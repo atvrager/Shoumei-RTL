@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel lec eqy smoke-test verify help setup check-tools
+.PHONY: all clean lean codegen chisel lec eqy smoke-test verify help setup check-tools opcodes
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -25,7 +25,8 @@ help:
 	@echo "  make setup      - Run bootstrap.py to install all dependencies"
 	@echo "  make all        - Run entire pipeline (lean → chisel → lec)"
 	@echo "  make lean       - Build LEAN code with Lake"
-	@echo "  make codegen    - Run code generators"
+	@echo "  make opcodes    - Generate RISC-V instruction definitions (RV32I)"
+	@echo "  make codegen    - Run code generators (includes opcodes)"
 	@echo "  make chisel     - Compile Chisel to SystemVerilog"
 	@echo ""
 	@echo "Verification Targets:"
@@ -76,8 +77,15 @@ endif
 	@echo "==> Building LEAN code with Lake..."
 	lake build
 
+# Generate RISC-V instruction definitions from riscv-opcodes
+opcodes:
+	@echo "==> Generating RISC-V instruction definitions (RV32I)..."
+	@cd third_party/riscv-opcodes && \
+		PYTHONPATH=src python -m riscv_opcodes -c 'rv_i' 'rv32_i' && \
+		echo "    Generated instr_dict.json with $$(python -c 'import json; print(len(json.load(open("instr_dict.json"))))') instructions"
+
 # Run code generators
-codegen: lean
+codegen: lean opcodes
 	@echo "==> Running code generators..."
 	lake exe codegen
 
@@ -129,4 +137,6 @@ endif
 	@find output/sv-from-lean -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/sv-from-chisel -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find chisel/src/main/scala/generated -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@# Clean riscv-opcodes generated files
+	-rm -f third_party/riscv-opcodes/instr_dict.json third_party/riscv-opcodes/encoding.out.h 2>/dev/null || true
 	@echo "✓ Clean complete"
