@@ -5,6 +5,11 @@ package «ProvenRTL» where
   -- Package configuration for Proven RTL
   -- Lake version: compatible with Lean 4.x
 
+  -- Linter configuration: make warnings errors
+  moreLeanArgs := #[
+    "-DwarningAsError=true"  -- Treat all warnings as errors
+  ]
+
 lean_lib «ProvenRTL» where
   -- Main library containing DSL, semantics, theorems, and code generators
   srcDir := "lean"

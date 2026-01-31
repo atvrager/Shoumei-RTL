@@ -2,9 +2,13 @@
 Codegen/Chisel.lean - Chisel Code Generator
 
 Generates Chisel (Scala) code from DSL circuits.
-Currently stubbed with hardcoded output - to be implemented fully.
 
-Target: Chisel 6.x (Scala 3)
+Design:
+- Combinational circuits: RawModule (no clock/reset, direct port declarations)
+- Sequential circuits: Module (with clock/reset) - NOT YET IMPLEMENTED
+- Port names match LEAN output exactly for LEC
+
+Target: Chisel 7.x (Scala 2.13)
 Output will be compiled to SystemVerilog via FIRRTL/CIRCT
 -/
 
@@ -31,12 +35,10 @@ def isCircuitInput (c : Circuit) (w : Wire) : Bool :=
 def isCircuitOutput (c : Circuit) (w : Wire) : Bool :=
   c.outputs.contains w
 
--- Helper: generate wire reference (io.name for inputs/outputs, name for internal wires)
-def wireRef (c : Circuit) (w : Wire) : String :=
-  if isCircuitInput c w || isCircuitOutput c w then
-    s!"io.{w.name}"
-  else
-    w.name
+-- Helper: generate wire reference
+-- For RawModule without IO bundle, all wires use direct names
+def wireRef (_ : Circuit) (w : Wire) : String :=
+  w.name
 
 -- Generate a single gate assignment
 def generateGate (c : Circuit) (g : Gate) : String :=
@@ -57,17 +59,15 @@ def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
   gateOutputs.filter (fun w => !c.outputs.contains w)
 
--- Generate IO bundle declaration
+-- Generate IO port declarations
+-- For RawModule, we use direct port declarations instead of IO bundle
+-- This makes port names match exactly with LEAN output (no io_ prefix)
 def generateIOBundle (c : Circuit) : String :=
-  let inputDecls := c.inputs.map (fun w => s!"    val {w.name} = Input(Bool())")
-  let outputDecls := c.outputs.map (fun w => s!"    val {w.name} = Output(Bool())")
+  let inputDecls := c.inputs.map (fun w => s!"  val {w.name} = IO(Input(Bool()))")
+  let outputDecls := c.outputs.map (fun w => s!"  val {w.name} = IO(Output(Bool()))")
   let allDecls := inputDecls ++ outputDecls
 
-  joinLines ([
-    "  val io = IO(new Bundle {"
-  ] ++ allDecls ++ [
-    "  })"
-  ])
+  joinLines allDecls
 
 -- Generate gate logic (wire declarations + assignments)
 def generateLogic (c : Circuit) : String :=
@@ -86,22 +86,46 @@ def generateLogic (c : Circuit) : String :=
   else
     joinLines wireDecls ++ "\n\n" ++ joinLines assignments
 
+-- Check if circuit has sequential elements
+-- Currently, we only support combinational gates
+-- When sequential elements are added to the DSL, this will need updating
+def hasSequentialElements (_ : Circuit) : Bool :=
+  -- TODO: When adding registers/sequential elements to GateType, check for them here
+  -- For now, all gates are combinational
+  false
+
+-- Validation: Ensure circuit is combinational
+-- This fails compilation if someone adds sequential elements without updating the generator
+def validateCombinational (c : Circuit) : Except String Unit :=
+  if hasSequentialElements c then
+    Except.error s!"Circuit '{c.name}' has sequential elements but Chisel generator only supports combinational circuits. Please extend the generator to use Module for sequential circuits."
+  else
+    Except.ok ()
+
 -- Main code generator: Circuit → Chisel module
 def toChisel (c : Circuit) : String :=
   let moduleName := c.name
 
-  joinLines [
-    "package generated",
-    "",
-    "import chisel3._",
-    "import chisel3.util._",
-    "",
-    "class " ++ moduleName ++ " extends Module {",
-    generateIOBundle c,
-    "",
-    generateLogic c,
-    "}"
-  ]
+  -- Validate that circuit is combinational
+  -- If this fails, it means sequential elements were added to DSL
+  -- and the generator needs to be extended
+  match validateCombinational c with
+  | Except.error msg => s!"// ERROR: {msg}\n// Generator needs updating for sequential circuits!"
+  | Except.ok _ =>
+      -- Use RawModule for combinational circuits (no clock/reset)
+      -- When adding sequential support, use Module for circuits with registers
+      joinLines [
+        "package generated",
+        "",
+        "import chisel3._",
+        "import chisel3.util._",
+        "",
+        "class " ++ moduleName ++ " extends RawModule {",
+        generateIOBundle c,
+        "",
+        generateLogic c,
+        "}"
+      ]
 
 -- TODO: Prove correctness theorem
 -- theorem toChisel_correct (c : Circuit) :
