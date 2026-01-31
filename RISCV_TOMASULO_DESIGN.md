@@ -567,7 +567,7 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 
 **Note:** Multi-entry queues (depth > 1) require circular buffer implementation with head/tail pointers. This is deferred to Phase 1+ as needed for specific components (ROB, RS).
 
-### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (67% complete)
+### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (83% complete)
 
 **Goal:** Implement and verify all arithmetic units needed for RV32IM
 
@@ -594,15 +594,20 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
    - MUX tree for operation selection
    - 3 structural proofs verified
    - All LEC tests PASS (2125 vars, 5497 clauses)
-6. ⏳ Shifter32 (5-stage barrel shifter) - NEXT
-7. ⏳ Complete ALU with all RV32I operations
+6. ✅ **Shifter32 (5-stage barrel shifter)** - COMPLETE
+   - Shifter32: 544 gates (3 parallel 5-stage shifters + MUX selection)
+   - 3 operations: SLL (left), SRL (logical right), SRA (arithmetic right)
+   - Each shifter: 5 stages for shifts 0-31 positions
+   - 2 structural proofs verified
+   - All LEC tests PASS (5959 vars, 15953 clauses)
+7. ⏳ Complete ALU with all RV32I operations - NEXT
 8. ⏳ Array Multiplier (32×32→64) - OPTIONAL/DEFERRED
 9. ⏳ Restoring Divider (32-bit) - OPTIONAL/DEFERRED
 
 **Current Progress (2026-01-31):**
-- **Gates implemented:** 749 / ~2000 (37.5% of MVP target)
-- **Modules verified:** 16 (all passing LEC ✓)
-- **Core components:** 4/6 complete (RCA, Subtractor, Comparator, LogicUnit)
+- **Gates implemented:** 1293 / ~2000 (64.7% of MVP target)
+- **Modules verified:** 18 (all passing LEC ✓)
+- **Core components:** 5/6 complete (RCA, Subtractor, Comparator, LogicUnit, Shifter)
 
 **Timeline:** 3-4 weeks (started 2026-01-31)
 **Deliverable:** Verified ALU core (items 1-7), optionally multiplier/divider

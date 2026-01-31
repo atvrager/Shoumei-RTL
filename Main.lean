@@ -11,6 +11,7 @@ import Shoumei.Circuits.Combinational.RippleCarryAdderCodegen
 import Shoumei.Circuits.Combinational.SubtractorCodegen
 import Shoumei.Circuits.Combinational.ComparatorCodegen
 import Shoumei.Circuits.Combinational.LogicUnitCodegen
+import Shoumei.Circuits.Combinational.ShifterCodegen
 
 -- Main code generation entry point
 -- Generates FullAdder, DFlipFlop, Queue, and RippleCarryAdder modules
@@ -42,3 +43,5 @@ def main : IO Unit := do
   Shoumei.Circuits.Combinational.generateComparators
   IO.println ""
   Shoumei.Circuits.Combinational.generateLogicUnits
+  IO.println ""
+  Shoumei.Circuits.Combinational.generateShifters
