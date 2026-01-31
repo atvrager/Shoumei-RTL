@@ -25,6 +25,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.OR => "|"
   | GateType.NOT => "~"
   | GateType.XOR => "^"
+  | GateType.BUF => ""   -- Buffer is direct assignment (no operator)
   | GateType.MUX => "?"  -- Ternary operator (special handling required)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses always block
 
@@ -38,6 +39,11 @@ def generateCombGate (g : Gate) : String :=
       match g.inputs with
       | [i0] => s!"  assign {g.output.name} = {op}{i0.name};"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | GateType.BUF =>
+      -- Buffer: direct assignment
+      match g.inputs with
+      | [i0] => s!"  assign {g.output.name} = {i0.name};"
+      | _ => s!"  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
       -- Ternary operator: sel ? in1 : in0
       -- inputs: [in0, in1, sel]

@@ -30,6 +30,8 @@ inductive GateType where
   | OR    -- Logical OR
   | NOT   -- Logical NOT (inverter)
   | XOR   -- Logical XOR (exclusive or)
+  | BUF   -- Buffer (pass-through)
+          -- Semantics: out = in
   | MUX   -- 2-to-1 Multiplexer (inputs: [in0, in1, sel], output: out)
           -- Semantics: out = sel ? in1 : in0
   -- Sequential elements
@@ -57,6 +59,9 @@ def mkNOT (a : Wire) (out : Wire) : Gate :=
 
 def mkXOR (a b : Wire) (out : Wire) : Gate :=
   { gateType := GateType.XOR, inputs := [a, b], output := out }
+
+def mkBUF (a : Wire) (out : Wire) : Gate :=
+  { gateType := GateType.BUF, inputs := [a], output := out }
 
 def mkMUX (in0 in1 sel : Wire) (out : Wire) : Gate :=
   { gateType := GateType.MUX, inputs := [in0, in1, sel], output := out }
@@ -97,7 +102,7 @@ end Circuit
 -- Classification: is a gate type combinational or sequential?
 def GateType.isCombinational (gt : GateType) : Bool :=
   match gt with
-  | GateType.AND | GateType.OR | GateType.NOT | GateType.XOR | GateType.MUX => true
+  | GateType.AND | GateType.OR | GateType.NOT | GateType.XOR | GateType.BUF | GateType.MUX => true
   | GateType.DFF => false
 
 def GateType.isSequential (gt : GateType) : Bool :=

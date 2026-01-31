@@ -40,6 +40,11 @@ def evalCombGate (g : Gate) (env : Env) : Bool :=
       match g.inputs with
       | [i0, i1] => xor (env i0) (env i1)
       | _ => false
+  | GateType.BUF =>
+      -- Buffer: pass-through (out = in)
+      match g.inputs with
+      | [i0] => env i0
+      | _ => false
   | GateType.MUX =>
       -- Inputs: [in0, in1, sel], semantics: sel ? in1 : in0
       match g.inputs with

@@ -39,7 +39,7 @@ open Shoumei
 def mkOrTree (wires : List Wire) (output : Wire) : List Gate :=
   match wires with
   | [] => []  -- Should not happen
-  | [w] => [Gate.mkOR w w output]  -- Single wire - OR with itself (acts as buffer)
+  | [w] => [Gate.mkBUF w output]  -- Single wire - just buffer it
   | w1 :: w2 :: rest =>
     -- Create intermediate wires
     let intermediate := Wire.mk s!"or_tree_{output.name}_{rest.length}"
@@ -80,8 +80,8 @@ def mkComparatorN (n : Nat) : Circuit :=
   let or_tree_gates := mkOrTree diff any_diff
   let eq_gate := Gate.mkNOT any_diff eq
 
-  -- Unsigned less-than: just use borrow (OR with itself acts as buffer)
-  let ltu_gate := Gate.mkOR borrow borrow ltu
+  -- Unsigned less-than: just use borrow (buffer it to output)
+  let ltu_gate := Gate.mkBUF borrow ltu
 
   -- Signed less-than: lt = (a[n-1] & ~b[n-1]) | (~(a[n-1] XOR b[n-1]) & diff[n-1])
   let a_sign := a.get! (n - 1)

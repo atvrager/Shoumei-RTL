@@ -26,6 +26,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.OR => "|"
   | GateType.NOT => "~"
   | GateType.XOR => "^"
+  | GateType.BUF => ""     -- Buffer is direct assignment (no operator)
   | GateType.MUX => "Mux"  -- Special function call (not infix)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses RegInit
 
@@ -52,6 +53,11 @@ def generateCombGate (c : Circuit) (g : Gate) : String :=
       match g.inputs with
       | [i0] => s!"  {outRef} := {op}{wireRef c i0}"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | GateType.BUF =>
+      -- Buffer: direct assignment
+      match g.inputs with
+      | [i0] => s!"  {outRef} := {wireRef c i0}"
+      | _ => s!"  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
       -- Mux(sel, in1, in0) - note: Chisel Mux has sel first, then true value, then false value
       match g.inputs with
