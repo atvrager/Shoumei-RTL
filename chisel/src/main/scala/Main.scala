@@ -10,25 +10,11 @@
 import chisel3._
 import circt.stage.ChiselStage
 import java.io.File
-import scala.util.{Try, Success, Failure}
 
 object Main extends App {
   println("証明 Shoumei RTL - Chisel to SystemVerilog Compiler")
   println("=" * 50)
   println()
-
-  // Discover generated modules in src/main/scala/generated/
-  def discoverGeneratedModules(): List[String] = {
-    val genDir = new File("src/main/scala/generated")
-    if (!genDir.exists() || !genDir.isDirectory) {
-      return List()
-    }
-
-    genDir.listFiles()
-      .filter(f => f.isFile && f.getName.endsWith(".scala"))
-      .map(_.getName.replace(".scala", ""))
-      .toList
-  }
 
   // Stub module for testing (used only if no generated modules found)
   class StubModule extends Module {
@@ -39,7 +25,63 @@ object Main extends App {
     io.out := io.in
   }
 
-  // Discover what modules we have
+  // Try to compile generated modules
+  // This uses dynamic class loading to avoid compile-time dependency on generated package
+  def compileModule(moduleName: String): Boolean = {
+    try {
+      println(s"Compiling $moduleName...")
+
+      // Use ChiselStage with a generator function
+      // The generator is called lazily, allowing us to load the class dynamically
+      val generatorFn = () => {
+        val moduleClass = Class.forName(s"generated.$moduleName")
+        // Get the primary constructor
+        val constructor = moduleClass.getDeclaredConstructors()(0)
+        constructor.setAccessible(true)
+        constructor.newInstance().asInstanceOf[RawModule]
+      }
+
+      val projectRoot = new File(System.getProperty("user.dir")).getParentFile
+      val outputDir = new File(projectRoot, "output/sv-from-chisel")
+      outputDir.mkdirs()
+
+      // Generate SystemVerilog using ChiselStage
+      // Note: ChiselStage.emitSystemVerilog handles Module construction properly
+      ChiselStage.emitSystemVerilogFile(
+        generatorFn(),
+        args = Array("--target-dir", outputDir.getAbsolutePath)
+      )
+
+      println(s"✓ $moduleName compilation successful")
+      println(s"Output: ${new File(outputDir, s"$moduleName.sv").getAbsolutePath}")
+      true
+    } catch {
+      case e: ClassNotFoundException =>
+        println(s"⚠ $moduleName class not found")
+        false
+      case e: Exception =>
+        println(s"✗ $moduleName compilation failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  // Discover generated modules in src/main/scala/generated/
+  def discoverGeneratedModules(): List[String] = {
+    val genDir = new File("src/main/scala/generated")
+    if (!genDir.exists() || !genDir.isDirectory) {
+      return List()
+    }
+
+    val files = genDir.listFiles()
+    if (files == null) return List()
+
+    files
+      .filter(f => f.isFile && f.getName.endsWith(".scala") && f.getName != ".gitkeep")
+      .map(_.getName.replace(".scala", ""))
+      .toList
+  }
+
   val modules = discoverGeneratedModules()
 
   if (modules.isEmpty) {
@@ -56,7 +98,7 @@ object Main extends App {
       println("Output: output/sv-from-chisel/StubModule.sv")
     } catch {
       case e: Exception =>
-        println(s"✗ Compilation failed: ${e.getMessage}")
+        println(s"✗ Stub compilation failed: ${e.getMessage}")
         e.printStackTrace()
         sys.exit(1)
     }
@@ -64,48 +106,20 @@ object Main extends App {
     println(s"Found ${modules.length} generated module(s): ${modules.mkString(", ")}")
     println()
 
-    // For now, specifically compile FullAdder if it exists
-    if (modules.contains("FullAdder")) {
-      println("Compiling FullAdder...")
-
-      try {
-        // Dynamically load the generated.FullAdder class using reflection
-        val fullAdderClass = Class.forName("generated.FullAdder")
-        val constructor = fullAdderClass.getConstructors()(0)
-        val fullAdderInstance = constructor.newInstance().asInstanceOf[Module]
-
-        // Generate SystemVerilog string
-        val sv = ChiselStage.emitSystemVerilog(fullAdderInstance)
-
-        // Write to file - use absolute path to avoid path resolution issues
-        val projectRoot = new File(System.getProperty("user.dir")).getParentFile
-        val outputDir = new File(projectRoot, "output/sv-from-chisel")
-        outputDir.mkdirs()
-        val outputFile = new File(outputDir, "FullAdder.sv")
-
-        val writer = new java.io.PrintWriter(outputFile)
-        try {
-          writer.write(sv)
-        } finally {
-          writer.close()
-        }
-
-        println("✓ FullAdder compilation successful")
-        println(s"Output: ${outputFile.getAbsolutePath}")
-      } catch {
-        case e: ClassNotFoundException =>
-          println(s"✗ FullAdder class not found (this shouldn't happen)")
-          println("   Make sure LEAN codegen has run successfully")
-          sys.exit(1)
-        case e: Exception =>
-          println(s"✗ Compilation failed: ${e.getMessage}")
-          e.printStackTrace()
-          sys.exit(1)
+    // Try to compile each discovered module
+    var successCount = 0
+    for (moduleName <- modules) {
+      if (compileModule(moduleName)) {
+        successCount += 1
       }
-    } else {
-      println("⚠ FullAdder.scala not found in generated modules")
-      println("   Run 'make codegen' to generate modules from LEAN")
+      println()
+    }
+
+    if (successCount == 0) {
+      println("✗ No modules compiled successfully")
       sys.exit(1)
+    } else {
+      println(s"✓ $successCount/${modules.length} module(s) compiled successfully")
     }
   }
 
