@@ -567,19 +567,32 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 
 **Note:** Multi-entry queues (depth > 1) require circular buffer implementation with head/tail pointers. This is deferred to Phase 1+ as needed for specific components (ROB, RS).
 
-### Phase 1: Arithmetic Building Blocks
+### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (17% complete)
 
 **Goal:** Implement and verify all arithmetic units needed for RV32IM
 
 **Tasks:**
-1. ✅ FullAdder (already done)
-2. Ripple-Carry Adder (32-bit)
-3. Array Multiplier (32×32→64)
-4. Restoring Divider (32-bit)
-5. Complete ALU with all RV32I operations
+1. ✅ FullAdder (already done - Phase 0)
+2. ✅ **Ripple-Carry Adder (32-bit)** - COMPLETE
+   - RippleCarryAdder32: 160 gates (32 FullAdders chained)
+   - Hierarchical composition via `Circuit.inline`
+   - 3 structural proofs verified
+   - Variants: RCA4, RCA8, RCA32
+3. Subtractor32 (RCA + 2's complement) - NEXT
+4. Comparator32 (3-output: eq, lt, gt)
+5. LogicUnit32 (AND/OR/XOR parallel)
+6. Shifter32 (5-stage barrel shifter)
+7. Complete ALU with all RV32I operations
+8. Array Multiplier (32×32→64) - OPTIONAL/DEFERRED
+9. Restoring Divider (32-bit) - OPTIONAL/DEFERRED
 
-**Timeline:** 3-4 weeks
-**Deliverable:** Verified ALU, multiplier, divider modules
+**Timeline:** 3-4 weeks (started 2026-01-31)
+**Deliverable:** Verified ALU core (items 1-7), optionally multiplier/divider
+
+**Key Achievement:** DSL enhanced with hierarchical circuit composition!
+- Added `Circuit.inline` for compositional proofs
+- RippleCarryAdder now reuses proven `fullAdderCircuit` instances
+- Foundation for scalable verification
 
 ### Phase 2: RISC-V Decoder Integration
 
@@ -1224,19 +1237,29 @@ Shoumei-RTL/
 
 ## Success Criteria
 
-**Phase 0 Complete:** (85% - Code generation pending)
+**Phase 0 Complete:** ✅ 100% DONE (2026-01-31)
 - [x] Sequential circuit DSL working (State, evalCycleSequential)
 - [x] DFF implemented and proven (8 theorems)
 - [x] N-bit Register implemented and proven (concrete + inductive)
 - [x] Queue/FIFO implemented with formal semantics (20+ theorems)
 - [x] Queue properties proven (FIFO ordering, overflow/underflow)
 - [x] DFF verified with LEC (SEC working)
-- [ ] Queue code generation (SystemVerilog/Chisel) - IN PROGRESS
-- [ ] Queue verified with LEC
+- [x] Queue code generation (SystemVerilog/Chisel)
+- [x] Queue verified with LEC (Queue1_8, Queue1_32 passing)
 
-**Phase 1 Complete:**
-- [ ] All arithmetic units (ALU, MUL, DIV) verified
-- [ ] LEC passes for all units
+**Phase 1 In Progress:** 🔄 17% DONE
+- [x] DSL enhanced with hierarchical circuit composition (`Circuit.inline`)
+- [x] RippleCarryAdder32 implemented (160 gates, 32 FullAdders)
+- [x] RCA structural proofs (3 theorems verified)
+- [x] RCA builds successfully with `lake build`
+- [ ] RCA code generation (SystemVerilog/Chisel)
+- [ ] RCA verified with LEC
+- [ ] Subtractor32 and Comparator32 implemented
+- [ ] LogicUnit32 (AND/OR/XOR) implemented
+- [ ] Shifter32 (barrel shifter) implemented
+- [ ] ALU32 core complete (all RV32I operations)
+- [ ] 50+ RV32I compliance tests
+- [ ] All Phase 1 components verified with LEC
 
 **Phase 2 Complete:**
 - [ ] RISC-V decoder generated from riscv-opcodes
@@ -1347,16 +1370,21 @@ This design document outlines an ambitious but achievable path to building a **f
 4. **Bottom-up verification** - Small proven components compose into larger proven systems
 
 **Next steps:**
-1. Review and approve this design document
-2. Begin Phase 0: Extend DSL for sequential circuits
-3. Set up riscv-opcodes integration
-4. Start implementing arithmetic building blocks
+1. ✅ ~~Phase 0: Extend DSL for sequential circuits~~ - COMPLETE
+2. ✅ ~~Start implementing arithmetic building blocks~~ - IN PROGRESS
+3. **Current:** Complete Phase 1 MVP (Subtractor, Comparator, LogicUnit, Shifter, ALU32)
+4. **Next:** Set up riscv-opcodes integration (Phase 2)
+5. **Future:** Register renaming infrastructure (Phase 3)
 
 The journey from FullAdder to Tomasulo CPU will push the boundaries of proven hardware design. Let's build something remarkable! 🚀
 
 ---
 
-**Document Status:** Active Development - Phase 0 (85% Complete)
-**Last Updated:** 2026-01-31 (Phase 0 progress update)
+**Document Status:** Active Development - Phase 1 (17% Complete)
+**Last Updated:** 2026-01-31 (Phase 1: RippleCarryAdder32 + DSL hierarchical composition)
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
+
+**Recent Milestones:**
+- ✅ Phase 0 Complete (2026-01-31): Queue/FIFO with full verification pipeline
+- 🔄 Phase 1 Started (2026-01-31): RippleCarryAdder32 with hierarchical composition

@@ -82,6 +82,16 @@ namespace Circuit
 def empty (name : String) : Circuit :=
   { name := name, inputs := [], outputs := [], gates := [] }
 
+-- Inline a subcircuit with wire remapping
+-- This allows hierarchical composition while keeping a flat gate structure
+-- wireMap: maps subcircuit wires to parent circuit wires
+def inline (subcircuit : Circuit) (wireMap : Wire → Wire) : List Gate :=
+  subcircuit.gates.map (fun g => {
+    gateType := g.gateType
+    inputs := g.inputs.map wireMap
+    output := wireMap g.output
+  })
+
 end Circuit
 
 -- Classification: is a gate type combinational or sequential?
