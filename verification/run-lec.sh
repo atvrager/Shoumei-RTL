@@ -67,16 +67,56 @@ verify_module() {
     sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean_${MODULE_NAME}.sv"
 
     # Check if this is a sequential circuit (contains always @)
+    local IS_SEQUENTIAL=0
     if grep -q "always @" "$LEAN_FILE"; then
-        echo -e "${YELLOW}⊙ SEQUENTIAL CIRCUIT - SKIPPING${NC}"
-        echo "  Note: Sequential equivalence checking (SEC) requires different tools"
-        echo "  Recommendation: Use Synopsys Formality or Cadence Conformal for SEC"
-        echo ""
-        return 0  # Don't fail, just skip
+        IS_SEQUENTIAL=1
+        echo "  Type: Sequential circuit (using SEC)"
+    else
+        echo "  Type: Combinational circuit (using CEC)"
     fi
+    echo ""
 
     # Create Yosys script for equivalence checking
-    cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
+    if [ $IS_SEQUENTIAL -eq 1 ]; then
+        # Sequential Equivalence Checking (SEC)
+        cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
+# Read and prepare LEAN design (gold reference)
+read_verilog LEAN_FILE
+hierarchy -check -top MODULE_NAME
+proc; memory; opt
+rename MODULE_NAME gold
+
+# Stash gold design
+design -stash gold
+
+# Read and prepare Chisel design (gate implementation)
+read_verilog -sv CHISEL_FILE
+hierarchy -check -top MODULE_NAME
+proc; memory; opt
+rename MODULE_NAME gate
+
+# Stash gate design
+design -stash gate
+
+# Copy both into main design for comparison
+design -copy-from gold -as gold gold
+design -copy-from gate -as gate gate
+
+# Build equivalence circuit (don't flatten - preserve state elements)
+equiv_make gold gate equiv
+prep -top equiv
+
+# Show statistics
+stat
+
+# Perform sequential equivalence check with induction
+equiv_simple -undef
+equiv_induct -undef
+equiv_status -assert
+YOSYS_EOF
+    else
+        # Combinational Equivalence Checking (CEC)
+        cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
 # Read and prepare LEAN design (gold reference)
 read_verilog LEAN_FILE
 hierarchy -check -top MODULE_NAME
@@ -109,6 +149,7 @@ stat
 # Run SAT solver to prove equivalence
 sat -verify -prove-asserts -show-ports miter
 YOSYS_EOF
+    fi
 
     # Substitute file paths and module name
     sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
@@ -124,7 +165,21 @@ YOSYS_EOF
 
     # Analyze results (quiet mode - don't show full yosys output unless failure)
 
-    if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SUCCESS" "$YOSYS_OUTPUT" || grep -q "Solving finished" "$YOSYS_OUTPUT"); then
+    # Check for successful verification (different for CEC vs SEC)
+    local VERIFICATION_SUCCESS=0
+    if [ $IS_SEQUENTIAL -eq 1 ]; then
+        # SEC: Check for equiv_status success
+        if [ $YOSYS_SUCCESS -eq 1 ] && grep -q "Equivalence successfully proven" "$YOSYS_OUTPUT"; then
+            VERIFICATION_SUCCESS=1
+        fi
+    else
+        # CEC: Check for SAT success
+        if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SUCCESS" "$YOSYS_OUTPUT" || grep -q "Solving finished" "$YOSYS_OUTPUT"); then
+            VERIFICATION_SUCCESS=1
+        fi
+    fi
+
+    if [ $VERIFICATION_SUCCESS -eq 1 ]; then
         # Check for any failed assertions
         if grep -q "FAILED" "$YOSYS_OUTPUT"; then
             echo -e "${RED}✗ NOT EQUIVALENT${NC}"
