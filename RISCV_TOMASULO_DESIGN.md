@@ -567,7 +567,7 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 
 **Note:** Multi-entry queues (depth > 1) require circular buffer implementation with head/tail pointers. This is deferred to Phase 1+ as needed for specific components (ROB, RS).
 
-### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (17% complete)
+### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (50% complete)
 
 **Goal:** Implement and verify all arithmetic units needed for RV32IM
 
@@ -578,21 +578,37 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
    - Hierarchical composition via `Circuit.inline`
    - 3 structural proofs verified
    - Variants: RCA4, RCA8, RCA32
-3. Subtractor32 (RCA + 2's complement) - NEXT
-4. Comparator32 (3-output: eq, lt, gt)
-5. LogicUnit32 (AND/OR/XOR parallel)
-6. Shifter32 (5-stage barrel shifter)
-7. Complete ALU with all RV32I operations
-8. Array Multiplier (32×32→64) - OPTIONAL/DEFERRED
-9. Restoring Divider (32-bit) - OPTIONAL/DEFERRED
+3. ✅ **Subtractor32 (RCA + 2's complement)** - COMPLETE
+   - Subtractor32: 192 gates (32 NOT + 160 RCA)
+   - Compositional reuse of RippleCarryAdder
+   - 3 structural proofs verified
+   - Variants: Sub4, Sub8, Sub32
+4. ✅ **Comparator32 (5-output: eq/lt/ltu/gt/gtu)** - COMPLETE
+   - Comparator32: 237 gates (subtraction + comparison logic)
+   - Signed overflow handling for correct lt comparison
+   - 3 structural proofs verified
+   - All LEC tests PASS (2608 vars, 6692 clauses)
+5. ⏳ LogicUnit32 (AND/OR/XOR parallel) - NEXT
+6. ⏳ Shifter32 (5-stage barrel shifter)
+7. ⏳ Complete ALU with all RV32I operations
+8. ⏳ Array Multiplier (32×32→64) - OPTIONAL/DEFERRED
+9. ⏳ Restoring Divider (32-bit) - OPTIONAL/DEFERRED
+
+**Current Progress (2026-01-31):**
+- **Gates implemented:** 589 / ~2000 (29.5% of MVP target)
+- **Modules verified:** 13 (all passing LEC ✓)
+- **Core components:** 3/6 complete (RCA, Subtractor, Comparator)
 
 **Timeline:** 3-4 weeks (started 2026-01-31)
 **Deliverable:** Verified ALU core (items 1-7), optionally multiplier/divider
 
-**Key Achievement:** DSL enhanced with hierarchical circuit composition!
-- Added `Circuit.inline` for compositional proofs
-- RippleCarryAdder now reuses proven `fullAdderCircuit` instances
-- Foundation for scalable verification
+**Key Achievements:**
+- DSL enhanced with hierarchical circuit composition (`Circuit.inline`)
+- Compositional verification pattern established
+- All components proven equivalent (LEAN SV ≡ Chisel SV)
+
+**Technical Debt:**
+- Add BUF (buffer) gate to DSL (currently using OR(x,x) workaround)
 
 ### Phase 2: RISC-V Decoder Integration
 
