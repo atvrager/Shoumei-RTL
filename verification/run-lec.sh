@@ -18,8 +18,9 @@ echo "  証明 Shoumei RTL - LEC with Yosys"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-LEAN_FILES=$(find "$LEAN_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null)
-CHISEL_FILES=$(find "$CHISEL_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null)
+LEAN_FILES=$(find "$LEAN_DIR" -maxdepth 1 -name "*.sv" -o -name "*.v" 2>/dev/null)
+# For Chisel, only look at top-level .sv files, not in verification/ subdirectories
+CHISEL_FILES=$(find "$CHISEL_DIR" -maxdepth 1 -name "*.sv" -o -name "*.v" 2>/dev/null)
 
 if [ -z "$LEAN_FILES" ] || [ -z "$CHISEL_FILES" ]; then
     echo -e "${RED}✗ Missing input files${NC}"
