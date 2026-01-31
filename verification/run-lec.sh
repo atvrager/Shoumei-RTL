@@ -64,8 +64,10 @@ verify_module() {
     echo "  Chisel: $CHISEL_FILE"
     echo ""
 
-    # Strip CIRCT verification layers from Chisel output
-    sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean_${MODULE_NAME}.sv"
+    # Strip CIRCT verification layers from Chisel output and remove 'automatic' keyword
+    # (Yosys has limited support for automatic variables in always blocks)
+    sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" | \
+        sed 's/\bautomatic\s\+/ /g' > "$TMPDIR/chisel_clean_${MODULE_NAME}.sv"
 
     # Check if this is a sequential circuit (contains always @)
     local IS_SEQUENTIAL=0

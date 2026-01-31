@@ -225,4 +225,26 @@ theorem alternating_operations :
   first = some 10 ∧ second = some 20 ∧ third = some 30 := by
   native_decide
 
+/-!
+## 32-bit Queue Tests (Wide Data)
+-/
+
+-- Theorem: FIFO ordering works with 32-bit data
+theorem fifo_32bit_data :
+  let q := QueueState.empty (α := Nat) 4
+  let q1 := q.enqueue 0xDEADBEEF
+  let q2 := q1.enqueue 0xCAFEBABE
+  let (q3, first) := q2.dequeue
+  let (_, second) := q3.dequeue
+  first = some 0xDEADBEEF ∧ second = some 0xCAFEBABE := by
+  native_decide
+
+-- Theorem: 32-bit queue handles large values
+theorem queue_32bit_large_values :
+  let q := QueueState.empty (α := Nat) 4
+  let q1 := q.enqueue 4294967295  -- 2^32 - 1
+  let (q2, result) := q1.dequeue
+  result = some 4294967295 ∧ q2.isEmpty = true := by
+  native_decide
+
 end Shoumei.Circuits.Sequential

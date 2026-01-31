@@ -37,7 +37,8 @@ echo ""
 echo "==> Test 1b: Formal Proofs Verification"
 if lake build Shoumei.Examples.AdderProofs && \
    lake build Shoumei.Circuits.Sequential.DFFProofs && \
-   lake build Shoumei.Circuits.Sequential.RegisterProofs; then
+   lake build Shoumei.Circuits.Sequential.RegisterProofs && \
+   lake build Shoumei.Circuits.Sequential.QueueProofs; then
     echo -e "${GREEN}✓ FullAdder formal proofs verified${NC}"
     echo "  - Truth table correctness (all 8 cases via case analysis)"
     echo "  - Commutativity property"
@@ -54,6 +55,14 @@ if lake build Shoumei.Examples.AdderProofs && \
     echo "  - 4-bit register data capture"
     echo "  - 4-bit multi-cycle sequences"
     echo "  - Base case (0-bit) and structure properties"
+    echo ""
+    echo -e "${GREEN}✓ Queue/FIFO formal proofs verified${NC}"
+    echo "  - FIFO ordering (single, dual, triple element sequences)"
+    echo "  - Overflow protection (cannot enqueue to full queue)"
+    echo "  - Underflow protection (cannot dequeue from empty queue)"
+    echo "  - Count accuracy (enqueue/dequeue sequences)"
+    echo "  - Peek correctness (non-destructive read)"
+    echo "  - 32-bit wide data support"
 else
     echo -e "${RED}✗ Formal proofs failed to verify${NC}"
     exit 1
@@ -91,7 +100,28 @@ if [ ! -f "chisel/src/main/scala/generated/DFlipFlop.scala" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}✓ Generated files exist (FullAdder, DFlipFlop)${NC}"
+# Verify Queue files exist
+if [ ! -f "output/sv-from-lean/Queue1_8.sv" ]; then
+    echo -e "${RED}✗ Queue1_8 LEAN SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "chisel/src/main/scala/generated/Queue1_8.scala" ]; then
+    echo -e "${RED}✗ Queue1_8 Chisel file not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "output/sv-from-lean/Queue1_32.sv" ]; then
+    echo -e "${RED}✗ Queue1_32 LEAN SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "chisel/src/main/scala/generated/Queue1_32.scala" ]; then
+    echo -e "${RED}✗ Queue1_32 Chisel file not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Generated files exist (FullAdder, DFlipFlop, Queue1_8, Queue1_32)${NC}"
 echo ""
 
 # Test 3: Chisel Compilation
@@ -115,7 +145,17 @@ if [ ! -f "output/sv-from-chisel/DFlipFlop.sv" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop)${NC}"
+if [ ! -f "output/sv-from-chisel/Queue1_8.sv" ]; then
+    echo -e "${RED}✗ Queue1_8 Chisel SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "output/sv-from-chisel/Queue1_32.sv" ]; then
+    echo -e "${RED}✗ Queue1_32 Chisel SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop, Queue1_8, Queue1_32)${NC}"
 echo ""
 
 # Test 4: Port Name Validation
@@ -195,6 +235,50 @@ fi
 echo -e "${GREEN}✓ DFlipFlop ports and logic verified${NC}"
 echo ""
 
+# Test 5c: Queue Port and Logic Validation
+echo "==> Test 5c: Queue Port and Logic Validation"
+
+# Check Queue ports in LEAN output (enq_data, enq_valid, enq_ready, deq_data, deq_valid, deq_ready)
+for port in enq_data enq_valid enq_ready deq_data deq_valid deq_ready; do
+    if ! grep -q "$port" output/sv-from-lean/Queue1_8.sv; then
+        echo -e "${RED}✗ Port '$port' missing in LEAN Queue output${NC}"
+        exit 1
+    fi
+done
+
+# Check Queue ports in Chisel output
+for port in enq_data enq_valid enq_ready deq_data deq_valid deq_ready; do
+    if ! grep -q "$port" output/sv-from-chisel/Queue1_8.sv; then
+        echo -e "${RED}✗ Port '$port' missing in Chisel Queue output${NC}"
+        exit 1
+    fi
+done
+
+# Check for valid register and sequential logic
+if ! grep -q "reg valid" output/sv-from-lean/Queue1_8.sv; then
+    echo -e "${RED}✗ No 'valid' register in LEAN Queue output${NC}"
+    exit 1
+fi
+
+if ! grep -q "always @(posedge" output/sv-from-lean/Queue1_8.sv; then
+    echo -e "${RED}✗ No 'always @(posedge' block in LEAN Queue output${NC}"
+    exit 1
+fi
+
+# Verify 32-bit queue has correct width
+if ! grep -q "\[31:0\]" output/sv-from-lean/Queue1_32.sv; then
+    echo -e "${RED}✗ 32-bit width not found in LEAN Queue1_32 output${NC}"
+    exit 1
+fi
+
+if ! grep -q "\[31:0\]" output/sv-from-chisel/Queue1_32.sv; then
+    echo -e "${RED}✗ 32-bit width not found in Chisel Queue1_32 output${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Queue ports and logic verified (8-bit and 32-bit)${NC}"
+echo ""
+
 # Test 6: Yosys Equivalence (if available)
 echo "==> Test 6: Yosys Equivalence Check"
 if command -v yosys > /dev/null 2>&1; then
@@ -218,11 +302,12 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "Pipeline Status:"
 echo "  ✓ LEAN builds successfully"
-echo "  ✓ Formal proofs verified (FullAdder correctness)"
+echo "  ✓ Formal proofs verified (FullAdder, DFF, Register, Queue)"
 echo "  ✓ Code generators produce valid output"
 echo "  ✓ Chisel compiles to SystemVerilog"
 echo "  ✓ FullAdder (combinational) verified"
 echo "  ✓ DFlipFlop (sequential) verified"
+echo "  ✓ Queue/FIFO (ready/valid handshaking) verified"
 echo ""
 
 exit 0
