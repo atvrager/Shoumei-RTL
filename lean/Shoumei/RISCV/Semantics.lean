@@ -1,0 +1,347 @@
+/-
+  RISC-V Instruction Semantics
+
+  Defines the operational semantics for all RV32I instructions.
+  This is the ISA specification - what each instruction actually does.
+-/
+
+import Shoumei.RISCV.ISA
+import Shoumei.RISCV.Decoder
+
+namespace Shoumei.RISCV
+
+/-- CPU architectural state (simplified for now) -/
+structure ArchState where
+  /-- Program counter (32-bit) -/
+  pc : UInt32
+  /-- 32 architectural registers (x0 is always 0) -/
+  regs : Fin 32 → UInt32
+  /-- Memory (simplified: address → value) -/
+  memory : UInt32 → UInt32
+  deriving Inhabited
+
+instance : Repr ArchState where
+  reprPrec s _ := s!"⟨pc: {s.pc}⟩"
+
+/-- Result of instruction execution -/
+inductive ExecResult where
+  | ok (newState : ArchState)
+  | illegalInstruction
+  | ecall
+  | ebreak
+  deriving Repr
+
+/-- Read register value (x0 is always 0) -/
+def ArchState.readReg (state : ArchState) (reg : Fin 32) : UInt32 :=
+  if reg.val = 0 then 0 else state.regs reg
+
+/-- Write register value (writing to x0 is a no-op) -/
+def ArchState.writeReg (state : ArchState) (reg : Fin 32) (value : UInt32) : ArchState :=
+  if reg.val = 0 then
+    state  -- Writing to x0 has no effect
+  else
+    { state with regs := fun r => if r = reg then value else state.regs r }
+
+/-- Read memory word (32-bit aligned) -/
+def ArchState.readMem32 (state : ArchState) (addr : UInt32) : UInt32 :=
+  state.memory addr
+
+/-- Write memory word (32-bit aligned) -/
+def ArchState.writeMem32 (state : ArchState) (addr : UInt32) (value : UInt32) : ArchState :=
+  { state with memory := fun a => if a = addr then value else state.memory a }
+
+/-- Read memory halfword (16-bit aligned, sign-extended) -/
+def ArchState.readMem16 (state : ArchState) (addr : UInt32) (unsigned : Bool) : UInt32 :=
+  let halfword := (state.memory (addr &&& 0xFFFFFFFC)).land 0xFFFF
+  if unsigned then
+    halfword
+  else
+    -- Sign extend from 16 bits
+    if (halfword &&& 0x8000) != 0 then
+      halfword ||| 0xFFFF0000
+    else
+      halfword
+
+/-- Read memory byte (sign-extended or zero-extended) -/
+def ArchState.readMem8 (state : ArchState) (addr : UInt32) (unsigned : Bool) : UInt32 :=
+  let byte := (state.memory (addr &&& 0xFFFFFFFC)).land 0xFF
+  if unsigned then
+    byte
+  else
+    -- Sign extend from 8 bits
+    if (byte &&& 0x80) != 0 then
+      byte ||| 0xFFFFFF00
+    else
+      byte
+
+/-- Increment PC by 4 (next instruction) -/
+def ArchState.nextPC (state : ArchState) : ArchState :=
+  { state with pc := state.pc + 4 }
+
+/-- Set PC to specific address -/
+def ArchState.setPC (state : ArchState) (newPC : UInt32) : ArchState :=
+  { state with pc := newPC }
+
+/-! ## ALU Operations -/
+
+/-- Convert UInt32 to signed Int32 interpretation -/
+def toInt32 (x : UInt32) : Int :=
+  if x.toNat >= 2^31 then
+    Int.ofNat x.toNat - Int.ofNat (2^32)
+  else
+    Int.ofNat x.toNat
+
+/-- Execute ALU operation (arithmetic and logic) -/
+def executeALU (op : OpType) (a b : UInt32) : UInt32 :=
+  match op with
+  | .ADD   => a + b
+  | .SUB   => a - b
+  | .AND   => a &&& b
+  | .OR    => a ||| b
+  | .XOR   => a ^^^ b
+  | .SLT   => if toInt32 a < toInt32 b then 1 else 0  -- Signed comparison
+  | .SLTU  => if a < b then 1 else 0                  -- Unsigned comparison
+  | .SLL   => a <<< UInt32.ofNat ((b &&& 0x1F).toNat)  -- Shift left logical
+  | .SRL   => a >>> UInt32.ofNat ((b &&& 0x1F).toNat)  -- Shift right logical
+  | .SRA   =>                                          -- Shift right arithmetic
+      let shamt := (b &&& 0x1F).toNat
+      let shamtU32 := UInt32.ofNat shamt
+      let signBit := (a >>> UInt32.ofNat 31) &&& 1
+      if signBit == 1 then
+        -- Negative: fill with 1s
+        let shifted := a >>> shamtU32
+        let fillBits := 0xFFFFFFFF <<< UInt32.ofNat (32 - shamt)
+        shifted ||| fillBits
+      else
+        -- Positive: fill with 0s
+        a >>> shamtU32
+  | _ => 0  -- Not an ALU op
+
+/-! ## Instruction Execution -/
+
+/-- Execute a single decoded instruction -/
+def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : ExecResult :=
+  match decoded.opType with
+
+  -- R-type ALU operations (register-register)
+  | .ADD | .SUB | .AND | .OR | .XOR | .SLT | .SLTU | .SLL | .SRL | .SRA =>
+    match decoded.rd, decoded.rs1, decoded.rs2 with
+    | some rd, some rs1, some rs2 =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      let result := executeALU decoded.opType val1 val2
+      .ok (state.writeReg rd result |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- I-type ALU operations (register-immediate)
+  | .ADDI | .ANDI | .ORI | .XORI | .SLTI | .SLTIU | .SLLI | .SRLI | .SRAI =>
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some imm =>
+      let val1 := state.readReg rs1
+      let val2 := UInt32.ofNat imm.toNat
+      -- Map I-type op to corresponding R-type for executeALU
+      let aluOp := match decoded.opType with
+        | .ADDI  => OpType.ADD
+        | .ANDI  => OpType.AND
+        | .ORI   => OpType.OR
+        | .XORI  => OpType.XOR
+        | .SLTI  => OpType.SLT
+        | .SLTIU => OpType.SLTU
+        | .SLLI  => OpType.SLL
+        | .SRLI  => OpType.SRL
+        | .SRAI  => OpType.SRA
+        | _ => OpType.ADD  -- unreachable
+      let result := executeALU aluOp val1 val2
+      .ok (state.writeReg rd result |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- Load instructions
+  | .LW =>  -- Load word
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readMem32 addr
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .LH =>  -- Load halfword (sign-extended)
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readMem16 addr false
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .LHU =>  -- Load halfword unsigned
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readMem16 addr true
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .LB =>  -- Load byte (sign-extended)
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readMem8 addr false
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .LBU =>  -- Load byte unsigned
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readMem8 addr true
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- Store instructions
+  | .SW =>  -- Store word
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readReg rs2
+      .ok (state.writeMem32 addr value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .SH =>  -- Store halfword
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readReg rs2 &&& 0xFFFF  -- Only lower 16 bits
+      .ok (state.writeMem32 addr value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  | .SB =>  -- Store byte
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let addr := state.readReg rs1 + UInt32.ofNat offset.toNat
+      let value := state.readReg rs2 &&& 0xFF  -- Only lower 8 bits
+      .ok (state.writeMem32 addr value |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- Branch instructions
+  | .BEQ =>  -- Branch if equal
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if val1 == val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  | .BNE =>  -- Branch if not equal
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if val1 != val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  | .BLT =>  -- Branch if less than (signed)
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if toInt32 val1 < toInt32 val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  | .BGE =>  -- Branch if greater or equal (signed)
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if toInt32 val1 >= toInt32 val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  | .BLTU =>  -- Branch if less than (unsigned)
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if val1 < val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  | .BGEU =>  -- Branch if greater or equal (unsigned)
+    match decoded.rs1, decoded.rs2, decoded.imm with
+    | some rs1, some rs2, some offset =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      if val1 >= val2 then
+        .ok (state.setPC (state.pc + UInt32.ofNat offset.toNat))
+      else
+        .ok state.nextPC
+    | _, _, _ => .illegalInstruction
+
+  -- Jump instructions
+  | .JAL =>  -- Jump and link
+    match decoded.rd, decoded.imm with
+    | some rd, some offset =>
+      let returnAddr := state.pc + 4
+      let targetAddr := state.pc + UInt32.ofNat offset.toNat
+      .ok (state.writeReg rd returnAddr |>.setPC targetAddr)
+    | _, _ => .illegalInstruction
+
+  | .JALR =>  -- Jump and link register
+    match decoded.rd, decoded.rs1, decoded.imm with
+    | some rd, some rs1, some offset =>
+      let returnAddr := state.pc + 4
+      let base := state.readReg rs1
+      let targetAddr := (base + UInt32.ofNat offset.toNat) &&& 0xFFFFFFFE  -- Clear LSB
+      .ok (state.writeReg rd returnAddr |>.setPC targetAddr)
+    | _, _, _ => .illegalInstruction
+
+  -- Upper immediate instructions
+  | .LUI =>  -- Load upper immediate
+    match decoded.rd, decoded.imm with
+    | some rd, some imm =>
+      let value := UInt32.ofNat imm.toNat  -- Already shifted by decoder
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _ => .illegalInstruction
+
+  | .AUIPC =>  -- Add upper immediate to PC
+    match decoded.rd, decoded.imm with
+    | some rd, some imm =>
+      let value := state.pc + UInt32.ofNat imm.toNat
+      .ok (state.writeReg rd value |>.nextPC)
+    | _, _ => .illegalInstruction
+
+  -- System instructions
+  | .FENCE =>
+    -- FENCE is a no-op in our simplified model (no memory reordering)
+    .ok state.nextPC
+
+  | .ECALL =>
+    -- Environment call - return special result
+    .ecall
+
+  | .EBREAK =>
+    -- Breakpoint - return special result
+    .ebreak
+
+/-- Execute a full instruction fetch-decode-execute cycle -/
+def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResult :=
+  -- Fetch instruction from memory at PC
+  let instrWord := state.readMem32 state.pc
+
+  -- Decode instruction
+  match decodeInstruction instrDefs instrWord with
+  | some decoded => executeInstruction state decoded
+  | none => .illegalInstruction
+
+end Shoumei.RISCV
