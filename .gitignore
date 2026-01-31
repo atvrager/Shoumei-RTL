@@ -53,6 +53,8 @@ chisel/src/main/scala/generated/*.scala
 # Verification artifacts
 verification/results/
 verification/logs/
+verification/FullAdder/
+verification/*_clean.sv
 *.vcd
 *.fst
 

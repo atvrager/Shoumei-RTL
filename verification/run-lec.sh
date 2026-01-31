@@ -1,165 +1,144 @@
-#!/usr/bin/env bash
-# run-lec.sh - Logical Equivalence Checking Script
-#
-# Uses ABC (Berkeley Logic Synthesis and Verification Tool)
-# to verify that SystemVerilog from LEAN and Chisel are equivalent
-#
-# Usage: ./run-lec.sh <sv-from-lean-dir> <sv-from-chisel-dir>
-#
-# Requirements: ABC (https://github.com/berkeley-abc/abc)
-# Install: Package manager or build from source
+#!/bin/bash
+# Logical Equivalence Checking with Yosys
+# Provides detailed diagnostics on success or failure
 
-set -euo pipefail
+set -e
 
-# Colors for output
+LEAN_DIR="${1:-output/sv-from-lean}"
+CHISEL_DIR="${2:-output/sv-from-chisel}"
+
+# Colors
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Check arguments
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <sv-from-lean-dir> <sv-from-chisel-dir>"
-    exit 1
-fi
-
-LEAN_DIR="$1"
-CHISEL_DIR="$2"
-
-echo "Proven RTL - Logical Equivalence Checking"
-echo "=========================================="
-echo ""
-echo "Comparing:"
-echo "  LEAN   → $LEAN_DIR"
-echo "  Chisel → $CHISEL_DIR"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  証明 Shoumei RTL - LEC with Yosys"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Check if ABC is installed
-if ! command -v abc &> /dev/null; then
-    echo -e "${YELLOW}⚠ ABC not installed - running in stub mode${NC}"
-    echo ""
-    echo "To install ABC:"
-    echo "  - Arch Linux: yay -S abc-git"
-    echo "  - Ubuntu: sudo apt install abc"
-    echo "  - From source: https://github.com/berkeley-abc/abc"
-    echo ""
-    echo "ABC commands that would be run:"
-    echo "  1. read_verilog <lean-sv-file>"
-    echo "  2. read_verilog <chisel-sv-file>"
-    echo "  3. miter -c -C 10000"
-    echo "  4. sat -C 10000"
-    echo ""
-    echo -e "${GREEN}✓ Stub mode: Equivalence check skipped${NC}"
-    exit 0
-fi
-
-# Find .sv files
-LEAN_FILES=$(find "$LEAN_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null || true)
-CHISEL_FILES=$(find "$CHISEL_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null || true)
-
-if [ -z "$LEAN_FILES" ]; then
-    echo -e "${YELLOW}⚠ No SystemVerilog files found in $LEAN_DIR${NC}"
-fi
-
-if [ -z "$CHISEL_FILES" ]; then
-    echo -e "${YELLOW}⚠ No SystemVerilog files found in $CHISEL_DIR${NC}"
-fi
+LEAN_FILES=$(find "$LEAN_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null)
+CHISEL_FILES=$(find "$CHISEL_DIR" -name "*.sv" -o -name "*.v" 2>/dev/null)
 
 if [ -z "$LEAN_FILES" ] || [ -z "$CHISEL_FILES" ]; then
-    echo ""
-    echo "Run code generation first:"
-    echo "  make codegen"
-    echo "  make chisel"
+    echo -e "${RED}✗ Missing input files${NC}"
     exit 1
 fi
 
-echo "Files to compare:"
-while IFS= read -r file; do
-    echo "  LEAN:   $file"
-done <<< "$LEAN_FILES"
-while IFS= read -r file; do
-    echo "  Chisel: $file"
-done <<< "$CHISEL_FILES"
-echo ""
-
-# Compare files using ABC
-echo "Running equivalence checking with ABC..."
-echo ""
-
-# For simplicity, assume one file in each directory for now
 LEAN_FILE=$(echo "$LEAN_FILES" | head -1)
 CHISEL_FILE=$(echo "$CHISEL_FILES" | head -1)
-
-if [ -z "$LEAN_FILE" ] || [ -z "$CHISEL_FILE" ]; then
-    echo -e "${YELLOW}⚠ Missing files for comparison${NC}"
-    echo "LEAN files found: $(echo "$LEAN_FILES" | wc -l)"
-    echo "Chisel files found: $(echo "$CHISEL_FILES" | wc -l)"
-    exit 1
-fi
 
 echo "Comparing:"
 echo "  LEAN:   $LEAN_FILE"
 echo "  Chisel: $CHISEL_FILE"
 echo ""
 
-# Note: For combinational circuits, we need to handle the fact that
-# Chisel adds clock/reset inputs and uses io_ prefix for ports.
-# ABC's cec command is better for combinational equivalence checking
-# than miter+sat because it handles port mapping automatically.
+# Create temporary working directory
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
 
-echo "Validating SystemVerilog files..."
-echo ""
+# Strip CIRCT verification layers from Chisel output
+sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean.sv"
 
-# Verify LEAN-generated SystemVerilog with ABC
-echo "Checking LEAN-generated file with ABC..."
-LEAN_CHECK=$(echo "read_verilog $LEAN_FILE; print_stats" | abc 2>&1)
-if echo "$LEAN_CHECK" | grep -q "error\|Error\|ERROR"; then
-    echo -e "${RED}✗ LEAN file has syntax errors${NC}"
-    echo "$LEAN_CHECK"
-    exit 1
-else
-    echo -e "${GREEN}✓ LEAN file is valid Verilog-95 and parseable by ABC${NC}"
-fi
-
-# Check that Chisel file exists and has expected content
-echo "Checking Chisel-generated file..."
-if [ ! -f "$CHISEL_FILE" ]; then
-    echo -e "${RED}✗ Chisel file not found${NC}"
-    exit 1
-fi
-
-if grep -q "module FullAdder" "$CHISEL_FILE"; then
-    echo -e "${GREEN}✓ Chisel file exists and contains FullAdder module${NC}"
-else
-    echo -e "${RED}✗ Chisel file does not contain expected module${NC}"
-    exit 1
-fi
-
-echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Equivalence Summary"
+echo "  Phase 1: Parse and Synthesize Designs"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Compare port signatures
-echo "Port signatures:"
-echo ""
-echo "LEAN:"
-grep "^module" "$LEAN_FILE"
-echo ""
-echo "Chisel:"
-sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" | grep -A 6 "^module" | head -7
+# Create Yosys script for equivalence checking
+cat > "$TMPDIR/lec.ys" <<'YOSYS_EOF'
+# Read and prepare LEAN design (gold reference)
+read_verilog LEAN_FILE
+hierarchy -check -top FullAdder
+proc; opt; memory; opt; flatten
+rename FullAdder gold
+
+# Stash gold design
+design -stash gold
+
+# Read and prepare Chisel design (gate implementation)
+read_verilog -sv CHISEL_FILE
+hierarchy -check -top FullAdder
+proc; opt; memory; opt; flatten
+rename FullAdder gate
+
+# Stash gate design
+design -stash gate
+
+# Copy both into main design for comparison
+design -copy-from gold -as gold gold
+design -copy-from gate -as gate gate
+
+# Build miter circuit for equivalence check
+miter -equiv -flatten -make_outputs gold gate miter
+hierarchy -top miter
+
+# Show statistics
+stat
+
+# Run SAT solver to prove equivalence
+sat -verify -prove-asserts -show-ports miter
+YOSYS_EOF
+
+# Substitute file paths
+sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec.ys"
+sed -i "s|CHISEL_FILE|$TMPDIR/chisel_clean.sv|g" "$TMPDIR/lec.ys"
+
+# Run Yosys and capture output
+YOSYS_OUTPUT="$TMPDIR/yosys_output.txt"
+if yosys -s "$TMPDIR/lec.ys" > "$YOSYS_OUTPUT" 2>&1; then
+    YOSYS_SUCCESS=1
+else
+    YOSYS_SUCCESS=0
+fi
+
+# Display output
+cat "$YOSYS_OUTPUT"
 echo ""
 
-echo "✓ Port names now match perfectly (a, b, cin, sum, cout)"
-echo "✓ No clock/reset ports (using RawModule for combinational)"
-echo "✓ Both implement identical full adder logic"
+# Analyze results
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Phase 2: Analyze Results"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Automated LEC with ABC is limited by SystemVerilog syntax differences."
-echo "For formal verification of equivalence, use:"
-echo "  - Yosys with 'equiv_simple' or 'equiv_induct' commands"
-echo "  - Synopsys Formality (commercial)"
-echo "  - Cadence Conformal (commercial)"
-echo ""
-echo -e "${GREEN}✓ Validation complete - generators produce equivalent circuits${NC}"
 
-exit 0
+if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SUCCESS" "$YOSYS_OUTPUT" || grep -q "Solving finished" "$YOSYS_OUTPUT"); then
+    # Check for any failed assertions
+    if grep -q "FAILED" "$YOSYS_OUTPUT"; then
+        echo -e "${RED}✗ NOT EQUIVALENT${NC}"
+        echo ""
+        echo "The SAT solver found a counterexample where the circuits differ."
+        echo ""
+        echo "Failed assertions:"
+        grep "FAILED" "$YOSYS_OUTPUT" | head -10
+        exit 1
+    else
+        echo -e "${GREEN}✓ EQUIVALENT${NC}"
+        echo ""
+        echo "Formal proof completed: LEAN and Chisel generators produce"
+        echo "logically equivalent circuits for FullAdder."
+        echo ""
+        # Show key statistics and SAT results
+        echo "SAT Solver Results:"
+        grep -A 1 "Solving problem with" "$YOSYS_OUTPUT" | sed 's/^/  /' || true
+        echo ""
+        echo "Circuit Statistics:"
+        grep "Number of cells:" "$YOSYS_OUTPUT" | head -2 | sed 's/^/  /' || true
+        exit 0
+    fi
+else
+    echo -e "${YELLOW}⚠ VERIFICATION INCOMPLETE${NC}"
+    echo ""
+    echo "Could not complete formal verification."
+    echo ""
+    echo "Common issues:"
+    echo "  - Port name mismatches (check with: grep 'module.*(' files)"
+    echo "  - Different module hierarchies"
+    echo "  - Yosys parsing errors"
+    echo ""
+    echo "Last 20 lines of output:"
+    tail -20 "$YOSYS_OUTPUT"
+    exit 1
+fi

@@ -1,7 +1,7 @@
 # Proven RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel lec help setup check-tools
+.PHONY: all clean lean codegen chisel lec eqy smoke-test verify help setup check-tools
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -19,16 +19,24 @@ all: check-tools lean codegen chisel lec
 
 # Help target
 help:
-	@echo "Proven RTL Build Targets:"
+	@echo "証明 Shoumei RTL - Build Targets:"
 	@echo ""
-	@echo "  make setup    - Run bootstrap.py to install all dependencies"
-	@echo "  make all      - Run entire pipeline (lean → chisel → lec)"
-	@echo "  make lean     - Build LEAN code with Lake"
-	@echo "  make codegen  - Run code generators"
-	@echo "  make chisel   - Compile Chisel to SystemVerilog"
-	@echo "  make lec      - Run logical equivalence checking"
-	@echo "  make clean    - Remove all generated files"
-	@echo "  make help     - Show this help message"
+	@echo "Build Targets:"
+	@echo "  make setup      - Run bootstrap.py to install all dependencies"
+	@echo "  make all        - Run entire pipeline (lean → chisel → lec)"
+	@echo "  make lean       - Build LEAN code with Lake"
+	@echo "  make codegen    - Run code generators"
+	@echo "  make chisel     - Compile Chisel to SystemVerilog"
+	@echo ""
+	@echo "Verification Targets:"
+	@echo "  make lec        - Run Yosys SAT-based LEC (miter + SAT solver)"
+	@echo "  make eqy        - Run EQY partitioned equivalence checking"
+	@echo "  make verify     - Run all verification methods (lec + eqy)"
+	@echo "  make smoke-test - Run comprehensive CI smoke tests"
+	@echo ""
+	@echo "Utility Targets:"
+	@echo "  make clean      - Remove all generated files"
+	@echo "  make help       - Show this help message"
 	@echo ""
 	@echo "First time setup:"
 	@echo "  1. make setup   (installs elan, lake, checks for sbt)"
@@ -83,10 +91,27 @@ endif
 	@echo "==> Compiling Chisel to SystemVerilog..."
 	cd chisel && sbt run
 
-# Run logical equivalence checking
+# Run logical equivalence checking with Yosys
 lec:
-	@echo "==> Running logical equivalence checking..."
+	@echo "==> Running logical equivalence checking (Yosys)..."
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+
+# Run equivalence checking with EQY (partitioned approach)
+eqy:
+	@echo "==> Preparing cleaned Chisel output for EQY..."
+	@sed '/^\/\/ ----- 8< -----/,$d' output/sv-from-chisel/FullAdder.sv > verification/FullAdder_chisel_clean.sv
+	@echo "==> Running EQY equivalence checking..."
+	@cd verification && rm -rf FullAdder && eqy FullAdder.eqy
+
+# Run comprehensive smoke tests for CI
+smoke-test: codegen chisel
+	@echo "==> Running smoke tests..."
+	./verification/smoke-test.sh
+
+# Run all verification methods (Yosys LEC + EQY)
+verify: lec eqy
+	@echo ""
+	@echo "✓ All verification methods passed"
 
 # Clean all generated files
 clean:

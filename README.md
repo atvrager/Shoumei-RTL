@@ -1,5 +1,7 @@
 # 証明 Shoumei RTL
 
+[![CI](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml) [![Full Verification](https://github.com/atvrager/Shoumei-RTL/actions/workflows/verify.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/verify.yml) [![Smoke Tests](https://github.com/atvrager/Shoumei-RTL/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/smoke-test.yml) [![LEC](https://github.com/atvrager/Shoumei-RTL/actions/workflows/lec.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/lec.yml)
+
 **Formally Verified Hardware Design with LEAN4**
 
 A theorem-proving based hardware design framework that generates provably correct circuits in SystemVerilog and Chisel, with automated logical equivalence checking.

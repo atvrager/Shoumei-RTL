@@ -6,7 +6,8 @@ read_verilog ../output/sv-from-lean/FullAdder.sv
 prep -top FullAdder
 
 [gate]
-read_verilog -sv ../output/sv-from-chisel/FullAdder.sv
+# Using cleaned Chisel output (CIRCT verification layers stripped)
+read_verilog -sv FullAdder_chisel_clean.sv
 prep -top FullAdder
 
 [strategy basic]

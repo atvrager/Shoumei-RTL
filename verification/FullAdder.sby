@@ -9,8 +9,8 @@ depth 10
 smtbmc z3
 
 [script]
-read_verilog -sv ../output/sv-from-chisel/FullAdder.sv
+read_verilog -sv FullAdder.sv
 prep -top FullAdder
 
 [files]
-../output/sv-from-chisel/FullAdder.sv
+../output/sv-from-chisel/FullAdder.sv FullAdder.sv

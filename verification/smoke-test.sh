@@ -118,7 +118,7 @@ echo ""
 echo "==> Test 6: Yosys Equivalence Check"
 if command -v yosys > /dev/null 2>&1; then
     echo "Yosys detected, running formal equivalence check..."
-    if ./verification/run-yosys-lec.sh output/sv-from-lean/FullAdder.sv output/sv-from-chisel/FullAdder.sv; then
+    if ./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel; then
         echo -e "${GREEN}✓ Formal equivalence proven with Yosys${NC}"
     else
         echo -e "${YELLOW}⚠ Yosys equivalence check did not pass${NC}"
