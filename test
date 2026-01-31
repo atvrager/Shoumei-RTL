@@ -1,0 +1,6 @@
+#!/bin/bash
+# Run smoke test
+
+set -e
+
+./verification/smoke-test.sh

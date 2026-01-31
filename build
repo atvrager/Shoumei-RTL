@@ -1,0 +1,11 @@
+#!/bin/bash
+# Build the Shoumei RTL project
+
+set -e
+
+export PATH="$HOME/.elan/bin:$PATH"
+
+echo "Building Shoumei RTL..."
+lake build
+
+echo "✓ Build complete"

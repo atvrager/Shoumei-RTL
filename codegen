@@ -1,0 +1,9 @@
+#!/bin/bash
+# Generate SystemVerilog and Chisel code from LEAN
+
+set -e
+
+export PATH="$HOME/.elan/bin:$PATH"
+
+lake build
+lake exe codegen

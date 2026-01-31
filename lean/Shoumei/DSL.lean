@@ -14,7 +14,7 @@ Supports both combinational (AND, OR, NOT, XOR) and sequential (DFF) elements.
 -- Uses String identifier for simplicity
 structure Wire where
   name : String
-  deriving Repr, BEq, Hashable
+  deriving Repr, BEq, Hashable, Inhabited
 
 namespace Wire
 
@@ -30,6 +30,8 @@ inductive GateType where
   | OR    -- Logical OR
   | NOT   -- Logical NOT (inverter)
   | XOR   -- Logical XOR (exclusive or)
+  | MUX   -- 2-to-1 Multiplexer (inputs: [in0, in1, sel], output: out)
+          -- Semantics: out = sel ? in1 : in0
   -- Sequential elements
   | DFF   -- D Flip-Flop (inputs: [d, clk, reset], output: q)
   deriving Repr, BEq
@@ -55,6 +57,9 @@ def mkNOT (a : Wire) (out : Wire) : Gate :=
 
 def mkXOR (a b : Wire) (out : Wire) : Gate :=
   { gateType := GateType.XOR, inputs := [a, b], output := out }
+
+def mkMUX (in0 in1 sel : Wire) (out : Wire) : Gate :=
+  { gateType := GateType.MUX, inputs := [in0, in1, sel], output := out }
 
 -- D Flip-Flop: captures data on rising edge of clock
 -- Synchronous reset: when reset is high on clock edge, output goes to 0
@@ -82,7 +87,7 @@ end Circuit
 -- Classification: is a gate type combinational or sequential?
 def GateType.isCombinational (gt : GateType) : Bool :=
   match gt with
-  | GateType.AND | GateType.OR | GateType.NOT | GateType.XOR => true
+  | GateType.AND | GateType.OR | GateType.NOT | GateType.XOR | GateType.MUX => true
   | GateType.DFF => false
 
 def GateType.isSequential (gt : GateType) : Bool :=

@@ -25,6 +25,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.OR => "|"
   | GateType.NOT => "~"
   | GateType.XOR => "^"
+  | GateType.MUX => "?"  -- Ternary operator (special handling required)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses always block
 
 -- Generate a single combinational gate assignment
@@ -37,6 +38,12 @@ def generateCombGate (g : Gate) : String :=
       match g.inputs with
       | [i0] => s!"  assign {g.output.name} = {op}{i0.name};"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | GateType.MUX =>
+      -- Ternary operator: sel ? in1 : in0
+      -- inputs: [in0, in1, sel]
+      match g.inputs with
+      | [in0, in1, sel] => s!"  assign {g.output.name} = {sel.name} ? {in1.name} : {in0.name};"
+      | _ => s!"  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF =>
       ""  -- DFFs handled in always blocks, not assign statements
   | _ =>

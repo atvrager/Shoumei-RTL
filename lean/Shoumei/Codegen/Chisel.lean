@@ -26,6 +26,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.OR => "|"
   | GateType.NOT => "~"
   | GateType.XOR => "^"
+  | GateType.MUX => "Mux"  -- Special function call (not infix)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses RegInit
 
 -- Helper: check if a wire is a circuit input
@@ -51,6 +52,11 @@ def generateCombGate (c : Circuit) (g : Gate) : String :=
       match g.inputs with
       | [i0] => s!"  {outRef} := {op}{wireRef c i0}"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | GateType.MUX =>
+      -- Mux(sel, in1, in0) - note: Chisel Mux has sel first, then true value, then false value
+      match g.inputs with
+      | [in0, in1, sel] => s!"  {outRef} := Mux({wireRef c sel}, {wireRef c in1}, {wireRef c in0})"
+      | _ => s!"  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF =>
       ""  -- DFFs handled separately in generateDFFLogic
   | _ =>
@@ -155,8 +161,8 @@ def generateCombLogic (c : Circuit) : String :=
   else
     joinLines wireDecls ++ "\n\n" ++ joinLines assignments
 
--- Generate sequential logic (register declarations + DFF logic)
-def generateSeqLogic (c : Circuit) : String :=
+-- Generate register declarations only (no update logic)
+def generateRegDecls (c : Circuit) : String :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
   if dffGates.isEmpty then
     ""
@@ -166,9 +172,16 @@ def generateSeqLogic (c : Circuit) : String :=
       let isOutput := isCircuitOutput c g.output
       let regName := if isOutput then g.output.name ++ "_reg" else g.output.name
       s!"  val {regName} = RegInit(false.B)")
-    -- DFF update logic
+    joinLines regDecls
+
+-- Generate register update logic only (no declarations)
+def generateRegUpdates (c : Circuit) : String :=
+  let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
+  if dffGates.isEmpty then
+    ""
+  else
     let dffLogic := dffGates.map (generateDFF c)
-    joinLines regDecls ++ "\n\n" ++ joinLines dffLogic
+    joinLines dffLogic
 
 -- Main code generator: Circuit → Chisel module
 -- Uses RawModule for purely combinational circuits
@@ -179,14 +192,16 @@ def toChisel (c : Circuit) : String :=
 
   if isSequential then
     -- Use Module for sequential circuits (implicit clock/reset)
+    -- IMPORTANT: Order matters in Chisel!
+    -- 1. Register declarations (val reg = RegInit(...))
+    -- 2. Wire declarations + combinational logic
+    -- 3. Register updates (when/otherwise blocks)
+    let regDecls := generateRegDecls c
     let combLogic := generateCombLogic c
-    let seqLogic := generateSeqLogic c
-    let logic := if combLogic.isEmpty then
-                   seqLogic
-                 else if seqLogic.isEmpty then
-                   combLogic
-                 else
-                   combLogic ++ "\n\n" ++ seqLogic
+    let regUpdates := generateRegUpdates c
+
+    let parts := [regDecls, combLogic, regUpdates].filter (fun s => !s.isEmpty)
+    let logic := String.intercalate "\n\n" parts
 
     joinLines [
       "package generated",

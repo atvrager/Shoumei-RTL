@@ -100,4 +100,103 @@ def queue1_4bit : QueueCircuit := mkQueue1 4
 def queue1_8bit : QueueCircuit := mkQueue1 8
 def queue1_32bit : QueueCircuit := mkQueue1 32
 
+/-!
+## Structural Queue Implementation
+
+Build a 1-entry Queue from DFFs and combinational logic.
+This demonstrates DSL composability and enables structural proofs.
+-/
+
+-- Helper to create wire names with indices
+def wireWithIndex (base : String) (idx : Nat) : Wire :=
+  Wire.mk s!"{base}_{idx}"
+
+-- Build a 1-entry Queue structurally from DFFs
+-- For an N-bit queue:
+--   - 1 DFF for valid bit
+--   - N DFFs for data bits
+--   - Combinational logic for ready/valid handshaking
+def mkQueue1Structural (width : Nat) : Circuit :=
+  let name := s!"Queue1_{width}"
+
+  -- Input wires
+  let enq_data := List.range width |>.map (wireWithIndex "enq_data")
+  let enq_valid := Wire.mk "enq_valid"
+  let deq_ready := Wire.mk "deq_ready"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+
+  -- Output wires
+  let enq_ready := Wire.mk "enq_ready"
+  let deq_data := List.range width |>.map (wireWithIndex "deq_data")
+  let deq_valid := Wire.mk "deq_valid"
+
+  -- Internal state wires
+  let valid := Wire.mk "valid"           -- Current valid bit (DFF output)
+  let valid_next := Wire.mk "valid_next" -- Next valid bit (DFF input)
+  let data_reg := List.range width |>.map (wireWithIndex "data_reg")
+  let data_next := List.range width |>.map (wireWithIndex "data_next")
+
+  -- Control signals
+  let enq_fire := Wire.mk "enq_fire"     -- enq_valid && enq_ready
+  let deq_fire := Wire.mk "deq_fire"     -- deq_valid && deq_ready
+  let not_deq_fire := Wire.mk "not_deq_fire"
+  let valid_hold := Wire.mk "valid_hold" -- MUX output for hold vs dequeue
+
+  -- Gates
+  let gates := [
+    -- Output combinational logic
+    Gate.mkNOT valid enq_ready,                    -- enq_ready = !valid
+    -- deq_valid = valid (direct wire connection handled by naming)
+    -- deq_data[i] = data_reg[i] (direct wire connections)
+
+    -- Control signal generation
+    Gate.mkAND enq_valid enq_ready enq_fire,       -- enq_fire = enq_valid && enq_ready
+    Gate.mkAND valid deq_ready deq_fire,           -- deq_fire = deq_valid && deq_ready (valid = deq_valid)
+    Gate.mkNOT deq_fire not_deq_fire,              -- not_deq_fire = !deq_fire
+
+    -- Valid next-state logic: valid_next = enq_fire ? 1 : (deq_fire ? 0 : valid)
+    -- Implemented as: valid_next = MUX(MUX(valid, 0, deq_fire), 1, enq_fire)
+    -- Since we don't have constant wires, we use: valid_next = enq_fire || (valid && !deq_fire)
+    Gate.mkAND valid not_deq_fire valid_hold,      -- valid_hold = valid && !deq_fire
+    Gate.mkOR enq_fire valid_hold valid_next,      -- valid_next = enq_fire || valid_hold
+
+    -- Valid DFF
+    Gate.mkDFF valid_next clock reset valid
+  ] ++
+  -- Data next-state logic: data_next[i] = enq_fire ? enq_data[i] : data_reg[i]
+  -- Implemented as: data_next[i] = MUX(data_reg[i], enq_data[i], enq_fire)
+  (List.range width).map (fun i =>
+    Gate.mkMUX (data_reg.get! i) (enq_data.get! i) enq_fire (data_next.get! i)
+  ) ++
+  -- Data DFFs
+  (List.range width).map (fun i =>
+    Gate.mkDFF (data_next.get! i) clock reset (data_reg.get! i)
+  ) ++
+  -- Connect deq_data outputs to data_reg (using assignment gates)
+  -- Note: In a real implementation, these would be handled by the code generator
+  -- For now, we represent them as direct wire mappings in the outputs
+  []
+
+  { name := name
+    inputs := enq_data ++ [enq_valid, deq_ready, clock, reset]
+    outputs := [enq_ready] ++ deq_data ++ [deq_valid]
+    gates := gates
+  }
+
+-- Helper: create structural queue with proper output connections
+-- Map outputs to internal wires (deq_data -> data_reg, deq_valid -> valid)
+def mkQueue1StructuralComplete (width : Nat) : Circuit :=
+  let base := mkQueue1Structural width
+  -- In the structural representation:
+  -- - deq_data[i] should be data_reg[i]
+  -- - deq_valid should be valid
+  let valid_wire := Wire.mk "valid"
+  let data_reg_wires := List.range width |>.map (wireWithIndex "data_reg")
+  let updated_outputs :=
+    [Wire.mk "enq_ready"] ++
+    data_reg_wires ++  -- Use data_reg as deq_data outputs
+    [valid_wire]       -- Use valid as deq_valid output
+  { base with outputs := updated_outputs }
+
 end Shoumei.Circuits.Sequential
