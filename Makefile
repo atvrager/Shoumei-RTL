@@ -99,7 +99,7 @@ lec:
 # Run equivalence checking with EQY (partitioned approach)
 eqy:
 	@echo "==> Preparing cleaned Chisel output for EQY..."
-	@sed '/^\/\/ ----- 8< -----/,$d' output/sv-from-chisel/FullAdder.sv > verification/FullAdder_chisel_clean.sv
+	@sed '/^\/\/ ----- 8< -----/,$$d' output/sv-from-chisel/FullAdder.sv > verification/FullAdder_chisel_clean.sv
 	@echo "==> Running EQY equivalence checking..."
 	@cd verification && rm -rf FullAdder && eqy FullAdder.eqy
 
