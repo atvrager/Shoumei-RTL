@@ -16,17 +16,18 @@ namespace ProvenRTL.Circuits.Sequential
 open ProvenRTL
 
 -- Build a simple D Flip-Flop circuit
+-- Note: Use "clock" as wire name to match Chisel Module conventions
 def mkDFlipFlop : Circuit :=
   let d := Wire.mk "d"
-  let clk := Wire.mk "clk"
+  let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
   let q := Wire.mk "q"
 
   { name := "DFlipFlop"
-    inputs := [d, clk, reset]
+    inputs := [d, clock, reset]
     outputs := [q]
     gates := [
-      Gate.mkDFF d clk reset q
+      Gate.mkDFF d clock reset q
     ]
   }
 

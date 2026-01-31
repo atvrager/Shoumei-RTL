@@ -147,8 +147,8 @@ echo ""
 # Test 5b: DFF Port and Logic Validation
 echo "==> Test 5b: DFF Port and Logic Validation"
 
-# Check DFF ports in LEAN output (d, clk, reset, q)
-for port in d clk reset q; do
+# Check DFF ports in LEAN output (d, clock, reset, q)
+for port in d clock reset q; do
     if ! grep -q "$port" output/sv-from-lean/DFlipFlop.sv; then
         echo -e "${RED}✗ Port '$port' missing in LEAN DFF output${NC}"
         exit 1
