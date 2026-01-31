@@ -10,7 +10,7 @@
 import chisel3._
 import circt.stage.ChiselStage
 import java.io.File
-import generated._
+import scala.util.{Try, Success, Failure}
 
 object Main extends App {
   println("証明 Shoumei RTL - Chisel to SystemVerilog Compiler")
@@ -69,8 +69,13 @@ object Main extends App {
       println("Compiling FullAdder...")
 
       try {
+        // Dynamically load the generated.FullAdder class using reflection
+        val fullAdderClass = Class.forName("generated.FullAdder")
+        val constructor = fullAdderClass.getConstructors()(0)
+        val fullAdderInstance = constructor.newInstance().asInstanceOf[Module]
+
         // Generate SystemVerilog string
-        val sv = ChiselStage.emitSystemVerilog(new generated.FullAdder)
+        val sv = ChiselStage.emitSystemVerilog(fullAdderInstance)
 
         // Write to file - use absolute path to avoid path resolution issues
         val projectRoot = new File(System.getProperty("user.dir")).getParentFile
@@ -88,6 +93,10 @@ object Main extends App {
         println("✓ FullAdder compilation successful")
         println(s"Output: ${outputFile.getAbsolutePath}")
       } catch {
+        case e: ClassNotFoundException =>
+          println(s"✗ FullAdder class not found (this shouldn't happen)")
+          println("   Make sure LEAN codegen has run successfully")
+          sys.exit(1)
         case e: Exception =>
           println(s"✗ Compilation failed: ${e.getMessage}")
           e.printStackTrace()
@@ -95,6 +104,7 @@ object Main extends App {
       }
     } else {
       println("⚠ FullAdder.scala not found in generated modules")
+      println("   Run 'make codegen' to generate modules from LEAN")
       sys.exit(1)
     }
   }
