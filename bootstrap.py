@@ -161,18 +161,104 @@ def setup_lean():
             print_error("LEAN installation failed")
             sys.exit(1)
 
-def check_sbt():
-    """Check if sbt is installed (optional for Chisel)"""
-    print_step("Checking sbt installation (optional)")
+def install_coursier():
+    """Install Coursier (Scala dependency manager) if not present"""
+    print_step("Installing Coursier (Scala toolchain manager)")
+
+    if command_exists("cs"):
+        print_success("Coursier already installed")
+        return
+
+    print("Installing Coursier...")
+
+    # Detect platform
+    import platform
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    # Determine the correct launcher
+    if system == "linux":
+        if "x86_64" in machine or "amd64" in machine:
+            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz"
+        elif "aarch64" in machine or "arm64" in machine:
+            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-aarch64-pc-linux.gz"
+        else:
+            print_error(f"Unsupported architecture: {machine}")
+            sys.exit(1)
+    elif system == "darwin":
+        if "x86_64" in machine:
+            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-apple-darwin.gz"
+        elif "arm64" in machine:
+            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-aarch64-apple-darwin.gz"
+        else:
+            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-apple-darwin.gz"
+    else:
+        print_error(f"Unsupported OS: {system}")
+        sys.exit(1)
+
+    # Download and install Coursier
+    home = Path.home()
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    cs_path = local_bin / "cs"
+
+    try:
+        print(f"Downloading from {launcher_url}")
+        run_command(f'curl -fL "{launcher_url}" | gzip -d > {cs_path}')
+        run_command(f"chmod +x {cs_path}")
+
+        # Update PATH
+        os.environ["PATH"] = f"{local_bin}:{os.environ['PATH']}"
+
+        if command_exists("cs"):
+            print_success("Coursier installed successfully")
+        else:
+            print_error("Coursier installation failed")
+            sys.exit(1)
+    except Exception as e:
+        print_error(f"Failed to install Coursier: {e}")
+        sys.exit(1)
+
+def install_sbt():
+    """Install sbt via Coursier (no system packages required)"""
+    print_step("Installing sbt via Coursier")
+
+    # First ensure Coursier is installed
+    if not command_exists("cs"):
+        install_coursier()
 
     if command_exists("sbt"):
-        version = run_command("sbt --version 2>&1 | grep 'sbt version' || sbt --version", capture=True)
-        print_success(f"sbt installed: {version}")
-    else:
-        print_warning("sbt not found - required for Chisel compilation")
-        print("Install manually:")
-        print("  https://www.scala-sbt.org/download.html")
-        print("  or use your package manager (e.g., pacman -S sbt on Arch)")
+        version = run_command("sbt --version 2>&1 | grep 'sbt version' | head -1 || sbt --version", capture=True)
+        print_success(f"sbt already installed: {version.strip()}")
+        return
+
+    print("Installing sbt and Scala toolchain via Coursier...")
+
+    try:
+        # Use Coursier to install sbt, scala, and scalac
+        # --yes flag auto-accepts all prompts
+        run_command("cs setup --yes --jvm 11")
+
+        # Update PATH to include Coursier bin directory
+        home = Path.home()
+        cs_bin = home / ".local" / "share" / "coursier" / "bin"
+        os.environ["PATH"] = f"{cs_bin}:{os.environ['PATH']}"
+
+        # Also update for Linux systems
+        if cs_bin.exists():
+            os.environ["PATH"] = f"{cs_bin}:{os.environ['PATH']}"
+
+        if command_exists("sbt"):
+            version = run_command("sbt --version 2>&1 | grep 'sbt version' | head -1", capture=True)
+            print_success(f"sbt installed successfully: {version.strip()}")
+        else:
+            print_warning("sbt installation completed but not found in PATH")
+            print(f"You may need to add {cs_bin} to your PATH")
+            print("Add this to your ~/.bashrc or ~/.zshrc:")
+            print(f'  export PATH="{cs_bin}:$PATH"')
+    except Exception as e:
+        print_error(f"Failed to install sbt: {e}")
+        print("You can install sbt manually from: https://www.scala-sbt.org/download.html")
 
 def verify_build():
     """Verify the installation by running lake build"""
@@ -203,8 +289,9 @@ def main():
     # Step 4: Set up LEAN
     setup_lean()
 
-    # Step 5: Check sbt (optional)
-    check_sbt()
+    # Step 5: Install Coursier and sbt
+    install_coursier()
+    install_sbt()
 
     # Step 6: Verify with lake build
     verify_build()
@@ -212,11 +299,14 @@ def main():
     # Final message
     print(f"\n{Color.GREEN}{Color.BOLD}Bootstrap complete!{Color.RESET}")
     print("\nNext steps:")
-    print("  1. If you installed new tools, restart your shell or source your shell rc:")
+    print("  1. Restart your shell or source your shell rc to update PATH:")
     print("     source ~/.bashrc  # or ~/.zshrc")
-    print("  2. Run 'lake build' to compile LEAN code")
-    print("  3. Install sbt if you plan to use Chisel")
-    print("  4. See README.md for build workflow")
+    print("  2. Verify installation:")
+    print("     lake --version")
+    print("     sbt --version")
+    print("  3. Build the project:")
+    print("     make all")
+    print("  4. See README.md for detailed workflow")
 
 if __name__ == "__main__":
     try:

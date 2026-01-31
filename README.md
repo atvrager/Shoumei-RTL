@@ -140,15 +140,36 @@ See [CLAUDE.md](CLAUDE.md) for development context and implementation notes.
 
 ## Installation
 
+**No system packages or sudo required!** Everything installs to your home directory.
+
 ```bash
-# Install Lean 4
-curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh
+# Clone the repository
+git clone https://github.com/yourusername/Shoumei-RTL.git
+cd Shoumei-RTL
 
-# Install sbt (example for Linux)
-curl -fL https://github.com/sbt/sbt/releases/download/v1.9.8/sbt-1.9.8.tgz | tar xz
+# Run automated setup (installs elan, lake, coursier, sbt to ~/.local and ~/.elan)
+make setup
+# or directly: python3 bootstrap.py
 
-# Install ABC (for equivalence checking)
-# See: https://github.com/berkeley-abc/abc
+# Restart shell or source your rc file
+source ~/.bashrc  # or ~/.zshrc
+
+# Build the project
+make all
+```
+
+The bootstrap script installs:
+- **elan** (LEAN toolchain manager) → `~/.elan/bin`
+- **lake** (LEAN build system) → via elan
+- **coursier** (Scala toolchain manager) → `~/.local/bin`
+- **sbt** (Scala build tool) → `~/.local/share/coursier/bin`
+- **scala** and **scalac** → via coursier
+
+Optional (for equivalence checking):
+```bash
+# Install ABC - see: https://github.com/berkeley-abc/abc
+# On macOS: brew install berkeley-abc
+# On Ubuntu: sudo apt-get install abc (or build from source)
 ```
 
 ## References

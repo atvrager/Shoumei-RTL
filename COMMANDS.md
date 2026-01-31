@@ -18,16 +18,19 @@ Quick reference for working with Proven RTL. This guide assumes you're in the pr
 
 ```bash
 # Initial setup (run once)
-python3 bootstrap.py
+make setup         # Runs bootstrap.py to install elan, lake, and check for sbt
 
 # Build everything
-make all
+make all           # Automatically checks for required tools
 
 # Or step by step:
 make lean          # Build LEAN code
 make codegen       # Run code generators (TODO: not yet implemented)
 make chisel        # Compile Chisel to SystemVerilog
 make lec           # Run logical equivalence checking
+
+# If make setup fails, you can run bootstrap directly:
+python3 bootstrap.py
 ```
 
 ---
@@ -204,28 +207,31 @@ sbt -J-Xmx4G run
 
 ## Make Targets
 
-The Makefile orchestrates the entire build pipeline.
+The Makefile orchestrates the entire build pipeline and includes automatic tool checking.
 
 ```bash
 # Show all available targets with descriptions
 make help
 
-# Build LEAN code
+# First-time setup (installs elan/lake, checks for sbt)
+make setup
+
+# Build LEAN code (checks for lake first)
 make lean
 
 # Run code generators (generates SV and Chisel from LEAN)
 make codegen       # TODO: Not yet implemented
 
-# Compile Chisel to SystemVerilog
+# Compile Chisel to SystemVerilog (checks for sbt first)
 make chisel
 
 # Run logical equivalence checking
 make lec
 
-# Run entire pipeline
+# Run entire pipeline (checks all tools first)
 make all
 
-# Clean all generated files
+# Clean all generated files (works even without tools installed)
 make clean
 
 # Clean and rebuild everything
@@ -234,14 +240,30 @@ make clean all
 
 ### Make Target Details
 
-| Target | What it does | Time |
-|--------|--------------|------|
-| `make lean` | Runs `lake build` | ~10s |
-| `make codegen` | Generates SystemVerilog and Chisel from LEAN DSL | TODO |
-| `make chisel` | Runs `sbt run` to compile Chisel → SystemVerilog | ~30s |
-| `make lec` | Runs LEC script to compare both SystemVerilog outputs | ~5s |
-| `make all` | Runs all of the above in sequence | ~50s |
-| `make clean` | Removes `build/`, `output/`, Chisel `target/` | ~1s |
+| Target | What it does | Tool Check | Time |
+|--------|--------------|------------|------|
+| `make setup` | Runs `bootstrap.py` to install dependencies | Python only | ~5-10min |
+| `make lean` | Runs `lake build`, checks for lake first | Required | ~10s |
+| `make codegen` | Generates SystemVerilog and Chisel from LEAN DSL | Required | TODO |
+| `make chisel` | Runs `sbt run` to compile Chisel → SystemVerilog | Required | ~30s |
+| `make lec` | Runs LEC script to compare both SystemVerilog outputs | None | ~5s |
+| `make all` | Runs entire pipeline with tool checks | All | ~50s |
+| `make clean` | Removes generated files (graceful if tools missing) | None | ~1s |
+
+### Error Handling
+
+The Makefile now checks for required tools and provides helpful error messages:
+
+```bash
+# If lake is not installed:
+$ make lean
+Error: lake not found. Run 'make setup' to install dependencies.
+
+# If sbt is not installed:
+$ make chisel
+Error: sbt not found. Cannot build Chisel code.
+Install sbt: https://www.scala-sbt.org/download.html
+```
 
 ---
 

@@ -18,23 +18,32 @@ A **complete build infrastructure scaffold** for formally verified hardware desi
 ### 1. Bootstrap the Environment
 
 ```bash
-./bootstrap.py
+make setup
 ```
 
-This will:
+Or directly:
+```bash
+python3 bootstrap.py
+```
+
+This will (all without requiring sudo/system packages):
 - Verify Python 3.11+
-- Install `uv` (Python package manager)
-- Install `elan` (LEAN toolchain manager)
-- Install LEAN 4.15.0
-- Check for `sbt` (you'll need to install this separately for Chisel)
+- Install `uv` (Python package manager) to `~/.local/bin`
+- Install `elan` (LEAN toolchain manager) to `~/.elan/bin`
+- Install LEAN 4.15.0 via elan
+- Install `coursier` (Scala toolchain manager) to `~/.local/bin`
+- Install `sbt` and Scala toolchain to `~/.local/share/coursier/bin`
 
 ### 2. Build the LEAN Code
 
 ```bash
-lake build
+make lean
+# or directly: lake build
 ```
 
 Expected output: Build succeeds with warnings about `sorry` (stubbed proofs).
+
+**Note:** The Makefile now checks for required tools and provides helpful error messages if they're missing.
 
 ### 3. View the Project Structure
 
