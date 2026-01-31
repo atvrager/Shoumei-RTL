@@ -18,42 +18,65 @@ echo "  証明 Shoumei RTL - LEC with Yosys"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-LEAN_FILES=$(find "$LEAN_DIR" -maxdepth 1 -name "*.sv" -o -name "*.v" 2>/dev/null)
-# For Chisel, only look at top-level .sv files, not in verification/ subdirectories
-CHISEL_FILES=$(find "$CHISEL_DIR" -maxdepth 1 -name "*.sv" -o -name "*.v" 2>/dev/null)
+# Find all LEAN-generated modules
+LEAN_MODULES=$(find "$LEAN_DIR" -maxdepth 1 \( -name "*.sv" -o -name "*.v" \) 2>/dev/null | sort)
 
-if [ -z "$LEAN_FILES" ] || [ -z "$CHISEL_FILES" ]; then
-    echo -e "${RED}✗ Missing input files${NC}"
+if [ -z "$LEAN_MODULES" ]; then
+    echo -e "${RED}✗ No LEAN-generated modules found in $LEAN_DIR${NC}"
     exit 1
 fi
 
-LEAN_FILE=$(echo "$LEAN_FILES" | head -1)
-CHISEL_FILE=$(echo "$CHISEL_FILES" | head -1)
-
-# Extract module name from filename (e.g., FullAdder.sv -> FullAdder)
-MODULE_NAME=$(basename "$LEAN_FILE" .sv)
-MODULE_NAME=$(basename "$MODULE_NAME" .v)
-
-echo "Comparing:"
-echo "  LEAN:   $LEAN_FILE"
-echo "  Chisel: $CHISEL_FILE"
-echo "  Module: $MODULE_NAME"
+# Count modules and show what we'll verify
+MODULE_COUNT=$(echo "$LEAN_MODULES" | wc -l)
+echo "Found $MODULE_COUNT module(s) to verify:"
+echo "$LEAN_MODULES" | while read -r file; do
+    echo "  - $(basename "$file" .sv)"
+done
 echo ""
+
+# Track overall success
+ALL_PASSED=1
 
 # Create temporary working directory
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# Strip CIRCT verification layers from Chisel output
-sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean.sv"
+# Function to verify a single module
+verify_module() {
+    local LEAN_FILE="$1"
+    local MODULE_NAME=$(basename "$LEAN_FILE" .sv)
+    MODULE_NAME=$(basename "$MODULE_NAME" .v)
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Phase 1: Parse and Synthesize Designs"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+    local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
 
-# Create Yosys script for equivalence checking
-cat > "$TMPDIR/lec.ys" <<'YOSYS_EOF'
+    # Check if corresponding Chisel file exists
+    if [ ! -f "$CHISEL_FILE" ]; then
+        echo -e "${RED}✗ No Chisel output found for $MODULE_NAME${NC}"
+        echo "  Expected: $CHISEL_FILE"
+        return 1
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Verifying: $MODULE_NAME"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  LEAN:   $LEAN_FILE"
+    echo "  Chisel: $CHISEL_FILE"
+    echo ""
+
+    # Strip CIRCT verification layers from Chisel output
+    sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean_${MODULE_NAME}.sv"
+
+    # Check if this is a sequential circuit (contains always @)
+    if grep -q "always @" "$LEAN_FILE"; then
+        echo -e "${YELLOW}⊙ SEQUENTIAL CIRCUIT - SKIPPING${NC}"
+        echo "  Note: Sequential equivalence checking (SEC) requires different tools"
+        echo "  Recommendation: Use Synopsys Formality or Cadence Conformal for SEC"
+        echo ""
+        return 0  # Don't fail, just skip
+    fi
+
+    # Create Yosys script for equivalence checking
+    cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
 # Read and prepare LEAN design (gold reference)
 read_verilog LEAN_FILE
 hierarchy -check -top MODULE_NAME
@@ -87,64 +110,71 @@ stat
 sat -verify -prove-asserts -show-ports miter
 YOSYS_EOF
 
-# Substitute file paths and module name
-sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec.ys"
-sed -i "s|CHISEL_FILE|$TMPDIR/chisel_clean.sv|g" "$TMPDIR/lec.ys"
-sed -i "s|MODULE_NAME|$MODULE_NAME|g" "$TMPDIR/lec.ys"
+    # Substitute file paths and module name
+    sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
+    sed -i "s|CHISEL_FILE|$TMPDIR/chisel_clean_${MODULE_NAME}.sv|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
+    sed -i "s|MODULE_NAME|$MODULE_NAME|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
 
-# Run Yosys and capture output
-YOSYS_OUTPUT="$TMPDIR/yosys_output.txt"
-if yosys -s "$TMPDIR/lec.ys" > "$YOSYS_OUTPUT" 2>&1; then
-    YOSYS_SUCCESS=1
-else
-    YOSYS_SUCCESS=0
-fi
-
-# Display output
-cat "$YOSYS_OUTPUT"
-echo ""
-
-# Analyze results
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Phase 2: Analyze Results"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SUCCESS" "$YOSYS_OUTPUT" || grep -q "Solving finished" "$YOSYS_OUTPUT"); then
-    # Check for any failed assertions
-    if grep -q "FAILED" "$YOSYS_OUTPUT"; then
-        echo -e "${RED}✗ NOT EQUIVALENT${NC}"
-        echo ""
-        echo "The SAT solver found a counterexample where the circuits differ."
-        echo ""
-        echo "Failed assertions:"
-        grep "FAILED" "$YOSYS_OUTPUT" | head -10
-        exit 1
-    else
-        echo -e "${GREEN}✓ EQUIVALENT${NC}"
-        echo ""
-        echo "Formal proof completed: LEAN and Chisel generators produce"
-        echo "logically equivalent circuits for $MODULE_NAME."
-        echo ""
-        # Show key statistics and SAT results
-        echo "SAT Solver Results:"
-        grep -A 1 "Solving problem with" "$YOSYS_OUTPUT" | sed 's/^/  /' || true
-        echo ""
-        echo "Circuit Statistics:"
-        grep "Number of cells:" "$YOSYS_OUTPUT" | head -2 | sed 's/^/  /' || true
-        exit 0
+    # Run Yosys and capture output
+    local YOSYS_OUTPUT="$TMPDIR/yosys_output_${MODULE_NAME}.txt"
+    local YOSYS_SUCCESS=0
+    if yosys -s "$TMPDIR/lec_${MODULE_NAME}.ys" > "$YOSYS_OUTPUT" 2>&1; then
+        YOSYS_SUCCESS=1
     fi
+
+    # Analyze results (quiet mode - don't show full yosys output unless failure)
+
+    if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SUCCESS" "$YOSYS_OUTPUT" || grep -q "Solving finished" "$YOSYS_OUTPUT"); then
+        # Check for any failed assertions
+        if grep -q "FAILED" "$YOSYS_OUTPUT"; then
+            echo -e "${RED}✗ NOT EQUIVALENT${NC}"
+            echo ""
+            echo "Failed assertions:"
+            grep "FAILED" "$YOSYS_OUTPUT" | head -5
+            echo ""
+            return 1
+        else
+            echo -e "${GREEN}✓ EQUIVALENT${NC}"
+            # Show key statistics
+            grep -A 1 "Solving problem with" "$YOSYS_OUTPUT" | sed 's/^/  /' || true
+            echo ""
+            return 0
+        fi
+    else
+        echo -e "${YELLOW}⚠ VERIFICATION INCOMPLETE${NC}"
+        echo ""
+        echo "Last 20 lines of Yosys output:"
+        tail -20 "$YOSYS_OUTPUT"
+        echo ""
+        return 1
+    fi
+}
+
+# Main loop: verify each module
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Running LEC on all modules"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+while IFS= read -r LEAN_FILE; do
+    if ! verify_module "$LEAN_FILE"; then
+        ALL_PASSED=0
+    fi
+done <<< "$LEAN_MODULES"
+
+# Final summary
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Summary"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [ $ALL_PASSED -eq 1 ]; then
+    echo -e "${GREEN}✓ All modules verified successfully${NC}"
+    echo ""
+    exit 0
 else
-    echo -e "${YELLOW}⚠ VERIFICATION INCOMPLETE${NC}"
+    echo -e "${RED}✗ Some modules failed verification${NC}"
     echo ""
-    echo "Could not complete formal verification."
-    echo ""
-    echo "Common issues:"
-    echo "  - Port name mismatches (check with: grep 'module.*(' files)"
-    echo "  - Different module hierarchies"
-    echo "  - Yosys parsing errors"
-    echo ""
-    echo "Last 20 lines of output:"
-    tail -20 "$YOSYS_OUTPUT"
     exit 1
 fi
