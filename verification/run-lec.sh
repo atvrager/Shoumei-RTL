@@ -44,7 +44,8 @@ trap 'rm -rf "$TMPDIR"' EXIT
 # Function to verify a single module
 verify_module() {
     local LEAN_FILE="$1"
-    local MODULE_NAME=$(basename "$LEAN_FILE" .sv)
+    local MODULE_NAME
+    MODULE_NAME=$(basename "$LEAN_FILE" .sv)
     MODULE_NAME=$(basename "$MODULE_NAME" .v)
 
     local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
