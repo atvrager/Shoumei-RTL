@@ -42,18 +42,29 @@ else
     exit 1
 fi
 
-# Verify files exist
+# Verify FullAdder files exist
 if [ ! -f "output/sv-from-lean/FullAdder.sv" ]; then
-    echo -e "${RED}✗ LEAN SystemVerilog not generated${NC}"
+    echo -e "${RED}✗ FullAdder LEAN SystemVerilog not generated${NC}"
     exit 1
 fi
 
 if [ ! -f "chisel/src/main/scala/generated/FullAdder.scala" ]; then
-    echo -e "${RED}✗ Chisel file not generated${NC}"
+    echo -e "${RED}✗ FullAdder Chisel file not generated${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✓ Generated files exist${NC}"
+# Verify DFlipFlop files exist
+if [ ! -f "output/sv-from-lean/DFlipFlop.sv" ]; then
+    echo -e "${RED}✗ DFlipFlop LEAN SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "chisel/src/main/scala/generated/DFlipFlop.scala" ]; then
+    echo -e "${RED}✗ DFlipFlop Chisel file not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Generated files exist (FullAdder, DFlipFlop)${NC}"
 echo ""
 
 # Test 3: Chisel Compilation
@@ -68,11 +79,16 @@ fi
 cd ..
 
 if [ ! -f "output/sv-from-chisel/FullAdder.sv" ]; then
-    echo -e "${RED}✗ Chisel SystemVerilog not generated${NC}"
+    echo -e "${RED}✗ FullAdder Chisel SystemVerilog not generated${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✓ Chisel SystemVerilog generated${NC}"
+if [ ! -f "output/sv-from-chisel/DFlipFlop.sv" ]; then
+    echo -e "${RED}✗ DFlipFlop Chisel SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop)${NC}"
 echo ""
 
 # Test 4: Port Name Validation
@@ -114,6 +130,44 @@ done
 echo -e "${GREEN}✓ Full adder logic verified${NC}"
 echo ""
 
+# Test 5b: DFF Port and Logic Validation
+echo "==> Test 5b: DFF Port and Logic Validation"
+
+# Check DFF ports in LEAN output (d, clk, reset, q)
+for port in d clk reset q; do
+    if ! grep -q "$port" output/sv-from-lean/DFlipFlop.sv; then
+        echo -e "${RED}✗ Port '$port' missing in LEAN DFF output${NC}"
+        exit 1
+    fi
+done
+
+# Check DFF ports in Chisel output (d, clock, reset, q)
+for port in d clock reset q; do
+    if ! grep -q "$port" output/sv-from-chisel/DFlipFlop.sv; then
+        echo -e "${RED}✗ Port '$port' missing in Chisel DFF output${NC}"
+        exit 1
+    fi
+done
+
+# Check for sequential logic patterns in both outputs
+if ! grep -q "always @(posedge" output/sv-from-lean/DFlipFlop.sv; then
+    echo -e "${RED}✗ No 'always @(posedge' block in LEAN DFF output${NC}"
+    exit 1
+fi
+
+if ! grep -q "if (reset)" output/sv-from-lean/DFlipFlop.sv; then
+    echo -e "${RED}✗ No reset logic in LEAN DFF output${NC}"
+    exit 1
+fi
+
+if ! grep -q "always @(posedge" output/sv-from-chisel/DFlipFlop.sv; then
+    echo -e "${RED}✗ No 'always @(posedge' block in Chisel DFF output${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ DFlipFlop ports and logic verified${NC}"
+echo ""
+
 # Test 6: Yosys Equivalence (if available)
 echo "==> Test 6: Yosys Equivalence Check"
 if command -v yosys > /dev/null 2>&1; then
@@ -139,8 +193,8 @@ echo "Pipeline Status:"
 echo "  ✓ LEAN builds successfully"
 echo "  ✓ Code generators produce valid output"
 echo "  ✓ Chisel compiles to SystemVerilog"
-echo "  ✓ Port names match between generators"
-echo "  ✓ Full adder logic is correct"
+echo "  ✓ FullAdder (combinational) verified"
+echo "  ✓ DFlipFlop (sequential) verified"
 echo ""
 
 exit 0

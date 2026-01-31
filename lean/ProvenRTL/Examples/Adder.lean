@@ -25,6 +25,7 @@ import ProvenRTL.DSL
 import ProvenRTL.Semantics
 import ProvenRTL.Codegen.SystemVerilog
 import ProvenRTL.Codegen.Chisel
+import ProvenRTL.Circuits.Sequential.DFF
 
 namespace ProvenRTL.Examples
 
@@ -78,16 +79,43 @@ def writeChisel : IO Unit := do
   IO.FS.writeFile path chisel
   IO.println s!"✓ Generated: {path}"
 
+-- Generate SystemVerilog for DFlipFlop
+def generateDFFSystemVerilog : String :=
+  Codegen.SystemVerilog.toSystemVerilog Circuits.Sequential.dff
+
+-- Generate Chisel for DFlipFlop
+def generateDFFChisel : String :=
+  Codegen.Chisel.toChisel Circuits.Sequential.dff
+
+-- Write DFF SystemVerilog to file
+def writeDFFSystemVerilog : IO Unit := do
+  let sv := generateDFFSystemVerilog
+  let path := "output/sv-from-lean/DFlipFlop.sv"
+  IO.FS.writeFile path sv
+  IO.println s!"✓ Generated: {path}"
+
+-- Write DFF Chisel to file
+def writeDFFChisel : IO Unit := do
+  let chisel := generateDFFChisel
+  let path := "chisel/src/main/scala/generated/DFlipFlop.scala"
+  IO.FS.writeFile path chisel
+  IO.println s!"✓ Generated: {path}"
+
 -- Main entry point for code generation
 def main : IO Unit := do
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Code Generation"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println ""
-  IO.println "Generating code for FullAdder circuit..."
+  IO.println "Generating code for circuits..."
   IO.println ""
+  IO.println "==> FullAdder (combinational)"
   writeSystemVerilog
   writeChisel
+  IO.println ""
+  IO.println "==> DFlipFlop (sequential)"
+  writeDFFSystemVerilog
+  writeDFFChisel
   IO.println ""
   IO.println "✓ Code generation complete"
 
