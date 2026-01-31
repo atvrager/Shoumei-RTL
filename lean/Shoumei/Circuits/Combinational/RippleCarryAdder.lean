@@ -71,13 +71,13 @@ def mkRippleCarryAdder32 : Circuit :=
   let b := makeIndexedWires "b" 32
   let sum := makeIndexedWires "sum" 32
 
-  -- Carry chain: cin (c0) → c1 → c2 → ... → c32 (cout)
-  -- Create internal carries c1..c31
-  let internal_carries := makeIndexedWires "c" 32
+  -- Carry chain: cin → c0 → c1 → ... → c30 → cout
+  -- For 32 bits, need 31 internal carries (c0..c30)
+  let internal_carries := makeIndexedWires "c" 31
   let cin := Wire.mk "cin"
   let cout := Wire.mk "cout"
 
-  -- Full carry chain: cin, c1, c2, ..., c31, cout
+  -- Full carry chain: cin, c0, c1, ..., c30, cout (33 elements)
   let carries := cin :: internal_carries ++ [cout]
 
   -- Build the gates
@@ -94,7 +94,8 @@ def mkRippleCarryAdder8 : Circuit :=
   let a := makeIndexedWires "a" 8
   let b := makeIndexedWires "b" 8
   let sum := makeIndexedWires "sum" 8
-  let internal_carries := makeIndexedWires "c" 8
+  -- For 8 bits, need 7 internal carries (c0..c6)
+  let internal_carries := makeIndexedWires "c" 7
   let cin := Wire.mk "cin"
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
@@ -112,7 +113,8 @@ def mkRippleCarryAdder4 : Circuit :=
   let a := makeIndexedWires "a" 4
   let b := makeIndexedWires "b" 4
   let sum := makeIndexedWires "sum" 4
-  let internal_carries := makeIndexedWires "c" 4
+  -- For 4 bits, need 3 internal carries (c0..c2)
+  let internal_carries := makeIndexedWires "c" 3
   let cin := Wire.mk "cin"
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
