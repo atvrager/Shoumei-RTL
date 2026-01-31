@@ -29,9 +29,14 @@ fi
 LEAN_FILE=$(echo "$LEAN_FILES" | head -1)
 CHISEL_FILE=$(echo "$CHISEL_FILES" | head -1)
 
+# Extract module name from filename (e.g., FullAdder.sv -> FullAdder)
+MODULE_NAME=$(basename "$LEAN_FILE" .sv)
+MODULE_NAME=$(basename "$MODULE_NAME" .v)
+
 echo "Comparing:"
 echo "  LEAN:   $LEAN_FILE"
 echo "  Chisel: $CHISEL_FILE"
+echo "  Module: $MODULE_NAME"
 echo ""
 
 # Create temporary working directory
@@ -50,18 +55,18 @@ echo ""
 cat > "$TMPDIR/lec.ys" <<'YOSYS_EOF'
 # Read and prepare LEAN design (gold reference)
 read_verilog LEAN_FILE
-hierarchy -check -top FullAdder
+hierarchy -check -top MODULE_NAME
 proc; opt; memory; opt; flatten
-rename FullAdder gold
+rename MODULE_NAME gold
 
 # Stash gold design
 design -stash gold
 
 # Read and prepare Chisel design (gate implementation)
 read_verilog -sv CHISEL_FILE
-hierarchy -check -top FullAdder
+hierarchy -check -top MODULE_NAME
 proc; opt; memory; opt; flatten
-rename FullAdder gate
+rename MODULE_NAME gate
 
 # Stash gate design
 design -stash gate
@@ -81,9 +86,10 @@ stat
 sat -verify -prove-asserts -show-ports miter
 YOSYS_EOF
 
-# Substitute file paths
+# Substitute file paths and module name
 sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec.ys"
 sed -i "s|CHISEL_FILE|$TMPDIR/chisel_clean.sv|g" "$TMPDIR/lec.ys"
+sed -i "s|MODULE_NAME|$MODULE_NAME|g" "$TMPDIR/lec.ys"
 
 # Run Yosys and capture output
 YOSYS_OUTPUT="$TMPDIR/yosys_output.txt"
@@ -117,7 +123,7 @@ if [ $YOSYS_SUCCESS -eq 1 ] && (grep -q "SAT proof finished - no model found: SU
         echo -e "${GREEN}✓ EQUIVALENT${NC}"
         echo ""
         echo "Formal proof completed: LEAN and Chisel generators produce"
-        echo "logically equivalent circuits for FullAdder."
+        echo "logically equivalent circuits for $MODULE_NAME."
         echo ""
         # Show key statistics and SAT results
         echo "SAT Solver Results:"

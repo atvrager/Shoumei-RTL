@@ -97,11 +97,13 @@ lec:
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
 
 # Run equivalence checking with EQY (partitioned approach)
+# Usage: make eqy [MODULE=<name>]  (defaults to FullAdder)
+MODULE ?= FullAdder
 eqy:
-	@echo "==> Preparing cleaned Chisel output for EQY..."
-	@sed '/^\/\/ ----- 8< -----/,$$d' output/sv-from-chisel/FullAdder.sv > verification/FullAdder_chisel_clean.sv
-	@echo "==> Running EQY equivalence checking..."
-	@cd verification && rm -rf FullAdder && eqy FullAdder.eqy
+	@echo "==> Preparing cleaned Chisel output for EQY ($(MODULE))..."
+	@sed '/^\/\/ ----- 8< -----/,$$d' output/sv-from-chisel/$(MODULE).sv > verification/$(MODULE)_chisel_clean.sv
+	@echo "==> Running EQY equivalence checking on $(MODULE)..."
+	@cd verification && rm -rf $(MODULE) && eqy $(MODULE).eqy
 
 # Run comprehensive smoke tests for CI
 smoke-test: codegen chisel

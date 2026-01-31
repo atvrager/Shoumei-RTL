@@ -53,8 +53,15 @@ chisel/src/main/scala/generated/*.scala
 # Verification artifacts
 verification/results/
 verification/logs/
-verification/FullAdder/
+
+# Generated EQY/SBY working directories (one per module)
+# Pattern: verification/<ModuleName>/ contains all EQY/SBY intermediate files
+verification/*/
+
+# Cleaned Chisel outputs for EQY (generated from *_clean.sv pattern)
 verification/*_clean.sv
+
+# Waveform dumps
 *.vcd
 *.fst
 
