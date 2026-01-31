@@ -56,10 +56,10 @@ fi
 echo -e "${GREEN}✓ Generated files exist${NC}"
 echo ""
 
-# Test 3: Chisel Compilation  
+# Test 3: Chisel Compilation
 echo "==> Test 3: Chisel Compilation"
 cd chisel
-if sbt run > /dev/null 2>&1; then
+if sbt run; then
     echo -e "${GREEN}✓ Chisel compilation succeeded${NC}"
 else
     echo -e "${RED}✗ Chisel compilation failed${NC}"

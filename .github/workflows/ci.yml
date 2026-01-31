@@ -101,11 +101,12 @@ jobs:
         working-directory: ./chisel
         run: sbt test
 
-      - name: Check Scala formatting
+      - name: Check Scala formatting with scalafmt
         working-directory: ./chisel
         run: |
-          echo "Scala formatting check would go here"
-          echo "Consider adding scalafmt in future"
+          echo "Checking Scala code formatting..."
+          sbt scalafmtCheckAll
+          echo "✓ All Scala files are properly formatted"
 
   format-check:
     name: Format and Lint Checks
@@ -190,10 +191,10 @@ jobs:
           source $HOME/.elan/env
           make lean
 
-      - name: Install ABC for LEC
+      - name: Install Yosys for LEC
         run: |
           sudo apt-get update
-          sudo apt-get install -y berkeley-abc
+          sudo apt-get install -y yosys
 
       - name: Run full pipeline (codegen → chisel → lec)
         run: |

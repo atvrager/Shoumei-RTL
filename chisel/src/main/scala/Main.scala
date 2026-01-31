@@ -18,8 +18,9 @@ object Main extends App {
 
   // Stub module for testing (used only if no generated modules found)
   class StubModule extends Module {
+
     val io = IO(new Bundle {
-      val in = Input(Bool())
+      val in  = Input(Bool())
       val out = Output(Bool())
     })
     io.out := io.in
@@ -27,7 +28,7 @@ object Main extends App {
 
   // Try to compile generated modules
   // This uses dynamic class loading to avoid compile-time dependency on generated package
-  def compileModule(moduleName: String): Boolean = {
+  def compileModule(moduleName: String): Boolean =
     try {
       println(s"Compiling $moduleName...")
 
@@ -42,7 +43,7 @@ object Main extends App {
       }
 
       val projectRoot = new File(System.getProperty("user.dir")).getParentFile
-      val outputDir = new File(projectRoot, "output/sv-from-chisel")
+      val outputDir   = new File(projectRoot, "output/sv-from-chisel")
       outputDir.mkdirs()
 
       // Generate SystemVerilog using ChiselStage
@@ -64,7 +65,6 @@ object Main extends App {
         e.printStackTrace()
         false
     }
-  }
 
   // Discover generated modules in src/main/scala/generated/
   def discoverGeneratedModules(): List[String] = {

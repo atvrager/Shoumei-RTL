@@ -208,8 +208,38 @@ The `chisel/` directory contains:
 ### Style Conventions
 
 - LEAN: Follow [Lean 4 style guide](https://github.com/leanprover/lean4/blob/master/doc/style.md)
-- Scala/Chisel: Follow Scala style guide
+- Scala/Chisel: Follow Scala style guide with scalafmt enforcement
 - SystemVerilog: IEEE 1800-2017 compliant, synthesizable subset only
+
+### Scala Code Formatting with scalafmt
+
+**IMPORTANT**: All Scala code must be formatted with scalafmt before committing.
+
+**Pre-commit checklist for Scala code:**
+```bash
+# Format all Scala files
+cd chisel && sbt scalafmt
+
+# Check formatting without making changes
+cd chisel && sbt scalafmtCheck
+```
+
+**Configuration:** `.scalafmt.conf` in chisel/ directory
+- Version: 3.8.3
+- Style: defaultWithAlign
+- Max column: 100
+- Scala dialect: 2.13
+
+**CI enforcement:** GitHub Actions automatically checks that all Scala code is properly formatted.
+
+**Install scalafmt locally (optional):**
+```bash
+# Using coursier
+cs install scalafmt
+
+# Or use sbt (automatic via plugin)
+cd chisel && sbt scalafmt
+```
 
 ### Shell Script Quality
 
