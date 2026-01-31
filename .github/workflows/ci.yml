@@ -248,5 +248,5 @@ jobs:
         run: |
           echo "Checking for broken file references in docs..."
           # Basic check for common paths mentioned in docs
-          grep -r "lean/ProvenRTL" README.md CLAUDE.md GETTING_STARTED.md > /dev/null || echo "No lean references found"
+          grep -r "lean/Shoumei" README.md CLAUDE.md GETTING_STARTED.md > /dev/null || echo "No lean references found"
           echo "✓ Documentation reference check complete"

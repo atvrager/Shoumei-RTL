@@ -35,7 +35,7 @@ echo ""
 
 # Test 1b: Formal Proofs Verification
 echo "==> Test 1b: Formal Proofs Verification"
-if lake build ProvenRTL.Examples.AdderProofs; then
+if lake build Shoumei.Examples.AdderProofs; then
     echo -e "${GREEN}✓ FullAdder formal proofs verified${NC}"
     echo "  - Truth table correctness (8 cases)"
     echo "  - Commutativity property"

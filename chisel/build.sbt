@@ -1,4 +1,4 @@
-// Proven RTL - Chisel Build Configuration
+// Shoumei RTL - Chisel Build Configuration
 // Scala 2.13 with Chisel 7.x
 
 // Shared version constants
@@ -7,11 +7,11 @@ val scalaVer = "2.13.18"  // Required for Chisel 7.7.0
 
 ThisBuild / scalaVersion := scalaVer
 ThisBuild / version := "0.1.0-SNAPSHOT"
-ThisBuild / organization := "com.provenrtl"
+ThisBuild / organization := "com.shoumei"
 
 lazy val root = (project in file("."))
   .settings(
-    name := "proven-rtl-chisel",
+    name := "shoumei-rtl-chisel",
 
 
     libraryDependencies ++= Seq(

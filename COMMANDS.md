@@ -1,6 +1,6 @@
 # Command Reference Guide
 
-Quick reference for working with Proven RTL. This guide assumes you're in the project root directory.
+Quick reference for working with Shoumei RTL. This guide assumes you're in the project root directory.
 
 ## Table of Contents
 
@@ -65,7 +65,7 @@ lake env lean --run
 
 ```bash
 # Check a single LEAN file for errors
-lake env lean lean/ProvenRTL/DSL.lean
+lake env lean lean/Shoumei/DSL.lean
 
 # View installed LEAN version
 lean --version
@@ -104,8 +104,8 @@ lake build -v -Kv
 lake env lean --run
 
 # In the REPL:
-#import ProvenRTL.DSL
-open ProvenRTL
+#import Shoumei.DSL
+open Shoumei
 #check Wire
 #eval fullAdderCircuit.name
 ```
@@ -494,7 +494,7 @@ make all
 ### Quick Development Loop
 
 ```bash
-# 1. Edit LEAN files in lean/ProvenRTL/
+# 1. Edit LEAN files in lean/Shoumei/
 # 2. Test immediately
 lake build
 

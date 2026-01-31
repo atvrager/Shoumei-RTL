@@ -2,7 +2,7 @@
 """
 bootstrap.py - Development Environment Setup Script
 
-Sets up the complete Proven RTL development environment:
+Sets up the complete Shoumei RTL development environment:
 - Verifies Python 3.11+
 - Installs uv (fast Python package manager)
 - Installs elan (LEAN toolchain manager)
@@ -274,7 +274,7 @@ def verify_build():
 
 def main():
     """Main bootstrap process"""
-    print(f"{Color.BOLD}Proven RTL - Development Environment Bootstrap{Color.RESET}")
+    print(f"{Color.BOLD}Shoumei RTL - Development Environment Bootstrap{Color.RESET}")
     print("=" * 50)
 
     # Step 1: Check Python version

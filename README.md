@@ -80,9 +80,9 @@ This project bridges formal verification and hardware design by:
 ## Project Structure
 
 ```
-proven-rtl/
+shoumei-rtl/
 ├── lean/                   # LEAN4 source code
-│   ├── ProvenRTL/         # Main DSL and theorem library
+│   ├── Shoumei/         # Main DSL and theorem library
 │   │   ├── DSL.lean       # Hardware DSL definitions
 │   │   ├── Semantics.lean # Operational semantics
 │   │   ├── Theorems.lean  # Proven properties

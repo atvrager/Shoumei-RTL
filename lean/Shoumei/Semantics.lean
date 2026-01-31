@@ -9,9 +9,9 @@ Supports both combinational (stateless) and sequential (stateful) circuits.
 Sequential circuits are evaluated cycle-by-cycle with explicit state management.
 -/
 
-import ProvenRTL.DSL
+import Shoumei.DSL
 
-namespace ProvenRTL
+namespace Shoumei
 
 -- Environment: maps wires to boolean values (for inputs and combinational signals)
 abbrev Env := Wire → Bool
@@ -152,4 +152,4 @@ def evalSequential (c : Circuit) (initState : State) (inputs : List Env) : List 
 def initState : State :=
   fun _ => false
 
-end ProvenRTL
+end Shoumei

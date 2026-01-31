@@ -12,12 +12,12 @@ Target: Chisel 7.x (Scala 2.13)
 Output will be compiled to SystemVerilog via FIRRTL/CIRCT
 -/
 
-import ProvenRTL.DSL
-import ProvenRTL.Codegen.Common
+import Shoumei.DSL
+import Shoumei.Codegen.Common
 
-namespace ProvenRTL.Codegen.Chisel
+namespace Shoumei.Codegen.Chisel
 
-open ProvenRTL.Codegen
+open Shoumei.Codegen
 
 -- Generate Chisel operator for a combinational gate type
 def gateTypeToOperator (gt : GateType) : String :=
@@ -220,4 +220,4 @@ def toChisel (c : Circuit) : String :=
 --   ⟦ toChisel c ⟧ = evalCircuit c := by
 --   sorry
 
-end ProvenRTL.Codegen.Chisel
+end Shoumei.Codegen.Chisel

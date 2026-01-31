@@ -1,8 +1,8 @@
 import Lake
 open Lake DSL
 
-package «ProvenRTL» where
-  -- Package configuration for Proven RTL
+package «Shoumei» where
+  -- Package configuration for Shoumei RTL
   -- Lake version: compatible with Lean 4.x
 
   -- Linter configuration: make warnings errors
@@ -10,7 +10,7 @@ package «ProvenRTL» where
     "-DwarningAsError=true"  -- Treat all warnings as errors
   ]
 
-lean_lib «ProvenRTL» where
+lean_lib «Shoumei» where
   -- Main library containing DSL, semantics, theorems, and code generators
   srcDir := "lean"
 

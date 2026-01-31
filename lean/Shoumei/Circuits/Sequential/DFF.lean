@@ -9,11 +9,11 @@ Behavior:
   - Otherwise: q = d (capture data input)
 -/
 
-import ProvenRTL.DSL
+import Shoumei.DSL
 
-namespace ProvenRTL.Circuits.Sequential
+namespace Shoumei.Circuits.Sequential
 
-open ProvenRTL
+open Shoumei
 
 -- Build a simple D Flip-Flop circuit
 -- Note: Use "clock" as wire name to match Chisel Module conventions
@@ -34,4 +34,4 @@ def mkDFlipFlop : Circuit :=
 -- Example: DFF that captures a data bit
 def dff : Circuit := mkDFlipFlop
 
-end ProvenRTL.Circuits.Sequential
+end Shoumei.Circuits.Sequential

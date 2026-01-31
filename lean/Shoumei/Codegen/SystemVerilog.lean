@@ -11,12 +11,12 @@ Design:
 Target: Verilog-95 (for ABC), extensible to SystemVerilog
 -/
 
-import ProvenRTL.DSL
-import ProvenRTL.Codegen.Common
+import Shoumei.DSL
+import Shoumei.Codegen.Common
 
-namespace ProvenRTL.Codegen.SystemVerilog
+namespace Shoumei.Codegen.SystemVerilog
 
-open ProvenRTL.Codegen
+open Shoumei.Codegen
 
 -- Generate SystemVerilog operator for a combinational gate type
 def gateTypeToOperator (gt : GateType) : String :=
@@ -154,4 +154,4 @@ def toSystemVerilog (c : Circuit) : String :=
 --   ⟦ toSystemVerilog c ⟧ = evalCircuit c := by
 --   sorry
 
-end ProvenRTL.Codegen.SystemVerilog
+end Shoumei.Codegen.SystemVerilog

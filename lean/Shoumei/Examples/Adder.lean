@@ -21,13 +21,13 @@ Logic:
   cout = (a ∧ b) ∨ (cin ∧ (a ⊕ b))
 -/
 
-import ProvenRTL.DSL
-import ProvenRTL.Semantics
-import ProvenRTL.Codegen.SystemVerilog
-import ProvenRTL.Codegen.Chisel
-import ProvenRTL.Circuits.Sequential.DFF
+import Shoumei.DSL
+import Shoumei.Semantics
+import Shoumei.Codegen.SystemVerilog
+import Shoumei.Codegen.Chisel
+import Shoumei.Circuits.Sequential.DFF
 
-namespace ProvenRTL.Examples
+namespace Shoumei.Examples
 
 -- Define the full adder circuit
 def fullAdderCircuit : Circuit :=
@@ -122,4 +122,4 @@ def main : IO Unit := do
 -- TODO: Add test cases that verify the circuit against the truth table
 -- def test_fullAdder : IO Unit := ...
 
-end ProvenRTL.Examples
+end Shoumei.Examples

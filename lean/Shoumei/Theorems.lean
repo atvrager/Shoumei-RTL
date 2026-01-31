@@ -11,10 +11,10 @@ Key theorem categories:
 - Code generation correctness: Generated code preserves semantics
 -/
 
-import ProvenRTL.DSL
-import ProvenRTL.Semantics
+import Shoumei.DSL
+import Shoumei.Semantics
 
-namespace ProvenRTL
+namespace Shoumei
 
 -- Theorem: Circuit evaluation is deterministic
 -- Same input environment always produces same output environment
@@ -68,4 +68,4 @@ theorem not_involution (a : Wire) (out1 out2 : Wire) (env : Env) :
 -- - No combinational loops
 -- - All outputs are driven
 
-end ProvenRTL
+end Shoumei

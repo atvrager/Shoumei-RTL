@@ -1,4 +1,4 @@
-# Proven RTL - Build System Makefile
+# Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
 .PHONY: all clean lean codegen chisel lec eqy smoke-test verify help setup check-tools

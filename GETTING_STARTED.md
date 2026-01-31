@@ -1,6 +1,6 @@
-# Getting Started with Proven RTL
+# Getting Started with Shoumei RTL
 
-This guide will help you set up and start using the Proven RTL framework.
+This guide will help you set up and start using the Shoumei RTL framework.
 
 ## What We've Built
 
@@ -54,7 +54,7 @@ provable-rtl/
 ├── lakefile.lean             # Lake build configuration
 ├── Makefile                  # Top-level build orchestration
 │
-├── lean/ProvenRTL/           # LEAN source code
+├── lean/Shoumei/           # LEAN source code
 │   ├── DSL.lean              # Hardware DSL (Wire, Gate, Circuit)
 │   ├── Semantics.lean        # Operational semantics (stubbed)
 │   ├── Theorems.lean         # Proven properties (stubbed)
@@ -149,7 +149,7 @@ make help
 
 ### Step 1: Implement Gate Evaluation (15-30 min)
 
-File: `lean/ProvenRTL/Semantics.lean`
+File: `lean/Shoumei/Semantics.lean`
 
 Replace `sorry` in `evalGate`:
 ```lean
@@ -167,19 +167,19 @@ def evalGate (g : Gate) (env : Env) : Bool :=
 
 ### Step 2: Implement Circuit Evaluation (30-60 min)
 
-File: `lean/ProvenRTL/Semantics.lean`
+File: `lean/Shoumei/Semantics.lean`
 
 Implement topological evaluation in `evalCircuit`.
 
 ### Step 3: Implement SystemVerilog Generator (1-2 hours)
 
-File: `lean/ProvenRTL/Codegen/SystemVerilog.lean`
+File: `lean/Shoumei/Codegen/SystemVerilog.lean`
 
 Generate actual Verilog from circuit structure instead of hardcoded template.
 
 ### Step 4: Implement Chisel Generator (1-2 hours)
 
-File: `lean/ProvenRTL/Codegen/Chisel.lean`
+File: `lean/Shoumei/Codegen/Chisel.lean`
 
 Generate actual Chisel from circuit structure.
 
@@ -190,7 +190,7 @@ File: `lakefile.lean`
 Add:
 ```lean
 lean_exe codegen where
-  root := `ProvenRTL.Examples.Adder
+  root := `Shoumei.Examples.Adder
   supportInterpreter := true
 ```
 
@@ -219,13 +219,13 @@ yay -S abc-git
 
 ### Step 8: Prove Theorems (Ongoing)
 
-File: `lean/ProvenRTL/Theorems.lean`
+File: `lean/Shoumei/Theorems.lean`
 
 Replace `sorry` with actual proofs.
 
 ## Example: Full Adder
 
-The full adder circuit is defined in `lean/ProvenRTL/Examples/Adder.lean`:
+The full adder circuit is defined in `lean/Shoumei/Examples/Adder.lean`:
 
 ```lean
 def fullAdderCircuit : Circuit :=

@@ -46,7 +46,7 @@ Dynamic instruction scheduling algorithm that:
 - Better utilization of functional units
 - Proven algorithm (invented for IBM System/360 Model 91 in 1967)
 
-### Why Tomasulo for Proven RTL?
+### Why Tomasulo for Shoumei RTL?
 
 1. **Well-defined semantics** - Tomasulo has clear operational semantics
 2. **Modular structure** - Clean separation of concerns (decode, rename, execute, retire)
@@ -518,7 +518,7 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 
 ### Phase 0: DSL Extension for Sequential Circuits (CRITICAL)
 
-**Goal:** Extend ProvenRTL DSL to support stateful elements, with Queue as the proving ground
+**Goal:** Extend Shoumei DSL to support stateful elements, with Queue as the proving ground
 
 **Tasks:**
 1. Add `StatefulCircuit` type to DSL.lean
@@ -691,7 +691,7 @@ git submodule update --init --recursive
 
 **Step 2: Write LEAN parser**
 ```lean
--- File: lean/ProvenRTL/RISCV/OpcodeParser.lean
+-- File: lean/Shoumei/RISCV/OpcodeParser.lean
 
 -- Parse single opcode line
 def parseOpcodeLine (line : String) : Option InstructionDef
@@ -1060,7 +1060,7 @@ Measured in gate equivalents (GEs):
 ```
 Shoumei-RTL/
 ├── lean/
-│   └── ProvenRTL/
+│   └── Shoumei/
 │       ├── DSL.lean                    # Core DSL (extend with stateful)
 │       ├── Semantics.lean              # Add sequential semantics
 │       ├── Theorems.lean               # General theorems

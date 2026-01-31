@@ -7,12 +7,12 @@ Proves correctness properties of the full adder:
 3. Arithmetic correctness - outputs represent binary addition
 -/
 
-import ProvenRTL.Examples.Adder
-import ProvenRTL.Semantics
+import Shoumei.Examples.Adder
+import Shoumei.Semantics
 
-namespace ProvenRTL.Examples
+namespace Shoumei.Examples
 
-open ProvenRTL
+open Shoumei
 
 -- Helper: Create environment from specific input values
 def makeAdderEnv (a_val b_val cin_val : Bool) : Env :=
@@ -130,4 +130,4 @@ theorem fullAdder_correct :
   intro a b cin
   cases a <;> cases b <;> cases cin <;> native_decide
 
-end ProvenRTL.Examples
+end Shoumei.Examples

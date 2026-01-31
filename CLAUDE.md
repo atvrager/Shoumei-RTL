@@ -1,6 +1,6 @@
 # Claude Development Context
 
-This file contains development context, architecture decisions, and implementation notes for Claude Code when working on the Proven RTL project.
+This file contains development context, architecture decisions, and implementation notes for Claude Code when working on the Shoumei RTL project.
 
 ## Project Vision
 
@@ -134,7 +134,7 @@ For Scala/JVM integration:
 ### LEAN4 Module Structure
 
 ```
-ProvenRTL/
+Shoumei/
 ├── DSL.lean              -- Core DSL types (Wire, Gate, Circuit, etc.)
 ├── Semantics.lean        -- Operational semantics (evaluation functions)
 ├── Theorems.lean         -- General theorems about DSL

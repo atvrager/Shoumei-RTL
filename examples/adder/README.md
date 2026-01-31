@@ -1,6 +1,6 @@
 # Full Adder Example
 
-This example demonstrates a 1-bit full adder circuit implemented in the Proven RTL DSL.
+This example demonstrates a 1-bit full adder circuit implemented in the Shoumei RTL DSL.
 
 ## Circuit Description
 
@@ -35,7 +35,7 @@ cout = (a ∧ b) ∨ (cin ∧ (a ⊕ b))
 
 ## Circuit Implementation
 
-The full adder is implemented in `lean/ProvenRTL/Examples/Adder.lean` using the following gates:
+The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the following gates:
 
 1. `ab_xor = a ⊕ b` - XOR gate for first two inputs
 2. `sum = ab_xor ⊕ cin` - XOR gate for final sum

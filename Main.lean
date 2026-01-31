@@ -5,6 +5,6 @@ This is the main entry point for the codegen executable.
 It calls the code generation functions from Examples.Adder.
 -/
 
-import ProvenRTL.Examples.Adder
+import Shoumei.Examples.Adder
 
-def main : IO Unit := ProvenRTL.Examples.main
+def main : IO Unit := Shoumei.Examples.main

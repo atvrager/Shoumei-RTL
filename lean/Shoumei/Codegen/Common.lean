@@ -7,9 +7,9 @@ Provides common functionality for code generators:
 - Line joining and formatting helpers
 -/
 
-import ProvenRTL.DSL
+import Shoumei.DSL
 
-namespace ProvenRTL.Codegen
+namespace Shoumei.Codegen
 
 -- Indent a string by a given number of spaces
 def indent (n : Nat) (s : String) : String :=
@@ -51,4 +51,4 @@ def makeComment (lang : String) (comment : String) : String :=
   | "chisel" => s!"// {comment}"
   | _ => s!"# {comment}"
 
-end ProvenRTL.Codegen
+end Shoumei.Codegen
