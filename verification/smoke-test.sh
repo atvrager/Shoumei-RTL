@@ -33,6 +33,20 @@ else
 fi
 echo ""
 
+# Test 1b: Formal Proofs Verification
+echo "==> Test 1b: Formal Proofs Verification"
+if lake build ProvenRTL.Examples.AdderProofs; then
+    echo -e "${GREEN}✓ FullAdder formal proofs verified${NC}"
+    echo "  - Truth table correctness (8 cases)"
+    echo "  - Commutativity property"
+    echo "  - Arithmetic correctness"
+    echo "  - Complete correctness theorem"
+else
+    echo -e "${RED}✗ Formal proofs failed to verify${NC}"
+    exit 1
+fi
+echo ""
+
 # Test 2: Code Generation
 echo "==> Test 2: Code Generation"
 if lake exe codegen > /dev/null 2>&1; then
@@ -191,6 +205,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "Pipeline Status:"
 echo "  ✓ LEAN builds successfully"
+echo "  ✓ Formal proofs verified (FullAdder correctness)"
 echo "  ✓ Code generators produce valid output"
 echo "  ✓ Chisel compiles to SystemVerilog"
 echo "  ✓ FullAdder (combinational) verified"
