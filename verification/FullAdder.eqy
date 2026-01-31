@@ -1,0 +1,14 @@
+# Eqy configuration for FullAdder equivalence checking
+# Compares LEAN-generated Verilog with Chisel-generated SystemVerilog
+
+[gold]
+read_verilog ../output/sv-from-lean/FullAdder.sv
+prep -top FullAdder
+
+[gate]
+read_verilog -sv ../output/sv-from-chisel/FullAdder.sv
+prep -top FullAdder
+
+[strategy basic]
+use sat
+depth 10
