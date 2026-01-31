@@ -20,3 +20,8 @@ lean_lib «Shoumei» where
 lean_exe codegen where
   root := `Main
   supportInterpreter := true
+
+-- Executable target for testing RISC-V parser
+lean_exe test_riscv where
+  root := `TestRISCVParser
+  supportInterpreter := true
