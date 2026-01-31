@@ -14,7 +14,6 @@ set -euo pipefail
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Check arguments
@@ -74,8 +73,12 @@ if [ -z "$LEAN_FILES" ] || [ -z "$CHISEL_FILES" ]; then
 fi
 
 echo "Files to compare:"
-echo "$LEAN_FILES" | sed 's/^/  LEAN:   /'
-echo "$CHISEL_FILES" | sed 's/^/  Chisel: /'
+while IFS= read -r file; do
+    echo "  LEAN:   $file"
+done <<< "$LEAN_FILES"
+while IFS= read -r file; do
+    echo "  Chisel: $file"
+done <<< "$CHISEL_FILES"
 echo ""
 
 # TODO: Implement actual ABC equivalence checking

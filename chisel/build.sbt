@@ -1,18 +1,23 @@
 // Proven RTL - Chisel Build Configuration
-// Scala 3 with Chisel 7.x
+// Scala 2.13 with Chisel 7.x
 
-ThisBuild / scalaVersion := "3.3.4"
+// Shared version constants
+val chiselVersion = "7.7.0"
+val scalaVer = "2.13.18"  // Required for Chisel 7.7.0
+
+ThisBuild / scalaVersion := scalaVer
 ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / organization := "com.provenrtl"
 
 lazy val root = (project in file("."))
   .settings(
     name := "proven-rtl-chisel",
+
+
     libraryDependencies ++= Seq(
-      "org.chipsalliance" %% "chisel" % "7.0.0",
-      "org.chipsalliance" %% "chisel-plugin" % "7.0.0" cross CrossVersion.full,
-      "org.chipsalliance" %% "chiseltest" % "7.0.0" % "test"
+      "org.chipsalliance" %% "chisel" % chiselVersion
     ),
+
     scalacOptions ++= Seq(
       "-language:reflectiveCalls",
       "-deprecation",
@@ -20,8 +25,10 @@ lazy val root = (project in file("."))
       "-Xcheckinit",
       "-Xfatal-warnings"
     ),
-    addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % "6.6.0" cross CrossVersion.full)
+
+    addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chiselVersion cross CrossVersion.full)
   )
 
-// Note: Chisel 7.x automatically manages firtool binary
-// No manual CIRCT/firtool installation needed
+// Note: Using Chisel 7.7.0 (latest stable as of 2026-01-31)
+// Chisel 7.x+ automatically manages firtool binary
+// TODO: Add chiseltest dependency once available for 7.x
