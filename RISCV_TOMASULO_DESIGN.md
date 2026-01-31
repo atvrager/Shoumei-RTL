@@ -628,19 +628,68 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 - ✅ All components compile to both SystemVerilog and Chisel
 - ✅ Complete RV32I ALU operation coverage
 
-### Phase 2: RISC-V Decoder Integration
+### Phase 2: RISC-V Decoder Integration - 🚧 IN PROGRESS (58% Complete)
 
 **Goal:** Parse riscv-opcodes and generate verified decoder
 
 **Tasks:**
-1. Add riscv-opcodes as git submodule
-2. Write LEAN parser for opcodes format
-3. Generate decoder circuit from opcode definitions
-4. Prove decoder completeness and correctness
-5. Generate instruction semantic functions
+1. ✅ Add riscv-opcodes as git submodule to `third_party/`
+2. ✅ Write LEAN parser for riscv-opcodes JSON format
+   - OpcodeParser.lean: Parses `instr_dict.json` at compile time
+   - FieldType enum (14 types: rd, rs1, rs2, immediates, fence fields)
+   - OpType enum (40 RV32I operations)
+   - InstructionDef structure with mask/match patterns
+3. ✅ Generate decoder circuit from opcode definitions
+   - Decoder.lean: Instruction decoder with field extraction
+   - decodeInstruction: Mask/match pattern matching for all 40 instructions
+   - Field extractors: rd, rs1, rs2, all immediate formats (I/S/B/U/J)
+   - Sign extension for immediate values
+4. ⏸️ Prove decoder completeness and correctness
+   - Comprehensive test suite: 40/40 RV32I instructions passing
+   - Formal proofs pending
+5. ⏸️ Generate instruction semantic functions
+6. ⏸️ Generate SystemVerilog/Chisel for decoder
+7. ⏸️ Verify decoder with LEC
 
-**Timeline:** 2-3 weeks
-**Deliverable:** Verified instruction decoder with full RV32IM coverage
+**Timeline:** 2-3 weeks (started 2026-01-31)
+**Status:** Core decoder complete, testing complete, proofs & codegen pending
+**Deliverable:** Verified instruction decoder with full RV32I coverage
+
+**Completed (2026-01-31):**
+- ✅ riscv-opcodes integration (git submodule + `make opcodes` automation)
+- ✅ JSON parser (reads all 40 RV32I instructions from instr_dict.json)
+- ✅ Decoder implementation (all instruction formats: R/I/S/B/U/J)
+- ✅ Field extraction (registers + immediate decoding with sign extension)
+- ✅ Comprehensive test suite (all 40 instructions verified)
+
+**Test Results:**
+```
+R-type ALU:    10/10 ✓ (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU)
+I-type ALU:     9/9  ✓ (ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI, SLTI, SLTIU)
+Loads:          5/5  ✓ (LB, LH, LW, LBU, LHU)
+Stores:         3/3  ✓ (SB, SH, SW)
+Branches:       6/6  ✓ (BEQ, BNE, BLT, BGE, BLTU, BGEU)
+Jumps:          2/2  ✓ (JAL, JALR)
+Upper Imm:      2/2  ✓ (LUI, AUIPC)
+System:         3/3  ✓ (FENCE, ECALL, EBREAK)
+────────────────────────────────────
+TOTAL:        40/40 ✓
+```
+
+**Files Created:**
+- `lean/Shoumei/RISCV/ISA.lean` - Core types (FieldType, OpType, InstructionDef)
+- `lean/Shoumei/RISCV/OpcodeParser.lean` - JSON parser for riscv-opcodes
+- `lean/Shoumei/RISCV/Decoder.lean` - Instruction decoder + field extraction
+- `lean/Shoumei/RISCV/DecoderTest.lean` - Comprehensive test suite
+- `lean/Shoumei/RISCV/InstructionList.lean` - Generator utilities
+- `TestRISCVParser.lean` - Test executable
+
+**Next Steps:**
+- Define instruction semantic functions (what ADD/SUB/etc. do)
+- Generate SystemVerilog/Chisel for decoder
+- Prove decoder completeness (all valid encodings decode)
+- Prove decoder correctness (unique decoding)
+- LEC verification of generated RTL
 
 ### Phase 3: Register Renaming Infrastructure
 
@@ -1165,9 +1214,11 @@ Shoumei-RTL/
 │       │       ├── Adder.lean          # Already exists
 │       │       └── Counter.lean        # Simple sequential example
 │       └── RISCV/
-│           ├── ISA.lean                # RISC-V semantic spec
-│           ├── OpcodeParser.lean       # Parse riscv-opcodes
-│           ├── Decoder.lean            # Generated decoder
+│           ├── ISA.lean                # ✅ Core types (FieldType, OpType, InstructionDef)
+│           ├── OpcodeParser.lean       # ✅ JSON parser for riscv-opcodes
+│           ├── Decoder.lean            # ✅ Instruction decoder + field extraction
+│           ├── DecoderTest.lean        # ✅ Comprehensive test suite (40/40 passing)
+│           ├── InstructionList.lean    # ✅ Generator utilities
 │           ├── RegisterFile.lean       # 32 architectural registers
 │           ├── ALU.lean                # RV32I ALU operations
 │           ├── Multiplier.lean         # RV32M multiply
@@ -1211,11 +1262,14 @@ Shoumei-RTL/
 │   └── compliance/                 # RISC-V compliance tests
 │       ├── run-tests.sh
 │       └── results/
-├── external/
-│   └── riscv-opcodes/              # Git submodule
-│       ├── opcodes
-│       ├── opcodes-rv32m
-│       └── parse.py
+├── third_party/                    # ✅ Third-party dependencies
+│   └── riscv-opcodes/              # ✅ Git submodule (official RISC-V ISA DB)
+│       ├── extensions/
+│       │   ├── rv_i                # RV32I base instructions
+│       │   ├── rv32_i              # RV32-specific I instructions
+│       │   └── rv_m                # M extension (multiply/divide)
+│       ├── instr_dict.json         # ✅ Generated by `make opcodes`
+│       └── src/                    # Python tools for generation
 ├── output/
 │   ├── sv-from-lean/
 │   └── sv-from-chisel/
@@ -1299,10 +1353,19 @@ Shoumei-RTL/
 - [ ] 50+ RV32I compliance tests (deferred - structural verification sufficient)
 - [ ] Full LEC verification setup (deferred - Chisel compilation verified)
 
-**Phase 2 Complete:**
-- [ ] RISC-V decoder generated from riscv-opcodes
-- [ ] Decoder completeness proved
-- [ ] All RV32IM instructions decode correctly
+**Phase 2 In Progress:** 🚧 58% DONE (started 2026-01-31)
+- [x] riscv-opcodes integrated as git submodule (third_party/)
+- [x] Makefile automation for `make opcodes` (generates instr_dict.json)
+- [x] LEAN data structures (FieldType, OpType, InstructionDef)
+- [x] JSON parser (OpcodeParser.lean) - reads all 40 RV32I instructions
+- [x] Decoder implementation (Decoder.lean) - all instruction formats
+- [x] Field extraction (rd, rs1, rs2, all immediate types with sign extension)
+- [x] Comprehensive test suite (40/40 RV32I instructions passing)
+- [ ] Instruction semantic functions (executeInstruction)
+- [ ] Decoder completeness proof (all valid encodings decode)
+- [ ] Decoder correctness proof (unique decoding, no overlap)
+- [ ] SystemVerilog/Chisel code generation for decoder
+- [ ] LEC verification of decoder RTL
 
 **Phase 3-7 Complete:**
 - [ ] All Tomasulo components implemented
@@ -1410,21 +1473,23 @@ This design document outlines an ambitious but achievable path to building a **f
 **Next steps:**
 1. ✅ ~~Phase 0: Extend DSL for sequential circuits~~ - COMPLETE
 2. ✅ ~~Phase 1: Arithmetic building blocks~~ - COMPLETE
-3. **Current:** Set up riscv-opcodes integration (Phase 2)
-4. **Next:** Implement verified RISC-V decoder
-5. **Future:** Register renaming infrastructure (Phase 3)
+3. ✅ ~~Phase 2.1-2.3: riscv-opcodes integration + decoder~~ - COMPLETE
+4. **Current:** Phase 2.4-2.7: Decoder proofs + code generation
+5. **Next:** Register renaming infrastructure (Phase 3)
 
 The journey from FullAdder to Tomasulo CPU will push the boundaries of proven hardware design. Let's build something remarkable! 🚀
 
 ---
 
-**Document Status:** Active Development - Phase 1 ✅ COMPLETE (100%)
-**Last Updated:** 2026-01-31 (Phase 1: ALU32 - Complete RV32I ALU with all 10 operations)
+**Document Status:** Active Development - Phase 2 🚧 IN PROGRESS (58%)
+**Last Updated:** 2026-01-31 (Phase 2: RV32I Decoder - 40/40 instructions tested)
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
 
 **Recent Milestones:**
 - ✅ Phase 0 Complete (2026-01-31): Queue/FIFO with full verification pipeline
 - ✅ Phase 1 Complete (2026-01-31): Complete RV32I ALU (6 components, ~3000 gates, 19 modules)
+- 🚧 Phase 2 In Progress (2026-01-31): RV32I Decoder core complete, all 40 instructions decode correctly
 
-**Next Phase:** Phase 2 - RISC-V Decoder Integration (riscv-opcodes parsing)
+**Current Phase:** Phase 2 - RISC-V Decoder Integration
+**Status:** Core decoder + tests complete (7/12 tasks), proofs & codegen pending
