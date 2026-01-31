@@ -88,11 +88,11 @@ def generateLogic (c : Circuit) : String :=
 
 -- Main code generator: Circuit → Chisel module
 def toChisel (c : Circuit) : String :=
-  -- TODO: Generate from circuit structure
-  -- For now, hardcoded output for a full adder
   let moduleName := c.name
 
   joinLines [
+    "package generated",
+    "",
     "import chisel3._",
     "import chisel3.util._",
     "",

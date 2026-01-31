@@ -3,6 +3,10 @@
 
 .PHONY: all clean lean codegen chisel lec help setup check-tools
 
+# Add tool directories to PATH
+# This ensures lake (from elan) and sbt (from coursier) are available
+export PATH := $(HOME)/.elan/bin:$(HOME)/.local/share/coursier/bin:$(PATH)
+
 # Tool availability checks
 HAS_LAKE := $(shell command -v lake 2> /dev/null)
 HAS_SBT := $(shell command -v sbt 2> /dev/null)

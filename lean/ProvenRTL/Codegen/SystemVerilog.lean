@@ -60,26 +60,39 @@ def generateAssignments (c : Circuit) : String :=
 def toSystemVerilog (c : Circuit) : String :=
   let moduleName := c.name
 
-  -- Format inputs: one per line
-  let inputLines := c.inputs.map (fun w => s!"  input {w.name}")
-  let inputsSection := String.intercalate ",\n" inputLines
+  -- Use Verilog-95 style for ABC compatibility:
+  -- module name(port1, port2, ...);
+  --   input port1;
+  --   output port2;
+  --   ...
+  -- endmodule
 
-  -- Format outputs: one per line
-  let outputLines := c.outputs.map (fun w => s!"  output {w.name}")
-  let outputsSection := String.intercalate ",\n" outputLines
+  -- Port list (just names, no direction)
+  let allPorts := c.inputs ++ c.outputs
+  let portNames := allPorts.map (fun w => w.name)
+  let portList := String.intercalate ", " portNames
+
+  -- Input declarations
+  let inputDecls := c.inputs.map (fun w => s!"  input {w.name};")
+  let inputSection := joinLines inputDecls
+
+  -- Output declarations
+  let outputDecls := c.outputs.map (fun w => s!"  output {w.name};")
+  let outputSection := joinLines outputDecls
 
   -- Get wire declarations and assignments
   let wireDecls := generateWireDeclarations c
   let assigns := generateAssignments c
 
   -- Build module
-  let header := s!"module {moduleName}(\n{inputsSection},\n{outputsSection}\n);"
-  let body := if wireDecls.isEmpty then assigns else wireDecls ++ "\n\n" ++ assigns
-
   joinLines [
-    header,
+    s!"module {moduleName}({portList});",
+    inputSection,
+    outputSection,
     "",
-    body,
+    wireDecls,
+    "",
+    assigns,
     "",
     "endmodule"
   ]

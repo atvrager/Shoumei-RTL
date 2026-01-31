@@ -188,28 +188,25 @@ jobs:
           source $HOME/.elan/env
           make lean
 
-      - name: Run code generators
-        run: |
-          source $HOME/.elan/env
-          echo "Code generator not yet implemented, skipping..."
-          # make codegen
-
-      - name: Build Chisel
-        run: make chisel
-
       - name: Install ABC for LEC
         run: |
           sudo apt-get update
-          sudo apt-get install -y berkeley-abc || echo "ABC not available in apt, skipping LEC tests"
+          sudo apt-get install -y berkeley-abc
 
-      - name: Run LEC (if ABC available)
+      - name: Run full pipeline (codegen → chisel → lec)
         run: |
-          if command -v abc > /dev/null; then
-            echo "ABC found, would run LEC here"
-            # make lec
-          else
-            echo "ABC not available, skipping LEC"
-          fi
+          source $HOME/.elan/env
+          echo "Running full pipeline: LEAN → Codegen → Chisel → LEC"
+          make codegen
+          make chisel
+          make lec
+
+      - name: Verify generated files
+        run: |
+          test -f output/sv-from-lean/FullAdder.sv || exit 1
+          test -f output/sv-from-chisel/FullAdder.sv || exit 1
+          test -f chisel/src/main/scala/generated/FullAdder.scala || exit 1
+          echo "✓ All generated files present"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

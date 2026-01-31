@@ -9,15 +9,28 @@
 
 import chisel3._
 import circt.stage.ChiselStage
+import java.io.File
+import generated._
 
 object Main extends App {
-  println("Proven RTL - Chisel to SystemVerilog Compiler")
+  println("証明 Shoumei RTL - Chisel to SystemVerilog Compiler")
   println("=" * 50)
+  println()
 
-  // TODO: Load and compile generated Chisel modules
-  // For now, compile a stub empty module to verify the toolchain works
+  // Discover generated modules in src/main/scala/generated/
+  def discoverGeneratedModules(): List[String] = {
+    val genDir = new File("src/main/scala/generated")
+    if (!genDir.exists() || !genDir.isDirectory) {
+      return List()
+    }
 
-  // Stub module for testing
+    genDir.listFiles()
+      .filter(f => f.isFile && f.getName.endsWith(".scala"))
+      .map(_.getName.replace(".scala", ""))
+      .toList
+  }
+
+  // Stub module for testing (used only if no generated modules found)
   class StubModule extends Module {
     val io = IO(new Bundle {
       val in = Input(Bool())
@@ -26,33 +39,66 @@ object Main extends App {
     io.out := io.in
   }
 
-  println("Compiling stub module...")
+  // Discover what modules we have
+  val modules = discoverGeneratedModules()
 
-  try {
-    // Compile to SystemVerilog using ChiselStage
-    // This uses firtool (CIRCT) backend automatically in Chisel 6.x
-    ChiselStage.emitSystemVerilogFile(
-      new StubModule,
-      args = Array(
-        "--target-dir", "../../output/sv-from-chisel"
+  if (modules.isEmpty) {
+    println("⚠ No generated modules found in src/main/scala/generated/")
+    println("Compiling stub module for toolchain verification...")
+    println()
+
+    try {
+      ChiselStage.emitSystemVerilogFile(
+        new StubModule,
+        args = Array("--target-dir", "../../output/sv-from-chisel")
       )
-    )
+      println("✓ Stub compilation successful")
+      println("Output: output/sv-from-chisel/StubModule.sv")
+    } catch {
+      case e: Exception =>
+        println(s"✗ Compilation failed: ${e.getMessage}")
+        e.printStackTrace()
+        sys.exit(1)
+    }
+  } else {
+    println(s"Found ${modules.length} generated module(s): ${modules.mkString(", ")}")
+    println()
 
-    println("✓ Compilation successful")
-    println("Output written to: output/sv-from-chisel/")
-  } catch {
-    case e: Exception =>
-      println(s"✗ Compilation failed: ${e.getMessage}")
-      e.printStackTrace()
+    // For now, specifically compile FullAdder if it exists
+    if (modules.contains("FullAdder")) {
+      println("Compiling FullAdder...")
+
+      try {
+        // Generate SystemVerilog string
+        val sv = ChiselStage.emitSystemVerilog(new generated.FullAdder)
+
+        // Write to file - use absolute path to avoid path resolution issues
+        val projectRoot = new File(System.getProperty("user.dir")).getParentFile
+        val outputDir = new File(projectRoot, "output/sv-from-chisel")
+        outputDir.mkdirs()
+        val outputFile = new File(outputDir, "FullAdder.sv")
+
+        val writer = new java.io.PrintWriter(outputFile)
+        try {
+          writer.write(sv)
+        } finally {
+          writer.close()
+        }
+
+        println("✓ FullAdder compilation successful")
+        println(s"Output: ${outputFile.getAbsolutePath}")
+      } catch {
+        case e: Exception =>
+          println(s"✗ Compilation failed: ${e.getMessage}")
+          e.printStackTrace()
+          sys.exit(1)
+      }
+    } else {
+      println("⚠ FullAdder.scala not found in generated modules")
       sys.exit(1)
+    }
   }
 
-  // TODO: In the future, dynamically discover and compile all modules
-  // in src/main/scala/generated/ directory
-  //
-  // Example:
-  // val generatedModules = discoverGeneratedModules()
-  // for (module <- generatedModules) {
-  //   compileModule(module)
-  // }
+  println()
+  println("✓ Chisel compilation complete")
 }
