@@ -1,0 +1,163 @@
+# Proven RTL
+
+A formally verified hardware design framework that uses LEAN4 theorem proving to generate provably correct hardware designs in both SystemVerilog and Chisel, with automated logical equivalence checking.
+
+## Overview
+
+This project bridges formal verification and hardware design by:
+
+1. **DSL Definition in LEAN4** - Define hardware circuits in a custom DSL embedded in LEAN4
+2. **Theorem Proving** - Prove properties about circuits using LEAN4's theorem proving capabilities
+3. **Dual Code Generation** - Generate both SystemVerilog and Chisel from the proven DSL
+4. **Chisel Compilation** - Compile Chisel to SystemVerilog via FIRRTL/CIRCT
+5. **Equivalence Checking** - Verify that both SystemVerilog outputs are logically equivalent
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│           LEAN4 Hardware DSL                    │
+│        (Theorems + Proofs)                      │
+└─────────────────┬───────────────────────────────┘
+                  │
+         ┌────────┴─────────┐
+         │                  │
+         ▼                  ▼
+┌─────────────────┐  ┌─────────────────┐
+│  SystemVerilog  │  │     Chisel      │
+│   Generator     │  │   Generator     │
+└────────┬────────┘  └────────┬────────┘
+         │                    │
+         │                    ▼
+         │           ┌─────────────────┐
+         │           │ FIRRTL + CIRCT  │
+         │           │   (firtool)     │
+         │           └────────┬────────┘
+         │                    │
+         ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐
+│ SystemVerilog   │  │ SystemVerilog   │
+│  (from LEAN)    │  │ (from Chisel)   │
+└────────┬────────┘  └────────┬────────┘
+         │                    │
+         └────────┬───────────┘
+                  ▼
+         ┌─────────────────┐
+         │   Equivalence   │
+         │    Checking     │
+         │  (ABC/Formal)   │
+         └─────────────────┘
+```
+
+## Technology Stack
+
+### Core Languages
+- **LEAN4** - Theorem proving and DSL host language
+- **Scala 3** - For Chisel (hardware construction language)
+- **SystemVerilog** - Target HDL for synthesis
+
+### Build Systems
+- **Lake** - LEAN4 build system and package manager (merged into Lean 4)
+- **sbt** - Scala Build Tool for Chisel components
+- **Make/Just** - Top-level orchestration (TBD)
+
+### Toolchain Components
+- **FIRRTL** - Flexible Intermediate Representation for RTL
+- **CIRCT** - Circuit IR Compilers and Tools (LLVM-based, includes firtool)
+- **ABC** - Open-source logic synthesis and verification (for equivalence checking)
+
+### Alternative LEC Tools (Commercial)
+- Synopsys Formality
+- Cadence Conformal
+- Siemens Questa SLEC
+
+## Project Structure
+
+```
+proven-rtl/
+├── lean/                   # LEAN4 source code
+│   ├── ProvenRTL/         # Main DSL and theorem library
+│   │   ├── DSL.lean       # Hardware DSL definitions
+│   │   ├── Semantics.lean # Operational semantics
+│   │   ├── Theorems.lean  # Proven properties
+│   │   └── Codegen/       # Code generation
+│   │       ├── SystemVerilog.lean
+│   │       └── Chisel.lean
+│   └── lakefile.lean      # Lake build configuration
+├── chisel/                # Chisel code (generated + runtime)
+│   ├── src/main/scala/    # Chisel source
+│   └── build.sbt          # sbt configuration
+├── output/                # Generated artifacts
+│   ├── sv-from-lean/      # SystemVerilog from LEAN
+│   └── sv-from-chisel/    # SystemVerilog from Chisel
+├── verification/          # Equivalence checking scripts
+└── examples/              # Example circuits
+```
+
+## Build Workflow
+
+1. **Define Circuit in LEAN DSL**
+   ```bash
+   lake build
+   ```
+
+2. **Generate SystemVerilog + Chisel**
+   ```bash
+   lake exe codegen examples/adder.lean
+   ```
+
+3. **Compile Chisel to SystemVerilog**
+   ```bash
+   cd chisel && sbt "run --target-dir ../output/sv-from-chisel"
+   ```
+
+4. **Run Equivalence Check**
+   ```bash
+   ./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+   ```
+
+## Current Status
+
+**Project Phase:** Initial Setup
+
+See [CLAUDE.md](CLAUDE.md) for development context and implementation notes.
+
+## Dependencies
+
+### LEAN4
+- Lean 4 (latest stable)
+- Lake (bundled with Lean 4)
+
+### Chisel/Scala
+- Scala 3.x
+- sbt 1.9+
+- Chisel 6.x
+- firtool (automatically managed by Chisel 6.0+)
+
+### Verification
+- ABC (open-source)
+- Or commercial tools (Synopsys Formality, Cadence Conformal)
+
+## Installation
+
+```bash
+# Install Lean 4
+curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh
+
+# Install sbt (example for Linux)
+curl -fL https://github.com/sbt/sbt/releases/download/v1.9.8/sbt-1.9.8.tgz | tar xz
+
+# Install ABC (for equivalence checking)
+# See: https://github.com/berkeley-abc/abc
+```
+
+## References
+
+- [LEAN4 Documentation](https://lean-lang.org/)
+- [Chisel Documentation](https://www.chisel-lang.org/)
+- [FIRRTL/CIRCT](https://circt.llvm.org/)
+- [ABC: A System for Sequential Synthesis and Verification](https://people.eecs.berkeley.edu/~alanmi/abc/)
+
+## License
+
+TBD
