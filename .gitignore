@@ -24,12 +24,16 @@ chisel/project/project/
 .bloop/
 metals.sbt
 
-# Generated outputs
-output/
+# Generated outputs (but keep directory structure)
+output/**/*
+!output/**/
+!output/**/.gitkeep
 *.v
 *.sv
 *.fir
 *.anno.json
+chisel/src/main/scala/generated/*.scala
+!chisel/src/main/scala/generated/.gitkeep
 
 # Build artifacts
 *.o

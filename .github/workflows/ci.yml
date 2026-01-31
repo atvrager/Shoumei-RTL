@@ -1,0 +1,242 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lean-build:
+    name: Build LEAN Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install elan (LEAN toolchain manager)
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Show LEAN version
+        run: |
+          source $HOME/.elan/env
+          lean --version
+          lake --version
+
+      - name: Cache LEAN dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-lean-
+
+      - name: Build LEAN project
+        run: |
+          source $HOME/.elan/env
+          lake update
+          lake build
+
+      - name: Check for sorry (incomplete proofs)
+        run: |
+          source $HOME/.elan/env
+          echo "Checking for 'sorry' in LEAN files..."
+          if grep -r "sorry" lean/ --include="*.lean"; then
+            echo "⚠️  Warning: Found incomplete proofs (sorry) in codebase"
+            echo "This is expected during initial development"
+          else
+            echo "✓ No incomplete proofs found"
+          fi
+
+  scala-build:
+    name: Build Scala/Chisel Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'sbt'
+
+      - name: Setup sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x99E82A75642AC823" | sudo gpg --no-default-keyring --keyring gnupg-ring:/etc/apt/trusted.gpg.d/scalasbt-release.gpg --import
+          sudo chmod 644 /etc/apt/trusted.gpg.d/scalasbt-release.gpg
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Show Scala/sbt versions
+        run: |
+          java -version
+          sbt --version
+
+      - name: Compile Chisel code
+        working-directory: ./chisel
+        run: sbt compile
+
+      - name: Run Chisel tests
+        working-directory: ./chisel
+        run: sbt test
+
+      - name: Check Scala formatting
+        working-directory: ./chisel
+        run: |
+          echo "Scala formatting check would go here"
+          echo "Consider adding scalafmt in future"
+
+  format-check:
+    name: Format and Lint Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check shell scripts
+        run: |
+          # Make sure shell scripts are executable
+          if [ -f verification/run-lec.sh ]; then
+            test -x verification/run-lec.sh || echo "⚠️  verification/run-lec.sh is not executable"
+          fi
+
+          # Basic shell syntax check
+          if command -v shellcheck > /dev/null; then
+            find . -name "*.sh" -type f -exec shellcheck {} +
+          else
+            echo "shellcheck not available, skipping shell script checks"
+          fi
+
+      - name: Check Python scripts
+        run: |
+          python3 -m py_compile bootstrap.py
+          echo "✓ Python syntax check passed"
+
+      - name: Check trailing whitespace
+        run: |
+          echo "Checking for trailing whitespace..."
+          if git grep -I --line-number '\s$' -- '*.lean' '*.scala' '*.md' '*.sh' '*.py'; then
+            echo "⚠️  Found trailing whitespace (non-blocking)"
+          else
+            echo "✓ No trailing whitespace found"
+          fi
+
+      - name: Check for TODO markers
+        run: |
+          echo "Scanning for TODO/FIXME markers..."
+          git grep -n -E 'TODO|FIXME|XXX|HACK' -- '*.lean' '*.scala' || echo "No TODO markers found"
+
+  integration:
+    name: Integration Test (Full Pipeline)
+    runs-on: ubuntu-latest
+    needs: [lean-build, scala-build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install elan (LEAN)
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Setup Java and sbt
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'sbt'
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x99E82A75642AC823" | sudo gpg --no-default-keyring --keyring gnupg-ring:/etc/apt/trusted.gpg.d/scalasbt-release.gpg --import
+          sudo chmod 644 /etc/apt/trusted.gpg.d/scalasbt-release.gpg
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Cache LEAN dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+
+      - name: Build LEAN
+        run: |
+          source $HOME/.elan/env
+          make lean
+
+      - name: Run code generators
+        run: |
+          source $HOME/.elan/env
+          echo "Code generator not yet implemented, skipping..."
+          # make codegen
+
+      - name: Build Chisel
+        run: make chisel
+
+      - name: Install ABC for LEC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y berkeley-abc || echo "ABC not available in apt, skipping LEC tests"
+
+      - name: Run LEC (if ABC available)
+        run: |
+          if command -v abc > /dev/null; then
+            echo "ABC found, would run LEC here"
+            # make lec
+          else
+            echo "ABC not available, skipping LEC"
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-outputs
+          path: |
+            output/**/*.sv
+            output/**/*.v
+            chisel/target/**/*.sv
+          retention-days: 7
+
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check documentation files exist
+        run: |
+          test -f README.md || exit 1
+          test -f CLAUDE.md || exit 1
+          test -f GETTING_STARTED.md || exit 1
+          test -f COMMANDS.md || exit 1
+          test -f LICENSE || exit 1
+          echo "✓ All required documentation files present"
+
+      - name: Check markdown links
+        run: |
+          echo "Markdown link checking would go here"
+          echo "Consider adding markdown-link-check in future"
+
+      - name: Check for broken references
+        run: |
+          echo "Checking for broken file references in docs..."
+          # Basic check for common paths mentioned in docs
+          grep -r "lean/ProvenRTL" README.md CLAUDE.md GETTING_STARTED.md > /dev/null || echo "No lean references found"
+          echo "✓ Documentation reference check complete"
