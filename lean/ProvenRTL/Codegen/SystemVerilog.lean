@@ -23,40 +23,63 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.XOR => "^"
 
 -- Generate a single gate assignment
--- TODO: Implement actual gate generation from Gate structure
 def generateGate (g : Gate) : String :=
-  -- Stubbed for now
-  s!"  // TODO: Generate gate assignment for {g.output.name}"
+  let op := gateTypeToOperator g.gateType
+  match g.gateType with
+  | GateType.NOT =>
+      -- Unary operator: ~input
+      match g.inputs with
+      | [i0] => s!"  assign {g.output.name} = {op}{i0.name};"
+      | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | _ =>
+      -- Binary operators: input1 op input2
+      match g.inputs with
+      | [i0, i1] => s!"  assign {g.output.name} = {i0.name} {op} {i1.name};"
+      | _ => s!"  // ERROR: Binary gate should have 2 inputs"
+
+-- Helper: find all internal wires (gate outputs that are not circuit outputs)
+def findInternalWires (c : Circuit) : List Wire :=
+  let gateOutputs := c.gates.map (fun g => g.output)
+  gateOutputs.filter (fun w => !c.outputs.contains w)
 
 -- Generate all internal wire declarations
--- TODO: Extract internal wires from circuit (wires that are gate outputs but not circuit outputs)
 def generateWireDeclarations (c : Circuit) : String :=
-  -- Stubbed for now
-  "  // TODO: Generate wire declarations"
+  let internalWires := findInternalWires c
+  if internalWires.isEmpty then
+    ""
+  else
+    let decls := internalWires.map (fun w => s!"  wire {w.name};")
+    joinLines decls
 
 -- Generate all gate assignments
--- TODO: Generate from circuit.gates
 def generateAssignments (c : Circuit) : String :=
-  -- Stubbed for now
-  "  // TODO: Generate gate assignments"
+  let assignments := c.gates.map generateGate
+  joinLines assignments
 
 -- Main code generator: Circuit → SystemVerilog module
 def toSystemVerilog (c : Circuit) : String :=
-  -- TODO: Generate from circuit structure
-  -- For now, hardcoded output for a full adder
   let moduleName := c.name
-  let inputs := wireListToString c.inputs
-  let outputs := wireListToString c.outputs
+
+  -- Format inputs: one per line
+  let inputLines := c.inputs.map (fun w => s!"  input {w.name}")
+  let inputsSection := String.intercalate ",\n" inputLines
+
+  -- Format outputs: one per line
+  let outputLines := c.outputs.map (fun w => s!"  output {w.name}")
+  let outputsSection := String.intercalate ",\n" outputLines
+
+  -- Get wire declarations and assignments
+  let wireDecls := generateWireDeclarations c
+  let assigns := generateAssignments c
+
+  -- Build module
+  let header := s!"module {moduleName}(\n{inputsSection},\n{outputsSection}\n);"
+  let body := if wireDecls.isEmpty then assigns else wireDecls ++ "\n\n" ++ assigns
 
   joinLines [
-    s!"module {moduleName}(",
-    s!"  input  {inputs},",
-    s!"  output {outputs}",
-    ");",
+    header,
     "",
-    generateWireDeclarations c,
-    "",
-    generateAssignments c,
+    body,
     "",
     "endmodule"
   ]

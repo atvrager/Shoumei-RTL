@@ -23,30 +23,68 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.NOT => "~"
   | GateType.XOR => "^"
 
--- Generate a single gate expression
--- TODO: Implement actual gate generation from Gate structure
-def generateGate (g : Gate) : String :=
-  -- Stubbed for now
-  s!"  // TODO: Generate gate expression for {g.output.name}"
+-- Helper: check if a wire is a circuit input
+def isCircuitInput (c : Circuit) (w : Wire) : Bool :=
+  c.inputs.contains w
+
+-- Helper: check if a wire is a circuit output
+def isCircuitOutput (c : Circuit) (w : Wire) : Bool :=
+  c.outputs.contains w
+
+-- Helper: generate wire reference (io.name for inputs/outputs, name for internal wires)
+def wireRef (c : Circuit) (w : Wire) : String :=
+  if isCircuitInput c w || isCircuitOutput c w then
+    s!"io.{w.name}"
+  else
+    w.name
+
+-- Generate a single gate assignment
+def generateGate (c : Circuit) (g : Gate) : String :=
+  let op := gateTypeToOperator g.gateType
+  let outRef := wireRef c g.output
+  match g.gateType with
+  | GateType.NOT =>
+      match g.inputs with
+      | [i0] => s!"  {outRef} := {op}{wireRef c i0}"
+      | _ => s!"  // ERROR: NOT gate should have 1 input"
+  | _ =>
+      match g.inputs with
+      | [i0, i1] => s!"  {outRef} := {wireRef c i0} {op} {wireRef c i1}"
+      | _ => s!"  // ERROR: Binary gate should have 2 inputs"
+
+-- Helper: find all internal wires (same as SystemVerilog)
+def findInternalWires (c : Circuit) : List Wire :=
+  let gateOutputs := c.gates.map (fun g => g.output)
+  gateOutputs.filter (fun w => !c.outputs.contains w)
 
 -- Generate IO bundle declaration
--- TODO: Generate from circuit.inputs and circuit.outputs
 def generateIOBundle (c : Circuit) : String :=
-  -- Stubbed for now
-  let inputs := wireListToString c.inputs
-  let outputs := wireListToString c.outputs
-  joinLines [
-    "  val io = IO(new Bundle {",
-    s!"    val {inputs} = Input(Bool())",
-    s!"    val {outputs} = Output(Bool())",
-    "  })"
-  ]
+  let inputDecls := c.inputs.map (fun w => s!"    val {w.name} = Input(Bool())")
+  let outputDecls := c.outputs.map (fun w => s!"    val {w.name} = Output(Bool())")
+  let allDecls := inputDecls ++ outputDecls
 
--- Generate gate logic
--- TODO: Generate from circuit.gates
+  joinLines ([
+    "  val io = IO(new Bundle {"
+  ] ++ allDecls ++ [
+    "  })"
+  ])
+
+-- Generate gate logic (wire declarations + assignments)
 def generateLogic (c : Circuit) : String :=
-  -- Stubbed for now
-  "  // TODO: Generate gate logic"
+  -- Internal wire declarations
+  let internalWires := findInternalWires c
+  let wireDecls := internalWires.map (fun w => s!"  val {w.name} = Wire(Bool())")
+
+  -- Gate assignments
+  let assignments := c.gates.map (generateGate c)
+
+  -- Combine with blank line separator if we have both
+  if wireDecls.isEmpty then
+    joinLines assignments
+  else if assignments.isEmpty then
+    joinLines wireDecls
+  else
+    joinLines wireDecls ++ "\n\n" ++ joinLines assignments
 
 -- Main code generator: Circuit → Chisel module
 def toChisel (c : Circuit) : String :=

@@ -34,6 +34,11 @@ This provides **mathematical proof** that our DSL semantics are correctly implem
 **Three-tier approach:**
 
 1. **LEAN4/Lake** - Primary build system for theorem proving and code generation
+   - **elan** - LEAN toolchain manager (like rustup for Rust)
+     - Manages LEAN installations (`~/.elan/bin/`)
+     - Controlled by `lean-toolchain` file (currently: v4.15.0)
+     - No sudo/system packages required
+     - Installation: `curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh`
    - Lake is now merged into Lean 4 itself
    - FFI capabilities for Scala/JVM integration if needed
    - Configuration in `lakefile.lean`

@@ -1,18 +1,22 @@
-# Proven RTL
+# 証明 Shoumei RTL
 
-A formally verified hardware design framework that uses LEAN4 theorem proving to generate provably correct hardware designs in both SystemVerilog and Chisel, with automated logical equivalence checking.
+**Formally Verified Hardware Design with LEAN4**
 
-## Overview
+A theorem-proving based hardware design framework that generates provably correct circuits in SystemVerilog and Chisel, with automated logical equivalence checking.
+
+> 証明 (しょうめい, *shōmei*) — Japanese for "proof"
+
+## 📋 Overview
 
 This project bridges formal verification and hardware design by:
 
-1. **DSL Definition in LEAN4** - Define hardware circuits in a custom DSL embedded in LEAN4
-2. **Theorem Proving** - Prove properties about circuits using LEAN4's theorem proving capabilities
-3. **Dual Code Generation** - Generate both SystemVerilog and Chisel from the proven DSL
-4. **Chisel Compilation** - Compile Chisel to SystemVerilog via FIRRTL/CIRCT
-5. **Equivalence Checking** - Verify that both SystemVerilog outputs are logically equivalent
+1. 🔷 **DSL Definition in LEAN4** — Define hardware circuits in a custom DSL embedded in LEAN4
+2. ✓ **Theorem Proving** — Prove properties about circuits using LEAN4's dependent type system
+3. ⚡ **Dual Code Generation** — Generate both SystemVerilog and Chisel from the proven DSL
+4. 🔧 **Chisel Compilation** — Compile Chisel to SystemVerilog via FIRRTL/CIRCT
+5. ⚖️  **Equivalence Checking** — Verify that both SystemVerilog outputs are logically equivalent
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -138,7 +142,7 @@ See [CLAUDE.md](CLAUDE.md) for development context and implementation notes.
 - ABC (open-source)
 - Or commercial tools (Synopsys Formality, Cadence Conformal)
 
-## Installation
+## 🚀 Installation
 
 **No system packages or sudo required!** Everything installs to your home directory.
 

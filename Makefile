@@ -9,7 +9,7 @@ HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
 
 # Default target: run entire pipeline
-all: check-tools lean chisel lec
+all: check-tools lean codegen chisel lec
 	@echo ""
 	@echo "✓ Complete pipeline executed successfully"
 
@@ -20,7 +20,7 @@ help:
 	@echo "  make setup    - Run bootstrap.py to install all dependencies"
 	@echo "  make all      - Run entire pipeline (lean → chisel → lec)"
 	@echo "  make lean     - Build LEAN code with Lake"
-	@echo "  make codegen  - Run code generators (TODO: not yet implemented)"
+	@echo "  make codegen  - Run code generators"
 	@echo "  make chisel   - Compile Chisel to SystemVerilog"
 	@echo "  make lec      - Run logical equivalence checking"
 	@echo "  make clean    - Remove all generated files"
@@ -65,14 +65,9 @@ endif
 	lake build
 
 # Run code generators
-# TODO: Implement Lake executable for code generation
 codegen: lean
 	@echo "==> Running code generators..."
-	@echo "TODO: Implement code generation executable"
-	@echo "Will generate:"
-	@echo "  - output/sv-from-lean/FullAdder.sv"
-	@echo "  - chisel/src/main/scala/generated/FullAdder.scala"
-	# lake exe codegen
+	lake exe codegen
 
 # Compile Chisel to SystemVerilog
 chisel:

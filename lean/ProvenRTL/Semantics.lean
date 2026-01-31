@@ -19,35 +19,41 @@ abbrev Env := Wire → Bool
 def evalGate (g : Gate) (env : Env) : Bool :=
   match g.gateType with
   | GateType.AND =>
-      -- TODO: Implement AND gate evaluation
-      -- Should compute: inputs[0] ∧ inputs[1]
-      sorry
+      match g.inputs with
+      | [i0, i1] => env i0 && env i1
+      | _ => false  -- Shouldn't happen for well-formed circuits
   | GateType.OR =>
-      -- TODO: Implement OR gate evaluation
-      -- Should compute: inputs[0] ∨ inputs[1]
-      sorry
+      match g.inputs with
+      | [i0, i1] => env i0 || env i1
+      | _ => false
   | GateType.NOT =>
-      -- TODO: Implement NOT gate evaluation
-      -- Should compute: ¬inputs[0]
-      sorry
+      match g.inputs with
+      | [i0] => !(env i0)
+      | _ => false
   | GateType.XOR =>
-      -- TODO: Implement XOR gate evaluation
-      -- Should compute: inputs[0] ≠ inputs[1]
-      sorry
+      match g.inputs with
+      | [i0, i1] => xor (env i0) (env i1)
+      | _ => false
+
+-- Helper: update environment with a new wire-value binding
+def updateEnv (env : Env) (w : Wire) (v : Bool) : Env :=
+  fun w' => if w' == w then v else env w'
 
 -- Evaluate an entire circuit
 -- Given input values (as an environment), compute output values
 def evalCircuit (c : Circuit) (inputEnv : Env) : Env :=
-  -- TODO: Implement circuit evaluation
   -- Strategy:
   -- 1. Start with inputEnv for circuit inputs
   -- 2. For each gate in topological order:
   --    - Evaluate gate using current environment
   --    - Update environment with gate output
-  -- 3. Return final environment (restrict to circuit outputs)
+  -- 3. Return final environment
   --
-  -- For now, this is stubbed
-  sorry
+  -- Note: Assumes gates are in topological order (which they are for our full adder)
+  c.gates.foldl (fun env gate =>
+    let result := evalGate gate env
+    updateEnv env gate.output result
+  ) inputEnv
 
 -- Helper: evaluate circuit and extract specific output wire
 def evalCircuitOutput (c : Circuit) (inputEnv : Env) (out : Wire) : Bool :=

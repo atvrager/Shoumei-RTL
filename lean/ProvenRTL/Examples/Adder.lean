@@ -64,9 +64,32 @@ def generateSystemVerilog : String :=
 def generateChisel : String :=
   Codegen.Chisel.toChisel fullAdderCircuit
 
--- TODO: Add IO functions to write generated code to files
--- def writeSystemVerilog (path : String) : IO Unit := ...
--- def writeChisel (path : String) : IO Unit := ...
+-- Write SystemVerilog to file
+def writeSystemVerilog : IO Unit := do
+  let sv := generateSystemVerilog
+  let path := "output/sv-from-lean/FullAdder.sv"
+  IO.FS.writeFile path sv
+  IO.println s!"✓ Generated: {path}"
+
+-- Write Chisel to file
+def writeChisel : IO Unit := do
+  let chisel := generateChisel
+  let path := "chisel/src/main/scala/generated/FullAdder.scala"
+  IO.FS.writeFile path chisel
+  IO.println s!"✓ Generated: {path}"
+
+-- Main entry point for code generation
+def main : IO Unit := do
+  IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  IO.println "  証明 Shoumei RTL - Code Generation"
+  IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  IO.println ""
+  IO.println "Generating code for FullAdder circuit..."
+  IO.println ""
+  writeSystemVerilog
+  writeChisel
+  IO.println ""
+  IO.println "✓ Code generation complete"
 
 -- TODO: Add test cases that verify the circuit against the truth table
 -- def test_fullAdder : IO Unit := ...
