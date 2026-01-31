@@ -567,7 +567,7 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 
 **Note:** Multi-entry queues (depth > 1) require circular buffer implementation with head/tail pointers. This is deferred to Phase 1+ as needed for specific components (ROB, RS).
 
-### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (50% complete)
+### Phase 1: Arithmetic Building Blocks - 🔄 IN PROGRESS (67% complete)
 
 **Goal:** Implement and verify all arithmetic units needed for RV32IM
 
@@ -588,27 +588,30 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
    - Signed overflow handling for correct lt comparison
    - 3 structural proofs verified
    - All LEC tests PASS (2608 vars, 6692 clauses)
-5. ⏳ LogicUnit32 (AND/OR/XOR parallel) - NEXT
-6. ⏳ Shifter32 (5-stage barrel shifter)
+5. ✅ **LogicUnit32 (AND/OR/XOR parallel)** - COMPLETE
+   - LogicUnit32: 160 gates (32 bits × 5 gates/bit)
+   - 2-bit op selector (00=AND, 01=OR, 10=XOR)
+   - MUX tree for operation selection
+   - 3 structural proofs verified
+   - All LEC tests PASS (2125 vars, 5497 clauses)
+6. ⏳ Shifter32 (5-stage barrel shifter) - NEXT
 7. ⏳ Complete ALU with all RV32I operations
 8. ⏳ Array Multiplier (32×32→64) - OPTIONAL/DEFERRED
 9. ⏳ Restoring Divider (32-bit) - OPTIONAL/DEFERRED
 
 **Current Progress (2026-01-31):**
-- **Gates implemented:** 589 / ~2000 (29.5% of MVP target)
-- **Modules verified:** 13 (all passing LEC ✓)
-- **Core components:** 3/6 complete (RCA, Subtractor, Comparator)
+- **Gates implemented:** 749 / ~2000 (37.5% of MVP target)
+- **Modules verified:** 16 (all passing LEC ✓)
+- **Core components:** 4/6 complete (RCA, Subtractor, Comparator, LogicUnit)
 
 **Timeline:** 3-4 weeks (started 2026-01-31)
 **Deliverable:** Verified ALU core (items 1-7), optionally multiplier/divider
 
 **Key Achievements:**
 - DSL enhanced with hierarchical circuit composition (`Circuit.inline`)
+- BUF (buffer) gate added to DSL (technical debt resolved!)
 - Compositional verification pattern established
 - All components proven equivalent (LEAN SV ≡ Chisel SV)
-
-**Technical Debt:**
-- Add BUF (buffer) gate to DSL (currently using OR(x,x) workaround)
 
 ### Phase 2: RISC-V Decoder Integration
 

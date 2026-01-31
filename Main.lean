@@ -10,6 +10,7 @@ import Shoumei.Examples.QueueExample
 import Shoumei.Circuits.Combinational.RippleCarryAdderCodegen
 import Shoumei.Circuits.Combinational.SubtractorCodegen
 import Shoumei.Circuits.Combinational.ComparatorCodegen
+import Shoumei.Circuits.Combinational.LogicUnitCodegen
 
 -- Main code generation entry point
 -- Generates FullAdder, DFlipFlop, Queue, and RippleCarryAdder modules
@@ -39,3 +40,5 @@ def main : IO Unit := do
   Shoumei.Circuits.Combinational.generateSubtractors
   IO.println ""
   Shoumei.Circuits.Combinational.generateComparators
+  IO.println ""
+  Shoumei.Circuits.Combinational.generateLogicUnits
