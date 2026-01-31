@@ -1,0 +1,75 @@
+# LEAN4 / Lake
+/.lake/
+/build/
+/lake-packages/
+*.olean
+*.trace
+*.hash
+
+# Scala / sbt / Chisel
+chisel/target/
+chisel/project/target/
+chisel/project/project/
+*.class
+*.log
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+.bsp/
+.metals/
+.bloop/
+metals.sbt
+
+# Generated outputs
+output/
+*.v
+*.sv
+*.fir
+*.anno.json
+
+# Build artifacts
+*.o
+*.so
+*.a
+*.dylib
+*.out
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Verification artifacts
+verification/results/
+verification/logs/
+*.vcd
+*.fst
+
+# Python (if used for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Temporary files
+/tmp/
+*.tmp
+*.bak
+*.orig
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# OS specific
+Thumbs.db
+.Spotlight-V100
+.Trashes
