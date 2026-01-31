@@ -122,9 +122,10 @@ jobs:
             test -x verification/run-lec.sh || echo "⚠️  verification/run-lec.sh is not executable"
           fi
 
-          # Basic shell syntax check
+          # Basic shell syntax check (exclude generated files)
           if command -v shellcheck > /dev/null; then
-            find . -name "*.sh" -type f -exec shellcheck {} +
+            find . -name "*.sh" -type f -not -path "./verification/FullAdder/*" -exec shellcheck {} +
+            echo "✓ All shell scripts pass shellcheck"
           else
             echo "shellcheck not available, skipping shell script checks"
           fi

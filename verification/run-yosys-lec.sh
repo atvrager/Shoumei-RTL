@@ -21,7 +21,7 @@ echo ""
 
 # Create temporary directory
 TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+trap 'rm -rf "$TMPDIR"' EXIT
 
 # Strip verification layers from Chisel output (after "// ----- 8< -----")
 sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" > "$TMPDIR/chisel_clean.sv"

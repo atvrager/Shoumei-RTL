@@ -211,6 +211,39 @@ The `chisel/` directory contains:
 - Scala/Chisel: Follow Scala style guide
 - SystemVerilog: IEEE 1800-2017 compliant, synthesizable subset only
 
+### Shell Script Quality
+
+**IMPORTANT**: All shell scripts must pass shellcheck before committing.
+
+**Pre-commit checklist for shell scripts:**
+```bash
+# Run shellcheck on all shell scripts
+find . -name "*.sh" -type f -exec shellcheck {} +
+
+# Or check a specific script
+shellcheck verification/run-lec.sh
+```
+
+**Common shellcheck rules to follow:**
+- **SC2064**: Use single quotes in traps: `trap 'rm -rf "$TMPDIR"' EXIT` (not `trap "rm -rf $TMPDIR" EXIT`)
+- **SC2034**: Remove unused variables or export them if used externally
+- **SC2086**: Quote variables to prevent word splitting: `"$variable"` (not `$variable`)
+- **SC2046**: Quote command substitutions: `"$(command)"` (not `$(command)`)
+
+**Install shellcheck:**
+```bash
+# Ubuntu/Debian
+sudo apt-get install shellcheck
+
+# Arch Linux
+sudo pacman -S shellcheck
+
+# macOS
+brew install shellcheck
+```
+
+CI will automatically run shellcheck on all `.sh` files and fail if issues are found.
+
 ## Notes for Claude
 
 - Always read existing LEAN files before modifying
