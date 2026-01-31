@@ -35,12 +35,18 @@ echo ""
 
 # Test 1b: Formal Proofs Verification
 echo "==> Test 1b: Formal Proofs Verification"
-if lake build Shoumei.Examples.AdderProofs; then
+if lake build Shoumei.Examples.AdderProofs && lake build Shoumei.Circuits.Sequential.DFFProofs; then
     echo -e "${GREEN}✓ FullAdder formal proofs verified${NC}"
-    echo "  - Truth table correctness (8 cases)"
+    echo "  - Truth table correctness (all 8 cases via case analysis)"
     echo "  - Commutativity property"
     echo "  - Arithmetic correctness"
     echo "  - Complete correctness theorem"
+    echo ""
+    echo -e "${GREEN}✓ DFlipFlop formal proofs verified${NC}"
+    echo "  - Reset behavior"
+    echo "  - Data capture"
+    echo "  - State persistence"
+    echo "  - Multi-cycle sequences"
 else
     echo -e "${RED}✗ Formal proofs failed to verify${NC}"
     exit 1
