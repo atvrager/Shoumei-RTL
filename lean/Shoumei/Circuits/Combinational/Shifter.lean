@@ -91,7 +91,7 @@ private def mkRightShiftStageArithmetic (stage_in : List Wire) (stage_out : List
   )
 
 -- Build complete 5-stage left shifter
-private def mkLeftShifter (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
+def mkLeftShifter (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
   -- Create intermediate wires for each stage
   let stage0_out := makeIndexedWires "sll_s0" 32
   let stage1_out := makeIndexedWires "sll_s1" 32
@@ -108,7 +108,7 @@ private def mkLeftShifter (input : List Wire) (shamt : List Wire) (zero : Wire) 
   stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4
 
 -- Build complete 5-stage right logical shifter
-private def mkRightLogicalShifter (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
+def mkRightLogicalShifter (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
   let stage0_out := makeIndexedWires "srl_s0" 32
   let stage1_out := makeIndexedWires "srl_s1" 32
   let stage2_out := makeIndexedWires "srl_s2" 32
@@ -124,7 +124,7 @@ private def mkRightLogicalShifter (input : List Wire) (shamt : List Wire) (zero 
   stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4
 
 -- Build complete 5-stage right arithmetic shifter
-private def mkRightArithmeticShifter (input : List Wire) (shamt : List Wire) (sign : Wire) (output : List Wire) : List Gate :=
+def mkRightArithmeticShifter (input : List Wire) (shamt : List Wire) (sign : Wire) (output : List Wire) : List Gate :=
   let stage0_out := makeIndexedWires "sra_s0" 32
   let stage1_out := makeIndexedWires "sra_s1" 32
   let stage2_out := makeIndexedWires "sra_s2" 32

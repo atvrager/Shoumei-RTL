@@ -72,7 +72,7 @@ def mkComparatorN (n : Nat) : Circuit :=
   let internal_carries := makeIndexedWires "c" (n - 1)
   let one := Wire.mk "one"
   let carries := one :: internal_carries ++ [borrow]
-  let rca_gates := buildFullAdderChain a b_inv carries diff
+  let rca_gates := buildFullAdderChain a b_inv carries diff ""
 
   -- Equality detection: diff == 0 means all bits are 0
   -- OR all diff bits, then NOT the result

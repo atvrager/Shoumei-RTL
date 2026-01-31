@@ -189,6 +189,56 @@ def generateRegUpdates (c : Circuit) : String :=
     let dffLogic := dffGates.map (generateDFF c)
     joinLines dffLogic
 
+-- Helper: chunk a list into sublists of size n
+partial def chunkList {α : Type} (xs : List α) (n : Nat) : List (List α) :=
+  if n == 0 || xs.isEmpty then []
+  else
+    let chunk := xs.take n
+    let rest := xs.drop n
+    chunk :: chunkList rest n
+
+-- Generate combinational logic with chunking for large circuits
+-- Splits gates into helper methods to avoid JVM bytecode size limits (64KB per method)
+def generateCombLogicChunked (c : Circuit) (chunkSize : Nat := 200) : (String × String) :=
+  let internalWires := findInternalWires c
+  let dffOutputs := findDFFOutputs c
+  let wireDecls := internalWires.filter (fun w => !dffOutputs.contains w) |>.map (fun w => s!"  val {w.name} = Wire(Bool())")
+
+  let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
+
+  if combGates.length <= chunkSize then
+    -- Small circuit: inline everything
+    let assignments := combGates.map (generateCombGate c)
+    let logic := if wireDecls.isEmpty then joinLines assignments
+                 else if assignments.isEmpty then joinLines wireDecls
+                 else joinLines wireDecls ++ "\n\n" ++ joinLines assignments
+    (logic, "")
+  else
+    -- Large circuit: split into helper methods
+    let chunks := chunkList combGates chunkSize
+    let numChunks := chunks.length
+
+    -- Generate helper method for each chunk
+    let helperMethods := chunks.enum.map (fun ⟨idx, chunk⟩ =>
+      let assignments := chunk.map (generateCombGate c)
+      joinLines [
+        s!"  private def initLogic{idx}(): Unit = " ++ "{",
+        joinLines (assignments.map (fun a => "  " ++ a)),
+        "  }"
+      ]
+    )
+
+    -- Generate calls to helper methods
+    let helperCalls := List.range numChunks |>.map (fun i => s!"  initLogic{i}()")
+
+    -- Main logic: wire declarations + helper calls
+    let mainLogic := if wireDecls.isEmpty then
+                       joinLines helperCalls
+                     else
+                       joinLines wireDecls ++ "\n\n" ++ joinLines helperCalls
+
+    (mainLogic, joinLines helperMethods)
+
 -- Main code generator: Circuit → Chisel module
 -- Uses RawModule for purely combinational circuits
 -- Uses Module for sequential circuits (with implicit clock/reset)
@@ -223,6 +273,24 @@ def toChisel (c : Circuit) : String :=
     ]
   else
     -- Use RawModule for combinational circuits (no clock/reset)
+    let (mainLogic, helperMethods) := generateCombLogicChunked c
+    let classBody := if helperMethods.isEmpty then
+      -- Small circuit: no helper methods needed
+      joinLines [
+        generateIOBundle c false,
+        "",
+        mainLogic
+      ]
+    else
+      -- Large circuit: include helper methods
+      joinLines [
+        generateIOBundle c false,
+        "",
+        mainLogic,
+        "",
+        helperMethods
+      ]
+
     joinLines [
       "package generated",
       "",
@@ -230,9 +298,7 @@ def toChisel (c : Circuit) : String :=
       "import chisel3.util._",
       "",
       "class " ++ moduleName ++ " extends RawModule {",
-      generateIOBundle c false,  -- false = combinational, keep all ports
-      "",
-      generateCombLogic c,
+      classBody,
       "}"
     ]
 

@@ -50,7 +50,7 @@ def mkSubtractorN (n : Nat) : Circuit :=
   let carries := cin :: internal_carries ++ [borrow]
 
   -- Build RCA gates using A and inverted B
-  let rca_gates := buildFullAdderChain a b_inv carries diff
+  let rca_gates := buildFullAdderChain a b_inv carries diff ""
 
   -- Create a constant "1" wire for cin
   -- We'll represent this as an input that should be tied to 1

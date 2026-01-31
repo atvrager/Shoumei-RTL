@@ -32,7 +32,7 @@ def makeIndexedWires (name : String) (n : Nat) : List Wire :=
 -- Helper: Create a FullAdder instance for a specific bit position
 -- Uses Circuit.inline to properly reuse the proven fullAdderCircuit
 -- This demonstrates hierarchical composition!
-def mkFullAdderInstance (a b cin sum cout : Wire) (bitIndex : Nat) : List Gate :=
+def mkFullAdderInstance (a b cin sum cout : Wire) (bitIndex : Nat) (wirePrefix : String) : List Gate :=
   -- Create wire mapping from fullAdderCircuit to our wires
   let wireMap (w : Wire) : Wire :=
     match w.name with
@@ -42,17 +42,18 @@ def mkFullAdderInstance (a b cin sum cout : Wire) (bitIndex : Nat) : List Gate :
     | "sum" => sum
     | "cout" => cout
     -- Internal wires need unique names per bit position
-    | "ab_xor" => Wire.mk s!"ab_xor{bitIndex}"
-    | "ab_and" => Wire.mk s!"ab_and{bitIndex}"
-    | "cin_ab" => Wire.mk s!"cin_ab{bitIndex}"
-    | _ => Wire.mk s!"unknown_{w.name}{bitIndex}"  -- Fallback
+    | "ab_xor" => Wire.mk s!"{wirePrefix}ab_xor{bitIndex}"
+    | "ab_and" => Wire.mk s!"{wirePrefix}ab_and{bitIndex}"
+    | "cin_ab" => Wire.mk s!"{wirePrefix}cin_ab{bitIndex}"
+    | _ => Wire.mk s!"{wirePrefix}unknown_{w.name}{bitIndex}"  -- Fallback
 
   -- Inline the proven fullAdderCircuit with our wire mapping
   fullAdderCircuit.inline wireMap
 
 -- Helper: Build a chain of FullAdders with carry propagation
 -- Returns the gates list for a ripple-carry adder
-def buildFullAdderChain (a_wires b_wires carry_wires sum_wires : List Wire) : List Gate :=
+-- wirePrefix: wirePrefix for internal wire names to avoid collisions (use "" for no wirePrefix)
+def buildFullAdderChain (a_wires b_wires carry_wires sum_wires : List Wire) (wirePrefix : String) : List Gate :=
   let n := a_wires.length
   -- For each bit position i, instantiate a FullAdder
   List.flatten (List.range n |>.map fun i =>
@@ -63,6 +64,7 @@ def buildFullAdderChain (a_wires b_wires carry_wires sum_wires : List Wire) : Li
       (sum_wires.get! i)        -- sum for bit i
       (carry_wires.get! (i + 1)) -- cout = cin for bit i+1
       i                         -- bit index for wire naming
+      wirePrefix                    -- wirePrefix for internal wires
   )
 
 -- Build a 32-bit ripple-carry adder
@@ -81,7 +83,7 @@ def mkRippleCarryAdder32 : Circuit :=
   let carries := cin :: internal_carries ++ [cout]
 
   -- Build the gates
-  let gates := buildFullAdderChain a b carries sum
+  let gates := buildFullAdderChain a b carries sum ""
 
   { name := "RippleCarryAdder32"
     inputs := a ++ b ++ [cin]
@@ -100,7 +102,7 @@ def mkRippleCarryAdder8 : Circuit :=
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
 
-  let gates := buildFullAdderChain a b carries sum
+  let gates := buildFullAdderChain a b carries sum ""
 
   { name := "RippleCarryAdder8"
     inputs := a ++ b ++ [cin]
@@ -119,7 +121,7 @@ def mkRippleCarryAdder4 : Circuit :=
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
 
-  let gates := buildFullAdderChain a b carries sum
+  let gates := buildFullAdderChain a b carries sum ""
 
   { name := "RippleCarryAdder4"
     inputs := a ++ b ++ [cin]
