@@ -8,6 +8,7 @@ It calls the code generation functions from Examples and Circuits.
 import Shoumei.Examples.Adder
 import Shoumei.Examples.QueueExample
 import Shoumei.Circuits.Combinational.RippleCarryAdderCodegen
+import Shoumei.Circuits.Combinational.SubtractorCodegen
 
 -- Main code generation entry point
 -- Generates FullAdder, DFlipFlop, Queue, and RippleCarryAdder modules
@@ -32,4 +33,6 @@ def main : IO Unit := do
   IO.println ""
   IO.println "==> Phase 1: Arithmetic Building Blocks"
   IO.println ""
-  Shoumei.Circuits.Combinational.main
+  Shoumei.Circuits.Combinational.generateRippleCarryAdders
+  IO.println ""
+  Shoumei.Circuits.Combinational.generateSubtractors

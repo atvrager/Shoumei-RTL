@@ -79,7 +79,7 @@ def writeRCA32Chisel : IO Unit := do
   IO.println s!"✓ Generated: {path}"
 
 -- Main entry point for RCA code generation
-def main : IO Unit := do
+def generateRippleCarryAdders : IO Unit := do
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  Phase 1: Ripple-Carry Adders"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
