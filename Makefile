@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel lec eqy smoke-test verify help setup check-tools opcodes
+.PHONY: all clean lean codegen chisel systemc lec eqy smoke-test verify help setup check-tools opcodes
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -13,9 +13,9 @@ HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
 
 # Default target: run entire pipeline
-all: check-tools lean codegen chisel lec
+all: check-tools lean codegen chisel systemc lec
 	@echo ""
-	@echo "✓ Complete pipeline executed successfully"
+	@echo "✓ Complete pipeline executed successfully (SV + Chisel + SystemC + LEC)"
 
 # Help target
 help:
@@ -23,11 +23,12 @@ help:
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  make setup      - Run bootstrap.py to install all dependencies"
-	@echo "  make all        - Run entire pipeline (lean → chisel → lec)"
+	@echo "  make all        - Run entire pipeline (lean → chisel → systemc → lec)"
 	@echo "  make lean       - Build LEAN code with Lake"
 	@echo "  make opcodes    - Generate RISC-V instruction definitions (RV32I)"
-	@echo "  make codegen    - Run code generators (includes opcodes)"
+	@echo "  make codegen    - Run code generators (SV + Chisel + SystemC)"
 	@echo "  make chisel     - Compile Chisel to SystemVerilog"
+	@echo "  make systemc    - Compile SystemC modules"
 	@echo ""
 	@echo "Verification Targets:"
 	@echo "  make lec        - Run Yosys SAT-based LEC (miter + SAT solver)"
@@ -87,10 +88,12 @@ opcodes:
 # Run code generators
 codegen: lean opcodes
 	@echo "==> Running code generators..."
-	@echo "    Phase 0+1: Foundation and arithmetic circuits..."
+	@echo "    Phase 0+1: Foundation and arithmetic circuits (SV + Chisel)..."
 	lake exe codegen
-	@echo "    Phase 2: RV32I decoder..."
+	@echo "    Phase 2: RV32I decoder (SV + Chisel)..."
 	lake exe generate_riscv_decoder
+	@echo "    Phase 3: SystemC code generation..."
+	lake exe codegen_systemc
 
 # Compile Chisel to SystemVerilog
 chisel:
@@ -103,6 +106,11 @@ endif
 	cd chisel && sbt run
 	@echo "==> Emitting RV32I decoder SystemVerilog from Chisel..."
 	cd chisel && sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder"
+
+# Compile SystemC modules
+systemc:
+	@echo "==> Compiling SystemC modules..."
+	cd systemc && ./build.sh
 
 # Run logical equivalence checking with Yosys
 lec:
@@ -141,7 +149,10 @@ endif
 	@# Always clean output directories (doesn't require tools)
 	@find output/sv-from-lean -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/sv-from-chisel -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@find output/systemc -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find chisel/src/main/scala/generated -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@# Clean SystemC build artifacts
+	@rm -rf systemc/build 2>/dev/null || true
 	@# Clean riscv-opcodes generated files
 	-rm -f third_party/riscv-opcodes/instr_dict.json third_party/riscv-opcodes/encoding.out.h 2>/dev/null || true
 	@echo "✓ Clean complete"

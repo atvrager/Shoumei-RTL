@@ -42,6 +42,9 @@ chisel/src/main/scala/generated/*.scala
 *.dylib
 *.out
 
+# SystemC build directory
+systemc/build/
+
 # IDEs
 .vscode/
 .idea/

@@ -23,13 +23,13 @@ open Shoumei.Codegen
 -- Generate SystemC operator for a combinational gate type
 def gateTypeToOperator (gt : GateType) : String :=
   match gt with
-  | GateType.AND => "&"
-  | GateType.OR => "|"
-  | GateType.NOT => "~"
-  | GateType.XOR => "^"
-  | GateType.BUF => ""   -- Buffer is direct assignment (no operator)
-  | GateType.MUX => "?"  -- Ternary operator (special handling required)
-  | GateType.DFF => ""   -- DFF doesn't use operators, uses SC_CTHREAD
+  | GateType.AND => "&&"
+  | GateType.OR => "||"
+  | GateType.NOT => "!"   -- Logical NOT for bool (not bitwise ~)
+  | GateType.XOR => "!="  -- XOR is logical inequality for bool
+  | GateType.BUF => ""    -- Buffer is direct assignment (no operator)
+  | GateType.MUX => "?"   -- Ternary operator (special handling required)
+  | GateType.DFF => ""    -- DFF doesn't use operators, uses SC_CTHREAD
 
 -- Helper: Get wire reference for SystemC (handles both individual and bundled I/O)
 def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
@@ -99,8 +99,9 @@ def generateSignalDeclarations (c : Circuit) : String :=
 -- Generate sensitivity list for SC_METHOD (all non-clock/reset inputs for data)
 def generateSensitivityList (c : Circuit) (useBundledIO : Bool) : String :=
   if useBundledIO then
-    -- For bundled I/O, sensitivity on entire vector
-    "    sensitive << inputs;"
+    -- For large bundled I/O circuits, use dont_initialize()
+    -- The simulator will trigger evaluation on any input change
+    "    dont_initialize();"
   else
     -- Individual inputs (exclude clock/reset from combinational sensitivity)
     let isSeq := c.hasSequentialElements
@@ -164,7 +165,7 @@ def generateCombGateSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex :
       match g.inputs with
       | [i0] =>
           let i0Ref := wireRef inputToIndex outputToIndex i0
-          s!"  {outRef}.write(~{i0Ref}.read());"
+          s!"  {outRef}.write(!{i0Ref}.read());"
       | _ => "  // ERROR: NOT gate should have 1 input"
   | GateType.BUF =>
       match g.inputs with
