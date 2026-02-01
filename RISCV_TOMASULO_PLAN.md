@@ -827,9 +827,33 @@ The rename stage output format should be designed with this in mind.
 
 ---
 
-## Phase 4: Reservation Stations
+## Phase 4: Reservation Stations & Decoupled Interfaces - 🚧 IN PROGRESS (Week 1 Complete)
 
-**Goal:** Implement dynamic scheduling infrastructure
+**Status:** Week 1/6 Complete - Decoupled Abstraction
+**Last Updated:** 2026-02-01
+
+**Goal:** Implement dynamic scheduling infrastructure with decoupled interface abstraction
+
+### Phase 4A: Decoupled Interface Abstraction ✅ COMPLETE (Week 1-2)
+
+**Goal:** Add formal ready/valid handshaking abstraction to DSL
+
+**Tasks:**
+1. ✅ Week 1: Core Decoupled types and helpers (COMPLETE)
+   - DecoupledSource/DecoupledSink types
+   - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
+   - Behavioral semantics: DecoupledTransfer rules
+   - Composition axioms and theorems
+2. ⏳ Week 2: Queue refactoring and examples (IN PROGRESS)
+   - Refactor Queue to expose Decoupled interface
+   - Prove basic decoupled properties
+   - Document usage patterns
+
+**Deliverable:** Lightweight decoupled abstraction for ready/valid handshaking
+
+### Phase 4B: Reservation Stations (Week 3-6)
+
+**Goal:** Dynamic scheduling with operand capture and CDB snooping
 
 **Tasks:**
 1. Reservation station entry structure
@@ -838,8 +862,8 @@ The rename stage output format should be designed with this in mind.
 4. Arbitration for execution units
 5. Prove operand forwarding correctness
 
-**Timeline:** 4-5 weeks
-**Deliverable:** Verified reservation station array
+**Timeline:** 4 weeks
+**Deliverable:** Verified reservation station array (~20 theorems)
 
 ---
 
@@ -942,7 +966,7 @@ The rename stage output format should be designed with this in mind.
 
 **Total: ~43 weeks (~11 months) for complete verified RV32IM Tomasulo CPU**
 
-**Current Progress:** 9 weeks complete (Phase 0-2), starting Phase 3 (Week 1)
+**Current Progress:** 17 weeks complete (Phase 0-3), Phase 4A Week 1 complete
 
 This is an ambitious timeline for a single developer. With a team of 2-3, could be reduced to 6-8 months.
 
@@ -950,7 +974,7 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 3B Week 6 Complete
+**Status:** Active Development - Phase 4A Week 1 Complete
 **Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
@@ -959,15 +983,20 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 - ✅ Phase 0: Sequential DSL (Queue/FIFO with full verification)
 - ✅ Phase 1: Arithmetic Building Blocks (Complete RV32I ALU, ~3000 gates)
 - ✅ Phase 2: RISC-V Decoder (40 instructions, dual codegen, LEC verified)
+- ✅ Phase 3: Register Renaming Infrastructure (RAT + FreeList + PhysRegFile + RenameStage)
+  - Week 1-3: Prerequisites (Decoder5/6, MuxTree, QueueN)
+  - Week 4: RAT (Register Alias Table, 416 gates, 9 behavioral proofs)
+  - Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
+  - Week 6: PhysRegFile (Physical Register File, 4160 gates, 18 proofs)
+  - Week 7: RenameStage Integration (15 gates, 3 instances, 18 theorems)
 
-**Current Phase:** Phase 3 - Register Renaming Infrastructure (Week 6/8 complete)
-- ✅ Week 1: Binary Decoder (Decoder5, Decoder6)
-- ✅ Week 2: MuxTree (Mux32x6, Mux64x32)
-- ✅ Week 3: QueueN (behavioral model + structural circuit)
-- ✅ Week 4: RAT (Register Alias Table, 416 gates, 9 behavioral proofs)
-- ✅ Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
-- ✅ Week 6: PhysRegFile (Physical Register File, 4160 gates, 18 proofs)
+**Current Phase:** Phase 4A - Decoupled Interface Abstraction (Week 1/2 complete)
+- ✅ Week 1: Core Decoupled types and helpers
+  - DecoupledSource/DecoupledSink types (272 lines)
+  - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
+  - DecoupledProofs: 11 axioms/theorems for composition (180 lines)
+  - Backward compatible: 47/47 modules still verified
 
 **Verification Status:** 47/47 modules verified (40 LEC + 7 compositional = 100% coverage)
 
-**Next Milestone:** Week 7-8 - RenameStage Integration (RAT + FreeList + PhysRegFile)
+**Next Milestone:** Phase 4A Week 2 - Queue refactoring with Decoupled interface
