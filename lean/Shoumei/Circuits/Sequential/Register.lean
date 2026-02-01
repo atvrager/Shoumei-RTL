@@ -48,12 +48,11 @@ def mkRegister32 : Circuit := mkRegisterN 32
 def registerWidth (c : Circuit) : Nat :=
   c.gates.filter (fun g => g.gateType == GateType.DFF) |>.length
 
--- TODO: Prove register width equals the parameter
--- This requires list length lemmas that we haven't developed yet
+-- TODO: Complete proof (requires showing filter keeps all DFFs)
 /-
 theorem registerWidth_correct (n : Nat) :
   registerWidth (mkRegisterN n) = n := by
-  simp [registerWidth, mkRegisterN, makeIndexedWires]
+  simp [registerWidth, mkRegisterN]
   sorry
 -/
 

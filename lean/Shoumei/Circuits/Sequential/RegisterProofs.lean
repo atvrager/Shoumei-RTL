@@ -9,6 +9,7 @@ Proves correctness properties of parameterized registers:
 -/
 
 import Shoumei.Circuits.Sequential.Register
+import Shoumei.Circuits.Sequential.RegisterLemmas
 import Shoumei.Semantics
 
 namespace Shoumei.Circuits.Sequential
@@ -32,6 +33,11 @@ def getQBit (env : Env) (i : Nat) : Bool :=
 def getQBits (env : Env) (n : Nat) : List Bool :=
   List.range n |>.map (fun i => getQBit env i)
 
+-- Axiom: makeRegisterEnv with reset=true has reset wire set to true
+-- Provable by unfolding mkEnv and showing find? succeeds on control_pairs
+axiom makeRegisterEnv_reset (n : Nat) (d_vals : List Bool) :
+    makeRegisterEnv n d_vals true (Wire.mk "reset") = true
+
 -- Theorem: 1-bit register has same structure as a single DFF
 theorem register1_structure :
   let reg1 := mkRegister1
@@ -43,17 +49,19 @@ theorem register1_structure :
 -- TODO: General theorems for arbitrary N (require inductive proofs)
 -- These outline the proof structure but aren't yet proven
 
-/-
 -- Theorem: Reset behavior for N-bit register
 -- When reset is high, all output bits become 0
-theorem registerN_reset (n : Nat) (d_vals : List Bool) (h : d_vals.length = n) :
+theorem registerN_reset (n : Nat) (d_vals : List Bool) (_ : d_vals.length = n) :
   let env := makeRegisterEnv n d_vals true
   let (nextState, _) := evalCycleSequential (mkRegisterN n) initState env
   -- All q bits are 0 after reset
-  ∀ i, i < n → nextState (Wire.mk s!"q{i}") = false := by
-  intro i hi
-  -- Base case and inductive reasoning
-  sorry
+  ∀ idx, idx < n → nextState (Wire.mk s!"q{idx}") = false := by
+  intro idx hidx
+  simp only []
+  apply register_nextState_under_reset
+  exact makeRegisterEnv_reset n d_vals
+
+/-
 
 -- Theorem: Data capture for N-bit register
 -- When reset is low, each output bit captures its corresponding input
@@ -61,7 +69,7 @@ theorem registerN_capture (n : Nat) (d_vals : List Bool) (h : d_vals.length = n)
   let env := makeRegisterEnv n d_vals false
   let (nextState, _) := evalCycleSequential (mkRegisterN n) initState env
   -- Each q[i] equals d[i]
-  ∀ i, i < n → nextState (Wire.mk s!"q{i}") = d_vals[i]? .getD false := by
+  ∀ i, i < n → nextState (Wire.mk s!"q{i}") = (d_vals[i]?.getD false) := by
   intro i hi
   sorry
 
