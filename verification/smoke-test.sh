@@ -89,6 +89,39 @@ if [ ! -f "chisel/src/main/scala/generated/FullAdder.scala" ]; then
     exit 1
 fi
 
+# Test 2b: RV32I Decoder Generation
+echo "==> Test 2b: RV32I Decoder Generation"
+
+# Generate opcodes first (required for decoder)
+if make opcodes > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ RISC-V opcodes generated${NC}"
+else
+    echo -e "${RED}✗ RISC-V opcodes generation failed${NC}"
+    exit 1
+fi
+
+# Generate RV32I decoder
+if lake exe generate_riscv_decoder > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ RV32I decoder generation succeeded${NC}"
+else
+    echo -e "${RED}✗ RV32I decoder generation failed${NC}"
+    exit 1
+fi
+
+# Verify RV32I decoder file exists
+if [ ! -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
+    echo -e "${RED}✗ RV32IDecoder LEAN SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+if [ ! -f "output/chisel-src/RV32IDecoder.scala" ]; then
+    echo -e "${RED}✗ RV32IDecoder Chisel source not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ RV32IDecoder files generated${NC}"
+echo ""
+
 # Verify DFlipFlop files exist
 if [ ! -f "output/sv-from-lean/DFlipFlop.sv" ]; then
     echo -e "${RED}✗ DFlipFlop LEAN SystemVerilog not generated${NC}"
@@ -156,6 +189,24 @@ if [ ! -f "output/sv-from-chisel/Queue1_32.sv" ]; then
 fi
 
 echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop, Queue1_8, Queue1_32)${NC}"
+
+# Test 3b: RV32I Decoder Chisel Compilation
+echo "==> Test 3b: RV32I Decoder Chisel Compilation"
+cd chisel
+if sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder" > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ RV32I decoder Chisel compilation succeeded${NC}"
+else
+    echo -e "${RED}✗ RV32I decoder Chisel compilation failed${NC}"
+    exit 1
+fi
+cd ..
+
+if [ ! -f "output/sv-from-chisel/RV32IDecoder.sv" ]; then
+    echo -e "${RED}✗ RV32IDecoder Chisel SystemVerilog not generated${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ RV32IDecoder Chisel SystemVerilog generated${NC}"
 echo ""
 
 # Test 4: Port Name Validation
@@ -281,6 +332,40 @@ fi
 echo -e "${GREEN}✓ Queue ports and logic verified (8-bit and 32-bit)${NC}"
 echo ""
 
+# Test 5d: RV32I Decoder Port and Logic Validation
+echo "==> Test 5d: RV32I Decoder Port and Logic Validation"
+
+# Check decoder ports in LEAN output
+for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
+    if ! grep -q "$port" output/sv-from-lean/RV32IDecoder.sv; then
+        echo -e "${RED}✗ Port '$port' missing in LEAN RV32IDecoder output${NC}"
+        exit 1
+    fi
+done
+
+# Check decoder ports in Chisel output
+for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
+    if ! grep -q "$port" output/sv-from-chisel/RV32IDecoder.sv; then
+        echo -e "${RED}✗ Port '$port' missing in Chisel RV32IDecoder output${NC}"
+        exit 1
+    fi
+done
+
+# Check for register extraction logic
+if ! grep -q "io_rd\|io_rs1\|io_rs2" output/sv-from-lean/RV32IDecoder.sv; then
+    echo -e "${RED}✗ No register field extraction in LEAN RV32IDecoder output${NC}"
+    exit 1
+fi
+
+# Check for immediate extraction logic
+if ! grep -q "imm_i\|imm_s\|imm_b\|imm_u\|imm_j" output/sv-from-lean/RV32IDecoder.sv; then
+    echo -e "${RED}✗ No immediate extraction logic in LEAN RV32IDecoder output${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ RV32IDecoder ports and logic verified${NC}"
+echo ""
+
 # Test 6: Yosys Equivalence (if available)
 echo "==> Test 6: Yosys Equivalence Check"
 if command -v yosys > /dev/null 2>&1; then
@@ -310,6 +395,7 @@ echo "  ✓ Chisel compiles to SystemVerilog"
 echo "  ✓ FullAdder (combinational) verified"
 echo "  ✓ DFlipFlop (sequential) verified"
 echo "  ✓ Queue/FIFO (ready/valid handshaking) verified"
+echo "  ✓ RV32IDecoder (40 RISC-V instructions) verified"
 echo ""
 
 exit 0
