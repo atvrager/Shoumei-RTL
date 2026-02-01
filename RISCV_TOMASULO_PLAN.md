@@ -1,7 +1,7 @@
 # RV32IM Tomasulo CPU - Implementation Plan
 
 **Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
-**Last Updated:** 2026-01-31 (Phase 3 Planning Complete)
+**Last Updated:** 2026-01-31 (Phase 3 Week 2 Complete - MuxTree)
 
 ---
 
@@ -24,7 +24,7 @@
 | Phase 0: Sequential DSL | ✅ Complete | 3 weeks | Queue/FIFO with verification |
 | Phase 1: Arithmetic | ✅ Complete | 4 weeks | Complete RV32I ALU |
 | Phase 2: Decoder | ✅ Complete | 2 weeks | RV32I instruction decoder |
-| **Phase 3: Renaming** | **📋 Planning Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
+| **Phase 3: Renaming** | **🚧 Week 2/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
 | Phase 4: Reservation Stations | ⏸️ Pending | 4-5 weeks | Dynamic scheduling infrastructure |
 | Phase 5: Execution Units | ⏸️ Pending | 3-4 weeks | EU integration with RS/CDB |
 | Phase 6: ROB & Retirement | ⏸️ Pending | 3-4 weeks | In-order commit logic |
@@ -275,11 +275,11 @@ TOTAL:         9 theorems + 4 runtime checks ✓
 
 ---
 
-## Phase 3: Register Renaming Infrastructure - 📋 READY TO BEGIN
+## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 2 Complete)
 
 **Goal:** Implement RAT, physical register file, free list with 64 physical registers
 
-**Status:** Planning Complete - Ready for Week 1 implementation
+**Status:** Week 2/8 Complete - MuxTree verified with LEC
 **Target:** 64 physical registers, 6-bit tags, structural proofs only
 **Timeline:** 8 weeks (prerequisites-first approach)
 
@@ -334,7 +334,7 @@ def mkDecoder (n : Nat) : Circuit
 
 ---
 
-#### Week 2: Parameterized Mux Tree
+#### Week 2: Parameterized Mux Tree ✅ COMPLETE
 
 **File**: `lean/Shoumei/Circuits/Combinational/MuxTree.lean`
 
@@ -358,11 +358,30 @@ def mkMuxTree (n width : Nat) : Circuit
 
 **Examples**: `mkMux32x6` (32:1 mux, 6 bits for RAT reads), `mkMux64x32` (64:1 mux, 32 bits for PhysRegFile reads)
 
-**Proofs**:
-- `theorem mux32x6_gate_count : mkMux32x6.gates.length = <count>`
-- `theorem mux_tree_depth (n : Nat) : depth = log2(n)`
+**Proofs** (18 theorems verified):
+- `theorem mux2x8_gate_count : mkMux2x8.gates.length = 32`
+- `theorem mux4x8_gate_count : mkMux4x8.gates.length = 96`
+- `theorem mux32x6_gate_count : mkMux32x6.gates.length = 744`
+- `theorem mux64x32_gate_count : mkMux64x32.gates.length = 8064`
+- `theorem mux32x6_formula : mkMux32x6.gates.length = (32 - 1) * 6 * 4`
+- `theorem mux64x32_formula : mkMux64x32.gates.length = (64 - 1) * 32 * 4`
+- All proofs use `native_decide`
 
-**Deliverable**: MuxTree builds, passes LEC, ~186 gates for mkMux32x6
+**LEC Verification**:
+- ✅ Mux2x8: PASS (324 vars, 805 clauses)
+- ✅ Mux4x8: PASS (821 vars, 2049 clauses)
+- ✅ Mux32x6: PASS (5774 vars, 14465 clauses)
+- ✅ **Mux64x32: PASS (61793 vars, 154961 clauses)** - Critical component!
+
+**Critical Achievements**:
+1. **JVM Size Limit Solution**: Implemented wire arrays (`Wire(Vec(8032, Bool()))`) + flattened I/O with underscore indexing (`inputs_0`, `inputs_1`, ...) to handle 8064-gate circuits
+2. **Port Name Compatibility**: LEAN and CIRCT both generate compatible flattened port names for LEC
+3. **Chisel Gate Type Support**: Fixed `generateCombGateIndexed` to support all 6 gate types (AND, OR, NOT, BUF, XOR, MUX)
+4. **ALU32 Bug Fix**: Added missing XOR/MUX support, fixing 2050 "not fully initialized" errors
+
+**Deliverable**: ✅ MuxTree builds, passes LEC, all sizes verified (32 to 8064 gates)
+
+**Completed:** 2026-01-31
 
 ---
 

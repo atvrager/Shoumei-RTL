@@ -29,46 +29,67 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.MUX => "?"  -- Ternary operator (special handling required)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses always block
 
+-- Helper: Get wire reference (handles flattened I/O with underscore indexing)
+def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
+  match inputToIndex.find? (fun p => p.fst.name == w.name) with
+  | some (_wire, idx) => s!"inputs_{idx}"
+  | none =>
+      match outputToIndex.find? (fun p => p.fst.name == w.name) with
+      | some (_wire, idx) => s!"outputs_{idx}"
+      | none => w.name
+
 -- Generate a single combinational gate assignment
 -- Note: DFFs are handled separately in generateAlwaysBlocks
-def generateCombGate (g : Gate) : String :=
+def generateCombGate (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
   let op := gateTypeToOperator g.gateType
+  let outRef := wireRef inputToIndex outputToIndex g.output
   match g.gateType with
   | GateType.NOT =>
       -- Unary operator: ~input
       match g.inputs with
-      | [i0] => s!"  assign {g.output.name} = {op}{i0.name};"
+      | [i0] => s!"  assign {outRef} = {op}{wireRef inputToIndex outputToIndex i0};"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
   | GateType.BUF =>
       -- Buffer: direct assignment
       match g.inputs with
-      | [i0] => s!"  assign {g.output.name} = {i0.name};"
+      | [i0] => s!"  assign {outRef} = {wireRef inputToIndex outputToIndex i0};"
       | _ => s!"  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
       -- Ternary operator: sel ? in1 : in0
       -- inputs: [in0, in1, sel]
       match g.inputs with
-      | [in0, in1, sel] => s!"  assign {g.output.name} = {sel.name} ? {in1.name} : {in0.name};"
+      | [in0, in1, sel] =>
+          let in0Ref := wireRef inputToIndex outputToIndex in0
+          let in1Ref := wireRef inputToIndex outputToIndex in1
+          let selRef := wireRef inputToIndex outputToIndex sel
+          s!"  assign {outRef} = {selRef} ? {in1Ref} : {in0Ref};"
       | _ => s!"  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF =>
       ""  -- DFFs handled in always blocks, not assign statements
   | _ =>
       -- Binary operators: input1 op input2
       match g.inputs with
-      | [i0, i1] => s!"  assign {g.output.name} = {i0.name} {op} {i1.name};"
+      | [i0, i1] =>
+          let i0Ref := wireRef inputToIndex outputToIndex i0
+          let i1Ref := wireRef inputToIndex outputToIndex i1
+          s!"  assign {outRef} = {i0Ref} {op} {i1Ref};"
       | _ => s!"  // ERROR: Binary gate should have 2 inputs"
 
 -- Generate always block for a D Flip-Flop
 -- DFF inputs: [d, clk, reset], output: q
-def generateDFF (g : Gate) : String :=
+def generateDFF (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
   match g.inputs with
   | [d, clk, reset] =>
+      let dRef := wireRef inputToIndex outputToIndex d
+      let clkRef := wireRef inputToIndex outputToIndex clk
+      let resetRef := wireRef inputToIndex outputToIndex reset
+      let qRef := wireRef inputToIndex outputToIndex g.output
       joinLines [
-        s!"  always @(posedge {clk.name}) begin",
-        s!"    if ({reset.name})",
-        s!"      {g.output.name} <= 1'b0;",
+        s!"  always @(posedge {clkRef}) begin",
+        s!"    if ({resetRef})",
+        s!"      {qRef} <= 1'b0;",
         s!"    else",
-        s!"      {g.output.name} <= {d.name};",
+        s!"      {qRef} <= {dRef};",
         s!"  end"
       ]
   | _ => s!"  // ERROR: DFF should have 3 inputs: [d, clk, reset]"
@@ -99,53 +120,84 @@ def generateWireDeclarations (c : Circuit) : String :=
     joinLines decls
 
 -- Generate all combinational gate assignments (DFFs handled separately)
-def generateCombAssignments (c : Circuit) : String :=
+def generateCombAssignments (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
-  let assignments := combGates.map generateCombGate
+  let assignments := combGates.map (generateCombGate inputToIndex outputToIndex)
   joinLines assignments
 
 -- Generate all always blocks for sequential elements (DFFs)
-def generateAlwaysBlocks (c : Circuit) : String :=
+def generateAlwaysBlocks (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
-  let blocks := dffGates.map generateDFF
+  let blocks := dffGates.map (generateDFF inputToIndex outputToIndex)
   joinLines blocks
 
 
 -- Main code generator: Circuit → SystemVerilog module
 -- Supports both combinational and sequential circuits
+-- Uses bundled I/O (input/output vectors) for large circuits (>500 I/O ports)
 def toSystemVerilog (c : Circuit) : String :=
   let moduleName := c.name
   let dffOutputs := findDFFOutputs c
 
-  -- Use Verilog-95 style for ABC compatibility:
-  -- module name(port1, port2, ...);
-  --   input port1;
-  --   output port2;  (or 'output reg' for DFF outputs)
-  --   ...
-  -- endmodule
+  -- Check if we should use bundled I/O (for large circuits)
+  let totalIOPorts := c.inputs.length + c.outputs.length
+  let useBundledIO := totalIOPorts > 500
 
-  -- Port list (just names, no direction)
-  let allPorts := c.inputs ++ c.outputs
-  let portNames := allPorts.map (fun w => w.name)
-  let portList := String.intercalate ", " portNames
-
-  -- Input declarations
-  let inputDecls := c.inputs.map (fun w => s!"  input {w.name};")
-  let inputSection := joinLines inputDecls
-
-  -- Output declarations (use 'output reg' for DFF outputs)
-  let outputDecls := c.outputs.map (fun w =>
-    if dffOutputs.contains w then
-      s!"  output reg {w.name};"
+  -- Create index mappings for bundled I/O
+  let (inputToIndex, outputToIndex) :=
+    if useBundledIO then
+      (c.inputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
+       c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)))
     else
-      s!"  output {w.name};"
-  )
-  let outputSection := joinLines outputDecls
+      ([], [])
+
+  -- Generate port list and declarations
+  let (portList, inputSection, outputSection) :=
+    if useBundledIO then
+      -- Flattened I/O with underscore indexing (matches CIRCT firtool output)
+      -- Generate individual ports: inputs_0, inputs_1, ..., outputs_0, outputs_1, ...
+      let inputPortNames := c.inputs.enum.map (fun ⟨idx, _⟩ => s!"inputs_{idx}")
+      let outputPortNames := c.outputs.enum.map (fun ⟨idx, _⟩ => s!"outputs_{idx}")
+      let allPortNames := inputPortNames ++ outputPortNames
+      let portListStr := String.intercalate ", " allPortNames
+
+      -- Generate individual input declarations
+      let inputDecls := c.inputs.enum.map (fun ⟨idx, _⟩ => s!"  input inputs_{idx};")
+      let inputSectionStr := joinLines inputDecls
+
+      -- Generate individual output declarations
+      let outputDecls := c.outputs.enum.map (fun ⟨idx, wire⟩ =>
+        if dffOutputs.contains wire then
+          s!"  output reg outputs_{idx};"
+        else
+          s!"  output outputs_{idx};"
+      )
+      let outputSectionStr := joinLines outputDecls
+
+      (portListStr, inputSectionStr, outputSectionStr)
+    else
+      -- Individual I/O: traditional Verilog-95 style
+      let allPorts := c.inputs ++ c.outputs
+      let portNames := allPorts.map (fun w => w.name)
+      let portListStr := String.intercalate ", " portNames
+
+      let inputDecls := c.inputs.map (fun w => s!"  input {w.name};")
+      let inputSectionStr := joinLines inputDecls
+
+      let outputDecls := c.outputs.map (fun w =>
+        if dffOutputs.contains w then
+          s!"  output reg {w.name};"
+        else
+          s!"  output {w.name};"
+      )
+      let outputSectionStr := joinLines outputDecls
+
+      (portListStr, inputSectionStr, outputSectionStr)
 
   -- Get wire declarations, combinational assignments, and always blocks
   let wireDecls := generateWireDeclarations c
-  let combAssigns := generateCombAssignments c
-  let alwaysBlocks := generateAlwaysBlocks c
+  let combAssigns := generateCombAssignments c inputToIndex outputToIndex
+  let alwaysBlocks := generateAlwaysBlocks c inputToIndex outputToIndex
 
   -- Build module
   joinLines [

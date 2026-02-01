@@ -134,6 +134,7 @@ def findDFFOutputs (c : Circuit) : List Wire :=
   c.gates.filter (fun g => g.gateType == GateType.DFF) |>.map (fun g => g.output)
 
 -- Generate IO port declarations
+-- For large circuits (>500 I/O ports), use Vec bundles to avoid JVM constructor limits
 -- For RawModule: all ports declared directly
 -- For Module: filter out clock and reset wires (both are implicit in Module)
 def generateIOBundle (c : Circuit) (isSequential : Bool) : String :=
@@ -142,11 +143,20 @@ def generateIOBundle (c : Circuit) (isSequential : Bool) : String :=
   let implicitWires := clockWires ++ resetWires
   -- Filter out clock and reset wires from inputs for sequential circuits
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
-  let inputDecls := filteredInputs.map (fun w => s!"  val {w.name} = IO(Input(Bool()))")
-  let outputDecls := c.outputs.map (fun w => s!"  val {w.name} = IO(Output(Bool()))")
-  let allDecls := inputDecls ++ outputDecls
 
-  joinLines allDecls
+  let totalIOPorts := filteredInputs.length + c.outputs.length
+
+  if totalIOPorts > 500 then
+    -- Use Vec bundles for large I/O
+    let inputDecl := s!"  val inputs = IO(Input(Vec({filteredInputs.length}, Bool())))"
+    let outputDecl := s!"  val outputs = IO(Output(Vec({c.outputs.length}, Bool())))"
+    inputDecl ++ "\n" ++ outputDecl
+  else
+    -- Individual port declarations for small/medium circuits
+    let inputDecls := filteredInputs.map (fun w => s!"  val {w.name} = IO(Input(Bool()))")
+    let outputDecls := c.outputs.map (fun w => s!"  val {w.name} = IO(Output(Bool()))")
+    let allDecls := inputDecls ++ outputDecls
+    joinLines allDecls
 
 -- Generate combinational logic (wire declarations + assignments for comb gates)
 def generateCombLogic (c : Circuit) : String :=
@@ -197,8 +207,74 @@ partial def chunkList {α : Type} (xs : List α) (n : Nat) : List (List α) :=
     let rest := xs.drop n
     chunk :: chunkList rest n
 
+-- Helper: Create wire array declaration for large circuits (avoids individual val declarations)
+def generateWireArrayDecl (numWires : Nat) : String :=
+  s!"  val _wires = Wire(Vec({numWires}, Bool()))"
+
+-- Helper: Get wire reference (handles wire arrays and I/O bundles)
+def wireRefIndexed (_c : Circuit) (wireToIndex : List (Wire × Nat)) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
+  -- Check if it's an internal wire (in wire array)
+  match wireToIndex.find? (fun p => p.fst.name == w.name) with
+  | some (_wire, idx) => s!"_wires({idx})"
+  | none =>
+      -- Check if it's an input port
+      match inputToIndex.find? (fun p => p.fst.name == w.name) with
+      | some (_wire, idx) => s!"inputs({idx})"
+      | none =>
+          -- Check if it's an output port
+          match outputToIndex.find? (fun p => p.fst.name == w.name) with
+          | some (_wire, idx) => s!"outputs({idx})"
+          | none => w.name  -- Direct name (for small circuits without bundling)
+
+-- Generate combinational gate with indexed wires
+def generateCombGateIndexed (c : Circuit) (wireToIndex : List (Wire × Nat)) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
+  let outRef := wireRefIndexed c wireToIndex inputToIndex outputToIndex g.output
+  match g.gateType with
+  | GateType.AND =>
+      if h : g.inputs.length >= 2 then
+        let in0Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        let in1Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨1, by omega⟩)
+        s!"  {outRef} := {in0Ref} & {in1Ref}"
+      else
+        s!"  // ERROR: AND gate should have 2 inputs"
+  | GateType.OR =>
+      if h : g.inputs.length >= 2 then
+        let in0Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        let in1Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨1, by omega⟩)
+        s!"  {outRef} := {in0Ref} | {in1Ref}"
+      else
+        s!"  // ERROR: OR gate should have 2 inputs"
+  | GateType.NOT =>
+      if h : g.inputs.length >= 1 then
+        let inRef := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        s!"  {outRef} := ~{inRef}"
+      else
+        s!"  // ERROR: NOT gate should have 1 input"
+  | GateType.BUF =>
+      if h : g.inputs.length >= 1 then
+        let inRef := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        s!"  {outRef} := {inRef}"
+      else
+        s!"  // ERROR: BUF gate should have 1 input"
+  | GateType.XOR =>
+      if h : g.inputs.length >= 2 then
+        let in0Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        let in1Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨1, by omega⟩)
+        s!"  {outRef} := {in0Ref} ^ {in1Ref}"
+      else
+        s!"  // ERROR: XOR gate should have 2 inputs"
+  | GateType.MUX =>
+      if h : g.inputs.length >= 3 then
+        let in0Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨0, by omega⟩)
+        let in1Ref := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨1, by omega⟩)
+        let selRef := wireRefIndexed c wireToIndex inputToIndex outputToIndex (g.inputs.get ⟨2, by omega⟩)
+        s!"  {outRef} := Mux({selRef}, {in1Ref}, {in0Ref})"
+      else
+        s!"  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
+  | GateType.DFF => ""  -- DFFs handled in always blocks
+
 -- Generate combinational logic with chunking for large circuits
--- Splits gates AND wire declarations into helper methods to avoid JVM bytecode size limits (64KB per method)
+-- Uses wire arrays (Vec) for circuits with >1000 internal wires to avoid JVM constructor limits
 def generateCombLogicChunked (c : Circuit) (chunkSize : Nat := 200) : (String × String) :=
   let internalWires := findInternalWires c
   let dffOutputs := findDFFOutputs c
@@ -206,7 +282,45 @@ def generateCombLogicChunked (c : Circuit) (chunkSize : Nat := 200) : (String ×
 
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
 
-  if combGates.length <= chunkSize then
+  -- Use wire arrays for circuits with many wires (>1000)
+  let useWireArray := wiresToDeclare.length > 1000
+
+  if useWireArray then
+    -- Very large circuit: use wire array AND I/O bundles to avoid individual val declarations
+    let wireToIndex := wiresToDeclare.enum.map (fun ⟨idx, wire⟩ => (wire, idx))
+    let wireArrayDecl := generateWireArrayDecl wiresToDeclare.length
+
+    -- Also create index mappings for I/O ports (for bundled I/O)
+    let totalIOPorts := c.inputs.length + c.outputs.length
+    let (inputToIndex, outputToIndex) := if totalIOPorts > 500 then
+      (c.inputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
+       c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)))
+    else
+      ([], [])  -- No bundling for small circuits
+
+    let gateChunks := chunkList combGates chunkSize
+
+    -- Generate helper methods for gate assignments using indexed wires
+    let gateHelperMethods := gateChunks.enum.map (fun ⟨idx, chunk⟩ =>
+      let assignments := chunk.map (generateCombGateIndexed c wireToIndex inputToIndex outputToIndex)
+      joinLines [
+        s!"  private def initLogic{idx}(): Unit = " ++ "{",
+        joinLines (assignments.map (fun a => "  " ++ a)),
+        "  }"
+      ]
+    )
+
+    -- Generate calls to helper methods
+    let gateHelperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
+
+    -- Main logic: wire array declaration + helper calls
+    let mainLogic := wireArrayDecl ++ "\n\n" ++ joinLines gateHelperCalls
+
+    -- Helper methods
+    let allHelpers := joinLines gateHelperMethods
+
+    (mainLogic, allHelpers)
+  else if combGates.length <= chunkSize then
     -- Small circuit: inline everything
     let wireDecls := wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())")
     let assignments := combGates.map (generateCombGate c)
@@ -215,9 +329,7 @@ def generateCombLogicChunked (c : Circuit) (chunkSize : Nat := 200) : (String ×
                  else joinLines wireDecls ++ "\n\n" ++ joinLines assignments
     (logic, "")
   else
-    -- Large circuit: split gate assignments into helper methods
-    -- Wire declarations must stay at class level (can't be in helper methods - they'd be local vars)
-    -- So we keep ALL wire declarations inline, but chunk the gate assignments
+    -- Medium circuit: chunk gate assignments but use individual wire declarations
     let wireDecls := wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())")
     let gateChunks := chunkList combGates chunkSize
 
@@ -276,7 +388,7 @@ def toChisel (c : Circuit) : String :=
     ]
   else
     -- Use RawModule for combinational circuits (no clock/reset)
-    let (mainLogic, helperMethods) := generateCombLogicChunked c 100  -- Smaller chunk size for large circuits
+    let (mainLogic, helperMethods) := generateCombLogicChunked c 25  -- Very aggressive chunking for JVM limits
     let classBody := if helperMethods.isEmpty then
       -- Small circuit: no helper methods needed
       joinLines [
