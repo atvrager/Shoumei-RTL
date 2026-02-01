@@ -45,3 +45,8 @@ lean_exe generate_muxtree where
 lean_exe test_systemc where
   root := `TestSystemC
   supportInterpreter := true
+
+-- Executable target for SystemC code generation (all 23 modules)
+lean_exe codegen_systemc where
+  root := `GenerateSystemC
+  supportInterpreter := true
