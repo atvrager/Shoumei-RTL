@@ -190,31 +190,25 @@ def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex
     none
 
 -- Helper: construct port reference from port base name and wire name
--- E.g., portBase="op", wireName="opcode3" → "op3"
---       portBase="zero", wireName="zero" → "zero"
---       portBase="out53", wireName="wire53" → "out53" (already complete)
---       portBase="inputs[0]", wireName="x", moduleName="Mux64x32" → "in0_b0" (index translation)
-def constructPortRef (moduleName : String) (portBase : String) (wireName : String) : String :=
-  -- Try to parse bracket notation first (e.g., "inputs[123]")
-  match parseBracketNotation portBase with
-  | some (baseName, flatIndex) =>
-      -- Try to infer the structured port name based on module type
-      match inferStructuredPortName moduleName baseName flatIndex with
-      | some portName => portName
-      | none => portBase.replace "[" "_" |>.replace "]" ""  -- Fallback: just convert brackets
-  | none =>
-      -- No brackets - handle normally
-      if endsWithDigit portBase then
-        portBase  -- Already complete (e.g., "out53")
-      else
-        -- Construct from base + wire index
-        let suffix := extractNumericSuffix wireName
-        if suffix.isEmpty then portBase else portBase ++ suffix
+-- Simple rule: brackets → underscores, done. No complex translation needed.
+-- E.g., portBase="inputs[123]" → "inputs_123"
+--       portBase="op", wireName="opcode3" → "op3"
+def constructPortRef (portBase : String) (wireName : String) : String :=
+  -- If it has brackets, convert to SystemVerilog style (bundled IO)
+  if portBase.contains '[' then
+    portBase.replace "[" "_" |>.replace "]" ""
+  -- If it already ends with a digit, it's complete
+  else if endsWithDigit portBase then
+    portBase
+  else
+    -- Construct from base + wire index
+    let suffix := extractNumericSuffix wireName
+    if suffix.isEmpty then portBase else portBase ++ suffix
 
 def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
   let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef inputToIndex outputToIndex wire
-    let portRef := constructPortRef inst.moduleName portBaseName wire.name
+    let portRef := constructPortRef portBaseName wire.name
     s!".{portRef}({wRef})"
   )
   let portsStr := String.intercalate ",\n    " portConnections

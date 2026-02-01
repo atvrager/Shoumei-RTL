@@ -129,9 +129,9 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   ) |>.flatten |>.flatten
 
   -- Read Ports: Mux64x32 for rd_tag1/rd_tag2
-  -- Mux64x32 uses bundled ports (>100 ports): inputs[idx], outputs[idx]
+  -- Mux64x32 uses bundled ports (>200 ports): inputs[idx], outputs[idx]
   let totalMuxPorts := numRegs * dataWidth + tagWidth + dataWidth
-  let useBundle := totalMuxPorts > 100
+  let useBundle := totalMuxPorts > 200
 
   let mux_in_map := if useBundle then
       (List.range numRegs).map (fun i =>

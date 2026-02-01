@@ -73,7 +73,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   -- 4. Read MuxTree Instance
   let muxTreeName := s!"Mux{depth}x{width}"
   let totalMuxPorts := depth * width + addrWidth + width
-  let useBundle := totalMuxPorts > 100
+  let useBundle := totalMuxPorts > 200
 
   let mux_in_map := if useBundle then
       (List.range depth).map (fun i =>
