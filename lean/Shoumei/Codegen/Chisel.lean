@@ -250,15 +250,28 @@ def generateRegUpdatesChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : N
 
 
 
+-- Helper: extract numeric suffix from wire name (e.g., "opcode3" → "3")
+def extractNumericSuffix (name : String) : String :=
+  let chars := name.toList.reverse
+  let digits := chars.takeWhile Char.isDigit
+  String.mk digits.reverse
+
+-- Helper: construct port reference from port base name and wire name
+-- E.g., portBase="op", wireName="opcode3" → "op3"
+--       portBase="zero", wireName="zero" → "zero"
+def constructPortRef (portBase : String) (wireName : String) : String :=
+  let suffix := extractNumericSuffix wireName
+  if suffix.isEmpty then portBase else portBase ++ suffix
+
 -- Generate submodule instantiation with chunking for connections
 def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 100) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
-  
+
   -- Handle port connections
-  -- Convert [ ] to ( ) for Chisel indexing
-  let connections := inst.portMap.map (fun (portName, wire) =>
+  -- Construct port name from portMap base name + wire index
+  let connections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef ctx wire
-    let portRef := portName.replace "[" "(" |>.replace "]" ")"
+    let portRef := constructPortRef portBaseName wire.name
     s!"  {inst.instName}.{portRef} <> {wRef}"
   )
   
@@ -339,7 +352,6 @@ def toChisel (c : Circuit) : String :=
   let resetWires := if isSequential then findResetWires c else []
   let implicitWires := clockWires ++ resetWires
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
-  let totalIOPorts := filteredInputs.length + c.outputs.length
 
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
 
@@ -349,7 +361,7 @@ def toChisel (c : Circuit) : String :=
     outputToIndex := c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
     regToIndex := dffGates.enum.map (fun ⟨idx, g⟩ => (g.output, idx)),
     useWireArray := wiresToDeclare.length > 200,
-    useIOBundle := totalIOPorts > 100,
+    useIOBundle := false,  -- DISABLED: Vec-based IO breaks module instantiation
     useRegArray := dffGates.length > 50
   }
 

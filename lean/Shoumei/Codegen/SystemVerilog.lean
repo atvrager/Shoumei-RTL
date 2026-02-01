@@ -133,10 +133,23 @@ def generateAlwaysBlocks (c : Circuit) (inputToIndex : List (Wire × Nat)) (outp
 
 
 -- Generate submodule instantiation
+-- Helper: extract numeric suffix from wire name (e.g., "opcode3" → "3")
+def extractNumericSuffix (name : String) : String :=
+  let chars := name.toList.reverse
+  let digits := chars.takeWhile Char.isDigit
+  String.mk digits.reverse
+
+-- Helper: construct port reference from port base name and wire name
+-- E.g., portBase="op", wireName="opcode3" → "op3"
+--       portBase="zero", wireName="zero" → "zero"
+def constructPortRef (portBase : String) (wireName : String) : String :=
+  let suffix := extractNumericSuffix wireName
+  if suffix.isEmpty then portBase else portBase ++ suffix
+
 def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
-  let portConnections := inst.portMap.map (fun (portName, wire) =>
+  let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef inputToIndex outputToIndex wire
-    let portRef := portName.replace "[" "_" |>.replace "]" ""
+    let portRef := constructPortRef portBaseName wire.name
     s!".{portRef}({wRef})"
   )
   let portsStr := String.intercalate ",\n    " portConnections
@@ -161,8 +174,8 @@ def toSystemVerilog (c : Circuit) : String :=
     let resetWires := dffGates.filterMap (fun g => match g.inputs with | [_d, _clk, res] => some res | _ => none)
     let implicitWires := clockWires ++ resetWires
     let filtered := c.inputs.filter (fun w => !implicitWires.contains w)
-    let totalPorts := filtered.length + c.outputs.length
-    let useBundle := totalPorts > 100
+    let _totalPorts := filtered.length + c.outputs.length
+    let useBundle := false  -- DISABLED: Bundled IO breaks module instantiation
     if useBundle then
       (filtered.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
        c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
