@@ -125,11 +125,23 @@ jobs:
             test -x verification/run-lec.sh || echo "⚠️  verification/run-lec.sh is not executable"
           fi
 
-          # Basic shell syntax check (exclude generated EQY/SBY working directories)
+          # Shellcheck (matching test script exclusions)
           if command -v shellcheck > /dev/null; then
-            # Exclude verification/*/* (generated EQY/SBY files), but include verification/*.sh
-            find . -name "*.sh" -type f -not -path "./verification/*/*" -exec shellcheck {} +
-            echo "✓ All shell scripts pass shellcheck"
+            SHELL_SCRIPTS=$(find . -name "*.sh" -type f \
+              -not -path "./verification/FullAdder/*" \
+              -not -path "./.git/*" \
+              -not -path "./third_party/*")
+            if [ -n "$SHELL_SCRIPTS" ]; then
+              # shellcheck disable=SC2086
+              if shellcheck $SHELL_SCRIPTS; then
+                echo "✓ All shell scripts pass shellcheck"
+              else
+                echo "✗ Shellcheck failed"
+                exit 1
+              fi
+            else
+              echo "⚠ No shell scripts found to check"
+            fi
           else
             echo "shellcheck not available, skipping shell script checks"
           fi
