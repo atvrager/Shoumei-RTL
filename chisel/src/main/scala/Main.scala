@@ -30,16 +30,15 @@ object Main extends App {
   // Read the package declaration from a Scala source file
   def getPackageName(file: File): String = {
     val source = Source.fromFile(file)
-    try {
+    try
       source
         .getLines()
         .map(_.trim)
         .find(_.startsWith("package "))
         .map(_.stripPrefix("package ").trim)
         .getOrElse("generated")
-    } finally {
+    finally
       source.close()
-    }
   }
 
   // Try to compile a generated module using reflection
@@ -91,10 +90,11 @@ object Main extends App {
 
     files
       .filter(f => f.isFile && f.getName.endsWith(".scala") && f.getName != ".gitkeep")
-      .map { file =>
-        val moduleName  = file.getName.replace(".scala", "")
-        val packageName = getPackageName(file)
-        (moduleName, s"$packageName.$moduleName")
+      .map {
+        file =>
+          val moduleName  = file.getName.replace(".scala", "")
+          val packageName = getPackageName(file)
+          (moduleName, s"$packageName.$moduleName")
       }
       .toList
   }
