@@ -105,7 +105,7 @@ def DecoupledSource.fireName {width : Nat} (d : DecoupledSource width) : String 
   -- Extract base name from valid signal (remove "_valid" suffix if present)
   let validName := d.valid.name
   if validName.endsWith "_valid" then
-    validName.dropRight 6 ++ "_fire"  -- "enq_valid" → "enq_fire"
+    (validName.dropEnd 6).toString ++ "_fire"  -- "enq_valid" → "enq_fire"
   else
     validName ++ "_fire"
 

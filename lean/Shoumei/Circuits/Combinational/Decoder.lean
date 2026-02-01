@@ -72,7 +72,7 @@ def mkEqualityCheckGates (n : Nat) (target : Nat) (inputs : List Wire) (output :
   let (gates, literals) := (List.range n).foldl
     (fun (acc : List Gate × List Wire) (bitIdx : Nat) =>
       let (gatesSoFar, litsSoFar) := acc
-      let inputWire := inputs.get! bitIdx
+      let inputWire := inputs[bitIdx]!
 
       if testBit target bitIdx then
         -- Bit is 1: use input wire directly
@@ -141,7 +141,7 @@ def mkDecoder (n : Nat) : Circuit :=
     -- Build equality check gates for each output
     let allGates := (List.range numOutputs).foldl
       (fun gatesSoFar (targetVal : Nat) =>
-        let outWire := outputs.get! targetVal
+        let outWire := outputs[targetVal]!
         let eqGates := mkEqualityCheckGates n targetVal inputs outWire
         gatesSoFar ++ eqGates)
       []

@@ -112,7 +112,7 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   -- we_i = write_en AND write_sel_i
   let we := (List.range numArchRegs).map (fun i => Wire.mk s!"we_{i}")
   let we_gates := (List.range numArchRegs).map (fun i =>
-    Gate.mkAND write_en (write_sel.get! i) (we.get! i))
+    Gate.mkAND write_en (write_sel[i]!) (we[i]!))
 
   -- Internal: Storage registers
   -- On write, reg[i] = we[i] ? write_data : reg[i] (hold)
@@ -130,7 +130,7 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
       let next := getNext i j
       [
         -- Write data mux: next = we ? write_data : reg (hold)
-        Gate.mkMUX reg (write_data.get! j) (we.get! i) next,
+        Gate.mkMUX reg (write_data[j]!) (we[i]!) next,
         -- Storage DFF (resets to 0)
         Gate.mkDFF next clock reset reg
       ]

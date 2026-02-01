@@ -53,9 +53,9 @@ open Shoumei
 -- Helper: Zero-extend a single bit to 32 bits
 -- bit_wire is connected to result[0], all other bits connected to zero
 private def zeroExtend1to32 (bit_wire : Wire) (zero : Wire) (output : List Wire) : List Gate :=
-  let gate0 := Gate.mkBUF bit_wire (output.get! 0)
+  let gate0 := Gate.mkBUF bit_wire (output[0]!)
   let rest_gates := List.range 31 |>.map (fun i =>
-    Gate.mkBUF zero (output.get! (i + 1))
+    Gate.mkBUF zero (output[i + 1]!)
   )
   gate0 :: rest_gates
 
@@ -69,7 +69,7 @@ def mkALU32 : Circuit :=
   let one := Wire.mk "one"    -- Constant 1 input
 
   -- Extract shift amount from b (lower 5 bits)
-  let shamt := List.range 5 |>.map (fun i => b.get! i)
+  let shamt := List.range 5 |>.map (fun i => b[i]!)
 
   -- Outputs from each functional unit
   let add_result := makeIndexedWires "add_out" 32
@@ -120,9 +120,9 @@ def mkALU32 : Circuit :=
   let cmp_ltu_gate := Gate.mkBUF cmp_borrow cmp_ltu
 
   -- Simplified signed comparison: just use diff sign and input signs
-  let a_sign := a.get! 31
-  let b_sign := b.get! 31
-  let diff_sign := cmp_diff.get! 31
+  let a_sign := a[31]!
+  let b_sign := b[31]!
+  let diff_sign := cmp_diff[31]!
   let b_sign_inv := Wire.mk "cmp_b_sign_inv"
   let a_neg_b_pos := Wire.mk "cmp_a_neg_b_pos"
   let signs_xor := Wire.mk "cmp_signs_xor"
@@ -146,20 +146,20 @@ def mkALU32 : Circuit :=
   -- We need to run it 3 times with different op values, or build inline
   -- Let's build inline to save complexity
   let and_gates := List.range 32 |>.map (fun i =>
-    Gate.mkAND (a.get! i) (b.get! i) (and_result.get! i)
+    Gate.mkAND (a[i]!) (b[i]!) (and_result[i]!)
   )
   let or_gates := List.range 32 |>.map (fun i =>
-    Gate.mkOR (a.get! i) (b.get! i) (or_result.get! i)
+    Gate.mkOR (a[i]!) (b[i]!) (or_result[i]!)
   )
   let xor_gates := List.range 32 |>.map (fun i =>
-    Gate.mkXOR (a.get! i) (b.get! i) (xor_result.get! i)
+    Gate.mkXOR (a[i]!) (b[i]!) (xor_result[i]!)
   )
 
   -- Build Shifter (inline simplified - just build 3 shifters)
   -- This will be complex, so let's use the existing Shifter32 structure
   let sll_gates := mkLeftShifter a shamt zero sll_result
   let srl_gates := mkRightLogicalShifter a shamt zero srl_result
-  let a_sign_for_sra := a.get! 31
+  let a_sign_for_sra := a[31]!
   let sra_gates := mkRightArithmeticShifter a shamt a_sign_for_sra sra_result
 
   -- MUX tree to select result based on opcode
@@ -169,13 +169,13 @@ def mkALU32 : Circuit :=
   let arith_final := makeIndexedWires "arith_out" 32  -- arith_mux1 or arith_mux2
 
   let arith_level1_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (add_result.get! i) (sub_result.get! i) (opcode.get! 0) (arith_mux1.get! i)
+    Gate.mkMUX (add_result[i]!) (sub_result[i]!) (opcode[0]!) (arith_mux1[i]!)
   )
   let arith_level2_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (slt_result.get! i) (sltu_result.get! i) (opcode.get! 0) (arith_mux2.get! i)
+    Gate.mkMUX (slt_result[i]!) (sltu_result[i]!) (opcode[0]!) (arith_mux2[i]!)
   )
   let arith_level3_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (arith_mux1.get! i) (arith_mux2.get! i) (opcode.get! 1) (arith_final.get! i)
+    Gate.mkMUX (arith_mux1[i]!) (arith_mux2[i]!) (opcode[1]!) (arith_final[i]!)
   )
 
   -- Level 2: Select between logic operations (3 operations: AND, OR, XOR)
@@ -183,10 +183,10 @@ def mkALU32 : Circuit :=
   let logic_final := makeIndexedWires "logic_out" 32  -- logic_mux1 or XOR
 
   let logic_level1_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (and_result.get! i) (or_result.get! i) (opcode.get! 0) (logic_mux1.get! i)
+    Gate.mkMUX (and_result[i]!) (or_result[i]!) (opcode[0]!) (logic_mux1[i]!)
   )
   let logic_level2_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (logic_mux1.get! i) (xor_result.get! i) (opcode.get! 1) (logic_final.get! i)
+    Gate.mkMUX (logic_mux1[i]!) (xor_result[i]!) (opcode[1]!) (logic_final[i]!)
   )
 
   -- Level 3: Select between shift operations (3 operations: SLL, SRL, SRA)
@@ -194,10 +194,10 @@ def mkALU32 : Circuit :=
   let shift_final := makeIndexedWires "shift_out" 32  -- shift_mux1 or SRA
 
   let shift_level1_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (sll_result.get! i) (srl_result.get! i) (opcode.get! 0) (shift_mux1.get! i)
+    Gate.mkMUX (sll_result[i]!) (srl_result[i]!) (opcode[0]!) (shift_mux1[i]!)
   )
   let shift_level2_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (shift_mux1.get! i) (sra_result.get! i) (opcode.get! 1) (shift_final.get! i)
+    Gate.mkMUX (shift_mux1[i]!) (sra_result[i]!) (opcode[1]!) (shift_final[i]!)
   )
 
   -- Top level: Select between arithmetic, logic, and shift
@@ -207,13 +207,13 @@ def mkALU32 : Circuit :=
   let top_mux2 := makeIndexedWires "top_mux2" 32  -- shift or zero
 
   let top_level1_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (arith_final.get! i) (logic_final.get! i) (opcode.get! 2) (top_mux1.get! i)
+    Gate.mkMUX (arith_final[i]!) (logic_final[i]!) (opcode[2]!) (top_mux1[i]!)
   )
   let top_level2_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (shift_final.get! i) zero (opcode.get! 2) (top_mux2.get! i)
+    Gate.mkMUX (shift_final[i]!) zero (opcode[2]!) (top_mux2[i]!)
   )
   let top_level3_gates := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (top_mux1.get! i) (top_mux2.get! i) (opcode.get! 3) (result.get! i)
+    Gate.mkMUX (top_mux1[i]!) (top_mux2[i]!) (opcode[3]!) (result[i]!)
   )
 
   { name := "ALU32"

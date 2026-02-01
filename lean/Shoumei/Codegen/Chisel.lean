@@ -254,7 +254,7 @@ def generateRegUpdatesChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : N
 def extractNumericSuffix (name : String) : String :=
   let chars := name.toList.reverse
   let digits := chars.takeWhile Char.isDigit
-  String.mk digits.reverse
+  String.ofList digits.reverse
 
 -- Helper: check if string ends with a digit
 def endsWithDigit (s : String) : Bool :=
@@ -269,7 +269,7 @@ def parseBracketNotation (s : String) : Option (String × Nat) :=
     let parts := s.splitOn "["
     match parts with
     | [base, rest] =>
-        let numStr := rest.takeWhile (· != ']')
+        let numStr : String := (rest.takeWhile (· != ']')).toString
         match numStr.toNat? with
         | some n => some (base, n)
         | none => none
@@ -280,11 +280,11 @@ def parseBracketNotation (s : String) : Option (String × Nat) :=
 def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex : Nat) : Option String :=
   -- Parse module name like "Mux64x32" → (64 entries, 32 bits each)
   if moduleName.startsWith "Mux" then
-    let rest := moduleName.drop 3  -- Remove "Mux"
+    let rest := (moduleName.drop 3).toString  -- Remove "Mux"
     let parts := rest.splitOn "x"
     match parts with
     | [numEntriesStr, widthStr] =>
-        match numEntriesStr.toNat?, widthStr.toNat? with
+        match (numEntriesStr : String).toNat?, (widthStr : String).toNat? with
         | some numEntries, some width =>
             if baseName == "inputs" then
               let totalDataInputs := numEntries * width

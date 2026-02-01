@@ -28,7 +28,7 @@ private def natToHex (n : Nat) : String :=
         Char.ofNat (digit + 48)  -- '0' to '9'
       else
         Char.ofNat (digit - 10 + 97)  -- 'a' to 'f'
-      aux (n / 16) (String.mk [hexChar] ++ acc)
+      aux (n / 16) (String.ofList [hexChar] ++ acc)
     termination_by n
   aux n ""
 

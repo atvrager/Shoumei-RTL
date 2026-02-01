@@ -13,7 +13,7 @@ namespace Shoumei.Codegen
 
 -- Indent a string by a given number of spaces
 def indent (n : Nat) (s : String) : String :=
-  String.mk (List.replicate n ' ') ++ s
+  String.ofList (List.replicate n ' ') ++ s
 
 -- Indent each line in a multiline string
 def indentLines (n : Nat) (s : String) : String :=

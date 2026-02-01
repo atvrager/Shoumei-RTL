@@ -73,7 +73,7 @@ def mkLogicUnitN (n : Nat) : Circuit :=
 
   -- Build gates for all bit positions
   let gates := List.flatten (List.range n |>.map (fun i =>
-    mkLogicUnitBit (a.get! i) (b.get! i) op0 op1 (result.get! i) i
+    mkLogicUnitBit (a[i]!) (b[i]!) op0 op1 (result[i]!) i
   ))
 
   { name := s!"LogicUnit{n}"

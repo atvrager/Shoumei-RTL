@@ -52,7 +52,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   -- write_en_i = write_en && write_sel_i
   let write_en_i := (List.range depth).map (fun i => Wire.mk s!"we_{i}")
   let we_gates := (List.range depth).map (fun i =>
-    Gate.mkAND write_en (write_sel.get! i) (write_en_i.get! i))
+    Gate.mkAND write_en (write_sel[i]!) (write_en_i[i]!))
 
   -- 3. Storage Elements
   -- We need to access storage wires easily, so helper function
@@ -64,7 +64,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
       let reg := getReg i j
       let next := getNext i j
       [
-        Gate.mkMUX reg (write_data.get! j) (write_en_i.get! i) next,
+        Gate.mkMUX reg (write_data[j]!) (write_en_i[i]!) next,
         Gate.mkDFF next clock reset reg
       ]
     )
@@ -141,11 +141,11 @@ def mkQueuePointer (width : Nat) : Circuit :=
   -- Mux next
   let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
   let mux_gates := (List.range width).map (fun i =>
-    Gate.mkMUX (count.get! i) (inc.get! i) en (next.get! i))
+    Gate.mkMUX (count[i]!) (inc[i]!) en (next[i]!))
     
   -- DFFs
   let dff_gates := (List.range width).map (fun i =>
-    Gate.mkDFF (next.get! i) clock reset (count.get! i))
+    Gate.mkDFF (next[i]!) clock reset (count[i]!))
   
   -- Only include 'zero' input if width > 1 (otherwise it's unused)
   let inputs := if width > 1 then
@@ -156,7 +156,7 @@ def mkQueuePointer (width : Nat) : Circuit :=
   { name := s!"QueuePointer_{width}"
     inputs := inputs
     outputs := count
-    gates := [Gate.mkBUF one (carries.get! 0)] ++ adder_gates ++ mux_gates ++ dff_gates
+    gates := [Gate.mkBUF one (carries[0]!)] ++ adder_gates ++ mux_gates ++ dff_gates
     instances := []
   }
 
@@ -190,7 +190,7 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   let all_ones := (List.range width).map (fun _ => one)
   let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
   let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
-  -- We assume cin=0 for this addition (carries.get! 0 needs to be 0)
+  -- We assume cin=0 for this addition (carries[0]! needs to be 0)
   -- But buildFullAdderChain connects carries[0].
   -- So we pass zero as carries[0].
   
@@ -218,19 +218,19 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   let mux_gates := (List.range width).map (fun i =>
     let m1 := Wire.mk s!"m1_{i}"
     [
-      Gate.mkMUX (count.get! i) (val_minus.get! i) do_dec m1,
-      Gate.mkMUX m1 (val_plus.get! i) do_inc (next.get! i)
+      Gate.mkMUX (count[i]!) (val_minus[i]!) do_dec m1,
+      Gate.mkMUX m1 (val_plus[i]!) do_inc (next[i]!)
     ]
   ) |>.flatten
   
   -- DFFs
   let dff_gates := (List.range width).map (fun i =>
-    Gate.mkDFF (next.get! i) clock reset (count.get! i))
+    Gate.mkDFF (next[i]!) clock reset (count[i]!))
     
   { name := s!"QueueCounterUpDown_{width}"
     inputs := [clock, reset, inc_en, dec_en, one, zero]
     outputs := count
-    gates := [Gate.mkBUF one (c_plus.get! 0), Gate.mkBUF zero (c_minus.get! 0)] ++ 
+    gates := [Gate.mkBUF one (c_plus[0]!), Gate.mkBUF zero (c_minus[0]!)] ++ 
              add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++ dff_gates
     instances := []
   }

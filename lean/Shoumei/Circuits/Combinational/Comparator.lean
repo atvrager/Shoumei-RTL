@@ -84,9 +84,9 @@ def mkComparatorN (n : Nat) : Circuit :=
   let ltu_gate := Gate.mkBUF borrow ltu
 
   -- Signed less-than: lt = (a[n-1] & ~b[n-1]) | (~(a[n-1] XOR b[n-1]) & diff[n-1])
-  let a_sign := a.get! (n - 1)
-  let b_sign := b.get! (n - 1)
-  let diff_sign := diff.get! (n - 1)
+  let a_sign := a[n - 1]!
+  let b_sign := b[n - 1]!
+  let diff_sign := diff[n - 1]!
 
   -- Intermediate wires for signed comparison
   let b_sign_inv := Wire.mk "b_sign_inv"

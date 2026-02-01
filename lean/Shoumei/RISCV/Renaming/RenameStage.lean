@@ -247,12 +247,12 @@ def mkRenameStage : Circuit :=
     --                or3 = or2 OR rd_addr[4]
     --                x0_detect = NOT or3
     (if archAddrWidth >= 2 then
-      [Gate.mkOR (rd_addr.get! 0) (rd_addr.get! 1) (rd_or_tree.get! 0)]
+      [Gate.mkOR (rd_addr[0]!) (rd_addr[1]!) (rd_or_tree[0]!)]
     else []) ++
     (List.range (archAddrWidth - 2)).map (fun i =>
-      Gate.mkOR (rd_or_tree.get! i) (rd_addr.get! (i + 2)) (rd_or_tree.get! (i + 1))
+      Gate.mkOR (rd_or_tree[i]!) (rd_addr[i + 2]!) (rd_or_tree[i + 1]!)
     ) ++
-    [Gate.mkNOT (rd_or_tree.get! (archAddrWidth - 2)) x0_detect]
+    [Gate.mkNOT (rd_or_tree[archAddrWidth - 2]!) x0_detect]
 
   -- needs_alloc = has_rd AND NOT x0_detect
   let not_x0 := Wire.mk "not_x0"

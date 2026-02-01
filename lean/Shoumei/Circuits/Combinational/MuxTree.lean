@@ -97,9 +97,9 @@ wirePrefix: unique identifier to avoid wire name collisions
 def mkMux2Gates (wirePrefix : String) (width : Nat) (in0 in1 : List Wire) (sel : Wire) (out : List Wire) : List Gate :=
   (List.range width).foldl
     (fun gates bitIdx =>
-      let in0Bit := in0.get! bitIdx
-      let in1Bit := in1.get! bitIdx
-      let outBit := out.get! bitIdx
+      let in0Bit := in0[bitIdx]!
+      let in1Bit := in1[bitIdx]!
+      let outBit := out[bitIdx]!
       gates ++ mkMux2Bit wirePrefix bitIdx in0Bit in1Bit sel outBit)
     []
 
@@ -124,15 +124,15 @@ def mkMuxTreeGates (wirePrefix : String) (depth : Nat) (n width : Nat) (inputs :
       let input0 := inputs.get ⟨0, h⟩
       (List.range width).foldl
         (fun gates bitIdx =>
-          gates ++ [Gate.mkBUF (input0.get! bitIdx) (output.get! bitIdx)])
+          gates ++ [Gate.mkBUF (input0[bitIdx]!) (output[bitIdx]!)])
         []
     else
       []
   else if n = 2 then
     -- Base case: 2:1 MUX
     if h : inputs.length >= 2 ∧ selBits.length > 0 then
-      let input0 := inputs.get! 0
-      let input1 := inputs.get! 1
+      let input0 := inputs[0]!
+      let input1 := inputs[1]!
       let sel := selBits.get ⟨0, h.right⟩
       mkMux2Gates s!"{wirePrefix}_d{depth}" width input0 input1 sel output
     else
@@ -185,7 +185,7 @@ def mkMuxTree (n width : Nat) : Circuit :=
     let input := makeMultiBitWires "in" 1 width |>.head!
     let output := makeIndexedWires "out" width
     let gates := (List.range width).foldl
-      (fun gs bitIdx => gs ++ [Gate.mkBUF (input.get! bitIdx) (output.get! bitIdx)])
+      (fun gs bitIdx => gs ++ [Gate.mkBUF (input[bitIdx]!) (output[bitIdx]!)])
       []
     { name := s!"Mux{n}x{width}"
       inputs := input.map (·.name) |>.map Wire.mk

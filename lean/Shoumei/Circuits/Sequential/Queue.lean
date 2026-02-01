@@ -169,11 +169,11 @@ def mkQueue1Structural (width : Nat) : Circuit :=
   -- Data next-state logic: data_next[i] = enq_fire ? enq_data[i] : data_reg[i]
   -- Implemented as: data_next[i] = MUX(data_reg[i], enq_data[i], enq_fire)
   (List.range width).map (fun i =>
-    Gate.mkMUX (data_reg.get! i) (enq_data.get! i) enq_fire (data_next.get! i)
+    Gate.mkMUX (data_reg[i]!) (enq_data[i]!) enq_fire (data_next[i]!)
   ) ++
   -- Data DFFs
   (List.range width).map (fun i =>
-    Gate.mkDFF (data_next.get! i) clock reset (data_reg.get! i)
+    Gate.mkDFF (data_next[i]!) clock reset (data_reg[i]!)
   ) ++
   -- Connect deq_data outputs to data_reg (using assignment gates)
   -- Note: In a real implementation, these would be handled by the code generator
@@ -289,11 +289,11 @@ def mkQueue1Decoupled (width : Nat) : Circuit :=
   ] ++
   -- Data next-state logic
   (List.range width).map (fun i =>
-    Gate.mkMUX (data_reg.get! i) (enq.bits.get! i) enq_fire (data_next.get! i)
+    Gate.mkMUX (data_reg[i]!) (enq.bits[i]!) enq_fire (data_next[i]!)
   ) ++
   -- Data DFFs
   (List.range width).map (fun i =>
-    Gate.mkDFF (data_next.get! i) clock reset (data_reg.get! i)
+    Gate.mkDFF (data_next[i]!) clock reset (data_reg[i]!)
   )
 
   { name := name

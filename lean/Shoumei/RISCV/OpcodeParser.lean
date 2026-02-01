@@ -57,11 +57,11 @@ def parseInstructionDef (name : String) (json : Json) : Except String Instructio
 
   -- Get variable_fields and extension as raw JSON
   let obj ← json.getObj?
-  let variableFieldsJson ← match obj.find compare "variable_fields" with
+  let variableFieldsJson ← match obj.get? "variable_fields" with
     | some j => pure j
     | none => throw "Missing 'variable_fields' field"
 
-  let extensionJson ← match obj.find compare "extension" with
+  let extensionJson ← match obj.get? "extension" with
     | some j => pure j
     | none => throw "Missing 'extension' field"
 
@@ -100,11 +100,11 @@ def parseInstrDict (jsonStr : String) : Except String (List InstructionDef) := d
   -- Extract object
   let obj ← json.getObj?
 
-  -- Parse each instruction using fold
-  obj.fold (init := Except.ok []) fun acc name instrJson =>
+  -- Parse each instruction using foldl (TreeMap.Raw API in Lean 4.27.0)
+  obj.foldl (fun acc name instrJson =>
     acc.bind fun instrs => do
       let instrDef ← parseInstructionDef name instrJson
-      pure (instrDef :: instrs)
+      pure (instrDef :: instrs)) (Except.ok [])
 
 /-- Read and parse instr_dict.json from file system -/
 def loadInstrDictFromFile (path : System.FilePath) : IO (List InstructionDef) := do

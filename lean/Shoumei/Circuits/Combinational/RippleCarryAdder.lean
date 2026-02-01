@@ -58,11 +58,11 @@ def buildFullAdderChain (a_wires b_wires carry_wires sum_wires : List Wire) (wir
   -- For each bit position i, instantiate a FullAdder
   List.flatten (List.range n |>.map fun i =>
     mkFullAdderInstance
-      (a_wires.get! i)
-      (b_wires.get! i)
-      (carry_wires.get! i)      -- cin for bit i
-      (sum_wires.get! i)        -- sum for bit i
-      (carry_wires.get! (i + 1)) -- cout = cin for bit i+1
+      (a_wires[i]!)
+      (b_wires[i]!)
+      (carry_wires[i]!)      -- cin for bit i
+      (sum_wires[i]!)        -- sum for bit i
+      (carry_wires[i + 1]!) -- cout = cin for bit i+1
       i                         -- bit index for wire naming
       wirePrefix                    -- wirePrefix for internal wires
   )

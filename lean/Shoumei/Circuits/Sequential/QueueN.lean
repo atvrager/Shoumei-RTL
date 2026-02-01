@@ -207,7 +207,7 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   let empty_gates := (List.range countWidth).foldl (fun (gs, prev) i =>
     let bit_not := Wire.mk s!"count_not_{i}"
     let and_out := if i == countWidth - 1 then empty else Wire.mk s!"count_empty_and_{i}"
-    let n_gs := gs ++ [Gate.mkNOT (count.get! i) bit_not]
+    let n_gs := gs ++ [Gate.mkNOT (count[i]!) bit_not]
     let a_gs := n_gs ++ [Gate.mkAND prev bit_not and_out]
     (a_gs, and_out)
   ) ([], one) -- Start with one for AND chain
@@ -215,7 +215,7 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   -- Full detection: count == depth
   -- If depth = 2^ptrWidth, then depth is 1 followed by ptrWidth zeros in countWidth-bit binary
   let full_gates := (List.range countWidth).foldl (fun (gs, prev) i =>
-    let bit_val := count.get! i
+    let bit_val := count[i]!
     let _target_bit := if i == ptrWidth then one else zero
     let check_bit := Wire.mk s!"full_check_bit_{i}"
     let and_out := if i == countWidth - 1 then full else Wire.mk s!"full_and_{i}"

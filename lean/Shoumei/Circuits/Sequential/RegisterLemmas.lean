@@ -9,19 +9,26 @@ open Shoumei
 axiom natToString_injective {i j : Nat} (h : Nat.repr i = Nat.repr j) : i = j
 
 -- 2. WIRE EQUALITY: Keep as Axiom (to unblock build)
--- The auto-generated BEq instance is opaque and standard library lemmas 
+-- The auto-generated BEq instance is opaque and standard library lemmas
 -- for String.eq_of_beq vary by Lean version. This is structurally true.
 axiom wire_beq_eq (w1 w2 : Wire) : (w1 == w2) = true → w1 = w2
 
--- 3. INTERPOLATION INEQUALITY: Proven (Fixed)
--- We prove they are different by looking at the first character ('q' vs 'r')
-theorem q_interp_ne_reset (j : Nat) : toString "" ++ toString "q" ++ toString "" ++ toString j ++ toString "" ≠ "reset" := by
+-- 3. INTERPOLATION INEQUALITY: Proven
+-- The string "q" ++ toString j starts with 'q', "reset" starts with 'r'.
+-- wire_mk_injective normalizes to toString "q" ++ toString j in Lean 4.27.0.
+theorem q_prefix_ne_reset (j : Nat) : toString "q" ++ toString j ≠ "reset" := by
   intro h
-  have h_chars := congrArg String.data h
-  -- Forces 'toString "q"' to become '"q"', reducing .data to ['q', ...]
-  -- This exposes the mismatch with ['r', ...] and solves the goal automatically.
-  simp [ToString.toString] at h_chars
-  -- 'contradiction' is NOT needed here because simp already solved it.
+  simp only [ToString.toString] at h
+  have h1 := congrArg String.toList h
+  rw [String.toList_append] at h1
+  -- h1 : "q".toList ++ (Nat.repr j).toList = "reset".toList
+  -- Reduce string literals to char lists
+  have hq : "q".toList = ['q'] := by decide
+  have hr : "reset".toList = ['r', 'e', 's', 'e', 't'] := by decide
+  rw [hq, hr] at h1
+  -- h1 : ['q'] ++ ... = ['r', ...], first chars differ
+  simp only [List.singleton_append] at h1
+  exact absurd (List.cons.inj h1).1 (by decide)
 
 -- 4. CONSTRUCTOR INJECTIVITY: Proven
 theorem wire_mk_injective {s1 s2 : String} (h : Wire.mk s1 = Wire.mk s2) : s1 = s2 :=
@@ -39,14 +46,15 @@ theorem evalDFF_under_reset (d clk rst q : Wire) (env : Env) (hrst : env rst = t
     evalDFF (Gate.mkDFF d clk rst q) env = false := by
   simp [evalDFF, Gate.mkDFF, hrst]
 
+set_option maxRecDepth 2048 in
 theorem getDFFOutputs_register (n : Nat) :
     getDFFOutputs (mkRegisterN n) = makeIndexedWires "q" n := by
   simp [getDFFOutputs, mkRegisterN, makeIndexedWires]
   induction n with
   | zero => rfl
   | succ n ih =>
-    simp [List.range_succ, List.map_append, List.zipWith_append, List.filter_append, ih]
-    rfl
+    simp [List.range_succ, List.map_append, List.filter_append, ih]
+    exact ⟨_, rfl, rfl⟩
 
 theorem updateState_all_false (state : State) (updates : List (Wire × Bool)) (w : Wire)
     (hstate : state w = false) (hall : ∀ p ∈ updates, p.2 = false) :
@@ -58,6 +66,7 @@ theorem updateState_all_false (state : State) (updates : List (Wire × Bool)) (w
     exact hall _ this
   · exact hstate
 
+set_option maxRecDepth 4096 in
 theorem mergeStateIntoEnv_non_dff (state : State) (env : Env) (dffOuts : List Wire) (w : Wire)
     (h : w ∉ dffOuts) : mergeStateIntoEnv state env dffOuts w = env w := by
   unfold mergeStateIntoEnv
@@ -67,7 +76,7 @@ theorem mergeStateIntoEnv_non_dff (state : State) (env : Env) (dffOuts : List Wi
     induction dffOuts with
     | nil => simp at hc
     | cons head tail ih =>
-      simp [List.contains] at hc
+      simp only [List.contains_cons, Bool.or_eq_true] at hc
       simp [List.mem_cons] at h
       cases hc with
       | inl heq =>
@@ -82,9 +91,8 @@ theorem reset_not_dff_output (n : Nat) :
   rw [getDFFOutputs_register]
   simp only [makeIndexedWires, List.mem_map, List.mem_range]
   intro ⟨j, _, h⟩
-  -- h is a Wire equality, extract the string equality
-  have h_str : toString "" ++ toString "q" ++ toString "" ++ toString j ++ toString "" = "reset" := wire_mk_injective h
-  exact q_interp_ne_reset j h_str
+  have h_str := wire_mk_injective h
+  exact q_prefix_ne_reset j h_str
 
 theorem register_env_reset (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") = true) :
     mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) (Wire.mk "reset") = true := by
@@ -92,6 +100,7 @@ theorem register_env_reset (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") =
   · exact hrst
   · exact reset_not_dff_output n
 
+set_option maxRecDepth 2048 in
 theorem register_comb_foldl_is_id (n : Nat) (env : Env) :
     (mkRegisterN n).gates.foldl (fun env gate =>
       if gate.gateType.isCombinational then
@@ -101,7 +110,7 @@ theorem register_comb_foldl_is_id (n : Nat) (env : Env) :
   induction n with
   | zero => rfl
   | succ n ih =>
-    simp [List.range_succ, List.map, List.zipWith, List.foldl, Gate.mkDFF, GateType.isCombinational]
+    simp [List.range_succ, List.map, List.foldl, Gate.mkDFF, GateType.isCombinational]
     exact ih
 
 -- Phase 6: Composition for reset behavior

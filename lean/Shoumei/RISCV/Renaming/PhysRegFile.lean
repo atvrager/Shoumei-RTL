@@ -107,7 +107,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   -- we_i = wr_en AND write_sel_i
   let we := (List.range numRegs).map (fun i => Wire.mk s!"we_{i}")
   let we_gates := (List.range numRegs).map (fun i =>
-    Gate.mkAND wr_en (write_sel.get! i) (we.get! i))
+    Gate.mkAND wr_en (write_sel[i]!) (we[i]!))
 
   -- Internal: Storage registers with write muxes
   -- On write: reg[i][j] = we[i] ? wr_data[j] : reg[i][j] (hold)
@@ -121,7 +121,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
       let next := getNext i j
       [
         -- Write data mux: next = we ? wr_data : reg (hold)
-        Gate.mkMUX reg (wr_data.get! j) (we.get! i) next,
+        Gate.mkMUX reg (wr_data[j]!) (we[i]!) next,
         -- Storage DFF (resets to 0)
         Gate.mkDFF next clock reset reg
       ]

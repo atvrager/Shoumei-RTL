@@ -7,6 +7,7 @@
   Target: SystemC 2.3.3+ (ISO/IEC 1666-2011)
 -/
 
+import Shoumei.DSL
 import Shoumei.RISCV.ISA
 import Shoumei.RISCV.Decoder
 
@@ -30,7 +31,7 @@ private def natToHexSC (n : Nat) : String :=
         Char.ofNat (digit + 48)
       else
         Char.ofNat (digit - 10 + 97)
-      aux (n / 16) (String.mk [hexChar] ++ acc)
+      aux (n / 16) (String.ofList [hexChar] ++ acc)
     termination_by n
   aux n ""
 

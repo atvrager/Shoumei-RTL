@@ -53,11 +53,11 @@ private def mkLeftShiftStage (stage_in : List Wire) (stage_out : List Wire)
   List.range width |>.map (fun i =>
     let shifted_input :=
       if i >= amount
-      then stage_in.get! (i - amount)  -- Shift left: take from lower index
+      then stage_in[i - amount]!  -- Shift left: take from lower index
       else zero  -- Fill with 0 for left shift
-    let current_input := stage_in.get! i
+    let current_input := stage_in[i]!
     -- MUX: if enable then use shifted value, else pass through
-    Gate.mkMUX current_input shifted_input enable (stage_out.get! i)
+    Gate.mkMUX current_input shifted_input enable (stage_out[i]!)
   )
 
 -- Helper: Build one stage of right shifter (logical)
@@ -69,10 +69,10 @@ private def mkRightShiftStageLogical (stage_in : List Wire) (stage_out : List Wi
     let shifted_idx := i + amount
     let shifted_input :=
       if shifted_idx < width
-      then stage_in.get! shifted_idx
+      then stage_in[shifted_idx]!
       else zero  -- Fill with 0 for logical shift
-    let current_input := stage_in.get! i
-    Gate.mkMUX current_input shifted_input enable (stage_out.get! i)
+    let current_input := stage_in[i]!
+    Gate.mkMUX current_input shifted_input enable (stage_out[i]!)
   )
 
 -- Helper: Build one stage of right shifter (arithmetic)
@@ -84,10 +84,10 @@ private def mkRightShiftStageArithmetic (stage_in : List Wire) (stage_out : List
     let shifted_idx := i + amount
     let shifted_input :=
       if shifted_idx < width
-      then stage_in.get! shifted_idx
+      then stage_in[shifted_idx]!
       else sign  -- Fill with sign bit for arithmetic shift
-    let current_input := stage_in.get! i
-    Gate.mkMUX current_input shifted_input enable (stage_out.get! i)
+    let current_input := stage_in[i]!
+    Gate.mkMUX current_input shifted_input enable (stage_out[i]!)
   )
 
 -- Build complete 5-stage left shifter
@@ -99,11 +99,11 @@ def mkLeftShifter (input : List Wire) (shamt : List Wire) (zero : Wire) (output 
   let stage3_out := makeIndexedWires "sll_s3" 32
   let stage4_out := output  -- Final stage outputs directly
 
-  let stage0 := mkLeftShiftStage input stage0_out (shamt.get! 0) zero 1 32 0
-  let stage1 := mkLeftShiftStage stage0_out stage1_out (shamt.get! 1) zero 2 32 1
-  let stage2 := mkLeftShiftStage stage1_out stage2_out (shamt.get! 2) zero 4 32 2
-  let stage3 := mkLeftShiftStage stage2_out stage3_out (shamt.get! 3) zero 8 32 3
-  let stage4 := mkLeftShiftStage stage3_out stage4_out (shamt.get! 4) zero 16 32 4
+  let stage0 := mkLeftShiftStage input stage0_out (shamt[0]!) zero 1 32 0
+  let stage1 := mkLeftShiftStage stage0_out stage1_out (shamt[1]!) zero 2 32 1
+  let stage2 := mkLeftShiftStage stage1_out stage2_out (shamt[2]!) zero 4 32 2
+  let stage3 := mkLeftShiftStage stage2_out stage3_out (shamt[3]!) zero 8 32 3
+  let stage4 := mkLeftShiftStage stage3_out stage4_out (shamt[4]!) zero 16 32 4
 
   stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4
 
@@ -115,11 +115,11 @@ def mkRightLogicalShifter (input : List Wire) (shamt : List Wire) (zero : Wire) 
   let stage3_out := makeIndexedWires "srl_s3" 32
   let stage4_out := output
 
-  let stage0 := mkRightShiftStageLogical input stage0_out (shamt.get! 0) zero 1 32 0
-  let stage1 := mkRightShiftStageLogical stage0_out stage1_out (shamt.get! 1) zero 2 32 1
-  let stage2 := mkRightShiftStageLogical stage1_out stage2_out (shamt.get! 2) zero 4 32 2
-  let stage3 := mkRightShiftStageLogical stage2_out stage3_out (shamt.get! 3) zero 8 32 3
-  let stage4 := mkRightShiftStageLogical stage3_out stage4_out (shamt.get! 4) zero 16 32 4
+  let stage0 := mkRightShiftStageLogical input stage0_out (shamt[0]!) zero 1 32 0
+  let stage1 := mkRightShiftStageLogical stage0_out stage1_out (shamt[1]!) zero 2 32 1
+  let stage2 := mkRightShiftStageLogical stage1_out stage2_out (shamt[2]!) zero 4 32 2
+  let stage3 := mkRightShiftStageLogical stage2_out stage3_out (shamt[3]!) zero 8 32 3
+  let stage4 := mkRightShiftStageLogical stage3_out stage4_out (shamt[4]!) zero 16 32 4
 
   stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4
 
@@ -131,11 +131,11 @@ def mkRightArithmeticShifter (input : List Wire) (shamt : List Wire) (sign : Wir
   let stage3_out := makeIndexedWires "sra_s3" 32
   let stage4_out := output
 
-  let stage0 := mkRightShiftStageArithmetic input stage0_out (shamt.get! 0) sign 1 32 0
-  let stage1 := mkRightShiftStageArithmetic stage0_out stage1_out (shamt.get! 1) sign 2 32 1
-  let stage2 := mkRightShiftStageArithmetic stage1_out stage2_out (shamt.get! 2) sign 4 32 2
-  let stage3 := mkRightShiftStageArithmetic stage2_out stage3_out (shamt.get! 3) sign 8 32 3
-  let stage4 := mkRightShiftStageArithmetic stage3_out stage4_out (shamt.get! 4) sign 16 32 4
+  let stage0 := mkRightShiftStageArithmetic input stage0_out (shamt[0]!) sign 1 32 0
+  let stage1 := mkRightShiftStageArithmetic stage0_out stage1_out (shamt[1]!) sign 2 32 1
+  let stage2 := mkRightShiftStageArithmetic stage1_out stage2_out (shamt[2]!) sign 4 32 2
+  let stage3 := mkRightShiftStageArithmetic stage2_out stage3_out (shamt[3]!) sign 8 32 3
+  let stage4 := mkRightShiftStageArithmetic stage3_out stage4_out (shamt[4]!) sign 16 32 4
 
   stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4
 
@@ -154,7 +154,7 @@ def mkShifter32 : Circuit :=
   let sra_out := makeIndexedWires "sra_out" 32
 
   -- Sign bit for arithmetic shift
-  let sign := input.get! 31
+  let sign := input[31]!
 
   -- Build all three shifters
   let sll_gates := mkLeftShifter input shamt zero sll_out
@@ -168,10 +168,10 @@ def mkShifter32 : Circuit :=
   --   Level 2: MUX(mux1, SRA, op1) -> result
   let mux1 := makeIndexedWires "mux1" 32
   let mux_level1 := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (sll_out.get! i) (srl_out.get! i) op0 (mux1.get! i)
+    Gate.mkMUX (sll_out[i]!) (srl_out[i]!) op0 (mux1[i]!)
   )
   let mux_level2 := List.range 32 |>.map (fun i =>
-    Gate.mkMUX (mux1.get! i) (sra_out.get! i) op1 (result.get! i)
+    Gate.mkMUX (mux1[i]!) (sra_out[i]!) op1 (result[i]!)
   )
 
   { name := "Shifter32"
@@ -193,28 +193,28 @@ def mkShifter4 : Circuit :=
   let sll_out := makeIndexedWires "sll_out" 4
   let srl_out := makeIndexedWires "srl_out" 4
   let sra_out := makeIndexedWires "sra_out" 4
-  let sign := input.get! 3
+  let sign := input[3]!
 
   -- 2 stages for 4-bit shifter
   let sll_s0 := makeIndexedWires "sll_s0" 4
   let srl_s0 := makeIndexedWires "srl_s0" 4
   let sra_s0 := makeIndexedWires "sra_s0" 4
 
-  let sll_stage0 := mkLeftShiftStage input sll_s0 (shamt.get! 0) zero 1 4 0
-  let sll_stage1 := mkLeftShiftStage sll_s0 sll_out (shamt.get! 1) zero 2 4 1
+  let sll_stage0 := mkLeftShiftStage input sll_s0 (shamt[0]!) zero 1 4 0
+  let sll_stage1 := mkLeftShiftStage sll_s0 sll_out (shamt[1]!) zero 2 4 1
 
-  let srl_stage0 := mkRightShiftStageLogical input srl_s0 (shamt.get! 0) zero 1 4 0
-  let srl_stage1 := mkRightShiftStageLogical srl_s0 srl_out (shamt.get! 1) zero 2 4 1
+  let srl_stage0 := mkRightShiftStageLogical input srl_s0 (shamt[0]!) zero 1 4 0
+  let srl_stage1 := mkRightShiftStageLogical srl_s0 srl_out (shamt[1]!) zero 2 4 1
 
-  let sra_stage0 := mkRightShiftStageArithmetic input sra_s0 (shamt.get! 0) sign 1 4 0
-  let sra_stage1 := mkRightShiftStageArithmetic sra_s0 sra_out (shamt.get! 1) sign 2 4 1
+  let sra_stage0 := mkRightShiftStageArithmetic input sra_s0 (shamt[0]!) sign 1 4 0
+  let sra_stage1 := mkRightShiftStageArithmetic sra_s0 sra_out (shamt[1]!) sign 2 4 1
 
   let mux1 := makeIndexedWires "mux1" 4
   let mux_level1 := List.range 4 |>.map (fun i =>
-    Gate.mkMUX (sll_out.get! i) (srl_out.get! i) op0 (mux1.get! i)
+    Gate.mkMUX (sll_out[i]!) (srl_out[i]!) op0 (mux1[i]!)
   )
   let mux_level2 := List.range 4 |>.map (fun i =>
-    Gate.mkMUX (mux1.get! i) (sra_out.get! i) op1 (result.get! i)
+    Gate.mkMUX (mux1[i]!) (sra_out[i]!) op1 (result[i]!)
   )
 
   { name := "Shifter4"

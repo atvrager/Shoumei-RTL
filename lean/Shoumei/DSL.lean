@@ -10,6 +10,12 @@ Defines the basic types for representing hardware circuits:
 Supports both combinational (AND, OR, NOT, XOR) and sequential (DFF) elements.
 -/
 
+-- Lean 4.27.0 compat: List.enum was removed in favor of List.zipIdx (which
+-- returns (α × Nat) instead of (Nat × α)). Re-define with the original signature
+-- to avoid a codebase-wide destructuring swap.
+def List.enum (l : List α) : List (Nat × α) :=
+  l.zipIdx.map (fun (a, i) => (i, a))
+
 -- Wire: represents a signal in the circuit
 -- Uses String identifier for simplicity
 structure Wire where
