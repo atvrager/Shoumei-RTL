@@ -28,10 +28,12 @@ def generateShifters : IO Unit := do
   IO.println "Generating Chisel for Shifters..."
 
   let chisel4 := Codegen.Chisel.toChisel mkShifter4
+  IO.FS.writeFile "output/chisel-src/Shifter4.scala" chisel4
   IO.FS.writeFile "chisel/src/main/scala/generated/Shifter4.scala" chisel4
   IO.println "  ✓ Shifter4.scala"
 
   let chisel32 := Codegen.Chisel.toChisel mkShifter32
+  IO.FS.writeFile "output/chisel-src/Shifter32.scala" chisel32
   IO.FS.writeFile "chisel/src/main/scala/generated/Shifter32.scala" chisel32
   IO.println "  ✓ Shifter32.scala"
 

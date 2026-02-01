@@ -99,7 +99,7 @@ class DecoderIO extends Bundle {
   val valid  = Output(Bool())       // Instruction is valid RV32I
 }
 
-class RV32IDecoder extends Module {
+class RV32IDecoder extends RawModule {
   val io = IO(new DecoderIO)
 
   val instr = io.instr

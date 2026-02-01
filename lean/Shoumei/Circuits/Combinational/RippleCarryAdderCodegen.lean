@@ -46,8 +46,9 @@ def writeRCA4SystemVerilog : IO Unit := do
 -- Write RCA4 Chisel to file
 def writeRCA4Chisel : IO Unit := do
   let chisel := generateRCA4Chisel
-  let path := "chisel/src/main/scala/generated/RippleCarryAdder4.scala"
+  let path := "output/chisel-src/RippleCarryAdder4.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/RippleCarryAdder4.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Write RCA8 SystemVerilog to file
@@ -60,8 +61,9 @@ def writeRCA8SystemVerilog : IO Unit := do
 -- Write RCA8 Chisel to file
 def writeRCA8Chisel : IO Unit := do
   let chisel := generateRCA8Chisel
-  let path := "chisel/src/main/scala/generated/RippleCarryAdder8.scala"
+  let path := "output/chisel-src/RippleCarryAdder8.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/RippleCarryAdder8.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Write RCA32 SystemVerilog to file
@@ -74,8 +76,9 @@ def writeRCA32SystemVerilog : IO Unit := do
 -- Write RCA32 Chisel to file
 def writeRCA32Chisel : IO Unit := do
   let chisel := generateRCA32Chisel
-  let path := "chisel/src/main/scala/generated/RippleCarryAdder32.scala"
+  let path := "output/chisel-src/RippleCarryAdder32.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/RippleCarryAdder32.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Main entry point for RCA code generation

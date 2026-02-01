@@ -32,14 +32,17 @@ def generateLogicUnits : IO Unit := do
   IO.println "Generating Chisel for LogicUnits..."
 
   let chisel4 := Codegen.Chisel.toChisel mkLogicUnit4
+  IO.FS.writeFile "output/chisel-src/LogicUnit4.scala" chisel4
   IO.FS.writeFile "chisel/src/main/scala/generated/LogicUnit4.scala" chisel4
   IO.println "  ✓ LogicUnit4.scala"
 
   let chisel8 := Codegen.Chisel.toChisel mkLogicUnit8
+  IO.FS.writeFile "output/chisel-src/LogicUnit8.scala" chisel8
   IO.FS.writeFile "chisel/src/main/scala/generated/LogicUnit8.scala" chisel8
   IO.println "  ✓ LogicUnit8.scala"
 
   let chisel32 := Codegen.Chisel.toChisel mkLogicUnit32
+  IO.FS.writeFile "output/chisel-src/LogicUnit32.scala" chisel32
   IO.FS.writeFile "chisel/src/main/scala/generated/LogicUnit32.scala" chisel32
   IO.println "  ✓ LogicUnit32.scala"
 

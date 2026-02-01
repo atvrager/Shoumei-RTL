@@ -22,6 +22,7 @@ def generateALUs : IO Unit := do
   IO.println "Generating Chisel for ALU..."
 
   let chisel32 := Codegen.Chisel.toChisel mkALU32
+  IO.FS.writeFile "output/chisel-src/ALU32.scala" chisel32
   IO.FS.writeFile "chisel/src/main/scala/generated/ALU32.scala" chisel32
   IO.println "  ✓ ALU32.scala"
 

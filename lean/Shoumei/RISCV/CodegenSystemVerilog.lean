@@ -34,7 +34,7 @@ private def natToHex (n : Nat) : String :=
 
 /-- Generate SystemVerilog identifier (sanitize special characters) -/
 def sanitizeSVIdentifier (name : String) : String :=
-  name.toLower.replace "." "_"
+  name.toUpper.replace "." "_"
 
 /-- Generate OpType enum declaration -/
 def genOpTypeEnum (defs : List InstructionDef) : String :=
@@ -46,15 +46,15 @@ def genOpTypeEnum (defs : List InstructionDef) : String :=
 def genImmediateExtractor (immType : String) : String :=
   match immType with
   | "I" =>
-    "assign imm_i = {{20{instr[31]}}, instr[31:20]};"
+    "assign imm_i = {{20{io_instr[31]}}, io_instr[31:20]};"
   | "S" =>
-    "assign imm_s = {{20{instr[31]}}, instr[31:25], instr[11:7]};"
+    "assign imm_s = {{20{io_instr[31]}}, io_instr[31:25], io_instr[11:7]};"
   | "B" =>
-    "assign imm_b = {{19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0};"
+    "assign imm_b = {{19{io_instr[31]}}, io_instr[31], io_instr[7], io_instr[30:25], io_instr[11:8], 1'b0};"
   | "U" =>
-    "assign imm_u = {instr[31:12], 12'b0};"
+    "assign imm_u = {io_instr[31:12], 12'b0};"
   | "J" =>
-    "assign imm_j = {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0};"
+    "assign imm_j = {{11{io_instr[31]}}, io_instr[31], io_instr[19:12], io_instr[20], io_instr[30:21], 1'b0};"
   | _ => ""
 
 /-- Generate decoder case for one instruction -/
@@ -62,7 +62,7 @@ def genDecoderCase (instrDef : InstructionDef) : String :=
   let maskHex := "32'h" ++ natToHex instrDef.maskBits.toNat
   let matchHex := "32'h" ++ natToHex instrDef.matchBits.toNat
   let opName := sanitizeSVIdentifier instrDef.name
-  "        if ((instr & " ++ maskHex ++ ") == " ++ matchHex ++ ") begin\n            optype = " ++ opName ++ ";\n            valid = 1'b1;\n        end"
+  "        if ((io_instr & " ++ maskHex ++ ") == " ++ matchHex ++ ") begin\n            io_optype = " ++ opName ++ ";\n            io_valid = 1'b1;\n        end"
 
 /-- Generate complete SystemVerilog decoder module -/
 def genSystemVerilogDecoder (defs : List InstructionDef) : String :=
@@ -83,20 +83,22 @@ def genSystemVerilogDecoder (defs : List InstructionDef) : String :=
 
   let moduleDecl :=
 "
-module rv32i_decoder (
-    input  logic [31:0] instr,      // 32-bit instruction word
-    output optype_t     optype,     // Decoded operation type
-    output logic [4:0]  rd,         // Destination register
-    output logic [4:0]  rs1,        // Source register 1
-    output logic [4:0]  rs2,        // Source register 2
-    output logic [31:0] imm,        // Immediate value (sign-extended)
-    output logic        valid       // Instruction is valid RV32I
+module RV32IDecoder (
+    input  logic        clock,
+    input  logic        reset,
+    input  logic [31:0] io_instr,   // 32-bit instruction word
+    output logic [5:0]  io_optype,  // Decoded operation type
+    output logic [4:0]  io_rd,      // Destination register
+    output logic [4:0]  io_rs1,     // Source register 1
+    output logic [4:0]  io_rs2,     // Source register 2
+    output logic [31:0] io_imm,     // Immediate value (sign-extended)
+    output logic        io_valid    // Instruction is valid RV32I
 );
 
 // Extract register fields
-assign rd  = instr[11:7];
-assign rs1 = instr[19:15];
-assign rs2 = instr[24:20];
+assign io_rd  = io_instr[11:7];
+assign io_rs1 = io_instr[19:15];
+assign io_rs2 = io_instr[24:20];
 
 // Extract immediate values for each format
 logic signed [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
@@ -119,9 +121,9 @@ logic signed [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
 // Decode instruction using mask/match patterns
 always_comb begin
     // Default: invalid instruction
-    optype = " ++ defaultOp ++ ";
-    imm = 32'b0;
-    valid = 1'b0;
+    io_optype = " ++ defaultOp ++ ";
+    io_imm = 32'b0;
+    io_valid = 1'b0;
 
     // Check each instruction pattern
 "
@@ -131,13 +133,13 @@ always_comb begin
   let immMux :=
 "
     // Select appropriate immediate based on instruction format
-    casez (instr[6:0])
-        7'b0010011, 7'b0000011, 7'b1100111: imm = imm_i;  // I-type (ALU-I, LOAD, JALR)
-        7'b0100011:                          imm = imm_s;  // S-type (STORE)
-        7'b1100011:                          imm = imm_b;  // B-type (BRANCH)
-        7'b0110111, 7'b0010111:              imm = imm_u;  // U-type (LUI, AUIPC)
-        7'b1101111:                          imm = imm_j;  // J-type (JAL)
-        default:                             imm = 32'b0;
+    casez (io_instr[6:0])
+        7'b0010011, 7'b0000011, 7'b1100111: io_imm = imm_i;  // I-type (ALU-I, LOAD, JALR)
+        7'b0100011:                          io_imm = imm_s;  // S-type (STORE)
+        7'b1100011:                          io_imm = imm_b;  // B-type (BRANCH)
+        7'b0110111, 7'b0010111:              io_imm = imm_u;  // U-type (LUI, AUIPC)
+        7'b1101111:                          io_imm = imm_j;  // J-type (JAL)
+        default:                             io_imm = 32'b0;
     endcase
 end
 

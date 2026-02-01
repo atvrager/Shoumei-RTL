@@ -46,8 +46,9 @@ def writeSubtractor4SystemVerilog : IO Unit := do
 -- Write Subtractor4 Chisel to file
 def writeSubtractor4Chisel : IO Unit := do
   let chisel := generateSubtractor4Chisel
-  let path := "chisel/src/main/scala/generated/Subtractor4.scala"
+  let path := "output/chisel-src/Subtractor4.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/Subtractor4.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Write Subtractor8 SystemVerilog to file
@@ -60,8 +61,9 @@ def writeSubtractor8SystemVerilog : IO Unit := do
 -- Write Subtractor8 Chisel to file
 def writeSubtractor8Chisel : IO Unit := do
   let chisel := generateSubtractor8Chisel
-  let path := "chisel/src/main/scala/generated/Subtractor8.scala"
+  let path := "output/chisel-src/Subtractor8.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/Subtractor8.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Write Subtractor32 SystemVerilog to file
@@ -74,8 +76,9 @@ def writeSubtractor32SystemVerilog : IO Unit := do
 -- Write Subtractor32 Chisel to file
 def writeSubtractor32Chisel : IO Unit := do
   let chisel := generateSubtractor32Chisel
-  let path := "chisel/src/main/scala/generated/Subtractor32.scala"
+  let path := "output/chisel-src/Subtractor32.scala"
   IO.FS.writeFile path chisel
+  IO.FS.writeFile "chisel/src/main/scala/generated/Subtractor32.scala" chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Main entry point for Subtractor code generation

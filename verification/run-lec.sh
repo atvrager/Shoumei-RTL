@@ -84,7 +84,7 @@ verify_module() {
         # Sequential Equivalence Checking (SEC)
         cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
 # Read and prepare LEAN design (gold reference)
-read_verilog LEAN_FILE
+read_verilog -sv LEAN_FILE
 hierarchy -check -top MODULE_NAME
 proc; memory; opt
 rename MODULE_NAME gold
@@ -121,7 +121,7 @@ YOSYS_EOF
         # Combinational Equivalence Checking (CEC)
         cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
 # Read and prepare LEAN design (gold reference)
-read_verilog LEAN_FILE
+read_verilog -sv LEAN_FILE
 hierarchy -check -top MODULE_NAME
 proc; opt; memory; opt; flatten
 rename MODULE_NAME gold

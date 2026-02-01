@@ -66,30 +66,47 @@ This provides **mathematical proof** that our DSL semantics are correctly implem
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Current)
-- [ ] Project structure setup
-- [ ] Basic LEAN4 DSL for simple combinational circuits (AND, OR, NOT gates)
-- [ ] Simple operational semantics in LEAN
-- [ ] Basic theorem proving infrastructure
-- [ ] Minimal code generators (SystemVerilog + Chisel)
+### Phase 1: Foundation ✅ COMPLETE
+- [x] Project structure setup
+- [x] Basic LEAN4 DSL for combinational circuits (gates, wires, circuits)
+- [x] Operational semantics in LEAN
+- [x] Basic theorem proving infrastructure
+- [x] Dual code generators (SystemVerilog + Chisel)
+- [x] Building blocks library:
+  - FullAdder, RippleCarryAdder (4/8/32-bit)
+  - Subtractor (4/8/32-bit)
+  - Comparator (4/8/32-bit)
+  - LogicUnit (4/8/32-bit)
+  - Shifter (4/32-bit)
+  - ALU32 (10 operations)
+- [x] Sequential circuits: DFlipFlop, Queue (1-element FIFO)
 
-### Phase 2: Toolchain Integration
-- [ ] Lake build configuration with code generation targets
-- [ ] sbt configuration for Chisel compilation
-- [ ] ABC integration scripts for LEC
-- [ ] End-to-end workflow automation
-- [ ] CI pipeline
+### Phase 2: RISC-V Decoder Integration ✅ COMPLETE
+- [x] Lake build configuration with code generation targets
+- [x] sbt configuration for Chisel compilation
+- [x] Yosys/ABC integration scripts for LEC
+- [x] End-to-end workflow automation
+- [x] RV32I instruction decoder:
+  - 40 RISC-V base integer instructions
+  - Automated parsing from riscv-opcodes
+  - Mask/match pattern decoding
+  - Immediate value extraction (I/S/B/U/J formats)
+- [x] LEC verification: All 20 modules proven equivalent
+  - LEAN SV ≡ Chisel SV (via Yosys SAT solver)
+- [ ] CI pipeline (GitHub Actions)
 
-### Phase 3: DSL Expansion
-- [ ] Sequential circuits (registers, state machines)
-- [ ] Parameterized circuits
-- [ ] Module hierarchy
-- [ ] More complex theorems (timing, safety properties)
+### Phase 3: DSL Expansion (Next)
+- [ ] More sequential circuits (counters, state machines)
+- [ ] Parameterized circuits with dependent types
+- [ ] Module hierarchy and composition
+- [ ] Correctness theorems (timing, safety properties)
+- [ ] RISC-V CPU datapath integration
 
-### Phase 4: Advanced Features
+### Phase 4: Advanced Features (Future)
 - [ ] Optimization passes with correctness proofs
 - [ ] Clock domain crossing primitives
-- [ ] Memory models
+- [ ] Memory models (SRAM, BRAM)
+- [ ] Pipeline verification
 - [ ] Industrial-scale examples
 
 ## Technical Challenges

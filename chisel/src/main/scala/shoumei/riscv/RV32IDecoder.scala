@@ -13,59 +13,57 @@ package shoumei.riscv
 import chisel3._
 import chisel3.util._
 
-
 object OpType extends ChiselEnum {
-  val XORI = Value
-  val XOR = Value
-  val SW = Value
-  val SUB = Value
-  val SRLI = Value
-  val SRL = Value
-  val SRAI = Value
-  val SRA = Value
-  val SLTU = Value
-  val SLTIU = Value
-  val SLTI = Value
-  val SLT = Value
-  val SLLI = Value
-  val SLL = Value
-  val SH = Value
-  val SB = Value
-  val ORI = Value
-  val OR = Value
-  val LW = Value
-  val LUI = Value
-  val LHU = Value
-  val LH = Value
-  val LBU = Value
-  val LB = Value
-  val JALR = Value
-  val JAL = Value
-  val FENCE = Value
-  val ECALL = Value
+  val XORI   = Value
+  val XOR    = Value
+  val SW     = Value
+  val SUB    = Value
+  val SRLI   = Value
+  val SRL    = Value
+  val SRAI   = Value
+  val SRA    = Value
+  val SLTU   = Value
+  val SLTIU  = Value
+  val SLTI   = Value
+  val SLT    = Value
+  val SLLI   = Value
+  val SLL    = Value
+  val SH     = Value
+  val SB     = Value
+  val ORI    = Value
+  val OR     = Value
+  val LW     = Value
+  val LUI    = Value
+  val LHU    = Value
+  val LH     = Value
+  val LBU    = Value
+  val LB     = Value
+  val JALR   = Value
+  val JAL    = Value
+  val FENCE  = Value
+  val ECALL  = Value
   val EBREAK = Value
-  val BNE = Value
-  val BLTU = Value
-  val BLT = Value
-  val BGEU = Value
-  val BGE = Value
-  val BEQ = Value
-  val AUIPC = Value
-  val ANDI = Value
-  val AND = Value
-  val ADDI = Value
-  val ADD = Value
+  val BNE    = Value
+  val BLTU   = Value
+  val BLT    = Value
+  val BGEU   = Value
+  val BGE    = Value
+  val BEQ    = Value
+  val AUIPC  = Value
+  val ANDI   = Value
+  val AND    = Value
+  val ADDI   = Value
+  val ADD    = Value
 }
 
-
 class DecoderIO extends Bundle {
-  val instr  = Input(UInt(32.W))    // 32-bit instruction word
-  val optype = Output(OpType())     // Decoded operation type
-  val rd     = Output(UInt(5.W))    // Destination register
-  val rs1    = Output(UInt(5.W))    // Source register 1
-  val rs2    = Output(UInt(5.W))    // Source register 2
-  val imm    = Output(SInt(32.W))   // Immediate value (sign-extended)
-  val valid  = Output(Bool())       // Instruction is valid RV32I
+  val instr  = Input(UInt(32.W))  // 32-bit instruction word
+  val optype = Output(OpType())   // Decoded operation type
+  val rd     = Output(UInt(5.W))  // Destination register
+  val rs1    = Output(UInt(5.W))  // Source register 1
+  val rs2    = Output(UInt(5.W))  // Source register 2
+  val imm    = Output(SInt(32.W)) // Immediate value (sign-extended)
+  val valid  = Output(Bool())     // Instruction is valid RV32I
 }
 
 class RV32IDecoder extends Module {
@@ -74,7 +72,7 @@ class RV32IDecoder extends Module {
   val instr = io.instr
 
   // Extract register fields
-  io.rd  := instr(11, 7)
+  io.rd := instr(11, 7)
   io.rs1 := instr(19, 15)
   io.rs2 := instr(24, 20)
 
@@ -82,10 +80,13 @@ class RV32IDecoder extends Module {
 
   val immI = Cat(Fill(20, instr(31)), instr(31, 20)).asSInt
   val immS = Cat(Fill(20, instr(31)), instr(31, 25), instr(11, 7)).asSInt
-  val immB = Cat(Fill(19, instr(31)), instr(31), instr(7), instr(30, 25), instr(11, 8), 0.U(1.W)).asSInt
-  val immU = Cat(instr(31, 12), 0.U(12.W)).asSInt
-  val immJ = Cat(Fill(11, instr(31)), instr(31), instr(19, 12), instr(20), instr(30, 21), 0.U(1.W)).asSInt
 
+  val immB =
+    Cat(Fill(19, instr(31)), instr(31), instr(7), instr(30, 25), instr(11, 8), 0.U(1.W)).asSInt
+  val immU = Cat(instr(31, 12), 0.U(12.W)).asSInt
+
+  val immJ =
+    Cat(Fill(11, instr(31)), instr(31), instr(19, 12), instr(20), instr(30, 21), 0.U(1.W)).asSInt
 
   // Default: invalid instruction
   io.optype := OpType.XORI
@@ -257,13 +258,12 @@ class RV32IDecoder extends Module {
       io.valid := true.B
     }
 
-
   // Select appropriate immediate based on instruction format
   switch(instr(6, 0)) {
-    is("b0010011".U, "b0000011".U, "b1100111".U) { io.imm := immI }  // I-type
-    is("b0100011".U)                                 { io.imm := immS }  // S-type
-    is("b1100011".U)                                 { io.imm := immB }  // B-type
-    is("b0110111".U, "b0010111".U)                { io.imm := immU }  // U-type
-    is("b1101111".U)                                 { io.imm := immJ }  // J-type
+    is("b0010011".U, "b0000011".U, "b1100111".U)(io.imm := immI) // I-type
+    is("b0100011".U)(io.imm := immS)                             // S-type
+    is("b1100011".U)(io.imm := immB)                             // B-type
+    is("b0110111".U, "b0010111".U)(io.imm := immU)               // U-type
+    is("b1101111".U)(io.imm := immJ)                             // J-type
   }
 }

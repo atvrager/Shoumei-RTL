@@ -32,14 +32,17 @@ def generateComparators : IO Unit := do
   IO.println "Generating Chisel for Comparators..."
 
   let chisel4 := Codegen.Chisel.toChisel mkComparator4
+  IO.FS.writeFile "output/chisel-src/Comparator4.scala" chisel4
   IO.FS.writeFile "chisel/src/main/scala/generated/Comparator4.scala" chisel4
   IO.println "  ✓ Comparator4.scala"
 
   let chisel8 := Codegen.Chisel.toChisel mkComparator8
+  IO.FS.writeFile "output/chisel-src/Comparator8.scala" chisel8
   IO.FS.writeFile "chisel/src/main/scala/generated/Comparator8.scala" chisel8
   IO.println "  ✓ Comparator8.scala"
 
   let chisel32 := Codegen.Chisel.toChisel mkComparator32
+  IO.FS.writeFile "output/chisel-src/Comparator32.scala" chisel32
   IO.FS.writeFile "chisel/src/main/scala/generated/Comparator32.scala" chisel32
   IO.println "  ✓ Comparator32.scala"
 
