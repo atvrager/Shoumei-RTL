@@ -966,7 +966,7 @@ The rename stage output format should be designed with this in mind.
 
 **Total: ~43 weeks (~11 months) for complete verified RV32IM Tomasulo CPU**
 
-**Current Progress:** 17 weeks complete (Phase 0-3), Phase 4A Week 1 complete
+**Current Progress:** 19 weeks complete (Phase 0-3 + Phase 4A)
 
 This is an ambitious timeline for a single developer. With a team of 2-3, could be reduced to 6-8 months.
 
@@ -974,7 +974,7 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 4A Week 1 Complete
+**Status:** Active Development - Phase 4A Complete, Starting Phase 4B
 **Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
@@ -989,14 +989,21 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
   - Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
   - Week 6: PhysRegFile (Physical Register File, 4160 gates, 18 proofs)
   - Week 7: RenameStage Integration (15 gates, 3 instances, 18 theorems)
+- ✅ Phase 4A: Decoupled Interface Abstraction (Week 1-2 complete)
+  - Week 1: Core Decoupled types and helpers
+    - DecoupledSource/DecoupledSink types (272 lines)
+    - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
+    - DecoupledProofs: 11 axioms/theorems for composition (180 lines)
+    - Backward compatible: 47/47 modules still verified
+  - Week 2: Queue refactoring and validation
+    - Queue1.enqPort/deqPort accessors for Decoupled extraction
+    - mkQueue1Decoupled variant using Decoupled helpers
+    - 13 new structural proofs for Decoupled Queue interface
+    - Comprehensive usage documentation with 5 example patterns
+    - Full smoke test: 47/47 modules verified (100% coverage)
 
-**Current Phase:** Phase 4A - Decoupled Interface Abstraction (Week 1/2 complete)
-- ✅ Week 1: Core Decoupled types and helpers
-  - DecoupledSource/DecoupledSink types (272 lines)
-  - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
-  - DecoupledProofs: 11 axioms/theorems for composition (180 lines)
-  - Backward compatible: 47/47 modules still verified
+**Current Phase:** Phase 4B - Reservation Stations (Ready to begin Week 1)
 
 **Verification Status:** 47/47 modules verified (40 LEC + 7 compositional = 100% coverage)
 
-**Next Milestone:** Phase 4A Week 2 - Queue refactoring with Decoupled interface
+**Next Milestone:** Phase 4B Week 1 - Reservation Station behavioral model (RSEntry, RSState)

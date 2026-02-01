@@ -10,10 +10,12 @@ Proves the fundamental properties of queues:
 -/
 
 import Shoumei.Circuits.Sequential.Queue
+import Shoumei.DSL.Decoupled
 
 namespace Shoumei.Circuits.Sequential
 
 open Shoumei
+open Shoumei.DSL.Decoupled
 
 -- Alias for convenience
 abbrev IntQueue := QueueState Nat
@@ -245,6 +247,69 @@ theorem queue_32bit_large_values :
   let q1 := q.enqueue 4294967295  -- 2^32 - 1
   let (q2, result) := q1.dequeue
   result = some 4294967295 ∧ q2.isEmpty = true := by
+  native_decide
+
+/-!
+## Decoupled Interface Properties
+-/
+
+-- Theorem: Queue1 enqueue port has correct wire count (width + 2)
+theorem queue1_enq_port_wire_count (width : Nat) :
+  (Queue1.enqPort width).allWires.length = width + 2 := by
+  simp [Queue1.enqPort, DecoupledSource.allWires, List.length_append, List.length_map, List.length_range]
+
+-- Theorem: Queue1 dequeue port has correct wire count (width + 2)
+theorem queue1_deq_port_wire_count (width : Nat) :
+  (Queue1.deqPort width).allWires.length = width + 2 := by
+  simp [Queue1.deqPort, DecoupledSource.allWires, List.length_append, List.length_map, List.length_range]
+
+-- Theorem: Queue1 enqueue port has correct valid wire name
+theorem queue1_enq_port_valid_name :
+  (Queue1.enqPort 8).valid.name = "enq_valid" := by
+  native_decide
+
+-- Theorem: Queue1 enqueue port has correct ready wire name
+theorem queue1_enq_port_ready_name :
+  (Queue1.enqPort 8).ready.name = "enq_ready" := by
+  native_decide
+
+-- Theorem: Queue1 dequeue port has correct valid wire name
+theorem queue1_deq_port_valid_name :
+  (Queue1.deqPort 8).valid.name = "valid" := by
+  native_decide
+
+-- Theorem: Queue1 dequeue port has correct ready wire name
+theorem queue1_deq_port_ready_name :
+  (Queue1.deqPort 8).ready.name = "deq_ready" := by
+  native_decide
+
+-- Theorem: mkQueue1Decoupled has the correct name for 8-bit queue
+theorem queue1_decoupled_8bit_name :
+  (mkQueue1Decoupled 8).name = "Queue1_8" := by
+  rfl
+
+-- Theorem: mkQueue1Decoupled has the correct input count for 8-bit queue
+-- Inputs: enq_bits[0..7] (8) + enq_valid (1) + deq_ready (1) + clock (1) + reset (1) = 12
+theorem queue1_decoupled_8bit_input_count :
+  (mkQueue1Decoupled 8).inputs.length = 12 := by
+  native_decide
+
+-- Theorem: mkQueue1Decoupled has the correct output count for 8-bit queue
+-- Outputs: enq_ready (1) + data_reg[0..7] (8) + valid (1) = 10
+theorem queue1_decoupled_8bit_output_count :
+  (mkQueue1Decoupled 8).outputs.length = 10 := by
+  native_decide
+
+-- Theorem: mkQueue1Decoupled has the correct gate count for 8-bit queue
+theorem queue1_decoupled_8bit_gate_count :
+  (mkQueue1Decoupled 8).gates.length = 23 := by
+  native_decide
+
+-- Theorem: mkQueue1Decoupled produces same structure as mkQueue1StructuralComplete
+theorem queue1_decoupled_equiv_structural_8bit :
+  (mkQueue1Decoupled 8).gates.length = (mkQueue1StructuralComplete 8).gates.length ∧
+  (mkQueue1Decoupled 8).inputs.length = (mkQueue1StructuralComplete 8).inputs.length ∧
+  (mkQueue1Decoupled 8).outputs.length = (mkQueue1StructuralComplete 8).outputs.length := by
   native_decide
 
 end Shoumei.Circuits.Sequential

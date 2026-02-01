@@ -16,37 +16,9 @@ just provides semantic annotations and helper functions to generate
 standard ready/valid patterns.
 -/
 
--- Note: This module is Shoumei.DSL.Decoupled (file: lean/Shoumei/DSL/Decoupled.lean)
--- We need to import the parent DSL module which defines Wire, Gate, Circuit types
--- But actually, Lean 4 doesn't allow circular dependencies between Shoumei.DSL and Shoumei.DSL.Decoupled
--- The solution: Define Decoupled in its own namespace and import it from DSL.lean later
+import Shoumei.DSL
 
 namespace Shoumei.DSL.Decoupled
-
--- Core types we use (must match DSL.lean definitions)
-structure Wire where
-  name : String
-  deriving Repr, BEq, Hashable, Inhabited
-
-inductive GateType where
-  | AND | OR | NOT | XOR | BUF | MUX | DFF
-  deriving Repr, BEq
-
-structure Gate where
-  gateType : GateType
-  inputs : List Wire
-  output : Wire
-  deriving Repr
-
-namespace Gate
-
-def mkAND (a b : Wire) (out : Wire) : Gate :=
-  { gateType := GateType.AND, inputs := [a, b], output := out }
-
-def mkBUF (a : Wire) (out : Wire) : Gate :=
-  { gateType := GateType.BUF, inputs := [a], output := out }
-
-end Gate
 
 /-! ## Decoupled Interface Types -/
 
@@ -268,5 +240,138 @@ def chainDecoupled {width : Nat}
     (consumer_in : DecoupledSink width)
     : List Gate :=
   connectDecoupled producer_out consumer_in
+
+/-! ## Usage Examples and Patterns
+
+This section demonstrates typical usage patterns for the Decoupled abstraction.
+
+### Example 1: Creating a Decoupled Module Interface
+
+When designing a module with ready/valid handshaking, use `mkDecoupledInput` and
+`mkDecoupledOutput` to create port bundles:
+
+```lean
+def mkMyModule (width : Nat) : Circuit :=
+  -- Create input port (sink) - receives data from producer
+  let dataIn := mkDecoupledInput "data_in" width
+
+  -- Create output port (source) - sends data to consumer
+  let dataOut := mkDecoupledOutput "data_out" width
+
+  -- Extract wires for circuit inputs/outputs
+  let inputs := dataIn.bits ++ [dataIn.valid] ++ [dataOut.ready]
+  let outputs := [dataIn.ready] ++ dataOut.bits ++ [dataOut.valid]
+
+  -- Build your circuit logic here...
+  { name := "MyModule"
+    inputs := inputs
+    outputs := outputs
+    gates := []  -- Your gates
+    instances := []
+  }
+```
+
+### Example 2: Generating Fire Signals
+
+The fire signal indicates when a transaction occurs (valid && ready).
+Use `mkDecoupledFireGate` to generate this automatically:
+
+```lean
+def mkQueueController (width : Nat) : List Gate :=
+  let enq := mkDecoupledInput "enq" width
+  let deq := mkDecoupledOutput "deq" width
+
+  -- Generate fire signals
+  let enqFireGate := mkDecoupledFireGate enq  -- enq_fire = enq_valid AND enq_ready
+  let deqFireGate := mkDecoupledFireGate deq  -- deq_fire = deq_valid AND deq_ready
+
+  [enqFireGate, deqFireGate] ++ [/* other control logic */]
+```
+
+### Example 3: Connecting Modules
+
+Use `connectDecoupled` to wire a producer directly to a consumer:
+
+```lean
+def mkPipeline (width : Nat) : Circuit :=
+  -- Stage 1 output
+  let stage1Out := mkDecoupledOutput "stage1_out" width
+
+  -- Stage 2 input
+  let stage2In := mkDecoupledInput "stage2_in" width
+
+  -- Connect stage1 → stage2
+  let connectionGates := connectDecoupled stage1Out stage2In
+  -- Creates width+2 BUF gates:
+  --   - width gates for data bits
+  --   - 1 gate for valid signal (forward)
+  --   - 1 gate for ready signal (backward)
+
+  { name := "Pipeline"
+    inputs := []
+    outputs := []
+    gates := connectionGates
+    instances := []
+  }
+```
+
+### Example 4: Extracting Decoupled Ports from Existing Circuits
+
+For modules that already implement ready/valid handshaking, extract
+their Decoupled interface for composition:
+
+```lean
+-- Queue example (see Queue.lean for full implementation)
+def Queue1.enqPort (width : Nat) : DecoupledSink width :=
+  { bits := List.range width |>.map (fun i => Wire.mk s!"enq_data_{i}")
+    valid := Wire.mk "enq_valid"
+    ready := Wire.mk "enq_ready"
+  }
+
+def Queue1.deqPort (width : Nat) : DecoupledSource width :=
+  { bits := List.range width |>.map (fun i => Wire.mk s!"data_reg_{i}")
+    valid := Wire.mk "valid"
+    ready := Wire.mk "deq_ready"
+  }
+```
+
+### Example 5: Chaining Multiple Stages
+
+Use `chainDecoupled` for multi-stage pipelines:
+
+```lean
+def mkThreeStageQueue (width : Nat) : List Gate :=
+  let q1Deq := Queue1.deqPort width
+  let q2Enq := Queue1.enqPort width
+  let q2Deq := Queue1.deqPort width
+  let q3Enq := Queue1.enqPort width
+
+  -- Chain: queue1 → queue2 → queue3
+  chainDecoupled q1Deq q2Enq ++
+  chainDecoupled q2Deq q3Enq
+```
+
+### Wire Naming Conventions
+
+The Decoupled abstraction follows these naming patterns:
+
+- **Data bits**: `{name}_bits_0`, `{name}_bits_1`, ..., `{name}_bits_{width-1}`
+- **Valid signal**: `{name}_valid`
+- **Ready signal**: `{name}_ready`
+- **Fire signal**: `{name}_fire` (derived from valid signal name)
+
+These conventions match industry standards (Chisel DecoupledIO, AXI-Stream).
+
+### Composition Guarantees
+
+The Decoupled abstraction provides semantic guarantees for composition:
+
+1. **Pipeline Composition**: A → B → C preserves decoupled properties
+2. **Buffering**: Inserting a queue between stages doesn't change behavior (only latency)
+3. **Deadlock Freedom**: Acyclic topologies are guaranteed deadlock-free
+
+See `DecoupledProofs.lean` for formal statements of these properties.
+
+-/
 
 end Shoumei.DSL.Decoupled
