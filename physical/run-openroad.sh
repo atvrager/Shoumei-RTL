@@ -5,8 +5,11 @@
 # Usage:
 #   ./physical/run-openroad.sh
 #
+#   If Docker permission denied, use sg:
+#   sg docker -c './physical/run-openroad.sh'
+#
 # Prerequisites:
-#   - Docker running and accessible
+#   - Docker running and accessible (user in docker group)
 #   - ORFS submodule initialized: git submodule update --init --recursive
 #   - Verilog generated: lake exe generate_riscv_decoder (for RV32IDecoder)
 #
@@ -46,7 +49,11 @@ fi
 
 if ! docker info > /dev/null 2>&1; then
     echo -e "${RED}✗ Docker daemon not running or permission denied${NC}"
-    echo "Ensure Docker is running and you have permissions (add user to docker group)"
+    echo ""
+    echo "Solutions:"
+    echo "  1. Add user to docker group: sudo usermod -aG docker \$USER"
+    echo "  2. Use sg to run with docker group: sg docker -c './physical/run-openroad.sh'"
+    echo "  3. Run with sudo (not recommended)"
     exit 1
 fi
 
