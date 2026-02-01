@@ -177,10 +177,85 @@ The `chisel/` directory contains:
 
 ## Testing Strategy
 
-1. **LEAN Proofs** - Theorems about circuit behavior
-2. **Unit Tests** - Test individual code generation functions
-3. **Integration Tests** - Full DSL → SV + Chisel → LEC pipeline
-4. **Property Tests** - Randomized circuit generation + LEC
+### 1. LEAN Proofs
+- Theorems about circuit behavior
+- Structural proofs (gate counts, port counts)
+- Behavioral proofs using `native_decide`
+
+### 2. Code Generation Testing
+**Run code generators:**
+```bash
+# Generate all modules (FullAdder, Queue, ALU, etc.)
+lake exe codegen
+
+# Generate specific modules
+lake exe generate_decoder       # Binary decoders
+lake exe generate_riscv_decoder # RV32I instruction decoder
+```
+
+### 3. Chisel Compilation
+**Compile Chisel to SystemVerilog:**
+```bash
+cd chisel && sbt run
+# Outputs to: output/sv-from-chisel/*.sv
+# Auto-discovers all modules in chisel/src/main/scala/generated/
+```
+
+### 4. Logical Equivalence Checking (LEC)
+**Verify LEAN SV ≡ Chisel SV using Yosys:**
+```bash
+# Verify all modules
+./verification/run-lec.sh
+
+# Verify specific directories
+./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+```
+
+**LEC Tool Details:**
+- **Location:** `verification/run-lec.sh`
+- **Tool:** Yosys (open-source formal verification)
+- **Method:**
+  - Combinational circuits: CEC (Combinational Equivalence Checking) with SAT
+  - Sequential circuits: SEC (Sequential Equivalence Checking) with induction
+- **Auto-detects:** Sequential vs combinational by checking for `always @` blocks
+- **Output:** Per-module verification with variable/clause counts
+
+### 5. Smoke Test (Full Pipeline)
+**Run complete verification pipeline:**
+```bash
+./verification/smoke-test.sh
+```
+
+**Pipeline stages:**
+1. LEAN build verification
+2. Formal proof verification (AdderProofs, DFFProofs, QueueProofs, etc.)
+3. Code generation (LEAN → SV and Chisel)
+4. Chisel compilation (Chisel → SV via CIRCT)
+5. Port name validation
+6. Logic validation
+7. Yosys LEC (if installed)
+
+**Exit code:** 0 = all tests pass, non-zero = failure
+
+### 6. Property Tests
+- Randomized circuit generation + LEC (future)
+
+## Verification Infrastructure
+
+**Scripts:**
+- `verification/run-lec.sh` - Yosys LEC for all modules
+- `verification/smoke-test.sh` - Full CI pipeline
+
+**Requirements:**
+- `yosys` - For LEC (install: `yay -S yosys` or `apt install yosys`)
+- `sbt` - For Chisel compilation
+- `lake` - For LEAN builds
+
+**Verification Status (as of 2026-01-31):**
+- **23 modules** verified with LEC
+- **Combinational:** FullAdder, RCA, Subtractor, Comparator, LogicUnit, Shifter, ALU32, Decoder{2,3,5}, RV32IDecoder
+- **Sequential:** DFlipFlop, Queue1_{8,32}
+- **All LEC tests:** ✓ PASSING
 
 ## Resources
 
