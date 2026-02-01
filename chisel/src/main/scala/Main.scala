@@ -41,6 +41,13 @@ object Main extends App {
       source.close()
   }
 
+  // Get module info (name, fully-qualified class name) from a generated source file
+  def moduleInfo(file: File): (String, String) = {
+    val moduleName  = file.getName.replace(".scala", "")
+    val packageName = getPackageName(file)
+    (moduleName, s"$packageName.$moduleName")
+  }
+
   // Try to compile a generated module using reflection
   // This avoids compile-time dependency on generated packages
   def compileModule(moduleName: String, fqClassName: String): Boolean =
@@ -90,12 +97,7 @@ object Main extends App {
 
     files
       .filter(f => f.isFile && f.getName.endsWith(".scala") && f.getName != ".gitkeep")
-      .map {
-        file =>
-          val moduleName  = file.getName.replace(".scala", "")
-          val packageName = getPackageName(file)
-          (moduleName, s"$packageName.$moduleName")
-      }
+      .map(moduleInfo)
       .toList
   }
 
