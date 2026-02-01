@@ -69,7 +69,6 @@ jobs:
         run: |
           cd chisel
           sbt run
-          sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder"
 
       - name: Run Yosys LEC
         run: |

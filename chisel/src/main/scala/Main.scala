@@ -10,6 +10,7 @@
 import chisel3._
 import circt.stage.ChiselStage
 import java.io.File
+import scala.io.Source
 
 object Main extends App {
   println("証明 Shoumei RTL - Chisel to SystemVerilog Compiler")
@@ -26,17 +27,35 @@ object Main extends App {
     io.out := io.in
   }
 
-  // Try to compile generated modules
-  // This uses dynamic class loading to avoid compile-time dependency on generated package
-  def compileModule(moduleName: String): Boolean =
-    try {
-      println(s"Compiling $moduleName...")
+  // Read the package declaration from a Scala source file
+  def getPackageName(file: File): String = {
+    val source = Source.fromFile(file)
+    try
+      source
+        .getLines()
+        .map(_.trim)
+        .find(_.startsWith("package "))
+        .map(_.stripPrefix("package ").trim)
+        .getOrElse("generated")
+    finally
+      source.close()
+  }
 
-      // Use ChiselStage with a generator function
-      // The generator is called lazily, allowing us to load the class dynamically
+  // Get module info (name, fully-qualified class name) from a generated source file
+  def moduleInfo(file: File): (String, String) = {
+    val moduleName  = file.getName.replace(".scala", "")
+    val packageName = getPackageName(file)
+    (moduleName, s"$packageName.$moduleName")
+  }
+
+  // Try to compile a generated module using reflection
+  // This avoids compile-time dependency on generated packages
+  def compileModule(moduleName: String, fqClassName: String): Boolean =
+    try {
+      println(s"Compiling $moduleName ($fqClassName)...")
+
       val generatorFn = () => {
-        val moduleClass = Class.forName(s"generated.$moduleName")
-        // Get the primary constructor
+        val moduleClass = Class.forName(fqClassName)
         val constructor = moduleClass.getDeclaredConstructors()(0)
         constructor.setAccessible(true)
         constructor.newInstance().asInstanceOf[RawModule]
@@ -46,11 +65,10 @@ object Main extends App {
       val outputDir   = new File(projectRoot, "output/sv-from-chisel")
       outputDir.mkdirs()
 
-      // Generate SystemVerilog using ChiselStage
-      // Note: ChiselStage.emitSystemVerilog handles Module construction properly
       ChiselStage.emitSystemVerilogFile(
         generatorFn(),
-        args = Array("--target-dir", outputDir.getAbsolutePath)
+        args = Array("--target-dir", outputDir.getAbsolutePath),
+        firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
       )
 
       println(s"✓ $moduleName compilation successful")
@@ -58,7 +76,7 @@ object Main extends App {
       true
     } catch {
       case e: ClassNotFoundException =>
-        println(s"⚠ $moduleName class not found")
+        println(s"⚠ $moduleName class not found ($fqClassName)")
         false
       case e: Exception =>
         println(s"✗ $moduleName compilation failed: ${e.getMessage}")
@@ -67,7 +85,8 @@ object Main extends App {
     }
 
   // Discover generated modules in src/main/scala/generated/
-  def discoverGeneratedModules(): List[String] = {
+  // Returns (moduleName, fullyQualifiedClassName) pairs
+  def discoverGeneratedModules(): List[(String, String)] = {
     val genDir = new File("src/main/scala/generated")
     if (!genDir.exists() || !genDir.isDirectory) {
       return List()
@@ -78,7 +97,7 @@ object Main extends App {
 
     files
       .filter(f => f.isFile && f.getName.endsWith(".scala") && f.getName != ".gitkeep")
-      .map(_.getName.replace(".scala", ""))
+      .map(moduleInfo)
       .toList
   }
 
@@ -103,13 +122,12 @@ object Main extends App {
         sys.exit(1)
     }
   } else {
-    println(s"Found ${modules.length} generated module(s): ${modules.mkString(", ")}")
+    println(s"Found ${modules.length} generated module(s): ${modules.map(_._1).mkString(", ")}")
     println()
 
-    // Try to compile each discovered module
     var successCount = 0
-    for (moduleName <- modules) {
-      if (compileModule(moduleName)) {
+    for ((moduleName, fqClassName) <- modules) {
+      if (compileModule(moduleName, fqClassName)) {
         successCount += 1
       }
       println()
