@@ -19,7 +19,8 @@ if command -v shellcheck > /dev/null 2>&1; then
     # Check main scripts and verification scripts (exclude old auto-generated ones)
     SHELL_SCRIPTS=$(find . -name "*.sh" -type f \
         -not -path "./verification/FullAdder/*" \
-        -not -path "./.git/*")
+        -not -path "./.git/*" \
+        -not -path "./third_party/*")
     if [ -n "$SHELL_SCRIPTS" ]; then
         # shellcheck disable=SC2086
         if shellcheck $SHELL_SCRIPTS; then

@@ -1,3 +1,6 @@
 [submodule "third_party/riscv-opcodes"]
 	path = third_party/riscv-opcodes
 	url = https://github.com/riscv/riscv-opcodes
+[submodule "third_party/orfs"]
+	path = third_party/orfs
+	url = https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts
