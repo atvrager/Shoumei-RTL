@@ -130,12 +130,22 @@ def queue64_6_cert : VerificationCertificate := {
   leanProof := some "compositional_soundness + parametric_soundness"
 }
 
+-- RAT (Register Alias Table) - hierarchical sequential, verified compositionally
+-- All subcomponents (Decoder5, Mux32x6) are LEC-verified
+def rat_32x6_cert : VerificationCertificate := {
+  moduleName := "RAT_32x6"
+  method := .Compositional
+  dependencies := ["Decoder5", "Mux32x6"]
+  leanProof := some "compositional_soundness"
+}
+
 -- Verification summary
 def allCertificates : List VerificationCertificate := [
   queue1_8_cert,
   queue1_32_cert,
   queue2_8_cert,
   queue4_8_cert,
+  rat_32x6_cert,
   queueRAM_64x32_cert,
   queueRAM_64x6_cert,
   queue64_32_cert,

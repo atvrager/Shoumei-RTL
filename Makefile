@@ -98,6 +98,8 @@ codegen: lean opcodes
 	lake exe generate_riscv_decoder
 	@echo "    Phase 3A: Multi-entry queue (QueueN) (SV + Chisel)..."
 	lake exe generate_queuen
+	@echo "    Phase 3B: Register Alias Table (RAT) (SV + Chisel)..."
+	lake exe generate_rat
 	@echo "    Phase 3: SystemC code generation..."
 	lake exe codegen_systemc
 

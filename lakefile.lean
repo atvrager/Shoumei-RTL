@@ -56,6 +56,11 @@ lean_exe generate_queuen where
   root := `GenerateQueueN
   supportInterpreter := true
 
+-- Executable target for generating RAT (Register Alias Table) circuits
+lean_exe generate_rat where
+  root := `GenerateRAT
+  supportInterpreter := true
+
 -- Executable target for exporting verification certificates
 -- Generates compositional-certs.txt from Lean verification certificates
 lean_exe export_verification_certs where
