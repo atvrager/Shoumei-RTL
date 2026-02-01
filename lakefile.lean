@@ -40,3 +40,8 @@ lean_exe generate_decoder where
 lean_exe generate_muxtree where
   root := `GenerateMuxTree
   supportInterpreter := true
+
+-- Executable target for testing SystemC code generation
+lean_exe test_systemc where
+  root := `TestSystemC
+  supportInterpreter := true

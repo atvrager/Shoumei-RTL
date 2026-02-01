@@ -17,6 +17,7 @@ import Shoumei.Theorems
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.Chisel
+import Shoumei.Codegen.SystemC
 
 -- Examples
 import Shoumei.Examples.Adder
