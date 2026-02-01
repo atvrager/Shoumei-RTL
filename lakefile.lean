@@ -35,3 +35,8 @@ lean_exe generate_riscv_decoder where
 lean_exe generate_decoder where
   root := `GenerateDecoder
   supportInterpreter := true
+
+-- Executable target for generating MuxTree variants (2:1, 4:1, 32:1, 64:1)
+lean_exe generate_muxtree where
+  root := `GenerateMuxTree
+  supportInterpreter := true
