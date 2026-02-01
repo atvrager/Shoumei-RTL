@@ -275,11 +275,11 @@ TOTAL:         9 theorems + 4 runtime checks ✓
 
 ---
 
-## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 2 Complete)
+## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 3 Started)
 
 **Goal:** Implement RAT, physical register file, free list with 64 physical registers
 
-**Status:** Week 2/8 Complete - MuxTree verified with LEC
+**Status:** Week 2 Complete, Week 3 In Progress - QueueN behavioral model done
 **Target:** 64 physical registers, 6-bit tags, structural proofs only
 **Timeline:** 8 weeks (prerequisites-first approach)
 
@@ -385,39 +385,58 @@ def mkMuxTree (n width : Nat) : Circuit
 
 ---
 
-#### Week 3: Multi-Entry Circular Buffer Queue
+#### Week 3: Multi-Entry Circular Buffer Queue 🚧 IN PROGRESS
 
 **File**: `lean/Shoumei/Circuits/Sequential/QueueN.lean`
 
-**Behavioral Model** (extend existing QueueState):
+**Behavioral Model** ✅ COMPLETE:
 ```lean
--- Already have QueueState (α : Type) with entries/capacity
--- Add circular buffer implementation
-structure CircularBuffer (α : Type) (n : Nat) where
-  storage : Fin n → Option α
-  head : Fin n       -- Read pointer
-  tail : Fin n       -- Write pointer
-  count : Nat        -- Current entries
+structure CircularBufferState (α : Type) (n : Nat) where
+  storage : Fin n → Option α  -- Circular array storage
+  head : Fin n                -- Read pointer (next dequeue)
+  tail : Fin n                -- Write pointer (next enqueue)
+  count : Nat                 -- Current number of entries
+  h_count : count ≤ n         -- Invariant: count never exceeds capacity
+
+-- Operations implemented:
+-- enqueue : advance tail, increment count
+-- dequeue : advance head, decrement count
+-- peek, isEmpty, isFull, empty
 ```
 
-**Structural Circuit**:
+**Structural Circuit** ⏳ PENDING:
 ```lean
 def mkQueueN (depth width : Nat) : Circuit
   -- Storage: depth registers, each width bits
-  -- Head pointer: log2(depth)+1 bits
-  -- Tail pointer: log2(depth)+1 bits
-  -- Count register: log2(depth)+1 bits
-  -- Control logic: empty/full detection, pointer increment
+  -- Head pointer: ceil(log2(depth)) bits
+  -- Tail pointer: ceil(log2(depth)) bits
+  -- Count register: ceil(log2(depth))+1 bits
+
+  -- Components needed:
+  -- 1. Storage register array (N × width bits)
+  -- 2. Pointer registers (head, tail, count)
+  -- 3. Write decoder (Decoder from Week 1)
+  -- 4. Read MUX (MuxTree from Week 2)
+  -- 5. Increment/wraparound logic
+  -- 6. Ready/valid handshaking
 ```
 
-**Examples**: `mkQueue64x6` (depth=64, width=6 bits for Free List tags)
+**Examples**:
+- ✅ `mkQueue64x6 : QueueNCircuit` - 64-entry, 6-bit wide (for Free List)
+- ✅ `mkQueueN2`, `mkQueueN4`, `mkQueueN8`, `mkQueueN16`, `mkQueueN32`, `mkQueueN64`
 
-**Proofs** (reuse/extend QueueProofs.lean):
-- `theorem queue64_structure : mkQueue64x6 has correct ports`
-- `theorem queue_fifo_order : behavioral FIFO correctness`
-- `theorem queue_no_overflow : cannot enqueue to full queue`
+**Progress**:
+- ✅ Behavioral model complete and compiling
+- ✅ CircularBufferState with head/tail/count pointer management
+- ✅ All operations (enqueue/dequeue/peek) with wraparound logic
+- ⏳ Structural circuit implementation (next session)
+- ⏳ Code generation (next session)
+- ⏳ Proofs (next session)
+- ⏳ LEC verification (next session)
 
 **Deliverable**: QueueN builds, passes LEC, ~2200 gates for mkQueue64x6
+
+**Completed**: 2026-01-31 (behavioral model only)
 
 ---
 
