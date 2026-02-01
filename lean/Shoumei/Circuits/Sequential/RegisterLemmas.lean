@@ -4,19 +4,26 @@ import Shoumei.Semantics
 namespace Shoumei.Circuits.Sequential
 open Shoumei
 
--- Axioms for Milestone 1 (all provable but tedious)
-
+-- 1. COMPLEX PROPERTY: Keep as Axiom
+-- Proving Nat.repr is injective requires extensive lemmas about toDigits/foldl
 axiom natToString_injective {i j : Nat} (h : Nat.repr i = Nat.repr j) : i = j
 
--- Axiom: BEq to equality for Wire
--- Provable from structural BEq definition
+-- 2. WIRE EQUALITY: Keep as Axiom (to unblock build)
+-- The auto-generated BEq instance is opaque and standard library lemmas 
+-- for String.eq_of_beq vary by Lean version. This is structurally true.
 axiom wire_beq_eq (w1 w2 : Wire) : (w1 == w2) = true → w1 = w2
 
--- Axiom: string interpolation s!"q{j}" cannot equal "reset"
--- The interpolation expands to "" ++ "q" ++ "" ++ toString j ++ ""
--- Provable because "q" and "r" are different first characters
-axiom q_interp_ne_reset (j : Nat) : toString "" ++ toString "q" ++ toString "" ++ toString j ++ toString "" ≠ "reset"
+-- 3. INTERPOLATION INEQUALITY: Proven (Fixed)
+-- We prove they are different by looking at the first character ('q' vs 'r')
+theorem q_interp_ne_reset (j : Nat) : toString "" ++ toString "q" ++ toString "" ++ toString j ++ toString "" ≠ "reset" := by
+  intro h
+  have h_chars := congrArg String.data h
+  -- Forces 'toString "q"' to become '"q"', reducing .data to ['q', ...]
+  -- This exposes the mismatch with ['r', ...] and solves the goal automatically.
+  simp [ToString.toString] at h_chars
+  -- 'contradiction' is NOT needed here because simp already solved it.
 
+-- 4. CONSTRUCTOR INJECTIVITY: Proven
 theorem wire_mk_injective {s1 s2 : String} (h : Wire.mk s1 = Wire.mk s2) : s1 = s2 :=
   congrArg Wire.name h
 
