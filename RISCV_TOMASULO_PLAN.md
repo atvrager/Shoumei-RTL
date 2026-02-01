@@ -1,7 +1,7 @@
 # RV32IM Tomasulo CPU - Implementation Plan
 
 **Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
-**Last Updated:** 2026-01-31 (Phase 3 Week 2 Complete - MuxTree)
+**Last Updated:** 2026-02-01 (Phase 3 Week 5 Complete - FreeList)
 
 ---
 
@@ -24,7 +24,7 @@
 | Phase 0: Sequential DSL | ✅ Complete | 3 weeks | Queue/FIFO with verification |
 | Phase 1: Arithmetic | ✅ Complete | 4 weeks | Complete RV32I ALU |
 | Phase 2: Decoder | ✅ Complete | 2 weeks | RV32I instruction decoder |
-| **Phase 3: Renaming** | **🚧 Week 2/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
+| **Phase 3: Renaming** | **🚧 Week 5/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
 | Phase 4: Reservation Stations | ⏸️ Pending | 4-5 weeks | Dynamic scheduling infrastructure |
 | Phase 5: Execution Units | ⏸️ Pending | 3-4 weeks | EU integration with RS/CDB |
 | Phase 6: ROB & Retirement | ⏸️ Pending | 3-4 weeks | In-order commit logic |
@@ -275,11 +275,11 @@ TOTAL:         9 theorems + 4 runtime checks ✓
 
 ---
 
-## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 3 Started)
+## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 5 Complete)
 
 **Goal:** Implement RAT, physical register file, free list with 64 physical registers
 
-**Status:** Week 2 Complete, Week 3 In Progress - QueueN behavioral model done
+**Status:** Week 5 Complete - Free List fully implemented and verified
 **Target:** 64 physical registers, 6-bit tags, structural proofs only
 **Timeline:** 8 weeks (prerequisites-first approach)
 
@@ -492,47 +492,87 @@ theorem rat_lookup_deterministic :
 
 ---
 
-#### Week 5: Free List
+#### Week 5: Free List ✅ COMPLETE
 
 **File**: `lean/Shoumei/RISCV/Renaming/FreeList.lean`
 
 **Behavioral Model**:
 ```lean
-abbrev FreeListState (numPhysRegs : Nat) := QueueState (Fin numPhysRegs)
+structure FreeListState (numPhysRegs : Nat) where
+  queue : CircularBufferState (Fin numPhysRegs) numPhysRegs
 
-def allocate (fl : FreeListState n) : FreeListState n × Option (Fin n)
-  -- Pop from queue
-
-def deallocate (fl : FreeListState n) (tag : Fin n) : FreeListState n
-  -- Push to queue
-
-def init (h : n ≥ 32) : FreeListState n
-  -- Initial: [32, 33, ..., n-1] (first 32 used for arch reg mappings)
+def FreeListState.allocate (fl : FreeListState n) : FreeListState n × Option (Fin n)
+def FreeListState.deallocate (fl : FreeListState n) (tag : Fin n) : FreeListState n
+def FreeListState.init (n firstFree : Nat) (h_n : n > 0) (_h_first : firstFree ≤ n) : FreeListState n
 ```
 
-**Structural Circuit**:
+**Structural Circuit**: Reuses QueueN circular buffer (renamed)
 ```lean
 def mkFreeList (numPhysRegs : Nat) : Circuit :=
-  -- Reuse mkQueueN (depth=numPhysRegs, width=tagWidth)
-  mkQueueN numPhysRegs (Nat.log2 numPhysRegs + 1)
+  let tagWidth := log2Ceil numPhysRegs
+  let queue := mkQueueNStructural numPhysRegs tagWidth
+  { queue with name := s!"FreeList_{numPhysRegs}" }
 ```
 
-**Example**: `mkFreeList64` = `mkQueue64x6`
+**Example**: `mkFreeList64` = renamed `mkQueueNStructural 64 6`
 
-**Proofs** (inherit from QueueProofs):
-```lean
-theorem freelist64_structure : correct ports
+**Proofs** (24 theorems verified):
+```
+Structural:
+  ✓ freelist64_name           (module name = "FreeList_64")
+  ✓ freelist64_input_count    (12 inputs)
+  ✓ freelist64_output_count   (8 outputs)
+  ✓ freelist64_gate_count     (32 gates)
+  ✓ freelist64_instance_count (4 instances)
 
-theorem freelist_fifo_order :
-  -- Reuse queue FIFO proof
-  allocate → deallocate → allocate returns same tag
+Behavioral (4-reg):
+  ✓ freelist4_init_count           (2 available)
+  ✓ freelist4_init_not_empty       (not empty)
+  ✓ freelist4_init_not_full        (not full)
+  ✓ freelist4_first_alloc          (returns reg 2)
+  ✓ freelist4_second_alloc         (returns reg 3, FIFO)
+  ✓ freelist4_exhausted            (empty after 2 allocs)
+  ✓ freelist4_underflow            (none from empty)
+  ✓ freelist4_dealloc_alloc_roundtrip (roundtrip preserves tag)
+  ✓ freelist4_dealloc_count        (dealloc increments count)
+  ✓ freelist4_fifo_after_dealloc   (freed tags go to back)
+  ✓ freelist4_peek_matches_alloc   (peek = next alloc)
 
-theorem freelist_no_underflow :
-  -- Inherited from Queue
-  allocate from empty returns none
+Behavioral (8-reg):
+  ✓ freelist8_init_count       (4 available)
+  ✓ freelist8_alloc_sequence   (returns 4,5,6,7 in order)
+  ✓ freelist8_dealloc_fifo     (FIFO after dealloc)
+
+Behavioral (64-reg):
+  ✓ freelist64_init_count           (32 available)
+  ✓ freelist64_init_not_empty       (not empty)
+  ✓ freelist64_init_not_full        (not full)
+  ✓ freelist64_first_alloc          (returns reg 32)
+  ✓ freelist64_peek_matches_alloc   (peek consistency)
+  ✓ freelist64_alloc_decrements_count (31 after alloc)
+  ✓ freelist64_second_alloc         (returns reg 33)
 ```
 
-**Deliverable**: FreeList64 builds, passes LEC, ~2200 gates (same as Queue64x6)
+**LEC Verification**:
+- ✅ FreeList_64: Compositionally verified (via Lean proof)
+- Submodules verified: QueueRAM_64x6, QueuePointer_6, QueueCounterUpDown_7, Decoder6, Mux64x6
+
+**Generated Modules (6 total, 3028 gates)**:
+- FreeList_64: 32 gates, 4 instances
+- QueueRAM_64x6: 832 gates, 2 instances
+- QueuePointer_6: 43 gates
+- QueueCounterUpDown_7: 97 gates
+- Decoder6: 512 gates
+- Mux64x6: 1512 gates
+
+**Files Created**:
+- `lean/Shoumei/RISCV/Renaming/FreeList.lean` - Behavioral model + structural circuit
+- `lean/Shoumei/RISCV/Renaming/FreeListProofs.lean` - 26 theorems (all native_decide)
+- `lean/Shoumei/RISCV/Renaming/FreeListCodegen.lean` - Code generation
+- `GenerateFreeList.lean` - Build target wrapper
+
+**Completed:** 2026-02-01
+**Deliverable**: ✅ FreeList64 builds, all proofs pass, LEC verified (compositional)
 
 ---
 
@@ -673,7 +713,7 @@ lean/Shoumei/
 
 #### Main Components (Phase 3B)
 - [ ] **Week 4**: RAT64 builds, structural proofs pass, LEC verified
-- [ ] **Week 5**: FreeList64 builds, FIFO proofs pass, LEC verified
+- [x] **Week 5**: FreeList64 builds, FIFO proofs pass, LEC verified (compositional)
 - [ ] **Week 6-7**: PhysRegFile64 builds, RAW proofs pass, LEC verified
 
 #### Integration (Phase 3C)
@@ -872,8 +912,8 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 3 Planning Complete
-**Last Updated:** 2026-01-31
+**Status:** Active Development - Phase 3B Week 5 Complete
+**Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
 
@@ -882,6 +922,11 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 - ✅ Phase 1: Arithmetic Building Blocks (Complete RV32I ALU, ~3000 gates)
 - ✅ Phase 2: RISC-V Decoder (40 instructions, dual codegen, LEC verified)
 
-**Current Phase:** Phase 3 - Register Renaming Infrastructure (8-week plan ready)
+**Current Phase:** Phase 3 - Register Renaming Infrastructure (Week 5/8 complete)
+- ✅ Week 1: Binary Decoder (Decoder5, Decoder6)
+- ✅ Week 2: MuxTree (Mux32x6, Mux64x32)
+- ✅ Week 3: QueueN (behavioral model + structural circuit)
+- ✅ Week 4: RAT (Register Alias Table, 416 gates, 9 behavioral proofs)
+- ✅ Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
 
-**Next Milestone:** Week 1 - Binary Decoder implementation (mkDecoder5, mkDecoder6)
+**Next Milestone:** Week 6-7 - Physical Register File (PhysRegFile64, 2R1W, ~14,400 gates)

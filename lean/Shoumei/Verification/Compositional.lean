@@ -139,6 +139,16 @@ def rat_32x6_cert : VerificationCertificate := {
   leanProof := some "compositional_soundness"
 }
 
+-- FreeList_64 - structurally identical to Queue64_6 (same submodules, renamed)
+-- All subcomponents verified: QueueRAM_64x6 (compositional), QueuePointer_6 (LEC),
+-- QueueCounterUpDown_7 (LEC), Decoder6 (LEC), Mux64x6 (LEC)
+def freelist_64_cert : VerificationCertificate := {
+  moduleName := "FreeList_64"
+  method := .Compositional
+  dependencies := ["QueueRAM_64x6", "QueuePointer_6", "QueueCounterUpDown_7", "Queue2_8", "Queue4_8"]
+  leanProof := some "compositional_soundness + parametric_soundness"
+}
+
 -- Verification summary
 def allCertificates : List VerificationCertificate := [
   queue1_8_cert,
@@ -149,7 +159,8 @@ def allCertificates : List VerificationCertificate := [
   queueRAM_64x32_cert,
   queueRAM_64x6_cert,
   queue64_32_cert,
-  queue64_6_cert
+  queue64_6_cert,
+  freelist_64_cert
 ]
 
 def countByMethod (method : VerificationMethod) : Nat :=
