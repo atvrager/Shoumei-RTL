@@ -90,8 +90,14 @@ codegen: lean opcodes
 	@echo "==> Running code generators..."
 	@echo "    Phase 0+1: Foundation and arithmetic circuits (SV + Chisel)..."
 	lake exe codegen
+	@echo "    Phase 1b: Decoders (SV + Chisel)..."
+	lake exe generate_decoder
+	@echo "    Phase 1c: MuxTrees (SV + Chisel)..."
+	lake exe generate_muxtree
 	@echo "    Phase 2: RV32I decoder (SV + Chisel)..."
 	lake exe generate_riscv_decoder
+	@echo "    Phase 3A: Multi-entry queue (QueueN) (SV + Chisel)..."
+	lake exe generate_queuen
 	@echo "    Phase 3: SystemC code generation..."
 	lake exe codegen_systemc
 

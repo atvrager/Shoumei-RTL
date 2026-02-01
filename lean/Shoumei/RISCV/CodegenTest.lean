@@ -30,7 +30,7 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
 
   -- Generate Chisel
   IO.println "\nGenerating Chisel decoder..."
-  writeChiselDecoder defs "output/chisel-src/RV32IDecoder.scala"
+  writeChiselDecoder defs "chisel/src/main/scala/generated/RV32IDecoder.scala"
   IO.println "✓ Chisel generation complete"
 
   IO.println "\n==================================================\n"

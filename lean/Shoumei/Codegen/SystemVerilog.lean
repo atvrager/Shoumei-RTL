@@ -140,31 +140,41 @@ def toSystemVerilog (c : Circuit) : String :=
   let dffOutputs := findDFFOutputs c
 
   -- Check if we should use bundled I/O (for large circuits)
-  let totalIOPorts := c.inputs.length + c.outputs.length
-  let useBundledIO := totalIOPorts > 500
-
-  -- Create index mappings for bundled I/O
-  let (inputToIndex, outputToIndex) :=
-    if useBundledIO then
-      (c.inputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
-       c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)))
+  let (inputToIndex, outputToIndex, useBundledIO, filteredInputs) :=
+    let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
+    let clockWires := dffGates.filterMap (fun g => match g.inputs with | [_d, clk, _res] => some clk | _ => none)
+    let resetWires := dffGates.filterMap (fun g => match g.inputs with | [_d, _clk, res] => some res | _ => none)
+    let implicitWires := clockWires ++ resetWires
+    let filtered := c.inputs.filter (fun w => !implicitWires.contains w)
+    let totalPorts := filtered.length + c.outputs.length
+    let useBundle := totalPorts > 50
+    if useBundle then
+      (filtered.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
+       c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
+       true, filtered)
     else
-      ([], [])
+      ([], [], false, c.inputs)
 
   -- Generate port list and declarations
   let (portList, inputSection, outputSection) :=
     if useBundledIO then
       -- Flattened I/O with underscore indexing (matches CIRCT firtool output)
-      -- Generate individual ports: inputs_0, inputs_1, ..., outputs_0, outputs_1, ...
-      let inputPortNames := c.inputs.enum.map (fun ⟨idx, _⟩ => s!"inputs_{idx}")
+      -- Generate individual ports for bundle + implicit ports
+      let inputPortNames := filteredInputs.enum.map (fun ⟨idx, _⟩ => s!"inputs_{idx}")
       let outputPortNames := c.outputs.enum.map (fun ⟨idx, _⟩ => s!"outputs_{idx}")
-      let allPortNames := inputPortNames ++ outputPortNames
+      
+      -- Find implicit ports to keep them separate
+      let implicitInputs := c.inputs.filter (fun w => !filteredInputs.contains w)
+      let implicitPortNames := implicitInputs.map (fun w => w.name)
+      
+      let allPortNames := inputPortNames ++ implicitPortNames ++ outputPortNames
       let portListStr := String.intercalate ", " allPortNames
-
-      -- Generate individual input declarations
-      let inputDecls := c.inputs.enum.map (fun ⟨idx, _⟩ => s!"  input inputs_{idx};")
-      let inputSectionStr := joinLines inputDecls
-
+ 
+      -- Generate individual declarations
+      let inputDecls := filteredInputs.enum.map (fun ⟨idx, _⟩ => s!"  input inputs_{idx};")
+      let implicitDecls := implicitInputs.map (fun w => s!"  input {w.name};")
+      let inputSectionStr := joinLines (inputDecls ++ implicitDecls)
+ 
       -- Generate individual output declarations
       let outputDecls := c.outputs.enum.map (fun ⟨idx, wire⟩ =>
         if dffOutputs.contains wire then
@@ -173,7 +183,7 @@ def toSystemVerilog (c : Circuit) : String :=
           s!"  output outputs_{idx};"
       )
       let outputSectionStr := joinLines outputDecls
-
+ 
       (portListStr, inputSectionStr, outputSectionStr)
     else
       -- Individual I/O: traditional Verilog-95 style

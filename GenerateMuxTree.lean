@@ -7,7 +7,7 @@ open Shoumei.Codegen
 
 def main : IO Unit := do
   let svDir := "output/sv-from-lean"
-  let chiselDir := "output/chisel-src"
+  let chiselDir := "chisel/src/main/scala/generated"
 
   IO.println "証明 Shoumei RTL - MuxTree Code Generator"
   IO.println "=========================================="

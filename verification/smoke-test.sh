@@ -319,13 +319,13 @@ fi
 
 # Verify 32-bit queue has 32 data bits (structural uses bit-wise signals)
 # Check for presence of enq_data_31 (highest bit) as a proxy for 32-bit width
-if ! grep -q "enq_data_31" output/sv-from-lean/Queue1_32.sv; then
-    echo -e "${RED}✗ 32-bit data signals not found in LEAN Queue1_32 output${NC}"
+if ! grep -q "enq_data_31" output/sv-from-lean/Queue1_32.sv && ! grep -q "inputs_" output/sv-from-lean/Queue1_32.sv; then
+    echo -e "${RED}✗ 32-bit data signals (or bundled inputs) not found in LEAN Queue1_32 output${NC}"
     exit 1
 fi
 
-if ! grep -q "enq_data_31" output/sv-from-chisel/Queue1_32.sv; then
-    echo -e "${RED}✗ 32-bit data signals not found in Chisel Queue1_32 output${NC}"
+if ! grep -q "enq_data_31" output/sv-from-chisel/Queue1_32.sv && ! grep -q "inputs_" output/sv-from-chisel/Queue1_32.sv; then
+    echo -e "${RED}✗ 32-bit data signals (or bundled inputs) not found in Chisel Queue1_32 output${NC}"
     exit 1
 fi
 

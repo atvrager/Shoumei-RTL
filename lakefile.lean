@@ -50,3 +50,8 @@ lean_exe test_systemc where
 lean_exe codegen_systemc where
   root := `GenerateSystemC
   supportInterpreter := true
+
+-- Executable target for generating QueueN variants (2:8, 4:8, 64:6, 64:32)
+lean_exe generate_queuen where
+  root := `GenerateQueueN
+  supportInterpreter := true

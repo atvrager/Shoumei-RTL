@@ -7,7 +7,7 @@ open Shoumei.Codegen
 
 def main : IO Unit := do
   let svDir := "output/sv-from-lean"
-  let chiselDir := "output/chisel-src"
+  let chiselDir := "chisel/src/main/scala/generated"
 
   -- Generate for Decoder2 (small test)
   IO.println "Generating Decoder2..."
