@@ -79,9 +79,14 @@ jobs:
         run: |
           lake build
 
+      - name: Generate RISC-V opcode definitions
+        run: |
+          cd third_party/riscv-opcodes && PYTHONPATH=src python3 -m riscv_opcodes -c 'rv_i' 'rv32_i'
+
       - name: Run code generators
         run: |
           lake exe codegen
+          lake exe generate_riscv_decoder
 
       - name: Verify LEAN generated SystemVerilog
         run: |
@@ -89,13 +94,18 @@ jobs:
             echo "ERROR: LEAN code generator did not produce SystemVerilog output"
             exit 1
           fi
+          if [ ! -f output/sv-from-lean/RV32IDecoder.sv ]; then
+            echo "ERROR: LEAN RV32I decoder code generator did not produce output"
+            exit 1
+          fi
           echo "✓ LEAN SystemVerilog generated"
-          wc -l output/sv-from-lean/FullAdder.sv
+          wc -l output/sv-from-lean/FullAdder.sv output/sv-from-lean/RV32IDecoder.sv
 
       - name: Compile Chisel to SystemVerilog
         run: |
           cd chisel
           sbt run
+          sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder"
 
       - name: Verify Chisel generated SystemVerilog
         run: |

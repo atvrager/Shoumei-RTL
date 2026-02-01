@@ -81,13 +81,16 @@ endif
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions (RV32I)..."
 	@cd third_party/riscv-opcodes && \
-		PYTHONPATH=src python -m riscv_opcodes -c 'rv_i' 'rv32_i' && \
-		echo "    Generated instr_dict.json with $$(python -c 'import json; print(len(json.load(open("instr_dict.json"))))') instructions"
+		PYTHONPATH=src python3 -m riscv_opcodes -c 'rv_i' 'rv32_i' && \
+		echo "    Generated instr_dict.json with $$(python3 -c 'import json; print(len(json.load(open("instr_dict.json"))))') instructions"
 
 # Run code generators
 codegen: lean opcodes
 	@echo "==> Running code generators..."
+	@echo "    Phase 0+1: Foundation and arithmetic circuits..."
 	lake exe codegen
+	@echo "    Phase 2: RV32I decoder..."
+	lake exe generate_riscv_decoder
 
 # Compile Chisel to SystemVerilog
 chisel:
@@ -98,6 +101,8 @@ ifndef HAS_SBT
 endif
 	@echo "==> Compiling Chisel to SystemVerilog..."
 	cd chisel && sbt run
+	@echo "==> Emitting RV32I decoder SystemVerilog from Chisel..."
+	cd chisel && sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder"
 
 # Run logical equivalence checking with Yosys
 lec:
