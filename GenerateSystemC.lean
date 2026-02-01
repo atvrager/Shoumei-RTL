@@ -18,11 +18,16 @@ import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.DFF
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Sequential.Queue
+import Shoumei.Circuits.Sequential.QueueN
+import Shoumei.Circuits.Sequential.QueueComponents
+import Shoumei.RISCV.Renaming.RAT
+import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.Codegen.SystemC
 
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
+open Shoumei.RISCV.Renaming
 open Shoumei.Codegen.SystemC
 
 -- Helper: Write SystemC .h and .cpp files for a circuit
@@ -119,6 +124,49 @@ def generateMuxTrees : IO Unit := do
   writeSystemCFiles mkMux4x8
   writeSystemCFiles mkMux32x6
   writeSystemCFiles mkMux64x32
+  writeSystemCFiles (mkMuxTree 64 6)
+
+-- Helper: log2 ceiling
+private def log2Ceil (n : Nat) : Nat :=
+  if n <= 1 then 0
+  else Nat.log2 n + (if 2^(Nat.log2 n) < n then 1 else 0)
+
+-- Phase 4: QueueN variants (parametric queues)
+def generateQueueNVariants : IO Unit := do
+  IO.println "==> Phase 4: QueueN Variants"
+  IO.println ""
+  -- Queue2_8
+  writeSystemCFiles (mkQueueNStructural 2 8)
+  writeSystemCFiles (mkQueueRAM 2 8)
+  writeSystemCFiles (mkQueuePointer 1)
+  writeSystemCFiles (mkQueueCounterUpDown 2)
+  -- Queue4_8
+  writeSystemCFiles (mkQueueNStructural 4 8)
+  writeSystemCFiles (mkQueueRAM 4 8)
+  writeSystemCFiles (mkQueuePointer 2)
+  writeSystemCFiles (mkQueueCounterUpDown 3)
+  -- Queue64_32
+  writeSystemCFiles (mkQueueNStructural 64 32)
+  writeSystemCFiles (mkQueueRAM 64 32)
+  -- Queue64_6
+  writeSystemCFiles (mkQueueNStructural 64 6)
+  writeSystemCFiles (mkQueueRAM 64 6)
+  -- Shared submodules for depth-64 queues
+  writeSystemCFiles (mkQueuePointer 6)
+  writeSystemCFiles (mkQueueCounterUpDown 7)
+  writeSystemCFiles (mkDecoder 6)
+
+-- Phase 5: RAT (Register Alias Table)
+def generateRATSystemC : IO Unit := do
+  IO.println "==> Phase 5: RAT (Register Alias Table)"
+  IO.println ""
+  writeSystemCFiles mkRAT64
+
+-- Phase 6: FreeList
+def generateFreeListSystemC : IO Unit := do
+  IO.println "==> Phase 6: FreeList (Free Physical Register List)"
+  IO.println ""
+  writeSystemCFiles mkFreeList64
 
 -- Main entry point
 def main : IO Unit := do
@@ -152,6 +200,12 @@ def main : IO Unit := do
   generateDecoders
   IO.println ""
   generateMuxTrees
+  IO.println ""
+  generateQueueNVariants
+  IO.println ""
+  generateRATSystemC
+  IO.println ""
+  generateFreeListSystemC
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
