@@ -146,9 +146,15 @@ def mkQueuePointer (width : Nat) : Circuit :=
   -- DFFs
   let dff_gates := (List.range width).map (fun i =>
     Gate.mkDFF (next.get! i) clock reset (count.get! i))
+  
+  -- Only include 'zero' input if width > 1 (otherwise it's unused)
+  let inputs := if width > 1 then
+    [clock, reset, en, one, zero]
+  else
+    [clock, reset, en, one]
     
   { name := s!"QueuePointer_{width}"
-    inputs := [clock, reset, en, one, zero]
+    inputs := inputs
     outputs := count
     gates := [Gate.mkBUF one (carries.get! 0)] ++ adder_gates ++ mux_gates ++ dff_gates
     instances := []
