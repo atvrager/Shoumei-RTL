@@ -5,6 +5,8 @@ import Shoumei.RISCV.Decoder
 import Shoumei.RISCV.DecoderTest
 import Shoumei.RISCV.Semantics
 import Shoumei.RISCV.SemanticsTestSimple
+import Shoumei.RISCV.DecoderProofs
+import Shoumei.RISCV.DecoderProofsTest
 
 open Shoumei.RISCV
 
@@ -21,3 +23,8 @@ def main : IO Unit := do
 
   -- Run semantics tests
   testKeySemantics defs
+
+  IO.println "\n==================================================\n"
+
+  -- Run structural proof tests
+  runStructuralProofTests defs
