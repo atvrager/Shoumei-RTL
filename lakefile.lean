@@ -25,3 +25,8 @@ lean_exe codegen where
 lean_exe test_riscv where
   root := `TestRISCVParser
   supportInterpreter := true
+
+-- Executable target for generating RV32I decoder (SystemVerilog + Chisel)
+lean_exe generate_riscv_decoder where
+  root := `GenerateRISCVDecoder
+  supportInterpreter := true
