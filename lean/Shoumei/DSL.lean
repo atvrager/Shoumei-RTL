@@ -73,23 +73,36 @@ def mkDFF (d clk reset : Wire) (q : Wire) : Gate :=
 
 end Gate
 
--- Circuit: a complete circuit with inputs, outputs, and gates
+
+
+-- CircuitInstance: represents a submodule instantiation
+structure CircuitInstance where
+  moduleName : String     -- Name of the module being instantiated (e.g., "Ram64x32")
+  instName : String       -- Name of this instance (e.g., "u_ram")
+  portMap : List (String × Wire) -- Mapping from submodule port names to local wires
+  deriving Repr
+
+-- Circuit: a complete circuit with inputs, outputs, gates, and submodules
 structure Circuit where
   name : String           -- Module/circuit name
   inputs : List Wire      -- Input signals
   outputs : List Wire     -- Output signals
   gates : List Gate       -- Internal gates
+  instances : List CircuitInstance -- Submodule instances
   deriving Repr
 
 namespace Circuit
 
 -- Helper to create empty circuit
 def empty (name : String) : Circuit :=
-  { name := name, inputs := [], outputs := [], gates := [] }
+  { name := name, inputs := [], outputs := [], gates := [], instances := [] }
 
 -- Inline a subcircuit with wire remapping
 -- This allows hierarchical composition while keeping a flat gate structure
 -- wireMap: maps subcircuit wires to parent circuit wires
+-- Note: Submodule instances in subcircuit are conceptually flattened/lost in this operation,
+-- similar to how gates are remapped. For now, we assume inlining is only used
+-- for flattening combinational logic or when we deliberately want to remove hierarchy.
 def inline (subcircuit : Circuit) (wireMap : Wire → Wire) : List Gate :=
   subcircuit.gates.map (fun g => {
     gateType := g.gateType

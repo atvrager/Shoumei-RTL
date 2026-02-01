@@ -178,7 +178,8 @@ def mkMuxTree (n width : Nat) : Circuit :=
     { name := "Mux0"
       inputs := []
       outputs := makeIndexedWires "out" width
-      gates := [] }
+      gates := []
+      instances := [] }
   else if n = 1 then
     -- Single input: just buffers
     let input := makeMultiBitWires "in" 1 width |>.head!
@@ -189,7 +190,8 @@ def mkMuxTree (n width : Nat) : Circuit :=
     { name := s!"Mux{n}x{width}"
       inputs := input.map (·.name) |>.map Wire.mk
       outputs := output
-      gates := gates }
+      gates := gates
+      instances := [] }
   else
     let numSelBits := log2Ceil n
     let inputWires := makeMultiBitWires "in" n width
@@ -204,7 +206,8 @@ def mkMuxTree (n width : Nat) : Circuit :=
     { name := s!"Mux{n}x{width}"
       inputs := allInputs
       outputs := outputWires
-      gates := gates }
+      gates := gates
+      instances := [] }
 
 /-! ## Concrete Examples -/
 

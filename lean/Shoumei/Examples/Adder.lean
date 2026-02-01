@@ -55,6 +55,7 @@ def fullAdderCircuit : Circuit :=
       Gate.mkAND cin ab_xor cin_ab,    -- cin_ab = cin ∧ ab_xor
       Gate.mkOR ab_and cin_ab cout     -- cout = ab_and ∨ cin_ab
     ]
+    instances := []
   }
 
 -- Generate SystemVerilog for the full adder

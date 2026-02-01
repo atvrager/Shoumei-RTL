@@ -34,6 +34,7 @@ def mkRegisterN (n : Nat) : Circuit :=
     inputs := d_wires ++ [clock, reset]
     outputs := q_wires
     gates := gates
+    instances := []
   }
 
 -- Specific widths for convenience

@@ -182,6 +182,7 @@ def mkQueue1Structural (width : Nat) : Circuit :=
     inputs := enq_data ++ [enq_valid, deq_ready, clock, reset]
     outputs := [enq_ready] ++ deq_data ++ [deq_valid]
     gates := gates
+    instances := []
   }
 
 -- Helper: create structural queue with proper output connections

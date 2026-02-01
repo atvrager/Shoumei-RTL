@@ -21,3 +21,6 @@ import Shoumei.Codegen.SystemC
 
 -- Examples
 import Shoumei.Examples.Adder
+import Shoumei.Circuits.Sequential.QueueN
+import Shoumei.Circuits.Sequential.QueueComponents
+import Shoumei.Circuits.Sequential.QueueNCodegen

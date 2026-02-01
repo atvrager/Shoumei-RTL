@@ -178,6 +178,7 @@ def mkShifter32 : Circuit :=
     inputs := input ++ shamt ++ [op0, op1, zero]
     outputs := result
     gates := sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
+    instances := []
   }
 
 -- Smaller variants for testing
@@ -220,6 +221,7 @@ def mkShifter4 : Circuit :=
     inputs := input ++ shamt ++ [op0, op1, zero]
     outputs := result
     gates := sll_stage0 ++ sll_stage1 ++ srl_stage0 ++ srl_stage1 ++ sra_stage0 ++ sra_stage1 ++ mux_level1 ++ mux_level2
+    instances := []
   }
 
 end Shoumei.Circuits.Combinational

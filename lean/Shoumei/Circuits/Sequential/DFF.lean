@@ -29,6 +29,7 @@ def mkDFlipFlop : Circuit :=
     gates := [
       Gate.mkDFF d clock reset q
     ]
+    instances := []
   }
 
 -- Example: DFF that captures a data bit

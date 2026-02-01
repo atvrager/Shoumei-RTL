@@ -60,6 +60,7 @@ def mkSubtractorN (n : Nat) : Circuit :=
     inputs := a ++ b ++ [one]  -- one should be tied to 1 externally
     outputs := diff ++ [borrow]
     gates := not_gates ++ rca_gates
+    instances := []
   }
 
 -- Specific widths

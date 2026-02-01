@@ -228,6 +228,7 @@ def mkALU32 : Circuit :=
              ++ logic_level1_gates ++ logic_level2_gates
              ++ shift_level1_gates ++ shift_level2_gates
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
+    instances := []
   }
 
 end Shoumei.Circuits.Combinational

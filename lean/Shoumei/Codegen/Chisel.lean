@@ -150,27 +150,35 @@ def generateDFF (ctx : ChiselContext) (c : Circuit) (g : Gate) : String :=
 -- Helper: find all internal wires (same as SystemVerilog)
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
-  gateOutputs.filter (fun w => !c.outputs.contains w)
+  let instanceWires := c.instances.map (fun inst => inst.portMap.map (fun (_, w) => w)) |>.flatten
+  let allCandidates := (gateOutputs ++ instanceWires).eraseDups
+  allCandidates.filter (fun w => !c.inputs.contains w && !c.outputs.contains w)
 
 -- Helper: find all DFF output wires
 def findDFFOutputs (c : Circuit) : List Wire :=
   c.gates.filter (fun g => g.gateType == GateType.DFF) |>.map (fun g => g.output)
 
 -- Generate IO port declarations
-def generateIOBundle (c : Circuit) (isSequential : Bool) (ctx : ChiselContext) : String :=
-  let clockWires := if isSequential then findClockWires c else []
-  let resetWires := if isSequential then findResetWires c else []
-  let implicitWires := clockWires ++ resetWires
+-- Generate IO port declarations
+def generateIOBundle (c : Circuit) (_ : Bool) (ctx : ChiselContext) : String :=
+  -- Identify special ports by name or connection
+  let implicitWires := c.inputs.filter (fun w => w.name == "clock" || w.name == "reset")
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
 
+  let implicitDecls := implicitWires.map (fun w =>
+    if w.name == "clock" then s!"  val {w.name} = IO(Input(Clock()))"
+    else s!"  val {w.name} = IO(Input(AsyncReset()))" 
+  )
+  
   if ctx.useIOBundle then
     let inputDecl := s!"  val inputs = IO(Input(Vec({filteredInputs.length}, Bool())))"
     let outputDecl := s!"  val outputs = IO(Output(Vec({c.outputs.length}, Bool())))"
-    inputDecl ++ "\n" ++ outputDecl
+    let decList := implicitDecls ++ [inputDecl, outputDecl]
+    joinLines decList
   else
     let inputDecls := filteredInputs.map (fun w => s!"  val {w.name} = IO(Input(Bool()))")
     let outputDecls := c.outputs.map (fun w => s!"  val {w.name} = IO(Output(Bool()))")
-    joinLines (inputDecls ++ outputDecls)
+    joinLines (implicitDecls ++ inputDecls ++ outputDecls)
 
 -- Generate combinational logic (wire declarations + assignments for comb gates)
 def generateCombLogic (ctx : ChiselContext) (c : Circuit) : String :=
@@ -196,13 +204,13 @@ def generateRegDecls (c : Circuit) (ctx : ChiselContext) : String :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
   if dffGates.isEmpty then ""
   else if ctx.useRegArray then
-    s!"  val _regs = Reg(Vec({dffGates.length}, Bool()))"
+    s!"  val _regs = withClockAndReset(clock, reset) " ++ "{ Reg(Vec(" ++ toString dffGates.length ++ ", Bool())) }"
   else
     -- Register declarations (use _reg suffix if output is a circuit output)
     let regDecls := dffGates.map (fun g =>
       let isOutput := c.outputs.contains g.output
       let regName := if isOutput then g.output.name ++ "_reg" else g.output.name
-      s!"  val {regName} = RegInit(false.B)")
+      s!"  val {regName} = withClockAndReset(clock, reset) " ++ "{ RegInit(false.B) }")
     joinLines regDecls
 
 -- Generate register update logic only (no declarations)
@@ -241,12 +249,56 @@ def generateRegUpdatesChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : N
 
 
 
--- Generate combinational logic with chunking for large circuits
-def generateCombLogicChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 200) : (String × String) :=
+
+-- Generate submodule instantiation with chunking for connections
+def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 100) : (String × String) :=
+  let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
+  
+  -- Handle port connections
+  -- Convert [ ] to ( ) for Chisel indexing
+  let connections := inst.portMap.map (fun (portName, wire) =>
+    let wRef := wireRef ctx wire
+    let portRef := portName.replace "[" "(" |>.replace "]" ")"
+    s!"  {inst.instName}.{portRef} <> {wRef}"
+  )
+  
+  if connections.length <= chunkSize then
+    (joinLines ([instDecl] ++ connections), "")
+  else
+    let chunks := chunkList connections chunkSize
+    let helperMethods := chunks.enum.map (fun ⟨idx, chunk⟩ =>
+      joinLines [
+        s!"  private def connect_{inst.instName}_{idx}(): Unit = " ++ "{",
+        joinLines chunk,
+        "  }"
+      ]
+    )
+    let helperCalls := List.range chunks.length |>.map (fun i => s!"  connect_{inst.instName}_{i}()")
+    (joinLines ([instDecl] ++ helperCalls), joinLines helperMethods)
+
+-- Generate all submodule instances with chunking
+def generateInstancesChunked (ctx : ChiselContext) (c : Circuit) : (String × String) :=
+  let results := c.instances.map (fun inst => generateInstanceChunked ctx inst 100)
+  let calls := results.map Prod.fst
+  let metods := results.map Prod.snd
+  (joinLines calls, joinLines metods)
+
+-- Generate wire declarations only
+def generateWireDecls (ctx : ChiselContext) (c : Circuit) : String :=
+  let internalWires := findInternalWires c
+  let dffOutputs := findDFFOutputs c
+  let wiresToDeclare := internalWires.filter (fun w => !dffOutputs.contains w)
+  if ctx.useWireArray then
+    s!"  val _wires = Wire(Vec({ctx.wireToIndex.length}, Bool()))"
+  else
+    joinLines (wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())"))
+
+
+-- Generate combinational assignments only (chunked)
+def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 200) : (String × String) :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
 
   if ctx.useWireArray then
-    let wireArrayDecl := s!"  val _wires = Wire(Vec({ctx.wireToIndex.length}, Bool()))"
     let gateChunks := chunkList combGates chunkSize
     let helperMethods := gateChunks.enum.map (fun ⟨idx, chunk⟩ =>
       let assignments := chunk.map (generateCombGate ctx)
@@ -257,19 +309,11 @@ def generateCombLogicChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Na
       ]
     )
     let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
-    (wireArrayDecl ++ "\n\n" ++ joinLines helperCalls, joinLines helperMethods)
+    (joinLines helperCalls, joinLines helperMethods)
   else if combGates.length <= chunkSize then
-    let internalWires := findInternalWires c
-    let dffOutputs := findDFFOutputs c
-    let wiresToDeclare := internalWires.filter (fun w => !dffOutputs.contains w)
-    let wireDecls := wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())")
     let assignments := combGates.map (generateCombGate ctx)
-    (joinLines (wireDecls ++ [""] ++ assignments), "")
+    (joinLines assignments, "")
   else
-    let internalWires := findInternalWires c
-    let dffOutputs := findDFFOutputs c
-    let wiresToDeclare := internalWires.filter (fun w => !dffOutputs.contains w)
-    let wireDecls := wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())")
     let gateChunks := chunkList combGates chunkSize
     let helperMethods := gateChunks.enum.map (fun ⟨idx, chunk⟩ =>
       let assignments := chunk.map (generateCombGate ctx)
@@ -280,7 +324,7 @@ def generateCombLogicChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Na
       ]
     )
     let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
-    (joinLines (wireDecls ++ [""] ++ helperCalls), joinLines helperMethods)
+    (joinLines helperCalls, joinLines helperMethods)
 
 -- Main code generator: Circuit → Chisel module
 def toChisel (c : Circuit) : String :=
@@ -305,18 +349,20 @@ def toChisel (c : Circuit) : String :=
     outputToIndex := c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
     regToIndex := dffGates.enum.map (fun ⟨idx, g⟩ => (g.output, idx)),
     useWireArray := wiresToDeclare.length > 200,
-    useIOBundle := totalIOPorts > 50,
+    useIOBundle := totalIOPorts > 100,
     useRegArray := dffGates.length > 50
   }
 
   if isSequential then
     let regDecls := generateRegDecls c ctx
-    let (combMain, combHelpers) := generateCombLogicChunked ctx c 500
-    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 500
+    let wireDecls := generateWireDecls ctx c
+    let (instances, instanceHelpers) := generateInstancesChunked ctx c
+    let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 100
+    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 100
 
-    let parts := [regDecls, combMain, updateMain].filter (fun s => !s.isEmpty)
+    let parts := [regDecls, wireDecls, instances, combMain, updateMain].filter (fun s => !s.isEmpty)
     let logic := String.intercalate "\n\n" parts
-    let helpers := [combHelpers, updateHelpers].filter (fun s => !s.isEmpty)
+    let helpers := [instanceHelpers, combHelpers, updateHelpers].filter (fun s => !s.isEmpty)
     let helpersString := String.intercalate "\n\n" helpers
 
     joinLines [
@@ -325,7 +371,7 @@ def toChisel (c : Circuit) : String :=
       "import chisel3._",
       "import chisel3.util._",
       "",
-      "class " ++ moduleName ++ " extends Module {",
+      "class " ++ moduleName ++ " extends RawModule {",
       generateIOBundle c true ctx,
       "",
       logic,
@@ -333,12 +379,20 @@ def toChisel (c : Circuit) : String :=
       "}"
     ]
   else
-    let (mainLogic, helperMethods) := generateCombLogicChunked ctx c 500
+    let wireDecls := generateWireDecls ctx c
+    let (instances, instanceHelpers) := generateInstancesChunked ctx c
+    let (mainLogic, helperMethods) := generateCombAssignmentsChunked ctx c 100
+    let allHelpers := [instanceHelpers, helperMethods].filter (fun s => !s.isEmpty) |> String.intercalate "\n"
+    
     let classBody := joinLines [
       generateIOBundle c false ctx,
       "",
+      wireDecls,
+      "",
+      instances,
+      "",
       mainLogic,
-      if helperMethods.isEmpty then "" else "\n" ++ helperMethods
+      if allHelpers.isEmpty then "" else "\n" ++ allHelpers
     ]
 
     joinLines [

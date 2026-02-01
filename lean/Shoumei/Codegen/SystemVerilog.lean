@@ -85,7 +85,7 @@ def generateDFF (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire 
       let resetRef := wireRef inputToIndex outputToIndex reset
       let qRef := wireRef inputToIndex outputToIndex g.output
       joinLines [
-        s!"  always @(posedge {clkRef}) begin",
+        s!"  always @(posedge {clkRef} or posedge {resetRef}) begin",
         s!"    if ({resetRef})",
         s!"      {qRef} <= 1'b0;",
         s!"    else",
@@ -132,6 +132,21 @@ def generateAlwaysBlocks (c : Circuit) (inputToIndex : List (Wire × Nat)) (outp
   joinLines blocks
 
 
+-- Generate submodule instantiation
+def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
+  let portConnections := inst.portMap.map (fun (portName, wire) =>
+    let wRef := wireRef inputToIndex outputToIndex wire
+    let portRef := portName.replace "[" "_" |>.replace "]" ""
+    s!".{portRef}({wRef})"
+  )
+  let portsStr := String.intercalate ",\n    " portConnections
+  s!"  {inst.moduleName} {inst.instName} (\n    {portsStr}\n  );"
+
+-- Generate all submodule instances
+def generateInstances (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
+  let instances := c.instances.map (generateInstance inputToIndex outputToIndex)
+  joinLines instances
+
 -- Main code generator: Circuit → SystemVerilog module
 -- Supports both combinational and sequential circuits
 -- Uses bundled I/O (input/output vectors) for large circuits (>500 I/O ports)
@@ -147,7 +162,7 @@ def toSystemVerilog (c : Circuit) : String :=
     let implicitWires := clockWires ++ resetWires
     let filtered := c.inputs.filter (fun w => !implicitWires.contains w)
     let totalPorts := filtered.length + c.outputs.length
-    let useBundle := totalPorts > 50
+    let useBundle := totalPorts > 100
     if useBundle then
       (filtered.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
        c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
@@ -208,6 +223,7 @@ def toSystemVerilog (c : Circuit) : String :=
   let wireDecls := generateWireDeclarations c
   let combAssigns := generateCombAssignments c inputToIndex outputToIndex
   let alwaysBlocks := generateAlwaysBlocks c inputToIndex outputToIndex
+  let instanceBlocks := generateInstances c inputToIndex outputToIndex
 
   -- Build module
   joinLines [
@@ -220,6 +236,8 @@ def toSystemVerilog (c : Circuit) : String :=
     combAssigns,
     "",
     alwaysBlocks,
+    "",
+    instanceBlocks,
     "",
     "endmodule"
   ]

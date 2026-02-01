@@ -89,6 +89,7 @@ def mkRippleCarryAdder32 : Circuit :=
     inputs := a ++ b ++ [cin]
     outputs := sum ++ [cout]
     gates := gates
+    instances := []
   }
 
 -- Convenience: 8-bit ripple-carry adder (for testing)
@@ -108,6 +109,7 @@ def mkRippleCarryAdder8 : Circuit :=
     inputs := a ++ b ++ [cin]
     outputs := sum ++ [cout]
     gates := gates
+    instances := []
   }
 
 -- Convenience: 4-bit ripple-carry adder (for testing)
@@ -127,6 +129,7 @@ def mkRippleCarryAdder4 : Circuit :=
     inputs := a ++ b ++ [cin]
     outputs := sum ++ [cout]
     gates := gates
+    instances := []
   }
 
 end Shoumei.Circuits.Combinational

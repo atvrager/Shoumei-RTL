@@ -80,6 +80,7 @@ def mkLogicUnitN (n : Nat) : Circuit :=
     inputs := a ++ b ++ [op0, op1]
     outputs := result
     gates := gates
+    instances := []
   }
 
 -- Specific widths

@@ -189,31 +189,16 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   let deq_data := (List.range width).map (fun i => Wire.mk s!"deq_data_{i}")
   let deq_valid := Wire.mk "deq_valid"
 
-  -- Pointer Registers
+  -- Pointer Registers (interfaced to submodules)
   let head := (List.range ptrWidth).map (fun i => Wire.mk s!"head_{i}")
-  let head_next := (List.range ptrWidth).map (fun i => Wire.mk s!"head_next_{i}")
   let tail := (List.range ptrWidth).map (fun i => Wire.mk s!"tail_{i}")
-  let tail_next := (List.range ptrWidth).map (fun i => Wire.mk s!"tail_next_{i}")
   let count := (List.range countWidth).map (fun i => Wire.mk s!"count_{i}")
-  let count_next := (List.range countWidth).map (fun i => Wire.mk s!"count_next_{i}")
-
-  -- Storage Registers
-  let storage := (List.range depth).map (fun i =>
-    (List.range width).map (fun j => Wire.mk s!"reg{i}_b{j}"))
-  let storage_next := (List.range depth).map (fun i =>
-    (List.range width).map (fun j => Wire.mk s!"reg{i}_next_b{j}"))
 
   -- Handshaking and Control Signals
   let full := Wire.mk "full"
   let empty := Wire.mk "empty"
   let enq_fire := Wire.mk "enq_fire"
   let deq_fire := Wire.mk "deq_fire"
-
-  -- Constant Vectors
-  let _zero_vec_ptr := (List.range ptrWidth).map (fun _ => zero)
-  let one_vec_ptr := one :: (List.range (ptrWidth - 1)).map (fun _ => zero)
-  let _zero_vec_count := (List.range countWidth).map (fun _ => zero)
-  let one_vec_count := one :: (List.range (countWidth - 1)).map (fun _ => zero)
 
   -- 1. Full/Empty Detection (Simplified: use count)
   -- For depth=64, full if count == 64 (binary 1000000), empty if count == 0
@@ -248,126 +233,60 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
     Gate.mkAND deq_ready deq_valid deq_fire
   ]
 
-  -- 2. Pointer Incrementers
-  let head_inc := (List.range ptrWidth).map (fun i => Wire.mk s!"head_inc_{i}")
-  let head_carries := (List.range (ptrWidth + 1)).map (fun i => Wire.mk s!"head_c_{i}")
-  let head_inc_gates := [Gate.mkBUF one (head_carries.get! 0)] ++
-    Shoumei.Circuits.Combinational.buildFullAdderChain head one_vec_ptr head_carries head_inc "head_ptr_"
+  -- Submodules Instantiation
+  
+  -- RAM
+  -- Inputs: clock, reset, write_en, write_addr, write_data, read_addr
+  -- Outputs: read_data
+  let ram_inst : CircuitInstance := {
+    moduleName := s!"QueueRAM_{depth}x{width}"
+    instName := "u_ram"
+    portMap := 
+      [("clock", clock), ("reset", reset), ("write_en", enq_fire)] ++
+      (tail.enum.map (fun ⟨i, w⟩ => (s!"write_addr_{i}", w))) ++
+      (enq_data.enum.map (fun ⟨i, w⟩ => (s!"write_data_{i}", w))) ++
+      (head.enum.map (fun ⟨i, w⟩ => (s!"read_addr_{i}", w))) ++
+      (deq_data.enum.map (fun ⟨i, w⟩ => (s!"read_data_{i}", w)))
+  }
 
-  let tail_inc := (List.range ptrWidth).map (fun i => Wire.mk s!"tail_inc_{i}")
-  let tail_carries := (List.range (ptrWidth + 1)).map (fun i => Wire.mk s!"tail_c_{i}")
-  let tail_inc_gates := [Gate.mkBUF one (tail_carries.get! 0)] ++
-    Shoumei.Circuits.Combinational.buildFullAdderChain tail one_vec_ptr tail_carries tail_inc "tail_ptr_"
+  -- Head Pointer
+  -- Inputs: clock, reset, en, one, zero
+  -- Outputs: count (head)
+  let head_inst : CircuitInstance := {
+    moduleName := s!"QueuePointer_{ptrWidth}"
+    instName := "u_head"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", deq_fire), ("one", one), ("zero", zero)] ++
+      (head.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
 
-  let count_inc := (List.range countWidth).map (fun i => Wire.mk s!"count_inc_{i}")
-  let count_carries := (List.range (countWidth + 1)).map (fun i => Wire.mk s!"count_inc_c_{i}")
-  let count_inc_gates := [Gate.mkBUF one (count_carries.get! 0)] ++
-    Shoumei.Circuits.Combinational.buildFullAdderChain count one_vec_count count_carries count_inc "count_inc_"
+  -- Tail Pointer
+  -- Inputs: clock, reset, en, one, zero
+  -- Outputs: count (tail)
+  let tail_inst : CircuitInstance := {
+    moduleName := s!"QueuePointer_{ptrWidth}"
+    instName := "u_tail"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", enq_fire), ("one", one), ("zero", zero)] ++
+      (tail.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
 
-  let count_dec := (List.range countWidth).map (fun i => Wire.mk s!"count_dec_{i}")
-  let count_dec_carries := (List.range (countWidth + 1)).map (fun i => Wire.mk s!"count_dec_c_{i}")
-  -- count - 1 = count + (~1) + 1
-  let one_vec_count_inv := (List.range countWidth).map (fun i => Wire.mk s!"one_vec_count_inv_{i}")
-  let one_vec_count_inv_gates := (List.range countWidth).map (fun i =>
-    Gate.mkNOT (one_vec_count.get! i) (one_vec_count_inv.get! i))
-  let count_dec_gates := one_vec_count_inv_gates ++ [Gate.mkBUF one (count_dec_carries.get! 0)] ++
-    Shoumei.Circuits.Combinational.buildFullAdderChain count one_vec_count_inv count_dec_carries count_dec "count_dec_"
-
-  -- 3. Next Value MUXes for Pointers
-  let head_next_gates := (List.range ptrWidth).map (fun i =>
-    Gate.mkMUX (head.get! i) (head_inc.get! i) deq_fire (head_next.get! i))
-  let tail_next_gates := (List.range ptrWidth).map (fun i =>
-    Gate.mkMUX (tail.get! i) (tail_inc.get! i) enq_fire (tail_next.get! i))
-
-  let count_hold := (List.range countWidth).map (fun i => Wire.mk s!"count_hold_{i}")
-  let count_hold_gates := (List.range countWidth).map (fun i =>
-    Gate.mkMUX (count.get! i) (count_inc.get! i) enq_fire (count_hold.get! i))
-  let count_next_gates := (List.range countWidth).map (fun i =>
-    Gate.mkMUX (count_hold.get! i) (count_dec.get! i) deq_fire (count_next.get! i))
-
-  -- 4. Pointer DFFs
-  let head_dffs := (List.range ptrWidth).map (fun i =>
-    Gate.mkDFF (head_next.get! i) clock reset (head.get! i))
-  let tail_dffs := (List.range ptrWidth).map (fun i =>
-    Gate.mkDFF (tail_next.get! i) clock reset (tail.get! i))
-  let count_dffs := (List.range countWidth).map (fun i =>
-    Gate.mkDFF (count_next.get! i) clock reset (count.get! i))
-
-  -- 5. Storage Logic
-  -- Write Decoder
-  let decoder := Shoumei.Circuits.Combinational.mkDecoder ptrWidth
-  let write_sel := (List.range depth).map (fun i => Wire.mk s!"write_sel_{i}")
-  let decoder_gates := decoder.inline (fun w =>
-    if w.name.startsWith "in" then
-      let i_str := w.name.drop 2
-      match i_str.toNat? with
-      | some idx => tail.get! idx
-      | none => w
-    else if w.name.startsWith "out" then
-      let i_str := w.name.drop 3
-      match i_str.toNat? with
-      | some idx => write_sel.get! idx
-      | none => w
-    else
-      Wire.mk s!"decoder_{w.name}"
-  )
-
-  -- Write Enables: enq_fire && write_sel[i]
-  let write_en := (List.range depth).map (fun i => Wire.mk s!"write_en_{i}")
-  let write_en_gates := (List.range depth).map (fun i =>
-    Gate.mkAND enq_fire (write_sel.get! i) (write_en.get! i))
-
-  -- Storage Next MUXes: storage_next[i] = write_en[i] ? enq_data : storage[i]
-  let storage_next_gates := (List.flatten (List.range depth |>.map (fun i =>
-    (List.range width).map (fun j =>
-      Gate.mkMUX (storage.get! i |>.get! j) (enq_data.get! j) (write_en.get! i) (storage_next.get! i |>.get! j)
-    )
-  )))
-
-  -- Storage DFFs
-  let storage_dffs := (List.flatten (List.range depth |>.map (fun i =>
-    (List.range width).map (fun j =>
-      Gate.mkDFF (storage_next.get! i |>.get! j) clock reset (storage.get! i |>.get! j)
-    )
-  )))
-
-  -- 6. Read MUX (MuxTree)
-  let mux_tree := Shoumei.Circuits.Combinational.mkMuxTree depth width
-  let read_data_internal := (List.range width).map (fun i => Wire.mk s!"read_data_int_{i}")
-  let mux_gates := mux_tree.inline (fun w =>
-    -- Expected names in MuxTree: in{i}_b{j}, sel{k}, out{j}
-    if w.name.startsWith "in" then
-      let parts := w.name.drop 2 |>.splitOn "_b"
-      match parts with
-      | [i_str, j_str] => match i_str.toNat?, j_str.toNat? with
-                          | some idx, some bit => storage.get! idx |>.get! bit
-                          | _, _ => w
-      | _ => w
-    else if w.name.startsWith "sel" then
-      match w.name.drop 3 |>.toNat? with
-      | some idx => head.get! idx
-      | none => w
-    else if w.name.startsWith "out" then
-      match w.name.drop 3 |>.toNat? with
-      | some idx => read_data_internal.get! idx
-      | none => w
-    else
-      Wire.mk s!"muxtree_{w.name}"
-  )
-
-  -- Connect internal read data to output
-  let output_connect_gates := (List.range width).map (fun i =>
-    Gate.mkBUF (read_data_internal.get! i) (deq_data.get! i))
+  -- Count (Up/Down Counter)
+  -- Inputs: clock, reset, inc, dec, one, zero
+  -- Outputs: count
+  let count_inst : CircuitInstance := {
+    moduleName := s!"QueueCounterUpDown_{countWidth}"
+    instName := "u_count"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("inc", enq_fire), ("dec", deq_fire), ("one", one), ("zero", zero)] ++
+      (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
 
   { name := name
     inputs := enq_data ++ [enq_valid, deq_ready, clock, reset, zero, one]
     outputs := [enq_ready] ++ deq_data ++ [deq_valid]
-    gates := empty_gates.1 ++ full_gates.1 ++ handshaking_gates ++
-             head_inc_gates ++ tail_inc_gates ++ count_inc_gates ++ count_dec_gates ++
-             head_next_gates ++ tail_next_gates ++ count_hold_gates ++ count_next_gates ++
-             head_dffs ++ tail_dffs ++ count_dffs ++
-             decoder_gates ++ write_en_gates ++ storage_next_gates ++ storage_dffs ++
-             mux_gates ++ output_connect_gates
+    gates := empty_gates.1 ++ full_gates.1 ++ handshaking_gates
+    instances := [ram_inst, head_inst, tail_inst, count_inst]
   }
 
 -- TODO: Implement mkQueueNStructural similar to mkQueue1Structural

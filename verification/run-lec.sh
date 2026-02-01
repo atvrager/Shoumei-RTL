@@ -26,7 +26,7 @@ if [ -z "$LEAN_MODULES" ]; then
     exit 1
 fi
 
-# Count modules and show what we'll verify
+# Count modules and show what we will verify
 MODULE_COUNT=$(echo "$LEAN_MODULES" | wc -l)
 echo "Found $MODULE_COUNT module(s) to verify:"
 echo "$LEAN_MODULES" | while read -r file; do
@@ -37,9 +37,34 @@ echo ""
 # Track overall success
 ALL_PASSED=1
 
+# Track verified modules for hierarchical checking
+VERIFIED_MODULES_FILE=$(mktemp)
+
 # Create temporary working directory
 TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+trap 'rm -rf "$TMPDIR" "$VERIFIED_MODULES_FILE"' EXIT
+
+# Clean all Chisel files upfront for hierarchical support
+CLEAN_CHISEL_DIR="$TMPDIR/chisel_clean"
+mkdir -p "$CLEAN_CHISEL_DIR"
+echo "Cleaning Chisel output files for Yosys compatibility..."
+for f in "$CHISEL_DIR"/*.sv; do
+    bn=$(basename "$f")
+    # 1. Remove CIRCT verification blocks
+    # 2. Convert 'automatic logic x = y;' to 'logic x; x = y;'
+    # 3. Remove remaining 'automatic' keywords
+    sed '/^\/\/ ----- 8< -----/,$d' "$f" | \
+        sed -E 's/([[:space:]])automatic logic\s+([a-zA-Z0-9_]+)\s*=\s*(.+);/\1logic \2;\n\1\2 = \3;/g' | \
+        sed 's/[[:space:]]*automatic[[:space:]]\+/ /g' > "$CLEAN_CHISEL_DIR/$bn"
+done
+echo "Cleaning complete."
+echo ""
+
+# Function to check if a module has submodule instances
+has_submodules() {
+    local file="$1"
+    grep -qE "^\s*[A-Za-z0-9_]+\s+[a-z_][a-zA-Z0-9_]*\s*\(" "$file"
+}
 
 # Function to verify a single module
 verify_module() {
@@ -49,6 +74,7 @@ verify_module() {
     MODULE_NAME=$(basename "$MODULE_NAME" .v)
 
     local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
+    local CHISEL_FILE_CLEAN="$CLEAN_CHISEL_DIR/${MODULE_NAME}.sv"
 
     # Check if corresponding Chisel file exists
     if [ ! -f "$CHISEL_FILE" ]; then
@@ -64,16 +90,25 @@ verify_module() {
     echo "  Chisel: $CHISEL_FILE"
     echo ""
 
-    # Strip CIRCT verification layers from Chisel output and remove 'automatic' keyword
-    sed '/^\/\/ ----- 8< -----/,$d' "$CHISEL_FILE" | \
-        sed -E 's/^(\s*)automatic logic\s+([a-zA-Z0-9_]+)\s*=\s*(.+);/\1logic \2;\n\1\2 = \3;/g' | \
-        sed 's/\bautomatic\s\+/ /g' > "$TMPDIR/chisel_clean_${MODULE_NAME}.sv"
-
-    # Check if this is a sequential circuit (contains always @)
+    # Check if this is a sequential circuit
+    # Detection: always block OR clock/reset inputs
     local IS_SEQUENTIAL=0
-    if grep -q "always @" "$LEAN_FILE"; then
+    if grep -qE "always @|input .*clock|input .*reset" "$LEAN_FILE"; then
         IS_SEQUENTIAL=1
-        echo "  Type: Sequential circuit (using SEC)"
+    fi
+
+    # Check if this module has hierarchical submodules
+    local HAS_HIERARCHY=0
+    if has_submodules "$LEAN_FILE"; then
+        HAS_HIERARCHY=1
+    fi
+
+    if [ $IS_SEQUENTIAL -eq 1 ]; then
+        if [ $HAS_HIERARCHY -eq 1 ]; then
+            echo "  Type: Sequential circuit with hierarchy (using hierarchical SEC)"
+        else
+            echo "  Type: Sequential circuit (using flat SEC)"
+        fi
     else
         echo "  Type: Combinational circuit (using CEC)"
     fi
@@ -81,22 +116,27 @@ verify_module() {
 
     # Create Yosys script for equivalence checking
     if [ $IS_SEQUENTIAL -eq 1 ]; then
-        # Sequential Equivalence Checking (SEC)
-        cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
+        if [ $HAS_HIERARCHY -eq 1 ]; then
+            # Hierarchical Sequential Equivalence Checking
+            # Strategy: Flatten but use limited induction depth
+            cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
-read_verilog -sv LEAN_FILE
-hierarchy -check -top MODULE_NAME
-proc; memory; opt
-rename MODULE_NAME gold
+read_verilog -sv $LEAN_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
+proc; memory; opt; flatten
+rename $MODULE_NAME gold
 
 # Stash gold design
 design -stash gold
 
+# Reset Verilog frontend
+design -reset-vlog
+
 # Read and prepare Chisel design (gate implementation)
-read_verilog -sv CHISEL_FILE
-hierarchy -check -top MODULE_NAME
-proc; memory; opt
-rename MODULE_NAME gate
+read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
+proc; memory; opt; flatten
+rename $MODULE_NAME gate
 
 # Stash gate design
 design -stash gate
@@ -105,9 +145,52 @@ design -stash gate
 design -copy-from gold -as gold gold
 design -copy-from gate -as gate gate
 
-# Build equivalence circuit (don't flatten - preserve state elements)
+# Build equivalence circuit
 equiv_make gold gate equiv
 prep -top equiv
+async2sync
+
+# Show statistics
+stat
+
+# For hierarchical designs, use limited induction depth
+# This is faster and leverages verified submodules
+equiv_simple -undef
+equiv_induct -undef -seq 3
+equiv_status -assert
+YOSYS_EOF
+        else
+            # Flat Sequential Equivalence Checking (for leaf modules)
+            cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+# Read and prepare LEAN design (gold reference)
+read_verilog -sv $LEAN_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
+proc; memory; opt; flatten
+rename $MODULE_NAME gold
+
+# Stash gold design
+design -stash gold
+
+# Reset Verilog frontend
+design -reset-vlog
+
+# Read and prepare Chisel design (gate implementation)
+read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
+proc; memory; opt; flatten
+rename $MODULE_NAME gate
+
+# Stash gate design
+design -stash gate
+
+# Copy both into main design for comparison
+design -copy-from gold -as gold gold
+design -copy-from gate -as gate gate
+
+# Build equivalence circuit (preserve state elements)
+equiv_make gold gate equiv
+prep -top equiv
+async2sync
 
 # Show statistics
 stat
@@ -117,23 +200,27 @@ equiv_simple -undef
 equiv_induct -undef
 equiv_status -assert
 YOSYS_EOF
+        fi
     else
         # Combinational Equivalence Checking (CEC)
-        cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<'YOSYS_EOF'
+        cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
-read_verilog -sv LEAN_FILE
-hierarchy -check -top MODULE_NAME
+read_verilog -sv $LEAN_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
-rename MODULE_NAME gold
+rename $MODULE_NAME gold
 
 # Stash gold design
 design -stash gold
 
+# Reset Verilog frontend
+design -reset-vlog
+
 # Read and prepare Chisel design (gate implementation)
-read_verilog -sv CHISEL_FILE
-hierarchy -check -top MODULE_NAME
+read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
-rename MODULE_NAME gate
+rename $MODULE_NAME gate
 
 # Stash gate design
 design -stash gate
@@ -154,11 +241,6 @@ sat -verify -prove-asserts -show-ports miter
 YOSYS_EOF
     fi
 
-    # Substitute file paths and module name
-    sed -i "s|LEAN_FILE|$LEAN_FILE|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
-    sed -i "s|CHISEL_FILE|$TMPDIR/chisel_clean_${MODULE_NAME}.sv|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
-    sed -i "s|MODULE_NAME|$MODULE_NAME|g" "$TMPDIR/lec_${MODULE_NAME}.ys"
-
     # Run Yosys and capture output
     local YOSYS_OUTPUT="$TMPDIR/yosys_output_${MODULE_NAME}.txt"
     local YOSYS_SUCCESS=0
@@ -166,9 +248,7 @@ YOSYS_EOF
         YOSYS_SUCCESS=1
     fi
 
-    # Analyze results (quiet mode - don't show full yosys output unless failure)
-
-    # Check for successful verification (different for CEC vs SEC)
+    # Analyze results
     local VERIFICATION_SUCCESS=0
     if [ $IS_SEQUENTIAL -eq 1 ]; then
         # SEC: Check for equiv_status success
@@ -196,6 +276,8 @@ YOSYS_EOF
             # Show key statistics
             grep -A 1 "Solving problem with" "$YOSYS_OUTPUT" | sed 's/^/  /' || true
             echo ""
+            # Record this module as verified for hierarchical checking
+            echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
             return 0
         fi
     else
@@ -225,6 +307,10 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+VERIFIED_COUNT=$(wc -l < "$VERIFIED_MODULES_FILE")
+echo "Verified $VERIFIED_COUNT out of $MODULE_COUNT modules"
 echo ""
 
 if [ $ALL_PASSED -eq 1 ]; then

@@ -125,6 +125,7 @@ def mkComparatorN (n : Nat) : Circuit :=
     outputs := [eq, lt, ltu, gt, gtu]
     gates := not_gates ++ rca_gates ++ or_tree_gates ++ [eq_gate, ltu_gate]
              ++ lt_gates ++ gtu_gates ++ gt_gates
+    instances := []
   }
 
 -- Specific widths

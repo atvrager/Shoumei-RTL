@@ -130,7 +130,9 @@ def mkDecoder (n : Nat) : Circuit :=
     { name := "Decoder0"
       inputs := []
       outputs := [Wire.mk "out0"]
-      gates := [] }
+
+      gates := []
+      instances := [] }
   else
     let numOutputs := 2^n
     let inputs := makeIndexedWires "in" n
@@ -147,7 +149,9 @@ def mkDecoder (n : Nat) : Circuit :=
     { name := s!"Decoder{n}"
       inputs := inputs
       outputs := outputs
-      gates := allGates }
+
+      gates := allGates
+      instances := [] }
 
 /-! ## Concrete Examples -/
 

@@ -84,8 +84,6 @@ def genSystemVerilogDecoder (defs : List InstructionDef) : String :=
   let moduleDecl :=
 "
 module RV32IDecoder (
-    input  logic        clock,
-    input  logic        reset,
     input  logic [31:0] io_instr,   // 32-bit instruction word
     output logic [5:0]  io_optype,  // Decoded operation type
     output logic [4:0]  io_rd,      // Destination register
