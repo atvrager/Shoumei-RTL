@@ -71,6 +71,11 @@ lean_exe generate_physregfile where
   root := `GeneratePhysRegFile
   supportInterpreter := true
 
+-- Executable target for generating IntegerExecUnit (Integer Execution Unit)
+lean_exe generate_integer_exec where
+  root := `GenerateIntegerExecUnit
+  supportInterpreter := true
+
 -- Executable target for exporting verification certificates
 -- Generates compositional-certs.txt from Lean verification certificates
 lean_exe export_verification_certs where

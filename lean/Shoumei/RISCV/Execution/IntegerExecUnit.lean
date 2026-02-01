@@ -221,4 +221,79 @@ def verifySLTU (a b : UInt32) : Bool :=
   let result := executeInteger OpType.SLTU a b 0
   if a < b then result.2 == 1 else result.2 == 0
 
+/-! ## Structural Circuit -/
+
+open Shoumei
+open Shoumei.Circuits.Combinational
+
+/-- Build Integer Execution Unit structural circuit.
+
+    **Architecture:**
+    - Wraps verified ALU32 from Phase 1
+    - Adds tag pass-through for CDB broadcast
+    - Single-cycle combinational execution
+
+    **Inputs:**
+    - a[31:0]: Source operand 1
+    - b[31:0]: Source operand 2
+    - opcode[3:0]: ALU operation selector (encoded from OpType)
+    - dest_tag[5:0]: Physical register tag for result
+    - zero, one: Constant inputs (for ALU32)
+
+    **Outputs:**
+    - result[31:0]: ALU computation result
+    - tag_out[5:0]: Pass-through of dest_tag (for CDB broadcast)
+
+    **Instances:**
+    - ALU32: 32-bit ALU (verified in Phase 1)
+
+    **Gates:**
+    - 6 BUF gates for tag pass-through
+
+    **Note:** Opcode encoding must match ALU32:
+    - 0000=ADD, 0001=SUB, 0010=SLT, 0011=SLTU
+    - 0100=AND, 0101=OR, 0110=XOR
+    - 0111=SLL, 1000=SRL, 1001=SRA
+-/
+def mkIntegerExecUnit : Circuit :=
+  let a := makeIndexedWires "a" 32
+  let b := makeIndexedWires "b" 32
+  let opcode := makeIndexedWires "opcode" 4
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+
+  -- Output wires
+  let result := makeIndexedWires "result" 32
+  let tag_out := makeIndexedWires "tag_out" 6
+
+  -- Instance ALU32 (reuse verified module from Phase 1)
+  let alu_inst : CircuitInstance := {
+    moduleName := "ALU32"
+    instName := "u_alu"
+    portMap := [
+      ("a", a),
+      ("b", b),
+      ("op", opcode),
+      ("zero", [zero]),
+      ("one", [one]),
+      ("result", result)
+    ].flatMap (fun (name, wires) => wires.map (fun w => (name, w)))
+  }
+
+  -- Tag pass-through (BUF gates to maintain structural clarity)
+  let tag_passthrough := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) dest_tag tag_out
+
+  { name := "IntegerExecUnit"
+    inputs := a ++ b ++ opcode ++ dest_tag ++ [zero, one]
+    outputs := result ++ tag_out
+    gates := tag_passthrough
+    instances := [alu_inst]
+  }
+
+/-- Convenience constructors for specific configurations -/
+def integerExecUnit : Circuit := mkIntegerExecUnit
+
 end Shoumei.RISCV.Execution
