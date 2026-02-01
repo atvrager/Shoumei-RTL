@@ -119,6 +119,16 @@ verify_module() {
         if [ $HAS_HIERARCHY -eq 1 ]; then
             # Hierarchical Sequential Equivalence Checking
             # Strategy: Flatten but use limited induction depth
+            
+            # Determine induction depth based on module size
+            local INDUCT_DEPTH=3
+            case "$MODULE_NAME" in
+                Queue64_32|Queue64_6|QueueRAM_64x32|QueueRAM_64x6)
+                    INDUCT_DEPTH=10
+                    echo "  Using deeper induction (depth=$INDUCT_DEPTH) for large module"
+                    ;;
+            esac
+            
             cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
 read_verilog -sv $LEAN_DIR/*.sv
@@ -154,9 +164,8 @@ async2sync
 stat
 
 # For hierarchical designs, use limited induction depth
-# This is faster and leverages verified submodules
 equiv_simple -undef
-equiv_induct -undef -seq 3
+equiv_induct -undef -seq $INDUCT_DEPTH
 equiv_status -assert
 YOSYS_EOF
         else
