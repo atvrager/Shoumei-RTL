@@ -1,7 +1,7 @@
 # RV32IM Tomasulo CPU - Implementation Plan
 
 **Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
-**Last Updated:** 2026-02-01 (Phase 3 Week 5 Complete - FreeList)
+**Last Updated:** 2026-02-01 (Phase 3 Week 6 Complete - PhysRegFile)
 
 ---
 
@@ -24,7 +24,7 @@
 | Phase 0: Sequential DSL | ✅ Complete | 3 weeks | Queue/FIFO with verification |
 | Phase 1: Arithmetic | ✅ Complete | 4 weeks | Complete RV32I ALU |
 | Phase 2: Decoder | ✅ Complete | 2 weeks | RV32I instruction decoder |
-| **Phase 3: Renaming** | **🚧 Week 5/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
+| **Phase 3: Renaming** | **🚧 Week 6/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
 | Phase 4: Reservation Stations | ⏸️ Pending | 4-5 weeks | Dynamic scheduling infrastructure |
 | Phase 5: Execution Units | ⏸️ Pending | 3-4 weeks | EU integration with RS/CDB |
 | Phase 6: ROB & Retirement | ⏸️ Pending | 3-4 weeks | In-order commit logic |
@@ -275,11 +275,11 @@ TOTAL:         9 theorems + 4 runtime checks ✓
 
 ---
 
-## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 5 Complete)
+## Phase 3: Register Renaming Infrastructure - 🚧 IN PROGRESS (Week 6 Complete)
 
 **Goal:** Implement RAT, physical register file, free list with 64 physical registers
 
-**Status:** Week 5 Complete - Free List fully implemented and verified
+**Status:** Week 6 Complete - PhysRegFile fully implemented and verified
 **Target:** 64 physical registers, 6-bit tags, structural proofs only
 **Timeline:** 8 weeks (prerequisites-first approach)
 
@@ -576,53 +576,83 @@ Behavioral (64-reg):
 
 ---
 
-#### Week 6-7: Physical Register File
+#### Week 6: Physical Register File ✅ COMPLETE
 
 **File**: `lean/Shoumei/RISCV/Renaming/PhysRegFile.lean`
 
 **Behavioral Model**:
 ```lean
-structure PhysRegFileState (numPhysRegs : Nat) where
-  regs : Fin numPhysRegs → UInt32
+structure PhysRegFileState (numRegs : Nat) where
+  regs : Fin numRegs → UInt32
 
-def read (prf : PhysRegFileState n) (tag : Fin n) : UInt32
-def write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) : PhysRegFileState n
-def init : PhysRegFileState n  -- All zeros
+def PhysRegFileState.read (prf : PhysRegFileState n) (tag : Fin n) : UInt32
+def PhysRegFileState.write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) : PhysRegFileState n
+def PhysRegFileState.init (n : Nat) : PhysRegFileState n  -- All zeros
+def PhysRegFileState.readPair (prf : PhysRegFileState n) (tag1 tag2 : Fin n) : UInt32 × UInt32
 ```
 
-**Structural Circuit**:
+**Structural Circuit**: Follows RAT pattern exactly (larger scale)
 ```lean
-def mkPhysRegFile (numPhysRegs : Nat) : Circuit
-  -- N parallel 32-bit registers
-  -- Write address decoder: tagWidth → N one-hot
-  -- Read port 1: N:1 mux (32 bits wide)
-  -- Read port 2: N:1 mux (32 bits wide)
-
-  -- Inputs:
-  --   rd_tag1[5:0], rd_tag2[5:0]    -- Read addresses
-  --   wr_tag[5:0], wr_data[31:0]    -- Write address/data
-  --   wr_en, clock, reset
-
-  -- Outputs:
-  --   rd_data1[31:0], rd_data2[31:0]  -- Register values
+def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit
+  -- 64 × 32-bit DFF register array
+  -- Write decoder: Decoder6 (6→64 one-hot)
+  -- Write enable: 64 AND gates (wr_en & write_sel_i)
+  -- Storage: 64 × 32 × 2 gates (MUX + DFF per bit)
+  -- Read port 1: Mux64x32 instance
+  -- Read port 2: Mux64x32 instance
 ```
 
 **Example**: `mkPhysRegFile64` (64 regs × 32 bits, 2 read ports)
 
-**Proofs**:
-```lean
-theorem physregfile64_structure :
-  mkPhysRegFile64.inputs.length = 79 ∧ mkPhysRegFile64.outputs.length = 64
+**Proofs** (18 theorems verified):
+```
+Structural (64×32):
+  ✓ physregfile64_name            (module name = "PhysRegFile_64x32")
+  ✓ physregfile64_input_count     (53 inputs)
+  ✓ physregfile64_output_count    (64 outputs)
+  ✓ physregfile64_instance_count  (3 instances)
+  ✓ physregfile64_gate_count      (4160 gates)
 
-theorem physregfile64_gate_count_reasonable :
-  mkPhysRegFile64.gates.length > 12000 ∧ mkPhysRegFile64.gates.length < 16000
+Structural (4×8 test config):
+  ✓ physregfile4x8_name           (module name = "PhysRegFile_4x8")
+  ✓ physregfile4x8_input_count    (17 inputs)
+  ✓ physregfile4x8_output_count   (16 outputs)
+  ✓ physregfile4x8_gate_count     (68 gates)
 
-theorem physregfile_raw_behavioral :
-  -- Read-after-write correctness
-  read (write prf tag val) tag = val
+Behavioral (generic, ∀ state):
+  ✓ physregfile_init_all_zero          (all regs read as 0 after init)
+  ✓ physregfile_read_after_write       (write then read same tag = written value)
+  ✓ physregfile_write_independence     (write to tag1 doesn't affect tag2)
+  ✓ physregfile_last_write_wins        (sequential writes, last visible)
+  ✓ physregfile_independent_writes     (writes to different tags both visible)
+  ✓ physregfile_readPair_correct       (dual read returns correct pair)
+
+Behavioral (concrete 4-reg, native_decide):
+  ✓ prf4_init_reg0            (reg 0 = 0 after init)
+  ✓ prf4_write_read           (write 42 to reg 1, read back 42)
+  ✓ prf4_write_independence   (write reg 1 doesn't change reg 0)
+  ✓ prf4_multi_write          (reg 0 = 10, reg 2 = 20, both visible)
+  ✓ prf4_last_write_wins      (write 10 then 20, reads 20)
+  ✓ prf4_dual_read            (readPair returns both written values)
 ```
 
-**Deliverable**: PhysRegFile64 builds, passes LEC, ~14,400 gates
+**LEC Verification**:
+- ✅ PhysRegFile_64x32: Compositionally verified (via Lean proof)
+- Submodules verified: Decoder6 (LEC), Mux64x32 (LEC)
+
+**Generated Modules (3 total, 4160 top-level gates)**:
+- PhysRegFile_64x32: 4160 gates, 3 instances
+- Decoder6: 512 gates (shared with FreeList)
+- Mux64x32: 8064 gates (shared with QueueN)
+
+**Files Created**:
+- `lean/Shoumei/RISCV/Renaming/PhysRegFile.lean` - Behavioral model + structural circuit
+- `lean/Shoumei/RISCV/Renaming/PhysRegFileProofs.lean` - 18 theorems (native_decide + simp)
+- `lean/Shoumei/RISCV/Renaming/PhysRegFileCodegen.lean` - Code generation (SV + Chisel)
+- `GeneratePhysRegFile.lean` - Build target wrapper
+
+**Completed:** 2026-02-01
+**Deliverable**: ✅ PhysRegFile64 builds, all proofs pass, LEC verified (compositional)
 
 ---
 
@@ -712,9 +742,9 @@ lean/Shoumei/
 - [ ] **Week 3**: QueueN (depth=64) builds and passes LEC
 
 #### Main Components (Phase 3B)
-- [ ] **Week 4**: RAT64 builds, structural proofs pass, LEC verified
+- [x] **Week 4**: RAT64 builds, structural proofs pass, LEC verified (compositional)
 - [x] **Week 5**: FreeList64 builds, FIFO proofs pass, LEC verified (compositional)
-- [ ] **Week 6-7**: PhysRegFile64 builds, RAW proofs pass, LEC verified
+- [x] **Week 6**: PhysRegFile64 builds, RAW proofs pass, LEC verified (compositional)
 
 #### Integration (Phase 3C)
 - [ ] **Week 8**: RenameStage integrates all components
@@ -726,21 +756,25 @@ lean/Shoumei/
 - [ ] All behavioral proofs use `native_decide` (concrete instances only)
 - [ ] No sorry/axioms (all proofs complete)
 
-### Gate Count Summary (Estimated)
+### Gate Count Summary (Actual)
 
-| Component | Gates | Notes |
-|-----------|-------|-------|
-| **Prerequisites** | | |
-| Decoder5 (5→32) | ~150 | AND trees |
-| Decoder6 (6→64) | ~300 | AND trees |
-| Mux32x6 | ~186 | Binary tree of 2:1 muxes |
-| Mux64x32 | ~2016 | 64:1 mux, 32 bits wide |
-| Queue64x6 | ~2200 | Circular buffer, 64 entries |
-| **Main Components** | | |
-| RAT64 | ~1400 | 32 regs × 6 bits + 2 mux trees |
-| FreeList64 | ~2200 | Reuse Queue64x6 |
-| PhysRegFile64 | ~14400 | 64 regs × 32 bits + 2 mux trees |
-| **Total** | **~22,850** | For complete rename stage |
+| Component | Gates | Instances | Notes |
+|-----------|-------|-----------|-------|
+| **Prerequisites** | | | |
+| Decoder5 (5→32) | 160 | 0 | AND trees |
+| Decoder6 (6→64) | 512 | 0 | AND trees |
+| Mux32x6 | 744 | 0 | Binary tree of 2:1 muxes |
+| Mux64x6 | 1512 | 0 | 64:1 mux, 6 bits wide |
+| Mux64x32 | 8064 | 0 | 64:1 mux, 32 bits wide |
+| QueueRAM_64x6 | 832 | 2 | Circular buffer storage |
+| QueuePointer_6 | 43 | 0 | Head/tail pointer |
+| QueueCounterUpDown_7 | 97 | 0 | Entry counter |
+| **Main Components** | | | |
+| RAT_32x6 | 416 | 3 | 32 regs × 6 bits + Decoder5 + 2× Mux32x6 |
+| FreeList_64 | 32 | 4 | Reuse QueueN (renamed) |
+| PhysRegFile_64x32 | 4160 | 3 | 64 regs × 32 bits + Decoder6 + 2× Mux64x32 |
+| **Total (top-level)** | **4,608** | **10** | Main component gates only |
+| **Total (with submodules)** | **~16,572** | - | Including all leaf modules |
 
 ### Verification Strategy
 
@@ -912,7 +946,7 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 3B Week 5 Complete
+**Status:** Active Development - Phase 3B Week 6 Complete
 **Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
@@ -922,11 +956,14 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 - ✅ Phase 1: Arithmetic Building Blocks (Complete RV32I ALU, ~3000 gates)
 - ✅ Phase 2: RISC-V Decoder (40 instructions, dual codegen, LEC verified)
 
-**Current Phase:** Phase 3 - Register Renaming Infrastructure (Week 5/8 complete)
+**Current Phase:** Phase 3 - Register Renaming Infrastructure (Week 6/8 complete)
 - ✅ Week 1: Binary Decoder (Decoder5, Decoder6)
 - ✅ Week 2: MuxTree (Mux32x6, Mux64x32)
 - ✅ Week 3: QueueN (behavioral model + structural circuit)
 - ✅ Week 4: RAT (Register Alias Table, 416 gates, 9 behavioral proofs)
 - ✅ Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
+- ✅ Week 6: PhysRegFile (Physical Register File, 4160 gates, 18 proofs)
 
-**Next Milestone:** Week 6-7 - Physical Register File (PhysRegFile64, 2R1W, ~14,400 gates)
+**Verification Status:** 47/47 modules verified (40 LEC + 7 compositional = 100% coverage)
+
+**Next Milestone:** Week 7-8 - RenameStage Integration (RAT + FreeList + PhysRegFile)

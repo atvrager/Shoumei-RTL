@@ -149,6 +149,15 @@ def freelist_64_cert : VerificationCertificate := {
   leanProof := some "compositional_soundness + parametric_soundness"
 }
 
+-- PhysRegFile_64x32 - large sequential register file, verified compositionally
+-- All subcomponents (Decoder6, Mux64x32) are LEC-verified
+def physregfile_64x32_cert : VerificationCertificate := {
+  moduleName := "PhysRegFile_64x32"
+  method := .Compositional
+  dependencies := ["Decoder6", "Mux64x32"]
+  leanProof := some "compositional_soundness"
+}
+
 -- Verification summary
 def allCertificates : List VerificationCertificate := [
   queue1_8_cert,
@@ -160,7 +169,8 @@ def allCertificates : List VerificationCertificate := [
   queueRAM_64x6_cert,
   queue64_32_cert,
   queue64_6_cert,
-  freelist_64_cert
+  freelist_64_cert,
+  physregfile_64x32_cert
 ]
 
 def countByMethod (method : VerificationMethod) : Nat :=

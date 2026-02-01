@@ -22,6 +22,7 @@ import Shoumei.Circuits.Sequential.QueueN
 import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
+import Shoumei.RISCV.Renaming.PhysRegFile
 import Shoumei.Codegen.SystemC
 
 open Shoumei.Examples
@@ -168,6 +169,12 @@ def generateFreeListSystemC : IO Unit := do
   IO.println ""
   writeSystemCFiles mkFreeList64
 
+-- Phase 7: PhysRegFile
+def generatePhysRegFileSystemC : IO Unit := do
+  IO.println "==> Phase 7: PhysRegFile (Physical Register File)"
+  IO.println ""
+  writeSystemCFiles mkPhysRegFile64
+
 -- Main entry point
 def main : IO Unit := do
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -206,6 +213,8 @@ def main : IO Unit := do
   generateRATSystemC
   IO.println ""
   generateFreeListSystemC
+  IO.println ""
+  generatePhysRegFileSystemC
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

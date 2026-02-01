@@ -66,6 +66,11 @@ lean_exe generate_freelist where
   root := `GenerateFreeList
   supportInterpreter := true
 
+-- Executable target for generating PhysRegFile (Physical Register File)
+lean_exe generate_physregfile where
+  root := `GeneratePhysRegFile
+  supportInterpreter := true
+
 -- Executable target for exporting verification certificates
 -- Generates compositional-certs.txt from Lean verification certificates
 lean_exe export_verification_certs where
