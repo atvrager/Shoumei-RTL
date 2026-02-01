@@ -256,22 +256,87 @@ def extractNumericSuffix (name : String) : String :=
   let digits := chars.takeWhile Char.isDigit
   String.mk digits.reverse
 
+-- Helper: check if string ends with a digit
+def endsWithDigit (s : String) : Bool :=
+  match s.toList.reverse.head? with
+  | some c => c.isDigit
+  | none => false
+
+-- Helper: parse bracket notation like "inputs[123]" → ("inputs", 123)
+def parseBracketNotation (s : String) : Option (String × Nat) :=
+  if !s.contains '[' then none
+  else
+    let parts := s.splitOn "["
+    match parts with
+    | [base, rest] =>
+        let numStr := rest.takeWhile (· != ']')
+        match numStr.toNat? with
+        | some n => some (base, n)
+        | none => none
+    | _ => none
+
+-- Helper: infer structured port name from module name and flat index
+-- E.g., Mux64x32 with inputs[0] → in0_b0, inputs[32] → in1_b0, inputs[2048] → sel0
+def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex : Nat) : Option String :=
+  -- Parse module name like "Mux64x32" → (64 entries, 32 bits each)
+  if moduleName.startsWith "Mux" then
+    let rest := moduleName.drop 3  -- Remove "Mux"
+    let parts := rest.splitOn "x"
+    match parts with
+    | [numEntriesStr, widthStr] =>
+        match numEntriesStr.toNat?, widthStr.toNat? with
+        | some numEntries, some width =>
+            if baseName == "inputs" then
+              let totalDataInputs := numEntries * width
+              if flatIndex < totalDataInputs then
+                -- Data input: in{entry}_b{bit}
+                let entryIdx := flatIndex / width
+                let bitIdx := flatIndex % width
+                some s!"in{entryIdx}_b{bitIdx}"
+              else
+                -- Select input: sel{n}
+                let selIdx := flatIndex - totalDataInputs
+                some s!"sel{selIdx}"
+            else if baseName == "outputs" then
+              some s!"out{flatIndex}"
+            else
+              none
+        | _, _ => none
+    | _ => none
+  else
+    none
+
 -- Helper: construct port reference from port base name and wire name
 -- E.g., portBase="op", wireName="opcode3" → "op3"
 --       portBase="zero", wireName="zero" → "zero"
-def constructPortRef (portBase : String) (wireName : String) : String :=
-  let suffix := extractNumericSuffix wireName
-  if suffix.isEmpty then portBase else portBase ++ suffix
+--       portBase="out53", wireName="wire53" → "out53" (already complete)
+--       portBase="inputs[0]", wireName="x", moduleName="Mux64x32" → "in0_b0" (index translation)
+def constructPortRef (moduleName : String) (portBase : String) (wireName : String) : String :=
+  -- Try to parse bracket notation first (e.g., "inputs[123]")
+  match parseBracketNotation portBase with
+  | some (baseName, flatIndex) =>
+      -- Try to infer the structured port name based on module type
+      match inferStructuredPortName moduleName baseName flatIndex with
+      | some portName => portName
+      | none => portBase.replace "[" "(" |>.replace "]" ")"  -- Fallback: just convert brackets
+  | none =>
+      -- No brackets - handle normally
+      if endsWithDigit portBase then
+        portBase  -- Already complete (e.g., "out53")
+      else
+        -- Construct from base + wire index
+        let suffix := extractNumericSuffix wireName
+        if suffix.isEmpty then portBase else portBase ++ suffix
 
 -- Generate submodule instantiation with chunking for connections
-def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 100) : (String × String) :=
+def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
 
   -- Handle port connections
-  -- Construct port name from portMap base name + wire index
+  -- Construct port name from portMap, using module name for index translation
   let connections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef ctx wire
-    let portRef := constructPortRef portBaseName wire.name
+    let portRef := constructPortRef inst.moduleName portBaseName wire.name
     s!"  {inst.instName}.{portRef} <> {wRef}"
   )
   
@@ -291,7 +356,7 @@ def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chun
 
 -- Generate all submodule instances with chunking
 def generateInstancesChunked (ctx : ChiselContext) (c : Circuit) : (String × String) :=
-  let results := c.instances.map (fun inst => generateInstanceChunked ctx inst 100)
+  let results := c.instances.map (fun inst => generateInstanceChunked ctx inst 25)
   let calls := results.map Prod.fst
   let metods := results.map Prod.snd
   (joinLines calls, joinLines metods)
@@ -307,8 +372,8 @@ def generateWireDecls (ctx : ChiselContext) (c : Circuit) : String :=
     joinLines (wiresToDeclare.map (fun w => s!"  val {w.name} = Wire(Bool())"))
 
 
--- Generate combinational assignments only (chunked)
-def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 200) : (String × String) :=
+-- Generate combinational assignments only (two-tier chunking for very large circuits)
+def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 25) : (String × String) :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
 
   if ctx.useWireArray then
@@ -321,8 +386,22 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
         "  }"
       ]
     )
-    let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
-    (joinLines helperCalls, joinLines helperMethods)
+    -- Two-tier: if we have >20 chunk methods, group them into super-chunks
+    if gateChunks.length > 20 then
+      let chunkCallsList := List.range gateChunks.length |>.map (fun i => s!"initLogic{i}()")
+      let superChunks := chunkList chunkCallsList 20
+      let superHelpers := superChunks.enum.map (fun ⟨idx, calls⟩ =>
+        joinLines [
+          s!"  private def initLogicGroup{idx}(): Unit = " ++ "{",
+          joinLines (calls.map (fun c => s!"    {c}")),
+          "  }"
+        ]
+      )
+      let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
+      (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
+    else
+      let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
+      (joinLines helperCalls, joinLines helperMethods)
   else if combGates.length <= chunkSize then
     let assignments := combGates.map (generateCombGate ctx)
     (joinLines assignments, "")
@@ -336,8 +415,22 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
         "  }"
       ]
     )
-    let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
-    (joinLines helperCalls, joinLines helperMethods)
+    -- Two-tier: if we have >50 chunk methods, group them
+    if gateChunks.length > 50 then
+      let chunkCallsList := List.range gateChunks.length |>.map (fun i => s!"initLogic{i}()")
+      let superChunks := chunkList chunkCallsList 50
+      let superHelpers := superChunks.enum.map (fun ⟨idx, calls⟩ =>
+        joinLines [
+          s!"  private def initLogicGroup{idx}(): Unit = " ++ "{",
+          joinLines (calls.map (fun c => s!"    {c}")),
+          "  }"
+        ]
+      )
+      let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
+      (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
+    else
+      let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
+      (joinLines helperCalls, joinLines helperMethods)
 
 -- Main code generator: Circuit → Chisel module
 def toChisel (c : Circuit) : String :=
@@ -352,6 +445,7 @@ def toChisel (c : Circuit) : String :=
   let resetWires := if isSequential then findResetWires c else []
   let implicitWires := clockWires ++ resetWires
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
+  let totalIOPorts := filteredInputs.length + c.outputs.length
 
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
 
@@ -361,7 +455,7 @@ def toChisel (c : Circuit) : String :=
     outputToIndex := c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
     regToIndex := dffGates.enum.map (fun ⟨idx, g⟩ => (g.output, idx)),
     useWireArray := wiresToDeclare.length > 200,
-    useIOBundle := false,  -- DISABLED: Vec-based IO breaks module instantiation
+    useIOBundle := totalIOPorts > 200,  -- Use bundled IO for very large modules to avoid JVM method size limits
     useRegArray := dffGates.length > 50
   }
 
@@ -369,8 +463,8 @@ def toChisel (c : Circuit) : String :=
     let regDecls := generateRegDecls c ctx
     let wireDecls := generateWireDecls ctx c
     let (instances, instanceHelpers) := generateInstancesChunked ctx c
-    let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 100
-    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 100
+    let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 25
+    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 25
 
     let parts := [regDecls, wireDecls, instances, combMain, updateMain].filter (fun s => !s.isEmpty)
     let logic := String.intercalate "\n\n" parts
@@ -393,7 +487,7 @@ def toChisel (c : Circuit) : String :=
   else
     let wireDecls := generateWireDecls ctx c
     let (instances, instanceHelpers) := generateInstancesChunked ctx c
-    let (mainLogic, helperMethods) := generateCombAssignmentsChunked ctx c 100
+    let (mainLogic, helperMethods) := generateCombAssignmentsChunked ctx c 25
     let allHelpers := [instanceHelpers, helperMethods].filter (fun s => !s.isEmpty) |> String.intercalate "\n"
     
     let classBody := joinLines [

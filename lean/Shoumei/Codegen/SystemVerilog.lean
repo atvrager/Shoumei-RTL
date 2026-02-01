@@ -139,17 +139,82 @@ def extractNumericSuffix (name : String) : String :=
   let digits := chars.takeWhile Char.isDigit
   String.mk digits.reverse
 
+-- Helper: check if string ends with a digit
+def endsWithDigit (s : String) : Bool :=
+  match s.toList.reverse.head? with
+  | some c => c.isDigit
+  | none => false
+
+-- Helper: parse bracket notation like "inputs[123]" → ("inputs", 123)
+def parseBracketNotation (s : String) : Option (String × Nat) :=
+  if !s.contains '[' then none
+  else
+    let parts := s.splitOn "["
+    match parts with
+    | [base, rest] =>
+        let numStr := rest.takeWhile (· != ']')
+        match numStr.toNat? with
+        | some n => some (base, n)
+        | none => none
+    | _ => none
+
+-- Helper: infer structured port name from module name and flat index
+-- E.g., Mux64x32 with inputs[0] → in0_b0, inputs[32] → in1_b0, inputs[2048] → sel0
+def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex : Nat) : Option String :=
+  -- Parse module name like "Mux64x32" → (64 entries, 32 bits each)
+  if moduleName.startsWith "Mux" then
+    let rest := moduleName.drop 3  -- Remove "Mux"
+    let parts := rest.splitOn "x"
+    match parts with
+    | [numEntriesStr, widthStr] =>
+        match numEntriesStr.toNat?, widthStr.toNat? with
+        | some numEntries, some width =>
+            if baseName == "inputs" then
+              let totalDataInputs := numEntries * width
+              if flatIndex < totalDataInputs then
+                -- Data input: in{entry}_b{bit}
+                let entryIdx := flatIndex / width
+                let bitIdx := flatIndex % width
+                some s!"in{entryIdx}_b{bitIdx}"
+              else
+                -- Select input: sel{n}
+                let selIdx := flatIndex - totalDataInputs
+                some s!"sel{selIdx}"
+            else if baseName == "outputs" then
+              some s!"out{flatIndex}"
+            else
+              none
+        | _, _ => none
+    | _ => none
+  else
+    none
+
 -- Helper: construct port reference from port base name and wire name
 -- E.g., portBase="op", wireName="opcode3" → "op3"
 --       portBase="zero", wireName="zero" → "zero"
-def constructPortRef (portBase : String) (wireName : String) : String :=
-  let suffix := extractNumericSuffix wireName
-  if suffix.isEmpty then portBase else portBase ++ suffix
+--       portBase="out53", wireName="wire53" → "out53" (already complete)
+--       portBase="inputs[0]", wireName="x", moduleName="Mux64x32" → "in0_b0" (index translation)
+def constructPortRef (moduleName : String) (portBase : String) (wireName : String) : String :=
+  -- Try to parse bracket notation first (e.g., "inputs[123]")
+  match parseBracketNotation portBase with
+  | some (baseName, flatIndex) =>
+      -- Try to infer the structured port name based on module type
+      match inferStructuredPortName moduleName baseName flatIndex with
+      | some portName => portName
+      | none => portBase.replace "[" "_" |>.replace "]" ""  -- Fallback: just convert brackets
+  | none =>
+      -- No brackets - handle normally
+      if endsWithDigit portBase then
+        portBase  -- Already complete (e.g., "out53")
+      else
+        -- Construct from base + wire index
+        let suffix := extractNumericSuffix wireName
+        if suffix.isEmpty then portBase else portBase ++ suffix
 
 def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
   let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef inputToIndex outputToIndex wire
-    let portRef := constructPortRef portBaseName wire.name
+    let portRef := constructPortRef inst.moduleName portBaseName wire.name
     s!".{portRef}({wRef})"
   )
   let portsStr := String.intercalate ",\n    " portConnections
@@ -174,8 +239,8 @@ def toSystemVerilog (c : Circuit) : String :=
     let resetWires := dffGates.filterMap (fun g => match g.inputs with | [_d, _clk, res] => some res | _ => none)
     let implicitWires := clockWires ++ resetWires
     let filtered := c.inputs.filter (fun w => !implicitWires.contains w)
-    let _totalPorts := filtered.length + c.outputs.length
-    let useBundle := false  -- DISABLED: Bundled IO breaks module instantiation
+    let totalPorts := filtered.length + c.outputs.length
+    let useBundle := totalPorts > 200  -- Use bundled IO for very large modules to avoid excessive ports
     if useBundle then
       (filtered.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
        c.outputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
