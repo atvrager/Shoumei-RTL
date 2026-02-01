@@ -30,3 +30,8 @@ lean_exe test_riscv where
 lean_exe generate_riscv_decoder where
   root := `GenerateRISCVDecoder
   supportInterpreter := true
+
+-- Executable target for generating binary decoders (5→32, 6→64)
+lean_exe generate_decoder where
+  root := `GenerateDecoder
+  supportInterpreter := true
