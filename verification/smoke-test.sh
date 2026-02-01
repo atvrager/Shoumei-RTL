@@ -114,7 +114,7 @@ if [ ! -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
     exit 1
 fi
 
-if [ ! -f "output/chisel-src/RV32IDecoder.scala" ]; then
+if [ ! -f "chisel/src/main/scala/generated/RV32IDecoder.scala" ]; then
     echo -e "${RED}✗ RV32IDecoder Chisel source not generated${NC}"
     exit 1
 fi

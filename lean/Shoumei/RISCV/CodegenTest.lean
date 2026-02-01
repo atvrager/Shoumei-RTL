@@ -36,7 +36,7 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
   IO.println "\n==================================================\n"
   IO.println "Code generation summary:"
   IO.println s!"  - SystemVerilog (from LEAN): output/sv-from-lean/RV32IDecoder.sv"
-  IO.println s!"  - Chisel source (from LEAN):  output/chisel-src/RV32IDecoder.scala"
+  IO.println s!"  - Chisel source (from LEAN):  chisel/src/main/scala/generated/RV32IDecoder.scala"
   IO.println s!"  - Instructions:               {defs.length} RV32I operations"
   IO.println "\nNext steps:"
   IO.println "  - Run: cd chisel && sbt run"
