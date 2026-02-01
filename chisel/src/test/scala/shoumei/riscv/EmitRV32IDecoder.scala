@@ -3,6 +3,7 @@ package shoumei.riscv
 import circt.stage.ChiselStage
 
 object EmitRV32IDecoder extends App {
+
   // Emit SystemVerilog for the RV32I decoder
   // Note: sbt runs from chisel/ directory, so ../ goes to project root
   ChiselStage.emitSystemVerilogFile(
