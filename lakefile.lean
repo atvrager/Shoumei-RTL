@@ -14,9 +14,16 @@ lean_lib «Shoumei» where
   -- Main library containing DSL, semantics, theorems, and code generators
   srcDir := "lean"
 
--- Executable target for code generation
--- Runs code generators to produce SystemVerilog and Chisel output
+-- Executable target for CENTRALIZED code generation
+-- Generates ALL circuits in one command (SV + Chisel + SystemC)
+-- This is the recommended way to generate code
 @[default_target]
+lean_exe generate_all where
+  root := `GenerateAll
+  supportInterpreter := true
+
+-- Executable target for legacy code generation
+-- (Use generate_all instead - it's simpler and does all 3 formats)
 lean_exe codegen where
   root := `Main
   supportInterpreter := true
