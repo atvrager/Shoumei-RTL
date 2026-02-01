@@ -119,7 +119,7 @@ systemc:
 	cd systemc && ./build.sh
 
 # Run logical equivalence checking with Yosys
-lec:
+lec: lean
 	@echo "==> Running logical equivalence checking (Yosys)..."
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
 

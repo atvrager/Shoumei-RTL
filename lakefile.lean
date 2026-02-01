@@ -55,3 +55,9 @@ lean_exe codegen_systemc where
 lean_exe generate_queuen where
   root := `GenerateQueueN
   supportInterpreter := true
+
+-- Executable target for exporting verification certificates
+-- Generates compositional-certs.txt from Lean verification certificates
+lean_exe export_verification_certs where
+  root := `ExportVerificationCerts
+  supportInterpreter := true

@@ -71,6 +71,21 @@ theorem compositional_soundness {α β : Type}
 
 -- Specific certificates for our modules
 
+-- Small queues verified by direct LEC
+def queue1_8_cert : VerificationCertificate := {
+  moduleName := "Queue1_8"
+  method := .LEC
+  dependencies := []
+  leanProof := none
+}
+
+def queue1_32_cert : VerificationCertificate := {
+  moduleName := "Queue1_32"
+  method := .LEC
+  dependencies := []
+  leanProof := none
+}
+
 def queue2_8_cert : VerificationCertificate := {
   moduleName := "Queue2_8"
   method := .LEC
@@ -78,18 +93,53 @@ def queue2_8_cert : VerificationCertificate := {
   leanProof := none
 }
 
+def queue4_8_cert : VerificationCertificate := {
+  moduleName := "Queue4_8"
+  method := .LEC
+  dependencies := ["QueueRAM_4x8", "QueuePointer_2", "QueueCounterUpDown_3"]
+  leanProof := none
+}
+
+-- Large Queue RAMs - too large for direct LEC, verified compositionally
+def queueRAM_64x32_cert : VerificationCertificate := {
+  moduleName := "QueueRAM_64x32"
+  method := .Compositional
+  dependencies := ["QueueRAM_2x8", "QueueRAM_4x8"]
+  leanProof := some "parametric_soundness"
+}
+
+def queueRAM_64x6_cert : VerificationCertificate := {
+  moduleName := "QueueRAM_64x6"
+  method := .Compositional
+  dependencies := ["QueueRAM_2x8", "QueueRAM_4x8"]
+  leanProof := some "parametric_soundness"
+}
+
+-- Large Queues - too large for direct LEC, verified compositionally
 def queue64_32_cert : VerificationCertificate := {
   moduleName := "Queue64_32"
   method := .Compositional
-  dependencies := ["QueueRAM_64x32", "QueuePointer_6", "QueueCounterUpDown_7"]
-  leanProof := some "parametric_soundness + compositional_soundness"
+  dependencies := ["QueueRAM_64x32", "QueuePointer_6", "QueueCounterUpDown_7", "Queue2_8", "Queue4_8"]
+  leanProof := some "compositional_soundness + parametric_soundness"
+}
+
+def queue64_6_cert : VerificationCertificate := {
+  moduleName := "Queue64_6"
+  method := .Compositional
+  dependencies := ["QueueRAM_64x6", "QueuePointer_6", "QueueCounterUpDown_7", "Queue2_8", "Queue4_8"]
+  leanProof := some "compositional_soundness + parametric_soundness"
 }
 
 -- Verification summary
 def allCertificates : List VerificationCertificate := [
+  queue1_8_cert,
+  queue1_32_cert,
   queue2_8_cert,
-  queue64_32_cert
-  -- ... more certificates
+  queue4_8_cert,
+  queueRAM_64x32_cert,
+  queueRAM_64x6_cert,
+  queue64_32_cert,
+  queue64_6_cert
 ]
 
 def countByMethod (method : VerificationMethod) : Nat :=
