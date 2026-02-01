@@ -39,8 +39,8 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
   IO.println s!"  - Chisel source (from LEAN):  output/chisel-src/RV32IDecoder.scala"
   IO.println s!"  - Instructions:               {defs.length} RV32I operations"
   IO.println "\nNext steps:"
-  IO.println "  - Copy Chisel to chisel/src/main/scala/shoumei/riscv/"
-  IO.println "  - Run: cd chisel && sbt 'Test/runMain shoumei.riscv.EmitRV32IDecoder'"
+  IO.println "  - Run: cd chisel && sbt run"
+  IO.println "  - Main.scala auto-discovers all generated modules (including RV32IDecoder)"
   IO.println "  - SystemVerilog from Chisel will be in: output/sv-from-chisel/RV32IDecoder.sv"
   IO.println "\n✓ Code generation complete!"
 

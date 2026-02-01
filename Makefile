@@ -102,6 +102,7 @@ codegen: lean opcodes
 	lake exe codegen_systemc
 
 # Compile Chisel to SystemVerilog
+# Main.scala auto-discovers all generated modules (including RV32IDecoder)
 chisel:
 ifndef HAS_SBT
 	@echo "Error: sbt not found. Cannot build Chisel code."
@@ -110,8 +111,6 @@ ifndef HAS_SBT
 endif
 	@echo "==> Compiling Chisel to SystemVerilog..."
 	cd chisel && sbt run
-	@echo "==> Emitting RV32I decoder SystemVerilog from Chisel..."
-	cd chisel && sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder"
 
 # Compile SystemC modules
 systemc:

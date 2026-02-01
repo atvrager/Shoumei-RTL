@@ -191,15 +191,8 @@ fi
 echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop, Queue1_8, Queue1_32)${NC}"
 
 # Test 3b: RV32I Decoder Chisel Compilation
+# RV32IDecoder is auto-discovered by Main.scala from generated/ directory
 echo "==> Test 3b: RV32I Decoder Chisel Compilation"
-cd chisel
-if sbt "Test/runMain shoumei.riscv.EmitRV32IDecoder" > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ RV32I decoder Chisel compilation succeeded${NC}"
-else
-    echo -e "${RED}✗ RV32I decoder Chisel compilation failed${NC}"
-    exit 1
-fi
-cd ..
 
 if [ ! -f "output/sv-from-chisel/RV32IDecoder.sv" ]; then
     echo -e "${RED}✗ RV32IDecoder Chisel SystemVerilog not generated${NC}"

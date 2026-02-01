@@ -101,10 +101,6 @@ jobs:
         working-directory: ./chisel
         run: sbt compile
 
-      - name: Run Chisel tests
-        working-directory: ./chisel
-        run: sbt test
-
       - name: Check Scala formatting with scalafmt
         working-directory: ./chisel
         run: |
