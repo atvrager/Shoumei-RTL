@@ -15,21 +15,23 @@ Shoumei has a unique advantage: the ISA semantics, the decoder, and the full mic
 ## Architecture
 
 ```
-  Lean (microarch models)              Spike (ISA oracle)
-         |                                    |
-   generates programs                  runs same ELF
-         |                                    |
-         v                                    v
-      ELF binary ─────────────────► commit log (golden trace)
-         |                                    |
-         v                                    v
-   RTL simulation ─────────────────► commit log (DUT trace)
-   (Verilator / SystemC)                      |
-                                              v
-                                    diff ── mismatch = bug
+  Lean (microarch models)
+         |
+   generates programs
+         |
+         v
+      ELF binary ──────────────────────────────────+
+         |                                          |
+         v                                          v
+   RTL Simulation ◄──── RVVI-TRACE ────► Spike (linked via libriscv)
+   (Verilator/SystemC)        |
+                              v
+                    lock-step compare (per retirement)
+                              |
+                    PASS / FAIL (cycle-accurate)
 ```
 
-**Lean** generates the programs and emits valid ELF binaries. **Spike** says what the correct answer is. **RTL** is the DUT. The Lean ISA semantics model is not trusted at runtime -- Spike is the single source of truth.
+**Lean** generates the programs and emits valid ELF binaries. **Spike** is linked into the testbench as a library and stepped on each RVVI retirement event. **RTL** drives -- Spike follows. Mismatches are detected at the exact cycle they occur, not post-mortem. See [Lock-Step Cosimulation via RVVI](cosimulation.md) for the full integration architecture.
 
 ### Role of each component
 
@@ -38,9 +40,9 @@ Shoumei has a unique advantage: the ISA semantics, the decoder, and the full mic
 | Lean microarch models | Guide test generation toward specific pipeline states |
 | Lean encoder | Produce instruction words from `OpType` + operands |
 | Lean ELF emitter | Package instructions into valid bare-metal ELF binaries |
-| Spike | ISA-level golden reference (commit log = expected behavior) |
-| RTL (Verilator/SystemC) | Design under test |
-| Trace comparator | Align Spike and RTL commit logs, report first divergence |
+| RVVI-TRACE port | Standard retirement interface on the RTL (output-only signals) |
+| Spike (libriscv) | ISA-level golden reference, linked into testbench, stepped per retirement |
+| RTL (Verilator/SystemC) | Design under test, drives the RVVI port |
 
 ### Why Spike and not the Lean semantics model?
 
@@ -53,6 +55,16 @@ Spike is the canonical RISC-V ISA reference simulator. Using it as the oracle me
 - Standard tooling (riscv-dv, riscof) already speaks Spike
 
 The Lean `executeInstruction` model remains useful for fast pre-filtering during generation and for cross-checking that the Lean proofs are grounded in reality (see [Lean semantics cross-check](#lean-semantics-cross-check)).
+
+### Why RVVI?
+
+The RVVI (RISC-V Verification Interface) is the standard trace port for RISC-V processor verification. By adopting RVVI-TRACE as the retirement interface:
+
+- Spike is stepped lock-step on each RVVI retirement event -- no offline trace files
+- Mismatches are caught at the exact cycle, with full Spike and RTL state available for debugging
+- The `intr` signal provides a clean path for future async interrupt cosimulation
+- The interface is compatible with ImperasDV and the broader RVVI ecosystem if needed later
+- Standard signal names (`pc_rdata`, `x_wb`, `x_wdata`, `mem_wmask`) replace ad-hoc conventions
 
 ## ELF Generation
 
@@ -278,11 +290,10 @@ This is not part of the RTL verification flow. It validates that the Lean proofs
 |-------|-------------|--------------|
 | A: Encoder | `Encoder.lean` with round-trip proofs | Existing `Decoder.lean`, `ISA.lean` |
 | B: ELF emitter | `ELF.lean` + `Bootstrap.lean`, `lake exe emit_test` | Phase A |
-| C: Spike harness | `scripts/run_spike.sh`, trace parser | Spike installed |
-| D: Hazard patterns | `Patterns.lean` with all pattern types | Phase B |
-| E: RTL trace extraction | Commit log output from SystemC/Verilator testbench | Phase 8 integration |
-| F: Trace comparison | `scripts/compare_traces.py`, CI integration | Phases C + E |
-| G: Coverage model | `Coverage.lean` + microarch simulator | Existing behavioral models |
-| H: Coverage-guided fuzzer | Generation loop with coverage feedback | Phases D + G |
+| C: Hazard patterns | `Patterns.lean` with all pattern types | Phase B |
+| D: RVVI port | RVVI-TRACE outputs on top-level CPU, PC/insn queues alongside ROB | Phase 8 integration |
+| E: Spike testbench | Verilator testbench linked against libriscv, lock-step checker | Phases D + Spike |
+| F: Coverage model | `Coverage.lean` + microarch simulator | Existing behavioral models |
+| G: Coverage-guided fuzzer | Generation loop with coverage feedback | Phases C + F |
 
-Phases A-D can proceed before the CPU is integrated (Phase 8). The generated ELFs are validated by Spike and stockpiled for when RTL simulation becomes available.
+Phases A-C can proceed before the CPU is integrated (Phase 8). The generated ELFs are validated by standalone Spike runs and stockpiled for when lock-step cosimulation becomes available in phase E.

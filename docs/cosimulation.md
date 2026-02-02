@@ -1,238 +1,427 @@
-# Cosimulation with Spike
+# Lock-Step Cosimulation via RVVI
 
-Architecture and integration guide for cosimulating the Shoumei RTL against Spike, the canonical RISC-V ISA reference simulator.
+Architecture and integration guide for lock-step cosimulation of the Shoumei RTL against Spike, driven by the RVVI (RISC-V Verification Interface) trace port.
 
 ## Overview
 
-Cosimulation compares two executions of the same program:
-
-1. **Spike** (golden model) -- produces a commit-level trace of every retired instruction
-2. **RTL simulation** (design under test) -- produces a commit-level trace from the ROB retirement port
-
-A mismatch at any retirement point is a bug in the RTL, the code generators, or the test infrastructure.
+The RTL exposes an RVVI-TRACE port at the ROB commit point. On every retirement event, the testbench steps Spike one instruction and compares state immediately. No trace files, no offline comparison -- mismatches are caught at the exact cycle they occur.
 
 ```
-                    ELF binary
-                   /          \
-                  v            v
-             Spike            RTL Sim
-          (reference)         (DUT)
-               |                |
-               v                v
-          golden.trace      dut.trace
-               \              /
-                v            v
-              Trace Comparator
-                    |
-                    v
-              PASS / FAIL
+                        ELF binary
+                            |
+                +-----------+-----------+
+                |                       |
+                v                       v
+          RTL Simulation          Spike (linked)
+          (Verilator/SystemC)     (libriscv)
+                |                       |
+                |   RVVI valid fires    |
+                +--------+      +-------+
+                         |      |
+                         v      v
+                    compare immediately
+                         |
+                    PASS / FAIL (cycle-accurate)
 ```
 
-## Spike Configuration
+**Key difference from offline trace comparison:** Spike is not run separately. It is linked into the testbench as a library. The RTL drives -- when it retires an instruction (RVVI `valid` asserted), the testbench calls `spike.step(1)` and checks the result against the RVVI signals. This is the same lock-step approach used by OpenHW Group's core-v-verif with ImperasDV, adapted for Spike.
 
-### Invocation
+## RVVI-TRACE Interface
+
+The RVVI-TRACE interface is a set of output-only signals from the RTL, sampled on the positive clock edge. It reports retirement and trap events along with all architectural state changes.
+
+### Signal definitions
+
+RVVI-TRACE for RV32IM, single-hart, single-issue (NRET=1):
+
+```systemverilog
+interface rvvi_trace #(
+    parameter int ILEN = 32,
+    parameter int XLEN = 32,
+    parameter int NRET = 1     // max instructions retired per cycle
+);
+    // Retirement event
+    logic                valid;          // instruction retired this cycle
+    logic [63:0]         order;          // monotonic retirement counter
+    logic [ILEN-1:0]     insn;           // instruction encoding
+    logic                trap;           // trap (not retired -- ECALL, EBREAK, illegal)
+    logic                halt;           // last instruction before halt
+    logic                intr;           // first instruction of trap handler
+
+    // Privilege & mode
+    logic [1:0]          mode;           // 0=U, 1=S, 3=M
+    logic [1:0]          ixl;            // current XLEN encoding
+
+    // Program counter
+    logic [XLEN-1:0]     pc_rdata;       // PC of this instruction
+    logic [XLEN-1:0]     pc_wdata;       // next PC (PC+4 or branch/trap target)
+
+    // Integer register writeback
+    logic [31:0]         x_wb;           // bitmask: which x registers were written
+    logic [XLEN-1:0]     x_wdata [0:31]; // written values (valid where x_wb bit set)
+
+    // Memory access
+    logic                mem_wmask_valid; // memory write occurred
+    logic [XLEN-1:0]     mem_addr;       // access address
+    logic [XLEN/8-1:0]   mem_rmask;      // read byte mask
+    logic [XLEN/8-1:0]   mem_wmask;      // write byte mask
+    logic [XLEN-1:0]     mem_rdata;      // read data
+    logic [XLEN-1:0]     mem_wdata;      // write data
+
+endinterface
+```
+
+### Signal semantics
+
+**Retirement event:** When `valid` is high and `trap` is low, exactly one instruction has retired. The testbench reads all other signals and steps Spike.
+
+**Trap event:** When `valid` is high and `trap` is high, an instruction trapped (ECALL, EBREAK, illegal instruction, misaligned access). The instruction did not retire. Spike must also be stepped to the same trap so that CSR state (mepc, mcause, mtval) stays in sync.
+
+**Register writeback:** `x_wb` is a bitmask. If bit N is set, register xN was written with `x_wdata[N]`. For instructions that don't write a register (branches, stores), `x_wb` is zero. Writes to x0 must report `x_wdata[0] = 0`.
+
+**Memory access:** `mem_wmask` indicates which bytes were written. For a `SW`, `mem_wmask = 4'b1111`. For `SH`, `mem_wmask = 4'b0011` or `4'b1100` depending on alignment. `mem_rmask` is analogous for loads.
+
+**Ordering:** `order` is a 64-bit monotonically increasing counter. It increments on every `valid` event (both retirements and traps). The ROB guarantees in-order commit, so the order field should match Spike's instruction count.
+
+### Mapping from ROBEntry to RVVI signals
+
+The existing `ROBEntry` structure (24 bits) provides most RVVI fields. Two additions are needed: a PC queue and an instruction word queue, piggybacked on ROB allocation.
+
+```
+RVVI signal        Source                                  Notes
+──────────────     ──────────────────────────────────      ─────
+valid              ROB head: valid && complete             commit fires
+order              64-bit counter, increments on valid
+insn               insn_queue[rob_head]                    NEW: store at alloc time
+trap               ROB head: exception [21]
+halt               tohost write detected
+intr               first insn after trap (derived)
+mode               2'b11 (M-mode only, for now)
+ixl                2'b01 (XLEN=32)
+pc_rdata           pc_queue[rob_head]                      NEW: store at alloc time
+pc_wdata           pc_queue[rob_head+1] or branch target
+x_wb               1 << archRd [16:20] (if hasPhysRd)
+x_wdata[archRd]    PhysRegFile[physRd] [2:7]
+mem_addr           store_buffer commit: address [2:33]
+mem_wdata           store_buffer commit: data [34:65]
+mem_wmask          derived from store_buffer: size [66:67]
+```
+
+**New state required:**
+- **PC queue:** `XLEN` bits per ROB entry. Written at allocation from the fetch stage PC. Read at commit for `pc_rdata`.
+- **Instruction word queue:** `ILEN` bits per ROB entry. Written at allocation from instruction memory. Read at commit for `insn`.
+
+Both are simple register files indexed by ROB slot, allocated and freed in lockstep with the ROB.
+
+## Spike Integration
+
+### Linking Spike as a library
+
+Spike (riscv-isa-sim) builds `libriscv.so` / `libriscv.a` which exposes the processor model as a C++ library. The testbench links against it directly.
 
 ```bash
-spike --log-commits --isa=rv32im -m0x80000000:0x10000 test.elf 2> golden.trace
+# Build Spike with shared library
+cd riscv-isa-sim
+mkdir build && cd build
+../configure --prefix=/opt/spike --enable-commitlog
+make -j$(nproc) && make install
+
+# Link into Verilator testbench
+SPIKE_INC=/opt/spike/include
+SPIKE_LIB=/opt/spike/lib
+verilator --cc --exe --build \
+  -CFLAGS "-I${SPIKE_INC}" \
+  -LDFLAGS "-L${SPIKE_LIB} -lriscv -lsoftfloat -ldisasm" \
+  output/sv-from-lean/ShoumeiCPU.sv \
+  testbench/cosim_tb.cpp \
+  -o build/shoumei_cosim
 ```
 
-| Flag | Purpose |
-|------|---------|
-| `--log-commits` | Emit one line per retired instruction on stderr |
-| `--isa=rv32im` | RV32I base + M extension (matches Shoumei config) |
-| `-m0x80000000:0x10000` | Physical memory: 64KB at 0x80000000 |
-| `--priv=m` | Stay in M-mode (optional, simplifies bare-metal tests) |
+### Spike stepping API
 
-### Commit log format
+```cpp
+#include <riscv/sim.h>
+#include <riscv/processor.h>
 
-Spike's `--log-commits` output:
+class SpikeOracle {
+    std::unique_ptr<sim_t> sim;
+    processor_t* proc;
 
+public:
+    SpikeOracle(const char* elf_path) {
+        // Configure: RV32IM, single hart, M-mode, memory at 0x80000000
+        cfg_t cfg;
+        cfg.isa = "rv32im";
+        cfg.priv = "m";
+        std::vector<mem_cfg_t> mem_cfg = {{0x80000000, 0x10000}};
+
+        sim = std::make_unique<sim_t>(
+            &cfg, false, mem_cfg,
+            std::vector<std::string>{elf_path},
+            /*dtb=*/nullptr, /*log_path=*/nullptr,
+            /*htif_args=*/std::vector<std::string>{});
+        proc = sim->get_core(0);
+    }
+
+    // Step one instruction, return state for comparison
+    struct StepResult {
+        uint32_t pc;
+        uint32_t insn;
+        uint32_t rd;         // destination register (0 if none)
+        uint32_t rd_value;   // written value
+        bool     trap;
+        bool     mem_write;
+        uint32_t mem_addr;
+        uint32_t mem_data;
+    };
+
+    StepResult step() {
+        StepResult r = {};
+        r.pc = proc->get_state()->pc;
+
+        // Capture pre-step register file
+        uint32_t regs_before[32];
+        for (int i = 0; i < 32; i++)
+            regs_before[i] = proc->get_state()->XPR[i];
+
+        // Step one instruction
+        proc->step(1);
+
+        // Detect which register changed
+        for (int i = 1; i < 32; i++) {
+            uint32_t val = proc->get_state()->XPR[i];
+            if (val != regs_before[i]) {
+                r.rd = i;
+                r.rd_value = val;
+                break;
+            }
+        }
+
+        return r;
+    }
+
+    uint32_t get_pc() { return proc->get_state()->pc; }
+    uint32_t get_xreg(int i) { return proc->get_state()->XPR[i]; }
+};
 ```
-core   0: 0x80000000 (0x00500093) x1  0x00000005
-core   0: 0x80000004 (0x00a00113) x2  0x0000000a
-core   0: 0x80000008 (0x002081b3) x3  0x0000000f
-core   0: 0x8000000c (0x00312023) mem 0x80010000 0x0000000f
+
+### Lock-step comparison loop
+
+The core of the testbench: on every RVVI retirement event, step Spike and compare.
+
+```cpp
+class CosimChecker {
+    SpikeOracle spike;
+    uint64_t insn_count = 0;
+    uint64_t mismatch_count = 0;
+
+public:
+    CosimChecker(const char* elf) : spike(elf) {}
+
+    // Called every clock posedge when RVVI valid is asserted
+    void on_rvvi_valid(const RVVISignals& rvvi) {
+        insn_count++;
+
+        // Step Spike one instruction
+        auto expected = spike.step();
+
+        // Compare PC
+        if (rvvi.pc_rdata != expected.pc) {
+            report_mismatch("PC", expected.pc, rvvi.pc_rdata);
+            return;
+        }
+
+        // Compare register writeback
+        if (rvvi.x_wb != 0) {
+            int rd = __builtin_ctz(rvvi.x_wb);  // first set bit
+            if (rd != expected.rd || rvvi.x_wdata[rd] != expected.rd_value) {
+                report_mismatch_rd(rd, expected.rd_value, rvvi.x_wdata[rd]);
+                return;
+            }
+        }
+
+        // Compare memory write
+        if (rvvi.mem_wmask != 0 && expected.mem_write) {
+            if (rvvi.mem_addr != expected.mem_addr ||
+                rvvi.mem_wdata != expected.mem_data) {
+                report_mismatch_mem(expected, rvvi);
+                return;
+            }
+        }
+    }
+
+    void report_mismatch(const char* field, uint32_t expected, uint32_t actual) {
+        fprintf(stderr,
+            "\n=== COSIM MISMATCH at instruction #%lu ===\n"
+            "  Field:    %s\n"
+            "  Spike:    0x%08x\n"
+            "  RTL:      0x%08x\n"
+            "  RTL PC:   0x%08x\n",
+            insn_count, field, expected, actual, /* pc from rvvi */0);
+        mismatch_count++;
+        // Optionally: dump full register file from both Spike and RVVI
+        // Optionally: $finish to stop simulation
+    }
+};
 ```
 
-Fields: `core N: PC (encoding) writeback_reg value` for register writes, `mem addr data` for stores.
+### Testbench main loop
 
-### Other useful Spike modes
+```cpp
+int main(int argc, char** argv) {
+    const char* elf_path = /* parse from args */;
 
-| Mode | Flag | Use case |
-|------|------|----------|
-| Interactive debug | `-d` | Step through failures, set breakpoints |
-| Full instruction log | `-l` | Verbose trace including fetched instructions |
-| Signature dump | `+signature=sig.out` | riscv-arch-test compatible output |
-| VCD trace | `--vcd=trace.vcd` | Waveform output for timing analysis |
+    // Initialize RTL simulation (Verilator)
+    VerilatedContext ctx;
+    auto dut = std::make_unique<VShoumeiCPU>(&ctx);
 
-## Trace Format
+    // Initialize Spike oracle with same ELF
+    CosimChecker checker(elf_path);
 
-Both Spike and the RTL produce traces in a common normalized format:
+    // Load ELF into RTL instruction/data memory
+    load_elf_into_rtl(elf_path, dut.get());
 
-```
-# PC         ENCODING   WB_REG  WB_VALUE    MEM_OP
-80000040   00500093   x01     00000005
-80000044   00a00113   x02     0000000a
-80000048   002081b3   x03     0000000f
-8000004c   00312023   ---     ----------  ST 80002000 0000000f W
-```
+    // Reset
+    dut->reset = 1;
+    for (int i = 0; i < 10; i++) { dut->clock = !dut->clock; dut->eval(); }
+    dut->reset = 0;
 
-### Fields
+    // Run
+    while (!done(dut.get())) {
+        dut->clock = !dut->clock;
+        dut->eval();
 
-| Field | Width | Description |
-|-------|-------|-------------|
-| PC | 8 hex chars | Program counter at retirement |
-| ENCODING | 8 hex chars | Raw instruction encoding |
-| WB_REG | `x00`-`x31` or `---` | Destination register (or none for stores/branches) |
-| WB_VALUE | 8 hex chars or `----------` | Writeback value |
-| MEM_OP | optional | `ST addr data W/H/B` for stores, `LD addr data W/H/B` for loads |
+        // On positive edge, check RVVI
+        if (dut->clock && dut->rvvi_valid) {
+            RVVISignals rvvi = capture_rvvi(dut.get());
 
-### Filtering
+            if (rvvi.trap) {
+                checker.on_rvvi_trap(rvvi);  // Spike must also trap
+            } else {
+                checker.on_rvvi_valid(rvvi);
+            }
+        }
+    }
 
-Generated ELFs include a metadata sidecar (`.meta` JSON) with symbol addresses:
-
-```json
-{
-  "test_body": "0x80000040",
-  "test_end": "0x80000120",
-  "num_test_insns": 28,
-  "pattern": "rawChain",
-  "description": "RAW ADD->SUB distance=3"
+    checker.report_summary();
+    return checker.pass() ? 0 : 1;
 }
 ```
 
-The trace parser strips bootstrap instructions (before `test_body`) and termination code (after `test_end`), comparing only the test payload.
+## Trap Synchronization
 
-## RTL Trace Extraction
+Traps require special handling because the instruction does not retire.
 
-### From the ROB commit port
+When RVVI reports `valid=1, trap=1`:
 
-When an instruction retires from the ROB, the following fields are available from the `ROBEntry` structure:
+1. **Step Spike** -- Spike will also trap on the same instruction
+2. **Compare trap cause** -- Check `mcause` CSR matches (illegal instruction, misaligned access, ecall, ebreak)
+3. **Compare mepc** -- The trapped PC must match
+4. **Sync privilege state** -- Both Spike and RTL enter the trap handler
 
-```
-Bit 0:      valid
-Bit 1:      complete
-Bits 2-7:   physRd (destination physical register)
-Bit 8:      hasPhysRd
-Bits 9-14:  oldPhysRd (previous mapping)
-Bit 15:     hasOldPhysRd
-Bits 16-20: archRd (architectural destination)
-Bit 21:     exception
-Bit 22:     isBranch
-Bit 23:     branchMispredicted
-```
+For Shoumei's current scope (M-mode only, no interrupts), traps are synchronous and deterministic. The only expected traps are:
+- ECALL (used for HTIF termination)
+- Illegal instruction (test for exception handling)
+- Misaligned access (if the pipeline doesn't mask them)
 
-At each ROB commit:
-1. Read `archRd` (bits [16:20]) for the destination register name
-2. Read the committed value from `PhysRegFile[physRd]` (bits [2:7])
-3. Read `pc` from the ROB's PC tracking (or a separate PC queue)
-4. Log as: `PC ENCODING archRd value`
+### HTIF termination
 
-### SystemC testbench
-
-The SystemC code generator already produces models for all pipeline components. The cosimulation testbench:
-
-1. Loads the ELF `.text` section into instruction memory
-2. Loads the ELF `.data` section into data memory
-3. Asserts reset for N cycles, then releases
-4. On each clock edge, checks the ROB commit port
-5. When commit fires, logs the trace line
-6. Terminates when `tohost` is written (HTIF convention)
+The program writes to `tohost` to signal completion. The testbench watches for a store to the `tohost` address:
 
 ```cpp
-// Pseudocode for SystemC testbench commit monitor
-void monitor() {
-    if (rob_commit_valid.read()) {
-        uint32_t pc = rob_commit_pc.read();
-        uint32_t encoding = imem[pc >> 2];
-        uint32_t arch_rd = rob_commit_arch_rd.read();
-        uint32_t value = rob_commit_value.read();
-        trace_file << hex(pc) << " " << hex(encoding)
-                   << " x" << dec(arch_rd) << " " << hex(value) << "\n";
+if (rvvi.mem_wmask != 0 && rvvi.mem_addr == tohost_addr) {
+    uint32_t code = rvvi.mem_wdata;
+    if (code == 1) {
+        printf("TEST PASS\n");
+        done = true;
+    } else {
+        printf("TEST FAIL: test_num=%d\n", code >> 1);
+        done = true;
     }
 }
 ```
 
-### Verilator alternative
+## Handling Asynchronous Events (Future)
 
-For faster simulation, Verilator compiles the generated SystemVerilog directly:
+When Shoumei adds interrupt support, the cosimulation must handle asynchronous events. This is where RVVI's design pays off over simpler interfaces.
 
-```bash
-verilator --cc --exe --build \
-  -Ioutput/sv-from-lean \
-  output/sv-from-lean/ShoumeiCPU.sv \
-  testbench/cosim_tb.cpp \
-  -o build/shoumei_sim
+**Problem:** An interrupt arrives between two instructions. The RTL takes the interrupt and vectors to the trap handler. Spike must be told about the interrupt so it follows the same path.
+
+**RVVI solution:** The testbench observes the RTL's RVVI `intr` signal (first instruction of trap handler). Before stepping Spike, it injects the same interrupt:
+
+```cpp
+if (rvvi.intr) {
+    // RTL took an interrupt -- inject it into Spike before stepping
+    uint32_t cause = read_csr(dut, CSR_MCAUSE);
+    spike.inject_interrupt(cause);
+}
+spike.step(1);
+// Now both are in the trap handler, state should match
 ```
 
-The testbench structure is identical -- monitor the ROB commit port and log traces.
+This is not needed for the current M-mode bare-metal scope but is the reason to adopt RVVI rather than a simpler ad-hoc interface. The migration path to interrupts, privilege modes, and multi-hart is built into the interface.
 
-## Trace Comparison
+## RTL Implementation
 
-### Basic diff
+### Adding the RVVI port to the CPU
 
-```bash
-spike --log-commits --isa=rv32im test.elf 2>&1 \
-  | python3 scripts/parse_spike_trace.py --meta test.meta > golden.trace
+The Lean circuit definition for the top-level CPU module adds the RVVI signals as outputs. These are driven from ROB commit logic and the new PC/instruction queues.
 
-./build/shoumei_sim +binary=test.elf +trace=dut.trace
+**New Lean structures for RVVI support:**
 
-python3 scripts/compare_traces.py golden.trace dut.trace
+```lean
+-- PC queue: stores fetch PC alongside each ROB entry
+-- Written at ROB allocation, read at ROB commit
+structure PCQueue (depth : Nat) where
+  entries : Fin depth → UInt32
+  -- Indexed by ROB slot, same alloc/dealloc as ROB
+
+-- Instruction queue: stores encoding alongside each ROB entry
+structure InsnQueue (depth : Nat) where
+  entries : Fin depth → UInt32
+
+-- RVVI output bundle (active at ROB commit)
+structure RVVIOutput where
+  valid     : Bool
+  order     : UInt64
+  insn      : UInt32
+  trap      : Bool
+  halt      : Bool
+  intr      : Bool
+  mode      : UInt2        -- 2'b11 for M-mode
+  pc_rdata  : UInt32
+  pc_wdata  : UInt32
+  x_wb      : UInt32       -- bitmask
+  x_wdata   : Fin 32 → UInt32
+  mem_addr  : UInt32
+  mem_wmask : UInt4
+  mem_wdata : UInt32
 ```
 
-### Comparison algorithm
+**Wire budget:** The RVVI port adds approximately 250 output wires to the top-level module. This is observation-only -- it does not affect the datapath or timing.
 
-The comparator aligns traces by PC and instruction index (not cycle count -- the RTL is out-of-order, so cycle alignment is meaningless). The comparison is at retirement boundaries only:
+### Generating the RVVI SystemVerilog
 
-1. Read one entry from each trace
-2. Compare PC -- must match (instructions retire in program order from the ROB)
-3. Compare encoding -- must match (same instruction)
-4. Compare writeback register and value -- must match
-5. Compare memory operations if present -- address, data, and width must match
-6. On first mismatch, report with context
+The code generators (`SystemVerilog.lean`, `Chisel.lean`) emit the RVVI signals as a separate output group. The Chisel generator wraps them in an `IO(Output(new RVVIBundle))`.
 
-### Mismatch report format
+For Verilator, the RVVI signals are accessible directly on the top-level module:
 
+```cpp
+RVVISignals capture_rvvi(VShoumeiCPU* dut) {
+    RVVISignals r;
+    r.valid     = dut->rvvi_valid;
+    r.pc_rdata  = dut->rvvi_pc_rdata;
+    r.insn      = dut->rvvi_insn;
+    r.trap      = dut->rvvi_trap;
+    r.x_wb      = dut->rvvi_x_wb;
+    for (int i = 0; i < 32; i++)
+        r.x_wdata[i] = dut->rvvi_x_wdata[i];
+    r.mem_addr  = dut->rvvi_mem_addr;
+    r.mem_wmask = dut->rvvi_mem_wmask;
+    r.mem_wdata = dut->rvvi_mem_wdata;
+    return r;
+}
 ```
-MISMATCH at instruction #17:
-  PC:       0x80000058
-  Encoding: 0x002081b3 (ADD x3, x1, x2)
-
-  Spike:    x03 = 0x0000000f
-  DUT:      x03 = 0x00000010
-
-  Test:     rawChain ADD->SUB distance=2
-  Context:  This is a RAW hazard test. x1 was written 2 instructions
-            ago. Possible CDB forwarding or register file read bug.
-
-Previous 3 instructions:
-  #14: 80000048 00500093 x01 00000005  (ADDI x1, x0, 5)
-  #15: 8000004c 00000013 ---           (NOP)
-  #16: 80000050 00000013 ---           (NOP)
-```
-
-### Handling out-of-order retirement
-
-The Tomasulo ROB guarantees in-order retirement even though execution is out-of-order. The commit trace from the RTL should be in strict program order. If the RTL trace is out of order relative to Spike, that itself is a bug (ROB commit logic is broken).
-
-## Synchronization
-
-The RTL is an out-of-order pipeline; Spike is a simple in-order stepper. They must agree at retirement boundaries, not at execution time.
-
-### Implicit sync: program order retirement
-
-Because the ROB commits in program order, every committed instruction is a natural sync point. The trace comparison works instruction-by-instruction without explicit barriers.
-
-### Explicit sync: FENCE as drain point
-
-For tests that need the pipeline to fully drain (e.g., before checking memory state):
-
-```asm
-FENCE       # All prior loads/stores complete
-            # Store buffer is empty after this point
-```
-
-After a FENCE, the store buffer and load queue are empty, and all prior instructions have committed. This is useful for memory-ordering tests where you want to check memory contents at a known quiescent point.
 
 ## CI Integration
 
@@ -247,106 +436,102 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Spike
+      - name: Install Spike (with library)
         run: |
           git clone https://github.com/riscv-software-src/riscv-isa-sim.git
-          cd riscv-isa-sim
-          mkdir build && cd build
-          ../configure --prefix=/opt/spike
+          cd riscv-isa-sim && mkdir build && cd build
+          ../configure --prefix=/opt/spike --enable-commitlog
           make -j$(nproc) && sudo make install
+          echo "/opt/spike/lib" | sudo tee /etc/ld.so.conf.d/spike.conf
+          sudo ldconfig
           echo "/opt/spike/bin" >> $GITHUB_PATH
 
-      - name: Build Lean + generate tests
+      - name: Build Lean + generate test ELFs
         run: |
           lake build
           lake exe generate_tests --suite all --output tests/generated/
 
-      - name: Run cosimulation
+      - name: Build Verilator cosim testbench
         run: |
-          scripts/run_cosim.sh tests/generated/
-          # Exits non-zero on any mismatch
-```
+          make -C testbench cosim   # Verilates RTL + links Spike
 
-### `run_cosim.sh` structure
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-TEST_DIR="${1:?Usage: run_cosim.sh <test_dir>}"
-PASS=0
-FAIL=0
-
-for elf in "$TEST_DIR"/*.elf; do
-    meta="${elf%.elf}.meta"
-    name=$(basename "$elf" .elf)
-
-    # Golden trace from Spike
-    spike --log-commits --isa=rv32im "$elf" 2>&1 \
-      | python3 scripts/parse_spike_trace.py --meta "$meta" > "/tmp/${name}.golden"
-
-    # DUT trace from RTL simulation
-    ./build/shoumei_sim "$elf" > "/tmp/${name}.dut"
-
-    # Compare
-    if python3 scripts/compare_traces.py "/tmp/${name}.golden" "/tmp/${name}.dut"; then
-        echo "PASS: $name"
-        PASS=$((PASS + 1))
-    else
-        echo "FAIL: $name"
-        FAIL=$((FAIL + 1))
-    fi
-done
-
-echo "Results: $PASS passed, $FAIL failed out of $((PASS + FAIL)) tests"
-[ "$FAIL" -eq 0 ]
+      - name: Run lock-step cosimulation
+        run: |
+          for elf in tests/generated/*.elf; do
+            echo "=== $(basename $elf) ==="
+            ./build/shoumei_cosim "$elf" || exit 1
+          done
 ```
 
 ## Debugging Failures
 
-### Step 1: Identify the divergence
+When the lock-step checker reports a mismatch, simulation stops at the exact failing cycle.
 
-The comparator output tells you the PC, instruction, and expected vs actual values.
+### Step 1: Read the mismatch report
 
-### Step 2: Disassemble the ELF
-
-```bash
-riscv32-unknown-elf-objdump -d test.elf
+```
+=== COSIM MISMATCH at instruction #17 ===
+  PC:       0x80000058
+  Insn:     0x002081b3 (ADD x3, x1, x2)
+  Field:    x_wdata[3]
+  Spike:    0x0000000f
+  RTL:      0x00000010
+  Cycle:    42
 ```
 
-Locate the failing instruction in the disassembly. The symbol table shows `test_body`, `test_end`, and the test description.
-
-### Step 3: Run Spike interactively
+### Step 2: Re-run with waveform
 
 ```bash
-spike -d --isa=rv32im test.elf
-: until pc 0 0x80000058    # Run to the failing PC
-: reg 0                     # Dump all registers
-: mem 0 0x80002000 16       # Dump memory
-```
-
-### Step 4: Check the RTL waveform
-
-If using Verilator with `--trace`:
-
-```bash
-./build/shoumei_sim +binary=test.elf +vcd=dump.vcd
+./build/shoumei_cosim +vcd=dump.vcd tests/generated/raw_chain_d2.elf
 gtkwave dump.vcd
 ```
 
-Look at the ROB commit signals around the failing instruction. Check whether the CDB broadcast, register file write, or store buffer forwarding is incorrect.
+Look at the RVVI signals and the internal pipeline state (CDB, RS entries, ROB) around cycle 42.
 
-### Step 5: Cross-reference with Lean model
+### Step 3: Interactive Spike for expected state
 
-If the bug is in the microarchitectural logic, the Lean behavioral models can help pinpoint which component is at fault. Run the Lean microarchitectural simulator on the same program and check which pipeline stage produces the wrong value.
+```bash
+spike -d --isa=rv32im tests/generated/raw_chain_d2.elf
+: until pc 0 0x80000058
+: reg 0
+: mem 0 0x80002000 16
+```
+
+### Step 4: Cross-reference with Lean model
+
+Run the Lean microarchitectural simulator to trace which pipeline stage computed the wrong value. The Lean behavioral models for RS, ROB, rename, and store buffer can narrow it to a specific component.
+
+### Step 5: Register file dump on mismatch
+
+The testbench can dump the full register file from both Spike and RVVI at the point of mismatch:
+
+```
+Register file at mismatch (instruction #17):
+  Reg   Spike       RTL         Match
+  x00   00000000    00000000    ok
+  x01   00000005    00000005    ok
+  x02   0000000a    0000000a    ok
+  x03   0000000f    00000010    MISMATCH <<<
+  x04   00000000    00000000    ok
+  ...
+```
 
 ## Comparison with Other Approaches
 
-| | riscv-dv | Directed tests | Formal (BMC) | Shoumei (Lean + Spike) |
-|---|---|---|---|---|
-| Microarch-aware generation | No | Manual | N/A | Yes (Lean models) |
-| Trusted oracle | Spike | Spike | Self-referential | Spike |
-| Coverage model | Instruction-level | Ad hoc | State space | Microarchitectural |
-| Reusable regression suite | Yes | Yes | No | Yes |
-| Provable encoder correctness | No | No | No | Yes (Lean proof) |
-| Effort to add new patterns | Config files | Manual assembly | New properties | Lean functions |
+| | riscv-dv + Spike log | ImperasDV + RVVI | Shoumei (Lean + RVVI + Spike) |
+|---|---|---|---|
+| Comparison mode | Offline trace diff | Lock-step via RVVI-API | Lock-step via RVVI + libriscv |
+| Microarch-aware generation | No | No | Yes (Lean models) |
+| Detection latency | Post-mortem | Immediate (cycle) | Immediate (cycle) |
+| Async event handling | Manual | Built-in | Via RVVI `intr` signal |
+| License | Open source | Commercial | Open source |
+| Provable test encoder | No | No | Yes (Lean proof) |
+| Trace interface | Ad-hoc | RVVI-TRACE | RVVI-TRACE |
+
+## References
+
+- [RVVI Specification (riscv-verification/RVVI)](https://github.com/riscv-verification/RVVI)
+- [RVVI-TRACE Interface](https://github.com/riscv-verification/RVVI/tree/main/RVVI-TRACE)
+- [Spike (riscv-isa-sim)](https://github.com/riscv-software-src/riscv-isa-sim)
+- [OpenHW core-v-verif (RVVI usage example)](https://github.com/openhwgroup/core-v-verif)
+- [Imperas RVVI Overview](https://www.imperas.com/index.php/articles/risc-v-verification-interface-rvvi-test-infrastructure-and-methodology-guidelines)
