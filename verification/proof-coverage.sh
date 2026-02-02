@@ -86,7 +86,7 @@ file_to_component() {
 }
 
 # No helper needed — associative array increments are inlined to avoid
-# shellcheck issues with namerefs (SC2178).
+# nameref-related linter warnings.
 
 # ─── Scan ───────────────────────────────────────────────────
 
