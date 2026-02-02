@@ -1,30 +1,63 @@
 # Lock-Step Cosimulation via RVVI
 
-Architecture and integration guide for lock-step cosimulation of the Shoumei RTL against Spike, driven by the RVVI (RISC-V Verification Interface) trace port.
+Architecture and integration guide for three-way lock-step cosimulation of the Shoumei RTL, the Lean-generated SystemC model, and Spike, driven by the RVVI (RISC-V Verification Interface) trace port.
 
 ## Overview
 
-The RTL exposes an RVVI-TRACE port at the ROB commit point. On every retirement event, the testbench steps Spike one instruction and compares state immediately. No trace files, no offline comparison -- mismatches are caught at the exact cycle they occur.
+Three independently generated implementations execute the same ELF and are compared at every retirement point:
+
+1. **RTL** (Verilator) -- generated SystemVerilog, the primary DUT
+2. **SystemC** (Lean codegen) -- generated `SC_MODULE`, a second DUT
+3. **Spike** (libriscv) -- canonical ISA reference, the oracle
 
 ```
-                        ELF binary
-                            |
-                +-----------+-----------+
-                |                       |
-                v                       v
-          RTL Simulation          Spike (linked)
-          (Verilator/SystemC)     (libriscv)
-                |                       |
-                |   RVVI valid fires    |
-                +--------+      +-------+
-                         |      |
-                         v      v
-                    compare immediately
-                         |
-                    PASS / FAIL (cycle-accurate)
+                              ELF binary
+                                  |
+                +--------+--------+--------+
+                |        |                 |
+                v        v                 v
+          RTL (Verilator)  SystemC       Spike
+          (SV from Lean)   (SC from Lean) (libriscv)
+                |            |             |
+                |  RVVI      |  step()     |  step()
+                |  valid     |             |
+                +-----+------+------+------+
+                      |             |
+                      v             v
+                 3-way compare (per retirement)
+                      |
+                 PASS / FAIL + fault isolation
 ```
 
-**Key difference from offline trace comparison:** Spike is not run separately. It is linked into the testbench as a library. The RTL drives -- when it retires an instruction (RVVI `valid` asserted), the testbench calls `spike.step(1)` and checks the result against the RVVI signals. This is the same lock-step approach used by OpenHW Group's core-v-verif with ImperasDV, adapted for Spike.
+When the RTL retires an instruction (RVVI `valid` asserted), the testbench:
+1. Reads the RVVI signals from the RTL
+2. Steps the SystemC model one instruction and reads its state
+3. Steps Spike one instruction and reads its state
+4. Compares all three
+
+All three are linked into the same Verilator testbench process. No trace files, no offline comparison -- mismatches are caught at the exact cycle they occur.
+
+### Why three-way?
+
+Two-way (RTL vs Spike) catches bugs but can't isolate their source. Three-way comparison with the SystemC model adds fault isolation:
+
+| RTL | SystemC | Spike | Diagnosis |
+|:---:|:---:|:---:|---|
+| ok | ok | ok | All agree -- no bug |
+| **wrong** | ok | ok | Bug in SystemVerilog code generator |
+| ok | **wrong** | ok | Bug in SystemC code generator |
+| **wrong** | **wrong** | ok | Bug in Lean circuit definition (both generators faithfully reproduce it) |
+| ok | ok | **wrong** | Spike bug or ISA spec ambiguity (rare) |
+
+The third column is the key insight. When RTL and SystemC agree with each other but both disagree with Spike, the Lean circuit definition itself is wrong -- not a code generator issue. This is the same principle as LEC (which checks Lean SV vs Chisel SV at the gate level), but operating at simulation time on actual programs.
+
+### Relationship to LEC
+
+LEC proves that Lean SV and Chisel SV are equivalent for all inputs. Three-way cosimulation proves that Lean SV, Lean SystemC, and Spike agree on specific test programs. These are complementary:
+
+- **LEC** catches structural divergence between code generators (complete but only between two generators)
+- **Three-way cosim** catches behavioral bugs in the Lean model itself (incomplete but covers all three implementations)
+- Together they form a closed verification triangle: Lean proofs establish correctness, LEC verifies code generators, cosim validates against the ISA reference
 
 ## RVVI-TRACE Interface
 
@@ -248,62 +281,138 @@ public:
 };
 ```
 
-### Lock-step comparison loop
+## SystemC Integration
 
-The core of the testbench: on every RVVI retirement event, step Spike and compare.
+The SystemC model is generated from the same Lean circuit definitions as the SystemVerilog, via `Codegen/SystemC.lean`. It produces `SC_MODULE` classes with `SC_METHOD` (combinational) and `SC_CTHREAD` (sequential) processes. Since SystemC is C++, it links directly into the Verilator testbench.
+
+### SystemC oracle wrapper
+
+```cpp
+#include "ShoumeiCPU.h"  // Generated SC_MODULE
+
+class SystemCOracle {
+    ShoumeiCPU sc_cpu{"sc_cpu"};
+    sc_signal<bool> sc_clock, sc_reset;
+    // ... sc_signals for all ports ...
+
+public:
+    SystemCOracle(const char* elf_path) {
+        // Bind signals to SC_MODULE ports
+        sc_cpu.clock(sc_clock);
+        sc_cpu.reset(sc_reset);
+        // ... bind all ports ...
+
+        // Load ELF into SystemC model's memory
+        load_elf_into_systemc(elf_path, &sc_cpu);
+
+        // Reset sequence
+        sc_reset = true;
+        for (int i = 0; i < 10; i++) cycle();
+        sc_reset = false;
+    }
+
+    void cycle() {
+        sc_clock = false; sc_start(5, SC_NS);
+        sc_clock = true;  sc_start(5, SC_NS);
+    }
+
+    struct StepResult {
+        uint32_t pc;
+        uint32_t rd;
+        uint32_t rd_value;
+        bool     trap;
+        bool     mem_write;
+        uint32_t mem_addr;
+        uint32_t mem_data;
+    };
+
+    // Step until the SystemC model retires an instruction
+    // (monitor its commit port, analogous to RVVI valid)
+    StepResult step_until_retire() {
+        StepResult r = {};
+        while (!sc_cpu.commit_valid.read()) {
+            cycle();
+        }
+        r.pc       = sc_cpu.commit_pc.read();
+        r.rd       = sc_cpu.commit_rd.read();
+        r.rd_value = sc_cpu.commit_rd_value.read();
+        r.trap     = sc_cpu.commit_trap.read();
+        cycle();  // advance past the commit event
+        return r;
+    }
+};
+```
+
+The SystemC model runs cycle-by-cycle in its own simulated time. The testbench steps it until it retires an instruction, then compares against both the RTL's RVVI output and Spike's state.
+
+**Timing independence:** The RTL and SystemC models may take different numbers of cycles to retire the same instruction (different microarchitectural optimizations in the code generators, different gate-level vs behavioral timing). The comparison is at the retirement boundary, not cycle-aligned. The `order` field (RVVI retirement counter) ensures the same logical instruction is being compared.
+
+### Lock-step three-way comparison loop
+
+The core of the testbench: on every RVVI retirement event, step both Spike and SystemC and compare all three.
 
 ```cpp
 class CosimChecker {
     SpikeOracle spike;
+    SystemCOracle systemc;
     uint64_t insn_count = 0;
     uint64_t mismatch_count = 0;
 
 public:
-    CosimChecker(const char* elf) : spike(elf) {}
+    CosimChecker(const char* elf)
+        : spike(elf), systemc(elf) {}
 
     // Called every clock posedge when RVVI valid is asserted
     void on_rvvi_valid(const RVVISignals& rvvi) {
         insn_count++;
 
-        // Step Spike one instruction
-        auto expected = spike.step();
+        // Step Spike
+        auto spike_result = spike.step();
 
-        // Compare PC
-        if (rvvi.pc_rdata != expected.pc) {
-            report_mismatch("PC", expected.pc, rvvi.pc_rdata);
-            return;
+        // Step SystemC model until it retires
+        auto sc_result = systemc.step_until_retire();
+
+        // Three-way comparison
+        bool rtl_ok   = compare(rvvi, spike_result);
+        bool sc_ok    = compare(sc_result, spike_result);
+        bool rtl_sc   = compare(rvvi, sc_result);
+
+        if (rtl_ok && sc_ok) {
+            return;  // All three agree
         }
 
-        // Compare register writeback
-        if (rvvi.x_wb != 0) {
-            int rd = __builtin_ctz(rvvi.x_wb);  // first set bit
-            if (rd != expected.rd || rvvi.x_wdata[rd] != expected.rd_value) {
-                report_mismatch_rd(rd, expected.rd_value, rvvi.x_wdata[rd]);
-                return;
-            }
+        // Fault isolation
+        if (!rtl_ok && sc_ok) {
+            report("SystemVerilog codegen bug", rvvi, sc_result, spike_result);
+        } else if (rtl_ok && !sc_ok) {
+            report("SystemC codegen bug", rvvi, sc_result, spike_result);
+        } else if (!rtl_ok && !sc_ok && rtl_sc) {
+            report("Lean circuit definition bug (both DUTs agree, Spike disagrees)",
+                   rvvi, sc_result, spike_result);
+        } else {
+            report("Multiple failures (all three disagree)",
+                   rvvi, sc_result, spike_result);
         }
-
-        // Compare memory write
-        if (rvvi.mem_wmask != 0 && expected.mem_write) {
-            if (rvvi.mem_addr != expected.mem_addr ||
-                rvvi.mem_wdata != expected.mem_data) {
-                report_mismatch_mem(expected, rvvi);
-                return;
-            }
-        }
+        mismatch_count++;
     }
 
-    void report_mismatch(const char* field, uint32_t expected, uint32_t actual) {
+private:
+    bool compare(const auto& a, const auto& b) {
+        return a.pc == b.pc && a.rd == b.rd && a.rd_value == b.rd_value;
+    }
+
+    void report(const char* diagnosis, const RVVISignals& rtl,
+                const auto& sc, const auto& spike) {
         fprintf(stderr,
             "\n=== COSIM MISMATCH at instruction #%lu ===\n"
-            "  Field:    %s\n"
-            "  Spike:    0x%08x\n"
-            "  RTL:      0x%08x\n"
-            "  RTL PC:   0x%08x\n",
-            insn_count, field, expected, actual, /* pc from rvvi */0);
-        mismatch_count++;
-        // Optionally: dump full register file from both Spike and RVVI
-        // Optionally: $finish to stop simulation
+            "  Diagnosis: %s\n"
+            "  PC:        RTL=0x%08x  SC=0x%08x  Spike=0x%08x\n"
+            "  rd:        RTL=x%d       SC=x%d       Spike=x%d\n"
+            "  rd_value:  RTL=0x%08x  SC=0x%08x  Spike=0x%08x\n",
+            insn_count, diagnosis,
+            rtl.pc_rdata, sc.pc, spike.pc,
+            /* rd from rtl */ 0, sc.rd, spike.rd,
+            /* value from rtl */ 0, sc.rd_value, spike.rd_value);
     }
 };
 ```
@@ -318,7 +427,7 @@ int main(int argc, char** argv) {
     VerilatedContext ctx;
     auto dut = std::make_unique<VShoumeiCPU>(&ctx);
 
-    // Initialize Spike oracle with same ELF
+    // Initialize three-way checker (Spike + SystemC, both linked in-process)
     CosimChecker checker(elf_path);
 
     // Load ELF into RTL instruction/data memory
@@ -339,7 +448,7 @@ int main(int argc, char** argv) {
             RVVISignals rvvi = capture_rvvi(dut.get());
 
             if (rvvi.trap) {
-                checker.on_rvvi_trap(rvvi);  // Spike must also trap
+                checker.on_rvvi_trap(rvvi);
             } else {
                 checker.on_rvvi_valid(rvvi);
             }
@@ -350,6 +459,10 @@ int main(int argc, char** argv) {
     return checker.pass() ? 0 : 1;
 }
 ```
+
+### Two-way fallback
+
+The SystemC leg is optional. The testbench supports a `--no-systemc` flag for faster runs when only RTL-vs-Spike checking is needed. The three-way mode is the default for CI; two-way is useful for interactive debugging where simulation speed matters.
 
 ## Trap Synchronization
 
@@ -546,25 +659,28 @@ Run the Lean microarchitectural simulator to trace which pipeline stage computed
 
 ### Step 5: Register file dump on mismatch
 
-The testbench can dump the full register file from both Spike and RVVI at the point of mismatch:
+The testbench dumps the full register file from all three models at the point of mismatch:
 
 ```
 Register file at mismatch (instruction #17):
-  Reg   Spike       RTL         Match
-  x00   00000000    00000000    ok
-  x01   00000005    00000005    ok
-  x02   0000000a    0000000a    ok
-  x03   0000000f    00000010    MISMATCH <<<
-  x04   00000000    00000000    ok
+  Reg   Spike       RTL         SystemC     Status
+  x00   00000000    00000000    00000000    ok
+  x01   00000005    00000005    00000005    ok
+  x02   0000000a    0000000a    0000000a    ok
+  x03   0000000f    00000010    00000010    RTL+SC wrong (Lean circuit bug)
+  x04   00000000    00000000    00000000    ok
   ...
 ```
 
+When RTL and SystemC agree with each other but both disagree with Spike (as in x03 above), the Lean circuit definition is at fault -- both code generators faithfully reproduced the same incorrect behavior.
+
 ## Comparison with Other Approaches
 
-| | riscv-dv + Spike log | ImperasDV + RVVI | Shoumei (Lean + RVVI + Spike) |
+| | riscv-dv + Spike log | ImperasDV + RVVI | Shoumei (Lean + RVVI + Spike + SystemC) |
 |---|---|---|---|
-| Comparison mode | Offline trace diff | Lock-step via RVVI-API | Lock-step via RVVI + libriscv |
+| Comparison mode | Offline trace diff | Lock-step (2-way) | Lock-step (3-way) |
 | Microarch-aware generation | No | No | Yes (Lean models) |
+| Fault isolation | No (1 DUT) | No (1 DUT) | Yes (RTL vs SystemC vs Spike) |
 | Detection latency | Post-mortem | Immediate (cycle) | Immediate (cycle) |
 | Async event handling | Manual | Built-in | Via RVVI `intr` signal |
 | License | Open source | Commercial | Open source |
