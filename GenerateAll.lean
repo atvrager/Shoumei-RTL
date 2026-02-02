@@ -107,8 +107,16 @@ def allCircuits : List Circuit := [
   mkQueueCounterUpDown 2,
   mkQueueCounterUpDown 3,
   mkQueueCounterUpDown 7,
+  -- Power-of-2 register building blocks (verified via LEC)
+  mkRegisterN 1,
   mkRegisterN 2,
-  mkRegisterN 91,
+  mkRegisterN 4,
+  mkRegisterN 8,
+  mkRegisterN 16,
+  mkRegisterN 32,
+  mkRegisterN 64,
+  -- Hierarchical registers (compositional verification)
+  mkRegister91Hierarchical,
 
   -- Phase 4: RISC-V Components
   -- Note: RV32IDecoder generated separately via generate_riscv_decoder
