@@ -73,21 +73,21 @@ def mkRippleCarryAdder32 : Circuit :=
   let b := makeIndexedWires "b" 32
   let sum := makeIndexedWires "sum" 32
 
-  -- Carry chain: cin → c0 → c1 → ... → c30 → cout
-  -- For 32 bits, need 31 internal carries (c0..c30)
-  let internal_carries := makeIndexedWires "c" 31
+  -- Carry chain: cin → c0 → c1 → ... → c30 → c31 (final carry, internal)
+  -- For 32 bits, need 32 internal carries (c0..c31)
+  -- Note: Final carry (c31) is kept internal since address calculations don't need overflow detection
+  let internal_carries := makeIndexedWires "c" 32
   let cin := Wire.mk "cin"
-  let cout := Wire.mk "cout"
 
-  -- Full carry chain: cin, c0, c1, ..., c30, cout (33 elements)
-  let carries := cin :: internal_carries ++ [cout]
+  -- Full carry chain: cin, c0, c1, ..., c31 (33 elements)
+  let carries := cin :: internal_carries
 
   -- Build the gates
   let gates := buildFullAdderChain a b carries sum ""
 
   { name := "RippleCarryAdder32"
     inputs := a ++ b ++ [cin]
-    outputs := sum ++ [cout]
+    outputs := sum  -- No cout output (optimized away, matches CIRCT behavior)
     gates := gates
     instances := []
   }

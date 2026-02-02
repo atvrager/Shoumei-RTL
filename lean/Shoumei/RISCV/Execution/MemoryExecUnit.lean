@@ -295,8 +295,8 @@ def mkMemoryExecUnit : Circuit :=
       ("a", a),
       ("b", b),
       ("cin", [zero]),
-      ("sum", sum),
-      ("cout", [Wire.mk "cout_unused"])  -- Carry-out not used for address calculation
+      ("sum", sum)
+      -- Note: No cout port (RippleCarryAdder32 doesn't expose final carry for address calculations)
     ].flatMap (fun (name, wires) => wires.map (fun w => (name, w)))
   }
 
