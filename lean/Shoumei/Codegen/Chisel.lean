@@ -476,6 +476,11 @@ def toChisel (c : Circuit) : String :=
 
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
 
+  -- Check if this is a "simple register" (only DFFs, no comb logic, no instances)
+  -- For these, we must match LEAN SV structure exactly (no reg arrays)
+  let isSimpleRegister := c.gates.all (fun g => g.gateType == GateType.DFF) &&
+                          c.instances.isEmpty
+
   let ctx : ChiselContext := {
     wireToIndex := wiresToDeclare.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
     inputToIndex := filteredInputs.enum.map (fun ⟨idx, wire⟩ => (wire, idx)),
@@ -483,7 +488,7 @@ def toChisel (c : Circuit) : String :=
     regToIndex := dffGates.enum.map (fun ⟨idx, g⟩ => (g.output, idx)),
     useWireArray := wiresToDeclare.length > 200,
     useIOBundle := totalIOPorts > 200,  -- Use bundled IO for very large modules to avoid JVM method size limits
-    useRegArray := dffGates.length > 50
+    useRegArray := dffGates.length > 50 && !isSimpleRegister  -- Never use reg arrays for simple registers
   }
 
   if isSequential then
