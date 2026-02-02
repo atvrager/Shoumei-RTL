@@ -504,6 +504,7 @@ def mkReservationStation4 : Circuit :=
   let tagWidth := 6
   let dataWidth := 32
   let opcodeWidth := 6
+  let entryWidth := 91  -- valid(1) + opcode(6) + dest_tag(6) + src1(1+6+32) + src2(1+6+32)
 
   -- Control
   let clock := Wire.mk "clock"
@@ -511,7 +512,7 @@ def mkReservationStation4 : Circuit :=
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
-  -- Issue interface (82 wires)
+  -- Issue interface
   let issue_en := Wire.mk "issue_en"
   let issue_opcode := makeIndexedWires "issue_opcode" opcodeWidth
   let issue_dest_tag := makeIndexedWires "issue_dest_tag" tagWidth
@@ -523,12 +524,12 @@ def mkReservationStation4 : Circuit :=
   let issue_src2_data := makeIndexedWires "issue_src2_data" dataWidth
   let issue_full := Wire.mk "issue_full"
 
-  -- CDB interface (39 wires)
+  -- CDB interface
   let cdb_valid := Wire.mk "cdb_valid"
   let cdb_tag := makeIndexedWires "cdb_tag" tagWidth
   let cdb_data := makeIndexedWires "cdb_data" dataWidth
 
-  -- Dispatch interface (76 wires)
+  -- Dispatch interface
   let dispatch_en := Wire.mk "dispatch_en"
   let dispatch_valid := Wire.mk "dispatch_valid"
   let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
@@ -536,14 +537,298 @@ def mkReservationStation4 : Circuit :=
   let dispatch_src2_data := makeIndexedWires "dispatch_src2_data" dataWidth
   let dispatch_dest_tag := makeIndexedWires "dispatch_dest_tag" tagWidth
 
-  -- Stub implementation: just structure, no gates yet
-  -- Full implementation will add:
-  -- - Allocation pointer DFFs and increment logic
-  -- - Decoder2 instance for issue select
-  -- - 364 DFFs for entry storage (4 × 91 bits)
-  -- - CDB tag comparators and wakeup logic
-  -- - PriorityArbiter4 instance for ready selection
-  -- - Dispatch muxes
+  -- ============================================================================
+  -- 1. ALLOCATION POINTER (2-bit counter with Register2)
+  -- ============================================================================
+
+  let alloc_ptr := makeIndexedWires "alloc_ptr" 2
+  let alloc_ptr_next := makeIndexedWires "alloc_ptr_next" 2
+
+  -- Increment logic: (alloc_ptr + 1) % 4
+  -- For 2-bit: next[0] = NOT(curr[0]), next[1] = curr[1] XOR curr[0]
+  let alloc_incr_gates := [
+    Gate.mkNOT alloc_ptr[0]! alloc_ptr_next[0]!,
+    Gate.mkXOR alloc_ptr[1]! alloc_ptr[0]! alloc_ptr_next[1]!
+  ]
+
+  -- Register2 instance for allocation pointer
+  let alloc_ptr_inst : CircuitInstance := {
+    moduleName := "Register2"
+    instName := "u_alloc_ptr"
+    portMap :=
+      (alloc_ptr_next.enum.map (fun ⟨i, w⟩ => (s!"d{i}", w))) ++
+      [("clock", clock), ("reset", reset)] ++
+      (alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"q{i}", w)))
+  }
+
+  -- ============================================================================
+  -- 2. ISSUE DECODER (Decoder2: 2→4 one-hot)
+  -- ============================================================================
+
+  let issue_sel := makeIndexedWires "issue_sel" 4
+
+  let decoder_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := "u_issue_dec"
+    portMap := [
+      ("in0", alloc_ptr[0]!), ("in1", alloc_ptr[1]!),
+      ("out0", issue_sel[0]!), ("out1", issue_sel[1]!),
+      ("out2", issue_sel[2]!), ("out3", issue_sel[3]!)
+    ]
+  }
+
+  -- ============================================================================
+  -- 3. PER-ENTRY LOGIC (4 entries with Register91 instances)
+  -- ============================================================================
+
+  -- Helper: Pack/unpack 91-bit entry representation
+  -- Layout: valid(0) opcode(1-6) dest_tag(7-12) src1_ready(13) src1_tag(14-19)
+  --         src1_data(20-51) src2_ready(52) src2_tag(53-58) src2_data(59-90)
+
+  let buildEntryLogic (i : Nat) : List Gate × List CircuitInstance :=
+    -- Entry storage wires (91 bits)
+    let entry_cur := makeIndexedWires s!"e{i}" entryWidth
+    let entry_next := makeIndexedWires s!"e{i}_next" entryWidth
+
+    -- Field extraction from current entry
+    let valid := entry_cur[0]!
+    let _ := entry_cur.drop 1 |>.take opcodeWidth  -- opcode (unused in simplified impl)
+    let _ := entry_cur.drop 7 |>.take tagWidth  -- dest_tag (unused in simplified impl)
+    let src1_ready := entry_cur[13]!
+    let src1_tag := entry_cur.drop 14 |>.take tagWidth
+    let _ := entry_cur.drop 20 |>.take dataWidth  -- src1_data (unused in simplified impl)
+    let src2_ready := entry_cur[52]!
+    let src2_tag := entry_cur.drop 53 |>.take tagWidth
+    let _ := entry_cur.drop 59 |>.take dataWidth  -- src2_data (unused in simplified impl)
+
+    -- Issue write enable: issue_en AND issue_sel[i] AND NOT(valid)
+    let issue_we_raw := Wire.mk s!"e{i}_issue_we_raw"
+    let valid_n := Wire.mk s!"e{i}_valid_n"
+    let issue_we := Wire.mk s!"e{i}_issue_we"
+    let issue_we_gates := [
+      Gate.mkAND issue_en issue_sel[i]! issue_we_raw,
+      Gate.mkNOT valid valid_n,
+      Gate.mkAND issue_we_raw valid_n issue_we
+    ]
+
+    -- Dispatch clear enable: dispatch_en AND dispatch_grant[i]
+    let dispatch_grant := Wire.mk s!"dispatch_grant{i}"
+    let dispatch_clear := Wire.mk s!"e{i}_dispatch_clear"
+    let dispatch_clear_gate := Gate.mkAND dispatch_en dispatch_grant dispatch_clear
+
+    -- CDB tag comparison for src1 (Comparator6 instance)
+    let cdb_match_src1 := Wire.mk s!"e{i}_cdb_match_src1"
+    let cmp_src1_inst : CircuitInstance := {
+      moduleName := "Comparator6"
+      instName := s!"u_e{i}_cmp_src1"
+      portMap :=
+        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
+        (src1_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+        [("eq", cdb_match_src1)]
+        -- Ignore lt, ltu, gt, gtu outputs
+    }
+
+    -- CDB tag comparison for src2 (Comparator6 instance)
+    let cdb_match_src2 := Wire.mk s!"e{i}_cdb_match_src2"
+    let cmp_src2_inst : CircuitInstance := {
+      moduleName := "Comparator6"
+      instName := s!"u_e{i}_cmp_src2"
+      portMap :=
+        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
+        (src2_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+        [("eq", cdb_match_src2)]
+    }
+
+    -- CDB wakeup condition for src1: valid AND NOT(src1_ready) AND match AND cdb_valid
+    let cdb_wakeup_src1_tmp1 := Wire.mk s!"e{i}_cdb_wakeup_src1_tmp1"
+    let src1_ready_n := Wire.mk s!"e{i}_src1_ready_n"
+    let cdb_wakeup_src1_tmp2 := Wire.mk s!"e{i}_cdb_wakeup_src1_tmp2"
+    let cdb_wakeup_src1 := Wire.mk s!"e{i}_cdb_wakeup_src1"
+    let wakeup_src1_gates := [
+      Gate.mkNOT src1_ready src1_ready_n,
+      Gate.mkAND valid src1_ready_n cdb_wakeup_src1_tmp1,
+      Gate.mkAND cdb_wakeup_src1_tmp1 cdb_match_src1 cdb_wakeup_src1_tmp2,
+      Gate.mkAND cdb_wakeup_src1_tmp2 cdb_valid cdb_wakeup_src1
+    ]
+
+    -- CDB wakeup condition for src2: similar logic
+    let cdb_wakeup_src2_tmp1 := Wire.mk s!"e{i}_cdb_wakeup_src2_tmp1"
+    let src2_ready_n := Wire.mk s!"e{i}_src2_ready_n"
+    let cdb_wakeup_src2_tmp2 := Wire.mk s!"e{i}_cdb_wakeup_src2_tmp2"
+    let cdb_wakeup_src2 := Wire.mk s!"e{i}_cdb_wakeup_src2"
+    let wakeup_src2_gates := [
+      Gate.mkNOT src2_ready src2_ready_n,
+      Gate.mkAND valid src2_ready_n cdb_wakeup_src2_tmp1,
+      Gate.mkAND cdb_wakeup_src2_tmp1 cdb_match_src2 cdb_wakeup_src2_tmp2,
+      Gate.mkAND cdb_wakeup_src2_tmp2 cdb_valid cdb_wakeup_src2
+    ]
+
+    -- Next-state logic for each bit (simplified: priority muxing)
+    -- Priority: dispatch_clear > issue > cdb_wakeup > hold
+    -- For now: simplified implementation with basic muxing
+    -- Full version would have per-field muxing based on update conditions
+
+    -- Valid bit: clear on dispatch, set on issue, hold otherwise
+    let valid_next_tmp1 := Wire.mk s!"e{i}_valid_next_tmp1"
+    let valid_next := entry_next[0]!
+    let valid_next_gates := [
+      Gate.mkMUX valid zero dispatch_clear valid_next_tmp1,  -- Clear on dispatch
+      Gate.mkMUX valid_next_tmp1 one issue_we valid_next  -- Set on issue
+    ]
+
+    -- For other fields: simplified hold (actual impl would mux based on issue/cdb)
+    -- This is a placeholder - full implementation needs per-field update logic
+    let field_next_gates := (List.range (entryWidth - 1)).map (fun j =>
+      Gate.mkBUF entry_cur[j + 1]! entry_next[j + 1]!
+    )
+
+    -- Register91 instance for entry storage
+    let entry_reg_inst : CircuitInstance := {
+      moduleName := "Register91"
+      instName := s!"u_entry{i}"
+      portMap :=
+        (entry_next.enum.map (fun ⟨j, w⟩ => (s!"d{j}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (entry_cur.enum.map (fun ⟨j, w⟩ => (s!"q{j}", w)))
+    }
+
+    let gates := issue_we_gates ++ [dispatch_clear_gate] ++
+                 wakeup_src1_gates ++ wakeup_src2_gates ++
+                 valid_next_gates ++ field_next_gates
+    let instances := [cmp_src1_inst, cmp_src2_inst, entry_reg_inst]
+
+    (gates, instances)
+
+  let entry_logic := (List.range 4).map buildEntryLogic
+  let entry_gates := entry_logic.map Prod.fst |>.flatten
+  let entry_instances := entry_logic.map Prod.snd |>.flatten
+
+  -- ============================================================================
+  -- 4. READY CHECKING AND ARBITRATION
+  -- ============================================================================
+
+  let ready := makeIndexedWires "ready" 4
+  let dispatch_grant := makeIndexedWires "dispatch_grant" 4
+
+  -- Per-entry ready: valid AND src1_ready AND src2_ready
+  -- Accessing entry bits: entry[0]=valid, entry[13]=src1_ready, entry[52]=src2_ready
+  let ready_gates := (List.range 4).map (fun i =>
+    let valid := Wire.mk s!"e{i}0"  -- Bit 0 of entry
+    let src1_ready := Wire.mk s!"e{i}13"  -- Bit 13
+    let src2_ready := Wire.mk s!"e{i}52"  -- Bit 52
+    let tmp := Wire.mk s!"ready{i}_tmp"
+    [
+      Gate.mkAND valid src1_ready tmp,
+      Gate.mkAND tmp src2_ready ready[i]!
+    ]
+  ) |>.flatten
+
+  -- PriorityArbiter4 instance
+  let arbiter_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter4"
+    instName := "u_ready_arbiter"
+    portMap :=
+      (ready.enum.map (fun ⟨i, w⟩ => (s!"request{i}", w))) ++
+      (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"grant{i}", w))) ++
+      [("valid", dispatch_valid)]
+  }
+
+  -- ============================================================================
+  -- 5. DISPATCH MUXES (4:1 selection using Mux4xN instances)
+  -- ============================================================================
+
+  -- Opcode dispatch (Mux4x6)
+  let opcode_mux_portmap :=
+    (((List.range 4).map (fun i =>
+        (List.range 6).map (fun j =>
+          (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 1}")
+        )
+      )).flatten) ++
+    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+
+  let opcode_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x6"
+    instName := "u_dispatch_opcode_mux"
+    portMap := opcode_mux_portmap
+  }
+
+  -- Src1 data dispatch (Mux4x32)
+  let src1_mux_portmap :=
+    (((List.range 4).map (fun i =>
+        (List.range 32).map (fun j =>
+          (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 20}")
+        )
+      )).flatten) ++
+    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_src1_data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+
+  let src1_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_dispatch_src1_mux"
+    portMap := src1_mux_portmap
+  }
+
+  -- Src2 data dispatch (Mux4x32)
+  let src2_mux_portmap :=
+    (((List.range 4).map (fun i =>
+        (List.range 32).map (fun j =>
+          (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 59}")
+        )
+      )).flatten) ++
+    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_src2_data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+
+  let src2_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_dispatch_src2_mux"
+    portMap := src2_mux_portmap
+  }
+
+  -- Dest tag dispatch (Mux4x6)
+  let tag_mux_portmap :=
+    (((List.range 4).map (fun i =>
+        (List.range 6).map (fun j =>
+          (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 7}")
+        )
+      )).flatten) ++
+    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+
+  let tag_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x6"
+    instName := "u_dispatch_tag_mux"
+    portMap := tag_mux_portmap
+  }
+
+  -- ============================================================================
+  -- 6. ISSUE_FULL SIGNAL (4:1 mux of valid bits selected by alloc_ptr)
+  -- ============================================================================
+
+  -- Extract valid bit from each entry
+  let entry_valid := (List.range 4).map (fun i => Wire.mk s!"e{i}0")
+
+  -- 4:1 mux: select valid[alloc_ptr]
+  let issue_full_mux_gates :=
+    -- Decode alloc_ptr to select signal
+    let sel0 := Wire.mk "issue_full_sel0"
+    let sel1 := Wire.mk "issue_full_sel1"
+    let tmp01 := Wire.mk "issue_full_tmp01"
+    let tmp23 := Wire.mk "issue_full_tmp23"
+    [
+      -- sel0 = alloc_ptr[0], sel1 = alloc_ptr[1]
+      Gate.mkBUF alloc_ptr[0]! sel0,
+      Gate.mkBUF alloc_ptr[1]! sel1,
+      -- Mux layer 1: select between (0,1) and (2,3)
+      Gate.mkMUX entry_valid[0]! entry_valid[1]! sel0 tmp01,
+      Gate.mkMUX entry_valid[2]! entry_valid[3]! sel0 tmp23,
+      -- Mux layer 2: final selection
+      Gate.mkMUX tmp01 tmp23 sel1 issue_full
+    ]
+
+  -- ============================================================================
+  -- FINAL ASSEMBLY
+  -- ============================================================================
 
   { name := "ReservationStation4"
     inputs := [clock, reset, zero, one, issue_en] ++
@@ -555,8 +840,10 @@ def mkReservationStation4 : Circuit :=
     outputs := [issue_full, dispatch_valid] ++
                dispatch_opcode ++ dispatch_src1_data ++
                dispatch_src2_data ++ dispatch_dest_tag
-    gates := []  -- Stub: structural implementation in progress
-    instances := []
+    gates := alloc_incr_gates ++ entry_gates ++ ready_gates ++ issue_full_mux_gates
+    instances := [alloc_ptr_inst, decoder_inst, arbiter_inst,
+                  opcode_mux_inst, src1_mux_inst, src2_mux_inst, tag_mux_inst] ++
+                 entry_instances
   }
 
 /-- RS4 alias for common usage -/
