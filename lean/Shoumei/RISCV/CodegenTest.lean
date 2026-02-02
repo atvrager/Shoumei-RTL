@@ -1,5 +1,6 @@
 /-
-  Code Generation Test - Generate both SystemVerilog and Chisel
+  Code Generation - Generate SystemVerilog, Chisel, and SystemC decoders
+  Produces both RV32I (base) and RV32IM (with M extension) decoder variants.
 -/
 
 import Shoumei.RISCV.ISA
@@ -11,10 +12,18 @@ import Shoumei.RISCV.CodegenSystemC
 
 namespace Shoumei.RISCV
 
-/-- Generate SystemVerilog, Chisel, and SystemC decoders -/
+/-- Check if any instruction belongs to the M extension -/
+def hasMExtension (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_m"))
+
+/-- Filter to only base I extension instructions -/
+def filterBaseI (defs : List InstructionDef) : List InstructionDef :=
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m"))
+
+/-- Generate all decoder variants from instruction definitions -/
 def generateDecoders (defs : List InstructionDef) : IO Unit := do
   IO.println "==================================================\n"
-  IO.println "Generating RV32I Decoder Code\n"
+  IO.println "Generating RISC-V Decoder Code\n"
   IO.println "==================================================\n"
 
   -- Create output directories
@@ -24,29 +33,30 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
     args := #["-p", "output/sv-from-lean", "output/chisel-src", "output/systemc"]
   }
 
-  -- Generate SystemVerilog
-  IO.println "\nGenerating SystemVerilog decoder..."
-  writeSystemVerilogDecoder defs "output/sv-from-lean/RV32IDecoder.sv"
-  IO.println "✓ SystemVerilog generation complete"
+  let baseDefs := filterBaseI defs
 
-  -- Generate Chisel
-  IO.println "\nGenerating Chisel decoder..."
-  writeChiselDecoder defs "chisel/src/main/scala/generated/RV32IDecoder.scala"
-  IO.println "✓ Chisel generation complete"
+  -- Always generate RV32I (base) decoder
+  IO.println s!"\n── RV32IDecoder ({baseDefs.length} instructions) ──"
+  writeSystemVerilogDecoder baseDefs "output/sv-from-lean/RV32IDecoder.sv" "RV32IDecoder"
+  writeChiselDecoder baseDefs "chisel/src/main/scala/generated/RV32IDecoder.scala" "RV32IDecoder"
+  writeSystemCDecoderHeader baseDefs "output/systemc/RV32IDecoder.h" "RV32IDecoder"
+  writeSystemCDecoderImpl baseDefs "output/systemc/RV32IDecoder.cpp" "RV32IDecoder"
+  IO.println "✓ RV32IDecoder complete"
 
-  -- Generate SystemC
-  IO.println "\nGenerating SystemC decoder..."
-  writeSystemCDecoderHeader defs "output/systemc/RV32IDecoder.h"
-  writeSystemCDecoderImpl defs "output/systemc/RV32IDecoder.cpp"
-  IO.println "✓ SystemC generation complete"
+  -- Generate RV32IM decoder if M extension instructions are present
+  if hasMExtension defs then
+    IO.println s!"\n── RV32IMDecoder ({defs.length} instructions) ──"
+    writeSystemVerilogDecoder defs "output/sv-from-lean/RV32IMDecoder.sv" "RV32IMDecoder"
+    writeChiselDecoder defs "chisel/src/main/scala/generated/RV32IMDecoder.scala" "RV32IMDecoder"
+    writeSystemCDecoderHeader defs "output/systemc/RV32IMDecoder.h" "RV32IMDecoder"
+    writeSystemCDecoderImpl defs "output/systemc/RV32IMDecoder.cpp" "RV32IMDecoder"
+    IO.println "✓ RV32IMDecoder complete"
 
   IO.println "\n==================================================\n"
   IO.println "Code generation summary:"
-  IO.println s!"  - SystemVerilog (from LEAN): output/sv-from-lean/RV32IDecoder.sv"
-  IO.println s!"  - Chisel source (from LEAN): chisel/src/main/scala/generated/RV32IDecoder.scala"
-  IO.println s!"  - SystemC header (from LEAN): output/systemc/RV32IDecoder.h"
-  IO.println s!"  - SystemC impl (from LEAN):   output/systemc/RV32IDecoder.cpp"
-  IO.println s!"  - Instructions:               {defs.length} RV32I operations"
+  IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + Chisel + SystemC)"
+  if hasMExtension defs then
+    IO.println s!"  - RV32IMDecoder: {defs.length} instructions (SV + Chisel + SystemC)"
   IO.println "\n✓ Code generation complete!"
 
 end Shoumei.RISCV

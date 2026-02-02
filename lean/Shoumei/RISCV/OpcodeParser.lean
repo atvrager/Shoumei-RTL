@@ -7,6 +7,7 @@
 
 import Lean.Data.Json
 import Shoumei.RISCV.ISA
+import Shoumei.RISCV.Config
 
 namespace Shoumei.RISCV
 
@@ -119,5 +120,22 @@ def loadInstrDictFromFile (path : System.FilePath) : IO (List InstructionDef) :=
 /-- Path to instr_dict.json (relative to project root) -/
 def instrDictPath : System.FilePath :=
   "third_party/riscv-opcodes/instr_dict.json"
+
+/-- Load instruction definitions filtered by a CPUConfig's enabled extensions.
+
+    This is the primary config-aware entry point. It loads all instructions from
+    the JSON file, then filters to only include instructions whose extension
+    field matches at least one of the config's enabled extensions.
+
+    Example:
+    - rv32iConfig  → only instructions with extension containing "rv_i" or "rv32_i"
+    - rv32imConfig → also includes instructions with extension containing "rv_m"
+-/
+def loadInstrDefsForConfig (config : CPUConfig) (path : System.FilePath := instrDictPath)
+    : IO (List InstructionDef) := do
+  let allDefs ← loadInstrDictFromFile path
+  let enabled := config.enabledExtensions
+  return allDefs.filter fun instrDef =>
+    instrDef.extension.any (enabled.contains ·)
 
 end Shoumei.RISCV

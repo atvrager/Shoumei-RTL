@@ -11,7 +11,7 @@ def main : IO Unit := do
   -- Load instruction definitions
   let defs ← loadInstrDictFromFile instrDictPath
 
-  IO.println s!"Loaded {defs.length} RV32I instructions from riscv-opcodes\n"
+  IO.println s!"Loaded {defs.length} instructions from riscv-opcodes\n"
 
-  -- Generate both SystemVerilog and Chisel decoders
+  -- Generate decoder variants (RV32I always; RV32IM if M-ext present)
   generateDecoders defs

@@ -36,11 +36,12 @@ private def natToHex (n : Nat) : String :=
 def sanitizeSVIdentifier (name : String) : String :=
   name.toUpper.replace "." "_"
 
-/-- Generate OpType enum declaration -/
-def genOpTypeEnum (defs : List InstructionDef) : String :=
-  let opcodes := defs.map (fun instrDef => sanitizeSVIdentifier instrDef.name)
+/-- Generate OpType enum declaration (scoped by module name to avoid conflicts) -/
+def genOpTypeEnum (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
+  let pfx := moduleName.toLower ++ "_"
+  let opcodes := defs.map (fun instrDef => pfx ++ sanitizeSVIdentifier instrDef.name)
   let enumItems := String.intercalate (",\n    ") opcodes
-  "typedef enum logic [5:0] {\n    " ++ enumItems ++ "\n} optype_t;"
+  "typedef enum logic [5:0] {\n    " ++ enumItems ++ "\n} " ++ moduleName.toLower ++ "_optype_t;"
 
 /-- Generate immediate extraction logic for one type -/
 def genImmediateExtractor (immType : String) : String :=
@@ -58,17 +59,17 @@ def genImmediateExtractor (immType : String) : String :=
   | _ => ""
 
 /-- Generate decoder case for one instruction -/
-def genDecoderCase (instrDef : InstructionDef) : String :=
+def genDecoderCase (instrDef : InstructionDef) (pfx : String := "") : String :=
   let maskHex := "32'h" ++ natToHex instrDef.maskBits.toNat
   let matchHex := "32'h" ++ natToHex instrDef.matchBits.toNat
-  let opName := sanitizeSVIdentifier instrDef.name
+  let opName := pfx ++ sanitizeSVIdentifier instrDef.name
   "        if ((io_instr & " ++ maskHex ++ ") == " ++ matchHex ++ ") begin\n            io_optype = " ++ opName ++ ";\n            io_valid = 1'b1;\n        end"
 
 /-- Generate complete SystemVerilog decoder module -/
-def genSystemVerilogDecoder (defs : List InstructionDef) : String :=
+def genSystemVerilogDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let header :=
-"//==============================================================================
-// RV32I Instruction Decoder
+s!"//==============================================================================
+// {moduleName} - Instruction Decoder
 // Generated from riscv-opcodes definitions
 //
 // This module decodes 32-bit RISC-V instructions and extracts:
@@ -79,18 +80,19 @@ def genSystemVerilogDecoder (defs : List InstructionDef) : String :=
 
 "
 
-  let enumDecl := genOpTypeEnum defs
+  let enumDecl := genOpTypeEnum defs moduleName
+  let enumPfx := moduleName.toLower ++ "_"
 
   let moduleDecl :=
-"
-module RV32IDecoder (
+s!"
+module {moduleName} (
     input  logic [31:0] io_instr,   // 32-bit instruction word
     output logic [5:0]  io_optype,  // Decoded operation type
     output logic [4:0]  io_rd,      // Destination register
     output logic [4:0]  io_rs1,     // Source register 1
     output logic [4:0]  io_rs2,     // Source register 2
     output logic [31:0] io_imm,     // Immediate value (sign-extended)
-    output logic        io_valid    // Instruction is valid RV32I
+    output logic        io_valid    // Instruction is valid
 );
 
 // Extract register fields
@@ -111,7 +113,7 @@ logic signed [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
   ]
 
   let defaultOp := match defs.head? with
-    | some firstDef => sanitizeSVIdentifier firstDef.name
+    | some firstDef => enumPfx ++ sanitizeSVIdentifier firstDef.name
     | none => "add"  -- Fallback (should never happen with RV32I)
 
   let decoderLogic :=
@@ -126,7 +128,7 @@ always_comb begin
     // Check each instruction pattern
 "
 
-  let decoderCases := String.intercalate "\n" (defs.map genDecoderCase)
+  let decoderCases := String.intercalate "\n" (defs.map fun d => genDecoderCase d enumPfx)
 
   let immMux :=
 "
@@ -155,8 +157,8 @@ endmodule
   ]
 
 /-- Write SystemVerilog decoder to file -/
-def writeSystemVerilogDecoder (defs : List InstructionDef) (outputPath : String) : IO Unit := do
-  let svCode := genSystemVerilogDecoder defs
+def writeSystemVerilogDecoder (defs : List InstructionDef) (outputPath : String) (moduleName : String := "RV32IDecoder") : IO Unit := do
+  let svCode := genSystemVerilogDecoder defs moduleName
   IO.FS.writeFile outputPath svCode
   IO.println s!"Generated SystemVerilog decoder: {outputPath}"
 

@@ -43,6 +43,11 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
 
+-- M-Extension Building Blocks
+import Shoumei.Circuits.Combinational.Multiplier
+import Shoumei.Circuits.Sequential.Divider
+import Shoumei.RISCV.Execution.MulDivExecUnit
+
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
 
@@ -148,6 +153,14 @@ def allCircuits : List Circuit := [
   mkIntegerExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
+
+  -- M-Extension (conditional on CPUConfig.enableM)
+  mkRippleCarryAdder64,
+  csaCompressor64,
+  mkPipelinedMultiplier,
+  mkDividerCircuit,
+  mkMulDivExecUnit,
+  mkMulDivRS4,
 
   -- Phase 6: Retirement
   mkROB16,
