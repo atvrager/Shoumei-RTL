@@ -17,11 +17,13 @@ import Shoumei.Circuits.Combinational.Comparator
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.Arbiter
+import Shoumei.Verification.Compositional
 
 open Shoumei.DSL
 open Shoumei.RISCV.Execution
 open Shoumei.Circuits.Sequential
 open Shoumei.Circuits.Combinational
+open Shoumei.Verification
 
 /-! ## Structural Proofs -/
 
@@ -127,12 +129,6 @@ RS4 Verification Status:
 - ⚠ Full LEC: Incomplete (sequential circuit limitation)
 - ✓ Compositional: Complete (verified by construction from proven building blocks)
 -/
-
-/-- Export compositional verification certificate for use by LEC script -/
-structure CompositionalCert where
-  moduleName : String
-  dependencies : List String
-  proofReference : String
 
 /-- RS4 compositional verification certificate -/
 def rs4_cert : CompositionalCert := {

@@ -238,10 +238,10 @@ def toSystemVerilog (c : Circuit) : String :=
 
   -- Check if we should use bundled I/O (for large circuits)
   let (inputToIndex, outputToIndex, useBundledIO, filteredInputs) :=
-    let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
-    let clockWires := dffGates.filterMap (fun g => match g.inputs with | [_d, clk, _res] => some clk | _ => none)
-    let resetWires := dffGates.filterMap (fun g => match g.inputs with | [_d, _clk, res] => some res | _ => none)
-    let implicitWires := clockWires ++ resetWires
+    -- Find clock/reset from both DFF gates AND instance connections
+    let clockWires := findClockWires c
+    let resetWires := findResetWires c
+    let implicitWires := (clockWires ++ resetWires).eraseDups
     let filtered := c.inputs.filter (fun w => !implicitWires.contains w)
     let totalPorts := filtered.length + c.outputs.length
     let useBundle := totalPorts > 200  -- Use bundled IO for very large modules to avoid excessive ports

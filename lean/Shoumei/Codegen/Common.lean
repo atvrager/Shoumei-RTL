@@ -51,4 +51,42 @@ def makeComment (lang : String) (comment : String) : String :=
   | "chisel" => s!"// {comment}"
   | _ => s!"# {comment}"
 
+-- Helper: find all clock wires (from DFF gates and instance connections)
+def findClockWires (c : Circuit) : List Wire :=
+  -- Find clocks from DFF gates
+  let dffClocks := c.gates.filterMap (fun g =>
+    if g.gateType == GateType.DFF then
+      match g.inputs with
+      | [_d, clk, _reset] => some clk
+      | _ => none
+    else
+      none
+  )
+  -- Also find clocks from instance connections
+  let instClocks := c.instances.filterMap (fun inst =>
+    inst.portMap.filterMap (fun (portName, wire) =>
+      if portName == "clock" then some wire else none
+    ) |>.head?
+  )
+  (dffClocks ++ instClocks).eraseDups
+
+-- Helper: find all reset wires (from DFF gates and instance connections)
+def findResetWires (c : Circuit) : List Wire :=
+  -- Find resets from DFF gates
+  let dffResets := c.gates.filterMap (fun g =>
+    if g.gateType == GateType.DFF then
+      match g.inputs with
+      | [_d, _clk, reset] => some reset
+      | _ => none
+    else
+      none
+  )
+  -- Also find resets from instance connections
+  let instResets := c.instances.filterMap (fun inst =>
+    inst.portMap.filterMap (fun (portName, wire) =>
+      if portName == "reset" then some wire else none
+    ) |>.head?
+  )
+  (dffResets ++ instResets).eraseDups
+
 end Shoumei.Codegen

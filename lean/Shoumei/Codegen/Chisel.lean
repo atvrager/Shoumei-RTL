@@ -99,27 +99,6 @@ def generateCombGate (ctx : ChiselContext) (g : Gate) : String :=
 
 -- Helper: find all clock wires (wires used as clock inputs to DFFs)
 -- For Module, these should not be in the IO bundle (clock is implicit)
-def findClockWires (c : Circuit) : List Wire :=
-  c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
-      match g.inputs with
-      | [_d, clk, _reset] => some clk
-      | _ => none
-    else
-      none
-  )
-
--- Helper: find all reset wires (wires used as reset inputs to DFFs)
--- For Module, these should not be in the IO bundle (reset is implicit)
-def findResetWires (c : Circuit) : List Wire :=
-  c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
-      match g.inputs with
-      | [_d, _clk, reset] => some reset
-      | _ => none
-    else
-      none
-  )
 
 -- Generate D Flip-Flop logic in Chisel
 def generateDFF (ctx : ChiselContext) (c : Circuit) (g : Gate) : String :=
@@ -351,18 +330,24 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
         portBase
 
 -- Generate submodule instantiation with chunking for connections
-def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
+def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
+
+  -- Find clock/reset wires (these are already declared as Clock/AsyncReset types)
+  let clockWires := findClockWires c
+  let resetWires := findResetWires c
 
   -- Handle port connections
   -- Construct port name from portMap
   let connections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef ctx wire
     let portRef := constructPortRef portBaseName wire.name
-    -- Add type conversion for clock/reset ports
+    -- Add type conversion for clock/reset ports ONLY if wire is not already Clock/AsyncReset
     let wRefConverted :=
-      if portBaseName == "clock" || portRef == "clock" then s!"{wRef}.asClock"
-      else if portBaseName == "reset" || portRef == "reset" then s!"{wRef}.asAsyncReset"
+      if (portBaseName == "clock" || portRef == "clock") && !clockWires.contains wire then
+        s!"{wRef}.asClock"
+      else if (portBaseName == "reset" || portRef == "reset") && !resetWires.contains wire then
+        s!"{wRef}.asAsyncReset"
       else wRef
     s!"  {inst.instName}.{portRef} <> {wRefConverted}"
   )
@@ -383,7 +368,7 @@ def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chun
 
 -- Generate all submodule instances with chunking
 def generateInstancesChunked (ctx : ChiselContext) (c : Circuit) : (String × String) :=
-  let results := c.instances.map (fun inst => generateInstanceChunked ctx inst 25)
+  let results := c.instances.map (fun inst => generateInstanceChunked ctx c inst 25)
   let calls := results.map Prod.fst
   let metods := results.map Prod.snd
   (joinLines calls, joinLines metods)
@@ -468,9 +453,11 @@ def toChisel (c : Circuit) : String :=
   let internalWires := findInternalWires c
   let dffOutputs := findDFFOutputs c
   let wiresToDeclare := internalWires.filter (fun w => !dffOutputs.contains w)
-  let clockWires := if isSequential then findClockWires c else []
-  let resetWires := if isSequential then findResetWires c else []
-  let implicitWires := clockWires ++ resetWires
+  -- Find clock/reset from both DFF gates AND instance connections
+  -- Don't check isSequential - circuits can have sequential instances without DFFs
+  let clockWires := findClockWires c
+  let resetWires := findResetWires c
+  let implicitWires := (clockWires ++ resetWires).eraseDups
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
   let totalIOPorts := filteredInputs.length + c.outputs.length
 

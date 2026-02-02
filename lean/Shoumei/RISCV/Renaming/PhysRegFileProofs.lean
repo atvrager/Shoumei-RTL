@@ -13,11 +13,15 @@ Behavioral proofs:
 -/
 
 import Shoumei.RISCV.Renaming.PhysRegFile
+import Shoumei.Verification.Compositional
+import Shoumei.Circuits.Combinational.Decoder
+import Shoumei.Circuits.Combinational.MuxTree
 
 namespace Shoumei.RISCV.Renaming.PhysRegFileProofs
 
 open Shoumei
 open Shoumei.RISCV.Renaming
+open Shoumei.Verification
 
 /-! ## Structural Proofs (64×32 configuration) -/
 
@@ -130,5 +134,31 @@ theorem prf4_dual_read :
     let prf1 := mkPRF4Init.write ⟨1, by omega⟩ 100
     let prf2 := prf1.write ⟨3, by omega⟩ 200
     prf2.readPair ⟨1, by omega⟩ ⟨3, by omega⟩ = (100, 200) := by native_decide
+
+/-! ## Compositional Verification Certificate -/
+
+/-- PhysRegFile_64x32 Building Block Dependencies:
+    All these modules must pass LEC before PhysRegFile is considered verified. -/
+def physregfile_dependencies : List String := [
+  "Decoder6",    -- Write address decoder (6→64)
+  "Mux64x32"     -- Read port mux (64:1, 32 bits) × 2
+]
+
+/-- PhysRegFile_64x32 compositional verification certificate -/
+def physregfile_cert : CompositionalCert := {
+  moduleName := "PhysRegFile_64x32"
+  dependencies := physregfile_dependencies
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
+/-! ## Verification Strategy
+
+PhysRegFile_64x32 correctness follows from:
+1. LEC verification of building blocks (Decoder6, Mux64x32)
+2. Hierarchical composition with correct port wiring (structural proofs above)
+3. Behavioral proofs (read-after-write, write independence, last-write-wins, etc.)
+
+This avoids the SEC structural mismatch issue caused by register arrays.
+-/
 
 end Shoumei.RISCV.Renaming.PhysRegFileProofs

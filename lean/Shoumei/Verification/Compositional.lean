@@ -43,6 +43,16 @@ structure VerificationCertificate where
   dependencies : List String
   leanProof : Option String  -- Reference to Lean theorem
 
+/-- Simplified compositional certificate for export.
+
+    Used by proof modules to declare their dependencies and verification strategy.
+    Exported via ExportVerificationCerts.lean for consumption by LEC scripts.
+-/
+structure CompositionalCert where
+  moduleName : String
+  dependencies : List String
+  proofReference : String
+
 -- Key insight: Our circuit construction is deterministic
 -- The same Lean function always produces the same circuit
 axiom construction_deterministic {α : Type} (f : Nat → α) (n : Nat) :

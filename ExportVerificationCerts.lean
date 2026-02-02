@@ -11,20 +11,14 @@ Output format (pipe-separated):
 ModuleName|Dependency1,Dependency2,...|ProofReference
 -/
 
-import Shoumei.RISCV.Execution.ReservationStationProofs
+import Shoumei.Verification.CompositionalCerts
 
-open Shoumei.RISCV.Execution
+open Shoumei.Verification.CompositionalCerts
 
 /-- Format a compositional certificate for shell consumption -/
-def formatCert (cert : CompositionalCert) : String :=
+def formatCert (cert : Shoumei.Verification.CompositionalCert) : String :=
   let deps := String.intercalate "," cert.dependencies
   s!"{cert.moduleName}|{deps}|{cert.proofReference}"
-
-/-- All compositional verification certificates in the project -/
-def allCerts : List CompositionalCert := [
-  rs4_cert
-  -- Add more certs here as we create them (e.g., PhysRegFile, RenameStage, etc.)
-]
 
 /-- Export all certificates to stdout -/
 def main : IO Unit := do

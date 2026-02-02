@@ -19,20 +19,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Find all LEAN-generated modules
-LEAN_MODULES=$(find "$LEAN_DIR" -maxdepth 1 \( -name "*.sv" -o -name "*.v" \) 2>/dev/null | sort)
+# Find all modules first
+ALL_LEAN_MODULES=$(find "$LEAN_DIR" -maxdepth 1 \( -name "*.sv" -o -name "*.v" \) 2>/dev/null)
 
-if [ -z "$LEAN_MODULES" ]; then
+if [ -z "$ALL_LEAN_MODULES" ]; then
     echo -e "${RED}✗ No LEAN-generated modules found in $LEAN_DIR${NC}"
     exit 1
 fi
-
-# Count modules and show what we will verify
-MODULE_COUNT=$(echo "$LEAN_MODULES" | wc -l)
-echo "Found $MODULE_COUNT module(s) to verify:"
-echo "$LEAN_MODULES" | while read -r file; do
-    echo "  - $(basename "$file" .sv)"
-done
-echo ""
 
 # Track overall success
 ALL_PASSED=1
@@ -55,6 +48,61 @@ while IFS='|' read -r module deps proof; do
     COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
 done < <(lake exe export_verification_certs 2>/dev/null || true)
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
+echo ""
+
+# Topological sort modules based on dependencies
+echo "Sorting modules in topological order..."
+TOPO_SORTED_MODULES=$(
+    # Build dependency graph
+    for file in $ALL_LEAN_MODULES; do
+        module=$(basename "$file" .sv)
+        module=$(basename "$module" .v)
+        # Get dependencies from compositional cert if it exists
+        if [ -n "${COMPOSITIONAL_CERTS[$module]}" ]; then
+            IFS='|' read -r deps proof <<< "${COMPOSITIONAL_CERTS[$module]}"
+            # Print: module depends_on dep1 dep2 ...
+            echo "$module $deps" | tr ',' ' '
+        else
+            # No dependencies
+            echo "$module"
+        fi
+    done | \
+    # Simple topological sort using tsort
+    awk '{
+        module = $1
+        modules[module] = 1
+        for (i = 2; i <= NF; i++) {
+            if ($i != "") {
+                print $i " " module
+                modules[$i] = 1
+            }
+        }
+    }
+    END {
+        for (m in modules) print m " " m
+    }' | tsort 2>/dev/null
+)
+
+# Map sorted module names back to file paths
+LEAN_MODULES=""
+for module in $TOPO_SORTED_MODULES; do
+    for file in $ALL_LEAN_MODULES; do
+        if [[ $(basename "$file" .sv) == "$module" ]] || [[ $(basename "$file" .v) == "$module" ]]; then
+            LEAN_MODULES="$LEAN_MODULES"$'\n'"$file"
+            break
+        fi
+    done
+done
+LEAN_MODULES=$(echo "$LEAN_MODULES" | sed '/^$/d')  # Remove empty lines
+MODULE_COUNT=$(echo "$LEAN_MODULES" | wc -l)
+echo "Sorted $MODULE_COUNT modules in dependency order"
+echo "Verification order:"
+echo "$LEAN_MODULES" | head -10 | while read -r file; do
+    echo "  - $(basename "$file" .sv)"
+done
+if [ "$MODULE_COUNT" -gt 10 ]; then
+    echo "  ... and $((MODULE_COUNT - 10)) more"
+fi
 echo ""
 
 # Create temporary working directory
