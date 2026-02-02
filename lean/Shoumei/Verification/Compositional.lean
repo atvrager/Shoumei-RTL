@@ -105,9 +105,24 @@ def queue2_8_cert : VerificationCertificate := {
 
 def queue4_8_cert : VerificationCertificate := {
   moduleName := "Queue4_8"
-  method := .LEC
+  method := .Compositional
   dependencies := ["QueueRAM_4x8", "QueuePointer_2", "QueueCounterUpDown_3"]
-  leanProof := none
+  leanProof := some "compositional_soundness"
+}
+
+-- Small Queue RAMs - structural differences prevent direct LEC, verified compositionally
+def queueRAM_2x8_cert : VerificationCertificate := {
+  moduleName := "QueueRAM_2x8"
+  method := .Compositional
+  dependencies := ["Decoder1", "Mux2x8"]
+  leanProof := some "compositional_soundness"
+}
+
+def queueRAM_4x8_cert : VerificationCertificate := {
+  moduleName := "QueueRAM_4x8"
+  method := .Compositional
+  dependencies := ["Decoder2", "Mux4x8"]
+  leanProof := some "compositional_soundness"
 }
 
 -- Large Queue RAMs - too large for direct LEC, verified compositionally
@@ -174,6 +189,8 @@ def allCertificates : List VerificationCertificate := [
   queue1_32_cert,
   queue2_8_cert,
   queue4_8_cert,
+  queueRAM_2x8_cert,
+  queueRAM_4x8_cert,
   rat_32x6_cert,
   queueRAM_64x32_cert,
   queueRAM_64x6_cert,

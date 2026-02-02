@@ -20,6 +20,18 @@ open Shoumei.Codegen
 
 /-! ## Helper Functions for Wire Name Parsing -/
 
+-- Helper: Verilog/SystemVerilog reserved keywords (must not be used as identifiers)
+def verilogKeywords : List String :=
+  ["and", "or", "xor", "not", "nand", "nor", "xnor", "buf", "bufif0", "bufif1",
+   "module", "endmodule", "input", "output", "inout", "wire", "reg", "assign",
+   "always", "if", "else", "case", "casez", "casex", "default", "for", "while",
+   "repeat", "begin", "end", "posedge", "negedge", "initial", "parameter",
+   "localparam", "generate", "genvar", "task", "function", "return"]
+
+-- Helper: check if a name is a Verilog keyword
+def isVerilogKeyword (name : String) : Bool :=
+  verilogKeywords.contains name
+
 -- Helper: check if string ends with a digit
 def endsWithDigit (s : String) : Bool :=
   match s.toList.reverse.head? with
@@ -33,9 +45,10 @@ def extractNumericSuffix (name : String) : String :=
   String.ofList digits.reverse
 
 -- Helper: extract basename and index from wire name ending in digits
--- E.g., "e0_next42" → ("e0_next", 42), "data5" → ("data", 5), "e01" → none (not a bus)
+-- E.g., "write_data_0" → ("write_data", 0), "opcode5" → ("opcode", 5), "e01" → none (not a bus)
 -- Heuristic: only treat as bus if basename ends with underscore OR is substantial (3+ chars)
 -- This avoids treating "e01" as "e[1]" (should stay as standalone wire "e01")
+-- Also avoids Verilog keywords like "and", "or", "xor"
 def splitWireName (w : Wire) : Option (String × Nat) :=
   let name := w.name
   if !endsWithDigit name then none
@@ -43,12 +56,21 @@ def splitWireName (w : Wire) : Option (String × Nat) :=
     let suffix : String := extractNumericSuffix name
     match suffix.toNat? with
     | some idx =>
-        let basename := (name.dropEnd suffix.length).toString
+        let basenameWithSep := (name.dropEnd suffix.length).toString
+        -- Strip trailing underscore if present (write_data_0 → write_data, not write_data_)
+        let basename := if basenameWithSep.endsWith "_" then
+          (basenameWithSep.dropEnd 1).toString
+        else
+          basenameWithSep
+
+        -- Reject if basename is a Verilog keyword
+        if isVerilogKeyword basename then
+          none
         -- Only treat as bus if:
-        -- 1. Basename ends with underscore (clear separator: "data_5" → "data_[5]")
+        -- 1. Original basename ended with underscore (clear separator: "data_5" → "data[5]")
         -- 2. Basename is substantial (3+ chars) AND suffix is short (1-2 digits)
         --    This handles "opcode5" → "opcode[5]" but NOT "e01" → "e[1]"
-        if basename.endsWith "_" then
+        else if basenameWithSep.endsWith "_" then
           some (basename, idx)
         else if basename.length >= 3 && suffix.length <= 2 then
           some (basename, idx)
@@ -70,42 +92,50 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.DFF => ""  -- DFF doesn't use operators, uses always block
 
 -- Helper: Get wire reference (handles flattened I/O with underscore indexing and bus indexing)
-def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
+-- Takes circuit for checking if wire is an input/output (to avoid bus grouping on ports)
+def wireRef (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
   match inputToIndex.find? (fun p => p.fst.name == w.name) with
   | some (_wire, idx) => s!"inputs_{idx}"
   | none =>
       match outputToIndex.find? (fun p => p.fst.name == w.name) with
       | some (_wire, idx) => s!"outputs_{idx}"
       | none =>
-          -- Check if this wire is part of a bus (ends with digits)
-          match splitWireName w with
-          | some (basename, idx) => s!"{basename}[{idx}]"
-          | none => w.name
+          -- Don't apply bus grouping to input/output wires (they're individual ports)
+          if c.inputs.contains w || c.outputs.contains w then
+            w.name
+          else
+            -- Check if this wire is part of a declared bus
+            if busWires.contains w then
+              match splitWireName w with
+              | some (basename, idx) => s!"{basename}[{idx}]"
+              | none => w.name
+            else
+              w.name
 
 -- Generate a single combinational gate assignment
 -- Note: DFFs are handled separately in generateAlwaysBlocks
-def generateCombGate (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
+def generateCombGate (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
   let op := gateTypeToOperator g.gateType
-  let outRef := wireRef inputToIndex outputToIndex g.output
+  let outRef := wireRef c busWires inputToIndex outputToIndex g.output
   match g.gateType with
   | GateType.NOT =>
       -- Unary operator: ~input
       match g.inputs with
-      | [i0] => s!"  assign {outRef} = {op}{wireRef inputToIndex outputToIndex i0};"
+      | [i0] => s!"  assign {outRef} = {op}{wireRef c busWires inputToIndex outputToIndex i0};"
       | _ => s!"  // ERROR: NOT gate should have 1 input"
   | GateType.BUF =>
       -- Buffer: direct assignment
       match g.inputs with
-      | [i0] => s!"  assign {outRef} = {wireRef inputToIndex outputToIndex i0};"
+      | [i0] => s!"  assign {outRef} = {wireRef c busWires inputToIndex outputToIndex i0};"
       | _ => s!"  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
       -- Ternary operator: sel ? in1 : in0
       -- inputs: [in0, in1, sel]
       match g.inputs with
       | [in0, in1, sel] =>
-          let in0Ref := wireRef inputToIndex outputToIndex in0
-          let in1Ref := wireRef inputToIndex outputToIndex in1
-          let selRef := wireRef inputToIndex outputToIndex sel
+          let in0Ref := wireRef c busWires inputToIndex outputToIndex in0
+          let in1Ref := wireRef c busWires inputToIndex outputToIndex in1
+          let selRef := wireRef c busWires inputToIndex outputToIndex sel
           s!"  assign {outRef} = {selRef} ? {in1Ref} : {in0Ref};"
       | _ => s!"  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF =>
@@ -114,20 +144,20 @@ def generateCombGate (inputToIndex : List (Wire × Nat)) (outputToIndex : List (
       -- Binary operators: input1 op input2
       match g.inputs with
       | [i0, i1] =>
-          let i0Ref := wireRef inputToIndex outputToIndex i0
-          let i1Ref := wireRef inputToIndex outputToIndex i1
+          let i0Ref := wireRef c busWires inputToIndex outputToIndex i0
+          let i1Ref := wireRef c busWires inputToIndex outputToIndex i1
           s!"  assign {outRef} = {i0Ref} {op} {i1Ref};"
       | _ => s!"  // ERROR: Binary gate should have 2 inputs"
 
 -- Generate always block for a D Flip-Flop
 -- DFF inputs: [d, clk, reset], output: q
-def generateDFF (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
+def generateDFF (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
   match g.inputs with
   | [d, clk, reset] =>
-      let dRef := wireRef inputToIndex outputToIndex d
-      let clkRef := wireRef inputToIndex outputToIndex clk
-      let resetRef := wireRef inputToIndex outputToIndex reset
-      let qRef := wireRef inputToIndex outputToIndex g.output
+      let dRef := wireRef c busWires inputToIndex outputToIndex d
+      let clkRef := wireRef c busWires inputToIndex outputToIndex clk
+      let resetRef := wireRef c busWires inputToIndex outputToIndex reset
+      let qRef := wireRef c busWires inputToIndex outputToIndex g.output
       joinLines [
         s!"  always @(posedge {clkRef} or posedge {resetRef}) begin",
         s!"    if ({resetRef})",
@@ -138,10 +168,14 @@ def generateDFF (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire 
       ]
   | _ => s!"  // ERROR: DFF should have 3 inputs: [d, clk, reset]"
 
--- Helper: find all internal wires (gate outputs that are not circuit outputs)
+-- Helper: find all internal wires (gate outputs + instance wires that are not circuit I/O)
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
-  gateOutputs.filter (fun w => !c.outputs.contains w)
+  let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
+  let allWires := gateOutputs ++ instanceWires
+  -- Filter out circuit inputs and outputs, and remove duplicates
+  let internalWires := allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)
+  internalWires.eraseDups
 
 -- Helper: find all DFF output wires (need to be declared as reg, not wire)
 def findDFFOutputs (c : Circuit) : List Wire :=
@@ -187,6 +221,12 @@ def generateBusDecl (basename : String) (indices : List (Nat × Wire)) (isReg : 
   let wireType := if isReg then "reg" else "wire"
   s!"  {wireType} [{maxIdx}:0] {basename};"
 
+-- Helper: get list of wires that are part of declared buses (for wireRef)
+def getBusWires (c : Circuit) : List Wire :=
+  let internalWires := findInternalWires c
+  let groups := groupWiresByBasename internalWires
+  groups.buses.flatMap (fun (_, wires) => wires.map (·.snd))
+
 -- Generate all internal wire declarations with bus grouping
 -- DFF outputs are declared as 'reg', other internal wires as 'wire'
 def generateWireDeclarations (c : Circuit) : String :=
@@ -215,15 +255,15 @@ def generateWireDeclarations (c : Circuit) : String :=
     joinLines (busDecls ++ standaloneDecls)
 
 -- Generate all combinational gate assignments (DFFs handled separately)
-def generateCombAssignments (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
+def generateCombAssignments (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
-  let assignments := combGates.map (generateCombGate inputToIndex outputToIndex)
+  let assignments := combGates.map (generateCombGate c busWires inputToIndex outputToIndex)
   joinLines assignments
 
 -- Generate all always blocks for sequential elements (DFFs)
-def generateAlwaysBlocks (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
+def generateAlwaysBlocks (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
-  let blocks := dffGates.map (generateDFF inputToIndex outputToIndex)
+  let blocks := dffGates.map (generateDFF c busWires inputToIndex outputToIndex)
   joinLines blocks
 
 
@@ -298,9 +338,9 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
       else
         portBase
 
-def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
+def generateInstance (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
   let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
-    let wRef := wireRef inputToIndex outputToIndex wire
+    let wRef := wireRef c busWires inputToIndex outputToIndex wire
     let portRef := constructPortRef portBaseName wire.name
     s!".{portRef}({wRef})"
   )
@@ -308,8 +348,8 @@ def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (
   s!"  {inst.moduleName} {inst.instName} (\n    {portsStr}\n  );"
 
 -- Generate all submodule instances
-def generateInstances (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
-  let instances := c.instances.map (generateInstance inputToIndex outputToIndex)
+def generateInstances (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
+  let instances := c.instances.map (generateInstance c busWires inputToIndex outputToIndex)
   joinLines instances
 
 -- Main code generator: Circuit → SystemVerilog module
@@ -385,10 +425,11 @@ def toSystemVerilog (c : Circuit) : String :=
       (portListStr, inputSectionStr, outputSectionStr)
 
   -- Get wire declarations, combinational assignments, and always blocks
+  let busWires := getBusWires c
   let wireDecls := generateWireDeclarations c
-  let combAssigns := generateCombAssignments c inputToIndex outputToIndex
-  let alwaysBlocks := generateAlwaysBlocks c inputToIndex outputToIndex
-  let instanceBlocks := generateInstances c inputToIndex outputToIndex
+  let combAssigns := generateCombAssignments c busWires inputToIndex outputToIndex
+  let alwaysBlocks := generateAlwaysBlocks c busWires inputToIndex outputToIndex
+  let instanceBlocks := generateInstances c busWires inputToIndex outputToIndex
 
   -- Build module
   joinLines [

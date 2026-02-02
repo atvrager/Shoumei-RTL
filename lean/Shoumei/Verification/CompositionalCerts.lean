@@ -53,6 +53,27 @@ def queueRAM_64x6_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- QueueRAM_2x8: 2-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
+def queueRAM_2x8_cert : CompositionalCert := {
+  moduleName := "QueueRAM_2x8"
+  dependencies := ["Decoder1", "Mux2x8"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueueRAM_4x8: 4-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
+def queueRAM_4x8_cert : CompositionalCert := {
+  moduleName := "QueueRAM_4x8"
+  dependencies := ["Decoder2", "Mux4x8"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- Queue4_8: 4-entry queue with 8-bit data (structural differences prevent direct LEC) -/
+def queue4_8_cert : CompositionalCert := {
+  moduleName := "Queue4_8"
+  dependencies := ["QueueRAM_4x8", "QueuePointer_2", "QueueCounterUpDown_3"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
 /-! ## RISC-V Renaming -/
 
 /-- PhysRegFile_64x32: Physical register file (64 registers × 32 bits) -/
@@ -92,8 +113,11 @@ def allCerts : List CompositionalCert := [
   register91_cert,
   queue64_32_cert,
   queue64_6_cert,
+  queue4_8_cert,
   queueRAM_64x32_cert,
   queueRAM_64x6_cert,
+  queueRAM_2x8_cert,
+  queueRAM_4x8_cert,
   -- Renaming
   physregfile_cert,
   rat_cert,
