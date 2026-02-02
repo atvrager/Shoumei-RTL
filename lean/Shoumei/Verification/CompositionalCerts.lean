@@ -74,6 +74,13 @@ def queue4_8_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- Register24 = Register16 + Register8 (hierarchical) -/
+def register24_cert : CompositionalCert := {
+  moduleName := "Register24"
+  dependencies := ["Register16", "Register8"]
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-! ## RISC-V Renaming -/
 
 /-- PhysRegFile_64x32: Physical register file (64 registers × 32 bits) -/
@@ -106,10 +113,20 @@ def rs4_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }
 
+/-! ## RISC-V Retirement -/
+
+/-- ROB16: 16-entry reorder buffer for in-order commit -/
+def rob16_cert : CompositionalCert := {
+  moduleName := "ROB16"
+  dependencies := ["Register24", "QueuePointer_4", "QueueCounterUpDown_5", "Decoder4", "Comparator6", "Mux16x6", "Mux16x5"]
+  proofReference := "Shoumei.RISCV.Retirement.ROBProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
   -- Sequential
+  register24_cert,
   register91_cert,
   queue64_32_cert,
   queue64_6_cert,
@@ -123,7 +140,9 @@ def allCerts : List CompositionalCert := [
   rat_cert,
   freelist_cert,
   -- Execution
-  rs4_cert
+  rs4_cert,
+  -- Retirement
+  rob16_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

@@ -1,7 +1,7 @@
 # RV32IM Tomasulo CPU - Implementation Plan
 
 **Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
-**Last Updated:** 2026-02-01 (Phase 5 Complete - Integer + Memory Execution Units, 64/64 Modules at 100% LEC)
+**Last Updated:** 2026-02-01 (Phase 6 Complete - ROB & Retirement, 71/71 Modules at 100% LEC)
 
 ---
 
@@ -26,8 +26,8 @@
 | Phase 2: Decoder | ✅ Complete | 2 weeks | RV32I instruction decoder |
 | Phase 3: Renaming | ✅ Complete | 8 weeks | RAT + Free List + PhysRegFile + RenameStage |
 | Phase 4: Reservation Stations | ✅ Complete | 5 weeks | RS4 verified, Decoupled interfaces, Tests |
-| **Phase 5: Execution Units** | **✅ Complete** | **2 weeks** | **Integer + Memory execution units** |
-| Phase 6: ROB & Retirement | ⏸️ Pending | 3-4 weeks | In-order commit logic |
+| Phase 5: Execution Units | ✅ Complete | 2 weeks | Integer + Memory execution units |
+| **Phase 6: ROB & Retirement** | **✅ Complete** | **1 day** | **16-entry ROB, commit logic, flush** |
 | Phase 7: Memory System | ⏸️ Pending | 2-3 weeks | LSU with store buffer |
 | Phase 8: Integration | ⏸️ Pending | 4-6 weeks | Complete CPU |
 | Phase 9: Verification | ⏸️ Pending | 3-4 weeks | Compliance tests |
@@ -1185,19 +1185,196 @@ The execution units output format (CDB broadcast) is designed for this integrati
 
 ---
 
-## Phase 6: Reorder Buffer & Retirement
+## Phase 6: Reorder Buffer & Retirement - ✅ COMPLETE
 
-**Goal:** In-order commit with precise exceptions
+**Status:** ROB16 verified with 50 behavioral tests, compositional LEC
+**Last Updated:** 2026-02-01
+**Timeline:** 1 day (significantly ahead of 3-4 week estimate)
 
-**Tasks:**
-1. ROB circular buffer
-2. Commit logic (head pointer management)
-3. Exception handling
-4. Architectural state update
-5. Prove ROB maintains program order
+**Goal:** In-order commit with precise exceptions, branch misprediction recovery
 
-**Timeline:** 3-4 weeks
-**Deliverable:** Verified ROB with commit logic
+### Architecture Decisions
+
+- **ROB depth**: 16 entries (4-bit pointers)
+- **Result storage**: Tomasulo-style (CDB writes PhysRegFile directly, ROB tracks completion only)
+- **Recovery scope**: Full branch misprediction recovery (committed RAT + flush)
+- **Commit width**: 1 instruction per cycle
+
+### Phase 6A: Prerequisite Submodules ✅ COMPLETE
+
+Added 6 new building blocks to `GenerateAll.lean`:
+
+| Module | Gates | Purpose |
+|--------|-------|---------|
+| Decoder4 (4→16) | 80 | Alloc/commit one-hot decode |
+| QueuePointer_4 | 28 | Head/tail wrapping counters |
+| QueueCounterUpDown_5 | 65 | Entry count (0..16) |
+| Register24 (hierarchical) | 0 (2 inst) | Per-entry storage (16+8 composition) |
+| Mux16x6 | 360 | Head physRd/oldPhysRd readout |
+| Mux16x5 | 300 | Head archRd readout |
+
+All verified via direct LEC, except Register24 (compositional: Register16 + Register8).
+
+### Phase 6B: ROB Behavioral Model ✅ COMPLETE
+
+**File:** `lean/Shoumei/RISCV/Retirement/ROB.lean`
+
+#### ROBEntry (24 bits per entry)
+
+| Bits | Width | Field |
+|------|-------|-------|
+| 0 | 1 | valid |
+| 1 | 1 | complete |
+| 2-7 | 6 | physRd |
+| 8 | 1 | hasPhysRd |
+| 9-14 | 6 | oldPhysRd |
+| 15 | 1 | hasOldPhysRd |
+| 16-20 | 5 | archRd |
+| 21 | 1 | exception |
+| 22 | 1 | isBranch |
+| 23 | 1 | branchMispredicted |
+
+#### Core Operations
+
+1. **`allocate`** - Write new entry at tail, advance tail, increment count. Returns `Option (Fin 16)` (None if full)
+2. **`cdbBroadcast`** - Parallel scan all 16 entries: if `valid && !complete && hasPhysRd && physRd == cdb_tag`, set `complete := true`, propagate exception/misprediction flags
+3. **`commit`** - If head entry is valid+complete: return entry data, clear valid, advance head, decrement count. Returns `Option ROBEntry`
+4. **`flush`** / **`fullFlush`** - Clear all entries, reset pointers (full flush for misprediction recovery)
+5. **`commitStep`** - Combined commit + committed RAT update in single operation
+
+#### CommittedRATState (for recovery)
+
+```lean
+structure CommittedRATState where
+  mapping : Fin 32 -> Fin 64  -- archReg -> physReg, updated at commit only
+```
+
+On misprediction: copy committed RAT → speculative RAT.
+
+### Phase 6C: ROB Test Suite ✅ COMPLETE
+
+**File:** `lean/Shoumei/RISCV/Retirement/ROBTest.lean`
+
+**50 concrete tests, all verified with `native_decide`:**
+
+| Category | Tests | Coverage |
+|----------|-------|----------|
+| Allocation | 5 | Empty alloc, tail advance, field storage, full stall |
+| CDB Broadcast | 6 | Tag match, no match, invalid skip, already complete, exception, misprediction |
+| Commit | 6 | Head commit, advance head, decrement count, empty none, incomplete blocks, deallocates old phys |
+| FIFO Ordering | 4 | A-B-C order, physRd roundtrip, pointer wraparound, 16-entry fill |
+| State Queries | 7 | isEmpty, isFull, count accurate, initial state, single alloc count |
+| Branch/Flush | 7 | isBranch stored, misprediction via CDB, full flush, flush resets count, flush preserves nothing |
+| Committed RAT | 5 | Commit updates mapping, no-dest skip, initial identity, recovery restore, selective update |
+| CommitStep Integration | 5 | Valid commit, empty skip, incomplete blocks, RAT update, dealloc tag |
+| Edge Cases | 5 | Zero-value fields, max physRd, all flags set, rapid alloc-commit, fresh entry not complete |
+
+### Phase 6D: ROB16 Structural Circuit ✅ COMPLETE
+
+**File:** `lean/Shoumei/RISCV/Retirement/ROB.lean` (structural section)
+
+#### Instance Summary (40 total)
+
+| Instance | Module | Count | Purpose |
+|----------|--------|-------|---------|
+| u_entry0..15 | Register24 | 16 | Entry storage |
+| u_head | QueuePointer_4 | 1 | Head pointer |
+| u_tail | QueuePointer_4 | 1 | Tail pointer |
+| u_count | QueueCounterUpDown_5 | 1 | Count register |
+| u_alloc_dec | Decoder4 | 1 | Tail → one-hot allocation |
+| u_commit_dec | Decoder4 | 1 | Head → one-hot commit |
+| u_cmp0..15 | Comparator6 | 16 | CDB tag matching |
+| u_mux_physrd | Mux16x6 | 1 | Head physRd readout |
+| u_mux_oldphysrd | Mux16x6 | 1 | Head oldPhysRd readout |
+| u_mux_archrd | Mux16x5 | 1 | Head archRd readout |
+
+#### Gate Logic (851 gates)
+
+- Per-entry (x16): alloc_we (AND), cdb_match (4 AND + NOT), commit_clear (AND), flush_clear (OR), next-state MUX chains (~30 MUX gates per entry)
+- Global: alloc_idx BUF (4), head single-bit readout AND/OR trees (7 fields x 31 gates), full/empty detection (~6 gates)
+
+#### Ports
+
+**Inputs (36):**
+- clock, reset, zero, one (4)
+- alloc_en, alloc_physRd[5:0], alloc_hasPhysRd, alloc_oldPhysRd[5:0], alloc_hasOldPhysRd, alloc_archRd[4:0], alloc_isBranch (21)
+- cdb_valid, cdb_tag[5:0], cdb_exception, cdb_mispredicted (9)
+- commit_en, flush_en (2)
+
+**Outputs (30):**
+- full, empty (2)
+- head_valid, head_complete, head_exception, head_isBranch, head_mispredicted (5)
+- head_physRd[5:0], head_hasPhysRd (7)
+- head_oldPhysRd[5:0], head_hasOldPhysRd (7)
+- head_archRd[4:0] (5)
+- alloc_idx[3:0] (4)
+
+### Verification Status
+
+**LEC Coverage:** 71/71 modules verified (100%)
+- 57 direct LEC
+- 14 compositional (including Register24, ROB16)
+
+**Compositional Proof Chain:**
+- Register16 ✓ (direct LEC) → Register24 ✓ (compositional)
+- Register8 ✓ (direct LEC) ↗
+- QueuePointer_4 ✓ (direct LEC) → ROB16 ✓ (compositional)
+- QueueCounterUpDown_5 ✓ (direct LEC) ↗
+- Decoder4 ✓ (direct LEC) ↗
+- Comparator6 ✓ (direct LEC) ↗
+- Mux16x6 ✓ (direct LEC) ↗
+- Mux16x5 ✓ (direct LEC) ↗
+
+**Structural Proofs (ROBProofs.lean):**
+- ✓ rob16_input_count (36 inputs)
+- ✓ rob16_output_count (30 outputs)
+- ✓ rob16_instance_count (40 instances)
+- ✓ rob16_gate_count (851 gates)
+- ✓ rob16_uses_verified_blocks (all instances from verified deps)
+- ✓ rob16_unique_instances (no duplicate instance names)
+
+### Files Created
+
+**Behavioral Model + Structural Circuit:**
+- `lean/Shoumei/RISCV/Retirement/ROB.lean`
+
+**Test Suite:**
+- `lean/Shoumei/RISCV/Retirement/ROBTest.lean` (50 tests)
+
+**Proofs:**
+- `lean/Shoumei/RISCV/Retirement/ROBProofs.lean` (6 structural theorems + compositional cert)
+
+**Modified:**
+- `GenerateAll.lean` - Added 8 new entries (6 prereq submodules + Register24 + ROB16)
+- `lean/Shoumei/Verification/CompositionalCerts.lean` - Added Register24 + ROB16 certs
+- `verification/run-lec.sh` - Added `-m MODULE` flag for targeted verification
+
+### Tooling Improvement
+
+Added `-m MODULE` flag to `run-lec.sh` for targeted verification:
+```bash
+./verification/run-lec.sh -m ROB16        # Verify ROB16 + transitive deps only
+./verification/run-lec.sh -m ROB16 -m RAT_32x6  # Multiple targets
+```
+
+Resolves transitive dependencies from compositional certificates, verifies in topological order. Reduces verification time from ~2min (all 71 modules) to ~15s (ROB16 + 10 deps).
+
+### Integration with Tomasulo Architecture
+
+**ROB receives from CDB:**
+- CDB tag + exception flag + misprediction flag
+- Marks matching entry as complete
+
+**ROB outputs to commit path:**
+- Head entry fields (physRd, oldPhysRd, archRd, flags)
+- Commit triggers: architectural register file update, free list deallocation
+
+**Branch misprediction recovery:**
+- Committed RAT maintains architectural state (updated only at commit)
+- On misprediction: copy committed RAT → speculative RAT, flush ROB
+
+**Completed:** 2026-02-01
+**Deliverable:** ✅ Verified 16-entry ROB with commit logic, CDB snooping, branch recovery, 100% LEC
 
 ---
 
@@ -1268,7 +1445,7 @@ The execution units output format (CDB broadcast) is designed for this integrati
 
 **Total: ~43 weeks (~11 months) for complete verified RV32IM Tomasulo CPU**
 
-**Current Progress:** 24 weeks complete (Phase 0-5 complete)
+**Current Progress:** 25 weeks complete (Phase 0-6 complete)
 
 This is an ambitious timeline for a single developer. With a team of 2-3, could be reduced to 6-8 months.
 
@@ -1276,7 +1453,7 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 5 Complete, Ready for Phase 6
+**Status:** Active Development - Phase 6 Complete, Ready for Phase 7
 **Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
 **Project:** Shoumei RTL - Formally Verified Hardware Design
@@ -1291,9 +1468,13 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 - ✅ Phase 4C: RS4 Behavioral Tests (11 concrete tests, 9 axioms documented)
 - ✅ Phase 5A: Execution Unit Structural Circuits (IntegerExecUnit + MemoryExecUnit)
 - ✅ Phase 5B: Execution Unit Test Suites (50+ concrete tests, all passing)
+- ✅ Phase 6A: ROB Prerequisite Submodules (6 new building blocks)
+- ✅ Phase 6B: ROB Behavioral Model (ROBEntry, ROBState, CommittedRAT)
+- ✅ Phase 6C: ROB Test Suite (50 concrete tests, all native_decide)
+- ✅ Phase 6D: ROB16 Structural Circuit (851 gates + 40 instances, compositionally verified)
 
-**Current Phase:** Phase 6 - Reorder Buffer & Retirement (ready to begin)
+**Current Phase:** Phase 7 - Memory System (ready to begin)
 
-**Verification Status:** 64/64 modules verified (52 LEC + 12 compositional = 100% coverage)
+**Verification Status:** 71/71 modules verified (57 LEC + 14 compositional = 100% coverage)
 
-**Next Milestone:** Phase 6 - ROB circular buffer, commit logic, precise exceptions
+**Next Milestone:** Phase 7 - Load-store unit with store buffer

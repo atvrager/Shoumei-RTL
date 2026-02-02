@@ -1,11 +1,35 @@
 #!/bin/bash
 # Logical Equivalence Checking with Yosys
 # Provides detailed diagnostics on success or failure
+#
+# Usage:
+#   ./run-lec.sh                    # Verify all modules
+#   ./run-lec.sh -m ROB16           # Verify ROB16 + its dependencies only
+#   ./run-lec.sh -m ROB16 -m RAT_32x6  # Verify multiple targets + deps
 
 set -e
 
-LEAN_DIR="${1:-output/sv-from-lean}"
-CHISEL_DIR="${2:-output/sv-from-chisel}"
+LEAN_DIR="output/sv-from-lean"
+CHISEL_DIR="output/sv-from-chisel"
+declare -a TARGET_MODULES=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -m|--module)
+            TARGET_MODULES+=("$2")
+            shift 2
+            ;;
+        *)
+            # Legacy positional args: first is LEAN_DIR, second is CHISEL_DIR
+            if [ -z "${_POS_1+x}" ]; then
+                LEAN_DIR="$1"; _POS_1=1
+            else
+                CHISEL_DIR="$1"
+            fi
+            shift
+            ;;
+    esac
+done
 
 # Colors
 GREEN='\033[0;32m'
@@ -94,6 +118,45 @@ for module in $TOPO_SORTED_MODULES; do
     done
 done
 LEAN_MODULES=$(echo "$LEAN_MODULES" | sed '/^$/d')  # Remove empty lines
+
+# If -m flag given, filter to only target modules + transitive dependencies
+if [ ${#TARGET_MODULES[@]} -gt 0 ]; then
+    echo "Target module(s): ${TARGET_MODULES[*]}"
+    echo "Resolving transitive dependencies..."
+
+    # Collect all required modules (targets + transitive deps)
+    declare -A REQUIRED_MODULES
+    declare -a QUEUE=("${TARGET_MODULES[@]}")
+    while [ ${#QUEUE[@]} -gt 0 ]; do
+        current="${QUEUE[0]}"
+        QUEUE=("${QUEUE[@]:1}")
+        [ -n "${REQUIRED_MODULES[$current]+x}" ] && continue
+        REQUIRED_MODULES["$current"]=1
+        # Add its dependencies to the queue
+        if [ -n "${COMPOSITIONAL_CERTS[$current]}" ]; then
+            IFS='|' read -r deps _proof <<< "${COMPOSITIONAL_CERTS[$current]}"
+            IFS=',' read -ra DEP_ARRAY <<< "$deps"
+            for dep in "${DEP_ARRAY[@]}"; do
+                dep=$(echo "$dep" | xargs)
+                [ -n "$dep" ] && QUEUE+=("$dep")
+            done
+        fi
+    done
+
+    # Filter LEAN_MODULES to only required modules (preserving topo order)
+    FILTERED=""
+    while IFS= read -r file; do
+        mod=$(basename "$file" .sv)
+        mod=$(basename "$mod" .v)
+        if [ -n "${REQUIRED_MODULES[$mod]+x}" ]; then
+            FILTERED="$FILTERED"$'\n'"$file"
+        fi
+    done <<< "$LEAN_MODULES"
+    LEAN_MODULES=$(echo "$FILTERED" | sed '/^$/d')
+    echo "  ${#REQUIRED_MODULES[@]} module(s) to verify (including dependencies)"
+    echo ""
+fi
+
 MODULE_COUNT=$(echo "$LEAN_MODULES" | wc -l)
 echo "Sorted $MODULE_COUNT modules in dependency order"
 echo "Verification order:"

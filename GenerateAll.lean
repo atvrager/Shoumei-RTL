@@ -43,12 +43,16 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
 
+-- Phase 6: Retirement
+import Shoumei.RISCV.Retirement.ROB
+
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
 open Shoumei.RISCV.Renaming
 open Shoumei.RISCV.Execution
+open Shoumei.RISCV.Retirement
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -79,6 +83,7 @@ def allCircuits : List Circuit := [
   mkDecoder 1,
   mkDecoder 2,
   mkDecoder 3,
+  mkDecoder 4,   -- Phase 6: ROB allocation decode (4→16 one-hot)
   mkDecoder 5,
   mkDecoder 6,
   mkComparatorN 6,
@@ -86,6 +91,8 @@ def allCircuits : List Circuit := [
   mkMux4x8,
   mkMuxTree 4 6,
   mkMuxTree 4 32,
+  mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
+  mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMux32x6,
   mkMux64x32,
   mkMuxTree 64 6,
@@ -104,9 +111,11 @@ def allCircuits : List Circuit := [
   mkQueueRAM 64 32,
   mkQueuePointer 1,
   mkQueuePointer 2,
+  mkQueuePointer 4,  -- Phase 6: ROB head/tail pointers
   mkQueuePointer 6,
   mkQueueCounterUpDown 2,
   mkQueueCounterUpDown 3,
+  mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
   mkQueueCounterUpDown 7,
   -- Power-of-2 register building blocks (verified via LEC)
   mkRegisterN 1,
@@ -117,6 +126,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 32,
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
+  mkRegisterNHierarchical 24,  -- Phase 6: ROB entry storage (16+8)
   mkRegister91Hierarchical,
 
   -- Phase 4: RISC-V Components
@@ -128,7 +138,10 @@ def allCircuits : List Circuit := [
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
   mkMemoryExecUnit,
-  mkReservationStation4
+  mkReservationStation4,
+
+  -- Phase 6: Retirement
+  mkROB16
 ]
 
 def main : IO Unit := do
