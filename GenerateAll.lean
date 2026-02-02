@@ -46,6 +46,9 @@ import Shoumei.RISCV.Execution.ReservationStation
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
 
+-- Phase 7: Memory
+import Shoumei.RISCV.Memory.StoreBuffer
+
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
@@ -53,6 +56,7 @@ open Shoumei.Circuits.Sequential
 open Shoumei.RISCV.Renaming
 open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
+open Shoumei.RISCV.Memory
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -91,6 +95,8 @@ def allCircuits : List Circuit := [
   mkMux4x8,
   mkMuxTree 4 6,
   mkMuxTree 4 32,
+  mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
+  mkMuxTree 8 32, -- Phase 7: Store buffer forwarding/dequeue data
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMux32x6,
@@ -111,10 +117,12 @@ def allCircuits : List Circuit := [
   mkQueueRAM 64 32,
   mkQueuePointer 1,
   mkQueuePointer 2,
+  mkQueuePointer 3,  -- Phase 7: Store buffer head/tail pointers
   mkQueuePointer 4,  -- Phase 6: ROB head/tail pointers
   mkQueuePointer 6,
   mkQueueCounterUpDown 2,
   mkQueueCounterUpDown 3,
+  mkQueueCounterUpDown 4,  -- Phase 7: Store buffer entry count (0..8)
   mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
   mkQueueCounterUpDown 7,
   -- Power-of-2 register building blocks (verified via LEC)
@@ -127,6 +135,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
   mkRegisterNHierarchical 24,  -- Phase 6: ROB entry storage (16+8)
+  mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
   mkRegister91Hierarchical,
 
   -- Phase 4: RISC-V Components
@@ -141,7 +150,10 @@ def allCircuits : List Circuit := [
   mkReservationStation4,
 
   -- Phase 6: Retirement
-  mkROB16
+  mkROB16,
+
+  -- Phase 7: Memory
+  mkStoreBuffer8
 ]
 
 def main : IO Unit := do

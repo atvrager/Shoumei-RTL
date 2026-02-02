@@ -154,12 +154,14 @@ def generateIOBundle (c : Circuit) (_ : Bool) (ctx : ChiselContext) : String :=
   if ctx.useIOBundle then
     let inputDecl := s!"  val inputs = IO(Input(Vec({filteredInputs.length}, Bool())))"
     let outputDecl := s!"  val outputs = IO(Output(Vec({c.outputs.length}, Bool())))"
-    let decList := implicitDecls ++ [inputDecl, outputDecl]
+    let dontTouchDecl := s!"  dontTouch(outputs)"
+    let decList := implicitDecls ++ [inputDecl, outputDecl, dontTouchDecl]
     joinLines decList
   else
     let inputDecls := filteredInputs.map (fun w => s!"  val {w.name} = IO(Input(Bool()))")
     let outputDecls := c.outputs.map (fun w => s!"  val {w.name} = IO(Output(Bool()))")
-    joinLines (implicitDecls ++ inputDecls ++ outputDecls)
+    let dontTouchDecls := c.outputs.map (fun w => s!"  dontTouch({w.name})")
+    joinLines (implicitDecls ++ inputDecls ++ outputDecls ++ dontTouchDecls)
 
 -- Generate combinational logic (wire declarations + assignments for comb gates)
 def generateCombLogic (ctx : ChiselContext) (c : Circuit) : String :=

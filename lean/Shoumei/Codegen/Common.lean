@@ -52,6 +52,7 @@ def makeComment (lang : String) (comment : String) : String :=
   | _ => s!"# {comment}"
 
 -- Helper: find all clock wires (from DFF gates and instance connections)
+-- Only returns wires that are actual circuit inputs (not internal derived wires)
 def findClockWires (c : Circuit) : List Wire :=
   -- Find clocks from DFF gates
   let dffClocks := c.gates.filterMap (fun g =>
@@ -68,9 +69,11 @@ def findClockWires (c : Circuit) : List Wire :=
       if portName == "clock" then some wire else none
     ) |>.head?
   )
-  (dffClocks ++ instClocks).eraseDups
+  -- Filter to only include actual circuit inputs (not internal wires)
+  (dffClocks ++ instClocks).eraseDups.filter (fun w => c.inputs.any (fun i => i.name == w.name))
 
 -- Helper: find all reset wires (from DFF gates and instance connections)
+-- Only returns wires that are actual circuit inputs (not internal derived wires)
 def findResetWires (c : Circuit) : List Wire :=
   -- Find resets from DFF gates
   let dffResets := c.gates.filterMap (fun g =>
@@ -87,6 +90,7 @@ def findResetWires (c : Circuit) : List Wire :=
       if portName == "reset" then some wire else none
     ) |>.head?
   )
-  (dffResets ++ instResets).eraseDups
+  -- Filter to only include actual circuit inputs (not internal wires)
+  (dffResets ++ instResets).eraseDups.filter (fun w => c.inputs.any (fun i => i.name == w.name))
 
 end Shoumei.Codegen

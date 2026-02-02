@@ -12,22 +12,24 @@ open Shoumei
 
 -- Comparator4 structural properties
 theorem comparator4_structure :
-  mkComparator4.gates.length = 41 ∧  -- Detailed breakdown:
-                                      -- 4 NOT (b_inv) + 20 RCA + 3 OR tree + 1 NOT (eq)
-                                      -- + 1 OR (ltu buf) + 6 signed lt + 3 gtu + 2 gt
-                                      -- + 1 eq_inv (shared)
+  mkComparator4.gates.length = 44 ∧  -- Detailed breakdown:
+                                      -- 4 NOT (b_inv) + 20 RCA + 3 OR tree
+                                      -- + 1 NOT (eq_raw) + 1 BUF (eq)
+                                      -- + 1 BUF (ltu_raw) + 1 BUF (ltu)
+                                      -- + 6 signed lt + 1 BUF (lt)
+                                      -- + 3 gtu + 2 gt + 1 eq_inv (shared)
   mkComparator4.inputs.length = 9 ∧
   mkComparator4.outputs.length = 5 := by native_decide
 
 -- Comparator8 structural properties
 theorem comparator8_structure :
-  mkComparator8.gates.length = 69 ∧
+  mkComparator8.gates.length = 72 ∧
   mkComparator8.inputs.length = 17 ∧
   mkComparator8.outputs.length = 5 := by native_decide
 
 -- Comparator32 structural properties
 theorem comparator32_structure :
-  mkComparator32.gates.length = 237 ∧
+  mkComparator32.gates.length = 240 ∧
   mkComparator32.inputs.length = 65 ∧
   mkComparator32.outputs.length = 5 := by native_decide
 

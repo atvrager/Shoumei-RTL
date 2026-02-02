@@ -76,12 +76,17 @@ def mkComparatorN (n : Nat) : Circuit :=
 
   -- Equality detection: diff == 0 means all bits are 0
   -- OR all diff bits, then NOT the result
+  -- Use intermediate wires to avoid reading output ports (firtool strips read-back outputs)
   let any_diff := Wire.mk "any_diff"
   let or_tree_gates := mkOrTree diff any_diff
-  let eq_gate := Gate.mkNOT any_diff eq
+  let eq_raw := Wire.mk "eq_raw"
+  let eq_gate := Gate.mkNOT any_diff eq_raw
+  let eq_buf := Gate.mkBUF eq_raw eq
 
   -- Unsigned less-than: just use borrow (buffer it to output)
-  let ltu_gate := Gate.mkBUF borrow ltu
+  let ltu_raw := Wire.mk "ltu_raw"
+  let ltu_gate := Gate.mkBUF borrow ltu_raw
+  let ltu_buf := Gate.mkBUF ltu_raw ltu
 
   -- Signed less-than: lt = (a[n-1] & ~b[n-1]) | (~(a[n-1] XOR b[n-1]) & diff[n-1])
   let a_sign := a[n - 1]!
@@ -95,36 +100,39 @@ def mkComparatorN (n : Nat) : Circuit :=
   let signs_same := Wire.mk "signs_same"    -- ~(a[n-1] XOR b[n-1])
   let same_sign_cmp := Wire.mk "same_sign_cmp"  -- signs_same & diff[n-1]
 
+  let lt_raw := Wire.mk "lt_raw"
   let lt_gates := [
     Gate.mkNOT b_sign b_sign_inv,
     Gate.mkAND a_sign b_sign_inv a_neg_b_pos,
     Gate.mkXOR a_sign b_sign signs_xor,
     Gate.mkNOT signs_xor signs_same,
     Gate.mkAND signs_same diff_sign same_sign_cmp,
-    Gate.mkOR a_neg_b_pos same_sign_cmp lt
+    Gate.mkOR a_neg_b_pos same_sign_cmp lt_raw
   ]
+  let lt_buf := Gate.mkBUF lt_raw lt
 
-  -- Greater than (unsigned): ~eq & ~ltu
+  -- Greater than (unsigned): ~eq & ~ltu (use raw wires, not output ports)
   let eq_inv := Wire.mk "eq_inv"
   let ltu_inv := Wire.mk "ltu_inv"
   let gtu_gates := [
-    Gate.mkNOT eq eq_inv,
-    Gate.mkNOT ltu ltu_inv,
+    Gate.mkNOT eq_raw eq_inv,
+    Gate.mkNOT ltu_raw ltu_inv,
     Gate.mkAND eq_inv ltu_inv gtu
   ]
 
-  -- Greater than (signed): ~eq & ~lt
+  -- Greater than (signed): ~eq & ~lt (use raw wire, not output port)
   let lt_inv := Wire.mk "lt_inv"
   let gt_gates := [
-    Gate.mkNOT lt lt_inv,
+    Gate.mkNOT lt_raw lt_inv,
     Gate.mkAND eq_inv lt_inv gt
   ]
 
   { name := s!"Comparator{n}"
     inputs := a ++ b ++ [one]
     outputs := [eq, lt, ltu, gt, gtu]
-    gates := not_gates ++ rca_gates ++ or_tree_gates ++ [eq_gate, ltu_gate]
-             ++ lt_gates ++ gtu_gates ++ gt_gates
+    gates := not_gates ++ rca_gates ++ or_tree_gates
+             ++ [eq_gate, eq_buf, ltu_gate, ltu_buf]
+             ++ lt_gates ++ [lt_buf] ++ gtu_gates ++ gt_gates
     instances := []
   }
 
