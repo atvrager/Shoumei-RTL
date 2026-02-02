@@ -47,10 +47,14 @@ echo "Loading compositional verification certificates from Lean..."
 while IFS='|' read -r module deps proof; do
     # Skip empty lines
     [[ -z "$module" ]] && continue
+    # Trim whitespace
+    module=$(echo "$module" | xargs)
+    deps=$(echo "$deps" | xargs)
+    proof=$(echo "$proof" | xargs)
     # Store module in associative array
     COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-done < <(lake exe export_verification_certs --stdout 2>/dev/null)
-echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificates from Lean"
+done < <(lake exe export_verification_certs 2>/dev/null || true)
+echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
 echo ""
 
 # Create temporary working directory
@@ -106,17 +110,38 @@ verify_module() {
     if [ -n "${COMPOSITIONAL_CERTS[$MODULE_NAME]}" ]; then
         echo "  Method: Compositional (Lean proof)"
         echo ""
-        echo -e "${GREEN}✓ COMPOSITIONALLY VERIFIED${NC}"
         IFS='|' read -r deps proof <<< "${COMPOSITIONAL_CERTS[$MODULE_NAME]}"
-        echo ""
-        echo "  Dependencies: $deps"
-        echo "  Lean proof: $proof"
-        echo "  Note: Skipping LEC (too large, verified by Lean compositional reasoning)"
-        echo ""
-        # Record as compositionally verified
-        echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
-        echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
-        return 0
+
+        # Check that all dependencies are verified
+        local ALL_DEPS_VERIFIED=1
+        local MISSING_DEPS=""
+        IFS=',' read -ra DEP_ARRAY <<< "$deps"
+        for dep in "${DEP_ARRAY[@]}"; do
+            dep=$(echo "$dep" | xargs)  # trim whitespace
+            if ! grep -q "^${dep}$" "$VERIFIED_MODULES_FILE" 2>/dev/null; then
+                ALL_DEPS_VERIFIED=0
+                MISSING_DEPS="$MISSING_DEPS $dep"
+            fi
+        done
+
+        if [ $ALL_DEPS_VERIFIED -eq 1 ]; then
+            echo -e "${GREEN}✓ COMPOSITIONALLY VERIFIED${NC}"
+            echo ""
+            echo "  Dependencies: $deps"
+            echo "  All dependencies verified: ✓"
+            echo "  Lean proof: $proof"
+            echo "  Note: Skipping full LEC (verified by compositional reasoning)"
+            echo ""
+            # Record as compositionally verified
+            echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
+            echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
+            return 0
+        else
+            echo -e "${YELLOW}⚠ COMPOSITIONAL VERIFICATION INCOMPLETE${NC}"
+            echo "  Missing dependencies:$MISSING_DEPS"
+            echo "  Attempting full LEC instead..."
+            echo ""
+        fi
     fi
 
     # Check if this is a sequential circuit
