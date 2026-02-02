@@ -62,8 +62,8 @@ file_to_component() {
         Circuits/Combinational/Comparator*.lean)       echo "Comparator" ;;
         Circuits/Combinational/LogicUnit*.lean)        echo "LogicUnit" ;;
         Circuits/Combinational/Shifter*.lean)          echo "Shifter" ;;
-        Circuits/Combinational/ALU*.lean)              echo "ALU32" ;;
         Circuits/Combinational/ALUBitVec*.lean)        echo "ALU-BitVec-Bridge" ;;
+        Circuits/Combinational/ALU*.lean)              echo "ALU32" ;;
         Circuits/Combinational/Decoder*.lean)          echo "Decoder" ;;
         Circuits/Combinational/MuxTree*.lean)          echo "MuxTree" ;;
         Circuits/Combinational/Arbiter*.lean)          echo "Arbiter" ;;
