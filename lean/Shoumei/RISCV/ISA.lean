@@ -111,6 +111,15 @@ inductive OpType where
   | FENCE  : OpType  -- Fence instruction
   | ECALL  : OpType  -- Environment call
   | EBREAK : OpType  -- Environment break
+  -- M extension: Multiply/Divide
+  | MUL    : OpType  -- Multiply low: rd = (rs1 * rs2)[31:0]
+  | MULH   : OpType  -- Multiply high signed: rd = (signed(rs1) * signed(rs2))[63:32]
+  | MULHSU : OpType  -- Multiply high signed-unsigned: rd = (signed(rs1) * unsigned(rs2))[63:32]
+  | MULHU  : OpType  -- Multiply high unsigned: rd = (unsigned(rs1) * unsigned(rs2))[63:32]
+  | DIV    : OpType  -- Divide signed: rd = signed(rs1) / signed(rs2)
+  | DIVU   : OpType  -- Divide unsigned: rd = unsigned(rs1) / unsigned(rs2)
+  | REM    : OpType  -- Remainder signed: rd = signed(rs1) % signed(rs2)
+  | REMU   : OpType  -- Remainder unsigned: rd = unsigned(rs1) % unsigned(rs2)
   deriving Repr, BEq, DecidableEq
 
 instance : ToString OpType where
@@ -125,6 +134,8 @@ instance : ToString OpType where
     | .SB => "SB" | .SH => "SH" | .SW => "SW"
     | .LUI => "LUI" | .AUIPC => "AUIPC"
     | .FENCE => "FENCE" | .ECALL => "ECALL" | .EBREAK => "EBREAK"
+    | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU" | .MULHU => "MULHU"
+    | .DIV => "DIV" | .DIVU => "DIVU" | .REM => "REM" | .REMU => "REMU"
 
 /-- Parse OpType from instruction name (uppercase) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -169,6 +180,15 @@ def OpType.fromString (s : String) : Option OpType :=
   | "FENCE"  => some .FENCE
   | "ECALL"  => some .ECALL
   | "EBREAK" => some .EBREAK
+  -- M extension
+  | "MUL"    => some .MUL
+  | "MULH"   => some .MULH
+  | "MULHSU" => some .MULHSU
+  | "MULHU"  => some .MULHU
+  | "DIV"    => some .DIV
+  | "DIVU"   => some .DIVU
+  | "REM"    => some .REM
+  | "REMU"   => some .REMU
   | _        => none
 
 /--

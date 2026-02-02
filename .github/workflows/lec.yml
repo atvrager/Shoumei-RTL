@@ -59,11 +59,7 @@ jobs:
 
       - name: Build LEAN and generate code
         run: |
-          lake build
-          cd third_party/riscv-opcodes && PYTHONPATH=src python3 -m riscv_opcodes -c 'rv_i' 'rv32_i'
-          cd "$GITHUB_WORKSPACE"
-          lake exe codegen
-          lake exe generate_riscv_decoder
+          make codegen
 
       - name: Compile Chisel
         run: |

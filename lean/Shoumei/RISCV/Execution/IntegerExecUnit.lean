@@ -71,6 +71,9 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .SB | .SH | .SW => 0  -- Stores (handled by MemoryUnit)
   | .LUI | .AUIPC => 0  -- Upper immediates (special handling)
   | .FENCE | .ECALL | .EBREAK => 0  -- System ops (special handling)
+  -- M extension operations (handled by MulDivExecUnit)
+  | .MUL | .MULH | .MULHSU | .MULHU => 0
+  | .DIV | .DIVU | .REM | .REMU => 0
 
 /-! ## Behavioral Model -/
 

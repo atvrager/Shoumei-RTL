@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel systemc lec eqy smoke-test verify help setup check-tools opcodes
+.PHONY: all clean lean codegen chisel systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -11,6 +11,10 @@ export PATH := $(HOME)/.elan/bin:$(HOME)/.local/share/coursier/bin:$(PATH)
 HAS_LAKE := $(shell command -v lake 2> /dev/null)
 HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
+
+# Configurable RISC-V extension list for opcode generation
+# Default includes M extension. Override with: make opcodes RISCV_EXTS="rv_i rv32_i"
+RISCV_EXTS ?= rv_i rv32_i rv_m
 
 # Default target: run entire pipeline
 all: check-tools lean codegen chisel systemc lec
@@ -25,7 +29,9 @@ help:
 	@echo "  make setup      - Run bootstrap.py to install all dependencies"
 	@echo "  make all        - Run entire pipeline (lean → chisel → systemc → lec)"
 	@echo "  make lean       - Build LEAN code with Lake"
-	@echo "  make opcodes    - Generate RISC-V instruction definitions (RV32I)"
+	@echo "  make opcodes      - Generate RISC-V instruction definitions (default: RV32I)"
+	@echo "  make opcodes-rv32i  - Generate RV32I instruction definitions"
+	@echo "  make opcodes-rv32im - Generate RV32IM instruction definitions (with M extension)"
 	@echo "  make codegen    - Run code generators (SV + Chisel + SystemC)"
 	@echo "  make chisel     - Compile Chisel to SystemVerilog"
 	@echo "  make systemc    - Compile SystemC modules"
@@ -79,32 +85,30 @@ endif
 	lake build
 
 # Generate RISC-V instruction definitions from riscv-opcodes
+# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m)
 opcodes:
-	@echo "==> Generating RISC-V instruction definitions (RV32I)..."
+	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
-		PYTHONPATH=src python3 -m riscv_opcodes -c 'rv_i' 'rv32_i' && \
+		PYTHONPATH=src python3 -m riscv_opcodes -c $(RISCV_EXTS) && \
 		echo "    Generated instr_dict.json with $$(python3 -c 'import json; print(len(json.load(open("instr_dict.json"))))') instructions"
+
+# Convenience targets for common configurations
+opcodes-rv32i: RISCV_EXTS = rv_i rv32_i
+opcodes-rv32i: opcodes
+
+opcodes-rv32im: RISCV_EXTS = rv_i rv32_i rv_m
+opcodes-rv32im: opcodes
 
 # Run code generators
 codegen: lean opcodes
 	@echo "==> Running code generators..."
-	@echo "    Phase 0+1: Foundation and arithmetic circuits (SV + Chisel)..."
-	lake exe codegen
-	@echo "    Phase 1b: Decoders (SV + Chisel)..."
-	lake exe generate_decoder
-	@echo "    Phase 1c: MuxTrees (SV + Chisel)..."
-	lake exe generate_muxtree
-	@echo "    Phase 2: RV32I decoder (SV + Chisel)..."
+	@echo "    Phase 1: All circuits (SV + Chisel + SystemC)..."
+	lake exe generate_all
+	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM)..."
 	lake exe generate_riscv_decoder
-	@echo "    Phase 3A: Multi-entry queue (QueueN) (SV + Chisel)..."
-	lake exe generate_queuen
-	@echo "    Phase 3B: Register Alias Table (RAT) (SV + Chisel)..."
-	lake exe generate_rat
-	@echo "    Phase 3: SystemC code generation..."
-	lake exe codegen_systemc
 
 # Compile Chisel to SystemVerilog
-# Main.scala auto-discovers all generated modules (including RV32IDecoder)
+# Main.scala auto-discovers all generated modules (including RV32I/RV32IM decoders)
 chisel:
 ifndef HAS_SBT
 	@echo "Error: sbt not found. Cannot build Chisel code."

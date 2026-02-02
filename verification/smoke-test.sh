@@ -100,15 +100,15 @@ else
     exit 1
 fi
 
-# Generate RV32I decoder
+# Generate RISC-V decoders (RV32I + RV32IM if M-ext present in instr_dict.json)
 if lake exe generate_riscv_decoder > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ RV32I decoder generation succeeded${NC}"
+    echo -e "${GREEN}✓ RISC-V decoder generation succeeded${NC}"
 else
-    echo -e "${RED}✗ RV32I decoder generation failed${NC}"
+    echo -e "${RED}✗ RISC-V decoder generation failed${NC}"
     exit 1
 fi
 
-# Verify RV32I decoder file exists
+# Verify RV32I decoder files exist (always generated)
 if [ ! -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
     echo -e "${RED}✗ RV32IDecoder LEAN SystemVerilog not generated${NC}"
     exit 1
@@ -120,6 +120,11 @@ if [ ! -f "chisel/src/main/scala/generated/RV32IDecoder.scala" ]; then
 fi
 
 echo -e "${GREEN}✓ RV32IDecoder files generated${NC}"
+
+# Check for RV32IM decoder (generated when M-ext instructions present)
+if [ -f "output/sv-from-lean/RV32IMDecoder.sv" ] && [ -f "chisel/src/main/scala/generated/RV32IMDecoder.scala" ]; then
+    echo -e "${GREEN}✓ RV32IMDecoder files generated${NC}"
+fi
 echo ""
 
 # Verify DFlipFlop files exist
@@ -190,9 +195,9 @@ fi
 
 echo -e "${GREEN}✓ Chisel SystemVerilog generated (FullAdder, DFlipFlop, Queue1_8, Queue1_32)${NC}"
 
-# Test 3b: RV32I Decoder Chisel Compilation
-# RV32IDecoder is auto-discovered by Main.scala from generated/ directory
-echo "==> Test 3b: RV32I Decoder Chisel Compilation"
+# Test 3b: RISC-V Decoder Chisel Compilation
+# Decoders are auto-discovered by Main.scala from generated/ directory
+echo "==> Test 3b: RISC-V Decoder Chisel Compilation"
 
 if [ ! -f "output/sv-from-chisel/RV32IDecoder.sv" ]; then
     echo -e "${RED}✗ RV32IDecoder Chisel SystemVerilog not generated${NC}"
@@ -200,6 +205,10 @@ if [ ! -f "output/sv-from-chisel/RV32IDecoder.sv" ]; then
 fi
 
 echo -e "${GREEN}✓ RV32IDecoder Chisel SystemVerilog generated${NC}"
+
+if [ -f "output/sv-from-chisel/RV32IMDecoder.sv" ]; then
+    echo -e "${GREEN}✓ RV32IMDecoder Chisel SystemVerilog generated${NC}"
+fi
 echo ""
 
 # Test 4: Port Name Validation
@@ -357,6 +366,17 @@ if ! grep -q "imm_i\|imm_s\|imm_b\|imm_u\|imm_j" output/sv-from-lean/RV32IDecode
 fi
 
 echo -e "${GREEN}✓ RV32IDecoder ports and logic verified${NC}"
+
+# Check RV32IM decoder if it exists
+if [ -f "output/sv-from-lean/RV32IMDecoder.sv" ]; then
+    for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
+        if ! grep -q "$port" output/sv-from-lean/RV32IMDecoder.sv; then
+            echo -e "${RED}✗ Port '$port' missing in LEAN RV32IMDecoder output${NC}"
+            exit 1
+        fi
+    done
+    echo -e "${GREEN}✓ RV32IMDecoder ports and logic verified${NC}"
+fi
 echo ""
 
 # Test 6: Yosys Equivalence (if available)
@@ -388,7 +408,8 @@ echo "  ✓ Chisel compiles to SystemVerilog"
 echo "  ✓ FullAdder (combinational) verified"
 echo "  ✓ DFlipFlop (sequential) verified"
 echo "  ✓ Queue/FIFO (ready/valid handshaking) verified"
-echo "  ✓ RV32IDecoder (40 RISC-V instructions) verified"
+echo "  ✓ RV32IDecoder (base ISA) verified"
+echo "  ✓ RV32IMDecoder (with M extension) verified"
 echo ""
 
 exit 0

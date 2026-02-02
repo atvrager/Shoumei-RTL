@@ -117,6 +117,81 @@ def executeALU (op : OpType) (a b : UInt32) : UInt32 :=
         a >>> shamtU32
   | _ => 0  -- Not an ALU op
 
+/-! ## M Extension: Multiply/Divide Operations -/
+
+/-- Convert Int to UInt32 (handling negative values via two's complement) -/
+private def intToUInt32 (x : Int) : UInt32 :=
+  UInt32.ofNat ((x % (2^32 : Int)).toNat)
+
+/-- Execute M-extension multiply/divide operation.
+    All operations take rs1 and rs2 as 32-bit values.
+    Signed interpretation uses toInt32.
+
+    Edge cases per RISC-V spec:
+    - DIV/REM by zero: DIV returns -1 (0xFFFFFFFF), REM returns dividend
+    - DIVU/REMU by zero: DIVU returns 2^32-1 (0xFFFFFFFF), REMU returns dividend
+    - Signed overflow (-2^31 / -1): DIV returns -2^31 (0x80000000), REM returns 0
+-/
+def executeMulDiv (op : OpType) (a b : UInt32) : UInt32 :=
+  match op with
+  | .MUL =>
+      -- Lower 32 bits of product
+      let prod := a.toNat * b.toNat
+      UInt32.ofNat (prod % (2^32))
+  | .MULH =>
+      -- Upper 32 bits of signed * signed
+      let sa := toInt32 a
+      let sb := toInt32 b
+      let prod := sa * sb
+      -- Arithmetic right shift by 32 to get upper bits
+      intToUInt32 (prod / (2^32 : Int))
+  | .MULHSU =>
+      -- Upper 32 bits of signed * unsigned
+      let sa := toInt32 a
+      let ub := (b.toNat : Int)
+      let prod := sa * ub
+      intToUInt32 (prod / (2^32 : Int))
+  | .MULHU =>
+      -- Upper 32 bits of unsigned * unsigned
+      let prod := a.toNat * b.toNat
+      UInt32.ofNat (prod / (2^32))
+  | .DIV =>
+      -- Signed division
+      if b == 0 then
+        0xFFFFFFFF  -- Division by zero: result is -1
+      else
+        let sa := toInt32 a
+        let sb := toInt32 b
+        if sa == -(2^31 : Int) && sb == -1 then
+          -- Overflow: -2^31 / -1 doesn't fit in 32 bits -> result is -2^31
+          0x80000000
+        else
+          intToUInt32 (sa / sb)
+  | .DIVU =>
+      -- Unsigned division
+      if b == 0 then
+        0xFFFFFFFF  -- Division by zero: result is 2^32 - 1
+      else
+        UInt32.ofNat (a.toNat / b.toNat)
+  | .REM =>
+      -- Signed remainder
+      if b == 0 then
+        a  -- Division by zero: result is dividend
+      else
+        let sa := toInt32 a
+        let sb := toInt32 b
+        if sa == -(2^31 : Int) && sb == -1 then
+          0  -- Overflow: -2^31 % -1 = 0
+        else
+          intToUInt32 (sa % sb)
+  | .REMU =>
+      -- Unsigned remainder
+      if b == 0 then
+        a  -- Division by zero: result is dividend
+      else
+        UInt32.ofNat (a.toNat % b.toNat)
+  | _ => 0  -- Not a MulDiv op
+
 /-! ## Instruction Execution -/
 
 /-- Execute a single decoded instruction -/
@@ -130,6 +205,16 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
       let val1 := state.readReg rs1
       let val2 := state.readReg rs2
       let result := executeALU decoded.opType val1 val2
+      .ok (state.writeReg rd result |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- M-extension (register-register multiply/divide)
+  | .MUL | .MULH | .MULHSU | .MULHU | .DIV | .DIVU | .REM | .REMU =>
+    match decoded.rd, decoded.rs1, decoded.rs2 with
+    | some rd, some rs1, some rs2 =>
+      let val1 := state.readReg rs1
+      let val2 := state.readReg rs2
+      let result := executeMulDiv decoded.opType val1 val2
       .ok (state.writeReg rd result |>.nextPC)
     | _, _, _ => .illegalInstruction
 

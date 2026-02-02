@@ -877,4 +877,20 @@ def mkReservationStation4 : Circuit :=
 /-- RS4 alias for common usage -/
 def rs4 : Circuit := mkReservationStation4
 
+/-- Build MulDiv Reservation Station (4 entries).
+
+    Structurally identical to the integer RS - same entry format,
+    same CDB snooping, same ready-select-dispatch logic. The only
+    difference is the circuit name for code generation and LEC.
+
+    This is a separate RS so the MulDiv execution unit has its own
+    dispatch queue, keeping it fully modular (removable when M
+    extension is disabled via CPUConfig). -/
+def mkMulDivRS4 : Circuit :=
+  let base := mkReservationStation4
+  { base with name := "MulDivRS4" }
+
+/-- MulDivRS4 alias for common usage -/
+def mulDivRS4 : Circuit := mkMulDivRS4
+
 end Shoumei.RISCV.Execution

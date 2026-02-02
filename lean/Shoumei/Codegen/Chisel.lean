@@ -331,33 +331,166 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
       else
         portBase
 
--- Generate submodule instantiation with chunking for connections
+/-! ## Bulk Vec Connection Helpers -/
+
+-- Helper: get the _wires array index for a wire, if it resolves to _wires(idx)
+def getWireArrayIdx (ctx : ChiselContext) (w : Wire) : Option Nat :=
+  if !ctx.useWireArray then none
+  else
+    -- Must not be a register
+    match ctx.regToIndex.find? (fun p => p.fst.name == w.name) with
+    | some _ => none
+    | none =>
+      -- Must not be an IO port (when using IO bundle)
+      if ctx.useIOBundle then
+        match ctx.inputToIndex.find? (fun p => p.fst.name == w.name) with
+        | some _ => none
+        | none =>
+          match ctx.outputToIndex.find? (fun p => p.fst.name == w.name) with
+          | some _ => none
+          | none =>
+            ctx.wireToIndex.find? (fun p => p.fst.name == w.name) |>.map Prod.snd
+      else
+        ctx.wireToIndex.find? (fun p => p.fst.name == w.name) |>.map Prod.snd
+
+-- Group port map entries by bracket base name.
+-- Returns (groups, standalone_entries) where groups are (baseName, sorted list of (portIndex, wire))
+def groupPortMapEntries (entries : List (String × Wire))
+    : (List (String × List (Nat × Wire)) × List (String × Wire)) :=
+  let result := entries.foldl (fun acc entry =>
+    let grps := acc.fst
+    let stand := acc.snd
+    let portName := entry.fst
+    let wire := entry.snd
+    match parseBracketNotation portName with
+    | some (base, idx) =>
+      match grps.find? (fun p => p.fst == base) with
+      | some _ =>
+        let grps' := grps.map (fun p => if p.fst == base then (p.fst, (idx, wire) :: p.snd) else p)
+        (grps', stand)
+      | none =>
+        ((base, [(idx, wire)]) :: grps, stand)
+    | none =>
+      (grps, (portName, wire) :: stand)
+  ) (([] : List (String × List (Nat × Wire))), ([] : List (String × Wire)))
+  -- Sort each group by port index
+  let sortedGroups := result.fst.map (fun p =>
+    (p.fst, p.snd.toArray.qsort (fun a b => a.fst < b.fst) |>.toList))
+  (sortedGroups, result.snd.reverse)
+
+-- Check if a sorted group of (portIndex, wire) pairs has contiguous _wires indices.
+-- Returns some(wireArrayStart) if wire[i] → _wires(start + i) for all i.
+def checkContiguousWires (ctx : ChiselContext) (group : List (Nat × Wire)) : Option Nat :=
+  match group with
+  | [] => none
+  | (_, firstWire) :: rest =>
+    match getWireArrayIdx ctx firstWire with
+    | some firstIdx =>
+      let allContiguous := rest.enum.all (fun pair =>
+        let i := pair.fst
+        let w := pair.snd.snd
+        match getWireArrayIdx ctx w with
+        | some idx => idx == firstIdx + (i + 1)
+        | none => false)
+      if allContiguous then some firstIdx else none
+    | none => none
+
+/-! ## Instance Connection Generation -/
+
+-- Split a sorted group of (portIndex, wire) entries into contiguous sub-ranges.
+-- Returns a list of connection strings: foreach loops for contiguous runs, individual lines otherwise.
+private def generateGroupConnections (ctx : ChiselContext) (instName baseName : String)
+    (entries : List (Nat × Wire)) : List String :=
+  let rec go (es : List (Nat × Wire)) (fuel : Nat) : List String :=
+    match fuel, es with
+    | 0, _ => []  -- fuel exhausted
+    | _, [] => []
+    | fuel' + 1, (portIdx, wire) :: rest =>
+      match getWireArrayIdx ctx wire with
+      | some wireIdx =>
+        -- Try to extend a contiguous run
+        let rec extend (rs : List (Nat × Wire)) (n : Nat) : Nat × List (Nat × Wire) :=
+          match rs with
+          | (nextPort, nextWire) :: rest2 =>
+            if nextPort == portIdx + n then
+              match getWireArrayIdx ctx nextWire with
+              | some nextWireIdx =>
+                if nextWireIdx == wireIdx + n then
+                  extend rest2 (n + 1)
+                else (n, rs)
+              | none => (n, rs)
+            else (n, rs)
+          | [] => (n, [])
+        let (count, remaining) := extend rest 1
+        if count >= 4 then
+          -- Emit foreach loop for contiguous range of 4+ entries
+          let line := "  (0 until " ++ toString count ++ ").foreach " ++ "{ i => " ++
+            instName ++ "." ++ baseName ++ "(" ++ toString portIdx ++ " + i) <> _wires(" ++
+            toString wireIdx ++ " + i) }"
+          line :: go remaining fuel'
+        else
+          -- Too short for a loop, emit individually
+          let short := (portIdx, wire) :: rest.take (count - 1)
+          let indiv := short.map (fun (idx, w) =>
+            s!"  {instName}.{baseName}({idx}) <> {wireRef ctx w}")
+          indiv ++ go (rest.drop (count - 1)) fuel'
+      | none =>
+        -- Wire not in _wires array, emit individually
+        let line := s!"  {instName}.{baseName}({portIdx}) <> {wireRef ctx wire}"
+        line :: go rest fuel'
+  go entries (entries.length + 1)
+
+-- Generate submodule instantiation with bulk Vec connections for bracketed port groups
 def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
-
-  -- Find clock/reset wires (these are already declared as Clock/AsyncReset types)
   let clockWires := findClockWires c
   let resetWires := findResetWires c
 
-  -- Handle port connections
-  -- Construct port name from portMap
-  let connections := inst.portMap.map (fun (portBaseName, wire) =>
+  -- Try to group port map entries by bracket base name for bulk connections
+  let (groups, standaloneEntries) := groupPortMapEntries inst.portMap
+
+  -- Generate connection lines for bracketed groups (foreach loops + individual)
+  let groupConns := groups.map (fun p =>
+    generateGroupConnections ctx inst.instName p.fst p.snd) |>.flatten
+
+  -- Generate connection lines for standalone entries (clock, reset, etc.)
+  let standConns := standaloneEntries.map (fun entry =>
+    let portName := entry.fst
+    let wire := entry.snd
     let wRef := wireRef ctx wire
-    let portRef := constructPortRef portBaseName wire.name
-    -- Add type conversion for clock/reset ports ONLY if wire is not already Clock/AsyncReset
+    let portRef := constructPortRef portName wire.name
     let wRefConverted :=
-      if (portBaseName == "clock" || portRef == "clock") && !clockWires.contains wire then
+      if (portName == "clock" || portRef == "clock") && !clockWires.contains wire then
         s!"{wRef}.asClock"
-      else if (portBaseName == "reset" || portRef == "reset") && !resetWires.contains wire then
+      else if (portName == "reset" || portRef == "reset") && !resetWires.contains wire then
         s!"{wRef}.asAsyncReset"
       else wRef
     s!"  {inst.instName}.{portRef} <> {wRefConverted}"
   )
-  
-  if connections.length <= chunkSize then
-    (joinLines ([instDecl] ++ connections), "")
+
+  -- Generate non-bracketed connections (for instances without bracket notation)
+  let nonBracketConns := if groups.isEmpty then
+    inst.portMap.map (fun entry =>
+      let portBaseName := entry.fst
+      let wire := entry.snd
+      let wRef := wireRef ctx wire
+      let portRef := constructPortRef portBaseName wire.name
+      let wRefConverted :=
+        if (portBaseName == "clock" || portRef == "clock") && !clockWires.contains wire then
+          s!"{wRef}.asClock"
+        else if (portBaseName == "reset" || portRef == "reset") && !resetWires.contains wire then
+          s!"{wRef}.asAsyncReset"
+        else wRef
+      s!"  {inst.instName}.{portRef} <> {wRefConverted}")
+  else []
+
+  let allConns := groupConns ++ standConns ++ nonBracketConns
+
+  -- Always apply chunking if connection count exceeds threshold
+  if allConns.length <= chunkSize then
+    (joinLines ([instDecl] ++ allConns), "")
   else
-    let chunks := chunkList connections chunkSize
+    let chunks := chunkList allConns chunkSize
     let helperMethods := chunks.enum.map (fun ⟨idx, chunk⟩ =>
       joinLines [
         s!"  private def connect_{inst.instName}_{idx}(): Unit = " ++ "{",

@@ -65,10 +65,12 @@ def genChiselDecoderCase (instrDef : InstructionDef) : String :=
   "    .elsewhen((instr & " ++ maskHex ++ ".U) === " ++ matchHex ++ ".U) {\n      io.optype := OpType." ++ opName ++ "\n      io.valid := true.B\n    }"
 
 /-- Generate complete Chisel decoder module -/
-def genChiselDecoder (defs : List InstructionDef) : String :=
+def genChiselDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
+  -- Derive unique package name per decoder to avoid OpType conflicts
+  let packageName := "shoumei.riscv." ++ moduleName.toLower
   let header :=
-"//==============================================================================
-// RV32I Instruction Decoder
+s!"//==============================================================================
+// {moduleName} - Instruction Decoder
 // Generated from riscv-opcodes definitions
 //
 // This module decodes 32-bit RISC-V instructions and extracts:
@@ -77,7 +79,7 @@ def genChiselDecoder (defs : List InstructionDef) : String :=
 // - Immediate values (sign-extended to 32 bits)
 //==============================================================================
 
-package shoumei.riscv
+package {packageName}
 
 import chisel3._
 import chisel3.util._
@@ -87,30 +89,23 @@ import chisel3.util._
   let enumDecl := genChiselOpTypeEnum defs
 
   let bundleDecl :=
-"
-
-class DecoderIO extends Bundle {
-  val instr  = Input(UInt(32.W))    // 32-bit instruction word
-  val optype = Output(OpType())     // Decoded operation type
-  val rd     = Output(UInt(5.W))    // Destination register
-  val rs1    = Output(UInt(5.W))    // Source register 1
-  val rs2    = Output(UInt(5.W))    // Source register 2
-  val imm    = Output(SInt(32.W))   // Immediate value (sign-extended)
-  val valid  = Output(Bool())       // Instruction is valid RV32I
-}
-
-class RV32IDecoder extends RawModule {
-  val io = IO(new DecoderIO)
-
-  val instr = io.instr
-
-  // Extract register fields
-  io.rd  := instr(11, 7)
-  io.rs1 := instr(19, 15)
-  io.rs2 := instr(24, 20)
-
-  // Extract immediate values for each format
-"
+    "\n\nclass " ++ moduleName ++ "IO extends Bundle {\n" ++
+    "  val instr  = Input(UInt(32.W))    // 32-bit instruction word\n" ++
+    "  val optype = Output(OpType())     // Decoded operation type\n" ++
+    "  val rd     = Output(UInt(5.W))    // Destination register\n" ++
+    "  val rs1    = Output(UInt(5.W))    // Source register 1\n" ++
+    "  val rs2    = Output(UInt(5.W))    // Source register 2\n" ++
+    "  val imm    = Output(SInt(32.W))   // Immediate value (sign-extended)\n" ++
+    "  val valid  = Output(Bool())       // Instruction is valid\n" ++
+    "}\n\n" ++
+    "class " ++ moduleName ++ " extends RawModule {\n" ++
+    "  val io = IO(new " ++ moduleName ++ "IO)\n\n" ++
+    "  val instr = io.instr\n\n" ++
+    "  // Extract register fields\n" ++
+    "  io.rd  := instr(11, 7)\n" ++
+    "  io.rs1 := instr(19, 15)\n" ++
+    "  io.rs2 := instr(24, 20)\n\n" ++
+    "  // Extract immediate values for each format\n"
 
   let immExtractors := String.intercalate "\n" [
     genChiselImmediateExtractor "I",
@@ -164,8 +159,8 @@ class RV32IDecoder extends RawModule {
   ]
 
 /-- Write Chisel decoder to file -/
-def writeChiselDecoder (defs : List InstructionDef) (outputPath : String) : IO Unit := do
-  let chiselCode := genChiselDecoder defs
+def writeChiselDecoder (defs : List InstructionDef) (outputPath : String) (moduleName : String := "RV32IDecoder") : IO Unit := do
+  let chiselCode := genChiselDecoder defs moduleName
   IO.FS.writeFile outputPath chiselCode
   IO.println s!"Generated Chisel decoder: {outputPath}"
 

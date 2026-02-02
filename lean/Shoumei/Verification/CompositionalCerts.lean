@@ -113,6 +113,36 @@ def rs4_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }
 
+/-! ## M-Extension -/
+
+/-- PipelinedMultiplier: 3-stage pipelined array multiplier -/
+def pipelinedMultiplier_cert : CompositionalCert := {
+  moduleName := "PipelinedMultiplier"
+  dependencies := ["CSACompressor64", "RippleCarryAdder64"]
+  proofReference := "Shoumei.Circuits.Combinational.MultiplierProofs"
+}
+
+/-- Divider32: 32-cycle restoring divider -/
+def divider32_cert : CompositionalCert := {
+  moduleName := "Divider32"
+  dependencies := ["Subtractor32"]
+  proofReference := "Shoumei.Circuits.Sequential.DividerProofs"
+}
+
+/-- MulDivExecUnit: Combined multiply/divide execution unit -/
+def muldivExecUnit_cert : CompositionalCert := {
+  moduleName := "MulDivExecUnit"
+  dependencies := ["PipelinedMultiplier", "Divider32"]
+  proofReference := "Shoumei.RISCV.Execution.MulDivExecUnitProofs"
+}
+
+/-- MulDivRS4: Reservation station for MulDiv operations -/
+def muldivRS4_cert : CompositionalCert := {
+  moduleName := "MulDivRS4"
+  dependencies := ["Register2", "Register91", "Comparator6", "Mux4x6", "Mux4x32", "Decoder2", "PriorityArbiter4"]
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
 /-! ## RISC-V Retirement -/
 
 /-- ROB16: 16-entry reorder buffer for in-order commit -/
@@ -141,6 +171,11 @@ def allCerts : List CompositionalCert := [
   freelist_cert,
   -- Execution
   rs4_cert,
+  -- M-Extension
+  pipelinedMultiplier_cert,
+  divider32_cert,
+  muldivExecUnit_cert,
+  muldivRS4_cert,
   -- Retirement
   rob16_cert
 ]

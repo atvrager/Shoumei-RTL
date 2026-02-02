@@ -57,23 +57,24 @@ def genSCDecoderCase (instrDef : InstructionDef) (isFirst : Bool) : String :=
   "    }"
 
 /-- Generate complete SystemC decoder header file (.h) -/
-def genSystemCDecoderHeader (defs : List InstructionDef) : String :=
+def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let enumDecl := genSCOpTypeEnum defs
+  let guardName := moduleName.toUpper ++ "_H"
 
   String.intercalate "\n" [
     "//==============================================================================",
-    "// RV32I Instruction Decoder - SystemC Model",
+    s!"// {moduleName} - Instruction Decoder - SystemC Model",
     "// Generated from riscv-opcodes definitions",
     "//==============================================================================",
     "",
-    "#ifndef RV32IDECODER_H",
-    "#define RV32IDECODER_H",
+    s!"#ifndef {guardName}",
+    s!"#define {guardName}",
     "",
     "#include <systemc.h>",
     "",
     enumDecl,
     "",
-    "SC_MODULE(RV32IDecoder) {",
+    s!"SC_MODULE({moduleName}) " ++ "{",
     "  // Ports",
     "  sc_in<sc_uint<32>>  io_instr;   // 32-bit instruction word",
     "  sc_out<sc_uint<6>>  io_optype;  // Decoded operation type",
@@ -81,24 +82,24 @@ def genSystemCDecoderHeader (defs : List InstructionDef) : String :=
     "  sc_out<sc_uint<5>>  io_rs1;     // Source register 1",
     "  sc_out<sc_uint<5>>  io_rs2;     // Source register 2",
     "  sc_out<sc_int<32>>  io_imm;     // Immediate value (sign-extended)",
-    "  sc_out<bool>        io_valid;   // Instruction is valid RV32I",
+    "  sc_out<bool>        io_valid;   // Instruction is valid",
     "",
     "  // Process methods",
     "  void comb_logic();",
     "",
     "  // Constructor",
-    "  SC_CTOR(RV32IDecoder) {",
+    s!"  SC_CTOR({moduleName}) " ++ "{",
     "    SC_METHOD(comb_logic);",
     "    sensitive << io_instr;",
     "  }",
     "};",
     "",
-    "#endif // RV32IDECODER_H",
+    s!"#endif // {guardName}",
     ""
   ]
 
 /-- Generate complete SystemC decoder implementation file (.cpp) -/
-def genSystemCDecoderImpl (defs : List InstructionDef) : String :=
+def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let defaultOp := match defs.head? with
     | some firstDef => sanitizeSCIdentifier firstDef.name
     | none => "ADD"
@@ -108,9 +109,9 @@ def genSystemCDecoderImpl (defs : List InstructionDef) : String :=
   let decoderCasesStr := String.intercalate "\n" decoderCases
 
   String.intercalate "\n" [
-    "#include \"RV32IDecoder.h\"",
+    s!"#include \"{moduleName}.h\"",
     "",
-    "void RV32IDecoder::comb_logic() {",
+    s!"void {moduleName}::comb_logic() " ++ "{",
     "  sc_uint<32> instr = io_instr.read();",
     "",
     "  // Extract register fields",
@@ -159,14 +160,14 @@ def genSystemCDecoderImpl (defs : List InstructionDef) : String :=
   ]
 
 /-- Write SystemC decoder header to file -/
-def writeSystemCDecoderHeader (defs : List InstructionDef) (outputPath : String) : IO Unit := do
-  let scCode := genSystemCDecoderHeader defs
+def writeSystemCDecoderHeader (defs : List InstructionDef) (outputPath : String) (moduleName : String := "RV32IDecoder") : IO Unit := do
+  let scCode := genSystemCDecoderHeader defs moduleName
   IO.FS.writeFile outputPath scCode
   IO.println s!"Generated SystemC header:         {outputPath}"
 
 /-- Write SystemC decoder implementation to file -/
-def writeSystemCDecoderImpl (defs : List InstructionDef) (outputPath : String) : IO Unit := do
-  let scCode := genSystemCDecoderImpl defs
+def writeSystemCDecoderImpl (defs : List InstructionDef) (outputPath : String) (moduleName : String := "RV32IDecoder") : IO Unit := do
+  let scCode := genSystemCDecoderImpl defs moduleName
   IO.FS.writeFile outputPath scCode
   IO.println s!"Generated SystemC implementation:  {outputPath}"
 

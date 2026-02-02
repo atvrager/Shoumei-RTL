@@ -132,4 +132,25 @@ def mkRippleCarryAdder4 : Circuit :=
     instances := []
   }
 
+-- 64-bit ripple-carry adder (flat construction, same pattern as RCA32)
+-- Used by the pipelined multiplier for final 64-bit addition
+def mkRippleCarryAdder64 : Circuit :=
+  let a := makeIndexedWires "a" 64
+  let b := makeIndexedWires "b" 64
+  let sum := makeIndexedWires "sum" 64
+
+  -- Carry chain: 64 internal carries
+  let internal_carries := makeIndexedWires "c" 64
+  let cin := Wire.mk "cin"
+  let carries := cin :: internal_carries
+
+  let gates := buildFullAdderChain a b carries sum ""
+
+  { name := "RippleCarryAdder64"
+    inputs := a ++ b ++ [cin]
+    outputs := sum
+    gates := gates
+    instances := []
+  }
+
 end Shoumei.Circuits.Combinational
