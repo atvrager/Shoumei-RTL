@@ -51,12 +51,21 @@ open Shoumei.RISCV
     addr = base + offset
 
     Both loads and stores use the same address calculation.
+
+    For negative offsets, converts to two's complement representation:
+    - offset = -100 → 0xFFFFFF9C (4294967196 in decimal)
+    - Then performs 32-bit modular addition
 -/
 def calculateMemoryAddress
     (base : UInt32)  -- rs1 value
     (offset : Int)   -- Sign-extended immediate
     : UInt32 :=
-  let offset_u32 := offset.toNat.toUInt32
+  let offset_u32 :=
+    if offset >= 0 then
+      offset.toNat.toUInt32
+    else
+      -- Two's complement: 2^32 + offset (when offset is negative)
+      (4294967296 + offset).toNat.toUInt32
   base + offset_u32
 
 /-! ## Load Operations -/
