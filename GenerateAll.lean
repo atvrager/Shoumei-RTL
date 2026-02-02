@@ -30,6 +30,7 @@ import Shoumei.Circuits.Combinational.Arbiter
 -- Phase 3: Sequential Components
 import Shoumei.Circuits.Sequential.QueueN
 import Shoumei.Circuits.Sequential.QueueComponents
+import Shoumei.Circuits.Sequential.Register
 
 -- Phase 4: RISC-V Components
 -- Note: RISC-V Decoder uses dynamic code generation (not static Circuit)
@@ -79,8 +80,11 @@ def allCircuits : List Circuit := [
   mkDecoder 3,
   mkDecoder 5,
   mkDecoder 6,
+  mkComparatorN 6,
   mkMux2x8,
   mkMux4x8,
+  mkMuxTree 4 6,
+  mkMuxTree 4 32,
   mkMux32x6,
   mkMux64x32,
   mkMuxTree 64 6,
@@ -88,7 +92,7 @@ def allCircuits : List Circuit := [
   mkPriorityArbiter4,
   mkPriorityArbiter8,
 
-  -- Phase 3: Queues
+  -- Phase 3: Queues and Registers
   mkQueueNStructural 2 8,
   mkQueueNStructural 4 8,
   mkQueueNStructural 64 6,
@@ -103,6 +107,8 @@ def allCircuits : List Circuit := [
   mkQueueCounterUpDown 2,
   mkQueueCounterUpDown 3,
   mkQueueCounterUpDown 7,
+  mkRegisterN 2,
+  mkRegisterN 91,
 
   -- Phase 4: RISC-V Components
   -- Note: RV32IDecoder generated separately via generate_riscv_decoder
