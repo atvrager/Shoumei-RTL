@@ -22,12 +22,11 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     GREEN='\033[0;32m'
     RED='\033[0;31m'
     YELLOW='\033[1;33m'
-    CYAN='\033[0;36m'
     BOLD='\033[1m'
     DIM='\033[2m'
     NC='\033[0m'
 else
-    GREEN='' RED='' YELLOW='' CYAN='' BOLD='' DIM='' NC=''
+    GREEN='' RED='' YELLOW='' BOLD='' DIM='' NC=''
 fi
 
 mkdir -p "$REPORT_DIR"
@@ -46,14 +45,15 @@ declare -A COMP_THEOREMS
 declare -A COMP_AXIOMS
 declare -A COMP_SORRY
 declare -A COMP_PROVEN
-declare -A COMP_FILES
 
 # ─── Helpers ────────────────────────────────────────────────
 
 # Map a Lean file path to a component name
 file_to_component() {
     local f="$1"
-    local rel="${f#"$LEAN_DIR"/}"
+    local prefix="$LEAN_DIR/"
+    # shellcheck disable=SC2295
+    local rel="${f#"$prefix"}"
 
     case "$rel" in
         Examples/Adder*.lean)           echo "FullAdder" ;;
@@ -85,13 +85,8 @@ file_to_component() {
     esac
 }
 
-# Increment an associative array value
-inc() {
-    local -n arr=$1
-    local key="$2"
-    local amount="${3:-1}"
-    arr[$key]=$(( ${arr[$key]:-0} + amount ))
-}
+# No helper needed — associative array increments are inlined to avoid
+# shellcheck issues with namerefs (SC2178).
 
 # ─── Scan ───────────────────────────────────────────────────
 
@@ -113,22 +108,23 @@ TOTAL_FILES=${#LEAN_FILES[@]}
 SORRY_LOCATIONS=()
 AXIOM_LOCATIONS=()
 
+PROJECT_PREFIX="$PROJECT_ROOT/"
 for f in "${LEAN_FILES[@]}"; do
     comp=$(file_to_component "$f")
-    rel="${f#"$PROJECT_ROOT"/}"
-    COMP_FILES[$comp]="${COMP_FILES[$comp]:+${COMP_FILES[$comp]}, }$rel"
+    # shellcheck disable=SC2295
+    rel="${f#"$PROJECT_PREFIX"}"
 
     # Count theorems and lemmas (proven declarations)
     thm_count=$(grep -cE '^\s*(theorem|protected theorem|private theorem)\s' "$f" 2>/dev/null || true)
     lem_count=$(grep -cE '^\s*(lemma|protected lemma|private lemma)\s' "$f" 2>/dev/null || true)
     TOTAL_THEOREMS=$((TOTAL_THEOREMS + thm_count))
     TOTAL_LEMMAS=$((TOTAL_LEMMAS + lem_count))
-    inc COMP_THEOREMS "$comp" $((thm_count + lem_count))
+    COMP_THEOREMS["$comp"]=$(( ${COMP_THEOREMS[$comp]:-0} + thm_count + lem_count ))
 
     # Count axioms
     ax_count=$(grep -cE '^\s*axiom\s' "$f" 2>/dev/null || true)
     TOTAL_AXIOMS=$((TOTAL_AXIOMS + ax_count))
-    inc COMP_AXIOMS "$comp" "$ax_count"
+    COMP_AXIOMS["$comp"]=$(( ${COMP_AXIOMS[$comp]:-0} + ax_count ))
 
     # Record axiom locations
     while IFS= read -r line; do
@@ -144,12 +140,12 @@ for f in "${LEAN_FILES[@]}"; do
     sorry_count=$((sorry_count - sorry_comment))
     if [ "$sorry_count" -lt 0 ]; then sorry_count=0; fi
     TOTAL_SORRY=$((TOTAL_SORRY + sorry_count))
-    inc COMP_SORRY "$comp" "$sorry_count"
+    COMP_SORRY["$comp"]=$(( ${COMP_SORRY[$comp]:-0} + sorry_count ))
 
     # Record sorry locations
     while IFS= read -r line; do
         # Skip comment-only lines
-        if echo "$line" | grep -qE '^\s*[0-9]+[:-]\s*--'; then
+        if [[ "$line" =~ ^[[:space:]]*[0-9]+[:-][[:space:]]*-- ]]; then
             continue
         fi
         if [ -n "$line" ]; then
@@ -174,12 +170,12 @@ done
 for comp in "${!COMP_AXIOMS[@]}"; do
     if [ -z "${COMP_THEOREMS[$comp]:-}" ]; then
         COMPONENTS+=("$comp")
-        COMP_THEOREMS[$comp]=0
+        COMP_THEOREMS["$comp"]=0
     fi
 done
 
 # Sort components
-IFS=$'\n' COMPONENTS=($(sort <<<"${COMPONENTS[*]}")); unset IFS
+mapfile -t COMPONENTS < <(printf '%s\n' "${COMPONENTS[@]}" | sort)
 
 for comp in "${COMPONENTS[@]}"; do
     local_thm=${COMP_THEOREMS[$comp]:-0}
@@ -188,7 +184,7 @@ for comp in "${COMPONENTS[@]}"; do
     # Proven = theorems that don't rely on sorry (approximate: total - sorry)
     proven=$((local_thm - local_sorry))
     if [ "$proven" -lt 0 ]; then proven=0; fi
-    COMP_PROVEN[$comp]=$proven
+    COMP_PROVEN["$comp"]=$proven
     TOTAL_PROVEN=$((TOTAL_PROVEN + proven))
 done
 
@@ -227,8 +223,8 @@ echo ""
 
 echo -e "${BOLD}2. Per-Component Coverage${NC}"
 echo ""
-printf "  ${DIM}%-24s %8s %8s %8s %8s${NC}\n" "Component" "Proven" "Axioms" "Sorry" "Coverage"
-printf "  ${DIM}%-24s %8s %8s %8s %8s${NC}\n" "------------------------" "--------" "--------" "--------" "--------"
+printf "  %b%-24s %8s %8s %8s %8s%b\n" "$DIM" "Component" "Proven" "Axioms" "Sorry" "Coverage" "$NC"
+printf "  %b%-24s %8s %8s %8s %8s%b\n" "$DIM" "------------------------" "--------" "--------" "--------" "--------" "$NC"
 
 for comp in "${COMPONENTS[@]}"; do
     local_proven=${COMP_PROVEN[$comp]:-0}
@@ -247,8 +243,8 @@ for comp in "${COMPONENTS[@]}"; do
         color="$YELLOW"
     fi
 
-    printf "  ${color}%-24s %8d %8d %8d %8s${NC}\n" \
-        "$comp" "$local_proven" "$local_ax" "$local_sorry" "$pct"
+    printf "  %b%-24s %8d %8d %8d %8s%b\n" \
+        "$color" "$comp" "$local_proven" "$local_ax" "$local_sorry" "$pct" "$NC"
 done
 echo ""
 
@@ -284,7 +280,7 @@ echo ""
 # For each component, classify its proofs into categories
 # Categories: Structural (gate/port counts), Behavioral (correctness), Protocol (handshaking/ordering)
 printf "  %-24s %12s %12s %12s\n" "Component" "Structural" "Behavioral" "Protocol"
-printf "  %-24s %12s %12s %12s\n" "------------------------" "------------" "------------" "------------"
+printf "  %-24s %12s %12s %12s\n" "--------" "--------" "--------" "--------"
 
 classify_component() {
     local comp="$1"
