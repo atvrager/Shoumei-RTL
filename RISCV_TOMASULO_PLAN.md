@@ -1,7 +1,7 @@
 # RV32IM Tomasulo CPU - Implementation Plan
 
 **Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
-**Last Updated:** 2026-02-01 (Phase 3 Week 7 Complete - RenameStage Integration)
+**Last Updated:** 2026-02-01 (Phase 4B Complete - RS4 Verified, 63/63 Modules at 100% LEC)
 
 ---
 
@@ -24,8 +24,8 @@
 | Phase 0: Sequential DSL | ✅ Complete | 3 weeks | Queue/FIFO with verification |
 | Phase 1: Arithmetic | ✅ Complete | 4 weeks | Complete RV32I ALU |
 | Phase 2: Decoder | ✅ Complete | 2 weeks | RV32I instruction decoder |
-| **Phase 3: Renaming** | **🚧 Week 6/8 Complete** | **8 weeks** | **RAT + Free List + PhysRegFile** |
-| Phase 4: Reservation Stations | ⏸️ Pending | 4-5 weeks | Dynamic scheduling infrastructure |
+| Phase 3: Renaming | ✅ Complete | 8 weeks | RAT + Free List + PhysRegFile + RenameStage |
+| **Phase 4: Reservation Stations** | **🚧 In Progress** | **5 weeks** | **RS4 verified, Decoupled interfaces** |
 | Phase 5: Execution Units | ⏸️ Pending | 3-4 weeks | EU integration with RS/CDB |
 | Phase 6: ROB & Retirement | ⏸️ Pending | 3-4 weeks | In-order commit logic |
 | Phase 7: Memory System | ⏸️ Pending | 2-3 weeks | LSU with store buffer |
@@ -275,11 +275,11 @@ TOTAL:         9 theorems + 4 runtime checks ✓
 
 ---
 
-## Phase 3: Register Renaming Infrastructure - ✅ COMPLETE (Week 7/7)
+## Phase 3: Register Renaming Infrastructure - ✅ COMPLETE
 
 **Goal:** Implement RAT, physical register file, free list with 64 physical registers
 
-**Status:** Week 7 Complete - All components implemented, integrated, and verified
+**Status:** Complete - All components implemented, integrated, and verified
 **Target:** 64 physical registers, 6-bit tags, structural proofs only
 **Timeline:** 8 weeks (prerequisites-first approach)
 
@@ -827,9 +827,9 @@ The rename stage output format should be designed with this in mind.
 
 ---
 
-## Phase 4: Reservation Stations & Decoupled Interfaces - 🚧 IN PROGRESS (Week 1 Complete)
+## Phase 4: Reservation Stations & Decoupled Interfaces - 🚧 IN PROGRESS
 
-**Status:** Week 1/6 Complete - Decoupled Abstraction
+**Status:** RS4 structural circuit verified, Decoupled interfaces complete
 **Last Updated:** 2026-02-01
 
 **Goal:** Implement dynamic scheduling infrastructure with decoupled interface abstraction
@@ -844,26 +844,38 @@ The rename stage output format should be designed with this in mind.
    - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
    - Behavioral semantics: DecoupledTransfer rules
    - Composition axioms and theorems
-2. ⏳ Week 2: Queue refactoring and examples (IN PROGRESS)
-   - Refactor Queue to expose Decoupled interface
-   - Prove basic decoupled properties
-   - Document usage patterns
+2. ✅ Week 2: Queue refactoring and examples (COMPLETE)
+   - Queue1.enqPort/deqPort accessors for Decoupled extraction
+   - mkQueue1Decoupled variant using Decoupled helpers
+   - 13 new structural proofs for Decoupled Queue interface
+   - Comprehensive usage documentation with 5 example patterns
 
-**Deliverable:** Lightweight decoupled abstraction for ready/valid handshaking
+**Deliverable:** ✅ Lightweight decoupled abstraction for ready/valid handshaking
 
-### Phase 4B: Reservation Stations (Week 3-6)
+### Phase 4B: Reservation Stations ✅ STRUCTURAL COMPLETE (Week 3-4)
 
 **Goal:** Dynamic scheduling with operand capture and CDB snooping
 
 **Tasks:**
-1. Reservation station entry structure
-2. Issue logic (operand capture)
-3. CDB snooping and wakeup
-4. Arbitration for execution units
-5. Prove operand forwarding correctness
+1. ✅ RS4 behavioral model (RSEntry, RSState, issue/wakeup/dispatch)
+2. ✅ RS4 structural circuit using verified building blocks:
+   - 4x Register91 (entry storage), Register2 (alloc pointer)
+   - 8x Comparator6 (CDB tag matching, 2 per entry)
+   - PriorityArbiter4 (ready selection)
+   - Mux4x6, Mux4x32 (dispatch output muxing), Decoder2 (allocation select)
+   - Total: 433 gates + 19 instances
+3. ✅ Compositional verification (all dependencies LEC-verified + Lean proof)
+4. ✅ Chisel compilation and LEC verification (100% coverage maintained)
+5. ⏸️ CDB snooping behavioral proofs (deferred)
+6. ⏸️ Operand forwarding correctness proofs (deferred)
 
-**Timeline:** 4 weeks
-**Deliverable:** Verified reservation station array (~20 theorems)
+**Deliverable:** ✅ Verified RS4 structural circuit
+
+### Phase 4C: Remaining Work (Week 5-6)
+
+1. Complete CDB snooping behavioral proofs
+2. Prove operand forwarding correctness
+3. Integration tests with execution units
 
 ---
 
@@ -974,36 +986,21 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 4A Complete, Starting Phase 4B
+**Status:** Active Development - Phase 4B RS4 Verified, Continuing Phase 4C
 **Last Updated:** 2026-02-01
 **Author:** Claude Code (with human guidance)
-**Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
+**Project:** Shoumei RTL - Formally Verified Hardware Design
 
 **Completed Phases:**
 - ✅ Phase 0: Sequential DSL (Queue/FIFO with full verification)
 - ✅ Phase 1: Arithmetic Building Blocks (Complete RV32I ALU, ~3000 gates)
 - ✅ Phase 2: RISC-V Decoder (40 instructions, dual codegen, LEC verified)
 - ✅ Phase 3: Register Renaming Infrastructure (RAT + FreeList + PhysRegFile + RenameStage)
-  - Week 1-3: Prerequisites (Decoder5/6, MuxTree, QueueN)
-  - Week 4: RAT (Register Alias Table, 416 gates, 9 behavioral proofs)
-  - Week 5: FreeList (Free Physical Register List, 3028 gates, 26 proofs)
-  - Week 6: PhysRegFile (Physical Register File, 4160 gates, 18 proofs)
-  - Week 7: RenameStage Integration (15 gates, 3 instances, 18 theorems)
-- ✅ Phase 4A: Decoupled Interface Abstraction (Week 1-2 complete)
-  - Week 1: Core Decoupled types and helpers
-    - DecoupledSource/DecoupledSink types (272 lines)
-    - Helper functions: mkDecoupledInput, mkDecoupledFireGate, connectDecoupled
-    - DecoupledProofs: 11 axioms/theorems for composition (180 lines)
-    - Backward compatible: 47/47 modules still verified
-  - Week 2: Queue refactoring and validation
-    - Queue1.enqPort/deqPort accessors for Decoupled extraction
-    - mkQueue1Decoupled variant using Decoupled helpers
-    - 13 new structural proofs for Decoupled Queue interface
-    - Comprehensive usage documentation with 5 example patterns
-    - Full smoke test: 47/47 modules verified (100% coverage)
+- ✅ Phase 4A: Decoupled Interface Abstraction (ready/valid handshaking)
+- ✅ Phase 4B: RS4 Structural Circuit (433 gates + 19 instances, compositionally verified)
 
-**Current Phase:** Phase 4B - Reservation Stations (Ready to begin Week 1)
+**Current Phase:** Phase 4C - RS4 behavioral proofs and integration
 
-**Verification Status:** 47/47 modules verified (40 LEC + 7 compositional = 100% coverage)
+**Verification Status:** 63/63 modules verified (54 LEC + 9 compositional = 100% coverage)
 
-**Next Milestone:** Phase 4B Week 1 - Reservation Station behavioral model (RSEntry, RSState)
+**Next Milestone:** Phase 4C - CDB snooping proofs, then Phase 5 execution unit integration

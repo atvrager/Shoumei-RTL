@@ -1,389 +1,210 @@
 # Claude Development Context
 
-This file contains development context, architecture decisions, and implementation notes for Claude Code when working on the Shoumei RTL project.
+Instructions and procedures for working on the Shoumei RTL project.
 
-## Project Vision
+## Project Summary
 
-Build a formally verified hardware design flow where:
-- Hardware circuits are defined in a LEAN4-embedded DSL
-- Properties are proven about circuits using theorem proving
-- Code generators produce both SystemVerilog and Chisel from the same proven source
-- Chisel is compiled to SystemVerilog via the standard toolchain (FIRRTL → CIRCT → SystemVerilog)
-- Logical Equivalence Checking (LEC) verifies both SystemVerilog outputs are identical
+Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, dual code generators produce SystemVerilog + Chisel, Yosys LEC verifies equivalence.
 
-This provides **mathematical proof** that our DSL semantics are correctly implemented in both code generators.
+**Current state:** 63 modules, 100% LEC coverage, building toward RV32IM Tomasulo CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
+
+## Key Toolchain Versions
+
+- **Lean 4:** v4.27.0 (controlled by `lean-toolchain`)
+- **Chisel:** 7.7.0 (in `chisel/build.sbt`)
+- **Scala:** 2.13.18 (required for Chisel 7.x)
+- **Yosys:** system package (for LEC)
+
+## Build Commands
+
+```bash
+lake build                          # Build Lean proofs + code generators
+lake exe generate_all               # Generate SV + Chisel + SystemC for all modules
+cd chisel && sbt run && cd ..       # Compile Chisel -> SV via CIRCT
+./verification/run-lec.sh           # Verify Lean SV == Chisel SV
+make all                            # Run entire pipeline
+```
+
+## Procedure: Adding a New Module
+
+This is the core workflow. Every module follows the same pattern. See [docs/adding-a-module.md](docs/adding-a-module.md) for the full walkthrough.
+
+### Summary
+
+1. **Behavioral model** -- Define state type + operations in Lean
+2. **Structural circuit** -- Build `Circuit` from gates and/or `CircuitInstance` submodules
+3. **Proofs** -- Structural (`native_decide`) and behavioral (`simp`, manual tactics)
+4. **Code generation** -- Add to `GenerateAll.lean` circuit list
+5. **Chisel compilation** -- `cd chisel && sbt run` (auto-discovers new modules)
+6. **LEC verification** -- `./verification/run-lec.sh`
+7. **Compositional cert** (if needed) -- Add to `CompositionalCerts.lean` + `ExportVerificationCerts.lean`
+
+### Where files go
+
+| Component | Location |
+|-----------|----------|
+| Combinational circuits | `lean/Shoumei/Circuits/Combinational/` |
+| Sequential circuits | `lean/Shoumei/Circuits/Sequential/` |
+| RISC-V components | `lean/Shoumei/RISCV/` (with subdirs `Execution/`, `Renaming/`) |
+| Proofs | Same directory as circuit, with `Proofs` suffix |
+| Codegen wrappers | Same directory as circuit, with `Codegen` suffix |
+| Compositional certs | `lean/Shoumei/Verification/CompositionalCerts.lean` |
+
+## Procedure: Verification
+
+See [docs/verification-guide.md](docs/verification-guide.md) for full details.
+
+### Direct LEC (most modules)
+
+Yosys compares Lean-generated SV against Chisel-generated SV:
+- **Combinational:** SAT-based miter circuit
+- **Sequential:** Induction-based equivalence (`equiv_make` / `equiv_induct`)
+- Auto-detected by checking for `always @` blocks
+
+### Compositional Verification (large sequential modules)
+
+For modules too large or structurally different for direct SEC:
+1. LEC-verify all building block submodules
+2. Define a `CompositionalCert` in Lean with module name, dependencies, proof reference
+3. Export via `lake exe export_verification_certs`
+4. LEC script loads certs, checks all deps are verified, accepts compositional proof
+
+Currently 9 modules use compositional verification:
+Register91, Queue64_32, Queue64_6, QueueRAM_64x32, QueueRAM_64x6,
+PhysRegFile_64x32, RAT_32x6, FreeList_64, ReservationStation4
+
+### Running verification
+
+```bash
+./verification/run-lec.sh                              # All modules
+./verification/smoke-test.sh                           # Full CI pipeline
+```
+
+## DSL Core Types
+
+Defined in `lean/Shoumei/DSL.lean`:
+
+```lean
+structure Wire where name : String
+inductive GateType where | AND | OR | NOT | XOR | BUF | MUX | DFF
+structure Gate where gateType : GateType; inputs : List Wire; output : Wire
+structure CircuitInstance where moduleName : String; instName : String; portMap : List (String × Wire)
+structure Circuit where name : String; inputs : List Wire; outputs : List Wire;
+                        gates : List Gate; instances : List CircuitInstance
+```
+
+**Two ways to build circuits:**
+- **Flat:** Direct gate lists (good for small combinational circuits)
+- **Hierarchical:** `CircuitInstance` references to other verified modules (good for large/sequential)
+
+## Code Generation Architecture
+
+Three code generators in `lean/Shoumei/Codegen/`:
+
+| Generator | File | Output |
+|-----------|------|--------|
+| SystemVerilog | `SystemVerilog.lean` | `output/sv-from-lean/*.sv` |
+| Chisel | `Chisel.lean` | `chisel/src/main/scala/generated/*.scala` |
+| SystemC | `SystemC.lean` | `output/systemc/*.{h,cpp}` |
+
+Shared utilities in `Common.lean`:
+- `findClockWires` / `findResetWires` -- detect clock/reset from DFF gates AND instance connections
+- Bundled I/O threshold logic for large port counts
+- Wire-to-index mapping
+
+### Adding a circuit to code generation
+
+In `GenerateAll.lean`, add to the `allCircuits` list:
+
+```lean
+def allCircuits : List (String × Circuit) := [
+  ("FullAdder", fullAdderCircuit),
+  ("YourNewModule", yourNewCircuit),
+  ...
+]
+```
+
+The centralized codegen generates SV + Chisel + SystemC for everything in the list.
+
+## Proof Patterns
+
+### Structural proofs (concrete circuits)
+
+```lean
+theorem myCircuit_gate_count : myCircuit.gates.length = 42 := by native_decide
+theorem myCircuit_ports : myCircuit.inputs.length = 5 := by native_decide
+```
+
+### Behavioral proofs (state machines)
+
+```lean
+-- For small state spaces, native_decide works
+theorem queue_fifo : enqueue_then_dequeue preserves_order := by native_decide
+
+-- For generic proofs, use simp + manual tactics
+theorem prf_read_after_write (tag : Fin n) (val : UInt32) :
+    (state.write tag val).read tag = val := by simp [write, read]
+```
+
+### Proof strategies for parameterized circuits
+
+See [docs/proof-strategies.md](docs/proof-strategies.md) for two approaches:
+1. **Structural induction + list lemmas** -- works for all parameterized circuits
+2. **BitVec semantic bridge** -- uses `bv_decide` for arithmetic proofs
 
 ## Architecture Decisions
 
-### Why LEAN4?
+### Why dual generation (SV + Chisel)?
 
-- Modern theorem prover with dependent types
-- Lake build system integrated (as of 2026)
-- FFI support for integration with external tools
-- Strong metaprogramming capabilities for DSL embedding
-- Growing ecosystem and active development (see [LEAN FRO Year 3 Roadmap](https://lean-lang.org/fro/roadmap/y3/))
+- **SystemVerilog from Lean:** Direct translation, proves semantics are correct
+- **Chisel from Lean:** Leverages mature FIRRTL/CIRCT toolchain, more optimized output
+- **LEC between them:** Validates both generators produce equivalent circuits
+- LEC is a sanity check; the real proof is in Lean
 
-### Why Dual Generation (SystemVerilog + Chisel)?
+### Why hierarchical circuits with instances?
 
-1. **SystemVerilog from LEAN**: Direct path, proves our semantics are correct
-2. **Chisel from LEAN**: Leverages mature Chisel/FIRRTL/CIRCT toolchain, more optimized output
-3. **LEC between them**: Validates both generators produce equivalent circuits
+Large sequential modules (Register91, Queue64, PhysRegFile) have structural differences between Lean SV and Chisel SV that make direct SEC fail. Hierarchical composition with `CircuitInstance` solves this:
+- LEC verifies leaf modules directly
+- Lean proves the composition is correct
+- Compositional certificates connect the two
 
-### Build System Strategy
+### Topological sorting in LEC
 
-**Three-tier approach:**
+The LEC script processes modules in dependency order (using `tsort`). This ensures building blocks are verified before the modules that depend on them, so compositional certificates can check their dependency requirements.
 
-1. **LEAN4/Lake** - Primary build system for theorem proving and code generation
-   - **elan** - LEAN toolchain manager (like rustup for Rust)
-     - Manages LEAN installations (`~/.elan/bin/`)
-     - Controlled by `lean-toolchain` file (currently: v4.15.0)
-     - No sudo/system packages required
-     - Installation: `curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh`
-   - Lake is now merged into Lean 4 itself
-   - FFI capabilities for Scala/JVM integration if needed
-   - Configuration in `lakefile.lean`
+## Code Style and Quality
 
-2. **Scala/sbt** - Chisel compilation to SystemVerilog
-   - Standard Chisel workflow: Chisel → FIRRTL → firtool → SystemVerilog
-   - Chisel 6.0+ auto-manages firtool binary
-   - Configuration in `build.sbt`
+### Lean
 
-3. **Top-level orchestration** - TBD (Make, Just, or custom Lake targets)
-   - Coordinates LEAN4 → Chisel generation → sbt build → LEC
-   - Could potentially use Lake's FFI to invoke sbt directly
+- Follow [Lean 4 style guide](https://github.com/leanprover/lean4/blob/master/doc/style.md)
+- No `sorry` in production code (treat as a bug)
+- Use `native_decide` for concrete proofs, `simp` + tactics for generic proofs
+- Keep circuits and proofs in separate files (`Foo.lean` + `FooProofs.lean`)
 
-### Equivalence Checking Tool Choice
+### Scala/Chisel
 
-**Initial: ABC (open-source)**
-- Supports both combinational (CEC) and sequential (SEC) equivalence
-- Free and scriptable
-- Good for development and CI
-
-**Future: Commercial tools**
-- Synopsys Formality (industry standard for LEC)
-- Cadence Conformal AI (AI-enhanced LEC)
-- Siemens Questa SLEC (sequential equivalence)
-
-## Implementation Phases
-
-### Phase 1: Foundation ✅ COMPLETE
-- [x] Project structure setup
-- [x] Basic LEAN4 DSL for combinational circuits (gates, wires, circuits)
-- [x] Operational semantics in LEAN
-- [x] Basic theorem proving infrastructure
-- [x] Dual code generators (SystemVerilog + Chisel)
-- [x] Building blocks library:
-  - FullAdder, RippleCarryAdder (4/8/32-bit)
-  - Subtractor (4/8/32-bit)
-  - Comparator (4/8/32-bit)
-  - LogicUnit (4/8/32-bit)
-  - Shifter (4/32-bit)
-  - ALU32 (10 operations)
-- [x] Sequential circuits: DFlipFlop, Queue (1-element FIFO)
-
-### Phase 2: RISC-V Decoder Integration ✅ COMPLETE
-- [x] Lake build configuration with code generation targets
-- [x] sbt configuration for Chisel compilation
-- [x] Yosys/ABC integration scripts for LEC
-- [x] End-to-end workflow automation
-- [x] RV32I instruction decoder:
-  - 40 RISC-V base integer instructions
-  - Automated parsing from riscv-opcodes
-  - Mask/match pattern decoding
-  - Immediate value extraction (I/S/B/U/J formats)
-- [x] LEC verification: All 20 modules proven equivalent
-  - LEAN SV ≡ Chisel SV (via Yosys SAT solver)
-- [ ] CI pipeline (GitHub Actions)
-
-### Phase 3: DSL Expansion (Next)
-- [ ] More sequential circuits (counters, state machines)
-- [ ] Parameterized circuits with dependent types
-- [ ] Module hierarchy and composition
-- [ ] Correctness theorems (timing, safety properties)
-- [ ] RISC-V CPU datapath integration
-
-### Phase 4: Advanced Features (Future)
-- [ ] Optimization passes with correctness proofs
-- [ ] Clock domain crossing primitives
-- [ ] Memory models (SRAM, BRAM)
-- [ ] Pipeline verification
-- [ ] Industrial-scale examples
-
-## Technical Challenges
-
-### Challenge 1: LEAN4 → Chisel Code Generation
-
-Chisel is Scala-based. Options:
-- Generate Chisel Scala source files (easiest, what we should do initially)
-- Use LEAN4 FFI to invoke Scala/JVM directly (more complex)
-- Generate FIRRTL directly, bypass Chisel (loses Chisel's optimizations)
-
-**Decision**: Generate Chisel Scala source, compile with sbt. Clean separation of concerns.
-
-### Challenge 2: Semantic Equivalence
-
-We need to prove that:
-```
-⟦ DSL Circuit ⟧ ≡ SystemVerilog Semantics ≡ Chisel Semantics
-```
-
-This requires:
-- Formal semantics for our DSL in LEAN
-- Verified code generators with correctness proofs
-- LEC only checks the generated outputs match (not the full proof chain)
-
-LEC is a sanity check; the real proof is in LEAN.
-
-### Challenge 3: FFI and Build System Integration
-
-LEAN4 FFI examples (from research):
-- [LEAN4 FFI Programming Tutorial with GLFW](https://github.com/DSLstandard/Lean4-FFI-Programming-Tutorial-GLFW)
-- [lean4-alloy: Write C shims from within Lean](https://github.com/tydeu/lean4-alloy)
-
-For Scala/JVM integration:
-- Could use Lean FFI → C → JNI → Scala (complex)
-- Or just generate .scala files and shell out to sbt (simple, recommended)
-
-**Decision**: Keep it simple - generate source files, use shell commands.
-
-## Code Organization
-
-### LEAN4 Module Structure
-
-```
-Shoumei/
-├── DSL.lean              -- Core DSL types (Wire, Gate, Circuit, etc.)
-├── Semantics.lean        -- Operational semantics (evaluation functions)
-├── Theorems.lean         -- General theorems about DSL
-├── Codegen/
-│   ├── Common.lean       -- Shared codegen utilities
-│   ├── SystemVerilog.lean -- SV generator with correctness proof
-│   └── Chisel.lean       -- Chisel generator with correctness proof
-├── Circuits/
-│   ├── Combinational.lean -- Combinational circuit library
-│   └── Sequential.lean    -- Sequential circuit library (future)
-└── Examples/
-    ├── Adder.lean
-    ├── Mux.lean
-    └── ALU.lean          -- (future)
-```
-
-### Chisel Runtime Support
-
-The `chisel/` directory contains:
-- Generated Chisel code from LEAN (in `chisel/src/main/scala/generated/`)
-- Runtime support code if needed (wrapper classes, utilities)
-- sbt build configuration
-
-## Testing Strategy
-
-### 1. LEAN Proofs
-- Theorems about circuit behavior
-- Structural proofs (gate counts, port counts)
-- Behavioral proofs using `native_decide`
-
-### 2. Code Generation Testing
-**Run code generators:**
+All generated Scala code must be formatted before committing:
 ```bash
-# Generate all modules (FullAdder, Queue, ALU, etc.)
-lake exe codegen
-
-# Generate specific modules
-lake exe generate_decoder       # Binary decoders
-lake exe generate_riscv_decoder # RV32I instruction decoder
-```
-
-### 3. Chisel Compilation
-**Compile Chisel to SystemVerilog:**
-```bash
-cd chisel && sbt run
-# Outputs to: output/sv-from-chisel/*.sv
-# Auto-discovers all modules in chisel/src/main/scala/generated/
-```
-
-### 4. Logical Equivalence Checking (LEC)
-**Verify LEAN SV ≡ Chisel SV using Yosys:**
-```bash
-# Verify all modules
-./verification/run-lec.sh
-
-# Verify specific directories
-./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
-```
-
-**LEC Tool Details:**
-- **Location:** `verification/run-lec.sh`
-- **Tool:** Yosys (open-source formal verification)
-- **Method:**
-  - Combinational circuits: CEC (Combinational Equivalence Checking) with SAT
-  - Sequential circuits: SEC (Sequential Equivalence Checking) with induction
-- **Auto-detects:** Sequential vs combinational by checking for `always @` blocks
-- **Output:** Per-module verification with variable/clause counts
-
-### 5. Smoke Test (Full Pipeline)
-**Run complete verification pipeline:**
-```bash
-./verification/smoke-test.sh
-```
-
-**Pipeline stages:**
-1. LEAN build verification
-2. Formal proof verification (AdderProofs, DFFProofs, QueueProofs, etc.)
-3. Code generation (LEAN → SV and Chisel)
-4. Chisel compilation (Chisel → SV via CIRCT)
-5. Port name validation
-6. Logic validation
-7. Yosys LEC (if installed)
-
-**Exit code:** 0 = all tests pass, non-zero = failure
-
-### 6. Property Tests
-- Randomized circuit generation + LEC (future)
-
-## Verification Infrastructure
-
-**Scripts:**
-- `verification/run-lec.sh` - Yosys LEC for all modules
-- `verification/smoke-test.sh` - Full CI pipeline
-
-**Requirements:**
-- `yosys` - For LEC (install: `yay -S yosys` or `apt install yosys`)
-- `sbt` - For Chisel compilation
-- `lake` - For LEAN builds
-
-**Verification Status (as of 2026-01-31):**
-- **23 modules** verified with LEC
-- **Combinational:** FullAdder, RCA, Subtractor, Comparator, LogicUnit, Shifter, ALU32, Decoder{2,3,5}, RV32IDecoder
-- **Sequential:** DFlipFlop, Queue1_{8,32}
-- **All LEC tests:** ✓ PASSING
-
-## Resources
-
-### LEAN4
-- [Lean 4 Language](https://lean-lang.org/)
-- [Lake README](https://github.com/leanprover/lean4/blob/master/src/lake/README.md)
-- [LEAN4 FFI Documentation](https://github.com/leanprover/lean4/blob/master/doc/dev/ffi.md)
-- [LEAN FRO Year 3 Roadmap](https://lean-lang.org/fro/roadmap/y3/)
-
-### Chisel/FIRRTL
-- [Chisel GitHub](https://github.com/chipsalliance/chisel)
-- [Chisel Documentation](https://www.chisel-lang.org/)
-- [CIRCT Project](https://circt.llvm.org/)
-
-### Formal Verification
-- [Formal Verification Overview](https://verificationacademy.com/topics/formal-verification/)
-- [Equivalence Checking (Synopsys)](https://www.synopsys.com/glossary/what-is-equivalence-checking.html)
-- [Cadence Logic Equivalence Checking](https://www.cadence.com/en_US/home/tools/digital-design-and-signoff/logic-equivalence-checking.html)
-- [ABC: System for Sequential Synthesis and Verification](https://github.com/ElNiak/awesome-formal-verification)
-
-### Related Projects
-- [sv2chisel: SystemVerilog to Chisel translator](https://github.com/ovh/sv2chisel) (interesting for comparison)
-
-## Development Guidelines
-
-### When Adding New DSL Constructs
-
-1. Define syntax in `DSL.lean`
-2. Define semantics in `Semantics.lean`
-3. Prove key properties in `Theorems.lean`
-4. Implement code generators in `Codegen/SystemVerilog.lean` and `Codegen/Chisel.lean`
-5. Prove code generator correctness (output matches semantics)
-6. Add examples and tests
-
-### When Extending Build System
-
-- Keep Lake as the primary entry point
-- Use Lake's extern_lib and FFI features sparingly
-- Document any sbt invocations clearly
-- Ensure all generated artifacts are in `output/` directory
-
-### Style Conventions
-
-- LEAN: Follow [Lean 4 style guide](https://github.com/leanprover/lean4/blob/master/doc/style.md)
-- Scala/Chisel: Follow Scala style guide with scalafmt enforcement
-- SystemVerilog: IEEE 1800-2017 compliant, synthesizable subset only
-
-### Scala Code Formatting with scalafmt
-
-**IMPORTANT**: All Scala code must be formatted with scalafmt before committing.
-
-**Pre-commit checklist for Scala code:**
-```bash
-# Format all Scala files
-cd chisel && sbt scalafmt
-
-# Check formatting without making changes
-cd chisel && sbt scalafmtCheck
-```
-
-**Configuration:** `.scalafmt.conf` in chisel/ directory
-- Version: 3.8.3
-- Style: defaultWithAlign
-- Max column: 100
-- Scala dialect: 2.13
-
-**CI enforcement:** GitHub Actions automatically checks that all Scala code is properly formatted.
-
-**Install scalafmt locally (optional):**
-```bash
-# Using coursier
-cs install scalafmt
-
-# Or use sbt (automatic via plugin)
 cd chisel && sbt scalafmt
 ```
+Config: `.scalafmt.conf` (Scala 2.13 dialect, 100 column max)
 
-### Shell Script Quality
+### Shell scripts
 
-**IMPORTANT**: All shell scripts must pass shellcheck before committing.
-
-**Pre-commit checklist for shell scripts:**
+All shell scripts must pass shellcheck:
 ```bash
-# Run shellcheck on all shell scripts
-find . -name "*.sh" -type f -exec shellcheck {} +
-
-# Or check a specific script
 shellcheck verification/run-lec.sh
 ```
 
-**Common shellcheck rules to follow:**
-- **SC2064**: Use single quotes in traps: `trap 'rm -rf "$TMPDIR"' EXIT` (not `trap "rm -rf $TMPDIR" EXIT`)
-- **SC2034**: Remove unused variables or export them if used externally
-- **SC2086**: Quote variables to prevent word splitting: `"$variable"` (not `$variable`)
-- **SC2046**: Quote command substitutions: `"$(command)"` (not `$(command)`)
+### SystemVerilog
 
-**Install shellcheck:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install shellcheck
+IEEE 1800-2017 compliant, synthesizable subset only.
 
-# Arch Linux
-sudo pacman -S shellcheck
+## Important Notes
 
-# macOS
-brew install shellcheck
-```
-
-CI will automatically run shellcheck on all `.sh` files and fail if issues are found.
-
-## Notes for Claude
-
-- Always read existing LEAN files before modifying
-- Maintain proof integrity - don't skip proofs with `sorry`
-- Code generation should be as simple as possible while remaining correct
-- When in doubt about LEAN syntax, check the official docs
+- Always read existing Lean files before modifying
 - LEC failures indicate bugs in code generators, not the DSL
-- This is research-level work - novel integration, expect challenges
-
-## Future Directions
-
-- Integration with formal verification tools like SymbiYosys
-- Support for property specifications (SVA-like)
-- Proof automation using tactics
-- Integration with physical design tools
-- Proof-carrying code generation
-- Verified optimization passes
-
-## Changelog
-
-- 2026-01-31: Initial project setup, research phase complete
+- Clock and reset are implicit in Chisel (Clock/AsyncReset types) -- the codegen handles filtering them from explicit inputs
+- `hasSequentialElements` checks DFF gates only, NOT instances -- use `findClockWires`/`findResetWires` which check both
+- The `generate_all` executable is the recommended codegen entry point (does SV + Chisel + SystemC)
+- Chisel `Main.scala` auto-discovers all modules in `generated/` directory
