@@ -161,13 +161,15 @@ def findDFFOutputs (c : Circuit) : List Wire :=
 -- Generate IO port declarations
 -- Generate IO port declarations
 def generateIOBundle (c : Circuit) (_ : Bool) (ctx : ChiselContext) : String :=
-  -- Identify special ports by name or connection
-  let implicitWires := c.inputs.filter (fun w => w.name == "clock" || w.name == "reset")
+  -- Only treat clock/reset as implicit if they're actually used by DFFs in this circuit
+  let clockWires := findClockWires c
+  let resetWires := findResetWires c
+  let implicitWires := (clockWires ++ resetWires).eraseDups
   let filteredInputs := c.inputs.filter (fun w => !implicitWires.contains w)
 
   let implicitDecls := implicitWires.map (fun w =>
-    if w.name == "clock" then s!"  val {w.name} = IO(Input(Clock()))"
-    else s!"  val {w.name} = IO(Input(AsyncReset()))" 
+    if clockWires.contains w then s!"  val {w.name} = IO(Input(Clock()))"
+    else s!"  val {w.name} = IO(Input(AsyncReset()))"
   )
   
   if ctx.useIOBundle then
@@ -218,6 +220,22 @@ def generateRegUpdates (ctx : ChiselContext) (c : Circuit) : String :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
   if dffGates.isEmpty then ""
   else joinLines (dffGates.map (generateDFF ctx c))
+
+-- Generate register output connections (for reg arrays where outputs are circuit outputs)
+def generateRegOutputConnections (ctx : ChiselContext) (c : Circuit) : String :=
+  if !ctx.useRegArray then ""
+  else
+    let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
+    let outputConnections := dffGates.filterMap (fun g =>
+      if c.outputs.contains g.output then
+        match ctx.regToIndex.find? (fun p => p.fst.name == g.output.name) with
+        | some (_wire, idx) => some s!"  {g.output.name} := _regs({idx})"
+        | none => none
+      else
+        none
+    )
+    if outputConnections.isEmpty then ""
+    else joinLines outputConnections
 
 -- Helper: chunk a list into sublists of size n
 partial def chunkList {α : Type} (xs : List α) (n : Nat) : List (List α) :=
@@ -318,9 +336,19 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
   else if endsWithDigit portBase then
     portBase
   else
-    -- Construct from base + wire index
+    -- Construct from base + wire index ONLY if wire name suggests indexing
+    -- E.g., portBase="a", wireName="a0" → "a0" (correct)
+    --       portBase="eq", wireName="e0_cdb_match_src1" → "eq" (don't append "1")
     let suffix := extractNumericSuffix wireName
-    if suffix.isEmpty then portBase else portBase ++ suffix
+    if suffix.isEmpty then
+      portBase
+    else
+      -- Only append suffix if wireName starts with or contains portBase
+      -- This handles cases like: portBase="a", wireName="a0" or "entry0_a0"
+      if wireName.startsWith portBase || wireName.contains ("_" ++ portBase) then
+        portBase ++ suffix
+      else
+        portBase
 
 -- Generate submodule instantiation with chunking for connections
 def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
@@ -331,7 +359,12 @@ def generateInstanceChunked (ctx : ChiselContext) (inst : CircuitInstance) (chun
   let connections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef ctx wire
     let portRef := constructPortRef portBaseName wire.name
-    s!"  {inst.instName}.{portRef} <> {wRef}"
+    -- Add type conversion for clock/reset ports
+    let wRefConverted :=
+      if portBaseName == "clock" || portRef == "clock" then s!"{wRef}.asClock"
+      else if portBaseName == "reset" || portRef == "reset" then s!"{wRef}.asAsyncReset"
+      else wRef
+    s!"  {inst.instName}.{portRef} <> {wRefConverted}"
   )
   
   if connections.length <= chunkSize then
@@ -459,8 +492,9 @@ def toChisel (c : Circuit) : String :=
     let (instances, instanceHelpers) := generateInstancesChunked ctx c
     let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 25
     let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 25
+    let regOutputs := generateRegOutputConnections ctx c
 
-    let parts := [regDecls, wireDecls, instances, combMain, updateMain].filter (fun s => !s.isEmpty)
+    let parts := [regDecls, wireDecls, instances, combMain, updateMain, regOutputs].filter (fun s => !s.isEmpty)
     let logic := String.intercalate "\n\n" parts
     let helpers := [instanceHelpers, combHelpers, updateHelpers].filter (fun s => !s.isEmpty)
     let helpersString := String.intercalate "\n\n" helpers

@@ -618,25 +618,36 @@ def mkReservationStation4 : Circuit :=
 
     -- CDB tag comparison for src1 (Comparator6 instance)
     let cdb_match_src1 := Wire.mk s!"e{i}_cdb_match_src1"
+    let cmp_src1_portmap :=
+      (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
+      (src1_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+      [("one", Wire.mk "one"),  -- Tie to 1 for equality comparison
+       ("eq", cdb_match_src1),
+       ("lt", Wire.mk s!"e{i}_cmp_src1_lt_unused"),
+       ("ltu", Wire.mk s!"e{i}_cmp_src1_ltu_unused"),
+       ("gt", Wire.mk s!"e{i}_cmp_src1_gt_unused"),
+       ("gtu", Wire.mk s!"e{i}_cmp_src1_gtu_unused")]
     let cmp_src1_inst : CircuitInstance := {
       moduleName := "Comparator6"
       instName := s!"u_e{i}_cmp_src1"
-      portMap :=
-        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
-        (src1_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
-        [("eq", cdb_match_src1)]
-        -- Ignore lt, ltu, gt, gtu outputs
+      portMap := cmp_src1_portmap
     }
 
     -- CDB tag comparison for src2 (Comparator6 instance)
     let cdb_match_src2 := Wire.mk s!"e{i}_cdb_match_src2"
+    let cmp_src2_portmap :=
+      (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
+      (src2_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+      [("one", Wire.mk "one"),  -- Tie to 1 for equality comparison
+       ("eq", cdb_match_src2),
+       ("lt", Wire.mk s!"e{i}_cmp_src2_lt_unused"),
+       ("ltu", Wire.mk s!"e{i}_cmp_src2_ltu_unused"),
+       ("gt", Wire.mk s!"e{i}_cmp_src2_gt_unused"),
+       ("gtu", Wire.mk s!"e{i}_cmp_src2_gtu_unused")]
     let cmp_src2_inst : CircuitInstance := {
       moduleName := "Comparator6"
       instName := s!"u_e{i}_cmp_src2"
-      portMap :=
-        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
-        (src2_tag.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
-        [("eq", cdb_match_src2)]
+      portMap := cmp_src2_portmap
     }
 
     -- CDB wakeup condition for src1: valid AND NOT(src1_ready) AND match AND cdb_valid
@@ -734,7 +745,23 @@ def mkReservationStation4 : Circuit :=
   }
 
   -- ============================================================================
-  -- 5. DISPATCH MUXES (4:1 selection using Mux4xN instances)
+  -- 5. PRIORITY ENCODER (One-hot grant → Binary select for muxes)
+  -- ============================================================================
+
+  -- dispatch_grant[3:0] (one-hot) → dispatch_sel[1:0] (binary)
+  -- Encoding: grant[0]=1 → sel=00, grant[1]=1 → sel=01,
+  --           grant[2]=1 → sel=10, grant[3]=1 → sel=11
+  let dispatch_sel := makeIndexedWires "dispatch_sel" 2
+
+  -- sel[0] = grant[1] OR grant[3]
+  -- sel[1] = grant[2] OR grant[3]
+  let priority_enc_gates := [
+    Gate.mkOR dispatch_grant[1]! dispatch_grant[3]! dispatch_sel[0]!,
+    Gate.mkOR dispatch_grant[2]! dispatch_grant[3]! dispatch_sel[1]!
+  ]
+
+  -- ============================================================================
+  -- 6. DISPATCH MUXES (4:1 selection using Mux4xN instances)
   -- ============================================================================
 
   -- Opcode dispatch (Mux4x6)
@@ -744,7 +771,7 @@ def mkReservationStation4 : Circuit :=
           (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 1}")
         )
       )).flatten) ++
-    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
     (dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
 
   let opcode_mux_inst : CircuitInstance := {
@@ -760,7 +787,7 @@ def mkReservationStation4 : Circuit :=
           (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 20}")
         )
       )).flatten) ++
-    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
     (dispatch_src1_data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
 
   let src1_mux_inst : CircuitInstance := {
@@ -776,7 +803,7 @@ def mkReservationStation4 : Circuit :=
           (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 59}")
         )
       )).flatten) ++
-    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
     (dispatch_src2_data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
 
   let src2_mux_inst : CircuitInstance := {
@@ -792,7 +819,7 @@ def mkReservationStation4 : Circuit :=
           (s!"in{i}_b{j}", Wire.mk s!"e{i}{j + 7}")
         )
       )).flatten) ++
-    (dispatch_grant.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))) ++
     (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
 
   let tag_mux_inst : CircuitInstance := {
@@ -840,7 +867,8 @@ def mkReservationStation4 : Circuit :=
     outputs := [issue_full, dispatch_valid] ++
                dispatch_opcode ++ dispatch_src1_data ++
                dispatch_src2_data ++ dispatch_dest_tag
-    gates := alloc_incr_gates ++ entry_gates ++ ready_gates ++ issue_full_mux_gates
+    gates := alloc_incr_gates ++ entry_gates ++ ready_gates ++
+             priority_enc_gates ++ issue_full_mux_gates
     instances := [alloc_ptr_inst, decoder_inst, arbiter_inst,
                   opcode_mux_inst, src1_mux_inst, src2_mux_inst, tag_mux_inst] ++
                  entry_instances

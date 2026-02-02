@@ -201,9 +201,19 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
   else if endsWithDigit portBase then
     portBase
   else
-    -- Construct from base + wire index
+    -- Construct from base + wire index ONLY if wire name suggests indexing
+    -- E.g., portBase="a", wireName="a0" → "a0" (correct)
+    --       portBase="eq", wireName="e0_cdb_match_src1" → "eq" (don't append "1")
     let suffix := extractNumericSuffix wireName
-    if suffix.isEmpty then portBase else portBase ++ suffix
+    if suffix.isEmpty then
+      portBase
+    else
+      -- Only append suffix if wireName starts with or contains portBase
+      -- This handles cases like: portBase="a", wireName="a0" or "entry0_a0"
+      if wireName.startsWith portBase || wireName.contains ("_" ++ portBase) then
+        portBase ++ suffix
+      else
+        portBase
 
 def generateInstance (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
   let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
