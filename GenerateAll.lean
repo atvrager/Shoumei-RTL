@@ -25,6 +25,7 @@ import Shoumei.Circuits.Combinational.ALU
 -- Phase 2: Decoders and Muxes
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
+import Shoumei.Circuits.Combinational.Arbiter
 
 -- Phase 3: Sequential Components
 import Shoumei.Circuits.Sequential.QueueN
@@ -82,6 +83,9 @@ def allCircuits : List Circuit := [
   mkMux32x6,
   mkMux64x32,
   mkMuxTree 64 6,
+  mkPriorityArbiter2,
+  mkPriorityArbiter4,
+  mkPriorityArbiter8,
 
   -- Phase 3: Queues
   mkQueueNStructural 2 8,
