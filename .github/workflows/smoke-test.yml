@@ -55,6 +55,13 @@ jobs:
             ~/.sbt
           key: ${{ runner.os }}-deps-${{ hashFiles('lakefile.lean', 'chisel/build.sbt') }}
 
+      - name: Build pipeline (LEAN + codegen + Chisel)
+        run: |
+          source $HOME/.elan/env
+          make lean
+          make codegen
+          make chisel
+
       - name: Run smoke tests
         run: |
           chmod +x verification/smoke-test.sh

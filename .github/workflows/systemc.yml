@@ -1,0 +1,87 @@
+name: SystemC
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  systemc-build:
+    name: SystemC Compilation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl git build-essential libgmp-dev cmake
+
+      - name: Install SystemC
+        run: |
+          sudo apt-get install -y libsystemc-dev || {
+            echo "libsystemc-dev not in repos, building from source..."
+            curl -fsSL https://github.com/accellera-official/systemc/archive/refs/tags/2.3.4.tar.gz -o systemc.tar.gz
+            tar xzf systemc.tar.gz
+            cd systemc-2.3.4
+            mkdir objdir && cd objdir
+            ../configure --prefix=/usr/local
+            make -j"$(nproc)"
+            sudo make install
+            sudo ldconfig
+          }
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache LEAN dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-lean-
+
+      - name: Build LEAN and generate code
+        run: |
+          source $HOME/.elan/env
+          make lean
+          make codegen
+
+      - name: Compile SystemC modules
+        run: make systemc
+
+      - name: Verify SystemC output
+        run: |
+          test -d output/systemc || { echo "output/systemc/ missing"; exit 1; }
+          H_COUNT=$(find output/systemc -name "*.h" | wc -l)
+          CPP_COUNT=$(find output/systemc -name "*.cpp" | wc -l)
+          echo "Generated: ${H_COUNT} headers, ${CPP_COUNT} implementations"
+          test "$H_COUNT" -gt 0 || { echo "No SystemC headers generated"; exit 1; }
+          test "$CPP_COUNT" -gt 0 || { echo "No SystemC implementations generated"; exit 1; }
+          echo "SystemC compilation verified"
+
+      - name: Upload SystemC artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: systemc-output
+          path: |
+            output/systemc/
+            systemc/build/
+          retention-days: 7
