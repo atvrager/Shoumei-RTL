@@ -38,6 +38,7 @@ Simplified model:
 -/
 
 import Shoumei.RISCV.ISA
+import Shoumei.Circuits.Combinational.RippleCarryAdder
 
 namespace Shoumei.RISCV.Execution
 
@@ -229,5 +230,94 @@ def verifyLoadAddress (base : UInt32) (offset : Int) : Bool :=
 def verifyStoreAddress (base : UInt32) (offset : Int) : Bool :=
   let req := executeStore OpType.SW base offset 0 0
   req.address == calculateMemoryAddress base offset
+
+/-! ## Structural Circuit -/
+
+open Shoumei
+open Shoumei.Circuits.Combinational
+
+/-- Build Memory Execution Unit structural circuit (Address Generation Unit).
+
+    **Architecture:**
+    - Computes effective address: base + offset
+    - Uses RippleCarryAdder32 (verified in Phase 1)
+    - Adds tag pass-through for CDB broadcast
+    - Single-cycle combinational execution
+
+    **Inputs:**
+    - base[31:0]: Source operand 1 (rs1 value, base address)
+    - offset[31:0]: Immediate offset (sign-extended to 32 bits)
+    - dest_tag[5:0]: Physical register tag for load result (or ROB tag for store)
+    - zero: Constant input (for adder carry-in)
+
+    **Outputs:**
+    - address[31:0]: Computed memory address (base + offset)
+    - tag_out[5:0]: Pass-through of dest_tag (for CDB broadcast)
+
+    **Instances:**
+    - RippleCarryAdder32: 32-bit adder (verified in Phase 1)
+
+    **Gates:**
+    - 6 BUF gates for tag pass-through
+
+    **Note:** This unit only calculates addresses. Actual memory access
+    is handled by the Memory System (Phase 7).
+-/
+def mkMemoryExecUnit : Circuit :=
+  let base := makeIndexedWires "base" 32
+  let offset := makeIndexedWires "offset" 32
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let zero := Wire.mk "zero"
+
+  -- Internal wires for adder (named to match RippleCarryAdder32 ports)
+  let a := makeIndexedWires "a" 32
+  let b := makeIndexedWires "b" 32
+  let sum := makeIndexedWires "sum" 32
+
+  -- Output wires
+  let address := makeIndexedWires "address" 32
+  let tag_out := makeIndexedWires "tag_out" 6
+
+  -- Connect inputs to adder inputs (BUF gates for semantic clarity)
+  let base_to_a := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) base a
+
+  let offset_to_b := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) offset b
+
+  -- Instance RippleCarryAdder32 for address calculation
+  let adder_inst : CircuitInstance := {
+    moduleName := "RippleCarryAdder32"
+    instName := "u_adder"
+    portMap := [
+      ("a", a),
+      ("b", b),
+      ("cin", [zero]),
+      ("sum", sum),
+      ("cout", [Wire.mk "cout_unused"])  -- Carry-out not used for address calculation
+    ].flatMap (fun (name, wires) => wires.map (fun w => (name, w)))
+  }
+
+  -- Connect sum to address output (BUF gates for clarity)
+  let sum_to_address := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) sum address
+
+  -- Tag pass-through (BUF gates to maintain structural clarity)
+  let tag_passthrough := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) dest_tag tag_out
+
+  { name := "MemoryExecUnit"
+    inputs := base ++ offset ++ dest_tag ++ [zero]
+    outputs := address ++ tag_out
+    gates := base_to_a ++ offset_to_b ++ sum_to_address ++ tag_passthrough
+    instances := [adder_inst]
+  }
+
+/-- Convenience constructor for Memory Execution Unit -/
+def memoryExecUnit : Circuit := mkMemoryExecUnit
 
 end Shoumei.RISCV.Execution
