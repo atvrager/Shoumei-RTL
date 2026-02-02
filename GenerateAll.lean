@@ -39,6 +39,7 @@ import Shoumei.RISCV.Renaming.PhysRegFile
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
+import Shoumei.RISCV.Execution.ReservationStation
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -110,7 +111,8 @@ def allCircuits : List Circuit := [
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
-  mkIntegerExecUnit
+  mkIntegerExecUnit,
+  mkReservationStation4
 ]
 
 def main : IO Unit := do
