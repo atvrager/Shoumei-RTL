@@ -15,8 +15,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Fetch riscv-opcodes submodule
+        run: git submodule update --init third_party/riscv-opcodes
 
       - name: Setup Python
         uses: actions/setup-python@v5

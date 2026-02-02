@@ -15,8 +15,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Fetch riscv-opcodes submodule
+        run: git submodule update --init third_party/riscv-opcodes
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -54,6 +55,13 @@ jobs:
             ~/.ivy2
             ~/.sbt
           key: ${{ runner.os }}-deps-${{ hashFiles('lakefile.lean', 'chisel/build.sbt') }}
+
+      - name: Build pipeline (LEAN + codegen + Chisel)
+        run: |
+          source $HOME/.elan/env
+          make lean
+          make codegen
+          make chisel
 
       - name: Run smoke tests
         run: |

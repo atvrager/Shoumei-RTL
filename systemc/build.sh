@@ -5,14 +5,29 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  証明 Shoumei RTL - SystemC Compilation"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Check SystemC installation (library or headers)
-if [ ! -f /usr/lib/libsystemc.so ] && [ ! -f /usr/local/lib/libsystemc.so ]; then
+# Check SystemC installation via pkg-config, ldconfig, or common paths
+SYSTEMC_FOUND=false
+
+if pkg-config --exists systemc 2>/dev/null; then
+  SYSTEMC_FOUND=true
+elif ldconfig -p 2>/dev/null | grep -q libsystemc; then
+  SYSTEMC_FOUND=true
+else
+  for d in /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu; do
+    if [ -f "$d/libsystemc.so" ] || [ -f "$d/libsystemc.a" ]; then
+      SYSTEMC_FOUND=true
+      break
+    fi
+  done
+fi
+
+if [ "$SYSTEMC_FOUND" = false ]; then
   echo ""
   echo "ERROR: SystemC not found"
   echo ""
   echo "Install SystemC:"
+  echo "  Ubuntu/Debian: sudo apt-get install libsystemc-dev"
   echo "  Arch Linux:    yay -S systemc"
-  echo "  Ubuntu/Debian: sudo apt-get install systemc systemc-dev"
   echo "  macOS:         brew install systemc"
   echo "  Manual:        https://github.com/accellera-official/systemc"
   echo ""
@@ -20,7 +35,7 @@ if [ ! -f /usr/lib/libsystemc.so ] && [ ! -f /usr/local/lib/libsystemc.so ]; the
 fi
 
 echo ""
-echo "SystemC found: /usr/lib/libsystemc.so"
+echo "SystemC found"
 echo ""
 
 # Build

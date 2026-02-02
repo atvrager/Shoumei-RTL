@@ -40,10 +40,12 @@ def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × N
       | some (_wire, idx) => s!"outputs[{idx}]"
       | none => w.name
 
--- Helper: find all internal wires (gate outputs that are not circuit outputs)
+-- Helper: find all internal wires (gate outputs and instance wires that are not circuit I/O)
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
-  gateOutputs.filter (fun w => !c.outputs.contains w)
+  let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
+  let allWires := gateOutputs ++ instanceWires
+  (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)).eraseDups
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=

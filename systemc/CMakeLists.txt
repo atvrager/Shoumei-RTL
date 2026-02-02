@@ -17,7 +17,7 @@ if(NOT SystemCLanguage_FOUND)
 
   find_library(SYSTEMC_LIBRARY
     NAMES systemc
-    PATHS /usr/lib /usr/local/lib
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu
   )
 
   if(SYSTEMC_INCLUDE_DIR AND SYSTEMC_LIBRARY)
