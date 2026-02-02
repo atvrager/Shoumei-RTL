@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install elan (LEAN toolchain manager)
         run: |
@@ -62,8 +60,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -115,8 +111,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Check shell scripts
         run: |
@@ -173,8 +167,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Fetch riscv-opcodes submodule
+        run: git submodule update --init third_party/riscv-opcodes
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -250,8 +245,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Check documentation files exist
         run: |
