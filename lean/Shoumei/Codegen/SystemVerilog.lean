@@ -18,6 +18,46 @@ namespace Shoumei.Codegen.SystemVerilog
 
 open Shoumei.Codegen
 
+/-! ## Helper Functions for Wire Name Parsing -/
+
+-- Helper: check if string ends with a digit
+def endsWithDigit (s : String) : Bool :=
+  match s.toList.reverse.head? with
+  | some c => c.isDigit
+  | none => false
+
+-- Helper: extract numeric suffix from wire name (e.g., "opcode3" → "3")
+def extractNumericSuffix (name : String) : String :=
+  let chars := name.toList.reverse
+  let digits := chars.takeWhile Char.isDigit
+  String.ofList digits.reverse
+
+-- Helper: extract basename and index from wire name ending in digits
+-- E.g., "e0_next42" → ("e0_next", 42), "data5" → ("data", 5), "e01" → none (not a bus)
+-- Heuristic: only treat as bus if basename ends with underscore OR is substantial (3+ chars)
+-- This avoids treating "e01" as "e[1]" (should stay as standalone wire "e01")
+def splitWireName (w : Wire) : Option (String × Nat) :=
+  let name := w.name
+  if !endsWithDigit name then none
+  else
+    let suffix : String := extractNumericSuffix name
+    match suffix.toNat? with
+    | some idx =>
+        let basename := (name.dropEnd suffix.length).toString
+        -- Only treat as bus if:
+        -- 1. Basename ends with underscore (clear separator: "data_5" → "data_[5]")
+        -- 2. Basename is substantial (3+ chars) AND suffix is short (1-2 digits)
+        --    This handles "opcode5" → "opcode[5]" but NOT "e01" → "e[1]"
+        if basename.endsWith "_" then
+          some (basename, idx)
+        else if basename.length >= 3 && suffix.length <= 2 then
+          some (basename, idx)
+        else
+          none
+    | none => none
+
+/-! ## Main Code Generation Functions -/
+
 -- Generate SystemVerilog operator for a combinational gate type
 def gateTypeToOperator (gt : GateType) : String :=
   match gt with
@@ -29,14 +69,18 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.MUX => "?"  -- Ternary operator (special handling required)
   | GateType.DFF => ""  -- DFF doesn't use operators, uses always block
 
--- Helper: Get wire reference (handles flattened I/O with underscore indexing)
+-- Helper: Get wire reference (handles flattened I/O with underscore indexing and bus indexing)
 def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
   match inputToIndex.find? (fun p => p.fst.name == w.name) with
   | some (_wire, idx) => s!"inputs_{idx}"
   | none =>
       match outputToIndex.find? (fun p => p.fst.name == w.name) with
       | some (_wire, idx) => s!"outputs_{idx}"
-      | none => w.name
+      | none =>
+          -- Check if this wire is part of a bus (ends with digits)
+          match splitWireName w with
+          | some (basename, idx) => s!"{basename}[{idx}]"
+          | none => w.name
 
 -- Generate a single combinational gate assignment
 -- Note: DFFs are handled separately in generateAlwaysBlocks
@@ -103,7 +147,47 @@ def findInternalWires (c : Circuit) : List Wire :=
 def findDFFOutputs (c : Circuit) : List Wire :=
   c.gates.filter (fun g => g.gateType == GateType.DFF) |>.map (fun g => g.output)
 
--- Generate all internal wire declarations
+-- Helper: group wires into buses by basename
+-- Returns: list of (basename, list of (index, wire)) for buses, and list of standalone wires
+structure WireGroups where
+  buses : List (String × List (Nat × Wire))
+  standalone : List Wire
+
+def groupWiresByBasename (wires : List Wire) : WireGroups :=
+  -- First, split wires into those with numeric suffixes and standalone
+  let (indexed, standalone) := wires.foldl (fun (acc1, acc2) w =>
+    match splitWireName w with
+    | some (base, idx) => ((base, idx, w) :: acc1, acc2)
+    | none => (acc1, w :: acc2)
+  ) ([], [])
+
+  -- Group by basename
+  let grouped := indexed.foldl (fun acc (base, idx, w) =>
+    match acc.find? (fun p => p.fst == base) with
+    | some (_, existingList) =>
+        acc.erase (base, existingList) |>.cons (base, (idx, w) :: existingList)
+    | none =>
+        (base, [(idx, w)]) :: acc
+  ) []
+
+  -- Only treat as bus if there are 2+ wires with same basename (heuristic)
+  let (realBuses, moreStandalone) := grouped.foldl (fun (buses, standalone) (base, wires) =>
+    if wires.length >= 2 then
+      ((base, wires) :: buses, standalone)
+    else
+      (buses, standalone ++ wires.map (·.snd))
+  ) ([], standalone)
+
+  { buses := realBuses, standalone := moreStandalone }
+
+-- Helper: generate bus declaration (wire or reg)
+def generateBusDecl (basename : String) (indices : List (Nat × Wire)) (isReg : Bool) : String :=
+  let sorted := indices.toArray.qsort (fun a b => a.fst < b.fst) |>.toList
+  let maxIdx := sorted.reverse.head!.fst
+  let wireType := if isReg then "reg" else "wire"
+  s!"  {wireType} [{maxIdx}:0] {basename};"
+
+-- Generate all internal wire declarations with bus grouping
 -- DFF outputs are declared as 'reg', other internal wires as 'wire'
 def generateWireDeclarations (c : Circuit) : String :=
   let internalWires := findInternalWires c
@@ -111,13 +195,24 @@ def generateWireDeclarations (c : Circuit) : String :=
   if internalWires.isEmpty then
     ""
   else
-    let decls := internalWires.map (fun w =>
+    let groups := groupWiresByBasename internalWires
+
+    -- Generate bus declarations
+    let busDecls := groups.buses.map (fun (basename, wires) =>
+      -- Check if any wire in the bus is a DFF output
+      let isReg := wires.any (fun (_, w) => dffOutputs.contains w)
+      generateBusDecl basename wires isReg
+    )
+
+    -- Generate standalone wire declarations
+    let standaloneDecls := groups.standalone.map (fun w =>
       if dffOutputs.contains w then
-        s!"  reg {w.name};"  -- DFF outputs must be 'reg'
+        s!"  reg {w.name};"
       else
         s!"  wire {w.name};"
     )
-    joinLines decls
+
+    joinLines (busDecls ++ standaloneDecls)
 
 -- Generate all combinational gate assignments (DFFs handled separately)
 def generateCombAssignments (c : Circuit) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) : String :=
@@ -133,18 +228,6 @@ def generateAlwaysBlocks (c : Circuit) (inputToIndex : List (Wire × Nat)) (outp
 
 
 -- Generate submodule instantiation
--- Helper: extract numeric suffix from wire name (e.g., "opcode3" → "3")
-def extractNumericSuffix (name : String) : String :=
-  let chars := name.toList.reverse
-  let digits := chars.takeWhile Char.isDigit
-  String.ofList digits.reverse
-
--- Helper: check if string ends with a digit
-def endsWithDigit (s : String) : Bool :=
-  match s.toList.reverse.head? with
-  | some c => c.isDigit
-  | none => false
-
 -- Helper: parse bracket notation like "inputs[123]" → ("inputs", 123)
 def parseBracketNotation (s : String) : Option (String × Nat) :=
   if !s.contains '[' then none
