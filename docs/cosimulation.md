@@ -30,46 +30,89 @@ The RTL exposes an RVVI-TRACE port at the ROB commit point. On every retirement 
 
 The RVVI-TRACE interface is a set of output-only signals from the RTL, sampled on the positive clock edge. It reports retirement and trap events along with all architectural state changes.
 
+### Parameters derived from Lean model
+
+RVVI-TRACE parameters are not hardcoded -- they are derived from the Lean CPU definition at code generation time. The Lean model is the single source of truth for the microarchitecture, and the RVVI interface must be consistent with it.
+
+| RVVI parameter | Lean source | Current value | Notes |
+|----------------|-------------|:---:|-------|
+| `XLEN` | `CPUConfig` (RV32 implied) | 32 | Would be 64 for RV64 |
+| `ILEN` | `CPUConfig.enableC` | 32 | 16 if compressed extension enabled |
+| `NRET` | ROB commit width | 1 | Number of entries the ROB can commit per cycle |
+| `NHART` | (not yet in config) | 1 | Single-hart for now |
+
+The code generator reads these from the Lean model and emits the parameterized RVVI interface:
+
+```lean
+-- In lean/Shoumei/RISCV/Config.lean (proposed additions)
+
+structure CPUConfig where
+  -- ... existing fields ...
+  /-- XLEN: register width (32 or 64) -/
+  xlen : Nat := 32
+  /-- Maximum instructions retired per cycle (ROB commit width) -/
+  commitWidth : Nat := 1
+  /-- Number of harts -/
+  numHarts : Nat := 1
+
+-- RVVI parameters derived from CPU config
+structure RVVIConfig where
+  xlen : Nat
+  ilen : Nat
+  nret : Nat
+  nhart : Nat
+
+def CPUConfig.rvviConfig (cfg : CPUConfig) : RVVIConfig :=
+  { xlen  := cfg.xlen
+    ilen  := if cfg.enableC then 16 else 32
+    nret  := cfg.commitWidth
+    nhart := cfg.numHarts }
+```
+
+The SystemVerilog code generator uses `RVVIConfig` to emit the interface with correct widths. If someone later widens the ROB commit port to retire 2 instructions per cycle, the RVVI interface updates automatically -- no manual sync required.
+
 ### Signal definitions
 
-RVVI-TRACE for RV32IM, single-hart, single-issue (NRET=1):
+RVVI-TRACE, parameterized by the Lean model (current: RV32IM, single-hart, NRET=1):
 
 ```systemverilog
 interface rvvi_trace #(
-    parameter int ILEN = 32,
-    parameter int XLEN = 32,
-    parameter int NRET = 1     // max instructions retired per cycle
+    parameter int ILEN  = 32,    // from CPUConfig: 16 if C ext, else 32
+    parameter int XLEN  = 32,    // from CPUConfig.xlen
+    parameter int NRET  = 1,     // from CPUConfig.commitWidth
+    parameter int NHART = 1      // from CPUConfig.numHarts
 );
-    // Retirement event
-    logic                valid;          // instruction retired this cycle
-    logic [63:0]         order;          // monotonic retirement counter
-    logic [ILEN-1:0]     insn;           // instruction encoding
-    logic                trap;           // trap (not retired -- ECALL, EBREAK, illegal)
-    logic                halt;           // last instruction before halt
-    logic                intr;           // first instruction of trap handler
+    // Retirement event (active on posedge clk)
+    logic                valid  [0:NHART-1][0:NRET-1];
+    logic [63:0]         order  [0:NHART-1][0:NRET-1];
+    logic [ILEN-1:0]     insn   [0:NHART-1][0:NRET-1];
+    logic                trap   [0:NHART-1][0:NRET-1];
+    logic                halt   [0:NHART-1][0:NRET-1];
+    logic                intr   [0:NHART-1][0:NRET-1];
 
     // Privilege & mode
-    logic [1:0]          mode;           // 0=U, 1=S, 3=M
-    logic [1:0]          ixl;            // current XLEN encoding
+    logic [1:0]          mode   [0:NHART-1][0:NRET-1];
+    logic [1:0]          ixl    [0:NHART-1][0:NRET-1];
 
     // Program counter
-    logic [XLEN-1:0]     pc_rdata;       // PC of this instruction
-    logic [XLEN-1:0]     pc_wdata;       // next PC (PC+4 or branch/trap target)
+    logic [XLEN-1:0]     pc_rdata  [0:NHART-1][0:NRET-1];
+    logic [XLEN-1:0]     pc_wdata  [0:NHART-1][0:NRET-1];
 
     // Integer register writeback
-    logic [31:0]         x_wb;           // bitmask: which x registers were written
-    logic [XLEN-1:0]     x_wdata [0:31]; // written values (valid where x_wb bit set)
+    logic [31:0]         x_wb      [0:NHART-1][0:NRET-1];
+    logic [XLEN-1:0]     x_wdata   [0:NHART-1][0:NRET-1][0:31];
 
     // Memory access
-    logic                mem_wmask_valid; // memory write occurred
-    logic [XLEN-1:0]     mem_addr;       // access address
-    logic [XLEN/8-1:0]   mem_rmask;      // read byte mask
-    logic [XLEN/8-1:0]   mem_wmask;      // write byte mask
-    logic [XLEN-1:0]     mem_rdata;      // read data
-    logic [XLEN-1:0]     mem_wdata;      // write data
+    logic [XLEN-1:0]     mem_addr  [0:NHART-1][0:NRET-1];
+    logic [XLEN/8-1:0]   mem_rmask [0:NHART-1][0:NRET-1];
+    logic [XLEN/8-1:0]   mem_wmask [0:NHART-1][0:NRET-1];
+    logic [XLEN-1:0]     mem_rdata [0:NHART-1][0:NRET-1];
+    logic [XLEN-1:0]     mem_wdata [0:NHART-1][0:NRET-1];
 
 endinterface
 ```
+
+For the current Shoumei config (`NHART=1, NRET=1`), the `[0:0][0:0]` array dimensions collapse to scalar signals. The code generator handles this: when `commitWidth = 1` and `numHarts = 1`, it emits flat signals without array indexing for cleaner RTL.
 
 ### Signal semantics
 
@@ -398,11 +441,11 @@ structure RVVIOutput where
   mem_wdata : UInt32
 ```
 
-**Wire budget:** The RVVI port adds approximately 250 output wires to the top-level module. This is observation-only -- it does not affect the datapath or timing.
+**Wire budget:** The RVVI port adds approximately `NRET * (2*XLEN + ILEN + 32*XLEN + 64 + 8)` output bits to the top-level module. For the current config (NRET=1, XLEN=32, ILEN=32), that is ~1200 bits / ~250 wires. This is observation-only -- it does not affect the datapath or timing.
 
 ### Generating the RVVI SystemVerilog
 
-The code generators (`SystemVerilog.lean`, `Chisel.lean`) emit the RVVI signals as a separate output group. The Chisel generator wraps them in an `IO(Output(new RVVIBundle))`.
+The code generator reads `CPUConfig.rvviConfig` and emits the RVVI interface with correct parameterization. The generator also handles the scalar-vs-array distinction: when `NRET=1` and `NHART=1`, signals are emitted as plain wires rather than arrays for cleaner RTL and easier Verilator access.
 
 For Verilator, the RVVI signals are accessible directly on the top-level module:
 
