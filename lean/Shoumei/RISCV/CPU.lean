@@ -194,4 +194,200 @@ def CPUState.getCycleCount (cpu : CPUState config) : Nat :=
 def CPUState.getPC (cpu : CPUState config) : UInt32 :=
   cpu.fetch.pc
 
+/-
+CPU Step Function - Pipeline Orchestration
+
+Executes one cycle of the entire Tomasulo pipeline. Stages execute in
+REVERSE ORDER (commit → fetch) to avoid structural hazards and simplify
+data dependencies.
+
+Stage order: Commit → Execute → CDB Snoop → Dispatch → Rename → Decode → Fetch
+
+This is a simplified behavioral model focusing on correctness.
+Decoder integration deferred (requires static instruction definitions).
+-/
+
+/-- CDB Broadcast Entry: tag + data from execution unit -/
+structure CDBBroadcast where
+  valid : Bool
+  tag : Fin 64
+  data : UInt32
+  exception : Bool := false
+  mispredicted : Bool := false
+
+/-- Execute one CPU cycle.
+
+    Full pipeline orchestration with all stages.
+    Decoder integration deferred (cpuStepWithDecoder will add it).
+
+    Parameters:
+    - cpu: Current CPU state
+    - imem: Instruction memory function
+    - decodedInstr: Optional decoded instruction (for testing, will be automated later)
+
+    Returns: Updated CPU state
+-/
+def cpuStep
+    (cpu : CPUState config)
+    (imem : SimpleIMem)
+    (decodedInstr : Option DecodedInstruction := none)
+    : CPUState config :=
+
+  -- ========== STAGE 7: ROB COMMIT ==========
+  -- Commit head entry if complete, update committedRAT, deallocate old phys reg
+  let commitResult := if cpu.rob.isEmpty then
+      none
+    else
+      let headEntry := cpu.rob.entries cpu.rob.head
+      if headEntry.valid && headEntry.complete then
+        some (headEntry.archRd, headEntry.physRd, headEntry.oldPhysRd,
+              headEntry.hasPhysRd, headEntry.hasOldPhysRd,
+              headEntry.exception, headEntry.isBranch, headEntry.branchMispredicted)
+      else
+        none
+
+  let (rob_afterCommit, rename_afterCommit, flushPC) := match commitResult with
+    | none => (cpu.rob, cpu.rename, none)
+    | some (archRd, physRd, oldPhysRd, hasPhysRd, hasOldPhysRd, exception, isBranch, mispredicted) =>
+        -- Advance ROB head
+        -- Note: count must be > 0 since we have a valid entry, but proving this requires ROB invariants
+        -- For behavioral model, we use a conservative bound check
+        let newCount := if cpu.rob.count > 0 then cpu.rob.count - 1 else 0
+        let newCountBound : newCount <= 16 := by
+          unfold newCount
+          by_cases h : cpu.rob.count > 0
+          · simp [h]
+            have := cpu.rob.h_count
+            omega
+          · simp [h]
+        let rob' := { cpu.rob with
+          head := ⟨(cpu.rob.head.val + 1) % 16, by omega⟩
+          count := newCount
+          h_count := newCountBound
+          entries := fun i => if i == cpu.rob.head then Retirement.ROBEntry.empty else cpu.rob.entries i
+        }
+
+        -- Update committedRAT if has destination
+        let rename' := if hasPhysRd && archRd.val ≠ 0 then
+          { cpu.rename with
+            rat := cpu.rename.rat.allocate archRd physRd }
+        else
+          cpu.rename
+
+        -- Deallocate old physical register if applicable
+        let rename'' := if hasOldPhysRd then
+          { rename' with freeList := rename'.freeList.deallocate oldPhysRd }
+        else
+          rename'
+
+        -- Check for flush (exception or branch misprediction)
+        let flush := if exception || (isBranch && mispredicted) then
+          some cpu.fetch.pc  -- Simplified: would compute actual target
+        else
+          none
+
+        (rob', rename'', flush)
+
+  -- ========== FLUSH HANDLING ==========
+  -- If commit triggered flush, clear pipeline and RS
+  let (rob_postFlush, rename_postFlush, rsInteger_postFlush, rsMemory_postFlush,
+       rsBranch_postFlush, rsMulDiv_postFlush, decode_postFlush, globalStall_postFlush) :=
+    match flushPC with
+    | some _ =>
+        -- Clear all speculative state
+        let robEmpty := ROBState.empty
+        let renameRestored := cpu.rename  -- In real impl, would restore from committedRAT
+        let rsIntEmpty := RSState.init 4
+        let rsMemEmpty := RSState.init 4
+        let rsBrEmpty := RSState.init 4
+        let rsMulDivEmpty : if config.enableM then RSState 4 else Unit :=
+          if h : config.enableM then
+            cast (by rw [if_pos h]) (RSState.init 4)
+          else
+            cast (by rw [if_neg h]) ()
+        let decodeEmpty := DecodeState.empty
+        (robEmpty, renameRestored, rsIntEmpty, rsMemEmpty, rsBrEmpty, rsMulDivEmpty, decodeEmpty, false)
+    | none =>
+        (rob_afterCommit, rename_afterCommit, cpu.rsInteger, cpu.rsMemory,
+         cpu.rsBranch, cpu.rsMulDiv, cpu.decode, cpu.globalStall)
+
+  -- ========== STAGE 6: EXECUTE & CDB BROADCAST ==========
+  -- Select ready entries from each RS and execute (simplified: no actual execution yet)
+  -- For now, just pass through without actual execution
+  let cdbBroadcasts : List CDBBroadcast := []  -- TODO: Execute from each RS
+
+  -- ========== STAGE 5: CDB SNOOP ==========
+  -- All RS and ROB snoop CDB broadcasts in parallel
+  let rob_postCDB := cdbBroadcasts.foldl (fun (rob : ROBState) (bc : CDBBroadcast) =>
+    if bc.valid then
+      rob.cdbBroadcast bc.tag bc.exception bc.mispredicted
+    else
+      rob
+  ) rob_postFlush
+
+  let rsInteger_postCDB := cdbBroadcasts.foldl (fun (rs : RSState 4) (bc : CDBBroadcast) =>
+    if bc.valid then rs.cdbBroadcast bc.tag bc.data else rs
+  ) rsInteger_postFlush
+
+  let rsMemory_postCDB := cdbBroadcasts.foldl (fun (rs : RSState 4) (bc : CDBBroadcast) =>
+    if bc.valid then rs.cdbBroadcast bc.tag bc.data else rs
+  ) rsMemory_postFlush
+
+  let rsBranch_postCDB := cdbBroadcasts.foldl (fun (rs : RSState 4) (bc : CDBBroadcast) =>
+    if bc.valid then rs.cdbBroadcast bc.tag bc.data else rs
+  ) rsBranch_postFlush
+
+  let rsMulDiv_postCDB := if h : config.enableM then
+      let rs := cast (by simp [h]) rsMulDiv_postFlush
+      let rs' := cdbBroadcasts.foldl (fun (rs : RSState 4) (bc : CDBBroadcast) =>
+        if bc.valid then rs.cdbBroadcast bc.tag bc.data else rs
+      ) rs
+      cast (by simp [h]) rs'
+    else
+      rsMulDiv_postFlush
+
+  -- ========== STAGE 4: DISPATCH TO RS ==========
+  -- Route renamed instruction to appropriate RS based on OpType
+  let (rsInteger_postDispatch, rsMemory_postDispatch, rsBranch_postDispatch,
+       rsMulDiv_postDispatch, rename_postDispatch, rob_postDispatch) :=
+    (rsInteger_postCDB, rsMemory_postCDB, rsBranch_postCDB, rsMulDiv_postCDB,
+     rename_afterCommit, rob_postCDB)
+  -- TODO: Actually dispatch renamed instruction to RS and allocate ROB
+
+  -- ========== STAGE 3: RENAME ==========
+  -- Transform decoded instruction into renamed instruction (phys register tags)
+  let (rename_postRename, renamedInstr) : (RenameStageState × Option RenamedInstruction) :=
+    (rename_postDispatch, none)
+  -- TODO: Call renameInstruction on decoded instruction
+
+  -- ========== STAGE 2: DECODE ==========
+  -- Decode instruction word into operation and fields
+  let decode' : DecodeState :=
+    match cpu.fetch.fetchedInstr with
+    | none => DecodeState.empty
+    | some instr =>
+        -- Use provided decodedInstr parameter (for testing)
+        -- TODO: Config-aware decoder call (decodeRV32I vs decodeRV32IM)
+        { fetchedInstr := some instr
+          decodedInstr := decodedInstr }
+
+  -- ========== STAGE 1: FETCH ==========
+  let stall := globalStall_postFlush
+  let branchRedirect := flushPC
+  let fetch' := fetchStep cpu.fetch imem stall branchRedirect
+
+  -- ========== ASSEMBLE FINAL STATE ==========
+  { cpu with
+    fetch := fetch'
+    decode := decode'
+    rename := rename_postRename
+    rsInteger := rsInteger_postDispatch
+    rsMemory := rsMemory_postDispatch
+    rsBranch := rsBranch_postDispatch
+    rsMulDiv := rsMulDiv_postDispatch
+    rob := rob_postDispatch
+    globalStall := globalStall_postFlush
+    flushing := flushPC.isSome
+    cycleCount := cpu.cycleCount + 1 }
+
 end Shoumei.RISCV.CPU
