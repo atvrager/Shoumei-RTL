@@ -882,6 +882,42 @@ def mkReservationStation4 : Circuit :=
     instances := [alloc_ptr_inst, decoder_inst, arbiter_inst,
                   opcode_mux_inst, src1_mux_inst, src2_mux_inst, tag_mux_inst] ++
                  entry_instances
+    -- v2 codegen annotations
+    signalGroups := [
+      -- Issue interface buses
+      { name := "issue_opcode",    width := opcodeWidth, wires := issue_opcode },
+      { name := "issue_dest_tag",  width := tagWidth,    wires := issue_dest_tag },
+      { name := "issue_src1_tag",  width := tagWidth,    wires := issue_src1_tag },
+      { name := "issue_src1_data", width := dataWidth,   wires := issue_src1_data },
+      { name := "issue_src2_tag",  width := tagWidth,    wires := issue_src2_tag },
+      { name := "issue_src2_data", width := dataWidth,   wires := issue_src2_data },
+      -- CDB buses
+      { name := "cdb_tag",  width := tagWidth,  wires := cdb_tag },
+      { name := "cdb_data", width := dataWidth, wires := cdb_data },
+      -- Dispatch output buses
+      { name := "dispatch_opcode",    width := opcodeWidth, wires := dispatch_opcode },
+      { name := "dispatch_src1_data", width := dataWidth,   wires := dispatch_src1_data },
+      { name := "dispatch_src2_data", width := dataWidth,   wires := dispatch_src2_data },
+      { name := "dispatch_dest_tag",  width := tagWidth,    wires := dispatch_dest_tag }
+    ]
+    inputBundles := [
+      -- Source operand 1: ready flag + tag + data
+      { name := "issue_src1"
+        signals := [("ready", .Bool), ("tag", .UInt tagWidth), ("data", .UInt dataWidth)] },
+      -- Source operand 2: ready flag + tag + data
+      { name := "issue_src2"
+        signals := [("ready", .Bool), ("tag", .UInt tagWidth), ("data", .UInt dataWidth)] },
+      -- Common Data Bus broadcast input
+      { name := "cdb"
+        signals := [("valid", .Bool), ("tag", .UInt tagWidth), ("data", .UInt dataWidth)] }
+    ]
+    outputBundles := [
+      -- Dispatch output to execution unit
+      { name := "dispatch"
+        signals := [("valid", .Bool), ("opcode", .UInt opcodeWidth),
+                    ("src1_data", .UInt dataWidth), ("src2_data", .UInt dataWidth),
+                    ("dest_tag", .UInt tagWidth)] }
+    ]
   }
 
 /-- RS4 alias for common usage -/

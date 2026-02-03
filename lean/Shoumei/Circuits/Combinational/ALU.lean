@@ -229,6 +229,13 @@ def mkALU32 : Circuit :=
              ++ shift_level1_gates ++ shift_level2_gates
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
     instances := []
+    -- v2 codegen annotations: bus groupings for typed port generation
+    signalGroups := [
+      { name := "a",      width := 32, wires := a },
+      { name := "b",      width := 32, wires := b },
+      { name := "op",     width := 4,  wires := opcode },
+      { name := "result", width := 32, wires := result }
+    ]
   }
 
 end Shoumei.Circuits.Combinational
