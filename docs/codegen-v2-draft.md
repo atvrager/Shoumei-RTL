@@ -711,26 +711,708 @@ both hierarchical modes share the same structure -- only syntax differs.
 
 ---
 
-## Open Questions
+## Open Questions (Detailed)
 
-1. **Struct naming**: Should struct types be auto-derived from `InterfaceBundle`
-   names, or manually specified? (e.g., is `decoupled32_t` always the same
-   shape, or could two modules define different 32-bit decoupled types?)
+---
 
-2. **Netlist flattening depth**: Should netlist mode flatten *everything*
-   (including RAM primitives), or stop at technology primitives?
+### Q1: Struct Naming -- Auto-derived or Manually Specified?
 
-3. **Multi-bit gate ops**: The current DSL is bit-level (every gate is 1 bit).
-   For vectorized `assign data_next = ...` we need to either:
-   - Keep bit-level gates but *reconstruct* buses in codegen (pattern matching)
-   - Add multi-bit gate types to the DSL (`MUXN`, `ANDN`, etc.)
+The question is whether struct types should be created automatically from
+`InterfaceBundle` annotations, or defined once in a shared library.
 
-   Recommendation: reconstruct in codegen. Don't change the proof core.
+#### The real interface shapes in our codebase today
 
-4. **SV struct vs. interface**: SV `struct packed` is simpler and synthesizable.
-   SV `interface` with `modport` is more powerful but tooling support varies.
-   Leaning toward `struct packed` only.
+Looking at what the RISC-V modules actually use, there are ~7 distinct shapes:
 
-5. **Chisel `Decoupled` vs. custom Bundle**: Chisel stdlib `Decoupled` is
-   convenient but opinionated (uses `ReadyValidIO`). Custom `Bundle` gives
-   more control. Could support both via a flag.
+```
+Shape 1: Decoupled (ready/valid handshake)
+  {name}_bits[W-1:0], {name}_valid, {name}_ready
+  Used by: Queue enq/deq ports
+
+Shape 2: Operand bundle (reservation station source operand)
+  {src}_ready, {src}_tag[5:0], {src}_data[31:0]
+  Used by: ReservationStation4 issue_src1, issue_src2, dispatch_src1, dispatch_src2
+
+Shape 3: CDB broadcast
+  cdb_valid, cdb_tag[5:0], cdb_data[31:0]
+  Used by: ReservationStation4 CDB input
+
+Shape 4: Register write port
+  {name}_en, {name}_addr[N-1:0], {name}_data[W-1:0]
+  Used by: RAT write port, PhysRegFile write port
+
+Shape 5: Register read port
+  {name}_addr[N-1:0], {name}_data[W-1:0]
+  Used by: RAT rs1/rs2, PhysRegFile rd1/rd2
+
+Shape 6: Dispatch entry (full RS entry)
+  dispatch_en, dispatch_opcode[5:0], dispatch_dest_tag[5:0],
+  dispatch_src1_ready, dispatch_src1_tag[5:0], dispatch_src1_data[31:0],
+  dispatch_src2_ready, dispatch_src2_tag[5:0], dispatch_src2_data[31:0]
+  Used by: ReservationStation4 dispatch input
+
+Shape 7: Issue output
+  issue_valid, issue_opcode[5:0], issue_dest_tag[5:0],
+  issue_src1_data[31:0], issue_src2_data[31:0]
+  Used by: ReservationStation4 issue output
+```
+
+#### Option A: Auto-derive per module
+
+Each module declares its own struct shapes inline. The codegen infers struct
+definitions from `InterfaceBundle` annotations.
+
+```systemverilog
+// Auto-generated for ReservationStation4 -- unique to this module
+typedef struct packed {
+  logic        ready;
+  logic [5:0]  tag;
+  logic [31:0] data;
+} ReservationStation4_operand_t;
+```
+
+**Pro:** No manual struct library to maintain. Each module is self-contained.
+**Con:** If Queue and RS both have a 32-bit decoupled port, they generate
+two separate struct types. A parent module that connects them needs a cast.
+Struct name proliferation: `Queue1_32_deq_t` vs `RS4_dispatch_decoupled_t`
+for the same shape.
+
+#### Option B: Shared struct library (manually defined)
+
+Define a canonical set of interface types in one place:
+
+```lean
+-- In DSL/Interfaces.lean
+def operandBundle : InterfaceShape := {
+  name := "operand"
+  fields := [("ready", Bool), ("tag", UInt 6), ("data", UInt 32)]
+}
+def cdbEntry : InterfaceShape := {
+  name := "cdb_entry"
+  fields := [("valid", Bool), ("tag", UInt 6), ("data", UInt 32)]
+}
+```
+
+Generates a shared header:
+```systemverilog
+// shoumei_types.svh -- shared across all modules
+typedef struct packed { logic ready; logic [5:0] tag; logic [31:0] data; } operand_t;
+typedef struct packed { logic valid; logic [5:0] tag; logic [31:0] data; } cdb_entry_t;
+```
+
+**Pro:** Canonical types. Connecting modules is trivial (same type = same struct).
+**Con:** Need to maintain the library. New interface shapes require explicit
+addition. Can't just define a circuit and have it "work".
+
+#### Option C: Hybrid -- auto-derive with dedup
+
+The codegen auto-derives struct types, but canonicalizes by shape.
+Two interfaces with identical field types and widths get the same struct name,
+regardless of which module they appear in.
+
+```
+operand_t  = {ready: Bool, tag: UInt(6), data: UInt(32)}
+cdb_entry_t = {valid: Bool, tag: UInt(6), data: UInt(32)}
+```
+
+These have the same bit layout but different field names. Options:
+- Same struct (field names ignored)? Loses semantic info.
+- Different structs (field names matter)? Keeps meaning, minimal dedup.
+
+**Recommendation:** Option B (shared library). The number of interface shapes
+is small (~7 for the full RV32IM). A shared library is easy to maintain, gives
+canonical names, and makes cross-module connections clean. Plus we already have
+`Decoupled.lean` as a precedent.
+
+---
+
+### Q2: Netlist Flattening Depth
+
+In netlist mode, how deep do we flatten?
+
+#### Current hierarchy levels in the project
+
+```
+Level 0 (top): ReservationStation4, StoreBuffer8, CPU (future)
+Level 1:       Queue64_32, PhysRegFile_64x32, RAT_32x6
+Level 2:       Register91, QueueRAM_64x32, Mux64x32, Mux32x6
+Level 3:       Register64, Register16, Register8, Register2, Register1
+Level 4:       Individual DFF gates
+```
+
+#### Option A: Flatten to gates (full netlist)
+
+Every module decomposed to AND/OR/NOT/XOR/MUX/DFF primitives. No instances
+remain. This is what `Circuit.inline` already does for combinational logic.
+
+```systemverilog
+// Queue64_32 fully flattened: ~4000+ gates
+module Queue64_32(...);
+  // hierarchical names preserve origin
+  logic u_mem__reg_0_to_63__dff_0;
+  logic u_mem__reg_0_to_63__dff_1;
+  // ... thousands of wires ...
+  assign u_ctrl__enq_fire = enq_valid & u_ctrl__enq_ready;
+  // ... thousands of assigns ...
+  always_ff @(posedge clock or posedge reset) begin
+    if (reset) u_mem__reg_0_to_63__dff_0 <= 1'b0;
+    else       u_mem__reg_0_to_63__dff_0 <= u_mem__reg_0_to_63__dff_0_next;
+  end
+  // ... thousands of always blocks ...
+endmodule
+```
+
+**Pro:** Single module, no dependencies. ABC/formal tools get everything.
+Hierarchical names tell you where each wire came from.
+**Con:** Huge files for big modules. Queue64_32 would be ~4000 gates.
+PhysRegFile_64x32 would be ~130K gates. Not human-readable at all.
+No RAM inference (synth tools can't reconstruct `Mem` from flat DFFs).
+
+#### Option B: Flatten to "technology primitives"
+
+Stop at primitives that map to real FPGA/ASIC cells:
+- DFF (flip-flop)
+- Single-bit gates (AND, OR, NOT, XOR)
+- MUX
+- But NOT: RAM blocks, register files, multiplexer trees
+
+This means some submodules stay as instances:
+
+```systemverilog
+// Queue64_32 partially flattened
+module Queue64_32(...);
+  // Control logic is flat gates
+  assign ctrl__enq_fire = enq_valid & ctrl__enq_ready;
+  // ...
+  // Storage stays as an instance (RAM primitive)
+  QueueRAM_64x32 u_mem(
+    .wr_addr(tail_ptr),
+    .wr_data(enq_bits),
+    .rd_addr(head_ptr),
+    .rd_data(deq_bits),
+    // ...
+  );
+endmodule
+```
+
+**Pro:** Synth tools can infer RAM blocks. Reasonable file sizes.
+**Con:** Not truly flat. Need to define what counts as a "technology primitive".
+
+#### Option C: User-controlled depth
+
+A parameter controls how many hierarchy levels to flatten:
+- `depth=0`: No flattening (same as hierarchical mode)
+- `depth=1`: Flatten one level (inline immediate children)
+- `depth=∞`: Flatten everything (full netlist)
+
+```lean
+-- In codegen call
+let sv := toSystemVerilogNetlist myCircuit (flattenDepth := 2)
+```
+
+**Pro:** Flexible. User picks the right level for their use case.
+**Con:** More codegen complexity. Hierarchical names change with depth.
+
+#### What about RAM?
+
+This is the crux of the issue. Our current DSL has no RAM primitive. A 64x32
+register file is 2048 DFFs + a 64:1 mux tree. Flattening it to gates is
+technically correct but produces output that no synthesis tool would recognize
+as a RAM.
+
+Two paths:
+1. **Add a RAM gate type to the DSL** (`GateType.RAM`). Proofs would treat it
+   as an opaque axiom with read/write semantics.
+2. **Keep DFFs, let the synth tool figure it out.** This works for small
+   register files but fails for anything >16 entries.
+
+For the netlist codegen specifically, this doesn't matter much -- the netlist
+is for formal/LEC, not synthesis. But it's worth flagging.
+
+**Recommendation:** Option A (full flatten) for the netlist target. It's the
+simplest, most consistent, and formal tools don't care about file size. For
+synthesis, you use hierarchical mode.
+
+---
+
+### Q3: Multi-bit Gate Reconstruction
+
+The DSL is bit-level. Every gate operates on single wires. But readable output
+needs buses: `assign data_next = enq_fire ? enq_bits : data_reg` instead of
+32 separate MUX assignments.
+
+#### What "reconstruction" means concretely
+
+Current gate list for a 32-bit mux:
+
+```lean
+Gate.mkMUX (Wire.mk "data_reg_0")  (Wire.mk "enq_bits_0")  (Wire.mk "enq_fire") (Wire.mk "data_next_0"),
+Gate.mkMUX (Wire.mk "data_reg_1")  (Wire.mk "enq_bits_1")  (Wire.mk "enq_fire") (Wire.mk "data_next_1"),
+-- ... 30 more ...
+Gate.mkMUX (Wire.mk "data_reg_31") (Wire.mk "enq_bits_31") (Wire.mk "enq_fire") (Wire.mk "data_next_31"),
+```
+
+The codegen needs to recognize this as one vectorized operation.
+
+#### Option A: Pattern-match in codegen (reconstruct)
+
+The codegen analyzes the gate list and groups operations:
+
+```
+Step 1: Group gates by (gateType, control signals)
+  MUX gates sharing the same sel wire "enq_fire" → candidate bus operation
+
+Step 2: Check if inputs/outputs form contiguous buses
+  data_reg_0..31 → data_reg[31:0] ✓
+  enq_bits_0..31 → enq_bits[31:0] ✓
+  data_next_0..31 → data_next[31:0] ✓
+
+Step 3: Emit vectorized
+  assign data_next = enq_fire ? enq_bits : data_reg;
+```
+
+Algorithm sketch:
+
+```lean
+-- Group MUX gates by select wire
+def groupMuxBySelect (gates : List Gate) : HashMap Wire (List Gate)
+
+-- Check if a gate group forms a contiguous bus operation
+def isContiguousBusOp (group : List Gate) : Option BusOp
+
+-- BusOp: vectorized operation descriptor
+structure BusOp where
+  gateType : GateType
+  inputs : List (String × Nat)  -- (basename, width) for each input bus
+  output : String × Nat          -- (basename, width) for output bus
+  control : Option Wire          -- select wire for MUX
+```
+
+**Pro:** No DSL changes. Proof core untouched. Works with existing circuits.
+The reconstruction is purely cosmetic -- the bit-level semantics are preserved.
+**Con:** Heuristic. Won't catch every pattern. Partial buses (e.g., bits 0-15
+muxed by sel_a, bits 16-31 muxed by sel_b) won't merge.
+
+#### What patterns actually appear in our circuits?
+
+Looking at the real gate lists:
+
+| Pattern | Frequency | Reconstructible? |
+|---------|-----------|-------------------|
+| N parallel MUX, same select | Very common (Queue, RS, PRF) | Yes -- straightforward |
+| N parallel AND/OR/XOR, same structure | Common (ALU bitwise ops) | Yes |
+| N parallel DFF, same clock/reset | Universal (every register) | Yes |
+| Ripple-carry adder chain | Moderate (ALU, Comparator) | Harder -- carry chain |
+| OR-tree (reduction) | Moderate (equality check) | Could emit `\|` reduction |
+| Shift barrel mux tree | Rare (Shifter) | Unlikely to reconstruct |
+
+The first three patterns cover ~80% of all gates. The ripple-carry and
+reduction patterns are nice-to-have. The barrel shifter is probably not
+worth reconstructing -- it would still be readable as individual MUXes.
+
+#### Option B: Add multi-bit gate types to DSL
+
+```lean
+inductive GateType where
+  | AND | OR | NOT | XOR | BUF | MUX | DFF
+  -- New: vectorized operations
+  | ANDN (width : Nat)  -- N-bit AND
+  | ORN (width : Nat)   -- N-bit OR
+  | MUXN (width : Nat)  -- N-bit MUX (shared select)
+  | DFFN (width : Nat)  -- N-bit register
+```
+
+**Pro:** No heuristic reconstruction needed. Intent is explicit.
+**Con:** Every circuit definition, every proof, every existing codegen path
+needs to handle both scalar and vector gates. `native_decide` proofs may
+need changes. The type theory becomes more complex.
+
+#### Option C: Annotate at circuit level
+
+Keep the bit-level gates but add annotations that explicitly declare buses:
+
+```lean
+structure Circuit where
+  ...
+  gates : List Gate
+  instances : List CircuitInstance
+  -- Codegen hints (don't affect proofs)
+  busAnnotations : List BusAnnotation := []
+
+structure BusAnnotation where
+  basename : String
+  width : Nat
+  gateIndices : List Nat  -- which gates form this bus operation
+```
+
+**Pro:** Proofs untouched. Circuit builder can emit annotations alongside gates.
+**Con:** Two sources of truth. Annotations can get out of sync with gates.
+
+**Recommendation:** Option A (reconstruct in codegen). The patterns are
+regular enough. The algorithm is:
+1. Group gates by `(gateType, shared_control_wires)`
+2. Sort each group by output wire index
+3. Check if inputs/outputs form contiguous buses
+4. Emit vectorized if yes, scalar if no
+
+For the 20% of gates that don't reconstruct, scalar output is fine -- that's
+already what the current codegen does.
+
+---
+
+### Q4: SV `struct packed` vs `interface` with `modport`
+
+Both are SystemVerilog constructs for grouping signals. They serve different purposes.
+
+#### `struct packed`
+
+```systemverilog
+typedef struct packed {
+  logic        valid;
+  logic [5:0]  tag;
+  logic [31:0] data;
+} cdb_entry_t;
+
+module ReservationStation4(
+  input  cdb_entry_t cdb [0:3],
+  // ...
+);
+```
+
+**Properties:**
+- Fully synthesizable (IEEE 1800-2017)
+- Can be used as port types, signal types, array elements
+- Has a defined bit layout (packed = contiguous bits)
+- Can be assigned, compared, passed through hierarchies
+- Supported by: Yosys (partial -- no struct in ports, but internal is fine),
+  Vivado (full), Synopsys DC (full), Verilator (full)
+
+**Yosys limitation:** Yosys (our LEC tool) does NOT support `struct` in
+port declarations. It can handle structs internally but ports must be
+flat `logic [N:0]` signals. This means:
+- Hierarchical mode: structs in internal signals only, ports stay flat
+- OR: flatten struct ports with a macro/wrapper
+
+#### `interface` with `modport`
+
+```systemverilog
+interface decoupled_if #(parameter WIDTH = 32);
+  logic [WIDTH-1:0] bits;
+  logic             valid;
+  logic             ready;
+
+  modport source(output bits, output valid, input  ready);
+  modport sink  (input  bits, input  valid, output ready);
+endinterface
+
+module Queue1_32(
+  decoupled_if.sink  enq,
+  decoupled_if.source deq,
+  input logic clock,
+  input logic reset
+);
+```
+
+**Properties:**
+- More powerful: modports encode direction, can contain tasks/functions
+- NOT synthesizable in all tools (Yosys has no interface support)
+- Heavier syntax, more boilerplate
+- Excellent for verification testbenches
+- Supported by: Verilator (full), Vivado (synthesis + sim),
+  Synopsys DC (synthesis), Yosys (NO)
+
+#### Comparison for our use case
+
+| Criterion | `struct packed` | `interface` |
+|-----------|----------------|-------------|
+| Yosys LEC | Partial (no struct ports) | No |
+| Readability | Good | Better (direction in modport) |
+| Synthesis | Universal | Tool-dependent |
+| Complexity | Simple | Significant |
+| Port declarations | Flat with struct type | Interface type with modport |
+| Cross-module connection | Assign struct to struct | Interface auto-connect |
+
+#### What about Yosys?
+
+Since Yosys is our LEC verification tool, this matters a lot.
+
+For **netlist mode**: no structs at all (everything is `logic` and `assign`).
+Yosys handles this natively.
+
+For **hierarchical mode**: we need to decide whether to:
+1. Use structs for readability but provide a Yosys-compatible "flat" variant
+2. Skip structs entirely and just use commented bus groups
+3. Use structs only in internal signals, not in ports
+
+Option 3 is probably the pragmatic choice:
+
+```systemverilog
+module Queue1_32(
+  input  logic           clock,
+  input  logic           reset,
+  input  logic [31:0]    enq_bits,    // flat port
+  input  logic           enq_valid,
+  output logic           enq_ready,
+  output logic [31:0]    deq_bits,
+  output logic           deq_valid,
+  input  logic           deq_ready
+);
+  // Internal: use struct for readability
+  typedef struct packed {
+    logic [31:0] bits;
+    logic        valid;
+    logic        ready;
+  } decoupled32_t;
+
+  decoupled32_t enq_s, deq_s;
+  assign enq_s = '{bits: enq_bits, valid: enq_valid, ready: enq_ready};
+  // ...
+endmodule
+```
+
+But this adds boilerplate for questionable benefit. The flat port names are
+already readable with good naming (`enq_bits`, `enq_valid`, `enq_ready`).
+
+**Recommendation:** Skip structs for now. Use flat ports with good naming
+conventions and comments. The signal naming improvements alone (buses, semantic
+names) give us 80% of the readability win. Structs can be added later when/if
+we move to a different LEC tool, or as an opt-in flag for non-LEC output.
+
+---
+
+### Q5: Chisel `Decoupled` vs Custom `Bundle`
+
+Chisel has a built-in `DecoupledIO` (via `Decoupled()` sugar) from `chisel3.util`.
+We could use it directly or define our own bundles.
+
+#### Chisel stdlib `Decoupled`
+
+```scala
+// What Chisel provides
+class DecoupledIO[+T <: Data](gen: T) extends Bundle {
+  val ready = Input(Bool())
+  val valid = Output(Bool())
+  val bits  = Output(gen)
+}
+
+// Usage:
+val io = IO(new Bundle {
+  val enq = Flipped(Decoupled(UInt(32.W)))  // sink: valid/bits are Input, ready is Output
+  val deq = Decoupled(UInt(32.W))           // source: valid/bits are Output, ready is Input
+})
+
+// Connection:
+io.enq.ready := !full
+when(io.enq.fire) { ... }  // .fire = valid && ready
+```
+
+**Properties:**
+- Industry-standard naming (`bits`, `valid`, `ready`)
+- `Flipped()` handles direction reversal for sink ports
+- `.fire` helper built in
+- CIRCT lowers to standard port names: `enq_bits`, `enq_valid`, `enq_ready`
+- This is the dominant pattern in the Chisel ecosystem
+
+**Potential concern:** The CIRCT-generated SV port names must match our
+Lean-generated SV port names for LEC. CIRCT lowers `Decoupled` to:
+```
+io_enq_bits      (with io_ prefix by default)
+io_enq_valid
+io_enq_ready
+```
+
+We'd need to either:
+- Match this naming in Lean SV codegen (add `io_` prefix)
+- Strip the prefix in Chisel (use `@public` or `IO` naming overrides)
+- Use Yosys `rename` commands in LEC to normalize
+
+#### Custom Bundle (no stdlib dependency)
+
+```scala
+class ShoumeiDecoupled(width: Int) extends Bundle {
+  val bits  = UInt(width.W)
+  val valid = Bool()
+  val ready = Bool()
+  // No Flipped -- direction set at IO declaration
+}
+
+val io = IO(new Bundle {
+  val enq_bits  = Input(UInt(32.W))
+  val enq_valid = Input(Bool())
+  val enq_ready = Output(Bool())
+  val deq_bits  = Output(UInt(32.W))
+  val deq_valid = Output(Bool())
+  val deq_ready = Input(Bool())
+})
+```
+
+**Pro:** Full control over port naming. No `io_` prefix. Exact match with
+Lean SV names. No CIRCT surprises.
+**Con:** Lose `.fire`, `Flipped()`, and other Decoupled conveniences.
+Less idiomatic -- anyone reading the Chisel output expects to see `Decoupled`.
+
+#### What about our other interface shapes?
+
+Beyond Decoupled, we have operand bundles, CDB entries, register ports, etc.
+These don't exist in Chisel stdlib, so they'd be custom Bundles regardless:
+
+```scala
+class Operand extends Bundle {
+  val ready = Bool()
+  val tag   = UInt(6.W)
+  val data  = UInt(32.W)
+}
+
+class CDBEntry extends Bundle {
+  val tag  = UInt(6.W)
+  val data = UInt(32.W)
+}
+
+class RegWritePort(addrWidth: Int, dataWidth: Int) extends Bundle {
+  val en   = Bool()
+  val addr = UInt(addrWidth.W)
+  val data = UInt(dataWidth.W)
+}
+
+class RegReadPort(addrWidth: Int, dataWidth: Int) extends Bundle {
+  val addr = Input(UInt(addrWidth.W))
+  val data = Output(UInt(dataWidth.W))
+}
+```
+
+These would be shared across modules in a `generated/Interfaces.scala` file.
+
+#### LEC port name matching
+
+This is the real constraint. The LEC flow compares Lean SV ports against
+Chisel-generated SV ports by name. Currently both use flat `Bool()` ports
+with matching names. With Bundles, CIRCT flattens them:
+
+| Chisel Bundle | CIRCT-generated SV port name |
+|---------------|------------------------------|
+| `io.enq.bits` | `io_enq_bits` |
+| `io.enq.valid` | `io_enq_valid` |
+| `io.cdb(0).tag` | `io_cdb_0_tag` |
+| `io.dispatch.src1.data` | `io_dispatch_src1_data` |
+
+So Lean SV codegen needs to emit matching names:
+```systemverilog
+// Lean SV hierarchical mode -- must match CIRCT naming
+module ReservationStation4(
+  input  logic [5:0]  io_dispatch_src1_tag,
+  input  logic [31:0] io_dispatch_src1_data,
+  input  logic        io_dispatch_src1_ready,
+  // ...
+);
+```
+
+Or we strip the `io_` prefix on the Chisel side with:
+```scala
+override def desiredName = "ReservationStation4"
+// and use experimental.prefix or @public to control naming
+```
+
+**Recommendation:** Use Chisel stdlib `Decoupled` for ready/valid interfaces.
+Define custom Bundles for everything else (operand, CDB, regport). Handle the
+`io_` prefix mismatch by stripping it on the Chisel side -- this is a one-line
+config and matches what most Chisel projects do for clean port names.
+
+---
+
+### Q6 (New): Signal Group Detection Algorithm
+
+Not originally listed but implied: how does the codegen decide which wires
+form a bus?
+
+#### Current approach (heuristic)
+
+```lean
+-- SystemVerilog.lean: splitWireName
+-- "write_data_0" → ("write_data", 0)
+-- "a3"           → ("a", 3) only if basename ≥ 3 chars
+-- "e01"          → rejected (looks like a single signal)
+```
+
+This breaks on:
+- `valid` (single bit, no index) -- correctly not split
+- `src1_data_0` vs `src10_data` -- ambiguous split point
+- `enq_bits_0` vs `enq_bits0` -- different heuristic paths
+
+#### Proposed approach (type-driven)
+
+If we have `SignalGroup` annotations (Option A from DSL changes):
+
+```lean
+def queue1_32_annotations : List SignalGroup := [
+  { name := "enq_bits",  wires := makeIndexedWires "enq_bits" 32, width := 32 },
+  { name := "data_reg",  wires := makeIndexedWires "data_reg" 32, width := 32 },
+  { name := "data_next", wires := makeIndexedWires "data_next" 32, width := 32 },
+]
+```
+
+The codegen doesn't guess -- it uses the annotations directly.
+
+For wires NOT covered by annotations, fall back to the heuristic.
+This gives a clean migration path: annotate the important buses,
+let the heuristic handle the rest.
+
+**Detection algorithm with annotations:**
+```
+1. For each wire in the circuit:
+   a. Check if it belongs to a SignalGroup → use group's basename and index
+   b. Else, apply splitWireName heuristic → best-effort grouping
+   c. Else, treat as standalone scalar signal
+
+2. For each SignalGroup, verify:
+   - All wires exist in circuit.inputs/outputs/gates
+   - Indices are contiguous (0..width-1)
+   - No wire belongs to multiple groups
+```
+
+---
+
+### Q7 (New): What Does the >200 Port Hack Actually Need to Become?
+
+The current `inputs_0`/`outputs_0` hack exists because individual `Bool()`
+port declarations blow up Chisel compilation and SV port lists. With buses,
+this problem goes away entirely.
+
+#### Current triggering modules
+
+| Module | Input wires | Output wires | Total | Currently bundled? |
+|--------|-------------|--------------|-------|--------------------|
+| StoreBuffer8 | 108 | 73 | 181 | Yes (hardcoded map) |
+| ReservationStation4 | ~140 | ~69 | ~209 | Yes (generic) |
+| PhysRegFile_64x32 | ~2100 | ~64 | ~2164 | Yes (generic) |
+| RAT_32x6 | ~200 | ~12 | ~212 | Yes (generic) |
+| Queue64_32 | ~34 | ~32 | ~66 | No |
+| Mux64x32 | ~2080 | ~32 | ~2112 | Yes (internal) |
+
+#### Why the hack exists
+
+In Chisel, each `val x = IO(Input(Bool()))` declaration:
+- Creates a JVM object
+- Adds to the module's port list
+- Generates a line in the FIRRTL output
+
+2000+ individual Bool declarations cause:
+- JVM method size limits (>64KB bytecode per method)
+- CIRCT compilation slowdowns
+- Unreadable port lists
+
+#### How buses eliminate the problem
+
+With `UInt(32.W)` instead of 32x `Bool()`:
+
+| Module | Chisel ports (current) | Chisel ports (with buses) |
+|--------|----------------------|--------------------------|
+| PhysRegFile_64x32 | 2164 x Bool() | ~10 ports (2 read ports, 1 write port, clk, rst) |
+| Mux64x32 | 2112 x Bool() | 66 ports (64 x UInt(32) inputs, 1 x UInt(6) sel, 1 x UInt(32) out) |
+| RAT_32x6 | 212 x Bool() | ~8 ports (2 read ports, 1 write port, clk, rst) |
+| StoreBuffer8 | 181 x Bool() | ~15 ports (decoupled in/out, lookup, commit) |
+
+The bundled IO hack, the hardcoded StoreBuffer8 mapping, the
+`moduleUsesBundledIO` list, `mapPortNameToSVBundle` -- all of it goes away.
+Replaced by proper typing at the DSL level.
+
+This is arguably the single biggest win from the codegen v2 work.
