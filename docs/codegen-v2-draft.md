@@ -3,6 +3,18 @@
 Draft sketches for the three code generation targets.
 Feedback welcome -- nothing here is implemented yet.
 
+## Decisions (locked in)
+
+| Question | Decision | Notes |
+|----------|----------|-------|
+| Register type | **Option B: `ShoumeiReg` wrapper** | Thin helper, async reset, reset-to-zero, no hierarchy. Returns plain `UInt`. |
+| Struct naming | **Option C: Hybrid auto-derive with dedup** | Auto-derive from annotations, canonicalize by field names + types |
+| Netlist flattening | **Full flatten + RAM primitive** | Flatten everything to gates, but add RAM as a DSL primitive to stop at |
+| Bus reconstruction | **Option A: Pattern-match in codegen** | Group gates by (type, shared control), check contiguous buses, emit vectorized |
+| SV types | **`struct packed`** with `yosys-slang` | Shared SV package, `read_slang` for LEC |
+| Chisel style | **Single-assign, no `when`** | Every signal has exactly one `:=`. Next-state is `Mux` chains. |
+| Chisel Decoupled | **`ShoumeiDecoupled` wrapper** | Same philosophy as `ShoumeiReg` -- own our types, control naming |
+
 ---
 
 ## Running Example: Queue1_32
@@ -444,8 +456,14 @@ import chisel3.util._
 
 class Queue1_32 extends Module {
   val io = IO(new Bundle {
-    val enq = Flipped(Decoupled(UInt(32.W)))
-    val deq = Decoupled(UInt(32.W))
+    // enqueue (sink)
+    val enq_bits  = Input(UInt(32.W))
+    val enq_valid = Input(Bool())
+    val enq_ready = Output(Bool())
+    // dequeue (source)
+    val deq_bits  = Output(UInt(32.W))
+    val deq_valid = Output(Bool())
+    val deq_ready = Input(Bool())
   })
 
   // --- state ---
@@ -456,24 +474,24 @@ class Queue1_32 extends Module {
   val enq_fire = Wire(Bool())
   val deq_fire = Wire(Bool())
 
-  io.enq.ready := ~valid_reg
-  io.deq.valid := valid_reg
-  enq_fire     := io.enq.valid & io.enq.ready
-  deq_fire     := io.deq.valid & io.deq.ready
+  io.enq_ready := ~valid_reg
+  io.deq_valid := valid_reg
+  enq_fire     := io.enq_valid & io.enq_ready
+  deq_fire     := io.deq_valid & io.deq_ready
 
   // --- next-state (pure combinational, Mux only) ---
   val valid_next = Wire(Bool())
   val data_next  = Wire(UInt(32.W))
 
   valid_next := enq_fire | (valid_reg & ~deq_fire)
-  data_next  := Mux(enq_fire, io.enq.bits, data_reg)
+  data_next  := Mux(enq_fire, io.enq_bits, data_reg)
 
   // --- register update (exactly one := per reg) ---
   valid_reg := valid_next
   data_reg  := data_next
 
   // --- output ---
-  io.deq.bits := data_reg
+  io.deq_bits := data_reg
 }
 ```
 
@@ -482,8 +500,12 @@ class Queue1_32 extends Module {
 ```scala
 class Queue4_32 extends Module {
   val io = IO(new Bundle {
-    val enq = Flipped(Decoupled(UInt(32.W)))
-    val deq = Decoupled(UInt(32.W))
+    val enq_bits  = Input(UInt(32.W))
+    val enq_valid = Input(Bool())
+    val enq_ready = Output(Bool())
+    val deq_bits  = Output(UInt(32.W))
+    val deq_valid = Output(Bool())
+    val deq_ready = Input(Bool())
   })
 
   // --- pointer / count ---
@@ -494,17 +516,17 @@ class Queue4_32 extends Module {
   val full  = count === 4.U
   val empty = count === 0.U
 
-  // --- storage ---
-  val mem = Mem(4, UInt(32.W))
+  // --- storage (RAM primitive) ---
+  val mem = ShoumeiMem(4, 32)  // depth=4, width=32
 
   // --- control ---
-  io.enq.ready := ~full
-  io.deq.valid := ~empty
+  io.enq_ready := ~full
+  io.deq_valid := ~empty
 
   val enq_fire = Wire(Bool())
   val deq_fire = Wire(Bool())
-  enq_fire := io.enq.valid & io.enq.ready
-  deq_fire := io.deq.valid & io.deq.ready
+  enq_fire := io.enq_valid & io.enq_ready
+  deq_fire := io.deq_valid & io.deq_ready
 
   // --- next-state (single assign, Mux only, no when) ---
   val head_next = Wire(UInt(2.W))
@@ -522,9 +544,9 @@ class Queue4_32 extends Module {
   tail_ptr := tail_next
   count    := count_next
 
-  // --- memory (write uses Mux-gated enable, not when) ---
-  mem.write(tail_ptr, io.enq.bits, enq_fire)
-  io.deq.bits := mem.read(head_ptr)
+  // --- memory (write uses enable arg, not when) ---
+  mem.write(tail_ptr, io.enq_bits, enq_fire)
+  io.deq_bits := mem.read(head_ptr)
 }
 ```
 
@@ -544,10 +566,39 @@ class RSEntry extends Bundle {
 
 class ReservationStation4 extends Module {
   val io = IO(new Bundle {
-    val dispatch = Flipped(Decoupled(new RSEntry))
-    val issue    = Decoupled(new RSEntry)
-    val cdb      = Input(Vec(4, Valid(new CDBEntry)))
-    val flush    = Input(Bool())
+    // dispatch (sink)
+    val dispatch_opcode    = Input(UInt(4.W))
+    val dispatch_src1_rdy  = Input(Bool())
+    val dispatch_src1_tag  = Input(UInt(6.W))
+    val dispatch_src1_data = Input(UInt(32.W))
+    val dispatch_src2_rdy  = Input(Bool())
+    val dispatch_src2_tag  = Input(UInt(6.W))
+    val dispatch_src2_data = Input(UInt(32.W))
+    val dispatch_dst_tag   = Input(UInt(6.W))
+    val dispatch_valid     = Input(Bool())
+    val dispatch_ready     = Output(Bool())
+    // issue (source)
+    val issue_opcode    = Output(UInt(4.W))
+    val issue_src1_data = Output(UInt(32.W))
+    val issue_src2_data = Output(UInt(32.W))
+    val issue_dst_tag   = Output(UInt(6.W))
+    val issue_valid     = Output(Bool())
+    val issue_ready     = Input(Bool())
+    // CDB broadcast (4 ports)
+    val cdb_0_tag   = Input(UInt(6.W))
+    val cdb_0_data  = Input(UInt(32.W))
+    val cdb_0_valid = Input(Bool())
+    val cdb_1_tag   = Input(UInt(6.W))
+    val cdb_1_data  = Input(UInt(32.W))
+    val cdb_1_valid = Input(Bool())
+    val cdb_2_tag   = Input(UInt(6.W))
+    val cdb_2_data  = Input(UInt(32.W))
+    val cdb_2_valid = Input(Bool())
+    val cdb_3_tag   = Input(UInt(6.W))
+    val cdb_3_data  = Input(UInt(32.W))
+    val cdb_3_valid = Input(Bool())
+    // flush
+    val flush = Input(Bool())
   })
 
   // --- entry storage (registered state) ---
@@ -866,10 +917,13 @@ These have the same bit layout but different field names. Options:
 - Same struct (field names ignored)? Loses semantic info.
 - Different structs (field names matter)? Keeps meaning, minimal dedup.
 
-**Recommendation:** Option B (shared library). The number of interface shapes
-is small (~7 for the full RV32IM). A shared library is easy to maintain, gives
-canonical names, and makes cross-module connections clean. Plus we already have
-`Decoupled.lean` as a precedent.
+**Decision: Option C (hybrid).** Auto-derive struct types from annotations,
+but canonicalize by field names + types. Two interfaces with the same fields
+(`ready: Bool, tag: UInt(6), data: UInt(32)`) get the same struct name.
+Different field names = different struct, even if bit layout is identical
+(`operand_t` vs `cdb_entry_t`). The shared interface library (`Interfaces.lean`)
+provides canonical names for the common shapes; module-specific shapes get
+auto-derived names.
 
 ---
 
@@ -973,12 +1027,64 @@ Two paths:
 2. **Keep DFFs, let the synth tool figure it out.** This works for small
    register files but fails for anything >16 entries.
 
-For the netlist codegen specifically, this doesn't matter much -- the netlist
-is for formal/LEC, not synthesis. But it's worth flagging.
+**Decision: Full flatten + RAM primitive.**
 
-**Recommendation:** Option A (full flatten) for the netlist target. It's the
-simplest, most consistent, and formal tools don't care about file size. For
-synthesis, you use hierarchical mode.
+Add RAM as a DSL primitive so the flattener stops there instead of
+decomposing into thousands of DFFs + mux trees:
+
+```lean
+-- New circuit instance attribute
+structure CircuitInstance where
+  moduleName : String
+  instName   : String
+  portMap    : List (String × Wire)
+  isPrimitive : Bool := false   -- NEW: don't inline in netlist mode
+
+-- Or: a dedicated RAM type (more semantic)
+structure RAMPrimitive where
+  name     : String
+  depth    : Nat                -- number of entries (e.g., 64)
+  width    : Nat                -- bits per entry (e.g., 32)
+  wrEn     : Wire
+  wrAddr   : List Wire          -- log2(depth) wires
+  wrData   : List Wire          -- width wires
+  rdAddr   : List Wire          -- log2(depth) wires
+  rdData   : List Wire          -- width wires (outputs)
+  clock    : Wire
+
+-- Circuit gains a ram field
+structure Circuit where
+  name       : String
+  inputs     : List Wire
+  outputs    : List Wire
+  gates      : List Gate
+  instances  : List CircuitInstance
+  rams       : List RAMPrimitive := []  -- NEW
+  ...
+```
+
+The RAM primitive is opaque to the proof core. Its semantics are axiomatized:
+
+```lean
+-- RAM behavioral spec (for proofs)
+axiom ram_read_after_write (r : RAMPrimitive) (addr : Fin r.depth) (data : BitVec r.width) :
+  (r.write addr data).read addr = data
+
+axiom ram_read_no_write (r : RAMPrimitive) (addr1 addr2 : Fin r.depth) (data : BitVec r.width) :
+  addr1 ≠ addr2 → (r.write addr1 data).read addr2 = r.read addr2
+```
+
+Code generators emit the RAM as:
+- **SV netlist:** `reg [31:0] mem [0:63];` + read/write assigns (stays as one block)
+- **SV hierarchical:** Same, or instantiate a RAM module
+- **Chisel:** `val mem = Mem(64, UInt(32.W))` + `mem.read`/`mem.write`
+
+This solves the PhysRegFile problem: instead of 2048 DFFs + 64:1 mux tree,
+it's one `RAMPrimitive` that every codegen knows how to handle.
+
+Netlist mode flattens everything EXCEPT RAM primitives and other
+`isPrimitive` instances. For formal tools, the RAM is a known semantic
+block they can reason about directly.
 
 ---
 
@@ -1426,10 +1532,79 @@ override def desiredName = "ReservationStation4"
 // and use experimental.prefix or @public to control naming
 ```
 
-**Recommendation:** Use Chisel stdlib `Decoupled` for ready/valid interfaces.
-Define custom Bundles for everything else (operand, CDB, regport). Handle the
-`io_` prefix mismatch by stripping it on the Chisel side -- this is a one-line
-config and matches what most Chisel projects do for clean port names.
+**Decision: `ShoumeiDecoupled` wrapper.** Same philosophy as `ShoumeiReg` --
+own our types, control naming, enforce our protocol semantics.
+
+```scala
+/** Shoumei ready/valid interface.
+  * Same shape as Chisel Decoupled but we control:
+  * - Port naming (no io_ prefix, matches Lean SV exactly)
+  * - Fire semantics (explicit Wire, not .fire method)
+  * - Direction convention (explicit, not Flipped magic)
+  */
+class ShoumeiDecoupled(width: Int) extends Bundle {
+  val bits  = UInt(width.W)
+  val valid = Bool()
+  val ready = Bool()
+}
+
+object ShoumeiDecoupled {
+  /** Source (output) side: we drive bits+valid, observe ready */
+  def source(width: Int): ShoumeiDecoupled = {
+    val d = new ShoumeiDecoupled(width)
+    // Direction set at IO() call site, not here
+    d
+  }
+
+  /** Fire signal: explicit Wire, single-assign style */
+  def fire(d: ShoumeiDecoupled): Bool = d.valid & d.ready
+}
+```
+
+Usage in generated code:
+
+```scala
+class Queue1_32 extends Module {
+  val io = IO(new Bundle {
+    // Input side (sink): bits+valid are Input, ready is Output
+    val enq_bits  = Input(UInt(32.W))
+    val enq_valid = Input(Bool())
+    val enq_ready = Output(Bool())
+    // Output side (source): bits+valid are Output, ready is Input
+    val deq_bits  = Output(UInt(32.W))
+    val deq_valid = Output(Bool())
+    val deq_ready = Input(Bool())
+  })
+
+  // Fire signals (explicit, single-assign)
+  val enq_fire = Wire(Bool())
+  val deq_fire = Wire(Bool())
+  enq_fire := io.enq_valid & io.enq_ready
+  deq_fire := io.deq_valid & io.deq_ready
+
+  // ... rest of single-assign logic ...
+}
+```
+
+**Why not stdlib Decoupled:**
+
+| Issue | Chisel stdlib | ShoumeiDecoupled |
+|-------|--------------|------------------|
+| Port naming | `io_enq_bits` (CIRCT adds `io_` prefix) | `enq_bits` (exact match to Lean SV) |
+| Direction | `Flipped(Decoupled(...))` magic | Explicit `Input`/`Output` per signal |
+| Fire | `.fire` method (hides `&&`) | Explicit `Wire(Bool())`, single-assign |
+| `when` temptation | `when(io.enq.fire) { ... }` | Not available -- forces Mux style |
+| Bundle nesting | `io.enq.bits` (2-level) | `io.enq_bits` (flat) |
+| LEC matching | Need `@public` or prefix stripping | Names match by construction |
+
+The flat port style (`enq_bits`, `enq_valid`, `enq_ready` as separate
+IO signals) is actually closer to what CIRCT ultimately generates anyway.
+We just skip the Bundle→flatten round-trip. And it means the codegen
+doesn't need to understand `Flipped` -- it just emits `Input`/`Output`
+per signal based on the annotation direction.
+
+For the other interface shapes (Operand, CDB, RegPort), same approach:
+flat ports with consistent naming prefix, not nested Bundles.
 
 ---
 
@@ -1576,6 +1751,42 @@ structure Circuit where
   signalGroups : List SignalGroup       := []
   inputBundles : List InterfaceBundle   := []
   outputBundles : List InterfaceBundle  := []
+  rams : List RAMPrimitive             := []
+
+-- RAM primitive (opaque to proofs, known to codegen)
+structure RAMPrimitive where
+  name    : String
+  depth   : Nat            -- number of entries
+  width   : Nat            -- bits per entry
+  wrEn    : Wire
+  wrAddr  : List Wire      -- log2(depth) wires
+  wrData  : List Wire      -- width wires
+  rdAddr  : List Wire      -- log2(depth) wires
+  rdData  : List Wire      -- width wires (outputs)
+  clock   : Wire
+```
+
+ShoumeiReg + ShoumeiMem Chisel helpers (emitted once in `ShoumeiPrimitives.scala`):
+
+```scala
+package generated
+
+import chisel3._
+
+object ShoumeiReg {
+  /** DFF with async reset to zero. Returns plain UInt. */
+  def apply(width: Int, clock: Clock, reset: AsyncReset): UInt =
+    withClockAndReset(clock, reset) { RegInit(0.U(width.W)) }
+
+  def bool(clock: Clock, reset: AsyncReset): Bool =
+    withClockAndReset(clock, reset) { RegInit(false.B) }
+}
+
+object ShoumeiMem {
+  /** RAM primitive. Wraps Chisel Mem with consistent interface. */
+  def apply(depth: Int, width: Int): SyncReadMem[UInt] =
+    SyncReadMem(depth, UInt(width.W))
+}
 ```
 
 ```lean
