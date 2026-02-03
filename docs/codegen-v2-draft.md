@@ -14,6 +14,13 @@ Feedback welcome -- nothing here is implemented yet.
 | SV types | **`struct packed`** with `yosys-slang` | Shared SV package, `read_slang` for LEC |
 | Chisel style | **Single-assign, no `when`** | Every signal has exactly one `:=`. Next-state is `Mux` chains. |
 | Chisel Decoupled | **`ShoumeiDecoupled` wrapper** | Same philosophy as `ShoumeiReg` -- own our types, control naming |
+| Multi-port RAM | **Option A: Configurable port lists** | `RAMPrimitive` has `writePorts : List RAMWritePort`, `readPorts : List RAMReadPort` |
+| Mem vs SyncReadMem | **Flag on primitive** | `syncRead : Bool` on `RAMPrimitive`. `false` → `Mem` (async), `true` → `SyncReadMem` (sync) |
+| LEC pairing | **Two pairs, trust transitivity** | netlist↔hier + hier↔Chisel. No direct netlist↔Chisel check needed. |
+| Struct ports in LEC | **Flat ports everywhere** | Structs internal only. All module ports are flat → names match by construction. |
+| Module vs RawModule | **Auto-detect** | Sequential → `Module`, combinational → `RawModule` |
+| BlackBox escape | **Eliminated by bus reconstruction** | Keep as fallback only if vectorization doesn't collapse enough |
+| RAM semantics | **Proved, no axioms** | Functional `RAM` model, properties by `simp`. LEC validates codegen matches. |
 
 ---
 
@@ -2288,7 +2295,7 @@ Define `RAM_1W1R`, `RAM_1W2R`, etc. as named variants.
 Pro: each is a known shape. Con: combinatorial explosion if we need
 `2W2R`, `1W3R`, etc.
 
-**Leaning: Option A.** Port lists handle any configuration. The common
+**Decision: Option A.** Port lists handle any configuration. The common
 cases are 1W1R (queues, store buffer) and 1W2R (register files). Code
 generators emit:
 - SV: `reg [31:0] mem [0:63];` with separate `always_ff` per write port
@@ -2296,7 +2303,7 @@ generators emit:
 - Chisel: `val mem = Mem(...)` or `SyncReadMem(...)` with multiple
   `.read()` / `.write()` calls
 
-**Needs decision.**
+**Decided.** ✓
 
 ---
 
@@ -2328,10 +2335,10 @@ object ShoumeiMem {
 }
 ```
 
-The `RAMPrimitive` in the DSL should carry a `syncRead : Bool` flag to
+The `RAMPrimitive` in the DSL carries a `syncRead : Bool` flag to
 distinguish the two.
 
-**Needs decision.**
+**Decided.** ✓ Flag on primitive: `syncRead := false` → `Mem`, `syncRead := true` → `SyncReadMem`.
 
 ---
 
@@ -2357,10 +2364,10 @@ But the netlist is generated from a different code path (flattened inline)
 vs hierarchical (instances preserved). LEC 1 validates the flattener.
 LEC 2 validates the Chisel codegen. Together they cover everything.
 
-**Leaning:** LEC 1 + LEC 2 (two pairs, transitive). Drop the direct
+**Decision:** LEC 1 + LEC 2 (two pairs, transitive). Drop the direct
 netlist-vs-Chisel check.
 
-**Needs decision.**
+**Decided.** ✓
 
 ---
 
@@ -2391,17 +2398,17 @@ But we decided against nested Bundles (ShoumeiDecoupled = flat ports).
 Yosys `rename` commands to normalize port names before `equiv_make`.
 Fragile, but possible.
 
-**Leaning: Option A.** Both SV modes use the same flat port names as
+**Decision: Option A.** Both SV modes use the same flat port names as
 Chisel. Structs are internal only. This is consistent with the
 ShoumeiDecoupled decision (flat ports, matching names by construction).
 
 The SV hierarchical sketches already show flat ports + struct internals,
-so this is already where the draft landed for Q4. Just needs to be explicit
-that struct-typed ports are NOT used for top-level module ports -- only for
-internal signal grouping and sub-module connections where both sides use
-the same `shoumei_types` package.
+so this is already where the draft landed for Q4. Struct-typed ports are
+NOT used for top-level module ports -- only for internal signal grouping
+and sub-module connections where both sides use the same `shoumei_types`
+package.
 
-**Needs confirmation.**
+**Decided.** ✓
 
 ---
 
@@ -2495,8 +2502,8 @@ theorem ram_read_no_write ... := by simp [RAM.write, RAM.read]
 **Con:** The proofs need to connect this functional model to the
 `RAMPrimitive` structural definition. Two levels of abstraction.
 
-**Leaning:** Option B. The proofs are trivial (`simp` handles them).
+**Decision: Option B.** The proofs are trivial (`simp` handles them).
 The connection to `RAMPrimitive` is: the codegen generates code that
 implements this functional spec, and LEC verifies it.
 
-**Needs decision.**
+**Decided.** ✓ No axioms. Fully proved functional RAM model.
