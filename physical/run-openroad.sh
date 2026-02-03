@@ -120,9 +120,11 @@ docker run --rm \
   -v "$PROJECT_ROOT:/project" \
   -w /OpenROAD-flow-scripts/flow \
   openroad/flow-ubuntu22.04-builder:3d5d5a \
-  bash -c 'source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project ABC_CLOCK_PERIOD_IN_PS=1000'
+  bash -c 'source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project ABC_CLOCK_PERIOD_IN_PS=1000' 2>&1 | \
+  grep -v "fatal: not a git repository" | \
+  grep -v "Stopping at filesystem boundary"
 
-ORFS_EXIT_CODE=$?
+ORFS_EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
 echo ""
