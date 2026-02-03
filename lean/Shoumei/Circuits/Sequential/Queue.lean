@@ -196,11 +196,29 @@ def mkQueue1StructuralComplete (width : Nat) : Circuit :=
   -- - deq_valid should be valid
   let valid_wire := Wire.mk "valid"
   let data_reg_wires := List.range width |>.map (wireWithIndex "data_reg")
+  let enq_data_wires := List.range width |>.map (wireWithIndex "enq_data")
   let updated_outputs :=
     [Wire.mk "enq_ready"] ++
     data_reg_wires ++  -- Use data_reg as deq_data outputs
     [valid_wire]       -- Use valid as deq_valid output
-  { base with outputs := updated_outputs }
+  { base with
+    outputs := updated_outputs
+    -- v2 codegen annotations: typed signals and interface bundles
+    signalGroups := [
+      { name := "enq_data", width := width, wires := enq_data_wires },
+      { name := "data_reg", width := width, wires := data_reg_wires }
+    ]
+    inputBundles := [
+      { name := "enq"
+        signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
+        protocol := some "decoupled" }
+    ]
+    outputBundles := [
+      { name := "deq"
+        signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
+        protocol := some "decoupled" }
+    ]
+  }
 
 /-! ## Decoupled Interface Support
 
