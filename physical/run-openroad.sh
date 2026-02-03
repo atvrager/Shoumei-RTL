@@ -70,28 +70,32 @@ echo -e "${GREEN}✓ ORFS submodule initialized${NC}"
 
 # Check generated Verilog (read from config.mk)
 DESIGN_NAME=$(grep "^export DESIGN_NAME" physical/config.mk | cut -d= -f2 | tr -d ' ')
-# Extract first file from VERILOG_FILES (may be multi-line with backslashes)
-VERILOG_FILE=$(grep "^export VERILOG_FILES" physical/config.mk | head -1 | cut -d= -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*\\[[:space:]]*$//' | sed "s|\$(PROJECT_ROOT)|$PROJECT_ROOT|")
 
 if [ -z "$DESIGN_NAME" ]; then
     echo -e "${RED}✗ DESIGN_NAME not found in physical/config.mk${NC}"
     exit 1
 fi
 
-if [ ! -f "$VERILOG_FILE" ]; then
-    echo -e "${RED}✗ Verilog file not found: $VERILOG_FILE${NC}"
-    echo "Run: make chisel (or lake exe generate_riscv_decoder for RV32IDecoder)"
+# Check main design file exists (dependencies will be handled by wildcard in Make)
+MAIN_VERILOG="$PROJECT_ROOT/output/sv-from-lean/${DESIGN_NAME}.sv"
+if [ ! -f "$MAIN_VERILOG" ]; then
+    echo -e "${RED}✗ Main Verilog file not found: $MAIN_VERILOG${NC}"
+    echo "Run: lake exe generate_all"
     exit 1
 fi
 
-echo -e "${GREEN}✓ Verilog file exists: $VERILOG_FILE${NC}"
+# Count generated SV files for confirmation
+SV_COUNT=$(ls -1 "$PROJECT_ROOT/output/sv-from-lean/"*.sv 2>/dev/null | wc -l)
+echo -e "${GREEN}✓ Main Verilog file exists: $MAIN_VERILOG${NC}"
+echo -e "${GREEN}✓ Found $SV_COUNT SystemVerilog modules for synthesis${NC}"
 echo ""
 
 # Display configuration
 echo "==> Configuration:"
 echo "  Design:    $DESIGN_NAME"
 echo "  Platform:  $(grep "^export PLATFORM" physical/config.mk | cut -d= -f2 | tr -d ' ')"
-echo "  Verilog:   $VERILOG_FILE"
+echo "  Main SV:   $MAIN_VERILOG"
+echo "  Modules:   $SV_COUNT SystemVerilog files"
 echo "  Clock:     $(grep "^export CLK_PERIOD_NS" physical/config.mk | cut -d= -f2 | tr -d ' ') ns"
 echo ""
 
