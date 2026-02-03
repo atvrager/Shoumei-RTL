@@ -141,6 +141,10 @@ structure CPUState (config : CPUConfig) where
   /-- Committed RAT for flush recovery -/
   committedRAT : CommittedRATState
 
+  -- ==== Execution Unit State ====
+  /-- MulDiv execution state (pipelined multiplier + divider, only if M extension enabled) -/
+  mulDivExecState : if config.enableM then MulDivExecState else Unit
+
   -- ==== RVVI Infrastructure (Future Cosimulation) ====
   /-- PC queue for RVVI-TRACE output -/
   pcQueue : PCQueue
@@ -168,6 +172,11 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
       cast (by simp [h]) (RSState.init 4)
     else
       cast (by simp [h]) ()
+  let mulDivExec : if config.enableM then MulDivExecState else Unit :=
+    if h : config.enableM then
+      cast (by simp [h]) MulDivExecState.init
+    else
+      cast (by simp [h]) ()
   { fetch := FetchState.init config.entryPoint
     decode := DecodeState.empty
     rename := RenameStageState.init
@@ -178,6 +187,7 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
     rob := ROBState.empty
     lsu := LSUState.empty
     committedRAT := CommittedRATState.init
+    mulDivExecState := mulDivExec
     pcQueue := PCQueue.init
     insnQueue := InsnQueue.init
     globalStall := false
@@ -320,11 +330,49 @@ def cpuStep
          cpu.rsBranch, cpu.rsMulDiv, cpu.decode, cpu.globalStall)
 
   -- ========== STAGE 6: EXECUTE & CDB BROADCAST ==========
+
+  -- MulDiv execution state update (only if M extension enabled)
+  -- Must be computed before CDB broadcasts to be available for final state assembly
+  let (mulDivExecState', mulDivBC) := if h : config.enableM then
+      let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
+      let execState : MulDivExecState := cast (by rw [if_pos h]) cpu.mulDivExecState
+
+      -- Check if RS has ready instruction to dispatch
+      match rs.selectReady with
+      | some idx =>
+          let (_, dispatchResult) := rs.dispatch idx
+          match dispatchResult with
+          | some (opcode, src1, src2, destTag, _immediate, _pc) =>
+              -- Use mulDivStep with proper state tracking
+              let op := Execution.opTypeToMulDivOpcode opcode
+              let (newExecState, result) := Execution.mulDivStep execState src1 src2 destTag op true
+              let broadcast := match result with
+                | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
+                | none => []
+              (cast (by rw [if_pos h]) newExecState, broadcast)
+          | none =>
+              -- No dispatch, but still step the exec state (to advance pipelines)
+              let (newExecState, result) := Execution.mulDivStep execState 0 0 0 0 false
+              let broadcast := match result with
+                | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
+                | none => []
+              (cast (by rw [if_pos h]) newExecState, broadcast)
+      | none =>
+          -- No ready instruction, still step exec state
+          let (newExecState, result) := Execution.mulDivStep execState 0 0 0 0 false
+          let broadcast := match result with
+            | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
+            | none => []
+          (cast (by rw [if_pos h]) newExecState, broadcast)
+    else
+      (cpu.mulDivExecState, [])
+
   -- Select ready entries from each RS and execute
-  let cdbBroadcasts : List CDBBroadcast :=
+  -- Returns CDB broadcasts and optional branch redirect target
+  let (cdbBroadcasts, branchRedirectTarget) : (List CDBBroadcast × Option UInt32) :=
     -- Integer RS execution (ALU operations)
     -- Uses verified IntegerExecUnit (executeInteger)
-    let intBC := match rsInteger_postFlush.selectReady with
+    let intBC : List CDBBroadcast := match rsInteger_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsInteger_postFlush.dispatch idx
           match dispatchResult with
@@ -336,7 +384,7 @@ def cpuStep
 
     -- Memory RS execution (loads/stores)
     -- Uses verified MemoryExecUnit (calculateMemoryAddress) with proper immediate values
-    let memBC := match rsMemory_postFlush.selectReady with
+    let memBC : List CDBBroadcast := match rsMemory_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsMemory_postFlush.dispatch idx
           match dispatchResult with
@@ -351,50 +399,23 @@ def cpuStep
 
     -- Branch RS execution
     -- Uses verified BranchExecUnit (evaluateBranchCondition and executeBranch)
-    let branchBC := match rsBranch_postFlush.selectReady with
+    let (branchBC, branchRedirect) : (List CDBBroadcast × Option UInt32) := match rsBranch_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsBranch_postFlush.dispatch idx
           match dispatchResult with
           | some (opcode, src1, src2, destTag, immediate, pc) =>
               -- Use proper branch condition evaluation from BranchExecUnit
-              let taken := Execution.evaluateBranchCondition opcode src1 src2
-              -- Calculate proper branch target using immediate and PC
               let offset : Int := immediate.getD 0
               let branchResult := Execution.executeBranch opcode src1 src2 pc offset destTag
               -- Broadcast link register value (PC+4) for JAL/JALR
               let result := pc + 4
-              -- TODO: Use branchResult to generate redirect to fetch stage
-              [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := branchResult.taken }]
-          | none => []
-      | none => []
+              -- If branch was taken, return target for redirect
+              let redirect := if branchResult.taken then some branchResult.target_pc else none
+              ([{ valid := true, tag := destTag, data := result, exception := false, mispredicted := branchResult.taken }], redirect)
+          | none => ([], none)
+      | none => ([], none)
 
-    -- MulDiv RS execution (only if M extension enabled)
-    -- Uses verified MulDivExecUnit operations
-    -- NOTE: Current limitation - no state tracking for multi-cycle operations
-    -- TODO: Add MulDivExecState to CPUState for pipelined multiplier (3-cycle) and divider (32-cycle)
-    -- TODO: Use mulDivStep for proper stateful execution
-    let mulDivBC := if h : config.enableM then
-        let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
-        match rs.selectReady with
-        | some idx =>
-            let (_, dispatchResult) := rs.dispatch idx
-            match dispatchResult with
-            | some (opcode, src1, src2, destTag, _immediate, _pc) =>
-                -- Simplified single-cycle MulDiv (proper impl needs state machine)
-                let result := match opcode with
-                  | OpType.MUL => src1 * src2
-                  | OpType.DIV => if src2 == 0 then UInt32.ofNat (-1 : Int).toNat else src1 / src2
-                  | OpType.REM => if src2 == 0 then src1 else src1 % src2
-                  | OpType.DIVU => if src2 == 0 then UInt32.ofNat (-1 : Int).toNat else src1 / src2
-                  | OpType.REMU => if src2 == 0 then src1 else src1 % src2
-                  | OpType.MULH | OpType.MULHU | OpType.MULHSU => 0  -- TODO: High word multiply
-                  | _ => 0
-                [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
-            | none => []
-        | none => []
-      else []
-
-    intBC ++ memBC ++ branchBC ++ mulDivBC
+    (intBC ++ memBC ++ branchBC ++ mulDivBC, branchRedirect)
 
   -- ========== UPDATE RS AFTER DISPATCH ==========
   -- Dispatch clears the dispatched entries from RS
@@ -487,7 +508,10 @@ def cpuStep
 
   -- ========== STAGE 1: FETCH ==========
   let stall := globalStall_postFlush
-  let branchRedirect := flushPC
+  -- Priority: branch redirect from execution > flush from commit
+  let branchRedirect := match branchRedirectTarget with
+    | some target => some target
+    | none => flushPC
   let fetch' := fetchStep cpu.fetch imem stall branchRedirect
 
   -- ========== ASSEMBLE FINAL STATE ==========
@@ -500,6 +524,7 @@ def cpuStep
     rsBranch := rsBranch_postDispatch
     rsMulDiv := rsMulDiv_postDispatch
     rob := rob_postDispatch
+    mulDivExecState := mulDivExecState'
     globalStall := globalStall_postFlush
     flushing := flushPC.isSome
     cycleCount := cpu.cycleCount + 1 }
