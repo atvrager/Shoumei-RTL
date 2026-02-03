@@ -313,13 +313,21 @@ def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex
     none
 
 -- Helper: construct port reference from port base name and wire name
--- Simple rule: brackets → underscores, done. No complex translation needed.
--- E.g., portBase="inputs[123]" → "inputs_123"
+-- Rules match Chisel codegen for consistency:
+-- 1. "inputs[123]" or similar bundled IO → keep underscores for array-like naming
+-- 2. Named ports like "alloc_physRd[0]" → strip brackets to "alloc_physRd0" (no underscore)
+-- E.g., portBase="inputs[123]" → "inputs_123" (bundled IO uses underscores)
+--       portBase="alloc_physRd[0]" → "alloc_physRd0" (named ports concatenate directly)
 --       portBase="op", wireName="opcode3" → "op3"
 def constructPortRef (portBase : String) (wireName : String) : String :=
-  -- If it has brackets, convert to SystemVerilog style (bundled IO)
+  -- If it has brackets, handle based on context
   if portBase.contains '[' then
-    portBase.replace "[" "_" |>.replace "]" ""
+    -- For bundled IO ports (inputs_N, outputs_N), keep underscores
+    if portBase.startsWith "inputs[" || portBase.startsWith "outputs[" then
+      portBase.replace "[" "_" |>.replace "]" ""
+    -- For named ports, strip brackets completely (no underscore separator)
+    else
+      portBase.replace "[" "" |>.replace "]" ""
   -- If it already ends with a digit, it's complete
   else if endsWithDigit portBase then
     portBase
