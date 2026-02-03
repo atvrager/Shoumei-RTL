@@ -1,9 +1,9 @@
 # Codegen V2: Signal Naming & Output Modes
 
-Draft sketches for the three code generation targets.
-Feedback welcome -- nothing here is implemented yet.
+Design specification for the three code generation targets.
+All design questions resolved. Ready for implementation.
 
-## Decisions (locked in)
+## Decisions
 
 | Question | Decision | Notes |
 |----------|----------|-------|
@@ -125,7 +125,7 @@ class Queue1_32 extends RawModule {
 
 ---
 
-## Proposed: Mode 1 -- SV Netlist (Flat)
+## Mode 1: SV Netlist (Flat)
 
 Everything flattened to primitives. No module hierarchy.
 Signal names carry **full hierarchical path** so you know where each wire came from.
@@ -213,7 +213,7 @@ Double underscore `__` separates hierarchy levels (single `_` stays in signal na
 
 ---
 
-## Proposed: Mode 2 -- SV Hierarchical
+## Mode 2: SV Hierarchical
 
 Like a human would write it. Module instantiation, SV structs for interfaces.
 
@@ -416,7 +416,7 @@ endmodule
 
 ---
 
-## Proposed: Mode 3 -- Chisel Hierarchical
+## Mode 3: Chisel Hierarchical
 
 Proper Chisel idioms: `Bundle`, `Decoupled`, `Vec`, `UInt`.
 
@@ -760,10 +760,11 @@ structure Circuit where
 **Pro:** Single source of truth. Type info flows through entire pipeline.
 **Con:** Large refactor. Every circuit definition, proof, codegen needs updating.
 
-### Recommendation
+### Decision
 
-**Start with Option A.** Ship the three output modes with annotations.
-Migrate to Option B incrementally as the RV32IM build-out demands richer types.
+**Option A (lightweight annotations).** Ship the three output modes with
+`SignalGroup` / `InterfaceBundle` annotations. Migrate to Option B (typed
+wires) incrementally as the RV32IM build-out demands richer types.
 
 The key insight: the **flat gate list is still the proof core**. The annotations
 are for codegen only. This preserves all existing proofs.
@@ -816,7 +817,7 @@ both hierarchical modes share the same structure -- only syntax differs.
 
 ---
 
-## Open Questions (Detailed)
+## Design Decisions (Detailed)
 
 ---
 
@@ -1047,17 +1048,15 @@ structure CircuitInstance where
   portMap    : List (String × Wire)
   isPrimitive : Bool := false   -- NEW: don't inline in netlist mode
 
--- Or: a dedicated RAM type (more semantic)
+-- Dedicated RAM type with configurable ports (Q8/Q9 decisions)
 structure RAMPrimitive where
-  name     : String
-  depth    : Nat                -- number of entries (e.g., 64)
-  width    : Nat                -- bits per entry (e.g., 32)
-  wrEn     : Wire
-  wrAddr   : List Wire          -- log2(depth) wires
-  wrData   : List Wire          -- width wires
-  rdAddr   : List Wire          -- log2(depth) wires
-  rdData   : List Wire          -- width wires (outputs)
-  clock    : Wire
+  name       : String
+  depth      : Nat              -- number of entries (e.g., 64)
+  width      : Nat              -- bits per entry (e.g., 32)
+  writePorts : List RAMWritePort
+  readPorts  : List RAMReadPort
+  syncRead   : Bool := false    -- false → Mem (async), true → SyncReadMem
+  clock      : Wire
 
 -- Circuit gains a ram field
 structure Circuit where
@@ -1066,19 +1065,28 @@ structure Circuit where
   outputs    : List Wire
   gates      : List Gate
   instances  : List CircuitInstance
-  rams       : List RAMPrimitive := []  -- NEW
+  rams       : List RAMPrimitive := []
   ...
 ```
 
-The RAM primitive is opaque to the proof core. Its semantics are axiomatized:
+The RAM primitive is opaque to the proof core. Its semantics are proved
+via a functional model (see Q14):
 
 ```lean
--- RAM behavioral spec (for proofs)
-axiom ram_read_after_write (r : RAMPrimitive) (addr : Fin r.depth) (data : BitVec r.width) :
-  (r.write addr data).read addr = data
+-- RAM functional model (for proofs)
+def RAM (depth width : Nat) := Fin depth → BitVec width
 
-axiom ram_read_no_write (r : RAMPrimitive) (addr1 addr2 : Fin r.depth) (data : BitVec r.width) :
-  addr1 ≠ addr2 → (r.write addr1 data).read addr2 = r.read addr2
+def RAM.write (mem : RAM d w) (addr : Fin d) (val : BitVec w) : RAM d w :=
+  fun a => if a == addr then val else mem a
+
+def RAM.read (mem : RAM d w) (addr : Fin d) : BitVec w := mem addr
+
+-- Proven, not axiomatized
+theorem ram_read_after_write (mem : RAM d w) (addr : Fin d) (val : BitVec w) :
+  (mem.write addr val).read addr = val := by simp [RAM.write, RAM.read]
+
+theorem ram_read_no_write (mem : RAM d w) (a1 a2 : Fin d) (val : BitVec w) :
+  a1 ≠ a2 → (mem.write a1 val).read a2 = mem.read a2 := by simp [RAM.write, RAM.read]
 ```
 
 Code generators emit the RAM as:
@@ -1208,7 +1216,7 @@ structure BusAnnotation where
 **Pro:** Proofs untouched. Circuit builder can emit annotations alongside gates.
 **Con:** Two sources of truth. Annotations can get out of sync with gates.
 
-**Recommendation:** Option A (reconstruct in codegen). The patterns are
+**Decision:** Option A (reconstruct in codegen). The patterns are
 regular enough. The algorithm is:
 1. Group gates by `(gateType, shared_control_wires)`
 2. Sort each group by output wire index
@@ -1399,11 +1407,11 @@ Two strategies:
 Strategy 1 is cleaner. If both `read_slang` invocations see the same
 `shoumei_types` package, the flattened names match by construction.
 
-**Recommendation (revised):** Use `struct packed` with a shared SV package.
-Switch LEC to `read_slang`. This gives us struct ports, nested structs,
-arrays of structs -- everything we need. Skip `interface`/`modport` for now
-(structs handle our use cases and are simpler). The migration cost is low:
-one line change in `run-lec.sh` + adding yosys-slang as a dependency.
+**Decision:** Use `struct packed` with a shared SV package. Switch LEC to
+`read_slang`. This gives us struct ports, nested structs, arrays of
+structs -- everything we need. Skip `interface`/`modport` for now (structs
+handle our use cases and are simpler). The migration cost is low: one line
+change in `run-lec.sh` + adding yosys-slang as a dependency.
 
 ---
 
@@ -1615,10 +1623,9 @@ flat ports with consistent naming prefix, not nested Bundles.
 
 ---
 
-### Q6 (New): Signal Group Detection Algorithm
+### Q6: Signal Group Detection Algorithm
 
-Not originally listed but implied: how does the codegen decide which wires
-form a bus?
+How does the codegen decide which wires form a bus?
 
 #### Current approach (heuristic)
 
@@ -1634,7 +1641,7 @@ This breaks on:
 - `src1_data_0` vs `src10_data` -- ambiguous split point
 - `enq_bits_0` vs `enq_bits0` -- different heuristic paths
 
-#### Proposed approach (type-driven)
+#### V2 approach (type-driven)
 
 If we have `SignalGroup` annotations (Option A from DSL changes):
 
@@ -1667,7 +1674,7 @@ let the heuristic handle the rest.
 
 ---
 
-### Q7 (New): What Does the >200 Port Hack Actually Need to Become?
+### Q7: Eliminating the >200 Port Hack
 
 The current `inputs_0`/`outputs_0` hack exists because individual `Bool()`
 port declarations blow up Chisel compilation and SV port lists. With buses,
@@ -1760,17 +1767,26 @@ structure Circuit where
   outputBundles : List InterfaceBundle  := []
   rams : List RAMPrimitive             := []
 
+-- RAM port types
+structure RAMWritePort where
+  en   : Wire
+  addr : List Wire         -- log2(depth) wires
+  data : List Wire         -- width wires
+
+structure RAMReadPort where
+  addr : List Wire         -- log2(depth) wires
+  data : List Wire         -- width wires (outputs)
+
 -- RAM primitive (opaque to proofs, known to codegen)
+-- Multi-port: configurable write/read port lists (Q8 decision)
 structure RAMPrimitive where
-  name    : String
-  depth   : Nat            -- number of entries
-  width   : Nat            -- bits per entry
-  wrEn    : Wire
-  wrAddr  : List Wire      -- log2(depth) wires
-  wrData  : List Wire      -- width wires
-  rdAddr  : List Wire      -- log2(depth) wires
-  rdData  : List Wire      -- width wires (outputs)
-  clock   : Wire
+  name       : String
+  depth      : Nat         -- number of entries
+  width      : Nat         -- bits per entry
+  writePorts : List RAMWritePort
+  readPorts  : List RAMReadPort
+  syncRead   : Bool := false  -- false → Mem (async), true → SyncReadMem (Q9 decision)
+  clock      : Wire
 ```
 
 ShoumeiReg + ShoumeiMem Chisel helpers (emitted once in `ShoumeiPrimitives.scala`):
@@ -1790,8 +1806,12 @@ object ShoumeiReg {
 }
 
 object ShoumeiMem {
-  /** RAM primitive. Wraps Chisel Mem with consistent interface. */
-  def apply(depth: Int, width: Int): SyncReadMem[UInt] =
+  /** Async-read memory (register file, small arrays). */
+  def apply(depth: Int, width: Int): Mem[UInt] =
+    Mem(depth, UInt(width.W))
+
+  /** Sync-read memory (SRAM, block RAM). */
+  def syncRead(depth: Int, width: Int): SyncReadMem[UInt] =
     SyncReadMem(depth, UInt(width.W))
 }
 ```
@@ -2037,7 +2057,7 @@ Con: CIRCT can't optimize across module boundaries as well. Every
 32-bit reg is a module instance -- verbose, and CIRCT may not inline
 them. Requires all RegisterN variants to exist as Chisel modules too.
 
-**Recommendation:** Option B. The helper enforces our DFF contract (async
+**Decision:** Option B. The helper enforces our DFF contract (async
 reset, reset-to-zero, explicit clock) without adding hierarchy that blocks
 CIRCT optimization. The single-assign style means each register has exactly
 one `:= data_next` line. The `ShoumeiReg` name makes it searchable and
@@ -2249,11 +2269,11 @@ Phase 7 waits for everything.
 
 ---
 
-## Remaining Open Questions
+## Additional Design Decisions
 
 ### Q8: Multi-port RAM
 
-The `RAMPrimitive` as drafted has 1 write port + 1 read port. But
+The `RAMPrimitive` in its initial form had 1 write port + 1 read port. But
 PhysRegFile has **1 write + 2 reads**, and future structures (ROB, store
 buffer) may need 2W+2R or more.
 
@@ -2403,7 +2423,7 @@ Chisel. Structs are internal only. This is consistent with the
 ShoumeiDecoupled decision (flat ports, matching names by construction).
 
 The SV hierarchical sketches already show flat ports + struct internals,
-so this is already where the draft landed for Q4. Struct-typed ports are
+so this is consistent with the Q4 decision. Struct-typed ports are
 NOT used for top-level module ports -- only for internal signal grouping
 and sub-module connections where both sides use the same `shoumei_types`
 package.
