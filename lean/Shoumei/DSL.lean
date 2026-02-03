@@ -88,20 +88,80 @@ structure CircuitInstance where
   portMap : List (String × Wire) -- Mapping from submodule port names to local wires
   deriving Repr
 
+/-! ## Codegen V2: Signal Annotations
+
+These types carry type information for code generators without affecting
+proofs. All fields on Circuit default to [] so existing definitions are
+unchanged.
+-/
+
+/-- Signal type annotation for codegen. Maps flat wires to typed signals. -/
+inductive SignalType where
+  | Bool
+  | UInt (width : Nat)
+  | SInt (width : Nat)
+  deriving Repr, BEq, Inhabited
+
+/-- Group of flat wires that form a single logical signal (e.g., a 32-bit bus). -/
+structure SignalGroup where
+  name  : String
+  width : Nat
+  wires : List Wire          -- the underlying flat wires
+  stype : SignalType := .UInt width
+  deriving Repr
+
+/-- Interface bundle describing a structured port group (e.g., Decoupled). -/
+structure InterfaceBundle where
+  name     : String
+  signals  : List (String × SignalType)  -- field name → type
+  protocol : Option String := none       -- "decoupled" | "regport" | none
+  deriving Repr
+
+/-- RAM write port: enable + address + data wires. -/
+structure RAMWritePort where
+  en   : Wire
+  addr : List Wire         -- log2(depth) wires
+  data : List Wire         -- width wires
+  deriving Repr
+
+/-- RAM read port: address wires (inputs) + data wires (outputs). -/
+structure RAMReadPort where
+  addr : List Wire         -- log2(depth) wires
+  data : List Wire         -- width wires (outputs)
+  deriving Repr
+
+/-- RAM primitive — opaque to proofs, known to codegen.
+    Multi-port: configurable write/read port lists. -/
+structure RAMPrimitive where
+  name       : String
+  depth      : Nat         -- number of entries
+  width      : Nat         -- bits per entry
+  writePorts : List RAMWritePort
+  readPorts  : List RAMReadPort
+  syncRead   : Bool := false  -- false → Mem (async), true → SyncReadMem (sync)
+  clock      : Wire
+  deriving Repr
+
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules
 structure Circuit where
-  name : String           -- Module/circuit name
-  inputs : List Wire      -- Input signals
-  outputs : List Wire     -- Output signals
-  gates : List Gate       -- Internal gates
-  instances : List CircuitInstance -- Submodule instances
+  name       : String           -- Module/circuit name
+  inputs     : List Wire        -- Input signals
+  outputs    : List Wire        -- Output signals
+  gates      : List Gate        -- Internal gates
+  instances  : List CircuitInstance -- Submodule instances
+  -- v2: codegen annotations (ignored by proofs, all default to [])
+  signalGroups  : List SignalGroup      := []
+  inputBundles  : List InterfaceBundle  := []
+  outputBundles : List InterfaceBundle  := []
+  rams          : List RAMPrimitive     := []
   deriving Repr
 
 namespace Circuit
 
 -- Helper to create empty circuit
 def empty (name : String) : Circuit :=
-  { name := name, inputs := [], outputs := [], gates := [], instances := [] }
+  { name := name, inputs := [], outputs := [], gates := [], instances := []
+    signalGroups := [], inputBundles := [], outputBundles := [], rams := [] }
 
 -- Inline a subcircuit with wire remapping
 -- This allows hierarchical composition while keeping a flat gate structure

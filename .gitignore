@@ -33,6 +33,7 @@ output/**/*
 *.fir
 *.anno.json
 chisel/src/main/scala/generated/*.scala
+!chisel/src/main/scala/generated/ShoumeiPrimitives.scala
 !chisel/src/main/scala/generated/.gitkeep
 
 # Build artifacts

@@ -10,6 +10,7 @@ Usage:
 
 -- Core DSL and semantics
 import Shoumei.DSL
+import Shoumei.DSL.Interfaces
 import Shoumei.Semantics
 import Shoumei.Theorems
 
