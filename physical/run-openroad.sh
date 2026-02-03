@@ -70,7 +70,8 @@ echo -e "${GREEN}✓ ORFS submodule initialized${NC}"
 
 # Check generated Verilog (read from config.mk)
 DESIGN_NAME=$(grep "^export DESIGN_NAME" physical/config.mk | cut -d= -f2 | tr -d ' ')
-VERILOG_FILE=$(grep "^export VERILOG_FILES" physical/config.mk | cut -d= -f2 | tr -d ' ' | sed "s|\$(PROJECT_ROOT)|$PROJECT_ROOT|")
+# Extract first file from VERILOG_FILES (may be multi-line with backslashes)
+VERILOG_FILE=$(grep "^export VERILOG_FILES" physical/config.mk | head -1 | cut -d= -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*\\[[:space:]]*$//' | sed "s|\$(PROJECT_ROOT)|$PROJECT_ROOT|")
 
 if [ -z "$DESIGN_NAME" ]; then
     echo -e "${RED}✗ DESIGN_NAME not found in physical/config.mk${NC}"
