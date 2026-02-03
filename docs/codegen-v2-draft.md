@@ -1483,3 +1483,423 @@ The bundled IO hack, the hardcoded StoreBuffer8 mapping, the
 Replaced by proper typing at the DSL level.
 
 This is arguably the single biggest win from the codegen v2 work.
+
+---
+
+## Implementation Plan
+
+Chisel hierarchical first. No external tool dependencies, fast feedback
+(`sbt run` fails immediately on bad output), and it forces us to get the
+DSL annotations right before touching the SV generators.
+
+### Phase 0: DSL Annotations (foundation for everything)
+
+**Goal:** Add type info to `Circuit` without breaking any existing proofs.
+
+**Files to change:**
+- `lean/Shoumei/DSL.lean` -- add `SignalGroup`, `InterfaceBundle`, optional fields on `Circuit`
+- `lean/Shoumei/DSL/Interfaces.lean` -- **new** shared interface library
+
+```lean
+-- DSL.lean additions
+inductive SignalType where
+  | Bool
+  | UInt (width : Nat)
+  | SInt (width : Nat)
+
+structure SignalGroup where
+  name  : String
+  width : Nat
+  wires : List Wire          -- the underlying flat wires
+  stype : SignalType := .UInt width
+
+structure InterfaceBundle where
+  name     : String
+  signals  : List (String × SignalType)  -- field name → type
+  protocol : Option String := none       -- "decoupled" | "regport" | none
+
+-- Circuit gets optional annotations (all default to [])
+structure Circuit where
+  name       : String
+  inputs     : List Wire
+  outputs    : List Wire
+  gates      : List Gate
+  instances  : List CircuitInstance
+  -- v2: codegen annotations (ignored by proofs)
+  signalGroups : List SignalGroup       := []
+  inputBundles : List InterfaceBundle   := []
+  outputBundles : List InterfaceBundle  := []
+```
+
+```lean
+-- DSL/Interfaces.lean - canonical interface types
+def decoupledBundle (width : Nat) : InterfaceBundle := {
+  name := "decoupled"
+  signals := [("bits", .UInt width), ("valid", .Bool), ("ready", .Bool)]
+  protocol := some "decoupled"
+}
+
+def operandBundle : InterfaceBundle := {
+  name := "operand"
+  signals := [("ready", .Bool), ("tag", .UInt 6), ("data", .UInt 32)]
+}
+
+def cdbEntryBundle : InterfaceBundle := {
+  name := "cdb_entry"
+  signals := [("tag", .UInt 6), ("data", .UInt 32)]
+}
+
+def regWriteBundle (addrW dataW : Nat) : InterfaceBundle := {
+  name := "reg_write"
+  signals := [("en", .Bool), ("addr", .UInt addrW), ("data", .UInt dataW)]
+}
+
+def regReadBundle (addrW dataW : Nat) : InterfaceBundle := {
+  name := "reg_read"
+  signals := [("addr", .UInt addrW), ("data", .UInt dataW)]
+}
+```
+
+**Validation:** `lake build` passes. All existing circuits compile
+unchanged (default `[]` annotations). No proofs break.
+
+**Deliverable:** DSL is ready. Nothing visible changes in output yet.
+
+---
+
+### Phase 1: Annotate Existing Circuits
+
+**Goal:** Add annotations to circuit definitions so codegen can use them.
+Start with a vertical slice -- one simple, one medium, one large module.
+
+**Vertical slice (3 circuits):**
+
+| Module | Why | Key annotations |
+|--------|-----|-----------------|
+| Queue1_32 | Simple, has Decoupled ports | 2 interface bundles (enq, deq), 2 signal groups (data_reg, data_next) |
+| ALU32 | Medium combinational, lots of buses | ~10 signal groups (a, b, op, result, add_result, ...) |
+| ReservationStation4 | Large, currently broken by >200 port hack | operand, CDB, dispatch bundles |
+
+**Example annotation for Queue1_32:**
+
+```lean
+def mkQueue1_32_annotated : Circuit :=
+  let base := mkQueue1StructuralComplete 32
+  { base with
+    inputBundles := [
+      { name := "enq", signals := [("bits", .UInt 32), ("valid", .Bool)]
+        protocol := some "decoupled" },
+    ]
+    outputBundles := [
+      { name := "enq", signals := [("ready", .Bool)]   -- enq.ready is output
+        protocol := some "decoupled" },
+      { name := "deq", signals := [("bits", .UInt 32), ("valid", .Bool)]
+        protocol := some "decoupled" },
+    ]
+    signalGroups := [
+      { name := "data_reg",  width := 32, wires := makeIndexedWires "data_reg" 32 },
+      { name := "data_next", width := 32, wires := makeIndexedWires "data_next" 32 },
+    ]
+  }
+```
+
+**Validation:** `lake build` passes. Annotations are plumbed through.
+Write a small test that reads annotations back (`#eval`).
+
+**Deliverable:** Three annotated circuits ready for codegen to consume.
+
+---
+
+### Phase 2: Chisel Hierarchical Codegen
+
+**Goal:** New `toChiselV2` that produces proper Chisel with Bundles, UInt,
+Decoupled. Runs alongside existing `toChisel` (no breaking changes).
+
+**Files to change:**
+- `lean/Shoumei/Codegen/ChiselV2.lean` -- **new** generator
+- `lean/Shoumei/Codegen/Unified.lean` -- add `writeCircuitChiselV2`
+- `chisel/src/main/scala/generated/Interfaces.scala` -- **new** shared Bundles
+
+**Step 2a: Chisel Bundle generation**
+
+From `InterfaceBundle` definitions, emit `Interfaces.scala`:
+
+```scala
+package generated
+
+import chisel3._
+import chisel3.util._
+
+class Operand extends Bundle {
+  val ready = Bool()
+  val tag   = UInt(6.W)
+  val data  = UInt(32.W)
+}
+
+class CDBEntry extends Bundle {
+  val tag  = UInt(6.W)
+  val data = UInt(32.W)
+}
+
+class RegWritePort(addrWidth: Int, dataWidth: Int) extends Bundle {
+  val en   = Bool()
+  val addr = UInt(addrWidth.W)
+  val data = UInt(dataWidth.W)
+}
+
+class RegReadPort(addrWidth: Int, dataWidth: Int) extends Bundle {
+  val addr = UInt(addrWidth.W)
+  val data = UInt(dataWidth.W)
+}
+```
+
+**Step 2b: Module IO generation**
+
+For a circuit with annotations, emit typed IO instead of flat Bool ports:
+
+```lean
+-- Old codegen (current):
+--   val enq_data_0 = IO(Input(Bool()))
+--   val enq_data_1 = IO(Input(Bool()))
+--   ...
+
+-- New codegen:
+--   val io = IO(new Bundle {
+--     val enq = Flipped(Decoupled(UInt(32.W)))
+--     val deq = Decoupled(UInt(32.W))
+--   })
+```
+
+Logic to emit:
+1. Check `inputBundles`/`outputBundles` for protocol
+2. If "decoupled" → emit `Decoupled(UInt(W.W))` or `Flipped(Decoupled(...))`
+3. If named bundle matches a known interface → emit that Bundle class
+4. Remaining flat wires → emit as `UInt(W.W)` or `Bool()` individually
+
+**Step 2c: Internal signal generation**
+
+Replace `_wires(N)` array with named signals:
+
+```lean
+-- Old: val _wires = Wire(Vec(500, Bool()))
+--      _wires(42) := _wires(10) & _wires(11)
+
+-- New: val enq_fire = Wire(Bool())
+--      val data_next = Wire(UInt(32.W))
+--      enq_fire := io.enq.valid && io.enq.ready
+--      data_next := Mux(enq_fire, io.enq.bits, data_reg)
+```
+
+For annotated signal groups → emit as `UInt(W.W)` with vectorized ops.
+For unannotated wires → keep as individual `Bool()` (safe fallback).
+
+**Step 2d: Bus reconstruction for gate emission**
+
+Implement the pattern-matching algorithm from Q3:
+1. Group MUX/AND/OR/DFF gates by shared control wire
+2. Check if inputs/outputs belong to the same SignalGroup
+3. If yes → emit one vectorized operation
+4. If no → emit individual scalar ops (existing behavior)
+
+**Step 2e: Register generation**
+
+Replace per-bit `RegInit(false.B)` with typed regs:
+
+```lean
+-- Old: val data_reg_0_reg = withClockAndReset(clock, reset) { RegInit(false.B) }
+--      val data_reg_1_reg = ...  (32 times)
+
+-- New: val data_reg = RegInit(0.U(32.W))
+```
+
+DFF groups sharing the same clock/reset with contiguous output wires
+in a SignalGroup → one `RegInit` of the group's type.
+
+**Step 2f: Delete the hacks**
+
+- Remove `moduleUsesBundledIO` hardcoded list
+- Remove `mapPortNameToVecRef` and StoreBuffer8 special-case mapping
+- Remove `useWireArray`/`useIOBundle`/`useRegArray` threshold logic
+- Remove method chunking (typed signals = smaller methods naturally)
+
+**Validation at each step:**
+- `lake build` passes (Lean compiles)
+- `lake exe generate_all` produces new Chisel files in a v2 output dir
+- `cd chisel && sbt compile` passes (Chisel code is syntactically valid)
+- `cd chisel && sbt run` passes (CIRCT generates SV)
+- Manually inspect output for Queue1_32, ALU32, RS4
+
+**Deliverable:** Chisel output that looks like a human wrote it. Three
+annotated modules generate correct, readable Chisel. All other modules
+continue using the v1 codegen path unchanged.
+
+---
+
+### Phase 3: Annotate Remaining Circuits
+
+**Goal:** Once the vertical slice works, annotate all 63 modules.
+
+Rough grouping by effort:
+
+| Group | Modules | Effort | Notes |
+|-------|---------|--------|-------|
+| Simple combinational | FullAdder, RCA, Subtractor, Comparator, LogicUnit, Decoder | Low | Just signal groups for buses (a, b, result) |
+| Medium combinational | ALU32, Shifter, MuxTree, Arbiter, Multiplier | Low-Med | Multiple bus groups, some shared patterns |
+| Simple sequential | DFF, Register*, QueuePointer, QueueCounter | Low | data_reg groups, clock/reset already detected |
+| Queue variants | Queue1_8, Queue1_32, QueueN_*, QueueRAM_* | Med | Decoupled bundles, storage arrays |
+| RISC-V rename | RAT, FreeList, PhysRegFile | Med | RegRead/RegWrite bundles, eliminate bundled IO |
+| Execution | IntExec, MemExec, RS4, MulDiv* | High | Operand, CDB, dispatch bundles, most complex |
+| Top-level | ROB, StoreBuffer, LSU, Fetch, Rename, CPU | High | Composed of many sub-interfaces |
+
+**Strategy:** Bottom-up. Annotate leaf modules first (they're simpler and
+their annotations inform the parent modules' port mappings).
+
+Order:
+1. All Phase 1 combinational modules (bulk, mostly mechanical)
+2. Register/Queue building blocks
+3. Mux/Decoder (internal to RISC-V modules)
+4. RAT, FreeList, PhysRegFile (rename stage)
+5. ReservationStation, execution units
+6. ROB, StoreBuffer, LSU
+7. CPU top-level
+
+**Validation:** After each group, `sbt run` passes for all modules.
+
+---
+
+### Phase 4: SV Hierarchical Codegen
+
+**Goal:** New `toSystemVerilogV2` producing readable SV with buses and
+struct types. Requires yosys-slang for LEC.
+
+**Files to change:**
+- `lean/Shoumei/Codegen/SystemVerilogV2.lean` -- **new** generator
+- `lean/Shoumei/Codegen/Unified.lean` -- add `writeCircuitSVV2`
+- `output/sv-from-lean/shoumei_types.sv` -- **new** shared package
+
+**Step 4a: SV Package generation**
+
+From the same `InterfaceBundle` definitions used for Chisel:
+
+```systemverilog
+package shoumei_types;
+  typedef struct packed { ... } operand_t;
+  typedef struct packed { ... } cdb_entry_t;
+  // etc.
+endpackage
+```
+
+**Step 4b: Module generation**
+
+Same annotation-driven logic as Chisel, but emitting SV syntax:
+- Typed ports: `input logic [31:0] enq_bits` instead of 32 individual ports
+- Struct ports: `input cdb_entry_t cdb [0:3]` (with yosys-slang)
+- Vectorized assigns: `assign data_next = enq_fire ? enq_bits : data_reg`
+- Single `always_ff` blocks for register groups
+
+**Step 4c: Instance generation**
+
+Submodule instantiation with named ports:
+```systemverilog
+Register32 u_data_reg(
+  .d   (data_next),
+  .q   (data_reg),
+  .clock(clock),
+  .reset(reset)
+);
+```
+
+**Validation:**
+- `yosys -m slang.so` reads generated SV without errors
+- LEC passes between SV hierarchical and Chisel SV (via CIRCT)
+
+---
+
+### Phase 5: yosys-slang Integration + LEC Update
+
+**Goal:** Switch LEC from `read_verilog -sv` to `read_slang`.
+
+**Files to change:**
+- `verification/run-lec.sh` -- replace `read_verilog -sv` with `read_slang`
+- `Makefile` or CI -- add yosys-slang install step
+
+**Migration:**
+1. Install yosys-slang plugin
+2. Change 6 lines in `run-lec.sh` (`read_verilog -sv` → `read_slang`)
+3. Run full LEC suite -- all 63 modules should pass
+4. If any fail, debug port name mismatches (struct flattening convention)
+
+**Validation:** `./verification/run-lec.sh` passes for all modules.
+
+---
+
+### Phase 6: SV Netlist Codegen
+
+**Goal:** Flat netlist output for formal tools. Everything is primitives.
+
+**Files to change:**
+- `lean/Shoumei/Codegen/SystemVerilogNetlist.lean` -- **new** generator
+- `lean/Shoumei/Codegen/Unified.lean` -- add `writeCircuitNetlist`
+
+**Key logic:**
+1. Recursive inline: walk `instances`, replace each with flattened gates
+   using `Circuit.inline` with wire remapping
+2. Hierarchical naming: prepend `{instName}__` to all remapped wires
+3. Bus reconstruction: same algorithm as Phase 2 step 2d
+4. Emit single flat module with:
+   - Typed ports (from annotations)
+   - Hierarchical internal wire names (`u_mem__reg_0_to_63__dff_0`)
+   - Vectorized assigns where possible
+   - One `always_ff` per register group
+
+**Validation:** Yosys reads it, `equiv_make` + SAT proves it equivalent
+to the hierarchical SV (both flattened internally by Yosys).
+
+---
+
+### Phase 7: Cleanup
+
+- Remove v1 codegen (`Chisel.lean`, `SystemVerilog.lean`) once v2 is stable
+- Remove `ChiselContext` with `useWireArray`/`useIOBundle`/`useRegArray`
+- Remove all hardcoded module name lists
+- Update `CLAUDE.md`, `docs/adding-a-module.md`
+- Run full verification suite one last time
+
+---
+
+### Dependency Graph
+
+```
+Phase 0 (DSL annotations)
+  │
+  ├──→ Phase 1 (annotate 3 circuits)
+  │       │
+  │       └──→ Phase 2 (Chisel hierarchical codegen)
+  │               │
+  │               └──→ Phase 3 (annotate all 63 circuits)
+  │                       │
+  │                       ├──→ Phase 4 (SV hierarchical codegen)
+  │                       │       │
+  │                       │       └──→ Phase 5 (yosys-slang + LEC)
+  │                       │
+  │                       └──→ Phase 6 (SV netlist codegen)
+  │
+  └──────────────────────────→ Phase 7 (cleanup, after 5+6 done)
+```
+
+Phases 4 and 6 can run in parallel once Phase 3 is done.
+Phase 5 depends on Phase 4 (need SV hierarchical output to LEC against).
+Phase 7 waits for everything.
+
+---
+
+### Risk Checklist
+
+| Risk | Mitigation |
+|------|------------|
+| Annotations get out of sync with wire lists | Validation function: check every annotated wire exists in circuit |
+| Bus reconstruction misgroups wires | Conservative: only merge when ALL wires in a SignalGroup participate. Fall back to scalar. |
+| CIRCT port naming doesn't match Lean SV naming | Test one module end-to-end in Phase 2 before annotating everything |
+| yosys-slang struct flattening convention differs between Lean SV and Chisel SV | Both import same `shoumei_types` package → flattened identically |
+| `native_decide` proofs break with new Circuit fields | Default values (`[]`) ensure backward compat. Proofs only see gates/inputs/outputs. |
+| sbt compile hits JVM limits with new codegen | Typed signals are inherently smaller than Bool() arrays. If still big, keep chunking as fallback. |
