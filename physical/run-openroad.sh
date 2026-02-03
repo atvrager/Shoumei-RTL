@@ -85,7 +85,7 @@ if [ ! -f "$MAIN_VERILOG" ]; then
 fi
 
 # Count generated SV files for confirmation
-SV_COUNT=$(ls -1 "$PROJECT_ROOT/output/sv-from-lean/"*.sv 2>/dev/null | wc -l)
+SV_COUNT=$(find "$PROJECT_ROOT/output/sv-from-lean/" -maxdepth 1 -name "*.sv" -type f 2>/dev/null | wc -l)
 echo -e "${GREEN}✓ Main Verilog file exists: $MAIN_VERILOG${NC}"
 echo -e "${GREEN}✓ Found $SV_COUNT SystemVerilog modules for synthesis${NC}"
 echo ""

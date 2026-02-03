@@ -755,16 +755,16 @@ def mkCPU_RV32I : Circuit :=
     moduleName := "IntegerExecUnit"
     instName := "u_exec_integer"
     portMap :=
-      (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
-      [(s!"opcode0", rs_int_dispatch_opcode[0]!),
-       (s!"opcode1", rs_int_dispatch_opcode[1]!),
-       (s!"opcode2", rs_int_dispatch_opcode[2]!),
-       (s!"opcode3", rs_int_dispatch_opcode[3]!)] ++
-      (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [(s!"opcode_0", rs_int_dispatch_opcode[0]!),
+       (s!"opcode_1", rs_int_dispatch_opcode[1]!),
+       (s!"opcode_2", rs_int_dispatch_opcode[2]!),
+       (s!"opcode_3", rs_int_dispatch_opcode[3]!)] ++
+      (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero), ("one", one)] ++
-      (int_result.enum.map (fun ⟨i, w⟩ => (s!"result{i}", w))) ++
-      (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
+      (int_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
   let mem_address := makeIndexedWires "mem_address" 32
@@ -774,12 +774,12 @@ def mkCPU_RV32I : Circuit :=
     moduleName := "MemoryExecUnit"
     instName := "u_exec_memory"
     portMap :=
-      (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base{i}", w))) ++
-      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset{i}", w))) ++
-      (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
+      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++
+      (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero)] ++
-      (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address{i}", w))) ++
-      (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
+      (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
+      (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
   -- === LSU ===
@@ -1169,17 +1169,17 @@ def mkCPU_RV32IM : Circuit :=
     moduleName := "IntegerExecUnit"
     instName := "u_exec_integer"
     portMap :=
-      (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
+      (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
       -- Width mismatch: RS has 6-bit opcode, ALU takes 4-bit. Connect lower 4 bits.
-      [(s!"opcode0", rs_int_dispatch_opcode[0]!),
-       (s!"opcode1", rs_int_dispatch_opcode[1]!),
-       (s!"opcode2", rs_int_dispatch_opcode[2]!),
-       (s!"opcode3", rs_int_dispatch_opcode[3]!)] ++
-      (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      [(s!"opcode_0", rs_int_dispatch_opcode[0]!),
+       (s!"opcode_1", rs_int_dispatch_opcode[1]!),
+       (s!"opcode_2", rs_int_dispatch_opcode[2]!),
+       (s!"opcode_3", rs_int_dispatch_opcode[3]!)] ++
+      (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero), ("one", one)] ++
-      (int_result.enum.map (fun ⟨i, w⟩ => (s!"result{i}", w))) ++
-      (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
+      (int_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
   -- Memory AGU (combinational, named ports)
@@ -1190,12 +1190,12 @@ def mkCPU_RV32IM : Circuit :=
     moduleName := "MemoryExecUnit"
     instName := "u_exec_memory"
     portMap :=
-      (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base{i}", w))) ++
-      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset{i}", w))) ++  -- Use immediate as offset
-      (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
+      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++  -- Use immediate as offset
+      (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero)] ++
-      (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address{i}", w))) ++
-      (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
+      (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
+      (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
   -- MulDiv (sequential, named ports, 3-bit opcode)
@@ -1208,18 +1208,18 @@ def mkCPU_RV32IM : Circuit :=
     moduleName := "MulDivExecUnit"
     instName := "u_exec_muldiv"
     portMap :=
-      (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
+      (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
       -- Width mismatch: RS has 6-bit opcode, MulDiv takes 3-bit. Connect lower 3 bits.
-      [(s!"op0", rs_muldiv_dispatch_opcode[0]!),
-       (s!"op1", rs_muldiv_dispatch_opcode[1]!),
-       (s!"op2", rs_muldiv_dispatch_opcode[2]!)] ++
-      (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      [(s!"op_0", rs_muldiv_dispatch_opcode[0]!),
+       (s!"op_1", rs_muldiv_dispatch_opcode[1]!),
+       (s!"op_2", rs_muldiv_dispatch_opcode[2]!)] ++
+      (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", rs_muldiv_dispatch_valid),
        ("clock", clock), ("reset", reset),
        ("zero", zero), ("one", one)] ++
-      (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result{i}", w))) ++
-      (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w))) ++
+      (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
       [("valid_out", muldiv_valid_out), ("busy", muldiv_busy)]
   }
 

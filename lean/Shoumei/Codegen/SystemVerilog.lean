@@ -322,27 +322,24 @@ def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex
 def constructPortRef (portBase : String) (wireName : String) : String :=
   -- If it has brackets, handle based on context
   if portBase.contains '[' then
-    -- For bundled IO ports (inputs_N, outputs_N), keep underscores
-    if portBase.startsWith "inputs[" || portBase.startsWith "outputs[" then
-      portBase.replace "[" "_" |>.replace "]" ""
-    -- For named ports, strip brackets completely (no underscore separator)
-    else
-      portBase.replace "[" "" |>.replace "]" ""
+    -- For all indexed ports, convert brackets to underscores to match makeIndexedWires naming
+    -- E.g., "head_archRd[4]" → "head_archRd_4", "inputs[0]" → "inputs_0"
+    portBase.replace "[" "_" |>.replace "]" ""
   -- If it already ends with a digit, it's complete
   else if endsWithDigit portBase then
     portBase
   else
     -- Construct from base + wire index ONLY if wire name suggests indexing
-    -- E.g., portBase="a", wireName="a0" → "a0" (correct)
+    -- E.g., portBase="tag_out", wireName="tag_out_0" → "tag_out_0"
     --       portBase="eq", wireName="e0_cdb_match_src1" → "eq" (don't append "1")
     let suffix := extractNumericSuffix wireName
     if suffix.isEmpty then
       portBase
     else
       -- Only append suffix if wireName starts with or contains portBase
-      -- This handles cases like: portBase="a", wireName="a0" or "entry0_a0"
+      -- This handles cases like: portBase="a", wireName="a_0" or "entry0_a_0"
       if wireName.startsWith portBase || wireName.contains ("_" ++ portBase) then
-        portBase ++ suffix
+        portBase ++ "_" ++ suffix  -- Add underscore separator to match makeIndexedWires
       else
         portBase
 

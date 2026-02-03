@@ -160,16 +160,16 @@ def mkMulDivExecUnit : Circuit :=
     moduleName := "PipelinedMultiplier"
     instName := "u_mul"
     portMap :=
-      (a.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (b.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
-      (op.enum.map (fun ⟨i, w⟩ => (s!"op{i}", w))) ++
-      (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      (op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
+      (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", mul_valid),
        ("clock", clock),
        ("reset", reset),
        ("zero", zero)] ++
-      (mul_result.enum.map (fun ⟨i, w⟩ => (s!"result{i}", w))) ++
-      (mul_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w))) ++
+      (mul_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (mul_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
       [("valid_out", mul_valid_out)]
   }
 
@@ -185,16 +185,16 @@ def mkMulDivExecUnit : Circuit :=
     moduleName := "Divider32"
     instName := "u_div"
     portMap :=
-      (a.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (b.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
-      (op.enum.map (fun ⟨i, w⟩ => (s!"op{i}", w))) ++
-      (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      (op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
+      (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("start", div_start),
        ("clock", clock),
        ("reset", reset),
        ("one", one)] ++
-      (div_result.enum.map (fun ⟨i, w⟩ => (s!"result{i}", w))) ++
-      (div_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w))) ++
+      (div_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (div_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
       [("valid_out", div_valid_out),
        ("busy", div_busy)]
   }

@@ -57,7 +57,7 @@ def muxSelect {n width : Nat} (inputs : Fin n → List Bool) (select : Fin n) : 
 
 -- Helper: Create indexed wires
 private def makeIndexedWires (name : String) (count : Nat) : List Wire :=
-  (List.range count).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range count).map (fun i => Wire.mk s!"{name}_{i}")
 
 -- Helper: Create multi-bit indexed wires (for each input, create width wires)
 private def makeMultiBitWires (basename : String) (count : Nat) (width : Nat) : List (List Wire) :=

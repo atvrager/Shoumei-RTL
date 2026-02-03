@@ -493,16 +493,16 @@ def mkROB16 : Circuit :=
     moduleName := "Decoder4"
     instName := "u_alloc_dec"
     portMap :=
-      (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (alloc_decode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (alloc_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   let commit_dec_inst : CircuitInstance := {
     moduleName := "Decoder4"
     instName := "u_commit_dec"
     portMap :=
-      (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- === Per-Entry Logic (16 entries) ===
@@ -557,8 +557,8 @@ def mkROB16 : Circuit :=
       moduleName := "Comparator6"
       instName := s!"u_cmp{i}"
       portMap :=
-        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
-        (cur_physRd.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+        (cdb_tag.enum.map (fun ⟨j, w⟩ => (s!"a_{j}", w))) ++
+        (cur_physRd.enum.map (fun ⟨j, w⟩ => (s!"b_{j}", w))) ++
         [("one", one), ("eq", cdb_match),
          ("lt", Wire.mk s!"e{i}_cmp_lt_unused"),
          ("ltu", Wire.mk s!"e{i}_cmp_ltu_unused"),
@@ -571,9 +571,9 @@ def mkROB16 : Circuit :=
       moduleName := "Register24"
       instName := s!"u_entry{i}"
       portMap :=
-        (e_next.enum.map (fun ⟨j, w⟩ => (s!"d{j}", w))) ++
+        (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
         [("clock", clock), ("reset", reset)] ++
-        (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q{j}", w)))
+        (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
     -- === Next-State Logic ===
@@ -664,8 +664,8 @@ def mkROB16 : Circuit :=
         let e := all_entry_cur[i]!
         (List.range 6).map (fun j => (s!"in{i}_b{j}", e[2+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel{k}", w))) ++
-      (head_physRd.enum.map (fun ⟨j, w⟩ => (s!"out{j}", w)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel_{k}", w))) ++
+      (head_physRd.enum.map (fun ⟨j, w⟩ => (s!"out_{j}", w)))
   }
 
   -- MuxTree 16 6 for oldPhysRd readout
@@ -677,8 +677,8 @@ def mkROB16 : Circuit :=
         let e := all_entry_cur[i]!
         (List.range 6).map (fun j => (s!"in{i}_b{j}", e[9+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel{k}", w))) ++
-      (head_oldPhysRd.enum.map (fun ⟨j, w⟩ => (s!"out{j}", w)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel_{k}", w))) ++
+      (head_oldPhysRd.enum.map (fun ⟨j, w⟩ => (s!"out_{j}", w)))
   }
 
   -- MuxTree 16 5 for archRd readout
@@ -690,8 +690,8 @@ def mkROB16 : Circuit :=
         let e := all_entry_cur[i]!
         (List.range 5).map (fun j => (s!"in{i}_b{j}", e[16+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel{k}", w))) ++
-      (head_archRd.enum.map (fun ⟨j, w⟩ => (s!"out{j}", w)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel_{k}", w))) ++
+      (head_archRd.enum.map (fun ⟨j, w⟩ => (s!"out_{j}", w)))
   }
 
   -- Single-bit head readout via AND/OR tree

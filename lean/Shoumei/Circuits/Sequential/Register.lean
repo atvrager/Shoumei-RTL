@@ -18,7 +18,7 @@ open Shoumei
 
 -- Helper: Create a list of wires with indexed names
 def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 /-! ## Flat Register Construction (for small power-of-2 sizes) -/
 
@@ -72,16 +72,16 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
         let inst : CircuitInstance := {
           moduleName := s!"Register{width}"
           instName := s!"reg_{startBit}_to_{startBit + width - 1}"
-          portMap := 
+          portMap :=
             -- Connect d inputs
-            (List.range width).map (fun i => 
-              (s!"d{i}", d_wires[startBit + i]!)
+            (List.range width).map (fun i =>
+              (s!"d_{i}", d_wires[startBit + i]!)
             ) ++
             -- Connect clock and reset
             [("clock", clock), ("reset", reset)] ++
-            -- Connect q outputs  
+            -- Connect q outputs
             (List.range width).map (fun i =>
-              (s!"q{i}", q_wires[startBit + i]!)
+              (s!"q_{i}", q_wires[startBit + i]!)
             )
         }
         inst :: buildInstances rest (startBit + width)

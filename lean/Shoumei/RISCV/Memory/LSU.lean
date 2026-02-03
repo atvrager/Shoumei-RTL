@@ -375,12 +375,12 @@ def mkLSU : Circuit :=
     moduleName := "MemoryExecUnit"
     instName := "u_agu"
     portMap :=
-      (dispatch_base.enum.map (fun ⟨i, w⟩ => (s!"base{i}", w))) ++
-      (dispatch_offset.enum.map (fun ⟨i, w⟩ => (s!"offset{i}", w))) ++
-      (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
+      (dispatch_base.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
+      (dispatch_offset.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++
+      (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero)] ++
-      (agu_address.enum.map (fun ⟨i, w⟩ => (s!"address{i}", w))) ++
-      (agu_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
+      (agu_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
+      (agu_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
   -- Connect AGU address to StoreBuffer enqueue address (BUF gates for clarity)

@@ -27,7 +27,7 @@ open Shoumei.Examples
 -- Helper: Create a list of wires with indexed names
 -- Reuse from Register.lean pattern
 def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 -- Helper: Create a FullAdder instance for a specific bit position
 -- Uses Circuit.inline to properly reuse the proven fullAdderCircuit

@@ -76,7 +76,7 @@ end ArbiterResult
 
 /-- Helper: Create indexed wires -/
 private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 /-- Build a fixed-priority arbiter circuit.
 

@@ -37,7 +37,7 @@ open Shoumei
 
 -- Helper: Create a list of wires with indexed names (private to this module)
 private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 -- Helper: Build logic unit for one bit position
 -- Inputs: a_i, b_i, op0, op1

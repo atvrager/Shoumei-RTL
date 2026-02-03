@@ -291,10 +291,10 @@ def mkPipelinedMultiplier : Circuit :=
     moduleName := "RippleCarryAdder64"
     instName := "u_final_adder"
     portMap :=
-      (s2_sum_q.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (s2_carry_q.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
+      (s2_sum_q.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (s2_carry_q.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
       [("cin", zero)] ++
-      (adder_sum.enum.map (fun ⟨i, w⟩ => (s!"sum{i}", w)))
+      (adder_sum.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
 
   -- Output selection: op==000 → low 32 bits, else → high 32 bits

@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im
+.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -17,7 +17,7 @@ HAS_PYTHON := $(shell command -v python3 2> /dev/null)
 RISCV_EXTS ?= rv_i rv32_i rv_m
 
 # Default target: run entire pipeline
-all: check-tools lean codegen chisel systemc lec
+all: check-tools lean codegen chisel systemverilog systemc lec
 	@echo ""
 	@echo "✓ Complete pipeline executed successfully (SV + Chisel + SystemC + LEC)"
 
@@ -34,6 +34,7 @@ help:
 	@echo "  make opcodes-rv32im - Generate RV32IM instruction definitions (with M extension)"
 	@echo "  make codegen    - Run code generators (SV + Chisel + SystemC)"
 	@echo "  make chisel     - Compile Chisel to SystemVerilog"
+	@echo "  make systemverilog - Validate generated SystemVerilog with Yosys"
 	@echo "  make systemc    - Compile SystemC modules"
 	@echo ""
 	@echo "Verification Targets:"
@@ -117,6 +118,12 @@ ifndef HAS_SBT
 endif
 	@echo "==> Compiling Chisel to SystemVerilog..."
 	cd chisel && sbt run
+
+# Validate generated SystemVerilog modules with Yosys
+# Checks syntax and hierarchy of all generated SV files
+systemverilog:
+	@echo "==> Validating generated SystemVerilog modules..."
+	@./verification/validate-sv.sh output/sv-from-lean
 
 # Compile SystemC modules
 systemc:

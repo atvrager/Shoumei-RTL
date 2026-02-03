@@ -344,16 +344,16 @@ def mkStoreBuffer8 : Circuit :=
     moduleName := "Decoder3"
     instName := "u_enq_dec"
     portMap :=
-      (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (enq_decode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (enq_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   let commit_dec_inst : CircuitInstance := {
     moduleName := "Decoder3"
     instName := "u_commit_dec"
     portMap :=
-      (commit_idx.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (commit_idx.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- === Per-Entry Logic (8 entries) ===
@@ -383,8 +383,8 @@ def mkStoreBuffer8 : Circuit :=
       moduleName := "Comparator32"
       instName := s!"u_cmp{i}"
       portMap :=
-        (fwd_address.enum.map (fun ⟨j, w⟩ => (s!"a{j}", w))) ++
-        (cur_address.enum.map (fun ⟨j, w⟩ => (s!"b{j}", w))) ++
+        (fwd_address.enum.map (fun ⟨j, w⟩ => (s!"a_{j}", w))) ++
+        (cur_address.enum.map (fun ⟨j, w⟩ => (s!"b_{j}", w))) ++
         [("one", one), ("eq", cmp_eq),
          ("lt", Wire.mk s!"e{i}_cmp_lt_unused"),
          ("ltu", Wire.mk s!"e{i}_cmp_ltu_unused"),
@@ -397,9 +397,9 @@ def mkStoreBuffer8 : Circuit :=
       moduleName := "Register68"
       instName := s!"u_entry{i}"
       portMap :=
-        (e_next.enum.map (fun ⟨j, w⟩ => (s!"d{j}", w))) ++
+        (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
         [("clock", clock), ("reset", combined_reset)] ++
-        (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q{j}", w)))
+        (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
     -- === Next-State Logic ===
@@ -489,8 +489,8 @@ def mkStoreBuffer8 : Circuit :=
     moduleName := "PriorityArbiter8"
     instName := "u_arb"
     portMap :=
-      (arb_requests.enum.map (fun ⟨i, w⟩ => (s!"request{i}", w))) ++
-      (arb_grants.enum.map (fun ⟨i, w⟩ => (s!"grant{i}", w))) ++
+      (arb_requests.enum.map (fun ⟨i, w⟩ => (s!"request_{i}", w))) ++
+      (arb_grants.enum.map (fun ⟨i, w⟩ => (s!"grant_{i}", w))) ++
       [("valid", arb_valid)]
   }
 
@@ -623,8 +623,8 @@ def mkStoreBuffer8 : Circuit :=
         let e := all_entry_cur[i]!
         (List.range 2).map (fun j => (s!"in{i}_b{j}", e[66+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel{k}", w))) ++
-      ((List.range 2).map (fun j => (s!"out{j}", deq_bits[64+j]!)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel_{k}", w))) ++
+      ((List.range 2).map (fun j => (s!"out_{j}", deq_bits[64+j]!)))
   }
 
   -- === Assemble Circuit ===

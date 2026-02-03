@@ -309,31 +309,61 @@ def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex
 -- Rules:
 -- 1. "inputs[123]" or "outputs[123]" → "inputs(123)" or "outputs(123)" (bundled IO array indexing)
 -- 2. "alloc_physRd[0]" → "alloc_physRd0" (named ports with bracket notation)
--- 3. "opcode3" with portBase="op" → "op3" (digit suffix extraction)
+-- 3. "a0" → "a_0" (convert old naming to new convention with underscores)
+-- 4. "result19" → "result_19" (convert old naming to new convention)
 def constructPortRef (portBase : String) (wireName : String) : String :=
   -- If it has brackets, handle based on whether it's bundled IO or named ports
   if portBase.contains '[' then
     -- Bundled IO uses inputs[N] or outputs[N] - convert to array indexing
     if portBase.startsWith "inputs[" || portBase.startsWith "outputs[" then
       portBase.replace "[" "(" |>.replace "]" ")"
-    -- Named ports like alloc_physRd[0] - convert to direct concatenation
+    -- Named ports like alloc_physRd[0] - convert to alloc_physRd_0 (add underscore)
     else
-      portBase.replace "[" "" |>.replace "]" ""
-  -- If it already ends with a digit, it's complete
+      portBase.replace "[" "_" |>.replace "]" ""
+  -- Special case: MuxTree bit notation pattern "xxx_bN" should stay as-is
+  -- E.g., "in1_b16" should NOT become "in1_b_16"
+  -- Check if it matches the pattern: contains "_b" and the part after "_b" is all digits
+  else if portBase.contains "_b" && endsWithDigit portBase then
+    let parts := portBase.splitOn "_b"
+    -- If split produces exactly 2 parts and the second part is all digits, it's a _bN pattern
+    if parts.length == 2 then
+      let suffix := parts.getLast!
+      if suffix.all Char.isDigit && !suffix.isEmpty then
+        portBase  -- It's a valid _bN pattern, keep as-is
+      else
+        -- Not a valid _bN pattern, fall through to normal digit handling
+        let suffix := extractNumericSuffix portBase
+        let base := (portBase.dropEnd suffix.length).toString
+        if suffix.isEmpty then portBase
+        else if base.endsWith "_" then portBase
+        else s!"{base}_{suffix}"
+    else
+      -- Not a _bN pattern, fall through to normal digit handling
+      let suffix := extractNumericSuffix portBase
+      let base := (portBase.dropEnd suffix.length).toString
+      if suffix.isEmpty then portBase
+      else if base.endsWith "_" then portBase
+      else s!"{base}_{suffix}"
+  -- If portBase ends with digits, split into base + index and add underscore if needed
+  -- E.g., "a0" → "a_0", "result19" → "result_19", "const_0" → "const_0" (already has underscore)
   else if endsWithDigit portBase then
-    portBase
+    let suffix := extractNumericSuffix portBase
+    let base := (portBase.dropEnd suffix.length).toString
+    if suffix.isEmpty then portBase
+    else if base.endsWith "_" then portBase  -- Already has underscore, keep as-is
+    else s!"{base}_{suffix}"
   else
     -- Construct from base + wire index ONLY if wire name suggests indexing
-    -- E.g., portBase="a", wireName="a0" → "a0" (correct)
+    -- E.g., portBase="a", wireName="a_0" → "a_0" (preserve underscores)
     --       portBase="eq", wireName="e0_cdb_match_src1" → "eq" (don't append "1")
     let suffix := extractNumericSuffix wireName
     if suffix.isEmpty then
       portBase
     else
       -- Only append suffix if wireName starts with or contains portBase
-      -- This handles cases like: portBase="a", wireName="a0" or "entry0_a0"
+      -- This handles cases like: portBase="a", wireName="a_0" or "entry0_a_0"
       if wireName.startsWith portBase || wireName.contains ("_" ++ portBase) then
-        portBase ++ suffix
+        portBase ++ "_" ++ suffix
       else
         portBase
 

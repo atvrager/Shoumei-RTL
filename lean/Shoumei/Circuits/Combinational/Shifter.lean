@@ -42,7 +42,7 @@ open Shoumei
 
 -- Helper: Create a list of wires with indexed names (private to this module)
 private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 -- Helper: Build one stage of left shifter
 -- Shifts left by 'amount' positions if 'enable' is true

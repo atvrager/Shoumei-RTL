@@ -104,8 +104,8 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     moduleName := s!"Decoder{addrWidth}"
     instName := "u_write_dec"
     portMap :=
-      (write_addr.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (write_addr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- Internal: Per-entry write enable
@@ -161,12 +161,12 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
         let idx := numArchRegs * tagWidth + i
         (s!"inputs[{idx}]", w))
     else
-      addr.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))
+      addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
 
   let mkMuxOutMap (data : List Wire) := if useBundle then
       data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
     else
-      data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w))
+      data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
 
   let mux_rs1_inst : CircuitInstance := {
     moduleName := s!"Mux{numArchRegs}x{tagWidth}"

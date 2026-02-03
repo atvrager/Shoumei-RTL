@@ -43,9 +43,9 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   let decoder_inst : CircuitInstance := {
     moduleName := decoderName
     instName := "u_dec"
-    portMap := 
-      (write_addr.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++ 
-      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+    portMap :=
+      (write_addr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- 2. Write Enable Logic
@@ -90,16 +90,16 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
       ) |>.flatten
   
   let mux_sel_map := if useBundle then
-      read_addr.enum.map (fun ⟨i, w⟩ => 
+      read_addr.enum.map (fun ⟨i, w⟩ =>
         let idx := depth * width + i
         (s!"inputs[{idx}]", w))
     else
-      read_addr.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))
+      read_addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
 
   let mux_out_map := if useBundle then
       read_data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
     else
-      read_data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w))
+      read_data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
   
   let mux_inst : CircuitInstance := {
     moduleName := muxTreeName

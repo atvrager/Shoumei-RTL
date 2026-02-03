@@ -49,7 +49,7 @@ def decode {n : Nat} (input : Fin (2^n)) : DecoderState n :=
 
 -- Helper: Create a list of wires with indexed names
 private def makeIndexedWires (name : String) (count : Nat) : List Wire :=
-  (List.range count).map (fun i => Wire.mk s!"{name}{i}")
+  (List.range count).map (fun i => Wire.mk s!"{name}_{i}")
 
 -- Helper: Check if bit position is set in a natural number
 -- testBit n i returns true if bit i of n is 1

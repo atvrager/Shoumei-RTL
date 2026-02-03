@@ -99,8 +99,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     moduleName := s!"Decoder{tagWidth}"
     instName := "u_write_dec"
     portMap :=
-      (wr_tag.enum.map (fun ⟨i, w⟩ => (s!"in{i}", w))) ++
-      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w)))
+      (wr_tag.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (write_sel.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- Internal: Per-entry write enable
@@ -152,12 +152,12 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
         let idx := numRegs * dataWidth + i
         (s!"inputs[{idx}]", w))
     else
-      addr.enum.map (fun ⟨i, w⟩ => (s!"sel{i}", w))
+      addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
 
   let mkMuxOutMap (data : List Wire) := if useBundle then
       data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
     else
-      data.enum.map (fun ⟨i, w⟩ => (s!"out{i}", w))
+      data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
 
   let mux_rd1_inst : CircuitInstance := {
     moduleName := s!"Mux{numRegs}x{dataWidth}"

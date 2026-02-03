@@ -353,10 +353,10 @@ def mkDividerCircuit : Circuit :=
     moduleName := "Subtractor32"
     instName := "u_trial_sub"
     portMap :=
-      (trial_a.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (div_q.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
+      (trial_a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (div_q.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
       [("one", one)] ++
-      (trial_diff.enum.map (fun ⟨i, w⟩ => (s!"diff{i}", w))) ++
+      (trial_diff.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
       [("borrow", trial_borrow)]
   }
 

@@ -215,9 +215,9 @@ def mkFetchStage : Circuit :=
     moduleName := "Register32"
     instName := "u_pc_reg"
     portMap :=
-      (next_pc.enum.map (fun ⟨i, w⟩ => (s!"d{i}", w))) ++
+      (next_pc.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
       [("clock", clock), ("reset", reset)] ++
-      (pc_reg.enum.map (fun ⟨i, w⟩ => (s!"q{i}", w)))
+      (pc_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
   }
 
   -- PC incrementer instance
@@ -225,10 +225,10 @@ def mkFetchStage : Circuit :=
     moduleName := "RippleCarryAdder32"
     instName := "u_pc_adder"
     portMap :=
-      (pc_reg.enum.map (fun ⟨i, w⟩ => (s!"a{i}", w))) ++
-      (const_4.enum.map (fun ⟨i, w⟩ => (s!"b{i}", w))) ++
+      (pc_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (const_4.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
       [("cin", const_0)] ++
-      (pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum{i}", w)))
+      (pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
 
   { name := "FetchStage"
