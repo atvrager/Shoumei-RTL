@@ -2239,3 +2239,264 @@ Phase 7 waits for everything.
 | yosys-slang struct flattening convention differs between Lean SV and Chisel SV | Both import same `shoumei_types` package → flattened identically |
 | `native_decide` proofs break with new Circuit fields | Default values (`[]`) ensure backward compat. Proofs only see gates/inputs/outputs. |
 | sbt compile hits JVM limits with new codegen | Typed signals are inherently smaller than Bool() arrays. If still big, keep chunking as fallback. |
+
+---
+
+## Remaining Open Questions
+
+### Q8: Multi-port RAM
+
+The `RAMPrimitive` as drafted has 1 write port + 1 read port. But
+PhysRegFile has **1 write + 2 reads**, and future structures (ROB, store
+buffer) may need 2W+2R or more.
+
+Current PhysRegFile implementation (`PhysRegFile.lean:106-134`):
+- 64 x 32-bit storage: 2048 DFFs + 64 x 32 write-data MUXes
+- Read port 1: instantiates `Mux64x32` (2080 inputs → 32 outputs)
+- Read port 2: instantiates another `Mux64x32`
+
+Options:
+
+**A. Multi-port RAMPrimitive (configurable)**
+```lean
+structure RAMPrimitive where
+  name      : String
+  depth     : Nat
+  width     : Nat
+  writePorts : List RAMWritePort   -- each has (en, addr, data)
+  readPorts  : List RAMReadPort    -- each has (addr, data_out)
+  clock     : Wire
+```
+
+Pro: one primitive handles all cases. PhysRegFile becomes one RAM with
+1W+2R. Con: more complex type, code generators need to handle
+arbitrary port counts.
+
+**B. Separate read-only / write-only ports, compose**
+```lean
+-- One RAM for storage (1W+1R), plus extra read mux instances
+-- Read port 2 is a separate Mux64x32 instance reading the same storage
+```
+
+Pro: simpler RAM type. Con: doesn't model multi-port correctly -- the
+mux reads are logically part of the register file, not separate.
+
+**C. One primitive per port configuration**
+
+Define `RAM_1W1R`, `RAM_1W2R`, etc. as named variants.
+
+Pro: each is a known shape. Con: combinatorial explosion if we need
+`2W2R`, `1W3R`, etc.
+
+**Leaning: Option A.** Port lists handle any configuration. The common
+cases are 1W1R (queues, store buffer) and 1W2R (register files). Code
+generators emit:
+- SV: `reg [31:0] mem [0:63];` with separate `always_ff` per write port
+  and `assign rd_data = mem[rd_addr]` per read port
+- Chisel: `val mem = Mem(...)` or `SyncReadMem(...)` with multiple
+  `.read()` / `.write()` calls
+
+**Needs decision.**
+
+---
+
+### Q9: Mem vs SyncReadMem (async vs sync read)
+
+The `ShoumeiMem` helper uses `SyncReadMem` (read requires a clock edge).
+But our PhysRegFile reads are **combinational** -- output changes
+immediately when the read address changes. That's `Mem`, not `SyncReadMem`.
+
+| Chisel type | Read behavior | Maps to |
+|-------------|---------------|---------|
+| `Mem` | Async (combinational read) | Register file, small LUTs |
+| `SyncReadMem` | Sync (read output registered) | SRAM, block RAM |
+
+Our current circuits:
+- **PhysRegFile**: async read (Mux64x32 is combinational). Use `Mem`.
+- **QueueRAM**: could be either. Currently uses DFF + Mux = async. Use `Mem`.
+- **Future SRAM**: would need `SyncReadMem` for actual memory blocks.
+
+```scala
+object ShoumeiMem {
+  /** Async-read memory (register file, small arrays). */
+  def apply(depth: Int, width: Int): Mem[UInt] =
+    Mem(depth, UInt(width.W))
+
+  /** Sync-read memory (SRAM, block RAM). */
+  def syncRead(depth: Int, width: Int): SyncReadMem[UInt] =
+    SyncReadMem(depth, UInt(width.W))
+}
+```
+
+The `RAMPrimitive` in the DSL should carry a `syncRead : Bool` flag to
+distinguish the two.
+
+**Needs decision.**
+
+---
+
+### Q10: LEC Pairing -- What Gets Compared to What?
+
+Current: Lean SV ↔ Chisel SV (one pair, `read_verilog -sv` both sides).
+
+With three output modes, what do we actually LEC?
+
+| Gold | Candidate | Method | Purpose |
+|------|-----------|--------|---------|
+| SV netlist (flat) | SV hierarchical | Yosys `flatten` both → SAT | Validate SV hier codegen |
+| SV hierarchical | Chisel SV (via CIRCT) | `equiv_make` → `equiv_induct` | Validate Chisel codegen |
+| SV netlist | Chisel SV | `flatten` + SAT | End-to-end sanity check |
+
+That's 3 LEC runs per module instead of 1. Or we could pick one canonical
+pair and trust transitivity:
+- If netlist == hierarchical (LEC 1) and hierarchical == Chisel (LEC 2),
+  then netlist == Chisel (by transitivity).
+- Only need 2 runs, not 3.
+
+But the netlist is generated from a different code path (flattened inline)
+vs hierarchical (instances preserved). LEC 1 validates the flattener.
+LEC 2 validates the Chisel codegen. Together they cover everything.
+
+**Leaning:** LEC 1 + LEC 2 (two pairs, transitive). Drop the direct
+netlist-vs-Chisel check.
+
+**Needs decision.**
+
+---
+
+### Q11: SV Struct Ports vs Chisel Flat Ports -- LEC Name Mismatch
+
+The plan has SV hierarchical using struct ports (`input cdb_entry_t cdb[0:3]`)
+but Chisel using flat ports (`val cdb_0_tag = Input(UInt(6.W))`).
+
+When yosys-slang reads the struct side, it flattens to something like
+`cdb[0].tag`. When CIRCT compiles the flat Chisel side, it emits `cdb_0_tag`.
+These names don't match → `equiv_make` can't pair ports.
+
+Options:
+
+**A. Both sides flat ports**
+
+SV hierarchical also uses flat ports (like we showed in the sketches):
+`input logic [5:0] cdb_0_tag`. Structs only used internally for readability.
+LEC sees identical port names on both sides.
+
+**B. Both sides struct ports**
+
+Chisel uses nested Bundles, CIRCT flattens to struct-matching names.
+But we decided against nested Bundles (ShoumeiDecoupled = flat ports).
+
+**C. Rename in LEC**
+
+Yosys `rename` commands to normalize port names before `equiv_make`.
+Fragile, but possible.
+
+**Leaning: Option A.** Both SV modes use the same flat port names as
+Chisel. Structs are internal only. This is consistent with the
+ShoumeiDecoupled decision (flat ports, matching names by construction).
+
+The SV hierarchical sketches already show flat ports + struct internals,
+so this is already where the draft landed for Q4. Just needs to be explicit
+that struct-typed ports are NOT used for top-level module ports -- only for
+internal signal grouping and sub-module connections where both sides use
+the same `shoumei_types` package.
+
+**Needs confirmation.**
+
+---
+
+### Q12: Module vs RawModule (Chisel)
+
+Current codegen uses:
+- `RawModule` for combinational circuits (no implicit clock/reset)
+- `Module` for sequential circuits (with implicit clock/reset)
+
+The `ShoumeiReg` helper takes explicit `clock` and `reset` arguments.
+In a `Module`, these are available as `this.clock` and `this.reset`.
+In a `RawModule`, they're explicit IO ports.
+
+V2 should maintain this distinction:
+```scala
+// Combinational: no clock, no reset, no registers
+class ALU32 extends RawModule {
+  val io = IO(new Bundle { ... })
+  // pure assign logic
+}
+
+// Sequential: clock + reset from Module
+class Queue1_32 extends Module {
+  val io = IO(new Bundle { ... })
+  val data_reg = ShoumeiReg(32, clock, reset)  // implicit clock/reset
+}
+```
+
+The codegen decision is simple: if `circuit.rams.length > 0` or
+`circuit.gates.any DFF` or `circuit.instances` reference sequential
+children → `Module`. Otherwise → `RawModule`.
+
+Not a real open question, just flagging it -- the plan's Phase 2 sketches
+all show `Module` but the combinational modules need `RawModule`.
+
+---
+
+### Q13: BlackBox Escape Hatch
+
+Current codegen uses `ExtModule` (BlackBox) for circuits >2000 gates
+(`Chisel.lean:742`). This includes ALU32, Shifter32, Multiplier, and
+the large Mux trees.
+
+With the v2 codegen, these modules get proper typed ports and bus
+reconstruction. But the gate count is still >2000. Does the JVM limit
+still apply?
+
+The JVM 64KB method limit triggers when too many statements appear in
+one method body. With buses:
+- ALU32: 11000+ gates → with reconstruction, maybe ~500 statements
+  (vectorized ops). Probably fits.
+- Mux64x32: 2080 gates → with reconstruction, ~65 statements
+  (64 `val in_N = ...` + 1 mux). Fits easily.
+
+**Likely resolved by bus reconstruction.** The BlackBox escape hatch
+probably isn't needed for v2. But keep it as a fallback for any module
+where reconstruction doesn't collapse enough.
+
+---
+
+### Q14: Axiom vs Proof for RAM Semantics
+
+The RAM primitive uses `axiom` for read-after-write semantics. This is
+trusted, not proved. In a project where the whole point is formal
+verification, axioms are a liability.
+
+Options:
+
+**A. Axioms (pragmatic)**
+
+Trust the RAM semantics. They're simple and universal (every RAM in
+existence satisfies read-after-write). The risk of getting this wrong
+is near zero.
+
+**B. Model RAM as function, prove properties**
+
+```lean
+def RAM (depth width : Nat) := Fin depth → BitVec width
+
+def RAM.write (mem : RAM d w) (addr : Fin d) (val : BitVec w) : RAM d w :=
+  fun a => if a == addr then val else mem a
+
+def RAM.read (mem : RAM d w) (addr : Fin d) : BitVec w := mem addr
+
+-- Proven, not axiomatized
+theorem ram_read_after_write ...  := by simp [RAM.write, RAM.read]
+theorem ram_read_no_write ... := by simp [RAM.write, RAM.read]
+```
+
+**Pro:** No axioms. Fully proved. Consistent with project philosophy.
+**Con:** The proofs need to connect this functional model to the
+`RAMPrimitive` structural definition. Two levels of abstraction.
+
+**Leaning:** Option B. The proofs are trivial (`simp` handles them).
+The connection to `RAMPrimitive` is: the codegen generates code that
+implements this functional spec, and LEC verifies it.
+
+**Needs decision.**
