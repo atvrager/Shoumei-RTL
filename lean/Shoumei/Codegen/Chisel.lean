@@ -227,7 +227,7 @@ partial def chunkList {α : Type} (xs : List α) (n : Nat) : List (List α) :=
     chunk :: chunkList rest n
 
 -- Generate register update logic with chunking for large circuits
-def generateRegUpdatesChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 50) : (String × String) :=
+def generateRegUpdatesChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 5) : (String × String) :=
   let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
   if dffGates.isEmpty then ("", "")
   else if dffGates.length <= chunkSize then (generateRegUpdates ctx c, "")
@@ -306,13 +306,19 @@ def inferStructuredPortName (moduleName : String) (baseName : String) (flatIndex
     none
 
 -- Helper: construct port reference from port base name and wire name
--- Simple rule: brackets → parens, done. No complex translation needed.
--- E.g., portBase="inputs[123]" → "inputs(123)"
---       portBase="op", wireName="opcode3" → "op3"
+-- Rules:
+-- 1. "inputs[123]" or "outputs[123]" → "inputs(123)" or "outputs(123)" (bundled IO array indexing)
+-- 2. "alloc_physRd[0]" → "alloc_physRd0" (named ports with bracket notation)
+-- 3. "opcode3" with portBase="op" → "op3" (digit suffix extraction)
 def constructPortRef (portBase : String) (wireName : String) : String :=
-  -- If it has brackets, just convert to parens (bundled IO)
+  -- If it has brackets, handle based on whether it's bundled IO or named ports
   if portBase.contains '[' then
-    portBase.replace "[" "(" |>.replace "]" ")"
+    -- Bundled IO uses inputs[N] or outputs[N] - convert to array indexing
+    if portBase.startsWith "inputs[" || portBase.startsWith "outputs[" then
+      portBase.replace "[" "(" |>.replace "]" ")"
+    -- Named ports like alloc_physRd[0] - convert to direct concatenation
+    else
+      portBase.replace "[" "" |>.replace "]" ""
   -- If it already ends with a digit, it's complete
   else if endsWithDigit portBase then
     portBase
@@ -443,12 +449,12 @@ private def generateGroupConnections (ctx : ChiselContext) (instName baseName : 
 -- Check if a module name corresponds to a module with bundled IO (>200 ports)
 -- This is a heuristic based on known module sizes
 private def moduleUsesBundledIO (moduleName : String) : Bool :=
-  -- Modules known to use bundled IO (>200 total ports)
+  -- Modules known to use bundled IO (>200 total ports, or large internal complexity)
   moduleName == "StoreBuffer8" || moduleName == "MemoryExecUnit" ||
-  moduleName == "LSU" || moduleName == "ROB16" ||
+  moduleName == "LSU" ||
   moduleName == "ReservationStation4" || moduleName == "MulDivRS4" ||
   moduleName == "PhysRegFile_64x32" || moduleName == "RAT_32x6" ||
-  moduleName == "FreeList_64"
+  moduleName == "FreeList_64" || moduleName == "PipelinedMultiplier"
 
 -- Map port names with underscores to bundled IO Vec indices
 -- This handles both "inputs" and "outputs" Vecs
@@ -488,19 +494,30 @@ private def mapPortNameToVecRef (moduleName portName : String) : Option String :
     else if portName.startsWith "fwd_data_" then
       portName.drop 9 |>.toNat? |>.map (fun i => s!"outputs({73 + i})")
     else none
+  -- Generic handler for bundled I/O port names (inputs_N, outputs_N)
+  else if portName.startsWith "inputs_" then
+    portName.drop 7 |>.toNat? |>.map (fun i => s!"inputs({i})")
+  else if portName.startsWith "outputs_" then
+    portName.drop 8 |>.toNat? |>.map (fun i => s!"outputs({i})")
   else none
 
 -- Generate submodule instantiation with bulk Vec connections for bracketed port groups
-def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
+def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitInstance) (chunkSize : Nat := 5) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
   let clockWires := findClockWires c
   let resetWires := findResetWires c
   let childUsesBundledIO := moduleUsesBundledIO inst.moduleName
 
-  -- Try to group port map entries by bracket base name for bulk connections
-  let (groups, standaloneEntries) := groupPortMapEntries inst.portMap
+  -- Only group port map entries for bundled IO modules (which use Vec ports)
+  -- For named-port modules (like ROB16), treat all entries as standalone
+  let (groups, standaloneEntries) :=
+    if childUsesBundledIO then
+      groupPortMapEntries inst.portMap
+    else
+      ([], inst.portMap)  -- No grouping for named ports
 
   -- Generate connection lines for bracketed groups (foreach loops + individual)
+  -- Only used for bundled IO modules
   let groupConns := groups.map (fun p =>
     generateGroupConnections ctx inst.instName p.fst p.snd) |>.flatten
 
@@ -581,7 +598,7 @@ def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitI
 
 -- Generate all submodule instances with chunking
 def generateInstancesChunked (ctx : ChiselContext) (c : Circuit) : (String × String) :=
-  let results := c.instances.map (fun inst => generateInstanceChunked ctx c inst 25)
+  let results := c.instances.map (fun inst => generateInstanceChunked ctx c inst 5)
   let calls := results.map Prod.fst
   let metods := results.map Prod.snd
   (joinLines calls, joinLines metods)
@@ -598,7 +615,7 @@ def generateWireDecls (ctx : ChiselContext) (c : Circuit) : String :=
 
 
 -- Generate combinational assignments only (two-tier chunking for very large circuits)
-def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 25) : (String × String) :=
+def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSize : Nat := 5) : (String × String) :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
 
   if ctx.useWireArray then
@@ -611,10 +628,10 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
         "  }"
       ]
     )
-    -- Two-tier: if we have >20 chunk methods, group them into super-chunks
-    if gateChunks.length > 20 then
+    -- Multi-tier: if we have >10 chunk methods, group them into super-chunks
+    if gateChunks.length > 10 then
       let chunkCallsList := List.range gateChunks.length |>.map (fun i => s!"initLogic{i}()")
-      let superChunks := chunkList chunkCallsList 20
+      let superChunks := chunkList chunkCallsList 10
       let superHelpers := superChunks.enum.map (fun ⟨idx, calls⟩ =>
         joinLines [
           s!"  private def initLogicGroup{idx}(): Unit = " ++ "{",
@@ -622,8 +639,22 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
           "  }"
         ]
       )
-      let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
-      (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
+      -- Third tier: if we have >10 super-chunk methods, group those too
+      if superChunks.length > 10 then
+        let superCalls := List.range superChunks.length |>.map (fun i => s!"initLogicGroup{i}()")
+        let ultraChunks := chunkList superCalls 10
+        let ultraHelpers := ultraChunks.enum.map (fun ⟨idx, calls⟩ =>
+          joinLines [
+            s!"  private def initLogicUltra{idx}(): Unit = " ++ "{",
+            joinLines (calls.map (fun c => s!"    {c}")),
+            "  }"
+          ]
+        )
+        let ultraCalls := List.range ultraChunks.length |>.map (fun i => s!"  initLogicUltra{i}()")
+        (joinLines ultraCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers ++ "\n\n" ++ joinLines ultraHelpers)
+      else
+        let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
+        (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
     else
       let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
       (joinLines helperCalls, joinLines helperMethods)
@@ -640,10 +671,10 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
         "  }"
       ]
     )
-    -- Two-tier: if we have >50 chunk methods, group them
-    if gateChunks.length > 50 then
+    -- Multi-tier: if we have >10 chunk methods, group them
+    if gateChunks.length > 10 then
       let chunkCallsList := List.range gateChunks.length |>.map (fun i => s!"initLogic{i}()")
-      let superChunks := chunkList chunkCallsList 50
+      let superChunks := chunkList chunkCallsList 10
       let superHelpers := superChunks.enum.map (fun ⟨idx, calls⟩ =>
         joinLines [
           s!"  private def initLogicGroup{idx}(): Unit = " ++ "{",
@@ -651,8 +682,22 @@ def generateCombAssignmentsChunked (ctx : ChiselContext) (c : Circuit) (chunkSiz
           "  }"
         ]
       )
-      let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
-      (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
+      -- Third tier: if we have >10 super-chunk methods, group those too
+      if superChunks.length > 10 then
+        let superCalls := List.range superChunks.length |>.map (fun i => s!"initLogicGroup{i}()")
+        let ultraChunks := chunkList superCalls 10
+        let ultraHelpers := ultraChunks.enum.map (fun ⟨idx, calls⟩ =>
+          joinLines [
+            s!"  private def initLogicUltra{idx}(): Unit = " ++ "{",
+            joinLines (calls.map (fun c => s!"    {c}")),
+            "  }"
+          ]
+        )
+        let ultraCalls := List.range ultraChunks.length |>.map (fun i => s!"  initLogicUltra{i}()")
+        (joinLines ultraCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers ++ "\n\n" ++ joinLines ultraHelpers)
+      else
+        let superCalls := List.range superChunks.length |>.map (fun i => s!"  initLogicGroup{i}()")
+        (joinLines superCalls, joinLines helperMethods ++ "\n\n" ++ joinLines superHelpers)
     else
       let helperCalls := List.range gateChunks.length |>.map (fun i => s!"  initLogic{i}()")
       (joinLines helperCalls, joinLines helperMethods)
@@ -662,7 +707,30 @@ def toChisel (c : Circuit) : String :=
   let moduleName := c.name
   let isSequential := c.hasSequentialElements
 
-  -- Setup context for large circuits
+  -- Use BlackBox for modules with >2000 gates (JVM class size limits)
+  -- BlackBox references the Lean-generated SystemVerilog directly
+  if c.gates.length > 2000 then
+    let ioDecl := generateIOBundle c false {
+      wireToIndex := [], inputToIndex := [], outputToIndex := [],
+      regToIndex := [], useWireArray := false,
+      useIOBundle := c.inputs.length + c.outputs.length > 200,
+      useRegArray := false
+    }
+    joinLines [
+      s!"// BlackBox wrapper for {moduleName} ({c.gates.length} gates)",
+      s!"// References Lean-generated SV: output/sv-from-lean/{moduleName}.sv",
+      "",
+      "package generated",
+      "",
+      "import chisel3._",
+      "import chisel3.util._",
+      "",
+      "class " ++ moduleName ++ " extends ExtModule {",
+      ioDecl,
+      "}"
+    ]
+  else
+    -- Setup context for large circuits
   let internalWires := findInternalWires c
   let dffOutputs := findDFFOutputs c
   let wiresToDeclare := internalWires.filter (fun w => !dffOutputs.contains w)
@@ -695,8 +763,8 @@ def toChisel (c : Circuit) : String :=
     let regDecls := generateRegDecls c ctx
     let wireDecls := generateWireDecls ctx c
     let (instances, instanceHelpers) := generateInstancesChunked ctx c
-    let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 25
-    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 25
+    let (combMain, combHelpers) := generateCombAssignmentsChunked ctx c 5
+    let (updateMain, updateHelpers) := generateRegUpdatesChunked ctx c 5
     let regOutputs := generateRegOutputConnections ctx c
 
     let parts := [regDecls, wireDecls, instances, combMain, updateMain, regOutputs].filter (fun s => !s.isEmpty)
@@ -720,7 +788,7 @@ def toChisel (c : Circuit) : String :=
   else
     let wireDecls := generateWireDecls ctx c
     let (instances, instanceHelpers) := generateInstancesChunked ctx c
-    let (mainLogic, helperMethods) := generateCombAssignmentsChunked ctx c 25
+    let (mainLogic, helperMethods) := generateCombAssignmentsChunked ctx c 5
     let allHelpers := [instanceHelpers, helperMethods].filter (fun s => !s.isEmpty) |> String.intercalate "\n"
     
     let classBody := joinLines [

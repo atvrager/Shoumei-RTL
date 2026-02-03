@@ -55,14 +55,21 @@ import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.LSU
 
+-- Phase 8: Top-Level Integration
+import Shoumei.RISCV.Fetch
+import Shoumei.RISCV.Renaming.RenameStage
+import Shoumei.RISCV.CPU
+
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
+open Shoumei.RISCV
 open Shoumei.RISCV.Renaming
 open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
+open Shoumei.RISCV.CPU
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -168,7 +175,13 @@ def allCircuits : List Circuit := [
 
   -- Phase 7: Memory
   mkStoreBuffer8,
-  mkLSU
+  mkLSU,
+
+  -- Phase 8: Top-Level Integration
+  mkFetchStage,
+  mkRenameStage,
+  mkCPU_RV32I,
+  mkCPU_RV32IM
 ]
 
 def main : IO Unit := do

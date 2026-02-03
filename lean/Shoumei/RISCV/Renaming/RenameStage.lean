@@ -338,16 +338,26 @@ def mkRenameStage : Circuit :=
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data2_{i}", w)))
   }
 
+  -- Output wires (separate from internal to avoid Chisel IO conflicts)
+  let rs1_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_phys_out_{i}")
+  let rs2_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_phys_out_{i}")
+  let rd_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rd_phys_out_{i}")
+  let phys_out_gates :=
+    (List.range tagWidth).map (fun i => Gate.mkBUF (rs1_phys[i]!) (rs1_phys_out[i]!)) ++
+    (List.range tagWidth).map (fun i => Gate.mkBUF (rs2_phys[i]!) (rs2_phys_out[i]!)) ++
+    (List.range tagWidth).map (fun i => Gate.mkBUF (rd_phys[i]!) (rd_phys_out[i]!))
+
   { name := "RenameStage_32x64"
     inputs := [clock, reset, zero, one, instr_valid, has_rd] ++
               rs1_addr ++ rs2_addr ++ rd_addr ++
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag
     outputs := [rename_valid, stall] ++
-               rs1_phys ++ rs2_phys ++ rd_phys ++
+               rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++
                rs1_data ++ rs2_data
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
-             allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates
+             allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
+             phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
   }
 

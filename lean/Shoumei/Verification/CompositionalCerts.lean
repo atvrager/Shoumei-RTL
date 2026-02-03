@@ -152,6 +152,50 @@ def rob16_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Retirement.ROBProofs"
 }
 
+/-! ## Phase 8: Top-Level Integration -/
+
+/-- RenameStage_32x64: Composite rename stage (RAT + FreeList + PhysRegFile) -/
+def renameStage_cert : CompositionalCert := {
+  moduleName := "RenameStage_32x64"
+  dependencies := ["RAT_32x6", "FreeList_64", "PhysRegFile_64x32"]
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
+/-- FetchStage: PC management and instruction fetch -/
+def fetchStage_cert : CompositionalCert := {
+  moduleName := "FetchStage"
+  dependencies := ["Register32", "RippleCarryAdder32"]
+  proofReference := "Shoumei.RISCV.FetchProofs"
+}
+
+/-- CPU_RV32I: Complete RV32I Tomasulo processor (simplified MVP) -/
+def cpu_rv32i_cert : CompositionalCert := {
+  moduleName := "CPU_RV32I"
+  dependencies := [
+    "FetchStage",
+    "RenameStage_32x64",
+    -- Transitive dependencies through RenameStage:
+    "RAT_32x6", "FreeList_64", "PhysRegFile_64x32",
+    -- Transitive dependencies through Fetch:
+    "Register32", "RippleCarryAdder32",
+    -- Additional dependencies (for full implementation):
+    "ReservationStation4", "IntegerExecUnit", "MemoryExecUnit",
+    "ROB16", "LSU", "StoreBuffer8"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
+/-- CPU_RV32IM: RV32IM with multiply/divide extension (simplified MVP) -/
+def cpu_rv32im_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IM"
+  dependencies := [
+    -- All CPU_RV32I dependencies, plus:
+    "MulDivRS4", "MulDivExecUnit",
+    "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -177,7 +221,12 @@ def allCerts : List CompositionalCert := [
   muldivExecUnit_cert,
   muldivRS4_cert,
   -- Retirement
-  rob16_cert
+  rob16_cert,
+  -- Phase 8: Top-Level Integration
+  renameStage_cert,
+  fetchStage_cert,
+  cpu_rv32i_cert,
+  cpu_rv32im_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts
