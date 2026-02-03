@@ -1084,14 +1084,6 @@ module ReservationStation4(
 - Can be used as port types, signal types, array elements
 - Has a defined bit layout (packed = contiguous bits)
 - Can be assigned, compared, passed through hierarchies
-- Supported by: Yosys (partial -- no struct in ports, but internal is fine),
-  Vivado (full), Synopsys DC (full), Verilator (full)
-
-**Yosys limitation:** Yosys (our LEC tool) does NOT support `struct` in
-port declarations. It can handle structs internally but ports must be
-flat `logic [N:0]` signals. This means:
-- Hierarchical mode: structs in internal signals only, ports stay flat
-- OR: flatten struct ports with a macro/wrapper
 
 #### `interface` with `modport`
 
@@ -1115,68 +1107,143 @@ module Queue1_32(
 
 **Properties:**
 - More powerful: modports encode direction, can contain tasks/functions
-- NOT synthesizable in all tools (Yosys has no interface support)
 - Heavier syntax, more boilerplate
 - Excellent for verification testbenches
-- Supported by: Verilator (full), Vivado (synthesis + sim),
-  Synopsys DC (synthesis), Yosys (NO)
+
+#### Yosys + yosys-slang: Struct Support Status
+
+Our LEC scripts currently use `read_verilog -sv` (Yosys built-in parser).
+The struct situation has improved significantly:
+
+**Yosys built-in parser (`read_verilog -sv`):**
+- `typedef struct packed` on module ports: [fixed in PR #2312 (Feb 2021)](https://github.com/YosysHQ/yosys/issues/2348)
+- Global typedef'd packed structs: [fixed in PR #5143](https://github.com/YosysHQ/yosys/issues/4653)
+- Arrays of packed structs in struct members: [still open (#2677)](https://github.com/YosysHQ/yosys/issues/2677)
+- SV `interface`/`modport`: not supported
+
+So modern Yosys (>=0.10, ~2021) can handle basic struct ports. Nested
+struct arrays are still broken in the built-in parser.
+
+**[yosys-slang](https://github.com/povik/yosys-slang) (`read_slang`):**
+- Uses the [slang](https://github.com/MikePopoloski/slang) library -- the
+  most compliant open-source SV frontend
+- Full SV 2017/2023 support including structs, packages, interfaces, etc.
+- Proven at scale: ETH Zürich used it for a chip tapeout (Koopa, 2025)
+- Parses Black Parrot, Ibex, OpenTitan successfully
+- Active project: 566 commits, 16 contributors, Yosys 0.44-0.58 compat
+
+**What switching to `read_slang` would unlock for us:**
+
+| Feature | `read_verilog -sv` | `read_slang` |
+|---------|-------------------|--------------|
+| `typedef struct packed` on ports | Yes (post-2021) | Yes |
+| Struct member access (`.field`) | Yes | Yes |
+| Arrays of structs (`cdb[0].tag`) | Broken | Yes |
+| Nested structs | Partial | Yes |
+| SV packages (`import pkg::*`) | Partial | Yes |
+| SV `interface`/`modport` | No | Yes |
+
+The LEC migration would be small -- change `read_verilog -sv` to `read_slang`
+in `run-lec.sh`. The equivalence checking commands (`equiv_make`, `equiv_induct`,
+SAT) are Yosys-native and don't change.
 
 #### Comparison for our use case
 
 | Criterion | `struct packed` | `interface` |
 |-----------|----------------|-------------|
-| Yosys LEC | Partial (no struct ports) | No |
+| Yosys LEC (read_slang) | Full | Full |
+| Yosys LEC (read_verilog) | Basic (no nested arrays) | No |
 | Readability | Good | Better (direction in modport) |
-| Synthesis | Universal | Tool-dependent |
+| Synthesis (commercial) | Universal | Tool-dependent |
 | Complexity | Simple | Significant |
 | Port declarations | Flat with struct type | Interface type with modport |
 | Cross-module connection | Assign struct to struct | Interface auto-connect |
 
-#### What about Yosys?
+#### What structs would look like for our modules
 
-Since Yosys is our LEC verification tool, this matters a lot.
-
-For **netlist mode**: no structs at all (everything is `logic` and `assign`).
-Yosys handles this natively.
-
-For **hierarchical mode**: we need to decide whether to:
-1. Use structs for readability but provide a Yosys-compatible "flat" variant
-2. Skip structs entirely and just use commented bus groups
-3. Use structs only in internal signals, not in ports
-
-Option 3 is probably the pragmatic choice:
+With `read_slang`, we can use structs on ports. Example for ReservationStation4:
 
 ```systemverilog
-module Queue1_32(
-  input  logic           clock,
-  input  logic           reset,
-  input  logic [31:0]    enq_bits,    // flat port
-  input  logic           enq_valid,
-  output logic           enq_ready,
-  output logic [31:0]    deq_bits,
-  output logic           deq_valid,
-  input  logic           deq_ready
-);
-  // Internal: use struct for readability
+// shoumei_types.svh -- shared package
+package shoumei_types;
   typedef struct packed {
-    logic [31:0] bits;
-    logic        valid;
     logic        ready;
-  } decoupled32_t;
+    logic [5:0]  tag;
+    logic [31:0] data;
+  } operand_t;
 
-  decoupled32_t enq_s, deq_s;
-  assign enq_s = '{bits: enq_bits, valid: enq_valid, ready: enq_ready};
-  // ...
+  typedef struct packed {
+    logic [5:0]  tag;
+    logic [31:0] data;
+  } cdb_entry_t;
+
+  typedef struct packed {
+    logic [5:0]  opcode;
+    logic [5:0]  dest_tag;
+    operand_t    src1;
+    operand_t    src2;
+  } rs_dispatch_t;
+endpackage
+
+// Module using struct ports
+module ReservationStation4
+  import shoumei_types::*;
+(
+  input  logic          clock,
+  input  logic          reset,
+  // dispatch (write)
+  input  rs_dispatch_t  dispatch_data,
+  input  logic          dispatch_valid,
+  output logic          dispatch_ready,
+  // issue (read)
+  output rs_dispatch_t  issue_data,
+  output logic          issue_valid,
+  input  logic          issue_ready,
+  // CDB broadcast
+  input  cdb_entry_t    cdb      [0:3],
+  input  logic [3:0]    cdb_valid,
+  // flush
+  input  logic          flush
+);
+  // Internal use: struct field access
+  always_ff @(posedge clock) begin
+    if (dispatch_valid && dispatch_ready) begin
+      entries[free_slot].src1 <= dispatch_data.src1;
+      entries[free_slot].src2 <= dispatch_data.src2;
+    end
+  end
 endmodule
 ```
 
-But this adds boilerplate for questionable benefit. The flat port names are
-already readable with good naming (`enq_bits`, `enq_valid`, `enq_ready`).
+Compare that to the current output with 200+ flat `inputs_0` ports. Massive
+readability improvement, and each field is self-documenting.
 
-**Recommendation:** Skip structs for now. Use flat ports with good naming
-conventions and comments. The signal naming improvements alone (buses, semantic
-names) give us 80% of the readability win. Structs can be added later when/if
-we move to a different LEC tool, or as an opt-in flag for non-LEC output.
+#### LEC consideration with struct ports
+
+When Yosys reads struct-typed ports via `read_slang`, it flattens them
+internally to individual bit signals for equivalence checking. The key
+question is what names those flattened signals get, and whether they match
+across the Lean SV and Chisel SV.
+
+Yosys/slang typically flattens `input cdb_entry_t cdb [0:3]` to something
+like `cdb[0].tag`, `cdb[0].data`, `cdb[1].tag`, etc. The LEC `equiv_make`
+command matches ports by name, so both sides need to agree on this
+flattening convention.
+
+Two strategies:
+1. **Both sides use structs** -- both Lean SV and Chisel SV use the same
+   package/struct definitions. Yosys flattens identically. Clean.
+2. **Only hierarchical SV uses structs, netlist stays flat** -- LEC compares
+   netlist (flat) vs Chisel (structs flattened). Need to ensure name mapping.
+
+Strategy 1 is cleaner. If both `read_slang` invocations see the same
+`shoumei_types` package, the flattened names match by construction.
+
+**Recommendation (revised):** Use `struct packed` with a shared SV package.
+Switch LEC to `read_slang`. This gives us struct ports, nested structs,
+arrays of structs -- everything we need. Skip `interface`/`modport` for now
+(structs handle our use cases and are simpler). The migration cost is low:
+one line change in `run-lec.sh` + adding yosys-slang as a dependency.
 
 ---
 
