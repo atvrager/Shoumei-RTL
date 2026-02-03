@@ -27,6 +27,10 @@ import Shoumei.RISCV.Decoder
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.Execution.ReservationStation
 import Shoumei.RISCV.Execution.Dispatch
+import Shoumei.RISCV.Execution.IntegerExecUnit
+import Shoumei.RISCV.Execution.BranchExecUnit
+import Shoumei.RISCV.Execution.MemoryExecUnit
+import Shoumei.RISCV.Execution.MulDivExecUnit
 import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Memory.LSU
 import Shoumei.RISCV.CPUControl
@@ -312,9 +316,101 @@ def cpuStep
          cpu.rsBranch, cpu.rsMulDiv, cpu.decode, cpu.globalStall)
 
   -- ========== STAGE 6: EXECUTE & CDB BROADCAST ==========
-  -- Select ready entries from each RS and execute (simplified: no actual execution yet)
-  -- For now, just pass through without actual execution
-  let cdbBroadcasts : List CDBBroadcast := []  -- TODO: Execute from each RS
+  -- Select ready entries from each RS and execute
+  let cdbBroadcasts : List CDBBroadcast :=
+    -- Integer RS execution
+    let intBC := match rsInteger_postFlush.selectReady with
+      | some idx =>
+          let (_, dispatchResult) := rsInteger_postFlush.dispatch idx
+          match dispatchResult with
+          | some (opcode, src1, src2, destTag) =>
+              let (_, result) := Execution.executeInteger opcode src1 src2 destTag
+              [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
+          | none => []
+      | none => []
+
+    -- Memory RS execution (simplified: no actual memory operations yet)
+    let memBC := match rsMemory_postFlush.selectReady with
+      | some idx =>
+          let (_, dispatchResult) := rsMemory_postFlush.dispatch idx
+          match dispatchResult with
+          | some (opcode, src1, src2, destTag) =>
+              -- For now, just compute address (AGU functionality)
+              let addr := match opcode with
+                | .LW | .LH | .LB | .LBU | .LHU | .SW | .SH | .SB => src1 + src2  -- base + offset
+                | _ => 0
+              [{ valid := true, tag := destTag, data := addr, exception := false, mispredicted := false }]
+          | none => []
+      | none => []
+
+    -- Branch RS execution (simplified: no actual branch logic yet)
+    let branchBC := match rsBranch_postFlush.selectReady with
+      | some idx =>
+          let (_, dispatchResult) := rsBranch_postFlush.dispatch idx
+          match dispatchResult with
+          | some (opcode, src1, src2, destTag) =>
+              -- Simplified branch evaluation (just compare equality for now)
+              let taken := match opcode with
+                | .BEQ => src1 == src2
+                | .BNE => src1 != src2
+                | .JAL | .JALR => true  -- Unconditional
+                | _ => false
+              [{ valid := true, tag := destTag, data := 0, exception := false, mispredicted := false }]
+          | none => []
+      | none => []
+
+    -- MulDiv RS execution (only if M extension enabled)
+    let mulDivBC := if h : config.enableM then
+        let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
+        match rs.selectReady with
+        | some idx =>
+            let (_, dispatchResult) := rs.dispatch idx
+            match dispatchResult with
+            | some (opcode, src1, src2, destTag) =>
+                -- Simplified MulDiv (just multiply for now)
+                let result := match opcode with
+                  | OpType.MUL => src1 * src2
+                  | OpType.DIV => if src2 == 0 then UInt32.ofNat (-1 : Int).toNat else src1 / src2
+                  | OpType.REM => if src2 == 0 then src1 else src1 % src2
+                  | _ => 0
+                [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
+            | none => []
+        | none => []
+      else []
+
+    intBC ++ memBC ++ branchBC ++ mulDivBC
+
+  -- ========== UPDATE RS AFTER DISPATCH ==========
+  -- Dispatch clears the dispatched entries from RS
+  let rsInteger_postExec := match rsInteger_postFlush.selectReady with
+    | some idx => rsInteger_postFlush.dispatch idx |>.1
+    | none => rsInteger_postFlush
+
+  let rsMemory_postExec := match rsMemory_postFlush.selectReady with
+    | some idx => rsMemory_postFlush.dispatch idx |>.1
+    | none => rsMemory_postFlush
+
+  let rsBranch_postExec := match rsBranch_postFlush.selectReady with
+    | some idx => rsBranch_postFlush.dispatch idx |>.1
+    | none => rsBranch_postFlush
+
+  let rsMulDiv_postExec := if h : config.enableM then
+      let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
+      let rs' := match rs.selectReady with
+        | some idx => rs.dispatch idx |>.1
+        | none => rs
+      cast (by rw [if_pos h]) rs'
+    else
+      rsMulDiv_postFlush
+
+  -- ========== CDB WRITEBACK TO PHYSREGFILE ==========
+  -- Write execution results to physical register file
+  let rename_postExecute := cdbBroadcasts.foldl (fun (ren : RenameStageState) (bc : CDBBroadcast) =>
+    if bc.valid then
+      { ren with physRegFile := ren.physRegFile.write bc.tag bc.data }
+    else
+      ren
+  ) rename_postFlush
 
   -- ========== STAGE 5: CDB SNOOP ==========
   -- All RS and ROB snoop CDB broadcasts in parallel
@@ -351,7 +447,7 @@ def cpuStep
   let (rsInteger_postDispatch, rsMemory_postDispatch, rsBranch_postDispatch,
        rsMulDiv_postDispatch, rename_postDispatch, rob_postDispatch) :=
     (rsInteger_postCDB, rsMemory_postCDB, rsBranch_postCDB, rsMulDiv_postCDB,
-     rename_afterCommit, rob_postCDB)
+     rename_postExecute, rob_postCDB)
   -- TODO: Actually dispatch renamed instruction to RS and allocate ROB
 
   -- ========== STAGE 3: RENAME ==========
