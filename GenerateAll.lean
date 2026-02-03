@@ -53,6 +53,7 @@ import Shoumei.RISCV.Retirement.ROB
 
 -- Phase 7: Memory
 import Shoumei.RISCV.Memory.StoreBuffer
+import Shoumei.RISCV.Memory.LSU
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -166,7 +167,8 @@ def allCircuits : List Circuit := [
   mkROB16,
 
   -- Phase 7: Memory
-  mkStoreBuffer8
+  mkStoreBuffer8,
+  mkLSU
 ]
 
 def main : IO Unit := do
