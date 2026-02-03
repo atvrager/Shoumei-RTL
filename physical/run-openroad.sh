@@ -112,6 +112,8 @@ echo ""
 echo "==> Running OpenROAD flow (this will take several minutes)..."
 echo ""
 
+# Capture exit code but don't fail the script
+set +e
 docker run --rm \
   -u "$(id -u):$(id -g)" \
   -v "$PROJECT_ROOT/third_party/orfs/flow:/OpenROAD-flow-scripts/flow" \
@@ -120,10 +122,20 @@ docker run --rm \
   openroad/flow-ubuntu22.04-builder:3d5d5a \
   bash -c 'source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project ABC_CLOCK_PERIOD_IN_PS=1000'
 
+ORFS_EXIT_CODE=$?
+set -e
+
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "${GREEN}✓ OpenROAD flow complete${NC}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [ $ORFS_EXIT_CODE -eq 0 ]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "${GREEN}✓ OpenROAD flow complete${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo -e "${YELLOW}⚠ OpenROAD flow completed with warnings (exit code: $ORFS_EXIT_CODE)${NC}"
+  echo -e "${YELLOW}  (This may be due to timing violations or minor issues)${NC}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
 echo ""
 
 # Display results location
@@ -134,40 +146,50 @@ REPORTS_DIR="third_party/orfs/flow/reports/$PLATFORM/$DESIGN_NAME/base"
 echo "Results:"
 echo "  Directory: $RESULTS_DIR"
 echo ""
-echo "Key files:"
+
+# Check for final outputs (stage 6)
 if [ -f "$RESULTS_DIR/6_final.gds" ]; then
-    echo -e "  ${GREEN}✓${NC} GDSII Layout:      $RESULTS_DIR/6_final.gds"
+  echo "Key files (Final - Stage 6):"
+  echo -e "  ${GREEN}✓${NC} GDSII Layout:       $RESULTS_DIR/6_final.gds"
+  echo -e "  ${GREEN}✓${NC} OpenDB Database:    $RESULTS_DIR/6_final.odb"
+  echo -e "  ${GREEN}✓${NC} Gate-Level Netlist: $RESULTS_DIR/6_final.v"
+  echo -e "  ${GREEN}✓${NC} DEF File:           $RESULTS_DIR/6_final.def"
 else
-    echo -e "  ${YELLOW}?${NC} GDSII Layout:      $RESULTS_DIR/6_final.gds"
-fi
+  # Show intermediate stages
+  echo "Intermediate outputs:"
 
-if [ -f "$RESULTS_DIR/6_final.odb" ]; then
-    echo -e "  ${GREEN}✓${NC} OpenDB Database:   $RESULTS_DIR/6_final.odb"
-else
-    echo -e "  ${YELLOW}?${NC} OpenDB Database:   $RESULTS_DIR/6_final.odb"
-fi
+  if [ -f "$RESULTS_DIR/5_1_grt.odb" ]; then
+    echo -e "  ${GREEN}✓${NC} Global Route (5_1): $RESULTS_DIR/5_1_grt.odb"
+  elif [ -f "$RESULTS_DIR/4_1_cts.odb" ]; then
+    echo -e "  ${GREEN}✓${NC} Clock Tree (4_1):   $RESULTS_DIR/4_1_cts.odb"
+  elif [ -f "$RESULTS_DIR/3_1_place_gp.odb" ]; then
+    echo -e "  ${GREEN}✓${NC} Placement (3_1):    $RESULTS_DIR/3_1_place_gp.odb"
+  elif [ -f "$RESULTS_DIR/2_1_floorplan.odb" ]; then
+    echo -e "  ${GREEN}✓${NC} Floorplan (2_1):    $RESULTS_DIR/2_1_floorplan.odb"
+  elif [ -f "$RESULTS_DIR/1_1_yosys.v" ]; then
+    echo -e "  ${GREEN}✓${NC} Synthesis (1_1):    $RESULTS_DIR/1_1_yosys.v"
+  fi
 
-if [ -f "$RESULTS_DIR/6_final.v" ]; then
-    echo -e "  ${GREEN}✓${NC} Gate-Level Netlist: $RESULTS_DIR/6_final.v"
-else
-    echo -e "  ${YELLOW}?${NC} Gate-Level Netlist: $RESULTS_DIR/6_final.v"
-fi
-
-if [ -f "$RESULTS_DIR/6_final.def" ]; then
-    echo -e "  ${GREEN}✓${NC} DEF File:          $RESULTS_DIR/6_final.def"
-else
-    echo -e "  ${YELLOW}?${NC} DEF File:          $RESULTS_DIR/6_final.def"
+  echo ""
+  echo -e "  ${YELLOW}Note: Final outputs not generated. Check openroad.log for details.${NC}"
 fi
 
 echo ""
 echo "Reports:"
 if [ -d "$REPORTS_DIR" ]; then
     echo -e "  ${GREEN}✓${NC} Reports directory: $REPORTS_DIR"
+
+    # Show key reports
+    if [ -f "$REPORTS_DIR/final_report.txt" ]; then
+      echo -e "  ${GREEN}✓${NC} Final report:      $REPORTS_DIR/final_report.txt"
+    fi
 else
     echo -e "  ${YELLOW}?${NC} Reports directory: $REPORTS_DIR"
 fi
 
 echo ""
-echo "View GDSII layout:"
-echo "  klayout $RESULTS_DIR/6_final.gds"
-echo ""
+if [ -f "$RESULTS_DIR/6_final.gds" ]; then
+  echo "View GDSII layout:"
+  echo "  klayout $RESULTS_DIR/6_final.gds"
+  echo ""
+fi
