@@ -128,7 +128,7 @@ ORFS_EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
 echo ""
-if [ $ORFS_EXIT_CODE -eq 0 ]; then
+if [ "$ORFS_EXIT_CODE" -eq 0 ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo -e "${GREEN}✓ OpenROAD flow complete${NC}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

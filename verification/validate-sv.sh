@@ -75,8 +75,8 @@ else
     echo -e "${GREEN}PASSED${NC}"
 
     # Count and display all warnings
-    WARNING_COUNT=$(grep "Warning:" "$YOSYS_OUTPUT" | wc -l || true)
-    IMPLICIT_COUNT=$(grep "implicitly declared" "$YOSYS_OUTPUT" | wc -l || true)
+    WARNING_COUNT=$(grep -c "Warning:" "$YOSYS_OUTPUT" || true)
+    IMPLICIT_COUNT=$(grep -c "implicitly declared" "$YOSYS_OUTPUT" || true)
 
     if [[ $WARNING_COUNT -gt 0 ]]; then
         echo ""
