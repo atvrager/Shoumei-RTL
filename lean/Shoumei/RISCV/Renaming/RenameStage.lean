@@ -49,6 +49,8 @@ structure RenamedInstruction where
   imm : Option Int
   /-- Previous physical register mapped to rd (for ROB retirement/deallocation) -/
   oldPhysRd : Option (Fin 64)
+  /-- Program counter - for branch target calculation and RVVI tracking -/
+  pc : UInt32
   deriving Repr
 
 /-- Default RenamedInstruction for Inhabited instance -/
@@ -60,6 +62,7 @@ instance : Inhabited RenamedInstruction where
     physRs2 := none
     imm := none
     oldPhysRd := none
+    pc := 0
   }
 
 /-! ## Behavioral Model -/
@@ -102,6 +105,7 @@ def renameInstruction
         physRs2 := physRs2
         imm := instr.imm
         oldPhysRd := none
+        pc := instr.pc
       })
   | some rd =>
       if rd.val = 0 then
@@ -113,6 +117,7 @@ def renameInstruction
           physRs2 := physRs2
           imm := instr.imm
           oldPhysRd := none
+          pc := instr.pc
         })
       else
         -- Normal destination register: allocate new physical register
@@ -133,6 +138,7 @@ def renameInstruction
                physRs2 := physRs2
                imm := instr.imm
                oldPhysRd := some oldPhysRd
+               pc := instr.pc
              })
 
 /-- Rename a sequence of instructions, threading state through.

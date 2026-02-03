@@ -44,6 +44,8 @@ open Shoumei.Circuits.Combinational
     - **src1/src2 ready flags**: Are the operands available?
     - **src1/src2 tags**: Which physical registers produced the operands (if not ready)
     - **src1/src2 data**: Operand values (if ready)
+    - **immediate**: Immediate value for memory offsets, branch offsets (from decode)
+    - **pc**: Program counter for branch target calculation
 
     State transitions:
     1. **Empty** (valid=false) - slot available for new instruction
@@ -70,6 +72,10 @@ structure RSEntry where
   src2_tag : Fin 64
   /-- Source operand 2 data value (if ready) -/
   src2_data : UInt32
+  /-- Immediate value (for memory offsets, branch targets) -/
+  immediate : Option Int
+  /-- Program counter (for branch target calculation) -/
+  pc : UInt32
   deriving Repr
 
 namespace RSEntry
@@ -85,6 +91,8 @@ def empty : RSEntry :=
     src2_ready := false
     src2_tag := 0
     src2_data := 0
+    immediate := none     -- No immediate value
+    pc := 0               -- Dummy PC value
   }
 
 /-- Is this entry ready for dispatch? (valid and both operands ready) -/
@@ -183,6 +191,8 @@ def issue
       src2_ready := src2_ready
       src2_tag := src2_tag
       src2_data := src2_data
+      immediate := instr.imm           -- Immediate value for memory/branch ops
+      pc := instr.pc                   -- Program counter for branch target calc
     }
 
     -- Update entries array (replace entry at next_alloc)
@@ -276,18 +286,18 @@ def selectReady (rs : RSState n) : Option (Fin n) :=
     1. Check if entry is ready (valid and both operands available)
     2. If ready:
        - Invalidate entry (mark as free)
-       - Return (opcode, src1_data, src2_data, dest_tag) for execution
+       - Return (opcode, src1_data, src2_data, dest_tag, immediate, pc) for execution
     3. If not ready, return none (caller shouldn't dispatch non-ready entries)
 
     **Note:** The execution unit will:
-    - Compute result = f(opcode, src1_data, src2_data)
+    - Compute result = f(opcode, src1_data, src2_data, immediate, pc)
     - Broadcast (dest_tag, result) on CDB
     - This wakes up other RS entries waiting for this tag
 -/
 def dispatch
     (rs : RSState n)
     (idx : Fin n)
-    : RSState n × Option (OpType × UInt32 × UInt32 × Fin 64) :=
+    : RSState n × Option (OpType × UInt32 × UInt32 × Fin 64 × Option Int × UInt32) :=
   let e := rs.entries idx
   if e.isReady then
     -- Invalidate entry (mark as free)
@@ -297,8 +307,8 @@ def dispatch
 
     let rs' := { rs with entries := newEntries }
 
-    -- Return operation bundle for execution unit
-    let result := (e.opcode, e.src1_data, e.src2_data, e.dest_tag)
+    -- Return operation bundle for execution unit (now includes immediate and pc)
+    let result := (e.opcode, e.src1_data, e.src2_data, e.dest_tag, e.immediate, e.pc)
     (rs', some result)
   else
     -- Entry not ready, shouldn't be dispatched
@@ -427,13 +437,13 @@ axiom rs_dispatch_clears_entry (n : Nat) (rs : RSState n) (idx : Fin n) :
 
 /-- Dispatch returns operands from the entry.
 
-    If dispatch succeeds, it returns the entry's opcode and operand data.
+    If dispatch succeeds, it returns the entry's opcode, operand data, immediate, and pc.
 -/
 axiom rs_dispatch_returns_operands (n : Nat) (rs : RSState n) (idx : Fin n) :
   let e := rs.entries idx
   let (_, result) := rs.dispatch idx
   e.isReady →
-    result = some (e.opcode, e.src1_data, e.src2_data, e.dest_tag)
+    result = some (e.opcode, e.src1_data, e.src2_data, e.dest_tag, e.immediate, e.pc)
 
 /-! ## Structural Circuit (Hardware Implementation) -/
 

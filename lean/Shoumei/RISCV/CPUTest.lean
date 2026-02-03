@@ -48,76 +48,85 @@ def runUntilIdle (cpu : CPUState config) (imem : SimpleIMem) (maxCycles : Nat :=
         runUntilIdle (cpuStep cpu imem) imem n
 
 /-- Create a decoded ADDI instruction (for testing without full decoder) -/
-def mkDecodedADDI (rd rs1 : Fin 32) (imm : Int) : DecodedInstruction :=
+def mkDecodedADDI (rd rs1 : Fin 32) (imm : Int) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .ADDI
     rd := some rd
     rs1 := some rs1
     rs2 := none
-    imm := some imm }
+    imm := some imm
+    pc := pc }
 
 /-- Create a decoded ADD instruction -/
-def mkDecodedADD (rd rs1 rs2 : Fin 32) : DecodedInstruction :=
+def mkDecodedADD (rd rs1 rs2 : Fin 32) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .ADD
     rd := some rd
     rs1 := some rs1
     rs2 := some rs2
-    imm := none }
+    imm := none
+    pc := pc }
 
 /-- Create a decoded SUB instruction -/
-def mkDecodedSUB (rd rs1 rs2 : Fin 32) : DecodedInstruction :=
+def mkDecodedSUB (rd rs1 rs2 : Fin 32) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .SUB
     rd := some rd
     rs1 := some rs1
     rs2 := some rs2
-    imm := none }
+    imm := none
+    pc := pc }
 
 /-- Create a decoded LW (load word) instruction -/
-def mkDecodedLW (rd rs1 : Fin 32) (offset : Int) : DecodedInstruction :=
+def mkDecodedLW (rd rs1 : Fin 32) (offset : Int) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .LW
     rd := some rd
     rs1 := some rs1
     rs2 := none
-    imm := some offset }
+    imm := some offset
+    pc := pc }
 
 /-- Create a decoded SW (store word) instruction -/
-def mkDecodedSW (rs2 rs1 : Fin 32) (offset : Int) : DecodedInstruction :=
+def mkDecodedSW (rs2 rs1 : Fin 32) (offset : Int) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .SW
     rd := none
     rs1 := some rs1
     rs2 := some rs2
-    imm := some offset }
+    imm := some offset
+    pc := pc }
 
 /-- Create a decoded BEQ instruction -/
-def mkDecodedBEQ (rs1 rs2 : Fin 32) (offset : Int) : DecodedInstruction :=
+def mkDecodedBEQ (rs1 rs2 : Fin 32) (offset : Int) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .BEQ
     rd := none
     rs1 := some rs1
     rs2 := some rs2
-    imm := some offset }
+    imm := some offset
+    pc := pc }
 
 /-- Create a decoded JAL instruction -/
-def mkDecodedJAL (rd : Fin 32) (offset : Int) : DecodedInstruction :=
+def mkDecodedJAL (rd : Fin 32) (offset : Int) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .JAL
     rd := some rd
     rs1 := none
     rs2 := none
-    imm := some offset }
+    imm := some offset
+    pc := pc }
 
 /-- Create a decoded MUL instruction (M extension) -/
-def mkDecodedMUL (rd rs1 rs2 : Fin 32) : DecodedInstruction :=
+def mkDecodedMUL (rd rs1 rs2 : Fin 32) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .MUL
     rd := some rd
     rs1 := some rs1
     rs2 := some rs2
-    imm := none }
+    imm := none
+    pc := pc }
 
 /-- Create a decoded DIV instruction (M extension) -/
-def mkDecodedDIV (rd rs1 rs2 : Fin 32) : DecodedInstruction :=
+def mkDecodedDIV (rd rs1 rs2 : Fin 32) (pc : UInt32 := 0x80000000) : DecodedInstruction :=
   { opType := .DIV
     rd := some rd
     rs1 := some rs1
     rs2 := some rs2
-    imm := none }
+    imm := none
+    pc := pc }
 
 /-! ## Basic Tests (10 tests) -/
 

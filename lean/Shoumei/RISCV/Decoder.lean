@@ -22,6 +22,8 @@ structure DecodedInstruction where
   rs2 : Option (Fin 32)
   /-- Immediate value (sign-extended to 32 bits) -/
   imm : Option Int
+  /-- Program counter (for branch target calculation and RVVI tracking) -/
+  pc : UInt32
   deriving Repr
 
 /-- Extract a bit field from a 32-bit instruction word -/
@@ -93,8 +95,9 @@ def extractImmJ (instr : UInt32) : Int :=
 /--
   Decode a 32-bit instruction word using a list of instruction definitions.
   Returns None if instruction doesn't match any definition.
+  PC is passed through for branch target calculation and RVVI tracking.
 -/
-def decodeInstruction (defs : List InstructionDef) (instr : UInt32) : Option DecodedInstruction :=
+def decodeInstruction (defs : List InstructionDef) (instr : UInt32) (pc : UInt32) : Option DecodedInstruction :=
   -- Find matching instruction definition
   let matchingDef := defs.find? (fun instrDef => instrDef.matches instr)
 
@@ -125,6 +128,7 @@ def decodeInstruction (defs : List InstructionDef) (instr : UInt32) : Option Dec
       rs1 := if hasRs1 then some (extractRs1 instr) else none
       rs2 := if hasRs2 then some (extractRs2 instr) else none
       imm := imm
+      pc := pc
     }
 
 /--
@@ -135,7 +139,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- R-type: ADD x1, x2, x3 (0x003100b3)
   let addInstr : UInt32 := 0x003100b3
-  match decodeInstruction defs addInstr with
+  match decodeInstruction defs addInstr 0x80000000 with
   | some decoded =>
     IO.println s!"✓ ADD x1, x2, x3: op={decoded.opType}, rd={decoded.rd}, rs1={decoded.rs1}, rs2={decoded.rs2}"
   | none =>
@@ -143,7 +147,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- I-type: ADDI x5, x0, 42 (0x02a00293)
   let addiInstr : UInt32 := 0x02a00293
-  match decodeInstruction defs addiInstr with
+  match decodeInstruction defs addiInstr 0x80000004 with
   | some decoded =>
     IO.println s!"✓ ADDI x5, x0, 42: op={decoded.opType}, rd={decoded.rd}, rs1={decoded.rs1}, imm={decoded.imm}"
   | none =>
@@ -151,7 +155,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- Load: LW x10, 8(x2) (0x00812503)
   let lwInstr : UInt32 := 0x00812503
-  match decodeInstruction defs lwInstr with
+  match decodeInstruction defs lwInstr 0x80000008 with
   | some decoded =>
     IO.println s!"✓ LW x10, 8(x2): op={decoded.opType}, rd={decoded.rd}, rs1={decoded.rs1}, imm={decoded.imm}"
   | none =>
@@ -159,7 +163,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- Store: SW x5, 12(x2) (0x00512623)
   let swInstr : UInt32 := 0x00512623
-  match decodeInstruction defs swInstr with
+  match decodeInstruction defs swInstr 0x8000000C with
   | some decoded =>
     IO.println s!"✓ SW x5, 12(x2): op={decoded.opType}, rs1={decoded.rs1}, rs2={decoded.rs2}, imm={decoded.imm}"
   | none =>
@@ -167,7 +171,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- Branch: BEQ x1, x2, 16 (0x00208863)
   let beqInstr : UInt32 := 0x00208863
-  match decodeInstruction defs beqInstr with
+  match decodeInstruction defs beqInstr 0x80000010 with
   | some decoded =>
     IO.println s!"✓ BEQ x1, x2, 16: op={decoded.opType}, rs1={decoded.rs1}, rs2={decoded.rs2}, imm={decoded.imm}"
   | none =>
@@ -175,7 +179,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- Jump: JAL x1, 20 (0x014000ef)
   let jalInstr : UInt32 := 0x014000ef
-  match decodeInstruction defs jalInstr with
+  match decodeInstruction defs jalInstr 0x80000014 with
   | some decoded =>
     IO.println s!"✓ JAL x1, 20: op={decoded.opType}, rd={decoded.rd}, imm={decoded.imm}"
   | none =>
@@ -183,7 +187,7 @@ def testDecoder (defs : List InstructionDef) : IO Unit := do
 
   -- U-type: LUI x5, 0x12345 (0x12345297)
   let luiInstr : UInt32 := 0x12345297
-  match decodeInstruction defs luiInstr with
+  match decodeInstruction defs luiInstr 0x80000018 with
   | some decoded =>
     IO.println s!"✓ LUI x5, 0x12345: op={decoded.opType}, rd={decoded.rd}, imm={decoded.imm}"
   | none =>

@@ -90,6 +90,7 @@ Decode Stage State
 
 Simple wrapper around fetched instruction. In the behavioral model,
 decode is purely combinational (happens within the same cycle).
+PC is tracked alongside the instruction for branch target calculation.
 -/
 
 structure DecodeState where
@@ -97,11 +98,14 @@ structure DecodeState where
   fetchedInstr : Option UInt32
   /-- Decoded instruction (None if decode failed) -/
   decodedInstr : Option DecodedInstruction
+  /-- Program counter for the fetched instruction -/
+  pc : UInt32
 deriving Repr
 
 def DecodeState.empty : DecodeState :=
   { fetchedInstr := none
-    decodedInstr := none }
+    decodedInstr := none
+    pc := 0 }
 
 /-
 Top-Level CPU State
@@ -318,60 +322,72 @@ def cpuStep
   -- ========== STAGE 6: EXECUTE & CDB BROADCAST ==========
   -- Select ready entries from each RS and execute
   let cdbBroadcasts : List CDBBroadcast :=
-    -- Integer RS execution
+    -- Integer RS execution (ALU operations)
+    -- Uses verified IntegerExecUnit (executeInteger)
     let intBC := match rsInteger_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsInteger_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag) =>
+          | some (opcode, src1, src2, destTag, _immediate, _pc) =>
               let (_, result) := Execution.executeInteger opcode src1 src2 destTag
               [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
           | none => []
       | none => []
 
-    -- Memory RS execution (simplified: no actual memory operations yet)
+    -- Memory RS execution (loads/stores)
+    -- Uses verified MemoryExecUnit (calculateMemoryAddress) with proper immediate values
     let memBC := match rsMemory_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsMemory_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag) =>
-              -- For now, just compute address (AGU functionality)
-              let addr := match opcode with
-                | .LW | .LH | .LB | .LBU | .LHU | .SW | .SH | .SB => src1 + src2  -- base + offset
-                | _ => 0
+          | some (opcode, src1, _src2, destTag, immediate, _pc) =>
+              -- Use proper immediate value from RS entry
+              let offset : Int := immediate.getD 0
+              let addr := Execution.calculateMemoryAddress src1 offset
+              -- TODO: Full LSU integration with executeLoad/executeStore, store buffer, forwarding
               [{ valid := true, tag := destTag, data := addr, exception := false, mispredicted := false }]
           | none => []
       | none => []
 
-    -- Branch RS execution (simplified: no actual branch logic yet)
+    -- Branch RS execution
+    -- Uses verified BranchExecUnit (evaluateBranchCondition and executeBranch)
     let branchBC := match rsBranch_postFlush.selectReady with
       | some idx =>
           let (_, dispatchResult) := rsBranch_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag) =>
-              -- Simplified branch evaluation (just compare equality for now)
-              let taken := match opcode with
-                | .BEQ => src1 == src2
-                | .BNE => src1 != src2
-                | .JAL | .JALR => true  -- Unconditional
-                | _ => false
-              [{ valid := true, tag := destTag, data := 0, exception := false, mispredicted := false }]
+          | some (opcode, src1, src2, destTag, immediate, pc) =>
+              -- Use proper branch condition evaluation from BranchExecUnit
+              let taken := Execution.evaluateBranchCondition opcode src1 src2
+              -- Calculate proper branch target using immediate and PC
+              let offset : Int := immediate.getD 0
+              let branchResult := Execution.executeBranch opcode src1 src2 pc offset destTag
+              -- Broadcast link register value (PC+4) for JAL/JALR
+              let result := pc + 4
+              -- TODO: Use branchResult to generate redirect to fetch stage
+              [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := branchResult.taken }]
           | none => []
       | none => []
 
     -- MulDiv RS execution (only if M extension enabled)
+    -- Uses verified MulDivExecUnit operations
+    -- NOTE: Current limitation - no state tracking for multi-cycle operations
+    -- TODO: Add MulDivExecState to CPUState for pipelined multiplier (3-cycle) and divider (32-cycle)
+    -- TODO: Use mulDivStep for proper stateful execution
     let mulDivBC := if h : config.enableM then
         let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
         match rs.selectReady with
         | some idx =>
             let (_, dispatchResult) := rs.dispatch idx
             match dispatchResult with
-            | some (opcode, src1, src2, destTag) =>
-                -- Simplified MulDiv (just multiply for now)
+            | some (opcode, src1, src2, destTag, _immediate, _pc) =>
+                -- Simplified single-cycle MulDiv (proper impl needs state machine)
                 let result := match opcode with
                   | OpType.MUL => src1 * src2
                   | OpType.DIV => if src2 == 0 then UInt32.ofNat (-1 : Int).toNat else src1 / src2
                   | OpType.REM => if src2 == 0 then src1 else src1 % src2
+                  | OpType.DIVU => if src2 == 0 then UInt32.ofNat (-1 : Int).toNat else src1 / src2
+                  | OpType.REMU => if src2 == 0 then src1 else src1 % src2
+                  | OpType.MULH | OpType.MULHU | OpType.MULHSU => 0  -- TODO: High word multiply
                   | _ => 0
                 [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
             | none => []
@@ -464,8 +480,10 @@ def cpuStep
     | some instr =>
         -- Use provided decodedInstr parameter (for testing)
         -- TODO: Config-aware decoder call (decodeRV32I vs decodeRV32IM)
+        -- PC of fetched instruction is the previous PC (before fetch incremented it)
         { fetchedInstr := some instr
-          decodedInstr := decodedInstr }
+          decodedInstr := decodedInstr
+          pc := cpu.fetch.pc - 4 }  -- PC of instruction that was fetched last cycle
 
   -- ========== STAGE 1: FETCH ==========
   let stall := globalStall_postFlush
