@@ -449,21 +449,26 @@ class Queue1_32 extends Module {
   })
 
   // --- state ---
-  val valid_reg = RegInit(false.B)
-  val data_reg  = RegInit(0.U(32.W))
+  val valid_reg = ShoumeiReg.bool(clock, reset)
+  val data_reg  = ShoumeiReg(32, clock, reset)
 
-  // --- control ---
-  val enq_fire = io.enq.valid && io.enq.ready
-  val deq_fire = io.deq.valid && io.deq.ready
+  // --- control (single assign per signal) ---
+  val enq_fire = Wire(Bool())
+  val deq_fire = Wire(Bool())
 
   io.enq.ready := ~valid_reg
   io.deq.valid := valid_reg
+  enq_fire     := io.enq.valid & io.enq.ready
+  deq_fire     := io.deq.valid & io.deq.ready
 
-  // --- next-state ---
-  val valid_next = enq_fire || (valid_reg && !deq_fire)
-  val data_next  = Mux(enq_fire, io.enq.bits, data_reg)
+  // --- next-state (pure combinational, Mux only) ---
+  val valid_next = Wire(Bool())
+  val data_next  = Wire(UInt(32.W))
 
-  // --- register update ---
+  valid_next := enq_fire | (valid_reg & ~deq_fire)
+  data_next  := Mux(enq_fire, io.enq.bits, data_reg)
+
+  // --- register update (exactly one := per reg) ---
   valid_reg := valid_next
   data_reg  := data_next
 
@@ -482,9 +487,9 @@ class Queue4_32 extends Module {
   })
 
   // --- pointer / count ---
-  val head_ptr = RegInit(0.U(2.W))
-  val tail_ptr = RegInit(0.U(2.W))
-  val count    = RegInit(0.U(3.W))
+  val head_ptr = ShoumeiReg(2, clock, reset)
+  val tail_ptr = ShoumeiReg(2, clock, reset)
+  val count    = ShoumeiReg(3, clock, reset)
 
   val full  = count === 4.U
   val empty = count === 0.U
@@ -493,23 +498,32 @@ class Queue4_32 extends Module {
   val mem = Mem(4, UInt(32.W))
 
   // --- control ---
-  io.enq.ready := !full
-  io.deq.valid := !empty
+  io.enq.ready := ~full
+  io.deq.valid := ~empty
 
-  val enq_fire = io.enq.fire
-  val deq_fire = io.deq.fire
+  val enq_fire = Wire(Bool())
+  val deq_fire = Wire(Bool())
+  enq_fire := io.enq.valid & io.enq.ready
+  deq_fire := io.deq.valid & io.deq.ready
 
-  // --- pointer update ---
-  when(enq_fire) { tail_ptr := tail_ptr + 1.U }
-  when(deq_fire) { head_ptr := head_ptr + 1.U }
-  when(enq_fire && !deq_fire) {
-    count := count + 1.U
-  }.elsewhen(!enq_fire && deq_fire) {
-    count := count - 1.U
-  }
+  // --- next-state (single assign, Mux only, no when) ---
+  val head_next = Wire(UInt(2.W))
+  val tail_next = Wire(UInt(2.W))
+  val count_next = Wire(UInt(3.W))
 
-  // --- memory ---
-  when(enq_fire) { mem.write(tail_ptr, io.enq.bits) }
+  tail_next := Mux(enq_fire, tail_ptr + 1.U, tail_ptr)
+  head_next := Mux(deq_fire, head_ptr + 1.U, head_ptr)
+  count_next := Mux(enq_fire & ~deq_fire, count + 1.U,
+                Mux(~enq_fire & deq_fire, count - 1.U,
+                    count))
+
+  // --- register update (one := per reg) ---
+  head_ptr := head_next
+  tail_ptr := tail_next
+  count    := count_next
+
+  // --- memory (write uses Mux-gated enable, not when) ---
+  mem.write(tail_ptr, io.enq.bits, enq_fire)
   io.deq.bits := mem.read(head_ptr)
 }
 ```
@@ -536,51 +550,84 @@ class ReservationStation4 extends Module {
     val flush    = Input(Bool())
   })
 
-  // --- entry storage ---
+  // --- entry storage (registered state) ---
   val entries     = Reg(Vec(4, new RSEntry))
   val entry_valid = RegInit(VecInit(Seq.fill(4)(false.B)))
-  val entry_ready = Wire(Vec(4, Bool()))
 
-  // --- readiness check ---
+  // --- combinational readiness ---
+  val entry_ready = Wire(Vec(4, Bool()))
   (0 until 4).foreach { i =>
-    entry_ready(i) := entries(i).src1_rdy && entries(i).src2_rdy
+    entry_ready(i) := entries(i).src1_rdy & entries(i).src2_rdy
   }
 
-  // --- age-based picker ---
+  // --- age-based picker (submodule) ---
   val u_picker = Module(new PriorityPicker4)
   u_picker.io.valid := entry_valid.asUInt & entry_ready.asUInt
 
-  // --- CDB wakeup ---
-  for (i <- 0 until 4) {
-    for (j <- 0 until 4) {
-      when(io.cdb(j).valid && !entries(i).src1_rdy &&
-           entries(i).src1_tag === io.cdb(j).bits.tag) {
-        entries(i).src1_data := io.cdb(j).bits.data
-        entries(i).src1_rdy  := true.B
-      }
-      // same for src2
+  // --- CDB wakeup: compute next entry state (pure Mux, no when) ---
+  val entries_next = Wire(Vec(4, new RSEntry))
+  (0 until 4).foreach { i =>
+    // Start with current entry
+    var src1_rdy_next  = entries(i).src1_rdy
+    var src1_data_next = entries(i).src1_data
+    var src2_rdy_next  = entries(i).src2_rdy
+    var src2_data_next = entries(i).src2_data
+
+    // Chain Muxes for each CDB port (priority: last CDB wins)
+    (0 until 4).foreach { j =>
+      val src1_match = io.cdb(j).valid & ~entries(i).src1_rdy &
+                       (entries(i).src1_tag === io.cdb(j).bits.tag)
+      val src2_match = io.cdb(j).valid & ~entries(i).src2_rdy &
+                       (entries(i).src2_tag === io.cdb(j).bits.tag)
+
+      src1_rdy_next  = Mux(src1_match, true.B,            src1_rdy_next)
+      src1_data_next = Mux(src1_match, io.cdb(j).bits.data, src1_data_next)
+      src2_rdy_next  = Mux(src2_match, true.B,            src2_rdy_next)
+      src2_data_next = Mux(src2_match, io.cdb(j).bits.data, src2_data_next)
     }
+
+    entries_next(i)          := entries(i)       // default: hold
+    entries_next(i).src1_rdy  := src1_rdy_next
+    entries_next(i).src1_data := src1_data_next
+    entries_next(i).src2_rdy  := src2_rdy_next
+    entries_next(i).src2_data := src2_data_next
   }
 
-  // --- dispatch ---
+  // --- dispatch: compute next valid + entry (Mux, no when) ---
   val free_slot = PriorityEncoder(~entry_valid.asUInt)
-  io.dispatch.ready := !entry_valid.asUInt.andR
+  io.dispatch.ready := ~entry_valid.asUInt.andR
 
-  when(io.dispatch.fire) {
-    entries(free_slot)     := io.dispatch.bits
-    entry_valid(free_slot) := true.B
+  val dispatch_fire = io.dispatch.valid & io.dispatch.ready
+  val entry_valid_after_dispatch = Wire(Vec(4, Bool()))
+  val entries_after_dispatch     = Wire(Vec(4, new RSEntry))
+  (0 until 4).foreach { i =>
+    val is_target = dispatch_fire & (free_slot === i.U)
+    entry_valid_after_dispatch(i) := Mux(is_target, true.B,              entry_valid(i))
+    entries_after_dispatch(i)     := Mux(is_target, io.dispatch.bits,    entries_next(i))
   }
 
-  // --- issue ---
+  // --- issue: compute next valid (Mux, no when) ---
   io.issue.valid := (entry_valid.asUInt & entry_ready.asUInt).orR
   io.issue.bits  := entries(u_picker.io.grant)
-  when(io.issue.fire) {
-    entry_valid(u_picker.io.grant) := false.B
+
+  val issue_fire = io.issue.valid & io.issue.ready
+  val entry_valid_after_issue = Wire(Vec(4, Bool()))
+  (0 until 4).foreach { i =>
+    val is_issued = issue_fire & (u_picker.io.grant === i.U)
+    entry_valid_after_issue(i) := Mux(is_issued, false.B,
+                                      entry_valid_after_dispatch(i))
   }
 
-  // --- flush ---
-  when(io.flush) {
-    entry_valid := VecInit(Seq.fill(4)(false.B))
+  // --- flush: compute final next valid (Mux, no when) ---
+  val entry_valid_next = Wire(Vec(4, Bool()))
+  (0 until 4).foreach { i =>
+    entry_valid_next(i) := Mux(io.flush, false.B, entry_valid_after_issue(i))
+  }
+
+  // --- register update (exactly one := per reg) ---
+  (0 until 4).foreach { i =>
+    entries(i)     := entries_after_dispatch(i)
+    entry_valid(i) := entry_valid_next(i)
   }
 }
 ```
@@ -1701,19 +1748,97 @@ Implement the pattern-matching algorithm from Q3:
 3. If yes → emit one vectorized operation
 4. If no → emit individual scalar ops (existing behavior)
 
-**Step 2e: Register generation**
+**Step 2e: Register generation + single-assign style**
 
-Replace per-bit `RegInit(false.B)` with typed regs:
+**Style rule: no `when` blocks.** Every signal has exactly one `:=`.
+Next-state logic is pure `Mux` chains. This maps 1:1 to the DSL (each wire
+has one gate driving it) and makes the codegen straightforward -- no need
+to reconstruct priority-encoded `when/elsewhen/otherwise` from flat gates.
 
-```lean
--- Old: val data_reg_0_reg = withClockAndReset(clock, reset) { RegInit(false.B) }
---      val data_reg_1_reg = ...  (32 times)
+```scala
+// BAD -- when block, multiple assigns to same reg, implicit priority
+when(reset.asBool) {
+  data_reg := 0.U
+}.elsewhen(enq_fire) {
+  data_reg := io.enq.bits
+}
 
--- New: val data_reg = RegInit(0.U(32.W))
+// GOOD -- single assign, explicit Mux, one driver per signal
+val data_next = Mux(enq_fire, io.enq.bits, data_reg)
+data_reg := Mux(reset.asBool, 0.U, data_next)
+
+// BEST -- separate next-state from register, matches DSL exactly
+//   MUX gates → data_next (combinational)
+//   DFF gate  → data_reg  (sequential, single assign)
+val data_next = Wire(UInt(32.W))
+data_next := Mux(enq_fire, io.enq.bits, data_reg)
+data_reg  := data_next   // DFF: just captures, reset handled below
 ```
 
+**Register type: custom wrapper vs bare `RegInit`**
+
+Three options:
+
+*Option A: Bare `RegInit` (simplest)*
+```scala
+val data_reg = withClockAndReset(clock, reset.asAsyncReset) {
+  RegInit(0.U(32.W))
+}
+data_reg := data_next
+```
+Pro: minimal code, CIRCT optimizes freely.
+Con: async reset is implicit in `withClockAndReset` scope -- easy to
+get wrong. Reset semantics are baked into RegInit, not separated.
+
+*Option B: `ShoumeiReg` helper (thin wrapper, no hierarchy)*
+```scala
+object ShoumeiReg {
+  def apply(width: Int, clock: Clock, reset: AsyncReset): UInt = {
+    withClockAndReset(clock, reset) { RegInit(0.U(width.W)) }
+  }
+}
+
+val data_reg = ShoumeiReg(32, clock, reset)
+data_reg := data_next
+```
+Pro: enforces async reset + reset-to-zero convention in one place.
+No extra hierarchy for CIRCT. Name is a codegen marker ("I know this
+came from a DFF in the DSL"). Still a plain `UInt` for downstream ops.
+Con: minor boilerplate for the helper definition.
+
+*Option C: Instantiate verified Register modules (full hierarchy)*
+```scala
+val u_data_reg = Module(new Register32)
+u_data_reg.io.d := data_next
+val data_reg = u_data_reg.io.q
+```
+Pro: structural match to Lean SV -- both outputs contain `Register32`
+instances. LEC is trivial (same module name, same ports). Compositional
+verification works directly.
+Con: CIRCT can't optimize across module boundaries as well. Every
+32-bit reg is a module instance -- verbose, and CIRCT may not inline
+them. Requires all RegisterN variants to exist as Chisel modules too.
+
+**Recommendation:** Option B. The helper enforces our DFF contract (async
+reset, reset-to-zero, explicit clock) without adding hierarchy that blocks
+CIRCT optimization. The single-assign style means each register has exactly
+one `:= data_next` line. The `ShoumeiReg` name makes it searchable and
+self-documenting.
+
+If LEC has structural matching issues, we can fall back to Option C for
+specific modules, but Option B should be the default.
+
+**Bus grouping for registers:**
+
 DFF groups sharing the same clock/reset with contiguous output wires
-in a SignalGroup → one `RegInit` of the group's type.
+in a SignalGroup → one `ShoumeiReg(width)` call instead of N individual ones.
+
+```scala
+// 32 individual DFFs in DSL → one typed register in Chisel
+val data_reg = ShoumeiReg(32, clock, reset)     // UInt(32.W)
+val valid_reg = ShoumeiReg(1, clock, reset)      // UInt(1.W), or:
+val valid_reg = ShoumeiReg.bool(clock, reset)    // Bool() variant
+```
 
 **Step 2f: Delete the hacks**
 
