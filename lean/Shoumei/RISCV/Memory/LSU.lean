@@ -370,16 +370,17 @@ def mkLSU : Circuit :=
   let sb_enq_size := mkWires "sb_enq_size_" 2  -- Placeholder: would be decoded from opcode
 
   -- === MemoryExecUnit Instance ===
+  -- MemoryExecUnit uses flat port names: base0, base1, ..., offset0, offset1, etc.
   let agu_inst : CircuitInstance := {
     moduleName := "MemoryExecUnit"
     instName := "u_agu"
     portMap :=
-      (dispatch_base.map (fun w => ("base", w))) ++
-      (dispatch_offset.map (fun w => ("offset", w))) ++
-      (dispatch_dest_tag.map (fun w => ("dest_tag", w))) ++
+      (dispatch_base.enum.map (fun ⟨i, w⟩ => (s!"base{i}", w))) ++
+      (dispatch_offset.enum.map (fun ⟨i, w⟩ => (s!"offset{i}", w))) ++
+      (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag{i}", w))) ++
       [("zero", zero)] ++
-      (agu_address.map (fun w => ("address", w))) ++
-      (agu_tag_out.map (fun w => ("tag_out", w)))
+      (agu_address.enum.map (fun ⟨i, w⟩ => (s!"address{i}", w))) ++
+      (agu_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out{i}", w)))
   }
 
   -- Connect AGU address to StoreBuffer enqueue address (BUF gates for clarity)
@@ -388,6 +389,7 @@ def mkLSU : Circuit :=
   ) agu_address sb_enq_address
 
   -- === StoreBuffer8 Instance ===
+  -- StoreBuffer8 uses underscore port names: enq_address_0, enq_address_1, etc.
   let sb_inst : CircuitInstance := {
     moduleName := "StoreBuffer8"
     instName := "u_store_buffer"
@@ -396,14 +398,14 @@ def mkLSU : Circuit :=
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
        ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
        ("fwd_hit", sb_fwd_hit), ("deq_valid", sb_deq_valid)] ++
-      (sb_enq_address.map (fun w => ("enq_address", w))) ++
-      (sb_enq_data.map (fun w => ("enq_data", w))) ++
-      (sb_enq_size.map (fun w => ("enq_size", w))) ++
-      (commit_store_idx.map (fun w => ("commit_idx", w))) ++
-      (fwd_address.map (fun w => ("fwd_address", w))) ++
-      (sb_fwd_data.map (fun w => ("fwd_data", w))) ++
-      (sb_deq_bits.map (fun w => ("deq_bits", w))) ++
-      (sb_enq_idx.map (fun w => ("enq_idx", w)))
+      (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_{i}", w))) ++
+      (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_{i}", w))) ++
+      (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_{i}", w))) ++
+      (commit_store_idx.enum.map (fun ⟨i, w⟩ => (s!"commit_idx_{i}", w))) ++
+      (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
+      (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_{i}", w))) ++
+      (sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"deq_bits_{i}", w))) ++
+      (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_{i}", w)))
   }
 
   -- === Assemble Circuit ===

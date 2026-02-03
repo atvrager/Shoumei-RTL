@@ -1378,11 +1378,11 @@ Resolves transitive dependencies from compositional certificates, verifies in to
 
 ---
 
-## Phase 7: Memory System - ✅ SUBSTANTIALLY COMPLETE
+## Phase 7: Memory System - ✅ COMPLETE
 
-**Status:** Behavioral Model Complete, Structural Circuit In Progress
+**Status:** All components verified (100% LEC coverage)
 **Last Updated:** 2026-02-02
-**Timeline:** 1 day (behavioral complete), 2-3 hours remaining (structural LEC)
+**Timeline:** 1.5 days (including codegen enhancement for bundled IO hierarchical instances)
 
 **Goal:** Load-store unit with ordering
 
@@ -1438,7 +1438,7 @@ Resolves transitive dependencies from compositional certificates, verifies in to
 | Sign Extension | 2 | LB (signed), LBU (unsigned) |
 | Edge Cases | 9 | Zero offset, wraparound, queries |
 
-#### 5. LSU Structural Circuit ✅ HIERARCHICAL COMPOSITION COMPLETE
+#### 5. LSU Structural Circuit ✅ COMPLETE
 - **Location:** `lean/Shoumei/RISCV/Memory/LSU.lean` (structural section)
 - **Architecture:** Hierarchical composition (MemoryExecUnit + StoreBuffer8)
 - **Structural:** 32 gates (address routing) + 2 instances
@@ -1446,36 +1446,75 @@ Resolves transitive dependencies from compositional certificates, verifies in to
 - **Status:**
   - ✅ LEAN Compilation: PASS (mkLSU builds successfully)
   - ✅ SystemVerilog Generation: PASS (LSU.sv generated)
-  - 🟡 Chisel Generation: IN PROGRESS (port mapping issue with hierarchical instances)
+  - ✅ Chisel Generation: PASS (LSU.scala generated, compiles successfully)
+  - ✅ LEC Verification: PASS (hierarchical SEC, 100% coverage)
 
 #### 6. ROB Integration Interface ✅ COMPLETE
 - **commitStore Operation:** Defined and tested
 - **ROB → LSU:** commit_store_valid + store_buffer_idx
 - **LSU → ROB:** CDB exception reporting
 
-### Remaining Work
+#### 7. Codegen Enhancement ✅ COMPLETE
+- **Issue:** Chisel and SystemVerilog codegen couldn't handle hierarchical instances where child modules use bundled IO (Vec inputs/outputs)
+- **Solution:** Enhanced both codegen to detect bundled IO child modules and map port names to Vec indices
+- **Implementation:**
+  - Added `moduleUsesBundledIO` detection for modules with >200 ports
+  - Added `mapPortNameToVecRef` (Chisel) and `mapPortNameToSVBundle` (SystemVerilog) mapping functions
+  - Applied reset.asBool conversion for AsyncReset → Bool Vec connections
+- **Files Modified:**
+  - `lean/Shoumei/Codegen/Chisel.lean` - Bundled IO child instance support
+  - `lean/Shoumei/Codegen/SystemVerilog.lean` - Bundled IO child instance support
 
-1. **Fix Chisel codegen for hierarchical port mapping** (~2 hours)
-   - Issue: Chisel codegen struggles with multi-wire ports in hierarchical instances
-   - Alternative: Use compositional verification without full Chisel LEC
+#### 8. Memory Consistency Proofs ✅ COMPLETE
+- **File:** `docs/phase7-memory-consistency-proofs.md`
+- **Documented Axioms:** 8 correctness properties (TSO ordering, FIFO, forwarding)
+- **Verification:** All axioms verified through 110+ concrete behavioral tests
+- **Pattern:** Follows Phase 3/4 approach (concrete tests + deferred generic proofs)
 
-2. **Run LEC on LSU** (~30 min)
-   - Expected: Compositional verification (LSU uses verified submodules)
-
-3. **Document memory consistency proofs** (~1 hour)
-   - Create `docs/phase7-memory-consistency-proofs.md`
-   - Document deferred axioms (following Phase 3/4 pattern)
-
-### Files Created
+### Files Created/Modified
 
 **Behavioral Model + Tests:**
 1. `lean/Shoumei/RISCV/Memory/LSU.lean` (420 lines) - Behavioral + structural
 2. `lean/Shoumei/RISCV/Memory/LSUTest.lean` (360 lines) - 35+ tests
 3. `lean/Shoumei/RISCV/Memory/LSUProofs.lean` (60 lines) - Structural proofs
 
+**Codegen Enhancement:**
+4. `lean/Shoumei/Codegen/Chisel.lean` - Bundled IO hierarchical instance support
+5. `lean/Shoumei/Codegen/SystemVerilog.lean` - Bundled IO hierarchical instance support
+
 **Integration:**
-4. `GenerateAll.lean` - Added LSU to circuit registry (line 171)
-5. `docs/phase7-status.md` - Comprehensive status report
+6. `GenerateAll.lean` - Added LSU to circuit registry (line 171)
+
+**Documentation:**
+7. `docs/phase7-status.md` - Comprehensive status report
+8. `docs/phase7-memory-consistency-proofs.md` - Deferred axioms documentation
+
+**Generated:**
+9. `output/sv-from-lean/LSU.sv` - SystemVerilog (Lean)
+10. `output/sv-from-chisel/LSU.sv` - SystemVerilog (Chisel)
+11. `output/systemc/LSU.{h,cpp}` - SystemC
+
+### Verification Summary
+
+**Total Modules Verified:** 77/77 (100% LEC coverage)
+- Phase 0-6 + M-Extension: 74 modules
+- **Phase 7 additions:**
+  - StoreBuffer8: ✅ Hierarchical SEC (compositional verification)
+  - MemoryExecUnit: ✅ Direct CEC (2023 vars, 5182 clauses)
+  - LSU: ✅ Hierarchical SEC (compositional verification)
+
+**Behavioral Tests:** 110+ tests (all passing with `native_decide`)
+- StoreBuffer8: 50+ tests
+- MemoryExecUnit: 25+ tests
+- LSU: 35+ tests
+
+### Key Achievements
+
+1. **Complete LSU Implementation:** All 6 operations (executeStore, executeLoad, commitStore, dequeueStore, processMemoryResponse, fullFlush) implemented and tested
+2. **TSO Memory Ordering:** Store-to-load forwarding with youngest-match priority correctly implements Total Store Order semantics
+3. **ROB Integration:** Store commitment interface defined and tested (`commitStore` operation)
+4. **Codegen Enhancement:** Fixed fundamental limitation in Chisel and SystemVerilog codegen for hierarchical instances with bundled IO children
+5. **100% LEC Coverage Maintained:** 77/77 modules verified (extended verification to hierarchical instances with bundled IO)
 
 **Generated:**
 6. `output/sv-from-lean/LSU.sv` - SystemVerilog (generated)

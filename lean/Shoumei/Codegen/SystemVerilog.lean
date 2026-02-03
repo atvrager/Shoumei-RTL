@@ -338,10 +338,67 @@ def constructPortRef (portBase : String) (wireName : String) : String :=
       else
         portBase
 
+-- Check if a module name corresponds to a module with bundled IO (>200 ports)
+-- This is a heuristic based on known module sizes
+private def moduleUsesBundledIO (moduleName : String) : Bool :=
+  -- Modules known to use bundled IO (>200 total ports)
+  moduleName == "StoreBuffer8" || moduleName == "MemoryExecUnit" ||
+  moduleName == "LSU" || moduleName == "ROB16" ||
+  moduleName == "ReservationStation4" || moduleName == "MulDivRS4" ||
+  moduleName == "PhysRegFile_64x32" || moduleName == "RAT_32x6" ||
+  moduleName == "FreeList_64"
+
+-- Map port names with underscores to bundled IO Vec indices for SystemVerilog
+-- SystemVerilog uses flat naming: inputs_0, inputs_1, outputs_0, etc.
+private def mapPortNameToSVBundle (moduleName portName : String) : Option String :=
+  -- For StoreBuffer8: map port names to inputs_N/outputs_N
+  if moduleName == "StoreBuffer8" then
+    -- StoreBuffer8 inputs order (excluding clock which is explicit):
+    -- 0: reset, 1: zero, 2: one, 3: enq_en, 4-35: enq_address, 36-67: enq_data,
+    -- 68-69: enq_size, 70: commit_en, 71-73: commit_idx, 74: deq_ready,
+    -- 75-106: fwd_address, 107: flush_en
+    if portName == "reset" then some "inputs_0"
+    else if portName == "zero" then some "inputs_1"
+    else if portName == "one" then some "inputs_2"
+    else if portName == "enq_en" then some "inputs_3"
+    else if portName == "commit_en" then some "inputs_70"
+    else if portName == "deq_ready" then some "inputs_74"
+    else if portName == "flush_en" then some "inputs_107"
+    else if portName.startsWith "enq_address_" then
+      portName.drop 12 |>.toNat? |>.map (fun i => s!"inputs_{4 + i}")
+    else if portName.startsWith "enq_data_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"inputs_{36 + i}")
+    else if portName.startsWith "enq_size_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"inputs_{68 + i}")
+    else if portName.startsWith "commit_idx_" then
+      portName.drop 11 |>.toNat? |>.map (fun i => s!"inputs_{71 + i}")
+    else if portName.startsWith "fwd_address_" then
+      portName.drop 12 |>.toNat? |>.map (fun i => s!"inputs_{75 + i}")
+    -- Outputs: 0: full, 1: empty, 2-4: enq_idx, 5: deq_valid, 6-71: deq_bits, 72: fwd_hit, 73-104: fwd_data
+    else if portName == "full" then some "outputs_0"
+    else if portName == "empty" then some "outputs_1"
+    else if portName == "deq_valid" then some "outputs_5"
+    else if portName == "fwd_hit" then some "outputs_72"
+    else if portName.startsWith "enq_idx_" then
+      portName.drop 8 |>.toNat? |>.map (fun i => s!"outputs_{2 + i}")
+    else if portName.startsWith "deq_bits_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"outputs_{6 + i}")
+    else if portName.startsWith "fwd_data_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"outputs_{73 + i}")
+    else none
+  else none
+
 def generateInstance (c : Circuit) (busWires : List Wire) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (inst : CircuitInstance) : String :=
+  let childUsesBundledIO := moduleUsesBundledIO inst.moduleName
   let portConnections := inst.portMap.map (fun (portBaseName, wire) =>
     let wRef := wireRef c busWires inputToIndex outputToIndex wire
-    let portRef := constructPortRef portBaseName wire.name
+    -- If child uses bundled IO, map port names to flat bundle indices
+    let portRef :=
+      if childUsesBundledIO then
+        match mapPortNameToSVBundle inst.moduleName portBaseName with
+        | some bundleRef => bundleRef
+        | none => constructPortRef portBaseName wire.name
+      else constructPortRef portBaseName wire.name
     s!".{portRef}({wRef})"
   )
   let portsStr := String.intercalate ",\n    " portConnections

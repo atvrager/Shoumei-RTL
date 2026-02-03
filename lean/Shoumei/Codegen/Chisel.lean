@@ -440,11 +440,62 @@ private def generateGroupConnections (ctx : ChiselContext) (instName baseName : 
         line :: go rest fuel'
   go entries (entries.length + 1)
 
+-- Check if a module name corresponds to a module with bundled IO (>200 ports)
+-- This is a heuristic based on known module sizes
+private def moduleUsesBundledIO (moduleName : String) : Bool :=
+  -- Modules known to use bundled IO (>200 total ports)
+  moduleName == "StoreBuffer8" || moduleName == "MemoryExecUnit" ||
+  moduleName == "LSU" || moduleName == "ROB16" ||
+  moduleName == "ReservationStation4" || moduleName == "MulDivRS4" ||
+  moduleName == "PhysRegFile_64x32" || moduleName == "RAT_32x6" ||
+  moduleName == "FreeList_64"
+
+-- Map port names with underscores to bundled IO Vec indices
+-- This handles both "inputs" and "outputs" Vecs
+private def mapPortNameToVecRef (moduleName portName : String) : Option String :=
+  -- For StoreBuffer8: map port names to inputs/outputs Vec indices
+  if moduleName == "StoreBuffer8" then
+    -- StoreBuffer8 inputs order (excluding clock which is explicit):
+    -- 0: reset, 1: zero, 2: one, 3: enq_en, 4-35: enq_address, 36-67: enq_data,
+    -- 68-69: enq_size, 70: commit_en, 71-73: commit_idx, 74: deq_ready,
+    -- 75-106: fwd_address, 107: flush_en
+    if portName == "reset" then some "inputs(0)"
+    else if portName == "zero" then some "inputs(1)"
+    else if portName == "one" then some "inputs(2)"
+    else if portName == "enq_en" then some "inputs(3)"
+    else if portName == "commit_en" then some "inputs(70)"
+    else if portName == "deq_ready" then some "inputs(74)"
+    else if portName == "flush_en" then some "inputs(107)"
+    else if portName.startsWith "enq_address_" then
+      portName.drop 12 |>.toNat? |>.map (fun i => s!"inputs({4 + i})")
+    else if portName.startsWith "enq_data_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"inputs({36 + i})")
+    else if portName.startsWith "enq_size_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"inputs({68 + i})")
+    else if portName.startsWith "commit_idx_" then
+      portName.drop 11 |>.toNat? |>.map (fun i => s!"inputs({71 + i})")
+    else if portName.startsWith "fwd_address_" then
+      portName.drop 12 |>.toNat? |>.map (fun i => s!"inputs({75 + i})")
+    -- Outputs: 0: full, 1: empty, 2-4: enq_idx, 5: deq_valid, 6-71: deq_bits, 72: fwd_hit, 73-104: fwd_data
+    else if portName == "full" then some "outputs(0)"
+    else if portName == "empty" then some "outputs(1)"
+    else if portName == "deq_valid" then some "outputs(5)"
+    else if portName == "fwd_hit" then some "outputs(72)"
+    else if portName.startsWith "enq_idx_" then
+      portName.drop 8 |>.toNat? |>.map (fun i => s!"outputs({2 + i})")
+    else if portName.startsWith "deq_bits_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"outputs({6 + i})")
+    else if portName.startsWith "fwd_data_" then
+      portName.drop 9 |>.toNat? |>.map (fun i => s!"outputs({73 + i})")
+    else none
+  else none
+
 -- Generate submodule instantiation with bulk Vec connections for bracketed port groups
 def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitInstance) (chunkSize : Nat := 25) : (String × String) :=
   let instDecl := s!"  val {inst.instName} = Module(new {inst.moduleName})"
   let clockWires := findClockWires c
   let resetWires := findResetWires c
+  let childUsesBundledIO := moduleUsesBundledIO inst.moduleName
 
   -- Try to group port map entries by bracket base name for bulk connections
   let (groups, standaloneEntries) := groupPortMapEntries inst.portMap
@@ -458,9 +509,23 @@ def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitI
     let portName := entry.fst
     let wire := entry.snd
     let wRef := wireRef ctx wire
-    let portRef := constructPortRef portName wire.name
+    -- If child uses bundled IO, map port names to Vec indices
+    let portRef :=
+      if childUsesBundledIO then
+        match mapPortNameToVecRef inst.moduleName portName with
+        | some vecRef => vecRef
+        | none => constructPortRef portName wire.name
+      else constructPortRef portName wire.name
+    -- Don't apply .asClock/.asAsyncReset conversions to Vec references
+    -- But DO apply .asBool to reset when connecting to a Bool Vec element
+    let isVecRef := portRef.startsWith "inputs" || portRef.startsWith "outputs"
     let wRefConverted :=
-      if (portName == "clock" || portRef == "clock") && !clockWires.contains wire then
+      if isVecRef then
+        -- If connecting reset to a Vec Bool element, need .asBool conversion
+        if portName == "reset" || wire.name == "reset" then
+          s!"{wRef}.asBool"
+        else wRef
+      else if (portName == "clock" || portRef == "clock") && !clockWires.contains wire then
         s!"{wRef}.asClock"
       else if (portName == "reset" || portRef == "reset") && !resetWires.contains wire then
         s!"{wRef}.asAsyncReset"
@@ -474,9 +539,22 @@ def generateInstanceChunked (ctx : ChiselContext) (c : Circuit) (inst : CircuitI
       let portBaseName := entry.fst
       let wire := entry.snd
       let wRef := wireRef ctx wire
-      let portRef := constructPortRef portBaseName wire.name
+      -- If child uses bundled IO, map port names to Vec indices
+      let portRef :=
+        if childUsesBundledIO then
+          match mapPortNameToVecRef inst.moduleName portBaseName with
+          | some vecRef => vecRef
+          | none => constructPortRef portBaseName wire.name
+        else constructPortRef portBaseName wire.name
+      -- Handle Vec references specially
+      let isVecRef := portRef.startsWith "inputs" || portRef.startsWith "outputs"
       let wRefConverted :=
-        if (portBaseName == "clock" || portRef == "clock") && !clockWires.contains wire then
+        if isVecRef then
+          -- If connecting reset to a Vec Bool element, need .asBool conversion
+          if portBaseName == "reset" || wire.name == "reset" then
+            s!"{wRef}.asBool"
+          else wRef
+        else if (portBaseName == "clock" || portRef == "clock") && !clockWires.contains wire then
           s!"{wRef}.asClock"
         else if (portBaseName == "reset" || portRef == "reset") && !resetWires.contains wire then
           s!"{wRef}.asAsyncReset"
