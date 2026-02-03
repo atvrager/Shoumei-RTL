@@ -231,4 +231,64 @@ def mkALU32 : Circuit :=
     instances := []
   }
 
+/-! ## Codegen V2: Annotated ALU32
+
+Adds SignalGroup and InterfaceBundle annotations to the ALU32 circuit.
+The gate list is unchanged -- annotations are purely additive metadata.
+
+Wire naming:
+  Inputs:  a_0..31, b_0..31, op_0..3, zero, one
+  Outputs: result_0..31
+
+Signal groups (buses):
+  a[31:0]        -- Operand A
+  b[31:0]        -- Operand B
+  op[3:0]        -- Opcode
+  result[31:0]   -- Final result
+  add_out[31:0]  -- Adder output
+  sub_out[31:0]  -- Subtractor output
+  slt_out[31:0]  -- Signed less-than output
+  sltu_out[31:0] -- Unsigned less-than output
+  and_out[31:0]  -- AND output
+  or_out[31:0]   -- OR output
+  xor_out[31:0]  -- XOR output
+  sll_out[31:0]  -- Shift left logical output
+  srl_out[31:0]  -- Shift right logical output
+  sra_out[31:0]  -- Shift right arithmetic output
+-/
+
+/-- ALU32 with codegen v2 annotations.
+    Same circuit as mkALU32, plus signal groups and interface bundles. -/
+def mkALU32Annotated : Circuit :=
+  let base := mkALU32
+  { base with
+    signalGroups := [
+      -- Input buses
+      { name := "a",   width := 32, wires := makeIndexedWires "a" 32 },
+      { name := "b",   width := 32, wires := makeIndexedWires "b" 32 },
+      { name := "op",  width := 4,  wires := makeIndexedWires "op" 4 },
+      -- Output bus
+      { name := "result", width := 32, wires := makeIndexedWires "result" 32 },
+      -- Functional unit outputs
+      { name := "add_out",  width := 32, wires := makeIndexedWires "add_out" 32 },
+      { name := "sub_out",  width := 32, wires := makeIndexedWires "sub_out" 32 },
+      { name := "slt_out",  width := 32, wires := makeIndexedWires "slt_out" 32 },
+      { name := "sltu_out", width := 32, wires := makeIndexedWires "sltu_out" 32 },
+      { name := "and_out",  width := 32, wires := makeIndexedWires "and_out" 32 },
+      { name := "or_out",   width := 32, wires := makeIndexedWires "or_out" 32 },
+      { name := "xor_out",  width := 32, wires := makeIndexedWires "xor_out" 32 },
+      { name := "sll_out",  width := 32, wires := makeIndexedWires "sll_out" 32 },
+      { name := "srl_out",  width := 32, wires := makeIndexedWires "srl_out" 32 },
+      { name := "sra_out",  width := 32, wires := makeIndexedWires "sra_out" 32 }
+    ]
+    inputBundles := [
+      { name := "alu"
+        signals := [("a", .UInt 32), ("b", .UInt 32), ("op", .UInt 4)] }
+    ]
+    outputBundles := [
+      { name := "alu"
+        signals := [("result", .UInt 32)] }
+    ]
+  }
+
 end Shoumei.Circuits.Combinational

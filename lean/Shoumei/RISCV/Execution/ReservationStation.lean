@@ -903,4 +903,92 @@ def mkMulDivRS4 : Circuit :=
 /-- MulDivRS4 alias for common usage -/
 def mulDivRS4 : Circuit := mkMulDivRS4
 
+/-! ## Codegen V2: Annotated ReservationStation4
+
+Adds SignalGroup and InterfaceBundle annotations to the RS4 circuit.
+The gate list and instances are unchanged -- annotations are purely
+additive metadata.
+
+Wire naming (195 wires):
+  Issue inputs:    issue_en, issue_opcode[5:0], issue_dest_tag[5:0],
+                   issue_src1_ready, issue_src1_tag[5:0], issue_src1_data[31:0],
+                   issue_src2_ready, issue_src2_tag[5:0], issue_src2_data[31:0]
+  CDB inputs:     cdb_valid, cdb_tag[5:0], cdb_data[31:0]
+  Dispatch input:  dispatch_en
+  Outputs:         issue_full, dispatch_valid,
+                   dispatch_opcode[5:0], dispatch_src1_data[31:0],
+                   dispatch_src2_data[31:0], dispatch_dest_tag[5:0]
+
+Interface bundles:
+  issue (input):      operand sources + dest tag for entry allocation
+  cdb (input):        tag + data broadcast for wakeup
+  dispatch (output):  ready entry data for execution unit
+-/
+
+/-- ReservationStation4 with codegen v2 annotations.
+    Same circuit as mkReservationStation4, plus signal groups and
+    interface bundles for readable codegen output. -/
+def mkReservationStation4Annotated : Circuit :=
+  let base := mkReservationStation4
+  let tagW := 6
+  let dataW := 32
+  let opcodeW := 6
+  { base with
+    signalGroups := [
+      -- Issue port buses
+      { name := "issue_opcode",    width := opcodeW, wires := makeIndexedWires "issue_opcode" opcodeW },
+      { name := "issue_dest_tag",  width := tagW,    wires := makeIndexedWires "issue_dest_tag" tagW },
+      { name := "issue_src1_tag",  width := tagW,    wires := makeIndexedWires "issue_src1_tag" tagW },
+      { name := "issue_src1_data", width := dataW,   wires := makeIndexedWires "issue_src1_data" dataW },
+      { name := "issue_src2_tag",  width := tagW,    wires := makeIndexedWires "issue_src2_tag" tagW },
+      { name := "issue_src2_data", width := dataW,   wires := makeIndexedWires "issue_src2_data" dataW },
+      -- CDB buses
+      { name := "cdb_tag",        width := tagW,     wires := makeIndexedWires "cdb_tag" tagW },
+      { name := "cdb_data",       width := dataW,    wires := makeIndexedWires "cdb_data" dataW },
+      -- Dispatch output buses
+      { name := "dispatch_opcode",    width := opcodeW, wires := makeIndexedWires "dispatch_opcode" opcodeW },
+      { name := "dispatch_src1_data", width := dataW,   wires := makeIndexedWires "dispatch_src1_data" dataW },
+      { name := "dispatch_src2_data", width := dataW,   wires := makeIndexedWires "dispatch_src2_data" dataW },
+      { name := "dispatch_dest_tag",  width := tagW,    wires := makeIndexedWires "dispatch_dest_tag" tagW },
+      -- Internal: allocation pointer
+      { name := "alloc_ptr",      width := 2,        wires := makeIndexedWires "alloc_ptr" 2 }
+    ]
+    inputBundles := [
+      -- Issue interface: allocate a new entry
+      { name := "issue"
+        signals := [
+          ("en", .Bool),
+          ("opcode", .UInt opcodeW),
+          ("dest_tag", .UInt tagW),
+          ("src1_ready", .Bool), ("src1_tag", .UInt tagW), ("src1_data", .UInt dataW),
+          ("src2_ready", .Bool), ("src2_tag", .UInt tagW), ("src2_data", .UInt dataW)
+        ] },
+      -- CDB broadcast: wake up waiting operands
+      { name := "cdb"
+        signals := [("valid", .Bool), ("tag", .UInt tagW), ("data", .UInt dataW)] },
+      -- Dispatch control
+      { name := "dispatch"
+        signals := [("en", .Bool)] }
+    ]
+    outputBundles := [
+      -- Issue status
+      { name := "issue"
+        signals := [("full", .Bool)] },
+      -- Dispatch output: ready entry for execution
+      { name := "dispatch"
+        signals := [
+          ("valid", .Bool),
+          ("opcode", .UInt opcodeW),
+          ("src1_data", .UInt dataW),
+          ("src2_data", .UInt dataW),
+          ("dest_tag", .UInt tagW)
+        ] }
+    ]
+  }
+
+/-- MulDivRS4 with codegen v2 annotations. -/
+def mkMulDivRS4Annotated : Circuit :=
+  let base := mkReservationStation4Annotated
+  { base with name := "MulDivRS4" }
+
 end Shoumei.RISCV.Execution

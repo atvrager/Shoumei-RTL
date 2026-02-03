@@ -88,6 +88,65 @@ structure CircuitInstance where
   portMap : List (String × Wire) -- Mapping from submodule port names to local wires
   deriving Repr
 
+/-! ## Codegen V2: Signal Type Annotations
+
+These types provide optional metadata for code generators to produce
+readable, type-aware output (buses, interfaces, RAMs) instead of
+flat bit-level signals. They do NOT affect the proof core -- the
+gate list remains the single source of truth for semantics.
+-/
+
+/-- Signal type annotation for codegen. Describes the logical type of a
+    group of wires (e.g., 32 bits forming a UInt). -/
+inductive SignalType where
+  | Bool                    -- Single bit
+  | UInt (width : Nat)      -- Unsigned multi-bit
+  | SInt (width : Nat)      -- Signed multi-bit
+  deriving Repr, BEq, Inhabited
+
+/-- A group of wires that form a single logical signal (e.g., a 32-bit bus).
+    Used by codegen to emit `logic [31:0] data_reg` instead of 32 individual wires. -/
+structure SignalGroup where
+  name  : String            -- Logical signal name (e.g., "data_reg")
+  width : Nat               -- Bit width (should equal wires.length)
+  wires : List Wire         -- The underlying flat wires, LSB first
+  stype : SignalType := .UInt width
+  deriving Repr
+
+/-- An interface bundle groups signals into a named protocol-level interface
+    (e.g., Decoupled with bits/valid/ready). Used by codegen to emit
+    proper Chisel Bundles and SV struct types. -/
+structure InterfaceBundle where
+  name     : String                      -- Interface name (e.g., "enq", "cdb_0")
+  signals  : List (String × SignalType)  -- Field name → type
+  protocol : Option String := none       -- "decoupled" | "regwrite" | "regread" | none
+  deriving Repr
+
+/-- RAM write port descriptor. -/
+structure RAMWritePort where
+  en   : Wire              -- Write enable
+  addr : List Wire         -- Address wires (log2(depth) bits)
+  data : List Wire         -- Write data wires (width bits)
+  deriving Repr
+
+/-- RAM read port descriptor. -/
+structure RAMReadPort where
+  addr : List Wire         -- Address wires (log2(depth) bits)
+  data : List Wire         -- Read data wires (width bits, outputs)
+  deriving Repr
+
+/-- RAM primitive -- opaque to proofs, known to codegen.
+    Replaces thousands of DFFs + mux trees with a single semantic block. -/
+structure RAMPrimitive where
+  name       : String      -- Instance name (e.g., "u_mem")
+  depth      : Nat         -- Number of entries (e.g., 64)
+  width      : Nat         -- Bits per entry (e.g., 32)
+  writePorts : List RAMWritePort
+  readPorts  : List RAMReadPort
+  syncRead   : Bool := false  -- false → Mem (async read), true → SyncReadMem (sync read)
+  clock      : Wire
+  deriving Repr
+
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules
 structure Circuit where
   name : String           -- Module/circuit name
@@ -95,13 +154,19 @@ structure Circuit where
   outputs : List Wire     -- Output signals
   gates : List Gate       -- Internal gates
   instances : List CircuitInstance -- Submodule instances
+  -- v2: codegen annotations (optional, default empty, ignored by proofs)
+  signalGroups  : List SignalGroup     := []
+  inputBundles  : List InterfaceBundle := []
+  outputBundles : List InterfaceBundle := []
+  rams          : List RAMPrimitive    := []
   deriving Repr
 
 namespace Circuit
 
 -- Helper to create empty circuit
 def empty (name : String) : Circuit :=
-  { name := name, inputs := [], outputs := [], gates := [], instances := [] }
+  { name := name, inputs := [], outputs := [], gates := [], instances := []
+    signalGroups := [], inputBundles := [], outputBundles := [], rams := [] }
 
 -- Inline a subcircuit with wire remapping
 -- This allows hierarchical composition while keeping a flat gate structure
@@ -134,6 +199,19 @@ def Circuit.hasSequentialElements (c : Circuit) : Bool :=
 -- Check if a circuit is purely combinational
 def Circuit.isCombinational (c : Circuit) : Bool :=
   !c.hasSequentialElements
+
+/-! ## Signal Group Helpers -/
+
+/-- Create a list of indexed wires: name_0, name_1, ..., name_{n-1}.
+    Canonical version -- modules can use this instead of local redefinitions. -/
+def mkIndexedWires (name : String) (n : Nat) : List Wire :=
+  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
+
+/-- Create a SignalGroup from a base name and width.
+    Generates wires name_0..name_{width-1} and bundles them. -/
+def SignalGroup.mk' (name : String) (width : Nat)
+    (stype : SignalType := .UInt width) : SignalGroup :=
+  { name := name, width := width, wires := mkIndexedWires name width, stype := stype }
 
 -- TODO: Add validation functions:
 -- - Check that all gate inputs are either circuit inputs or outputs of previous gates

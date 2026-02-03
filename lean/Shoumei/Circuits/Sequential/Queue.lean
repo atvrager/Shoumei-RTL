@@ -315,4 +315,61 @@ axiom queue1_decoupled_equiv_structural (width : Nat)
       (mkQueue1Decoupled width).inputs.length = (mkQueue1StructuralComplete width).inputs.length ∧
       (mkQueue1Decoupled width).outputs.length = (mkQueue1StructuralComplete width).outputs.length
 
+/-! ## Codegen V2: Annotated Queue1
+
+Adds SignalGroup and InterfaceBundle annotations to the Queue1 circuit
+for use by codegen v2. The gate list and proof core are unchanged --
+annotations are purely additive metadata.
+
+Wire naming (Queue1_32):
+  Inputs:  enq_data_0..31, enq_valid, deq_ready, clock, reset
+  Outputs: enq_ready, data_reg_0..31, valid
+
+Interface mapping:
+  enq (decoupled sink):  bits = enq_data[31:0], valid = enq_valid, ready = enq_ready
+  deq (decoupled source): bits = data_reg[31:0], valid = valid, ready = deq_ready
+
+Signal groups:
+  data_reg[width-1:0]  -- registered data (DFF outputs, also deq_bits)
+  data_next[width-1:0] -- next-state data (MUX outputs → DFF inputs)
+-/
+
+/-- Queue1 with codegen v2 annotations.
+    Same circuit as mkQueue1StructuralComplete, plus signal groups
+    and interface bundles for readable codegen output. -/
+def mkQueue1Annotated (width : Nat) : Circuit :=
+  let base := mkQueue1StructuralComplete width
+  { base with
+    signalGroups := [
+      { name := "data_reg"
+        width := width
+        wires := List.range width |>.map (wireWithIndex "data_reg")
+        stype := .UInt width },
+      { name := "data_next"
+        width := width
+        wires := List.range width |>.map (wireWithIndex "data_next")
+        stype := .UInt width }
+    ]
+    inputBundles := [
+      -- enq: decoupled sink (bits + valid are inputs, ready is output)
+      { name := "enq"
+        signals := [("bits", .UInt width), ("valid", .Bool)]
+        protocol := some "decoupled" },
+      -- deq: only deq_ready is an input to the queue
+      { name := "deq"
+        signals := [("ready", .Bool)]
+        protocol := some "decoupled" }
+    ]
+    outputBundles := [
+      -- enq: enq_ready is an output of the queue
+      { name := "enq"
+        signals := [("ready", .Bool)]
+        protocol := some "decoupled" },
+      -- deq: decoupled source (bits + valid are outputs)
+      { name := "deq"
+        signals := [("bits", .UInt width), ("valid", .Bool)]
+        protocol := some "decoupled" }
+    ]
+  }
+
 end Shoumei.Circuits.Sequential
