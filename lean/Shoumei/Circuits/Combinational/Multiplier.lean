@@ -260,22 +260,52 @@ def mkPipelinedMultiplier : Circuit :=
   let (sum_s1, carry_s1, csa_routing_gates, csa_instances) :=
     mkCSATreeHierarchical pp_rows zero
 
-  -- Pipeline register 1
+  -- Pipeline register 1 (hierarchical: use Register instances)
   let s1_sum_q := makeIndexedWires "s1_sum_q" 64
   let s1_carry_q := makeIndexedWires "s1_carry_q" 64
   let s1_op_q := makeIndexedWires "s1_op_q" 3
   let s1_tag_q := makeIndexedWires "s1_tag_q" 6
   let s1_valid_q := Wire.mk "s1_valid_q"
 
-  let pipe_reg1_gates :=
-    mkPipelineRegister sum_s1 s1_sum_q clock reset ++
-    mkPipelineRegister carry_s1 s1_carry_q clock reset ++
-    mkPipelineRegister op s1_op_q clock reset ++
-    mkPipelineRegister dest_tag s1_tag_q clock reset ++
-    [Gate.mkDFF valid_in clock reset s1_valid_q]
+  let pipe_reg1_instances := [
+    {
+      moduleName := "Register64"
+      instName := "u_pipe1_sum"
+      portMap :=
+        (sum_s1.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_sum_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register64"
+      instName := "u_pipe1_carry"
+      portMap :=
+        (carry_s1.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_carry_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register3"
+      instName := "u_pipe1_op"
+      portMap :=
+        (op.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_op_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register6"
+      instName := "u_pipe1_tag"
+      portMap :=
+        (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_tag_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+  ]
+
+  let pipe_reg1_valid_gates := [Gate.mkDFF valid_in clock reset s1_valid_q]
 
   -- ========================================================================
-  -- Stage 2: Pipeline pass-through
+  -- Stage 2: Pipeline pass-through (hierarchical: use Register instances)
   -- ========================================================================
 
   let s2_sum_q := makeIndexedWires "s2_sum_q" 64
@@ -284,12 +314,42 @@ def mkPipelinedMultiplier : Circuit :=
   let s2_tag_q := makeIndexedWires "s2_tag_q" 6
   let s2_valid_q := Wire.mk "s2_valid_q"
 
-  let pipe_reg2_gates :=
-    mkPipelineRegister s1_sum_q s2_sum_q clock reset ++
-    mkPipelineRegister s1_carry_q s2_carry_q clock reset ++
-    mkPipelineRegister s1_op_q s2_op_q clock reset ++
-    mkPipelineRegister s1_tag_q s2_tag_q clock reset ++
-    [Gate.mkDFF s1_valid_q clock reset s2_valid_q]
+  let pipe_reg2_instances := [
+    {
+      moduleName := "Register64"
+      instName := "u_pipe2_sum"
+      portMap :=
+        (s1_sum_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_sum_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register64"
+      instName := "u_pipe2_carry"
+      portMap :=
+        (s1_carry_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_carry_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register3"
+      instName := "u_pipe2_op"
+      portMap :=
+        (s1_op_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_op_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register6"
+      instName := "u_pipe2_tag"
+      portMap :=
+        (s1_tag_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_tag_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+  ]
+
+  let pipe_reg2_valid_gates := [Gate.mkDFF s1_valid_q clock reset s2_valid_q]
 
   -- ========================================================================
   -- Stage 3: Final Addition + Output Selection
@@ -330,8 +390,8 @@ def mkPipelinedMultiplier : Circuit :=
   let all_gates :=
     pp_gates ++
     csa_routing_gates ++
-    pipe_reg1_gates ++
-    pipe_reg2_gates ++
+    pipe_reg1_valid_gates ++
+    pipe_reg2_valid_gates ++
     op_sel_gates ++
     result_mux_gates ++
     tag_passthrough ++
@@ -341,7 +401,7 @@ def mkPipelinedMultiplier : Circuit :=
     inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero]
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
-    instances := csa_instances ++ [rca64_inst]
+    instances := csa_instances ++ pipe_reg1_instances ++ pipe_reg2_instances ++ [rca64_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "a", width := 32, wires := a },

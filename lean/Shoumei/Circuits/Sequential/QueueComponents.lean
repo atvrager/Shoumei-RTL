@@ -7,6 +7,7 @@ import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Sequential.DFF
+-- Note: Register module instances referenced by name only (no import needed)
 
 namespace Shoumei.Circuits.Sequential
 
@@ -54,21 +55,37 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   let we_gates := (List.range depth).map (fun i =>
     Gate.mkAND write_en (write_sel[i]!) (write_en_i[i]!))
 
-  -- 3. Storage Elements
-  -- We need to access storage wires easily, so helper function
+  -- 3. Storage Elements (hierarchical: Register instances + write-enable muxes)
   let getReg (i j : Nat) : Wire := Wire.mk s!"mem_{i}_{j}"
   let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
 
-  let storage_logic := (List.range depth).map (fun i =>
+  -- Write-enable mux gates: next[i][j] = we[i] ? write_data[j] : mem[i][j]
+  let write_mux_gates := (List.range depth).map (fun i =>
     (List.range width).map (fun j =>
       let reg := getReg i j
       let next := getNext i j
-      [
-        Gate.mkMUX reg (write_data[j]!) (write_en_i[i]!) next,
-        Gate.mkDFF next clock reset reg
-      ]
+      Gate.mkMUX reg (write_data[j]!) (write_en_i[i]!) next
     )
-  ) |>.flatten |>.flatten
+  ) |>.flatten
+
+  -- Storage instances: depth× RegisterN (hierarchical, not inline DFFs)
+  let storage_instances := (List.range depth).map (fun i =>
+    {
+      moduleName := s!"Register{width}"
+      instName := s!"u_mem_{i}"
+      portMap :=
+        -- Connect d inputs (from write mux outputs)
+        (List.range width).map (fun j =>
+          (s!"d_{j}", getNext i j)
+        ) ++
+        -- Connect clock and reset
+        [("clock", clock), ("reset", reset)] ++
+        -- Connect q outputs
+        (List.range width).map (fun j =>
+          (s!"q_{j}", getReg i j)
+        )
+    }
+  )
 
   -- 4. Read MuxTree Instance
   let muxTreeName := s!"Mux{depth}x{width}"
@@ -110,8 +127,8 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   { name := s!"QueueRAM_{depth}x{width}"
     inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ read_addr
     outputs := read_data
-    gates := we_gates ++ storage_logic
-    instances := [decoder_inst, mux_inst]
+    gates := we_gates ++ write_mux_gates
+    instances := [decoder_inst] ++ storage_instances ++ [mux_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "write_addr", width := addrWidth, wires := write_addr },

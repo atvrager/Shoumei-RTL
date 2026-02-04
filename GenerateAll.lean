@@ -109,12 +109,14 @@ def allCircuits : List Circuit := [
   mkMuxTree 4 6,
   mkMuxTree 4 32,
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
+  mkMux8x6,       -- Building block for hierarchical 64:1 muxes
+  mkMux8x32,      -- Building block for hierarchical 64:1 muxes
   mkMuxTree 8 32, -- Phase 7: Store buffer forwarding/dequeue data
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMux32x6,
-  mkMux64x32,
-  mkMuxTree 64 6,
+  mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
+  mkMux64x6Hierarchical,   -- Hierarchical version (9 instances instead of 1512 gates)
   mkPriorityArbiter2,
   mkPriorityArbiter4,
   mkPriorityArbiter8,
@@ -141,7 +143,9 @@ def allCircuits : List Circuit := [
   -- Power-of-2 register building blocks (verified via LEC)
   mkRegisterN 1,
   mkRegisterN 2,
+  mkRegisterN 3,  -- Used in PipelinedMultiplier pipeline
   mkRegisterN 4,
+  mkRegisterN 6,  -- Used in PipelinedMultiplier and PhysRegFile
   mkRegisterN 8,
   mkRegisterN 16,
   mkRegisterN 32,

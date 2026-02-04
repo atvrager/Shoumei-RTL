@@ -234,4 +234,157 @@ def mkMux32x6 : Circuit := mkMuxTree 32 6
 /-- 64:1 MUX, 32 bits (for PhysRegFile read ports - reads 32-bit register values) -/
 def mkMux64x32 : Circuit := mkMuxTree 64 32
 
+/-! ## Hierarchical Mux Construction -/
+
+/--
+8:1 MUX with parameterized width (building block for larger muxes).
+Small enough to compile directly as gates.
+Gate count: 7 * width * 4 = 28 * width gates
+-/
+def mkMux8xN (width : Nat) : Circuit := mkMuxTree 8 width
+
+/-- 8:1 MUX, 32 bits -/
+def mkMux8x32 : Circuit := mkMux8xN 32
+
+/-- 8:1 MUX, 6 bits -/
+def mkMux8x6 : Circuit := mkMux8xN 6
+
+/--
+64:1 MUX, 32 bits - Hierarchical version using 8:1 mux building blocks.
+Structure:
+  - Stage 1: 8x Mux8x32 instances (each handles 8 of the 64 inputs)
+  - Stage 2: 1x Mux8x32 instance (selects among the 8 stage-1 outputs)
+Total instances: 9
+Gate count: Only glue logic for select bit routing
+-/
+def mkMux64x32Hierarchical : Circuit :=
+  -- Input wires: 64 inputs, each 32 bits
+  let inputWires := makeMultiBitWires "in" 64 32
+  let inputWiresFlat := inputWires.flatten
+
+  -- Select wires: 6 bits (sel[5:0])
+  let selWires := makeIndexedWires "sel" 6
+
+  -- Output wires: 32 bits
+  let outputWires := makeIndexedWires "out" 32
+
+  -- Stage 1 output wires: 8 intermediate results (each 32 bits)
+  let stage1Outs := makeMultiBitWires "stage1_out" 8 32
+
+  -- Build instances for stage 1: 8x Mux8x32
+  let stage1Instances := (List.range 8).map (fun stageIdx =>
+    let inputBase := stageIdx * 8  -- Each stage1 mux handles 8 consecutive inputs
+    let portMap := (List.range 8).flatMap (fun inputIdx =>
+      let globalInputIdx := inputBase + inputIdx
+      (List.range 32).map (fun bitIdx =>
+        (s!"in{inputIdx}_b{bitIdx}", inputWires[globalInputIdx]![bitIdx]!))
+    ) ++ (List.range 3).map (fun selIdx =>
+      (s!"sel_{selIdx}", selWires[selIdx]!)
+    ) ++ (List.range 32).map (fun bitIdx =>
+      (s!"out_{bitIdx}", stage1Outs[stageIdx]![bitIdx]!)
+    )
+    { moduleName := "Mux8x32"
+      instName := s!"u_mux_stage1_{stageIdx}"
+      portMap := portMap
+    }
+  )
+
+  -- Build instance for stage 2: 1x Mux8x32
+  let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
+    (List.range 32).map (fun bitIdx =>
+      (s!"in{inputIdx}_b{bitIdx}", stage1Outs[inputIdx]![bitIdx]!))
+  ) ++ (List.range 3).map (fun selIdx =>
+    (s!"sel_{selIdx}", selWires[selIdx + 3]!)  -- Use upper 3 bits of select
+  ) ++ (List.range 32).map (fun bitIdx =>
+    (s!"out_{bitIdx}", outputWires[bitIdx]!)
+  )
+  let stage2Instance := {
+    moduleName := "Mux8x32"
+    instName := "u_mux_stage2"
+    portMap := stage2PortMap
+  }
+
+  let inputGroups := (List.range 64).map (fun i =>
+    { name := s!"in{i}"
+      width := 32
+      wires := inputWires[i]! : SignalGroup })
+
+  { name := "Mux64x32"
+    inputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
+    outputs := outputWires
+    gates := []  -- Pure hierarchical, no direct gates
+    instances := stage1Instances ++ [stage2Instance]
+    signalGroups := inputGroups ++ [
+      { name := "sel", width := 6, wires := selWires },
+      { name := "out", width := 32, wires := outputWires }
+    ]
+  }
+
+/--
+64:1 MUX, 6 bits - Hierarchical version using 8:1 mux building blocks.
+Structure: Same as Mux64x32Hierarchical but with 6-bit width.
+-/
+def mkMux64x6Hierarchical : Circuit :=
+  -- Input wires: 64 inputs, each 6 bits
+  let inputWires := makeMultiBitWires "in" 64 6
+  let inputWiresFlat := inputWires.flatten
+
+  -- Select wires: 6 bits (sel[5:0])
+  let selWires := makeIndexedWires "sel" 6
+
+  -- Output wires: 6 bits
+  let outputWires := makeIndexedWires "out" 6
+
+  -- Stage 1 output wires: 8 intermediate results (each 6 bits)
+  let stage1Outs := makeMultiBitWires "stage1_out" 8 6
+
+  -- Build instances for stage 1: 8x Mux8x6
+  let stage1Instances := (List.range 8).map (fun stageIdx =>
+    let inputBase := stageIdx * 8
+    let portMap := (List.range 8).flatMap (fun inputIdx =>
+      let globalInputIdx := inputBase + inputIdx
+      (List.range 6).map (fun bitIdx =>
+        (s!"in{inputIdx}_b{bitIdx}", inputWires[globalInputIdx]![bitIdx]!))
+    ) ++ (List.range 3).map (fun selIdx =>
+      (s!"sel_{selIdx}", selWires[selIdx]!)
+    ) ++ (List.range 6).map (fun bitIdx =>
+      (s!"out_{bitIdx}", stage1Outs[stageIdx]![bitIdx]!)
+    )
+    { moduleName := "Mux8x6"
+      instName := s!"u_mux_stage1_{stageIdx}"
+      portMap := portMap
+    }
+  )
+
+  -- Build instance for stage 2: 1x Mux8x6
+  let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
+    (List.range 6).map (fun bitIdx =>
+      (s!"in{inputIdx}_b{bitIdx}", stage1Outs[inputIdx]![bitIdx]!))
+  ) ++ (List.range 3).map (fun selIdx =>
+    (s!"sel_{selIdx}", selWires[selIdx + 3]!)
+  ) ++ (List.range 6).map (fun bitIdx =>
+    (s!"out_{bitIdx}", outputWires[bitIdx]!)
+  )
+  let stage2Instance := {
+    moduleName := "Mux8x6"
+    instName := "u_mux_stage2"
+    portMap := stage2PortMap
+  }
+
+  let inputGroups := (List.range 64).map (fun i =>
+    { name := s!"in{i}"
+      width := 6
+      wires := inputWires[i]! : SignalGroup })
+
+  { name := "Mux64x6"
+    inputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
+    outputs := outputWires
+    gates := []
+    instances := stage1Instances ++ [stage2Instance]
+    signalGroups := inputGroups ++ [
+      { name := "sel", width := 6, wires := selWires },
+      { name := "out", width := 6, wires := outputWires }
+    ]
+  }
+
 end Shoumei.Circuits.Combinational

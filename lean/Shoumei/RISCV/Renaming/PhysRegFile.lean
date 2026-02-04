@@ -23,6 +23,7 @@ import Shoumei.DSL
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.DFF
+import Shoumei.Circuits.Sequential.Register
 
 namespace Shoumei.RISCV.Renaming
 
@@ -115,18 +116,33 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   let getReg (i j : Nat) : Wire := Wire.mk s!"reg_{i}_{j}"
   let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
 
-  let storage_gates := (List.range numRegs).map (fun i =>
+  -- Write-enable mux gates: next = we[i] ? wr_data[j] : reg[i][j] (hold)
+  let write_mux_gates := (List.range numRegs).map (fun i =>
     (List.range dataWidth).map (fun j =>
       let reg := getReg i j
       let next := getNext i j
-      [
-        -- Write data mux: next = we ? wr_data : reg (hold)
-        Gate.mkMUX reg (wr_data[j]!) (we[i]!) next,
-        -- Storage DFF (resets to 0)
-        Gate.mkDFF next clock reset reg
-      ]
+      Gate.mkMUX reg (wr_data[j]!) (we[i]!) next
     )
-  ) |>.flatten |>.flatten
+  ) |>.flatten
+
+  -- Storage instances: 64× Register32 (hierarchical, not inline DFFs)
+  let storage_instances := (List.range numRegs).map (fun i =>
+    {
+      moduleName := s!"Register{dataWidth}"
+      instName := s!"u_reg_{i}"
+      portMap :=
+        -- Connect d inputs (from write mux outputs)
+        (List.range dataWidth).map (fun j =>
+          (s!"d_{j}", getNext i j)
+        ) ++
+        -- Connect clock and reset
+        [("clock", clock), ("reset", reset)] ++
+        -- Connect q outputs
+        (List.range dataWidth).map (fun j =>
+          (s!"q_{j}", getReg i j)
+        )
+    }
+  )
 
   -- Read Ports: Mux64x32 for rd_tag1/rd_tag2
   -- Mux64x32 uses bundled ports (>200 ports): inputs[idx], outputs[idx]
@@ -174,8 +190,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
     inputs := [clock, reset, wr_en] ++ rd_tag1 ++ rd_tag2 ++ wr_tag ++ wr_data
     outputs := rd_data1 ++ rd_data2
-    gates := we_gates ++ storage_gates
-    instances := [decoder_inst, mux_rd1_inst, mux_rd2_inst]
+    gates := we_gates ++ write_mux_gates
+    instances := [decoder_inst] ++ storage_instances ++ [mux_rd1_inst, mux_rd2_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "rd_tag1", width := tagWidth, wires := rd_tag1 },
