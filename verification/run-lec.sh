@@ -6,18 +6,29 @@
 #   ./run-lec.sh                    # Verify all modules
 #   ./run-lec.sh -m ROB16           # Verify ROB16 + its dependencies only
 #   ./run-lec.sh -m ROB16 -m RAT_32x6  # Verify multiple targets + deps
+#   ./run-lec.sh --use-slang        # Force use of yosys-slang (errors if not available)
+#   ./run-lec.sh --no-slang         # Force use of $READ_CMD
 
 set -e
 
 LEAN_DIR="output/sv-from-lean"
 CHISEL_DIR="output/sv-from-chisel"
 declare -a TARGET_MODULES=()
+USE_SLANG="auto"  # auto, yes, no
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -m|--module)
             TARGET_MODULES+=("$2")
             shift 2
+            ;;
+        --use-slang)
+            USE_SLANG="yes"
+            shift
+            ;;
+        --no-slang)
+            USE_SLANG="no"
+            shift
             ;;
         *)
             # Legacy positional args: first is LEAN_DIR, second is CHISEL_DIR
@@ -37,9 +48,40 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Detect slang availability
+SLANG_AVAILABLE=0
+if yosys -m slang -p "help read_slang" >/dev/null 2>&1; then
+    SLANG_AVAILABLE=1
+fi
+
+# Determine read command based on slang availability and user preference
+READ_CMD="read_verilog -sv"
+if [ "$USE_SLANG" = "yes" ]; then
+    if [ $SLANG_AVAILABLE -eq 1 ]; then
+        READ_CMD="read_slang"
+    else
+        echo -e "${RED}ERROR: --use-slang specified but yosys-slang is not available${NC}"
+        echo "Install yosys-slang plugin or remove --use-slang flag"
+        exit 1
+    fi
+elif [ "$USE_SLANG" = "auto" ] && [ $SLANG_AVAILABLE -eq 1 ]; then
+    READ_CMD="read_slang"
+fi
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  証明 Shoumei RTL - LEC with Yosys"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Show which read command is being used
+if [ "$READ_CMD" = "read_slang" ]; then
+    echo -e "${GREEN}Using yosys-slang for SystemVerilog parsing${NC}"
+else
+    echo "Using $READ_CMD for SystemVerilog parsing"
+    if [ $SLANG_AVAILABLE -eq 1 ]; then
+        echo "(yosys-slang available but not selected, use --use-slang to enable)"
+    fi
+fi
 echo ""
 
 # Find all LEAN-generated modules
@@ -288,7 +330,7 @@ verify_module() {
 
             cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
-read_verilog -sv $LEAN_DIR/*.sv
+$READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -300,7 +342,7 @@ design -stash gold
 design -reset-vlog
 
 # Read and prepare Chisel design (gate implementation)
-read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+$READ_CMD $CLEAN_CHISEL_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gate
@@ -329,7 +371,7 @@ YOSYS_EOF
             # Flat Sequential Equivalence Checking (for leaf modules)
             cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
-read_verilog -sv $LEAN_DIR/*.sv
+$READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -341,7 +383,7 @@ design -stash gold
 design -reset-vlog
 
 # Read and prepare Chisel design (gate implementation)
-read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+$READ_CMD $CLEAN_CHISEL_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gate
@@ -371,7 +413,7 @@ YOSYS_EOF
         # Combinational Equivalence Checking (CEC)
         cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
 # Read and prepare LEAN design (gold reference)
-read_verilog -sv $LEAN_DIR/*.sv
+$READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -383,7 +425,7 @@ design -stash gold
 design -reset-vlog
 
 # Read and prepare Chisel design (gate implementation)
-read_verilog -sv $CLEAN_CHISEL_DIR/*.sv
+$READ_CMD $CLEAN_CHISEL_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
 rename $MODULE_NAME gate
