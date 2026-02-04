@@ -60,6 +60,224 @@ partial def flattenCircuit (c : Circuit) : List Gate :=
   -- Future: Look up instance circuits and recursively inline
   c.gates
 
+/-! ## Helper Functions (adapted from V2) -/
+
+/-- Get wire reference (supports both individual wires and bus signals) -/
+def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
+  match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+  | some (_, sg) =>
+      -- Part of a bus - use indexed reference
+      match ctx.wireToIndex.find? (fun (w', _) => w'.name == w.name) with
+      | some (_, idx) => s!"{sg.name}[{idx}]"
+      | none => w.name
+  | none => w.name
+
+/-- Convert signal group to SystemVerilog type -/
+def signalGroupToSV (sg : SignalGroup) : String :=
+  if sg.width > 1 then
+    s!"logic [{sg.width - 1}:0]"
+  else
+    "logic"
+
+/-- Join list of strings with newlines -/
+def joinLines (lines : List String) : String :=
+  String.intercalate "\n" lines
+
+/-- Find all DFF gates -/
+def findDFFs (gates : List Gate) : List Gate :=
+  gates.filter (fun g => g.gateType == GateType.DFF)
+
+/-- Group DFFs by their clock and reset signals -/
+def groupDFFsByClockReset (dffs : List Gate) : List (Wire × Wire × List Gate) :=
+  match dffs.head? with
+  | none => []
+  | some firstDFF =>
+      match firstDFF.inputs with
+      | [_, clk, rst] => [(clk, rst, dffs)]
+      | _ => []
+
+/-! ## Port Generation -/
+
+/-- Generate port declaration for a wire -/
+def generateWirePort (ctx : Context) (_c : Circuit) (w : Wire) (direction : String) : Option String :=
+  -- Skip clock and reset (will be added explicitly for sequential circuits)
+  if ctx.clockWires.contains w || ctx.resetWires.contains w then
+    none
+  else
+    match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+    | some (_, sg) =>
+        -- Part of a bus - only emit for first wire in group
+        if sg.wires.head? == some w then
+          let svType := signalGroupToSV sg
+          some s!"  {direction} {svType} {sg.name}"
+        else
+          none
+    | none =>
+        -- Standalone wire
+        some s!"  {direction} logic {w.name}"
+
+/-- Generate all port declarations -/
+def generatePorts (ctx : Context) (c : Circuit) : String :=
+  let inputPorts := c.inputs.filterMap (generateWirePort ctx c · "input")
+  let outputPorts := c.outputs.filterMap (generateWirePort ctx c · "output")
+
+  -- Add explicit clock and reset ports for sequential circuits
+  let clockResetPorts := if ctx.isSequential then
+    ["  input logic clock", "  input logic reset"]
+  else
+    []
+
+  let allPorts := inputPorts ++ outputPorts ++ clockResetPorts
+
+  if allPorts.isEmpty then
+    ""
+  else
+    match allPorts with
+    | [] => ""
+    | [single] => single
+    | _ =>
+        let withCommas := allPorts.dropLast.map (fun p => p ++ ",")
+        let lastPort := allPorts.getLast!
+        joinLines (withCommas ++ [lastPort])
+
+/-! ## Internal Wire Generation -/
+
+/-- Check if wire is a port (input or output) -/
+def isPort (c : Circuit) (w : Wire) : Bool :=
+  c.inputs.any (fun inp => inp.name == w.name) ||
+  c.outputs.any (fun out => out.name == w.name)
+
+/-- Generate signal declaration for an internal wire -/
+def generateInternalSignalDecl (ctx : Context) (_c : Circuit) (w : Wire) : Option String :=
+  match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+  | some (_, sg) =>
+      -- Part of a bus - only emit for first wire in group
+      if sg.wires.head? == some w then
+        let svType := signalGroupToSV sg
+        some s!"  {svType} {sg.name};"
+      else
+        none
+  | none =>
+      -- Standalone wire
+      some s!"  logic {w.name};"
+
+/-- Generate internal wire declarations -/
+def generateInternalWires (ctx : Context) (c : Circuit) (gates : List Gate) : String :=
+  -- Collect all internal wires (gate outputs that aren't ports)
+  let internalWires := gates.map (·.output) |>.filter (fun w => !isPort c w)
+  let decls := internalWires.filterMap (generateInternalSignalDecl ctx c)
+  joinLines decls
+
+/-! ## Combinational Logic Generation -/
+
+/-- Generate continuous assignment for a gate -/
+def generateGateAssign (ctx : Context) (c : Circuit) (g : Gate) : Option String :=
+  match g.gateType with
+  | GateType.DFF => none  -- DFFs handled in always_ff blocks
+  | GateType.AND =>
+      match g.inputs with
+      | [a, b] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c a} & {wireRef ctx c b};"
+      | _ => none
+  | GateType.OR =>
+      match g.inputs with
+      | [a, b] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c a} | {wireRef ctx c b};"
+      | _ => none
+  | GateType.XOR =>
+      match g.inputs with
+      | [a, b] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c a} ^ {wireRef ctx c b};"
+      | _ => none
+  | GateType.NOT =>
+      match g.inputs with
+      | [a] => some s!"  assign {wireRef ctx c g.output} = ~{wireRef ctx c a};"
+      | _ => none
+  | GateType.BUF =>
+      match g.inputs with
+      | [a] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c a};"
+      | _ => none
+  | GateType.MUX =>
+      match g.inputs with
+      | [sel, a, b] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c sel} ? {wireRef ctx c a} : {wireRef ctx c b};"
+      | _ => none
+
+/-- Generate all combinational logic -/
+def generateCombLogic (ctx : Context) (c : Circuit) (gates : List Gate) : String :=
+  let assigns := gates.filterMap (generateGateAssign ctx c)
+  joinLines assigns
+
+/-! ## Sequential Logic Generation -/
+
+/-- Generate register declaration and assignment for a DFF -/
+def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option String × String × String) :=
+  match g.inputs with
+  | [d, _clk, _rst] =>
+      let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
+
+      match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
+      | some (_, sg) =>
+          -- Part of a bus - only emit for first register in group
+          if sg.wires.head? == some g.output then
+            let svType := signalGroupToSV sg
+            let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
+            -- For buses, use the group name of the input (not indexed reference)
+            let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
+              | some (_, inputGroup) => inputGroup.name
+              | none => d.name
+            let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
+            let resetVal := if sg.width > 1 then s!"{sg.width}'d0" else "1'b0"
+            some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};")
+          else
+            none
+      | none =>
+          -- Standalone register
+          let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
+          let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
+            | some (_, inputGroup) => inputGroup.name
+            | none => d.name
+          let decl := if isCircuitOutput then none else some s!"  logic {regName};"
+          some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= 1'b0;")
+  | _ => none
+
+/-- Generate always_ff block for register group -/
+def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire) (dffs : List Gate) : String :=
+  let results := dffs.filterMap (generateDFFDecl ctx c)
+  let decls := results.filterMap (fun (decl, _, _) => decl)
+  let assigns := results.map (fun (_, assign, _) => assign)
+  let resetAssigns := results.map (fun (_, _, resetAssign) => resetAssign)
+
+  if assigns.isEmpty then
+    ""
+  else
+    let declsStr := joinLines decls
+    let clkRef := wireRef ctx c clk
+    let rstRef := wireRef ctx c rst
+
+    let alwaysBlock := joinLines [
+      s!"  always_ff @(posedge {clkRef} or posedge {rstRef}) begin",
+      s!"    if ({rstRef}) begin",
+      joinLines resetAssigns,
+      "    end else begin",
+      joinLines assigns,
+      "    end",
+      "  end"
+    ]
+
+    if declsStr.isEmpty then
+      alwaysBlock
+    else
+      declsStr ++ "\n\n" ++ alwaysBlock
+
+/-- Generate all register logic -/
+def generateRegisters (ctx : Context) (c : Circuit) (gates : List Gate) : String :=
+  let dffs := findDFFs gates
+  if dffs.isEmpty then
+    ""
+  else
+    let grouped := groupDFFsByClockReset dffs
+    let blocks := grouped.map (fun (clk, rst, dffGroup) =>
+      generateAlwaysFFBlock ctx c clk rst dffGroup
+    )
+    String.intercalate "\n\n" blocks
+
 /-! ## Netlist Generation -/
 
 /-- Generate flat netlist SystemVerilog.
@@ -85,7 +303,7 @@ def toSystemVerilogNetlist (c : Circuit) : String :=
     sg.wires.enum.map (fun (idx, w) => (w, idx))
   )
 
-  let _ctx : Context := {
+  let ctx : Context := {
     wireToGroup := wireToGroup
     wireToIndex := wireToIndex
     clockWires := clockWires
@@ -94,26 +312,37 @@ def toSystemVerilogNetlist (c : Circuit) : String :=
   }
 
   -- Step 5: Generate module header
-  let header := s!"// Flat netlist generated from {c.name}\n"
-              ++ s!"// {flatGates.length} gates (all instances inlined)\n"
-              ++ s!"module {c.name}(\n"
+  let header := joinLines [
+    "// Flat netlist auto-generated by Shoumei Codegen",
+    s!"// Source: {c.name} (all instances inlined)",
+    s!"// {flatGates.length} gates total",
+    "",
+    s!"module {c.name} ("
+  ]
 
   -- Step 6: Generate ports (using signal groups for buses)
-  -- TODO: Implement port generation with bus types
-  let ports := "  // TODO: Generate typed ports\n"
+  let ports := generatePorts ctx c
 
   -- Step 7: Generate internal wires
-  let wires := "  // TODO: Generate internal wire declarations\n"
+  let internalWires := generateInternalWires ctx c flatGates
 
-  -- Step 8: Generate gate assignments
-  let assigns := "  // TODO: Generate continuous assignments\n"
+  -- Step 8: Generate combinational logic
+  let combLogic := generateCombLogic ctx c flatGates
 
   -- Step 9: Generate always_ff blocks for registers
-  let registers := if isSeq then "  // TODO: Generate always_ff blocks\n" else ""
+  let registers := generateRegisters ctx c flatGates
 
-  -- Step 10: Close module
-  let footer := "endmodule\n"
+  -- Step 10: Assemble module
+  let body := joinLines [
+    if ports.isEmpty then ");" else ports ++ "\n);",
+    "",
+    if internalWires.isEmpty then "" else internalWires ++ "\n",
+    if combLogic.isEmpty then "" else combLogic ++ "\n",
+    if registers.isEmpty then "" else registers
+  ]
 
-  header ++ ports ++ ");\n\n" ++ wires ++ "\n" ++ assigns ++ "\n" ++ registers ++ footer
+  let footer := "endmodule"
+
+  joinLines [header, body, footer]
 
 end Shoumei.Codegen.SystemVerilogNetlist

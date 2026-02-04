@@ -76,6 +76,8 @@ def writeCircuitSystemC (c : Circuit) : IO Unit := do
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) : IO Unit := do
   writeCircuitSV c
+  writeCircuitSVV2 c
+  writeCircuitNetlist c
   writeCircuitChisel c
   writeCircuitSystemC c
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances"
