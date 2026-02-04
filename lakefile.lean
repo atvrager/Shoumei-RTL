@@ -93,3 +93,8 @@ lean_exe export_verification_certs where
 lean_exe test_chisel_v2 where
   root := `TestChiselV2
   supportInterpreter := true
+
+-- Executable target for testing SystemVerilog V2 code generation
+lean_exe test_svv2 where
+  root := `TestSVV2
+  supportInterpreter := true
