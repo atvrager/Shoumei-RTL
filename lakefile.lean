@@ -88,3 +88,8 @@ lean_exe generate_integer_exec where
 lean_exe export_verification_certs where
   root := `ExportVerificationCerts
   supportInterpreter := true
+
+-- Executable target for testing Chisel V2 code generation
+lean_exe test_chisel_v2 where
+  root := `TestChiselV2
+  supportInterpreter := true

@@ -20,9 +20,10 @@ abbrev Env := Wire → Bool
 -- This represents the current state of all sequential elements
 abbrev State := Wire → Bool
 
--- Evaluate a combinational gate given an environment
--- For sequential gates (DFF), use evalDFF instead
-def evalCombGate (g : Gate) (env : Env) : Bool :=
+-- Evaluate a gate given an environment (returns output value)
+-- For combinational gates: computes output from inputs
+-- For sequential gates (DFF): returns false (use evalDFF instead)
+def evalGate (g : Gate) (env : Env) : Bool :=
   match g.gateType with
   | GateType.AND =>
       match g.inputs with
@@ -51,7 +52,10 @@ def evalCombGate (g : Gate) (env : Env) : Bool :=
       | [in0, in1, sel] => if env sel then env in1 else env in0
       | _ => false
   | GateType.DFF =>
-      false  -- DFF should not be evaluated as combinational
+      false  -- DFF should not be evaluated as combinational (use evalDFF)
+
+-- Alias for backward compatibility
+def evalCombGate := evalGate
 
 -- Evaluate a D Flip-Flop to get next state value
 -- Inputs: [d, clk, reset], output: q
@@ -85,7 +89,7 @@ def evalCircuit (c : Circuit) (inputEnv : Env) : Env :=
   --
   -- Note: Assumes gates are in topological order and circuit is purely combinational
   c.gates.foldl (fun env gate =>
-    let result := evalCombGate gate env
+    let result := evalGate gate env
     updateEnv env gate.output result
   ) inputEnv
 
@@ -129,7 +133,7 @@ def evalCycleSequential (c : Circuit) (state : State) (inputEnv : Env) : State �
   -- Step 2: Evaluate all combinational gates to build full environment
   let combEnv := c.gates.foldl (fun env gate =>
     if gate.gateType.isCombinational then
-      let result := evalCombGate gate env
+      let result := evalGate gate env
       updateEnv env gate.output result
     else
       env  -- Skip sequential gates in combinational phase
