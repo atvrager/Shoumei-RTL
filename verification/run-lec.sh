@@ -321,6 +321,12 @@ verify_module() {
     fi
     echo ""
 
+    # Plugin loading command (if using slang)
+    local PLUGIN_CMD=""
+    if [ "$READ_CMD" = "read_slang" ]; then
+        PLUGIN_CMD="plugin -i slang"
+    fi
+
     # Create Yosys script for equivalence checking
     if [ $IS_SEQUENTIAL -eq 1 ]; then
         if [ $HAS_HIERARCHY -eq 1 ]; then
@@ -329,6 +335,9 @@ verify_module() {
             local INDUCT_DEPTH=3
 
             cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+# Load slang plugin if needed
+$PLUGIN_CMD
+
 # Read and prepare LEAN design (gold reference)
 $READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
@@ -370,6 +379,9 @@ YOSYS_EOF
         else
             # Flat Sequential Equivalence Checking (for leaf modules)
             cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+# Load slang plugin if needed
+$PLUGIN_CMD
+
 # Read and prepare LEAN design (gold reference)
 $READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
@@ -412,6 +424,9 @@ YOSYS_EOF
     else
         # Combinational Equivalence Checking (CEC)
         cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+# Load slang plugin if needed
+$PLUGIN_CMD
+
 # Read and prepare LEAN design (gold reference)
 $READ_CMD $LEAN_DIR/*.sv
 hierarchy -check -top $MODULE_NAME
