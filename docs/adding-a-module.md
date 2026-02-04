@@ -188,9 +188,9 @@ Add your circuit to `GenerateAll.lean`:
 
 ```lean
 -- In the allCircuits list:
-def allCircuits : List (String × Circuit) := [
+def allCircuits : List Circuit := [
   ...existing modules...
-  ("MyModule", mkMyModule),
+  mkMyModule,
 ]
 ```
 
@@ -199,7 +199,11 @@ Then run:
 lake exe generate_all
 ```
 
-This generates SV, Chisel, and SystemC in one command.
+This generates all 4 outputs in one command:
+- SystemVerilog (hierarchical): `output/sv-from-lean/`
+- SystemVerilog netlist (flat): `output/sv-netlist/`
+- Chisel → SV via CIRCT: `chisel/src/main/scala/generated/`
+- SystemC: `output/systemc/`
 
 ### Option B: Dedicated codegen file
 

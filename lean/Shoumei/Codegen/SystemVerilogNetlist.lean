@@ -23,12 +23,12 @@ Validation: Yosys equiv_make vs hierarchical SV
 import Shoumei.DSL
 import Shoumei.DSL.Interfaces
 import Shoumei.Codegen.Common
-import Shoumei.Codegen.SystemVerilogV2
+import Shoumei.Codegen.SystemVerilog
 
 namespace Shoumei.Codegen.SystemVerilogNetlist
 
 open Shoumei.Codegen
-open Shoumei.Codegen.SystemVerilogV2  -- Reuse bus reconstruction
+open Shoumei.Codegen.SystemVerilog  -- Reuse bus reconstruction
 
 /-! ## Flattening Logic -/
 

@@ -99,32 +99,37 @@ structure Circuit where name : String; inputs : List Wire; outputs : List Wire;
 
 ## Code Generation Architecture
 
-Three code generators in `lean/Shoumei/Codegen/`:
+Four code generators in `lean/Shoumei/Codegen/`:
 
 | Generator | File | Output |
 |-----------|------|--------|
-| SystemVerilog | `SystemVerilog.lean` | `output/sv-from-lean/*.sv` |
+| SystemVerilog | `SystemVerilog.lean` | `output/sv-from-lean/*.sv` (hierarchical) |
+| SystemVerilog Netlist | `SystemVerilogNetlist.lean` | `output/sv-netlist/*.sv` (flat) |
 | Chisel | `Chisel.lean` | `chisel/src/main/scala/generated/*.scala` |
 | SystemC | `SystemC.lean` | `output/systemc/*.{h,cpp}` |
 
 Shared utilities in `Common.lean`:
 - `findClockWires` / `findResetWires` -- detect clock/reset from DFF gates AND instance connections
-- Bundled I/O threshold logic for large port counts
-- Wire-to-index mapping
+- Signal group detection and bus reconstruction (data_0..data_31 → logic [31:0])
+- Wire-to-index mapping for typed signals
 
 ### Adding a circuit to code generation
 
 In `GenerateAll.lean`, add to the `allCircuits` list:
 
 ```lean
-def allCircuits : List (String × Circuit) := [
-  ("FullAdder", fullAdderCircuit),
-  ("YourNewModule", yourNewCircuit),
+def allCircuits : List Circuit := [
+  fullAdderCircuit,
+  yourNewCircuit,
   ...
 ]
 ```
 
-The centralized codegen generates SV + Chisel + SystemC for everything in the list.
+The centralized codegen generates all 4 outputs for everything in the list:
+- SystemVerilog (hierarchical)
+- SystemVerilog netlist (flat)
+- Chisel → SystemVerilog via CIRCT
+- SystemC (.h + .cpp)
 
 ## Proof Patterns
 
