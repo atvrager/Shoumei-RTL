@@ -48,10 +48,39 @@ object Main extends App {
     (moduleName, s"$packageName.$moduleName")
   }
 
+  // Check if a module is an ExtModule by reading its source file
+  // We can't use reflection because of classloader issues with ExtModule
+  def isExtModule(moduleName: String, fqClassName: String): Boolean =
+    try {
+      val packageName = fqClassName.stripSuffix(s".$moduleName")
+      val packagePath = packageName.replace('.', '/')
+      val sourceFile = new File(s"src/main/scala/$packagePath/$moduleName.scala")
+
+      if (!sourceFile.exists()) return false
+
+      val source = Source.fromFile(sourceFile)
+      try {
+        val content = source.mkString
+        content.contains("extends ExtModule")
+      } finally {
+        source.close()
+      }
+    } catch {
+      case _: Exception => false
+    }
+
   // Try to compile a generated module using reflection
   // This avoids compile-time dependency on generated packages
+  // NOTE: ExtModules are skipped - they reference external Verilog and should not be compiled
   def compileModule(moduleName: String, fqClassName: String): Boolean =
     try {
+      // Check if this is an ExtModule BEFORE instantiating
+      if (isExtModule(moduleName, fqClassName)) {
+        println(s"⊘ $moduleName is an ExtModule (blackbox) - skipping compilation")
+        println(s"   (ExtModules reference external Verilog: output/sv-from-lean/$moduleName.sv)")
+        return true // Count as success - ExtModules don't need compilation
+      }
+
       println(s"Compiling $moduleName ($fqClassName)...")
 
       val generatorFn = () => {

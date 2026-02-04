@@ -327,6 +327,50 @@ verify_module() {
         PLUGIN_CMD="plugin -i slang"
     fi
 
+    # Extract module dependencies from a SystemVerilog file
+    # Returns list of instantiated module names (one per line)
+    get_module_dependencies() {
+        local svfile="$1"
+        # Pattern: ModuleName instance_name (
+        grep -oE '^\s*[A-Z][a-zA-Z0-9_]*\s+[a-z_][a-zA-Z0-9_]*\s*\(' "$svfile" | \
+            awk '{print $1}' | sort -u
+    }
+
+    # Generate read commands for a specific module + its dependencies
+    # For slang: reads only the module and its deps (not all files)
+    # For built-in: still reads all files (wildcards work fine)
+    generate_read_commands_for_module() {
+        local module_name="$1"
+        local dir="$2"
+        local module_file="$dir/${module_name}.sv"
+
+        if [ "$READ_CMD" = "read_slang" ]; then
+            # For slang, collect module + dependencies
+            local files="$module_file"
+
+            # Get dependencies and add their files
+            if [ -f "$module_file" ]; then
+                local deps
+                deps=$(get_module_dependencies "$module_file")
+                for dep in $deps; do
+                    local dep_file="$dir/${dep}.sv"
+                    if [ -f "$dep_file" ] || [ -L "$dep_file" ]; then
+                        files="$files $dep_file"
+                    fi
+                done
+            fi
+
+            echo "$READ_CMD $files"
+        else
+            # Built-in parser can handle wildcards
+            echo "$READ_CMD $dir/*.sv"
+        fi
+    }
+
+    # Get read commands for this specific module
+    LEAN_READ_CMDS=$(generate_read_commands_for_module "$MODULE_NAME" "$LEAN_DIR")
+    CHISEL_READ_CMDS=$(generate_read_commands_for_module "$MODULE_NAME" "$CLEAN_CHISEL_DIR")
+
     # Create Yosys script for equivalence checking
     if [ $IS_SEQUENTIAL -eq 1 ]; then
         if [ $HAS_HIERARCHY -eq 1 ]; then
@@ -339,7 +383,7 @@ verify_module() {
 $PLUGIN_CMD
 
 # Read and prepare LEAN design (gold reference)
-$READ_CMD $LEAN_DIR/*.sv
+$LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -347,11 +391,11 @@ rename $MODULE_NAME gold
 # Stash gold design
 design -stash gold
 
-# Reset Verilog frontend
-design -reset-vlog
+# Full reset (needed for slang - reset-vlog not sufficient)
+design -reset
 
 # Read and prepare Chisel design (gate implementation)
-$READ_CMD $CLEAN_CHISEL_DIR/*.sv
+$CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gate
@@ -383,7 +427,7 @@ YOSYS_EOF
 $PLUGIN_CMD
 
 # Read and prepare LEAN design (gold reference)
-$READ_CMD $LEAN_DIR/*.sv
+$LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -391,11 +435,11 @@ rename $MODULE_NAME gold
 # Stash gold design
 design -stash gold
 
-# Reset Verilog frontend
-design -reset-vlog
+# Full reset (needed for slang - reset-vlog not sufficient)
+design -reset
 
 # Read and prepare Chisel design (gate implementation)
-$READ_CMD $CLEAN_CHISEL_DIR/*.sv
+$CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; memory; opt; flatten
 rename $MODULE_NAME gate
@@ -428,7 +472,7 @@ YOSYS_EOF
 $PLUGIN_CMD
 
 # Read and prepare LEAN design (gold reference)
-$READ_CMD $LEAN_DIR/*.sv
+$LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
 rename $MODULE_NAME gold
@@ -436,11 +480,11 @@ rename $MODULE_NAME gold
 # Stash gold design
 design -stash gold
 
-# Reset Verilog frontend
-design -reset-vlog
+# Full reset (needed for slang - reset-vlog not sufficient)
+design -reset
 
 # Read and prepare Chisel design (gate implementation)
-$READ_CMD $CLEAN_CHISEL_DIR/*.sv
+$CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
 proc; opt; memory; opt; flatten
 rename $MODULE_NAME gate
