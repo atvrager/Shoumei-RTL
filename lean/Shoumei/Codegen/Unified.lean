@@ -16,6 +16,7 @@ Usage:
 import Shoumei.DSL
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogV2
+import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.Chisel
 import Shoumei.Codegen.ChiselV2
 import Shoumei.Codegen.SystemC
@@ -28,6 +29,7 @@ open Shoumei.Codegen
 -- Output paths (centralized configuration)
 def svOutputDir : String := "output/sv-from-lean"
 def svV2OutputDir : String := "output/sv-from-lean-v2"
+def svNetlistOutputDir : String := "output/sv-netlist"
 def chiselOutputDir : String := "chisel/src/main/scala/generated"
 def chiselV2OutputDir : String := "chisel/src/main/scala/generated_v2"
 def systemcOutputDir : String := "output/systemc"
@@ -42,6 +44,12 @@ def writeCircuitSV (c : Circuit) : IO Unit := do
 def writeCircuitSVV2 (c : Circuit) : IO Unit := do
   let sv := SystemVerilogV2.toSystemVerilogV2 c
   let path := s!"{svV2OutputDir}/{c.name}.sv"
+  IO.FS.writeFile path sv
+
+-- Write SystemVerilog Netlist (flat) for a circuit
+def writeCircuitNetlist (c : Circuit) : IO Unit := do
+  let sv := SystemVerilogNetlist.toSystemVerilogNetlist c
+  let path := s!"{svNetlistOutputDir}/{c.name}.sv"
   IO.FS.writeFile path sv
 
 -- Write Chisel for a circuit
@@ -89,6 +97,7 @@ def writeCircuitVerbose (c : Circuit) : IO Unit := do
 def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir
   IO.FS.createDirAll svV2OutputDir
+  IO.FS.createDirAll svNetlistOutputDir
   IO.FS.createDirAll chiselOutputDir
   IO.FS.createDirAll chiselV2OutputDir
   IO.FS.createDirAll systemcOutputDir
