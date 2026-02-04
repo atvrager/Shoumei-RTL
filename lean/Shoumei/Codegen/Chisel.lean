@@ -737,8 +737,9 @@ def toChisel (c : Circuit) : String :=
   let moduleName := c.name
   let isSequential := c.hasSequentialElements
 
-  -- Use BlackBox for modules with >2000 gates (JVM class size limits)
-  -- BlackBox references the Lean-generated SystemVerilog directly
+  -- Use ExtModule (BlackBox) for modules with >2000 gates (JVM class size limits)
+  -- Large modules cause "Class too large" errors in Scala compiler
+  -- ExtModule references Lean-generated SV which CIRCT will read
   if c.gates.length > 2000 then
     let ioDecl := generateIOBundle c false {
       wireToIndex := [], inputToIndex := [], outputToIndex := [],
@@ -746,17 +747,19 @@ def toChisel (c : Circuit) : String :=
       useIOBundle := c.inputs.length + c.outputs.length > 200,
       useRegArray := false
     }
+    let pathLine := s!"  addPath(\"../../output/sv-from-lean/{moduleName}.sv\")"
     joinLines [
-      s!"// BlackBox wrapper for {moduleName} ({c.gates.length} gates)",
-      s!"// References Lean-generated SV: output/sv-from-lean/{moduleName}.sv",
+      s!"// ExtModule blackbox for {moduleName} ({c.gates.length} gates)",
+      s!"// Verilog implementation in: ../../output/sv-from-lean/{moduleName}.sv",
       "",
       "package generated",
       "",
       "import chisel3._",
       "import chisel3.util._",
       "",
-      "class " ++ moduleName ++ " extends ExtModule {",
+      s!"class {moduleName} extends ExtModule " ++ "{",
       ioDecl,
+      pathLine,
       "}"
     ]
   else
