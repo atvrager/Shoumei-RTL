@@ -54,7 +54,7 @@ object Main extends App {
     try {
       val packageName = fqClassName.stripSuffix(s".$moduleName")
       val packagePath = packageName.replace('.', '/')
-      val sourceFile = new File(s"src/main/scala/$packagePath/$moduleName.scala")
+      val sourceFile  = new File(s"src/main/scala/$packagePath/$moduleName.scala")
 
       if (!sourceFile.exists()) return false
 
@@ -62,9 +62,8 @@ object Main extends App {
       try {
         val content = source.mkString
         content.contains("extends ExtModule")
-      } finally {
+      } finally
         source.close()
-      }
     } catch {
       case _: Exception => false
     }

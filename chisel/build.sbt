@@ -3,7 +3,7 @@
 
 // Shared version constants
 val chiselVersion = "7.7.0"
-val scalaVer = "2.13.18"  // Required for Chisel 7.7.0
+val scalaVer      = "2.13.18" // Required for Chisel 7.7.0
 
 ThisBuild / scalaVersion := scalaVer
 ThisBuild / version := "0.1.0-SNAPSHOT"
@@ -12,12 +12,9 @@ ThisBuild / organization := "com.shoumei"
 lazy val root = (project in file("."))
   .settings(
     name := "shoumei-rtl-chisel",
-
-
     libraryDependencies ++= Seq(
       "org.chipsalliance" %% "chisel" % chiselVersion
     ),
-
     scalacOptions ++= Seq(
       "-language:reflectiveCalls",
       "-deprecation",
@@ -25,7 +22,6 @@ lazy val root = (project in file("."))
       "-Xcheckinit",
       "-Xfatal-warnings"
     ),
-
     addCompilerPlugin("org.chipsalliance" % "chisel-plugin" % chiselVersion cross CrossVersion.full)
   )
 
