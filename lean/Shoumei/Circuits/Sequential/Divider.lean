@@ -616,6 +616,15 @@ def mkDividerCircuit : Circuit :=
     outputs := result ++ tag_out ++ [valid_out, busy_out]
     gates := all_gates
     instances := [sub_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 32, wires := a_in },
+      { name := "b", width := 32, wires := b_in },
+      { name := "op", width := 3, wires := op_in },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 32, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
   }
 
 /-- Convenience definition for the divider circuit. -/

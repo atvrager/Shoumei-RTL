@@ -81,6 +81,13 @@ def mkLogicUnitN (n : Nat) : Circuit :=
     outputs := result
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := n, wires := a },
+      { name := "b", width := n, wires := b },
+      { name := "result", width := n, wires := result },
+      { name := "op", width := 2, wires := [op0, op1] }
+    ]
   }
 
 -- Specific widths

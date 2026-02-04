@@ -176,6 +176,17 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     outputs := rd_data1 ++ rd_data2
     gates := we_gates ++ storage_gates
     instances := [decoder_inst, mux_rd1_inst, mux_rd2_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "rd_tag1", width := tagWidth, wires := rd_tag1 },
+      { name := "rd_tag2", width := tagWidth, wires := rd_tag2 },
+      { name := "wr_tag", width := tagWidth, wires := wr_tag },
+      { name := "wr_data", width := dataWidth, wires := wr_data },
+      { name := "rd_data1", width := dataWidth, wires := rd_data1 },
+      { name := "rd_data2", width := dataWidth, wires := rd_data2 },
+      { name := "write_sel", width := numRegs, wires := write_sel },
+      { name := "we", width := numRegs, wires := we }
+    ]
   }
 
 /-- Physical Register File with 64 registers × 32 bits (default configuration) -/

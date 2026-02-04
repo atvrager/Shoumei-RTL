@@ -438,6 +438,22 @@ def mkLSU : Circuit :=
     outputs := all_outputs
     gates := all_gates
     instances := all_instances
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "dispatch_base_", width := 32, wires := dispatch_base },
+      { name := "dispatch_offset_", width := 32, wires := dispatch_offset },
+      { name := "dispatch_dest_tag_", width := 6, wires := dispatch_dest_tag },
+      { name := "store_data_", width := 32, wires := store_data },
+      { name := "commit_store_idx_", width := 3, wires := commit_store_idx },
+      { name := "fwd_address_", width := 32, wires := fwd_address },
+      { name := "agu_address_", width := 32, wires := agu_address },
+      { name := "agu_tag_out_", width := 6, wires := agu_tag_out },
+      { name := "sb_fwd_data_", width := 32, wires := sb_fwd_data },
+      { name := "sb_deq_bits_", width := 66, wires := sb_deq_bits },
+      { name := "sb_enq_idx_", width := 3, wires := sb_enq_idx },
+      { name := "sb_enq_address_", width := 32, wires := sb_enq_address },
+      { name := "sb_enq_size_", width := 2, wires := sb_enq_size }
+    ]
   }
 
 end Shoumei.RISCV.Memory

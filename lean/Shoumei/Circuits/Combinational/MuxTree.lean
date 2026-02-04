@@ -203,11 +203,22 @@ def mkMuxTree (n width : Nat) : Circuit :=
 
     let allInputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
 
+    let inputGroups := (List.range n).map (fun i =>
+      { name := s!"in{i}"
+        width := width
+        wires := inputWires[i]! : SignalGroup })
+
     { name := s!"Mux{n}x{width}"
       inputs := allInputs
       outputs := outputWires
       gates := gates
-      instances := [] }
+      instances := []
+      -- V2 codegen annotations
+      signalGroups := inputGroups ++ [
+        { name := "sel", width := numSelBits, wires := selWires },
+        { name := "out", width := width, wires := outputWires }
+      ]
+    }
 
 /-! ## Concrete Examples -/
 

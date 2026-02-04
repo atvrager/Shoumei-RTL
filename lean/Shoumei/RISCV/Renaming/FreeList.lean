@@ -117,7 +117,19 @@ Submodules:
 def mkFreeList (numPhysRegs : Nat) : Circuit :=
   let tagWidth := log2Ceil numPhysRegs
   let queue := mkQueueNStructural numPhysRegs tagWidth
-  { queue with name := s!"FreeList_{numPhysRegs}" }
+  let ptrWidth := log2Ceil numPhysRegs
+  let countWidth := ptrWidth + 1
+  { queue with
+    name := s!"FreeList_{numPhysRegs}"
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "enq_data", width := tagWidth, wires := (List.range tagWidth).map (fun i => Wire.mk s!"enq_data_{i}") },
+      { name := "deq_data", width := tagWidth, wires := (List.range tagWidth).map (fun i => Wire.mk s!"deq_data_{i}") },
+      { name := "head", width := ptrWidth, wires := (List.range ptrWidth).map (fun i => Wire.mk s!"head_{i}") },
+      { name := "tail", width := ptrWidth, wires := (List.range ptrWidth).map (fun i => Wire.mk s!"tail_{i}") },
+      { name := "count", width := countWidth, wires := (List.range countWidth).map (fun i => Wire.mk s!"count_{i}") }
+    ]
+  }
 
 /-- Free List with 64 physical registers (6-bit tags) -/
 def mkFreeList64 : Circuit := mkFreeList 64

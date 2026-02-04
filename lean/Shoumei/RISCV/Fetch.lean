@@ -236,6 +236,16 @@ def mkFetchStage : Circuit :=
     outputs := pc_out ++ [stalled_reg]
     gates := const_4_gates ++ stall_mux_gates ++ branch_mux_gates ++ stalled_gates ++ pc_out_gates
     instances := [pc_reg_inst, adder_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "branch_target", width := 32, wires := branch_target },
+      { name := "pc", width := 32, wires := pc_out },
+      { name := "pc_reg", width := 32, wires := pc_reg },
+      { name := "next_pc", width := 32, wires := next_pc },
+      { name := "const_4", width := 32, wires := const_4 },
+      { name := "pc_plus_4", width := 32, wires := pc_plus_4 },
+      { name := "stall_mux", width := 32, wires := stall_mux_out }
+    ]
   }
 
 end Shoumei.RISCV

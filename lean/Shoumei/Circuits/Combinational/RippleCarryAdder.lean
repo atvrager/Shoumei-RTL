@@ -90,6 +90,13 @@ def mkRippleCarryAdder32 : Circuit :=
     outputs := sum  -- No cout output (optimized away, matches CIRCT behavior)
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "sum", width := 32, wires := sum },
+      { name := "c", width := 32, wires := internal_carries }
+    ]
   }
 
 -- Convenience: 8-bit ripple-carry adder (for testing)
@@ -110,6 +117,13 @@ def mkRippleCarryAdder8 : Circuit :=
     outputs := sum ++ [cout]
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 8, wires := a },
+      { name := "b", width := 8, wires := b },
+      { name := "sum", width := 8, wires := sum },
+      { name := "c", width := 7, wires := internal_carries }
+    ]
   }
 
 -- Convenience: 4-bit ripple-carry adder (for testing)
@@ -130,6 +144,13 @@ def mkRippleCarryAdder4 : Circuit :=
     outputs := sum ++ [cout]
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 4, wires := a },
+      { name := "b", width := 4, wires := b },
+      { name := "sum", width := 4, wires := sum },
+      { name := "c", width := 3, wires := internal_carries }
+    ]
   }
 
 -- 64-bit ripple-carry adder (flat construction, same pattern as RCA32)
@@ -151,6 +172,13 @@ def mkRippleCarryAdder64 : Circuit :=
     outputs := sum
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 64, wires := a },
+      { name := "b", width := 64, wires := b },
+      { name := "sum", width := 64, wires := sum },
+      { name := "c", width := 64, wires := internal_carries }
+    ]
   }
 
 end Shoumei.Circuits.Combinational

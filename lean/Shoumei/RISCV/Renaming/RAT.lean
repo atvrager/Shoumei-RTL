@@ -185,6 +185,17 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     outputs := rs1_data ++ rs2_data
     gates := we_gates ++ storage_gates
     instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "write_addr", width := addrWidth, wires := write_addr },
+      { name := "write_data", width := tagWidth, wires := write_data },
+      { name := "rs1_addr", width := addrWidth, wires := rs1_addr },
+      { name := "rs2_addr", width := addrWidth, wires := rs2_addr },
+      { name := "rs1_data", width := tagWidth, wires := rs1_data },
+      { name := "rs2_data", width := tagWidth, wires := rs2_data },
+      { name := "write_sel", width := numArchRegs, wires := write_sel },
+      { name := "we", width := numArchRegs, wires := we }
+    ]
   }
 
 /-- RAT with 64 physical registers (default configuration) -/

@@ -149,9 +149,14 @@ def mkDecoder (n : Nat) : Circuit :=
     { name := s!"Decoder{n}"
       inputs := inputs
       outputs := outputs
-
       gates := allGates
-      instances := [] }
+      instances := []
+      -- V2 codegen annotations
+      signalGroups := [
+        { name := "in", width := n, wires := inputs },
+        { name := "out", width := numOutputs, wires := outputs }
+      ]
+    }
 
 /-! ## Concrete Examples -/
 

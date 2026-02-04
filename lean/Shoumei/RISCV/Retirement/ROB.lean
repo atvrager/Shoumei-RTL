@@ -764,6 +764,17 @@ def mkROB16 : Circuit :=
     outputs := all_outputs
     gates := all_gates
     instances := all_instances
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "alloc_physRd", width := 6, wires := alloc_physRd },
+      { name := "alloc_oldPhysRd", width := 6, wires := alloc_oldPhysRd },
+      { name := "alloc_archRd", width := 5, wires := alloc_archRd },
+      { name := "cdb_tag", width := 6, wires := cdb_tag },
+      { name := "alloc_idx", width := 4, wires := alloc_idx },
+      { name := "head_physRd", width := 6, wires := head_physRd },
+      { name := "head_oldPhysRd", width := 6, wires := head_oldPhysRd },
+      { name := "head_archRd", width := 5, wires := head_archRd }
+    ]
   }
 
 end Shoumei.RISCV.Retirement

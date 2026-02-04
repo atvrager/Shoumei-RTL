@@ -232,6 +232,19 @@ def mkMulDivExecUnit : Circuit :=
     outputs := result ++ tag_out ++ [valid_out, busy]
     gates := all_gates
     instances := [mul_inst, div_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "op", width := 3, wires := op },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 32, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out },
+      { name := "mul_result", width := 32, wires := mul_result },
+      { name := "mul_tag_out", width := 6, wires := mul_tag_out },
+      { name := "div_result", width := 32, wires := div_result },
+      { name := "div_tag_out", width := 6, wires := div_tag_out }
+    ]
   }
 
 /-- Convenience alias for the MulDiv execution unit circuit. -/

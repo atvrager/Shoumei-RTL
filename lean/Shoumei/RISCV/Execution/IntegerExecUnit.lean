@@ -294,6 +294,15 @@ def mkIntegerExecUnit : Circuit :=
     outputs := result ++ tag_out
     gates := tag_passthrough
     instances := [alu_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "opcode", width := 4, wires := opcode },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 32, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
   }
 
 /-- Convenience constructors for specific configurations -/

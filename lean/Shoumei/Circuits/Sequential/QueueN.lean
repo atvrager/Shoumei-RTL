@@ -297,6 +297,11 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
     outputs := [enq_ready] ++ deq_data ++ [deq_valid]
     gates := empty_gates.1 ++ full_gates.1 ++ handshaking_gates
     instances := [ram_inst, head_inst, tail_inst, count_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "enq_data", width := width, wires := enq_data },
+      { name := "deq_data", width := width, wires := deq_data }
+    ]
   }
 
 -- TODO: Implement mkQueueNStructural similar to mkQueue1Structural

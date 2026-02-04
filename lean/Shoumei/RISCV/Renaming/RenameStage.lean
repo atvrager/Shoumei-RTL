@@ -359,6 +359,23 @@ def mkRenameStage : Circuit :=
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
              phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "rs1_addr_", width := 5, wires := rs1_addr },
+      { name := "rs2_addr_", width := 5, wires := rs2_addr },
+      { name := "rd_addr_", width := 5, wires := rd_addr },
+      { name := "cdb_tag_", width := 6, wires := cdb_tag },
+      { name := "cdb_data_", width := 32, wires := cdb_data },
+      { name := "retire_tag_", width := 6, wires := retire_tag },
+      { name := "rs1_phys_out_", width := 6, wires := rs1_phys_out },
+      { name := "rs2_phys_out_", width := 6, wires := rs2_phys_out },
+      { name := "rd_phys_out_", width := 6, wires := rd_phys_out },
+      { name := "rs1_data_", width := 32, wires := rs1_data },
+      { name := "rs2_data_", width := 32, wires := rs2_data },
+      { name := "rs1_phys", width := 6, wires := rs1_phys },
+      { name := "rs2_phys", width := 6, wires := rs2_phys },
+      { name := "rd_phys", width := 6, wires := rd_phys }
+    ]
   }
 
 end Shoumei.RISCV.Renaming

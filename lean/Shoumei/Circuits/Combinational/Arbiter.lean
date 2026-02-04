@@ -168,6 +168,12 @@ def mkPriorityArbiter (n : Nat) : Circuit :=
       outputs := grant ++ [valid]
       gates := not_gates ++ grant_gates ++ validGates
       instances := []
+      -- V2 codegen annotations
+      signalGroups := [
+        { name := "request", width := n, wires := request },
+        { name := "grant", width := n, wires := grant },
+        { name := "request_n", width := n, wires := request_n }
+      ]
     }
 
 /-! ## Common Configurations -/

@@ -133,7 +133,17 @@ def mkCSACompressor64 : Circuit :=
     inputs := x ++ y ++ z ++ [zero]
     outputs := s ++ c_shifted
     gates := csa_gates ++ shift_gates
-    instances := [] }
+    instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "x", width := width, wires := x },
+      { name := "y", width := width, wires := y },
+      { name := "z", width := width, wires := z },
+      { name := "sum", width := width, wires := s },
+      { name := "carry", width := width, wires := c_shifted },
+      { name := "c", width := width, wires := c }
+    ]
+  }
 
 /-- Convenience alias for CSA compressor. -/
 def csaCompressor64 : Circuit := mkCSACompressor64
@@ -332,6 +342,24 @@ def mkPipelinedMultiplier : Circuit :=
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
     instances := csa_instances ++ [rca64_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "op", width := 3, wires := op },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 32, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out },
+      { name := "s1_sum_q", width := 64, wires := s1_sum_q },
+      { name := "s1_carry_q", width := 64, wires := s1_carry_q },
+      { name := "s1_op_q", width := 3, wires := s1_op_q },
+      { name := "s1_tag_q", width := 6, wires := s1_tag_q },
+      { name := "s2_sum_q", width := 64, wires := s2_sum_q },
+      { name := "s2_carry_q", width := 64, wires := s2_carry_q },
+      { name := "s2_op_q", width := 3, wires := s2_op_q },
+      { name := "s2_tag_q", width := 6, wires := s2_tag_q },
+      { name := "add_sum", width := 64, wires := adder_sum }
+    ]
   }
 
 /-- Convenience alias. -/

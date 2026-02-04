@@ -663,6 +663,22 @@ def mkStoreBuffer8 : Circuit :=
     outputs := all_outputs
     gates := all_gates
     instances := all_instances
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "enq_address_", width := 32, wires := enq_address },
+      { name := "enq_data_", width := 32, wires := enq_data },
+      { name := "enq_size_", width := 2, wires := enq_size },
+      { name := "commit_idx_", width := 3, wires := commit_idx },
+      { name := "deq_bits_", width := 66, wires := deq_bits },
+      { name := "fwd_address_", width := 32, wires := fwd_address },
+      { name := "fwd_data_", width := 32, wires := fwd_data },
+      { name := "enq_idx_", width := 3, wires := enq_idx },
+      { name := "head_ptr_", width := 3, wires := head_ptr },
+      { name := "tail_ptr_", width := 3, wires := tail_ptr },
+      { name := "count_", width := 4, wires := count },
+      { name := "enq_decode_", width := 8, wires := enq_decode },
+      { name := "commit_decode_", width := 8, wires := commit_decode }
+    ]
   }
 
 end Shoumei.RISCV.Memory

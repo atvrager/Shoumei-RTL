@@ -61,6 +61,14 @@ def mkSubtractorN (n : Nat) : Circuit :=
     outputs := diff ++ [borrow]
     gates := not_gates ++ rca_gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := n, wires := a },
+      { name := "b", width := n, wires := b },
+      { name := "diff", width := n, wires := diff },
+      { name := "b_inv", width := n, wires := b_inv },
+      { name := "c", width := n - 1, wires := internal_carries }
+    ]
   }
 
 -- Specific widths

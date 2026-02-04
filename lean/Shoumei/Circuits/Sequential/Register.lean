@@ -37,6 +37,11 @@ def mkRegisterN (n : Nat) : Circuit :=
     outputs := q_wires
     gates := gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "d", width := n, wires := d_wires },
+      { name := "q", width := n, wires := q_wires }
+    ]
   }
 
 /-! ## Hierarchical Register Construction (for arbitrary sizes) -/
@@ -93,6 +98,11 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
     outputs := q_wires
     gates := []  -- No gates, only instances
     instances := instances
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "d", width := n, wires := d_wires },
+      { name := "q", width := n, wires := q_wires }
+    ]
   }
 
 /-! ## Convenience Definitions -/

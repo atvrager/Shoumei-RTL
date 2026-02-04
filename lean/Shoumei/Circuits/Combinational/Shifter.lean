@@ -179,6 +179,17 @@ def mkShifter32 : Circuit :=
     outputs := result
     gates := sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "in", width := 32, wires := input },
+      { name := "shamt", width := 5, wires := shamt },
+      { name := "result", width := 32, wires := result },
+      { name := "op", width := 2, wires := [op0, op1] },
+      { name := "sll_out", width := 32, wires := sll_out },
+      { name := "srl_out", width := 32, wires := srl_out },
+      { name := "sra_out", width := 32, wires := sra_out },
+      { name := "mux1", width := 32, wires := mux1 }
+    ]
   }
 
 -- Smaller variants for testing
@@ -222,6 +233,20 @@ def mkShifter4 : Circuit :=
     outputs := result
     gates := sll_stage0 ++ sll_stage1 ++ srl_stage0 ++ srl_stage1 ++ sra_stage0 ++ sra_stage1 ++ mux_level1 ++ mux_level2
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "in", width := 4, wires := input },
+      { name := "shamt", width := 2, wires := shamt },
+      { name := "result", width := 4, wires := result },
+      { name := "op", width := 2, wires := [op0, op1] },
+      { name := "sll_out", width := 4, wires := sll_out },
+      { name := "srl_out", width := 4, wires := srl_out },
+      { name := "sra_out", width := 4, wires := sra_out },
+      { name := "sll_s0", width := 4, wires := sll_s0 },
+      { name := "srl_s0", width := 4, wires := srl_s0 },
+      { name := "sra_s0", width := 4, wires := sra_s0 },
+      { name := "mux1", width := 4, wires := mux1 }
+    ]
   }
 
 end Shoumei.Circuits.Combinational

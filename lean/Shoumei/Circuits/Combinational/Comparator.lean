@@ -134,6 +134,14 @@ def mkComparatorN (n : Nat) : Circuit :=
              ++ [eq_gate, eq_buf, ltu_gate, ltu_buf]
              ++ lt_gates ++ [lt_buf] ++ gtu_gates ++ gt_gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "a", width := n, wires := a },
+      { name := "b", width := n, wires := b },
+      { name := "diff", width := n, wires := diff },
+      { name := "b_inv", width := n, wires := b_inv },
+      { name := "c", width := n - 1, wires := internal_carries }
+    ]
   }
 
 -- Specific widths

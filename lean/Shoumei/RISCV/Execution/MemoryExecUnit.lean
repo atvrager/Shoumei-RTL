@@ -324,6 +324,17 @@ def mkMemoryExecUnit : Circuit :=
     outputs := address ++ tag_out
     gates := base_to_a ++ offset_to_b ++ sum_to_address ++ tag_passthrough
     instances := [adder_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "base", width := 32, wires := base },
+      { name := "offset", width := 32, wires := offset },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "sum", width := 32, wires := sum },
+      { name := "address", width := 32, wires := address },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
   }
 
 /-- Convenience constructor for Memory Execution Unit -/

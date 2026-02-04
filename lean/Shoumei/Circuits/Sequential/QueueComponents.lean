@@ -112,6 +112,15 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
     outputs := read_data
     gates := we_gates ++ storage_logic
     instances := [decoder_inst, mux_inst]
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "write_addr", width := addrWidth, wires := write_addr },
+      { name := "write_data", width := width, wires := write_data },
+      { name := "read_addr", width := addrWidth, wires := read_addr },
+      { name := "read_data", width := width, wires := read_data },
+      { name := "write_sel", width := depth, wires := write_sel },
+      { name := "we", width := depth, wires := write_en_i }
+    ]
   }
 
 -- Simple Up Counter with Enable and Wrap
@@ -158,6 +167,13 @@ def mkQueuePointer (width : Nat) : Circuit :=
     outputs := count
     gates := [Gate.mkBUF one (carries[0]!)] ++ adder_gates ++ mux_gates ++ dff_gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "inc", width := width, wires := inc },
+      { name := "next", width := width, wires := next },
+      { name := "c", width := width + 1, wires := carries }
+    ]
   }
 
 
@@ -230,9 +246,18 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   { name := s!"QueueCounterUpDown_{width}"
     inputs := [clock, reset, inc_en, dec_en, one, zero]
     outputs := count
-    gates := [Gate.mkBUF one (c_plus[0]!), Gate.mkBUF zero (c_minus[0]!)] ++ 
+    gates := [Gate.mkBUF one (c_plus[0]!), Gate.mkBUF zero (c_minus[0]!)] ++
              add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++ dff_gates
     instances := []
+    -- V2 codegen annotations
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "plus", width := width, wires := val_plus },
+      { name := "minus", width := width, wires := val_minus },
+      { name := "next", width := width, wires := next },
+      { name := "cp", width := width + 1, wires := c_plus },
+      { name := "cm", width := width + 1, wires := c_minus }
+    ]
   }
 
 end Shoumei.Circuits.Sequential
