@@ -171,11 +171,11 @@ def mkALU32 : Circuit :=
       { moduleName := "Shifter32"
         instName := "u_shift"
         portMap := (List.range 32 |>.flatMap (fun i =>
-          [ (s!"data{i}", a[i]!)
+          [ (s!"in{i}", a[i]!)
           , (s!"result{i}", shift_result[i]!)
           ]
         )) ++ (List.range 5 |>.map (fun i => (s!"shamt{i}", shift_amt[i]!)))
-           ++ [("dir", shift_dir), ("arith", shift_arith)]
+           ++ [("op0", shift_dir), ("op1", shift_arith)]
       }
     ]
     signalGroups := [
