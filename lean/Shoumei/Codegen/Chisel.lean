@@ -114,7 +114,8 @@ def findInternalWires (c : Circuit) : List Wire :=
 def mkContext (c : Circuit) : Context :=
   let clockWires := findClockWires c
   let resetWires := findResetWires c
-  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF)
+  -- A circuit is sequential if it has DFFs OR if it has instances (which might need clock/reset)
+  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) || !c.instances.isEmpty
 
   -- Auto-detect signal groups from internal wires
   let internalWires := findInternalWires c
@@ -246,12 +247,32 @@ def willGenerateIndividualAssignments (gates : List Gate) : Bool :=
               let (in0Bases, in1Bases) := inputPairs.unzip
               let unique0 := in0Bases.eraseDups
               let unique1 := in1Bases.eraseDups
-              -- If uniform (both have single unique base), generates bus-wide or Cat → UInt
-              !(unique0.length == 1 && unique1.length == 1)
+              -- If AT LEAST ONE input is uniform (single unique base), generates bus-wide or Cat → UInt
+              -- Only if BOTH are non-uniform, generate individual assignments → Vec
+              !(unique0.length == 1 || unique1.length == 1)
         | GateType.MUX =>
-            -- MUX gates - complex patterns, conservatively use Vec
-            -- (generateBusWideOp has specific patterns for select signal)
-            false  -- Assume bus-wide for now
+            -- MUX gates - check if they have uniform inputs
+            -- MUX has 3 inputs: [falseVal, trueVal, sel]
+            -- If all MUXes have same base names for all 3 inputs → bus-wide (UInt)
+            -- Otherwise → individual assignments (Vec)
+            let inputTriples := gates.filterMap (fun g =>
+              match g.inputs with
+              | [falseVal, trueVal, sel] =>
+                  some (extractBaseName falseVal.name, extractBaseName trueVal.name, extractBaseName sel.name)
+              | _ => none
+            )
+            if inputTriples.length != gates.length then
+              true  -- Some gates don't have 3 inputs, Vec
+            else
+              let (falseVals, trueVals, sels) := inputTriples.foldl
+                (fun (fs, ts, ss) (f, t, s) => (f :: fs, t :: ts, s :: ss))
+                ([], [], [])
+              let uniqueFalse := falseVals.eraseDups
+              let uniqueTrue := trueVals.eraseDups
+              let uniqueSel := sels.eraseDups
+              -- If all three inputs are uniform → bus-wide MUX (UInt)
+              -- Otherwise → individual MUXes (Vec)
+              !(uniqueFalse.length == 1 && uniqueTrue.length == 1 && uniqueSel.length == 1)
         | _ =>
             -- Other gates (NOT, DFF, etc.) don't match bus-wide patterns
             true  -- Needs Vec
@@ -321,6 +342,26 @@ def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
             -- Check if this will generate individual assignments or bus-wide operation
             willGenerateIndividualAssignments outputGates
 
+/-! ## Wire and Port Reference Helpers -/
+
+/-- Check if a wire is used in non-DFF gates (i.e., in combinational logic) -/
+def isWireUsedInCombLogic (c : Circuit) (wireName : String) : Bool :=
+  c.gates.any (fun g =>
+    g.gateType != GateType.DFF && g.inputs.any (fun inp => inp.name == wireName)
+  )
+
+/-- Get the IO port name for a wire, renaming if needed to avoid conflicts -/
+def getIOPortName (ctx : Context) (c : Circuit) (w : Wire) : String :=
+  -- For Module (sequential), rename "reset" to "reset_in" if used in combinational logic
+  -- to avoid conflict with implicit reset
+  if ctx.isSequential && w.name == "reset" && isWireUsedInCombLogic c w.name then
+    "reset_in"
+  -- For Module (sequential), rename "clock" to "clock_in" if used in combinational logic
+  else if ctx.isSequential && w.name == "clock" && isWireUsedInCombLogic c w.name then
+    "clock_in"
+  else
+    w.name
+
 /-- Generate reference to a wire in generated Chisel code.
 
     For wires in signal groups: use group name
@@ -329,15 +370,34 @@ def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
 
     When reading from Vec signal groups (for instance port connections), automatically adds .asUInt -/
 def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
-  -- Check if this is clock or reset (should be implicit)
+  -- Check if this is clock or reset
   if ctx.clockWires.contains w then
-    "clock"
+    -- If used in combinational logic, use renamed port; otherwise use implicit clock
+    if isWireUsedInCombLogic c w.name then
+      getIOPortName ctx c w
+    else
+      "clock"
   else if ctx.resetWires.contains w then
-    "reset.asBool"
+    -- If used in combinational logic, use renamed port; otherwise use implicit reset
+    if isWireUsedInCombLogic c w.name then
+      getIOPortName ctx c w
+    else
+      "reset.asBool"
+  else if ctx.isSequential && w.name == "clock" && isWireUsedInCombLogic c w.name then
+    -- Explicit clock wire in Module (renamed to clock_in)
+    getIOPortName ctx c w
+  else if ctx.isSequential && w.name == "reset" && isWireUsedInCombLogic c w.name then
+    -- Explicit reset wire in Module (renamed to reset_in)
+    getIOPortName ctx c w
   else
     -- Check if wire belongs to a signal group
     match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
     | some (_, sg) =>
+        -- Check if this signal group is a DFF output (register)
+        let isDFFOutput := sg.wires.any (fun sw =>
+          c.gates.any (fun g => g.gateType == GateType.DFF && g.output.name == sw.name)
+        )
+
         -- Check if signal group matches indexed pattern AND a Vec exists for it
         match parseIndexedName sg.name with
         | some (baseName, vecIdx) =>
@@ -355,37 +415,47 @@ def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
                 s!"{baseName}({vecIdx})"
             else
               -- Not part of a Vec, use normal signal group reference
+              let sgRef := if isDFFOutput then s!"{sg.name}_reg" else sg.name
               if sg.width > 1 then
                 match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == w.name) with
-                | some (_, idx) => s!"{sg.name}({idx})"
+                | some (_, idx) => s!"{sgRef}({idx})"
                 | none =>
                     -- Add .asUInt if this is an output with Vec declaration
                     let isOutput := c.outputs.any (fun ow => sg.wires.any (fun sw => sw.name == ow.name))
                     if isOutput && outputHasIndividualBitAssignmentsHelper c sg then
-                      s!"{sg.name}.asUInt"
+                      s!"{sgRef}.asUInt"
                     else
-                      sg.name
+                      sgRef
               else
-                sg.name
+                sgRef
         | none =>
             -- Not an indexed pattern - use normal signal group reference
+            let sgRef := if isDFFOutput then s!"{sg.name}_reg" else sg.name
             if sg.width > 1 then
               match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == w.name) with
-              | some (_, idx) => s!"{sg.name}({idx})"
+              | some (_, idx) => s!"{sgRef}({idx})"
               | none =>
                     -- Add .asUInt if this is an output with Vec declaration
                     let isOutput := c.outputs.any (fun ow => sg.wires.any (fun sw => sw.name == ow.name))
                     if isOutput && outputHasIndividualBitAssignmentsHelper c sg then
-                      s!"{sg.name}.asUInt"
+                      s!"{sgRef}.asUInt"
                     else
-                      sg.name
+                      sgRef
             else
-              sg.name
+              sgRef
     | none =>
-        -- Check if it's a bundle field
-        -- For now, just use the wire name
-        -- TODO: Implement bundle field resolution
-        w.name
+        -- Check if this wire is a DFF output (register)
+        -- If so, use _reg suffix since all registers now use that suffix
+        let isDFFOutput := c.gates.any (fun g =>
+          g.gateType == GateType.DFF && g.output.name == w.name
+        )
+        if isDFFOutput then
+          s!"{w.name}_reg"
+        else
+          -- Check if it's a bundle field
+          -- For now, just use the wire name
+          -- TODO: Implement bundle field resolution
+          w.name
 
 /-! ## Bundle Generation -/
 
@@ -421,11 +491,24 @@ def generateWireIO (ctx : Context) (c : Circuit) (w : Wire) (isInput : Bool) : O
   -- Skip implicit clock/reset
   if ctx.clockWires.contains w || ctx.resetWires.contains w then
     none
-  else
-    -- Skip DFF outputs when they're circuit outputs (registers handle these)
-    let isDFFOutput := c.gates.any (fun g => g.gateType == GateType.DFF && g.output.name == w.name)
-    if !isInput && isDFFOutput then
+  -- For Module (sequential circuits), skip wires named "clock" or "reset"
+  -- ONLY if they're not used in non-DFF gates (i.e., only used implicitly)
+  else if ctx.isSequential && (w.name == "clock" || w.name == "reset") then
+    if isWireUsedInCombLogic c w.name then
+      -- Generate explicit IO with renamed port to avoid conflict with implicit
+      let portName := getIOPortName ctx c w
+      let dir := if isInput then "Input" else "Output"
+      some s!"  val {portName} = IO({dir}(Bool()))"
+    else
+      -- Only used implicitly (for DFFs or instances), skip from IO
       none
+  else
+    -- Skip DFF outputs ONLY if they're NOT circuit outputs (internal register state)
+    -- DFF outputs that ARE circuit outputs need to be exposed as IO ports
+    let isDFFOutput := c.gates.any (fun g => g.gateType == GateType.DFF && g.output.name == w.name)
+    let isCircuitOutput := c.outputs.any (fun out => out.name == w.name)
+    if !isInput && isDFFOutput && !isCircuitOutput then
+      none  -- Internal register, skip
     else
       -- Check if wire is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
@@ -652,26 +735,53 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                 let in1Bus := isPartOfBus ctx in1
                 let selBus := isPartOfBus ctx sel
 
-                -- Get the bit index of select within its bus (if any)
-                let selIdx := ctx.wireToIndex.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2)
+                -- Check if ALL gates have inputs from the SAME buses (uniform inputs)
+                -- This is critical for bus-wide MUX operations
+                let allGatesUniform := gates.all (fun g =>
+                  match g.inputs with
+                  | [g_in0, g_in1, g_sel] =>
+                      let g_in0Bus := isPartOfBus ctx g_in0
+                      let g_in1Bus := isPartOfBus ctx g_in1
+                      let g_selBus := isPartOfBus ctx g_sel
+                      -- Check if this gate's inputs are from the same buses as firstGate
+                      (match g_in0Bus, in0Bus with
+                       | some gb0, some b0 => gb0.name == b0.name
+                       | none, none => true
+                       | _, _ => false) &&
+                      (match g_in1Bus, in1Bus with
+                       | some gb1, some b1 => gb1.name == b1.name
+                       | none, none => true
+                       | _, _ => false) &&
+                      (match g_selBus, selBus with
+                       | some gbs, some bs => gbs.name == bs.name
+                       | none, none => true
+                       | _, _ => false)
+                  | _ => false
+                )
 
-                -- Generate based on pattern
-                match in0Bus, in1Bus, selBus, selIdx with
-                | some b0, some b1, none, _ =>
-                    -- Bus mux with standalone scalar select: out := Mux(sel, in1, in0)
-                    let outRef := signalGroupRef ctx bus.name
-                    let in1Ref := signalGroupRefForBusOp ctx _c b1
-                    let in0Ref := signalGroupRefForBusOp ctx _c b0
-                    some s!"  {outRef} := Mux({sel.name}, {in1Ref}, {in0Ref})"
-                | some b0, some b1, some selB, some idx =>
-                    -- Bus mux with indexed select: out := Mux(selBus(idx), in1, in0)
-                    let outRef := signalGroupRef ctx bus.name
-                    let in1Ref := signalGroupRefForBusOp ctx _c b1
-                    let in0Ref := signalGroupRefForBusOp ctx _c b0
-                    some s!"  {outRef} := Mux({selB.name}({idx}), {in1Ref}, {in0Ref})"
-                | _, _, _, _ =>
-                    -- Fall through to individual gates
-                    none
+                if !allGatesUniform then
+                  none  -- Gates have inputs from different buses, use individual assignments
+                else
+                  -- Get the bit index of select within its bus (if any)
+                  let selIdx := ctx.wireToIndex.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2)
+
+                  -- Generate based on pattern
+                  match in0Bus, in1Bus, selBus, selIdx with
+                  | some b0, some b1, none, _ =>
+                      -- Bus mux with standalone scalar select: out := Mux(sel, in1, in0)
+                      let outRef := signalGroupRef ctx bus.name
+                      let in1Ref := signalGroupRefForBusOp ctx _c b1
+                      let in0Ref := signalGroupRefForBusOp ctx _c b0
+                      some s!"  {outRef} := Mux({sel.name}, {in1Ref}, {in0Ref})"
+                  | some b0, some b1, some selB, some idx =>
+                      -- Bus mux with indexed select: out := Mux(selBus(idx), in1, in0)
+                      let outRef := signalGroupRef ctx bus.name
+                      let in1Ref := signalGroupRefForBusOp ctx _c b1
+                      let in0Ref := signalGroupRefForBusOp ctx _c b0
+                      some s!"  {outRef} := Mux({selB.name}({idx}), {in1Ref}, {in0Ref})"
+                  | _, _, _, _ =>
+                      -- Fall through to individual gates
+                      none
             | _ => none
         | GateType.BUF =>
             -- Simple bus assignment: out := in
@@ -1177,9 +1287,6 @@ def findDFFs (c : Circuit) : List Gate :=
 def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
   match g.inputs with
   | [_d, clk, _rst] =>
-      -- Check if this register output is also a circuit output
-      let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
-
       -- Check if this register is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, sg) =>
@@ -1194,8 +1301,8 @@ def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
               match ctx.resetWires.head? with
               | some rw => rw.name
               | none => "reset"
-            -- If it's a circuit output, don't add _reg suffix
-            let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
+            -- Always use _reg suffix to avoid conflict with IO ports
+            let regName := s!"{sg.name}_reg"
             s!"  val {regName} = ShoumeiReg({sg.width}, {clockRef}, {resetRef})"
           else
             ""
@@ -1208,7 +1315,8 @@ def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
             match ctx.resetWires.head? with
             | some rw => rw.name
             | none => "reset"
-          let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
+          -- Always use _reg suffix to avoid conflict with IO ports
+          let regName := s!"{g.output.name}_reg"
           s!"  val {regName} = ShoumeiReg(1, {clockRef}, {resetRef})"
   | _ =>
       "  // ERROR: DFF should have 3 inputs [d, clk, reset]"
@@ -1217,9 +1325,6 @@ def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
 def generateRegisterUpdate (ctx : Context) (c : Circuit) (g : Gate) : String :=
   match g.inputs with
   | [d, _clk, _rst] =>
-      -- Check if this register output is also a circuit output
-      let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
-
       -- Check if register output is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, outputGroup) =>
@@ -1233,31 +1338,58 @@ def generateRegisterUpdate (ctx : Context) (c : Circuit) (g : Gate) : String :=
                   | some (baseName, vecIdx) => s!"{baseName}({vecIdx})"
                   | none => dGroup.name
               | none => wireRef ctx c d  -- Fallback to wireRef for non-grouped wires
-            let regName := if isCircuitOutput then outputGroup.name else s!"{outputGroup.name}_reg"
+            -- Always use _reg suffix
+            let regName := s!"{outputGroup.name}_reg"
             s!"  {regName} := {dName}"
           else
             ""
       | none =>
           -- Standalone register
           let dName := wireRef ctx c d
-          let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
+          -- Always use _reg suffix
+          let regName := s!"{g.output.name}_reg"
           s!"  {regName} := {dName}"
   | _ =>
       ""
+
+/-- Generate wiring from internal registers to output IO ports -/
+def generateRegisterOutputWiring (ctx : Context) (c : Circuit) (g : Gate) : String :=
+  -- Check if this register output is a circuit output
+  let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
+  if !isCircuitOutput then
+    ""  -- Not a circuit output, no wiring needed
+  else
+    -- Generate wiring statement: output := output_reg
+    match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
+    | some (_, outputGroup) =>
+        -- Part of a bus - only emit for first register in group
+        if outputGroup.wires.head? == some g.output then
+          s!"  {outputGroup.name} := {outputGroup.name}_reg"
+        else
+          ""
+    | none =>
+        -- Standalone register
+        s!"  {g.output.name} := {g.output.name}_reg"
 
 /-- Generate all register logic -/
 def generateRegisters (ctx : Context) (c : Circuit) : String :=
   let dffs := findDFFs c
   let decls := dffs.map (generateRegisterDecl ctx c)
   let updates := dffs.map (generateRegisterUpdate ctx c)
+  let wirings := dffs.map (generateRegisterOutputWiring ctx c)
 
   let declsStr := joinLines (decls.filter (· != ""))
   let updatesStr := joinLines (updates.filter (· != ""))
+  let wiringsStr := joinLines (wirings.filter (· != ""))
 
   if declsStr.isEmpty then
     ""
   else
-    declsStr ++ "\n\n" ++ updatesStr
+    let result := declsStr ++ "\n\n" ++ updatesStr
+    if wiringsStr.isEmpty then
+      result
+    else
+      result ++ "\n\n" ++ wiringsStr
 
 /-! ## Module Generation -/
 
