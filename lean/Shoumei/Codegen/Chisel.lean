@@ -209,6 +209,53 @@ def hasUniformBinaryInputs (gates : List Gate) : Bool :=
     -- If both inputs uniform (same source for all gates), bus-wide operation
     unique0.length == 1 && unique1.length == 1
 
+/-- Check if gates match a pattern that generateBusWideOp will handle.
+    Returns false (use UInt) if gates will generate bus-wide operation or Cat.
+    Returns true (use Vec) if gates will generate individual assignments. -/
+def willGenerateIndividualAssignments (gates : List Gate) : Bool :=
+  match gates.head? with
+  | none => false  -- No gates, doesn't need Vec
+  | some firstGate =>
+      let allSameType := gates.all (fun g => g.gateType == firstGate.gateType)
+      if !allSameType then
+        true  -- Mixed gate types, needs Vec
+      else
+        match firstGate.gateType with
+        | GateType.BUF =>
+            -- BUF gates - check if from same source (bus-wide) or different sources (Vec)
+            let inputBases := gates.filterMap (fun g =>
+              match g.inputs with
+              | [inp] => some (extractBaseName inp.name)
+              | _ => none
+            )
+            let uniqueBases := inputBases.eraseDups
+            !(uniqueBases.length == 1)  -- Same source = bus-wide (UInt), different = Vec
+        | GateType.AND | GateType.OR | GateType.XOR =>
+            -- AND/OR/XOR - check input pattern
+            -- Pattern 1: Both inputs are buses with same base → bus-wide binary op (UInt)
+            -- Pattern 2: One bus, one scalar → Cat expression (UInt)
+            -- Pattern 3: Non-uniform inputs → individual assignments (Vec)
+            let inputPairs := gates.filterMap (fun g =>
+              match g.inputs with
+              | [in0, in1] => some (extractBaseName in0.name, extractBaseName in1.name)
+              | _ => none
+            )
+            if inputPairs.length != gates.length then
+              true  -- Some gates lack 2 inputs, Vec
+            else
+              let (in0Bases, in1Bases) := inputPairs.unzip
+              let unique0 := in0Bases.eraseDups
+              let unique1 := in1Bases.eraseDups
+              -- If uniform (both have single unique base), generates bus-wide or Cat → UInt
+              !(unique0.length == 1 && unique1.length == 1)
+        | GateType.MUX =>
+            -- MUX gates - complex patterns, conservatively use Vec
+            -- (generateBusWideOp has specific patterns for select signal)
+            false  -- Assume bus-wide for now
+        | _ =>
+            -- Other gates (NOT, DFF, etc.) don't match bus-wide patterns
+            true  -- Needs Vec
+
 /-- Check if an output signal group has individual bit assignments from gates.
     Returns true only if the output has gates doing individual bit computations,
     not just complete BUF copies from another signal group or bus-wide operations. -/
@@ -236,32 +283,8 @@ def outputHasIndividualBitAssignmentsHelper (c : Circuit) (sg : SignalGroup) : B
             true  -- Mixed types or incomplete coverage - needs Vec
           else
             -- All bits have same gate type and all bits covered
-            -- Check if this matches a bus-wide operation pattern
-            match firstGate.gateType with
-            | GateType.BUF =>
-                -- BUF gates - check if copying from same source (bus-wide assignment)
-                let inputWires := outputGates.filterMap (fun g =>
-                  match g.inputs with
-                  | [inp] => some inp.name
-                  | _ => none
-                )
-                let inputBases := inputWires.filterMap (fun name =>
-                  let parts := name.splitOn "_"
-                  if parts.length >= 2 then
-                    let lastPart := parts.getLast!
-                    if lastPart.all (fun c => c.isDigit) then
-                      some (String.intercalate "_" (parts.dropLast))
-                    else
-                      some name
-                  else
-                    some name
-                )
-                let uniqueBases := inputBases.eraseDups
-                !(uniqueBases.length == 1)  -- Same source = UInt, different sources = Vec
-            | _ =>
-                -- Non-BUF gates may or may not be handled by generateBusWideOp
-                -- To be safe, use Vec (allows individual bit assignments)
-                true
+            -- Check if this will generate individual assignments or bus-wide operation
+            willGenerateIndividualAssignments outputGates
 
 /-- Check if a signal group should be declared as Vec(width, Bool()) instead of UInt(width.W).
     Heuristic: Use Vec if the signal group has individual bit assignments that don't form
@@ -295,32 +318,8 @@ def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
             true  -- Mixed types or incomplete coverage - needs Vec
           else
             -- All bits have same gate type and all bits covered
-            -- Check if this matches a bus-wide operation pattern
-            match firstGate.gateType with
-            | GateType.BUF =>
-                -- BUF gates - check if copying from same source (bus-wide assignment)
-                let inputWires := outputGates.filterMap (fun g =>
-                  match g.inputs with
-                  | [inp] => some inp.name
-                  | _ => none
-                )
-                let inputBases := inputWires.filterMap (fun name =>
-                  let parts := name.splitOn "_"
-                  if parts.length >= 2 then
-                    let lastPart := parts.getLast!
-                    if lastPart.all (fun c => c.isDigit) then
-                      some (String.intercalate "_" (parts.dropLast))
-                    else
-                      some name
-                  else
-                    some name
-                )
-                let uniqueBases := inputBases.eraseDups
-                !(uniqueBases.length == 1)  -- Same source = UInt, different sources = Vec
-            | _ =>
-                -- Non-BUF gates may or may not be handled by generateBusWideOp
-                -- To be safe, use Vec (allows individual bit assignments)
-                true
+            -- Check if this will generate individual assignments or bus-wide operation
+            willGenerateIndividualAssignments outputGates
 
 /-- Generate reference to a wire in generated Chisel code.
 
