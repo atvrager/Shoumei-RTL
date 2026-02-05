@@ -178,12 +178,129 @@ def isVecBase (ctx : Context) (baseName : String) : Bool :=
   )
   matchingGroups.length >= 2
 
+/-- Check if an output signal group has individual bit assignments from gates.
+    Returns true only if the output has gates doing individual bit computations,
+    not just complete BUF copies from another signal group. -/
+def outputHasIndividualBitAssignmentsHelper (c : Circuit) (sg : SignalGroup) : Bool :=
+  if sg.width <= 1 then
+    false  -- Single-bit outputs don't need Vec
+  else
+    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+
+    -- Get all gates that write to this signal group
+    let outputGates := combGates.filter (fun g =>
+      sg.wires.any (fun w => w.name == g.output.name)
+    )
+
+    if outputGates.isEmpty then
+      false  -- No gates, doesn't need Vec
+    else
+      -- Check if all gates are BUF gates from the same source signal group
+      let allBufs := outputGates.all (fun g => g.gateType == GateType.BUF)
+
+      if !allBufs then
+        true  -- Has non-BUF gates, needs Vec for individual bit ops
+      else
+        -- All BUF gates - check if they're copying from same source
+        let inputWires := outputGates.filterMap (fun g =>
+          match g.inputs with
+          | [inp] => some inp.name
+          | _ => none
+        )
+
+        -- Extract base names (signal groups)
+        -- Handle names like "dest_tag_0" -> "dest_tag" by removing last underscore+digit
+        let inputBases := inputWires.filterMap (fun name =>
+          let parts := name.splitOn "_"
+          if parts.length >= 2 then
+            -- Check if last part is a digit (index)
+            let lastPart := parts.getLast!
+            if lastPart.all (fun c => c.isDigit) then
+              -- Remove last part (the index) to get base name
+              some (String.intercalate "_" (parts.dropLast))
+            else
+              some name  -- No digit suffix
+          else
+            some name  -- No underscore pattern
+        )
+
+        let uniqueBases := inputBases.eraseDups
+
+        -- If all BUF gates copy from same source AND cover all bits,
+        -- it's a complete bus copy, doesn't need Vec
+        -- Otherwise (multiple sources or incomplete), needs Vec
+        !(uniqueBases.length == 1 && outputGates.length == sg.width)
+
+/-- Check if a signal group should be declared as Vec(width, Bool()) instead of UInt(width.W).
+    Heuristic: Use Vec if the signal group has individual bit assignments that don't form
+    a complete bus-wide operation. This happens when:
+    1. Signal group has gates writing to individual bits (like c(0) := ab_and0 | cin_ab0)
+    2. Signal group has incomplete coverage (not all bits assigned by same operation)
+
+    Don't use Vec for complete bus-wide operations like a := base (all bits copied from one bus). -/
+def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
+  if sg.width <= 1 then
+    false  -- Single-bit signals don't need Vec
+  else
+    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+
+    -- Get all combinational gates that write to this signal group
+    let outputGates := combGates.filter (fun g =>
+      sg.wires.any (fun w => w.name == g.output.name)
+    )
+
+    if outputGates.isEmpty then
+      false  -- No gates write to this signal group
+    else
+      -- Check if this would be recognized as a bus-wide operation
+      -- If all gates are same type and operate uniformly, it's a bus-wide op (use UInt)
+      match outputGates.head? with
+      | none => false  -- Should not happen since we checked isEmpty
+      | some firstGate =>
+          let allSameGateType := outputGates.all (fun g => g.gateType == firstGate.gateType)
+
+          if allSameGateType && outputGates.length == sg.width then
+            -- All bits have same gate type and all bits covered
+            -- Check if this is a uniform operation (all gates have same input pattern)
+
+            -- Check if all gates are BUF gates from the same source signal group
+            if firstGate.gateType == GateType.BUF then
+              let inputWires := outputGates.filterMap (fun g =>
+                match g.inputs with
+                | [inp] => some inp.name
+                | _ => none
+              )
+
+              -- Extract base names to identify source signal groups
+              let inputBases := inputWires.filterMap (fun name =>
+                let parts := name.splitOn "_"
+                if parts.length >= 2 then
+                  let lastPart := parts.getLast!
+                  if lastPart.all (fun c => c.isDigit) then
+                    some (String.intercalate "_" (parts.dropLast))
+                  else
+                    some name
+                else
+                  some name
+              )
+
+              let uniqueBases := inputBases.eraseDups
+              !(uniqueBases.length == 1)  -- If one source, it's bus copy (use UInt)
+            else
+              -- Non-BUF gates but uniform - this is a bus-wide operation (use UInt)
+              false
+          else
+            -- Mixed gate types or incomplete coverage - needs Vec for individual bit access
+            true
+
 /-- Generate reference to a wire in generated Chisel code.
 
     For wires in signal groups: use group name
     For bundle fields: use io.bundle_name.field_name
-    For standalone wires: use wire name directly -/
-def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
+    For standalone wires: use wire name directly
+
+    When reading from Vec signal groups (for instance port connections), automatically adds .asUInt -/
+def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
   -- Check if this is clock or reset (should be implicit)
   if ctx.clockWires.contains w then
     "clock"
@@ -202,7 +319,10 @@ def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
               if sg.width > 1 then
                 match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == w.name) with
                 | some (_, bitIdx) => s!"{baseName}({vecIdx})({bitIdx})"
-                | none => s!"{baseName}({vecIdx})"  -- Whole bus element
+                | none =>
+                    -- Whole bus element - add .asUInt if it's a Vec
+                    let baseRef := s!"{baseName}({vecIdx})"
+                    if needsVecDeclarationHelper sg c then s!"{baseRef}.asUInt" else baseRef
               else
                 s!"{baseName}({vecIdx})"
             else
@@ -210,7 +330,13 @@ def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
               if sg.width > 1 then
                 match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == w.name) with
                 | some (_, idx) => s!"{sg.name}({idx})"
-                | none => sg.name
+                | none =>
+                    -- Add .asUInt if this is an output with Vec declaration
+                    let isOutput := c.outputs.any (fun ow => sg.wires.any (fun sw => sw.name == ow.name))
+                    if isOutput && outputHasIndividualBitAssignmentsHelper c sg then
+                      s!"{sg.name}.asUInt"
+                    else
+                      sg.name
               else
                 sg.name
         | none =>
@@ -218,7 +344,13 @@ def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
             if sg.width > 1 then
               match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == w.name) with
               | some (_, idx) => s!"{sg.name}({idx})"
-              | none => sg.name
+              | none =>
+                    -- Add .asUInt if this is an output with Vec declaration
+                    let isOutput := c.outputs.any (fun ow => sg.wires.any (fun sw => sw.name == ow.name))
+                    if isOutput && outputHasIndividualBitAssignmentsHelper c sg then
+                      s!"{sg.name}.asUInt"
+                    else
+                      sg.name
             else
               sg.name
     | none =>
@@ -272,7 +404,11 @@ def generateWireIO (ctx : Context) (c : Circuit) (w : Wire) (isInput : Bool) : O
       | some (_, sg) =>
           -- Only emit IO for the first wire in the group (we'll create one typed signal)
           if sg.wires.head? == some w then
-            let chiselType := signalGroupToChisel sg
+            -- For outputs with individual bit assignments, use Vec type
+            let chiselType := if !isInput && outputHasIndividualBitAssignmentsHelper c sg && sg.width > 1 then
+                               s!"Vec({sg.width}, Bool())"
+                             else
+                               signalGroupToChisel sg
             let dir := if isInput then "Input" else "Output"
             some s!"  val {sg.name} = IO({dir}({chiselType}))"
           else
@@ -297,13 +433,18 @@ def generateIO (ctx : Context) (c : Circuit) : String :=
 /-! ## Internal Signal Generation -/
 
 /-- Generate Wire declaration for internal signals -/
-def generateInternalWireDecl (ctx : Context) (_c : Circuit) (w : Wire) : Option String :=
+def generateInternalWireDecl (ctx : Context) (c : Circuit) (w : Wire) : Option String :=
   -- Check if wire is part of a signal group
   match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
   | some (_, sg) =>
       -- Only emit for first wire in group
       if sg.wires.head? == some w then
-        let chiselType := signalGroupToChisel sg
+        -- Determine if we need Vec for individual bit assignments
+        let useVec := needsVecDeclarationHelper sg c
+        let chiselType := if useVec then
+                           s!"Vec({sg.width}, Bool())"
+                         else
+                           signalGroupToChisel sg
         some s!"  val {sg.name} = Wire({chiselType})"
       else
         none
@@ -445,6 +586,27 @@ def groupGatesByBus (ctx : Context) (gates : List Gate) : List (SignalGroup × L
 def isCompleteBusOp (_ctx : Context) (bus : SignalGroup) (gates : List Gate) : Bool :=
   gates.length == bus.width
 
+/-- Get reference to an entire signal group (for bus connections).
+    Handles Vec indexing if the signal group is part of a Vec pattern.
+    Example: "next_0" -> "next(0)", "wr_data" -> "wr_data" -/
+def signalGroupRef (ctx : Context) (sgName : String) : String :=
+  match parseIndexedName sgName with
+  | some (baseName, vecIdx) =>
+      if isVecBase ctx baseName then
+        s!"{baseName}({vecIdx})"  -- Part of Vec - use Vec indexing
+      else
+        sgName  -- Not part of Vec - use signal group name directly
+  | none => sgName  -- No index pattern - use as-is
+
+/-- Get reference to a signal group for bus operations, adding .asUInt if it's declared as Vec. -/
+def signalGroupRefForBusOp (ctx : Context) (c : Circuit) (sg : SignalGroup) : String :=
+  let baseRef := signalGroupRef ctx sg.name
+  -- Check if this signal group is declared as Vec (needs .asUInt for bus ops)
+  if needsVecDeclarationHelper sg c then
+    s!"{baseRef}.asUInt"
+  else
+    baseRef
+
 /-- Generate bus-wide operation for gates that operate on all bits of a bus -/
 def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates : List Gate) : Option String :=
   if !isCompleteBusOp ctx bus gates then none
@@ -469,10 +631,16 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                 match in0Bus, in1Bus, selBus, selIdx with
                 | some b0, some b1, none, _ =>
                     -- Bus mux with standalone scalar select: out := Mux(sel, in1, in0)
-                    some s!"  {bus.name} := Mux({sel.name}, {b1.name}, {b0.name})"
+                    let outRef := signalGroupRef ctx bus.name
+                    let in1Ref := signalGroupRefForBusOp ctx _c b1
+                    let in0Ref := signalGroupRefForBusOp ctx _c b0
+                    some s!"  {outRef} := Mux({sel.name}, {in1Ref}, {in0Ref})"
                 | some b0, some b1, some selB, some idx =>
                     -- Bus mux with indexed select: out := Mux(selBus(idx), in1, in0)
-                    some s!"  {bus.name} := Mux({selB.name}({idx}), {b1.name}, {b0.name})"
+                    let outRef := signalGroupRef ctx bus.name
+                    let in1Ref := signalGroupRefForBusOp ctx _c b1
+                    let in0Ref := signalGroupRefForBusOp ctx _c b0
+                    some s!"  {outRef} := Mux({selB.name}({idx}), {in1Ref}, {in0Ref})"
                 | _, _, _, _ =>
                     -- Fall through to individual gates
                     none
@@ -485,7 +653,9 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                 match in0Bus with
                 | some b0 =>
                     -- Bus-wide assignment: out := in
-                    some s!"  {bus.name} := {b0.name}"
+                    let outRef := signalGroupRef ctx bus.name
+                    let inRef := signalGroupRefForBusOp ctx _c b0
+                    some s!"  {outRef} := {inRef}"
                 | none => none
             | _ => none
         | GateType.AND | GateType.OR | GateType.XOR =>
@@ -498,21 +668,30 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                 match in0Bus, in1Bus with
                 | some b0, some b1 =>
                     -- Bus-wide binary op: out := in0 op in1
-                    some s!"  {bus.name} := {b0.name} {op} {b1.name}"
+                    let outRef := signalGroupRef ctx bus.name
+                    let in0Ref := signalGroupRefForBusOp ctx _c b0
+                    let in1Ref := signalGroupRefForBusOp ctx _c b1
+                    some s!"  {outRef} := {in0Ref} {op} {in1Ref}"
                 | some b0, none =>
-                    -- Bus op scalar: generate for loop
+                    -- Bus op scalar: use Cat to build result
+                    let outRef := signalGroupRef ctx bus.name
+                    -- Use plain signalGroupRef (not ForBusOp) because we need Vec element access
+                    let in0Ref := signalGroupRef ctx b0.name
                     let forLoop := joinLines [
-                      s!"  for (i <- 0 until {bus.width}) " ++ "{",
-                      s!"    {bus.name}(i) := {b0.name}(i) {op} {in1.name}",
-                      "  }"
+                      s!"  {outRef} := Cat(",
+                      s!"    (0 until {bus.width}).reverse.map(i => {in0Ref}(i) {op} {in1.name})",
+                      "  )"
                     ]
                     some forLoop
                 | none, some b1 =>
-                    -- Scalar op bus: generate for loop
+                    -- Scalar op bus: use Cat to build result
+                    let outRef := signalGroupRef ctx bus.name
+                    -- Use plain signalGroupRef (not ForBusOp) because we need Vec element access
+                    let in1Ref := signalGroupRef ctx b1.name
                     let forLoop := joinLines [
-                      s!"  for (i <- 0 until {bus.width}) " ++ "{",
-                      s!"    {bus.name}(i) := {in0.name} {op} {b1.name}(i)",
-                      "  }"
+                      s!"  {outRef} := Cat(",
+                      s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Ref}(i))",
+                      "  )"
                     ]
                     some forLoop
                 | none, none => none
@@ -717,12 +896,13 @@ def generateCombGates (ctx : Context) (c : Circuit) : String :=
   )
   let individualOps := remainingGates.map (generateCombGate ctx c) |>.filter (· != "")
 
-  -- Consolidate indexed patterns into for loops
+  -- Consolidate constant assignments (but skip for loop consolidation to avoid bit extraction LHS)
   let allOps := busOps ++ individualOps
   let afterConstOpt := consolidateConstantAssignments allOps
-  let consolidated := consolidateIntoForLoops afterConstOpt
+  -- Disabled: consolidateIntoForLoops creates bit extraction assignments which don't work in Chisel
+  -- let consolidated := consolidateIntoForLoops afterConstOpt
 
-  joinLines consolidated
+  joinLines afterConstOpt
 
 /-! ## Module Instance Generation -/
 
@@ -801,6 +981,11 @@ def groupPortMapBySignalGroup (ctx : Context) (portMap : List (String × Wire))
         acc ++ [(key, [entry])]
   ) [] |>.map (fun ((sg, pb), entries) => (sg, pb, entries))
 
+/-- Convert bracket notation in port names to Chisel parenthesis notation.
+    Example: "alloc_oldPhysRd[0]" -> "alloc_oldPhysRd(0)" -/
+def convertPortNameToChisel (portName : String) : String :=
+  portName.replace "[" "(" |>.replace "]" ")"
+
 /-- Generate Chisel module instantiation and port connections -/
 def generateInstance (ctx : Context) (c : Circuit) (inst : CircuitInstance) : List String :=
   -- 1. Create module instantiation statement
@@ -823,41 +1008,116 @@ def generateInstance (ctx : Context) (c : Circuit) (inst : CircuitInstance) : Li
 
   -- 5. Generate bus connections (one connection per signal group)
   let busConnections := busGroups.map (fun (sgName, portBase, entries) =>
-    -- Determine direction: check if wire is produced by any gate in parent
-    -- If wire is NOT produced by gates, it must be produced by instance = output
-    -- If wire IS produced by gates or is input, it drives instance = input
+    -- Determine direction using multiple heuristics:
+    -- 1. If wire produced by gates or is circuit input → instance INPUT
+    -- 2. If wire is circuit output → instance OUTPUT
+    -- 3. Use port name heuristic as fallback
     let isProducedByGate := entries.any (fun (_, w) =>
       c.gates.any (fun g => g.output.name == w.name)
     )
     let isCircuitInput := entries.any (fun (_, w) =>
       c.inputs.any (fun inp => inp.name == w.name)
     )
-    let isInstanceInput := isProducedByGate || isCircuitInput
+    let isCircuitOutput := entries.any (fun (_, w) =>
+      c.outputs.any (fun out => out.name == w.name)
+    )
+
+    -- Port name heuristics: common input/output patterns
+    let portNameSuggestsInput :=
+      portBase.startsWith "in" || portBase.startsWith "d" ||
+      portBase.startsWith "a" || portBase.startsWith "b" ||
+      portBase.startsWith "sel" || portBase.startsWith "addr" ||
+      portBase.startsWith "data" || portBase.startsWith "en"
+    let portNameSuggestsOutput :=
+      portBase.startsWith "out" || portBase.startsWith "q" ||
+      portBase.startsWith "result"
+
+    -- Determine direction (prefer wire source over port name heuristic)
+    let isInstanceInput :=
+      if isProducedByGate || isCircuitInput then true
+      else if isCircuitOutput then false
+      else if portNameSuggestsInput && !portNameSuggestsOutput then true
+      else if portNameSuggestsOutput && !portNameSuggestsInput then false
+      else isProducedByGate || isCircuitInput  -- Default: check wire source
+
+    -- Get proper reference for entire signal group (handles Vec indexing)
+    let sgRef := signalGroupRef ctx sgName
 
     -- Generate connection statement
     if isInstanceInput then
-      s!"  {inst.instName}.{portBase} := {sgName}"
+      s!"  {inst.instName}.{portBase} := {sgRef}"
     else
-      s!"  {sgName} := {inst.instName}.{portBase}"
+      -- For instance outputs, add .asUInt if receiving signal is not Vec
+      -- (instance output might be Vec but parent signal is UInt)
+      let receivingSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
+      let needsAsUInt := match receivingSg with
+        | some (_, sg) => !needsVecDeclarationHelper sg c
+        | none => false  -- Standalone wire, no conversion needed
+      let instRef := if needsAsUInt then
+                      s!"{inst.instName}.{portBase}.asUInt"
+                    else
+                      s!"{inst.instName}.{portBase}"
+      s!"  {sgRef} := {instRef}"
   )
 
-  -- 6. Generate standalone wire connections (one per wire)
-  -- For standalone wires, use the FULL port name (don't strip indices)
-  let standaloneConnections := standaloneEntries.map (fun (portName, wire) =>
-    let wireRefStr := wireRef ctx c wire
+  -- 6. Group standalone entries by port base name (for bundled ports like alloc_oldPhysRd[0..5])
+  --    Only group entries that use bracket notation (not underscore/digit suffixes)
+  let standaloneGrouped : List (String × List (String × Wire)) :=
+    standaloneEntries.foldl (fun acc (portName, wire) =>
+      -- Only group if port name contains brackets (bundled notation)
+      if portName.contains '[' then
+        let baseName := extractPortBaseName portName
+        match acc.find? (fun (base, _) => base == baseName) with
+        | some (_, entries) =>
+            acc.filter (fun (base, _) => base != baseName) ++ [(baseName, entries ++ [(portName, wire)])]
+        | none =>
+            acc ++ [(baseName, [(portName, wire)])]
+      else
+        -- Not bundled - treat as separate entry with full name as base
+        acc ++ [(portName, [(portName, wire)])]
+    ) []
 
-    -- Same direction logic: check if wire is produced by gate or is input
-    let isProducedByGate := c.gates.any (fun g => g.output.name == wire.name)
-    let isCircuitInput := c.inputs.any (fun inp => inp.name == wire.name)
-    let isInstanceInput := isProducedByGate || isCircuitInput
+  -- 7. Generate standalone wire connections
+  let standaloneConnections := standaloneGrouped.flatMap (fun (baseName, entries) =>
+    if entries.length > 1 then
+      -- Multiple entries with same base - generate Cat expression
+      let sortedEntries := entries.toArray.qsort (fun (p1, _) (p2, _) => p1 < p2) |>.toList
+      let wireRefs := sortedEntries.map (fun (_, w) => wireRef ctx c w)
+      let catExpr := "Cat(" ++ String.intercalate ", " wireRefs.reverse ++ ")"  -- Cat is MSB-first
 
-    if isInstanceInput then
-      s!"  {inst.instName}.{portName} := {wireRefStr}"
+      -- Determine direction (check first entry)
+      let (_, firstWire) := sortedEntries.head!
+      let isProducedByGate := c.gates.any (fun g => g.output.name == firstWire.name)
+      let isCircuitInput := c.inputs.any (fun inp => inp.name == firstWire.name)
+      let isInstanceInput := isProducedByGate || isCircuitInput
+
+      if isInstanceInput then
+        [s!"  {inst.instName}.{baseName} := {catExpr}"]
+      else
+        -- Output from instance - need to extract bits
+        sortedEntries.map (fun (portName, wire) =>
+          let wireRefStr := wireRef ctx c wire
+          let chiselPortName := convertPortNameToChisel portName
+          s!"  {wireRefStr} := {inst.instName}.{chiselPortName}"
+        )
     else
-      s!"  {wireRefStr} := {inst.instName}.{portName}"
+      -- Single entry - use direct connection
+      entries.map (fun (portName, wire) =>
+        let wireRefStr := wireRef ctx c wire
+        let chiselPortName := convertPortNameToChisel portName
+
+        let isProducedByGate := c.gates.any (fun g => g.output.name == wire.name)
+        let isCircuitInput := c.inputs.any (fun inp => inp.name == wire.name)
+        let isInstanceInput := isProducedByGate || isCircuitInput
+
+        if isInstanceInput then
+          s!"  {inst.instName}.{chiselPortName} := {wireRefStr}"
+        else
+          s!"  {wireRefStr} := {inst.instName}.{chiselPortName}"
+      )
   )
 
-  -- 7. Return instantiation + all connections
+  -- 8. Return instantiation + all connections
   [instantiation] ++ busConnections ++ standaloneConnections
 
 /-- Generate all module instantiations -/
@@ -981,20 +1241,20 @@ def generateModule (c : Circuit) : String :=
 
   let io := generateIO ctx c
   let internalWires := generateInternalWires ctx c
+  let registers := generateRegisters ctx c
   let combGates := generateCombGates ctx c
   let instances := generateInstances ctx c
-  let registers := generateRegisters ctx c
 
   let body := joinLines [
     io,
     "",
     internalWires,
     "",
+    registers,
+    "",
     combGates,
     "",
-    instances,
-    "",
-    registers
+    instances
   ]
 
   let footer := "}"
