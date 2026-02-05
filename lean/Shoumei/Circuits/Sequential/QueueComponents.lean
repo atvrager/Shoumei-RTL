@@ -88,35 +88,18 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   )
 
   -- 4. Read MuxTree Instance
+  -- Mux modules use signal groups: in0, in1, ..., sel, out
   let muxTreeName := s!"Mux{depth}x{width}"
-  let totalMuxPorts := depth * width + addrWidth + width
-  let useBundle := totalMuxPorts > 200
 
-  let mux_in_map := if useBundle then
-      (List.range depth).map (fun i =>
-        (List.range width).map (fun j =>
-           let idx := i * width + j
-           (s!"inputs[{idx}]", getReg i j)
-        )
-      ) |>.flatten
-    else
-      (List.range depth).map (fun i =>
-          (List.range width).map (fun j =>
-            (s!"in{i}_b{j}", getReg i j)
-          )
-      ) |>.flatten
-  
-  let mux_sel_map := if useBundle then
-      read_addr.enum.map (fun ⟨i, w⟩ =>
-        let idx := depth * width + i
-        (s!"inputs[{idx}]", w))
-    else
-      read_addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
+  let mux_in_map := (List.range depth).map (fun i =>
+    (List.range width).map (fun j =>
+      (s!"in{i}[{j}]", getReg i j)
+    )
+  ) |>.flatten
 
-  let mux_out_map := if useBundle then
-      read_data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
-    else
-      read_data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
+  let mux_sel_map := read_addr.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))
+
+  let mux_out_map := read_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
   
   let mux_inst : CircuitInstance := {
     moduleName := muxTreeName

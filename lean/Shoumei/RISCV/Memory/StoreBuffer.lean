@@ -551,10 +551,10 @@ def mkStoreBuffer8 : Circuit :=
     instName := "u_fwd_mux"
     portMap :=
       ((List.range 8).map (fun i =>
-        (List.range 32).map (fun j => (s!"inputs[{i * 32 + j}]", all_entry_data[i]![j]!))
+        (List.range 32).map (fun j => (s!"in{i}[{j}]", all_entry_data[i]![j]!))
       )).flatten ++
-      (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"inputs[{256 + k}]", w))) ++
-      (fwd_data.enum.map (fun ⟨j, w⟩ => (s!"outputs[{j}]", w)))
+      (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
+      (fwd_data.enum.map (fun ⟨j, w⟩ => (s!"out[{j}]", w)))
   }
 
   -- === Dequeue Readout ===
@@ -595,10 +595,10 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 32).map (fun j => (s!"inputs[{i * 32 + j}]", e[2+j]!))
+        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[2+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"inputs[{256 + k}]", w))) ++
-      ((List.range 32).map (fun j => (s!"outputs[{j}]", deq_bits[j]!)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
+      ((List.range 32).map (fun j => (s!"out[{j}]", deq_bits[j]!)))
   }
 
   -- Dequeue data readout via Mux8x32 (data)
@@ -608,10 +608,10 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 32).map (fun j => (s!"inputs[{i * 32 + j}]", e[34+j]!))
+        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[34+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"inputs[{256 + k}]", w))) ++
-      ((List.range 32).map (fun j => (s!"outputs[{j}]", deq_bits[32+j]!)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
+      ((List.range 32).map (fun j => (s!"out[{j}]", deq_bits[32+j]!)))
   }
 
   -- Dequeue size readout via Mux8x2
@@ -621,10 +621,10 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 2).map (fun j => (s!"in{i}_b{j}", e[66+j]!))
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[66+j]!))
       )).flatten ++
-      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel_{k}", w))) ++
-      ((List.range 2).map (fun j => (s!"out_{j}", deq_bits[64+j]!)))
+      (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
+      ((List.range 2).map (fun j => (s!"out[{j}]", deq_bits[64+j]!)))
   }
 
   -- === Assemble Circuit ===

@@ -778,11 +778,11 @@ def mkReservationStation4 : Circuit :=
   let opcode_mux_portmap :=
     (((List.range 4).map (fun i =>
         (List.range 6).map (fun j =>
-          (s!"in{i}_b{j}", Wire.mk s!"e{i}_{j + 1}")
+          (s!"in{i}[{j}]", Wire.mk s!"e{i}_{j + 1}")
         )
       )).flatten) ++
-    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
-    (dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+    (dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
 
   let opcode_mux_inst : CircuitInstance := {
     moduleName := "Mux4x6"
@@ -794,11 +794,11 @@ def mkReservationStation4 : Circuit :=
   let src1_mux_portmap :=
     (((List.range 4).map (fun i =>
         (List.range 32).map (fun j =>
-          (s!"in{i}_b{j}", Wire.mk s!"e{i}_{j + 20}")
+          (s!"in{i}[{j}]", Wire.mk s!"e{i}_{j + 20}")
         )
       )).flatten) ++
-    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
-    (dispatch_src1_data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+    (dispatch_src1_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
 
   let src1_mux_inst : CircuitInstance := {
     moduleName := "Mux4x32"
@@ -810,11 +810,11 @@ def mkReservationStation4 : Circuit :=
   let src2_mux_portmap :=
     (((List.range 4).map (fun i =>
         (List.range 32).map (fun j =>
-          (s!"in{i}_b{j}", Wire.mk s!"e{i}_{j + 59}")
+          (s!"in{i}[{j}]", Wire.mk s!"e{i}_{j + 59}")
         )
       )).flatten) ++
-    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
-    (dispatch_src2_data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+    (dispatch_src2_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
 
   let src2_mux_inst : CircuitInstance := {
     moduleName := "Mux4x32"
@@ -826,11 +826,11 @@ def mkReservationStation4 : Circuit :=
   let tag_mux_portmap :=
     (((List.range 4).map (fun i =>
         (List.range 6).map (fun j =>
-          (s!"in{i}_b{j}", Wire.mk s!"e{i}_{j + 7}")
+          (s!"in{i}[{j}]", Wire.mk s!"e{i}_{j + 7}")
         )
       )).flatten) ++
-    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
-    (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+    (dispatch_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+    (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
 
   let tag_mux_inst : CircuitInstance := {
     moduleName := "Mux4x6"

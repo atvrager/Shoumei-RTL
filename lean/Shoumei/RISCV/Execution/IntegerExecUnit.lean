@@ -274,14 +274,12 @@ def mkIntegerExecUnit : Circuit :=
   let alu_inst : CircuitInstance := {
     moduleName := "ALU32"
     instName := "u_alu"
-    portMap := [
-      ("a", a),
-      ("b", b),
-      ("op", opcode),
-      ("zero", [zero]),
-      ("one", [one]),
-      ("result", result)
-    ].flatMap (fun (name, wires) => wires.map (fun w => (name, w)))
+    portMap :=
+      (a.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
+      (b.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
+      (opcode.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
+      [("zero", zero)] ++
+      (result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
   }
 
   -- Tag pass-through (BUF gates to maintain structural clarity)

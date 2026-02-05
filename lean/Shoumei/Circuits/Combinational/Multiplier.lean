@@ -207,12 +207,12 @@ private partial def mkCSATreeHierarchical
           moduleName := "CSACompressor64"
           instName := s!"u_{tag}"
           portMap :=
-            (x.enum.map (fun ⟨i, w⟩ => (s!"inputs[{i}]", w))) ++
-            (y.enum.map (fun ⟨i, w⟩ => (s!"inputs[{i + 64}]", w))) ++
-            (z.enum.map (fun ⟨i, w⟩ => (s!"inputs[{i + 128}]", w))) ++
-            [(s!"inputs[192]", zero_wire)] ++
-            (s_out.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))) ++
-            (c_out.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i + 64}]", w)))
+            (x.enum.map (fun ⟨i, w⟩ => (s!"x[{i}]", w))) ++
+            (y.enum.map (fun ⟨i, w⟩ => (s!"y[{i}]", w))) ++
+            (z.enum.map (fun ⟨i, w⟩ => (s!"z[{i}]", w))) ++
+            [("zero", zero_wire)] ++
+            (s_out.enum.map (fun ⟨i, w⟩ => (s!"sum[{i}]", w))) ++
+            (c_out.enum.map (fun ⟨i, w⟩ => (s!"carry[{i}]", w)))
         }
         let (more_rows, more_gates, more_insts) := compressGroups rest (idx + 1)
         (s_out :: c_out :: more_rows, more_gates, inst :: more_insts)

@@ -138,35 +138,18 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   ) |>.flatten |>.flatten
 
   -- Read Port 1 & 2: Mux32x6 for rs1/rs2
-  -- Mux32x6 uses bundled ports (>100 ports): inputs[idx], outputs[idx]
-  let totalMuxPorts := numArchRegs * tagWidth + addrWidth + tagWidth
-  let useBundle := totalMuxPorts > 100
+  -- Mux modules use signal groups: in0, in1, ..., sel, out
+  let mux_in_map := (List.range numArchRegs).map (fun i =>
+    (List.range tagWidth).map (fun j =>
+      (s!"in{i}[{j}]", getReg i j)
+    )
+  ) |>.flatten
 
-  let mux_in_map := if useBundle then
-      (List.range numArchRegs).map (fun i =>
-        (List.range tagWidth).map (fun j =>
-          let idx := i * tagWidth + j
-          (s!"inputs[{idx}]", getReg i j)
-        )
-      ) |>.flatten
-    else
-      (List.range numArchRegs).map (fun i =>
-        (List.range tagWidth).map (fun j =>
-          (s!"in{i}_b{j}", getReg i j)
-        )
-      ) |>.flatten
+  let mkMuxSelMap (addr : List Wire) :=
+    addr.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))
 
-  let mkMuxSelMap (addr : List Wire) := if useBundle then
-      addr.enum.map (fun ⟨i, w⟩ =>
-        let idx := numArchRegs * tagWidth + i
-        (s!"inputs[{idx}]", w))
-    else
-      addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
-
-  let mkMuxOutMap (data : List Wire) := if useBundle then
-      data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
-    else
-      data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
+  let mkMuxOutMap (data : List Wire) :=
+    data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
 
   let mux_rs1_inst : CircuitInstance := {
     moduleName := s!"Mux{numArchRegs}x{tagWidth}"

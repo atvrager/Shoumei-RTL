@@ -178,9 +178,40 @@ def isVecBase (ctx : Context) (baseName : String) : Bool :=
   )
   matchingGroups.length >= 2
 
+/-- Extract base name from a wire name by stripping digit suffix.
+    Examples: "addr_0" -> "addr", "sel_1" -> "sel", "data" -> "data" -/
+def extractBaseName (wireName : String) : String :=
+  let parts := wireName.splitOn "_"
+  if parts.length >= 2 then
+    let lastPart := parts.getLast!
+    if lastPart.all (·.isDigit) then
+      String.intercalate "_" (parts.dropLast)
+    else
+      wireName
+  else
+    wireName
+
+/-- Check if binary gates (AND/OR/XOR) have uniform inputs.
+    Returns false (needs UInt) if all gates have inputs from same two signal groups.
+    Returns true (needs Vec) otherwise. -/
+def hasUniformBinaryInputs (gates : List Gate) : Bool :=
+  let inputPairs := gates.filterMap (fun g =>
+    match g.inputs with
+    | [in0, in1] => some (extractBaseName in0.name, extractBaseName in1.name)
+    | _ => none
+  )
+  if inputPairs.length != gates.length then
+    false  -- Some gates don't have 2 inputs, not uniform
+  else
+    let (input0Bases, input1Bases) := inputPairs.unzip
+    let unique0 := input0Bases.eraseDups
+    let unique1 := input1Bases.eraseDups
+    -- If both inputs uniform (same source for all gates), bus-wide operation
+    unique0.length == 1 && unique1.length == 1
+
 /-- Check if an output signal group has individual bit assignments from gates.
     Returns true only if the output has gates doing individual bit computations,
-    not just complete BUF copies from another signal group. -/
+    not just complete BUF copies from another signal group or bus-wide operations. -/
 def outputHasIndividualBitAssignmentsHelper (c : Circuit) (sg : SignalGroup) : Bool :=
   if sg.width <= 1 then
     false  -- Single-bit outputs don't need Vec
@@ -195,47 +226,49 @@ def outputHasIndividualBitAssignmentsHelper (c : Circuit) (sg : SignalGroup) : B
     if outputGates.isEmpty then
       false  -- No gates, doesn't need Vec
     else
-      -- Check if all gates are BUF gates from the same source signal group
-      let allBufs := outputGates.all (fun g => g.gateType == GateType.BUF)
+      -- Check if this matches a bus-wide operation pattern in generateBusWideOp
+      match outputGates.head? with
+      | none => false  -- Should not happen since we checked isEmpty
+      | some firstGate =>
+          let allSameGateType := outputGates.all (fun g => g.gateType == firstGate.gateType)
 
-      if !allBufs then
-        true  -- Has non-BUF gates, needs Vec for individual bit ops
-      else
-        -- All BUF gates - check if they're copying from same source
-        let inputWires := outputGates.filterMap (fun g =>
-          match g.inputs with
-          | [inp] => some inp.name
-          | _ => none
-        )
-
-        -- Extract base names (signal groups)
-        -- Handle names like "dest_tag_0" -> "dest_tag" by removing last underscore+digit
-        let inputBases := inputWires.filterMap (fun name =>
-          let parts := name.splitOn "_"
-          if parts.length >= 2 then
-            -- Check if last part is a digit (index)
-            let lastPart := parts.getLast!
-            if lastPart.all (fun c => c.isDigit) then
-              -- Remove last part (the index) to get base name
-              some (String.intercalate "_" (parts.dropLast))
-            else
-              some name  -- No digit suffix
+          if !(allSameGateType && outputGates.length == sg.width) then
+            true  -- Mixed types or incomplete coverage - needs Vec
           else
-            some name  -- No underscore pattern
-        )
-
-        let uniqueBases := inputBases.eraseDups
-
-        -- If all BUF gates copy from same source AND cover all bits,
-        -- it's a complete bus copy, doesn't need Vec
-        -- Otherwise (multiple sources or incomplete), needs Vec
-        !(uniqueBases.length == 1 && outputGates.length == sg.width)
+            -- All bits have same gate type and all bits covered
+            -- Check if this matches a bus-wide operation pattern
+            match firstGate.gateType with
+            | GateType.BUF =>
+                -- BUF gates - check if copying from same source (bus-wide assignment)
+                let inputWires := outputGates.filterMap (fun g =>
+                  match g.inputs with
+                  | [inp] => some inp.name
+                  | _ => none
+                )
+                let inputBases := inputWires.filterMap (fun name =>
+                  let parts := name.splitOn "_"
+                  if parts.length >= 2 then
+                    let lastPart := parts.getLast!
+                    if lastPart.all (fun c => c.isDigit) then
+                      some (String.intercalate "_" (parts.dropLast))
+                    else
+                      some name
+                  else
+                    some name
+                )
+                let uniqueBases := inputBases.eraseDups
+                !(uniqueBases.length == 1)  -- Same source = UInt, different sources = Vec
+            | _ =>
+                -- Non-BUF gates may or may not be handled by generateBusWideOp
+                -- To be safe, use Vec (allows individual bit assignments)
+                true
 
 /-- Check if a signal group should be declared as Vec(width, Bool()) instead of UInt(width.W).
     Heuristic: Use Vec if the signal group has individual bit assignments that don't form
     a complete bus-wide operation. This happens when:
     1. Signal group has gates writing to individual bits (like c(0) := ab_and0 | cin_ab0)
     2. Signal group has incomplete coverage (not all bits assigned by same operation)
+    3. Gates don't match a bus-wide pattern in generateBusWideOp (e.g., NOT gates)
 
     Don't use Vec for complete bus-wide operations like a := base (all bits copied from one bus). -/
 def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
@@ -252,46 +285,42 @@ def needsVecDeclarationHelper (sg : SignalGroup) (c : Circuit) : Bool :=
     if outputGates.isEmpty then
       false  -- No gates write to this signal group
     else
-      -- Check if this would be recognized as a bus-wide operation
-      -- If all gates are same type and operate uniformly, it's a bus-wide op (use UInt)
+      -- Check if this matches a bus-wide operation pattern in generateBusWideOp
       match outputGates.head? with
       | none => false  -- Should not happen since we checked isEmpty
       | some firstGate =>
           let allSameGateType := outputGates.all (fun g => g.gateType == firstGate.gateType)
 
-          if allSameGateType && outputGates.length == sg.width then
+          if !(allSameGateType && outputGates.length == sg.width) then
+            true  -- Mixed types or incomplete coverage - needs Vec
+          else
             -- All bits have same gate type and all bits covered
-            -- Check if this is a uniform operation (all gates have same input pattern)
-
-            -- Check if all gates are BUF gates from the same source signal group
-            if firstGate.gateType == GateType.BUF then
-              let inputWires := outputGates.filterMap (fun g =>
-                match g.inputs with
-                | [inp] => some inp.name
-                | _ => none
-              )
-
-              -- Extract base names to identify source signal groups
-              let inputBases := inputWires.filterMap (fun name =>
-                let parts := name.splitOn "_"
-                if parts.length >= 2 then
-                  let lastPart := parts.getLast!
-                  if lastPart.all (fun c => c.isDigit) then
-                    some (String.intercalate "_" (parts.dropLast))
+            -- Check if this matches a bus-wide operation pattern
+            match firstGate.gateType with
+            | GateType.BUF =>
+                -- BUF gates - check if copying from same source (bus-wide assignment)
+                let inputWires := outputGates.filterMap (fun g =>
+                  match g.inputs with
+                  | [inp] => some inp.name
+                  | _ => none
+                )
+                let inputBases := inputWires.filterMap (fun name =>
+                  let parts := name.splitOn "_"
+                  if parts.length >= 2 then
+                    let lastPart := parts.getLast!
+                    if lastPart.all (fun c => c.isDigit) then
+                      some (String.intercalate "_" (parts.dropLast))
+                    else
+                      some name
                   else
                     some name
-                else
-                  some name
-              )
-
-              let uniqueBases := inputBases.eraseDups
-              !(uniqueBases.length == 1)  -- If one source, it's bus copy (use UInt)
-            else
-              -- Non-BUF gates but uniform - this is a bus-wide operation (use UInt)
-              false
-          else
-            -- Mixed gate types or incomplete coverage - needs Vec for individual bit access
-            true
+                )
+                let uniqueBases := inputBases.eraseDups
+                !(uniqueBases.length == 1)  -- Same source = UInt, different sources = Vec
+            | _ =>
+                -- Non-BUF gates may or may not be handled by generateBusWideOp
+                -- To be safe, use Vec (allows individual bit assignments)
+                true
 
 /-- Generate reference to a wire in generated Chisel code.
 
@@ -675,22 +704,36 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                 | some b0, none =>
                     -- Bus op scalar: use Cat to build result
                     let outRef := signalGroupRef ctx bus.name
-                    -- Use plain signalGroupRef (not ForBusOp) because we need Vec element access
-                    let in0Ref := signalGroupRef ctx b0.name
+                    -- Check if b0 needs Vec indexing
+                    let in0Ref := if needsVecDeclarationHelper b0 _c then
+                                   signalGroupRef ctx b0.name  -- Vec, use element access
+                                 else
+                                   signalGroupRefForBusOp ctx _c b0  -- UInt, broadcast
+                    let in0Access := if needsVecDeclarationHelper b0 _c then
+                                      s!"{in0Ref}(i)"
+                                    else
+                                      in0Ref
                     let forLoop := joinLines [
                       s!"  {outRef} := Cat(",
-                      s!"    (0 until {bus.width}).reverse.map(i => {in0Ref}(i) {op} {in1.name})",
+                      s!"    (0 until {bus.width}).reverse.map(i => {in0Access} {op} {in1.name})",
                       "  )"
                     ]
                     some forLoop
                 | none, some b1 =>
                     -- Scalar op bus: use Cat to build result
                     let outRef := signalGroupRef ctx bus.name
-                    -- Use plain signalGroupRef (not ForBusOp) because we need Vec element access
-                    let in1Ref := signalGroupRef ctx b1.name
+                    -- Check if b1 needs Vec indexing
+                    let in1Ref := if needsVecDeclarationHelper b1 _c then
+                                   signalGroupRef ctx b1.name  -- Vec, use element access
+                                 else
+                                   signalGroupRefForBusOp ctx _c b1  -- UInt, broadcast
+                    let in1Access := if needsVecDeclarationHelper b1 _c then
+                                      s!"{in1Ref}(i)"
+                                    else
+                                      in1Ref
                     let forLoop := joinLines [
                       s!"  {outRef} := Cat(",
-                      s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Ref}(i))",
+                      s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Access})",
                       "  )"
                     ]
                     some forLoop

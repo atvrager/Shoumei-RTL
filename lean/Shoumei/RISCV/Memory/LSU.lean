@@ -389,23 +389,22 @@ def mkLSU : Circuit :=
   ) agu_address sb_enq_address
 
   -- === StoreBuffer8 Instance ===
-  -- StoreBuffer8 uses underscore port names: enq_address_0, enq_address_1, etc.
   let sb_inst : CircuitInstance := {
     moduleName := "StoreBuffer8"
     instName := "u_store_buffer"
     portMap :=
-      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
+      [("reset", reset), ("zero", zero), ("one", one),
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
        ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
        ("fwd_hit", sb_fwd_hit), ("deq_valid", sb_deq_valid)] ++
-      (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_{i}", w))) ++
-      (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_{i}", w))) ++
-      (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_{i}", w))) ++
-      (commit_store_idx.enum.map (fun ⟨i, w⟩ => (s!"commit_idx_{i}", w))) ++
-      (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
-      (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_{i}", w))) ++
-      (sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"deq_bits_{i}", w))) ++
-      (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_{i}", w)))
+      (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_[{i}]", w))) ++
+      (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_[{i}]", w))) ++
+      (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_[{i}]", w))) ++
+      (commit_store_idx.enum.map (fun ⟨i, w⟩ => (s!"commit_idx_[{i}]", w))) ++
+      (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_[{i}]", w))) ++
+      (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_[{i}]", w))) ++
+      (sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"deq_bits_[{i}]", w))) ++
+      (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_[{i}]", w)))
   }
 
   -- === Assemble Circuit ===
@@ -440,19 +439,19 @@ def mkLSU : Circuit :=
     instances := all_instances
     -- V2 codegen annotations
     signalGroups := [
-      { name := "dispatch_base_", width := 32, wires := dispatch_base },
-      { name := "dispatch_offset_", width := 32, wires := dispatch_offset },
-      { name := "dispatch_dest_tag_", width := 6, wires := dispatch_dest_tag },
-      { name := "store_data_", width := 32, wires := store_data },
-      { name := "commit_store_idx_", width := 3, wires := commit_store_idx },
-      { name := "fwd_address_", width := 32, wires := fwd_address },
-      { name := "agu_address_", width := 32, wires := agu_address },
-      { name := "agu_tag_out_", width := 6, wires := agu_tag_out },
-      { name := "sb_fwd_data_", width := 32, wires := sb_fwd_data },
-      { name := "sb_deq_bits_", width := 66, wires := sb_deq_bits },
-      { name := "sb_enq_idx_", width := 3, wires := sb_enq_idx },
-      { name := "sb_enq_address_", width := 32, wires := sb_enq_address },
-      { name := "sb_enq_size_", width := 2, wires := sb_enq_size }
+      { name := "dispatch_base", width := 32, wires := dispatch_base },
+      { name := "dispatch_offset", width := 32, wires := dispatch_offset },
+      { name := "dispatch_dest_tag", width := 6, wires := dispatch_dest_tag },
+      { name := "store_data", width := 32, wires := store_data },
+      { name := "commit_store_idx", width := 3, wires := commit_store_idx },
+      { name := "fwd_address", width := 32, wires := fwd_address },
+      { name := "agu_address", width := 32, wires := agu_address },
+      { name := "agu_tag_out", width := 6, wires := agu_tag_out },
+      { name := "sb_fwd_data", width := 32, wires := sb_fwd_data },
+      { name := "sb_deq_bits", width := 66, wires := sb_deq_bits },
+      { name := "sb_enq_idx", width := 3, wires := sb_enq_idx },
+      { name := "sb_enq_address", width := 32, wires := sb_enq_address },
+      { name := "sb_enq_size", width := 2, wires := sb_enq_size }
     ]
   }
 

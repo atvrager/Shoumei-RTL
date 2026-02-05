@@ -131,49 +131,32 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
       moduleName := s!"Register{dataWidth}"
       instName := s!"u_reg_{i}"
       portMap :=
-        -- Connect d inputs (from write mux outputs)
+        -- Connect d inputs (from write mux outputs) - use bracket notation for Cat grouping
         (List.range dataWidth).map (fun j =>
-          (s!"d_{j}", getNext i j)
+          (s!"d[{j}]", getNext i j)
         ) ++
         -- Connect clock and reset
         [("clock", clock), ("reset", reset)] ++
-        -- Connect q outputs
+        -- Connect q outputs - use bracket notation for Cat grouping
         (List.range dataWidth).map (fun j =>
-          (s!"q_{j}", getReg i j)
+          (s!"q[{j}]", getReg i j)
         )
     }
   )
 
   -- Read Ports: Mux64x32 for rd_tag1/rd_tag2
-  -- Mux64x32 uses bundled ports (>200 ports): inputs[idx], outputs[idx]
-  let totalMuxPorts := numRegs * dataWidth + tagWidth + dataWidth
-  let useBundle := totalMuxPorts > 200
+  -- Mux64x32 uses signal groups: in0, in1, ..., in63 (each 32 bits), sel (6 bits), out (32 bits)
+  let mux_in_map := (List.range numRegs).map (fun i =>
+    (List.range dataWidth).map (fun j =>
+      (s!"in{i}[{j}]", getReg i j)
+    )
+  ) |>.flatten
 
-  let mux_in_map := if useBundle then
-      (List.range numRegs).map (fun i =>
-        (List.range dataWidth).map (fun j =>
-          let idx := i * dataWidth + j
-          (s!"inputs[{idx}]", getReg i j)
-        )
-      ) |>.flatten
-    else
-      (List.range numRegs).map (fun i =>
-        (List.range dataWidth).map (fun j =>
-          (s!"in{i}_b{j}", getReg i j)
-        )
-      ) |>.flatten
+  let mkMuxSelMap (addr : List Wire) :=
+    addr.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))
 
-  let mkMuxSelMap (addr : List Wire) := if useBundle then
-      addr.enum.map (fun ⟨i, w⟩ =>
-        let idx := numRegs * dataWidth + i
-        (s!"inputs[{idx}]", w))
-    else
-      addr.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))
-
-  let mkMuxOutMap (data : List Wire) := if useBundle then
-      data.enum.map (fun ⟨i, w⟩ => (s!"outputs[{i}]", w))
-    else
-      data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w))
+  let mkMuxOutMap (data : List Wire) :=
+    data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
 
   let mux_rd1_inst : CircuitInstance := {
     moduleName := s!"Mux{numRegs}x{dataWidth}"
@@ -186,6 +169,16 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     instName := "u_mux_rd2"
     portMap := mux_in_map ++ mkMuxSelMap rd_tag2 ++ mkMuxOutMap rd_data2
   }
+
+  -- Signal groups for next and reg internal wires (for Vec grouping in Chisel)
+  let next_groups := (List.range numRegs).map (fun i =>
+    { name := s!"next_{i}",
+      width := dataWidth,
+      wires := (List.range dataWidth).map (fun j => getNext i j) })
+  let reg_groups := (List.range numRegs).map (fun i =>
+    { name := s!"reg_{i}",
+      width := dataWidth,
+      wires := (List.range dataWidth).map (fun j => getReg i j) })
 
   { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
     inputs := [clock, reset, wr_en] ++ rd_tag1 ++ rd_tag2 ++ wr_tag ++ wr_data
@@ -202,7 +195,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
       { name := "rd_data2", width := dataWidth, wires := rd_data2 },
       { name := "write_sel", width := numRegs, wires := write_sel },
       { name := "we", width := numRegs, wires := we }
-    ]
+    ] ++ next_groups ++ reg_groups
   }
 
 /-- Physical Register File with 64 registers × 32 bits (default configuration) -/

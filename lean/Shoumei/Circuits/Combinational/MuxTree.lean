@@ -277,11 +277,11 @@ def mkMux64x32Hierarchical : Circuit :=
     let portMap := (List.range 8).flatMap (fun inputIdx =>
       let globalInputIdx := inputBase + inputIdx
       (List.range 32).map (fun bitIdx =>
-        (s!"in{inputIdx}_b{bitIdx}", inputWires[globalInputIdx]![bitIdx]!))
+        (s!"in{inputIdx}[{bitIdx}]", inputWires[globalInputIdx]![bitIdx]!))
     ) ++ (List.range 3).map (fun selIdx =>
-      (s!"sel_{selIdx}", selWires[selIdx]!)
+      (s!"sel[{selIdx}]", selWires[selIdx]!)
     ) ++ (List.range 32).map (fun bitIdx =>
-      (s!"out_{bitIdx}", stage1Outs[stageIdx]![bitIdx]!)
+      (s!"out[{bitIdx}]", stage1Outs[stageIdx]![bitIdx]!)
     )
     { moduleName := "Mux8x32"
       instName := s!"u_mux_stage1_{stageIdx}"
@@ -292,11 +292,11 @@ def mkMux64x32Hierarchical : Circuit :=
   -- Build instance for stage 2: 1x Mux8x32
   let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
     (List.range 32).map (fun bitIdx =>
-      (s!"in{inputIdx}_b{bitIdx}", stage1Outs[inputIdx]![bitIdx]!))
+      (s!"in{inputIdx}[{bitIdx}]", stage1Outs[inputIdx]![bitIdx]!))
   ) ++ (List.range 3).map (fun selIdx =>
-    (s!"sel_{selIdx}", selWires[selIdx + 3]!)  -- Use upper 3 bits of select
+    (s!"sel[{selIdx}]", selWires[selIdx + 3]!)  -- Use upper 3 bits of select
   ) ++ (List.range 32).map (fun bitIdx =>
-    (s!"out_{bitIdx}", outputWires[bitIdx]!)
+    (s!"out[{bitIdx}]", outputWires[bitIdx]!)
   )
   let stage2Instance := {
     moduleName := "Mux8x32"
@@ -344,11 +344,11 @@ def mkMux64x6Hierarchical : Circuit :=
     let portMap := (List.range 8).flatMap (fun inputIdx =>
       let globalInputIdx := inputBase + inputIdx
       (List.range 6).map (fun bitIdx =>
-        (s!"in{inputIdx}_b{bitIdx}", inputWires[globalInputIdx]![bitIdx]!))
+        (s!"in{inputIdx}[{bitIdx}]", inputWires[globalInputIdx]![bitIdx]!))
     ) ++ (List.range 3).map (fun selIdx =>
-      (s!"sel_{selIdx}", selWires[selIdx]!)
+      (s!"sel[{selIdx}]", selWires[selIdx]!)
     ) ++ (List.range 6).map (fun bitIdx =>
-      (s!"out_{bitIdx}", stage1Outs[stageIdx]![bitIdx]!)
+      (s!"out[{bitIdx}]", stage1Outs[stageIdx]![bitIdx]!)
     )
     { moduleName := "Mux8x6"
       instName := s!"u_mux_stage1_{stageIdx}"
@@ -359,11 +359,11 @@ def mkMux64x6Hierarchical : Circuit :=
   -- Build instance for stage 2: 1x Mux8x6
   let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
     (List.range 6).map (fun bitIdx =>
-      (s!"in{inputIdx}_b{bitIdx}", stage1Outs[inputIdx]![bitIdx]!))
+      (s!"in{inputIdx}[{bitIdx}]", stage1Outs[inputIdx]![bitIdx]!))
   ) ++ (List.range 3).map (fun selIdx =>
-    (s!"sel_{selIdx}", selWires[selIdx + 3]!)
+    (s!"sel[{selIdx}]", selWires[selIdx + 3]!)
   ) ++ (List.range 6).map (fun bitIdx =>
-    (s!"out_{bitIdx}", outputWires[bitIdx]!)
+    (s!"out[{bitIdx}]", outputWires[bitIdx]!)
   )
   let stage2Instance := {
     moduleName := "Mux8x6"
