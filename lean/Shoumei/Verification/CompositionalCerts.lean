@@ -74,6 +74,69 @@ def queue4_8_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- QueueCounterUpDown_2: flat up/down counter (induction fails on count bits) -/
+def queueCounterUpDown_2_cert : CompositionalCert := {
+  moduleName := "QueueCounterUpDown_2"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueueCounterUpDown_3: flat up/down counter (induction fails on count bits) -/
+def queueCounterUpDown_3_cert : CompositionalCert := {
+  moduleName := "QueueCounterUpDown_3"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueueCounterUpDown_4: flat up/down counter (induction fails on count bits) -/
+def queueCounterUpDown_4_cert : CompositionalCert := {
+  moduleName := "QueueCounterUpDown_4"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueueCounterUpDown_5: flat up/down counter (induction fails on count bits) -/
+def queueCounterUpDown_5_cert : CompositionalCert := {
+  moduleName := "QueueCounterUpDown_5"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueueCounterUpDown_7: flat up/down counter (induction fails on count bits) -/
+def queueCounterUpDown_7_cert : CompositionalCert := {
+  moduleName := "QueueCounterUpDown_7"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueuePointer_2: flat pointer counter (induction fails on count bits) -/
+def queuePointer_2_cert : CompositionalCert := {
+  moduleName := "QueuePointer_2"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueuePointer_3: flat pointer counter (induction fails on count bits) -/
+def queuePointer_3_cert : CompositionalCert := {
+  moduleName := "QueuePointer_3"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueuePointer_4: flat pointer counter (induction fails on count bits) -/
+def queuePointer_4_cert : CompositionalCert := {
+  moduleName := "QueuePointer_4"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- QueuePointer_6: flat pointer counter (induction fails on count bits) -/
+def queuePointer_6_cert : CompositionalCert := {
+  moduleName := "QueuePointer_6"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
 /-- Register24 = Register16 + Register8 (hierarchical) -/
 def register24_cert : CompositionalCert := {
   moduleName := "Register24"
@@ -209,6 +272,15 @@ def allCerts : List CompositionalCert := [
   queueRAM_64x6_cert,
   queueRAM_2x8_cert,
   queueRAM_4x8_cert,
+  queueCounterUpDown_2_cert,
+  queueCounterUpDown_3_cert,
+  queueCounterUpDown_4_cert,
+  queueCounterUpDown_5_cert,
+  queueCounterUpDown_7_cert,
+  queuePointer_2_cert,
+  queuePointer_3_cert,
+  queuePointer_4_cert,
+  queuePointer_6_cert,
   -- Renaming
   physregfile_cert,
   rat_cert,
