@@ -197,10 +197,10 @@ def main : IO Unit := do
   -- Initialize output directories
   initOutputDirs
 
-  -- Generate all circuits
+  -- Generate all circuits (pass allCircuits for sub-module port direction lookup)
   let mut count := 0
   for c in allCircuits do
-    writeCircuit c
+    writeCircuit c allCircuits
     count := count + 1
 
   IO.println ""

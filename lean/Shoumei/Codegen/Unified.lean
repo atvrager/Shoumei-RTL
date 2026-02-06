@@ -45,8 +45,9 @@ def writeCircuitNetlist (c : Circuit) : IO Unit := do
   IO.FS.writeFile path sv
 
 -- Write Chisel (hierarchical) for a circuit
-def writeCircuitChisel (c : Circuit) : IO Unit := do
-  let chisel := Chisel.toChisel c
+-- Pass allCircuits for sub-module port direction lookup in hierarchical modules
+def writeCircuitChisel (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+  let chisel := Chisel.toChisel c allCircuits
   let path := s!"{chiselOutputDir}/{c.name}.scala"
   IO.FS.writeFile path chisel
 
@@ -60,22 +61,22 @@ def writeCircuitSystemC (c : Circuit) : IO Unit := do
   IO.FS.writeFile cppPath impl
 
 -- Write all output formats for a circuit
-def writeCircuit (c : Circuit) : IO Unit := do
+def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   writeCircuitSV c
   writeCircuitNetlist c
-  writeCircuitChisel c
+  writeCircuitChisel c allCircuits
   writeCircuitSystemC c
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances"
 
 -- Verbose version with individual file confirmation
-def writeCircuitVerbose (c : Circuit) : IO Unit := do
+def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   writeCircuitSV c
   IO.println s!"  ✓ {c.name}.sv"
 
   writeCircuitNetlist c
   IO.println s!"  ✓ {c.name}.sv (netlist)"
 
-  writeCircuitChisel c
+  writeCircuitChisel c allCircuits
   IO.println s!"  ✓ {c.name}.scala"
 
   writeCircuitSystemC c
