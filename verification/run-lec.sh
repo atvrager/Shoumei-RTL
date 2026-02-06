@@ -103,23 +103,45 @@ COMPOSITIONAL_MODULES_FILE=$(mktemp)
 # Load compositional verification certificates from Lean
 declare -A COMPOSITIONAL_CERTS
 echo "Loading compositional verification certificates from Lean..."
-while IFS='|' read -r module deps proof; do
-    # Skip empty lines
-    [[ -z "$module" ]] && continue
-    # Trim whitespace
-    module=$(echo "$module" | xargs)
-    deps=$(echo "$deps" | xargs)
-    proof=$(echo "$proof" | xargs)
-    # Store module in associative array
-    COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-done < <(.lake/build/bin/export_verification_certs 2>/dev/null || \
-    lake exe export_verification_certs 2>/dev/null || \
-    "$HOME/.elan/bin/lake" exe export_verification_certs 2>/dev/null || \
-    true)
+
+# Determine the project root (directory containing this script's parent)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+CERTS_FILE="$PROJECT_ROOT/verification/compositional-certs.txt"
+
+# Try sources in order: pre-generated file (from make codegen) > built binary > lake exe
+CERT_SOURCE=""
+if [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
+    CERT_SOURCE="$CERTS_FILE"
+    echo "  Reading from $CERTS_FILE"
+fi
+
+if [ -n "$CERT_SOURCE" ]; then
+    while IFS='|' read -r module deps proof; do
+        [[ -z "$module" ]] && continue
+        module=$(echo "$module" | xargs)
+        deps=$(echo "$deps" | xargs)
+        proof=$(echo "$proof" | xargs)
+        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
+    done < "$CERT_SOURCE"
+else
+    echo "  No pre-generated certs file found, trying to export from Lean..."
+    while IFS='|' read -r module deps proof; do
+        [[ -z "$module" ]] && continue
+        module=$(echo "$module" | xargs)
+        deps=$(echo "$deps" | xargs)
+        proof=$(echo "$proof" | xargs)
+        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
+    done < <(.lake/build/bin/export_verification_certs 2>/dev/null || \
+        lake exe export_verification_certs 2>/dev/null || \
+        "$HOME/.elan/bin/lake" exe export_verification_certs 2>/dev/null || \
+        true)
+fi
+
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
 if [ ${#COMPOSITIONAL_CERTS[@]} -eq 0 ]; then
     echo -e "${YELLOW}⚠ No compositional certificates loaded. Large hierarchical modules may fail LEC.${NC}"
-    echo "  Ensure 'lake build export_verification_certs' has been run, or use 'make lec'."
+    echo "  Run 'make codegen' first, or ensure 'lake build export_verification_certs' succeeds."
 fi
 echo ""
 

@@ -58,6 +58,7 @@ systemc/build/
 # Verification artifacts
 verification/results/
 verification/logs/
+verification/compositional-certs.txt
 
 # Generated EQY/SBY working directories (one per module)
 # Pattern: verification/<ModuleName>/ contains all EQY/SBY intermediate files

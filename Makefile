@@ -107,6 +107,9 @@ codegen: lean opcodes
 	lake exe generate_all
 	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM)..."
 	lake exe generate_riscv_decoder
+	@echo "    Phase 3: Exporting compositional verification certificates..."
+	@mkdir -p verification
+	lake exe export_verification_certs > verification/compositional-certs.txt
 
 # Compile Chisel to SystemVerilog
 # Main.scala auto-discovers all generated modules (including RV32I/RV32IM decoders)
@@ -132,8 +135,9 @@ systemc:
 
 # Run logical equivalence checking with Yosys
 lec: lean
-	@echo "==> Building verification certificate exporter..."
-	lake build export_verification_certs
+	@echo "==> Exporting compositional verification certificates..."
+	@mkdir -p verification
+	lake exe export_verification_certs > verification/compositional-certs.txt
 	@echo "==> Running logical equivalence checking (Yosys)..."
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
 
