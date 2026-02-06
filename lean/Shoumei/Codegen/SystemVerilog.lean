@@ -391,14 +391,88 @@ def generateRegisters (ctx : Context) (c : Circuit) : String :=
 
 /-! ## Module Instantiation -/
 
+/-- Parse a port name that may contain bracket indexing.
+    "alloc_physRd[0]" → some ("alloc_physRd", 0)
+    "enq_valid" → none -/
+def parsePortIndex (portName : String) : Option (String × Nat) :=
+  match portName.splitOn "[" with
+  | [base, idxPart] =>
+      -- Remove trailing ']' from idxPart
+      let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
+      match idxStr.toNat? with
+      | some idx => some (base, idx)
+      | none => none
+  | _ => none
+
+/-- Group port map entries: collect bracketed entries with the same base name
+    into bus groups, preserving order. Non-bracketed entries pass through as-is. -/
+def groupPortMapEntries (portMap : List (String × Wire))
+    : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
+  -- Process entries, accumulating groups
+  let result := portMap.foldl (fun (acc : List (Sum (String × Wire) (String × List (Nat × Wire)))) (pname, w) =>
+    match parsePortIndex pname with
+    | none =>
+        -- Scalar port, pass through
+        acc ++ [Sum.inl (pname, w)]
+    | some (base, idx) =>
+        -- Check if the last entry is a group with the same base name
+        match acc.reverse with
+        | (Sum.inr (prevBase, entries)) :: restRev =>
+            if prevBase == base then
+              -- Extend the existing group
+              restRev.reverse ++ [Sum.inr (base, entries ++ [(idx, w)])]
+            else
+              -- Different base, start new group
+              acc ++ [Sum.inr (base, [(idx, w)])]
+        | _ =>
+            -- No previous group, start new one
+            acc ++ [Sum.inr (base, [(idx, w)])]
+  ) []
+  result
+
 /-- Generate port connection for module instantiation -/
 def generatePortConnection (ctx : Context) (c : Circuit) (portName : String) (wire : Wire) : String :=
   s!"    .{portName}({wireRef ctx c wire})"
 
+/-- Try to extract the bus name from a list of wire references.
+    If all refs are busName[0], busName[1], ..., busName[N-1], return some busName.
+    Otherwise return none. -/
+def extractCommonBusName (wireRefs : List String) (sorted : List (Nat × Wire)) : Option String :=
+  match wireRefs.head? with
+  | none => none
+  | some firstRef =>
+      match firstRef.splitOn "[" with
+      | [busName, _] =>
+          let allMatch := sorted.enum.all (fun (i, (idx, _)) =>
+            match wireRefs[i]? with
+            | some ref => ref == busName ++ "[" ++ toString idx ++ "]"
+            | none => false)
+          if allMatch then some busName else none
+      | _ => none
+
+/-- Generate a bus port connection.
+    Entries are sorted by index. If all wires form a contiguous bus, connects
+    directly. Otherwise uses concatenation \{MSB, ..., LSB\} syntax. -/
+def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
+    (entries : List (Nat × Wire)) : String :=
+  let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
+  let wireRefs := sorted.map (fun (_, w) => wireRef ctx c w)
+  match extractCommonBusName wireRefs sorted with
+  | some busName =>
+      -- Direct bus connection: .portName(busName)
+      s!"    .{baseName}({busName})"
+  | none =>
+      -- Concatenation: .portName({wire_N, ..., wire_0})
+      let concat := "{" ++ String.intercalate ", " wireRefs.reverse ++ "}"
+      s!"    .{baseName}({concat})"
+
 /-- Generate module instantiation -/
 def generateInstance (ctx : Context) (c : Circuit) (inst : CircuitInstance) : String :=
-  let portConnections := inst.portMap.map (fun (pname, w) =>
-    generatePortConnection ctx c pname w
+  let grouped := groupPortMapEntries inst.portMap
+  let portConnections := grouped.map (fun entry =>
+    match entry with
+    | Sum.inl (pname, w) => generatePortConnection ctx c pname w
+    | Sum.inr (baseName, entries) => generateBusPortConnection ctx c baseName entries
   )
 
   let connectionsStr := String.intercalate ",\n" portConnections
