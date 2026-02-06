@@ -135,7 +135,10 @@ def sanitizeSignalGroup (sg : SignalGroup) : SignalGroup :=
 def mkContext (c : Circuit) : Context :=
   let clockWires := findClockWires c
   let resetWires := findResetWires c
-  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF)
+  -- A circuit is sequential if it has DFF gates OR clock/reset wires
+  -- (hierarchical modules may have no DFFs but pass clock/reset to instances)
+  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) ||
+                      !clockWires.isEmpty || !resetWires.isEmpty
 
   -- Auto-detect signal groups from internal wires
   let internalWires := findInternalWires c
@@ -228,11 +231,13 @@ def generatePorts (ctx : Context) (c : Circuit) : String :=
   let inputPorts := c.inputs.filterMap (generateWirePort ctx c · "input")
   let outputPorts := c.outputs.filterMap (generateWirePort ctx c · "output")
 
-  -- Add explicit clock and reset ports for sequential circuits
-  let clockResetPorts := if ctx.isSequential then
-    ["  input logic clock", "  input logic reset"]
-  else
-    []
+  -- Add explicit clock and reset ports that were filtered from regular inputs
+  -- Only add ports that: (1) exist in the circuit's inputs, and (2) were filtered
+  let hasClock := c.inputs.any (fun w => ctx.clockWires.contains w)
+  let hasReset := c.inputs.any (fun w => ctx.resetWires.contains w)
+  let clockResetPorts :=
+    (if hasClock then ["  input logic clock"] else []) ++
+    (if hasReset then ["  input logic reset"] else [])
 
   let allPorts := inputPorts ++ outputPorts ++ clockResetPorts
 

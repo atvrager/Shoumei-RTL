@@ -300,7 +300,7 @@ verify_module() {
     # Check if this is a sequential circuit
     # Detection: always block OR clock/reset inputs
     local IS_SEQUENTIAL=0
-    if grep -qE "always @|input .*clock|input .*reset" "$LEAN_FILE"; then
+    if grep -qE "always(_ff)? @|input .*clock|input .*reset" "$LEAN_FILE"; then
         IS_SEQUENTIAL=1
     fi
 
