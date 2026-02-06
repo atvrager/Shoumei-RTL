@@ -29,28 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             curl git build-essential libgmp-dev \
-            yosys yosys-dev z3 cmake
-
-      - name: Install slang library
-        run: |
-          git clone https://github.com/MikePopoloski/slang.git /tmp/slang
-          cd /tmp/slang
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc)
-          sudo cmake --install build
-
-      - name: Install yosys-slang plugin
-        run: |
-          git clone https://github.com/povik/yosys-slang.git /tmp/yosys-slang
-          cd /tmp/yosys-slang
-          git submodule update --init --recursive
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc)
-          sudo cmake --install build
-
-      - name: Verify yosys-slang installation
-        run: |
-          yosys -m slang -p "help read_slang"
+            yosys z3
 
       - name: Install elan
         run: |
@@ -91,7 +70,7 @@ jobs:
       - name: Run Yosys LEC
         run: |
           chmod +x verification/run-lec.sh
-          ./verification/run-lec.sh --use-slang output/sv-from-lean output/sv-from-chisel
+          ./verification/run-lec.sh --no-slang output/sv-from-lean output/sv-from-chisel
 
       - name: Upload LEC results
         if: always()

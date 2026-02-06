@@ -33,8 +33,9 @@ def chiselOutputDir : String := "chisel/src/main/scala/generated"
 def systemcOutputDir : String := "output/systemc"
 
 -- Write SystemVerilog (hierarchical) for a circuit
-def writeCircuitSV (c : Circuit) : IO Unit := do
-  let sv := SystemVerilog.toSystemVerilog c
+-- Pass allCircuits for sub-module port structure lookup in hierarchical modules
+def writeCircuitSV (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+  let sv := SystemVerilog.toSystemVerilog c allCircuits
   let path := s!"{svOutputDir}/{c.name}.sv"
   IO.FS.writeFile path sv
 
@@ -62,7 +63,7 @@ def writeCircuitSystemC (c : Circuit) : IO Unit := do
 
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
-  writeCircuitSV c
+  writeCircuitSV c allCircuits
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
   writeCircuitSystemC c

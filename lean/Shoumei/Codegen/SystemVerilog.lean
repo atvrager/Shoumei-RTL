@@ -418,44 +418,113 @@ def generateRegisters (ctx : Context) (c : Circuit) : String :=
 
 /-! ## Module Instantiation -/
 
-/-- Parse a port name that may contain bracket indexing.
-    "alloc_physRd[0]" → some ("alloc_physRd", 0)
-    "enq_valid" → none -/
+/-- Parse a port name that may contain indexing in various formats.
+    Bracket:    "alloc_physRd[0]" → some ("alloc_physRd", 0)
+    Underscore: "data_3"          → some ("data", 3)
+    Bare:       "in0"             → some ("in", 0)
+    Non-indexed:"enq_valid"       → none -/
 def parsePortIndex (portName : String) : Option (String × Nat) :=
+  -- Try bracket indexing first: portName[N]
   match portName.splitOn "[" with
   | [base, idxPart] =>
-      -- Remove trailing ']' from idxPart
       let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
       match idxStr.toNat? with
       | some idx => some (base, idx)
       | none => none
-  | _ => none
-
-/-- Group port map entries: collect bracketed entries with the same base name
-    into bus groups, preserving order. Non-bracketed entries pass through as-is. -/
-def groupPortMapEntries (portMap : List (String × Wire))
-    : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
-  -- Process entries, accumulating groups
-  let result := portMap.foldl (fun (acc : List (Sum (String × Wire) (String × List (Nat × Wire)))) (pname, w) =>
-    match parsePortIndex pname with
-    | none =>
-        -- Scalar port, pass through
-        acc ++ [Sum.inl (pname, w)]
-    | some (base, idx) =>
-        -- Check if the last entry is a group with the same base name
-        match acc.reverse with
-        | (Sum.inr (prevBase, entries)) :: restRev =>
-            if prevBase == base then
-              -- Extend the existing group
-              restRev.reverse ++ [Sum.inr (base, entries ++ [(idx, w)])]
+  | _ =>
+      -- Try underscore or bare suffix: extract trailing digits
+      let chars := portName.toList
+      let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
+      if digitSuffix.isEmpty then
+        none
+      else
+        let idxStr := String.ofList digitSuffix
+        let baseStr := String.ofList (chars.take (chars.length - digitSuffix.length))
+        match idxStr.toNat? with
+        | some idx =>
+            -- Strip trailing underscore from base if present (underscore indexing)
+            let base := if baseStr.endsWith "_" then
+              String.ofList (baseStr.toList.dropLast)
             else
-              -- Different base, start new group
-              acc ++ [Sum.inr (base, [(idx, w)])]
-        | _ =>
-            -- No previous group, start new one
-            acc ++ [Sum.inr (base, [(idx, w)])]
-  ) []
-  result
+              baseStr
+            -- Don't parse if base is empty
+            if base.isEmpty then none
+            else some (base, idx)
+        | none => none
+
+/-- Build a mapping of port base names to their grouped bus names for a sub-module.
+    Uses the sub-module's signal groups + auto-detected groups to determine
+    which individual port names (e.g., "in_0", "data_3") belong to buses (e.g., "in", "data"). -/
+def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
+    : List (String × String × Nat) :=
+  -- Returns: list of (individualPortName, busName, bitIndex)
+  match allCircuits.find? (fun sc => sc.name == moduleName) with
+  | none => []
+  | some subMod =>
+      let subCtx := mkContext subMod
+      -- For each input and output wire in the sub-module, check if it's in a signal group
+      (subMod.inputs ++ subMod.outputs).filterMap (fun w =>
+        match subCtx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+        | some (_, sg) =>
+            match subCtx.wireToIndex.find? (fun (w', _) => w'.name == w.name) with
+            | some (_, idx) => some (w.name, sg.name, idx)
+            | none => none
+        | none => none
+      )
+
+/-- Group port map entries using the sub-module's actual port structure.
+    Matches portMap entry names against sub-module wire names and groups
+    them according to the sub-module's signal groups. -/
+def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
+    : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
+  let portGroups := buildSubModulePortGroups allCircuits inst.moduleName
+  -- For each portMap entry, check if it matches a sub-module wire that belongs to a group
+  let parsed := inst.portMap.map (fun (pname, w) =>
+    -- Try direct match: portMap name == sub-module wire name
+    let directMatch := portGroups.find? (fun (entry : String × String × Nat) =>
+      entry.1 == pname)
+    match directMatch with
+    | some (_, busName, idx) => (pname, w, some (busName, idx))
+    | none =>
+        -- Try parsePortIndex for bracket/underscore/bare patterns
+        match parsePortIndex pname with
+        | some (base, idx) =>
+            -- Verify this base name matches a bus in the sub-module
+            if portGroups.any (fun (entry : String × String × Nat) => entry.2.1 == base) then
+              (pname, w, some (base, idx))
+            else
+              (pname, w, (none : Option (String × Nat)))
+        | none => (pname, w, (none : Option (String × Nat)))
+  )
+  -- Collect groups (handling interleaved portMaps)
+  let groupAcc := parsed.foldl
+    (fun (groups : List (String × List (Nat × Wire))) (_pname, _w, parsed?) =>
+      match parsed? with
+      | some (base, idx) =>
+          match groups.find? (fun (b, _) => b == base) with
+          | some _ =>
+              groups.map (fun (b, es) =>
+                if b == base then (b, es ++ [(idx, _w)]) else (b, es))
+          | none =>
+              groups ++ [(base, [(idx, _w)])]
+      | none => groups
+    ) []
+  -- Emit groups at first occurrence, scalars inline
+  parsed.foldl (fun (acc : List (Sum (String × Wire) (String × List (Nat × Wire))) × List String)
+    (pname, w, parsed?) =>
+      let (result, emittedBases) := acc
+      match parsed? with
+      | some (base, _) =>
+          if emittedBases.contains base then
+            (result, emittedBases)
+          else
+            match groupAcc.find? (fun (b, _) => b == base) with
+            | some (_, entries) =>
+                (result ++ [Sum.inr (base, entries)], emittedBases ++ [base])
+            | none => (result, emittedBases)
+      | none =>
+          (result ++ [Sum.inl (pname, w)], emittedBases)
+  ) ([], []) |>.1
 
 /-- Generate port connection for module instantiation -/
 def generatePortConnection (ctx : Context) (c : Circuit) (portName : String) (wire : Wire) : String :=
@@ -494,8 +563,9 @@ def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
       s!"    .{baseName}({concat})"
 
 /-- Generate module instantiation -/
-def generateInstance (ctx : Context) (c : Circuit) (inst : CircuitInstance) : String :=
-  let grouped := groupPortMapEntries inst.portMap
+def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
+    (inst : CircuitInstance) : String :=
+  let grouped := groupPortMapEntries allCircuits inst
   let portConnections := grouped.map (fun entry =>
     match entry with
     | Sum.inl (pname, w) => generatePortConnection ctx c pname w
@@ -511,14 +581,14 @@ def generateInstance (ctx : Context) (c : Circuit) (inst : CircuitInstance) : St
   ]
 
 /-- Generate all module instantiations -/
-def generateInstances (ctx : Context) (c : Circuit) : String :=
-  let instances := c.instances.map (generateInstance ctx c)
+def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit) : String :=
+  let instances := c.instances.map (generateInstance ctx c allCircuits)
   joinLines instances
 
 /-! ## Module Generation -/
 
 /-- Generate complete SystemVerilog module for a circuit -/
-def generateModule (c : Circuit) : String :=
+def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let ctx := mkContext c
 
   let header := joinLines [
@@ -537,7 +607,7 @@ def generateModule (c : Circuit) : String :=
   let internalSignals := generateInternalSignals ctx c
   let combLogic := generateCombLogic ctx c
   let registers := generateRegisters ctx c
-  let instances := generateInstances ctx c
+  let instances := generateInstances ctx c allCircuits
 
   let body := joinLines [
     portSection,
@@ -555,7 +625,7 @@ def generateModule (c : Circuit) : String :=
 /-! ## Public API -/
 
 /-- Generate SystemVerilog code for a circuit -/
-def toSystemVerilog (c : Circuit) : String :=
-  generateModule c
+def toSystemVerilog (c : Circuit) (allCircuits : List Circuit := []) : String :=
+  generateModule c allCircuits
 
 end Shoumei.Codegen.SystemVerilog
