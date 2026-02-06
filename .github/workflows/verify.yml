@@ -127,10 +127,9 @@ jobs:
         with:
           name: verification-outputs
           path: |
-            output/sv-from-lean/
-            output/sv-from-chisel/
+            output/
             chisel/src/main/scala/generated/
-          retention-days: 30
+          retention-days: 5
 
       - name: Summary
         if: success()
