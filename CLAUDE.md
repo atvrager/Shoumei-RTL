@@ -157,6 +157,16 @@ See [docs/proof-strategies.md](docs/proof-strategies.md) for two approaches:
 1. **Structural induction + list lemmas** -- works for all parameterized circuits
 2. **BitVec semantic bridge** -- uses `bv_decide` for arithmetic proofs
 
+### Interactive Proof Development with Lean LSP
+
+See [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) for comprehensive guide to Lean LSP tools:
+- **`lean_multi_attempt`** -- test multiple tactics without editing files
+- **`lean_goal`** -- inspect proof states and goal transformations
+- **`lean_run_code`** -- execute standalone code snippets
+- **Search tools** -- find lemmas in Mathlib (leansearch, loogle, leanfinder)
+- **`lean_profile_proof`** -- performance analysis of proofs
+- Error diagnosis and debugging workflows
+
 ## Architecture Decisions
 
 ### Why dual generation (SV + Chisel)?
