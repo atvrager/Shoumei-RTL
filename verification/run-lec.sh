@@ -112,7 +112,7 @@ while IFS='|' read -r module deps proof; do
     proof=$(echo "$proof" | xargs)
     # Store module in associative array
     COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-done < <(lake exe export_verification_certs 2>/dev/null || true)
+done < <(.lake/build/bin/export_verification_certs 2>/dev/null || lake exe export_verification_certs 2>/dev/null || true)
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
 echo ""
 
