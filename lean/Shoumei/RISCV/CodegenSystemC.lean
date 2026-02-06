@@ -56,10 +56,17 @@ def genSCDecoderCase (instrDef : InstructionDef) (isFirst : Bool) : String :=
   "      io_valid.write(true);\n" ++
   "    }"
 
+/-- Check if decoder includes M-extension instructions (SystemC) -/
+private def hasMSC (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_m"))
+
 /-- Generate complete SystemC decoder header file (.h) -/
 def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let enumDecl := genSCOpTypeEnum defs
   let guardName := moduleName.toUpper ++ "_H"
+
+  let muldivPort := if hasMSC defs then
+    "\n  sc_out<bool>        io_is_muldiv;  // M-extension multiply/divide" else ""
 
   String.intercalate "\n" [
     "//==============================================================================",
@@ -76,13 +83,17 @@ def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String :=
     "",
     s!"SC_MODULE({moduleName}) " ++ "{",
     "  // Ports",
-    "  sc_in<sc_uint<32>>  io_instr;   // 32-bit instruction word",
-    "  sc_out<sc_uint<6>>  io_optype;  // Decoded operation type",
-    "  sc_out<sc_uint<5>>  io_rd;      // Destination register",
-    "  sc_out<sc_uint<5>>  io_rs1;     // Source register 1",
-    "  sc_out<sc_uint<5>>  io_rs2;     // Source register 2",
-    "  sc_out<sc_int<32>>  io_imm;     // Immediate value (sign-extended)",
-    "  sc_out<bool>        io_valid;   // Instruction is valid",
+    "  sc_in<sc_uint<32>>  io_instr;      // 32-bit instruction word",
+    "  sc_out<sc_uint<6>>  io_optype;     // Decoded operation type",
+    "  sc_out<sc_uint<5>>  io_rd;         // Destination register",
+    "  sc_out<sc_uint<5>>  io_rs1;        // Source register 1",
+    "  sc_out<sc_uint<5>>  io_rs2;        // Source register 2",
+    "  sc_out<sc_int<32>>  io_imm;        // Immediate value (sign-extended)",
+    "  sc_out<bool>        io_valid;      // Instruction is valid",
+    "  sc_out<bool>        io_has_rd;     // Instruction writes a register",
+    "  sc_out<bool>        io_is_integer; // Dispatch to integer ALU",
+    "  sc_out<bool>        io_is_memory;  // Dispatch to load/store unit",
+    "  sc_out<bool>        io_is_branch;  // Dispatch to branch unit" ++ muldivPort,
     "",
     "  // Process methods",
     "  void comb_logic();",
@@ -155,6 +166,30 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "    default:",
     "      io_imm.write(0); break;",
     "  }",
+    "",
+    "  // Dispatch classification",
+    "  bool valid = io_valid.read();",
+    "  bool is_store  = (opcode == 0x23);",
+    "  bool is_branch_op = (opcode == 0x63);",
+    "  bool is_fence  = (opcode == 0x0f);",
+    "  bool is_system = (opcode == 0x73);",
+    "  io_has_rd.write(valid && !is_store && !is_branch_op && !is_fence && !is_system);",
+    "",
+    "  bool is_rtype = (opcode == 0x33);",
+    if hasMSC defs then
+    "  bool is_mext = is_rtype && ((instr >> 25) & 1);",
+    else "",
+    "  io_is_integer.write(valid && (",
+    if hasMSC defs then
+    "    (is_rtype && !is_mext) ||"
+    else
+    "    is_rtype ||",
+    "    (opcode == 0x13) || (opcode == 0x37) || (opcode == 0x17)));",
+    "  io_is_memory.write(valid && ((opcode == 0x03) || (opcode == 0x23)));",
+    "  io_is_branch.write(valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67)));",
+    if hasMSC defs then
+    "  io_is_muldiv.write(valid && is_mext);"
+    else "",
     "}",
     ""
   ]

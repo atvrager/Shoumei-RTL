@@ -558,25 +558,17 @@ RV32I CPU Structural Circuit (Base Integer ISA)
 
 Same as RV32IM but without MulDiv RS and execution unit.
 
-Instances (9 total):
+Instances (10 total):
 1. FetchStage - PC management
-2. RenameStage_32x64 - RAT + FreeList + PhysRegFile
-3-5. ReservationStation4 (×3) - Integer, Memory, Branch
-6. IntegerExecUnit - ALU operations
-7. MemoryExecUnit - Address calculation
-8. ROB16 - Reorder buffer
-9. LSU - Load-store unit
-
-Note: Decoder kept external, decode signals as CPU inputs.
+2. RV32IDecoder - Instruction decoder
+3. RenameStage_32x64 - RAT + FreeList + PhysRegFile
+4-6. ReservationStation4 (×3) - Integer, Memory, Branch
+7. IntegerExecUnit - ALU operations
+8. MemoryExecUnit - Address calculation
+9. ROB16 - Reorder buffer
+10. LSU - Load-store unit
 -/
 def mkCPU_RV32I : Circuit :=
-  -- This is identical to RV32IM except:
-  -- 1. No MulDiv RS instance
-  -- 2. No MulDiv exec unit instance
-  -- 3. No dispatch_is_muldiv input
-  -- 4. Simplified CDB arbitration (no MulDiv)
-  -- 5. Simplified stall generation (no rs_muldiv_full)
-
   -- Global signals
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -588,6 +580,9 @@ def mkCPU_RV32I : Circuit :=
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
+  let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
+
+  -- === DECODER OUTPUTS (internal, driven by RV32IDecoder instance) ===
   let decode_optype := makeIndexedWires "decode_optype" 6
   let decode_rd := makeIndexedWires "decode_rd" 5
   let decode_rs1 := makeIndexedWires "decode_rs1" 5
@@ -598,7 +593,6 @@ def mkCPU_RV32I : Circuit :=
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
-  let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
 
   -- === FETCH STAGE ===
   let fetch_pc := makeIndexedWires "fetch_pc" 32
@@ -616,6 +610,24 @@ def mkCPU_RV32I : Circuit :=
       (branch_redirect_target.enum.map (fun ⟨i, w⟩ => (s!"branch_target_{i}", w))) ++
       (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
       [("stalled_reg", fetch_stalled)]
+  }
+
+  -- === DECODER ===
+  let decoder_inst : CircuitInstance := {
+    moduleName := "RV32IDecoder"
+    instName := "u_decoder"
+    portMap :=
+      (imem_resp_data.enum.map (fun ⟨i, w⟩ => (s!"io_instr_{i}", w))) ++
+      (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"io_optype_{i}", w))) ++
+      (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"io_rd_{i}", w))) ++
+      (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"io_rs1_{i}", w))) ++
+      (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"io_rs2_{i}", w))) ++
+      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"io_imm_{i}", w))) ++
+      [("io_valid", decode_valid),
+       ("io_has_rd", decode_has_rd),
+       ("io_is_integer", dispatch_is_integer),
+       ("io_is_memory", dispatch_is_memory),
+       ("io_is_branch", dispatch_is_branch)]
   }
 
   -- === RENAME STAGE ===
@@ -928,16 +940,13 @@ def mkCPU_RV32I : Circuit :=
     inputs := [clock, reset, zero, one] ++
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
-              decode_optype ++ decode_rd ++ decode_rs1 ++ decode_rs2 ++ decode_imm ++
-              [decode_valid, decode_has_rd] ++
-              [dispatch_is_integer, dispatch_is_memory, dispatch_is_branch] ++
               branch_redirect_target
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
                [rob_empty]
     gates := dispatch_gates ++ cdb_arb_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
-    instances := [fetch_inst, rename_inst,
+    instances := [fetch_inst, decoder_inst, rename_inst,
                   rs_int_inst, rs_mem_inst, rs_branch_inst,
                   int_exec_inst, mem_exec_inst,
                   rob_inst, lsu_inst]
@@ -992,19 +1001,18 @@ def mkCPU_RV32I : Circuit :=
 /--
 RV32IM CPU Structural Circuit (With M-Extension)
 
-Complete synthesizable CPU with all 11 verified submodules:
+Complete synthesizable CPU with all 12 verified submodules:
 1. FetchStage - PC management
-2. RenameStage_32x64 - RAT + FreeList + PhysRegFile
-3-6. ReservationStation4 (×4) - Integer, Memory, Branch, MulDiv
-7. IntegerExecUnit - ALU operations
-8. MemoryExecUnit - Address calculation
-9. MulDivExecUnit - Multiply/divide
-10. ROB16 - Reorder buffer
-11. LSU - Load-store unit with store buffer
+2. RV32IMDecoder - Instruction decoder (with M-extension)
+3. RenameStage_32x64 - RAT + FreeList + PhysRegFile
+4-7. ReservationStation4 (×4) - Integer, Memory, Branch, MulDiv
+8. IntegerExecUnit - ALU operations
+9. MemoryExecUnit - Address calculation
+10. MulDivExecUnit - Multiply/divide
+11. ROB16 - Reorder buffer
+12. LSU - Load-store unit with store buffer
 
-Simplified design for Phase 8G synthesis:
-- Decoder kept external (decode signals as CPU inputs)
-- Dispatch classification external (is_integer/memory/branch/muldiv inputs)
+Design notes:
 - Source ready bits tied high (always ready)
 - Branch redirect tied low (no redirects for now)
 - CDB arbitration: priority MUX (LSU > MulDiv > Integer)
@@ -1023,7 +1031,10 @@ def mkCPU_RV32IM : Circuit :=
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
 
-  -- Decode inputs (from external decoder)
+  -- Branch redirect (tied to zero for now - no branch prediction)
+  let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
+
+  -- === DECODER OUTPUTS (internal, driven by RV32IMDecoder instance) ===
   let decode_optype := makeIndexedWires "decode_optype" 6
   let decode_rd := makeIndexedWires "decode_rd" 5
   let decode_rs1 := makeIndexedWires "decode_rs1" 5
@@ -1031,15 +1042,10 @@ def mkCPU_RV32IM : Circuit :=
   let decode_imm := makeIndexedWires "decode_imm" 32
   let decode_valid := Wire.mk "decode_valid"
   let decode_has_rd := Wire.mk "decode_has_rd"
-
-  -- Dispatch classification inputs (from external classifier)
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
   let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
-
-  -- Branch redirect (tied to zero for now - no branch prediction)
-  let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
 
   -- === FETCH STAGE ===
   let fetch_pc := makeIndexedWires "fetch_pc" 32
@@ -1057,6 +1063,25 @@ def mkCPU_RV32IM : Circuit :=
       (branch_redirect_target.enum.map (fun ⟨i, w⟩ => (s!"branch_target_{i}", w))) ++
       (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
       [("stalled_reg", fetch_stalled)]
+  }
+
+  -- === DECODER ===
+  let decoder_inst : CircuitInstance := {
+    moduleName := "RV32IMDecoder"
+    instName := "u_decoder"
+    portMap :=
+      (imem_resp_data.enum.map (fun ⟨i, w⟩ => (s!"io_instr_{i}", w))) ++
+      (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"io_optype_{i}", w))) ++
+      (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"io_rd_{i}", w))) ++
+      (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"io_rs1_{i}", w))) ++
+      (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"io_rs2_{i}", w))) ++
+      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"io_imm_{i}", w))) ++
+      [("io_valid", decode_valid),
+       ("io_has_rd", decode_has_rd),
+       ("io_is_integer", dispatch_is_integer),
+       ("io_is_memory", dispatch_is_memory),
+       ("io_is_branch", dispatch_is_branch),
+       ("io_is_muldiv", dispatch_is_muldiv)]
   }
 
   -- === RENAME STAGE ===
@@ -1456,16 +1481,13 @@ def mkCPU_RV32IM : Circuit :=
     inputs := [clock, reset, zero, one] ++
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
-              decode_optype ++ decode_rd ++ decode_rs1 ++ decode_rs2 ++ decode_imm ++
-              [decode_valid, decode_has_rd] ++
-              [dispatch_is_integer, dispatch_is_memory, dispatch_is_branch, dispatch_is_muldiv] ++
               branch_redirect_target
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
                [rob_empty]
     gates := dispatch_gates ++ arb_level1_gates ++ cdb_arb_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
-    instances := [fetch_inst, rename_inst,
+    instances := [fetch_inst, decoder_inst, rename_inst,
                   rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
                   int_exec_inst, mem_exec_inst, muldiv_exec_inst,
                   rob_inst, lsu_inst]

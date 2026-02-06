@@ -30,6 +30,7 @@ output/**/*
 !output/**/.gitkeep
 *.v
 *.sv
+!testbench/**/*.sv
 *.fir
 *.anno.json
 chisel/src/main/scala/generated/*.scala
