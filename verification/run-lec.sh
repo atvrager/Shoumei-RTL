@@ -112,8 +112,15 @@ while IFS='|' read -r module deps proof; do
     proof=$(echo "$proof" | xargs)
     # Store module in associative array
     COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-done < <(.lake/build/bin/export_verification_certs 2>/dev/null || lake exe export_verification_certs 2>/dev/null || true)
+done < <(.lake/build/bin/export_verification_certs 2>/dev/null || \
+    lake exe export_verification_certs 2>/dev/null || \
+    "$HOME/.elan/bin/lake" exe export_verification_certs 2>/dev/null || \
+    true)
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
+if [ ${#COMPOSITIONAL_CERTS[@]} -eq 0 ]; then
+    echo -e "${YELLOW}⚠ No compositional certificates loaded. Large hierarchical modules may fail LEC.${NC}"
+    echo "  Ensure 'lake build export_verification_certs' has been run, or use 'make lec'."
+fi
 echo ""
 
 # Topological sort modules based on dependencies

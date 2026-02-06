@@ -132,6 +132,8 @@ systemc:
 
 # Run logical equivalence checking with Yosys
 lec: lean
+	@echo "==> Building verification certificate exporter..."
+	lake build export_verification_certs
 	@echo "==> Running logical equivalence checking (Yosys)..."
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
 
