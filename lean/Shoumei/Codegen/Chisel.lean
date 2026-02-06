@@ -1578,6 +1578,20 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   ]
 
   let io := generateIO ctx c
+
+  -- Generate dontTouch for all output ports to prevent CIRCT DCE from removing them
+  let outputDontTouch := c.outputs.filterMap (fun w =>
+    if ctx.clockWires.contains w || ctx.resetWires.contains w then none
+    else
+      match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+      | some (_, sg) =>
+          if sg.wires.head? == some w then
+            some s!"  dontTouch({sg.name})"
+          else none
+      | none => some s!"  dontTouch({w.name})"
+  )
+  let dontTouchStr := joinLines outputDontTouch
+
   let internalWires := generateInternalWires ctx c
 
   -- Generate DontCare for undriven internal wires
@@ -1620,6 +1634,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
   let body := joinLines [
     io,
+    dontTouchStr,
     "",
     internalWires,
     undrivenStr,

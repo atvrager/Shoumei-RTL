@@ -96,7 +96,7 @@ object Main extends App {
       ChiselStage.emitSystemVerilogFile(
         generatorFn(),
         args = Array("--target-dir", outputDir.getAbsolutePath),
-        firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
+        firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "--disable-opt")
       )
 
       println(s"✓ $moduleName compilation successful")

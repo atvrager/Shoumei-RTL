@@ -131,6 +131,126 @@ def sanitizeSVName (name : String) : String :=
 def sanitizeSignalGroup (sg : SignalGroup) : SignalGroup :=
   { sg with name := sanitizeSVName sg.name }
 
+/-- Extract base name from a wire name by stripping digit suffix.
+    Examples: "addr_0" -> "addr", "sel_1" -> "sel", "data" -> "data" -/
+private def extractBaseName (wireName : String) : String :=
+  let parts := wireName.splitOn "_"
+  if parts.length >= 2 then
+    let lastPart := parts.getLast!
+    if lastPart.toNat?.isSome then
+      String.intercalate "_" (parts.dropLast)
+    else
+      wireName
+  else
+    wireName
+
+/-- Check if an output signal group needs individual port declarations
+    (matching Chisel Vec behavior) vs vectorized (matching Chisel UInt behavior).
+    Returns true if the signal group needs individual ports. -/
+def outputNeedsIndividualPorts (wireToGroup : List (Wire × SignalGroup))
+    (wireToIndex : List (Wire × Nat)) (c : Circuit) (sg : SignalGroup) : Bool :=
+  if sg.width <= 1 then
+    false  -- Single-bit outputs don't need individual ports
+  else
+    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+    let outputGates := combGates.filter (fun g =>
+      sg.wires.any (fun w => w.name == g.output.name)
+    )
+    if outputGates.isEmpty then
+      false  -- No gates write to this group (e.g., driven by instances)
+    else
+      match outputGates.head? with
+      | none => false
+      | some firstGate =>
+          let allSameType := outputGates.all (fun g => g.gateType == firstGate.gateType)
+          if !(allSameType && outputGates.length == sg.width) then
+            true  -- Mixed types or incomplete coverage → individual
+          else
+            -- Check if gates form a bus-wide operation pattern
+            match firstGate.gateType with
+            | GateType.BUF =>
+                match firstGate.inputs with
+                | [in0] =>
+                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
+                    match in0GroupName with
+                    | some firstBusName =>
+                        let allInSameBus := outputGates.all (fun g =>
+                          match g.inputs with
+                          | [inp] =>
+                              let inpGroupName := wireToGroup.find? (fun (w', _) => w'.name == inp.name) |>.map (·.2.name)
+                              inpGroupName == some firstBusName
+                          | _ => false
+                        )
+                        !allInSameBus
+                    | none => true
+                | _ => true
+            | GateType.AND | GateType.OR | GateType.XOR =>
+                match firstGate.inputs with
+                | [in0, in1] =>
+                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
+                    let in1GroupName := wireToGroup.find? (fun (w', _) => w'.name == in1.name) |>.map (·.2.name)
+                    if in0GroupName.isSome || in1GroupName.isSome then
+                      let allUniform := outputGates.all (fun g =>
+                        match g.inputs with
+                        | [gi0, gi1] =>
+                            let gi0GroupName := wireToGroup.find? (fun (w', _) => w'.name == gi0.name) |>.map (·.2.name)
+                            let gi1GroupName := wireToGroup.find? (fun (w', _) => w'.name == gi1.name) |>.map (·.2.name)
+                            gi0GroupName == in0GroupName && gi1GroupName == in1GroupName
+                        | _ => false
+                      )
+                      !allUniform
+                    else
+                      true
+                | _ => true
+            | GateType.MUX =>
+                match firstGate.inputs with
+                | [in0, in1, sel] =>
+                    let in0Bus := wireToGroup.any (fun (w', _) => w'.name == in0.name)
+                    let in1Bus := wireToGroup.any (fun (w', _) => w'.name == in1.name)
+                    if in0Bus && in1Bus then
+                      let in0Group := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
+                      let in1Group := wireToGroup.find? (fun (w', _) => w'.name == in1.name) |>.map (·.2.name)
+                      let selGroup := wireToGroup.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2.name)
+                      let allGatesUniform := outputGates.all (fun g =>
+                        match g.inputs with
+                        | [g_in0, g_in1, g_sel] =>
+                            let g0 := wireToGroup.find? (fun (w', _) => w'.name == g_in0.name) |>.map (·.2.name)
+                            let g1 := wireToGroup.find? (fun (w', _) => w'.name == g_in1.name) |>.map (·.2.name)
+                            let gs := wireToGroup.find? (fun (w', _) => w'.name == g_sel.name) |>.map (·.2.name)
+                            g0 == in0Group && g1 == in1Group && gs == selGroup
+                        | _ => false
+                      )
+                      if !allGatesUniform then
+                        true
+                      else
+                        let selInBus := wireToGroup.any (fun (w', _) => w'.name == sel.name)
+                        let selIdx := wireToIndex.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2)
+                        match selInBus, selIdx with
+                        | false, _ => false
+                        | true, some _ => false
+                        | _, _ => true
+                    else
+                      true
+                | _ => true
+            | GateType.NOT =>
+                -- NOT gates: check if all inputs come from the same bus
+                match firstGate.inputs with
+                | [in0] =>
+                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
+                    match in0GroupName with
+                    | some firstBusName =>
+                        let allInSameBus := outputGates.all (fun g =>
+                          match g.inputs with
+                          | [inp] =>
+                              let inpGroupName := wireToGroup.find? (fun (w', _) => w'.name == inp.name) |>.map (·.2.name)
+                              inpGroupName == some firstBusName
+                          | _ => false
+                        )
+                        !allInSameBus
+                    | none => true
+                | _ => true
+            | _ => true  -- DFF and other types → individual
+
 /-- Build context from circuit -/
 def mkContext (c : Circuit) : Context :=
   let clockWires := findClockWires c
@@ -183,13 +303,24 @@ def signalGroupToSV (sg : SignalGroup) : String :=
 /-- Generate reference to a wire in generated SystemVerilog code.
 
     For wires in signal groups: use group name with optional bit indexing
+    For output signal group wires: use wire name directly (ports are individual)
     For standalone wires: use wire name directly -/
-def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
+def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
   -- Check if wire belongs to a signal group
   match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
   | some (_, sg) =>
-      -- Wire is part of a bus
-      if sg.width > 1 then
+      -- Output signal group wires with individual ports use wire names directly
+      let isOutput := c.outputs.any (fun ow => ow.name == w.name)
+      let outputSg := if isOutput then
+        -- Find the signal group this output wire belongs to
+        ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) |>.map (·.2)
+      else none
+      let needsIndividual := match outputSg with
+        | some osg => outputNeedsIndividualPorts ctx.wireToGroup ctx.wireToIndex c osg
+        | none => false
+      if needsIndividual then
+        w.name
+      else if sg.width > 1 then
         -- Multi-bit bus - use indexed reference
         match ctx.wireToIndex.find? (fun (w', _) => w'.name == w.name) with
         | some (_, idx) => s!"{sg.name}[{idx}]"
@@ -199,7 +330,7 @@ def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
         sg.name
   | none =>
       -- Standalone wire
-      w.name
+      sanitizeSVName w.name
 
 /-! ## Module Port Generation -/
 
@@ -208,28 +339,34 @@ def generateSignalGroupPort (direction : String) (sg : SignalGroup) : String :=
   let svType := signalGroupToSV sg
   s!"  {direction} {svType} {sg.name}"
 
-/-- Generate port declaration for a single wire -/
-def generateWirePort (ctx : Context) (_c : Circuit) (w : Wire) (direction : String) : Option String :=
+/-- Generate port declaration(s) for a single wire.
+    Returns a list of port strings because output signal groups expand to multiple ports. -/
+def generateWirePorts (ctx : Context) (_c : Circuit) (w : Wire) (direction : String) : List String :=
   -- Skip clock and reset (will be added explicitly)
   if ctx.clockWires.contains w || ctx.resetWires.contains w then
-    none
+    []
   else
     -- Check if wire is part of a signal group
     match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
     | some (_, sg) =>
         -- Only emit port for the first wire in the group
         if sg.wires.head? == some w then
-          some (generateSignalGroupPort direction sg)
+          if direction == "output" && outputNeedsIndividualPorts ctx.wireToGroup ctx.wireToIndex _c sg then
+            -- Output signal groups with individual bit assignments: emit individual ports to match Chisel/CIRCT
+            sg.wires.enum.map (fun (_, wire) => s!"  {direction} logic {wire.name}")
+          else
+            -- Input signal groups and bus-wide output groups: keep vectorized
+            [generateSignalGroupPort direction sg]
         else
-          none
+          []
     | none =>
         -- Standalone wire - emit as single-bit logic
-        some s!"  {direction} logic {w.name}"
+        [s!"  {direction} logic {w.name}"]
 
 /-- Generate all port declarations -/
 def generatePorts (ctx : Context) (c : Circuit) : String :=
-  let inputPorts := c.inputs.filterMap (generateWirePort ctx c · "input")
-  let outputPorts := c.outputs.filterMap (generateWirePort ctx c · "output")
+  let inputPorts := c.inputs.flatMap (generateWirePorts ctx c · "input")
+  let outputPorts := c.outputs.flatMap (generateWirePorts ctx c · "output")
 
   -- Add explicit clock and reset ports that were filtered from regular inputs
   -- Only add ports that: (1) exist in the circuit's inputs, and (2) were filtered
@@ -268,7 +405,7 @@ def generateInternalSignalDecl (ctx : Context) (_c : Circuit) (w : Wire) : Optio
         none
   | none =>
       -- Standalone wire
-      some s!"  logic {w.name};"
+      some s!"  logic {sanitizeSVName w.name};"
 
 /-- Generate all internal signal declarations -/
 def generateInternalSignals (ctx : Context) (c : Circuit) : String :=
@@ -452,6 +589,22 @@ def parsePortIndex (portName : String) : Option (String × Nat) :=
             else some (base, idx)
         | none => none
 
+/-- Get the set of output signal group names that use individual ports for a sub-module. -/
+def getSubModuleIndividualOutputGroups (allCircuits : List Circuit) (moduleName : String)
+    : List String :=
+  match allCircuits.find? (fun sc => sc.name == moduleName) with
+  | none => []
+  | some subMod =>
+      let subCtx := mkContext subMod
+      let allSgs := subCtx.wireToGroup.map (·.2)
+      let uniqueSgNames := (allSgs.map (·.name)).eraseDups
+      let uniqueSgs := uniqueSgNames.filterMap (fun n => allSgs.find? (fun sg => sg.name == n))
+      uniqueSgs.filter (fun sg =>
+          let isOutputGroup := sg.wires.any (fun w => subMod.outputs.any (fun ow => ow.name == w.name))
+          isOutputGroup && outputNeedsIndividualPorts subCtx.wireToGroup subCtx.wireToIndex subMod sg
+        )
+        |>.map (·.name)
+
 /-- Build a mapping of port base names to their grouped bus names for a sub-module.
     Uses the sub-module's signal groups + auto-detected groups to determine
     which individual port names (e.g., "in_0", "data_3") belong to buses (e.g., "in", "data"). -/
@@ -463,6 +616,7 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
   | some subMod =>
       let subCtx := mkContext subMod
       -- For each input and output wire in the sub-module, check if it's in a signal group
+      -- Include ALL signal groups (even individual-port outputs) for grouping
       (subMod.inputs ++ subMod.outputs).filterMap (fun w =>
         match subCtx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
         | some (_, sg) =>
@@ -562,14 +716,28 @@ def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
       let concat := "{" ++ String.intercalate ", " wireRefs.reverse ++ "}"
       s!"    .{baseName}({concat})"
 
+/-- Generate individual port connections for a bus group where the sub-module
+    uses individual ports (e.g., out_0, out_1, ...). -/
+def generateIndividualBusPortConnections (ctx : Context) (c : Circuit)
+    (baseName : String) (entries : List (Nat × Wire)) : List String :=
+  let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
+  sorted.map (fun (idx, w) => s!"    .{baseName}_{idx}({wireRef ctx c w})")
+
 /-- Generate module instantiation -/
 def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
     (inst : CircuitInstance) : String :=
   let grouped := groupPortMapEntries allCircuits inst
-  let portConnections := grouped.map (fun entry =>
+  -- Get output signal groups with individual ports for this sub-module
+  let individualOutputGroups := getSubModuleIndividualOutputGroups allCircuits inst.moduleName
+  let portConnections := grouped.flatMap (fun entry =>
     match entry with
-    | Sum.inl (pname, w) => generatePortConnection ctx c pname w
-    | Sum.inr (baseName, entries) => generateBusPortConnection ctx c baseName entries
+    | Sum.inl (pname, w) => [generatePortConnection ctx c pname w]
+    | Sum.inr (baseName, entries) =>
+        -- Check if this bus group corresponds to an individual-port output
+        if individualOutputGroups.contains baseName then
+          generateIndividualBusPortConnections ctx c baseName entries
+        else
+          [generateBusPortConnection ctx c baseName entries]
   )
 
   let connectionsStr := String.intercalate ",\n" portConnections

@@ -339,27 +339,43 @@ verify_module() {
     # Generate read commands for a specific module + its dependencies
     # For slang: reads only the module and its deps (not all files)
     # For built-in: still reads all files (wildcards work fine)
-    generate_read_commands_for_module() {
-        local module_name="$1"
-        local dir="$2"
-        local module_file="$dir/${module_name}.sv"
+    # Collect transitive dependencies for a module
+    collect_transitive_deps() {
+        local dir="$1"
+        shift
+        local -a queue=("$@")
+        local -A visited=()
+        local -a all_files=()
 
-        if [ "$READ_CMD" = "read_slang" ]; then
-            # For slang, collect module + dependencies
-            local files="$module_file"
+        while [ ${#queue[@]} -gt 0 ]; do
+            local mod="${queue[0]}"
+            queue=("${queue[@]:1}")
+            if [ -n "${visited[$mod]+x}" ]; then continue; fi
+            visited[$mod]=1
 
-            # Get dependencies and add their files
-            if [ -f "$module_file" ]; then
+            local mod_file="$dir/${mod}.sv"
+            if [ -f "$mod_file" ] || [ -L "$mod_file" ]; then
+                all_files+=("$mod_file")
                 local deps
-                deps=$(get_module_dependencies "$module_file")
+                deps=$(get_module_dependencies "$mod_file")
                 for dep in $deps; do
-                    local dep_file="$dir/${dep}.sv"
-                    if [ -f "$dep_file" ] || [ -L "$dep_file" ]; then
-                        files="$files $dep_file"
+                    if [ -z "${visited[$dep]+x}" ]; then
+                        queue+=("$dep")
                     fi
                 done
             fi
+        done
+        echo "${all_files[*]}"
+    }
 
+    generate_read_commands_for_module() {
+        local module_name="$1"
+        local dir="$2"
+
+        if [ "$READ_CMD" = "read_slang" ]; then
+            # For slang, collect module + transitive dependencies
+            local files
+            files=$(collect_transitive_deps "$dir" "$module_name")
             echo "$READ_CMD $files"
         else
             # Built-in parser can handle wildcards
