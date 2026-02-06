@@ -110,6 +110,27 @@ def findInternalWires (c : Circuit) : List Wire :=
     !c.inputs.contains w && !c.outputs.contains w
   )
 
+/-- Verilog/SystemVerilog reserved keywords that cannot be used as identifiers -/
+def svReservedKeywords : List String :=
+  ["and", "or", "xor", "not", "nand", "nor", "xnor", "buf", "bufif0", "bufif1",
+   "notif0", "notif1", "input", "output", "inout", "wire", "reg", "logic",
+   "assign", "module", "endmodule", "begin", "end", "always", "initial",
+   "if", "else", "case", "endcase", "for", "while", "repeat", "forever",
+   "function", "endfunction", "task", "endtask", "generate", "endgenerate",
+   "parameter", "localparam", "integer", "real", "time", "event",
+   "posedge", "negedge", "edge", "supply0", "supply1", "tri", "wand", "wor",
+   "default", "disable", "deassign", "force", "release", "fork", "join",
+   "table", "endtable", "primitive", "endprimitive", "specify", "endspecify"]
+
+/-- Sanitize a signal name to avoid Verilog reserved keyword conflicts.
+    Prefixes with "w_" if the name is a reserved keyword. -/
+def sanitizeSVName (name : String) : String :=
+  if svReservedKeywords.contains name then s!"w_{name}" else name
+
+/-- Sanitize signal group name for SV output -/
+def sanitizeSignalGroup (sg : SignalGroup) : SignalGroup :=
+  { sg with name := sanitizeSVName sg.name }
+
 /-- Build context from circuit -/
 def mkContext (c : Circuit) : Context :=
   let clockWires := findClockWires c
@@ -122,7 +143,8 @@ def mkContext (c : Circuit) : Context :=
 
   -- Combine explicit annotations with auto-detected groups
   -- Explicit annotations take precedence (come first)
-  let allGroups := c.signalGroups ++ autoDetectedGroups
+  -- Sanitize names to avoid SV reserved keyword conflicts
+  let allGroups := (c.signalGroups ++ autoDetectedGroups).map sanitizeSignalGroup
 
   -- Build wire-to-group mapping from all signal groups
   let wireToGroup := allGroups.flatMap (fun sg =>
