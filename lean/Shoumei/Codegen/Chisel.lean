@@ -114,8 +114,10 @@ def findInternalWires (c : Circuit) : List Wire :=
 def mkContext (c : Circuit) : Context :=
   let clockWires := findClockWires c
   let resetWires := findResetWires c
-  -- A circuit is sequential if it has DFFs OR if it has instances (which might need clock/reset)
-  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) || !c.instances.isEmpty
+  -- A circuit is sequential if it has DFFs or clock/reset wires
+  -- (not just having instances -- combinational hierarchical modules like ALU32, Mux64x32 don't need clock)
+  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) ||
+                      !clockWires.isEmpty || !resetWires.isEmpty
 
   -- Auto-detect signal groups from internal wires
   let internalWires := findInternalWires c
@@ -377,16 +379,11 @@ def isWireUsedInCombLogic (c : Circuit) (wireName : String) : Bool :=
   )
 
 /-- Get the IO port name for a wire, renaming if needed to avoid conflicts -/
-def getIOPortName (ctx : Context) (c : Circuit) (w : Wire) : String :=
-  -- For Module (sequential), rename "reset" to "reset_in" if used in combinational logic
-  -- to avoid conflict with implicit reset
-  if ctx.isSequential && w.name == "reset" && isWireUsedInCombLogic c w.name then
-    "reset_in"
-  -- For Module (sequential), rename "clock" to "clock_in" if used in combinational logic
-  else if ctx.isSequential && w.name == "clock" && isWireUsedInCombLogic c w.name then
-    "clock_in"
-  else
-    w.name
+def getIOPortName (_ctx : Context) (_c : Circuit) (w : Wire) : String :=
+  -- For sequential modules, clock and reset are implicit in Chisel (Module class).
+  -- When they're used in combinational logic, use the implicit signals directly
+  -- rather than creating separate ports (which would cause port mismatches with Lean SV).
+  w.name
 
 /-- Generate reference to a wire in generated Chisel code.
 
@@ -398,23 +395,15 @@ def getIOPortName (ctx : Context) (c : Circuit) (w : Wire) : String :=
 def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
   -- Check if this is clock or reset
   if ctx.clockWires.contains w then
-    -- If used in combinational logic, use renamed port; otherwise use implicit clock
-    if isWireUsedInCombLogic c w.name then
-      getIOPortName ctx c w
-    else
-      "clock"
+    -- Always use Chisel's implicit clock (no separate port needed)
+    "clock.asBool"
   else if ctx.resetWires.contains w then
-    -- If used in combinational logic, use renamed port; otherwise use implicit reset
-    if isWireUsedInCombLogic c w.name then
-      getIOPortName ctx c w
-    else
-      "reset.asBool"
-  else if ctx.isSequential && w.name == "clock" && isWireUsedInCombLogic c w.name then
-    -- Explicit clock wire in Module (renamed to clock_in)
-    getIOPortName ctx c w
-  else if ctx.isSequential && w.name == "reset" && isWireUsedInCombLogic c w.name then
-    -- Explicit reset wire in Module (renamed to reset_in)
-    getIOPortName ctx c w
+    -- Always use Chisel's implicit reset (no separate port needed)
+    "reset.asBool"
+  else if ctx.isSequential && w.name == "clock" then
+    "clock.asBool"
+  else if ctx.isSequential && w.name == "reset" then
+    "reset.asBool"
   else
     -- Check if wire belongs to a signal group
     match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
@@ -518,16 +507,9 @@ def generateWireIO (ctx : Context) (c : Circuit) (w : Wire) (isInput : Bool) : O
   if ctx.clockWires.contains w || ctx.resetWires.contains w then
     none
   -- For Module (sequential circuits), skip wires named "clock" or "reset"
-  -- ONLY if they're not used in non-DFF gates (i.e., only used implicitly)
+  -- They're available as implicit signals via Module's clock/reset
   else if ctx.isSequential && (w.name == "clock" || w.name == "reset") then
-    if isWireUsedInCombLogic c w.name then
-      -- Generate explicit IO with renamed port to avoid conflict with implicit
-      let portName := getIOPortName ctx c w
-      let dir := if isInput then "Input" else "Output"
-      some s!"  val {portName} = IO({dir}(Bool()))"
-    else
-      -- Only used implicitly (for DFFs or instances), skip from IO
-      none
+    none  -- Use clock.asBool / reset.asBool in wireRef instead of a separate port
   else
     -- Skip DFF outputs ONLY if they're NOT circuit outputs (internal register state)
     -- DFF outputs that ARE circuit outputs need to be exposed as IO ports
@@ -861,40 +843,88 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                     some s!"  {outRef} := {in0Ref} {op} {in1Ref}"
                 | some b0, none =>
                     -- Bus op scalar: use Cat to build result
-                    let outRef := signalGroupRef ctx bus.name
-                    -- Check if b0 needs Vec indexing
-                    let in0Ref := if needsVecDeclarationHelper ctx b0 _c then
-                                   signalGroupRef ctx b0.name  -- Vec, use element access
-                                 else
-                                   signalGroupRefForBusOp ctx _c b0  -- UInt, broadcast
-                    let in0Access := if needsVecDeclarationHelper ctx b0 _c then
-                                      s!"{in0Ref}(i)"
-                                    else
-                                      in0Ref
-                    let forLoop := joinLines [
-                      s!"  {outRef} := Cat(",
-                      s!"    (0 until {bus.width}).reverse.map(i => {in0Access} {op} {in1.name})",
-                      "  )"
-                    ]
-                    some forLoop
+                    -- Check if the scalar input is the same across all gates
+                    let scalarIsUniform := gates.all (fun g =>
+                      match g.inputs with
+                      | [_, scalar] => scalar.name == in1.name
+                      | _ => false
+                    )
+                    if scalarIsUniform then
+                      let outRef := signalGroupRef ctx bus.name
+                      let in0Ref := if needsVecDeclarationHelper ctx b0 _c then
+                                     signalGroupRef ctx b0.name
+                                   else
+                                     signalGroupRefForBusOp ctx _c b0
+                      let in0Access := if needsVecDeclarationHelper ctx b0 _c then
+                                        s!"{in0Ref}(i)"
+                                      else
+                                        in0Ref
+                      let forLoop := joinLines [
+                        s!"  {outRef} := Cat(",
+                        s!"    (0 until {bus.width}).reverse.map(i => {in0Access} {op} {in1.name})",
+                        "  )"
+                      ]
+                      some forLoop
+                    else
+                      -- Scalar varies per bit: build Cat with per-gate expressions
+                      let sortedGates := gates.toArray.qsort (fun g1 g2 =>
+                        match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == g1.output.name),
+                              ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == g2.output.name) with
+                        | some (_, i1), some (_, i2) => i1 < i2
+                        | _, _ => g1.output.name < g2.output.name
+                      ) |>.toList
+                      let outRef := signalGroupRef ctx bus.name
+                      let perBitExprs := sortedGates.reverse.map (fun g =>
+                        match g.inputs with
+                        | [busIn, scalarIn] =>
+                            let busRef := wireRef ctx _c busIn
+                            s!"{busRef} {op} {scalarIn.name}"
+                        | _ => "false.B"
+                      )
+                      let catBody := String.intercalate ", " perBitExprs
+                      some s!"  {outRef} := Cat({catBody})"
                 | none, some b1 =>
                     -- Scalar op bus: use Cat to build result
-                    let outRef := signalGroupRef ctx bus.name
-                    -- Check if b1 needs Vec indexing
-                    let in1Ref := if needsVecDeclarationHelper ctx b1 _c then
-                                   signalGroupRef ctx b1.name  -- Vec, use element access
-                                 else
-                                   signalGroupRefForBusOp ctx _c b1  -- UInt, broadcast
-                    let in1Access := if needsVecDeclarationHelper ctx b1 _c then
-                                      s!"{in1Ref}(i)"
-                                    else
-                                      in1Ref
-                    let forLoop := joinLines [
-                      s!"  {outRef} := Cat(",
-                      s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Access})",
-                      "  )"
-                    ]
-                    some forLoop
+                    -- Check if the scalar input is the same across all gates
+                    let scalarIsUniform := gates.all (fun g =>
+                      match g.inputs with
+                      | [scalar, _] => scalar.name == in0.name
+                      | _ => false
+                    )
+                    if scalarIsUniform then
+                      let outRef := signalGroupRef ctx bus.name
+                      let in1Ref := if needsVecDeclarationHelper ctx b1 _c then
+                                     signalGroupRef ctx b1.name
+                                   else
+                                     signalGroupRefForBusOp ctx _c b1
+                      let in1Access := if needsVecDeclarationHelper ctx b1 _c then
+                                        s!"{in1Ref}(i)"
+                                      else
+                                        in1Ref
+                      let forLoop := joinLines [
+                        s!"  {outRef} := Cat(",
+                        s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Access})",
+                        "  )"
+                      ]
+                      some forLoop
+                    else
+                      -- Scalar varies per bit: build Cat with per-gate expressions
+                      let sortedGates := gates.toArray.qsort (fun g1 g2 =>
+                        match ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == g1.output.name),
+                              ctx.wireToIndex.find? (fun ⟨w', _⟩ => w'.name == g2.output.name) with
+                        | some (_, i1), some (_, i2) => i1 < i2
+                        | _, _ => g1.output.name < g2.output.name
+                      ) |>.toList
+                      let outRef := signalGroupRef ctx bus.name
+                      let perBitExprs := sortedGates.reverse.map (fun g =>
+                        match g.inputs with
+                        | [scalarIn, busIn] =>
+                            let busRef := wireRef ctx _c busIn
+                            s!"{scalarIn.name} {op} {busRef}"
+                        | _ => "false.B"
+                      )
+                      let catBody := String.intercalate ", " perBitExprs
+                      some s!"  {outRef} := Cat({catBody})"
                 | none, none => none
             | _ => none
         | _ => none
@@ -1082,8 +1112,9 @@ def consolidateIntoForLoops (assignments : List String) : List String :=
 
   remaining ++ (forLoops.map (·.2))
 
-/-- Generate all combinational gate logic with bus-wide optimization -/
-def generateCombGates (ctx : Context) (c : Circuit) : String :=
+/-- Generate all combinational gate logic with bus-wide optimization.
+    excludedWires: wire names already driven by instance outputs (skip to avoid double-assignment) -/
+def generateCombGates (ctx : Context) (c : Circuit) (excludedWires : List String := []) : String :=
   let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
 
   -- Group gates by bus operations
@@ -1102,8 +1133,10 @@ def generateCombGates (ctx : Context) (c : Circuit) : String :=
   let handledGates := busOpsWithGates.flatMap (·.2)
 
   -- Generate individual assignments for remaining gates
+  -- Also exclude gates whose outputs are already driven by instance connections
   let remainingGates := combGates.filter (fun g =>
-    !handledGates.any (fun hg => hg.output.name == g.output.name)
+    !handledGates.any (fun hg => hg.output.name == g.output.name) &&
+    !excludedWires.contains g.output.name
   )
   let individualOps := remainingGates.map (generateCombGate ctx c) |>.filter (· != "")
 
@@ -1251,6 +1284,15 @@ def groupPortMapBySignalGroup (ctx : Context) (portMap : List (String × Wire))
         acc ++ [(key, [entry])]
   ) [] |>.map (fun ((sg, pb), entries) => (sg, pb, entries))
 
+/-- Extract numeric index from a bracket-notation port name.
+    Example: "in0[31]" → some 31, "out[5]" → some 5, "valid" → none -/
+def extractBracketIndex (portName : String) : Option Nat :=
+  match portName.splitOn "[" with
+  | [_, rest] =>
+      let idxStr := String.ofList (rest.toList.takeWhile (· != ']'))
+      idxStr.toNat?
+  | _ => none
+
 /-- Convert bracket notation in port names to Chisel parenthesis notation.
     Example: "alloc_oldPhysRd[0]" -> "alloc_oldPhysRd(0)" -/
 def convertPortNameToChisel (portName : String) : String :=
@@ -1273,18 +1315,26 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
   )
 
   -- 2b. Check if filtered clock/reset entries need explicit connections
-  --     (when sub-module has renamed "reset" → "reset_in" because it uses reset in comb logic)
+  --     For sequential sub-modules (Chisel Module), clock/reset are implicit - no explicit connection needed.
+  --     For RawModule sub-modules that use clock/reset in comb logic, generate explicit port connections.
   let renamedClockResetConnections := clockResetEntries.filterMap (fun (pname, _wire) =>
     let baseName := extractPortBaseName pname
     if baseName == "reset" || baseName == "clock" then
       match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
       | none => none
       | some subMod =>
-          if isWireUsedInCombLogic subMod baseName then
-            -- Sub-module uses clock/reset in combinational logic → renamed port needs connection
-            let renamedPort := if baseName == "reset" then "reset_in" else "clock_in"
-            let wireRefStr := if baseName == "reset" then "reset.asBool" else "clock"
-            some s!"  {inst.instName}.{renamedPort} := {wireRefStr}"
+          -- Check if sub-module is sequential (will be generated as Chisel Module with implicit clock/reset)
+          let subClockWires := findClockWires subMod
+          let subResetWires := findResetWires subMod
+          let subIsSequential := subMod.gates.any (fun g => g.gateType == GateType.DFF) ||
+                                 !subClockWires.isEmpty || !subResetWires.isEmpty
+          if subIsSequential then
+            -- Sequential sub-module: Chisel propagates clock/reset implicitly, no explicit connection needed
+            none
+          else if isWireUsedInCombLogic subMod baseName then
+            -- Non-sequential sub-module uses clock/reset in combinational logic → needs explicit port
+            let wireRefStr := if baseName == "reset" then "reset.asBool" else "clock.asBool"
+            some s!"  {inst.instName}.{baseName} := {wireRefStr}"
           else
             none  -- Implicit propagation handles it
     else
@@ -1351,7 +1401,14 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
   let standaloneConnections := standaloneGrouped.flatMap (fun (baseName, entries) =>
     if entries.length > 1 then
       -- Multiple entries with same base - generate Cat expression
-      let sortedEntries := entries.toArray.qsort (fun (p1, _) (p2, _) => p1 < p2) |>.toList
+      -- Sort by numeric index (not lexicographic) to handle indices >= 10 correctly
+      let sortedEntries := entries.toArray.qsort (fun (p1, _) (p2, _) =>
+        match extractBracketIndex p1, extractBracketIndex p2 with
+        | some i1, some i2 => i1 < i2
+        | some _, none => true
+        | none, some _ => false
+        | none, none => p1 < p2
+      ) |>.toList
       let wireRefs := sortedEntries.map (fun (_, w) => wireRef ctx c w)
       let catExpr := "Cat(" ++ String.intercalate ", " wireRefs.reverse ++ ")"  -- Cat is MSB-first
 
@@ -1428,15 +1485,16 @@ def findDFFs (c : Circuit) : List Gate :=
   c.gates.filter (fun g => g.gateType == GateType.DFF)
 
 /-- Generate register declaration using ShoumeiReg helper -/
-def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
+def generateRegisterDecl (ctx : Context) (_c : Circuit) (g : Gate) : String :=
   match g.inputs with
-  | [_d, clk, _rst] =>
+  | [_d, _clk, _rst] =>
       -- Check if this register is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, sg) =>
           -- Part of a bus - only emit for first register in group
           if sg.wires.head? == some g.output then
-            let clockRef := wireRef ctx c clk
+            -- ShoumeiReg expects Clock type, so use "clock" directly (not wireRef which returns .asBool)
+            let clockRef := "clock"
             let resetRef := if ctx.isSequential then
               -- Module has implicit reset (type Reset, need to cast to AsyncReset)
               "reset.asAsyncReset"
@@ -1452,7 +1510,8 @@ def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
             ""
       | none =>
           -- Standalone register
-          let clockRef := wireRef ctx c clk
+          -- ShoumeiReg expects Clock type, so use "clock" directly (not wireRef which returns .asBool)
+          let clockRef := "clock"
           let resetRef := if ctx.isSequential then
             "reset.asAsyncReset"
           else
@@ -1503,15 +1562,18 @@ def generateRegisterUpdate (ctx : Context) (c : Circuit) (g : Gate) : String :=
 
 /-- Generate wiring from internal registers to output IO ports AND internal Vec wires.
     When a DFF output belongs to a signal group that forms a Vec pattern,
-    we need: vec(i) := reg_i_reg, not just circuit output wiring. -/
-def generateRegisterOutputWiring (ctx : Context) (c : Circuit) (g : Gate) : String :=
+    we need: vec(i) := reg_i_reg, not just circuit output wiring.
+    excludedWires: wire names already driven by instance outputs (skip to avoid double-assignment) -/
+def generateRegisterOutputWiring (ctx : Context) (c : Circuit) (g : Gate) (excludedWires : List String := []) : String :=
   let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
   -- Also check if this DFF output belongs to an internal signal group
   -- (needs wiring so the Wire Vec gets populated from the registers)
   let isInternalGrouped := !isCircuitOutput && ctx.wireToGroup.any (fun (w', _) => w'.name == g.output.name)
+  -- Skip if this wire is already driven by an instance connection
+  let isExcluded := excludedWires.contains g.output.name
 
-  if !isCircuitOutput && !isInternalGrouped then
-    ""  -- Standalone internal register - no separate wiring needed (used via _reg suffix)
+  if (!isCircuitOutput && !isInternalGrouped) || isExcluded then
+    ""  -- Standalone internal register or instance-driven wire - no separate wiring needed
   else
     match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
     | some (_, outputGroup) =>
@@ -1535,12 +1597,13 @@ def generateRegisterOutputWiring (ctx : Context) (c : Circuit) (g : Gate) : Stri
         else
           ""
 
-/-- Generate all register logic -/
-def generateRegisters (ctx : Context) (c : Circuit) : String :=
+/-- Generate all register logic.
+    excludedWires: wire names already driven by instance outputs (skip output wiring) -/
+def generateRegisters (ctx : Context) (c : Circuit) (excludedWires : List String := []) : String :=
   let dffs := findDFFs c
   let decls := dffs.map (generateRegisterDecl ctx c)
   let updates := dffs.map (generateRegisterUpdate ctx c)
-  let wirings := dffs.map (generateRegisterOutputWiring ctx c)
+  let wirings := dffs.map (fun g => generateRegisterOutputWiring ctx c g excludedWires)
 
   let declsStr := joinLines (decls.filter (· != ""))
   let updatesStr := joinLines (updates.filter (· != ""))
@@ -1628,8 +1691,9 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let undrivenStr := if undrivenDontCares.isEmpty then ""
                      else joinLines undrivenDontCares
 
-  let registers := generateRegisters ctx c
-  let combGates := generateCombGates ctx c
+  -- Pass instanceOutputNames to avoid double-assignment of instance-driven wires
+  let registers := generateRegisters ctx c instanceOutputNames
+  let combGates := generateCombGates ctx c instanceOutputNames
   let instances := generateInstances ctx c allCircuits
 
   let body := joinLines [

@@ -632,24 +632,47 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
 def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
     : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
   let portGroups := buildSubModulePortGroups allCircuits inst.moduleName
-  -- For each portMap entry, check if it matches a sub-module wire that belongs to a group
-  let parsed := inst.portMap.map (fun (pname, w) =>
+  -- Pre-compute: count how many times each port name appears in portMap
+  -- (for detecting bare group names like "sum" repeated 32 times)
+  let portNameCounts := inst.portMap.foldl (fun acc (pname, _) =>
+    match acc.find? (fun (n, _) => n == pname) with
+    | some _ => acc.map (fun (n, c) => if n == pname then (n, c + 1) else (n, c))
+    | none => acc ++ [(pname, 1)]
+  ) ([] : List (String × Nat))
+  -- Track running index per bare group name
+  let initAcc : List (String × Wire × Option (String × Nat)) × List (String × Nat) := ([], [])
+  let (parsed, _) := inst.portMap.foldl (fun acc (pname, w) =>
+    let results := acc.1
+    let bareIdxMap := acc.2
     -- Try direct match: portMap name == sub-module wire name
     let directMatch := portGroups.find? (fun (entry : String × String × Nat) =>
       entry.1 == pname)
     match directMatch with
-    | some (_, busName, idx) => (pname, w, some (busName, idx))
+    | some (_, busName, idx) =>
+        (results ++ [(pname, w, some (busName, idx))], bareIdxMap)
     | none =>
         -- Try parsePortIndex for bracket/underscore/bare patterns
         match parsePortIndex pname with
         | some (base, idx) =>
             -- Verify this base name matches a bus in the sub-module
             if portGroups.any (fun (entry : String × String × Nat) => entry.2.1 == base) then
-              (pname, w, some (base, idx))
+              (results ++ [(pname, w, some (base, idx))], bareIdxMap)
             else
-              (pname, w, (none : Option (String × Nat)))
-        | none => (pname, w, (none : Option (String × Nat)))
-  )
+              (results ++ [(pname, w, (none : Option (String × Nat)))], bareIdxMap)
+        | none =>
+            -- Check if this bare name is a sub-module signal group name with multiple entries
+            -- (e.g., "sum" appearing 32 times → group "sum" with indices 0..31)
+            let isGroupName := portGroups.any (fun (entry : String × String × Nat) => entry.2.1 == pname)
+            let count := (portNameCounts.find? (fun (n, _) => n == pname)).map (·.2) |>.getD 0
+            if isGroupName && count > 1 then
+              let curIdx := (bareIdxMap.find? (fun (n, _) => n == pname)).map (·.2) |>.getD 0
+              let newMap := match bareIdxMap.find? (fun (n, _) => n == pname) with
+                | some _ => bareIdxMap.map (fun (n, i) => if n == pname then (n, i + 1) else (n, i))
+                | none => bareIdxMap ++ [(pname, 1)]
+              (results ++ [(pname, w, some (pname, curIdx))], newMap)
+            else
+              (results ++ [(pname, w, (none : Option (String × Nat)))], bareIdxMap)
+  ) initAcc
   -- Collect groups (handling interleaved portMaps)
   let groupAcc := parsed.foldl
     (fun (groups : List (String × List (Nat × Wire))) (_pname, _w, parsed?) =>

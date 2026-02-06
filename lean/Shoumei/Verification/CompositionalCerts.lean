@@ -67,6 +67,13 @@ def queueRAM_4x8_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- Queue2_8: 2-entry queue with 8-bit data (structural differences prevent direct LEC) -/
+def queue2_8_cert : CompositionalCert := {
+  moduleName := "Queue2_8"
+  dependencies := ["QueueRAM_2x8", "QueuePointer_1", "QueueCounterUpDown_2"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
 /-- Queue4_8: 4-entry queue with 8-bit data (structural differences prevent direct LEC) -/
 def queue4_8_cert : CompositionalCert := {
   moduleName := "Queue4_8"
@@ -109,6 +116,13 @@ def queueCounterUpDown_7_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- QueuePointer_1: flat pointer counter (induction fails on count bits) -/
+def queuePointer_1_cert : CompositionalCert := {
+  moduleName := "QueuePointer_1"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
 /-- QueuePointer_2: flat pointer counter (induction fails on count bits) -/
 def queuePointer_2_cert : CompositionalCert := {
   moduleName := "QueuePointer_2"
@@ -141,6 +155,13 @@ def queuePointer_6_cert : CompositionalCert := {
 def register24_cert : CompositionalCert := {
   moduleName := "Register24"
   dependencies := ["Register16", "Register8"]
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register68 = Register64 + Register4 (hierarchical) -/
+def register68_cert : CompositionalCert := {
+  moduleName := "Register68"
+  dependencies := ["Register64", "Register4"]
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
@@ -215,6 +236,22 @@ def rob16_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Retirement.ROBProofs"
 }
 
+/-! ## RISC-V Memory -/
+
+/-- StoreBuffer8: 8-entry store buffer with forwarding -/
+def storeBuffer8_cert : CompositionalCert := {
+  moduleName := "StoreBuffer8"
+  dependencies := ["Register68", "QueuePointer_3", "QueueCounterUpDown_4", "Decoder3", "Comparator32", "PriorityArbiter8", "Mux8x32", "Mux8x2"]
+  proofReference := "Shoumei.RISCV.Memory.StoreBufferProofs"
+}
+
+/-- LSU: Load-Store Unit (address generation + store buffering) -/
+def lsu_cert : CompositionalCert := {
+  moduleName := "LSU"
+  dependencies := ["MemoryExecUnit", "StoreBuffer8"]
+  proofReference := "Shoumei.RISCV.Memory.LSUProofs"
+}
+
 /-! ## Phase 8: Top-Level Integration -/
 
 /-- RenameStage_32x64: Composite rename stage (RAT + FreeList + PhysRegFile) -/
@@ -264,7 +301,9 @@ def cpu_rv32im_cert : CompositionalCert := {
 def allCerts : List CompositionalCert := [
   -- Sequential
   register24_cert,
+  register68_cert,
   register91_cert,
+  queue2_8_cert,
   queue64_32_cert,
   queue64_6_cert,
   queue4_8_cert,
@@ -277,6 +316,7 @@ def allCerts : List CompositionalCert := [
   queueCounterUpDown_4_cert,
   queueCounterUpDown_5_cert,
   queueCounterUpDown_7_cert,
+  queuePointer_1_cert,
   queuePointer_2_cert,
   queuePointer_3_cert,
   queuePointer_4_cert,
@@ -294,6 +334,9 @@ def allCerts : List CompositionalCert := [
   muldivRS4_cert,
   -- Retirement
   rob16_cert,
+  -- Memory
+  storeBuffer8_cert,
+  lsu_cert,
   -- Phase 8: Top-Level Integration
   renameStage_cert,
   fetchStage_cert,
