@@ -35,7 +35,7 @@ fi
 # --- Test 1: Generated file existence ---
 echo "==> Test 1: Generated Files"
 
-for mod in FullAdder DFlipFlop Queue1_8 Queue1_32 RV32IDecoder; do
+for mod in FullAdder DFlipFlop Queue1_8 Queue1_32; do
     if [ -f "output/sv-from-lean/${mod}.sv" ]; then
         pass "Lean SV: ${mod}.sv"
     else
@@ -53,10 +53,18 @@ for mod in FullAdder DFlipFlop Queue1_8 Queue1_32 RV32IDecoder; do
     fi
 done
 
-# RV32IM (optional, only when M extension enabled)
-if [ -f "output/sv-from-lean/RV32IMDecoder.sv" ]; then
-    pass "RV32IMDecoder generated"
-fi
+# RV32I/RV32IM decoders (optional, depends on third_party/riscv-opcodes submodule)
+for mod in RV32IDecoder RV32IMDecoder; do
+    if [ -f "output/sv-from-lean/${mod}.sv" ]; then
+        pass "${mod} generated"
+        if [ -f "chisel/src/main/scala/generated/${mod}.scala" ]; then
+            pass "Chisel src: ${mod}.scala"
+        fi
+        if [ -f "output/sv-from-chisel/${mod}.sv" ]; then
+            pass "Chisel SV: ${mod}.sv"
+        fi
+    fi
+done
 echo ""
 
 # --- Test 2: SystemC output ---
@@ -104,8 +112,8 @@ for port in d clock reset q; do
     fi
 done
 
-# Queue
-for port in enq_data_0 enq_valid enq_ready; do
+# Queue (enq_data is bus-grouped: input logic [7:0] enq_data)
+for port in enq_data enq_valid enq_ready; do
     if grep -q "$port" output/sv-from-lean/Queue1_8.sv 2>/dev/null; then
         pass "Queue1_8 port '${port}'"
     else
@@ -113,15 +121,17 @@ for port in enq_data_0 enq_valid enq_ready; do
     fi
 done
 
-# RV32IDecoder
-for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
-    if grep -q "$port" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null && \
-       grep -q "$port" output/sv-from-chisel/RV32IDecoder.sv 2>/dev/null; then
-        pass "RV32IDecoder port '${port}'"
-    else
-        fail "RV32IDecoder port '${port}' mismatch"
-    fi
-done
+# RV32IDecoder (conditional - requires third_party/riscv-opcodes submodule)
+if [ -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
+    for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
+        if grep -q "$port" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null && \
+           grep -q "$port" output/sv-from-chisel/RV32IDecoder.sv 2>/dev/null; then
+            pass "RV32IDecoder port '${port}'"
+        else
+            fail "RV32IDecoder port '${port}' mismatch"
+        fi
+    done
+fi
 echo ""
 
 # --- Test 4: Logic validation ---
@@ -136,8 +146,8 @@ for expr in "a ^ b" "ab_xor ^ cin" "a & b"; do
     fi
 done
 
-# DFF sequential logic
-if grep -q "always @(posedge" output/sv-from-lean/DFlipFlop.sv 2>/dev/null; then
+# DFF sequential logic (always_ff is IEEE 1800-2005+ syntax)
+if grep -qE "always(_ff)? @\(posedge" output/sv-from-lean/DFlipFlop.sv 2>/dev/null; then
     pass "DFlipFlop sequential block"
 else
     fail "DFlipFlop missing always @(posedge block"
@@ -150,17 +160,19 @@ else
 fi
 
 # Queue sequential logic
-if grep -q "always @(posedge" output/sv-from-lean/Queue1_8.sv 2>/dev/null; then
+if grep -qE "always(_ff)? @\(posedge" output/sv-from-lean/Queue1_8.sv 2>/dev/null; then
     pass "Queue1_8 sequential block"
 else
     fail "Queue1_8 missing always @(posedge block"
 fi
 
-# Decoder immediate extraction
-if grep -qE "imm_i|imm_s|imm_b" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null; then
-    pass "RV32IDecoder immediate extraction"
-else
-    fail "RV32IDecoder missing immediate extraction"
+# Decoder immediate extraction (conditional)
+if [ -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
+    if grep -qE "imm_i|imm_s|imm_b" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null; then
+        pass "RV32IDecoder immediate extraction"
+    else
+        fail "RV32IDecoder missing immediate extraction"
+    fi
 fi
 echo ""
 
