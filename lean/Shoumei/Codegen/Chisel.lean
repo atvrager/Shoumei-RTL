@@ -1214,7 +1214,12 @@ def determinePortDirection (_ctx : Context) (c : Circuit) (allCircuits : List Ci
               otherInst.instName != inst.instName &&
               otherInst.portMap.any (fun (_, w) => w.name == wire.name))
             if isConsumedByGate || isConsumedByOtherInstance then false
-            else true  -- Unknown sub-module, wire not consumed elsewhere → assume input
+            else
+              -- Wire not consumed: if also not driven by anything, it must be
+              -- an output from the instance (nothing else can drive it)
+              let isDriven := isProducedByGate || isCircuitInput
+              if !isDriven then false  -- Instance output (unconnected)
+              else true  -- Driven by something → assume input
           else
           -- 4. Port name heuristics (expanded)
           let containsAddr := (portBase.splitOn "addr").length > 1

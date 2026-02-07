@@ -252,11 +252,7 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   -- Head Pointer
   -- Inputs: clock, reset, en, one, (zero if ptrWidth > 1)
   -- Outputs: count (head)
-  let head_base_ports := [("clock", clock), ("reset", reset), ("en", deq_fire), ("one", one)]
-  let head_ports := if ptrWidth > 1 then
-    head_base_ports ++ [("zero", zero)]
-  else
-    head_base_ports
+  let head_ports := [("clock", clock), ("reset", reset), ("en", deq_fire), ("one", one), ("zero", zero)]
   let head_inst : CircuitInstance := {
     moduleName := s!"QueuePointer_{ptrWidth}"
     instName := "u_head"
@@ -268,11 +264,7 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   -- Tail Pointer
   -- Inputs: clock, reset, en, one, (zero if ptrWidth > 1)
   -- Outputs: count (tail)
-  let tail_base_ports := [("clock", clock), ("reset", reset), ("en", enq_fire), ("one", one)]
-  let tail_ports := if ptrWidth > 1 then
-    tail_base_ports ++ [("zero", zero)]
-  else
-    tail_base_ports
+  let tail_ports := [("clock", clock), ("reset", reset), ("en", enq_fire), ("one", one), ("zero", zero)]
   let tail_inst : CircuitInstance := {
     moduleName := s!"QueuePointer_{ptrWidth}"
     instName := "u_tail"

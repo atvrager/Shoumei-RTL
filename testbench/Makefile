@@ -16,7 +16,6 @@ TB_DIR    := $(PROJ_ROOT)/testbench
 VERILATOR  := verilator
 VFLAGS     := --cc --exe --build -j 0 \
               --Mdir $(BUILD_DIR)/verilator \
-              -Wno-fatal \
               --top-module tb_cpu \
               -CFLAGS "-std=c++17 -O2"
 

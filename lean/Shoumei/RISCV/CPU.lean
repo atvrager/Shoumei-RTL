@@ -688,6 +688,7 @@ def mkCPU_RV32I : Circuit :=
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
+  let dispatch_is_store := Wire.mk "dispatch_is_store"  -- Unused for now
   let decode_use_imm := Wire.mk "decode_use_imm"
 
   -- === FETCH STAGE ===
@@ -724,6 +725,7 @@ def mkCPU_RV32I : Circuit :=
        ("io_is_integer", dispatch_is_integer),
        ("io_is_memory", dispatch_is_memory),
        ("io_is_branch", dispatch_is_branch),
+       ("io_is_store", dispatch_is_store),
        ("io_use_imm", decode_use_imm)]
   }
 
@@ -1162,6 +1164,7 @@ def mkCPU_RV32IM : Circuit :=
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
   let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
+  let dispatch_is_store := Wire.mk "dispatch_is_store"  -- Unused for now
   let decode_use_imm := Wire.mk "decode_use_imm"
 
   -- === FETCH STAGE ===
@@ -1199,6 +1202,7 @@ def mkCPU_RV32IM : Circuit :=
        ("io_is_memory", dispatch_is_memory),
        ("io_is_branch", dispatch_is_branch),
        ("io_is_muldiv", dispatch_is_muldiv),
+       ("io_is_store", dispatch_is_store),
        ("io_use_imm", decode_use_imm)]
   }
 

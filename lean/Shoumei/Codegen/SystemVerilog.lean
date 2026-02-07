@@ -771,15 +771,28 @@ def extractCommonBusName (wireRefs : List String) (sorted : List (Nat × Wire)) 
 
 /-- Generate a bus port connection.
     Entries are sorted by index. If all wires form a contiguous bus, connects
-    directly. Otherwise uses concatenation \{MSB, ..., LSB\} syntax. -/
+    directly. Otherwise uses concatenation \{MSB, ..., LSB\} syntax.
+    When entries cover only a subrange of the parent bus, emits a range slice. -/
 def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
     (entries : List (Nat × Wire)) : String :=
   let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
   let wireRefs := sorted.map (fun (_, w) => wireRef ctx c w)
   match extractCommonBusName wireRefs sorted with
   | some busName =>
-      -- Direct bus connection: .portName(busName)
-      s!"    .{baseName}({busName})"
+      -- Check if the entries cover only a subrange of the parent bus
+      let nEntries := sorted.length
+      -- Find the parent signal group width for this bus
+      let parentWidth := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == busName) with
+        | some (_, sg) => sg.width
+        | none => nEntries
+      if nEntries == parentWidth then
+        -- Full bus connection: .portName(busName)
+        s!"    .{baseName}({busName})"
+      else
+        -- Subrange: .portName(busName[hi:lo])
+        let lo := match sorted.head? with | some (i, _) => i | none => 0
+        let hi := match sorted.getLast? with | some (i, _) => i | none => 0
+        s!"    .{baseName}({busName}[{hi}:{lo}])"
   | none =>
       -- Concatenation: .portName({wire_N, ..., wire_0})
       let concat := "{" ++ String.intercalate ", " wireRefs.reverse ++ "}"
