@@ -83,9 +83,9 @@ def mkComparatorN (n : Nat) : Circuit :=
   let eq_gate := Gate.mkNOT any_diff eq_raw
   let eq_buf := Gate.mkBUF eq_raw eq
 
-  -- Unsigned less-than: just use borrow (buffer it to output)
+  -- Unsigned less-than: borrow=1 means a>=b, so ltu = ~borrow
   let ltu_raw := Wire.mk "ltu_raw"
-  let ltu_gate := Gate.mkBUF borrow ltu_raw
+  let ltu_gate := Gate.mkNOT borrow ltu_raw
   let ltu_buf := Gate.mkBUF ltu_raw ltu
 
   -- Signed less-than: lt = (a[n-1] & ~b[n-1]) | (~(a[n-1] XOR b[n-1]) & diff[n-1])
