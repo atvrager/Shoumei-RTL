@@ -98,13 +98,6 @@ jobs:
             echo "No incomplete proofs found"
           fi
 
-      - name: Upload .lake artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lean-build
-          path: .lake/
-          include-hidden-files: true
-          retention-days: 1
 
   scala-build:
     name: Scala Build
@@ -166,11 +159,15 @@ jobs:
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Download lean-build artifact
-        uses: actions/download-artifact@v4
+      - name: Cache .lake
+        uses: actions/cache@v4
         with:
-          name: lean-build
-          path: .lake/
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-lean-
 
       - name: Setup Java
         uses: actions/setup-java@v4
