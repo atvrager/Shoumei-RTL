@@ -20,6 +20,7 @@ import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.Chisel
 import Shoumei.Codegen.SystemC
+import Shoumei.Codegen.Testbench
 
 namespace Shoumei.Codegen.Unified
 
@@ -91,5 +92,17 @@ def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svNetlistOutputDir
   IO.FS.createDirAll chiselOutputDir
   IO.FS.createDirAll systemcOutputDir
+
+-- Write SystemVerilog testbench for a TestbenchConfig
+def writeTestbenchSV (cfg : Testbench.TestbenchConfig) : IO Unit :=
+  Testbench.writeTestbenchSV cfg
+
+-- Write SystemC testbench for a TestbenchConfig
+def writeTestbenchSystemC (cfg : Testbench.TestbenchConfig) : IO Unit :=
+  Testbench.writeTestbenchSystemC cfg
+
+-- Write both testbenches
+def writeTestbenches (cfg : Testbench.TestbenchConfig) : IO Unit :=
+  Testbench.writeTestbenches cfg
 
 end Shoumei.Codegen.Unified

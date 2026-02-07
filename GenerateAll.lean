@@ -61,6 +61,9 @@ import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CPU
 
+-- Testbench generation
+import Shoumei.RISCV.CPUTestbench
+
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
@@ -71,6 +74,7 @@ open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.CPU
+open Shoumei.RISCV.CPUTestbench
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -204,6 +208,11 @@ def main : IO Unit := do
   for c in allCircuits do
     writeCircuit c allCircuits
     count := count + 1
+
+  -- Generate testbenches
+  IO.println ""
+  IO.println "Generating testbenches..."
+  writeTestbenches cpuTestbenchConfig
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

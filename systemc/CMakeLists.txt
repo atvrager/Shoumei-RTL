@@ -50,13 +50,18 @@ message(STATUS "Found ${CMAKE_MATCH_COUNT} SystemC modules")
 message(STATUS "SystemC modules will be compiled as object library")
 message(STATUS "Use Phase 3 testbenches to create executables")
 
-# Future: Phase 3 will add testbench executables here
-# foreach(MODULE_FILE ${SYSTEMC_MODULES})
-#   get_filename_component(MODULE_NAME ${MODULE_FILE} NAME_WE)
-#   add_executable(${MODULE_NAME}_test
-#     ${MODULE_FILE}
-#     ../output/systemc/${MODULE_NAME}_tb.cpp
-#   )
-#   target_link_libraries(${MODULE_NAME}_test SystemC::systemc)
-#   target_include_directories(${MODULE_NAME}_test PRIVATE ../output/systemc)
-# endforeach()
+# ELF loader library (shared between Verilator and SystemC testbenches)
+add_library(elf_loader STATIC ../testbench/lib/elf_loader.cpp)
+target_include_directories(elf_loader PUBLIC ../testbench/lib)
+
+# Generated SystemC testbench executables
+file(GLOB SC_TESTBENCHES "../testbench/generated/sc_main_*.cpp")
+foreach(TB_FILE ${SC_TESTBENCHES})
+  get_filename_component(TB_NAME ${TB_FILE} NAME_WE)
+  add_executable(${TB_NAME}
+    ${TB_FILE}
+    $<TARGET_OBJECTS:shoumei_systemc_modules>
+  )
+  target_link_libraries(${TB_NAME} SystemC::systemc elf_loader)
+  target_include_directories(${TB_NAME} PRIVATE ../output/systemc ../testbench/lib)
+endforeach()
