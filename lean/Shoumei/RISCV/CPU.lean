@@ -1160,12 +1160,81 @@ def mkCPU_RV32I : Circuit :=
        ("head_mispredicted", rob_head_mispredicted)]
   }
 
-  -- === CDB ARBITRATION (Priority: LSU > Integer, no MulDiv) ===
-  let cdb_arb_gates := [Gate.mkMUX rs_int_dispatch_valid lsu_sb_deq_valid lsu_sb_deq_valid cdb_valid] ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX int_tag_out[i]! lsu_agu_tag[i]! lsu_sb_deq_valid cdb_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX int_result[i]! lsu_sb_fwd_data[i]! lsu_sb_deq_valid cdb_data[i]!)
+  -- === CDB REPLAY BUFFER (saves integer result when LSU wins arbitration) ===
+  let replay_valid := Wire.mk "replay_valid"
+  let replay_valid_next := Wire.mk "replay_valid_next"
+  let replay_tag := makeIndexedWires "replay_tag" 6
+  let replay_tag_next := makeIndexedWires "replay_tag_next" 6
+  let replay_data := makeIndexedWires "replay_data" 32
+  let replay_data_next := makeIndexedWires "replay_data_next" 32
+
+  -- Save condition: integer has result AND LSU wins AND no replay pending
+  let int_dropped := Wire.mk "int_dropped"
+  let int_dropped_tmp := Wire.mk "int_dropped_tmp"
+  let not_replay_valid := Wire.mk "not_replay_valid"
+  -- Replay wins CDB this cycle (clears replay)
+  let replay_wins := Wire.mk "replay_wins"
+
+  let replay_save_gates := [
+    Gate.mkNOT replay_valid not_replay_valid,
+    Gate.mkAND rs_int_dispatch_valid lsu_sb_deq_valid int_dropped_tmp,
+    Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
+    -- replay_valid_next: set when saving, clear when replaying, hold otherwise
+    -- If int_dropped: save (set valid)
+    -- If replay_wins: clear (replay consumed)
+    -- Else: hold
+    Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
+    Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
+    Gate.mkDFF replay_valid_next clock reset replay_valid
+  ]
+
+  -- Save tag and data when int_dropped
+  let replay_tag_gates := (List.range 6).map (fun i =>
+    [Gate.mkMUX replay_tag[i]! int_tag_out[i]! int_dropped replay_tag_next[i]!,
+     Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
+
+  let replay_data_gates := (List.range 32).map (fun i =>
+    [Gate.mkMUX replay_data[i]! int_result[i]! int_dropped replay_data_next[i]!,
+     Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
+
+  -- === CDB ARBITRATION (Priority: Replay > LSU > Integer) ===
+  -- replay_wins = replay_valid (highest priority)
+  let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
+
+  -- lsu_wins = lsu_valid AND NOT replay_valid
+  let lsu_wins := Wire.mk "lsu_wins"
+  let lsu_wins_gate := [Gate.mkAND lsu_sb_deq_valid not_replay_valid lsu_wins]
+
+  -- int_wins = int_valid AND NOT lsu_valid AND NOT replay_valid
+  let int_wins := Wire.mk "int_wins"
+  let int_wins_tmp := Wire.mk "int_wins_tmp"
+  let not_lsu_valid := Wire.mk "not_lsu_valid"
+  let int_wins_gates := [
+    Gate.mkNOT lsu_sb_deq_valid not_lsu_valid,
+    Gate.mkAND rs_int_dispatch_valid not_lsu_valid int_wins_tmp,
+    Gate.mkAND int_wins_tmp not_replay_valid int_wins
+  ]
+
+  -- cdb_valid = replay_wins OR lsu_wins OR int_wins
+  let cdb_valid_tmp := Wire.mk "cdb_valid_tmp"
+  let cdb_valid_gates := [
+    Gate.mkOR replay_wins lsu_wins cdb_valid_tmp,
+    Gate.mkOR cdb_valid_tmp int_wins cdb_valid
+  ]
+
+  -- cdb_tag/cdb_data: MUX chain (int -> lsu -> replay, last wins)
+  let cdb_tag_mux_gates := (List.range 6).map (fun i =>
+    let m1 := Wire.mk s!"cdb_tag_m1_{i}"
+    [Gate.mkMUX int_tag_out[i]! lsu_agu_tag[i]! lsu_wins m1,
+     Gate.mkMUX m1 replay_tag[i]! replay_wins cdb_tag[i]!])
+  let cdb_data_mux_gates := (List.range 32).map (fun i =>
+    let m1 := Wire.mk s!"cdb_data_m1_{i}"
+    [Gate.mkMUX int_result[i]! lsu_sb_fwd_data[i]! lsu_wins m1,
+     Gate.mkMUX m1 replay_data[i]! replay_wins cdb_data[i]!])
+  let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
+
+  let cdb_arb_gates := replay_save_gates ++ replay_tag_gates ++ replay_data_gates ++
+    replay_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++ cdb_valid_gates ++ cdb_mux_gates
 
   -- === COMMIT CONTROL ===
   let commit_gates := [
@@ -1738,13 +1807,70 @@ def mkCPU_RV32IM : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX int_result[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
 
-  -- Level 2: Arbitrate between (Int/MulDiv) and LSU (LSU has priority)
-  -- LSU valid = sb_deq_valid (load completion)
-  let cdb_arb_gates := [Gate.mkMUX int_muldiv_valid lsu_sb_deq_valid lsu_sb_deq_valid cdb_valid] ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX int_muldiv_tag[i]! lsu_agu_tag[i]! lsu_sb_deq_valid cdb_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX int_muldiv_data[i]! lsu_sb_fwd_data[i]! lsu_sb_deq_valid cdb_data[i]!)
+  -- === CDB REPLAY BUFFER (saves int/muldiv result when LSU wins arbitration) ===
+  let replay_valid := Wire.mk "replay_valid"
+  let replay_valid_next := Wire.mk "replay_valid_next"
+  let replay_tag := makeIndexedWires "replay_tag" 6
+  let replay_tag_next := makeIndexedWires "replay_tag_next" 6
+  let replay_data := makeIndexedWires "replay_data" 32
+  let replay_data_next := makeIndexedWires "replay_data_next" 32
+
+  let int_dropped := Wire.mk "int_dropped"
+  let int_dropped_tmp := Wire.mk "int_dropped_tmp"
+  let not_replay_valid := Wire.mk "not_replay_valid"
+  let replay_wins := Wire.mk "replay_wins"
+
+  let replay_save_gates := [
+    Gate.mkNOT replay_valid not_replay_valid,
+    Gate.mkAND int_muldiv_valid lsu_sb_deq_valid int_dropped_tmp,
+    Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
+    Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
+    Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
+    Gate.mkDFF replay_valid_next clock reset replay_valid
+  ]
+
+  let replay_tag_gates := (List.range 6).map (fun i =>
+    [Gate.mkMUX replay_tag[i]! int_muldiv_tag[i]! int_dropped replay_tag_next[i]!,
+     Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
+
+  let replay_data_gates := (List.range 32).map (fun i =>
+    [Gate.mkMUX replay_data[i]! int_muldiv_data[i]! int_dropped replay_data_next[i]!,
+     Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
+
+  -- Level 2: CDB Arbitration (Priority: Replay > LSU > Int/MulDiv)
+  let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
+
+  let lsu_wins := Wire.mk "lsu_wins"
+  let lsu_wins_gate := [Gate.mkAND lsu_sb_deq_valid not_replay_valid lsu_wins]
+
+  let int_wins := Wire.mk "int_wins"
+  let int_wins_tmp := Wire.mk "int_wins_tmp"
+  let not_lsu_valid := Wire.mk "not_lsu_valid"
+  let int_wins_gates := [
+    Gate.mkNOT lsu_sb_deq_valid not_lsu_valid,
+    Gate.mkAND int_muldiv_valid not_lsu_valid int_wins_tmp,
+    Gate.mkAND int_wins_tmp not_replay_valid int_wins
+  ]
+
+  let cdb_valid_tmp := Wire.mk "cdb_valid_tmp"
+  let cdb_valid_gates := [
+    Gate.mkOR replay_wins lsu_wins cdb_valid_tmp,
+    Gate.mkOR cdb_valid_tmp int_wins cdb_valid
+  ]
+
+  let cdb_tag_mux_gates := (List.range 6).map (fun i =>
+    let m1 := Wire.mk s!"cdb_tag_m1_{i}"
+    [Gate.mkMUX int_muldiv_tag[i]! lsu_agu_tag[i]! lsu_wins m1,
+     Gate.mkMUX m1 replay_tag[i]! replay_wins cdb_tag[i]!])
+  let cdb_data_mux_gates := (List.range 32).map (fun i =>
+    let m1 := Wire.mk s!"cdb_data_m1_{i}"
+    [Gate.mkMUX int_muldiv_data[i]! lsu_sb_fwd_data[i]! lsu_wins m1,
+     Gate.mkMUX m1 replay_data[i]! replay_wins cdb_data[i]!])
+  let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
+
+  let cdb_arb_gates := arb_level1_gates ++ replay_save_gates ++ replay_tag_gates ++
+    replay_data_gates ++ replay_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++
+    cdb_valid_gates ++ cdb_mux_gates
 
   -- === COMMIT CONTROL ===
   -- Commit enable = head_valid AND head_complete
@@ -1807,7 +1933,7 @@ def mkCPU_RV32IM : Circuit :=
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
                [rob_empty]
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
-             alu_lut_gates ++ arb_level1_gates ++ cdb_arb_gates ++
+             alu_lut_gates ++ cdb_arb_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
