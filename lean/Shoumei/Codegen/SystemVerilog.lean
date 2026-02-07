@@ -632,6 +632,13 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
 def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
     : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
   let portGroups := buildSubModulePortGroups allCircuits inst.moduleName
+  -- If sub-module not in allCircuits, infer grouping from port name patterns
+  let portGroups := if portGroups.isEmpty then
+    inst.portMap.filterMap (fun (pname, _) =>
+      match parsePortIndex pname with
+      | some (base, idx) => some (pname, base, idx)
+      | none => none)
+  else portGroups
   -- Pre-compute: count how many times each port name appears in portMap
   -- (for detecting bare group names like "sum" repeated 32 times)
   let portNameCounts := inst.portMap.foldl (fun acc (pname, _) =>

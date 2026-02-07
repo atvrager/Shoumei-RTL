@@ -30,6 +30,7 @@ output/**/*
 !output/**/.gitkeep
 *.v
 *.sv
+!testbench/**/*.sv
 *.fir
 *.anno.json
 chisel/src/main/scala/generated/*.scala
@@ -43,6 +44,9 @@ chisel/src/main/scala/generated_v2/*.scala
 *.a
 *.dylib
 *.out
+
+# Verilator simulation build
+build-sim/
 
 # SystemC build directory
 systemc/build/

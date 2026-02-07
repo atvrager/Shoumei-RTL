@@ -65,6 +65,10 @@ def genDecoderCase (instrDef : InstructionDef) (pfx : String := "") : String :=
   let opName := pfx ++ sanitizeSVIdentifier instrDef.name
   "        if ((io_instr & " ++ maskHex ++ ") == " ++ matchHex ++ ") begin\n            io_optype = " ++ opName ++ ";\n            io_valid = 1'b1;\n        end"
 
+/-- Check if decoder includes M-extension instructions -/
+private def hasM (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_m"))
+
 /-- Generate complete SystemVerilog decoder module -/
 def genSystemVerilogDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let header :=
@@ -76,6 +80,8 @@ s!"//===========================================================================
 // - Operation type (optype_t enum)
 // - Register operands (rd, rs1, rs2)
 // - Immediate values (sign-extended to 32 bits)
+// - has_rd: whether the instruction writes a register
+// - Dispatch classification: is_integer, is_memory, is_branch, is_muldiv
 //==============================================================================
 
 "
@@ -83,16 +89,23 @@ s!"//===========================================================================
   let enumDecl := genOpTypeEnum defs moduleName
   let enumPfx := moduleName.toLower ++ "_"
 
+  let muldivPort := if hasM defs then
+    "\n    output logic        io_is_muldiv   // M-extension multiply/divide" else ""
+
   let moduleDecl :=
 s!"
 module {moduleName} (
-    input  logic [31:0] io_instr,   // 32-bit instruction word
-    output logic [5:0]  io_optype,  // Decoded operation type
-    output logic [4:0]  io_rd,      // Destination register
-    output logic [4:0]  io_rs1,     // Source register 1
-    output logic [4:0]  io_rs2,     // Source register 2
-    output logic [31:0] io_imm,     // Immediate value (sign-extended)
-    output logic        io_valid    // Instruction is valid
+    input  logic [31:0] io_instr,      // 32-bit instruction word
+    output logic [5:0]  io_optype,     // Decoded operation type
+    output logic [4:0]  io_rd,         // Destination register
+    output logic [4:0]  io_rs1,        // Source register 1
+    output logic [4:0]  io_rs2,        // Source register 2
+    output logic [31:0] io_imm,        // Immediate value (sign-extended)
+    output logic        io_valid,      // Instruction is valid
+    output logic        io_has_rd,     // Instruction writes a register
+    output logic        io_is_integer, // Dispatch to integer ALU
+    output logic        io_is_memory,  // Dispatch to load/store unit
+    output logic        io_is_branch{if hasM defs then "," else ""}  // Dispatch to branch unit" ++ muldivPort ++ "
 );
 
 // Extract register fields
@@ -130,6 +143,12 @@ always_comb begin
 
   let decoderCases := String.intercalate "\n" (defs.map fun d => genDecoderCase d enumPfx)
 
+  let muldivClassify := if hasM defs then
+    "\n// MulDiv: R-type (0110011) with funct7[0]=1 (M-extension encoding)\nassign io_is_muldiv = io_valid && (io_instr[6:0] == 7'b0110011) && io_instr[25];"
+  else ""
+
+  let integerMuldivExclude := if hasM defs then " && !io_instr[25]" else ""
+
   let immMux :=
 "
     // Select appropriate immediate based on instruction format
@@ -142,6 +161,36 @@ always_comb begin
         default:                             io_imm = 32'b0;
     endcase
 end
+
+// Dispatch classification (active only when instruction is valid)
+// has_rd: all instructions except stores, branches, and system (FENCE/ECALL/EBREAK)
+assign io_has_rd = io_valid &&
+    (io_instr[6:0] != 7'b0100011) &&  // not STORE
+    (io_instr[6:0] != 7'b1100011) &&  // not BRANCH
+    (io_instr[6:0] != 7'b0001111) &&  // not FENCE
+    (io_instr[6:0] != 7'b1110011);    // not ECALL/EBREAK
+
+// Integer: R-type ALU (0110011, excluding M-ext), I-type ALU (0010011), LUI (0110111), AUIPC (0010111)
+assign io_is_integer = io_valid && (
+    (io_instr[6:0] == 7'b0110011" ++ integerMuldivExclude ++ ") ||  // R-type (ADD, SUB, AND, etc.)
+    (io_instr[6:0] == 7'b0010011) ||  // I-type (ADDI, ANDI, etc.)
+    (io_instr[6:0] == 7'b0110111) ||  // LUI
+    (io_instr[6:0] == 7'b0010111)     // AUIPC
+);
+
+// Memory: LOAD (0000011) and STORE (0100011)
+assign io_is_memory = io_valid && (
+    (io_instr[6:0] == 7'b0000011) ||  // LOAD (LB, LH, LW, LBU, LHU)
+    (io_instr[6:0] == 7'b0100011)     // STORE (SB, SH, SW)
+);
+
+// Branch: BRANCH (1100011), JAL (1101111), JALR (1100111)
+assign io_is_branch = io_valid && (
+    (io_instr[6:0] == 7'b1100011) ||  // BRANCH (BEQ, BNE, BLT, BGE, etc.)
+    (io_instr[6:0] == 7'b1101111) ||  // JAL
+    (io_instr[6:0] == 7'b1100111)     // JALR
+);
+" ++ muldivClassify ++ "
 
 endmodule
 "
