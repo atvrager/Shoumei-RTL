@@ -559,9 +559,13 @@ def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire
     -- For non-circuit-output DFF groups, the register name differs from the bus name
     let feedbackAssigns := results.filterMap (fun (_, _, _, regName) =>
       -- If regName ends with "_reg", generate assign busName = regName
+      -- Skip if regName itself is a circuit output (the output port IS the register)
       if regName.endsWith "_reg" then
         let busName := regName.dropEnd 4  -- Remove "_reg" suffix
-        some s!"  assign {busName} = {regName};"
+        let regIsCircuitOutput := c.outputs.any (fun w =>
+          extractBaseName w.name == regName || w.name == regName)
+        if regIsCircuitOutput then none
+        else some s!"  assign {busName} = {regName};"
       else
         none)
     let feedbackStr := joinLines feedbackAssigns
