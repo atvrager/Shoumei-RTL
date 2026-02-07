@@ -116,7 +116,7 @@ def mkContext (c : Circuit) : Context :=
   let resetWires := findResetWires c
   -- A circuit is sequential if it has DFFs or clock/reset wires
   -- (not just having instances -- combinational hierarchical modules like ALU32, Mux64x32 don't need clock)
-  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) ||
+  let isSequential := c.gates.any (fun g => g.gateType.isDFF) ||
                       !clockWires.isEmpty || !resetWires.isEmpty
 
   -- Auto-detect signal groups from internal wires
@@ -317,7 +317,7 @@ def outputHasIndividualBitAssignmentsHelper (ctx : Context) (c : Circuit) (sg : 
   if sg.width <= 1 then
     false  -- Single-bit outputs don't need Vec
   else
-    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+    let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
 
     -- Get all gates that write to this signal group
     let outputGates := combGates.filter (fun g =>
@@ -347,7 +347,7 @@ def needsVecDeclarationHelper (ctx : Context) (sg : SignalGroup) (c : Circuit) :
   if sg.width <= 1 then
     false  -- Single-bit signals don't need Vec
   else
-    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+    let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
 
     -- Get all combinational gates that write to this signal group
     let outputGates := combGates.filter (fun g =>
@@ -650,7 +650,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.XOR => "^"
   | GateType.BUF => ""
   | GateType.MUX => "Mux"
-  | GateType.DFF => ""
+  | GateType.DFF | GateType.DFF_SET => ""
 
 /-- Generate assignment for a combinational gate -/
 def generateCombGate (ctx : Context) (c : Circuit) (g : Gate) : String :=
@@ -671,7 +671,7 @@ def generateCombGate (ctx : Context) (c : Circuit) (g : Gate) : String :=
       | [in0, in1, sel] =>
           s!"  {outRef} := Mux({wireRef ctx c sel}, {wireRef ctx c in1}, {wireRef ctx c in0})"
       | _ => "  // ERROR: MUX gate should have 3 inputs"
-  | GateType.DFF =>
+  | GateType.DFF | GateType.DFF_SET =>
       ""  -- DFFs handled separately
   | _ =>
       match g.inputs with
@@ -1115,7 +1115,7 @@ def consolidateIntoForLoops (assignments : List String) : List String :=
 /-- Generate all combinational gate logic with bus-wide optimization.
     excludedWires: wire names already driven by instance outputs (skip to avoid double-assignment) -/
 def generateCombGates (ctx : Context) (c : Circuit) (excludedWires : List String := []) : String :=
-  let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+  let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
 
   -- Group gates by bus operations
   let busGroups := groupGatesByBus ctx combGates
@@ -1339,7 +1339,7 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           -- Check if sub-module is sequential (will be generated as Chisel Module with implicit clock/reset)
           let subClockWires := findClockWires subMod
           let subResetWires := findResetWires subMod
-          let subIsSequential := subMod.gates.any (fun g => g.gateType == GateType.DFF) ||
+          let subIsSequential := subMod.gates.any (fun g => g.gateType.isDFF) ||
                                  !subClockWires.isEmpty || !subResetWires.isEmpty
           if subIsSequential then
             -- Sequential sub-module: Chisel propagates clock/reset implicitly, no explicit connection needed
@@ -1495,35 +1495,38 @@ def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
 
 /-- Find all DFF gates in circuit -/
 def findDFFs (c : Circuit) : List Gate :=
-  c.gates.filter (fun g => g.gateType == GateType.DFF)
+  c.gates.filter (fun g => g.gateType.isDFF)
 
-/-- Generate register declaration using ShoumeiReg helper -/
-def generateRegisterDecl (ctx : Context) (_c : Circuit) (g : Gate) : String :=
+/-- Compute the init value for a signal group by checking which wires are DFF_SET.
+    Returns the integer init value (0 if all DFF, nonzero if some DFF_SET). -/
+private def computeGroupInitVal (c : Circuit) (sg : SignalGroup) : Nat :=
+  sg.wires.enum.foldl (fun acc ⟨i, w⟩ =>
+    if c.gates.any (fun g => g.gateType == GateType.DFF_SET && g.output.name == w.name)
+    then acc + 2^i else acc) 0
+
+/-- Generate register declaration using ShoumeiReg/ShoumeiRegInit helper -/
+def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
   match g.inputs with
   | [_d, _clk, _rst] =>
-      -- Check if this register is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, sg) =>
-          -- Part of a bus - only emit for first register in group
           if sg.wires.head? == some g.output then
-            -- ShoumeiReg expects Clock type, so use "clock" directly (not wireRef which returns .asBool)
             let clockRef := "clock"
             let resetRef := if ctx.isSequential then
-              -- Module has implicit reset (type Reset, need to cast to AsyncReset)
               "reset.asAsyncReset"
             else
-              -- RawModule needs explicit reset (shouldn't happen for DFFs, but fallback)
               match ctx.resetWires.head? with
               | some rw => rw.name
               | none => "reset"
-            -- Always use _reg suffix to avoid conflict with IO ports
             let regName := s!"{sg.name}_reg"
-            s!"  val {regName} = ShoumeiReg({sg.width}, {clockRef}, {resetRef})"
+            let initVal := computeGroupInitVal c sg
+            if initVal == 0 then
+              s!"  val {regName} = ShoumeiReg({sg.width}, {clockRef}, {resetRef})"
+            else
+              s!"  val {regName} = ShoumeiRegInit({sg.width}, BigInt({initVal}), {clockRef}, {resetRef})"
           else
             ""
       | none =>
-          -- Standalone register
-          -- ShoumeiReg expects Clock type, so use "clock" directly (not wireRef which returns .asBool)
           let clockRef := "clock"
           let resetRef := if ctx.isSequential then
             "reset.asAsyncReset"
@@ -1531,9 +1534,11 @@ def generateRegisterDecl (ctx : Context) (_c : Circuit) (g : Gate) : String :=
             match ctx.resetWires.head? with
             | some rw => rw.name
             | none => "reset"
-          -- Always use _reg suffix to avoid conflict with IO ports
           let regName := s!"{g.output.name}_reg"
-          s!"  val {regName} = ShoumeiReg(1, {clockRef}, {resetRef})"
+          if g.gateType == GateType.DFF_SET then
+            s!"  val {regName} = ShoumeiRegInit.bool({clockRef}, {resetRef})"
+          else
+            s!"  val {regName} = ShoumeiReg(1, {clockRef}, {resetRef})"
   | _ =>
       "  // ERROR: DFF should have 3 inputs [d, clk, reset]"
 
@@ -1655,7 +1660,8 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     "",
     "import chisel3._",
     "import chisel3.util._",
-    "import shoumei.ShoumeiReg"
+    "import shoumei.ShoumeiReg",
+    "import shoumei.ShoumeiRegInit"
   ] ++ decoderImports ++ [
     "",
     "class " ++ c.name ++ " extends " ++ moduleType ++ " {"

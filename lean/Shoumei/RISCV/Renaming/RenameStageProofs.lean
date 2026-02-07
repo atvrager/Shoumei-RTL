@@ -55,7 +55,7 @@ theorem renamestage_output_count : mkRenameStage.outputs.length = 84 := by nativ
 theorem renamestage_instance_count : mkRenameStage.instances.length = 3 := by native_decide
 
 /-- RenameStage gate count (control logic + allocation counter + output buffers) -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 91 := by native_decide
+theorem renamestage_gate_count : mkRenameStage.gates.length = 79 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 

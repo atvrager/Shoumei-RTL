@@ -152,7 +152,7 @@ def outputNeedsIndividualPorts (wireToGroup : List (Wire × SignalGroup))
   if sg.width <= 1 then
     false  -- Single-bit outputs don't need individual ports
   else
-    let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+    let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
     let outputGates := combGates.filter (fun g =>
       sg.wires.any (fun w => w.name == g.output.name)
     )
@@ -257,7 +257,7 @@ def mkContext (c : Circuit) : Context :=
   let resetWires := findResetWires c
   -- A circuit is sequential if it has DFF gates OR clock/reset wires
   -- (hierarchical modules may have no DFFs but pass clock/reset to instances)
-  let isSequential := c.gates.any (fun g => g.gateType == GateType.DFF) ||
+  let isSequential := c.gates.any (fun g => g.gateType.isDFF) ||
                       !clockWires.isEmpty || !resetWires.isEmpty
 
   -- Auto-detect signal groups from internal wires
@@ -424,7 +424,7 @@ def gateTypeToSVOperator (gt : GateType) : String :=
   | GateType.XOR => "^"
   | GateType.BUF => ""
   | GateType.MUX => "?:"
-  | GateType.DFF => ""
+  | GateType.DFF | GateType.DFF_SET => ""
 
 /-- Generate continuous assignment for a combinational gate -/
 def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
@@ -445,7 +445,7 @@ def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
       | [in0, in1, sel] =>
           s!"  assign {outRef} = {wireRef ctx c sel} ? {wireRef ctx c in1} : {wireRef ctx c in0};"
       | _ => "  // ERROR: MUX gate should have 3 inputs"
-  | GateType.DFF =>
+  | GateType.DFF | GateType.DFF_SET =>
       ""  -- DFFs handled separately
   | _ =>
       match g.inputs with
@@ -455,15 +455,15 @@ def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
 
 /-- Generate all combinational logic assignments -/
 def generateCombLogic (ctx : Context) (c : Circuit) : String :=
-  let combGates := c.gates.filter (fun g => g.gateType != GateType.DFF)
+  let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
   let assignments := combGates.map (generateCombAssignment ctx c)
   joinLines (assignments.filter (· != ""))
 
 /-! ## Register Generation -/
 
-/-- Find all DFF gates in circuit -/
+/-- Find all DFF/DFF_SET gates in circuit -/
 def findDFFs (c : Circuit) : List Gate :=
-  c.gates.filter (fun g => g.gateType == GateType.DFF)
+  c.gates.filter (fun g => g.gateType.isDFF)
 
 /-- Group DFFs by their clock and reset signals -/
 def groupDFFsByClockReset (dffs : List Gate) : List (Wire × Wire × List Gate) :=
@@ -476,7 +476,25 @@ def groupDFFsByClockReset (dffs : List Gate) : List (Wire × Wire × List Gate) 
       | [_, clk, rst] => [(clk, rst, dffs)]
       | _ => []
 
-/-- Generate register declaration and assignment for a DFF.
+/-- Compute the reset value for a signal group by checking which wires are DFF_SET.
+    Returns an SV literal like "6'b100000" or "1'b0". -/
+private def computeGroupResetVal (c : Circuit) (sg : SignalGroup) : String :=
+  -- Check each wire in the group: is it driven by DFF_SET?
+  let bits := sg.wires.map (fun w =>
+    c.gates.any (fun g => g.gateType == GateType.DFF_SET && g.output.name == w.name))
+  let hasAnySet := bits.any id
+  if !hasAnySet then
+    -- All zeros
+    if sg.width > 1 then s!"{sg.width}'d0" else "1'b0"
+  else if bits.all id then
+    -- All ones
+    if sg.width > 1 then s!"{sg.width}'d{2^sg.width - 1}" else "1'b1"
+  else
+    -- Mixed: emit binary literal (LSB first in wires list = bit 0)
+    let bitStr := bits.reverse.map (fun b => if b then "1" else "0") |> String.join
+    s!"{sg.width}'b{bitStr}"
+
+/-- Generate register declaration and assignment for a DFF/DFF_SET.
     Returns (declaration_option, assign, reset_assign, reg_name) -/
 def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option String × String × String × String) :=
   match g.inputs with
@@ -495,7 +513,7 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
               | some (_, inputGroup) => inputGroup.name
               | none => d.name
             let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
-            let resetVal := if sg.width > 1 then s!"{sg.width}'d0" else "1'b0"
+            let resetVal := computeGroupResetVal c sg
             some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};", regName)
           else
             none
@@ -506,7 +524,8 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
             | some (_, inputGroup) => inputGroup.name
             | none => d.name
           let decl := if isCircuitOutput then none else some s!"  logic {regName};"
-          some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= 1'b0;", regName)
+          let resetVal := if g.gateType == GateType.DFF_SET then "1'b1" else "1'b0"
+          some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};", regName)
   | _ =>
       none
 
@@ -528,7 +547,7 @@ def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire
     let alwaysBlock := joinLines [
       s!"  always_ff @(posedge {clkRef} or posedge {rstRef}) begin",
       s!"    if ({rstRef}) begin",
-      "      // Reset all registers to 0",
+      "      // Reset registers (DFF→0, DFF_SET→1)",
       joinLines resetAssigns,
       "    end else begin",
       joinLines assigns,

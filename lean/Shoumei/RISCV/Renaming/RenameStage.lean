@@ -276,19 +276,9 @@ def mkRenameStage : Circuit :=
 
   -- === Allocation Counter ===
   -- Simple 6-bit counter starting at 32 (0b100000).
-  -- Uses XOR trick: bit 5 DFF stores inverted value, XOR with 'one' at output.
-  -- On reset: DFF=0, XOR(0,1)=1 → counter reads 32.
+  -- Uses DFF_SET for bit 5 to reset to 1, giving initial value 32.
   -- Increments on allocate_fire.
-  let alloc_ctr_raw := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_raw_{i}")
   let alloc_ctr := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_{i}")
-
-  -- XOR output: bit 5 inverted, others pass through
-  -- initVal = 32 = 0b100000, so bit 5 is the only set bit
-  let ctr_xor_out_gates := (List.range tagWidth).map (fun i =>
-    if i == 5 then
-      Gate.mkXOR (alloc_ctr_raw[i]!) one (alloc_ctr[i]!)
-    else
-      Gate.mkBUF (alloc_ctr_raw[i]!) (alloc_ctr[i]!))
 
   -- rd_phys = alloc_ctr (current counter value is the allocated tag)
   let rd_phys_assign_gates := (List.range tagWidth).map (fun i =>
@@ -305,17 +295,13 @@ def mkRenameStage : Circuit :=
   let ctr_mux_gates := (List.range tagWidth).map (fun i =>
     Gate.mkMUX (alloc_ctr[i]!) (ctr_plus[i]!) allocate_fire (ctr_next[i]!))
 
-  -- XOR input: convert back to raw storage (invert bit 5)
-  let ctr_raw_next := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_raw_next_{i}")
-  let ctr_xor_in_gates := (List.range tagWidth).map (fun i =>
-    if i == 5 then
-      Gate.mkXOR (ctr_next[i]!) one (ctr_raw_next[i]!)
-    else
-      Gate.mkBUF (ctr_next[i]!) (ctr_raw_next[i]!))
-
-  -- DFFs for counter (reset to 0, XOR gives effective reset to 32)
+  -- DFFs: bit 5 uses DFF_SET (resets to 1), others use DFF (reset to 0)
+  -- Initial value = 32 = 0b100000
   let ctr_dff_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkDFF (ctr_raw_next[i]!) clock reset (alloc_ctr_raw[i]!))
+    if i == 5 then
+      Gate.mkDFF_SET (ctr_next[i]!) clock reset (alloc_ctr[i]!)
+    else
+      Gate.mkDFF (ctr_next[i]!) clock reset (alloc_ctr[i]!))
 
   -- RAT instance
   let rat_inst : CircuitInstance := {
@@ -385,8 +371,8 @@ def mkRenameStage : Circuit :=
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
              [Gate.mkBUF one (ctr_carry[0]!)] ++
-             ctr_xor_out_gates ++ rd_phys_assign_gates ++ ctr_add_gates ++
-             ctr_mux_gates ++ ctr_xor_in_gates ++ ctr_dff_gates ++
+             rd_phys_assign_gates ++ ctr_add_gates ++
+             ctr_mux_gates ++ ctr_dff_gates ++
              phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
@@ -404,7 +390,11 @@ def mkRenameStage : Circuit :=
       { name := "rs2_data", width := 32, wires := rs2_data },
       { name := "rs1_phys", width := 6, wires := rs1_phys },
       { name := "rs2_phys", width := 6, wires := rs2_phys },
-      { name := "rd_phys", width := 6, wires := rd_phys }
+      { name := "rd_phys", width := 6, wires := rd_phys },
+      { name := "alloc_ctr", width := 6, wires := alloc_ctr },
+      { name := "ctr_plus", width := 6, wires := ctr_plus },
+      { name := "ctr_next", width := 6, wires := ctr_next },
+      { name := "ctr_c", width := 7, wires := ctr_carry }
     ]
   }
 

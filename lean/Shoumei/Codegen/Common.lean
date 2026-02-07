@@ -56,7 +56,7 @@ def makeComment (lang : String) (comment : String) : String :=
 def findClockWires (c : Circuit) : List Wire :=
   -- Find clocks from DFF gates
   let dffClocks := c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
+    if g.gateType.isDFF then
       match g.inputs with
       | [_d, clk, _reset] => some clk
       | _ => none
@@ -77,7 +77,7 @@ def findClockWires (c : Circuit) : List Wire :=
 def findResetWires (c : Circuit) : List Wire :=
   -- Find resets from DFF gates
   let dffResets := c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
+    if g.gateType.isDFF then
       match g.inputs with
       | [_d, _clk, reset] => some reset
       | _ => none

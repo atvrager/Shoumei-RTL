@@ -83,9 +83,9 @@ def signalGroupToSV (sg : SignalGroup) : String :=
 def joinLines (lines : List String) : String :=
   String.intercalate "\n" lines
 
-/-- Find all DFF gates -/
+/-- Find all DFF/DFF_SET gates -/
 def findDFFs (gates : List Gate) : List Gate :=
-  gates.filter (fun g => g.gateType == GateType.DFF)
+  gates.filter (fun g => g.gateType.isDFF)
 
 /-- Group DFFs by their clock and reset signals -/
 def groupDFFsByClockReset (dffs : List Gate) : List (Wire × Wire × List Gate) :=
@@ -173,7 +173,7 @@ def generateInternalWires (ctx : Context) (c : Circuit) (gates : List Gate) : St
 /-- Generate continuous assignment for a gate -/
 def generateGateAssign (ctx : Context) (c : Circuit) (g : Gate) : Option String :=
   match g.gateType with
-  | GateType.DFF => none  -- DFFs handled in always_ff blocks
+  | GateType.DFF | GateType.DFF_SET => none  -- DFFs handled in always_ff blocks
   | GateType.AND =>
       match g.inputs with
       | [a, b] => some s!"  assign {wireRef ctx c g.output} = {wireRef ctx c a} & {wireRef ctx c b};"
@@ -206,40 +206,52 @@ def generateCombLogic (ctx : Context) (c : Circuit) (gates : List Gate) : String
 
 /-! ## Sequential Logic Generation -/
 
-/-- Generate register declaration and assignment for a DFF -/
-def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option String × String × String) :=
+/-- Compute the reset value for a signal group by checking which wires are DFF_SET.
+    Returns an SV literal like "6'b100000" or "1'b0". -/
+private def computeGroupResetVal (gates : List Gate) (sg : SignalGroup) : String :=
+  let bits := sg.wires.map (fun w =>
+    gates.any (fun g => g.gateType == GateType.DFF_SET && g.output.name == w.name))
+  let hasAnySet := bits.any id
+  if !hasAnySet then
+    if sg.width > 1 then s!"{sg.width}'d0" else "1'b0"
+  else if bits.all id then
+    if sg.width > 1 then s!"{sg.width}'d{2^sg.width - 1}" else "1'b1"
+  else
+    let bitStr := bits.reverse.map (fun b => if b then "1" else "0") |> String.join
+    s!"{sg.width}'b{bitStr}"
+
+/-- Generate register declaration and assignment for a DFF/DFF_SET -/
+def generateDFFDecl (ctx : Context) (c : Circuit) (gates : List Gate) (g : Gate) : Option (Option String × String × String) :=
   match g.inputs with
   | [d, _clk, _rst] =>
       let isCircuitOutput := c.outputs.any (fun w => w.name == g.output.name)
 
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, sg) =>
-          -- Part of a bus - only emit for first register in group
           if sg.wires.head? == some g.output then
             let svType := signalGroupToSV sg
             let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
-            -- For buses, use the group name of the input (not indexed reference)
             let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
               | some (_, inputGroup) => inputGroup.name
               | none => d.name
             let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
-            let resetVal := if sg.width > 1 then s!"{sg.width}'d0" else "1'b0"
+            let resetVal := computeGroupResetVal gates sg
             some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};")
           else
             none
       | none =>
-          -- Standalone register
           let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
           let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
             | some (_, inputGroup) => inputGroup.name
             | none => d.name
           let decl := if isCircuitOutput then none else some s!"  logic {regName};"
-          some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= 1'b0;")
+          let resetVal := if g.gateType == GateType.DFF_SET then "1'b1" else "1'b0"
+          some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};")
   | _ => none
 
 /-- Generate always_ff block for register group -/
-def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire) (dffs : List Gate) : String :=
-  let results := dffs.filterMap (generateDFFDecl ctx c)
+def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (allDFFs : List Gate) (clk : Wire) (rst : Wire) (dffs : List Gate) : String :=
+  let results := dffs.filterMap (generateDFFDecl ctx c allDFFs)
   let decls := results.filterMap (fun (decl, _, _) => decl)
   let assigns := results.map (fun (_, assign, _) => assign)
   let resetAssigns := results.map (fun (_, _, resetAssign) => resetAssign)
@@ -274,7 +286,7 @@ def generateRegisters (ctx : Context) (c : Circuit) (gates : List Gate) : String
   else
     let grouped := groupDFFsByClockReset dffs
     let blocks := grouped.map (fun (clk, rst, dffGroup) =>
-      generateAlwaysFFBlock ctx c clk rst dffGroup
+      generateAlwaysFFBlock ctx c dffs clk rst dffGroup
     )
     String.intercalate "\n\n" blocks
 
@@ -289,7 +301,7 @@ def toSystemVerilogNetlist (c : Circuit) : String :=
   -- Step 2: Build context (detect clock/reset from original circuit)
   let clockWires := findClockWires c
   let resetWires := findResetWires c
-  let isSeq := flatGates.any (fun g => g.gateType == GateType.DFF)
+  let isSeq := flatGates.any (fun g => g.gateType.isDFF)
 
   -- Step 3: Auto-detect signal groups from wire patterns
   let allWires := (c.inputs ++ c.outputs ++ flatGates.map (·.output)).eraseDups

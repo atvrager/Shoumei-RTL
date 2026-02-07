@@ -17,6 +17,18 @@ object ShoumeiReg {
     withClockAndReset(clock, reset)(RegInit(false.B))
 }
 
+/** DFF with async reset to a custom init value. Used for DFF_SET bits. */
+object ShoumeiRegInit {
+
+  /** Multi-bit register with custom init value (returns plain UInt). */
+  def apply(width: Int, initVal: BigInt, clock: Clock, reset: AsyncReset): UInt =
+    withClockAndReset(clock, reset)(RegInit(initVal.U(width.W)))
+
+  /** Single-bit register with init to 1 (returns Bool). */
+  def bool(clock: Clock, reset: AsyncReset): Bool =
+    withClockAndReset(clock, reset)(RegInit(true.B))
+}
+
 /** Memory primitives. */
 object ShoumeiMem {
 
