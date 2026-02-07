@@ -261,43 +261,47 @@ def mkRenameStage : Circuit :=
     Gate.mkAND has_rd not_x0 needs_alloc
   ]
 
-  -- FreeList dequeue: request allocation when needed and available
-  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
-  let alloc_avail := Wire.mk "alloc_avail"
-  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
-
-  -- allocate_fire = needs_alloc AND instr_valid AND alloc_avail (FreeList has entry)
-  let alloc_tmp := Wire.mk "alloc_tmp"
+  -- allocate_fire = needs_alloc AND instr_valid
   let allocate_fire_gates := [
-    Gate.mkAND needs_alloc instr_valid alloc_tmp,
-    Gate.mkAND alloc_tmp alloc_avail allocate_fire
+    Gate.mkAND needs_alloc instr_valid allocate_fire
   ]
 
   -- rat_we = allocate_fire (update RAT on successful allocation)
   let rat_we_gate := Gate.mkBUF allocate_fire rat_we
 
-  -- stall = needs_alloc AND instr_valid AND NOT alloc_avail (FreeList empty)
-  let not_avail := Wire.mk "not_avail"
-  let stall_gates := [
-    Gate.mkNOT alloc_avail not_avail,
-    Gate.mkAND alloc_tmp not_avail stall
-  ]
+  -- stall = zero (counter-based allocation never stalls)
+  let stall_gates := [Gate.mkBUF zero stall]
 
-  -- rename_valid = instr_valid AND NOT stall
-  let not_stall := Wire.mk "not_stall"
-  let rename_valid_gates := [
-    Gate.mkNOT stall not_stall,
-    Gate.mkAND instr_valid not_stall rename_valid
-  ]
+  -- rename_valid = instr_valid (no stall possible with counter allocator)
+  let rename_valid_gates := [Gate.mkBUF instr_valid rename_valid]
 
-  -- === FreeList-based Allocation ===
-  -- rd_phys = freelist_deq_data (dequeued tag is the allocated physical register)
+  -- === Counter-based Allocation ===
+  -- 6-bit counter starts at 32 (0b100000), increments on allocate_fire
+  -- Counter provides rd_phys; wraps at 64→0 (ok: by then, tags recycled via FreeList)
+  let ctr := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_{i}")
+  let ctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_next_{i}")
+  -- +1 adder chain
+  let ctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"ctr_carry_{i}")
+  let ctr_adder_inner := (List.range tagWidth).map (fun i =>
+    [Gate.mkXOR (ctr[i]!) (ctr_carry[i]!) (ctr_next[i]!),
+     Gate.mkAND (ctr[i]!) (ctr_carry[i]!) (ctr_carry[i + 1]!)])
+  let ctr_adder_gates :=
+    [Gate.mkBUF allocate_fire (ctr_carry[0]!)] ++ ctr_adder_inner.flatten
+  -- DFFs for counter (resets to 0; we add 32 by inverting bit 5 for rd_phys)
+  let ctr_dff_gates := (List.range tagWidth).map (fun i =>
+    Gate.mkDFF (ctr_next[i]!) clock reset (ctr[i]!))
+
+  -- rd_phys = counter + 32 (invert bit 5, pass bits 0-4 through)
   let rd_phys_assign_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkBUF (freelist_deq_data[i]!) (rd_phys[i]!))
+    if i == 5 then Gate.mkNOT (ctr[i]!) (rd_phys[i]!)
+    else Gate.mkBUF (ctr[i]!) (rd_phys[i]!))
 
-  -- FreeList dequeue enable = allocate_fire (dequeue when allocation succeeds)
+  -- FreeList: dequeue disabled (counter handles allocation), enqueue for retirement
+  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
+  let alloc_avail := Wire.mk "alloc_avail"
+  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
   let freelist_deq_ready := Wire.mk "freelist_deq_ready"
-  let freelist_ready_gate := Gate.mkBUF allocate_fire freelist_deq_ready
+  let freelist_ready_gate := Gate.mkBUF zero freelist_deq_ready  -- never dequeue
 
   -- RAT instance (now with old_rd_data output for previous mapping)
   let old_rd_raw := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_raw_{i}")
@@ -369,8 +373,8 @@ def mkRenameStage : Circuit :=
                rs1_data ++ rs2_data
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             rd_phys_assign_gates ++ old_rd_assign_gates ++
-             phys_out_gates
+             ctr_adder_gates ++ ctr_dff_gates ++ rd_phys_assign_gates ++
+             old_rd_assign_gates ++ phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
     signalGroups := [

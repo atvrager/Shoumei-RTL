@@ -190,7 +190,7 @@ def mkBusyBitTable
     (clear_tag : List Wire) (clear_en : Wire)
     (read1_tag : List Wire) (read2_tag : List Wire)
     (use_imm : Wire)
-    (src1_ready src2_ready : Wire)
+    (src1_ready src2_ready src2_ready_reg : Wire)
     : (List Gate × List CircuitInstance) :=
   let mkW := fun (s : String) => Wire.mk s
   -- Decoder instances for set and clear paths
@@ -276,7 +276,8 @@ def mkBusyBitTable
   let readyGates := [
     Gate.mkNOT busy_rs1 src1_ready,
     Gate.mkNOT busy_rs2 not_busy_rs2,
-    Gate.mkOR use_imm not_busy_rs2 src2_ready
+    Gate.mkOR use_imm not_busy_rs2 src2_ready,
+    Gate.mkBUF not_busy_rs2 src2_ready_reg  -- src2 ready without use_imm masking (for stores)
   ]
 
   let allGates := perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ readyGates
@@ -932,23 +933,73 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid
   ]
 
-  -- === SRC2 MUX: select immediate for I-type, register value for R-type ===
-  let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
-  let src2_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
-
   -- === BUSY-BIT TABLE (operand readiness tracking) ===
   let busy_set_en := Wire.mk "busy_set_en"
   let busy_set_gate := Gate.mkAND rename_valid decode_has_rd busy_set_en
-  let issue_src1_ready := Wire.mk "issue_src1_ready"
-  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let busy_src1_ready := Wire.mk "busy_src1_ready"
+  let busy_src2_ready := Wire.mk "busy_src2_ready"
+  let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
   let (busy_gates, busy_instances) := mkBusyBitTable
     clock reset zero one
     rd_phys busy_set_en
     cdb_tag cdb_valid
     rs1_phys rs2_phys
     decode_use_imm
-    issue_src1_ready issue_src2_ready
+    busy_src1_ready busy_src2_ready busy_src2_ready_reg
+
+  -- === CDB FORWARDING (same-cycle wakeup at RS entry) ===
+  -- When CDB broadcasts a tag matching an instruction's source at the same cycle
+  -- it enters the RS, the busy-bit table hasn't updated yet. We must forward
+  -- the CDB data and readiness directly.
+  let cdb_match_src1 := Wire.mk "cdb_match_src1"
+  let cdb_match_src2 := Wire.mk "cdb_match_src2"
+  let cdb_fwd_src1 := Wire.mk "cdb_fwd_src1"
+  let cdb_fwd_src2 := Wire.mk "cdb_fwd_src2"
+  let issue_src1_ready := Wire.mk "issue_src1_ready"
+  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let issue_src2_ready_reg := Wire.mk "issue_src2_ready_reg"
+
+  let cdb_fwd_cmp_src1_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_fwd_cmp_src1"
+    portMap := [("one", one), ("eq", cdb_match_src1),
+                ("lt", Wire.mk "cdb_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src1_ltu"),
+                ("gt", Wire.mk "cdb_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src1_gtu")] ++
+               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  let cdb_fwd_cmp_src2_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_fwd_cmp_src2"
+    portMap := [("one", one), ("eq", cdb_match_src2),
+                ("lt", Wire.mk "cdb_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src2_ltu"),
+                ("gt", Wire.mk "cdb_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src2_gtu")] ++
+               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+
+  let cdb_fwd_gates := [
+    Gate.mkAND cdb_valid cdb_match_src1 cdb_fwd_src1,
+    Gate.mkAND cdb_valid cdb_match_src2 cdb_fwd_src2,
+    Gate.mkOR busy_src1_ready cdb_fwd_src1 issue_src1_ready,
+    Gate.mkOR busy_src2_ready cdb_fwd_src2 issue_src2_ready,
+    Gate.mkOR busy_src2_ready_reg cdb_fwd_src2 issue_src2_ready_reg
+  ]
+
+  -- Forwarded data: use CDB data when forwarding, else PRF data
+  let fwd_src1_data := makeIndexedWires "fwd_src1_data" 32
+  let fwd_src2_data := makeIndexedWires "fwd_src2_data" 32
+  let fwd_src1_data_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (rs1_data[i]!) (cdb_data[i]!) cdb_fwd_src1 (fwd_src1_data[i]!))
+  let fwd_src2_data_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (rs2_data[i]!) (cdb_data[i]!) cdb_fwd_src2 (fwd_src2_data[i]!))
+
+  let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst]
+
+  -- === SRC2 MUX: select immediate for I-type, forwarded register value for R-type ===
+  let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
+  let src2_mux_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (fwd_src2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
 
   -- === RESERVATION STATIONS (3 instances) ===
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
@@ -969,7 +1020,7 @@ def mkCPU_RV32I : Circuit :=
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
@@ -992,16 +1043,16 @@ def mkCPU_RV32I : Circuit :=
     instName := "u_rs_memory"
     portMap := [("clock", clock), ("reset", reset),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
+                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready_reg),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               -- Memory RS: src2 = register value (store data), NOT immediate
-               (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               -- Memory RS: src2 = forwarded register value (store data), NOT immediate
+               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
@@ -1028,10 +1079,10 @@ def mkCPU_RV32I : Circuit :=
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               -- Branch RS: src2 = register value, NOT immediate
-               (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               -- Branch RS: src2 = forwarded register value, NOT immediate
+               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
@@ -1290,9 +1341,11 @@ def mkCPU_RV32I : Circuit :=
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
                [rob_empty]
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+             cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_arb_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
+                  cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst,
                   int_exec_inst, mem_exec_inst,
                   rob_inst, lsu_inst]
@@ -1505,23 +1558,69 @@ def mkCPU_RV32IM : Circuit :=
     Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid
   ]
 
-  -- === SRC2 MUX: select immediate for I-type, register value for R-type ===
-  let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
-  let src2_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
-
   -- === BUSY-BIT TABLE (operand readiness tracking) ===
   let busy_set_en := Wire.mk "busy_set_en"
   let busy_set_gate := Gate.mkAND rename_valid decode_has_rd busy_set_en
-  let issue_src1_ready := Wire.mk "issue_src1_ready"
-  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let busy_src1_ready := Wire.mk "busy_src1_ready"
+  let busy_src2_ready := Wire.mk "busy_src2_ready"
+  let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
   let (busy_gates, busy_instances) := mkBusyBitTable
     clock reset zero one
     rd_phys busy_set_en
     cdb_tag cdb_valid
     rs1_phys rs2_phys
     decode_use_imm
-    issue_src1_ready issue_src2_ready
+    busy_src1_ready busy_src2_ready busy_src2_ready_reg
+
+  -- === CDB FORWARDING (same-cycle wakeup at RS entry) ===
+  let cdb_match_src1 := Wire.mk "cdb_match_src1"
+  let cdb_match_src2 := Wire.mk "cdb_match_src2"
+  let cdb_fwd_src1 := Wire.mk "cdb_fwd_src1"
+  let cdb_fwd_src2 := Wire.mk "cdb_fwd_src2"
+  let issue_src1_ready := Wire.mk "issue_src1_ready"
+  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let issue_src2_ready_reg := Wire.mk "issue_src2_ready_reg"
+
+  let cdb_fwd_cmp_src1_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_fwd_cmp_src1"
+    portMap := [("one", one), ("eq", cdb_match_src1),
+                ("lt", Wire.mk "cdb_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src1_ltu"),
+                ("gt", Wire.mk "cdb_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src1_gtu")] ++
+               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  let cdb_fwd_cmp_src2_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_fwd_cmp_src2"
+    portMap := [("one", one), ("eq", cdb_match_src2),
+                ("lt", Wire.mk "cdb_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src2_ltu"),
+                ("gt", Wire.mk "cdb_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src2_gtu")] ++
+               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+
+  let cdb_fwd_gates := [
+    Gate.mkAND cdb_valid cdb_match_src1 cdb_fwd_src1,
+    Gate.mkAND cdb_valid cdb_match_src2 cdb_fwd_src2,
+    Gate.mkOR busy_src1_ready cdb_fwd_src1 issue_src1_ready,
+    Gate.mkOR busy_src2_ready cdb_fwd_src2 issue_src2_ready,
+    Gate.mkOR busy_src2_ready_reg cdb_fwd_src2 issue_src2_ready_reg
+  ]
+
+  let fwd_src1_data := makeIndexedWires "fwd_src1_data" 32
+  let fwd_src2_data := makeIndexedWires "fwd_src2_data" 32
+  let fwd_src1_data_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (rs1_data[i]!) (cdb_data[i]!) cdb_fwd_src1 (fwd_src1_data[i]!))
+  let fwd_src2_data_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (rs2_data[i]!) (cdb_data[i]!) cdb_fwd_src2 (fwd_src2_data[i]!))
+
+  let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst]
+
+  -- === SRC2 MUX: select immediate for I-type, forwarded register value for R-type ===
+  let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
+  let src2_mux_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX (fwd_src2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
 
   -- === RESERVATION STATIONS (4 instances, bundled I/O) ===
   -- RS Integer
@@ -1543,7 +1642,7 @@ def mkCPU_RV32IM : Circuit :=
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
@@ -1567,16 +1666,16 @@ def mkCPU_RV32IM : Circuit :=
     instName := "u_rs_memory"
     portMap := [("clock", clock), ("reset", reset),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
+                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready_reg),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               -- Memory RS: src2 = register value (store data), NOT immediate
-               (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               -- Memory RS: src2 = forwarded register value (store data), NOT immediate
+               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
@@ -1604,10 +1703,10 @@ def mkCPU_RV32IM : Circuit :=
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               -- Branch RS: src2 = register value, NOT immediate
-               (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               -- Branch RS: src2 = forwarded register value, NOT immediate
+               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
@@ -1635,7 +1734,7 @@ def mkCPU_RV32IM : Circuit :=
                (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
@@ -1933,9 +2032,11 @@ def mkCPU_RV32IM : Circuit :=
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
                [rob_empty]
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+             cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_arb_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
+                  cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
                   int_exec_inst, mem_exec_inst, muldiv_exec_inst,
                   rob_inst, lsu_inst]
