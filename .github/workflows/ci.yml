@@ -283,8 +283,8 @@ jobs:
       - name: Build simulation
         run: make -C testbench sim
 
-      - name: Run simulation
-        run: ./build-sim/sim_shoumei +timeout=500 || true
+      - name: Run simulation (built-in test)
+        run: ./build-sim/sim_shoumei +timeout=1000
 
   smoke-test:
     name: Smoke Test
