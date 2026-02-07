@@ -48,8 +48,6 @@ module tb_cpu #(
   logic        dmem_req_ready;
   logic        dmem_resp_valid;
   logic [31:0] dmem_resp_data;
-  logic [31:0] branch_redirect_target;
-
   logic [31:0] fetch_pc;
   logic        fetch_stalled;
   logic        global_stall_out;
@@ -60,9 +58,6 @@ module tb_cpu #(
   logic        rob_empty;
 
   assign reset = ~rst_n;
-
-  // No branch redirect for now
-  assign branch_redirect_target = 32'b0;
 
   // =========================================================================
   // CPU instance
@@ -76,7 +71,6 @@ module tb_cpu #(
       .dmem_req_ready         (dmem_req_ready),
       .dmem_resp_valid        (dmem_resp_valid),
       .dmem_resp_data         (dmem_resp_data),
-      .branch_redirect_target (branch_redirect_target),
       .fetch_pc               (fetch_pc),
       .fetch_stalled          (fetch_stalled),
       .global_stall_out       (global_stall_out),
@@ -203,14 +197,18 @@ module tb_cpu #(
   `ifdef TRACE_PIPELINE
   always_ff @(posedge clk) begin
     if (!reset) begin
-      $display("[%0d] PC=0x%08x stall=%b ren=%b rob=%b tmp2=%b tmp3=%b tmp4=%b tmp5=%b | cdb=%b tag=%0d data=0x%08x | rob_empty=%b commit=%b | int_disp=%b mem_disp=%b src1rdy=%b src2rdy=%b",
+      $display("[%0d] PC=0x%08x stall=%b ren=%b rob=%b | cdb=%b tag=%0d data=0x%08x | commit=%b | int_disp=%b br_disp=%b mem_disp=%b | flush=%b rs1p=%0d rs2p=%0d rdp=%0d | rs1d=0x%08x rs2d=0x%08x | fwd1=%b fwd2=%b | maddr=0x%08x imm=0x%08x fwdhit=%b fwddata=0x%08x",
                cycle_count, fetch_pc, global_stall_out,
                u_cpu.rename_stall, u_cpu.rob_full,
-               u_cpu.stall_tmp2, u_cpu.stall_tmp3, u_cpu.stall_tmp4, u_cpu.stall_tmp5,
                u_cpu.cdb_valid, u_cpu.cdb_tag, u_cpu.cdb_data,
-               rob_empty, u_cpu.rob_commit_en,
-               u_cpu.rs_int_dispatch_valid, u_cpu.rs_mem_dispatch_valid,
-               u_cpu.issue_src1_ready, u_cpu.issue_src2_ready);
+               u_cpu.rob_commit_en,
+               u_cpu.rs_int_dispatch_valid, u_cpu.rs_branch_dispatch_valid, u_cpu.rs_mem_dispatch_valid,
+               u_cpu.pipeline_flush,
+               u_cpu.u_rename.rs1_phys, u_cpu.u_rename.rs2_phys, u_cpu.u_rename.rd_phys,
+               u_cpu.rs1_data, u_cpu.rs2_data,
+               u_cpu.cdb_fwd_src1, u_cpu.cdb_fwd_src2,
+               u_cpu.mem_address, u_cpu.captured_imm,
+               u_cpu.lsu_sb_fwd_hit, u_cpu.lsu_sb_fwd_data);
     end
   end
   `endif

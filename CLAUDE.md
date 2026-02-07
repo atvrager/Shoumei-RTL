@@ -14,6 +14,7 @@ Formally verified hardware design: circuits defined in Lean 4 DSL, properties pr
 - **Chisel:** 7.7.0 (in `chisel/build.sbt`)
 - **Scala:** 2.13.18 (required for Chisel 7.x)
 - **Yosys:** system package (for LEC)
+- **RISC-V GCC:** `riscv32-unknown-elf-gcc` at `~/.local/riscv32-elf/bin/` (add to PATH for test compilation)
 
 ## Build Commands
 
@@ -23,6 +24,12 @@ lake exe generate_all               # Generate SV + Chisel + SystemC for all mod
 cd chisel && sbt run && cd ..       # Compile Chisel -> SV via CIRCT
 ./verification/run-lec.sh           # Verify Lean SV == Chisel SV
 make all                            # Run entire pipeline
+
+# RISC-V test compilation and simulation
+export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
+make -C testbench/tests             # Compile C tests -> ELF binaries
+make -C testbench sim               # Build Verilator simulation
+make -C testbench run-all-tests     # Run all ELF tests
 ```
 
 ## Procedure: Adding a New Module

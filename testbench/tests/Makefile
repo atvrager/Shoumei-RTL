@@ -2,7 +2,7 @@ RISCV_PREFIX ?= riscv32-unknown-elf-
 CC      = $(RISCV_PREFIX)gcc
 CFLAGS  = -march=rv32im -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib
-TESTS   = pass_test dep_test addi_test
+TESTS   = pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test sltiu_test
 
 all: $(TESTS:=.elf)
 

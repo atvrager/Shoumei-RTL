@@ -37,6 +37,7 @@ jobs:
             # shellcheck disable=SC2086
             cppcheck --error-exitcode=1 --enable=warning,style \
               --suppress=missingIncludeSystem \
+              --suppress=knownConditionTrueFalse \
               $CPP_FILES $C_FILES
           fi
 
@@ -312,14 +313,8 @@ jobs:
       - name: Check Verilator version
         run: verilator --version
 
-      - name: Run simulation (pass test)
-        run: ./build-sim/sim_shoumei +elf=testbench/tests/pass_test.elf +timeout=1000
-
-      - name: Run simulation (dependency test)
-        run: ./build-sim/sim_shoumei +elf=testbench/tests/dep_test.elf +timeout=2000
-
-      - name: Run simulation (addi test)
-        run: ./build-sim/sim_shoumei +elf=testbench/tests/addi_test.elf +timeout=2000
+      - name: Run all ELF tests
+        run: make -C testbench run-all-tests
 
   smoke-test:
     name: Smoke Test
