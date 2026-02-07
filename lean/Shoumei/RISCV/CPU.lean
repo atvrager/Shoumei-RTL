@@ -1002,6 +1002,8 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkMUX (fwd_src2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
 
   -- === RESERVATION STATIONS (3 instances) ===
+  let rs_int_alloc_ptr_unused := makeIndexedWires "rs_int_alloc_ptr_unused" 2
+  let rs_int_grant_unused := makeIndexedWires "rs_int_grant_unused" 4
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_dispatch_valid := Wire.mk "rs_int_dispatch_valid"
   let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 6
@@ -1028,7 +1030,9 @@ def mkCPU_RV32I : Circuit :=
                (rs_int_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_int_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_int_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
   let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
@@ -1037,6 +1041,8 @@ def mkCPU_RV32I : Circuit :=
   let rs_mem_dispatch_src1 := makeIndexedWires "rs_mem_dispatch_src1" 32
   let rs_mem_dispatch_src2 := makeIndexedWires "rs_mem_dispatch_src2" 32
   let rs_mem_dispatch_tag := makeIndexedWires "rs_mem_dispatch_tag" 6
+  let rs_mem_alloc_ptr := makeIndexedWires "rs_mem_alloc_ptr" 2
+  let rs_mem_grant := makeIndexedWires "rs_mem_grant" 4
 
   let rs_mem_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
@@ -1058,9 +1064,63 @@ def mkCPU_RV32I : Circuit :=
                (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_mem_alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_mem_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
+  -- === IMMEDIATE REGISTER FILE (RV32I) ===
+  -- Captures decode_imm at mem RS dispatch time, indexed by RS alloc_ptr.
+  -- Read at issue time using dispatch_grant. Fixes OoO immediate desync.
+  let imm_rf_decoded := makeIndexedWires "imm_rf_decoded" 4
+  let imm_rf_we := makeIndexedWires "imm_rf_we" 4
+
+  let imm_rf_decoder_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := "u_imm_rf_dec"
+    portMap := [
+      ("in_0", rs_mem_alloc_ptr[0]!), ("in_1", rs_mem_alloc_ptr[1]!),
+      ("out_0", imm_rf_decoded[0]!), ("out_1", imm_rf_decoded[1]!),
+      ("out_2", imm_rf_decoded[2]!), ("out_3", imm_rf_decoded[3]!)
+    ]
+  }
+
+  let imm_rf_we_gates := (List.range 4).map (fun e =>
+    Gate.mkAND imm_rf_decoded[e]! dispatch_mem_valid imm_rf_we[e]!)
+
+  let imm_rf_entries := (List.range 4).map (fun e =>
+    makeIndexedWires s!"imm_rf_e{e}" 32)
+  let imm_rf_gates := (List.range 4).map (fun e =>
+    let entry := imm_rf_entries[e]!
+    (List.range 32).map (fun b =>
+      let next := Wire.mk s!"imm_rf_next_e{e}_{b}"
+      [ Gate.mkMUX entry[b]! decode_imm[b]! imm_rf_we[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+
+  let captured_imm := makeIndexedWires "captured_imm" 32
+  let imm_rf_sel := makeIndexedWires "imm_rf_sel" 2
+  let imm_rf_sel_gates := [
+    Gate.mkOR rs_mem_grant[1]! rs_mem_grant[3]! imm_rf_sel[0]!,
+    Gate.mkOR rs_mem_grant[2]! rs_mem_grant[3]! imm_rf_sel[1]!
+  ]
+
+  let imm_rf_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_imm_rf_mux"
+    portMap :=
+      (((List.range 4).map (fun e =>
+          (List.range 32).map (fun b =>
+            (s!"in{e}[{b}]", imm_rf_entries[e]![b]!)
+          )
+        )).flatten) ++
+      (imm_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
+  }
+
+  let rs_branch_alloc_ptr_unused := makeIndexedWires "rs_branch_alloc_ptr_unused" 2
+  let rs_branch_grant_unused := makeIndexedWires "rs_branch_grant_unused" 4
   let rs_branch_issue_full := Wire.mk "rs_branch_issue_full"
   let rs_branch_dispatch_valid := Wire.mk "rs_branch_dispatch_valid"
   let rs_branch_dispatch_opcode := makeIndexedWires "rs_branch_dispatch_opcode" 6
@@ -1088,7 +1148,9 @@ def mkCPU_RV32I : Circuit :=
                (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_branch_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_branch_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
   -- === EXECUTION UNITS ===
@@ -1122,7 +1184,7 @@ def mkCPU_RV32I : Circuit :=
     instName := "u_exec_memory"
     portMap :=
       (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
-      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++
+      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++
       (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero)] ++
       (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
@@ -1152,7 +1214,7 @@ def mkCPU_RV32I : Circuit :=
                 ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty), ("sb_fwd_hit", lsu_sb_fwd_hit),
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_base_{i}", w))) ++
-               (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
+               (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
                (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
                (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
                ((makeIndexedWires "lsu_commit_idx" 3).enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
@@ -1343,12 +1405,14 @@ def mkCPU_RV32I : Circuit :=
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_arb_gates ++
+             imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst,
                   int_exec_inst, mem_exec_inst,
-                  rob_inst, lsu_inst]
+                  rob_inst, lsu_inst,
+                  imm_rf_decoder_inst, imm_rf_mux_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "imem_resp_data", width := 32, wires := imem_resp_data },
@@ -1624,6 +1688,8 @@ def mkCPU_RV32IM : Circuit :=
 
   -- === RESERVATION STATIONS (4 instances, bundled I/O) ===
   -- RS Integer
+  let rs_int_alloc_ptr_unused := makeIndexedWires "rs_int_alloc_ptr_unused" 2
+  let rs_int_grant_unused := makeIndexedWires "rs_int_grant_unused" 4
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_dispatch_valid := Wire.mk "rs_int_dispatch_valid"
   let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 6
@@ -1650,7 +1716,9 @@ def mkCPU_RV32IM : Circuit :=
                (rs_int_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_int_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_int_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
   -- RS Memory
@@ -1660,6 +1728,8 @@ def mkCPU_RV32IM : Circuit :=
   let rs_mem_dispatch_src1 := makeIndexedWires "rs_mem_dispatch_src1" 32
   let rs_mem_dispatch_src2 := makeIndexedWires "rs_mem_dispatch_src2" 32
   let rs_mem_dispatch_tag := makeIndexedWires "rs_mem_dispatch_tag" 6
+  let rs_mem_alloc_ptr := makeIndexedWires "rs_mem_alloc_ptr" 2
+  let rs_mem_grant := makeIndexedWires "rs_mem_grant" 4
 
   let rs_mem_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
@@ -1681,10 +1751,67 @@ def mkCPU_RV32IM : Circuit :=
                (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_mem_alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_mem_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
+  }
+
+  -- === IMMEDIATE REGISTER FILE ===
+  -- Captures decode_imm at mem RS dispatch time, indexed by RS alloc_ptr.
+  -- Read at issue time using dispatch_grant. Fixes OoO immediate desync.
+  let imm_rf_decoded := makeIndexedWires "imm_rf_decoded" 4
+  let imm_rf_we := makeIndexedWires "imm_rf_we" 4
+
+  let imm_rf_decoder_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := "u_imm_rf_dec"
+    portMap := [
+      ("in_0", rs_mem_alloc_ptr[0]!), ("in_1", rs_mem_alloc_ptr[1]!),
+      ("out_0", imm_rf_decoded[0]!), ("out_1", imm_rf_decoded[1]!),
+      ("out_2", imm_rf_decoded[2]!), ("out_3", imm_rf_decoded[3]!)
+    ]
+  }
+
+  -- Gate each decoded output with dispatch_mem_valid
+  let imm_rf_we_gates := (List.range 4).map (fun e =>
+    Gate.mkAND imm_rf_decoded[e]! dispatch_mem_valid imm_rf_we[e]!)
+
+  -- 4 entries × 32 bits: MUX + DFF per bit
+  let imm_rf_entries := (List.range 4).map (fun e =>
+    makeIndexedWires s!"imm_rf_e{e}" 32)
+  let imm_rf_gates := (List.range 4).map (fun e =>
+    let entry := imm_rf_entries[e]!
+    (List.range 32).map (fun b =>
+      let next := Wire.mk s!"imm_rf_next_e{e}_{b}"
+      [ Gate.mkMUX entry[b]! decode_imm[b]! imm_rf_we[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+
+  -- Read mux: convert dispatch_grant (one-hot) → binary sel, then Mux4x32
+  let captured_imm := makeIndexedWires "captured_imm" 32
+  let imm_rf_sel := makeIndexedWires "imm_rf_sel" 2
+  let imm_rf_sel_gates := [
+    Gate.mkOR rs_mem_grant[1]! rs_mem_grant[3]! imm_rf_sel[0]!,
+    Gate.mkOR rs_mem_grant[2]! rs_mem_grant[3]! imm_rf_sel[1]!
+  ]
+
+  let imm_rf_mux_inst : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_imm_rf_mux"
+    portMap :=
+      (((List.range 4).map (fun e =>
+          (List.range 32).map (fun b =>
+            (s!"in{e}[{b}]", imm_rf_entries[e]![b]!)
+          )
+        )).flatten) ++
+      (imm_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
+      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
   }
 
   -- RS Branch
+  let rs_branch_alloc_ptr_unused := makeIndexedWires "rs_branch_alloc_ptr_unused" 2
+  let rs_branch_grant_unused := makeIndexedWires "rs_branch_grant_unused" 4
   let rs_branch_issue_full := Wire.mk "rs_branch_issue_full"
   let rs_branch_dispatch_valid := Wire.mk "rs_branch_dispatch_valid"
   let rs_branch_dispatch_opcode := makeIndexedWires "rs_branch_dispatch_opcode" 6
@@ -1712,10 +1839,14 @@ def mkCPU_RV32IM : Circuit :=
                (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_branch_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_branch_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
   -- RS MulDiv
+  let rs_muldiv_alloc_ptr_unused := makeIndexedWires "rs_muldiv_alloc_ptr_unused" 2
+  let rs_muldiv_grant_unused := makeIndexedWires "rs_muldiv_grant_unused" 4
   let rs_muldiv_issue_full := Wire.mk "rs_muldiv_issue_full"
   let rs_muldiv_dispatch_valid := Wire.mk "rs_muldiv_dispatch_valid"
   let rs_muldiv_dispatch_opcode := makeIndexedWires "rs_muldiv_dispatch_opcode" 6
@@ -1742,7 +1873,9 @@ def mkCPU_RV32IM : Circuit :=
                (rs_muldiv_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
                (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w)))
+               (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_muldiv_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_muldiv_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
   -- === EXECUTION UNITS ===
@@ -1778,7 +1911,7 @@ def mkCPU_RV32IM : Circuit :=
     instName := "u_exec_memory"
     portMap :=
       (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
-      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++  -- Use immediate as offset
+      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++  -- Use captured immediate as offset
       (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("zero", zero)] ++
       (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
@@ -1833,7 +1966,7 @@ def mkCPU_RV32IM : Circuit :=
                 ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty), ("sb_fwd_hit", lsu_sb_fwd_hit),
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_base_{i}", w))) ++
-               (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
+               (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
                (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
                (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
                ((makeIndexedWires "lsu_commit_idx" 3).enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
@@ -2034,12 +2167,14 @@ def mkCPU_RV32IM : Circuit :=
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_arb_gates ++
+             imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
                   int_exec_inst, mem_exec_inst, muldiv_exec_inst,
-                  rob_inst, lsu_inst]
+                  rob_inst, lsu_inst,
+                  imm_rf_decoder_inst, imm_rf_mux_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "imem_resp_data", width := 32, wires := imem_resp_data },

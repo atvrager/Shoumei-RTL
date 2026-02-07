@@ -39,8 +39,8 @@ theorem rs4_input_count : mkReservationStation4.inputs.length = 135 := by native
 /-- RS4 has correct number of outputs:
     issue_full(1) + dispatch_valid(1) +
     dispatch_opcode(6) + dispatch_src1_data(32) + dispatch_src2_data(32) +
-    dispatch_dest_tag(6) = 78 -/
-theorem rs4_output_count : mkReservationStation4.outputs.length = 78 := by native_decide
+    dispatch_dest_tag(6) + alloc_ptr(2) + dispatch_grant(4) = 84 -/
+theorem rs4_output_count : mkReservationStation4.outputs.length = 84 := by native_decide
 
 /-- RS4 uses 19 verified submodule instances:
     - 1 × Decoder2 (issue allocation)
