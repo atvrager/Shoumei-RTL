@@ -96,6 +96,8 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   -- Outputs
   let rs1_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_data_{i}")
   let rs2_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_data_{i}")
+  -- Third read port: old mapping for write_addr (before write, for ROB oldPhysRd tracking)
+  let old_rd_data := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_data_{i}")
 
   -- Internal: Write Decoder (5→32 one-hot)
   let write_sel := (List.range numArchRegs).map (fun i => Wire.mk s!"write_sel_{i}")
@@ -163,11 +165,18 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     portMap := mux_in_map ++ mkMuxSelMap rs2_addr ++ mkMuxOutMap rs2_data
   }
 
+  -- Third read port: read RAT[write_addr] to get old mapping before write
+  let mux_old_rd_inst : CircuitInstance := {
+    moduleName := s!"Mux{numArchRegs}x{tagWidth}"
+    instName := "u_mux_old_rd"
+    portMap := mux_in_map ++ mkMuxSelMap write_addr ++ mkMuxOutMap old_rd_data
+  }
+
   { name := s!"RAT_{numArchRegs}x{tagWidth}"
     inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr
-    outputs := rs1_data ++ rs2_data
+    outputs := rs1_data ++ rs2_data ++ old_rd_data
     gates := we_gates ++ storage_gates
-    instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst]
+    instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_old_rd_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "write_addr", width := addrWidth, wires := write_addr },
@@ -177,7 +186,8 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
       { name := "rs1_data", width := tagWidth, wires := rs1_data },
       { name := "rs2_data", width := tagWidth, wires := rs2_data },
       { name := "write_sel", width := numArchRegs, wires := write_sel },
-      { name := "we", width := numArchRegs, wires := we }
+      { name := "we", width := numArchRegs, wires := we },
+      { name := "old_rd_data", width := tagWidth, wires := old_rd_data }
     ]
   }
 
