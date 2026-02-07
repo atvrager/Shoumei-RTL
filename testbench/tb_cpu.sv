@@ -200,11 +200,14 @@ module tb_cpu #(
   `ifdef TRACE_PIPELINE
   always_ff @(posedge clk) begin
     if (!reset) begin
-      $display("[%0d] PC=0x%08x valid=%b optype=%0d | cdb=%b tag=%0d data=0x%08x | dmem=%b we=%b addr=0x%08x data=0x%08x",
-               cycle_count, fetch_pc,
-               u_cpu.decode_valid, u_cpu.decode_optype,
+      $display("[%0d] PC=0x%08x stall=%b ren=%b rob=%b tmp2=%b tmp3=%b tmp4=%b tmp5=%b | cdb=%b tag=%0d data=0x%08x | rob_empty=%b commit=%b | int_disp=%b mem_disp=%b src1rdy=%b src2rdy=%b",
+               cycle_count, fetch_pc, global_stall_out,
+               u_cpu.rename_stall, u_cpu.rob_full,
+               u_cpu.stall_tmp2, u_cpu.stall_tmp3, u_cpu.stall_tmp4, u_cpu.stall_tmp5,
                u_cpu.cdb_valid, u_cpu.cdb_tag, u_cpu.cdb_data,
-               dmem_req_valid, dmem_req_we, dmem_req_addr, dmem_req_data);
+               rob_empty, u_cpu.rob_commit_en,
+               u_cpu.rs_int_dispatch_valid, u_cpu.rs_mem_dispatch_valid,
+               u_cpu.issue_src1_ready, u_cpu.issue_src2_ready);
     end
   end
   `endif
