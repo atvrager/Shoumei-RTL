@@ -47,100 +47,121 @@ open Shoumei.RISCV.Renaming
 open Shoumei.RISCV.Retirement (ROBState CommittedRATState)
 open Shoumei.RISCV.Memory (LSUState)
 
-/-- Generate gates for funct3+bit30 → ALU opcode translation.
-    Derives 4-bit ALU opcode from instruction funct3 (bits 14:12) and funct7[5] (bit 30).
+/-- Generate gates for 6-bit OpType dispatch code → 4-bit ALU opcode translation.
 
-    RV32I ALU encoding (matches ALU32 op input):
-      funct3=000: bit30 ? SUB(1) : ADD(0)
-      funct3=001: SLL(7)
-      funct3=010: SLT(2)
-      funct3=011: SLTU(3)
-      funct3=100: XOR(6)
-      funct3=101: bit30 ? SRA(9) : SRL(8)
-      funct3=110: OR(5)
-      funct3=111: AND(4)
+    Takes the RS dispatch opcode (6-bit OpType encoding from decoder) and produces
+    the 4-bit ALU opcode expected by IntegerExecUnit / ALU32.
 
-    The mapping from funct3 → ALU op bits:
-      alu_op[0] = bit30 & (~f3[2] & ~f3[1] & ~f3[0] | f3[2] & ~f3[1] & f3[0])
-                = bit30 & (funct3==000 | funct3==101)
-      alu_op[1] = f3[1] & ~f3[2]    (funct3=010,011)
-      alu_op[2] = f3[2]             (funct3=100,101,110,111)
-      alu_op[3] = f3[2] & ~f3[1] & f3[0] & ~bit30   (funct3=101, bit30=0 → SRL=8)
-               | f3[2] & ~f3[1] & f3[0] & bit30      (funct3=101, bit30=1 → SRA=9)
-               = f3[2] & ~f3[1] & f3[0]              (funct3=101 → 8 or 9)
+    Implemented as AND-OR logic: for each output bit, OR together product terms
+    matching the input encodings that should set that bit.
 
-    Actually let's use a direct truth table approach with 16 entries (4 input bits).
+    Parameters:
+    - prefix: Wire name prefix (for unique naming in multi-instance circuits)
+    - optype: 6-bit OpType dispatch code from RS
+    - aluOp: 4-bit ALU opcode output
+    - mapping: List of (optype_encoding, alu_opcode) pairs
+
+    ALU opcode encoding:
+      0=ADD, 1=SUB, 2=SLT, 3=SLTU, 4=AND, 5=OR, 6=XOR, 7=SLL, 8=SRL, 9=SRA
 -/
-def mkALUOpcodeLUT (instr : List Wire) (aluOp : List Wire) : List Gate :=
-  -- Extract funct3 (bits 14,13,12) and bit30
-  let f0 := instr[12]!  -- funct3[0]
-  let f1 := instr[13]!  -- funct3[1]
-  let f2 := instr[14]!  -- funct3[2]
-  let b30 := instr[30]! -- funct7[5], distinguishes ADD/SUB and SRL/SRA
-  -- Intermediate wires
-  let nf0 := Wire.mk "alulut_nf0"
-  let nf1 := Wire.mk "alulut_nf1"
-  let nf2 := Wire.mk "alulut_nf2"
-  -- alu_op[0]: set for SUB(1), SLTU(3), OR(5), SLL(7), SRA(9)
-  -- SUB: f3=000,b30=1 → op=0001 → bit0=1
-  -- SLTU: f3=011 → op=0011 → bit0=1
-  -- OR: f3=110 → op=0101 → bit0=1
-  -- SLL: f3=001 → op=0111 → bit0=1
-  -- SRA: f3=101,b30=1 → op=1001 → bit0=1
-  -- bit0 = (f3=000 & b30) | (f3=011) | (f3=110) | (f3=001) | (f3=101 & b30)
-  --      = (b30 & ~f2 & ~f1 & ~f0) | (~f2 & f1 & f0) | (f2 & f1 & ~f0) | (~f2 & ~f1 & f0) | (b30 & f2 & ~f1 & f0)
-  -- Simplify: = f0 ^ f1   (for non-b30 cases: 001,011,110 have f0^f1=1; 000,010,100,101,111 have f0^f1=0 or 1...)
-  -- Actually let me just be explicit with AND-OR gates
-  let t0_sub := Wire.mk "alulut_t0_sub"     -- ~f2 & ~f1 & ~f0 & b30
-  let t0_sltu := Wire.mk "alulut_t0_sltu"   -- ~f2 & f1 & f0
-  let t0_or := Wire.mk "alulut_t0_or"       -- f2 & f1 & ~f0
-  let t0_sll := Wire.mk "alulut_t0_sll"     -- ~f2 & ~f1 & f0
-  let t0_sra := Wire.mk "alulut_t0_sra"     -- f2 & ~f1 & f0 & b30
-  let t0_a := Wire.mk "alulut_t0_a"
-  let t0_b := Wire.mk "alulut_t0_b"
-  let t0_c := Wire.mk "alulut_t0_c"
-  let t0_d := Wire.mk "alulut_t0_d"
-  let t0_e := Wire.mk "alulut_t0_e"
-  let t0_f := Wire.mk "alulut_t0_f"
-  -- alu_op[1]: set for SLT(2), SLTU(3)
-  -- f3=010 or f3=011 → ~f2 & f1
-  let t1_a := Wire.mk "alulut_t1_a"
-  -- alu_op[2]: set for AND(4), OR(5), XOR(6), SLL(7)
-  -- AND: f3=111→op4, OR: f3=110→op5, XOR: f3=100→op6, SLL: f3=001→op7
-  -- bit2 = f3=111|f3=110|f3=100|f3=001
-  --       = f2 | (~f2 & ~f1 & f0)
-  --       hmm, that's f2 | (~f1 & f0) ... no
-  -- AND=4(0100), OR=5(0101), XOR=6(0110), SLL=7(0111)
-  -- bit2=1 for these 4. funct3 values: 111,110,100,001
-  -- bit2 = f2 | (~f2 & ~f1 & f0)
-  let _t2_a := Wire.mk "alulut_t2_a"  -- unused, using t0_sll and f2 directly
-  [
-    Gate.mkNOT f0 nf0, Gate.mkNOT f1 nf1, Gate.mkNOT f2 nf2,
-    -- alu_op[0] terms
-    Gate.mkAND nf2 nf1 t0_a,    -- ~f2 & ~f1
-    Gate.mkAND t0_a nf0 t0_b,   -- ~f2 & ~f1 & ~f0
-    Gate.mkAND t0_b b30 t0_sub, -- SUB term
-    Gate.mkAND nf2 f1 t0_c,     -- ~f2 & f1
-    Gate.mkAND t0_c f0 t0_sltu, -- SLTU term
-    Gate.mkAND f2 f1 t0_d,      -- f2 & f1
-    Gate.mkAND t0_d nf0 t0_or,  -- OR term
-    Gate.mkAND t0_a f0 t0_sll,  -- SLL term (~f2 & ~f1 & f0)
-    Gate.mkAND f2 nf1 t0_e,     -- f2 & ~f1
-    Gate.mkAND t0_e f0 t0_f,    -- f2 & ~f1 & f0
-    Gate.mkAND t0_f b30 t0_sra, -- SRA term
-    -- OR all bit0 terms
-    Gate.mkOR t0_sub t0_sltu (Wire.mk "alulut_o0a"),
-    Gate.mkOR (Wire.mk "alulut_o0a") t0_or (Wire.mk "alulut_o0b"),
-    Gate.mkOR (Wire.mk "alulut_o0b") t0_sll (Wire.mk "alulut_o0c"),
-    Gate.mkOR (Wire.mk "alulut_o0c") t0_sra (aluOp[0]!),
-    -- alu_op[1]: ~f2 & f1
-    Gate.mkAND nf2 f1 t1_a,
-    Gate.mkBUF t1_a (aluOp[1]!),
-    -- alu_op[2]: f2 | (~f2 & ~f1 & f0) = f2 | (t0_sll)
-    Gate.mkOR f2 t0_sll (aluOp[2]!),
-    -- alu_op[3]: f2 & ~f1 & f0
-    Gate.mkBUF t0_f (aluOp[3]!)
-  ]
+def mkOpTypeToALU4 (pfx : String) (optype : List Wire) (aluOp : List Wire)
+    (mapping : List (Nat × Nat)) : List Gate :=
+  -- For each ALU output bit, collect optype values that set it
+  let testBit (n : Nat) (b : Nat) : Bool := (n / (2 ^ b)) % 2 != 0
+  let bit0_terms := mapping.filter (fun (_, alu) => testBit alu 0) |>.map Prod.fst
+  let bit1_terms := mapping.filter (fun (_, alu) => testBit alu 1) |>.map Prod.fst
+  let bit2_terms := mapping.filter (fun (_, alu) => testBit alu 2) |>.map Prod.fst
+  let bit3_terms := mapping.filter (fun (_, alu) => testBit alu 3) |>.map Prod.fst
+  -- Helper: build a 6-bit equality match for one encoding value
+  let mkMatch (enc : Nat) (tag : String) : (List Gate × Wire) :=
+    let matchWire := Wire.mk s!"{pfx}_{tag}"
+    -- Select true/inverted bit for each position
+    let bitWires := (List.range 6).map fun b =>
+      if testBit enc b then optype[b]! else Wire.mk s!"{pfx}_n{b}"
+    -- Chain 6-input AND: a0 & a1 → t01, t01 & a2 → t012, etc.
+    let t01 := Wire.mk s!"{pfx}_{tag}_t01"
+    let t012 := Wire.mk s!"{pfx}_{tag}_t012"
+    let t0123 := Wire.mk s!"{pfx}_{tag}_t0123"
+    let t01234 := Wire.mk s!"{pfx}_{tag}_t01234"
+    let andGates := [
+      Gate.mkAND bitWires[0]! bitWires[1]! t01,
+      Gate.mkAND t01 bitWires[2]! t012,
+      Gate.mkAND t012 bitWires[3]! t0123,
+      Gate.mkAND t0123 bitWires[4]! t01234,
+      Gate.mkAND t01234 bitWires[5]! matchWire
+    ]
+    (andGates, matchWire)
+  -- Helper: OR-chain to combine match wires into one output
+  let mkOrChain (wires : List Wire) (outWire : Wire) : List Gate :=
+    match wires with
+    | [] => [Gate.mkBUF (Wire.mk s!"{pfx}_gnd") outWire]  -- no terms → 0
+    | [w] => [Gate.mkBUF w outWire]
+    | w0 :: w1 :: rest =>
+      let first := Wire.mk s!"{pfx}_{outWire.name}_or0"
+      let firstGate := Gate.mkOR w0 w1 first
+      let (gates, _) := rest.enum.foldl (fun (acc, prev) ⟨idx, w⟩ =>
+        let isLast := idx == rest.length - 1
+        let next := if isLast then outWire else Wire.mk s!"{pfx}_{outWire.name}_or{idx+1}"
+        (acc ++ [Gate.mkOR prev w next], next)
+      ) ([firstGate], first)
+      gates
+  -- Generate shared NOT wires for all 6 optype bits
+  let notGates := (List.range 6).map fun b =>
+    Gate.mkNOT optype[b]! (Wire.mk s!"{pfx}_n{b}")
+  -- Generate match + OR logic for each output bit
+  let mkBitLogic (terms : List Nat) (bitIdx : Nat) : List Gate :=
+    let matchResults := terms.enum.map fun ⟨idx, enc⟩ =>
+      mkMatch enc s!"b{bitIdx}_e{idx}"
+    let matchGates := (matchResults.map Prod.fst).flatten
+    let matchWires := matchResults.map Prod.snd
+    let orGates := mkOrChain matchWires aluOp[bitIdx]!
+    matchGates ++ orGates
+  notGates ++
+    mkBitLogic bit0_terms 0 ++
+    mkBitLogic bit1_terms 1 ++
+    mkBitLogic bit2_terms 2 ++
+    mkBitLogic bit3_terms 3
+
+/-- OpType → ALU4 mapping for RV32I decoder encoding.
+    Encoding order (from generated RV32IDecoder.sv):
+    0=XORI, 1=XOR, 2=SW, 3=SUB, 4=SRLI, 5=SRL, 6=SRAI, 7=SRA,
+    8=SLTU, 9=SLTIU, 10=SLTI, 11=SLT, 12=SLLI, 13=SLL, 14=SH, 15=SB,
+    16=ORI, 17=OR, 18=LW, 19=LUI, 20=LHU, 21=LH, 22=LBU, 23=LB,
+    24=JALR, 25=JAL, 26=FENCE, 27=ECALL, 28=EBREAK, 29=BNE, 30=BLTU,
+    31=BLT, 32=BGEU, 33=BGE, 34=BEQ, 35=AUIPC, 36=ANDI, 37=AND,
+    38=ADDI, 39=ADD -/
+def aluMapping_RV32I : List (Nat × Nat) :=
+  [ (39, 0), (38, 0),   -- ADD, ADDI → 0
+    (3, 1),             -- SUB → 1
+    (11, 2), (10, 2),   -- SLT, SLTI → 2
+    (8, 3), (9, 3),     -- SLTU, SLTIU → 3
+    (37, 4), (36, 4),   -- AND, ANDI → 4
+    (17, 5), (16, 5),   -- OR, ORI → 5
+    (1, 6), (0, 6),     -- XOR, XORI → 6
+    (13, 7), (12, 7),   -- SLL, SLLI → 7
+    (5, 8), (4, 8),     -- SRL, SRLI → 8
+    (7, 9), (6, 9) ]    -- SRA, SRAI → 9
+
+/-- OpType → ALU4 mapping for RV32IM decoder encoding.
+    Encoding order (from generated RV32IMDecoder.sv):
+    0=XORI, 1=XOR, 2=SW, 3=SUB, 4=SRLI, 5=SRL, 6=SRAI, 7=SRA,
+    8=SLTU, 9=SLTIU, 10=SLTI, 11=SLT, 12=SLLI, 13=SLL, 14=SH, 15=SB,
+    16=REMU, 17=REM, 18=ORI, 19=OR, 20=MULHU, 21=MULHSU, 22=MULH, 23=MUL,
+    24=LW, 25=LUI, 26=LHU, 27=LH, 28=LBU, 29=LB, 30=JALR, 31=JAL,
+    32=FENCE, 33=ECALL, 34=EBREAK, 35=DIVU, 36=DIV, 37=BNE, 38=BLTU,
+    39=BLT, 40=BGEU, 41=BGE, 42=BEQ, 43=AUIPC, 44=ANDI, 45=AND,
+    46=ADDI, 47=ADD -/
+def aluMapping_RV32IM : List (Nat × Nat) :=
+  [ (47, 0), (46, 0),   -- ADD, ADDI → 0
+    (3, 1),             -- SUB → 1
+    (11, 2), (10, 2),   -- SLT, SLTI → 2
+    (8, 3), (9, 3),     -- SLTU, SLTIU → 3
+    (45, 4), (44, 4),   -- AND, ANDI → 4
+    (19, 5), (18, 5),   -- OR, ORI → 5
+    (1, 6), (0, 6),     -- XOR, XORI → 6
+    (13, 7), (12, 7),   -- SLL, SLLI → 7
+    (5, 8), (4, 8),     -- SRL, SRLI → 8
+    (7, 9), (6, 9) ]    -- SRA, SRAI → 9
 
 /-
 RVVI-TRACE Infrastructure (Future Cosimulation)
@@ -884,9 +905,11 @@ def mkCPU_RV32I : Circuit :=
   let int_result := makeIndexedWires "int_result" 32
   let int_tag_out := makeIndexedWires "int_tag_out" 6
 
-  -- ALU opcode LUT: translate 6-bit optype → 4-bit ALU op
+  -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
+  -- Driven from RS dispatch opcode (not imem_resp_data) so the ALU executes
+  -- the correct operation for the dispatched instruction, not the current fetch.
   let alu_op := makeIndexedWires "alu_op" 4
-  let alu_lut_gates := mkALUOpcodeLUT imem_resp_data alu_op
+  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op aluMapping_RV32I
 
   let int_exec_inst : CircuitInstance := {
     moduleName := "IntegerExecUnit"
@@ -1402,9 +1425,11 @@ def mkCPU_RV32IM : Circuit :=
   let int_result := makeIndexedWires "int_result" 32
   let int_tag_out := makeIndexedWires "int_tag_out" 6
 
-  -- ALU opcode LUT: translate 6-bit optype → 4-bit ALU op
+  -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
+  -- Driven from RS dispatch opcode (not imem_resp_data) so the ALU executes
+  -- the correct operation for the dispatched instruction, not the current fetch.
   let alu_op := makeIndexedWires "alu_op" 4
-  let alu_lut_gates := mkALUOpcodeLUT imem_resp_data alu_op
+  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op aluMapping_RV32IM
 
   let int_exec_inst : CircuitInstance := {
     moduleName := "IntegerExecUnit"
