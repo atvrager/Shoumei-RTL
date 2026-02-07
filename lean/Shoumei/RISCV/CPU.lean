@@ -883,6 +883,18 @@ def mkCPU_RV32I : Circuit :=
   let cdb_valid := Wire.mk "cdb_valid"
   let cdb_tag := makeIndexedWires "cdb_tag" 6
   let cdb_data := makeIndexedWires "cdb_data" 32
+
+  -- Mask CDB valid for PhysRegFile writes: don't write to p0 (x0's home register)
+  -- cdb_tag_nonzero = OR of all 6 tag bits; cdb_valid_prf = cdb_valid AND cdb_tag_nonzero
+  let cdb_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_tag_nz_t{i}")
+  let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
+  let cdb_valid_prf := Wire.mk "cdb_valid_prf"
+  let cdb_tag_nz_gates :=
+    [Gate.mkOR cdb_tag[0]! cdb_tag[1]! cdb_tag_nz_tmp[0]!] ++
+    (List.range 4).map (fun i =>
+      Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
+    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_prf]
+
   let rob_commit_en := Wire.mk "rob_commit_en"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
@@ -901,7 +913,7 @@ def mkCPU_RV32I : Circuit :=
       (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
-      [("cdb_valid", cdb_valid)] ++
+      [("cdb_valid", cdb_valid_prf)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", retire_recycle_valid)] ++
@@ -1176,6 +1188,22 @@ def mkCPU_RV32I : Circuit :=
       (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
+  -- Branch execution unit
+  let branch_result := makeIndexedWires "branch_result" 32
+  let branch_tag_out := makeIndexedWires "branch_tag_out" 6
+
+  let branch_exec_inst : CircuitInstance := {
+    moduleName := "BranchExecUnit"
+    instName := "u_exec_branch"
+    portMap :=
+      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"src1_{i}", w))) ++
+      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"src2_{i}", w))) ++
+      (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
+      [("zero", zero)] ++
+      (branch_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (branch_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
+  }
+
   let mem_address := makeIndexedWires "mem_address" 32
   let mem_tag_out := makeIndexedWires "mem_tag_out" 6
 
@@ -1281,7 +1309,22 @@ def mkCPU_RV32I : Circuit :=
   let replay_data := makeIndexedWires "replay_data" 32
   let replay_data_next := makeIndexedWires "replay_data_next" 32
 
-  -- Save condition: integer has result AND LSU wins AND no replay pending
+  -- === CDB ARBITRATION (Priority: Replay > LSU > Integer > Branch) ===
+
+  -- Level 0: Merge Branch into Integer (Integer has priority)
+  -- Branch exec unit outputs result=0 and tag passthrough
+  let int_branch_valid := Wire.mk "int_branch_valid"
+  let int_branch_tag := makeIndexedWires "int_branch_tag" 6
+  let int_branch_data := makeIndexedWires "int_branch_data" 32
+
+  let arb_level0_gates :=
+    [Gate.mkOR rs_int_dispatch_valid rs_branch_dispatch_valid int_branch_valid] ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX branch_tag_out[i]! int_tag_out[i]! rs_int_dispatch_valid int_branch_tag[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX branch_result[i]! int_result[i]! rs_int_dispatch_valid int_branch_data[i]!)
+
+  -- Save condition: int/branch has result AND LSU wins AND no replay pending
   let int_dropped := Wire.mk "int_dropped"
   let int_dropped_tmp := Wire.mk "int_dropped_tmp"
   let not_replay_valid := Wire.mk "not_replay_valid"
@@ -1290,12 +1333,8 @@ def mkCPU_RV32I : Circuit :=
 
   let replay_save_gates := [
     Gate.mkNOT replay_valid not_replay_valid,
-    Gate.mkAND rs_int_dispatch_valid lsu_sb_deq_valid int_dropped_tmp,
+    Gate.mkAND int_branch_valid lsu_sb_deq_valid int_dropped_tmp,
     Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
-    -- replay_valid_next: set when saving, clear when replaying, hold otherwise
-    -- If int_dropped: save (set valid)
-    -- If replay_wins: clear (replay consumed)
-    -- Else: hold
     Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
     Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
     Gate.mkDFF replay_valid_next clock reset replay_valid
@@ -1303,14 +1342,13 @@ def mkCPU_RV32I : Circuit :=
 
   -- Save tag and data when int_dropped
   let replay_tag_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX replay_tag[i]! int_tag_out[i]! int_dropped replay_tag_next[i]!,
+    [Gate.mkMUX replay_tag[i]! int_branch_tag[i]! int_dropped replay_tag_next[i]!,
      Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
 
   let replay_data_gates := (List.range 32).map (fun i =>
-    [Gate.mkMUX replay_data[i]! int_result[i]! int_dropped replay_data_next[i]!,
+    [Gate.mkMUX replay_data[i]! int_branch_data[i]! int_dropped replay_data_next[i]!,
      Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
 
-  -- === CDB ARBITRATION (Priority: Replay > LSU > Integer) ===
   -- replay_wins = replay_valid (highest priority)
   let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
 
@@ -1318,13 +1356,13 @@ def mkCPU_RV32I : Circuit :=
   let lsu_wins := Wire.mk "lsu_wins"
   let lsu_wins_gate := [Gate.mkAND lsu_sb_deq_valid not_replay_valid lsu_wins]
 
-  -- int_wins = int_valid AND NOT lsu_valid AND NOT replay_valid
+  -- int_wins = int_branch_valid AND NOT lsu_valid AND NOT replay_valid
   let int_wins := Wire.mk "int_wins"
   let int_wins_tmp := Wire.mk "int_wins_tmp"
   let not_lsu_valid := Wire.mk "not_lsu_valid"
   let int_wins_gates := [
     Gate.mkNOT lsu_sb_deq_valid not_lsu_valid,
-    Gate.mkAND rs_int_dispatch_valid not_lsu_valid int_wins_tmp,
+    Gate.mkAND int_branch_valid not_lsu_valid int_wins_tmp,
     Gate.mkAND int_wins_tmp not_replay_valid int_wins
   ]
 
@@ -1335,18 +1373,18 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkOR cdb_valid_tmp int_wins cdb_valid
   ]
 
-  -- cdb_tag/cdb_data: MUX chain (int -> lsu -> replay, last wins)
+  -- cdb_tag/cdb_data: MUX chain (int/branch -> lsu -> replay, last wins)
   let cdb_tag_mux_gates := (List.range 6).map (fun i =>
     let m1 := Wire.mk s!"cdb_tag_m1_{i}"
-    [Gate.mkMUX int_tag_out[i]! lsu_agu_tag[i]! lsu_wins m1,
+    [Gate.mkMUX int_branch_tag[i]! lsu_agu_tag[i]! lsu_wins m1,
      Gate.mkMUX m1 replay_tag[i]! replay_wins cdb_tag[i]!])
   let cdb_data_mux_gates := (List.range 32).map (fun i =>
     let m1 := Wire.mk s!"cdb_data_m1_{i}"
-    [Gate.mkMUX int_result[i]! lsu_sb_fwd_data[i]! lsu_wins m1,
+    [Gate.mkMUX int_branch_data[i]! lsu_sb_fwd_data[i]! lsu_wins m1,
      Gate.mkMUX m1 replay_data[i]! replay_wins cdb_data[i]!])
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
 
-  let cdb_arb_gates := replay_save_gates ++ replay_tag_gates ++ replay_data_gates ++
+  let cdb_arb_gates := arb_level0_gates ++ replay_save_gates ++ replay_tag_gates ++ replay_data_gates ++
     replay_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++ cdb_valid_gates ++ cdb_mux_gates
 
   -- === COMMIT CONTROL ===
@@ -1404,13 +1442,13 @@ def mkCPU_RV32I : Circuit :=
                [rob_empty]
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
-             alu_lut_gates ++ cdb_arb_gates ++
+             alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst,
-                  int_exec_inst, mem_exec_inst,
+                  int_exec_inst, branch_exec_inst, mem_exec_inst,
                   rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst]
     -- V2 codegen annotations
@@ -1568,6 +1606,16 @@ def mkCPU_RV32IM : Circuit :=
   let cdb_tag := makeIndexedWires "cdb_tag" 6
   let cdb_data := makeIndexedWires "cdb_data" 32
 
+  -- Mask CDB valid for PhysRegFile writes: don't write to p0 (x0's home register)
+  let cdb_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_tag_nz_t{i}")
+  let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
+  let cdb_valid_prf := Wire.mk "cdb_valid_prf"
+  let cdb_tag_nz_gates :=
+    [Gate.mkOR cdb_tag[0]! cdb_tag[1]! cdb_tag_nz_tmp[0]!] ++
+    (List.range 4).map (fun i =>
+      Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
+    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_prf]
+
   -- ROB commit signals
   let rob_commit_en := Wire.mk "rob_commit_en"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
@@ -1587,7 +1635,7 @@ def mkCPU_RV32IM : Circuit :=
       (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
-      [("cdb_valid", cdb_valid)] ++
+      [("cdb_valid", cdb_valid_prf)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", retire_recycle_valid)] ++
@@ -1902,6 +1950,22 @@ def mkCPU_RV32IM : Circuit :=
       (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
+  -- Branch execution unit
+  let branch_result := makeIndexedWires "branch_result" 32
+  let branch_tag_out := makeIndexedWires "branch_tag_out" 6
+
+  let branch_exec_inst : CircuitInstance := {
+    moduleName := "BranchExecUnit"
+    instName := "u_exec_branch"
+    portMap :=
+      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"src1_{i}", w))) ++
+      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"src2_{i}", w))) ++
+      (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
+      [("zero", zero)] ++
+      (branch_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (branch_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
+  }
+
   -- Memory AGU (combinational, named ports)
   let mem_address := makeIndexedWires "mem_address" 32
   let mem_tag_out := makeIndexedWires "mem_tag_out" 6
@@ -2025,19 +2089,33 @@ def mkCPU_RV32IM : Circuit :=
        ("head_mispredicted", rob_head_mispredicted)]
   }
 
-  -- === CDB ARBITRATION (Priority: LSU > MulDiv > Integer) ===
-  -- 2-level MUX tree, ~78 gates total
+  -- === CDB ARBITRATION (Priority: LSU > MulDiv > Integer > Branch) ===
+  -- 3-level MUX tree
 
-  -- Level 1: Arbitrate between Integer and MulDiv (MulDiv has priority)
+  -- Level 0: Arbitrate between Branch and Integer (Integer has priority)
+  -- Branch exec unit outputs result=0 and tag passthrough
+  let int_branch_valid := Wire.mk "int_branch_valid"
+  let int_branch_tag := makeIndexedWires "int_branch_tag" 6
+  let int_branch_data := makeIndexedWires "int_branch_data" 32
+
+  let arb_level0_gates :=
+    [Gate.mkOR rs_int_dispatch_valid rs_branch_dispatch_valid int_branch_valid,
+     Gate.mkMUX rs_branch_dispatch_valid rs_int_dispatch_valid rs_int_dispatch_valid (Wire.mk "ib_valid_unused")] ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX branch_tag_out[i]! int_tag_out[i]! rs_int_dispatch_valid int_branch_tag[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX branch_result[i]! int_result[i]! rs_int_dispatch_valid int_branch_data[i]!)
+
+  -- Level 1: Arbitrate between Int/Branch and MulDiv (MulDiv has priority)
   let int_muldiv_valid := Wire.mk "int_muldiv_valid"
   let int_muldiv_tag := makeIndexedWires "int_muldiv_tag" 6
   let int_muldiv_data := makeIndexedWires "int_muldiv_data" 32
 
-  let arb_level1_gates := [Gate.mkMUX rs_int_dispatch_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
+  let arb_level1_gates := [Gate.mkMUX int_branch_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
     (List.range 6).map (fun i =>
-      Gate.mkMUX int_tag_out[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
+      Gate.mkMUX int_branch_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
     (List.range 32).map (fun i =>
-      Gate.mkMUX int_result[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
+      Gate.mkMUX int_branch_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
 
   -- === CDB REPLAY BUFFER (saves int/muldiv result when LSU wins arbitration) ===
   let replay_valid := Wire.mk "replay_valid"
@@ -2100,7 +2178,7 @@ def mkCPU_RV32IM : Circuit :=
      Gate.mkMUX m1 replay_data[i]! replay_wins cdb_data[i]!])
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
 
-  let cdb_arb_gates := arb_level1_gates ++ replay_save_gates ++ replay_tag_gates ++
+  let cdb_arb_gates := arb_level0_gates ++ arb_level1_gates ++ replay_save_gates ++ replay_tag_gates ++
     replay_data_gates ++ replay_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++
     cdb_valid_gates ++ cdb_mux_gates
 
@@ -2166,13 +2244,13 @@ def mkCPU_RV32IM : Circuit :=
                [rob_empty]
     gates := dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
-             alu_lut_gates ++ cdb_arb_gates ++
+             alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++ busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
-                  int_exec_inst, mem_exec_inst, muldiv_exec_inst,
+                  int_exec_inst, branch_exec_inst, mem_exec_inst, muldiv_exec_inst,
                   rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst]
     -- V2 codegen annotations

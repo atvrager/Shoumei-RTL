@@ -83,6 +83,11 @@ lean_exe generate_integer_exec where
   root := `GenerateIntegerExecUnit
   supportInterpreter := true
 
+-- Executable target for generating BranchExecUnit (Branch Execution Unit)
+lean_exe generate_branch_exec where
+  root := `GenerateBranchExecUnit
+  supportInterpreter := true
+
 -- Executable target for exporting verification certificates
 -- Generates compositional-certs.txt from Lean verification certificates
 lean_exe export_verification_certs where

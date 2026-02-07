@@ -188,7 +188,9 @@ int main(int argc, char** argv) {
     // =====================================================================
     // Main simulation loop
     // =====================================================================
+    #if VM_TRACE
     uint64_t sim_time = 10;
+    #endif
     uint32_t cycle = 0;
     bool done = false;
 
