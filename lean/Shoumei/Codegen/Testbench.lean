@@ -367,12 +367,12 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   )
 
   let portBindings := String.intercalate "\n" (
-    scalarInputs.map (fun w => s!"    u_cpu.{w.name}({w.name}_sig);") ++
-    scalarOutputs.map (fun w => s!"    u_cpu.{w.name}({w.name}_sig);") ++
+    scalarInputs.map (fun w => s!"    u_cpu->{w.name}({w.name}_sig);") ++
+    scalarOutputs.map (fun w => s!"    u_cpu->{w.name}({w.name}_sig);") ++
     -- Constant port bindings
-    cfg.constantPorts.map (fun (name, _) => s!"    u_cpu.{name}({name}_sig);") ++
+    cfg.constantPorts.map (fun (name, _) => s!"    u_cpu->{name}({name}_sig);") ++
     groups.flatMap (fun sg =>
-      (List.range sg.width).map fun i => s!"    u_cpu.{sg.name}_{i}({sg.name}_{i}_sig);")
+      (List.range sg.width).map fun i => s!"    u_cpu->{sg.name}_{i}({sg.name}_{i}_sig);")
   )
 
   let constBindings := String.intercalate "\n" (
@@ -434,10 +434,10 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   "    // Signal arrays for bus helpers\n" ++
   signalArrayDecls ++ "\n\n" ++
 
-  "    // Instantiate CPU\n" ++
-  s!"    {c.name} u_cpu(\"u_cpu\");\n" ++
-  s!"    u_cpu.{clockName}(clk);\n" ++
-  s!"    u_cpu.{resetName}({resetName}_sig);\n" ++
+  "    // Instantiate CPU (heap-allocated to avoid stack overflow)\n" ++
+  s!"    auto* u_cpu = new {c.name}(\"u_cpu\");\n" ++
+  s!"    u_cpu->{clockName}(clk);\n" ++
+  s!"    u_cpu->{resetName}({resetName}_sig);\n" ++
   portBindings ++ "\n\n" ++
 
   "    // Constants\n" ++
@@ -485,6 +485,7 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   s!"        printf(\"TIMEOUT at cycle %u PC=0x%08x\\n\", cycle, get_{pcSig}({pcSig}_sigs));\n" ++
   s!"    {rb}\n" ++
   "    printf(\"Total cycles: %u\\n\", cycle);\n" ++
+  "    delete u_cpu;\n" ++
   "    return done ? 0 : 1;\n" ++
   s!"{rb}\n"
 

@@ -54,9 +54,9 @@ def writeCircuitChisel (c : Circuit) (allCircuits : List Circuit := []) : IO Uni
   IO.FS.writeFile path chisel
 
 -- Write SystemC for a circuit (.h and .cpp)
-def writeCircuitSystemC (c : Circuit) : IO Unit := do
-  let header := SystemC.toSystemCHeader c
-  let impl := SystemC.toSystemCImpl c
+def writeCircuitSystemC (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+  let header := SystemC.toSystemCHeader c allCircuits
+  let impl := SystemC.toSystemCImpl c allCircuits
   let hPath := s!"{systemcOutputDir}/{c.name}.h"
   let cppPath := s!"{systemcOutputDir}/{c.name}.cpp"
   IO.FS.writeFile hPath header
@@ -67,7 +67,7 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := d
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
-  writeCircuitSystemC c
+  writeCircuitSystemC c allCircuits
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances"
 
 -- Verbose version with individual file confirmation
@@ -81,7 +81,7 @@ def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Un
   writeCircuitChisel c allCircuits
   IO.println s!"  ✓ {c.name}.scala"
 
-  writeCircuitSystemC c
+  writeCircuitSystemC c allCircuits
   IO.println s!"  ✓ {c.name}.h / {c.name}.cpp"
 
   IO.println s!"  ({c.gates.length} gates, {c.instances.length} instances)"

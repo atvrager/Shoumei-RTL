@@ -3,6 +3,8 @@
 
   Generates a SystemC simulation model from instruction definitions
   parsed from riscv-opcodes. Produces both .h (header) and .cpp files.
+  Uses individual sc_in<bool>/sc_out<bool> ports matching the Lean DSL
+  gate-level representation.
 
   Target: SystemC 2.3.3+ (ISO/IEC 1666-2011)
 -/
@@ -52,28 +54,36 @@ def genSCDecoderCase (instrDef : InstructionDef) (isFirst : Bool) : String :=
   let opName := sanitizeSCIdentifier instrDef.name
   let pfx := if isFirst then "    if" else "    else if"
   pfx ++ " ((instr & " ++ maskHex ++ ") == " ++ matchHex ++ ") {\n" ++
-  "      io_optype.write(" ++ opName ++ ");\n" ++
-  "      io_valid.write(true);\n" ++
+  "      optype = " ++ opName ++ ";\n" ++
+  "      valid = true;\n" ++
   "    }"
 
 /-- Check if decoder includes M-extension instructions (SystemC) -/
 private def hasMSC (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
-/-- Generate complete SystemC decoder header file (.h) -/
+/-- Generate individual bool port declarations for a multi-bit signal -/
+private def genBoolPorts (dir : String) (baseName : String) (width : Nat) : String :=
+  let ports := (List.range width).map fun i =>
+    s!"  {dir}<bool> {baseName}_{i};"
+  String.intercalate "\n" ports
+
+/-- Generate sensitivity list for all input bool ports -/
+private def genSensitivity (baseName : String) (width : Nat) : String :=
+  let ports := (List.range width).map fun i => s!"{baseName}_{i}"
+  String.intercalate " << " ports
+
+/-- Generate complete SystemC decoder header file (.h) with individual bool ports -/
 def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let enumDecl := genSCOpTypeEnum defs
   let guardName := moduleName.toUpper ++ "_H"
+  let lb := "{"
+  let rb := "}"
 
   let muldivPort := if hasMSC defs then
-    "\n  sc_out<bool>        io_is_muldiv;  // M-extension multiply/divide" else ""
+    "\n  sc_out<bool> io_is_muldiv;" else ""
 
   String.intercalate "\n" [
-    "//==============================================================================",
-    s!"// {moduleName} - Instruction Decoder - SystemC Model",
-    "// Generated from riscv-opcodes definitions",
-    "//==============================================================================",
-    "",
     s!"#ifndef {guardName}",
     s!"#define {guardName}",
     "",
@@ -81,37 +91,43 @@ def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String :=
     "",
     enumDecl,
     "",
-    s!"SC_MODULE({moduleName}) " ++ "{",
-    "  // Ports",
-    "  sc_in<sc_uint<32>>  io_instr;      // 32-bit instruction word",
-    "  sc_out<sc_uint<6>>  io_optype;     // Decoded operation type",
-    "  sc_out<sc_uint<5>>  io_rd;         // Destination register",
-    "  sc_out<sc_uint<5>>  io_rs1;        // Source register 1",
-    "  sc_out<sc_uint<5>>  io_rs2;        // Source register 2",
-    "  sc_out<sc_int<32>>  io_imm;        // Immediate value (sign-extended)",
-    "  sc_out<bool>        io_valid;      // Instruction is valid",
-    "  sc_out<bool>        io_has_rd;     // Instruction writes a register",
-    "  sc_out<bool>        io_is_integer; // Dispatch to integer ALU",
-    "  sc_out<bool>        io_is_memory;  // Dispatch to load/store unit",
-    "  sc_out<bool>        io_is_branch;  // Dispatch to branch unit",
-    "  sc_out<bool>        io_is_store;   // Instruction is a store",
-    "  sc_out<bool>        io_use_imm;    // Uses immediate (not R-type)" ++ muldivPort,
+    s!"SC_MODULE({moduleName}) {lb}",
+    "  // Input: 32-bit instruction word",
+    genBoolPorts "sc_in" "io_instr" 32,
     "",
-    "  // Process methods",
+    "  // Output: decoded operation type (6 bits)",
+    genBoolPorts "sc_out" "io_optype" 6,
+    "",
+    "  // Output: register fields",
+    genBoolPorts "sc_out" "io_rd" 5,
+    genBoolPorts "sc_out" "io_rs1" 5,
+    genBoolPorts "sc_out" "io_rs2" 5,
+    "",
+    "  // Output: immediate value (32 bits, sign-extended)",
+    genBoolPorts "sc_out" "io_imm" 32,
+    "",
+    "  // Output: control signals",
+    "  sc_out<bool> io_valid;",
+    "  sc_out<bool> io_has_rd;",
+    "  sc_out<bool> io_is_integer;",
+    "  sc_out<bool> io_is_memory;",
+    "  sc_out<bool> io_is_branch;",
+    "  sc_out<bool> io_is_store;",
+    "  sc_out<bool> io_use_imm;" ++ muldivPort,
+    "",
     "  void comb_logic();",
     "",
-    "  // Constructor",
-    s!"  SC_CTOR({moduleName}) " ++ "{",
+    s!"  SC_CTOR({moduleName}) {lb}",
     "    SC_METHOD(comb_logic);",
-    "    sensitive << io_instr;",
-    "  }",
-    "};",
+    "    sensitive << " ++ genSensitivity "io_instr" 32 ++ ";",
+    s!"  {rb}",
+    s!"{rb};",
     "",
     s!"#endif // {guardName}",
     ""
   ]
 
-/-- Generate complete SystemC decoder implementation file (.cpp) -/
+/-- Generate complete SystemC decoder implementation file (.cpp) with individual bool ports -/
 def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let defaultOp := match defs.head? with
     | some firstDef => sanitizeSCIdentifier firstDef.name
@@ -121,56 +137,79 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     genSCDecoderCase instrDef (idx == 0))
   let decoderCasesStr := String.intercalate "\n" decoderCases
 
+  let lb := "{"
+  let rb := "}"
+
+  -- Gather input bits into uint32_t
+  let gatherInstr := "  uint32_t instr = 0;\n" ++
+    String.intercalate "\n" ((List.range 32).map fun i =>
+      s!"  instr |= (io_instr_{i}.read() ? 1u : 0u) << {i};")
+
+  -- Scatter multi-bit outputs
+  let scatterField (name : String) (width : Nat) (varName : String) : String :=
+    String.intercalate "\n" ((List.range width).map fun i =>
+      s!"  {name}_{i}.write(({varName} >> {i}) & 1);")
+
   String.intercalate "\n" [
     s!"#include \"{moduleName}.h\"",
     "",
-    s!"void {moduleName}::comb_logic() " ++ "{",
-    "  sc_uint<32> instr = io_instr.read();",
+    s!"void {moduleName}::comb_logic() {lb}",
+    "  // Gather instruction bits",
+    gatherInstr,
     "",
     "  // Extract register fields",
-    "  io_rd.write(instr.range(11, 7));",
-    "  io_rs1.write(instr.range(19, 15));",
-    "  io_rs2.write(instr.range(24, 20));",
+    "  uint32_t rd  = (instr >> 7) & 0x1f;",
+    "  uint32_t rs1 = (instr >> 15) & 0x1f;",
+    "  uint32_t rs2 = (instr >> 20) & 0x1f;",
     "",
     "  // Extract immediate values for each format",
-    "  sc_int<32> imm_i = (sc_int<32>)(((sc_int<32>)instr) >> 20);",
-    "  sc_int<32> imm_s = (sc_int<32>)(((sc_int<32>)(instr & 0xfe000000)) >> 20) |",
-    "                     (sc_int<32>)(instr.range(11, 7));",
-    "  sc_int<32> imm_b = (sc_int<32>)(((sc_int<32>)(instr & 0x80000000)) >> 19) |",
-    "                     (sc_int<32>)((instr[7] << 11) | (instr.range(30, 25) << 5) |",
-    "                     (instr.range(11, 8) << 1));",
-    "  sc_int<32> imm_u = (sc_int<32>)(instr & 0xfffff000);",
-    "  sc_int<32> imm_j = (sc_int<32>)(((sc_int<32>)(instr & 0x80000000)) >> 11) |",
-    "                     (sc_int<32>)((instr & 0x000ff000) | ((instr >> 9) & 0x800) |",
-    "                     ((instr >> 20) & 0x7fe));",
+    "  int32_t imm_i = ((int32_t)instr) >> 20;",
+    "  int32_t imm_s = (((int32_t)(instr & 0xfe000000)) >> 20) |",
+    "                  ((instr >> 7) & 0x1f);",
+    "  int32_t imm_b = (((int32_t)(instr & 0x80000000)) >> 19) |",
+    "                  (((instr >> 7) & 1) << 11) | (((instr >> 25) & 0x3f) << 5) |",
+    "                  (((instr >> 8) & 0xf) << 1);",
+    "  int32_t imm_u = (int32_t)(instr & 0xfffff000);",
+    "  int32_t imm_j = (((int32_t)(instr & 0x80000000)) >> 11) |",
+    "                  (instr & 0x000ff000) | (((instr >> 9) & 0x800)) |",
+    "                  (((instr >> 20) & 0x7fe));",
     "",
     "  // Default: invalid instruction",
-    s!"  io_optype.write({defaultOp});",
-    "  io_imm.write(0);",
-    "  io_valid.write(false);",
+    s!"  uint32_t optype = {defaultOp};",
+    "  bool valid = false;",
     "",
     "  // Decode instruction using mask/match patterns",
     decoderCasesStr,
     "",
     "  // Select appropriate immediate based on instruction format",
-    "  sc_uint<7> opcode = instr.range(6, 0);",
-    "  switch (opcode.to_uint()) {",
-    "    case 0x13: case 0x03: case 0x67:  // I-type (ALU-I, LOAD, JALR)",
-    "      io_imm.write(imm_i); break;",
-    "    case 0x23:                         // S-type (STORE)",
-    "      io_imm.write(imm_s); break;",
-    "    case 0x63:                         // B-type (BRANCH)",
-    "      io_imm.write(imm_b); break;",
-    "    case 0x37: case 0x17:             // U-type (LUI, AUIPC)",
-    "      io_imm.write(imm_u); break;",
-    "    case 0x6f:                         // J-type (JAL)",
-    "      io_imm.write(imm_j); break;",
-    "    default:",
-    "      io_imm.write(0); break;",
-    "  }",
+    "  uint32_t opcode = instr & 0x7f;",
+    "  int32_t imm = 0;",
+    s!"  switch (opcode) {lb}",
+    "    case 0x13: case 0x03: case 0x67:  // I-type",
+    "      imm = imm_i; break;",
+    "    case 0x23:  // S-type",
+    "      imm = imm_s; break;",
+    "    case 0x63:  // B-type",
+    "      imm = imm_b; break;",
+    "    case 0x37: case 0x17:  // U-type",
+    "      imm = imm_u; break;",
+    "    case 0x6f:  // J-type",
+    "      imm = imm_j; break;",
+    "    default: imm = 0; break;",
+    s!"  {rb}",
+    "",
+    "  // Scatter outputs to individual bool ports",
+    scatterField "io_optype" 6 "optype",
+    scatterField "io_rd" 5 "rd",
+    scatterField "io_rs1" 5 "rs1",
+    scatterField "io_rs2" 5 "rs2",
+    "  uint32_t imm_u32 = (uint32_t)imm;",
+    scatterField "io_imm" 32 "imm_u32",
+    "",
+    "  // Control signals",
+    "  io_valid.write(valid);",
     "",
     "  // Dispatch classification",
-    "  bool valid = io_valid.read();",
     "  bool is_store  = (opcode == 0x23);",
     "  bool is_branch_op = (opcode == 0x63);",
     "  bool is_fence  = (opcode == 0x0f);",
@@ -194,7 +233,7 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     if hasMSC defs then
     "  io_is_muldiv.write(valid && is_mext);"
     else "",
-    "}",
+    s!"{rb}",
     ""
   ]
 
