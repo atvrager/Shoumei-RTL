@@ -31,10 +31,14 @@ CDB Broadcast:
 -/
 
 import Shoumei.RISCV.ISA
+import Shoumei.DSL
+import Shoumei.DSL.Interfaces
 
 namespace Shoumei.RISCV.Execution
 
 open Shoumei.RISCV
+open Shoumei.DSL
+open Shoumei.DSL.Interfaces
 
 /-! ## Branch Evaluation -/
 
@@ -192,5 +196,52 @@ def verifyBLT (a b : UInt32) : Bool :=
 /-- Verify BLTU (unsigned less-than). -/
 def verifyBLTU (a b : UInt32) : Bool :=
   evaluateBranchCondition OpType.BLTU a b == (a < b)
+
+/-! ## Structural Circuit -/
+
+/-- Branch Execution Unit - Structural Circuit.
+
+    For the current pipeline (no branch prediction), this unit simply:
+    - Passes through dest_tag → tag_out (for CDB broadcast)
+    - Outputs result = 0 (branches don't write register values)
+
+    Inputs: src1(32), src2(32), dest_tag(6), zero
+    Outputs: result(32), tag_out(6)
+
+    Future: Add comparison logic for misprediction detection.
+-/
+def mkBranchExecUnit : Circuit :=
+  let src1 := makeIndexedWires "src1" 32
+  let src2 := makeIndexedWires "src2" 32
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let zero := Wire.mk "zero"
+
+  -- Output wires
+  let result := makeIndexedWires "result" 32
+  let tag_out := makeIndexedWires "tag_out" 6
+
+  -- Tag pass-through
+  let tag_passthrough := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) dest_tag tag_out
+
+  -- Result = 0 (tie all bits to zero)
+  let result_zero := result.map (fun w => Gate.mkBUF zero w)
+
+  { name := "BranchExecUnit"
+    inputs := src1 ++ src2 ++ dest_tag ++ [zero]
+    outputs := result ++ tag_out
+    gates := tag_passthrough ++ result_zero
+    instances := []
+    signalGroups := [
+      { name := "src1", width := 32, wires := src1 },
+      { name := "src2", width := 32, wires := src2 },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 32, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
+  }
+
+def branchExecUnit : Circuit := mkBranchExecUnit
 
 end Shoumei.RISCV.Execution

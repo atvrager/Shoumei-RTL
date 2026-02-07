@@ -1311,6 +1311,41 @@ def extractBracketIndex (portName : String) : Option Nat :=
       idxStr.toNat?
   | _ => none
 
+/-- Extract numeric index from underscore-suffix port name.
+    Example: "q_0" → some 0, "grant_3" → some 3, "valid" → none -/
+def extractUnderscoreIndex (portName : String) : Option Nat :=
+  let parts := portName.splitOn "_"
+  if parts.length >= 2 then
+    let lastPart := parts.getLast!
+    if lastPart.all (·.isDigit) && !lastPart.isEmpty then
+      lastPart.toNat?
+    else
+      none
+  else
+    none
+
+/-- Extract numeric index from either bracket or underscore notation.
+    Example: "q[0]" → some 0, "q_0" → some 0, "valid" → none -/
+def extractPortIndex (portName : String) : Option Nat :=
+  extractBracketIndex portName |>.orElse (fun _ => extractUnderscoreIndex portName)
+
+/-- Check if a sub-module has a bus port with the given base name.
+    A bus port exists if the sub-module has a signal group (explicit or auto-detected
+    from internal wires) that matches the base name. This mirrors how mkContext builds
+    wireToGroup: explicit signalGroups + autoDetectSignalGroups on internal wires.
+    IO wires with _N suffixes alone don't count — they generate as individual Bool() ports. -/
+def subModuleHasBusPort (allCircuits : List Circuit) (moduleName : String) (baseName : String) : Bool :=
+  match allCircuits.find? (fun sc => sc.name == moduleName) with
+  | none => true  -- Unknown module: assume bus port exists (conservative)
+  | some subMod =>
+      -- Check explicit signal groups (same as mkContext)
+      let hasExplicitGroup := subMod.signalGroups.any (fun sg => sg.name == baseName)
+      -- Check auto-detected signal groups from internal wires (same as mkContext)
+      let internalWires := findInternalWires subMod
+      let autoGroups := autoDetectSignalGroups internalWires
+      let hasAutoGroup := autoGroups.any (fun sg => sg.name == baseName)
+      hasExplicitGroup || hasAutoGroup
+
 /-- Convert bracket notation in port names to Chisel parenthesis notation.
     Example: "alloc_oldPhysRd[0]" -> "alloc_oldPhysRd(0)" -/
 def convertPortNameToChisel (portName : String) : String :=
@@ -1368,7 +1403,9 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
   let busGroups := groupPortMapBySignalGroup ctx groupedEntries
 
   -- 5. Generate bus connections (one connection per signal group)
-  let busConnections := busGroups.map (fun (sgName, portBase, entries) =>
+  --    When the sub-module has a matching bus port, use a single bus connection.
+  --    When the sub-module has individual ports (no bus), use Cat/bit-extract for the mismatch.
+  let busConnections := busGroups.flatMap (fun (sgName, portBase, entries) =>
     -- Use determinePortDirection for reliable direction detection
     let firstWire := entries.head?.map (·.2) |>.getD (Wire.mk "")
     let isInstanceInput := determinePortDirection ctx c allCircuits inst portBase firstWire
@@ -1376,34 +1413,64 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
     -- Get proper reference for entire signal group (handles Vec indexing)
     let sgRef := signalGroupRef ctx sgName
 
-    -- Generate connection statement
-    if isInstanceInput then
-      -- Add .asUInt if source signal group is Vec (instance port expects UInt)
-      let sourceSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
-      let sourceIsVec := match sourceSg with
-        | some (_, sg) => needsVecDeclarationHelper ctx sg c
-        | none => false
-      let srcRef := if sourceIsVec then s!"{sgRef}.asUInt" else sgRef
-      s!"  {inst.instName}.{portBase} := {srcRef}"
+    if subModuleHasBusPort allCircuits inst.moduleName portBase then
+      -- Sub-module has a bus port: single bus connection
+      if isInstanceInput then
+        let sourceSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
+        let sourceIsVec := match sourceSg with
+          | some (_, sg) => needsVecDeclarationHelper ctx sg c
+          | none => false
+        let srcRef := if sourceIsVec then s!"{sgRef}.asUInt" else sgRef
+        [s!"  {inst.instName}.{portBase} := {srcRef}"]
+      else
+        let receivingSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
+        let needsAsUInt := match receivingSg with
+          | some (_, sg) => !needsVecDeclarationHelper ctx sg c
+          | none => false
+        let instRef := if needsAsUInt then
+                        s!"{inst.instName}.{portBase}.asUInt"
+                      else
+                        s!"{inst.instName}.{portBase}"
+        [s!"  {sgRef} := {instRef}"]
     else
-      -- For instance outputs, add .asUInt if receiving signal is not Vec
-      let receivingSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
-      let needsAsUInt := match receivingSg with
-        | some (_, sg) => !needsVecDeclarationHelper ctx sg c
-        | none => false
-      let instRef := if needsAsUInt then
-                      s!"{inst.instName}.{portBase}.asUInt"
-                    else
-                      s!"{inst.instName}.{portBase}"
-      s!"  {sgRef} := {instRef}"
+      -- Sub-module has individual ports: connect via Cat (output) or individual assigns (input)
+      -- Sort entries by port index
+      let sortedEntries := entries.toArray.qsort (fun (p1, _) (p2, _) =>
+        match extractPortIndex p1, extractPortIndex p2 with
+        | some i1, some i2 => i1 < i2
+        | some _, none => true
+        | none, some _ => false
+        | none, none => p1 < p2
+      ) |>.toList
+      if isInstanceInput then
+        -- Decompose parent bus into individual instance port connections
+        sortedEntries.map (fun (portName, _wire) =>
+          let idx := match extractPortIndex portName with
+            | some i => i
+            | none => 0
+          s!"  {inst.instName}.{portName} := {sgRef}({idx})"
+        )
+      else
+        -- Cat individual instance outputs into parent bus
+        let catParts := sortedEntries.reverse.map (fun (portName, _) =>
+          s!"{inst.instName}.{portName}"
+        )
+        let catExpr := "Cat(" ++ String.intercalate ", " catParts ++ ")"
+        [s!"  {sgRef} := {catExpr}"]
   )
 
   -- 6. Group standalone entries by port base name (for bundled ports like alloc_oldPhysRd[0..5])
-  --    Only group entries that use bracket notation (not underscore/digit suffixes)
+  --    Groups bracket notation (q[0], q[1]) and underscore notation (q_0, q_1) when
+  --    the sub-module has a corresponding bus port with that base name.
   let standaloneGrouped : List (String × List (String × Wire)) :=
     standaloneEntries.foldl (fun acc (portName, wire) =>
-      -- Only group if port name contains brackets (bundled notation)
-      if portName.contains '[' then
+      -- Check if port name should be grouped (bracket notation or underscore bus port)
+      let shouldGroup :=
+        if portName.contains '[' then true
+        else match extractUnderscoreIndex portName with
+          | some _ => subModuleHasBusPort allCircuits inst.moduleName (extractPortBaseName portName)
+          | none => false
+      if shouldGroup then
         let baseName := extractPortBaseName portName
         match acc.find? (fun (base, _) => base == baseName) with
         | some (_, entries) =>
@@ -1421,7 +1488,7 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
       -- Multiple entries with same base - generate Cat expression
       -- Sort by numeric index (not lexicographic) to handle indices >= 10 correctly
       let sortedEntries := entries.toArray.qsort (fun (p1, _) (p2, _) =>
-        match extractBracketIndex p1, extractBracketIndex p2 with
+        match extractPortIndex p1, extractPortIndex p2 with
         | some i1, some i2 => i1 < i2
         | some _, none => true
         | none, some _ => false
@@ -1437,10 +1504,13 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
       if isInstanceInput then
         [s!"  {inst.instName}.{baseName} := {catExpr}"]
       else
-        -- Output from instance - need to extract bits
+        -- Output from instance - need to extract bits using baseName(index) notation
         sortedEntries.map (fun (portName, wire) =>
           let wireRefStr := wireRef ctx c wire
-          let chiselPortName := convertPortNameToChisel portName
+          -- Convert port name to Chisel index notation: q[0] → q(0), q_0 → q(0)
+          let chiselPortName := match extractPortIndex portName with
+            | some idx => s!"{baseName}({idx})"
+            | none => convertPortNameToChisel portName
           s!"  {wireRefStr} := {inst.instName}.{chiselPortName}"
         )
     else

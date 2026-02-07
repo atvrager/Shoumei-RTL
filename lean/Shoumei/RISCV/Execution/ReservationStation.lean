@@ -918,7 +918,8 @@ def mkReservationStation4 : Circuit :=
               [dispatch_en]
     outputs := [issue_full, dispatch_valid] ++
                dispatch_opcode ++ dispatch_src1_data ++
-               dispatch_src2_data ++ dispatch_dest_tag
+               dispatch_src2_data ++ dispatch_dest_tag ++
+               alloc_ptr ++ dispatch_grant
     gates := alloc_incr_gates ++ entry_gates ++ ready_gates ++
              priority_enc_gates ++ issue_full_mux_gates
     instances := [alloc_ptr_inst, decoder_inst, arbiter_inst,

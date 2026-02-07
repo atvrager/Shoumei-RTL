@@ -13,7 +13,7 @@
 //   0x00001000              : tohost (write 1 = PASS, else FAIL)
 //
 // Usage:
-//   Load program into imem/dmem via $readmemh or Verilator C++ harness.
+//   Load program into mem[] via DPI-C dpi_mem_write() from C++ harness.
 //   Assert reset for >=4 cycles, then release.
 //   Simulation terminates on tohost write or cycle timeout.
 //==============================================================================
@@ -32,7 +32,12 @@ module tb_cpu #(
     output logic [31:0] o_fetch_pc,
     output logic        o_rob_empty,
     output logic        o_global_stall,
-    output logic [31:0] o_cycle_count
+    output logic [31:0] o_cycle_count,
+    // Debug outputs (avoids verilator public access)
+    output logic        o_dmem_req_valid,
+    output logic        o_dmem_req_we,
+    output logic [31:0] o_dmem_req_addr,
+    output logic [31:0] o_dmem_req_data
 );
 
   // =========================================================================
@@ -48,10 +53,10 @@ module tb_cpu #(
   logic [31:0] fetch_pc;
   logic        fetch_stalled;
   logic        global_stall_out;
-  logic        dmem_req_valid /* verilator public */;
-  logic        dmem_req_we    /* verilator public */;
-  logic [31:0] dmem_req_addr  /* verilator public */;
-  logic [31:0] dmem_req_data  /* verilator public */;
+  logic        dmem_req_valid;
+  logic        dmem_req_we;
+  logic [31:0] dmem_req_addr;
+  logic [31:0] dmem_req_data;
   logic        rob_empty;
 
   assign reset = ~rst_n;
@@ -85,15 +90,13 @@ module tb_cpu #(
   // =========================================================================
   // Memory: shared instruction + data, word-addressed
   // =========================================================================
-  logic [31:0] mem [0:MEM_SIZE_WORDS-1] /* verilator public */;
+  logic [31:0] mem [0:MEM_SIZE_WORDS-1];
 
-  // Load hex file via plusarg (portable across Verilator versions)
-  initial begin
-    string hex_file;
-    if ($value$plusargs("hex=%s", hex_file)) begin
-      $readmemh(hex_file, mem);
-    end
-  end
+  // DPI-C: allow C++ to write memory words before simulation starts
+  export "DPI-C" function dpi_mem_write;
+  function void dpi_mem_write(input int unsigned word_addr, input int unsigned data);
+    mem[word_addr] = data;
+  endfunction
 
   // Base address for memory mapping (word offset)
   localparam logic [31:0] MEM_BASE = 32'h00000000;
@@ -218,7 +221,11 @@ module tb_cpu #(
   assign o_test_code    = test_code;
   assign o_fetch_pc     = fetch_pc;
   assign o_rob_empty    = rob_empty;
-  assign o_global_stall = global_stall_out;
-  assign o_cycle_count  = cycle_count;
+  assign o_global_stall    = global_stall_out;
+  assign o_cycle_count     = cycle_count;
+  assign o_dmem_req_valid  = dmem_req_valid;
+  assign o_dmem_req_we     = dmem_req_we;
+  assign o_dmem_req_addr   = dmem_req_addr;
+  assign o_dmem_req_data   = dmem_req_data;
 
 endmodule

@@ -3,8 +3,9 @@
 # Targets:
 #   make sim          - Build Verilator simulation binary
 #   make sim-trace    - Build with VCD trace support
-#   make run          - Run with built-in test program
-#   make run-hex      - Run with a hex file: make run-hex HEX=path/to/prog.hex
+#   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
+#   make tests        - Build ELF test programs
+#   make run-all-tests- Build sim + tests, run all
 #   make clean        - Clean build artifacts
 
 PROJ_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))..
@@ -25,7 +26,7 @@ SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(TB_DIR)/tb_cpu.sv
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
 
-.PHONY: sim sim-trace run run-hex clean
+.PHONY: sim sim-trace run-elf tests run-all-tests clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@mkdir -p $(BUILD_DIR)/verilator
@@ -42,12 +43,20 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with VCD trace)"
 
-run: sim
-	$(BUILD_DIR)/sim_shoumei
+run-elf: sim
+	$(BUILD_DIR)/sim_shoumei +elf=$(ELF)
 
-run-hex: sim
-	$(BUILD_DIR)/sim_shoumei +hex=$(HEX)
+tests:
+	$(MAKE) -C $(TB_DIR)/tests
+
+run-all-tests: sim tests
+	@for elf in $(TB_DIR)/tests/*.elf; do \
+		echo "=== Running $$(basename $$elf) ==="; \
+		$(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=2000 || exit 1; \
+	done
+	@echo "All tests passed."
 
 clean:
 	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace
 	rm -f shoumei_cpu.vcd
+	$(MAKE) -C $(TB_DIR)/tests clean

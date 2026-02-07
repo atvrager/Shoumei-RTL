@@ -40,6 +40,7 @@ import Shoumei.RISCV.Renaming.PhysRegFile
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
+import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
 
@@ -163,6 +164,7 @@ def allCircuits : List Circuit := [
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
+  mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
 
