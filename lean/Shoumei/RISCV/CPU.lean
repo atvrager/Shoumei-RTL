@@ -925,12 +925,16 @@ def mkCPU_RV32I : Circuit :=
   let dmem_req_addr := makeIndexedWires "dmem_req_addr" 32
   let dmem_req_data := makeIndexedWires "dmem_req_data" 32
 
-  let dmem_gates := [Gate.mkBUF rs_mem_dispatch_valid dmem_req_valid,
-                     Gate.mkBUF zero dmem_req_we] ++
+  -- dmem interface: loads + store buffer dequeues
+  let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"
+  let dmem_gates := [
+    Gate.mkOR rs_mem_dispatch_valid lsu_sb_deq_valid dmem_valid_tmp,
+    Gate.mkBUF dmem_valid_tmp dmem_req_valid,
+    Gate.mkBUF lsu_sb_deq_valid dmem_req_we] ++
     (List.range 32).map (fun i =>
-      Gate.mkBUF mem_address[i]! dmem_req_addr[i]!) ++
+      Gate.mkMUX mem_address[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid dmem_req_addr[i]!) ++
     (List.range 32).map (fun i =>
-      Gate.mkBUF zero dmem_req_data[i]!)
+      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!)
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
@@ -1465,13 +1469,22 @@ def mkCPU_RV32IM : Circuit :=
   let dmem_req_addr := makeIndexedWires "dmem_req_addr" 32
   let dmem_req_data := makeIndexedWires "dmem_req_data" 32
 
-  -- Simplified dmem interface: req_valid = mem RS dispatch valid, addr = AGU output
-  let dmem_gates := [Gate.mkBUF rs_mem_dispatch_valid dmem_req_valid,
-                     Gate.mkBUF zero dmem_req_we] ++  -- No stores for now (we=0)
+  -- dmem interface:
+  --   req_valid = load dispatch OR store buffer dequeue
+  --   req_we    = store buffer dequeue (only stores write)
+  --   req_addr  = MUX(load_addr, store_addr, is_store)
+  --   req_data  = store buffer dequeue data (sb_deq_bits[32:63])
+  let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"
+  let dmem_gates := [
+    Gate.mkOR rs_mem_dispatch_valid lsu_sb_deq_valid dmem_valid_tmp,
+    Gate.mkBUF dmem_valid_tmp dmem_req_valid,
+    Gate.mkBUF lsu_sb_deq_valid dmem_req_we] ++
+    -- Address: MUX between load address (mem_address) and store address (sb_deq_bits[0:31])
     (List.range 32).map (fun i =>
-      Gate.mkBUF mem_address[i]! dmem_req_addr[i]!) ++
+      Gate.mkMUX mem_address[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid dmem_req_addr[i]!) ++
+    -- Data: store buffer dequeue data (sb_deq_bits[32:63])
     (List.range 32).map (fun i =>
-      Gate.mkBUF zero dmem_req_data[i]!)
+      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!)
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"

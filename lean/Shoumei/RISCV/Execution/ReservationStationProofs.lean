@@ -58,12 +58,11 @@ theorem rs4_instance_count : mkReservationStation4.instances.length = 19 := by n
     Gate breakdown:
     - Allocation increment: 5 gates
     - CDB wakeup logic: ~200 gates (AND/OR conditions)
-    - Next-state muxing: ~200 gates (select issue vs wakeup vs hold)
+    - Next-state muxing: per-field MUX (issue/wakeup/hold) for all 91 entry bits × 4 entries
     - Ready checking: 12 AND gates
     - Priority encoder: 2 OR gates
-    - Miscellaneous: ~14 gates
-    Total: 433 gates -/
-theorem rs4_gate_count : mkReservationStation4.gates.length = 433 := by native_decide
+    Total: 697 gates -/
+theorem rs4_gate_count : mkReservationStation4.gates.length = 697 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 

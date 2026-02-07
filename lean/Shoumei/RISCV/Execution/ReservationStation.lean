@@ -697,11 +697,53 @@ def mkReservationStation4 : Circuit :=
       Gate.mkMUX valid_next_tmp1 one issue_we valid_next  -- Set on issue
     ]
 
-    -- For other fields: simplified hold (actual impl would mux based on issue/cdb)
-    -- This is a placeholder - full implementation needs per-field update logic
+    -- Per-field next-state logic:
+    -- On issue_we: write issue data into entry
+    -- On cdb_wakeup: update src ready bits and data
+    -- Otherwise: hold current value
+
+    -- Issue data mapping: issue fields → entry bit positions
+    -- [1-6]=opcode, [7-12]=dest_tag, [13]=src1_ready, [14-19]=src1_tag,
+    -- [20-51]=src1_data, [52]=src2_ready, [53-58]=src2_tag, [59-90]=src2_data
+    let issue_data : List Wire :=
+      issue_opcode ++ issue_dest_tag ++
+      [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
+      [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data
+
+    -- Build MUX for each field bit (bits 1-90)
     let field_next_gates := (List.range (entryWidth - 1)).map (fun j =>
-      Gate.mkBUF entry_cur[j + 1]! entry_next[j + 1]!
-    )
+      -- j is 0-indexed into field bits, entry bit is j+1
+      let bit_idx := j + 1
+      let cur_val := entry_cur[bit_idx]!
+      let next_val := entry_next[bit_idx]!
+      let issue_val := issue_data[j]!
+
+      if bit_idx == 13 then
+        -- src1_ready: issue_we ? issue_src1_ready : (cdb_wakeup_src1 ? one : hold)
+        let tmp := Wire.mk s!"e{i}_src1_ready_next_tmp"
+        [Gate.mkMUX cur_val one cdb_wakeup_src1 tmp,
+         Gate.mkMUX tmp issue_val issue_we next_val]
+      else if (20 <= bit_idx && bit_idx <= 51) then
+        -- src1_data: issue_we ? issue_val : (cdb_wakeup_src1 ? cdb_data[bit-20] : hold)
+        let cdb_idx := bit_idx - 20
+        let tmp := Wire.mk s!"e{i}_src1_data{cdb_idx}_next_tmp"
+        [Gate.mkMUX cur_val cdb_data[cdb_idx]! cdb_wakeup_src1 tmp,
+         Gate.mkMUX tmp issue_val issue_we next_val]
+      else if bit_idx == 52 then
+        -- src2_ready: similar to src1_ready
+        let tmp := Wire.mk s!"e{i}_src2_ready_next_tmp"
+        [Gate.mkMUX cur_val one cdb_wakeup_src2 tmp,
+         Gate.mkMUX tmp issue_val issue_we next_val]
+      else if (59 <= bit_idx && bit_idx <= 90) then
+        -- src2_data: similar to src1_data
+        let cdb_idx := bit_idx - 59
+        let tmp := Wire.mk s!"e{i}_src2_data{cdb_idx}_next_tmp"
+        [Gate.mkMUX cur_val cdb_data[cdb_idx]! cdb_wakeup_src2 tmp,
+         Gate.mkMUX tmp issue_val issue_we next_val]
+      else
+        -- Other fields (opcode, dest_tag, src tags): write on issue, hold otherwise
+        [Gate.mkMUX cur_val issue_val issue_we next_val]
+    ) |>.flatten
 
     -- Register91 instance for entry storage
     let entry_reg_inst : CircuitInstance := {

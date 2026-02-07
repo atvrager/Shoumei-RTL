@@ -107,9 +107,13 @@ int main(int argc, char** argv) {
         // Default: tiny test program
         printf("No +hex file specified, loading built-in test program\n");
         dut->tb_cpu->mem[0] = 0x00500093;  // addi x1, x0, 5
-        dut->tb_cpu->mem[1] = 0x00308113;  // addi x2, x1, 3
-        dut->tb_cpu->mem[2] = 0x00000013;  // nop
-        dut->tb_cpu->mem[3] = 0x00000013;  // nop
+        dut->tb_cpu->mem[1] = 0x00300113;  // addi x2, x0, 3
+        dut->tb_cpu->mem[2] = 0x002081b3;  // add  x3, x1, x2
+        dut->tb_cpu->mem[3] = 0x00100213;  // addi x4, x0, 1
+        dut->tb_cpu->mem[4] = 0x000012b7;  // lui  x5, 1  (x5 = 0x1000)
+        dut->tb_cpu->mem[5] = 0x0042A023;  // sw   x4, 0(x5)  (tohost)
+        dut->tb_cpu->mem[6] = 0x00000013;  // nop
+        dut->tb_cpu->mem[7] = 0x00000013;  // nop
     }
 
     // =====================================================================

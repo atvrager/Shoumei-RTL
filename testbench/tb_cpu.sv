@@ -8,9 +8,9 @@
 //   - Cycle counter and timeout
 //
 // Memory map:
-//   0x80000000 - 0x8000FFFF : Instruction memory (64KB)
-//   0x80000000 - 0x8000FFFF : Data memory (shared, 64KB)
-//   0x80001000              : tohost (write 1 = PASS, else FAIL)
+//   0x00000000 - 0x0000FFFF : Instruction memory (64KB)
+//   0x00000000 - 0x0000FFFF : Data memory (shared, 64KB)
+//   0x00001000              : tohost (write 1 = PASS, else FAIL)
 //
 // Usage:
 //   Load program into imem/dmem via $readmemh or Verilator C++ harness.
@@ -21,7 +21,7 @@
 module tb_cpu #(
     parameter MEM_SIZE_WORDS = 16384,   // 64KB / 4 = 16K words
     parameter TIMEOUT_CYCLES = 100000,
-    parameter TOHOST_ADDR    = 32'h80001000
+    parameter TOHOST_ADDR    = 32'h00001000
 ) (
     input logic clk,
     input logic rst_n,
@@ -62,10 +62,6 @@ module tb_cpu #(
   // =========================================================================
   // CPU instance
   // =========================================================================
-  // dmem_req_data uses individual bit ports in Lean SV codegen
-  logic [31:0] dmem_req_data_bits;
-  assign dmem_req_data = dmem_req_data_bits;
-
   CPU_RV32IM u_cpu (
       .clock                  (clk),
       .reset                  (reset),
@@ -82,38 +78,7 @@ module tb_cpu #(
       .dmem_req_valid         (dmem_req_valid),
       .dmem_req_we            (dmem_req_we),
       .dmem_req_addr          (dmem_req_addr),
-      .dmem_req_data_0        (dmem_req_data_bits[0]),
-      .dmem_req_data_1        (dmem_req_data_bits[1]),
-      .dmem_req_data_2        (dmem_req_data_bits[2]),
-      .dmem_req_data_3        (dmem_req_data_bits[3]),
-      .dmem_req_data_4        (dmem_req_data_bits[4]),
-      .dmem_req_data_5        (dmem_req_data_bits[5]),
-      .dmem_req_data_6        (dmem_req_data_bits[6]),
-      .dmem_req_data_7        (dmem_req_data_bits[7]),
-      .dmem_req_data_8        (dmem_req_data_bits[8]),
-      .dmem_req_data_9        (dmem_req_data_bits[9]),
-      .dmem_req_data_10       (dmem_req_data_bits[10]),
-      .dmem_req_data_11       (dmem_req_data_bits[11]),
-      .dmem_req_data_12       (dmem_req_data_bits[12]),
-      .dmem_req_data_13       (dmem_req_data_bits[13]),
-      .dmem_req_data_14       (dmem_req_data_bits[14]),
-      .dmem_req_data_15       (dmem_req_data_bits[15]),
-      .dmem_req_data_16       (dmem_req_data_bits[16]),
-      .dmem_req_data_17       (dmem_req_data_bits[17]),
-      .dmem_req_data_18       (dmem_req_data_bits[18]),
-      .dmem_req_data_19       (dmem_req_data_bits[19]),
-      .dmem_req_data_20       (dmem_req_data_bits[20]),
-      .dmem_req_data_21       (dmem_req_data_bits[21]),
-      .dmem_req_data_22       (dmem_req_data_bits[22]),
-      .dmem_req_data_23       (dmem_req_data_bits[23]),
-      .dmem_req_data_24       (dmem_req_data_bits[24]),
-      .dmem_req_data_25       (dmem_req_data_bits[25]),
-      .dmem_req_data_26       (dmem_req_data_bits[26]),
-      .dmem_req_data_27       (dmem_req_data_bits[27]),
-      .dmem_req_data_28       (dmem_req_data_bits[28]),
-      .dmem_req_data_29       (dmem_req_data_bits[29]),
-      .dmem_req_data_30       (dmem_req_data_bits[30]),
-      .dmem_req_data_31       (dmem_req_data_bits[31]),
+      .dmem_req_data          (dmem_req_data),
       .rob_empty              (rob_empty)
   );
 
@@ -123,7 +88,7 @@ module tb_cpu #(
   logic [31:0] mem [0:MEM_SIZE_WORDS-1] /* verilator public */;
 
   // Base address for memory mapping (word offset)
-  localparam logic [31:0] MEM_BASE = 32'h80000000;
+  localparam logic [31:0] MEM_BASE = 32'h00000000;
 
   function automatic logic [31:0] addr_to_idx(input logic [31:0] addr);
     return (addr - MEM_BASE) >> 2;
@@ -209,12 +174,13 @@ module tb_cpu #(
   // These signals are read by the C++ harness
   // test_done, test_pass, test_code, cycle_count, fetch_pc, rob_empty
 
-  // Optional: trace output for debugging
+  // Trace output for debugging (enable with +define+TRACE_RETIRE)
   `ifdef TRACE_RETIRE
   always_ff @(posedge clk) begin
-    if (!reset && rob_empty == 1'b0) begin
-      $display("[cycle %0d] PC=0x%08h stall=%b rob_empty=%b",
-               cycle_count, fetch_pc, global_stall_out, rob_empty);
+    if (!reset) begin
+      $display("[cycle %0d] PC=0x%08h stall=%b rob_empty=%b cdb_valid=%b commit=%b",
+               cycle_count, fetch_pc, global_stall_out, rob_empty,
+               u_cpu.cdb_valid, u_cpu.rob_commit_en);
     end
   end
   `endif

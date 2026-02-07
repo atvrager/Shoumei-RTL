@@ -1,20 +1,20 @@
 # Simple ADDI test program
-# Base address: 0x80000000 (word-indexed, one word per line)
+# Base address: 0x00000000 (word-indexed, one word per line)
 #
 # Program:
 #   addi x1, x0, 5        # x1 = 5
 #   addi x2, x0, 3        # x2 = 3
 #   add  x3, x1, x2       # x3 = 8
 #   addi x4, x0, 1        # x4 = 1 (PASS code)
-#   sw   x4, 0x1000(x0)   # tohost = 1 (PASS) -- addr 0x80001000
+#   lui  x5, 1            # x5 = 0x1000
+#   sw   x4, 0(x5)        # tohost = 1 (PASS) -- addr 0x00001000
 #   nop                    # padding
-#   nop
 #   nop
 00500093
 00300113
 002081b3
 00100213
-02402023
-00000013
+000012b7
+0042A023
 00000013
 00000013

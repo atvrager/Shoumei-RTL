@@ -260,4 +260,107 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
     ]
   }
 
+/--
+Up/Down Counter with configurable initial value.
+
+Uses XOR inversion trick: for bits that should be 1 on reset, we XOR the DFF
+input/output with `one`. DFF resets to 0, XOR(0,1) = 1, giving the desired
+initial value without needing a DFF_SET gate type.
+
+Parameters:
+- width: counter bit width
+- initVal: initial value after reset (as a natural number)
+-/
+def mkQueueCounterUpDownInit (width : Nat) (initVal : Nat) : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let inc_en := Wire.mk "inc"
+  let dec_en := Wire.mk "dec"
+  -- count is the TRUE count value (after XOR correction)
+  let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
+  -- raw is the DFF output (before XOR correction)
+  let raw := (List.range width).map (fun i => Wire.mk s!"raw_{i}")
+
+  -- Constants
+  let one := Wire.mk "one"
+  let zero := Wire.mk "zero"
+
+  -- initBit: whether bit i of initVal is 1
+  let initBit (i : Nat) : Bool := (initVal / (2^i)) % 2 == 1
+
+  -- XOR correction: count[i] = raw[i] XOR (initBit i ? one : zero)
+  -- For bits where initBit=0, count = raw (BUF)
+  -- For bits where initBit=1, count = raw XOR one (inverted)
+  let xor_out_gates := (List.range width).map (fun i =>
+    if initBit i then
+      Gate.mkXOR (raw[i]!) one (count[i]!)
+    else
+      Gate.mkBUF (raw[i]!) (count[i]!))
+
+  -- +1 Logic (operates on true count)
+  let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
+  let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
+  let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
+  let add_gates := buildFullAdderChain count one_vec c_plus val_plus "add_"
+
+  -- -1 Logic (operates on true count)
+  let all_ones := (List.range width).map (fun _ => one)
+  let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
+  let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
+  let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
+
+  -- Mux Logic (same as original)
+  let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
+  let do_inc := Wire.mk "do_inc"
+  let do_dec := Wire.mk "do_dec"
+  let not_dec := Wire.mk "not_dec"
+  let not_inc := Wire.mk "not_inc"
+
+  let ctrl_gates := [
+    Gate.mkNOT dec_en not_dec,
+    Gate.mkAND inc_en not_dec do_inc,
+    Gate.mkNOT inc_en not_inc,
+    Gate.mkAND dec_en not_inc do_dec
+  ]
+
+  let mux_gates := (List.range width).map (fun i =>
+    let m1 := Wire.mk s!"m1_{i}"
+    [
+      Gate.mkMUX (count[i]!) (val_minus[i]!) do_dec m1,
+      Gate.mkMUX m1 (val_plus[i]!) do_inc (next[i]!)
+    ]
+  ) |>.flatten
+
+  -- XOR correction on input: convert true next value back to raw storage
+  -- raw_next[i] = next[i] XOR (initBit i ? one : zero)
+  let raw_next := (List.range width).map (fun i => Wire.mk s!"raw_next_{i}")
+  let xor_in_gates := (List.range width).map (fun i =>
+    if initBit i then
+      Gate.mkXOR (next[i]!) one (raw_next[i]!)
+    else
+      Gate.mkBUF (next[i]!) (raw_next[i]!))
+
+  -- DFFs (store raw values, reset to 0)
+  let dff_gates := (List.range width).map (fun i =>
+    Gate.mkDFF (raw_next[i]!) clock reset (raw[i]!))
+
+  { name := s!"QueueCounterUpDown_{width}"
+    inputs := [clock, reset, inc_en, dec_en, one, zero]
+    outputs := count
+    gates := [Gate.mkBUF one (c_plus[0]!), Gate.mkBUF zero (c_minus[0]!)] ++
+             xor_out_gates ++ add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++
+             xor_in_gates ++ dff_gates
+    instances := []
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "raw", width := width, wires := raw },
+      { name := "plus", width := width, wires := val_plus },
+      { name := "minus", width := width, wires := val_minus },
+      { name := "next", width := width, wires := next },
+      { name := "raw_next", width := width, wires := raw_next },
+      { name := "cp", width := width + 1, wires := c_plus },
+      { name := "cm", width := width + 1, wires := c_minus }
+    ]
+  }
+
 end Shoumei.Circuits.Sequential
