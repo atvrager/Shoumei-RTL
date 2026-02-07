@@ -289,6 +289,9 @@ jobs:
       - name: Run simulation (pass test)
         run: ./build-sim/sim_shoumei +hex=testbench/tests/pass_test.hex +timeout=1000
 
+      - name: Run simulation (dependency test)
+        run: ./build-sim/sim_shoumei +hex=testbench/tests/dep_test.hex +timeout=2000
+
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest
