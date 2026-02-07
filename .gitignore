@@ -45,6 +45,9 @@ chisel/src/main/scala/generated_v2/*.scala
 *.dylib
 *.out
 
+# Verilator simulation build
+build-sim/
+
 # SystemC build directory
 systemc/build/
 

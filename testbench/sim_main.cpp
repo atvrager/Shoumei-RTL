@@ -10,7 +10,7 @@
 //   make -C testbench sim
 //
 // Run:
-//   ./build/sim_shoumei [+hex=path/to/program.hex] [+timeout=N] [+trace]
+//   ./build-sim/sim_shoumei [+hex=path/to/program.hex] [+timeout=N] [+trace]
 //==============================================================================
 
 #include <cstdio>
@@ -19,9 +19,10 @@
 #include <memory>
 
 #include "Vtb_cpu.h"
+#include "Vtb_cpu_tb_cpu.h"
 #include "verilated.h"
 
-#ifdef VM_TRACE
+#if VM_TRACE
 #include "verilated_vcd_c.h"
 #endif
 
@@ -45,7 +46,7 @@ static bool has_plusarg(int argc, char** argv, const char* name) {
     return false;
 }
 
-// Load hex file into simulated memory via Verilator's public access
+// Load hex file into simulated memory via verilator public access
 // Format: one 32-bit hex word per line, starting at address 0
 static int load_hex(Vtb_cpu* dut, const char* path) {
     FILE* f = fopen(path, "r");
@@ -62,9 +63,7 @@ static int load_hex(Vtb_cpu* dut, const char* path) {
 
         uint32_t word;
         if (sscanf(line, "%x", &word) == 1) {
-            // Access memory through Verilator hierarchy
-            // tb_cpu.mem[addr] = word
-            dut->tb_cpu__DOT__mem[addr] = word;
+            dut->tb_cpu->mem[addr] = word;
             addr++;
         }
     }
@@ -86,7 +85,7 @@ int main(int argc, char** argv) {
 
     uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;
 
-#ifdef VM_TRACE
+#if VM_TRACE
     VerilatedVcdC* trace = nullptr;
     if (do_trace) {
         Verilated::traceEverOn(true);
@@ -101,21 +100,16 @@ int main(int argc, char** argv) {
 
     // Load program
     if (hex_path) {
-        // Load after reset so memory is initialized
         if (load_hex(dut.get(), hex_path) < 0) {
             return 1;
         }
     } else {
         // Default: tiny test program
-        // 0x80000000: addi x1, x0, 5      -> 0x00500093
-        // 0x80000004: addi x2, x1, 3      -> 0x00308113
-        // 0x80000008: sw   x2, 0(x0)      -> 0x00202023  (store to 0x80001000 would need offset)
-        // 0x8000000C: nop (addi x0,x0,0)  -> 0x00000013
         printf("No +hex file specified, loading built-in test program\n");
-        dut->tb_cpu__DOT__mem[0] = 0x00500093;  // addi x1, x0, 5
-        dut->tb_cpu__DOT__mem[1] = 0x00308113;  // addi x2, x1, 3
-        dut->tb_cpu__DOT__mem[2] = 0x00000013;  // nop
-        dut->tb_cpu__DOT__mem[3] = 0x00000013;  // nop
+        dut->tb_cpu->mem[0] = 0x00500093;  // addi x1, x0, 5
+        dut->tb_cpu->mem[1] = 0x00308113;  // addi x2, x1, 3
+        dut->tb_cpu->mem[2] = 0x00000013;  // nop
+        dut->tb_cpu->mem[3] = 0x00000013;  // nop
     }
 
     // =====================================================================
@@ -126,7 +120,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 10; i++) {
         dut->clk = !dut->clk;
         dut->eval();
-#ifdef VM_TRACE
+#if VM_TRACE
         if (trace) trace->dump(i);
 #endif
     }
@@ -146,31 +140,28 @@ int main(int argc, char** argv) {
         // Rising edge
         dut->clk = 1;
         dut->eval();
-#ifdef VM_TRACE
+#if VM_TRACE
         if (trace) trace->dump(sim_time++);
 #endif
 
-        // Check termination signals from tb_cpu
-        if (dut->tb_cpu__DOT__test_done) {
+        // Check termination via public output ports
+        if (dut->o_test_done) {
             done = true;
-            if (dut->tb_cpu__DOT__test_pass) {
+            if (dut->o_test_pass) {
                 printf("\n══════ TEST PASS ══════\n");
-                printf("  Cycle:     %u\n", cycle);
-                printf("  PC:        0x%08x\n", dut->tb_cpu__DOT__fetch_pc);
-                printf("  tohost:    0x%08x\n", dut->tb_cpu__DOT__test_code);
             } else {
                 printf("\n══════ TEST FAIL ══════\n");
-                printf("  Cycle:     %u\n", cycle);
-                printf("  PC:        0x%08x\n", dut->tb_cpu__DOT__fetch_pc);
-                printf("  tohost:    0x%08x\n", dut->tb_cpu__DOT__test_code);
-                printf("  test_num:  %u\n", dut->tb_cpu__DOT__test_code >> 1);
+                printf("  test_num:  %u\n", dut->o_test_code >> 1);
             }
+            printf("  Cycle:     %u\n", cycle);
+            printf("  PC:        0x%08x\n", dut->o_fetch_pc);
+            printf("  tohost:    0x%08x\n", dut->o_test_code);
         }
 
         // Falling edge
         dut->clk = 0;
         dut->eval();
-#ifdef VM_TRACE
+#if VM_TRACE
         if (trace) trace->dump(sim_time++);
 #endif
 
@@ -178,23 +169,22 @@ int main(int argc, char** argv) {
 
         // Progress indicator
         if (cycle % 10000 == 0) {
-            printf("  [%u cycles] PC=0x%08x\n", cycle,
-                   dut->tb_cpu__DOT__fetch_pc);
+            printf("  [%u cycles] PC=0x%08x\n", cycle, dut->o_fetch_pc);
         }
     }
 
     if (!done) {
         printf("\n══════ TIMEOUT ══════\n");
         printf("  Cycle:     %u\n", cycle);
-        printf("  PC:        0x%08x\n", dut->tb_cpu__DOT__fetch_pc);
-        printf("  rob_empty: %d\n", dut->tb_cpu__DOT__rob_empty);
-        printf("  stall:     %d\n", dut->tb_cpu__DOT__global_stall_out);
+        printf("  PC:        0x%08x\n", dut->o_fetch_pc);
+        printf("  rob_empty: %d\n", dut->o_rob_empty);
+        printf("  stall:     %d\n", dut->o_global_stall);
     }
 
     printf("─────────────────────────────────────────────\n");
     printf("Total cycles: %u\n", cycle);
 
-#ifdef VM_TRACE
+#if VM_TRACE
     if (trace) {
         trace->close();
         delete trace;
@@ -202,5 +192,5 @@ int main(int argc, char** argv) {
 #endif
 
     dut->final();
-    return done && dut->tb_cpu__DOT__test_pass ? 0 : 1;
+    return done && dut->o_test_pass ? 0 : 1;
 }

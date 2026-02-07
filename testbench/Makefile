@@ -9,7 +9,7 @@
 
 PROJ_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))..
 SV_DIR    := $(PROJ_ROOT)/output/sv-from-lean
-BUILD_DIR := $(PROJ_ROOT)/build
+BUILD_DIR := $(PROJ_ROOT)/build-sim
 TB_DIR    := $(PROJ_ROOT)/testbench
 
 # Verilator flags
@@ -28,14 +28,14 @@ CPP_SOURCES := $(TB_DIR)/sim_main.cpp
 .PHONY: sim sim-trace run run-hex clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) $(VFLAGS) \
 		-o $(BUILD_DIR)/sim_shoumei \
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei"
 
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) $(VFLAGS) --trace \
 		-CFLAGS "-DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \

@@ -90,7 +90,7 @@ s!"//===========================================================================
   let enumPfx := moduleName.toLower ++ "_"
 
   let muldivPort := if hasM defs then
-    "\n    output logic        io_is_muldiv,  // M-extension multiply/divide" else ""
+    "\n    output logic        io_is_muldiv   // M-extension multiply/divide" else ""
 
   let moduleDecl :=
 s!"

@@ -177,7 +177,7 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "",
     "  bool is_rtype = (opcode == 0x33);",
     if hasMSC defs then
-    "  bool is_mext = is_rtype && ((instr >> 25) & 1);",
+    "  bool is_mext = is_rtype && ((instr >> 25) & 1);"
     else "",
     "  io_is_integer.write(valid && (",
     if hasMSC defs then
