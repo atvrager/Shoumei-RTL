@@ -141,31 +141,26 @@ def mkQueuePointer (width : Nat) : Circuit :=
   -- Adder
   let inc := (List.range width).map (fun i => Wire.mk s!"inc_{i}")
   let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"c_{i}")
-  
+  let add_cin_gate := Gate.mkBUF zero (carries[0]!)  -- carry-in = 0
+
   -- Create constant 1 vector: [1, 0, 0...]
   let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
-  
+
   let adder_gates := buildFullAdderChain count one_vec carries inc "add_"
-  
+
   -- Mux next
   let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
   let mux_gates := (List.range width).map (fun i =>
     Gate.mkMUX (count[i]!) (inc[i]!) en (next[i]!))
-    
+
   -- DFFs
   let dff_gates := (List.range width).map (fun i =>
     Gate.mkDFF (next[i]!) clock reset (count[i]!))
-  
-  -- Only include 'zero' input if width > 1 (otherwise it's unused)
-  let inputs := if width > 1 then
-    [clock, reset, en, one, zero]
-  else
-    [clock, reset, en, one]
-    
+
   { name := s!"QueuePointer_{width}"
-    inputs := inputs
+    inputs := [clock, reset, en, one, zero]
     outputs := count
-    gates := [Gate.mkBUF one (carries[0]!)] ++ adder_gates ++ mux_gates ++ dff_gates
+    gates := [add_cin_gate] ++ adder_gates ++ mux_gates ++ dff_gates
     instances := []
     -- V2 codegen annotations
     signalGroups := [
@@ -195,21 +190,18 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   let one := Wire.mk "one"
   let zero := Wire.mk "zero"
   
-  -- +1 Logic
+  -- +1 Logic (cin=0: count + 1 via ripple-carry)
   let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
   let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
   let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
+  let add_cin_gate := Gate.mkBUF zero (c_plus[0]!)  -- carry-in = 0
   let add_gates := buildFullAdderChain count one_vec c_plus val_plus "add_"
 
-  -- -1 Logic
-  -- val - 1 = val + 111...1
+  -- -1 Logic (cin=0: count + 0xFFF...F = count - 1 via two's complement)
   let all_ones := (List.range width).map (fun _ => one)
   let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
   let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
-  -- We assume cin=0 for this addition (carries[0]! needs to be 0)
-  -- But buildFullAdderChain connects carries[0].
-  -- So we pass zero as carries[0].
-  
+  let sub_cin_gate := Gate.mkBUF zero (c_minus[0]!)  -- carry-in = 0
   let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
   
   -- Mux Logic
@@ -246,10 +238,93 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   { name := s!"QueueCounterUpDown_{width}"
     inputs := [clock, reset, inc_en, dec_en, one, zero]
     outputs := count
-    gates := [Gate.mkBUF one (c_plus[0]!), Gate.mkBUF zero (c_minus[0]!)] ++
+    gates := [add_cin_gate, sub_cin_gate] ++
              add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++ dff_gates
     instances := []
     -- V2 codegen annotations
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "plus", width := width, wires := val_plus },
+      { name := "minus", width := width, wires := val_minus },
+      { name := "next", width := width, wires := next },
+      { name := "cp", width := width + 1, wires := c_plus },
+      { name := "cm", width := width + 1, wires := c_minus }
+    ]
+  }
+
+/--
+Up/Down Counter with configurable initial value.
+
+Uses DFF_SET for bits that should be 1 on reset, DFF for bits that should be 0.
+This gives the desired initial value cleanly without XOR tricks.
+
+Parameters:
+- width: counter bit width
+- initVal: initial value after reset (as a natural number)
+-/
+def mkQueueCounterUpDownInit (width : Nat) (initVal : Nat) : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let inc_en := Wire.mk "inc"
+  let dec_en := Wire.mk "dec"
+  let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
+
+  -- Constants
+  let one := Wire.mk "one"
+  let zero := Wire.mk "zero"
+
+  -- initBit: whether bit i of initVal is 1
+  let initBit (i : Nat) : Bool := (initVal / (2^i)) % 2 == 1
+
+  -- +1 Logic (cin=0: count + 1 via ripple-carry)
+  let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
+  let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
+  let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
+  let add_cin_gate := Gate.mkBUF zero (c_plus[0]!)  -- carry-in = 0
+  let add_gates := buildFullAdderChain count one_vec c_plus val_plus "add_"
+
+  -- -1 Logic (cin=0: count + 0xFFF...F = count - 1)
+  let all_ones := (List.range width).map (fun _ => one)
+  let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
+  let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
+  let sub_cin_gate := Gate.mkBUF zero (c_minus[0]!)  -- carry-in = 0
+  let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
+
+  -- Mux Logic
+  let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
+  let do_inc := Wire.mk "do_inc"
+  let do_dec := Wire.mk "do_dec"
+  let not_dec := Wire.mk "not_dec"
+  let not_inc := Wire.mk "not_inc"
+
+  let ctrl_gates := [
+    Gate.mkNOT dec_en not_dec,
+    Gate.mkAND inc_en not_dec do_inc,
+    Gate.mkNOT inc_en not_inc,
+    Gate.mkAND dec_en not_inc do_dec
+  ]
+
+  let mux_gates := (List.range width).map (fun i =>
+    let m1 := Wire.mk s!"m1_{i}"
+    [
+      Gate.mkMUX (count[i]!) (val_minus[i]!) do_dec m1,
+      Gate.mkMUX m1 (val_plus[i]!) do_inc (next[i]!)
+    ]
+  ) |>.flatten
+
+  -- DFFs: use DFF_SET for bits where initVal has a 1, DFF otherwise
+  let dff_gates := (List.range width).map (fun i =>
+    if initBit i then
+      Gate.mkDFF_SET (next[i]!) clock reset (count[i]!)
+    else
+      Gate.mkDFF (next[i]!) clock reset (count[i]!))
+
+  { name := s!"QueueCounterUpDown_{width}"
+    inputs := [clock, reset, inc_en, dec_en, one, zero]
+    outputs := count
+    gates := [add_cin_gate, sub_cin_gate] ++
+             add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++ dff_gates
+    instances := []
     signalGroups := [
       { name := "count", width := width, wires := count },
       { name := "plus", width := width, wires := val_plus },

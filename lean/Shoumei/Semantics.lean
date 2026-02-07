@@ -51,8 +51,8 @@ def evalGate (g : Gate) (env : Env) : Bool :=
       match g.inputs with
       | [in0, in1, sel] => if env sel then env in1 else env in0
       | _ => false
-  | GateType.DFF =>
-      false  -- DFF should not be evaluated as combinational (use evalDFF)
+  | GateType.DFF | GateType.DFF_SET =>
+      false  -- DFF/DFF_SET should not be evaluated as combinational (use evalDFF)
 
 -- Alias for backward compatibility
 def evalCombGate := evalGate
@@ -66,10 +66,14 @@ def evalDFF (g : Gate) (env : Env) : Bool :=
   | GateType.DFF =>
       match g.inputs with
       | [d, _clk, reset] =>
-          -- On rising edge: if reset high, output is 0; otherwise capture d
           if env reset then false else env d
-      | _ => false  -- Malformed DFF
-  | _ => false  -- Not a DFF
+      | _ => false
+  | GateType.DFF_SET =>
+      match g.inputs with
+      | [d, _clk, reset] =>
+          if env reset then true else env d
+      | _ => false
+  | _ => false
 
 
 -- Helper: update environment with a new wire-value binding
@@ -114,7 +118,7 @@ def mergeStateIntoEnv (state : State) (env : Env) (dffOutputs : List Wire) : Env
 
 -- Helper: get all DFF output wires from a circuit
 def getDFFOutputs (c : Circuit) : List Wire :=
-  c.gates.filter (fun g => g.gateType == GateType.DFF) |>.map (fun g => g.output)
+  c.gates.filter (fun g => g.gateType.isDFF) |>.map (fun g => g.output)
 
 -- Helper: update state with new values from DFF evaluation
 def updateState (state : State) (updates : List (Wire Ã— Bool)) : State :=
@@ -141,7 +145,7 @@ def evalCycleSequential (c : Circuit) (state : State) (inputEnv : Env) : State Ã
 
   -- Step 3: Evaluate all DFFs to compute next state
   let nextStateUpdates := c.gates.filterMap (fun gate =>
-    if gate.gateType == GateType.DFF then
+    if gate.gateType.isDFF then
       let nextVal := evalDFF gate combEnv
       some (gate.output, nextVal)
     else

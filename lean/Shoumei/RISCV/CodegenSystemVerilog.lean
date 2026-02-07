@@ -105,7 +105,9 @@ module {moduleName} (
     output logic        io_has_rd,     // Instruction writes a register
     output logic        io_is_integer, // Dispatch to integer ALU
     output logic        io_is_memory,  // Dispatch to load/store unit
-    output logic        io_is_branch{if hasM defs then "," else ""}  // Dispatch to branch unit" ++ muldivPort ++ "
+    output logic        io_is_branch,  // Dispatch to branch unit
+    output logic        io_is_store,   // Instruction is a store (SB/SH/SW)
+    output logic        io_use_imm{if hasM defs then "," else ""}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ "
 );
 
 // Extract register fields
@@ -190,6 +192,12 @@ assign io_is_branch = io_valid && (
     (io_instr[6:0] == 7'b1101111) ||  // JAL
     (io_instr[6:0] == 7'b1100111)     // JALR
 );
+
+// Store: STORE (0100011)
+assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011);
+
+// Use immediate: all instructions except R-type (OP = 0110011) and R-type M-ext (same opcode)
+assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011);
 " ++ muldivClassify ++ "
 
 endmodule

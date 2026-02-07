@@ -121,6 +121,8 @@ import chisel3.util._
     "  val io_is_integer = IO(Output(Bool()))       // Dispatch to integer ALU\n" ++
     "  val io_is_memory  = IO(Output(Bool()))       // Dispatch to load/store unit\n" ++
     "  val io_is_branch  = IO(Output(Bool()))       // Dispatch to branch unit\n" ++
+    "  val io_is_store   = IO(Output(Bool()))       // Instruction is a store\n" ++
+    "  val io_use_imm    = IO(Output(Bool()))       // Uses immediate (not R-type)\n" ++
     muldivPort ++
     "\n" ++
     "  val instr = io_instr\n" ++
@@ -199,6 +201,9 @@ import chisel3.util._
     (opcode === \"b1101111\".U) ||  // JAL
     (opcode === \"b1100111\".U)     // JALR
   )
+
+  io_is_store := io_valid && (opcode === \"b0100011\".U)  // STORE
+  io_use_imm  := io_valid && (opcode =/= \"b0110011\".U)  // All except R-type
 " ++ muldivClassify ++ "
 }
 "

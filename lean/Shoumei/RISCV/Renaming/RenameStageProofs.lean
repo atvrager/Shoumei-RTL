@@ -54,12 +54,8 @@ theorem renamestage_output_count : mkRenameStage.outputs.length = 84 := by nativ
 /-- RenameStage uses 3 submodule instances (RAT + FreeList + PhysRegFile) -/
 theorem renamestage_instance_count : mkRenameStage.instances.length = 3 := by native_decide
 
-/-- RenameStage control logic gate count:
-    x0_detect (4 OR + 1 NOT = 5) + needs_alloc (1 NOT + 1 AND = 2)
-    + freelist_ready (1 BUF = 1) + allocate_fire (2 AND = 2)
-    + rat_we (1 BUF = 1) + stall (1 NOT + 1 AND = 2) + rename_valid (1 NOT + 1 AND = 2)
-    = 15 gates -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 15 := by native_decide
+/-- RenameStage gate count (control logic + allocation counter + output buffers) -/
+theorem renamestage_gate_count : mkRenameStage.gates.length = 79 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 

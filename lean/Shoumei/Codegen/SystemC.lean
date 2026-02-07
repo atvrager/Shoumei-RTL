@@ -29,7 +29,7 @@ def gateTypeToOperator (gt : GateType) : String :=
   | GateType.XOR => "!="  -- XOR is logical inequality for bool
   | GateType.BUF => ""    -- Buffer is direct assignment (no operator)
   | GateType.MUX => "?"   -- Ternary operator (special handling required)
-  | GateType.DFF => ""    -- DFF doesn't use operators, uses SC_CTHREAD
+  | GateType.DFF | GateType.DFF_SET => ""    -- DFFs use SC_CTHREAD, not operators
 
 -- Helper: Get wire reference for SystemC (handles both individual and bundled I/O)
 def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire) : String :=
@@ -49,13 +49,13 @@ def findInternalWires (c : Circuit) : List Wire :=
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
-  c.gates.filter (fun g => g.gateType == GateType.DFF)
+  c.gates.filter (fun g => g.gateType.isDFF)
     |>.map (fun g => g.output)
 
 -- Helper: find all clock wires (from DFF inputs)
 def findClockWires (c : Circuit) : List Wire :=
   c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
+    if g.gateType.isDFF then
       match g.inputs with
       | [_d, clk, _reset] => some clk
       | _ => none
@@ -66,7 +66,7 @@ def findClockWires (c : Circuit) : List Wire :=
 -- Helper: find all reset wires (from DFF inputs)
 def findResetWires (c : Circuit) : List Wire :=
   c.gates.filterMap (fun g =>
-    if g.gateType == GateType.DFF then
+    if g.gateType.isDFF then
       match g.inputs with
       | [_d, _clk, reset] => some reset
       | _ => none
@@ -185,7 +185,7 @@ def generateCombGateSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex :
           let selRef := wireRef inputToIndex outputToIndex sel
           s!"  {outRef}.write({selRef}.read() ? {in1Ref}.read() : {in0Ref}.read());"
       | _ => "  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
-  | GateType.DFF =>
+  | GateType.DFF | GateType.DFF_SET =>
       ""  -- DFFs handled in seq_logic, not comb_logic
   | _ =>
       -- Binary operators: input1 op input2
@@ -203,9 +203,10 @@ def generateDFFSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex : List
       let dRef := wireRef inputToIndex outputToIndex d
       let resetRef := wireRef inputToIndex outputToIndex reset
       let qRef := wireRef inputToIndex outputToIndex g.output
+      let resetVal := if g.gateType == GateType.DFF_SET then "true" else "false"
       joinLines [
         s!"    if ({resetRef}.read()) " ++ "{",
-        s!"      {qRef}.write(false);",
+        s!"      {qRef}.write({resetVal});",
         "    } else {",
         s!"      {qRef}.write({dRef}.read());",
         "    }"
@@ -231,7 +232,7 @@ def generateSeqMethod (c : Circuit) (useBundledIO : Bool) : String :=
   let inputToIndex := if useBundledIO then c.inputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
   let outputToIndex := if useBundledIO then c.outputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
 
-  let dffGates := c.gates.filter (fun g => g.gateType == GateType.DFF)
+  let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
   let dffLogic := dffGates.map (fun g => generateDFFSystemC inputToIndex outputToIndex g)
 
   joinLines [

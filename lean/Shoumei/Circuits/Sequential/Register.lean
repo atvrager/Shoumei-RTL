@@ -121,6 +121,6 @@ def mkRegister91Hierarchical : Circuit := mkRegisterNHierarchical 91
 
 -- Helper: Extract the number of DFFs in a register circuit
 def registerWidth (c : Circuit) : Nat :=
-  c.gates.filter (fun g => g.gateType == GateType.DFF) |>.length
+  c.gates.filter (fun g => g.gateType.isDFF) |>.length
 
 end Shoumei.Circuits.Sequential

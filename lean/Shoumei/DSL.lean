@@ -7,7 +7,7 @@ Defines the basic types for representing hardware circuits:
 - Gate: Logic gate with inputs and output
 - Circuit: Complete circuit with inputs, outputs, and gates
 
-Supports both combinational (AND, OR, NOT, XOR) and sequential (DFF) elements.
+Supports both combinational (AND, OR, NOT, XOR) and sequential (DFF, DFF_SET) elements.
 -/
 
 -- Lean 4.27.0 compat: List.enum was removed in favor of List.zipIdx (which
@@ -41,7 +41,8 @@ inductive GateType where
   | MUX   -- 2-to-1 Multiplexer (inputs: [in0, in1, sel], output: out)
           -- Semantics: out = sel ? in1 : in0
   -- Sequential elements
-  | DFF   -- D Flip-Flop (inputs: [d, clk, reset], output: q)
+  | DFF       -- D Flip-Flop (inputs: [d, clk, reset], output: q) — resets to 0
+  | DFF_SET   -- D Flip-Flop with preset (inputs: [d, clk, reset], output: q) — resets to 1
   deriving Repr, BEq
 
 -- Gate: represents a logic gate with inputs and output
@@ -73,9 +74,14 @@ def mkMUX (in0 in1 sel : Wire) (out : Wire) : Gate :=
   { gateType := GateType.MUX, inputs := [in0, in1, sel], output := out }
 
 -- D Flip-Flop: captures data on rising edge of clock
--- Synchronous reset: when reset is high on clock edge, output goes to 0
+-- Async reset: when reset is high, output goes to 0
 def mkDFF (d clk reset : Wire) (q : Wire) : Gate :=
   { gateType := GateType.DFF, inputs := [d, clk, reset], output := q }
+
+-- D Flip-Flop with preset: captures data on rising edge of clock
+-- Async reset: when reset is high, output goes to 1 (preset)
+def mkDFF_SET (d clk reset : Wire) (q : Wire) : Gate :=
+  { gateType := GateType.DFF_SET, inputs := [d, clk, reset], output := q }
 
 end Gate
 
@@ -182,10 +188,16 @@ end Circuit
 def GateType.isCombinational (gt : GateType) : Bool :=
   match gt with
   | GateType.AND | GateType.OR | GateType.NOT | GateType.XOR | GateType.BUF | GateType.MUX => true
-  | GateType.DFF => false
+  | GateType.DFF | GateType.DFF_SET => false
 
 def GateType.isSequential (gt : GateType) : Bool :=
   !gt.isCombinational
+
+/-- Returns true for both DFF and DFF_SET gate types -/
+def GateType.isDFF (gt : GateType) : Bool :=
+  match gt with
+  | GateType.DFF | GateType.DFF_SET => true
+  | _ => false
 
 -- Check if a circuit has sequential elements
 def Circuit.hasSequentialElements (c : Circuit) : Bool :=

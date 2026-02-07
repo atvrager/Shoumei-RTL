@@ -152,7 +152,7 @@ def ROBState.allocate
   else
     let newEntry : ROBEntry := {
       valid := true
-      complete := false
+      complete := !hasPhysRd  -- stores/branches are immediately complete
       physRd := physRd
       hasPhysRd := hasPhysRd
       oldPhysRd := oldPhysRd
@@ -587,10 +587,13 @@ def mkROB16 : Circuit :=
     ]
 
     -- complete_next: MUX priority: clear > cdb > alloc > hold
+    -- On alloc: set complete = NOT(hasPhysRd) — stores/branches are immediately complete
+    let alloc_imm_complete := Wire.mk s!"e{i}_alloc_imm_complete"
     let comp_mux1 := Wire.mk s!"e{i}_comp_mux1"
     let comp_mux2 := Wire.mk s!"e{i}_comp_mux2"
     let complete_gates := [
-      Gate.mkMUX cur_complete zero alloc_we comp_mux1,  -- alloc resets complete
+      Gate.mkNOT alloc_hasPhysRd alloc_imm_complete,
+      Gate.mkMUX cur_complete alloc_imm_complete alloc_we comp_mux1,  -- alloc: complete if no physRd
       Gate.mkMUX comp_mux1 one cdb_we comp_mux2,       -- CDB sets complete
       Gate.mkMUX comp_mux2 zero clear e_next[1]!        -- clear clears complete
     ]

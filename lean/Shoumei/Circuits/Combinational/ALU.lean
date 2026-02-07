@@ -66,12 +66,17 @@ def mkALU32 : Circuit :=
   let opcode := makeIndexedWires "op" 4  -- 4-bit opcode
   let result := makeIndexedWires "result" 32
   let zero := Wire.mk "zero"  -- Constant 0 input
+  let one := Wire.mk "one"    -- Constant 1 input
 
   -- Outputs from each functional unit
   let add_result := makeIndexedWires "add_out" 32
   let sub_result := makeIndexedWires "sub_out" 32
+  let sub_borrow := Wire.mk "sub_borrow"  -- Unused output
   let cmp_lt := Wire.mk "cmp_lt"
   let cmp_ltu := Wire.mk "cmp_ltu"
+  let cmp_eq := Wire.mk "cmp_eq"    -- Unused output
+  let cmp_gt := Wire.mk "cmp_gt"    -- Unused output
+  let cmp_gtu := Wire.mk "cmp_gtu"  -- Unused output
   let slt_result := makeIndexedWires "slt_out" 32
   let sltu_result := makeIndexedWires "sltu_out" 32
   let logic_result := makeIndexedWires "logic_out" 32
@@ -122,7 +127,7 @@ def mkALU32 : Circuit :=
   )
 
   { name := "ALU32"
-    inputs := a ++ b ++ opcode ++ [zero]
+    inputs := a ++ b ++ opcode ++ [zero, one]
     outputs := result
     gates := slt_extend_gates ++ sltu_extend_gates
              ++ arith_level1_gates ++ arith_level2_gates ++ arith_level3_gates
@@ -146,7 +151,7 @@ def mkALU32 : Circuit :=
           , (s!"b{i}", b[i]!)
           , (s!"diff{i}", sub_result[i]!)
           ]
-        ))
+        )) ++ [("one", one), ("borrow", sub_borrow)]
       },
       -- Comparator32 for SLT/SLTU operations
       { moduleName := "Comparator32"
@@ -155,7 +160,8 @@ def mkALU32 : Circuit :=
           [ (s!"a{i}", a[i]!)
           , (s!"b{i}", b[i]!)
           ]
-        )) ++ [("lt", cmp_lt), ("ltu", cmp_ltu)]
+        )) ++ [("one", one), ("lt", cmp_lt), ("ltu", cmp_ltu),
+               ("eq", cmp_eq), ("gt", cmp_gt), ("gtu", cmp_gtu)]
       },
       -- LogicUnit32 for AND/OR/XOR operations
       { moduleName := "LogicUnit32"
@@ -175,7 +181,7 @@ def mkALU32 : Circuit :=
           , (s!"result{i}", shift_result[i]!)
           ]
         )) ++ (List.range 5 |>.map (fun i => (s!"shamt{i}", shift_amt[i]!)))
-           ++ [("op0", shift_dir), ("op1", shift_arith)]
+           ++ [("op0", shift_dir), ("op1", shift_arith), ("zero", zero)]
       }
     ]
     signalGroups := [

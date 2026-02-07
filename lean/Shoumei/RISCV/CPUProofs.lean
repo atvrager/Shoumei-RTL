@@ -12,9 +12,8 @@ open Shoumei.RISCV.CPU
 
 /-! ## RV32I CPU Properties -/
 
-/-- CPU_RV32I has exactly 2 instances (Fetch + Rename for MVP)
-    Note: Full implementation would have 9 instances -/
-theorem cpu_rv32i_instance_count : mkCPU_RV32I.instances.length = 2 := by
+/-- CPU_RV32I has 10 instances (Fetch, Decode, Rename, 3 RS, 2 ExecUnits, ROB, LSU) -/
+theorem cpu_rv32i_instance_count : mkCPU_RV32I.instances.length = 10 := by
   native_decide
 
 /-- CPU_RV32I has FetchStage instance -/
@@ -31,15 +30,14 @@ theorem cpu_rv32i_has_rename :
 theorem cpu_rv32i_name : mkCPU_RV32I.name = "CPU_RV32I" := by
   rfl
 
-/-- CPU_RV32I has stall generation gates (8 gates in OR tree) -/
-theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 8 := by
+/-- CPU_RV32I gate count (dispatch + CDB arb + commit + stall + dmem + output) -/
+theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 119 := by
   native_decide
 
 /-! ## RV32IM CPU Properties -/
 
-/-- CPU_RV32IM has exactly 2 instances (Fetch + Rename for MVP)
-    Note: Full implementation would have 11 instances -/
-theorem cpu_rv32im_instance_count : mkCPU_RV32IM.instances.length = 2 := by
+/-- CPU_RV32IM has 12 instances (adds MulDiv RS + MulDiv ExecUnit) -/
+theorem cpu_rv32im_instance_count : mkCPU_RV32IM.instances.length = 12 := by
   native_decide
 
 /-- CPU_RV32IM has FetchStage instance -/
@@ -56,8 +54,8 @@ theorem cpu_rv32im_has_rename :
 theorem cpu_rv32im_name : mkCPU_RV32IM.name = "CPU_RV32IM" := by
   rfl
 
-/-- CPU_RV32IM has stall generation gates (9 gates in OR tree, including MulDiv) -/
-theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 9 := by
+/-- CPU_RV32IM gate count (dispatch + arb_level1 + CDB arb + commit + stall + dmem + output) -/
+theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 160 := by
   native_decide
 
 /-! ## Behavioral Correspondence (Axioms) -/
@@ -66,9 +64,6 @@ theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 9 := by
 These axioms state that the structural circuits implement the behavioral cpuStep.
 Full verification requires proving equivalence between circuit execution and cpuStep.
 Deferred to future work (would require circuit semantics formalization).
-
-Note: The current structural implementation is an MVP showing the composition pattern.
-Full implementation would include all RS instances, execution units, ROB, and LSU.
 -/
 
 axiom mkCPU_RV32I_implements_cpuStep :

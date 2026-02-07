@@ -65,8 +65,8 @@ theorem rob16_instance_count : mkROB16.instances.length = 40 := by native_decide
     - Alloc idx passthrough: 4 BUF gates
     - Head single-bit readout: ~217 AND/OR tree gates (7 fields x 31 gates)
     - Full/empty detection: ~6 gates
-    Total: 851 gates -/
-theorem rob16_gate_count : mkROB16.gates.length = 851 := by native_decide
+    Total: 867 gates -/
+theorem rob16_gate_count : mkROB16.gates.length = 867 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 

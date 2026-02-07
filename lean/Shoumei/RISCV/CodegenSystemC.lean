@@ -93,7 +93,9 @@ def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String :=
     "  sc_out<bool>        io_has_rd;     // Instruction writes a register",
     "  sc_out<bool>        io_is_integer; // Dispatch to integer ALU",
     "  sc_out<bool>        io_is_memory;  // Dispatch to load/store unit",
-    "  sc_out<bool>        io_is_branch;  // Dispatch to branch unit" ++ muldivPort,
+    "  sc_out<bool>        io_is_branch;  // Dispatch to branch unit",
+    "  sc_out<bool>        io_is_store;   // Instruction is a store",
+    "  sc_out<bool>        io_use_imm;    // Uses immediate (not R-type)" ++ muldivPort,
     "",
     "  // Process methods",
     "  void comb_logic();",
@@ -187,6 +189,8 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "    (opcode == 0x13) || (opcode == 0x37) || (opcode == 0x17)));",
     "  io_is_memory.write(valid && ((opcode == 0x03) || (opcode == 0x23)));",
     "  io_is_branch.write(valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67)));",
+    "  io_is_store.write(valid && (opcode == 0x23));",
+    "  io_use_imm.write(valid && (opcode != 0x33));",
     if hasMSC defs then
     "  io_is_muldiv.write(valid && is_mext);"
     else "",

@@ -278,7 +278,7 @@ def mkIntegerExecUnit : Circuit :=
       (a.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
       (b.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
       (opcode.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
-      [("zero", zero)] ++
+      [("zero", zero), ("one", one)] ++
       (result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
   }
 
