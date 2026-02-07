@@ -876,6 +876,7 @@ def mkCPU_RV32I : Circuit :=
   let rs1_phys := makeIndexedWires "rs1_phys" 6
   let rs2_phys := makeIndexedWires "rs2_phys" 6
   let rd_phys := makeIndexedWires "rd_phys" 6
+  let old_rd_phys := makeIndexedWires "old_rd_phys" 6
   let rs1_data := makeIndexedWires "rs1_data" 32
   let rs2_data := makeIndexedWires "rs2_data" 32
   let cdb_valid := Wire.mk "cdb_valid"
@@ -883,6 +884,10 @@ def mkCPU_RV32I : Circuit :=
   let cdb_data := makeIndexedWires "cdb_data" 32
   let rob_commit_en := Wire.mk "rob_commit_en"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
+  let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
+  let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
+  -- Retire: recycle old physical register back to FreeList only when hasOldPhysRd
+  let retire_recycle_valid := Wire.mk "retire_recycle_valid"
 
   let rename_inst : CircuitInstance := {
     moduleName := "RenameStage_32x64"
@@ -898,14 +903,15 @@ def mkCPU_RV32I : Circuit :=
       [("cdb_valid", cdb_valid)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", rob_commit_en)] ++
-      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
+      [("retire_valid", retire_recycle_valid)] ++
+      (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_phys_out_{i}", w))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
-      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w)))
+      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
+      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1115,15 +1121,10 @@ def mkCPU_RV32I : Circuit :=
   let rob_head_valid := Wire.mk "rob_head_valid"
   let rob_head_complete := Wire.mk "rob_head_complete"
   let rob_head_hasPhysRd := Wire.mk "rob_head_hasPhysRd"
-  let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
-  let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
   let rob_head_archRd := makeIndexedWires "rob_head_archRd" 5
   let rob_head_exception := Wire.mk "rob_head_exception"
   let rob_head_isBranch := Wire.mk "rob_head_isBranch"
   let rob_head_mispredicted := Wire.mk "rob_head_mispredicted"
-
-  -- Old physical register tracking disabled (tied to zero)
-  let alloc_oldPhysRd_zeros := [zero, zero, zero, zero, zero, zero]
 
   let rob_inst : CircuitInstance := {
     moduleName := "ROB16"
@@ -1134,8 +1135,8 @@ def mkCPU_RV32I : Circuit :=
        ("alloc_en", rename_valid)] ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
       [("alloc_hasPhysRd", decode_has_rd)] ++
-      (alloc_oldPhysRd_zeros.enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
-      [("alloc_hasOldPhysRd", zero)] ++
+      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
+      [("alloc_hasOldPhysRd", decode_has_rd)] ++
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"alloc_archRd[{i}]", w))) ++
       [("alloc_isBranch", dispatch_is_branch),
        ("cdb_valid", cdb_valid)] ++
@@ -1168,7 +1169,9 @@ def mkCPU_RV32I : Circuit :=
 
   -- === COMMIT CONTROL ===
   let commit_gates := [
-    Gate.mkAND rob_head_valid rob_head_complete rob_commit_en
+    Gate.mkAND rob_head_valid rob_head_complete rob_commit_en,
+    -- Recycle old physical register to FreeList only when commit has oldPhysRd
+    Gate.mkAND rob_commit_en rob_head_hasOldPhysRd retire_recycle_valid
   ]
 
   -- === STALL GENERATION ===
@@ -1238,6 +1241,7 @@ def mkCPU_RV32I : Circuit :=
       { name := "rs1_phys", width := 6, wires := rs1_phys },
       { name := "rs2_phys", width := 6, wires := rs2_phys },
       { name := "rd_phys", width := 6, wires := rd_phys },
+      { name := "old_rd_phys", width := 6, wires := old_rd_phys },
       { name := "rs1_data", width := 32, wires := rs1_data },
       { name := "rs2_data", width := 32, wires := rs2_data },
       { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },
@@ -1369,6 +1373,7 @@ def mkCPU_RV32IM : Circuit :=
   let rs1_phys := makeIndexedWires "rs1_phys" 6
   let rs2_phys := makeIndexedWires "rs2_phys" 6
   let rd_phys := makeIndexedWires "rd_phys" 6
+  let old_rd_phys := makeIndexedWires "old_rd_phys" 6
   let rs1_data := makeIndexedWires "rs1_data" 32
   let rs2_data := makeIndexedWires "rs2_data" 32
 
@@ -1380,6 +1385,10 @@ def mkCPU_RV32IM : Circuit :=
   -- ROB commit signals
   let rob_commit_en := Wire.mk "rob_commit_en"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
+  let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
+  let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
+  -- Retire: recycle old physical register back to FreeList only when hasOldPhysRd
+  let retire_recycle_valid := Wire.mk "retire_recycle_valid"
 
   let rename_inst : CircuitInstance := {
     moduleName := "RenameStage_32x64"
@@ -1395,14 +1404,15 @@ def mkCPU_RV32IM : Circuit :=
       [("cdb_valid", cdb_valid)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", rob_commit_en)] ++
-      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
+      [("retire_valid", retire_recycle_valid)] ++
+      (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_phys_out_{i}", w))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
-      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w)))
+      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
+      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION GATES ===
@@ -1675,15 +1685,10 @@ def mkCPU_RV32IM : Circuit :=
   let rob_head_valid := Wire.mk "rob_head_valid"
   let rob_head_complete := Wire.mk "rob_head_complete"
   let rob_head_hasPhysRd := Wire.mk "rob_head_hasPhysRd"
-  let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
-  let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
   let rob_head_archRd := makeIndexedWires "rob_head_archRd" 5
   let rob_head_exception := Wire.mk "rob_head_exception"
   let rob_head_isBranch := Wire.mk "rob_head_isBranch"
   let rob_head_mispredicted := Wire.mk "rob_head_mispredicted"
-
-  -- Old physical register tracking disabled (tied to zero)
-  let alloc_oldPhysRd_zeros := [zero, zero, zero, zero, zero, zero]
 
   let rob_inst : CircuitInstance := {
     moduleName := "ROB16"
@@ -1694,8 +1699,8 @@ def mkCPU_RV32IM : Circuit :=
        ("alloc_en", rename_valid)] ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
       [("alloc_hasPhysRd", decode_has_rd)] ++
-      (alloc_oldPhysRd_zeros.enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
-      [("alloc_hasOldPhysRd", zero)] ++
+      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
+      [("alloc_hasOldPhysRd", decode_has_rd)] ++
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"alloc_archRd[{i}]", w))) ++
       [("alloc_isBranch", dispatch_is_branch),
        ("cdb_valid", cdb_valid)] ++
@@ -1822,6 +1827,7 @@ def mkCPU_RV32IM : Circuit :=
       { name := "rs1_phys", width := 6, wires := rs1_phys },
       { name := "rs2_phys", width := 6, wires := rs2_phys },
       { name := "rd_phys", width := 6, wires := rd_phys },
+      { name := "old_rd_phys", width := 6, wires := old_rd_phys },
       { name := "rs1_data", width := 32, wires := rs1_data },
       { name := "rs2_data", width := 32, wires := rs2_data },
       { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },

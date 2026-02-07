@@ -232,6 +232,8 @@ def mkRenameStage : Circuit :=
   let rd_phys := (List.range tagWidth).map (fun i => Wire.mk s!"rd_phys_{i}")
   let rs1_data := (List.range dataWidth).map (fun i => Wire.mk s!"rs1_data_{i}")
   let rs2_data := (List.range dataWidth).map (fun i => Wire.mk s!"rs2_data_{i}")
+  -- Old physical register mapping output (for ROB oldPhysRd tracking)
+  let old_rd_phys := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_phys_{i}")
 
   -- Internal signals
   let x0_detect := Wire.mk "x0_detect"
@@ -259,52 +261,46 @@ def mkRenameStage : Circuit :=
     Gate.mkAND has_rd not_x0 needs_alloc
   ]
 
-  -- allocate_fire = needs_alloc AND instr_valid
-  -- (No stall from FreeList - counter always has a value available)
+  -- FreeList dequeue: request allocation when needed and available
+  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
+  let alloc_avail := Wire.mk "alloc_avail"
+  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
+
+  -- allocate_fire = needs_alloc AND instr_valid AND alloc_avail (FreeList has entry)
+  let alloc_tmp := Wire.mk "alloc_tmp"
   let allocate_fire_gates := [
-    Gate.mkAND needs_alloc instr_valid allocate_fire
+    Gate.mkAND needs_alloc instr_valid alloc_tmp,
+    Gate.mkAND alloc_tmp alloc_avail allocate_fire
   ]
 
   -- rat_we = allocate_fire (update RAT on successful allocation)
   let rat_we_gate := Gate.mkBUF allocate_fire rat_we
 
-  -- stall = 0 (counter-based allocator never stalls)
-  let stall_gates := [Gate.mkBUF zero stall]
+  -- stall = needs_alloc AND instr_valid AND NOT alloc_avail (FreeList empty)
+  let not_avail := Wire.mk "not_avail"
+  let stall_gates := [
+    Gate.mkNOT alloc_avail not_avail,
+    Gate.mkAND alloc_tmp not_avail stall
+  ]
 
-  -- rename_valid = instr_valid (never stalls)
-  let rename_valid_gates := [Gate.mkBUF instr_valid rename_valid]
+  -- rename_valid = instr_valid AND NOT stall
+  let not_stall := Wire.mk "not_stall"
+  let rename_valid_gates := [
+    Gate.mkNOT stall not_stall,
+    Gate.mkAND instr_valid not_stall rename_valid
+  ]
 
-  -- === Allocation Counter ===
-  -- Simple 6-bit counter starting at 32 (0b100000).
-  -- Uses DFF_SET for bit 5 to reset to 1, giving initial value 32.
-  -- Increments on allocate_fire.
-  let alloc_ctr := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_{i}")
-
-  -- rd_phys = alloc_ctr (current counter value is the allocated tag)
+  -- === FreeList-based Allocation ===
+  -- rd_phys = freelist_deq_data (dequeued tag is the allocated physical register)
   let rd_phys_assign_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkBUF (alloc_ctr[i]!) (rd_phys[i]!))
+    Gate.mkBUF (freelist_deq_data[i]!) (rd_phys[i]!))
 
-  -- Increment: next = ctr + 1 (when allocate_fire)
-  let ctr_plus := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_plus_{i}")
-  let ctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"ctr_c_{i}")
-  let ctr_cin_gate := Gate.mkBUF zero (ctr_carry[0]!)  -- carry-in = 0
-  let ctr_one_vec := one :: (List.range (tagWidth - 1)).map (fun _ => zero)
-  let ctr_add_gates := Shoumei.Circuits.Combinational.buildFullAdderChain alloc_ctr ctr_one_vec ctr_carry ctr_plus "ctr_add_"
+  -- FreeList dequeue enable = allocate_fire (dequeue when allocation succeeds)
+  let freelist_deq_ready := Wire.mk "freelist_deq_ready"
+  let freelist_ready_gate := Gate.mkBUF allocate_fire freelist_deq_ready
 
-  -- Mux: next = allocate_fire ? ctr_plus : alloc_ctr
-  let ctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_next_{i}")
-  let ctr_mux_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkMUX (alloc_ctr[i]!) (ctr_plus[i]!) allocate_fire (ctr_next[i]!))
-
-  -- DFFs: bit 5 uses DFF_SET (resets to 1), others use DFF (reset to 0)
-  -- Initial value = 32 = 0b100000
-  let ctr_dff_gates := (List.range tagWidth).map (fun i =>
-    if i == 5 then
-      Gate.mkDFF_SET (ctr_next[i]!) clock reset (alloc_ctr[i]!)
-    else
-      Gate.mkDFF (ctr_next[i]!) clock reset (alloc_ctr[i]!))
-
-  -- RAT instance
+  -- RAT instance (now with old_rd_data output for previous mapping)
+  let old_rd_raw := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_raw_{i}")
   let rat_inst : CircuitInstance := {
     moduleName := "RAT_32x6"
     instName := "u_rat"
@@ -315,15 +311,15 @@ def mkRenameStage : Circuit :=
       (rs1_addr.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (rs2_addr.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
-      (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w)))
+      (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
+      (old_rd_raw.enum.map (fun ⟨i, w⟩ => (s!"old_rd_data_{i}", w)))
   }
 
-  -- FreeList instance (kept for deallocation path, but not used for allocation)
-  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
-  let freelist_deq_ready := Wire.mk "freelist_deq_ready"
-  let alloc_avail := Wire.mk "alloc_avail"
-  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
-  let freelist_ready_gate := Gate.mkBUF zero freelist_deq_ready  -- never dequeue
+  -- old_rd_phys output = old_rd_raw (previous RAT mapping for rd)
+  let old_rd_assign_gates := (List.range tagWidth).map (fun i =>
+    Gate.mkBUF (old_rd_raw[i]!) (old_rd_phys[i]!))
+
+  -- FreeList instance (used for both allocation and deallocation)
   let freelist_inst : CircuitInstance := {
     moduleName := "FreeList_64"
     instName := "u_freelist"
@@ -356,10 +352,12 @@ def mkRenameStage : Circuit :=
   let rs1_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_phys_out_{i}")
   let rs2_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_phys_out_{i}")
   let rd_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rd_phys_out_{i}")
+  let old_rd_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_phys_out_{i}")
   let phys_out_gates :=
     (List.range tagWidth).map (fun i => Gate.mkBUF (rs1_phys[i]!) (rs1_phys_out[i]!)) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF (rs2_phys[i]!) (rs2_phys_out[i]!)) ++
-    (List.range tagWidth).map (fun i => Gate.mkBUF (rd_phys[i]!) (rd_phys_out[i]!))
+    (List.range tagWidth).map (fun i => Gate.mkBUF (rd_phys[i]!) (rd_phys_out[i]!)) ++
+    (List.range tagWidth).map (fun i => Gate.mkBUF (old_rd_phys[i]!) (old_rd_phys_out[i]!))
 
   { name := "RenameStage_32x64"
     inputs := [clock, reset, zero, one, instr_valid, has_rd] ++
@@ -367,12 +365,11 @@ def mkRenameStage : Circuit :=
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag
     outputs := [rename_valid, stall] ++
-               rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++
+               rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
                rs1_data ++ rs2_data
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             rd_phys_assign_gates ++ [ctr_cin_gate] ++ ctr_add_gates ++
-             ctr_mux_gates ++ ctr_dff_gates ++
+             rd_phys_assign_gates ++ old_rd_assign_gates ++
              phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
@@ -386,15 +383,14 @@ def mkRenameStage : Circuit :=
       { name := "rs1_phys_out", width := 6, wires := rs1_phys_out },
       { name := "rs2_phys_out", width := 6, wires := rs2_phys_out },
       { name := "rd_phys_out", width := 6, wires := rd_phys_out },
+      { name := "old_rd_phys_out", width := 6, wires := old_rd_phys_out },
       { name := "rs1_data", width := 32, wires := rs1_data },
       { name := "rs2_data", width := 32, wires := rs2_data },
       { name := "rs1_phys", width := 6, wires := rs1_phys },
       { name := "rs2_phys", width := 6, wires := rs2_phys },
       { name := "rd_phys", width := 6, wires := rd_phys },
-      { name := "alloc_ctr", width := 6, wires := alloc_ctr },
-      { name := "ctr_plus", width := 6, wires := ctr_plus },
-      { name := "ctr_next", width := 6, wires := ctr_next },
-      { name := "ctr_c", width := 7, wires := ctr_carry }
+      { name := "old_rd_phys", width := 6, wires := old_rd_phys },
+      { name := "freelist_deq", width := 6, wires := freelist_deq_data }
     ]
   }
 
