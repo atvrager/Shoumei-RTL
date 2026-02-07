@@ -555,10 +555,26 @@ def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire
       "  end"
     ]
 
-    if declsStr.isEmpty then
+    -- Generate feedback assignments: connect _reg back to combinational bus
+    -- For non-circuit-output DFF groups, the register name differs from the bus name
+    let feedbackAssigns := results.filterMap (fun (_, _, _, regName) =>
+      -- If regName ends with "_reg", generate assign busName = regName
+      if regName.endsWith "_reg" then
+        let busName := regName.dropEnd 4  -- Remove "_reg" suffix
+        some s!"  assign {busName} = {regName};"
+      else
+        none)
+    let feedbackStr := joinLines feedbackAssigns
+
+    let base := if declsStr.isEmpty then
       alwaysBlock
     else
       declsStr ++ "\n\n" ++ alwaysBlock
+
+    if feedbackStr.isEmpty then
+      base
+    else
+      base ++ "\n\n" ++ feedbackStr
 
 /-- Generate all register logic -/
 def generateRegisters (ctx : Context) (c : Circuit) : String :=

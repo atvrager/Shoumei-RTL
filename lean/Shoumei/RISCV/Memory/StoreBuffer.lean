@@ -119,7 +119,7 @@ def StoreBufferState.enqueue
   else
     let newEntry : StoreBufferEntry := {
       valid := true
-      committed := false
+      committed := true  -- Auto-commit on enqueue (simplified model)
       address := address
       data := data
       size := size
@@ -409,11 +409,12 @@ def mkStoreBuffer8 : Circuit :=
     let valid_gate :=
       Gate.mkMUX cur_valid one enq_we e_next[0]!
 
-    -- committed_next: MUX priority: enq (clears) > commit (sets) > hold
+    -- committed_next: MUX priority: enq (sets committed=1) > commit (sets) > hold
+    -- NOTE: Auto-commit on enqueue (simplified model, no ROB index tracking needed)
     let committed_mux1 := Wire.mk s!"e{i}_committed_mux1"
     let committed_gates := [
       Gate.mkMUX cur_committed one commit_we committed_mux1,  -- commit sets committed
-      Gate.mkMUX committed_mux1 zero enq_we e_next[1]!        -- enq clears committed
+      Gate.mkMUX committed_mux1 one enq_we e_next[1]!         -- enq also sets committed
     ]
 
     -- address_next: only changes on enq

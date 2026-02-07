@@ -48,10 +48,10 @@ module tb_cpu #(
   logic [31:0] fetch_pc;
   logic        fetch_stalled;
   logic        global_stall_out;
-  logic        dmem_req_valid;
-  logic        dmem_req_we;
-  logic [31:0] dmem_req_addr;
-  logic [31:0] dmem_req_data;
+  logic        dmem_req_valid /* verilator public */;
+  logic        dmem_req_we    /* verilator public */;
+  logic [31:0] dmem_req_addr  /* verilator public */;
+  logic [31:0] dmem_req_data  /* verilator public */;
   logic        rob_empty;
 
   assign reset = ~rst_n;
@@ -144,6 +144,9 @@ module tb_cpu #(
       test_pass <= 1'b0;
       test_code <= 32'b0;
     end else begin
+      /* verilator lint_off WIDTH */
+      /* verilator lint_on WIDTH */
+
       // Watch for stores to tohost address
       if (dmem_req_valid && dmem_req_we &&
           dmem_req_addr == TOHOST_ADDR) begin
@@ -181,6 +184,19 @@ module tb_cpu #(
       $display("[cycle %0d] PC=0x%08h stall=%b rob_empty=%b cdb_valid=%b commit=%b",
                cycle_count, fetch_pc, global_stall_out, rob_empty,
                u_cpu.cdb_valid, u_cpu.rob_commit_en);
+    end
+  end
+  `endif
+
+  // Pipeline debug trace (enable with +define+TRACE_PIPELINE)
+  `ifdef TRACE_PIPELINE
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      $display("[%0d] PC=0x%08x valid=%b optype=%0d | cdb=%b tag=%0d data=0x%08x | dmem=%b we=%b addr=0x%08x data=0x%08x",
+               cycle_count, fetch_pc,
+               u_cpu.decode_valid, u_cpu.decode_optype,
+               u_cpu.cdb_valid, u_cpu.cdb_tag, u_cpu.cdb_data,
+               dmem_req_valid, dmem_req_we, dmem_req_addr, dmem_req_data);
     end
   end
   `endif

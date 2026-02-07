@@ -393,7 +393,7 @@ def mkLSU : Circuit :=
     moduleName := "StoreBuffer8"
     instName := "u_store_buffer"
     portMap :=
-      [("reset", reset), ("zero", zero), ("one", one),
+      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
        ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
        ("fwd_hit", sb_fwd_hit), ("deq_valid", sb_deq_valid)] ++

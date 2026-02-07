@@ -287,6 +287,7 @@ def mkRenameStage : Circuit :=
   -- Increment: next = ctr + 1 (when allocate_fire)
   let ctr_plus := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_plus_{i}")
   let ctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"ctr_c_{i}")
+  let ctr_cin_gate := Gate.mkBUF zero (ctr_carry[0]!)  -- carry-in = 0
   let ctr_one_vec := one :: (List.range (tagWidth - 1)).map (fun _ => zero)
   let ctr_add_gates := Shoumei.Circuits.Combinational.buildFullAdderChain alloc_ctr ctr_one_vec ctr_carry ctr_plus "ctr_add_"
 
@@ -370,8 +371,7 @@ def mkRenameStage : Circuit :=
                rs1_data ++ rs2_data
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             [Gate.mkBUF one (ctr_carry[0]!)] ++
-             rd_phys_assign_gates ++ ctr_add_gates ++
+             rd_phys_assign_gates ++ [ctr_cin_gate] ++ ctr_add_gates ++
              ctr_mux_gates ++ ctr_dff_gates ++
              phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]

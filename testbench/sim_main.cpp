@@ -82,6 +82,7 @@ int main(int argc, char** argv) {
     const char* hex_path = get_plusarg(argc, argv, "+hex");
     const char* timeout_str = get_plusarg(argc, argv, "+timeout");
     bool do_trace = has_plusarg(argc, argv, "+trace");
+    bool verbose = has_plusarg(argc, argv, "+verbose");
 
     uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;
 
@@ -106,14 +107,17 @@ int main(int argc, char** argv) {
     } else {
         // Default: tiny test program
         printf("No +hex file specified, loading built-in test program\n");
-        dut->tb_cpu->mem[0] = 0x00500093;  // addi x1, x0, 5
-        dut->tb_cpu->mem[1] = 0x00300113;  // addi x2, x0, 3
-        dut->tb_cpu->mem[2] = 0x002081b3;  // add  x3, x1, x2
-        dut->tb_cpu->mem[3] = 0x00100213;  // addi x4, x0, 1
-        dut->tb_cpu->mem[4] = 0x000012b7;  // lui  x5, 1  (x5 = 0x1000)
-        dut->tb_cpu->mem[5] = 0x0042A023;  // sw   x4, 0(x5)  (tohost)
-        dut->tb_cpu->mem[6] = 0x00000013;  // nop
-        dut->tb_cpu->mem[7] = 0x00000013;  // nop
+        // Test: write 1 to tohost (0x1000) → PASS
+        // NOPs needed: src_ready is hardwired, so operands must be in PRF
+        // before the SW issues. Each NOP burns one pipeline slot.
+        dut->tb_cpu->mem[0] = 0x00100213;  // addi x4, x0, 1
+        dut->tb_cpu->mem[1] = 0x000012b7;  // lui  x5, 1        (x5 = 0x1000)
+        dut->tb_cpu->mem[2] = 0x00000013;  // nop
+        dut->tb_cpu->mem[3] = 0x00000013;  // nop
+        dut->tb_cpu->mem[4] = 0x00000013;  // nop
+        dut->tb_cpu->mem[5] = 0x00000013;  // nop
+        dut->tb_cpu->mem[6] = 0x0042A023;  // sw   x4, 0(x5)    (tohost = 1 → PASS)
+        dut->tb_cpu->mem[7] = 0x0000006f;  // jal  x0, 0         (spin forever)
     }
 
     // =====================================================================
@@ -147,6 +151,17 @@ int main(int argc, char** argv) {
 #if VM_TRACE
         if (trace) trace->dump(sim_time++);
 #endif
+
+        // Debug: print key signals for first 30 cycles if +verbose
+        if (verbose && cycle < 30) {
+            auto tb = dut->tb_cpu;
+            printf("  [%4u] PC=0x%08x stall=%d rob_empty=%d",
+                cycle, dut->o_fetch_pc, (int)dut->o_global_stall, (int)dut->o_rob_empty);
+            if (tb->dmem_req_valid)
+                printf(" DMEM: we=%d addr=0x%08x data=0x%08x",
+                    (int)tb->dmem_req_we, tb->dmem_req_addr, tb->dmem_req_data);
+            printf("\n");
+        }
 
         // Check termination via public output ports
         if (dut->o_test_done) {
