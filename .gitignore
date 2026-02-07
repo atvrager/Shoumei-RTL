@@ -71,6 +71,10 @@ verification/*/
 # Cleaned Chisel outputs for EQY (generated from *_clean.sv pattern)
 verification/*_clean.sv
 
+# Test ELF binaries
+testbench/tests/*.elf
+testbench/tests/*.o
+
 # Waveform dumps
 *.vcd
 *.fst

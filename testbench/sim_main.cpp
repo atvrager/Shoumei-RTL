@@ -2,7 +2,7 @@
 // sim_main.cpp - Verilator testbench for Shoumei CPU
 //
 // Drives the tb_cpu wrapper:
-//   1. Loads a flat binary or hex file into memory
+//   1. Loads an ELF binary into memory via DPI-C (PT_LOAD segments)
 //   2. Runs clock cycles until tohost is written or timeout
 //   3. Reports PASS/FAIL with cycle count
 //
@@ -10,21 +10,25 @@
 //   make -C testbench sim
 //
 // Run:
-//   ./build-sim/sim_shoumei [+hex=path/to/program.hex] [+timeout=N] [+trace]
+//   ./build-sim/sim_shoumei +elf=path/to/program.elf [+timeout=N] [+trace]
 //==============================================================================
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <elf.h>
 
 #include "Vtb_cpu.h"
-#include "Vtb_cpu_tb_cpu.h"
 #include "verilated.h"
+#include "svdpi.h"
 
 #if VM_TRACE
 #include "verilated_vcd_c.h"
 #endif
+
+// DPI-C exported from tb_cpu.sv
+extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
 
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 
@@ -46,31 +50,87 @@ static bool has_plusarg(int argc, char** argv, const char* name) {
     return false;
 }
 
-// Load hex file into simulated memory via verilator public access
-// Format: one 32-bit hex word per line, starting at address 0
-static int load_hex(Vtb_cpu* dut, const char* path) {
-    FILE* f = fopen(path, "r");
+// Load ELF file into simulated memory via DPI-C
+// Parses ELF32 PT_LOAD segments, calls dpi_mem_write() for each word
+static int load_elf(const char* path) {
+    FILE* f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "ERROR: Cannot open hex file: %s\n", path);
+        fprintf(stderr, "ERROR: Cannot open ELF file: %s\n", path);
         return -1;
     }
 
-    char line[256];
-    int addr = 0;
-    while (fgets(line, sizeof(line), f)) {
-        // Skip comments and blank lines
-        if (line[0] == '/' || line[0] == '#' || line[0] == '\n') continue;
+    // Read ELF header
+    Elf32_Ehdr ehdr;
+    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) {
+        fprintf(stderr, "ERROR: Cannot read ELF header: %s\n", path);
+        fclose(f);
+        return -1;
+    }
 
-        uint32_t word;
-        if (sscanf(line, "%x", &word) == 1) {
-            dut->tb_cpu->mem[addr] = word;
-            addr++;
+    // Validate
+    if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0) {
+        fprintf(stderr, "ERROR: Not an ELF file: %s\n", path);
+        fclose(f);
+        return -1;
+    }
+    if (ehdr.e_ident[EI_CLASS] != ELFCLASS32) {
+        fprintf(stderr, "ERROR: Not a 32-bit ELF: %s\n", path);
+        fclose(f);
+        return -1;
+    }
+    if (ehdr.e_machine != EM_RISCV) {
+        fprintf(stderr, "ERROR: Not a RISC-V ELF (e_machine=%u): %s\n", ehdr.e_machine, path);
+        fclose(f);
+        return -1;
+    }
+
+    // Read program headers and load PT_LOAD segments
+    uint32_t total_bytes = 0;
+    for (int i = 0; i < ehdr.e_phnum; i++) {
+        Elf32_Phdr phdr;
+        fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);
+        if (fread(&phdr, sizeof(phdr), 1, f) != 1) {
+            fprintf(stderr, "ERROR: Cannot read program header %d\n", i);
+            fclose(f);
+            return -1;
         }
+
+        if (phdr.p_type != PT_LOAD) continue;
+        if (phdr.p_memsz == 0) continue;
+
+        uint32_t base_addr = phdr.p_paddr;
+        uint32_t filesz = phdr.p_filesz;
+        uint32_t memsz = phdr.p_memsz;
+
+        // Zero-fill the entire region first (handles BSS)
+        for (uint32_t off = 0; off < memsz; off += 4) {
+            dpi_mem_write((base_addr + off) / 4, 0);
+        }
+
+        // Read file data
+        if (filesz > 0) {
+            fseek(f, phdr.p_offset, SEEK_SET);
+            uint32_t words = (filesz + 3) / 4;
+            for (uint32_t w = 0; w < words; w++) {
+                uint32_t word = 0;
+                uint32_t remaining = filesz - w * 4;
+                uint32_t to_read = remaining < 4 ? remaining : 4;
+                if (fread(&word, 1, to_read, f) != to_read) {
+                    fprintf(stderr, "ERROR: Short read in segment %d\n", i);
+                    fclose(f);
+                    return -1;
+                }
+                dpi_mem_write((base_addr / 4) + w, word);
+            }
+        }
+
+        printf("  PT_LOAD: paddr=0x%08x filesz=%u memsz=%u\n", base_addr, filesz, memsz);
+        total_bytes += memsz;
     }
 
     fclose(f);
-    printf("Loaded %d words from %s\n", addr, path);
-    return addr;
+    printf("Loaded ELF %s (%u bytes total)\n", path, total_bytes);
+    return (int)total_bytes;
 }
 
 int main(int argc, char** argv) {
@@ -79,7 +139,7 @@ int main(int argc, char** argv) {
     auto dut = std::make_unique<Vtb_cpu>();
 
     // Parse arguments
-    const char* hex_path = get_plusarg(argc, argv, "+hex");
+    const char* elf_path = get_plusarg(argc, argv, "+elf");
     const char* timeout_str = get_plusarg(argc, argv, "+timeout");
     bool do_trace = has_plusarg(argc, argv, "+trace");
     bool verbose = has_plusarg(argc, argv, "+verbose");
@@ -99,25 +159,16 @@ int main(int argc, char** argv) {
     (void)do_trace;
 #endif
 
-    // Load program
-    if (hex_path) {
-        if (load_hex(dut.get(), hex_path) < 0) {
-            return 1;
-        }
-    } else {
-        // Default: tiny test program
-        printf("No +hex file specified, loading built-in test program\n");
-        // Test: write 1 to tohost (0x1000) → PASS
-        // NOPs needed: src_ready is hardwired, so operands must be in PRF
-        // before the SW issues. Each NOP burns one pipeline slot.
-        dut->tb_cpu->mem[0] = 0x00100213;  // addi x4, x0, 1
-        dut->tb_cpu->mem[1] = 0x000012b7;  // lui  x5, 1        (x5 = 0x1000)
-        dut->tb_cpu->mem[2] = 0x00000013;  // nop
-        dut->tb_cpu->mem[3] = 0x00000013;  // nop
-        dut->tb_cpu->mem[4] = 0x00000013;  // nop
-        dut->tb_cpu->mem[5] = 0x00000013;  // nop
-        dut->tb_cpu->mem[6] = 0x0042A023;  // sw   x4, 0(x5)    (tohost = 1 → PASS)
-        dut->tb_cpu->mem[7] = 0x0000006f;  // jal  x0, 0         (spin forever)
+    // Load program via DPI-C
+    if (!elf_path) {
+        fprintf(stderr, "ERROR: No ELF file specified. Use +elf=path/to/program.elf\n");
+        return 1;
+    }
+
+    // Set DPI scope to tb_cpu so dpi_mem_write resolves to the right instance
+    svSetScope(svGetScopeFromName("TOP.tb_cpu"));
+    if (load_elf(elf_path) < 0) {
+        return 1;
     }
 
     // =====================================================================
@@ -154,16 +205,15 @@ int main(int argc, char** argv) {
 
         // Debug: print key signals for first 30 cycles if +verbose
         if (verbose && cycle < 30) {
-            auto tb = dut->tb_cpu;
             printf("  [%4u] PC=0x%08x stall=%d rob_empty=%d",
                 cycle, dut->o_fetch_pc, (int)dut->o_global_stall, (int)dut->o_rob_empty);
-            if (tb->dmem_req_valid)
+            if (dut->o_dmem_req_valid)
                 printf(" DMEM: we=%d addr=0x%08x data=0x%08x",
-                    (int)tb->dmem_req_we, tb->dmem_req_addr, tb->dmem_req_data);
+                    (int)dut->o_dmem_req_we, dut->o_dmem_req_addr, dut->o_dmem_req_data);
             printf("\n");
         }
 
-        // Check termination via public output ports
+        // Check termination via output ports
         if (dut->o_test_done) {
             done = true;
             if (dut->o_test_pass) {

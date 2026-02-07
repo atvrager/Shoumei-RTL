@@ -28,14 +28,26 @@ jobs:
       - name: Python syntax
         run: python3 -m py_compile bootstrap.py
 
+      - name: C/C++ lint (cppcheck)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq cppcheck
+          CPP_FILES=$(find testbench -name '*.cpp' -o -name '*.h' | grep -v build-sim)
+          C_FILES=$(find testbench/tests -name '*.c' -o -name '*.h')
+          if [ -n "$CPP_FILES$C_FILES" ]; then
+            # shellcheck disable=SC2086
+            cppcheck --error-exitcode=1 --enable=warning,style \
+              --suppress=missingIncludeSystem \
+              $CPP_FILES $C_FILES
+          fi
+
       - name: Trailing whitespace
         run: |
-          if git grep -I --line-number '\s$' -- '*.lean' '*.scala' '*.md' '*.sh' '*.py'; then
+          if git grep -I --line-number '\s$' -- '*.lean' '*.scala' '*.md' '*.sh' '*.py' '*.c' '*.cpp' '*.h' '*.S' '*.ld'; then
             echo "Warning: trailing whitespace found (non-blocking)"
           fi
 
       - name: TODO scan
-        run: git grep -n -E 'TODO|FIXME|XXX|HACK' -- '*.lean' '*.scala' || true
+        run: git grep -n -E 'TODO|FIXME|XXX|HACK' -- '*.lean' '*.scala' '*.c' '*.cpp' '*.h' '*.S' || true
 
       - name: Documentation exists
         run: |
@@ -280,6 +292,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y verilator
 
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/riscv32-elf
+          key: riscv32-elf-2026.01.23
+
+      - name: Setup RISC-V toolchain
+        run: |
+          ./scripts/setup-riscv-toolchain.sh
+          echo "$HOME/.local/riscv32-elf/bin" >> $GITHUB_PATH
+
+      - name: Build test ELFs
+        run: make -C testbench/tests
+
       - name: Build simulation
         run: make -C testbench sim
 
@@ -287,10 +313,13 @@ jobs:
         run: verilator --version
 
       - name: Run simulation (pass test)
-        run: ./build-sim/sim_shoumei +hex=testbench/tests/pass_test.hex +timeout=1000
+        run: ./build-sim/sim_shoumei +elf=testbench/tests/pass_test.elf +timeout=1000
 
       - name: Run simulation (dependency test)
-        run: ./build-sim/sim_shoumei +hex=testbench/tests/dep_test.hex +timeout=2000
+        run: ./build-sim/sim_shoumei +elf=testbench/tests/dep_test.elf +timeout=2000
+
+      - name: Run simulation (addi test)
+        run: ./build-sim/sim_shoumei +elf=testbench/tests/addi_test.elf +timeout=2000
 
   smoke-test:
     name: Smoke Test
