@@ -286,8 +286,8 @@ jobs:
       - name: Check Verilator version
         run: verilator --version
 
-      - name: Run simulation (built-in test)
-        run: ./build-sim/sim_shoumei +timeout=1000 +verbose
+      - name: Run simulation (pass test)
+        run: ./build-sim/sim_shoumei +hex=testbench/tests/pass_test.hex +timeout=1000
 
   smoke-test:
     name: Smoke Test

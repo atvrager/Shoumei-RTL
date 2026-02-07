@@ -87,6 +87,14 @@ module tb_cpu #(
   // =========================================================================
   logic [31:0] mem [0:MEM_SIZE_WORDS-1] /* verilator public */;
 
+  // Load hex file via plusarg (portable across Verilator versions)
+  initial begin
+    string hex_file;
+    if ($value$plusargs("hex=%s", hex_file)) begin
+      $readmemh(hex_file, mem);
+    end
+  end
+
   // Base address for memory mapping (word offset)
   localparam logic [31:0] MEM_BASE = 32'h00000000;
 
