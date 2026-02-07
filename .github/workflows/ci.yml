@@ -103,6 +103,7 @@ jobs:
         with:
           name: lean-build
           path: .lake/
+          include-hidden-files: true
           retention-days: 1
 
   scala-build:
