@@ -202,7 +202,7 @@ def rs4_cert : CompositionalCert := {
 /-- PipelinedMultiplier: 3-stage pipelined array multiplier -/
 def pipelinedMultiplier_cert : CompositionalCert := {
   moduleName := "PipelinedMultiplier"
-  dependencies := ["CSACompressor64", "RippleCarryAdder64"]
+  dependencies := ["CSACompressor64", "KoggeStoneAdder64"]
   proofReference := "Shoumei.Circuits.Combinational.MultiplierProofs"
 }
 

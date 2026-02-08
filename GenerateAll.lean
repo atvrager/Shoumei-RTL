@@ -45,6 +45,7 @@ import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
 
 -- M-Extension Building Blocks
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
@@ -174,6 +175,7 @@ def allCircuits : List Circuit := [
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkRippleCarryAdder64,
+  mkKoggeStoneAdder64,
   csaCompressor64,
   mkPipelinedMultiplier,
   mkDividerCircuit,

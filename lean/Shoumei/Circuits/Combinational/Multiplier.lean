@@ -9,7 +9,7 @@ Architecture:
   Stage 1: Partial product generation (1024 AND gates) +
            CSA tree reduction via CSACompressor64 instances (32 rows -> 2)
   Stage 2: Pipeline register pass-through (timing closure)
-  Stage 3: Final 64-bit ripple-carry addition + result selection
+  Stage 3: Final 64-bit Kogge-Stone addition + result selection
 
 The CSA tree uses CSACompressor64 sub-modules (each compresses 3 rows to 2)
 arranged hierarchically. This keeps each module within JVM class file limits
@@ -28,6 +28,7 @@ Operation types (op encoding):
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
 
@@ -232,7 +233,7 @@ private partial def mkCSATreeHierarchical
     Inputs (77): a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero
     Outputs (39): result[31:0], tag_out[5:0], valid_out
 
-    Instances: ~30 CSACompressor64 + 1 RippleCarryAdder64 -/
+    Instances: ~30 CSACompressor64 + 1 KoggeStoneAdder64 -/
 def mkPipelinedMultiplier : Circuit :=
   let a := makeIndexedWires "a" 32
   let b := makeIndexedWires "b" 32
@@ -357,8 +358,8 @@ def mkPipelinedMultiplier : Circuit :=
 
   let adder_sum := makeIndexedWires "add_sum" 64
 
-  let rca64_inst : CircuitInstance := {
-    moduleName := "RippleCarryAdder64"
+  let ksa64_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder64"
     instName := "u_final_adder"
     portMap :=
       (s2_sum_q.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -401,7 +402,7 @@ def mkPipelinedMultiplier : Circuit :=
     inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero]
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
-    instances := csa_instances ++ pipe_reg1_instances ++ pipe_reg2_instances ++ [rca64_inst]
+    instances := csa_instances ++ pipe_reg1_instances ++ pipe_reg2_instances ++ [ksa64_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "a", width := 32, wires := a },
