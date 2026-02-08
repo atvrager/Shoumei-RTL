@@ -13,7 +13,7 @@ Phase 8 scope: Behavioral model only. Structural circuit TBD.
 import Shoumei.RISCV.Config
 import Shoumei.DSL
 import Shoumei.Circuits.Sequential.Register
-import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.RISCV
 
@@ -222,7 +222,7 @@ def mkFetchStage : Circuit :=
 
   -- PC incrementer instance
   let adder_inst : CircuitInstance := {
-    moduleName := "RippleCarryAdder32"
+    moduleName := "KoggeStoneAdder32"
     instName := "u_pc_adder"
     portMap :=
       (pc_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++

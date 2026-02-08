@@ -45,6 +45,7 @@ import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
 
 -- M-Extension Building Blocks
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
@@ -88,6 +89,7 @@ def allCircuits : List Circuit := [
   mkRippleCarryAdder4,
   mkRippleCarryAdder8,
   mkRippleCarryAdder32,
+  mkKoggeStoneAdder32,
   mkSubtractor4,
   mkSubtractor8,
   mkSubtractor32,
@@ -174,6 +176,7 @@ def allCircuits : List Circuit := [
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkRippleCarryAdder64,
+  mkKoggeStoneAdder64,
   csaCompressor64,
   mkPipelinedMultiplier,
   mkDividerCircuit,
@@ -216,8 +219,9 @@ def main : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println s!"✓ Generated {count} circuits (all 3 formats)"
+  IO.println s!"✓ Generated {count} circuits (all formats)"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  SystemC: output/systemc/"
+  IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -38,7 +38,7 @@ Simplified model:
 -/
 
 import Shoumei.RISCV.ISA
-import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.RISCV.Execution
 
@@ -298,7 +298,7 @@ def mkMemoryExecUnit : Circuit :=
 
   -- Instance RippleCarryAdder32 for address calculation
   let adder_inst : CircuitInstance := {
-    moduleName := "RippleCarryAdder32"
+    moduleName := "KoggeStoneAdder32"
     instName := "u_adder"
     portMap := [
       ("a", a),

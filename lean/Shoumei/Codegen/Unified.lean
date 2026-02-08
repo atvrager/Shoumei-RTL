@@ -21,6 +21,7 @@ import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.Chisel
 import Shoumei.Codegen.SystemC
 import Shoumei.Codegen.Testbench
+import Shoumei.Codegen.ASAP7
 
 namespace Shoumei.Codegen.Unified
 
@@ -32,6 +33,7 @@ def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
 def chiselOutputDir : String := "chisel/src/main/scala/generated"
 def systemcOutputDir : String := "output/systemc"
+def asap7OutputDir : String := "output/sv-asap7"
 
 -- Write SystemVerilog (hierarchical) for a circuit
 -- Pass allCircuits for sub-module port structure lookup in hierarchical modules
@@ -62,13 +64,22 @@ def writeCircuitSystemC (c : Circuit) (allCircuits : List Circuit := []) : IO Un
   IO.FS.writeFile hPath header
   IO.FS.writeFile cppPath impl
 
+-- Write ASAP7 tech-mapped SystemVerilog for a circuit (only if keepHierarchy)
+def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+  if c.keepHierarchy then
+    let sv := ASAP7.toASAP7SystemVerilog c allCircuits
+    let path := s!"{asap7OutputDir}/{c.name}.sv"
+    IO.FS.writeFile path sv
+
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits
-  IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances"
+  writeCircuitASAP7 c allCircuits
+  let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
+  IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
 
 -- Verbose version with individual file confirmation
 def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
@@ -92,6 +103,7 @@ def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svNetlistOutputDir
   IO.FS.createDirAll chiselOutputDir
   IO.FS.createDirAll systemcOutputDir
+  IO.FS.createDirAll asap7OutputDir
 
 -- Write SystemVerilog testbench for a TestbenchConfig
 def writeTestbenchSV (cfg : Testbench.TestbenchConfig) : IO Unit :=

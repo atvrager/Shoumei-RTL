@@ -202,7 +202,7 @@ def rs4_cert : CompositionalCert := {
 /-- PipelinedMultiplier: 3-stage pipelined array multiplier -/
 def pipelinedMultiplier_cert : CompositionalCert := {
   moduleName := "PipelinedMultiplier"
-  dependencies := ["CSACompressor64", "RippleCarryAdder64"]
+  dependencies := ["CSACompressor64", "KoggeStoneAdder64"]
   proofReference := "Shoumei.Circuits.Combinational.MultiplierProofs"
 }
 
@@ -264,7 +264,7 @@ def renameStage_cert : CompositionalCert := {
 /-- FetchStage: PC management and instruction fetch -/
 def fetchStage_cert : CompositionalCert := {
   moduleName := "FetchStage"
-  dependencies := ["Register32", "RippleCarryAdder32"]
+  dependencies := ["Register32", "KoggeStoneAdder32"]
   proofReference := "Shoumei.RISCV.FetchProofs"
 }
 
@@ -277,7 +277,7 @@ def cpu_rv32i_cert : CompositionalCert := {
     -- Transitive dependencies through RenameStage:
     "RAT_32x6", "FreeList_64", "PhysRegFile_64x32",
     -- Transitive dependencies through Fetch:
-    "Register32", "RippleCarryAdder32",
+    "Register32", "KoggeStoneAdder32",
     -- Additional dependencies (for full implementation):
     "ReservationStation4", "IntegerExecUnit", "MemoryExecUnit",
     "ROB16", "LSU", "StoreBuffer8"
