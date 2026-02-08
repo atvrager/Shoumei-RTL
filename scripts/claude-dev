@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Launch Claude Code inside the Shoumei-RTL devcontainer.
+#
+# Usage:
+#   ./scripts/claude-dev            # interactive session
+#   ./scripts/claude-dev --resume   # resume last session
+#   ./scripts/claude-dev -p "..."   # one-shot prompt
+#
+# Requires: devcontainer CLI (@devcontainers/cli)
+#
+# Forwards from host: API keys, git config, SSH keys, Claude settings,
+# and relevant environment variables.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# ── Ensure the container is running ──────────────────────────────────
+devcontainer up --workspace-folder "$REPO_ROOT" >/dev/null 2>&1
+
+# ── Build env var forwarding list ────────────────────────────────────
+ENV_ARGS=()
+forward_var() {
+  local var="$1"
+  if [[ -n "${!var:-}" ]]; then
+    ENV_ARGS+=("$var=${!var}")
+  fi
+}
+
+# Auth
+forward_var ANTHROPIC_API_KEY
+forward_var GITHUB_PERSONAL_ACCESS_TOKEN
+
+# Claude settings
+forward_var CLAUDE_CODE_MAX_OUTPUT_TOKENS
+forward_var CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+
+# Terminal
+forward_var TERM
+forward_var COLORTERM
+forward_var LANG
+
+# ── Launch ───────────────────────────────────────────────────────────
+exec devcontainer exec \
+  --workspace-folder "$REPO_ROOT" \
+  env "${ENV_ARGS[@]}" \
+  claude --dangerously-skip-permissions "$@"

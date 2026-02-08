@@ -52,6 +52,9 @@ build-sim/
 # SystemC build directory
 systemc/build/
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # IDEs
 .vscode/
 .idea/

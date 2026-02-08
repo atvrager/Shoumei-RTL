@@ -4,8 +4,16 @@
     "dockerfile": "Dockerfile",
     "context": "."
   },
+  "features": {},
+
   "remoteUser": "dev",
   "containerUser": "dev",
+
+  "mounts": [
+    "source=${localEnv:HOME}/.gitconfig,target=/home/dev/.gitconfig,type=bind,readonly",
+    "source=${localEnv:HOME}/.ssh,target=/home/dev/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude,target=/home/dev/.claude,type=bind"
+  ],
 
   "containerEnv": {
     "PATH": "/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
