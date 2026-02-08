@@ -25,10 +25,6 @@ VFLAGS     := --cc --exe --build -j 0 \
 # Source files: all SV from Lean + generated testbench
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
-# Fall back to hand-written testbench if generated one doesn't exist
-ifeq ($(TB_SOURCES),)
-TB_SOURCES := $(TB_DIR)/tb_cpu.sv
-endif
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
 
 .PHONY: sim sim-trace sim-debug run-elf tests run-all-tests clean

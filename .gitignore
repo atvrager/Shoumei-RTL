@@ -71,6 +71,9 @@ verification/*/
 # Cleaned Chisel outputs for EQY (generated from *_clean.sv pattern)
 verification/*_clean.sv
 
+# Generated testbenches (produced by lake exe generate_all)
+testbench/generated/
+
 # Test ELF binaries
 testbench/tests/*.elf
 testbench/tests/*.o

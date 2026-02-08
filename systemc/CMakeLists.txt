@@ -65,3 +65,14 @@ foreach(TB_FILE ${SC_TESTBENCHES})
   target_link_libraries(${TB_NAME} SystemC::systemc elf_loader)
   target_include_directories(${TB_NAME} PRIVATE ../output/systemc ../testbench/lib)
 endforeach()
+
+# Setup files: heavy compilation (includes full module headers) but parallelizable
+file(GLOB SC_SETUP_FILES "../testbench/generated/sc_setup_*.cpp")
+foreach(SETUP_FILE ${SC_SETUP_FILES})
+  get_filename_component(SETUP_NAME ${SETUP_FILE} NAME_WE)
+  # Extract module name: sc_setup_FOO -> sc_main_FOO
+  string(REPLACE "sc_setup_" "sc_main_" TB_TARGET ${SETUP_NAME})
+  if(TARGET ${TB_TARGET})
+    target_sources(${TB_TARGET} PRIVATE ${SETUP_FILE})
+  endif()
+endforeach()
