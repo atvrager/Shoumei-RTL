@@ -144,6 +144,7 @@ def mkCSACompressor64 : Circuit :=
       { name := "carry", width := width, wires := c_shifted },
       { name := "c", width := width, wires := c }
     ]
+    keepHierarchy := true
   }
 
 /-- Convenience alias for CSA compressor. -/
@@ -403,7 +404,7 @@ def mkPipelinedMultiplier : Circuit :=
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
     instances := csa_instances ++ pipe_reg1_instances ++ pipe_reg2_instances ++ [ksa64_inst]
-    -- V2 codegen annotations
+    keepHierarchy := true
     signalGroups := [
       { name := "a", width := 32, wires := a },
       { name := "b", width := 32, wires := b },

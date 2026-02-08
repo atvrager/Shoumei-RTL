@@ -34,18 +34,34 @@ namespace Shoumei.Circuits.Combinational
 
 open Shoumei
 
--- Helper: OR all bits together (for zero detection)
--- Returns wire that is 1 if ANY input bit is 1
+-- Helper: OR all bits together (for zero detection) using balanced binary tree.
+-- O(log n) depth instead of O(n) ripple chain.
+-- Uses fuel parameter to guarantee termination (log2(n) + 1 levels suffice).
 def mkOrTree (wires : List Wire) (output : Wire) : List Gate :=
-  match wires with
-  | [] => []  -- Should not happen
-  | [w] => [Gate.mkBUF w output]  -- Single wire - just buffer it
-  | w1 :: w2 :: rest =>
-    -- Create intermediate wires
-    let intermediate := Wire.mk s!"or_tree_{output.name}_{rest.length}"
-    let first_or := Gate.mkOR w1 w2 intermediate
-    first_or :: mkOrTree (intermediate :: rest) output
-termination_by wires.length
+  -- Pair up adjacent wires, OR them into intermediates
+  let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
+    let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
+      match remaining with
+      | [] => (acc_w.reverse, acc_g)
+      | [w] => ((w :: acc_w).reverse, acc_g)
+      | w1 :: w2 :: rest =>
+        let intermediate := Wire.mk s!"or_t_{output.name}_l{lvl}_{acc_w.length}"
+        let gate := Gate.mkOR w1 w2 intermediate
+        go rest (intermediate :: acc_w) (acc_g ++ [gate])
+    go ws [] []
+  -- Iterate levels with fuel to guarantee termination
+  let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat)
+      : List Gate :=
+    match fuel with
+    | 0 => acc  -- Should never hit for reasonable inputs
+    | fuel' + 1 =>
+      match ws with
+      | [] => acc
+      | [w] => acc ++ [Gate.mkBUF w output]
+      | _ =>
+        let (next_ws, next_gates) := buildLevel ws lvl
+        reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
+  reduceTree wires 0 [] (wires.length + 1)
 
 -- Helper: Build N-bit comparator using Subtractor
 def mkComparatorN (n : Nat) : Circuit :=
@@ -142,6 +158,7 @@ def mkComparatorN (n : Nat) : Circuit :=
       { name := "b_inv", width := n, wires := b_inv },
       { name := "c", width := n - 1, wires := internal_carries }
     ]
+    keepHierarchy := Nat.ble 6 n  -- Preserve hierarchy for 6-bit and 32-bit comparators
   }
 
 -- Specific widths

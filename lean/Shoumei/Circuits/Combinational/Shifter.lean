@@ -179,7 +179,7 @@ def mkShifter32 : Circuit :=
     outputs := result
     gates := sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
     instances := []
-    -- V2 codegen annotations
+    keepHierarchy := true
     signalGroups := [
       { name := "in", width := 32, wires := input },
       { name := "shamt", width := 5, wires := shamt },

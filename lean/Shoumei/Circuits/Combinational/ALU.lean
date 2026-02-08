@@ -190,6 +190,7 @@ def mkALU32 : Circuit :=
       { name := "op",     width := 4,  wires := opcode },
       { name := "result", width := 32, wires := result }
     ]
+    keepHierarchy := true
   }
 
 end Shoumei.Circuits.Combinational
