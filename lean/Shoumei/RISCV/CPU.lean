@@ -934,7 +934,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cdb_valid := Wire.mk "cdb_valid"
   let cdb_tag := makeIndexedWires "cdb_tag" 6
   let cdb_data := makeIndexedWires "cdb_data" 32
-
+  -- Pre-register CDB signals (before pipeline register)
+  let cdb_pre_valid := Wire.mk "cdb_pre_valid"
+  let cdb_pre_tag := makeIndexedWires "cdb_pre_tag" 6
+  let cdb_pre_data := makeIndexedWires "cdb_pre_data" 32
   -- Mask CDB valid for PhysRegFile writes: don't write to p0 (x0's home register)
   let cdb_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_tag_nz_t{i}")
   let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
@@ -1035,14 +1038,23 @@ def mkCPU (config : CPUConfig) : Circuit :=
     busy_src1_ready busy_src2_ready busy_src2_ready_reg
 
   -- === CDB FORWARDING ===
+  -- Two forwarding paths: registered CDB (cdb_*) and pre-register CDB (cdb_pre_*).
+  -- Pre-register has priority (newest result). Both set issue_src_ready.
   let cdb_match_src1 := Wire.mk "cdb_match_src1"
   let cdb_match_src2 := Wire.mk "cdb_match_src2"
   let cdb_fwd_src1 := Wire.mk "cdb_fwd_src1"
   let cdb_fwd_src2 := Wire.mk "cdb_fwd_src2"
+  let cdb_pre_match_src1 := Wire.mk "cdb_pre_match_src1"
+  let cdb_pre_match_src2 := Wire.mk "cdb_pre_match_src2"
+  let cdb_pre_fwd_src1 := Wire.mk "cdb_pre_fwd_src1"
+  let cdb_pre_fwd_src2 := Wire.mk "cdb_pre_fwd_src2"
+  let any_fwd_src1 := Wire.mk "any_fwd_src1"
+  let any_fwd_src2 := Wire.mk "any_fwd_src2"
   let issue_src1_ready := Wire.mk "issue_src1_ready"
   let issue_src2_ready := Wire.mk "issue_src2_ready"
   let issue_src2_ready_reg := Wire.mk "issue_src2_ready_reg"
 
+  -- Registered CDB comparators
   let cdb_fwd_cmp_src1_inst : CircuitInstance := {
     moduleName := "Comparator6"
     instName := "u_cdb_fwd_cmp_src1"
@@ -1061,24 +1073,52 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
+  -- Pre-register CDB comparators (same-cycle forwarding bypass)
+  let cdb_pre_fwd_cmp_src1_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_pre_fwd_cmp_src1"
+    portMap := [("one", one), ("eq", cdb_pre_match_src1),
+                ("lt", Wire.mk "cdb_pre_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_pre_fwd_cmp_src1_ltu"),
+                ("gt", Wire.mk "cdb_pre_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_pre_fwd_cmp_src1_gtu")] ++
+               (cdb_pre_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  let cdb_pre_fwd_cmp_src2_inst : CircuitInstance := {
+    moduleName := "Comparator6"
+    instName := "u_cdb_pre_fwd_cmp_src2"
+    portMap := [("one", one), ("eq", cdb_pre_match_src2),
+                ("lt", Wire.mk "cdb_pre_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_pre_fwd_cmp_src2_ltu"),
+                ("gt", Wire.mk "cdb_pre_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_pre_fwd_cmp_src2_gtu")] ++
+               (cdb_pre_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
 
   let cdb_fwd_gates := [
     Gate.mkAND cdb_valid cdb_match_src1 cdb_fwd_src1,
     Gate.mkAND cdb_valid cdb_match_src2 cdb_fwd_src2,
-    Gate.mkOR busy_src1_ready cdb_fwd_src1 issue_src1_ready,
-    Gate.mkOR busy_src2_ready cdb_fwd_src2 issue_src2_ready,
-    Gate.mkOR busy_src2_ready_reg cdb_fwd_src2 issue_src2_ready_reg
+    Gate.mkAND cdb_pre_valid cdb_pre_match_src1 cdb_pre_fwd_src1,
+    Gate.mkAND cdb_pre_valid cdb_pre_match_src2 cdb_pre_fwd_src2,
+    Gate.mkOR cdb_fwd_src1 cdb_pre_fwd_src1 any_fwd_src1,
+    Gate.mkOR cdb_fwd_src2 cdb_pre_fwd_src2 any_fwd_src2,
+    Gate.mkOR busy_src1_ready any_fwd_src1 issue_src1_ready,
+    Gate.mkOR busy_src2_ready any_fwd_src2 issue_src2_ready,
+    Gate.mkOR busy_src2_ready_reg any_fwd_src2 issue_src2_ready_reg
   ]
 
-  -- Forwarded data: use CDB data when forwarding, else PRF data
+  -- Forwarded data: pre-register CDB has priority over registered CDB over PRF
   let fwd_src1_data := makeIndexedWires "fwd_src1_data" 32
   let fwd_src2_data := makeIndexedWires "fwd_src2_data" 32
+  let fwd_src1_data_tmp := makeIndexedWires "fwd_src1_data_tmp" 32
+  let fwd_src2_data_tmp := makeIndexedWires "fwd_src2_data_tmp" 32
   let fwd_src1_data_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs1_data[i]!) (cdb_data[i]!) cdb_fwd_src1 (fwd_src1_data[i]!))
+    [Gate.mkMUX (rs1_data[i]!) (cdb_data[i]!) cdb_fwd_src1 (fwd_src1_data_tmp[i]!),
+     Gate.mkMUX (fwd_src1_data_tmp[i]!) (cdb_pre_data[i]!) cdb_pre_fwd_src1 (fwd_src1_data[i]!)]) |>.flatten
   let fwd_src2_data_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs2_data[i]!) (cdb_data[i]!) cdb_fwd_src2 (fwd_src2_data[i]!))
+    [Gate.mkMUX (rs2_data[i]!) (cdb_data[i]!) cdb_fwd_src2 (fwd_src2_data_tmp[i]!),
+     Gate.mkMUX (fwd_src2_data_tmp[i]!) (cdb_pre_data[i]!) cdb_pre_fwd_src2 (fwd_src2_data[i]!)]) |>.flatten
 
-  let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst]
+  let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst,
+                             cdb_pre_fwd_cmp_src1_inst, cdb_pre_fwd_cmp_src2_inst]
 
   -- === SRC2 MUX ===
   let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
@@ -1917,7 +1957,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cdb_valid_gates := [
     Gate.mkOR replay_wins dmem_wins cdb_valid_tmp,
     Gate.mkOR cdb_valid_tmp lsu_wins cdb_valid_tmp2,
-    Gate.mkOR cdb_valid_tmp2 int_wins cdb_valid
+    Gate.mkOR cdb_valid_tmp2 int_wins cdb_pre_valid
   ]
 
   let cdb_tag_mux_gates := (List.range 6).map (fun i =>
@@ -1925,14 +1965,33 @@ def mkCPU (config : CPUConfig) : Circuit :=
     let m2 := Wire.mk s!"cdb_tag_m2_{i}"
     [Gate.mkMUX merged_tag[i]! lsu_tag[i]! lsu_wins m1,
      Gate.mkMUX m1 dmem_load_tag_reg[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_tag[i]! replay_wins cdb_tag[i]!])
+     Gate.mkMUX m2 replay_tag[i]! replay_wins cdb_pre_tag[i]!])
   let cdb_data_mux_gates := (List.range 32).map (fun i =>
     let m1 := Wire.mk s!"cdb_data_m1_{i}"
     let m2 := Wire.mk s!"cdb_data_m2_{i}"
     [Gate.mkMUX merged_data[i]! lsu_data[i]! lsu_wins m1,
      Gate.mkMUX m1 dmem_resp_data[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_data[i]! replay_wins cdb_data[i]!])
+     Gate.mkMUX m2 replay_data[i]! replay_wins cdb_pre_data[i]!])
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
+
+  -- CDB pipeline register: breaks critical path between execution and broadcast
+  -- Uses DFlipFlop sub-module instances (not flat DFF gates) so they get their own
+  -- always_ff block with plain `reset`, avoiding the pipeline_reset_busy domain.
+  -- CDB pipeline register: breaks critical path between execution and broadcast
+  -- Uses DFlipFlop sub-module instances (not flat DFF gates) so they get their own
+  -- always_ff block with plain `reset`, avoiding the pipeline_reset_busy domain.
+  let cdb_reg_insts : List CircuitInstance :=
+    [{ moduleName := "DFlipFlop", instName := "u_cdb_valid_reg",
+       portMap := [("d", cdb_pre_valid), ("q", cdb_valid),
+                   ("clock", clock), ("reset", reset)] }] ++
+    (List.range 6).map (fun i => {
+       moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_{i}",
+       portMap := [("d", cdb_pre_tag[i]!), ("q", cdb_tag[i]!),
+                   ("clock", clock), ("reset", reset)] }) ++
+    (List.range 32).map (fun i => {
+       moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_{i}",
+       portMap := [("d", cdb_pre_data[i]!), ("q", cdb_data[i]!),
+                   ("clock", clock), ("reset", reset)] })
 
   let cdb_arb_gates := arb_level0_gates ++ arb_level1_gates ++ replay_save_gates ++
     replay_tag_gates ++ replay_data_gates ++
@@ -2031,7 +2090,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   br_pc_rf_decoder_inst, br_pc_rf_mux_inst, br_imm_rf_mux_inst,
                   auipc_adder_inst, br_pc_plus_4_adder_inst,
                   branch_target_adder_inst, jalr_target_adder_inst,
-                  br_cmp_inst]
+                  br_cmp_inst] ++
+                  cdb_reg_insts
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
        { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
