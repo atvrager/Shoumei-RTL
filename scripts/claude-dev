@@ -44,4 +44,4 @@ forward_var LANG
 exec devcontainer exec \
   --workspace-folder "$REPO_ROOT" \
   env "${ENV_ARGS[@]}" \
-  claude "$@"
+  claude --dangerously-skip-permissions "$@"
