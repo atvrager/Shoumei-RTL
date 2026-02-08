@@ -57,14 +57,20 @@ def findInternalWires (c : Circuit) : List Wire :=
 def findSignalWires (c : Circuit) : List Wire :=
   let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
   let dffOutputs := c.gates.filter (fun g => g.gateType.isDFF) |>.map (fun g => g.output)
-  -- DFF inputs (d) also need to be signals since they're read by seq_logic SC_CTHREAD
+  -- DFF inputs (d, reset) also need to be signals since they're read by seq_logic SC_CTHREAD
   let dffInputs := c.gates.filterMap (fun g =>
     if g.gateType.isDFF then
       match g.inputs with
       | [d, _, _] => some d
       | _ => none
     else none)
-  (instanceWires ++ dffOutputs ++ dffInputs).eraseDups
+  let dffResets := c.gates.filterMap (fun g =>
+    if g.gateType.isDFF then
+      match g.inputs with
+      | [_, _, reset] => some reset
+      | _ => none
+    else none)
+  (instanceWires ++ dffOutputs ++ dffInputs ++ dffResets).eraseDups
 
 -- Build a precomputed list of wire names that must be sc_signal.
 -- Includes: I/O ports, instance-connected wires, DFF outputs, DFF inputs.

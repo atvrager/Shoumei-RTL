@@ -849,8 +849,20 @@ def mkCPU_RV32I : Circuit :=
   -- before the flush kills the RS outputs that feed the CDB arbiter.
   let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
   let pipeline_flush_comb := Wire.mk "pipeline_flush_comb"
-  let pipeline_flush := Wire.mk "pipeline_flush"  -- = DFF(reset OR redirect_valid_reg)
-  let pipeline_reset := Wire.mk "pipeline_reset"  -- = reset OR pipeline_flush (for RS/ROB/LSU)
+  let pipeline_flush := Wire.mk "pipeline_flush"  -- for dispatch gating (low fanout)
+  -- Per-subsystem flush registers to limit reset fanout after synthesis flattening
+  let flush_rs_int := Wire.mk "flush_rs_int"
+  let flush_rs_mem := Wire.mk "flush_rs_mem"
+  let flush_rs_br := Wire.mk "flush_rs_br"
+  let flush_rob := Wire.mk "flush_rob"
+  let flush_busy := Wire.mk "flush_busy"
+  let flush_misc := Wire.mk "flush_misc"
+  let pipeline_reset_rs_int := Wire.mk "pipeline_reset_rs_int"
+  let pipeline_reset_rs_mem := Wire.mk "pipeline_reset_rs_mem"
+  let pipeline_reset_rs_br := Wire.mk "pipeline_reset_rs_br"
+  let pipeline_reset_rob := Wire.mk "pipeline_reset_rob"
+  let pipeline_reset_busy := Wire.mk "pipeline_reset_busy"
+  let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
   let fetch_stall := Wire.mk "fetch_stall"
   let branch_redirect_target_reg := makeIndexedWires "branch_redirect_target_reg" 32
   let redirect_valid_dff_inst : CircuitInstance := {
@@ -869,12 +881,21 @@ def mkCPU_RV32I : Circuit :=
   -- Double-registered flush: pipeline_flush_comb → DFF → pipeline_flush
   -- Delays RS/ROB flush by 1 cycle after redirect_valid_reg, ensuring the
   -- branch's CDB broadcast completes before async reset kills RS outputs.
-  let flush_dff_inst : CircuitInstance := {
+  -- Per-subsystem flush DFFs to limit reset fanout after synthesis flattening
+  let flush_dff_dispatch : CircuitInstance := {
     moduleName := "DFlipFlop"
-    instName := "u_flush_dff"
+    instName := "u_flush_dff_dispatch"
     portMap := [("d", pipeline_flush_comb), ("q", pipeline_flush),
                 ("clock", clock), ("reset", reset)]
   }
+  let flush_dff_insts : List CircuitInstance := [
+    "rs_int", "rs_mem", "rs_br", "rob", "busy", "misc"
+  ].map (fun tag => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_flush_dff_{tag}"
+    portMap := [("d", pipeline_flush_comb), ("q", Wire.mk s!"flush_{tag}"),
+                ("clock", clock), ("reset", reset)]
+  })
 
   let fetch_inst : CircuitInstance := {
     moduleName := "FetchStage"
@@ -989,8 +1010,14 @@ def mkCPU_RV32I : Circuit :=
   -- pipeline_reset = reset OR pipeline_flush (for RS/ROB/LSU async reset)
   -- Stall fetch during flush to avoid dropping the first instruction after redirect
   let flush_gate := [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
-                     Gate.mkOR reset pipeline_flush pipeline_reset,
-                     Gate.mkOR global_stall pipeline_flush fetch_stall]
+                     Gate.mkOR global_stall pipeline_flush fetch_stall,
+                     -- Per-subsystem reset OR gates
+                     Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
+                     Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
+                     Gate.mkOR reset flush_rs_br pipeline_reset_rs_br,
+                     Gate.mkOR reset flush_rob pipeline_reset_rob,
+                     Gate.mkOR reset flush_busy pipeline_reset_busy,
+                     Gate.mkOR reset flush_misc pipeline_reset_misc]
 
   -- Dispatch gating uses both combinational redirect (cycle N) and registered (cycle N+1)
   -- Suppress dispatch during redirect (cycles N, N+1) and flush (cycle N+2)
@@ -1018,7 +1045,7 @@ def mkCPU_RV32I : Circuit :=
   let busy_src2_ready := Wire.mk "busy_src2_ready"
   let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
   let (busy_gates, busy_instances) := mkBusyBitTable
-    clock pipeline_reset zero one
+    clock pipeline_reset_busy zero one
     rd_phys busy_set_en
     cdb_tag cdb_valid
     rs1_phys rs2_phys
@@ -1092,7 +1119,7 @@ def mkCPU_RV32I : Circuit :=
   let rs_int_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_integer"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_int),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_int_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -1125,7 +1152,7 @@ def mkCPU_RV32I : Circuit :=
   let rs_mem_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_memory"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready_reg),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -1287,7 +1314,7 @@ def mkCPU_RV32I : Circuit :=
   let rs_branch_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_branch"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_br),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_branch_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -1687,7 +1714,7 @@ def mkCPU_RV32I : Circuit :=
     moduleName := "ROB16"
     instName := "u_rob"
     portMap :=
-      [("clock", clock), ("reset", pipeline_reset),
+      [("clock", clock), ("reset", pipeline_reset_rob),
        ("zero", zero), ("one", one),
        ("alloc_en", rename_valid)] ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
@@ -1833,7 +1860,7 @@ def mkCPU_RV32I : Circuit :=
   -- DFFs to capture load tag when load_no_fwd fires
   let dmem_tag_capture_gates := (List.range 6).map (fun i =>
     [Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!,
-     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset dmem_load_tag_reg[i]!]) |>.flatten
+     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset_misc dmem_load_tag_reg[i]!]) |>.flatten
 
   -- CDB ARBITRATION: Priority: Replay > dmem_resp > LSU_fwd/deq > Integer/Branch
   let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
@@ -1965,7 +1992,7 @@ def mkCPU_RV32I : Circuit :=
              load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst,
-                  redirect_valid_dff_inst, flush_dff_inst] ++ redirect_target_dff_insts ++
+                  redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++ redirect_target_dff_insts ++
                   busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst,
@@ -2095,8 +2122,24 @@ def mkCPU_RV32IM : Circuit :=
   -- Branch redirect: same approach as RV32I. Double-registered flush.
   let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
   let pipeline_flush_comb := Wire.mk "pipeline_flush_comb"
-  let pipeline_flush := Wire.mk "pipeline_flush"
-  let pipeline_reset := Wire.mk "pipeline_reset"
+  let pipeline_flush := Wire.mk "pipeline_flush"  -- for dispatch gating (low fanout)
+  -- Per-subsystem flush registers to limit reset fanout after synthesis flattening.
+  -- Each subsystem gets its own DFF(pipeline_flush_comb) → OR(reset, flush_X) chain,
+  -- so the async reset tree fans out to only one submodule's internal DFFs.
+  let flush_rs_int := Wire.mk "flush_rs_int"
+  let flush_rs_mem := Wire.mk "flush_rs_mem"
+  let flush_rs_br := Wire.mk "flush_rs_br"
+  let flush_rs_muldiv := Wire.mk "flush_rs_muldiv"
+  let flush_rob := Wire.mk "flush_rob"
+  let flush_busy := Wire.mk "flush_busy"
+  let flush_misc := Wire.mk "flush_misc"
+  let pipeline_reset_rs_int := Wire.mk "pipeline_reset_rs_int"
+  let pipeline_reset_rs_mem := Wire.mk "pipeline_reset_rs_mem"
+  let pipeline_reset_rs_br := Wire.mk "pipeline_reset_rs_br"
+  let pipeline_reset_rs_muldiv := Wire.mk "pipeline_reset_rs_muldiv"
+  let pipeline_reset_rob := Wire.mk "pipeline_reset_rob"
+  let pipeline_reset_busy := Wire.mk "pipeline_reset_busy"
+  let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
   let fetch_stall := Wire.mk "fetch_stall"
   let branch_redirect_target_reg := makeIndexedWires "branch_redirect_target_reg" 32
   let redirect_valid_dff_inst : CircuitInstance := {
@@ -2112,12 +2155,22 @@ def mkCPU_RV32IM : Circuit :=
                 ("clock", clock), ("reset", reset)]
   })
 
-  let flush_dff_inst : CircuitInstance := {
+  -- Per-subsystem flush DFFs: each captures pipeline_flush_comb independently
+  -- so post-flatten reset fanout is bounded per subsystem
+  let flush_dff_dispatch : CircuitInstance := {
     moduleName := "DFlipFlop"
-    instName := "u_flush_dff"
+    instName := "u_flush_dff_dispatch"
     portMap := [("d", pipeline_flush_comb), ("q", pipeline_flush),
                 ("clock", clock), ("reset", reset)]
   }
+  let flush_dff_insts : List CircuitInstance := [
+    "rs_int", "rs_mem", "rs_br", "rs_muldiv", "rob", "busy", "misc"
+  ].map (fun tag => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_flush_dff_{tag}"
+    portMap := [("d", pipeline_flush_comb), ("q", Wire.mk s!"flush_{tag}"),
+                ("clock", clock), ("reset", reset)]
+  })
 
   let fetch_inst : CircuitInstance := {
     moduleName := "FetchStage"
@@ -2232,12 +2285,19 @@ def mkCPU_RV32IM : Circuit :=
   let redirect_or_flush := Wire.mk "redirect_or_flush"
   let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
 
-  -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFF)
-  -- pipeline_flush = DFF(pipeline_flush_comb) - delayed 2 cycles from branch fire
-  -- pipeline_reset = reset OR pipeline_flush (for RS/ROB/LSU async reset)
+  -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFFs)
+  -- Per-subsystem: flush_X = DFF(pipeline_flush_comb), pipeline_reset_X = reset | flush_X
+  -- pipeline_flush (dispatch copy) used only for fetch stall and dispatch gating (low fanout)
   let flush_gate := [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
-                     Gate.mkOR reset pipeline_flush pipeline_reset,
-                     Gate.mkOR global_stall pipeline_flush fetch_stall]
+                     Gate.mkOR global_stall pipeline_flush fetch_stall,
+                     -- Per-subsystem reset OR gates (each driven by its own flush DFF)
+                     Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
+                     Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
+                     Gate.mkOR reset flush_rs_br pipeline_reset_rs_br,
+                     Gate.mkOR reset flush_rs_muldiv pipeline_reset_rs_muldiv,
+                     Gate.mkOR reset flush_rob pipeline_reset_rob,
+                     Gate.mkOR reset flush_busy pipeline_reset_busy,
+                     Gate.mkOR reset flush_misc pipeline_reset_misc]
 
   let dispatch_gates := [
     Gate.mkNOT global_stall not_stall,
@@ -2264,7 +2324,7 @@ def mkCPU_RV32IM : Circuit :=
   let busy_src2_ready := Wire.mk "busy_src2_ready"
   let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
   let (busy_gates, busy_instances) := mkBusyBitTable
-    clock pipeline_reset zero one
+    clock pipeline_reset_busy zero one
     rd_phys busy_set_en
     cdb_tag cdb_valid
     rs1_phys rs2_phys
@@ -2335,7 +2395,7 @@ def mkCPU_RV32IM : Circuit :=
   let rs_int_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_integer"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_int),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_int_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -2369,7 +2429,7 @@ def mkCPU_RV32IM : Circuit :=
   let rs_mem_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_memory"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready_reg),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -2531,7 +2591,7 @@ def mkCPU_RV32IM : Circuit :=
   let rs_branch_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_branch"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_br),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_branch_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -2639,7 +2699,7 @@ def mkCPU_RV32IM : Circuit :=
   let rs_muldiv_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_muldiv"
-    portMap := [("clock", clock), ("reset", pipeline_reset),
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_muldiv),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_muldiv_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid), ("dispatch_en", one),
@@ -2734,7 +2794,7 @@ def mkCPU_RV32IM : Circuit :=
        (s!"op_2", rs_muldiv_dispatch_opcode[2]!)] ++
       (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", rs_muldiv_dispatch_valid),
-       ("clock", clock), ("reset", pipeline_reset),
+       ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
        ("zero", zero), ("one", one)] ++
       (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
       (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
@@ -2979,7 +3039,7 @@ def mkCPU_RV32IM : Circuit :=
     moduleName := "ROB16"
     instName := "u_rob"
     portMap :=
-      [("clock", clock), ("reset", pipeline_reset),
+      [("clock", clock), ("reset", pipeline_reset_rob),
        ("zero", zero), ("one", one),
        ("alloc_en", rename_valid)] ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
@@ -3128,7 +3188,7 @@ def mkCPU_RV32IM : Circuit :=
 
   let dmem_tag_capture_gates := (List.range 6).map (fun i =>
     [Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!,
-     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset dmem_load_tag_reg[i]!]) |>.flatten
+     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset_misc dmem_load_tag_reg[i]!]) |>.flatten
 
   -- Level 2: CDB Arbitration (Priority: Replay > dmem_resp > LSU > Int/MulDiv)
   let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
@@ -3267,7 +3327,8 @@ def mkCPU_RV32IM : Circuit :=
              load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
              commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
     instances := [fetch_inst, decoder_inst, rename_inst,
-                  redirect_valid_dff_inst, flush_dff_inst] ++ redirect_target_dff_insts ++
+                  redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++
+                  redirect_target_dff_insts ++
                   busy_instances ++
                   cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
