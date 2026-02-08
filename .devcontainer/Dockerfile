@@ -19,7 +19,7 @@ ARG JAVA_VERSION=11
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # Core build tools
-        curl ca-certificates git git-lfs make cmake pkg-config \
+        curl ca-certificates git git-lfs openssh-client make cmake pkg-config \
         gcc g++ python3 python3-pip xz-utils gzip unzip \
         # Linters (lint CI job)
         shellcheck cppcheck \
