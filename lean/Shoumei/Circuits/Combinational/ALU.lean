@@ -133,8 +133,8 @@ def mkALU32 : Circuit :=
              ++ arith_level1_gates ++ arith_level2_gates ++ arith_level3_gates
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
     instances := [
-      -- RippleCarryAdder32 for ADD operation
-      { moduleName := "RippleCarryAdder32"
+      -- KoggeStoneAdder32 for ADD operation
+      { moduleName := "KoggeStoneAdder32"
         instName := "u_add"
         portMap := (List.range 32 |>.flatMap (fun i =>
           [ (s!"a{i}", a[i]!)

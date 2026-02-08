@@ -89,6 +89,7 @@ def allCircuits : List Circuit := [
   mkRippleCarryAdder4,
   mkRippleCarryAdder8,
   mkRippleCarryAdder32,
+  mkKoggeStoneAdder32,
   mkSubtractor4,
   mkSubtractor8,
   mkSubtractor32,
@@ -218,8 +219,9 @@ def main : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println s!"✓ Generated {count} circuits (all 3 formats)"
+  IO.println s!"✓ Generated {count} circuits (all formats)"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  SystemC: output/systemc/"
+  IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

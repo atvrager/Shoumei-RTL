@@ -430,7 +430,7 @@ $PLUGIN_CMD
 # Read and prepare LEAN design (gold reference)
 $LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; flatten
+proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gold
 
 # Stash gold design
@@ -442,7 +442,7 @@ design -reset
 # Read and prepare Chisel design (gate implementation)
 $CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; flatten
+proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gate
 
 # Stash gate design
@@ -474,7 +474,7 @@ $PLUGIN_CMD
 # Read and prepare LEAN design (gold reference)
 $LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; flatten
+proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gold
 
 # Stash gold design
@@ -486,7 +486,7 @@ design -reset
 # Read and prepare Chisel design (gate implementation)
 $CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; flatten
+proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gate
 
 # Stash gate design
@@ -519,7 +519,7 @@ $PLUGIN_CMD
 # Read and prepare LEAN design (gold reference)
 $LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; opt; memory; opt; flatten
+proc; opt; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gold
 
 # Stash gold design
@@ -531,7 +531,7 @@ design -reset
 # Read and prepare Chisel design (gate implementation)
 $CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; opt; memory; opt; flatten
+proc; opt; memory; opt; setattr -mod -unset keep_hierarchy; flatten
 rename $MODULE_NAME gate
 
 # Stash gate design

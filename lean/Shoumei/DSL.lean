@@ -160,6 +160,7 @@ structure Circuit where
   inputBundles  : List InterfaceBundle  := []
   outputBundles : List InterfaceBundle  := []
   rams          : List RAMPrimitive     := []
+  keepHierarchy : Bool                  := false
   deriving Repr
 
 namespace Circuit

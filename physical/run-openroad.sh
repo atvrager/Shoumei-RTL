@@ -76,10 +76,13 @@ if [ -z "$DESIGN_NAME" ]; then
     exit 1
 fi
 
-# Check main design file exists (dependencies will be handled by wildcard in Make)
+# Check main design file exists (check both physical/ and output/sv-from-lean/)
 MAIN_VERILOG="$PROJECT_ROOT/output/sv-from-lean/${DESIGN_NAME}.sv"
 if [ ! -f "$MAIN_VERILOG" ]; then
-    echo -e "${RED}✗ Main Verilog file not found: $MAIN_VERILOG${NC}"
+    MAIN_VERILOG="$PROJECT_ROOT/physical/${DESIGN_NAME}.sv"
+fi
+if [ ! -f "$MAIN_VERILOG" ]; then
+    echo -e "${RED}✗ Main Verilog file not found: ${DESIGN_NAME}.sv${NC}"
     echo "Run: lake exe generate_all"
     exit 1
 fi
