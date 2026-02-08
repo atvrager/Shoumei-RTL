@@ -164,6 +164,113 @@ def mkComparatorN (n : Nat) : Circuit :=
 -- Specific widths
 def mkComparator4 : Circuit := mkComparatorN 4
 def mkComparator8 : Circuit := mkComparatorN 8
-def mkComparator32 : Circuit := mkComparatorN 32
+
+-- 32-bit comparator using Subtractor32 instance (KSA-based, O(log n) carry propagation)
+-- instead of inlined ripple-carry chain. Same interface: a[31:0], b[31:0], one → eq, lt, ltu, gt, gtu.
+def mkComparator32 : Circuit :=
+  let n := 32
+  let a := makeIndexedWires "a" n
+  let b := makeIndexedWires "b" n
+
+  -- Outputs
+  let eq := Wire.mk "eq"
+  let lt := Wire.mk "lt"
+  let ltu := Wire.mk "ltu"
+  let gt := Wire.mk "gt"
+  let gtu := Wire.mk "gtu"
+
+  -- Subtractor outputs
+  let diff := makeIndexedWires "diff" n
+  let borrow := Wire.mk "borrow"
+  let one := Wire.mk "one"
+
+  -- Subtractor32 instance (KSA-based internally)
+  let sub_inst : CircuitInstance := {
+    moduleName := "Subtractor32"
+    instName := "u_sub"
+    portMap :=
+      (List.range n |>.flatMap (fun i =>
+        [ (s!"a{i}", a[i]!)
+        , (s!"b{i}", b[i]!)
+        , (s!"diff{i}", diff[i]!)
+        ]
+      )) ++ [("one", one), ("borrow", borrow)]
+  }
+
+  -- Equality detection: diff == 0 means all bits are 0
+  let any_diff := Wire.mk "any_diff"
+  let or_tree_gates := mkOrTree diff any_diff
+  let eq_raw := Wire.mk "eq_raw"
+  let eq_gate := Gate.mkNOT any_diff eq_raw
+  let eq_buf := Gate.mkBUF eq_raw eq
+
+  -- Sign/MSB analysis shared by signed and unsigned comparisons
+  let a_sign := a[n - 1]!
+  let b_sign := b[n - 1]!
+  let diff_sign := diff[n - 1]!
+
+  let b_sign_inv := Wire.mk "b_sign_inv"
+  let a_sign_inv := Wire.mk "a_sign_inv"
+  let signs_xor := Wire.mk "signs_xor"
+  let signs_same := Wire.mk "signs_same"
+  let same_sign_cmp := Wire.mk "same_sign_cmp"
+  let sign_common_gates := [
+    Gate.mkNOT b_sign b_sign_inv,
+    Gate.mkNOT a_sign a_sign_inv,
+    Gate.mkXOR a_sign b_sign signs_xor,
+    Gate.mkNOT signs_xor signs_same,
+    Gate.mkAND signs_same diff_sign same_sign_cmp
+  ]
+
+  -- Unsigned less-than: ltu = (~a[31] & b[31]) | (signs_same & diff[31])
+  -- If MSBs differ: b has MSB set means b is larger unsigned
+  -- If MSBs same: sign of difference tells us
+  let ltu_raw_msb := Wire.mk "ltu_raw_msb"
+  let ltu_raw := Wire.mk "ltu_raw"
+  let ltu_gates := [
+    Gate.mkAND a_sign_inv b_sign ltu_raw_msb,
+    Gate.mkOR ltu_raw_msb same_sign_cmp ltu_raw
+  ]
+  let ltu_buf := Gate.mkBUF ltu_raw ltu
+
+  -- Signed less-than: lt = (a[31] & ~b[31]) | (signs_same & diff[31])
+  let a_neg_b_pos := Wire.mk "a_neg_b_pos"  -- a[31] & ~b[31]
+  let lt_raw := Wire.mk "lt_raw"
+  let lt_gates := [
+    Gate.mkAND a_sign b_sign_inv a_neg_b_pos,
+    Gate.mkOR a_neg_b_pos same_sign_cmp lt_raw
+  ]
+  let lt_buf := Gate.mkBUF lt_raw lt
+
+  -- Greater than (unsigned): ~eq & ~ltu
+  let eq_inv := Wire.mk "eq_inv"
+  let ltu_inv := Wire.mk "ltu_inv"
+  let gtu_gates := [
+    Gate.mkNOT eq_raw eq_inv,
+    Gate.mkNOT ltu_raw ltu_inv,
+    Gate.mkAND eq_inv ltu_inv gtu
+  ]
+
+  -- Greater than (signed): ~eq & ~lt
+  let lt_inv := Wire.mk "lt_inv"
+  let gt_gates := [
+    Gate.mkNOT lt_raw lt_inv,
+    Gate.mkAND eq_inv lt_inv gt
+  ]
+
+  { name := "Comparator32"
+    inputs := a ++ b ++ [one]
+    outputs := [eq, lt, ltu, gt, gtu]
+    gates := or_tree_gates ++ [eq_gate, eq_buf]
+             ++ sign_common_gates ++ ltu_gates ++ [ltu_buf]
+             ++ lt_gates ++ [lt_buf] ++ gtu_gates ++ gt_gates
+    instances := [sub_inst]
+    signalGroups := [
+      { name := "a", width := n, wires := a },
+      { name := "b", width := n, wires := b },
+      { name := "diff", width := n, wires := diff }
+    ]
+    keepHierarchy := true
+  }
 
 end Shoumei.Circuits.Combinational

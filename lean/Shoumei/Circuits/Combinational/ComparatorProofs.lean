@@ -27,11 +27,12 @@ theorem comparator8_structure :
   mkComparator8.inputs.length = 17 ∧
   mkComparator8.outputs.length = 5 := by native_decide
 
--- Comparator32 structural properties
+-- Comparator32 structural properties (KSA-based via Subtractor32 instance)
 theorem comparator32_structure :
-  mkComparator32.gates.length = 240 ∧
+  mkComparator32.gates.length = 50 ∧
   mkComparator32.inputs.length = 65 ∧
-  mkComparator32.outputs.length = 5 := by native_decide
+  mkComparator32.outputs.length = 5 ∧
+  mkComparator32.instances.length = 1 := by native_decide
 
 -- TODO: Behavioral proofs
 -- These would prove functional correctness:

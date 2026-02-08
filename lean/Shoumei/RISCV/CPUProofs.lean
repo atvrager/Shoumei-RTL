@@ -12,8 +12,8 @@ open Shoumei.RISCV.CPU
 
 /-! ## RV32I CPU Properties -/
 
-/-- CPU_RV32I has 10 instances (Fetch, Decode, Rename, 3 RS, 2 ExecUnits, ROB, LSU) -/
-theorem cpu_rv32i_instance_count : mkCPU_RV32I.instances.length = 10 := by
+/-- CPU_RV32I instance count (Fetch, Decode, Rename, 3 RS, 2 ExecUnits, ROB, LSU, + submodule instances) -/
+theorem cpu_rv32i_instance_count : mkCPU_RV32I.instances.length = 109 := by
   native_decide
 
 /-- CPU_RV32I has FetchStage instance -/
@@ -31,13 +31,13 @@ theorem cpu_rv32i_name : mkCPU_RV32I.name = "CPU_RV32I" := by
   rfl
 
 /-- CPU_RV32I gate count (dispatch + CDB arb + commit + stall + dmem + output) -/
-theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 119 := by
+theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 2866 := by
   native_decide
 
 /-! ## RV32IM CPU Properties -/
 
-/-- CPU_RV32IM has 12 instances (adds MulDiv RS + MulDiv ExecUnit) -/
-theorem cpu_rv32im_instance_count : mkCPU_RV32IM.instances.length = 12 := by
+/-- CPU_RV32IM instance count (adds MulDiv RS + MulDiv ExecUnit) -/
+theorem cpu_rv32im_instance_count : mkCPU_RV32IM.instances.length = 112 := by
   native_decide
 
 /-- CPU_RV32IM has FetchStage instance -/
@@ -55,7 +55,7 @@ theorem cpu_rv32im_name : mkCPU_RV32IM.name = "CPU_RV32IM" := by
   rfl
 
 /-- CPU_RV32IM gate count (dispatch + arb_level1 + CDB arb + commit + stall + dmem + output) -/
-theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 160 := by
+theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 2901 := by
   native_decide
 
 /-! ## Behavioral Correspondence (Axioms) -/
