@@ -1,0 +1,29 @@
+{
+  "name": "Shoumei-RTL",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "dev",
+  "containerUser": "dev",
+
+  "containerEnv": {
+    "PATH": "/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  },
+
+  "postCreateCommand": "lake build",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "leanprover.lean4",
+        "scalameta.metals",
+        "mshr-h.veriloghdl",
+        "mhutchie.git-graph"
+      ],
+      "settings": {
+        "lean4.lakeEnabled": true
+      }
+    }
+  }
+}
