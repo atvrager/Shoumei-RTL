@@ -65,9 +65,9 @@ def writeCircuitSystemC (c : Circuit) (allCircuits : List Circuit := []) : IO Un
   IO.FS.writeFile cppPath impl
 
 -- Write ASAP7 tech-mapped SystemVerilog for a circuit (only if keepHierarchy)
-def writeCircuitASAP7 (c : Circuit) : IO Unit := do
+def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   if c.keepHierarchy then
-    let sv := ASAP7.toASAP7SystemVerilog c
+    let sv := ASAP7.toASAP7SystemVerilog c allCircuits
     let path := s!"{asap7OutputDir}/{c.name}.sv"
     IO.FS.writeFile path sv
 
@@ -77,7 +77,7 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := d
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits
-  writeCircuitASAP7 c
+  writeCircuitASAP7 c allCircuits
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
 

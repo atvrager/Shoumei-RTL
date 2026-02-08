@@ -25,7 +25,7 @@ import Shoumei.Codegen.SystemVerilog
 namespace Shoumei.Codegen.ASAP7
 
 open Shoumei
-open Shoumei.Codegen.SystemVerilog (mkContext wireRef generatePorts generateInternalSignals Context)
+open Shoumei.Codegen.SystemVerilog (mkContext wireRef generatePorts generateInternalSignals generateInstances generateRegisters Context)
 
 /-- Map a DSL GateType to an ASAP7 cell name. -/
 private def gateToASAP7Cell : GateType → String
@@ -70,8 +70,10 @@ private def generateGateInst (ctx : Context) (c : Circuit) (g : Gate) (idx : Nat
   | GateType.DFF | GateType.DFF_SET =>
       "  // ERROR: DFF in ASAP7 tech-mapped combinational module"
 
-/-- Generate the complete ASAP7 tech-mapped module. -/
-def toASAP7SystemVerilog (c : Circuit) : String :=
+/-- Generate the complete ASAP7 tech-mapped module.
+    Gates are mapped to ASAP7 cells; sub-module instances are emitted verbatim
+    (they will be resolved from their own ASAP7 or generic SV definitions). -/
+def toASAP7SystemVerilog (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let ctx := mkContext c
 
   -- Header
@@ -102,6 +104,12 @@ def toASAP7SystemVerilog (c : Circuit) : String :=
     "  // ASAP7 technology-mapped gates\n" ++
     String.intercalate "\n" (gateInsts.filter (· ≠ ""))
 
+  -- DFF registers (reuse SV codegen register generation for sequential modules)
+  let registers := generateRegisters ctx c
+
+  -- Sub-module instances (reuse SV codegen instance generation)
+  let instances := generateInstances ctx c allCircuits
+
   let footer := "endmodule"
 
   String.intercalate "\n" [
@@ -110,6 +118,8 @@ def toASAP7SystemVerilog (c : Circuit) : String :=
     "",
     if internalSignals.isEmpty then "" else internalSignals ++ "\n",
     if gateSection.isEmpty then "" else gateSection ++ "\n",
+    if registers.isEmpty then "" else registers ++ "\n",
+    if instances.isEmpty then "" else instances ++ "\n",
     footer
   ]
 
