@@ -69,6 +69,9 @@ RUN mkdir -p /home/dev/.local/riscv32-elf \
 # ── uv (Python package manager) ────────────────────────────────────
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# ── Claude Code (native installer) ───────────────────────────────
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
 # ── PATH ────────────────────────────────────────────────────────────
 # Matches the Makefile's PATH and bootstrap.py's layout.
 ENV PATH="/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/bin:${PATH}"
