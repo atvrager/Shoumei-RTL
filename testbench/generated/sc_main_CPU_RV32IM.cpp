@@ -1,5 +1,5 @@
 //==============================================================================
-// sc_main_CPU_RV32IM.cpp - Auto-generated SystemC testbench
+// sc_main_CPU_RV32IM.cpp - Auto-generated SystemC testbench (thin)
 // DO NOT EDIT - regenerate with: lake exe generate_all
 //==============================================================================
 
@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "CPU_RV32IM.h"
+#include "sc_setup_CPU_RV32IM.h"
 #include "elf_loader.h"
 
 static const uint32_t MEM_SIZE_WORDS = 16384;
@@ -110,8 +110,6 @@ uint32_t get_dmem_req_data(sc_signal<bool>* sigs[]) {
 
 //------------------------------------------------------------------------------
 // ImemModel: Combinational instruction memory
-// Equivalent to SV: assign imem_resp_data = mem[fetch_pc >> 2];
-// SC_METHOD sensitive to fetch_pc bits ensures delta-cycle feedback works.
 //------------------------------------------------------------------------------
 SC_MODULE(ImemModel) {
     sc_in<bool> fetch_pc_0;
@@ -225,8 +223,6 @@ SC_MODULE(ImemModel) {
 
 //------------------------------------------------------------------------------
 // DmemModel: Data memory with 1-cycle read latency (manually clocked)
-// NOT an SC_MODULE - called explicitly from the simulation loop to avoid
-// timing issues with SC_CTHREAD firing before CPU eval.
 //------------------------------------------------------------------------------
 struct DmemModel {
     sc_signal<bool>& dmem_req_valid_sig;
@@ -254,7 +250,6 @@ struct DmemModel {
     { dmem_req_ready_sig.write(true); }
 
     void tick() {
-        // Respond to pending load from previous cycle
         if (pending) {
             dmem_resp_valid_sig.write(true);
             for (int i = 0; i < 32; i++) dmem_resp_data_sigs[i]->write((read_data >> i) & 1);
@@ -264,7 +259,6 @@ struct DmemModel {
             for (int i = 0; i < 32; i++) dmem_resp_data_sigs[i]->write(false);
         }
 
-        // Handle new request
         if (dmem_req_valid_sig.read()) {
             uint32_t addr = get_dmem_req_addr(dmem_req_addr_sigs);
             if (dmem_req_we_sig.read()) {
@@ -285,7 +279,6 @@ struct DmemModel {
 };
 
 int sc_main(int argc, char* argv[]) {
-    // Suppress W571 (no activity for sc_start) — expected with manual eval
     sc_report_handler::set_actions(SC_ID_NO_SC_START_ACTIVITY_, SC_DO_NOTHING);
 
     const char* elf_path = nullptr;
@@ -483,179 +476,12 @@ int sc_main(int argc, char* argv[]) {
     sc_signal<bool>* dmem_req_addr_sigs[] = {&dmem_req_addr_0_sig, &dmem_req_addr_1_sig, &dmem_req_addr_2_sig, &dmem_req_addr_3_sig, &dmem_req_addr_4_sig, &dmem_req_addr_5_sig, &dmem_req_addr_6_sig, &dmem_req_addr_7_sig, &dmem_req_addr_8_sig, &dmem_req_addr_9_sig, &dmem_req_addr_10_sig, &dmem_req_addr_11_sig, &dmem_req_addr_12_sig, &dmem_req_addr_13_sig, &dmem_req_addr_14_sig, &dmem_req_addr_15_sig, &dmem_req_addr_16_sig, &dmem_req_addr_17_sig, &dmem_req_addr_18_sig, &dmem_req_addr_19_sig, &dmem_req_addr_20_sig, &dmem_req_addr_21_sig, &dmem_req_addr_22_sig, &dmem_req_addr_23_sig, &dmem_req_addr_24_sig, &dmem_req_addr_25_sig, &dmem_req_addr_26_sig, &dmem_req_addr_27_sig, &dmem_req_addr_28_sig, &dmem_req_addr_29_sig, &dmem_req_addr_30_sig, &dmem_req_addr_31_sig};
     sc_signal<bool>* dmem_req_data_sigs[] = {&dmem_req_data_0_sig, &dmem_req_data_1_sig, &dmem_req_data_2_sig, &dmem_req_data_3_sig, &dmem_req_data_4_sig, &dmem_req_data_5_sig, &dmem_req_data_6_sig, &dmem_req_data_7_sig, &dmem_req_data_8_sig, &dmem_req_data_9_sig, &dmem_req_data_10_sig, &dmem_req_data_11_sig, &dmem_req_data_12_sig, &dmem_req_data_13_sig, &dmem_req_data_14_sig, &dmem_req_data_15_sig, &dmem_req_data_16_sig, &dmem_req_data_17_sig, &dmem_req_data_18_sig, &dmem_req_data_19_sig, &dmem_req_data_20_sig, &dmem_req_data_21_sig, &dmem_req_data_22_sig, &dmem_req_data_23_sig, &dmem_req_data_24_sig, &dmem_req_data_25_sig, &dmem_req_data_26_sig, &dmem_req_data_27_sig, &dmem_req_data_28_sig, &dmem_req_data_29_sig, &dmem_req_data_30_sig, &dmem_req_data_31_sig};
 
-    // Instantiate CPU (heap-allocated to avoid stack overflow)
-    auto* u_cpu = new CPU_RV32IM("u_cpu");
-    u_cpu->clock(clk);
-    u_cpu->reset(reset_sig);
-    u_cpu->dmem_req_ready(dmem_req_ready_sig);
-    u_cpu->dmem_resp_valid(dmem_resp_valid_sig);
-    u_cpu->fetch_stalled(fetch_stalled_sig);
-    u_cpu->global_stall_out(global_stall_out_sig);
-    u_cpu->dmem_req_valid(dmem_req_valid_sig);
-    u_cpu->dmem_req_we(dmem_req_we_sig);
-    u_cpu->rob_empty(rob_empty_sig);
-    u_cpu->zero(zero_sig);
-    u_cpu->one(one_sig);
-    u_cpu->imem_resp_data_0(imem_resp_data_0_sig);
-    u_cpu->imem_resp_data_1(imem_resp_data_1_sig);
-    u_cpu->imem_resp_data_2(imem_resp_data_2_sig);
-    u_cpu->imem_resp_data_3(imem_resp_data_3_sig);
-    u_cpu->imem_resp_data_4(imem_resp_data_4_sig);
-    u_cpu->imem_resp_data_5(imem_resp_data_5_sig);
-    u_cpu->imem_resp_data_6(imem_resp_data_6_sig);
-    u_cpu->imem_resp_data_7(imem_resp_data_7_sig);
-    u_cpu->imem_resp_data_8(imem_resp_data_8_sig);
-    u_cpu->imem_resp_data_9(imem_resp_data_9_sig);
-    u_cpu->imem_resp_data_10(imem_resp_data_10_sig);
-    u_cpu->imem_resp_data_11(imem_resp_data_11_sig);
-    u_cpu->imem_resp_data_12(imem_resp_data_12_sig);
-    u_cpu->imem_resp_data_13(imem_resp_data_13_sig);
-    u_cpu->imem_resp_data_14(imem_resp_data_14_sig);
-    u_cpu->imem_resp_data_15(imem_resp_data_15_sig);
-    u_cpu->imem_resp_data_16(imem_resp_data_16_sig);
-    u_cpu->imem_resp_data_17(imem_resp_data_17_sig);
-    u_cpu->imem_resp_data_18(imem_resp_data_18_sig);
-    u_cpu->imem_resp_data_19(imem_resp_data_19_sig);
-    u_cpu->imem_resp_data_20(imem_resp_data_20_sig);
-    u_cpu->imem_resp_data_21(imem_resp_data_21_sig);
-    u_cpu->imem_resp_data_22(imem_resp_data_22_sig);
-    u_cpu->imem_resp_data_23(imem_resp_data_23_sig);
-    u_cpu->imem_resp_data_24(imem_resp_data_24_sig);
-    u_cpu->imem_resp_data_25(imem_resp_data_25_sig);
-    u_cpu->imem_resp_data_26(imem_resp_data_26_sig);
-    u_cpu->imem_resp_data_27(imem_resp_data_27_sig);
-    u_cpu->imem_resp_data_28(imem_resp_data_28_sig);
-    u_cpu->imem_resp_data_29(imem_resp_data_29_sig);
-    u_cpu->imem_resp_data_30(imem_resp_data_30_sig);
-    u_cpu->imem_resp_data_31(imem_resp_data_31_sig);
-    u_cpu->dmem_resp_data_0(dmem_resp_data_0_sig);
-    u_cpu->dmem_resp_data_1(dmem_resp_data_1_sig);
-    u_cpu->dmem_resp_data_2(dmem_resp_data_2_sig);
-    u_cpu->dmem_resp_data_3(dmem_resp_data_3_sig);
-    u_cpu->dmem_resp_data_4(dmem_resp_data_4_sig);
-    u_cpu->dmem_resp_data_5(dmem_resp_data_5_sig);
-    u_cpu->dmem_resp_data_6(dmem_resp_data_6_sig);
-    u_cpu->dmem_resp_data_7(dmem_resp_data_7_sig);
-    u_cpu->dmem_resp_data_8(dmem_resp_data_8_sig);
-    u_cpu->dmem_resp_data_9(dmem_resp_data_9_sig);
-    u_cpu->dmem_resp_data_10(dmem_resp_data_10_sig);
-    u_cpu->dmem_resp_data_11(dmem_resp_data_11_sig);
-    u_cpu->dmem_resp_data_12(dmem_resp_data_12_sig);
-    u_cpu->dmem_resp_data_13(dmem_resp_data_13_sig);
-    u_cpu->dmem_resp_data_14(dmem_resp_data_14_sig);
-    u_cpu->dmem_resp_data_15(dmem_resp_data_15_sig);
-    u_cpu->dmem_resp_data_16(dmem_resp_data_16_sig);
-    u_cpu->dmem_resp_data_17(dmem_resp_data_17_sig);
-    u_cpu->dmem_resp_data_18(dmem_resp_data_18_sig);
-    u_cpu->dmem_resp_data_19(dmem_resp_data_19_sig);
-    u_cpu->dmem_resp_data_20(dmem_resp_data_20_sig);
-    u_cpu->dmem_resp_data_21(dmem_resp_data_21_sig);
-    u_cpu->dmem_resp_data_22(dmem_resp_data_22_sig);
-    u_cpu->dmem_resp_data_23(dmem_resp_data_23_sig);
-    u_cpu->dmem_resp_data_24(dmem_resp_data_24_sig);
-    u_cpu->dmem_resp_data_25(dmem_resp_data_25_sig);
-    u_cpu->dmem_resp_data_26(dmem_resp_data_26_sig);
-    u_cpu->dmem_resp_data_27(dmem_resp_data_27_sig);
-    u_cpu->dmem_resp_data_28(dmem_resp_data_28_sig);
-    u_cpu->dmem_resp_data_29(dmem_resp_data_29_sig);
-    u_cpu->dmem_resp_data_30(dmem_resp_data_30_sig);
-    u_cpu->dmem_resp_data_31(dmem_resp_data_31_sig);
-    u_cpu->fetch_pc_0(fetch_pc_0_sig);
-    u_cpu->fetch_pc_1(fetch_pc_1_sig);
-    u_cpu->fetch_pc_2(fetch_pc_2_sig);
-    u_cpu->fetch_pc_3(fetch_pc_3_sig);
-    u_cpu->fetch_pc_4(fetch_pc_4_sig);
-    u_cpu->fetch_pc_5(fetch_pc_5_sig);
-    u_cpu->fetch_pc_6(fetch_pc_6_sig);
-    u_cpu->fetch_pc_7(fetch_pc_7_sig);
-    u_cpu->fetch_pc_8(fetch_pc_8_sig);
-    u_cpu->fetch_pc_9(fetch_pc_9_sig);
-    u_cpu->fetch_pc_10(fetch_pc_10_sig);
-    u_cpu->fetch_pc_11(fetch_pc_11_sig);
-    u_cpu->fetch_pc_12(fetch_pc_12_sig);
-    u_cpu->fetch_pc_13(fetch_pc_13_sig);
-    u_cpu->fetch_pc_14(fetch_pc_14_sig);
-    u_cpu->fetch_pc_15(fetch_pc_15_sig);
-    u_cpu->fetch_pc_16(fetch_pc_16_sig);
-    u_cpu->fetch_pc_17(fetch_pc_17_sig);
-    u_cpu->fetch_pc_18(fetch_pc_18_sig);
-    u_cpu->fetch_pc_19(fetch_pc_19_sig);
-    u_cpu->fetch_pc_20(fetch_pc_20_sig);
-    u_cpu->fetch_pc_21(fetch_pc_21_sig);
-    u_cpu->fetch_pc_22(fetch_pc_22_sig);
-    u_cpu->fetch_pc_23(fetch_pc_23_sig);
-    u_cpu->fetch_pc_24(fetch_pc_24_sig);
-    u_cpu->fetch_pc_25(fetch_pc_25_sig);
-    u_cpu->fetch_pc_26(fetch_pc_26_sig);
-    u_cpu->fetch_pc_27(fetch_pc_27_sig);
-    u_cpu->fetch_pc_28(fetch_pc_28_sig);
-    u_cpu->fetch_pc_29(fetch_pc_29_sig);
-    u_cpu->fetch_pc_30(fetch_pc_30_sig);
-    u_cpu->fetch_pc_31(fetch_pc_31_sig);
-    u_cpu->dmem_req_addr_0(dmem_req_addr_0_sig);
-    u_cpu->dmem_req_addr_1(dmem_req_addr_1_sig);
-    u_cpu->dmem_req_addr_2(dmem_req_addr_2_sig);
-    u_cpu->dmem_req_addr_3(dmem_req_addr_3_sig);
-    u_cpu->dmem_req_addr_4(dmem_req_addr_4_sig);
-    u_cpu->dmem_req_addr_5(dmem_req_addr_5_sig);
-    u_cpu->dmem_req_addr_6(dmem_req_addr_6_sig);
-    u_cpu->dmem_req_addr_7(dmem_req_addr_7_sig);
-    u_cpu->dmem_req_addr_8(dmem_req_addr_8_sig);
-    u_cpu->dmem_req_addr_9(dmem_req_addr_9_sig);
-    u_cpu->dmem_req_addr_10(dmem_req_addr_10_sig);
-    u_cpu->dmem_req_addr_11(dmem_req_addr_11_sig);
-    u_cpu->dmem_req_addr_12(dmem_req_addr_12_sig);
-    u_cpu->dmem_req_addr_13(dmem_req_addr_13_sig);
-    u_cpu->dmem_req_addr_14(dmem_req_addr_14_sig);
-    u_cpu->dmem_req_addr_15(dmem_req_addr_15_sig);
-    u_cpu->dmem_req_addr_16(dmem_req_addr_16_sig);
-    u_cpu->dmem_req_addr_17(dmem_req_addr_17_sig);
-    u_cpu->dmem_req_addr_18(dmem_req_addr_18_sig);
-    u_cpu->dmem_req_addr_19(dmem_req_addr_19_sig);
-    u_cpu->dmem_req_addr_20(dmem_req_addr_20_sig);
-    u_cpu->dmem_req_addr_21(dmem_req_addr_21_sig);
-    u_cpu->dmem_req_addr_22(dmem_req_addr_22_sig);
-    u_cpu->dmem_req_addr_23(dmem_req_addr_23_sig);
-    u_cpu->dmem_req_addr_24(dmem_req_addr_24_sig);
-    u_cpu->dmem_req_addr_25(dmem_req_addr_25_sig);
-    u_cpu->dmem_req_addr_26(dmem_req_addr_26_sig);
-    u_cpu->dmem_req_addr_27(dmem_req_addr_27_sig);
-    u_cpu->dmem_req_addr_28(dmem_req_addr_28_sig);
-    u_cpu->dmem_req_addr_29(dmem_req_addr_29_sig);
-    u_cpu->dmem_req_addr_30(dmem_req_addr_30_sig);
-    u_cpu->dmem_req_addr_31(dmem_req_addr_31_sig);
-    u_cpu->dmem_req_data_0(dmem_req_data_0_sig);
-    u_cpu->dmem_req_data_1(dmem_req_data_1_sig);
-    u_cpu->dmem_req_data_2(dmem_req_data_2_sig);
-    u_cpu->dmem_req_data_3(dmem_req_data_3_sig);
-    u_cpu->dmem_req_data_4(dmem_req_data_4_sig);
-    u_cpu->dmem_req_data_5(dmem_req_data_5_sig);
-    u_cpu->dmem_req_data_6(dmem_req_data_6_sig);
-    u_cpu->dmem_req_data_7(dmem_req_data_7_sig);
-    u_cpu->dmem_req_data_8(dmem_req_data_8_sig);
-    u_cpu->dmem_req_data_9(dmem_req_data_9_sig);
-    u_cpu->dmem_req_data_10(dmem_req_data_10_sig);
-    u_cpu->dmem_req_data_11(dmem_req_data_11_sig);
-    u_cpu->dmem_req_data_12(dmem_req_data_12_sig);
-    u_cpu->dmem_req_data_13(dmem_req_data_13_sig);
-    u_cpu->dmem_req_data_14(dmem_req_data_14_sig);
-    u_cpu->dmem_req_data_15(dmem_req_data_15_sig);
-    u_cpu->dmem_req_data_16(dmem_req_data_16_sig);
-    u_cpu->dmem_req_data_17(dmem_req_data_17_sig);
-    u_cpu->dmem_req_data_18(dmem_req_data_18_sig);
-    u_cpu->dmem_req_data_19(dmem_req_data_19_sig);
-    u_cpu->dmem_req_data_20(dmem_req_data_20_sig);
-    u_cpu->dmem_req_data_21(dmem_req_data_21_sig);
-    u_cpu->dmem_req_data_22(dmem_req_data_22_sig);
-    u_cpu->dmem_req_data_23(dmem_req_data_23_sig);
-    u_cpu->dmem_req_data_24(dmem_req_data_24_sig);
-    u_cpu->dmem_req_data_25(dmem_req_data_25_sig);
-    u_cpu->dmem_req_data_26(dmem_req_data_26_sig);
-    u_cpu->dmem_req_data_27(dmem_req_data_27_sig);
-    u_cpu->dmem_req_data_28(dmem_req_data_28_sig);
-    u_cpu->dmem_req_data_29(dmem_req_data_29_sig);
-    u_cpu->dmem_req_data_30(dmem_req_data_30_sig);
-    u_cpu->dmem_req_data_31(dmem_req_data_31_sig);
+    // Port pointer array (order matches sc_setup port binding)
+    sc_signal<bool>* cpu_ports[] = {&zero_sig, &one_sig, &imem_resp_data_0_sig, &imem_resp_data_1_sig, &imem_resp_data_2_sig, &imem_resp_data_3_sig, &imem_resp_data_4_sig, &imem_resp_data_5_sig, &imem_resp_data_6_sig, &imem_resp_data_7_sig, &imem_resp_data_8_sig, &imem_resp_data_9_sig, &imem_resp_data_10_sig, &imem_resp_data_11_sig, &imem_resp_data_12_sig, &imem_resp_data_13_sig, &imem_resp_data_14_sig, &imem_resp_data_15_sig, &imem_resp_data_16_sig, &imem_resp_data_17_sig, &imem_resp_data_18_sig, &imem_resp_data_19_sig, &imem_resp_data_20_sig, &imem_resp_data_21_sig, &imem_resp_data_22_sig, &imem_resp_data_23_sig, &imem_resp_data_24_sig, &imem_resp_data_25_sig, &imem_resp_data_26_sig, &imem_resp_data_27_sig, &imem_resp_data_28_sig, &imem_resp_data_29_sig, &imem_resp_data_30_sig, &imem_resp_data_31_sig, &dmem_req_ready_sig, &dmem_resp_valid_sig, &dmem_resp_data_0_sig, &dmem_resp_data_1_sig, &dmem_resp_data_2_sig, &dmem_resp_data_3_sig, &dmem_resp_data_4_sig, &dmem_resp_data_5_sig, &dmem_resp_data_6_sig, &dmem_resp_data_7_sig, &dmem_resp_data_8_sig, &dmem_resp_data_9_sig, &dmem_resp_data_10_sig, &dmem_resp_data_11_sig, &dmem_resp_data_12_sig, &dmem_resp_data_13_sig, &dmem_resp_data_14_sig, &dmem_resp_data_15_sig, &dmem_resp_data_16_sig, &dmem_resp_data_17_sig, &dmem_resp_data_18_sig, &dmem_resp_data_19_sig, &dmem_resp_data_20_sig, &dmem_resp_data_21_sig, &dmem_resp_data_22_sig, &dmem_resp_data_23_sig, &dmem_resp_data_24_sig, &dmem_resp_data_25_sig, &dmem_resp_data_26_sig, &dmem_resp_data_27_sig, &dmem_resp_data_28_sig, &dmem_resp_data_29_sig, &dmem_resp_data_30_sig, &dmem_resp_data_31_sig, &fetch_pc_0_sig, &fetch_pc_1_sig, &fetch_pc_2_sig, &fetch_pc_3_sig, &fetch_pc_4_sig, &fetch_pc_5_sig, &fetch_pc_6_sig, &fetch_pc_7_sig, &fetch_pc_8_sig, &fetch_pc_9_sig, &fetch_pc_10_sig, &fetch_pc_11_sig, &fetch_pc_12_sig, &fetch_pc_13_sig, &fetch_pc_14_sig, &fetch_pc_15_sig, &fetch_pc_16_sig, &fetch_pc_17_sig, &fetch_pc_18_sig, &fetch_pc_19_sig, &fetch_pc_20_sig, &fetch_pc_21_sig, &fetch_pc_22_sig, &fetch_pc_23_sig, &fetch_pc_24_sig, &fetch_pc_25_sig, &fetch_pc_26_sig, &fetch_pc_27_sig, &fetch_pc_28_sig, &fetch_pc_29_sig, &fetch_pc_30_sig, &fetch_pc_31_sig, &fetch_stalled_sig, &global_stall_out_sig, &dmem_req_valid_sig, &dmem_req_we_sig, &dmem_req_addr_0_sig, &dmem_req_addr_1_sig, &dmem_req_addr_2_sig, &dmem_req_addr_3_sig, &dmem_req_addr_4_sig, &dmem_req_addr_5_sig, &dmem_req_addr_6_sig, &dmem_req_addr_7_sig, &dmem_req_addr_8_sig, &dmem_req_addr_9_sig, &dmem_req_addr_10_sig, &dmem_req_addr_11_sig, &dmem_req_addr_12_sig, &dmem_req_addr_13_sig, &dmem_req_addr_14_sig, &dmem_req_addr_15_sig, &dmem_req_addr_16_sig, &dmem_req_addr_17_sig, &dmem_req_addr_18_sig, &dmem_req_addr_19_sig, &dmem_req_addr_20_sig, &dmem_req_addr_21_sig, &dmem_req_addr_22_sig, &dmem_req_addr_23_sig, &dmem_req_addr_24_sig, &dmem_req_addr_25_sig, &dmem_req_addr_26_sig, &dmem_req_addr_27_sig, &dmem_req_addr_28_sig, &dmem_req_addr_29_sig, &dmem_req_addr_30_sig, &dmem_req_addr_31_sig, &dmem_req_data_0_sig, &dmem_req_data_1_sig, &dmem_req_data_2_sig, &dmem_req_data_3_sig, &dmem_req_data_4_sig, &dmem_req_data_5_sig, &dmem_req_data_6_sig, &dmem_req_data_7_sig, &dmem_req_data_8_sig, &dmem_req_data_9_sig, &dmem_req_data_10_sig, &dmem_req_data_11_sig, &dmem_req_data_12_sig, &dmem_req_data_13_sig, &dmem_req_data_14_sig, &dmem_req_data_15_sig, &dmem_req_data_16_sig, &dmem_req_data_17_sig, &dmem_req_data_18_sig, &dmem_req_data_19_sig, &dmem_req_data_20_sig, &dmem_req_data_21_sig, &dmem_req_data_22_sig, &dmem_req_data_23_sig, &dmem_req_data_24_sig, &dmem_req_data_25_sig, &dmem_req_data_26_sig, &dmem_req_data_27_sig, &dmem_req_data_28_sig, &dmem_req_data_29_sig, &dmem_req_data_30_sig, &dmem_req_data_31_sig, &rob_empty_sig};
+
+    // Create and bind CPU via setup module
+    CpuCtx* u_cpu = cpu_create("u_cpu", clk, reset_sig,
+        cpu_ports, 169);
 
     // Instantiate combinational imem model
     auto* u_imem = new ImemModel("u_imem");
@@ -744,30 +570,24 @@ int sc_main(int argc, char* argv[]) {
     }
     reset_sig.write(false);
 
-    // Simulation loop: fully manual Verilator-style evaluation.
-    // No sc_clock needed — all timing is explicit.
+    // Simulation loop
     bool done = false;
     uint32_t cycle = 0;
     printf("Simulation started (timeout=%u)\n", timeout);
 
     while (!done && cycle < timeout) {
-        // 1. DmemModel: respond to pending loads, handle new requests
         u_dmem->tick();
-        sc_start(SC_ZERO_TIME);  // flush dmem writes
+        sc_start(SC_ZERO_TIME);
 
-        // 2. Latch all CPU DFFs (captures comb outputs from prev cycle)
         u_cpu->eval_seq_all();
-        sc_start(SC_ZERO_TIME);  // flush DFF outputs
+        sc_start(SC_ZERO_TIME);
 
-        // 3. Settle combinational logic (multiple passes for hierarchy)
-        // Each pass: CPU comb -> flush -> ImemModel reacts -> flush
         for (int settle = 0; settle < 50; settle++) {
             u_cpu->eval_comb_all();
             sc_start(SC_ZERO_TIME);
         }
         cycle++;
 
-        // Check tohost from DmemModel
         if (u_dmem->test_done) {
             done = true;
             printf("\nTEST %s\n", u_dmem->test_data == 1 ? "PASS" : "FAIL");
@@ -784,7 +604,6 @@ int sc_main(int argc, char* argv[]) {
     printf("Total cycles: %u\n", cycle);
     delete u_dmem;
     delete u_imem;
-    delete u_cpu;
-    // Note: sc_stop() not called; process exits directly.
+    cpu_delete(u_cpu);
     return done ? 0 : 1;
 }
