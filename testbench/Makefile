@@ -66,7 +66,7 @@ run-all-tests: sim tests
 	for elf in $(TB_DIR)/tests/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=2000 2>&1); \
+		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
 		if [ "$$tohost" = "0x00000001" ]; then \

@@ -802,6 +802,7 @@ Instances: 10 (RV32I) or 12 (RV32IM) verified submodules.
 -/
 def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
+  let sbFwdPipelined := config.sbFwdPipelineStages > 0
   let enc := config.opcodeEncodings
   -- Global signals
   let clock := Wire.mk "clock"
@@ -1899,15 +1900,30 @@ def mkCPU (config : CPUConfig) : Circuit :=
   ]
 
   let lsu_valid := Wire.mk "lsu_valid"
-  let lsu_valid_gate := [Gate.mkBUF load_fwd_valid lsu_valid]
-
   let lsu_tag := makeIndexedWires "lsu_tag" 6
   let lsu_data := makeIndexedWires "lsu_data" 32
+
+  -- When sbFwdPipelineStages > 0, register the SB forwarding result through DFFs.
+  -- This breaks the timing-critical path: mem_address → SB compare → CDB arbiter.
+  -- The registered result enters the CDB arbiter one cycle later.
+  -- When sbFwdPipelineStages = 0, use combinational BUF (current behavior).
+  let lsu_valid_gate :=
+    if sbFwdPipelined then
+      [Gate.mkDFF load_fwd_valid clock reset lsu_valid]
+    else
+      [Gate.mkBUF load_fwd_valid lsu_valid]
+
   let lsu_tag_data_mux_gates :=
-    (List.range 6).map (fun i =>
-      Gate.mkBUF rs_mem_dispatch_tag[i]! lsu_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
+    if sbFwdPipelined then
+      (List.range 6).map (fun i =>
+        Gate.mkDFF rs_mem_dispatch_tag[i]! clock reset lsu_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkDFF lsu_sb_fwd_data[i]! clock reset lsu_data[i]!)
+    else
+      (List.range 6).map (fun i =>
+        Gate.mkBUF rs_mem_dispatch_tag[i]! lsu_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
 
   -- === DMEM RESPONSE PATH ===
   let load_no_fwd := Wire.mk "load_no_fwd"
