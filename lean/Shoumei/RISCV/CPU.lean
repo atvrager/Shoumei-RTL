@@ -791,21 +791,18 @@ private def bundledPorts (portName : String) (wires : List Wire) : List (String 
   wires.enum.map (fun ⟨i, w⟩ => (s!"{portName}_{i}", w))
 
 /--
-RV32I CPU Structural Circuit (Base Integer ISA)
+Parameterized CPU Structural Circuit
 
-Same as RV32IM but without MulDiv RS and execution unit.
+Supports RV32I (base) and RV32IM (with M-extension multiply/divide).
+Controlled by `CPUConfig.enableM`:
+- When false: 3 RS (int, mem, branch), 3 exec units, 2-level CDB arb
+- When true:  4 RS (+muldiv), 4 exec units (+MulDivExecUnit), 3-level CDB arb
 
-Instances (10 total):
-1. FetchStage - PC management
-2. RV32IDecoder - Instruction decoder
-3. RenameStage_32x64 - RAT + FreeList + PhysRegFile
-4-6. ReservationStation4 (×3) - Integer, Memory, Branch
-7. IntegerExecUnit - ALU operations
-8. MemoryExecUnit - Address calculation
-9. ROB16 - Reorder buffer
-10. LSU - Load-store unit
+Instances: 10 (RV32I) or 12 (RV32IM) verified submodules.
 -/
-def mkCPU_RV32I : Circuit :=
+def mkCPU (config : CPUConfig) : Circuit :=
+  let enableM := config.enableM
+  let enc := config.opcodeEncodings
   -- Global signals
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -818,7 +815,7 @@ def mkCPU_RV32I : Circuit :=
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
 
-  -- === DECODER OUTPUTS (internal, driven by RV32IDecoder instance) ===
+  -- === DECODER OUTPUTS (internal, driven by decoder instance) ===
   let decode_optype := makeIndexedWires "decode_optype" 6
   let decode_rd := makeIndexedWires "decode_rd" 5
   let decode_rs1 := makeIndexedWires "decode_rs1" 5
@@ -829,37 +826,32 @@ def mkCPU_RV32I : Circuit :=
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
-  let dispatch_is_store := Wire.mk "dispatch_is_store"  -- Unused for now
+  let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
+  let dispatch_is_store := Wire.mk "dispatch_is_store"
   let decode_use_imm := Wire.mk "decode_use_imm"
 
   -- === FETCH STAGE ===
   let fetch_pc := makeIndexedWires "fetch_pc" 32
   let fetch_stalled := Wire.mk "fetch_stalled"
   let global_stall := Wire.mk "global_stall"
-  let branch_redirect_valid := Wire.mk "branch_redirect_valid"  -- driven by branch logic below
+  let branch_redirect_valid := Wire.mk "branch_redirect_valid"
   let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
 
-  -- Branch redirect: register the redirect signals to break combinational loops.
-  -- Selective flush: RS/ROB/LSU get flushed, but NOT the rename stage (PRF/RAT/FreeList).
-  -- This preserves register values computed before the branch while clearing wrong-path work.
-  --
-  -- Timing: branch fires at cycle N → redirect_valid_reg=1 at N+1 (fetch redirects)
-  --         → pipeline_flush_reg=1 at N+2 (RS/ROB clear).
-  -- The 2-cycle delay ensures the branch's CDB broadcast (at N+1 clock edge) completes
-  -- before the flush kills the RS outputs that feed the CDB arbiter.
   let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
   let pipeline_flush_comb := Wire.mk "pipeline_flush_comb"
-  let pipeline_flush := Wire.mk "pipeline_flush"  -- for dispatch gating (low fanout)
-  -- Per-subsystem flush registers to limit reset fanout after synthesis flattening
+  let pipeline_flush := Wire.mk "pipeline_flush"
+  -- Per-subsystem flush registers
   let flush_rs_int := Wire.mk "flush_rs_int"
   let flush_rs_mem := Wire.mk "flush_rs_mem"
   let flush_rs_br := Wire.mk "flush_rs_br"
+  let flush_rs_muldiv := Wire.mk "flush_rs_muldiv"
   let flush_rob := Wire.mk "flush_rob"
   let flush_busy := Wire.mk "flush_busy"
   let flush_misc := Wire.mk "flush_misc"
   let pipeline_reset_rs_int := Wire.mk "pipeline_reset_rs_int"
   let pipeline_reset_rs_mem := Wire.mk "pipeline_reset_rs_mem"
   let pipeline_reset_rs_br := Wire.mk "pipeline_reset_rs_br"
+  let pipeline_reset_rs_muldiv := Wire.mk "pipeline_reset_rs_muldiv"
   let pipeline_reset_rob := Wire.mk "pipeline_reset_rob"
   let pipeline_reset_busy := Wire.mk "pipeline_reset_busy"
   let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
@@ -878,19 +870,18 @@ def mkCPU_RV32I : Circuit :=
                 ("clock", clock), ("reset", reset)]
   })
 
-  -- Double-registered flush: pipeline_flush_comb → DFF → pipeline_flush
-  -- Delays RS/ROB flush by 1 cycle after redirect_valid_reg, ensuring the
-  -- branch's CDB broadcast completes before async reset kills RS outputs.
-  -- Per-subsystem flush DFFs to limit reset fanout after synthesis flattening
+  -- Per-subsystem flush DFFs
   let flush_dff_dispatch : CircuitInstance := {
     moduleName := "DFlipFlop"
     instName := "u_flush_dff_dispatch"
     portMap := [("d", pipeline_flush_comb), ("q", pipeline_flush),
                 ("clock", clock), ("reset", reset)]
   }
-  let flush_dff_insts : List CircuitInstance := [
-    "rs_int", "rs_mem", "rs_br", "rob", "busy", "misc"
-  ].map (fun tag => {
+  let flush_tags := if enableM then
+    ["rs_int", "rs_mem", "rs_br", "rs_muldiv", "rob", "busy", "misc"]
+  else
+    ["rs_int", "rs_mem", "rs_br", "rob", "busy", "misc"]
+  let flush_dff_insts : List CircuitInstance := flush_tags.map (fun tag => {
     moduleName := "DFlipFlop"
     instName := s!"u_flush_dff_{tag}"
     portMap := [("d", pipeline_flush_comb), ("q", Wire.mk s!"flush_{tag}"),
@@ -912,7 +903,7 @@ def mkCPU_RV32I : Circuit :=
 
   -- === DECODER ===
   let decoder_inst : CircuitInstance := {
-    moduleName := "RV32IDecoder"
+    moduleName := if enableM then "RV32IMDecoder" else "RV32IDecoder"
     instName := "u_decoder"
     portMap :=
       (imem_resp_data.enum.map (fun ⟨i, w⟩ => (s!"io_instr_{i}", w))) ++
@@ -925,8 +916,9 @@ def mkCPU_RV32I : Circuit :=
        ("io_has_rd", decode_has_rd),
        ("io_is_integer", dispatch_is_integer),
        ("io_is_memory", dispatch_is_memory),
-       ("io_is_branch", dispatch_is_branch),
-       ("io_is_store", dispatch_is_store),
+       ("io_is_branch", dispatch_is_branch)] ++
+      (if enableM then [("io_is_muldiv", dispatch_is_muldiv)] else []) ++
+      [("io_is_store", dispatch_is_store),
        ("io_use_imm", decode_use_imm)]
   }
 
@@ -944,7 +936,6 @@ def mkCPU_RV32I : Circuit :=
   let cdb_data := makeIndexedWires "cdb_data" 32
 
   -- Mask CDB valid for PhysRegFile writes: don't write to p0 (x0's home register)
-  -- cdb_tag_nonzero = OR of all 6 tag bits; cdb_valid_prf = cdb_valid AND cdb_tag_nonzero
   let cdb_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_tag_nz_t{i}")
   let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
   let cdb_valid_prf := Wire.mk "cdb_valid_prf"
@@ -958,10 +949,9 @@ def mkCPU_RV32I : Circuit :=
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
   let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
-  -- Retire: recycle old physical register back to FreeList only when hasOldPhysRd
   let retire_recycle_valid := Wire.mk "retire_recycle_valid"
 
-  -- Gate rename's instr_valid during redirect/flush to prevent double-rename
+  -- Gate rename's instr_valid during redirect/flush
   let decode_valid_rename := Wire.mk "decode_valid_rename"
 
   let rename_inst : CircuitInstance := {
@@ -995,50 +985,42 @@ def mkCPU_RV32I : Circuit :=
   let dispatch_int_valid := Wire.mk "dispatch_int_valid"
   let dispatch_mem_valid := Wire.mk "dispatch_mem_valid"
   let dispatch_branch_valid := Wire.mk "dispatch_branch_valid"
+  let dispatch_muldiv_valid := Wire.mk "dispatch_muldiv_valid"
 
-  -- Store buffer enqueue = memory RS dispatch valid (TODO: filter stores only)
   let sb_enq_en := Wire.mk "sb_enq_en"
 
-  -- Suppress dispatch during redirect cycles (both combinational and registered)
-  -- to prevent wrong-path instructions from entering the pipeline.
   let not_redirecting := Wire.mk "not_redirecting"
   let redirect_or := Wire.mk "redirect_or"
+  let redirect_or_flush := Wire.mk "redirect_or_flush"
   let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
 
-  -- pipeline_flush_comb = reset OR redirect_valid_reg (combinational, feeds flush DFF)
-  -- pipeline_flush = DFF(pipeline_flush_comb) (arrives 1 cycle after redirect_valid_reg)
-  -- pipeline_reset = reset OR pipeline_flush (for RS/ROB/LSU async reset)
-  -- Stall fetch during flush to avoid dropping the first instruction after redirect
-  let flush_gate := [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
-                     Gate.mkOR global_stall pipeline_flush fetch_stall,
-                     -- Per-subsystem reset OR gates
-                     Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
-                     Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
-                     Gate.mkOR reset flush_rs_br pipeline_reset_rs_br,
-                     Gate.mkOR reset flush_rob pipeline_reset_rob,
-                     Gate.mkOR reset flush_busy pipeline_reset_busy,
-                     Gate.mkOR reset flush_misc pipeline_reset_misc]
+  -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFFs)
+  let flush_gate :=
+    [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
+     Gate.mkOR global_stall pipeline_flush fetch_stall,
+     -- Per-subsystem reset OR gates
+     Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
+     Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
+     Gate.mkOR reset flush_rs_br pipeline_reset_rs_br] ++
+    (if enableM then [Gate.mkOR reset flush_rs_muldiv pipeline_reset_rs_muldiv] else []) ++
+    [Gate.mkOR reset flush_rob pipeline_reset_rob,
+     Gate.mkOR reset flush_busy pipeline_reset_busy,
+     Gate.mkOR reset flush_misc pipeline_reset_misc]
 
-  -- Dispatch gating uses both combinational redirect (cycle N) and registered (cycle N+1)
-  -- Suppress dispatch during redirect (cycles N, N+1) and flush (cycle N+2)
-  let redirect_or_flush := Wire.mk "redirect_or_flush"
-  let dispatch_gates := [
-    Gate.mkNOT global_stall not_stall,
-    Gate.mkOR branch_redirect_valid branch_redirect_valid_reg redirect_or,
-    Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
-    Gate.mkNOT redirect_or_flush not_redirecting,
-    -- Gate rename by redirect/flush AND stall to prevent double-rename.
-    -- Without the stall gate, the same instruction gets re-renamed each stall cycle,
-    -- consuming ptags and corrupting the RAT (src reads own destination tag).
-    Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
-    Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
-    Gate.mkBUF decode_valid_rename dispatch_base_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid
-  ]
+  let dispatch_gates :=
+    [Gate.mkNOT global_stall not_stall,
+     Gate.mkOR branch_redirect_valid branch_redirect_valid_reg redirect_or,
+     Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
+     Gate.mkNOT redirect_or_flush not_redirecting,
+     Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
+     Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
+     Gate.mkBUF decode_valid_rename dispatch_base_valid,
+     Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
+     Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
+     Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid] ++
+    (if enableM then [Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid] else [])
 
-  -- === BUSY-BIT TABLE (operand readiness tracking) ===
+  -- === BUSY-BIT TABLE ===
   let busy_set_en := Wire.mk "busy_set_en"
   let busy_set_gate := Gate.mkAND rename_valid decode_has_rd busy_set_en
   let busy_src1_ready := Wire.mk "busy_src1_ready"
@@ -1052,10 +1034,7 @@ def mkCPU_RV32I : Circuit :=
     decode_use_imm
     busy_src1_ready busy_src2_ready busy_src2_ready_reg
 
-  -- === CDB FORWARDING (same-cycle wakeup at RS entry) ===
-  -- When CDB broadcasts a tag matching an instruction's source at the same cycle
-  -- it enters the RS, the busy-bit table hasn't updated yet. We must forward
-  -- the CDB data and readiness directly.
+  -- === CDB FORWARDING ===
   let cdb_match_src1 := Wire.mk "cdb_match_src1"
   let cdb_match_src2 := Wire.mk "cdb_match_src2"
   let cdb_fwd_src1 := Wire.mk "cdb_fwd_src1"
@@ -1101,12 +1080,13 @@ def mkCPU_RV32I : Circuit :=
 
   let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst]
 
-  -- === SRC2 MUX: select immediate for I-type, forwarded register value for R-type ===
+  -- === SRC2 MUX ===
   let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
   let src2_mux_gates := (List.range 32).map (fun i =>
     Gate.mkMUX (fwd_src2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
 
-  -- === RESERVATION STATIONS (3 instances) ===
+  -- === RESERVATION STATIONS ===
+  -- RS Integer
   let rs_int_alloc_ptr := makeIndexedWires "rs_int_alloc_ptr" 2
   let rs_int_grant := makeIndexedWires "rs_int_grant" 4
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
@@ -1140,6 +1120,7 @@ def mkCPU_RV32I : Circuit :=
                (rs_int_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
+  -- RS Memory
   let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
   let rs_mem_dispatch_valid := Wire.mk "rs_mem_dispatch_valid"
   let rs_mem_dispatch_opcode := makeIndexedWires "rs_mem_dispatch_opcode" 6
@@ -1174,9 +1155,7 @@ def mkCPU_RV32I : Circuit :=
                (rs_mem_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
-  -- === IMMEDIATE REGISTER FILE (RV32I) ===
-  -- Captures decode_imm at mem RS dispatch time, indexed by RS alloc_ptr.
-  -- Read at issue time using dispatch_grant. Fixes OoO immediate desync.
+  -- === IMMEDIATE REGISTER FILE ===
   let imm_rf_decoded := makeIndexedWires "imm_rf_decoded" 4
   let imm_rf_we := makeIndexedWires "imm_rf_we" 4
 
@@ -1225,8 +1204,6 @@ def mkCPU_RV32I : Circuit :=
   }
 
   -- === INTEGER IMMEDIATE REGISTER FILE ===
-  -- Captures decode_imm at int RS dispatch time, indexed by RS alloc_ptr.
-  -- Read at issue time using dispatch_grant. Used for LUI/AUIPC.
   let int_imm_rf_decoded := makeIndexedWires "int_imm_rf_decoded" 4
   let int_imm_rf_we := makeIndexedWires "int_imm_rf_we" 4
 
@@ -1275,7 +1252,6 @@ def mkCPU_RV32I : Circuit :=
   }
 
   -- === INTEGER PC REGISTER FILE ===
-  -- Captures fetch_pc at int RS dispatch time. Used for AUIPC.
   let int_pc_rf_entries := (List.range 4).map (fun e =>
     makeIndexedWires s!"int_pc_rf_e{e}" 32)
   let int_pc_rf_gates := (List.range 4).map (fun e =>
@@ -1410,15 +1386,48 @@ def mkCPU_RV32I : Circuit :=
       (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
   }
 
+  -- === MULDIV RS (conditional) ===
+  let rs_muldiv_alloc_ptr_unused := makeIndexedWires "rs_muldiv_alloc_ptr_unused" 2
+  let rs_muldiv_grant_unused := makeIndexedWires "rs_muldiv_grant_unused" 4
+  let rs_muldiv_issue_full := Wire.mk "rs_muldiv_issue_full"
+  let rs_muldiv_dispatch_valid := Wire.mk "rs_muldiv_dispatch_valid"
+  let rs_muldiv_dispatch_opcode := makeIndexedWires "rs_muldiv_dispatch_opcode" 6
+  let rs_muldiv_dispatch_src1 := makeIndexedWires "rs_muldiv_dispatch_src1" 32
+  let rs_muldiv_dispatch_src2 := makeIndexedWires "rs_muldiv_dispatch_src2" 32
+  let rs_muldiv_dispatch_tag := makeIndexedWires "rs_muldiv_dispatch_tag" 6
+
+  let rs_muldiv_inst : CircuitInstance := {
+    moduleName := "ReservationStation4"
+    instName := "u_rs_muldiv"
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_muldiv),
+                ("zero", zero), ("one", one), ("issue_en", dispatch_muldiv_valid),
+                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
+                ("cdb_valid", cdb_valid), ("dispatch_en", one),
+                ("issue_full", rs_muldiv_issue_full), ("dispatch_valid", rs_muldiv_dispatch_valid)] ++
+               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
+               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
+               (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
+               (rs_muldiv_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
+               (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
+               (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
+               (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_muldiv_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_muldiv_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
+  }
+
   -- === EXECUTION UNITS ===
   let int_result := makeIndexedWires "int_result" 32
   let int_tag_out := makeIndexedWires "int_tag_out" 6
 
   -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
-  -- Driven from RS dispatch opcode (not imem_resp_data) so the ALU executes
-  -- the correct operation for the dispatched instruction, not the current fetch.
   let alu_op := makeIndexedWires "alu_op" 4
-  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op aluMapping_RV32I
+  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op
+    (if enableM then aluMapping_RV32IM else aluMapping_RV32I)
 
   let int_exec_inst : CircuitInstance := {
     moduleName := "IntegerExecUnit"
@@ -1464,8 +1473,31 @@ def mkCPU_RV32I : Circuit :=
       (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
 
-  -- === FIX 1: LUI/AUIPC POST-ALU MUX ===
-  -- AUIPC result = captured_pc + captured_imm
+  -- MulDiv exec unit (conditional)
+  let muldiv_result := makeIndexedWires "muldiv_result" 32
+  let muldiv_tag_out := makeIndexedWires "muldiv_tag_out" 6
+  let muldiv_valid_out := Wire.mk "muldiv_valid_out"
+  let muldiv_busy := Wire.mk "muldiv_busy"
+
+  let muldiv_exec_inst : CircuitInstance := {
+    moduleName := "MulDivExecUnit"
+    instName := "u_exec_muldiv"
+    portMap :=
+      (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [(s!"op_0", rs_muldiv_dispatch_opcode[0]!),
+       (s!"op_1", rs_muldiv_dispatch_opcode[1]!),
+       (s!"op_2", rs_muldiv_dispatch_opcode[2]!)] ++
+      (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
+      [("valid_in", rs_muldiv_dispatch_valid),
+       ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
+       ("zero", zero), ("one", one)] ++
+      (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
+      [("valid_out", muldiv_valid_out), ("busy", muldiv_busy)]
+  }
+
+  -- === LUI/AUIPC POST-ALU MUX ===
   let auipc_result := makeIndexedWires "auipc_result" 32
   let auipc_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -1478,12 +1510,9 @@ def mkCPU_RV32I : Circuit :=
       []
   }
 
-  -- Opcode match: LUI = encoding 19, AUIPC = encoding 35
-  -- 6-bit match: build AND chain for each encoding
+  -- Opcode match: LUI and AUIPC encodings from config
   let is_lui := Wire.mk "is_lui"
   let is_auipc := Wire.mk "is_auipc"
-  let lui_enc : Nat := 19   -- LUI in RV32I decoder
-  let auipc_enc : Nat := 35 -- AUIPC in RV32I decoder
   let testBit (n : Nat) (b : Nat) : Bool := (n / (2 ^ b)) % 2 != 0
 
   let mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
@@ -1503,8 +1532,8 @@ def mkCPU_RV32I : Circuit :=
       Gate.mkAND t01234 bitWires[5]! result
     ]
 
-  let lui_match_gates := mkOpcodeMatch6 "lui_match" lui_enc rs_int_dispatch_opcode is_lui
-  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" auipc_enc rs_int_dispatch_opcode is_auipc
+  let lui_match_gates := mkOpcodeMatch6 "lui_match" enc.lui rs_int_dispatch_opcode is_lui
+  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" enc.auipc rs_int_dispatch_opcode is_auipc
 
   -- Post-ALU MUX: int_result_final = MUX(MUX(int_result, auipc_result, is_auipc), int_captured_imm, is_lui)
   let int_result_final := makeIndexedWires "int_result_final" 32
@@ -1514,11 +1543,9 @@ def mkCPU_RV32I : Circuit :=
       Gate.mkMUX int_auipc_muxed[i]! int_captured_imm[i]! is_lui int_result_final[i]! ]
   ) |>.flatten
 
-  -- === FIX 2: JAL/JALR LINK REGISTER (PC+4) ===
-  -- PC+4 adder for branch unit
+  -- === JAL/JALR LINK REGISTER (PC+4) ===
   let br_pc_plus_4 := makeIndexedWires "br_pc_plus_4" 32
   let br_pc_plus_4_b := makeIndexedWires "br_pc_plus_4_b" 32
-  -- b input = 4 (bit 2 = 1, rest = 0)
   let br_pc_plus_4_b_gates := (List.range 32).map (fun i =>
     if i == 2 then Gate.mkBUF one br_pc_plus_4_b[i]!
     else Gate.mkBUF zero br_pc_plus_4_b[i]!)
@@ -1534,21 +1561,19 @@ def mkCPU_RV32I : Circuit :=
       []
   }
 
-  -- Opcode match: JAL = encoding 25, JALR = encoding 24 in RV32I
+  -- Opcode match: JAL/JALR from config
   let is_jal := Wire.mk "is_jal"
   let is_jalr := Wire.mk "is_jalr"
   let is_jal_or_jalr := Wire.mk "is_jal_or_jalr"
-  let jal_match_gates := mkOpcodeMatch6 "jal_match" 25 rs_branch_dispatch_opcode is_jal
-  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" 24 rs_branch_dispatch_opcode is_jalr
+  let jal_match_gates := mkOpcodeMatch6 "jal_match" enc.jal rs_branch_dispatch_opcode is_jal
+  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" enc.jalr rs_branch_dispatch_opcode is_jalr
   let jal_jalr_or_gate := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
 
-  -- Post-branch MUX: branch_result_final = MUX(branch_result, br_pc_plus_4, is_jal_or_jalr)
   let branch_result_final := makeIndexedWires "branch_result_final" 32
   let branch_result_mux_gates := (List.range 32).map (fun i =>
     Gate.mkMUX branch_result[i]! br_pc_plus_4[i]! is_jal_or_jalr branch_result_final[i]!)
 
-  -- === FIX 3: BRANCH TARGET + PC REDIRECT ===
-  -- Branch target = br_captured_pc + br_captured_imm
+  -- === BRANCH TARGET + PC REDIRECT ===
   let branch_target := makeIndexedWires "branch_target" 32
   let branch_target_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -1574,18 +1599,15 @@ def mkCPU_RV32I : Circuit :=
       (jalr_target_raw.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
       []
   }
-  -- Clear bit 0 for JALR
   let jalr_target_gates := (List.range 32).map (fun i =>
     if i == 0 then Gate.mkBUF zero jalr_target[i]!
     else Gate.mkBUF jalr_target_raw[i]! jalr_target[i]!)
 
-  -- Select target: MUX between branch_target and jalr_target based on is_jalr
   let final_branch_target := makeIndexedWires "final_branch_target" 32
   let target_sel_gates := (List.range 32).map (fun i =>
     Gate.mkMUX branch_target[i]! jalr_target[i]! is_jalr final_branch_target[i]!)
 
-  -- Branch condition evaluation using Comparator32
-  -- The BranchExecUnit currently just passes tags through; we do condition eval here
+  -- Branch condition evaluation
   let br_eq := Wire.mk "br_eq"
   let br_lt := Wire.mk "br_lt"
   let br_ltu := Wire.mk "br_ltu"
@@ -1600,8 +1622,7 @@ def mkCPU_RV32I : Circuit :=
        ("gt", Wire.mk "br_gt"), ("gtu", Wire.mk "br_gtu")]
   }
 
-  -- Decode branch condition from opcode
-  -- BEQ=34, BNE=29, BLT=31, BGE=33, BLTU=30, BGEU=32 in RV32I
+  -- Decode branch condition from opcode (encodings from config)
   let is_beq := Wire.mk "is_beq"
   let is_bne := Wire.mk "is_bne"
   let is_blt := Wire.mk "is_blt"
@@ -1609,12 +1630,12 @@ def mkCPU_RV32I : Circuit :=
   let is_bltu := Wire.mk "is_bltu"
   let is_bgeu := Wire.mk "is_bgeu"
 
-  let beq_match_gates := mkOpcodeMatch6 "beq_match" 34 rs_branch_dispatch_opcode is_beq
-  let bne_match_gates := mkOpcodeMatch6 "bne_match" 29 rs_branch_dispatch_opcode is_bne
-  let blt_match_gates := mkOpcodeMatch6 "blt_match" 31 rs_branch_dispatch_opcode is_blt
-  let bge_match_gates := mkOpcodeMatch6 "bge_match" 33 rs_branch_dispatch_opcode is_bge
-  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" 30 rs_branch_dispatch_opcode is_bltu
-  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" 32 rs_branch_dispatch_opcode is_bgeu
+  let beq_match_gates := mkOpcodeMatch6 "beq_match" enc.beq rs_branch_dispatch_opcode is_beq
+  let bne_match_gates := mkOpcodeMatch6 "bne_match" enc.bne rs_branch_dispatch_opcode is_bne
+  let blt_match_gates := mkOpcodeMatch6 "blt_match" enc.blt rs_branch_dispatch_opcode is_blt
+  let bge_match_gates := mkOpcodeMatch6 "bge_match" enc.bge rs_branch_dispatch_opcode is_bge
+  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" enc.bltu rs_branch_dispatch_opcode is_bltu
+  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" enc.bgeu rs_branch_dispatch_opcode is_bgeu
 
   -- Condition evaluation
   let not_eq := Wire.mk "br_not_eq"
@@ -1643,21 +1664,17 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkAND is_bge not_lt bge_taken,
     Gate.mkAND is_bltu br_ltu bltu_taken,
     Gate.mkAND is_bgeu not_ltu bgeu_taken,
-    -- OR all taken conditions
     Gate.mkOR beq_taken bne_taken cond_taken_tmp1,
     Gate.mkOR cond_taken_tmp1 blt_taken cond_taken_tmp2,
     Gate.mkOR cond_taken_tmp2 bge_taken cond_taken_tmp3,
     Gate.mkOR cond_taken_tmp3 bltu_taken cond_taken_tmp4,
     Gate.mkOR cond_taken_tmp4 bgeu_taken cond_taken,
-    -- JAL/JALR are always taken
     Gate.mkOR cond_taken is_jal_or_jalr branch_taken
   ]
 
-  -- Wire branch redirect to fetch: branch_valid = taken AND dispatch_valid
   let branch_redirect_valid := Wire.mk "branch_redirect_valid"
   let branch_redirect_gate := [Gate.mkAND branch_taken rs_branch_dispatch_valid branch_redirect_valid]
 
-  -- Wire target to branch_redirect_target (which feeds into fetch)
   let branch_target_wire_gates := (List.range 32).map (fun i =>
     Gate.mkBUF final_branch_target[i]! branch_redirect_target[i]!)
 
@@ -1675,7 +1692,6 @@ def mkCPU_RV32I : Circuit :=
   let lsu_inst : CircuitInstance := {
     moduleName := "LSU"
     instName := "u_lsu"
-    -- LSU uses plain reset, NOT pipeline_reset: store buffer must survive pipeline flushes
     portMap := [("clock", clock), ("reset", reset),
                 ("zero", zero), ("one", one),
                 ("commit_store_en", rob_commit_en),
@@ -1744,7 +1760,7 @@ def mkCPU_RV32I : Circuit :=
        ("head_mispredicted", rob_head_mispredicted)]
   }
 
-  -- === CDB REPLAY BUFFER (saves integer result when LSU wins arbitration) ===
+  -- === CDB REPLAY BUFFER ===
   let replay_valid := Wire.mk "replay_valid"
   let replay_valid_next := Wire.mk "replay_valid_next"
   let replay_tag := makeIndexedWires "replay_tag" 6
@@ -1752,10 +1768,8 @@ def mkCPU_RV32I : Circuit :=
   let replay_data := makeIndexedWires "replay_data" 32
   let replay_data_next := makeIndexedWires "replay_data_next" 32
 
-  -- === CDB ARBITRATION (Priority: Replay > LSU > Integer > Branch) ===
-
+  -- === CDB ARBITRATION ===
   -- Level 0: Merge Branch into Integer (Integer has priority)
-  -- Branch exec unit outputs result=0 and tag passthrough
   let int_branch_valid := Wire.mk "int_branch_valid"
   let int_branch_tag := makeIndexedWires "int_branch_tag" 6
   let int_branch_data := makeIndexedWires "int_branch_data" 32
@@ -1767,39 +1781,54 @@ def mkCPU_RV32I : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX branch_result_final[i]! int_result_final[i]! rs_int_dispatch_valid int_branch_data[i]!)
 
-  -- Save condition: int/branch has result AND LSU wins AND no replay pending
+  -- Level 1 (M-extension only): Merge Int/Branch with MulDiv (MulDiv has priority)
+  let int_muldiv_valid := Wire.mk "int_muldiv_valid"
+  let int_muldiv_tag := makeIndexedWires "int_muldiv_tag" 6
+  let int_muldiv_data := makeIndexedWires "int_muldiv_data" 32
+
+  let arb_level1_gates :=
+    if enableM then
+      [Gate.mkMUX int_branch_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX int_branch_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX int_branch_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
+    else []
+
+  -- Wire names for the merged signal that feeds CDB arb level 2
+  -- RV32I: int_branch_*; RV32IM: int_muldiv_*
+  let merged_valid := if enableM then int_muldiv_valid else int_branch_valid
+  let merged_tag := if enableM then int_muldiv_tag else int_branch_tag
+  let merged_data := if enableM then int_muldiv_data else int_branch_data
+
+  -- Save condition: merged has result AND LSU wins AND no replay pending
   let int_dropped := Wire.mk "int_dropped"
   let int_dropped_tmp := Wire.mk "int_dropped_tmp"
   let not_replay_valid := Wire.mk "not_replay_valid"
-  -- Replay wins CDB this cycle (clears replay)
   let replay_wins := Wire.mk "replay_wins"
   -- Forward-declare lsu_valid for replay save logic
   let lsu_valid := Wire.mk "lsu_valid"
 
-  -- int_dropped: int/branch preempted by higher-priority CDB source (lsu OR dmem_resp)
   let int_higher_priority := Wire.mk "int_higher_priority"
   let replay_save_gates := [
     Gate.mkNOT replay_valid not_replay_valid,
     Gate.mkOR lsu_valid dmem_resp_valid int_higher_priority,
-    Gate.mkAND int_branch_valid int_higher_priority int_dropped_tmp,
+    Gate.mkAND merged_valid int_higher_priority int_dropped_tmp,
     Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
     Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
     Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
     Gate.mkDFF replay_valid_next clock reset replay_valid
   ]
 
-  -- Save tag and data when int_dropped
   let replay_tag_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX replay_tag[i]! int_branch_tag[i]! int_dropped replay_tag_next[i]!,
+    [Gate.mkMUX replay_tag[i]! merged_tag[i]! int_dropped replay_tag_next[i]!,
      Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
 
   let replay_data_gates := (List.range 32).map (fun i =>
-    [Gate.mkMUX replay_data[i]! int_branch_data[i]! int_dropped replay_data_next[i]!,
+    [Gate.mkMUX replay_data[i]! merged_data[i]! int_dropped replay_data_next[i]!,
      Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
 
-  -- === FIX 4: LSU STORE-TO-LOAD FORWARDING ===
-  -- Decode is_load from rs_mem_dispatch_opcode
-  -- LW=18, LH=21, LHU=20, LB=23, LBU=22 in RV32I decoder
+  -- === LSU STORE-TO-LOAD FORWARDING ===
   let is_lw := Wire.mk "is_lw"
   let is_lh := Wire.mk "is_lh"
   let is_lhu := Wire.mk "is_lhu"
@@ -1810,11 +1839,11 @@ def mkCPU_RV32I : Circuit :=
   let is_load_tmp2 := Wire.mk "is_load_tmp2"
   let is_load_tmp3 := Wire.mk "is_load_tmp3"
 
-  let lw_match_gates := mkOpcodeMatch6 "lw_match" 18 rs_mem_dispatch_opcode is_lw
-  let lh_match_gates := mkOpcodeMatch6 "lh_match" 21 rs_mem_dispatch_opcode is_lh
-  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" 20 rs_mem_dispatch_opcode is_lhu
-  let lb_match_gates := mkOpcodeMatch6 "lb_match" 23 rs_mem_dispatch_opcode is_lb
-  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" 22 rs_mem_dispatch_opcode is_lbu
+  let lw_match_gates := mkOpcodeMatch6 "lw_match" enc.lw rs_mem_dispatch_opcode is_lw
+  let lh_match_gates := mkOpcodeMatch6 "lh_match" enc.lh rs_mem_dispatch_opcode is_lh
+  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" enc.lhu rs_mem_dispatch_opcode is_lhu
+  let lb_match_gates := mkOpcodeMatch6 "lb_match" enc.lb rs_mem_dispatch_opcode is_lb
+  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" enc.lbu rs_mem_dispatch_opcode is_lbu
   let is_load_gates := [
     Gate.mkOR is_lw is_lh is_load_tmp1,
     Gate.mkOR is_load_tmp1 is_lhu is_load_tmp2,
@@ -1822,7 +1851,6 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkOR is_load_tmp3 is_lbu is_load
   ]
 
-  -- load_fwd_valid = fwd_hit AND rs_mem_dispatch_valid AND is_load
   let load_fwd_valid := Wire.mk "load_fwd_valid"
   let load_fwd_tmp := Wire.mk "load_fwd_tmp"
   let load_fwd_gates := [
@@ -1830,11 +1858,9 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkAND load_fwd_tmp is_load load_fwd_valid
   ]
 
-  -- LSU CDB valid: only store-to-load forwarding goes on CDB
   let lsu_valid := Wire.mk "lsu_valid"
   let lsu_valid_gate := [Gate.mkBUF load_fwd_valid lsu_valid]
 
-  -- LSU CDB tag/data: from forwarded load
   let lsu_tag := makeIndexedWires "lsu_tag" 6
   let lsu_data := makeIndexedWires "lsu_data" 32
   let lsu_tag_data_mux_gates :=
@@ -1843,8 +1869,7 @@ def mkCPU_RV32I : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
 
-  -- === DMEM RESPONSE PATH (loads that miss store buffer) ===
-  -- load_no_fwd = dispatched load that did NOT get store buffer forwarding
+  -- === DMEM RESPONSE PATH ===
   let load_no_fwd := Wire.mk "load_no_fwd"
   let load_no_fwd_tmp := Wire.mk "load_no_fwd_tmp"
   let not_sb_fwd_hit := Wire.mk "not_sb_fwd_hit"
@@ -1857,12 +1882,11 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd
   ]
 
-  -- DFFs to capture load tag when load_no_fwd fires
   let dmem_tag_capture_gates := (List.range 6).map (fun i =>
     [Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!,
      Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset_misc dmem_load_tag_reg[i]!]) |>.flatten
 
-  -- CDB ARBITRATION: Priority: Replay > dmem_resp > LSU_fwd/deq > Integer/Branch
+  -- CDB level 2: Priority: Replay > dmem_resp > LSU > merged
   let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
 
   let dmem_wins := Wire.mk "dmem_wins"
@@ -1883,7 +1907,7 @@ def mkCPU_RV32I : Circuit :=
   let not_lsu_valid := Wire.mk "not_lsu_valid"
   let int_wins_gates := [
     Gate.mkNOT lsu_valid not_lsu_valid,
-    Gate.mkAND int_branch_valid not_lsu_valid int_wins_tmp,
+    Gate.mkAND merged_valid not_lsu_valid int_wins_tmp,
     Gate.mkAND int_wins_tmp not_replay_valid int_wins_tmp2,
     Gate.mkAND int_wins_tmp2 not_dmem_resp int_wins
   ]
@@ -1896,22 +1920,22 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkOR cdb_valid_tmp2 int_wins cdb_valid
   ]
 
-  -- cdb_tag/cdb_data: MUX chain (int/branch -> lsu -> dmem -> replay, last wins)
   let cdb_tag_mux_gates := (List.range 6).map (fun i =>
     let m1 := Wire.mk s!"cdb_tag_m1_{i}"
     let m2 := Wire.mk s!"cdb_tag_m2_{i}"
-    [Gate.mkMUX int_branch_tag[i]! lsu_tag[i]! lsu_wins m1,
+    [Gate.mkMUX merged_tag[i]! lsu_tag[i]! lsu_wins m1,
      Gate.mkMUX m1 dmem_load_tag_reg[i]! dmem_wins m2,
      Gate.mkMUX m2 replay_tag[i]! replay_wins cdb_tag[i]!])
   let cdb_data_mux_gates := (List.range 32).map (fun i =>
     let m1 := Wire.mk s!"cdb_data_m1_{i}"
     let m2 := Wire.mk s!"cdb_data_m2_{i}"
-    [Gate.mkMUX int_branch_data[i]! lsu_data[i]! lsu_wins m1,
+    [Gate.mkMUX merged_data[i]! lsu_data[i]! lsu_wins m1,
      Gate.mkMUX m1 dmem_resp_data[i]! dmem_wins m2,
      Gate.mkMUX m2 replay_data[i]! replay_wins cdb_data[i]!])
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
 
-  let cdb_arb_gates := arb_level0_gates ++ replay_save_gates ++ replay_tag_gates ++ replay_data_gates ++
+  let cdb_arb_gates := arb_level0_gates ++ arb_level1_gates ++ replay_save_gates ++
+    replay_tag_gates ++ replay_data_gates ++
     load_no_fwd_gates ++ dmem_tag_capture_gates ++
     replay_wins_gate ++ dmem_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++
     cdb_valid_gates ++ cdb_mux_gates
@@ -1919,7 +1943,6 @@ def mkCPU_RV32I : Circuit :=
   -- === COMMIT CONTROL ===
   let commit_gates := [
     Gate.mkAND rob_head_valid rob_head_complete rob_commit_en,
-    -- Recycle old physical register to FreeList only when commit has oldPhysRd
     Gate.mkAND rob_commit_en rob_head_hasOldPhysRd retire_recycle_valid
   ]
 
@@ -1928,14 +1951,18 @@ def mkCPU_RV32I : Circuit :=
   let stall_tmp2 := Wire.mk "stall_tmp2"
   let stall_tmp3 := Wire.mk "stall_tmp3"
   let stall_tmp4 := Wire.mk "stall_tmp4"
+  let stall_tmp5 := Wire.mk "stall_tmp5"
 
-  let stall_gates := [
-    Gate.mkOR rename_stall rob_full stall_tmp1,
-    Gate.mkOR stall_tmp1 rs_int_issue_full stall_tmp2,
-    Gate.mkOR stall_tmp2 rs_mem_issue_full stall_tmp3,
-    Gate.mkOR stall_tmp3 rs_branch_issue_full stall_tmp4,
-    Gate.mkOR stall_tmp4 lsu_sb_full global_stall
-  ]
+  let stall_gates :=
+    [Gate.mkOR rename_stall rob_full stall_tmp1,
+     Gate.mkOR stall_tmp1 rs_int_issue_full stall_tmp2,
+     Gate.mkOR stall_tmp2 rs_mem_issue_full stall_tmp3,
+     Gate.mkOR stall_tmp3 rs_branch_issue_full stall_tmp4] ++
+    (if enableM then
+      [Gate.mkOR stall_tmp4 rs_muldiv_issue_full stall_tmp5,
+       Gate.mkOR stall_tmp5 lsu_sb_full global_stall]
+    else
+      [Gate.mkOR stall_tmp4 lsu_sb_full global_stall])
 
   -- === MEMORY INTERFACE ===
   let dmem_req_valid := Wire.mk "dmem_req_valid"
@@ -1943,14 +1970,12 @@ def mkCPU_RV32I : Circuit :=
   let dmem_req_addr := makeIndexedWires "dmem_req_addr" 32
   let dmem_req_data := makeIndexedWires "dmem_req_data" 32
 
-  -- sb_enq_en = rs_mem_dispatch_valid AND NOT is_load (stores only)
   let not_is_load := Wire.mk "not_is_load"
   let sb_enq_gate_gates := [
     Gate.mkNOT is_load not_is_load,
     Gate.mkAND rs_mem_dispatch_valid not_is_load sb_enq_en
   ]
 
-  -- dmem interface: non-forwarded loads + store buffer dequeues
   let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"
   let dmem_gates := sb_enq_gate_gates ++ [
     Gate.mkOR load_no_fwd lsu_sb_deq_valid dmem_valid_tmp,
@@ -1965,1342 +1990,7 @@ def mkCPU_RV32I : Circuit :=
   let global_stall_out := Wire.mk "global_stall_out"
   let output_gates := [Gate.mkBUF global_stall global_stall_out]
 
-  { name := "CPU_RV32I"
-    inputs := [clock, reset, zero, one] ++
-              imem_resp_data ++
-              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
-    outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
-               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
-               [rob_empty]
-    gates := flush_gate ++ dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
-             cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
-             alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
-             imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
-             int_imm_rf_we_gates ++ int_imm_rf_gates ++ int_imm_rf_sel_gates ++
-             int_pc_rf_gates ++
-             lui_match_gates ++ auipc_match_gates ++ lui_auipc_gates ++
-             br_pc_rf_we_gates ++ br_pc_rf_gates ++ br_pc_rf_sel_gates ++
-             br_imm_rf_gates ++
-             br_pc_plus_4_b_gates ++ branch_result_mux_gates ++
-             jal_match_gates ++ jalr_match_gates ++ jal_jalr_or_gate ++
-             beq_match_gates ++ bne_match_gates ++ blt_match_gates ++
-             bge_match_gates ++ bltu_match_gates ++ bgeu_match_gates ++
-             branch_cond_gates ++ branch_redirect_gate ++ branch_target_wire_gates ++
-             jalr_target_gates ++ target_sel_gates ++
-             lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++
-             lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
-             load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
-             commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
-    instances := [fetch_inst, decoder_inst, rename_inst,
-                  redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++ redirect_target_dff_insts ++
-                  busy_instances ++
-                  cdb_fwd_instances ++
-                  [rs_int_inst, rs_mem_inst, rs_branch_inst,
-                  int_exec_inst, branch_exec_inst, mem_exec_inst,
-                  rob_inst, lsu_inst,
-                  imm_rf_decoder_inst, imm_rf_mux_inst,
-                  int_imm_rf_decoder_inst, int_imm_rf_mux_inst, int_pc_rf_mux_inst,
-                  br_pc_rf_decoder_inst, br_pc_rf_mux_inst, br_imm_rf_mux_inst,
-                  auipc_adder_inst, br_pc_plus_4_adder_inst,
-                  branch_target_adder_inst, jalr_target_adder_inst,
-                  br_cmp_inst]
-    -- V2 codegen annotations
-    signalGroups := [
-      { name := "imem_resp_data", width := 32, wires := imem_resp_data },
-      { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
-      { name := "decode_optype", width := 6, wires := decode_optype },
-      { name := "decode_rd", width := 5, wires := decode_rd },
-      { name := "decode_rs1", width := 5, wires := decode_rs1 },
-      { name := "decode_rs2", width := 5, wires := decode_rs2 },
-      { name := "decode_imm", width := 32, wires := decode_imm },
-      { name := "branch_redirect_target", width := 32, wires := branch_redirect_target },
-      { name := "fetch_pc", width := 32, wires := fetch_pc },
-      { name := "rs1_phys", width := 6, wires := rs1_phys },
-      { name := "rs2_phys", width := 6, wires := rs2_phys },
-      { name := "rd_phys", width := 6, wires := rd_phys },
-      { name := "old_rd_phys", width := 6, wires := old_rd_phys },
-      { name := "rs1_data", width := 32, wires := rs1_data },
-      { name := "rs2_data", width := 32, wires := rs2_data },
-      { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },
-      { name := "cdb_tag", width := 6, wires := cdb_tag },
-      { name := "cdb_data", width := 32, wires := cdb_data },
-      { name := "rob_head_physRd", width := 6, wires := rob_head_physRd },
-      { name := "rob_alloc_idx", width := 4, wires := rob_alloc_idx },
-      { name := "rob_head_oldPhysRd", width := 6, wires := rob_head_oldPhysRd },
-      { name := "rob_head_archRd", width := 5, wires := rob_head_archRd },
-      { name := "int_result", width := 32, wires := int_result },
-      { name := "int_result_final", width := 32, wires := int_result_final },
-      { name := "int_captured_imm", width := 32, wires := int_captured_imm },
-      { name := "int_captured_pc", width := 32, wires := int_captured_pc },
-      { name := "auipc_result", width := 32, wires := auipc_result },
-      { name := "int_tag_out", width := 6, wires := int_tag_out },
-      { name := "branch_result_final", width := 32, wires := branch_result_final },
-      { name := "br_captured_pc", width := 32, wires := br_captured_pc },
-      { name := "br_captured_imm", width := 32, wires := br_captured_imm },
-      { name := "br_pc_plus_4", width := 32, wires := br_pc_plus_4 },
-      { name := "branch_target", width := 32, wires := branch_target },
-      { name := "final_branch_target", width := 32, wires := final_branch_target },
-      { name := "mem_address", width := 32, wires := mem_address },
-      { name := "mem_tag_out", width := 6, wires := mem_tag_out },
-      { name := "lsu_agu_address", width := 32, wires := lsu_agu_address },
-      { name := "lsu_agu_tag", width := 6, wires := lsu_agu_tag },
-      { name := "lsu_sb_fwd_data", width := 32, wires := lsu_sb_fwd_data },
-      { name := "lsu_sb_deq_bits", width := 66, wires := lsu_sb_deq_bits },
-      { name := "lsu_sb_enq_idx", width := 3, wires := lsu_sb_enq_idx },
-      { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
-      { name := "dmem_req_data", width := 32, wires := dmem_req_data },
-      { name := "rs_int_dispatch_opcode", width := 6, wires := rs_int_dispatch_opcode },
-      { name := "rs_int_dispatch_src1", width := 32, wires := rs_int_dispatch_src1 },
-      { name := "rs_int_dispatch_src2", width := 32, wires := rs_int_dispatch_src2 },
-      { name := "rs_int_dispatch_tag", width := 6, wires := rs_int_dispatch_tag },
-      { name := "rs_mem_dispatch_opcode", width := 6, wires := rs_mem_dispatch_opcode },
-      { name := "rs_mem_dispatch_src1", width := 32, wires := rs_mem_dispatch_src1 },
-      { name := "rs_mem_dispatch_src2", width := 32, wires := rs_mem_dispatch_src2 },
-      { name := "rs_mem_dispatch_tag", width := 6, wires := rs_mem_dispatch_tag },
-      { name := "rs_branch_dispatch_opcode", width := 6, wires := rs_branch_dispatch_opcode },
-      { name := "rs_branch_dispatch_src1", width := 32, wires := rs_branch_dispatch_src1 },
-      { name := "rs_branch_dispatch_src2", width := 32, wires := rs_branch_dispatch_src2 },
-      { name := "rs_branch_dispatch_tag", width := 6, wires := rs_branch_dispatch_tag }
-    ]
-  }
-
-/--
-RV32IM CPU Structural Circuit (With M-Extension)
-
-Complete synthesizable CPU with all 12 verified submodules:
-1. FetchStage - PC management
-2. RV32IMDecoder - Instruction decoder (with M-extension)
-3. RenameStage_32x64 - RAT + FreeList + PhysRegFile
-4-7. ReservationStation4 (×4) - Integer, Memory, Branch, MulDiv
-8. IntegerExecUnit - ALU operations
-9. MemoryExecUnit - Address calculation
-10. MulDivExecUnit - Multiply/divide
-11. ROB16 - Reorder buffer
-12. LSU - Load-store unit with store buffer
-
-Design notes:
-- Source ready bits tied high (always ready)
-- Branch redirect tied low (no redirects for now)
-- CDB arbitration: priority MUX (LSU > MulDiv > Integer)
--/
-def mkCPU_RV32IM : Circuit :=
-  -- Global signals
-  let clock := Wire.mk "clock"
-  let reset := Wire.mk "reset"
-  let zero := Wire.mk "zero"
-  let one := Wire.mk "one"
-
-  -- === EXTERNAL INTERFACES ===
-  -- Memory interfaces
-  let imem_resp_data := makeIndexedWires "imem_resp_data" 32
-  let dmem_req_ready := Wire.mk "dmem_req_ready"
-  let dmem_resp_valid := Wire.mk "dmem_resp_valid"
-  let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
-
-  -- === DECODER OUTPUTS (internal, driven by RV32IMDecoder instance) ===
-  let decode_optype := makeIndexedWires "decode_optype" 6
-  let decode_rd := makeIndexedWires "decode_rd" 5
-  let decode_rs1 := makeIndexedWires "decode_rs1" 5
-  let decode_rs2 := makeIndexedWires "decode_rs2" 5
-  let decode_imm := makeIndexedWires "decode_imm" 32
-  let decode_valid := Wire.mk "decode_valid"
-  let decode_has_rd := Wire.mk "decode_has_rd"
-  let dispatch_is_integer := Wire.mk "dispatch_is_integer"
-  let dispatch_is_memory := Wire.mk "dispatch_is_memory"
-  let dispatch_is_branch := Wire.mk "dispatch_is_branch"
-  let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
-  let dispatch_is_store := Wire.mk "dispatch_is_store"  -- Unused for now
-  let decode_use_imm := Wire.mk "decode_use_imm"
-
-  -- === FETCH STAGE ===
-  let fetch_pc := makeIndexedWires "fetch_pc" 32
-  let fetch_stalled := Wire.mk "fetch_stalled"
-  let global_stall := Wire.mk "global_stall"
-  let branch_redirect_valid := Wire.mk "branch_redirect_valid"  -- driven by branch logic below
-  let branch_redirect_target := makeIndexedWires "branch_redirect_target" 32
-
-  -- Branch redirect: same approach as RV32I. Double-registered flush.
-  let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
-  let pipeline_flush_comb := Wire.mk "pipeline_flush_comb"
-  let pipeline_flush := Wire.mk "pipeline_flush"  -- for dispatch gating (low fanout)
-  -- Per-subsystem flush registers to limit reset fanout after synthesis flattening.
-  -- Each subsystem gets its own DFF(pipeline_flush_comb) → OR(reset, flush_X) chain,
-  -- so the async reset tree fans out to only one submodule's internal DFFs.
-  let flush_rs_int := Wire.mk "flush_rs_int"
-  let flush_rs_mem := Wire.mk "flush_rs_mem"
-  let flush_rs_br := Wire.mk "flush_rs_br"
-  let flush_rs_muldiv := Wire.mk "flush_rs_muldiv"
-  let flush_rob := Wire.mk "flush_rob"
-  let flush_busy := Wire.mk "flush_busy"
-  let flush_misc := Wire.mk "flush_misc"
-  let pipeline_reset_rs_int := Wire.mk "pipeline_reset_rs_int"
-  let pipeline_reset_rs_mem := Wire.mk "pipeline_reset_rs_mem"
-  let pipeline_reset_rs_br := Wire.mk "pipeline_reset_rs_br"
-  let pipeline_reset_rs_muldiv := Wire.mk "pipeline_reset_rs_muldiv"
-  let pipeline_reset_rob := Wire.mk "pipeline_reset_rob"
-  let pipeline_reset_busy := Wire.mk "pipeline_reset_busy"
-  let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
-  let fetch_stall := Wire.mk "fetch_stall"
-  let branch_redirect_target_reg := makeIndexedWires "branch_redirect_target_reg" 32
-  let redirect_valid_dff_inst : CircuitInstance := {
-    moduleName := "DFlipFlop"
-    instName := "u_redirect_valid_dff"
-    portMap := [("d", branch_redirect_valid), ("q", branch_redirect_valid_reg),
-                ("clock", clock), ("reset", reset)]
-  }
-  let redirect_target_dff_insts : List CircuitInstance := (List.range 32).map (fun i => {
-    moduleName := "DFlipFlop"
-    instName := s!"u_redirect_target_dff_{i}"
-    portMap := [("d", branch_redirect_target[i]!), ("q", branch_redirect_target_reg[i]!),
-                ("clock", clock), ("reset", reset)]
-  })
-
-  -- Per-subsystem flush DFFs: each captures pipeline_flush_comb independently
-  -- so post-flatten reset fanout is bounded per subsystem
-  let flush_dff_dispatch : CircuitInstance := {
-    moduleName := "DFlipFlop"
-    instName := "u_flush_dff_dispatch"
-    portMap := [("d", pipeline_flush_comb), ("q", pipeline_flush),
-                ("clock", clock), ("reset", reset)]
-  }
-  let flush_dff_insts : List CircuitInstance := [
-    "rs_int", "rs_mem", "rs_br", "rs_muldiv", "rob", "busy", "misc"
-  ].map (fun tag => {
-    moduleName := "DFlipFlop"
-    instName := s!"u_flush_dff_{tag}"
-    portMap := [("d", pipeline_flush_comb), ("q", Wire.mk s!"flush_{tag}"),
-                ("clock", clock), ("reset", reset)]
-  })
-
-  let fetch_inst : CircuitInstance := {
-    moduleName := "FetchStage"
-    instName := "u_fetch"
-    portMap :=
-      [("clock", clock), ("reset", reset),
-       ("stall", fetch_stall),
-       ("branch_valid", branch_redirect_valid_reg),
-       ("const_0", zero), ("const_1", one)] ++
-      (branch_redirect_target_reg.enum.map (fun ⟨i, w⟩ => (s!"branch_target_{i}", w))) ++
-      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
-      [("stalled_reg", fetch_stalled)]
-  }
-
-  -- === DECODER ===
-  let decoder_inst : CircuitInstance := {
-    moduleName := "RV32IMDecoder"
-    instName := "u_decoder"
-    portMap :=
-      (imem_resp_data.enum.map (fun ⟨i, w⟩ => (s!"io_instr_{i}", w))) ++
-      (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"io_optype_{i}", w))) ++
-      (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"io_rd_{i}", w))) ++
-      (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"io_rs1_{i}", w))) ++
-      (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"io_rs2_{i}", w))) ++
-      (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"io_imm_{i}", w))) ++
-      [("io_valid", decode_valid),
-       ("io_has_rd", decode_has_rd),
-       ("io_is_integer", dispatch_is_integer),
-       ("io_is_memory", dispatch_is_memory),
-       ("io_is_branch", dispatch_is_branch),
-       ("io_is_muldiv", dispatch_is_muldiv),
-       ("io_is_store", dispatch_is_store),
-       ("io_use_imm", decode_use_imm)]
-  }
-
-  -- === RENAME STAGE ===
-  let rename_valid := Wire.mk "rename_valid"
-  let rename_stall := Wire.mk "rename_stall"
-  let rs1_phys := makeIndexedWires "rs1_phys" 6
-  let rs2_phys := makeIndexedWires "rs2_phys" 6
-  let rd_phys := makeIndexedWires "rd_phys" 6
-  let old_rd_phys := makeIndexedWires "old_rd_phys" 6
-  let rs1_data := makeIndexedWires "rs1_data" 32
-  let rs2_data := makeIndexedWires "rs2_data" 32
-
-  -- CDB signals (driven by arbitration)
-  let cdb_valid := Wire.mk "cdb_valid"
-  let cdb_tag := makeIndexedWires "cdb_tag" 6
-  let cdb_data := makeIndexedWires "cdb_data" 32
-
-  -- Mask CDB valid for PhysRegFile writes: don't write to p0 (x0's home register)
-  let cdb_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_tag_nz_t{i}")
-  let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
-  let cdb_valid_prf := Wire.mk "cdb_valid_prf"
-  let cdb_tag_nz_gates :=
-    [Gate.mkOR cdb_tag[0]! cdb_tag[1]! cdb_tag_nz_tmp[0]!] ++
-    (List.range 4).map (fun i =>
-      Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
-    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_prf]
-
-  -- ROB commit signals
-  let rob_commit_en := Wire.mk "rob_commit_en"
-  let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
-  let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
-  let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
-  -- Retire: recycle old physical register back to FreeList only when hasOldPhysRd
-  let retire_recycle_valid := Wire.mk "retire_recycle_valid"
-
-  -- Gate rename's instr_valid during redirect/flush to prevent double-rename
-  let decode_valid_rename := Wire.mk "decode_valid_rename"
-
-  let rename_inst : CircuitInstance := {
-    moduleName := "RenameStage_32x64"
-    instName := "u_rename"
-    portMap :=
-      [("clock", clock), ("reset", reset),
-       ("zero", zero), ("one", one),
-       ("instr_valid", decode_valid_rename),
-       ("has_rd", decode_has_rd)] ++
-      (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
-      (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
-      (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
-      [("cdb_valid", cdb_valid_prf)] ++
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
-      (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", retire_recycle_valid)] ++
-      (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
-      [("rename_valid", rename_valid), ("stall", rename_stall)] ++
-      (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
-      (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
-      (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_phys_out_{i}", w))) ++
-      (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
-      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
-      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w)))
-  }
-
-  -- === DISPATCH QUALIFICATION GATES ===
-  -- Dispatch valid = NOT(stall) AND decode_valid AND dispatch_is_X
-  let not_stall := Wire.mk "not_stall"
-  let dispatch_base_valid := Wire.mk "dispatch_base_valid"
-  let dispatch_int_valid := Wire.mk "dispatch_int_valid"
-  let dispatch_mem_valid := Wire.mk "dispatch_mem_valid"
-  let dispatch_branch_valid := Wire.mk "dispatch_branch_valid"
-  let dispatch_muldiv_valid := Wire.mk "dispatch_muldiv_valid"
-
-  -- Store buffer enqueue = memory RS dispatch valid (TODO: filter stores only)
-  let sb_enq_en := Wire.mk "sb_enq_en"
-
-  -- Suppress dispatch during redirect and flush cycles
-  let not_redirecting := Wire.mk "not_redirecting"
-  let redirect_or := Wire.mk "redirect_or"
-  let redirect_or_flush := Wire.mk "redirect_or_flush"
-  let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
-
-  -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFFs)
-  -- Per-subsystem: flush_X = DFF(pipeline_flush_comb), pipeline_reset_X = reset | flush_X
-  -- pipeline_flush (dispatch copy) used only for fetch stall and dispatch gating (low fanout)
-  let flush_gate := [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
-                     Gate.mkOR global_stall pipeline_flush fetch_stall,
-                     -- Per-subsystem reset OR gates (each driven by its own flush DFF)
-                     Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
-                     Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
-                     Gate.mkOR reset flush_rs_br pipeline_reset_rs_br,
-                     Gate.mkOR reset flush_rs_muldiv pipeline_reset_rs_muldiv,
-                     Gate.mkOR reset flush_rob pipeline_reset_rob,
-                     Gate.mkOR reset flush_busy pipeline_reset_busy,
-                     Gate.mkOR reset flush_misc pipeline_reset_misc]
-
-  let dispatch_gates := [
-    Gate.mkNOT global_stall not_stall,
-    Gate.mkOR branch_redirect_valid branch_redirect_valid_reg redirect_or,
-    Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
-    Gate.mkNOT redirect_or_flush not_redirecting,
-    -- Gate rename by redirect/flush AND stall to prevent double-rename.
-    -- Without the stall gate, the same instruction gets re-renamed each stall cycle,
-    -- consuming ptags and corrupting the RAT (src reads own destination tag).
-    Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
-    Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
-    -- dispatch_base_valid = decode_valid_rename (rename and dispatch are synchronized)
-    Gate.mkBUF decode_valid_rename dispatch_base_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid,
-    Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid
-  ]
-
-  -- === BUSY-BIT TABLE (operand readiness tracking) ===
-  let busy_set_en := Wire.mk "busy_set_en"
-  let busy_set_gate := Gate.mkAND rename_valid decode_has_rd busy_set_en
-  let busy_src1_ready := Wire.mk "busy_src1_ready"
-  let busy_src2_ready := Wire.mk "busy_src2_ready"
-  let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
-  let (busy_gates, busy_instances) := mkBusyBitTable
-    clock pipeline_reset_busy zero one
-    rd_phys busy_set_en
-    cdb_tag cdb_valid
-    rs1_phys rs2_phys
-    decode_use_imm
-    busy_src1_ready busy_src2_ready busy_src2_ready_reg
-
-  -- === CDB FORWARDING (same-cycle wakeup at RS entry) ===
-  let cdb_match_src1 := Wire.mk "cdb_match_src1"
-  let cdb_match_src2 := Wire.mk "cdb_match_src2"
-  let cdb_fwd_src1 := Wire.mk "cdb_fwd_src1"
-  let cdb_fwd_src2 := Wire.mk "cdb_fwd_src2"
-  let issue_src1_ready := Wire.mk "issue_src1_ready"
-  let issue_src2_ready := Wire.mk "issue_src2_ready"
-  let issue_src2_ready_reg := Wire.mk "issue_src2_ready_reg"
-
-  let cdb_fwd_cmp_src1_inst : CircuitInstance := {
-    moduleName := "Comparator6"
-    instName := "u_cdb_fwd_cmp_src1"
-    portMap := [("one", one), ("eq", cdb_match_src1),
-                ("lt", Wire.mk "cdb_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src1_ltu"),
-                ("gt", Wire.mk "cdb_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src1_gtu")] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
-  }
-  let cdb_fwd_cmp_src2_inst : CircuitInstance := {
-    moduleName := "Comparator6"
-    instName := "u_cdb_fwd_cmp_src2"
-    portMap := [("one", one), ("eq", cdb_match_src2),
-                ("lt", Wire.mk "cdb_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src2_ltu"),
-                ("gt", Wire.mk "cdb_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src2_gtu")] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
-  }
-
-  let cdb_fwd_gates := [
-    Gate.mkAND cdb_valid cdb_match_src1 cdb_fwd_src1,
-    Gate.mkAND cdb_valid cdb_match_src2 cdb_fwd_src2,
-    Gate.mkOR busy_src1_ready cdb_fwd_src1 issue_src1_ready,
-    Gate.mkOR busy_src2_ready cdb_fwd_src2 issue_src2_ready,
-    Gate.mkOR busy_src2_ready_reg cdb_fwd_src2 issue_src2_ready_reg
-  ]
-
-  let fwd_src1_data := makeIndexedWires "fwd_src1_data" 32
-  let fwd_src2_data := makeIndexedWires "fwd_src2_data" 32
-  let fwd_src1_data_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs1_data[i]!) (cdb_data[i]!) cdb_fwd_src1 (fwd_src1_data[i]!))
-  let fwd_src2_data_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (rs2_data[i]!) (cdb_data[i]!) cdb_fwd_src2 (fwd_src2_data[i]!))
-
-  let cdb_fwd_instances := [cdb_fwd_cmp_src1_inst, cdb_fwd_cmp_src2_inst]
-
-  -- === SRC2 MUX: select immediate for I-type, forwarded register value for R-type ===
-  let issue_src2_muxed := makeIndexedWires "issue_src2_muxed" 32
-  let src2_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (fwd_src2_data[i]!) (decode_imm[i]!) decode_use_imm (issue_src2_muxed[i]!))
-
-  -- === RESERVATION STATIONS (4 instances, bundled I/O) ===
-  -- RS Integer
-  let rs_int_alloc_ptr := makeIndexedWires "rs_int_alloc_ptr" 2
-  let rs_int_grant := makeIndexedWires "rs_int_grant" 4
-  let rs_int_issue_full := Wire.mk "rs_int_issue_full"
-  let rs_int_dispatch_valid := Wire.mk "rs_int_dispatch_valid"
-  let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 6
-  let rs_int_dispatch_src1 := makeIndexedWires "rs_int_dispatch_src1" 32
-  let rs_int_dispatch_src2 := makeIndexedWires "rs_int_dispatch_src2" 32
-  let rs_int_dispatch_tag := makeIndexedWires "rs_int_dispatch_tag" 6
-
-  let rs_int_inst : CircuitInstance := {
-    moduleName := "ReservationStation4"
-    instName := "u_rs_integer"
-    portMap := [("clock", clock), ("reset", pipeline_reset_rs_int),
-                ("zero", zero), ("one", one), ("issue_en", dispatch_int_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid), ("dispatch_en", one),
-                ("issue_full", rs_int_issue_full), ("dispatch_valid", rs_int_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
-               (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
-               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
-               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
-               (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-               (rs_int_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
-               (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
-               (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_int_alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
-               (rs_int_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
-  }
-
-  -- RS Memory
-  let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
-  let rs_mem_dispatch_valid := Wire.mk "rs_mem_dispatch_valid"
-  let rs_mem_dispatch_opcode := makeIndexedWires "rs_mem_dispatch_opcode" 6
-  let rs_mem_dispatch_src1 := makeIndexedWires "rs_mem_dispatch_src1" 32
-  let rs_mem_dispatch_src2 := makeIndexedWires "rs_mem_dispatch_src2" 32
-  let rs_mem_dispatch_tag := makeIndexedWires "rs_mem_dispatch_tag" 6
-  let rs_mem_alloc_ptr := makeIndexedWires "rs_mem_alloc_ptr" 2
-  let rs_mem_grant := makeIndexedWires "rs_mem_grant" 4
-
-  let rs_mem_inst : CircuitInstance := {
-    moduleName := "ReservationStation4"
-    instName := "u_rs_memory"
-    portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
-                ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready_reg),
-                ("cdb_valid", cdb_valid), ("dispatch_en", one),
-                ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
-               (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
-               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
-               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               -- Memory RS: src2 = forwarded register value (store data), NOT immediate
-               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
-               (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-               (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
-               (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
-               (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_mem_alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
-               (rs_mem_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
-  }
-
-  -- === IMMEDIATE REGISTER FILE ===
-  -- Captures decode_imm at mem RS dispatch time, indexed by RS alloc_ptr.
-  -- Read at issue time using dispatch_grant. Fixes OoO immediate desync.
-  let imm_rf_decoded := makeIndexedWires "imm_rf_decoded" 4
-  let imm_rf_we := makeIndexedWires "imm_rf_we" 4
-
-  let imm_rf_decoder_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := "u_imm_rf_dec"
-    portMap := [
-      ("in_0", rs_mem_alloc_ptr[0]!), ("in_1", rs_mem_alloc_ptr[1]!),
-      ("out_0", imm_rf_decoded[0]!), ("out_1", imm_rf_decoded[1]!),
-      ("out_2", imm_rf_decoded[2]!), ("out_3", imm_rf_decoded[3]!)
-    ]
-  }
-
-  -- Gate each decoded output with dispatch_mem_valid
-  let imm_rf_we_gates := (List.range 4).map (fun e =>
-    Gate.mkAND imm_rf_decoded[e]! dispatch_mem_valid imm_rf_we[e]!)
-
-  -- 4 entries × 32 bits: MUX + DFF per bit
-  let imm_rf_entries := (List.range 4).map (fun e =>
-    makeIndexedWires s!"imm_rf_e{e}" 32)
-  let imm_rf_gates := (List.range 4).map (fun e =>
-    let entry := imm_rf_entries[e]!
-    (List.range 32).map (fun b =>
-      let next := Wire.mk s!"imm_rf_next_e{e}_{b}"
-      [ Gate.mkMUX entry[b]! decode_imm[b]! imm_rf_we[e]! next,
-        Gate.mkDFF next clock reset entry[b]! ]
-    ) |>.flatten
-  ) |>.flatten
-
-  -- Read mux: convert dispatch_grant (one-hot) → binary sel, then Mux4x32
-  let captured_imm := makeIndexedWires "captured_imm" 32
-  let imm_rf_sel := makeIndexedWires "imm_rf_sel" 2
-  let imm_rf_sel_gates := [
-    Gate.mkOR rs_mem_grant[1]! rs_mem_grant[3]! imm_rf_sel[0]!,
-    Gate.mkOR rs_mem_grant[2]! rs_mem_grant[3]! imm_rf_sel[1]!
-  ]
-
-  let imm_rf_mux_inst : CircuitInstance := {
-    moduleName := "Mux4x32"
-    instName := "u_imm_rf_mux"
-    portMap :=
-      (((List.range 4).map (fun e =>
-          (List.range 32).map (fun b =>
-            (s!"in{e}[{b}]", imm_rf_entries[e]![b]!)
-          )
-        )).flatten) ++
-      (imm_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
-  }
-
-  -- === INTEGER IMMEDIATE REGISTER FILE ===
-  let int_imm_rf_decoded := makeIndexedWires "int_imm_rf_decoded" 4
-  let int_imm_rf_we := makeIndexedWires "int_imm_rf_we" 4
-
-  let int_imm_rf_decoder_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := "u_int_imm_rf_dec"
-    portMap := [
-      ("in_0", rs_int_alloc_ptr[0]!), ("in_1", rs_int_alloc_ptr[1]!),
-      ("out_0", int_imm_rf_decoded[0]!), ("out_1", int_imm_rf_decoded[1]!),
-      ("out_2", int_imm_rf_decoded[2]!), ("out_3", int_imm_rf_decoded[3]!)
-    ]
-  }
-
-  let int_imm_rf_we_gates := (List.range 4).map (fun e =>
-    Gate.mkAND int_imm_rf_decoded[e]! dispatch_int_valid int_imm_rf_we[e]!)
-
-  let int_imm_rf_entries := (List.range 4).map (fun e =>
-    makeIndexedWires s!"int_imm_rf_e{e}" 32)
-  let int_imm_rf_gates := (List.range 4).map (fun e =>
-    let entry := int_imm_rf_entries[e]!
-    (List.range 32).map (fun b =>
-      let next := Wire.mk s!"int_imm_rf_next_e{e}_{b}"
-      [ Gate.mkMUX entry[b]! decode_imm[b]! int_imm_rf_we[e]! next,
-        Gate.mkDFF next clock reset entry[b]! ]
-    ) |>.flatten
-  ) |>.flatten
-
-  let int_captured_imm := makeIndexedWires "int_captured_imm" 32
-  let int_imm_rf_sel := makeIndexedWires "int_imm_rf_sel" 2
-  let int_imm_rf_sel_gates := [
-    Gate.mkOR rs_int_grant[1]! rs_int_grant[3]! int_imm_rf_sel[0]!,
-    Gate.mkOR rs_int_grant[2]! rs_int_grant[3]! int_imm_rf_sel[1]!
-  ]
-
-  let int_imm_rf_mux_inst : CircuitInstance := {
-    moduleName := "Mux4x32"
-    instName := "u_int_imm_rf_mux"
-    portMap :=
-      (((List.range 4).map (fun e =>
-          (List.range 32).map (fun b =>
-            (s!"in{e}[{b}]", int_imm_rf_entries[e]![b]!)
-          )
-        )).flatten) ++
-      (int_imm_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (int_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
-  }
-
-  -- === INTEGER PC REGISTER FILE ===
-  let int_pc_rf_entries := (List.range 4).map (fun e =>
-    makeIndexedWires s!"int_pc_rf_e{e}" 32)
-  let int_pc_rf_gates := (List.range 4).map (fun e =>
-    let entry := int_pc_rf_entries[e]!
-    (List.range 32).map (fun b =>
-      let next := Wire.mk s!"int_pc_rf_next_e{e}_{b}"
-      [ Gate.mkMUX entry[b]! fetch_pc[b]! int_imm_rf_we[e]! next,
-        Gate.mkDFF next clock reset entry[b]! ]
-    ) |>.flatten
-  ) |>.flatten
-
-  let int_captured_pc := makeIndexedWires "int_captured_pc" 32
-  let int_pc_rf_mux_inst : CircuitInstance := {
-    moduleName := "Mux4x32"
-    instName := "u_int_pc_rf_mux"
-    portMap :=
-      (((List.range 4).map (fun e =>
-          (List.range 32).map (fun b =>
-            (s!"in{e}[{b}]", int_pc_rf_entries[e]![b]!)
-          )
-        )).flatten) ++
-      (int_imm_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (int_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
-  }
-
-  -- RS Branch
-  let rs_branch_alloc_ptr := makeIndexedWires "rs_branch_alloc_ptr" 2
-  let rs_branch_grant := makeIndexedWires "rs_branch_grant" 4
-  let rs_branch_issue_full := Wire.mk "rs_branch_issue_full"
-  let rs_branch_dispatch_valid := Wire.mk "rs_branch_dispatch_valid"
-  let rs_branch_dispatch_opcode := makeIndexedWires "rs_branch_dispatch_opcode" 6
-  let rs_branch_dispatch_src1 := makeIndexedWires "rs_branch_dispatch_src1" 32
-  let rs_branch_dispatch_src2 := makeIndexedWires "rs_branch_dispatch_src2" 32
-  let rs_branch_dispatch_tag := makeIndexedWires "rs_branch_dispatch_tag" 6
-
-  let rs_branch_inst : CircuitInstance := {
-    moduleName := "ReservationStation4"
-    instName := "u_rs_branch"
-    portMap := [("clock", clock), ("reset", pipeline_reset_rs_br),
-                ("zero", zero), ("one", one), ("issue_en", dispatch_branch_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid), ("dispatch_en", one),
-                ("issue_full", rs_branch_issue_full), ("dispatch_valid", rs_branch_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
-               (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
-               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
-               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
-               (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-               (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
-               (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
-               (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_branch_alloc_ptr.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
-               (rs_branch_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
-  }
-
-  -- === BRANCH PC REGISTER FILE ===
-  let br_pc_rf_decoded := makeIndexedWires "br_pc_rf_decoded" 4
-  let br_pc_rf_we := makeIndexedWires "br_pc_rf_we" 4
-
-  let br_pc_rf_decoder_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := "u_br_pc_rf_dec"
-    portMap := [
-      ("in_0", rs_branch_alloc_ptr[0]!), ("in_1", rs_branch_alloc_ptr[1]!),
-      ("out_0", br_pc_rf_decoded[0]!), ("out_1", br_pc_rf_decoded[1]!),
-      ("out_2", br_pc_rf_decoded[2]!), ("out_3", br_pc_rf_decoded[3]!)
-    ]
-  }
-
-  let br_pc_rf_we_gates := (List.range 4).map (fun e =>
-    Gate.mkAND br_pc_rf_decoded[e]! dispatch_branch_valid br_pc_rf_we[e]!)
-
-  let br_pc_rf_entries := (List.range 4).map (fun e =>
-    makeIndexedWires s!"br_pc_rf_e{e}" 32)
-  let br_pc_rf_gates := (List.range 4).map (fun e =>
-    let entry := br_pc_rf_entries[e]!
-    (List.range 32).map (fun b =>
-      let next := Wire.mk s!"br_pc_rf_next_e{e}_{b}"
-      [ Gate.mkMUX entry[b]! fetch_pc[b]! br_pc_rf_we[e]! next,
-        Gate.mkDFF next clock reset entry[b]! ]
-    ) |>.flatten
-  ) |>.flatten
-
-  let br_captured_pc := makeIndexedWires "br_captured_pc" 32
-  let br_pc_rf_sel := makeIndexedWires "br_pc_rf_sel" 2
-  let br_pc_rf_sel_gates := [
-    Gate.mkOR rs_branch_grant[1]! rs_branch_grant[3]! br_pc_rf_sel[0]!,
-    Gate.mkOR rs_branch_grant[2]! rs_branch_grant[3]! br_pc_rf_sel[1]!
-  ]
-
-  let br_pc_rf_mux_inst : CircuitInstance := {
-    moduleName := "Mux4x32"
-    instName := "u_br_pc_rf_mux"
-    portMap :=
-      (((List.range 4).map (fun e =>
-          (List.range 32).map (fun b =>
-            (s!"in{e}[{b}]", br_pc_rf_entries[e]![b]!)
-          )
-        )).flatten) ++
-      (br_pc_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
-  }
-
-  -- === BRANCH IMMEDIATE REGISTER FILE ===
-  let br_imm_rf_entries := (List.range 4).map (fun e =>
-    makeIndexedWires s!"br_imm_rf_e{e}" 32)
-  let br_imm_rf_gates := (List.range 4).map (fun e =>
-    let entry := br_imm_rf_entries[e]!
-    (List.range 32).map (fun b =>
-      let next := Wire.mk s!"br_imm_rf_next_e{e}_{b}"
-      [ Gate.mkMUX entry[b]! decode_imm[b]! br_pc_rf_we[e]! next,
-        Gate.mkDFF next clock reset entry[b]! ]
-    ) |>.flatten
-  ) |>.flatten
-
-  let br_captured_imm := makeIndexedWires "br_captured_imm" 32
-  let br_imm_rf_mux_inst : CircuitInstance := {
-    moduleName := "Mux4x32"
-    instName := "u_br_imm_rf_mux"
-    portMap :=
-      (((List.range 4).map (fun e =>
-          (List.range 32).map (fun b =>
-            (s!"in{e}[{b}]", br_imm_rf_entries[e]![b]!)
-          )
-        )).flatten) ++
-      (br_pc_rf_sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
-  }
-
-  -- RS MulDiv
-  let rs_muldiv_alloc_ptr_unused := makeIndexedWires "rs_muldiv_alloc_ptr_unused" 2
-  let rs_muldiv_grant_unused := makeIndexedWires "rs_muldiv_grant_unused" 4
-  let rs_muldiv_issue_full := Wire.mk "rs_muldiv_issue_full"
-  let rs_muldiv_dispatch_valid := Wire.mk "rs_muldiv_dispatch_valid"
-  let rs_muldiv_dispatch_opcode := makeIndexedWires "rs_muldiv_dispatch_opcode" 6
-  let rs_muldiv_dispatch_src1 := makeIndexedWires "rs_muldiv_dispatch_src1" 32
-  let rs_muldiv_dispatch_src2 := makeIndexedWires "rs_muldiv_dispatch_src2" 32
-  let rs_muldiv_dispatch_tag := makeIndexedWires "rs_muldiv_dispatch_tag" 6
-
-  let rs_muldiv_inst : CircuitInstance := {
-    moduleName := "ReservationStation4"
-    instName := "u_rs_muldiv"
-    portMap := [("clock", clock), ("reset", pipeline_reset_rs_muldiv),
-                ("zero", zero), ("one", one), ("issue_en", dispatch_muldiv_valid),
-                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid), ("dispatch_en", one),
-                ("issue_full", rs_muldiv_issue_full), ("dispatch_valid", rs_muldiv_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
-               (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
-               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
-               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
-               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
-               (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
-               (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-               (rs_muldiv_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
-               (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
-               (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
-               (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_muldiv_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
-               (rs_muldiv_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
-  }
-
-  -- === EXECUTION UNITS ===
-  -- Integer ALU (combinational, named ports, 4-bit opcode)
-  let int_result := makeIndexedWires "int_result" 32
-  let int_tag_out := makeIndexedWires "int_tag_out" 6
-
-  -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
-  -- Driven from RS dispatch opcode (not imem_resp_data) so the ALU executes
-  -- the correct operation for the dispatched instruction, not the current fetch.
-  let alu_op := makeIndexedWires "alu_op" 4
-  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op aluMapping_RV32IM
-
-  let int_exec_inst : CircuitInstance := {
-    moduleName := "IntegerExecUnit"
-    instName := "u_exec_integer"
-    portMap :=
-      (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (rs_int_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      (alu_op.enum.map (fun ⟨i, w⟩ => (s!"opcode_{i}", w))) ++
-      (rs_int_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("zero", zero), ("one", one)] ++
-      (int_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
-      (int_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
-  }
-
-  -- Branch execution unit
-  let branch_result := makeIndexedWires "branch_result" 32
-  let branch_tag_out := makeIndexedWires "branch_tag_out" 6
-
-  let branch_exec_inst : CircuitInstance := {
-    moduleName := "BranchExecUnit"
-    instName := "u_exec_branch"
-    portMap :=
-      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"src1_{i}", w))) ++
-      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"src2_{i}", w))) ++
-      (rs_branch_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("zero", zero)] ++
-      (branch_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
-      (branch_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
-  }
-
-  -- Memory AGU (combinational, named ports)
-  let mem_address := makeIndexedWires "mem_address" 32
-  let mem_tag_out := makeIndexedWires "mem_tag_out" 6
-
-  let mem_exec_inst : CircuitInstance := {
-    moduleName := "MemoryExecUnit"
-    instName := "u_exec_memory"
-    portMap :=
-      (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
-      (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++  -- Use captured immediate as offset
-      (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("zero", zero)] ++
-      (mem_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
-      (mem_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
-  }
-
-  -- MulDiv (sequential, named ports, 3-bit opcode)
-  let muldiv_result := makeIndexedWires "muldiv_result" 32
-  let muldiv_tag_out := makeIndexedWires "muldiv_tag_out" 6
-  let muldiv_valid_out := Wire.mk "muldiv_valid_out"
-  let muldiv_busy := Wire.mk "muldiv_busy"
-
-  let muldiv_exec_inst : CircuitInstance := {
-    moduleName := "MulDivExecUnit"
-    instName := "u_exec_muldiv"
-    portMap :=
-      (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      -- Width mismatch: RS has 6-bit opcode, MulDiv takes 3-bit. Connect lower 3 bits.
-      [(s!"op_0", rs_muldiv_dispatch_opcode[0]!),
-       (s!"op_1", rs_muldiv_dispatch_opcode[1]!),
-       (s!"op_2", rs_muldiv_dispatch_opcode[2]!)] ++
-      (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("valid_in", rs_muldiv_dispatch_valid),
-       ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
-       ("zero", zero), ("one", one)] ++
-      (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
-      (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
-      [("valid_out", muldiv_valid_out), ("busy", muldiv_busy)]
-  }
-
-  -- === FIX 1: LUI/AUIPC POST-ALU MUX ===
-  let auipc_result := makeIndexedWires "auipc_result" 32
-  let auipc_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_auipc_adder"
-    portMap :=
-      (int_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (int_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (auipc_result.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-
-  -- Opcode match: LUI = encoding 25, AUIPC = encoding 43 in RV32IM
-  let is_lui := Wire.mk "is_lui"
-  let is_auipc := Wire.mk "is_auipc"
-  let testBit (n : Nat) (b : Nat) : Bool := (n / (2 ^ b)) % 2 != 0
-
-  let mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
-    let bitWires := (List.range 6).map fun b =>
-      if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
-    let notGates := (List.range 6).filterMap fun b =>
-      if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
-    let t01 := Wire.mk s!"{pfx}_t01"
-    let t012 := Wire.mk s!"{pfx}_t012"
-    let t0123 := Wire.mk s!"{pfx}_t0123"
-    let t01234 := Wire.mk s!"{pfx}_t01234"
-    notGates ++ [
-      Gate.mkAND bitWires[0]! bitWires[1]! t01,
-      Gate.mkAND t01 bitWires[2]! t012,
-      Gate.mkAND t012 bitWires[3]! t0123,
-      Gate.mkAND t0123 bitWires[4]! t01234,
-      Gate.mkAND t01234 bitWires[5]! result
-    ]
-
-  let lui_match_gates := mkOpcodeMatch6 "lui_match" 25 rs_int_dispatch_opcode is_lui
-  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" 43 rs_int_dispatch_opcode is_auipc
-
-  -- Post-ALU MUX: int_result_final = MUX(MUX(int_result, auipc_result, is_auipc), int_captured_imm, is_lui)
-  let int_result_final := makeIndexedWires "int_result_final" 32
-  let int_auipc_muxed := makeIndexedWires "int_auipc_muxed" 32
-  let lui_auipc_gates := (List.range 32).map (fun i =>
-    [ Gate.mkMUX int_result[i]! auipc_result[i]! is_auipc int_auipc_muxed[i]!,
-      Gate.mkMUX int_auipc_muxed[i]! int_captured_imm[i]! is_lui int_result_final[i]! ]
-  ) |>.flatten
-
-  -- === FIX 2: JAL/JALR LINK REGISTER (PC+4) ===
-  let br_pc_plus_4 := makeIndexedWires "br_pc_plus_4" 32
-  let br_pc_plus_4_b := makeIndexedWires "br_pc_plus_4_b" 32
-  let br_pc_plus_4_b_gates := (List.range 32).map (fun i =>
-    if i == 2 then Gate.mkBUF one br_pc_plus_4_b[i]!
-    else Gate.mkBUF zero br_pc_plus_4_b[i]!)
-
-  let br_pc_plus_4_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_br_pc_plus_4"
-    portMap :=
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_pc_plus_4_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (br_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-
-  -- Opcode match: JAL = encoding 31, JALR = encoding 30 in RV32IM
-  let is_jal := Wire.mk "is_jal"
-  let is_jalr := Wire.mk "is_jalr"
-  let is_jal_or_jalr := Wire.mk "is_jal_or_jalr"
-  let jal_match_gates := mkOpcodeMatch6 "jal_match" 31 rs_branch_dispatch_opcode is_jal
-  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" 30 rs_branch_dispatch_opcode is_jalr
-  let jal_jalr_or_gate := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
-
-  -- Post-branch MUX: branch_result_final = MUX(branch_result, br_pc_plus_4, is_jal_or_jalr)
-  let branch_result_final := makeIndexedWires "branch_result_final" 32
-  let branch_result_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX branch_result[i]! br_pc_plus_4[i]! is_jal_or_jalr branch_result_final[i]!)
-
-  -- === FIX 3: BRANCH TARGET + PC REDIRECT ===
-  let branch_target := makeIndexedWires "branch_target" 32
-  let branch_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_branch_target"
-    portMap :=
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (branch_target.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-
-  -- JALR target = src1 + br_captured_imm, bit 0 cleared
-  let jalr_target_raw := makeIndexedWires "jalr_target_raw" 32
-  let jalr_target := makeIndexedWires "jalr_target" 32
-  let jalr_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_jalr_target"
-    portMap :=
-      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (jalr_target_raw.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-  let jalr_target_gates := (List.range 32).map (fun i =>
-    if i == 0 then Gate.mkBUF zero jalr_target[i]!
-    else Gate.mkBUF jalr_target_raw[i]! jalr_target[i]!)
-
-  -- Select target: MUX between branch_target and jalr_target based on is_jalr
-  let final_branch_target := makeIndexedWires "final_branch_target" 32
-  let target_sel_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX branch_target[i]! jalr_target[i]! is_jalr final_branch_target[i]!)
-
-  -- Branch condition evaluation using Comparator32
-  let br_eq := Wire.mk "br_eq"
-  let br_lt := Wire.mk "br_lt"
-  let br_ltu := Wire.mk "br_ltu"
-
-  let br_cmp_inst : CircuitInstance := {
-    moduleName := "Comparator32"
-    instName := "u_br_cmp"
-    portMap :=
-      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("one", one), ("eq", br_eq), ("lt", br_lt), ("ltu", br_ltu),
-       ("gt", Wire.mk "br_gt"), ("gtu", Wire.mk "br_gtu")]
-  }
-
-  -- Decode branch condition from opcode
-  -- BEQ=42, BNE=37, BLT=39, BGE=41, BLTU=38, BGEU=40 in RV32IM
-  let is_beq := Wire.mk "is_beq"
-  let is_bne := Wire.mk "is_bne"
-  let is_blt := Wire.mk "is_blt"
-  let is_bge := Wire.mk "is_bge"
-  let is_bltu := Wire.mk "is_bltu"
-  let is_bgeu := Wire.mk "is_bgeu"
-
-  let beq_match_gates := mkOpcodeMatch6 "beq_match" 42 rs_branch_dispatch_opcode is_beq
-  let bne_match_gates := mkOpcodeMatch6 "bne_match" 37 rs_branch_dispatch_opcode is_bne
-  let blt_match_gates := mkOpcodeMatch6 "blt_match" 39 rs_branch_dispatch_opcode is_blt
-  let bge_match_gates := mkOpcodeMatch6 "bge_match" 41 rs_branch_dispatch_opcode is_bge
-  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" 38 rs_branch_dispatch_opcode is_bltu
-  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" 40 rs_branch_dispatch_opcode is_bgeu
-
-  -- Condition evaluation
-  let not_eq := Wire.mk "br_not_eq"
-  let not_lt := Wire.mk "not_lt"
-  let not_ltu := Wire.mk "not_ltu"
-  let beq_taken := Wire.mk "beq_taken"
-  let bne_taken := Wire.mk "bne_taken"
-  let blt_taken := Wire.mk "blt_taken"
-  let bge_taken := Wire.mk "bge_taken"
-  let bltu_taken := Wire.mk "bltu_taken"
-  let bgeu_taken := Wire.mk "bgeu_taken"
-  let cond_taken_tmp1 := Wire.mk "cond_taken_tmp1"
-  let cond_taken_tmp2 := Wire.mk "cond_taken_tmp2"
-  let cond_taken_tmp3 := Wire.mk "cond_taken_tmp3"
-  let cond_taken_tmp4 := Wire.mk "cond_taken_tmp4"
-  let cond_taken := Wire.mk "cond_taken"
-  let branch_taken := Wire.mk "branch_taken"
-
-  let branch_cond_gates := [
-    Gate.mkNOT br_eq not_eq,
-    Gate.mkNOT br_lt not_lt,
-    Gate.mkNOT br_ltu not_ltu,
-    Gate.mkAND is_beq br_eq beq_taken,
-    Gate.mkAND is_bne not_eq bne_taken,
-    Gate.mkAND is_blt br_lt blt_taken,
-    Gate.mkAND is_bge not_lt bge_taken,
-    Gate.mkAND is_bltu br_ltu bltu_taken,
-    Gate.mkAND is_bgeu not_ltu bgeu_taken,
-    Gate.mkOR beq_taken bne_taken cond_taken_tmp1,
-    Gate.mkOR cond_taken_tmp1 blt_taken cond_taken_tmp2,
-    Gate.mkOR cond_taken_tmp2 bge_taken cond_taken_tmp3,
-    Gate.mkOR cond_taken_tmp3 bltu_taken cond_taken_tmp4,
-    Gate.mkOR cond_taken_tmp4 bgeu_taken cond_taken,
-    Gate.mkOR cond_taken is_jal_or_jalr branch_taken
-  ]
-
-  -- Wire branch redirect to fetch
-  let branch_redirect_valid := Wire.mk "branch_redirect_valid"
-  let branch_redirect_gate := [Gate.mkAND branch_taken rs_branch_dispatch_valid branch_redirect_valid]
-
-  let branch_target_wire_gates := (List.range 32).map (fun i =>
-    Gate.mkBUF final_branch_target[i]! branch_redirect_target[i]!)
-
-  -- === LSU (bundled I/O) ===
-  let lsu_agu_address := makeIndexedWires "lsu_agu_address" 32
-  let lsu_agu_tag := makeIndexedWires "lsu_agu_tag" 6
-  let lsu_sb_full := Wire.mk "lsu_sb_full"
-  let lsu_sb_empty := Wire.mk "lsu_sb_empty"
-  let lsu_sb_fwd_hit := Wire.mk "lsu_sb_fwd_hit"
-  let lsu_sb_fwd_data := makeIndexedWires "lsu_sb_fwd_data" 32
-  let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
-  let lsu_sb_deq_bits := makeIndexedWires "lsu_sb_deq_bits" 66
-  let lsu_sb_enq_idx := makeIndexedWires "lsu_sb_enq_idx" 3
-
-  let lsu_inst : CircuitInstance := {
-    moduleName := "LSU"
-    instName := "u_lsu"
-    -- LSU uses plain reset, NOT pipeline_reset: store buffer must survive pipeline flushes
-    portMap := [("clock", clock), ("reset", reset),
-                ("zero", zero), ("one", one),
-                ("commit_store_en", rob_commit_en),
-                ("deq_ready", dmem_req_ready),
-                ("flush_en", zero),
-                ("sb_enq_en", sb_enq_en),
-                ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty), ("sb_fwd_hit", lsu_sb_fwd_hit),
-                ("sb_deq_valid", lsu_sb_deq_valid)] ++
-               (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_base_{i}", w))) ++
-               (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
-               (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
-               ((makeIndexedWires "lsu_commit_idx" 3).enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
-               (mem_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
-               ((makeIndexedWires "lsu_sb_enq_size" 2).enum.map (fun ⟨i, w⟩ => (s!"sb_enq_size_{i}", w))) ++
-               (lsu_agu_address.enum.map (fun ⟨i, w⟩ => (s!"agu_address_{i}", w))) ++
-               (lsu_agu_tag.enum.map (fun ⟨i, w⟩ => (s!"agu_tag_out_{i}", w))) ++
-               (lsu_sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_data_{i}", w))) ++
-               (lsu_sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"sb_deq_bits_{i}", w))) ++
-               (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w)))
-  }
-
-  -- === ROB (named ports) ===
-  let rob_full := Wire.mk "rob_full"
-  let rob_empty := Wire.mk "rob_empty"
-  let rob_alloc_idx := makeIndexedWires "rob_alloc_idx" 4
-  let rob_head_valid := Wire.mk "rob_head_valid"
-  let rob_head_complete := Wire.mk "rob_head_complete"
-  let rob_head_hasPhysRd := Wire.mk "rob_head_hasPhysRd"
-  let rob_head_archRd := makeIndexedWires "rob_head_archRd" 5
-  let rob_head_exception := Wire.mk "rob_head_exception"
-  let rob_head_isBranch := Wire.mk "rob_head_isBranch"
-  let rob_head_mispredicted := Wire.mk "rob_head_mispredicted"
-
-  let rob_inst : CircuitInstance := {
-    moduleName := "ROB16"
-    instName := "u_rob"
-    portMap :=
-      [("clock", clock), ("reset", pipeline_reset_rob),
-       ("zero", zero), ("one", one),
-       ("alloc_en", rename_valid)] ++
-      (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
-      [("alloc_hasPhysRd", decode_has_rd)] ++
-      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
-      [("alloc_hasOldPhysRd", decode_has_rd)] ++
-      (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"alloc_archRd[{i}]", w))) ++
-      [("alloc_isBranch", dispatch_is_branch),
-       ("cdb_valid", cdb_valid)] ++
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag[{i}]", w))) ++
-      [("cdb_exception", zero),
-       ("cdb_mispredicted", zero),
-       ("commit_en", rob_commit_en),
-       ("flush_en", zero),
-       ("full", rob_full),
-       ("empty", rob_empty)] ++
-      (rob_alloc_idx.enum.map (fun ⟨i, w⟩ => (s!"alloc_idx[{i}]", w))) ++
-      [("head_valid", rob_head_valid),
-       ("head_complete", rob_head_complete)] ++
-      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"head_physRd[{i}]", w))) ++
-      [("head_hasPhysRd", rob_head_hasPhysRd)] ++
-      (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"head_oldPhysRd[{i}]", w))) ++
-      [("head_hasOldPhysRd", rob_head_hasOldPhysRd)] ++
-      (rob_head_archRd.enum.map (fun ⟨i, w⟩ => (s!"head_archRd[{i}]", w))) ++
-      [("head_exception", rob_head_exception),
-       ("head_isBranch", rob_head_isBranch),
-       ("head_mispredicted", rob_head_mispredicted)]
-  }
-
-  -- === CDB ARBITRATION (Priority: LSU > MulDiv > Integer > Branch) ===
-  -- 3-level MUX tree
-
-  -- Level 0: Arbitrate between Branch and Integer (Integer has priority)
-  -- Branch exec unit outputs result=0 and tag passthrough
-  let int_branch_valid := Wire.mk "int_branch_valid"
-  let int_branch_tag := makeIndexedWires "int_branch_tag" 6
-  let int_branch_data := makeIndexedWires "int_branch_data" 32
-
-  let arb_level0_gates :=
-    [Gate.mkOR rs_int_dispatch_valid rs_branch_dispatch_valid int_branch_valid] ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX branch_tag_out[i]! int_tag_out[i]! rs_int_dispatch_valid int_branch_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX branch_result_final[i]! int_result_final[i]! rs_int_dispatch_valid int_branch_data[i]!)
-
-  -- Level 1: Arbitrate between Int/Branch and MulDiv (MulDiv has priority)
-  let int_muldiv_valid := Wire.mk "int_muldiv_valid"
-  let int_muldiv_tag := makeIndexedWires "int_muldiv_tag" 6
-  let int_muldiv_data := makeIndexedWires "int_muldiv_data" 32
-
-  let arb_level1_gates := [Gate.mkMUX int_branch_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX int_branch_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX int_branch_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
-
-  -- === CDB REPLAY BUFFER (saves int/muldiv result when LSU wins arbitration) ===
-  let replay_valid := Wire.mk "replay_valid"
-  let replay_valid_next := Wire.mk "replay_valid_next"
-  let replay_tag := makeIndexedWires "replay_tag" 6
-  let replay_tag_next := makeIndexedWires "replay_tag_next" 6
-  let replay_data := makeIndexedWires "replay_data" 32
-  let replay_data_next := makeIndexedWires "replay_data_next" 32
-
-  let int_dropped := Wire.mk "int_dropped"
-  let int_dropped_tmp := Wire.mk "int_dropped_tmp"
-  let not_replay_valid := Wire.mk "not_replay_valid"
-  let replay_wins := Wire.mk "replay_wins"
-
-  -- === FIX 4: LSU STORE-TO-LOAD FORWARDING ===
-  -- LW=24, LH=27, LHU=26, LB=29, LBU=28 in RV32IM decoder
-  let is_lw := Wire.mk "is_lw"
-  let is_lh := Wire.mk "is_lh"
-  let is_lhu := Wire.mk "is_lhu"
-  let is_lb := Wire.mk "is_lb"
-  let is_lbu := Wire.mk "is_lbu"
-  let is_load := Wire.mk "is_load"
-  let is_load_tmp1 := Wire.mk "is_load_tmp1"
-  let is_load_tmp2 := Wire.mk "is_load_tmp2"
-  let is_load_tmp3 := Wire.mk "is_load_tmp3"
-
-  let lw_match_gates := mkOpcodeMatch6 "lw_match" 24 rs_mem_dispatch_opcode is_lw
-  let lh_match_gates := mkOpcodeMatch6 "lh_match" 27 rs_mem_dispatch_opcode is_lh
-  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" 26 rs_mem_dispatch_opcode is_lhu
-  let lb_match_gates := mkOpcodeMatch6 "lb_match" 29 rs_mem_dispatch_opcode is_lb
-  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" 28 rs_mem_dispatch_opcode is_lbu
-  let is_load_gates := [
-    Gate.mkOR is_lw is_lh is_load_tmp1,
-    Gate.mkOR is_load_tmp1 is_lhu is_load_tmp2,
-    Gate.mkOR is_load_tmp2 is_lb is_load_tmp3,
-    Gate.mkOR is_load_tmp3 is_lbu is_load
-  ]
-
-  let load_fwd_valid := Wire.mk "load_fwd_valid"
-  let load_fwd_tmp := Wire.mk "load_fwd_tmp"
-  let load_fwd_gates := [
-    Gate.mkAND lsu_sb_fwd_hit rs_mem_dispatch_valid load_fwd_tmp,
-    Gate.mkAND load_fwd_tmp is_load load_fwd_valid
-  ]
-
-  -- LSU CDB valid: only store-to-load forwarding goes on CDB
-  let lsu_valid := Wire.mk "lsu_valid"
-  let lsu_valid_gate := [Gate.mkBUF load_fwd_valid lsu_valid]
-
-  -- LSU CDB tag/data: from forwarded load
-  let lsu_tag := makeIndexedWires "lsu_tag" 6
-  let lsu_data := makeIndexedWires "lsu_data" 32
-  let lsu_tag_data_mux_gates :=
-    (List.range 6).map (fun i =>
-      Gate.mkBUF rs_mem_dispatch_tag[i]! lsu_tag[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
-
-  -- int_dropped: int/muldiv preempted by higher-priority CDB source (lsu OR dmem_resp)
-  let int_higher_priority := Wire.mk "int_higher_priority"
-  let replay_save_gates := [
-    Gate.mkNOT replay_valid not_replay_valid,
-    Gate.mkOR lsu_valid dmem_resp_valid int_higher_priority,
-    Gate.mkAND int_muldiv_valid int_higher_priority int_dropped_tmp,
-    Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
-    Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
-    Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
-    Gate.mkDFF replay_valid_next clock reset replay_valid
-  ]
-
-  let replay_tag_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX replay_tag[i]! int_muldiv_tag[i]! int_dropped replay_tag_next[i]!,
-     Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
-
-  let replay_data_gates := (List.range 32).map (fun i =>
-    [Gate.mkMUX replay_data[i]! int_muldiv_data[i]! int_dropped replay_data_next[i]!,
-     Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
-
-  -- === DMEM RESPONSE PATH (loads that miss store buffer) ===
-  let load_no_fwd := Wire.mk "load_no_fwd"
-  let load_no_fwd_tmp := Wire.mk "load_no_fwd_tmp"
-  let not_sb_fwd_hit := Wire.mk "not_sb_fwd_hit"
-  let dmem_load_tag_reg := makeIndexedWires "dmem_load_tag_reg" 6
-  let dmem_load_tag_next := makeIndexedWires "dmem_load_tag_next" 6
-
-  let load_no_fwd_gates := [
-    Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
-    Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
-    Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd
-  ]
-
-  let dmem_tag_capture_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!,
-     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset_misc dmem_load_tag_reg[i]!]) |>.flatten
-
-  -- Level 2: CDB Arbitration (Priority: Replay > dmem_resp > LSU > Int/MulDiv)
-  let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
-
-  let dmem_wins := Wire.mk "dmem_wins"
-  let dmem_wins_gate := [Gate.mkAND dmem_resp_valid not_replay_valid dmem_wins]
-
-  let lsu_wins := Wire.mk "lsu_wins"
-  let lsu_wins_tmp := Wire.mk "lsu_wins_tmp"
-  let not_dmem_resp := Wire.mk "not_dmem_resp"
-  let lsu_wins_gate := [
-    Gate.mkNOT dmem_resp_valid not_dmem_resp,
-    Gate.mkAND lsu_valid not_replay_valid lsu_wins_tmp,
-    Gate.mkAND lsu_wins_tmp not_dmem_resp lsu_wins
-  ]
-
-  let int_wins := Wire.mk "int_wins"
-  let int_wins_tmp := Wire.mk "int_wins_tmp"
-  let int_wins_tmp2 := Wire.mk "int_wins_tmp2"
-  let not_lsu_valid := Wire.mk "not_lsu_valid"
-  let int_wins_gates := [
-    Gate.mkNOT lsu_valid not_lsu_valid,
-    Gate.mkAND int_muldiv_valid not_lsu_valid int_wins_tmp,
-    Gate.mkAND int_wins_tmp not_replay_valid int_wins_tmp2,
-    Gate.mkAND int_wins_tmp2 not_dmem_resp int_wins
-  ]
-
-  let cdb_valid_tmp := Wire.mk "cdb_valid_tmp"
-  let cdb_valid_tmp2 := Wire.mk "cdb_valid_tmp2"
-  let cdb_valid_gates := [
-    Gate.mkOR replay_wins dmem_wins cdb_valid_tmp,
-    Gate.mkOR cdb_valid_tmp lsu_wins cdb_valid_tmp2,
-    Gate.mkOR cdb_valid_tmp2 int_wins cdb_valid
-  ]
-
-  let cdb_tag_mux_gates := (List.range 6).map (fun i =>
-    let m1 := Wire.mk s!"cdb_tag_m1_{i}"
-    let m2 := Wire.mk s!"cdb_tag_m2_{i}"
-    [Gate.mkMUX int_muldiv_tag[i]! lsu_tag[i]! lsu_wins m1,
-     Gate.mkMUX m1 dmem_load_tag_reg[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_tag[i]! replay_wins cdb_tag[i]!])
-  let cdb_data_mux_gates := (List.range 32).map (fun i =>
-    let m1 := Wire.mk s!"cdb_data_m1_{i}"
-    let m2 := Wire.mk s!"cdb_data_m2_{i}"
-    [Gate.mkMUX int_muldiv_data[i]! lsu_data[i]! lsu_wins m1,
-     Gate.mkMUX m1 dmem_resp_data[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_data[i]! replay_wins cdb_data[i]!])
-  let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
-
-  let cdb_arb_gates := arb_level0_gates ++ arb_level1_gates ++ replay_save_gates ++ replay_tag_gates ++
-    replay_data_gates ++ load_no_fwd_gates ++ dmem_tag_capture_gates ++
-    replay_wins_gate ++ dmem_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++
-    cdb_valid_gates ++ cdb_mux_gates
-
-  -- === COMMIT CONTROL ===
-  let commit_gates := [
-    Gate.mkAND rob_head_valid rob_head_complete rob_commit_en,
-    -- Recycle old physical register to FreeList only when commit has oldPhysRd
-    Gate.mkAND rob_commit_en rob_head_hasOldPhysRd retire_recycle_valid
-  ]
-
-  -- === STALL GENERATION (OR tree) ===
-  let stall_tmp1 := Wire.mk "stall_tmp1"
-  let stall_tmp2 := Wire.mk "stall_tmp2"
-  let stall_tmp3 := Wire.mk "stall_tmp3"
-  let stall_tmp4 := Wire.mk "stall_tmp4"
-  let stall_tmp5 := Wire.mk "stall_tmp5"
-
-  let stall_gates := [
-    Gate.mkOR rename_stall rob_full stall_tmp1,
-    Gate.mkOR stall_tmp1 rs_int_issue_full stall_tmp2,
-    Gate.mkOR stall_tmp2 rs_mem_issue_full stall_tmp3,
-    Gate.mkOR stall_tmp3 rs_branch_issue_full stall_tmp4,
-    Gate.mkOR stall_tmp4 rs_muldiv_issue_full stall_tmp5,
-    Gate.mkOR stall_tmp5 lsu_sb_full global_stall
-  ]
-
-  -- === MEMORY INTERFACE OUTPUTS ===
-  let dmem_req_valid := Wire.mk "dmem_req_valid"
-  let dmem_req_we := Wire.mk "dmem_req_we"
-  let dmem_req_addr := makeIndexedWires "dmem_req_addr" 32
-  let dmem_req_data := makeIndexedWires "dmem_req_data" 32
-
-  -- dmem interface:
-  --   req_valid = load dispatch OR store buffer dequeue
-  --   req_we    = store buffer dequeue (only stores write)
-  --   req_addr  = MUX(load_addr, store_addr, is_store)
-  --   req_data  = store buffer dequeue data (sb_deq_bits[32:63])
-  -- sb_enq_en = rs_mem_dispatch_valid AND NOT is_load (stores only)
-  let not_is_load := Wire.mk "not_is_load"
-  let sb_enq_gate_gates := [
-    Gate.mkNOT is_load not_is_load,
-    Gate.mkAND rs_mem_dispatch_valid not_is_load sb_enq_en
-  ]
-
-  let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"
-  let dmem_gates := sb_enq_gate_gates ++ [
-    Gate.mkOR load_no_fwd lsu_sb_deq_valid dmem_valid_tmp,
-    Gate.mkBUF dmem_valid_tmp dmem_req_valid,
-    Gate.mkBUF lsu_sb_deq_valid dmem_req_we] ++
-    -- Address: MUX between load address (mem_address) and store address (sb_deq_bits[0:31])
-    (List.range 32).map (fun i =>
-      Gate.mkMUX mem_address[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid dmem_req_addr[i]!) ++
-    -- Data: store buffer dequeue data (sb_deq_bits[32:63])
-    (List.range 32).map (fun i =>
-      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!)
-
-  -- === OUTPUT BUFFERS ===
-  let global_stall_out := Wire.mk "global_stall_out"
-  let output_gates := [Gate.mkBUF global_stall global_stall_out]
-
-  { name := "CPU_RV32IM"
+  { name := if enableM then "CPU_RV32IM" else "CPU_RV32I"
     inputs := [clock, reset, zero, one] ++
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
@@ -3331,81 +2021,89 @@ def mkCPU_RV32IM : Circuit :=
                   redirect_target_dff_insts ++
                   busy_instances ++
                   cdb_fwd_instances ++
-                  [rs_int_inst, rs_mem_inst, rs_branch_inst, rs_muldiv_inst,
-                  int_exec_inst, branch_exec_inst, mem_exec_inst, muldiv_exec_inst,
-                  rob_inst, lsu_inst,
+                  [rs_int_inst, rs_mem_inst, rs_branch_inst] ++
+                  (if enableM then [rs_muldiv_inst] else []) ++
+                  [int_exec_inst, branch_exec_inst, mem_exec_inst] ++
+                  (if enableM then [muldiv_exec_inst] else []) ++
+                  [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst,
                   int_imm_rf_decoder_inst, int_imm_rf_mux_inst, int_pc_rf_mux_inst,
                   br_pc_rf_decoder_inst, br_pc_rf_mux_inst, br_imm_rf_mux_inst,
                   auipc_adder_inst, br_pc_plus_4_adder_inst,
                   branch_target_adder_inst, jalr_target_adder_inst,
                   br_cmp_inst]
-    -- V2 codegen annotations
-    signalGroups := [
-      { name := "imem_resp_data", width := 32, wires := imem_resp_data },
-      { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
-      { name := "decode_optype", width := 6, wires := decode_optype },
-      { name := "decode_rd", width := 5, wires := decode_rd },
-      { name := "decode_rs1", width := 5, wires := decode_rs1 },
-      { name := "decode_rs2", width := 5, wires := decode_rs2 },
-      { name := "decode_imm", width := 32, wires := decode_imm },
-      { name := "branch_redirect_target", width := 32, wires := branch_redirect_target },
-      { name := "fetch_pc", width := 32, wires := fetch_pc },
-      { name := "rs1_phys", width := 6, wires := rs1_phys },
-      { name := "rs2_phys", width := 6, wires := rs2_phys },
-      { name := "rd_phys", width := 6, wires := rd_phys },
-      { name := "old_rd_phys", width := 6, wires := old_rd_phys },
-      { name := "rs1_data", width := 32, wires := rs1_data },
-      { name := "rs2_data", width := 32, wires := rs2_data },
-      { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },
-      { name := "cdb_tag", width := 6, wires := cdb_tag },
-      { name := "cdb_data", width := 32, wires := cdb_data },
-      { name := "rob_head_physRd", width := 6, wires := rob_head_physRd },
-      { name := "rob_alloc_idx", width := 4, wires := rob_alloc_idx },
-      { name := "rob_head_oldPhysRd", width := 6, wires := rob_head_oldPhysRd },
-      { name := "rob_head_archRd", width := 5, wires := rob_head_archRd },
-      { name := "int_result", width := 32, wires := int_result },
-      { name := "int_result_final", width := 32, wires := int_result_final },
-      { name := "int_captured_imm", width := 32, wires := int_captured_imm },
-      { name := "int_captured_pc", width := 32, wires := int_captured_pc },
-      { name := "auipc_result", width := 32, wires := auipc_result },
-      { name := "int_tag_out", width := 6, wires := int_tag_out },
-      { name := "branch_result_final", width := 32, wires := branch_result_final },
-      { name := "br_captured_pc", width := 32, wires := br_captured_pc },
-      { name := "br_captured_imm", width := 32, wires := br_captured_imm },
-      { name := "br_pc_plus_4", width := 32, wires := br_pc_plus_4 },
-      { name := "branch_target", width := 32, wires := branch_target },
-      { name := "final_branch_target", width := 32, wires := final_branch_target },
-      { name := "mem_address", width := 32, wires := mem_address },
-      { name := "mem_tag_out", width := 6, wires := mem_tag_out },
-      { name := "muldiv_result", width := 32, wires := muldiv_result },
-      { name := "muldiv_tag_out", width := 6, wires := muldiv_tag_out },
-      { name := "lsu_agu_address", width := 32, wires := lsu_agu_address },
-      { name := "lsu_agu_tag", width := 6, wires := lsu_agu_tag },
-      { name := "lsu_sb_fwd_data", width := 32, wires := lsu_sb_fwd_data },
-      { name := "lsu_sb_deq_bits", width := 66, wires := lsu_sb_deq_bits },
-      { name := "lsu_sb_enq_idx", width := 3, wires := lsu_sb_enq_idx },
-      { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
-      { name := "dmem_req_data", width := 32, wires := dmem_req_data },
-      { name := "rs_int_dispatch_opcode", width := 6, wires := rs_int_dispatch_opcode },
-      { name := "rs_int_dispatch_src1", width := 32, wires := rs_int_dispatch_src1 },
-      { name := "rs_int_dispatch_src2", width := 32, wires := rs_int_dispatch_src2 },
-      { name := "rs_int_dispatch_tag", width := 6, wires := rs_int_dispatch_tag },
-      { name := "rs_mem_dispatch_opcode", width := 6, wires := rs_mem_dispatch_opcode },
-      { name := "rs_mem_dispatch_src1", width := 32, wires := rs_mem_dispatch_src1 },
-      { name := "rs_mem_dispatch_src2", width := 32, wires := rs_mem_dispatch_src2 },
-      { name := "rs_mem_dispatch_tag", width := 6, wires := rs_mem_dispatch_tag },
-      { name := "rs_branch_dispatch_opcode", width := 6, wires := rs_branch_dispatch_opcode },
-      { name := "rs_branch_dispatch_src1", width := 32, wires := rs_branch_dispatch_src1 },
-      { name := "rs_branch_dispatch_src2", width := 32, wires := rs_branch_dispatch_src2 },
-      { name := "rs_branch_dispatch_tag", width := 6, wires := rs_branch_dispatch_tag },
-      { name := "rs_muldiv_dispatch_opcode", width := 6, wires := rs_muldiv_dispatch_opcode },
-      { name := "rs_muldiv_dispatch_src1", width := 32, wires := rs_muldiv_dispatch_src1 },
-      { name := "rs_muldiv_dispatch_src2", width := 32, wires := rs_muldiv_dispatch_src2 },
-      { name := "rs_muldiv_dispatch_tag", width := 6, wires := rs_muldiv_dispatch_tag },
-      { name := "int_muldiv_tag", width := 6, wires := int_muldiv_tag },
-      { name := "int_muldiv_data", width := 32, wires := int_muldiv_data }
-    ]
+    signalGroups :=
+      [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
+       { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
+       { name := "decode_optype", width := 6, wires := decode_optype },
+       { name := "decode_rd", width := 5, wires := decode_rd },
+       { name := "decode_rs1", width := 5, wires := decode_rs1 },
+       { name := "decode_rs2", width := 5, wires := decode_rs2 },
+       { name := "decode_imm", width := 32, wires := decode_imm },
+       { name := "branch_redirect_target", width := 32, wires := branch_redirect_target },
+       { name := "fetch_pc", width := 32, wires := fetch_pc },
+       { name := "rs1_phys", width := 6, wires := rs1_phys },
+       { name := "rs2_phys", width := 6, wires := rs2_phys },
+       { name := "rd_phys", width := 6, wires := rd_phys },
+       { name := "old_rd_phys", width := 6, wires := old_rd_phys },
+       { name := "rs1_data", width := 32, wires := rs1_data },
+       { name := "rs2_data", width := 32, wires := rs2_data },
+       { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },
+       { name := "cdb_tag", width := 6, wires := cdb_tag },
+       { name := "cdb_data", width := 32, wires := cdb_data },
+       { name := "rob_head_physRd", width := 6, wires := rob_head_physRd },
+       { name := "rob_alloc_idx", width := 4, wires := rob_alloc_idx },
+       { name := "rob_head_oldPhysRd", width := 6, wires := rob_head_oldPhysRd },
+       { name := "rob_head_archRd", width := 5, wires := rob_head_archRd },
+       { name := "int_result", width := 32, wires := int_result },
+       { name := "int_result_final", width := 32, wires := int_result_final },
+       { name := "int_captured_imm", width := 32, wires := int_captured_imm },
+       { name := "int_captured_pc", width := 32, wires := int_captured_pc },
+       { name := "auipc_result", width := 32, wires := auipc_result },
+       { name := "int_tag_out", width := 6, wires := int_tag_out },
+       { name := "branch_result_final", width := 32, wires := branch_result_final },
+       { name := "br_captured_pc", width := 32, wires := br_captured_pc },
+       { name := "br_captured_imm", width := 32, wires := br_captured_imm },
+       { name := "br_pc_plus_4", width := 32, wires := br_pc_plus_4 },
+       { name := "branch_target", width := 32, wires := branch_target },
+       { name := "final_branch_target", width := 32, wires := final_branch_target },
+       { name := "mem_address", width := 32, wires := mem_address },
+       { name := "mem_tag_out", width := 6, wires := mem_tag_out }] ++
+      (if enableM then [
+       { name := "muldiv_result", width := 32, wires := muldiv_result },
+       { name := "muldiv_tag_out", width := 6, wires := muldiv_tag_out }] else []) ++
+      [{ name := "lsu_agu_address", width := 32, wires := lsu_agu_address },
+       { name := "lsu_agu_tag", width := 6, wires := lsu_agu_tag },
+       { name := "lsu_sb_fwd_data", width := 32, wires := lsu_sb_fwd_data },
+       { name := "lsu_sb_deq_bits", width := 66, wires := lsu_sb_deq_bits },
+       { name := "lsu_sb_enq_idx", width := 3, wires := lsu_sb_enq_idx },
+       { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
+       { name := "dmem_req_data", width := 32, wires := dmem_req_data },
+       { name := "rs_int_dispatch_opcode", width := 6, wires := rs_int_dispatch_opcode },
+       { name := "rs_int_dispatch_src1", width := 32, wires := rs_int_dispatch_src1 },
+       { name := "rs_int_dispatch_src2", width := 32, wires := rs_int_dispatch_src2 },
+       { name := "rs_int_dispatch_tag", width := 6, wires := rs_int_dispatch_tag },
+       { name := "rs_mem_dispatch_opcode", width := 6, wires := rs_mem_dispatch_opcode },
+       { name := "rs_mem_dispatch_src1", width := 32, wires := rs_mem_dispatch_src1 },
+       { name := "rs_mem_dispatch_src2", width := 32, wires := rs_mem_dispatch_src2 },
+       { name := "rs_mem_dispatch_tag", width := 6, wires := rs_mem_dispatch_tag },
+       { name := "rs_branch_dispatch_opcode", width := 6, wires := rs_branch_dispatch_opcode },
+       { name := "rs_branch_dispatch_src1", width := 32, wires := rs_branch_dispatch_src1 },
+       { name := "rs_branch_dispatch_src2", width := 32, wires := rs_branch_dispatch_src2 },
+       { name := "rs_branch_dispatch_tag", width := 6, wires := rs_branch_dispatch_tag }] ++
+      (if enableM then [
+       { name := "rs_muldiv_dispatch_opcode", width := 6, wires := rs_muldiv_dispatch_opcode },
+       { name := "rs_muldiv_dispatch_src1", width := 32, wires := rs_muldiv_dispatch_src1 },
+       { name := "rs_muldiv_dispatch_src2", width := 32, wires := rs_muldiv_dispatch_src2 },
+       { name := "rs_muldiv_dispatch_tag", width := 6, wires := rs_muldiv_dispatch_tag },
+       { name := "int_muldiv_tag", width := 6, wires := int_muldiv_tag },
+       { name := "int_muldiv_data", width := 32, wires := int_muldiv_data }] else [])
   }
+
+/-- RV32I CPU (backward-compatible alias) -/
+def mkCPU_RV32I : Circuit := mkCPU rv32iConfig
+
+/-- RV32IM CPU (backward-compatible alias) -/
+def mkCPU_RV32IM : Circuit := mkCPU rv32imConfig
 
 end Shoumei.RISCV.CPU
