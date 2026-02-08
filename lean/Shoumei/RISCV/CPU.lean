@@ -982,7 +982,7 @@ def mkCPU_RV32I : Circuit :=
   -- to prevent wrong-path instructions from entering the pipeline.
   let not_redirecting := Wire.mk "not_redirecting"
   let redirect_or := Wire.mk "redirect_or"
-  let dispatch_valid_gated := Wire.mk "dispatch_valid_gated"
+  let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
 
   -- pipeline_flush_comb = reset OR redirect_valid_reg (combinational, feeds flush DFF)
   -- pipeline_flush = DFF(pipeline_flush_comb) (arrives 1 cycle after redirect_valid_reg)
@@ -1000,10 +1000,12 @@ def mkCPU_RV32I : Circuit :=
     Gate.mkOR branch_redirect_valid branch_redirect_valid_reg redirect_or,
     Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
     Gate.mkNOT redirect_or_flush not_redirecting,
-    -- Gate rename to prevent double-rename during redirect/flush
-    Gate.mkAND decode_valid not_redirecting decode_valid_rename,
-    Gate.mkAND not_stall decode_valid dispatch_valid_gated,
-    Gate.mkAND dispatch_valid_gated not_redirecting dispatch_base_valid,
+    -- Gate rename by redirect/flush AND stall to prevent double-rename.
+    -- Without the stall gate, the same instruction gets re-renamed each stall cycle,
+    -- consuming ptags and corrupting the RAT (src reads own destination tag).
+    Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
+    Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
+    Gate.mkBUF decode_valid_rename dispatch_base_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid
@@ -2228,7 +2230,7 @@ def mkCPU_RV32IM : Circuit :=
   let not_redirecting := Wire.mk "not_redirecting"
   let redirect_or := Wire.mk "redirect_or"
   let redirect_or_flush := Wire.mk "redirect_or_flush"
-  let dispatch_valid_gated := Wire.mk "dispatch_valid_gated"
+  let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
 
   -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFF)
   -- pipeline_flush = DFF(pipeline_flush_comb) - delayed 2 cycles from branch fire
@@ -2242,10 +2244,13 @@ def mkCPU_RV32IM : Circuit :=
     Gate.mkOR branch_redirect_valid branch_redirect_valid_reg redirect_or,
     Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
     Gate.mkNOT redirect_or_flush not_redirecting,
-    -- Gate rename to prevent double-rename during redirect/flush
-    Gate.mkAND decode_valid not_redirecting decode_valid_rename,
-    Gate.mkAND not_stall decode_valid dispatch_valid_gated,
-    Gate.mkAND dispatch_valid_gated not_redirecting dispatch_base_valid,
+    -- Gate rename by redirect/flush AND stall to prevent double-rename.
+    -- Without the stall gate, the same instruction gets re-renamed each stall cycle,
+    -- consuming ptags and corrupting the RAT (src reads own destination tag).
+    Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
+    Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
+    -- dispatch_base_valid = decode_valid_rename (rename and dispatch are synchronized)
+    Gate.mkBUF decode_valid_rename dispatch_base_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
     Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid,

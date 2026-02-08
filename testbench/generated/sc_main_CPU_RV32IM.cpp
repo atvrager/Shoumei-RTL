@@ -14,6 +14,14 @@ static const uint32_t MEM_SIZE_WORDS = 16384;
 static const uint32_t TOHOST_ADDR = 0x1000;
 static const uint32_t TIMEOUT_CYCLES = 100000;
 
+// Memory model (shared between ImemModel and DmemModel)
+static uint32_t mem[16384];
+
+static void mem_write_cb(uint32_t addr, uint32_t data) {
+    uint32_t widx = addr / 4;
+    if (widx < MEM_SIZE_WORDS) mem[widx] = data;
+}
+
 // Bus pack/unpack helpers
 void set_imem_resp_data(sc_signal<bool>* sigs[], uint32_t v) {
     sigs[0]->write((v >> 0) & 1);
@@ -100,21 +108,186 @@ uint32_t get_dmem_req_data(sc_signal<bool>* sigs[]) {
 }
 
 
-// Memory model
-static uint32_t mem[16384];
+//------------------------------------------------------------------------------
+// ImemModel: Combinational instruction memory
+// Equivalent to SV: assign imem_resp_data = mem[fetch_pc >> 2];
+// SC_METHOD sensitive to fetch_pc bits ensures delta-cycle feedback works.
+//------------------------------------------------------------------------------
+SC_MODULE(ImemModel) {
+    sc_in<bool> fetch_pc_0;
+    sc_in<bool> fetch_pc_1;
+    sc_in<bool> fetch_pc_2;
+    sc_in<bool> fetch_pc_3;
+    sc_in<bool> fetch_pc_4;
+    sc_in<bool> fetch_pc_5;
+    sc_in<bool> fetch_pc_6;
+    sc_in<bool> fetch_pc_7;
+    sc_in<bool> fetch_pc_8;
+    sc_in<bool> fetch_pc_9;
+    sc_in<bool> fetch_pc_10;
+    sc_in<bool> fetch_pc_11;
+    sc_in<bool> fetch_pc_12;
+    sc_in<bool> fetch_pc_13;
+    sc_in<bool> fetch_pc_14;
+    sc_in<bool> fetch_pc_15;
+    sc_in<bool> fetch_pc_16;
+    sc_in<bool> fetch_pc_17;
+    sc_in<bool> fetch_pc_18;
+    sc_in<bool> fetch_pc_19;
+    sc_in<bool> fetch_pc_20;
+    sc_in<bool> fetch_pc_21;
+    sc_in<bool> fetch_pc_22;
+    sc_in<bool> fetch_pc_23;
+    sc_in<bool> fetch_pc_24;
+    sc_in<bool> fetch_pc_25;
+    sc_in<bool> fetch_pc_26;
+    sc_in<bool> fetch_pc_27;
+    sc_in<bool> fetch_pc_28;
+    sc_in<bool> fetch_pc_29;
+    sc_in<bool> fetch_pc_30;
+    sc_in<bool> fetch_pc_31;
+    sc_out<bool> imem_resp_data_0;
+    sc_out<bool> imem_resp_data_1;
+    sc_out<bool> imem_resp_data_2;
+    sc_out<bool> imem_resp_data_3;
+    sc_out<bool> imem_resp_data_4;
+    sc_out<bool> imem_resp_data_5;
+    sc_out<bool> imem_resp_data_6;
+    sc_out<bool> imem_resp_data_7;
+    sc_out<bool> imem_resp_data_8;
+    sc_out<bool> imem_resp_data_9;
+    sc_out<bool> imem_resp_data_10;
+    sc_out<bool> imem_resp_data_11;
+    sc_out<bool> imem_resp_data_12;
+    sc_out<bool> imem_resp_data_13;
+    sc_out<bool> imem_resp_data_14;
+    sc_out<bool> imem_resp_data_15;
+    sc_out<bool> imem_resp_data_16;
+    sc_out<bool> imem_resp_data_17;
+    sc_out<bool> imem_resp_data_18;
+    sc_out<bool> imem_resp_data_19;
+    sc_out<bool> imem_resp_data_20;
+    sc_out<bool> imem_resp_data_21;
+    sc_out<bool> imem_resp_data_22;
+    sc_out<bool> imem_resp_data_23;
+    sc_out<bool> imem_resp_data_24;
+    sc_out<bool> imem_resp_data_25;
+    sc_out<bool> imem_resp_data_26;
+    sc_out<bool> imem_resp_data_27;
+    sc_out<bool> imem_resp_data_28;
+    sc_out<bool> imem_resp_data_29;
+    sc_out<bool> imem_resp_data_30;
+    sc_out<bool> imem_resp_data_31;
 
-static void mem_write_cb(uint32_t addr, uint32_t data) {
-    uint32_t widx = addr / 4;
-    if (widx < MEM_SIZE_WORDS) mem[widx] = data;
-}
+    void update() {
+        uint32_t pc = (uint32_t)fetch_pc_0.read() | ((uint32_t)fetch_pc_1.read() << 1) | ((uint32_t)fetch_pc_2.read() << 2) | ((uint32_t)fetch_pc_3.read() << 3) | ((uint32_t)fetch_pc_4.read() << 4) | ((uint32_t)fetch_pc_5.read() << 5) | ((uint32_t)fetch_pc_6.read() << 6) | ((uint32_t)fetch_pc_7.read() << 7) | ((uint32_t)fetch_pc_8.read() << 8) | ((uint32_t)fetch_pc_9.read() << 9) | ((uint32_t)fetch_pc_10.read() << 10) | ((uint32_t)fetch_pc_11.read() << 11) | ((uint32_t)fetch_pc_12.read() << 12) | ((uint32_t)fetch_pc_13.read() << 13) | ((uint32_t)fetch_pc_14.read() << 14) | ((uint32_t)fetch_pc_15.read() << 15) | ((uint32_t)fetch_pc_16.read() << 16) | ((uint32_t)fetch_pc_17.read() << 17) | ((uint32_t)fetch_pc_18.read() << 18) | ((uint32_t)fetch_pc_19.read() << 19) | ((uint32_t)fetch_pc_20.read() << 20) | ((uint32_t)fetch_pc_21.read() << 21) | ((uint32_t)fetch_pc_22.read() << 22) | ((uint32_t)fetch_pc_23.read() << 23) | ((uint32_t)fetch_pc_24.read() << 24) | ((uint32_t)fetch_pc_25.read() << 25) | ((uint32_t)fetch_pc_26.read() << 26) | ((uint32_t)fetch_pc_27.read() << 27) | ((uint32_t)fetch_pc_28.read() << 28) | ((uint32_t)fetch_pc_29.read() << 29) | ((uint32_t)fetch_pc_30.read() << 30) | ((uint32_t)fetch_pc_31.read() << 31);
+        uint32_t widx = pc >> 2;
+        uint32_t data = (widx < MEM_SIZE_WORDS) ? mem[widx] : 0;
+        imem_resp_data_0.write((data >> 0) & 1);
+        imem_resp_data_1.write((data >> 1) & 1);
+        imem_resp_data_2.write((data >> 2) & 1);
+        imem_resp_data_3.write((data >> 3) & 1);
+        imem_resp_data_4.write((data >> 4) & 1);
+        imem_resp_data_5.write((data >> 5) & 1);
+        imem_resp_data_6.write((data >> 6) & 1);
+        imem_resp_data_7.write((data >> 7) & 1);
+        imem_resp_data_8.write((data >> 8) & 1);
+        imem_resp_data_9.write((data >> 9) & 1);
+        imem_resp_data_10.write((data >> 10) & 1);
+        imem_resp_data_11.write((data >> 11) & 1);
+        imem_resp_data_12.write((data >> 12) & 1);
+        imem_resp_data_13.write((data >> 13) & 1);
+        imem_resp_data_14.write((data >> 14) & 1);
+        imem_resp_data_15.write((data >> 15) & 1);
+        imem_resp_data_16.write((data >> 16) & 1);
+        imem_resp_data_17.write((data >> 17) & 1);
+        imem_resp_data_18.write((data >> 18) & 1);
+        imem_resp_data_19.write((data >> 19) & 1);
+        imem_resp_data_20.write((data >> 20) & 1);
+        imem_resp_data_21.write((data >> 21) & 1);
+        imem_resp_data_22.write((data >> 22) & 1);
+        imem_resp_data_23.write((data >> 23) & 1);
+        imem_resp_data_24.write((data >> 24) & 1);
+        imem_resp_data_25.write((data >> 25) & 1);
+        imem_resp_data_26.write((data >> 26) & 1);
+        imem_resp_data_27.write((data >> 27) & 1);
+        imem_resp_data_28.write((data >> 28) & 1);
+        imem_resp_data_29.write((data >> 29) & 1);
+        imem_resp_data_30.write((data >> 30) & 1);
+        imem_resp_data_31.write((data >> 31) & 1);
+    }
 
-static uint32_t mem_read(uint32_t byte_addr) {
-    uint32_t widx = byte_addr >> 2;
-    if (widx < MEM_SIZE_WORDS) return mem[widx];
-    return 0;
-}
+    SC_CTOR(ImemModel) {
+        SC_METHOD(update);
+        sensitive << fetch_pc_0 << fetch_pc_1 << fetch_pc_2 << fetch_pc_3 << fetch_pc_4 << fetch_pc_5 << fetch_pc_6 << fetch_pc_7 << fetch_pc_8 << fetch_pc_9 << fetch_pc_10 << fetch_pc_11 << fetch_pc_12 << fetch_pc_13 << fetch_pc_14 << fetch_pc_15 << fetch_pc_16 << fetch_pc_17 << fetch_pc_18 << fetch_pc_19 << fetch_pc_20 << fetch_pc_21 << fetch_pc_22 << fetch_pc_23 << fetch_pc_24 << fetch_pc_25 << fetch_pc_26 << fetch_pc_27 << fetch_pc_28 << fetch_pc_29 << fetch_pc_30 << fetch_pc_31;
+    }
+};
+
+//------------------------------------------------------------------------------
+// DmemModel: Data memory with 1-cycle read latency (manually clocked)
+// NOT an SC_MODULE - called explicitly from the simulation loop to avoid
+// timing issues with SC_CTHREAD firing before CPU eval.
+//------------------------------------------------------------------------------
+struct DmemModel {
+    sc_signal<bool>& dmem_req_valid_sig;
+    sc_signal<bool>& dmem_req_we_sig;
+    sc_signal<bool>& dmem_req_ready_sig;
+    sc_signal<bool>& dmem_resp_valid_sig;
+    sc_signal<bool>** dmem_req_addr_sigs;
+    sc_signal<bool>** dmem_req_data_sigs;
+    sc_signal<bool>** dmem_resp_data_sigs;
+
+    bool pending;
+    uint32_t read_data;
+    bool test_done;
+    uint32_t test_data;
+
+    DmemModel(sc_signal<bool>& valid, sc_signal<bool>& we,
+             sc_signal<bool>& ready, sc_signal<bool>& resp_valid,
+             sc_signal<bool>** addr_sigs, sc_signal<bool>** data_out_sigs,
+             sc_signal<bool>** resp_data_sigs)
+        : dmem_req_valid_sig(valid), dmem_req_we_sig(we),
+          dmem_req_ready_sig(ready), dmem_resp_valid_sig(resp_valid),
+          dmem_req_addr_sigs(addr_sigs), dmem_req_data_sigs(data_out_sigs),
+          dmem_resp_data_sigs(resp_data_sigs),
+          pending(false), read_data(0), test_done(false), test_data(0)
+    { dmem_req_ready_sig.write(true); }
+
+    void tick() {
+        // Respond to pending load from previous cycle
+        if (pending) {
+            dmem_resp_valid_sig.write(true);
+            for (int i = 0; i < 32; i++) dmem_resp_data_sigs[i]->write((read_data >> i) & 1);
+            pending = false;
+        } else {
+            dmem_resp_valid_sig.write(false);
+            for (int i = 0; i < 32; i++) dmem_resp_data_sigs[i]->write(false);
+        }
+
+        // Handle new request
+        if (dmem_req_valid_sig.read()) {
+            uint32_t addr = get_dmem_req_addr(dmem_req_addr_sigs);
+            if (dmem_req_we_sig.read()) {
+                uint32_t data = get_dmem_req_data(dmem_req_data_sigs);
+                if (addr == TOHOST_ADDR) {
+                    test_done = true;
+                    test_data = data;
+                } else {
+                    uint32_t widx = addr >> 2;
+                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;
+                }
+            } else {
+                read_data = mem[addr >> 2];
+                pending = true;
+            }
+        }
+    }
+};
 
 int sc_main(int argc, char* argv[]) {
+    // Suppress W571 (no activity for sc_start) — expected with manual eval
+    sc_report_handler::set_actions(SC_ID_NO_SC_START_ACTIVITY_, SC_DO_NOTHING);
+
     const char* elf_path = nullptr;
     uint32_t timeout = TIMEOUT_CYCLES;
     for (int i = 1; i < argc; i++) {
@@ -484,46 +657,121 @@ int sc_main(int argc, char* argv[]) {
     u_cpu->dmem_req_data_30(dmem_req_data_30_sig);
     u_cpu->dmem_req_data_31(dmem_req_data_31_sig);
 
+    // Instantiate combinational imem model
+    auto* u_imem = new ImemModel("u_imem");
+    u_imem->fetch_pc_0(fetch_pc_0_sig);
+    u_imem->fetch_pc_1(fetch_pc_1_sig);
+    u_imem->fetch_pc_2(fetch_pc_2_sig);
+    u_imem->fetch_pc_3(fetch_pc_3_sig);
+    u_imem->fetch_pc_4(fetch_pc_4_sig);
+    u_imem->fetch_pc_5(fetch_pc_5_sig);
+    u_imem->fetch_pc_6(fetch_pc_6_sig);
+    u_imem->fetch_pc_7(fetch_pc_7_sig);
+    u_imem->fetch_pc_8(fetch_pc_8_sig);
+    u_imem->fetch_pc_9(fetch_pc_9_sig);
+    u_imem->fetch_pc_10(fetch_pc_10_sig);
+    u_imem->fetch_pc_11(fetch_pc_11_sig);
+    u_imem->fetch_pc_12(fetch_pc_12_sig);
+    u_imem->fetch_pc_13(fetch_pc_13_sig);
+    u_imem->fetch_pc_14(fetch_pc_14_sig);
+    u_imem->fetch_pc_15(fetch_pc_15_sig);
+    u_imem->fetch_pc_16(fetch_pc_16_sig);
+    u_imem->fetch_pc_17(fetch_pc_17_sig);
+    u_imem->fetch_pc_18(fetch_pc_18_sig);
+    u_imem->fetch_pc_19(fetch_pc_19_sig);
+    u_imem->fetch_pc_20(fetch_pc_20_sig);
+    u_imem->fetch_pc_21(fetch_pc_21_sig);
+    u_imem->fetch_pc_22(fetch_pc_22_sig);
+    u_imem->fetch_pc_23(fetch_pc_23_sig);
+    u_imem->fetch_pc_24(fetch_pc_24_sig);
+    u_imem->fetch_pc_25(fetch_pc_25_sig);
+    u_imem->fetch_pc_26(fetch_pc_26_sig);
+    u_imem->fetch_pc_27(fetch_pc_27_sig);
+    u_imem->fetch_pc_28(fetch_pc_28_sig);
+    u_imem->fetch_pc_29(fetch_pc_29_sig);
+    u_imem->fetch_pc_30(fetch_pc_30_sig);
+    u_imem->fetch_pc_31(fetch_pc_31_sig);
+    u_imem->imem_resp_data_0(imem_resp_data_0_sig);
+    u_imem->imem_resp_data_1(imem_resp_data_1_sig);
+    u_imem->imem_resp_data_2(imem_resp_data_2_sig);
+    u_imem->imem_resp_data_3(imem_resp_data_3_sig);
+    u_imem->imem_resp_data_4(imem_resp_data_4_sig);
+    u_imem->imem_resp_data_5(imem_resp_data_5_sig);
+    u_imem->imem_resp_data_6(imem_resp_data_6_sig);
+    u_imem->imem_resp_data_7(imem_resp_data_7_sig);
+    u_imem->imem_resp_data_8(imem_resp_data_8_sig);
+    u_imem->imem_resp_data_9(imem_resp_data_9_sig);
+    u_imem->imem_resp_data_10(imem_resp_data_10_sig);
+    u_imem->imem_resp_data_11(imem_resp_data_11_sig);
+    u_imem->imem_resp_data_12(imem_resp_data_12_sig);
+    u_imem->imem_resp_data_13(imem_resp_data_13_sig);
+    u_imem->imem_resp_data_14(imem_resp_data_14_sig);
+    u_imem->imem_resp_data_15(imem_resp_data_15_sig);
+    u_imem->imem_resp_data_16(imem_resp_data_16_sig);
+    u_imem->imem_resp_data_17(imem_resp_data_17_sig);
+    u_imem->imem_resp_data_18(imem_resp_data_18_sig);
+    u_imem->imem_resp_data_19(imem_resp_data_19_sig);
+    u_imem->imem_resp_data_20(imem_resp_data_20_sig);
+    u_imem->imem_resp_data_21(imem_resp_data_21_sig);
+    u_imem->imem_resp_data_22(imem_resp_data_22_sig);
+    u_imem->imem_resp_data_23(imem_resp_data_23_sig);
+    u_imem->imem_resp_data_24(imem_resp_data_24_sig);
+    u_imem->imem_resp_data_25(imem_resp_data_25_sig);
+    u_imem->imem_resp_data_26(imem_resp_data_26_sig);
+    u_imem->imem_resp_data_27(imem_resp_data_27_sig);
+    u_imem->imem_resp_data_28(imem_resp_data_28_sig);
+    u_imem->imem_resp_data_29(imem_resp_data_29_sig);
+    u_imem->imem_resp_data_30(imem_resp_data_30_sig);
+    u_imem->imem_resp_data_31(imem_resp_data_31_sig);
+
+    // Instantiate dmem model (manually clocked, not SC_MODULE)
+    auto* u_dmem = new DmemModel(dmem_req_valid_sig, dmem_req_we_sig,
+        dmem_req_ready_sig, dmem_resp_valid_sig,
+        dmem_req_addr_sigs, dmem_req_data_sigs, dmem_resp_data_sigs);
+
     // Constants
     zero_sig.write(false);
     one_sig.write(true);
 
-    // Reset
+    // Trigger SystemC elaboration (binds all ports)
+    sc_start(SC_ZERO_TIME);
+
+    // Reset: hold reset high for 5 cycles
     reset_sig.write(true);
-    sc_start(50, SC_NS);
+    for (int r = 0; r < 5; r++) {
+        u_cpu->eval_seq_all();
+        for (int s = 0; s < 50; s++) { u_cpu->eval_comb_all(); sc_start(SC_ZERO_TIME); }
+    }
     reset_sig.write(false);
 
-    // Simulation loop
+    // Simulation loop: fully manual Verilator-style evaluation.
+    // No sc_clock needed — all timing is explicit.
     bool done = false;
     uint32_t cycle = 0;
     printf("Simulation started (timeout=%u)\n", timeout);
 
     while (!done && cycle < timeout) {
-        uint32_t pc = get_fetch_pc(fetch_pc_sigs);
-        set_imem_resp_data(imem_resp_data_sigs, mem_read(pc));
-        dmem_req_ready_sig.write(true);
+        // 1. DmemModel: respond to pending loads, handle new requests
+        u_dmem->tick();
+        sc_start(SC_ZERO_TIME);  // flush dmem writes
 
-        sc_start(10, SC_NS);
+        // 2. Latch all CPU DFFs (captures comb outputs from prev cycle)
+        u_cpu->eval_seq_all();
+        sc_start(SC_ZERO_TIME);  // flush DFF outputs
+
+        // 3. Settle combinational logic (multiple passes for hierarchy)
+        // Each pass: CPU comb -> flush -> ImemModel reacts -> flush
+        for (int settle = 0; settle < 50; settle++) {
+            u_cpu->eval_comb_all();
+            sc_start(SC_ZERO_TIME);
+        }
         cycle++;
 
-        if (dmem_req_valid_sig.read()) {
-            uint32_t addr = get_dmem_req_addr(dmem_req_addr_sigs);
-            uint32_t data = get_dmem_req_data(dmem_req_data_sigs);
-            if (dmem_req_we_sig.read()) {
-                if (addr == TOHOST_ADDR) {
-                    done = true;
-                    printf("\nTEST %s\n", data == 1 ? "PASS" : "FAIL");
-                    printf("  Cycle: %u\ntohost: 0x%08x\n", cycle, data);
-                } else {
-                    uint32_t widx = addr >> 2;
-                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;
-                }
-            } else {
-                dmem_resp_valid_sig.write(true);
-                set_dmem_resp_data(dmem_resp_data_sigs, mem_read(addr));
-            }
-        } else {
-            dmem_resp_valid_sig.write(false);
+        // Check tohost from DmemModel
+        if (u_dmem->test_done) {
+            done = true;
+            printf("\nTEST %s\n", u_dmem->test_data == 1 ? "PASS" : "FAIL");
+            printf("  Cycle: %u\ntohost: 0x%08x\n", cycle, u_dmem->test_data);
         }
 
         if (cycle % 10000 == 0)
@@ -534,6 +782,9 @@ int sc_main(int argc, char* argv[]) {
         printf("TIMEOUT at cycle %u PC=0x%08x\n", cycle, get_fetch_pc(fetch_pc_sigs));
     }
     printf("Total cycles: %u\n", cycle);
+    delete u_dmem;
+    delete u_imem;
     delete u_cpu;
+    // Note: sc_stop() not called; process exits directly.
     return done ? 0 : 1;
 }

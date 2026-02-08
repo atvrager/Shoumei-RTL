@@ -383,6 +383,34 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   let lb := "{"
   let rb := "}"
 
+  -- Generate ImemModel SC_MODULE port declarations
+  let imemWidth := 32
+  let pcWidth := 32
+  let imemPortDecls := String.intercalate "\n" (
+    (List.range pcWidth).map (fun i => s!"    sc_in<bool> {pcSig}_{i};") ++
+    (List.range imemWidth).map (fun i => s!"    sc_out<bool> {imemDataIn}_{i};")
+  )
+  let imemSensitivity := String.intercalate " << " (
+    (List.range pcWidth).map (fun i => s!"{pcSig}_{i}")
+  )
+  let imemGetPC := String.intercalate " | " (
+    (List.range pcWidth).map fun i =>
+      if i == 0 then s!"(uint32_t){pcSig}_{i}.read()"
+      else s!"((uint32_t){pcSig}_{i}.read() << {i})"
+  )
+  let imemSetData := String.intercalate "\n" (
+    (List.range imemWidth).map fun i =>
+      s!"        {imemDataIn}_{i}.write((data >> {i}) & 1);"
+  )
+
+  -- ImemModel port bindings in sc_main
+  let imemModelBindings := String.intercalate "\n" (
+    (List.range pcWidth).map (fun i =>
+      s!"    u_imem->{pcSig}_{i}({pcSig}_{i}_sig);") ++
+    (List.range imemWidth).map (fun i =>
+      s!"    u_imem->{imemDataIn}_{i}({imemDataIn}_{i}_sig);")
+  )
+
   "//==============================================================================\n" ++
   s!"// sc_main_{c.name}.cpp - Auto-generated SystemC testbench\n" ++
   "// DO NOT EDIT - regenerate with: lake exe generate_all\n" ++
@@ -397,22 +425,95 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   s!"static const uint32_t TOHOST_ADDR = 0x{natToHexDigits cfg.tohostAddr};\n" ++
   s!"static const uint32_t TIMEOUT_CYCLES = {cfg.timeoutCycles};\n\n" ++
 
-  "// Bus pack/unpack helpers\n" ++
-  busHelpers ++ "\n\n" ++
-
-  "// Memory model\n" ++
+  "// Memory model (shared between ImemModel and DmemModel)\n" ++
   s!"static uint32_t mem[{cfg.memSizeWords}];\n\n" ++
   s!"static void mem_write_cb(uint32_t addr, uint32_t data) {lb}\n" ++
   s!"    uint32_t widx = addr / 4;\n" ++
   s!"    if (widx < MEM_SIZE_WORDS) mem[widx] = data;\n" ++
   s!"{rb}\n\n" ++
-  s!"static uint32_t mem_read(uint32_t byte_addr) {lb}\n" ++
-  s!"    uint32_t widx = byte_addr >> 2;\n" ++
-  s!"    if (widx < MEM_SIZE_WORDS) return mem[widx];\n" ++
-  s!"    return 0;\n" ++
-  s!"{rb}\n\n" ++
+
+  "// Bus pack/unpack helpers\n" ++
+  busHelpers ++ "\n\n" ++
+
+  "//------------------------------------------------------------------------------\n" ++
+  "// ImemModel: Combinational instruction memory\n" ++
+  "// Equivalent to SV: assign imem_resp_data = mem[fetch_pc >> 2];\n" ++
+  "// SC_METHOD sensitive to fetch_pc bits ensures delta-cycle feedback works.\n" ++
+  "//------------------------------------------------------------------------------\n" ++
+  s!"SC_MODULE(ImemModel) {lb}\n" ++
+  imemPortDecls ++ "\n\n" ++
+  s!"    void update() {lb}\n" ++
+  s!"        uint32_t pc = {imemGetPC};\n" ++
+  s!"        uint32_t widx = pc >> 2;\n" ++
+  s!"        uint32_t data = (widx < MEM_SIZE_WORDS) ? mem[widx] : 0;\n" ++
+  imemSetData ++ "\n" ++
+  s!"    {rb}\n\n" ++
+  s!"    SC_CTOR(ImemModel) {lb}\n" ++
+  s!"        SC_METHOD(update);\n" ++
+  s!"        sensitive << {imemSensitivity};\n" ++
+  s!"    {rb}\n" ++
+  s!"{rb};\n\n" ++
+
+  "//------------------------------------------------------------------------------\n" ++
+  "// DmemModel: Data memory with 1-cycle read latency (manually clocked)\n" ++
+  "// NOT an SC_MODULE - called explicitly from the simulation loop to avoid\n" ++
+  "// timing issues with SC_CTHREAD firing before CPU eval.\n" ++
+  "//------------------------------------------------------------------------------\n" ++
+  s!"struct DmemModel {lb}\n" ++
+  s!"    sc_signal<bool>& {dmemValid}_sig;\n" ++
+  s!"    sc_signal<bool>& {dmemWe}_sig;\n" ++
+  s!"    sc_signal<bool>& {dmemReady}_sig;\n" ++
+  s!"    sc_signal<bool>& {dmemRespValid}_sig;\n" ++
+  s!"    sc_signal<bool>** {dmemAddr}_sigs;\n" ++
+  s!"    sc_signal<bool>** {dmemDataOut}_sigs;\n" ++
+  s!"    sc_signal<bool>** {dmemRespData}_sigs;\n\n" ++
+  s!"    bool pending;\n" ++
+  s!"    uint32_t read_data;\n" ++
+  s!"    bool test_done;\n" ++
+  s!"    uint32_t test_data;\n\n" ++
+  s!"    DmemModel(sc_signal<bool>& valid, sc_signal<bool>& we,\n" ++
+  s!"             sc_signal<bool>& ready, sc_signal<bool>& resp_valid,\n" ++
+  s!"             sc_signal<bool>** addr_sigs, sc_signal<bool>** data_out_sigs,\n" ++
+  s!"             sc_signal<bool>** resp_data_sigs)\n" ++
+  s!"        : {dmemValid}_sig(valid), {dmemWe}_sig(we),\n" ++
+  s!"          {dmemReady}_sig(ready), {dmemRespValid}_sig(resp_valid),\n" ++
+  s!"          {dmemAddr}_sigs(addr_sigs), {dmemDataOut}_sigs(data_out_sigs),\n" ++
+  s!"          {dmemRespData}_sigs(resp_data_sigs),\n" ++
+  s!"          pending(false), read_data(0), test_done(false), test_data(0)\n" ++
+  s!"    {lb} {dmemReady}_sig.write(true); {rb}\n\n" ++
+  s!"    void tick() {lb}\n" ++
+  s!"        // Respond to pending load from previous cycle\n" ++
+  s!"        if (pending) {lb}\n" ++
+  s!"            {dmemRespValid}_sig.write(true);\n" ++
+  s!"            for (int i = 0; i < 32; i++) {dmemRespData}_sigs[i]->write((read_data >> i) & 1);\n" ++
+  s!"            pending = false;\n" ++
+  s!"        {rb} else {lb}\n" ++
+  s!"            {dmemRespValid}_sig.write(false);\n" ++
+  s!"            for (int i = 0; i < 32; i++) {dmemRespData}_sigs[i]->write(false);\n" ++
+  s!"        {rb}\n\n" ++
+  s!"        // Handle new request\n" ++
+  s!"        if ({dmemValid}_sig.read()) {lb}\n" ++
+  s!"            uint32_t addr = get_{dmemAddr}({dmemAddr}_sigs);\n" ++
+  s!"            if ({dmemWe}_sig.read()) {lb}\n" ++
+  s!"                uint32_t data = get_{dmemDataOut}({dmemDataOut}_sigs);\n" ++
+  s!"                if (addr == TOHOST_ADDR) {lb}\n" ++
+  s!"                    test_done = true;\n" ++
+  s!"                    test_data = data;\n" ++
+  s!"                {rb} else {lb}\n" ++
+  s!"                    uint32_t widx = addr >> 2;\n" ++
+  s!"                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;\n" ++
+  s!"                {rb}\n" ++
+  s!"            {rb} else {lb}\n" ++
+  s!"                read_data = mem[addr >> 2];\n" ++
+  s!"                pending = true;\n" ++
+  s!"            {rb}\n" ++
+  s!"        {rb}\n" ++
+  s!"    {rb}\n" ++
+  s!"{rb};\n\n" ++
 
   s!"int sc_main(int argc, char* argv[]) {lb}\n" ++
+  "    // Suppress W571 (no activity for sc_start) — expected with manual eval\n" ++
+  "    sc_report_handler::set_actions(SC_ID_NO_SC_START_ACTIVITY_, SC_DO_NOTHING);\n\n" ++
   "    const char* elf_path = nullptr;\n" ++
   s!"    uint32_t timeout = TIMEOUT_CYCLES;\n" ++
   s!"    for (int i = 1; i < argc; i++) {lb}\n" ++
@@ -440,43 +541,53 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   s!"    u_cpu->{resetName}({resetName}_sig);\n" ++
   portBindings ++ "\n\n" ++
 
+  "    // Instantiate combinational imem model\n" ++
+  "    auto* u_imem = new ImemModel(\"u_imem\");\n" ++
+  imemModelBindings ++ "\n\n" ++
+
+  "    // Instantiate dmem model (manually clocked, not SC_MODULE)\n" ++
+  s!"    auto* u_dmem = new DmemModel({dmemValid}_sig, {dmemWe}_sig,\n" ++
+  s!"        {dmemReady}_sig, {dmemRespValid}_sig,\n" ++
+  s!"        {dmemAddr}_sigs, {dmemDataOut}_sigs, {dmemRespData}_sigs);\n\n" ++
+
   "    // Constants\n" ++
   constBindings ++ "\n\n" ++
 
-  "    // Reset\n" ++
+  "    // Trigger SystemC elaboration (binds all ports)\n" ++
+  "    sc_start(SC_ZERO_TIME);\n\n" ++
+  "    // Reset: hold reset high for 5 cycles\n" ++
   s!"    {resetName}_sig.write(true);\n" ++
-  "    sc_start(50, SC_NS);\n" ++
+  "    for (int r = 0; r < 5; r++) {\n" ++
+  "        u_cpu->eval_seq_all();\n" ++
+  "        for (int s = 0; s < 50; s++) { u_cpu->eval_comb_all(); sc_start(SC_ZERO_TIME); }\n" ++
+  "    }\n" ++
   s!"    {resetName}_sig.write(false);\n\n" ++
 
-  "    // Simulation loop\n" ++
+  "    // Simulation loop: fully manual Verilator-style evaluation.\n" ++
+  "    // No sc_clock needed — all timing is explicit.\n" ++
   "    bool done = false;\n" ++
   "    uint32_t cycle = 0;\n" ++
   "    printf(\"Simulation started (timeout=%u)\\n\", timeout);\n\n" ++
 
   s!"    while (!done && cycle < timeout) {lb}\n" ++
-  s!"        uint32_t pc = get_{pcSig}({pcSig}_sigs);\n" ++
-  s!"        set_{imemDataIn}({imemDataIn}_sigs, mem_read(pc));\n" ++
-  s!"        {dmemReady}_sig.write(true);\n\n" ++
-  "        sc_start(10, SC_NS);\n" ++
+  "        // 1. DmemModel: respond to pending loads, handle new requests\n" ++
+  "        u_dmem->tick();\n" ++
+  "        sc_start(SC_ZERO_TIME);  // flush dmem writes\n\n" ++
+  "        // 2. Latch all CPU DFFs (captures comb outputs from prev cycle)\n" ++
+  "        u_cpu->eval_seq_all();\n" ++
+  "        sc_start(SC_ZERO_TIME);  // flush DFF outputs\n\n" ++
+  "        // 3. Settle combinational logic (multiple passes for hierarchy)\n" ++
+  "        // Each pass: CPU comb -> flush -> ImemModel reacts -> flush\n" ++
+  "        for (int settle = 0; settle < 50; settle++) {\n" ++
+  "            u_cpu->eval_comb_all();\n" ++
+  "            sc_start(SC_ZERO_TIME);\n" ++
+  "        }\n" ++
   "        cycle++;\n\n" ++
-  s!"        if ({dmemValid}_sig.read()) {lb}\n" ++
-  s!"            uint32_t addr = get_{dmemAddr}({dmemAddr}_sigs);\n" ++
-  s!"            uint32_t data = get_{dmemDataOut}({dmemDataOut}_sigs);\n" ++
-  s!"            if ({dmemWe}_sig.read()) {lb}\n" ++
-  s!"                if (addr == TOHOST_ADDR) {lb}\n" ++
-  "                    done = true;\n" ++
-  "                    printf(\"\\nTEST %s\\n\", data == 1 ? \"PASS\" : \"FAIL\");\n" ++
-  "                    printf(\"  Cycle: %u\\ntohost: 0x%08x\\n\", cycle, data);\n" ++
-  s!"                {rb} else {lb}\n" ++
-  s!"                    uint32_t widx = addr >> 2;\n" ++
-  s!"                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;\n" ++
-  s!"                {rb}\n" ++
-  s!"            {rb} else {lb}\n" ++
-  s!"                {dmemRespValid}_sig.write(true);\n" ++
-  s!"                set_{dmemRespData}({dmemRespData}_sigs, mem_read(addr));\n" ++
-  s!"            {rb}\n" ++
-  s!"        {rb} else {lb}\n" ++
-  s!"            {dmemRespValid}_sig.write(false);\n" ++
+  "        // Check tohost from DmemModel\n" ++
+  s!"        if (u_dmem->test_done) {lb}\n" ++
+  "            done = true;\n" ++
+  "            printf(\"\\nTEST %s\\n\", u_dmem->test_data == 1 ? \"PASS\" : \"FAIL\");\n" ++
+  "            printf(\"  Cycle: %u\\ntohost: 0x%08x\\n\", cycle, u_dmem->test_data);\n" ++
   s!"        {rb}\n\n" ++
   "        if (cycle % 10000 == 0)\n" ++
   s!"            printf(\"  [%u cycles] PC=0x%08x\\n\", cycle, get_{pcSig}({pcSig}_sigs));\n" ++
@@ -485,7 +596,10 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   s!"        printf(\"TIMEOUT at cycle %u PC=0x%08x\\n\", cycle, get_{pcSig}({pcSig}_sigs));\n" ++
   s!"    {rb}\n" ++
   "    printf(\"Total cycles: %u\\n\", cycle);\n" ++
+  "    delete u_dmem;\n" ++
+  "    delete u_imem;\n" ++
   "    delete u_cpu;\n" ++
+  "    // Note: sc_stop() not called; process exits directly.\n" ++
   "    return done ? 0 : 1;\n" ++
   s!"{rb}\n"
 

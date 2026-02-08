@@ -48,6 +48,72 @@ def findInternalWires (c : Circuit) : List Wire :=
   let allWires := gateOutputs ++ instanceWires
   (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)).eraseDups
 
+-- Helper: find wires that MUST be sc_signal (connected to submodule ports or DFF outputs)
+-- These cannot be plain bool because SystemC port binding requires sc_signal.
+def findSignalWires (c : Circuit) : List Wire :=
+  let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
+  let dffOutputs := c.gates.filter (fun g => g.gateType.isDFF) |>.map (fun g => g.output)
+  -- DFF inputs (d) also need to be signals since they're read by seq_logic SC_CTHREAD
+  let dffInputs := c.gates.filterMap (fun g =>
+    if g.gateType.isDFF then
+      match g.inputs with
+      | [d, _, _] => some d
+      | _ => none
+    else none)
+  (instanceWires ++ dffOutputs ++ dffInputs).eraseDups
+
+-- Build a precomputed list of wire names that must be sc_signal.
+-- Includes: I/O ports, instance-connected wires, DFF outputs, DFF inputs.
+def buildSignalNameList (c : Circuit) : List String :=
+  let signalWires := findSignalWires c
+  (signalWires.map (·.name) ++ c.outputs.map (·.name) ++ c.inputs.map (·.name)).eraseDups
+
+-- Check if a wire name is in the precomputed signal list
+def isSignalName (sigNames : List String) (name : String) : Bool :=
+  sigNames.contains name
+
+-- Find sc_signal wires that are ALSO outputs of combinational gates.
+-- These need shadow bool variables for correct single-pass comb_logic evaluation.
+-- Without shadows, sc_signal .read() returns stale (previous delta-cycle) values
+-- when the signal is both written and read within the same comb_logic method.
+def findCombDrivenSignals (c : Circuit) : List String :=
+  let sigNames := buildSignalNameList c
+  let combGateOutputs := c.gates.filter (·.gateType.isCombinational) |>.map (·.output.name)
+  let ioNames := (c.inputs.map (·.name) ++ c.outputs.map (·.name))
+  -- A comb-driven signal is one that is an INTERNAL sc_signal AND a comb gate output
+  -- Exclude I/O ports (they use sc_in/sc_out, not sc_signal, and don't need shadows)
+  combGateOutputs.filter (fun n => sigNames.contains n && !ioNames.contains n) |>.eraseDups
+
+-- Read expression for a wire: uses .read() for sc_signal, direct access for bool
+-- combShadows: names of sc_signals that have shadow bool variables in comb_logic
+def wireReadExpr (sigNames : List String) (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (w : Wire)
+    (combShadows : List String := []) : String :=
+  let ref := wireRef inputToIndex outputToIndex w
+  -- Bundled I/O always uses .read()
+  if inputToIndex.any (fun p => p.fst.name == w.name) then s!"{ref}.read()"
+  else if outputToIndex.any (fun p => p.fst.name == w.name) then s!"{ref}.read()"
+  -- Comb-driven sc_signals: read from shadow bool in comb_logic
+  else if combShadows.contains w.name then s!"{ref}_shadow"
+  -- sc_signal wires (ports, instance wires, DFF outputs) use .read()
+  else if isSignalName sigNames w.name then s!"{ref}.read()"
+  -- Plain bool intermediates use direct access
+  else ref
+
+-- Write statement for a wire: uses .write() for sc_signal, = for bool
+-- combShadows: names of sc_signals that have shadow bool variables in comb_logic
+def wireWriteStmt (sigNames : List String) (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (w : Wire) (expr : String)
+    (combShadows : List String := []) : String :=
+  let ref := wireRef inputToIndex outputToIndex w
+  if inputToIndex.any (fun p => p.fst.name == w.name) then s!"  {ref}.write({expr});"
+  else if outputToIndex.any (fun p => p.fst.name == w.name) then s!"  {ref}.write({expr});"
+  -- Comb-driven sc_signals: write to shadow bool AND sc_signal
+  else if combShadows.contains w.name then
+    s!"  {ref}_shadow = {expr};\n  {w.name}.write({ref}_shadow);"
+  else if isSignalName sigNames w.name then s!"  {ref}.write({expr});"
+  else s!"  {ref} = {expr};"
+
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
   c.gates.filter (fun g => g.gateType.isDFF)
@@ -282,12 +348,24 @@ def generatePortDeclarations (c : Circuit) (useBundledIO : Bool) : String :=
     joinLines (inputDecls ++ outputDecls)
 
 -- Generate internal signal declarations
+-- Wires connected to submodule ports or DFFs must be sc_signal<bool>.
+-- Pure combinational intermediates use plain bool for correct same-cycle evaluation.
 def generateSignalDeclarations (c : Circuit) : String :=
   let internalWires := findInternalWires c
   if internalWires.isEmpty then
     ""
   else
-    let decls := internalWires.map (fun w => s!"  sc_signal<bool> {w.name};")
+    let sigNames := buildSignalNameList c
+    let combDriven := findCombDrivenSignals c
+    let decls := internalWires.map (fun w =>
+      if isSignalName sigNames w.name then
+        if combDriven.contains w.name then
+          -- Comb-driven sc_signal: declare both sc_signal (for ports) and shadow bool (for comb_logic)
+          s!"  sc_signal<bool> {w.name};\n  bool {w.name}_shadow = false;"
+        else
+          s!"  sc_signal<bool> {w.name};"
+      else
+        s!"  bool {w.name} = false;")
     joinLines decls
 
 -- Generate sensitivity list for SC_METHOD (all non-clock/reset inputs for data)
@@ -307,10 +385,13 @@ def generateSensitivityList (c : Circuit) (useBundledIO : Bool) : String :=
     else
       c.inputs
 
-    -- Also include internal signals that are driven by instances (submodule outputs)
-    -- These feed into the parent's combinational gates
+    -- Also include internal sc_signal wires that are driven by instances (submodule outputs)
+    -- or DFFs. Plain bool intermediates don't need sensitivity (computed inline).
     let internalWires := findInternalWires c
-    let allSenseWires := dataInputs ++ internalWires
+    let sigNames := buildSignalNameList c
+    let internalSignalWires := internalWires.filter (fun w =>
+      isSignalName sigNames w.name)
+    let allSenseWires := dataInputs ++ internalSignalWires
 
     if allSenseWires.isEmpty then
       "    // No data inputs for sensitivity list"
@@ -333,26 +414,10 @@ def generateConstructor (c : Circuit) (useBundledIO : Bool) (allCircuits : List 
     -- Instance member init
     generateInstanceInitList c
 
-  -- Process registration
-  let clocks := findClockWires c
-  let clockName := if !clocks.isEmpty then clocks.head!.name else "clock"
-
-  let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
-  let hasCombLogic := !combGates.isEmpty
-
-  let processReg : List String :=
-    -- Register comb_logic only if there are combinational gates
-    (if hasCombLogic then
-      ["    SC_METHOD(comb_logic);",
-       generateSensitivityList c useBundledIO]
-    else []) ++
-    -- Register seq_logic only if this module has its own DFF gates
-    -- (submodule instances handle their own clocking internally)
-    (let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
-     if !dffGates.isEmpty then
-      [s!"    SC_CTHREAD(seq_logic, {clockName}.pos());",
-       "    reset_signal_is(reset, true);"]
-    else [])
+  -- No SC_METHOD registration: evaluation is driven entirely by the
+  -- testbench calling eval_seq_all()/eval_comb_all() each cycle.
+  -- This avoids delta-cycle ordering issues in hierarchical designs.
+  let processReg : List String := []
 
   -- Instance port bindings (in constructor body)
   let instanceBindings := if hasInstances then
@@ -368,32 +433,28 @@ def generateConstructor (c : Circuit) (useBundledIO : Bool) (allCircuits : List 
   joinLines ([ctorLine] ++ processReg ++ instanceBindings ++ ["  }"])
 
 -- Generate a single combinational gate assignment (for .cpp file)
-def generateCombGateSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate) : String :=
+-- Uses plain bool assignment for pure combinational intermediates,
+-- and sc_signal .write()/.read() for wires connected to ports/DFFs.
+def generateCombGateSystemC (sigNames : List String) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (combShadows : List String) (g : Gate) : String :=
   let op := gateTypeToOperator g.gateType
-  let outRef := wireRef inputToIndex outputToIndex g.output
+  let rd := fun w => wireReadExpr sigNames inputToIndex outputToIndex w combShadows
+  let wr := fun expr => wireWriteStmt sigNames inputToIndex outputToIndex g.output expr combShadows
 
   match g.gateType with
   | GateType.NOT =>
       match g.inputs with
-      | [i0] =>
-          let i0Ref := wireRef inputToIndex outputToIndex i0
-          s!"  {outRef}.write(!{i0Ref}.read());"
+      | [i0] => wr s!"!{rd i0}"
       | _ => "  // ERROR: NOT gate should have 1 input"
   | GateType.BUF =>
       match g.inputs with
-      | [i0] =>
-          let i0Ref := wireRef inputToIndex outputToIndex i0
-          s!"  {outRef}.write({i0Ref}.read());"
+      | [i0] => wr (rd i0)
       | _ => "  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
       -- Ternary operator: sel ? in1 : in0
       -- inputs: [in0, in1, sel]
       match g.inputs with
       | [in0, in1, sel] =>
-          let in0Ref := wireRef inputToIndex outputToIndex in0
-          let in1Ref := wireRef inputToIndex outputToIndex in1
-          let selRef := wireRef inputToIndex outputToIndex sel
-          s!"  {outRef}.write({selRef}.read() ? {in1Ref}.read() : {in0Ref}.read());"
+          wr s!"{rd sel} ? {rd in1} : {rd in0}"
       | _ => "  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF | GateType.DFF_SET =>
       ""  -- DFFs handled in seq_logic, not comb_logic
@@ -401,9 +462,7 @@ def generateCombGateSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex :
       -- Binary operators: input1 op input2
       match g.inputs with
       | [i0, i1] =>
-          let i0Ref := wireRef inputToIndex outputToIndex i0
-          let i1Ref := wireRef inputToIndex outputToIndex i1
-          s!"  {outRef}.write({i0Ref}.read() {op} {i1Ref}.read());"
+          wr s!"{rd i0} {op} {rd i1}"
       | _ => "  // ERROR: Binary gate should have 2 inputs"
 
 -- Generate DFF logic for SC_CTHREAD
@@ -423,15 +482,54 @@ def generateDFFSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex : List
       ]
   | _ => "    // ERROR: DFF should have 3 inputs: [d, clk, reset]"
 
+-- Topological sort of combinational gates.
+-- Gates are sorted so that a gate's input wires are produced before they are consumed.
+-- Wires that are circuit inputs, DFF outputs, or instance port outputs are "available"
+-- from the start (they don't need to be produced by a comb gate).
+def topSortCombGates (c : Circuit) : List Gate :=
+  let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
+  -- Comb gate outputs that are also sc_signals use shadow bools,
+  -- so they must NOT be treated as pre-available.
+  let combGateOutputNames := combGates.map (·.output.name)
+  -- Build set of wire names that are available without a comb gate producing them
+  let inputNames := c.inputs.map (·.name)
+  let dffOutputNames := c.gates.filter (·.gateType.isDFF) |>.map (·.output.name)
+  let instOutputNames := List.flatten (c.instances.map (fun inst =>
+    inst.portMap.map (fun p => p.2.name)))
+  -- Filter out wires that are produced by comb gates (they must be topo-sorted)
+  let available := (inputNames ++ dffOutputNames ++ instOutputNames).filter
+    (fun n => !combGateOutputNames.contains n)
+  -- Iteratively emit gates whose inputs are all available
+  let rec loop (remaining : List Gate) (avail : List String) (sorted : List Gate)
+      (fuel : Nat) : List Gate :=
+    match fuel with
+    | 0 => sorted ++ remaining  -- fallback: append unsorted remainder
+    | fuel + 1 =>
+      if remaining.isEmpty then sorted
+      else
+        let (ready, notReady) := remaining.partition (fun g =>
+          g.inputs.all (fun w => avail.contains w.name))
+        if ready.isEmpty then
+          -- No progress; break cycle by emitting first remaining gate
+          match remaining with
+          | g :: rest => loop rest (avail ++ [g.output.name]) (sorted ++ [g]) fuel
+          | [] => sorted
+        else
+          let newAvail := avail ++ ready.map (·.output.name)
+          loop notReady newAvail (sorted ++ ready) fuel
+  loop combGates available [] (combGates.length + 1)
+
 -- Generate comb_logic method body
 def generateCombMethod (c : Circuit) (useBundledIO : Bool) : String :=
   let inputToIndex := if useBundledIO then c.inputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
   let outputToIndex := if useBundledIO then c.outputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
 
-  let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
+  let combGates := topSortCombGates c
   if combGates.isEmpty then ""
   else
-    let assignments := combGates.map (fun g => generateCombGateSystemC inputToIndex outputToIndex g)
+    let sigNames := buildSignalNameList c
+    let combShadows := findCombDrivenSignals c
+    let assignments := combGates.map (fun g => generateCombGateSystemC sigNames inputToIndex outputToIndex combShadows g)
     joinLines [
       s!"void {c.name}::comb_logic() " ++ "{",
       joinLines assignments,
@@ -449,10 +547,7 @@ def generateSeqMethod (c : Circuit) (useBundledIO : Bool) : String :=
     let dffLogic := dffGates.map (fun g => generateDFFSystemC inputToIndex outputToIndex g)
     joinLines [
       s!"void {c.name}::seq_logic() " ++ "{",
-      "  while (true) {",
-      "    wait();  // Wait for clock edge",
       joinLines dffLogic,
-      "  }",
       "}"
     ]
 
@@ -485,7 +580,10 @@ def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
   let processDecls :=
     (if hasCombLogic then ["  void comb_logic();"] else []) ++
-    (if isSeq && hasDFFs then ["  void seq_logic();"] else [])
+    (if isSeq && hasDFFs then ["  void seq_logic();"] else []) ++
+    -- eval_comb_all/eval_seq_all: hierarchical evaluation methods
+    ["  void eval_comb_all();",
+     "  void eval_seq_all();"]
 
   -- Constructor
   let ctor := generateConstructor c useBundledIO allCircuits
@@ -526,13 +624,38 @@ def toSystemCImpl (c : Circuit) (_allCircuits : List Circuit := []) : String :=
 
   let combMethod := generateCombMethod c useBundledIO
   let seqMethod := if isSeq then generateSeqMethod c useBundledIO else ""
+  let hasDFFs := !(c.gates.filter (·.gateType.isDFF)).isEmpty
+  let hasCombLogic := !(c.gates.filter (·.gateType.isCombinational)).isEmpty
+
+  -- Generate eval_comb_all: own comb + submodule eval_comb_all
+  let instCombCalls := c.instances.map (fun inst =>
+    s!"  {inst.instName}.eval_comb_all();")
+  let evalCombAllBody :=
+    (if hasCombLogic then ["  comb_logic();"] else []) ++
+    instCombCalls
+  let evalCombAll := joinLines [
+    s!"void {moduleName}::eval_comb_all() " ++ "{",
+    joinLines evalCombAllBody,
+    "}"
+  ]
+
+  -- Generate eval_seq_all: submodule eval_seq_all + own seq
+  let instSeqCalls := c.instances.map (fun inst =>
+    s!"  {inst.instName}.eval_seq_all();")
+  let ownSeq := if hasDFFs then ["  seq_logic();"] else []
+  let evalSeqAll := joinLines [
+    s!"void {moduleName}::eval_seq_all() " ++ "{",
+    joinLines (instSeqCalls ++ ownSeq),
+    "}"
+  ]
 
   let parts := [
     s!"#include \"{moduleName}.h\"",
     ""
   ] ++
   (if combMethod.isEmpty then [] else [combMethod]) ++
-  (if seqMethod.isEmpty then [] else ["", seqMethod])
+  (if seqMethod.isEmpty then [] else ["", seqMethod]) ++
+  ["", evalCombAll, "", evalSeqAll]
 
   joinLines parts
 

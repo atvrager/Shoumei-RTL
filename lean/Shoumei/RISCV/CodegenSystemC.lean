@@ -116,10 +116,10 @@ def genSystemCDecoderHeader (defs : List InstructionDef) (moduleName : String :=
     "  sc_out<bool> io_use_imm;" ++ muldivPort,
     "",
     "  void comb_logic();",
+    "  void eval_comb_all();",
+    "  void eval_seq_all();",
     "",
     s!"  SC_CTOR({moduleName}) {lb}",
-    "    SC_METHOD(comb_logic);",
-    "    sensitive << " ++ genSensitivity "io_instr" 32 ++ ";",
     s!"  {rb}",
     s!"{rb};",
     "",
@@ -233,6 +233,13 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     if hasMSC defs then
     "  io_is_muldiv.write(valid && is_mext);"
     else "",
+    s!"{rb}",
+    "",
+    s!"void {moduleName}::eval_comb_all() {lb}",
+    "  comb_logic();",
+    s!"{rb}",
+    "",
+    s!"void {moduleName}::eval_seq_all() {lb}",
     s!"{rb}",
     ""
   ]

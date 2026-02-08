@@ -455,6 +455,14 @@ def mkROB16 : Circuit :=
     Gate.mkNOT empty_or4 empty
   ]
 
+  -- Safe commit: gate commit_en with NOT(empty) to prevent underflow.
+  -- Uses empty_or4 (= any count bit set = not empty) directly instead of reading
+  -- from the empty output port, which has deferred-write semantics in SystemC.
+  let commit_en_safe := Wire.mk "commit_en_safe"
+  let commit_safe_gates := [
+    Gate.mkAND commit_en empty_or4 commit_en_safe
+  ]
+
   -- Alloc index output: BUF tail_ptr to alloc_idx
   let alloc_idx_gates := List.zipWith (fun src dst =>
     Gate.mkBUF src dst
@@ -466,7 +474,7 @@ def mkROB16 : Circuit :=
     moduleName := "QueuePointer_4"
     instName := "u_head"
     portMap :=
-      [("clock", clock), ("reset", reset), ("en", commit_en),
+      [("clock", clock), ("reset", reset), ("en", commit_en_safe),
        ("one", one), ("zero", zero)] ++
       (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -485,7 +493,7 @@ def mkROB16 : Circuit :=
     instName := "u_count"
     portMap :=
       [("clock", clock), ("reset", reset), ("inc", alloc_en),
-       ("dec", commit_en), ("one", one), ("zero", zero)] ++
+       ("dec", commit_en_safe), ("one", one), ("zero", zero)] ++
       (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
@@ -546,7 +554,7 @@ def mkROB16 : Circuit :=
 
     -- Control: commit clear = AND(commit_en, commit_decode[i])
     let commit_clear := Wire.mk s!"e{i}_commit_clear"
-    let commit_clear_gate := Gate.mkAND commit_en commit_decode[i]! commit_clear
+    let commit_clear_gate := Gate.mkAND commit_en_safe commit_decode[i]! commit_clear
 
     -- Control: clear = OR(flush_en, commit_clear)
     let clear := Wire.mk s!"e{i}_clear"
@@ -754,7 +762,7 @@ def mkROB16 : Circuit :=
     [head_exception, head_isBranch, head_mispredicted]
 
   let all_gates :=
-    global_gates ++ [full_gate] ++ empty_gates ++ alloc_idx_gates ++
+    global_gates ++ [full_gate] ++ empty_gates ++ commit_safe_gates ++ alloc_idx_gates ++
     all_entry_gates ++ head_readout_gates
 
   let all_instances :=
