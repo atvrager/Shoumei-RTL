@@ -6,18 +6,23 @@ Sets up the complete Shoumei RTL development environment:
 - Verifies Python 3.11+
 - Installs uv (fast Python package manager)
 - Installs elan (LEAN toolchain manager)
-- Installs LEAN 4 (via lean-toolchain file)
-- Optionally installs sbt (for Chisel)
+- Installs LEAN 4 v4.27.0 (via lean-toolchain file)
+- Installs Coursier + sbt (for Chisel 7.7.0 / Scala 2.13.18)
+- Installs Yosys (LEC verification)
+- Installs Verilator (RTL simulation)
+- Installs SystemC (SystemC simulation)
+- Installs RISC-V GCC cross-compiler (test ELF compilation)
 - Verifies installation with `lake build`
 
 Requirements: Python 3.11+
-Usage: python3 bootstrap.py
+Usage: python3 bootstrap.py [--check-only]
 """
 
 import sys
 import os
 import subprocess
 import shutil
+import argparse
 from pathlib import Path
 
 # ANSI color codes for pretty output
@@ -45,15 +50,6 @@ def print_error(msg):
     """Print an error message"""
     print(f"{Color.RED}✗ {msg}{Color.RESET}")
 
-def check_python_version():
-    """Verify Python 3.11+"""
-    print_step("Checking Python version")
-    version = sys.version_info
-    if version.major < 3 or (version.major == 3 and version.minor < 11):
-        print_error(f"Python 3.11+ required, found {version.major}.{version.minor}")
-        sys.exit(1)
-    print_success(f"Python {version.major}.{version.minor}.{version.micro}")
-
 def run_command(cmd, check=True, capture=False):
     """Run a shell command"""
     try:
@@ -80,6 +76,15 @@ def run_command(cmd, check=True, capture=False):
 def command_exists(cmd):
     """Check if a command exists in PATH"""
     return shutil.which(cmd) is not None
+
+def check_python_version():
+    """Verify Python 3.11+"""
+    print_step("Checking Python version")
+    version = sys.version_info
+    if version.major < 3 or (version.major == 3 and version.minor < 11):
+        print_error(f"Python 3.11+ required, found {version.major}.{version.minor}")
+        sys.exit(1)
+    print_success(f"Python {version.major}.{version.minor}.{version.micro}")
 
 def install_uv():
     """Install uv if not present"""
@@ -260,6 +265,90 @@ def install_sbt():
         print_error(f"Failed to install sbt: {e}")
         print("You can install sbt manually from: https://www.scala-sbt.org/download.html")
 
+def install_yosys():
+    """Install Yosys (used for LEC verification)"""
+    print_step("Checking Yosys installation")
+
+    if command_exists("yosys"):
+        version = run_command("yosys --version", capture=True)
+        print_success(f"Yosys already installed: {version}")
+        return
+
+    print_warning("Yosys not found.")
+    print("Install via your system package manager:")
+    print("  Ubuntu/Debian:  sudo apt-get install yosys")
+    print("  Arch Linux:     sudo pacman -S yosys")
+    print("  macOS:          brew install yosys")
+
+def install_verilator():
+    """Install Verilator (used for RTL simulation)"""
+    print_step("Checking Verilator installation")
+
+    if command_exists("verilator"):
+        version = run_command("verilator --version", capture=True)
+        print_success(f"Verilator already installed: {version}")
+        return
+
+    print_warning("Verilator not found.")
+    print("Install via your system package manager:")
+    print("  Ubuntu/Debian:  sudo apt-get install verilator")
+    print("  Arch Linux:     sudo pacman -S verilator")
+    print("  macOS:          brew install verilator")
+
+def install_systemc():
+    """Install SystemC development library"""
+    print_step("Checking SystemC installation")
+
+    # Check for libsystemc by trying pkg-config or looking for the header
+    has_systemc = False
+    try:
+        run_command("pkg-config --exists systemc 2>/dev/null", check=True, capture=True)
+        has_systemc = True
+    except (subprocess.CalledProcessError, Exception):
+        # Try checking common header locations
+        for p in ["/usr/include/systemc.h", "/usr/local/include/systemc.h"]:
+            if Path(p).exists():
+                has_systemc = True
+                break
+
+    if has_systemc:
+        print_success("SystemC already installed")
+        return
+
+    print_warning("SystemC not found.")
+    print("Install via your system package manager:")
+    print("  Ubuntu/Debian:  sudo apt-get install libsystemc-dev")
+    print("  Arch Linux:     yay -S systemc  (AUR)")
+    print("  macOS:          brew install systemc")
+    print("")
+    print("Or build from source:")
+    print("  curl -fsSL https://github.com/accellera-official/systemc/archive/refs/tags/2.3.4.tar.gz -o systemc.tar.gz")
+    print("  tar xzf systemc.tar.gz && cd systemc-2.3.4")
+    print("  mkdir objdir && cd objdir && ../configure --prefix=/usr/local && make -j$(nproc) && sudo make install")
+
+def install_riscv_gcc():
+    """Install RISC-V GCC cross-compiler"""
+    print_step("Checking RISC-V GCC cross-compiler")
+
+    home = Path.home()
+    riscv_dir = home / ".local" / "riscv32-elf"
+    riscv_gcc = riscv_dir / "bin" / "riscv32-unknown-elf-gcc"
+
+    if riscv_gcc.exists() or command_exists("riscv32-unknown-elf-gcc"):
+        print_success("RISC-V GCC already installed")
+        return
+
+    print_warning("RISC-V GCC not found, installing...")
+
+    setup_script = Path("scripts/setup-riscv-toolchain.sh")
+    if setup_script.exists():
+        run_command(f"bash {setup_script}")
+        os.environ["PATH"] = f"{riscv_dir / 'bin'}:{os.environ['PATH']}"
+        print_success(f"RISC-V GCC installed to {riscv_dir}")
+    else:
+        print_error("scripts/setup-riscv-toolchain.sh not found")
+        print("Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases")
+
 def verify_build():
     """Verify the installation by running lake build"""
     print_step("Verifying installation with 'lake build'")
@@ -272,8 +361,78 @@ def verify_build():
         print("This is expected if there are compilation errors in LEAN code")
         print("The toolchain is installed correctly.")
 
+def check_all_tools():
+    """Check-only mode: verify all tools are present and print a summary."""
+    print(f"{Color.BOLD}Shoumei RTL - Tool Check{Color.RESET}")
+    print("=" * 50)
+
+    tools = [
+        ("python3",                  "Python 3.11+"),
+        ("lake",                     "Lean 4 / Lake"),
+        ("sbt",                      "sbt (Scala build tool)"),
+        ("yosys",                    "Yosys (LEC)"),
+        ("verilator",                "Verilator (RTL sim)"),
+        ("riscv32-unknown-elf-gcc",  "RISC-V GCC"),
+        ("cmake",                    "CMake"),
+        ("uv",                       "uv (Python)"),
+        ("gh",                       "GitHub CLI"),
+    ]
+
+    # Also check RISC-V GCC in the standard install location
+    home = Path.home()
+    riscv_gcc = home / ".local" / "riscv32-elf" / "bin" / "riscv32-unknown-elf-gcc"
+
+    missing = []
+    for cmd, label in tools:
+        found = command_exists(cmd)
+        # Special case: riscv gcc might be in ~/.local/riscv32-elf/bin
+        if cmd == "riscv32-unknown-elf-gcc" and not found and riscv_gcc.exists():
+            found = True
+        if found:
+            print_success(label)
+        else:
+            print_error(f"{label} — NOT FOUND")
+            missing.append(cmd)
+
+    # Check SystemC separately (header-based)
+    has_systemc = False
+    for p in ["/usr/include/systemc.h", "/usr/local/include/systemc.h"]:
+        if Path(p).exists():
+            has_systemc = True
+            break
+    if not has_systemc:
+        try:
+            run_command("pkg-config --exists systemc 2>/dev/null", check=True, capture=True)
+            has_systemc = True
+        except Exception:
+            pass
+
+    if has_systemc:
+        print_success("SystemC")
+    else:
+        print_error("SystemC — NOT FOUND")
+        missing.append("systemc")
+
+    print()
+    if missing:
+        print_error(f"{len(missing)} tool(s) missing: {', '.join(missing)}")
+        print("Run: python3 bootstrap.py  (without --check-only) to install")
+        return False
+    else:
+        print_success("All tools present")
+        return True
+
 def main():
     """Main bootstrap process"""
+    parser = argparse.ArgumentParser(description="Shoumei RTL development environment setup")
+    parser.add_argument("--check-only", action="store_true",
+                        help="Only verify tools are present; do not install anything")
+    args = parser.parse_args()
+
+    if args.check_only:
+        ok = check_all_tools()
+        sys.exit(0 if ok else 1)
+
     print(f"{Color.BOLD}Shoumei RTL - Development Environment Bootstrap{Color.RESET}")
     print("=" * 50)
 
@@ -293,7 +452,15 @@ def main():
     install_coursier()
     install_sbt()
 
-    # Step 6: Verify with lake build
+    # Step 6: HDL / simulation tools
+    install_yosys()
+    install_verilator()
+    install_systemc()
+
+    # Step 7: RISC-V cross-compiler
+    install_riscv_gcc()
+
+    # Step 8: Verify with lake build
     verify_build()
 
     # Final message
@@ -302,8 +469,7 @@ def main():
     print("  1. Restart your shell or source your shell rc to update PATH:")
     print("     source ~/.bashrc  # or ~/.zshrc")
     print("  2. Verify installation:")
-    print("     lake --version")
-    print("     sbt --version")
+    print("     python3 bootstrap.py --check-only")
     print("  3. Build the project:")
     print("     make all")
     print("  4. See README.md for detailed workflow")

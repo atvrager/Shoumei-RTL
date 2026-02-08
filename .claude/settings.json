@@ -1,0 +1,22 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "registry.npmjs.org",
+        "repo1.maven.org",
+        "*.coursier.io",
+        "raw.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "astral.sh",
+        "static.lean-lang.org",
+        "reservoir.lean-lang.org",
+        "leanprover-community.github.io"
+      ]
+    }
+  }
+}
