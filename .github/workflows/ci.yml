@@ -222,6 +222,9 @@ jobs:
       - name: Generate code
         run: make codegen
 
+      - name: Generate test assembly
+        run: lake exe gen_tests
+
       - name: Compile Chisel
         run: make chisel
 
@@ -235,6 +238,7 @@ jobs:
             output/systemc/
             chisel/src/main/scala/generated/
             testbench/generated/
+            testbench/tests/generated/
             verification/compositional-certs.txt
           retention-days: 5
 
