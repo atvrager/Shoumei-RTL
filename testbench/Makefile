@@ -46,7 +46,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@rm -rf $(BUILD_DIR)/verilator
@@ -89,7 +89,10 @@ sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 run-elf: sim
 	$(BUILD_DIR)/sim_shoumei +elf=$(ELF)
 
-tests:
+gen-tests:
+	cd $(PROJ_ROOT) && lake exe gen_tests
+
+tests: gen-tests
 	$(MAKE) -C $(TB_DIR)/tests
 
 run-all-tests: sim tests

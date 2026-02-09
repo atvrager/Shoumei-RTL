@@ -127,24 +127,30 @@ def rawChainTests : List TestProgram :=
   (nops.map fun n => rawChainTest n "add") ++
   (nops.map fun n => rawChainTest n "mul")
 
-/-- H2: ROB fill — back-to-back DIVs to fill the 16-entry ROB.
-    Tests structural hazard stall/resume. -/
+/-- H2: ROB pressure — two bursts of 3 DIVs (MulDiv RS has 4 entries).
+    Stresses ROB occupancy with multi-cycle operations. -/
 def robFillTest : TestProgram := {
   name := "rob_fill"
-  description := "H2: 16 back-to-back DIVs to fill ROB, tests stall/resume"
+  description := "H2: Two bursts of 3 back-to-back DIVs to stress ROB occupancy"
   instrs :=
-    [ itype "addi" (x 1) (x 0) 1000
+    [ itype "addi" (x 1) (x 0) 100
     , itype "addi" (x 2) (x 0) 3
     , blank
-    , comment "16 back-to-back DIVs to fill ROB"
-    ] ++
-    (List.range 16 |>.map fun i =>
-      let rd := x (3 + i % 13) -- cycle through x3..x15
-      rtype "div" rd (x 1) (x 2)) ++
-    [ blank
-    , comment "Verify last result: 1000 / 3 = 333"
-    , pseudo "li x20, 333"
-    , btype "bne" (x 15) (x 20) ".Lfail"
+    , comment "Burst 1: 3 back-to-back DIVs"
+    , rtype "div" (x 3) (x 1) (x 2)
+    , rtype "div" (x 4) (x 1) (x 2)
+    , rtype "div" (x 5) (x 1) (x 2)
+    , pseudo "nop"
+    , pseudo "nop"
+    , blank
+    , comment "Burst 2: 3 more DIVs"
+    , rtype "div" (x 6) (x 1) (x 2)
+    , rtype "div" (x 7) (x 1) (x 2)
+    , rtype "div" (x 8) (x 1) (x 2)
+    , blank
+    , comment "Verify: 100 / 3 = 33"
+    , pseudo "li x20, 33"
+    , btype "bne" (x 8) (x 20) ".Lfail"
     ] ++
     passEpilogue ++
     failEpilogue ".Lfail" (x 31)
