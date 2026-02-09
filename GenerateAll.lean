@@ -52,6 +52,7 @@ import Shoumei.RISCV.Execution.MulDivExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
+import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
 import Shoumei.RISCV.Memory.StoreBuffer
@@ -122,6 +123,7 @@ def allCircuits : List Circuit := [
   mkMuxTree 8 32, -- Phase 7: Store buffer forwarding/dequeue data
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
+  mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
   mkMux64x6Hierarchical,   -- Hierarchical version (9 instances instead of 1512 gates)
@@ -186,6 +188,7 @@ def allCircuits : List Circuit := [
 
   -- Phase 6: Retirement
   mkROB16,
+  mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
 
   -- Phase 7: Memory
   mkStoreBuffer8,

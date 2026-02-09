@@ -223,6 +223,9 @@ def mkRenameStage : Circuit :=
   let cdb_data := (List.range dataWidth).map (fun i => Wire.mk s!"cdb_data_{i}")
   let retire_valid := Wire.mk "retire_valid"
   let retire_tag := (List.range tagWidth).map (fun i => Wire.mk s!"retire_tag_{i}")
+  -- 3rd read port: RVVI commit readback (rd_tag3 → rd_data3)
+  let rd_tag3 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag3_{i}")
+  let rd_data3 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data3_{i}")
 
   -- Output ports
   let rename_valid := Wire.mk "rename_valid"
@@ -346,10 +349,12 @@ def mkRenameStage : Circuit :=
       [("wr_en", cdb_valid)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag1_{i}", w))) ++  -- Read port 1 uses renamed rs1
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag2_{i}", w))) ++  -- Read port 2 uses renamed rs2
+      (rd_tag3.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++   -- Read port 3: RVVI commit readback
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"wr_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"wr_data_{i}", w))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data1_{i}", w))) ++
-      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data2_{i}", w)))
+      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data2_{i}", w))) ++
+      (rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w)))
   }
 
   -- Output wires (separate from internal to avoid Chisel IO conflicts)
@@ -367,10 +372,11 @@ def mkRenameStage : Circuit :=
     inputs := [clock, reset, zero, one, instr_valid, has_rd] ++
               rs1_addr ++ rs2_addr ++ rd_addr ++
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
-              [retire_valid] ++ retire_tag
+              [retire_valid] ++ retire_tag ++
+              rd_tag3
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
-               rs1_data ++ rs2_data
+               rs1_data ++ rs2_data ++ rd_data3
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
              ctr_adder_gates ++ ctr_dff_gates ++ rd_phys_assign_gates ++
@@ -394,7 +400,9 @@ def mkRenameStage : Circuit :=
       { name := "rs2_phys", width := 6, wires := rs2_phys },
       { name := "rd_phys", width := 6, wires := rd_phys },
       { name := "old_rd_phys", width := 6, wires := old_rd_phys },
-      { name := "freelist_deq", width := 6, wires := freelist_deq_data }
+      { name := "freelist_deq", width := 6, wires := freelist_deq_data },
+      { name := "rd_tag3", width := 6, wires := rd_tag3 },
+      { name := "rd_data3", width := 32, wires := rd_data3 }
     ]
   }
 

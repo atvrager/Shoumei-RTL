@@ -32,6 +32,7 @@ import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.MulDivExecUnit
 import Shoumei.RISCV.Retirement.ROB
+import Shoumei.RISCV.Retirement.Queue16x32
 import Shoumei.RISCV.Memory.LSU
 import Shoumei.RISCV.CPUControl
 import Shoumei.DSL
@@ -954,6 +955,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
   let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
   let retire_recycle_valid := Wire.mk "retire_recycle_valid"
+  let rvvi_rd_data := makeIndexedWires "rvvi_rd_data" 32
 
   -- Gate rename's instr_valid during redirect/flush
   let decode_valid_rename := Wire.mk "decode_valid_rename"
@@ -974,13 +976,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", retire_recycle_valid)] ++
       (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++  -- 3rd read port: RVVI commit readback
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_phys_out_{i}", w))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
-      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w)))
+      (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w))) ++
+      (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1758,6 +1762,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rob_head_exception := Wire.mk "rob_head_exception"
   let rob_head_isBranch := Wire.mk "rob_head_isBranch"
   let rob_head_mispredicted := Wire.mk "rob_head_mispredicted"
+  let rob_head_idx := makeIndexedWires "rob_head_idx" 4
 
   let rob_inst : CircuitInstance := {
     moduleName := "ROB16"
@@ -1781,6 +1786,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("full", rob_full),
        ("empty", rob_empty)] ++
       (rob_alloc_idx.enum.map (fun ⟨i, w⟩ => (s!"alloc_idx[{i}]", w))) ++
+      (rob_head_idx.enum.map (fun ⟨i, w⟩ => (s!"head_idx[{i}]", w))) ++
       [("head_valid", rob_head_valid),
        ("head_complete", rob_head_complete)] ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"head_physRd[{i}]", w))) ++
@@ -1792,6 +1798,52 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("head_isBranch", rob_head_isBranch),
        ("head_mispredicted", rob_head_mispredicted)]
   }
+
+  -- === RVVI INFRASTRUCTURE ===
+  -- PC queue and instruction queue for RVVI-TRACE output
+  let rvvi_valid := Wire.mk "rvvi_valid"
+  let rvvi_trap := Wire.mk "rvvi_trap"
+  let rvvi_pc_rdata := makeIndexedWires "rvvi_pc_rdata" 32
+  let rvvi_insn := makeIndexedWires "rvvi_insn" 32
+  let rvvi_rd := makeIndexedWires "rvvi_rd" 5
+  let rvvi_rd_valid := Wire.mk "rvvi_rd_valid"
+
+  let pc_queue_inst : CircuitInstance := {
+    moduleName := "Queue16x32"
+    instName := "u_pc_queue"
+    portMap :=
+      [("clock", clock), ("reset", reset),
+       ("wr_en", rename_valid)] ++
+      (rob_alloc_idx.enum.map (fun ⟨i, w⟩ => (s!"wr_idx_{i}", w))) ++
+      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"wr_data_{i}", w))) ++
+      (rob_head_idx.enum.map (fun ⟨i, w⟩ => (s!"rd_idx_{i}", w))) ++
+      (rvvi_pc_rdata.enum.map (fun ⟨i, w⟩ => (s!"rd_data_{i}", w)))
+  }
+
+  let insn_queue_inst : CircuitInstance := {
+    moduleName := "Queue16x32"
+    instName := "u_insn_queue"
+    portMap :=
+      [("clock", clock), ("reset", reset),
+       ("wr_en", rename_valid)] ++
+      (rob_alloc_idx.enum.map (fun ⟨i, w⟩ => (s!"wr_idx_{i}", w))) ++
+      (imem_resp_data.enum.map (fun ⟨i, w⟩ => (s!"wr_data_{i}", w))) ++
+      (rob_head_idx.enum.map (fun ⟨i, w⟩ => (s!"rd_idx_{i}", w))) ++
+      (rvvi_insn.enum.map (fun ⟨i, w⟩ => (s!"rd_data_{i}", w)))
+  }
+
+  -- RVVI output logic
+  -- rvvi_valid = rob_commit_en (head_valid AND head_complete)
+  -- rvvi_trap = rob_head_exception AND rob_commit_en
+  -- rvvi_rd[4:0] = rob_head_archRd
+  -- rvvi_rd_valid = rob_head_hasPhysRd AND rob_commit_en
+  -- rvvi_rd_data = prf rd_data3 (via rename stage 3rd read port, already wired)
+  let rvvi_gates :=
+    [Gate.mkBUF rob_commit_en rvvi_valid,
+     Gate.mkAND rob_head_exception rob_commit_en rvvi_trap,
+     Gate.mkAND rob_head_hasPhysRd rob_commit_en rvvi_rd_valid] ++
+    (List.range 5).map (fun i =>
+      Gate.mkBUF rob_head_archRd[i]! rvvi_rd[i]!)
 
   -- === CDB REPLAY BUFFER ===
   let replay_valid := Wire.mk "replay_valid"
@@ -2065,7 +2117,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
-               [rob_empty]
+               [rob_empty] ++
+               -- RVVI-TRACE outputs
+               [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
+               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data
     gates := flush_gate ++ dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
@@ -2084,7 +2139,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++
              lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
              load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
-             commit_gates ++ stall_gates ++ dmem_gates ++ output_gates
+             commit_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates
     instances := [fetch_inst, decoder_inst, rename_inst,
                   redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++
                   redirect_target_dff_insts ++
@@ -2102,7 +2157,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   branch_target_adder_inst, jalr_target_adder_inst,
                   br_cmp_inst] ++
                   cdb_reg_insts ++
-                  lsu_pipeline_insts
+                  lsu_pipeline_insts ++
+                  [pc_queue_inst, insn_queue_inst]
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
        { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
@@ -2168,7 +2224,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rs_muldiv_dispatch_src2", width := 32, wires := rs_muldiv_dispatch_src2 },
        { name := "rs_muldiv_dispatch_tag", width := 6, wires := rs_muldiv_dispatch_tag },
        { name := "int_muldiv_tag", width := 6, wires := int_muldiv_tag },
-       { name := "int_muldiv_data", width := 32, wires := int_muldiv_data }] else [])
+       { name := "int_muldiv_data", width := 32, wires := int_muldiv_data }] else []) ++
+      [{ name := "rvvi_pc_rdata", width := 32, wires := rvvi_pc_rdata },
+       { name := "rvvi_insn", width := 32, wires := rvvi_insn },
+       { name := "rvvi_rd", width := 5, wires := rvvi_rd },
+       { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
+       { name := "rob_head_idx", width := 4, wires := rob_head_idx }]
   }
 
 /-- RV32I CPU (backward-compatible alias) -/

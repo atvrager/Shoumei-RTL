@@ -7,6 +7,10 @@
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
 #   make tests        - Build ELF test programs
 #   make run-all-tests- Build sim + tests, run all
+#   make cosim        - Build cosimulation binary (RTL + Spike + SystemC)
+#   make cosim-no-sc  - Build 2-way cosimulation (RTL + Spike only)
+#   make run-cosim    - Run 3-way cosim on all ELFs
+#   make run-cosim-no-sc - Run 2-way cosim on all ELFs
 #   make clean        - Clean build artifacts
 
 PROJ_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))..
@@ -26,11 +30,17 @@ VFLAGS     := --cc --exe --build -j 0 \
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
+COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp
 
 # X-propagation flags: randomize uninitialized regs to catch reset bugs
 VFLAGS_XPROP := --x-assign unique --x-initial unique
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop clean
+# Spike paths (override with SPIKE_PREFIX=...)
+SPIKE_PREFIX ?= $(HOME)/.local/spike
+SPIKE_INC    := $(SPIKE_PREFIX)/include
+SPIKE_LIB    := $(SPIKE_PREFIX)/lib
+
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@mkdir -p $(BUILD_DIR)/verilator
@@ -112,7 +122,63 @@ run-all-tests-xprop: sim-xprop tests
 	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
 	[ $$fail -eq 0 ]
 
+cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
+	@mkdir -p $(BUILD_DIR)/verilator_cosim
+	$(VERILATOR) --cc --exe --build -j 0 \
+		--Mdir $(BUILD_DIR)/verilator_cosim \
+		-Wno-UNOPTFLAT --top-module tb_cpu \
+		-CFLAGS "-std=c++17 -O2 -I$(SPIKE_INC)" \
+		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -Wl,-rpath,$(SPIKE_LIB)" \
+		-o $(BUILD_DIR)/cosim_shoumei \
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
+	@echo "Built: $(BUILD_DIR)/cosim_shoumei (2-way: RTL + Spike)"
+
+cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
+	@mkdir -p $(BUILD_DIR)/verilator_cosim3
+	$(VERILATOR) --cc --exe --build -j 0 \
+		--Mdir $(BUILD_DIR)/verilator_cosim3 \
+		-Wno-UNOPTFLAT --top-module tb_cpu \
+		-CFLAGS "-std=c++17 -O2 -I$(SPIKE_INC) -DHAS_SYSTEMC" \
+		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lsystemc -Wl,-rpath,$(SPIKE_LIB)" \
+		-o $(BUILD_DIR)/cosim_shoumei_3way \
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
+	@echo "Built: $(BUILD_DIR)/cosim_shoumei_3way (3-way: RTL + Spike + SystemC)"
+
+run-cosim-no-sc: cosim-no-sc tests
+	@pass=0; fail=0; total=0; \
+	for elf in $(TB_DIR)/tests/*.elf; do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		if $(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
+			echo "PASS  $$name"; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name"; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "$$pass/$$total passed, $$fail failed (2-way cosim)"; \
+	[ $$fail -eq 0 ]
+
+run-cosim: cosim tests
+	@pass=0; fail=0; total=0; \
+	for elf in $(TB_DIR)/tests/*.elf; do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		if $(BUILD_DIR)/cosim_shoumei_3way +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
+			echo "PASS  $$name"; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name"; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "$$pass/$$total passed, $$fail failed (3-way cosim)"; \
+	[ $$fail -eq 0 ]
+
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(BUILD_DIR)/sim_shoumei_xprop
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(BUILD_DIR)/verilator_cosim3 $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(BUILD_DIR)/sim_shoumei_xprop $(BUILD_DIR)/cosim_shoumei $(BUILD_DIR)/cosim_shoumei_3way
 	rm -f shoumei_cpu.vcd
 	$(MAKE) -C $(TB_DIR)/tests clean

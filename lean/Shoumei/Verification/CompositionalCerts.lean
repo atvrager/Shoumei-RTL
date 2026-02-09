@@ -229,6 +229,13 @@ def muldivRS4_cert : CompositionalCert := {
 
 /-! ## RISC-V Retirement -/
 
+/-- Queue16x32: 16-entry × 32-bit register array for RVVI PC/instruction queues -/
+def queue16x32_cert : CompositionalCert := {
+  moduleName := "Queue16x32"
+  dependencies := ["Register32", "Decoder4", "Mux16x32"]
+  proofReference := "Shoumei.RISCV.Retirement.Queue16x32"
+}
+
 /-- ROB16: 16-entry reorder buffer for in-order commit -/
 def rob16_cert : CompositionalCert := {
   moduleName := "ROB16"
@@ -333,6 +340,7 @@ def allCerts : List CompositionalCert := [
   muldivExecUnit_cert,
   muldivRS4_cert,
   -- Retirement
+  queue16x32_cert,
   rob16_cert,
   -- Memory
   storeBuffer8_cert,

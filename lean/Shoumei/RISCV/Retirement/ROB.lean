@@ -417,6 +417,9 @@ def mkROB16 : Circuit :=
   -- === Allocation Result ===
   let alloc_idx := mkWires "alloc_idx" 4
 
+  -- === Head Index Output (for RVVI queue readout) ===
+  let head_idx := mkWires "head_idx" 4
+
   -- === Head Entry Readout ===
   let head_valid := Wire.mk "head_valid"
   let head_complete := Wire.mk "head_complete"
@@ -467,6 +470,11 @@ def mkROB16 : Circuit :=
   let alloc_idx_gates := List.zipWith (fun src dst =>
     Gate.mkBUF src dst
   ) tail_ptr alloc_idx
+
+  -- Head index output: BUF head_ptr to head_idx (for RVVI queue readout)
+  let head_idx_gates := List.zipWith (fun src dst =>
+    Gate.mkBUF src dst
+  ) head_ptr head_idx
 
   -- === Infrastructure Instances ===
 
@@ -756,13 +764,13 @@ def mkROB16 : Circuit :=
     [commit_en, flush_en]
 
   let all_outputs :=
-    [full, empty] ++ alloc_idx ++
+    [full, empty] ++ alloc_idx ++ head_idx ++
     [head_valid, head_complete] ++ head_physRd ++ [head_hasPhysRd] ++
     head_oldPhysRd ++ [head_hasOldPhysRd] ++ head_archRd ++
     [head_exception, head_isBranch, head_mispredicted]
 
   let all_gates :=
-    global_gates ++ [full_gate] ++ empty_gates ++ commit_safe_gates ++ alloc_idx_gates ++
+    global_gates ++ [full_gate] ++ empty_gates ++ commit_safe_gates ++ alloc_idx_gates ++ head_idx_gates ++
     all_entry_gates ++ head_readout_gates
 
   let all_instances :=
@@ -782,6 +790,7 @@ def mkROB16 : Circuit :=
       { name := "alloc_archRd", width := 5, wires := alloc_archRd },
       { name := "cdb_tag", width := 6, wires := cdb_tag },
       { name := "alloc_idx", width := 4, wires := alloc_idx },
+      { name := "head_idx", width := 4, wires := head_idx },
       { name := "head_physRd", width := 6, wires := head_physRd },
       { name := "head_oldPhysRd", width := 6, wires := head_oldPhysRd },
       { name := "head_archRd", width := 5, wires := head_archRd }

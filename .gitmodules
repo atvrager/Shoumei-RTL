@@ -4,3 +4,6 @@
 [submodule "third_party/orfs"]
 	path = third_party/orfs
 	url = https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts
+[submodule "third_party/riscv-isa-sim"]
+	path = third_party/riscv-isa-sim
+	url = https://github.com/riscv-software-src/riscv-isa-sim.git

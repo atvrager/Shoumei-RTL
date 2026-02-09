@@ -152,7 +152,17 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "    output logic        o_dmem_req_valid,\n" ++
   "    output logic        o_dmem_req_we,\n" ++
   "    output logic [31:0] o_dmem_req_addr,\n" ++
-  "    output logic [31:0] o_dmem_req_data\n" ++
+  "    output logic [31:0] o_dmem_req_data,\n" ++
+  "    // HTIF\n" ++
+  "    output logic [31:0] o_tohost,\n" ++
+  "    // RVVI-TRACE outputs (cosimulation)\n" ++
+  "    output logic        o_rvvi_valid,\n" ++
+  "    output logic        o_rvvi_trap,\n" ++
+  "    output logic [31:0] o_rvvi_pc_rdata,\n" ++
+  "    output logic [31:0] o_rvvi_insn,\n" ++
+  "    output logic [4:0]  o_rvvi_rd,\n" ++
+  "    output logic        o_rvvi_rd_valid,\n" ++
+  "    output logic [31:0] o_rvvi_rd_data\n" ++
   ");\n\n" ++
 
   "  // =========================================================================\n" ++
@@ -273,7 +283,15 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   s!"  assign o_dmem_req_valid = {dmemValid};\n" ++
   s!"  assign o_dmem_req_we    = {dmemWe};\n" ++
   s!"  assign o_dmem_req_addr  = {dmemAddr};\n" ++
-  s!"  assign o_dmem_req_data  = {dmemDataOut};\n\n" ++
+  s!"  assign o_dmem_req_data  = {dmemDataOut};\n" ++
+  "  assign o_tohost          = test_code;\n" ++
+  "  assign o_rvvi_valid      = rvvi_valid;\n" ++
+  "  assign o_rvvi_trap       = rvvi_trap;\n" ++
+  "  assign o_rvvi_pc_rdata   = rvvi_pc_rdata;\n" ++
+  "  assign o_rvvi_insn       = rvvi_insn;\n" ++
+  "  assign o_rvvi_rd         = rvvi_rd;\n" ++
+  "  assign o_rvvi_rd_valid   = rvvi_rd_valid;\n" ++
+  "  assign o_rvvi_rd_data    = rvvi_rd_data;\n\n" ++
   "endmodule\n"
 
 /-! ## SystemC Testbench Generator -/
