@@ -14,8 +14,12 @@ export VERILOG_FILES = $(PROJECT_ROOT)/physical/CPU_RV32IM_synth.sv \
                        $(ASAP7_SV) $(GENERIC_SV)
 export SDC_FILE      = $(PROJECT_ROOT)/physical/constraints.sdc
 
-# Timing Target (relaxed for complex CPU - 5ns = 200 MHz)
-export CLK_PERIOD_NS = 5.0
+# Frequency targets (ASAP7 time unit = picoseconds)
+#   200 MHz = 5000ps (default, must pass)
+#   500 MHz = 2000ps (stretch goal)
+#  1000 MHz = 1000ps (aspirational)
+FMAX_MHZ ?= 200
+export CLK_PERIOD_PS = $(shell echo "1000000 / $(FMAX_MHZ)" | bc)
 
 # Floorplan Configuration
 export CORE_UTILIZATION = 30

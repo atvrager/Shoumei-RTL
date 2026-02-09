@@ -34,7 +34,7 @@ structure CPUConfig where
       0 = combinational (current behavior), 1 = registered (for timing closure).
       When 1, SB forwarding result is registered and merged after the CDB DFF,
       bypassing the main CDB arbiter to avoid double-delay. -/
-  sbFwdPipelineStages : Nat := 0
+  sbFwdPipelineStages : Nat := 1
   deriving Repr, BEq, DecidableEq
 
 /-- Map config flags to riscv-opcodes extension strings.
@@ -56,8 +56,7 @@ def rv32iConfig : CPUConfig := {}
 /-- RV32IM configuration (M extension enabled) -/
 def rv32imConfig : CPUConfig := { enableM := true }
 
-/-- RV32IM configuration with timing closure optimizations -/
-def rv32imTimingClosureConfig : CPUConfig := { enableM := true, sbFwdPipelineStages := 1 }
+
 
 /-
 RVVI-TRACE Interface Parameters

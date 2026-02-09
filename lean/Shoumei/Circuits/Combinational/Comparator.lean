@@ -273,4 +273,41 @@ def mkComparator32 : Circuit :=
     keepHierarchy := true
   }
 
+-- N-bit equality-only comparator using XOR + OR-tree (O(log n) depth)
+-- Much faster than full Comparator which uses subtraction (O(n) ripple carry).
+-- Inputs: a[N-1:0], b[N-1:0]
+-- Output: eq (1 if a == b)
+def mkEqualityComparatorN (n : Nat) : Circuit :=
+  let a := makeIndexedWires "a" n
+  let b := makeIndexedWires "b" n
+  let eq := Wire.mk "eq"
+
+  -- XOR each bit pair: diff_i = a_i XOR b_i (1 if bits differ)
+  let diff := makeIndexedWires "diff" n
+  let xor_gates := List.zipWith (fun a_wire b_wire =>
+    (a_wire, b_wire)
+  ) a b |>.enum.map (fun ⟨i, (aw, bw)⟩ =>
+    Gate.mkXOR aw bw diff[i]!
+  )
+
+  -- OR-tree: any_diff = OR of all diff bits
+  let any_diff := Wire.mk "any_diff"
+  let or_tree_gates := mkOrTree diff any_diff
+
+  -- eq = NOT any_diff
+  let eq_gate := Gate.mkNOT any_diff eq
+
+  { name := s!"EqualityComparator{n}"
+    inputs := a ++ b
+    outputs := [eq]
+    gates := xor_gates ++ or_tree_gates ++ [eq_gate]
+    instances := []
+    signalGroups := [
+      { name := "a", width := n, wires := a },
+      { name := "b", width := n, wires := b },
+      { name := "diff", width := n, wires := diff }
+    ]
+    keepHierarchy := false
+  }
+
 end Shoumei.Circuits.Combinational

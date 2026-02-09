@@ -3,7 +3,9 @@
 # Based on docs/physical-design.md
 #
 # Usage:
-#   ./physical/run-openroad.sh
+#   ./physical/run-openroad.sh                  # 200 MHz (default)
+#   FMAX_MHZ=500 ./physical/run-openroad.sh     # 500 MHz stretch
+#   FMAX_MHZ=1000 ./physical/run-openroad.sh    # 1 GHz aspirational
 #
 #   If Docker permission denied, use sg:
 #   sg docker -c './physical/run-openroad.sh'
@@ -99,7 +101,9 @@ echo "  Design:    $DESIGN_NAME"
 echo "  Platform:  $(grep "^export PLATFORM" physical/config.mk | cut -d= -f2 | tr -d ' ')"
 echo "  Main SV:   $MAIN_VERILOG"
 echo "  Modules:   $SV_COUNT SystemVerilog files"
-echo "  Clock:     $(grep "^export CLK_PERIOD_NS" physical/config.mk | cut -d= -f2 | tr -d ' ') ns"
+FMAX_MHZ="${FMAX_MHZ:-200}"
+CLK_PERIOD_PS=$((1000000 / FMAX_MHZ))
+echo "  Frequency: ${FMAX_MHZ} MHz (${CLK_PERIOD_PS} ps period)"
 echo ""
 
 # Ask for confirmation
@@ -123,7 +127,7 @@ docker run --rm \
   -v "$PROJECT_ROOT:/project" \
   -w /OpenROAD-flow-scripts/flow \
   openroad/flow-ubuntu22.04-builder:3d5d5a \
-  bash -c 'source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project ABC_CLOCK_PERIOD_IN_PS=1000' 2>&1 | \
+  bash -c "source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project FMAX_MHZ=${FMAX_MHZ} ABC_CLOCK_PERIOD_IN_PS=${CLK_PERIOD_PS}" 2>&1 | \
   grep -v "fatal: not a git repository" | \
   grep -v "Stopping at filesystem boundary"
 

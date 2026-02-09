@@ -111,6 +111,7 @@ def allCircuits : List Circuit := [
   mkDecoder 5,
   mkDecoder 6,
   mkComparatorN 6,
+  mkEqualityComparatorN 6,
   mkMux2x8,
   mkMux4x8,
   mkMuxTree 4 6,

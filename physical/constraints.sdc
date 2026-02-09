@@ -1,10 +1,17 @@
 # SDC Constraints for CPU_RV32IM
 # Generated for OpenROAD physical synthesis flow
+# NOTE: ASAP7 uses picoseconds as the time unit
 
 current_design CPU_RV32IM
 
 set clk_name  clock
-set clk_period 5.0
+
+# Default: 200 MHz = 5000ps. Override via CLK_PERIOD_PS env var.
+if {[info exists env(CLK_PERIOD_PS)]} {
+    set clk_period $env(CLK_PERIOD_PS)
+} else {
+    set clk_period 5000
+}
 
 # Create clock on the actual clock port
 create_clock -name ${clk_name} -period ${clk_period} [get_ports clock]

@@ -1055,41 +1055,33 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let issue_src2_ready := Wire.mk "issue_src2_ready"
   let issue_src2_ready_reg := Wire.mk "issue_src2_ready_reg"
 
-  -- Registered CDB comparators
+  -- Registered CDB comparators (equality-only, faster than full Comparator6)
   let cdb_fwd_cmp_src1_inst : CircuitInstance := {
-    moduleName := "Comparator6"
+    moduleName := "EqualityComparator6"
     instName := "u_cdb_fwd_cmp_src1"
-    portMap := [("one", one), ("eq", cdb_match_src1),
-                ("lt", Wire.mk "cdb_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src1_ltu"),
-                ("gt", Wire.mk "cdb_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src1_gtu")] ++
+    portMap := [("eq", cdb_match_src1)] ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   let cdb_fwd_cmp_src2_inst : CircuitInstance := {
-    moduleName := "Comparator6"
+    moduleName := "EqualityComparator6"
     instName := "u_cdb_fwd_cmp_src2"
-    portMap := [("one", one), ("eq", cdb_match_src2),
-                ("lt", Wire.mk "cdb_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_fwd_cmp_src2_ltu"),
-                ("gt", Wire.mk "cdb_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_fwd_cmp_src2_gtu")] ++
+    portMap := [("eq", cdb_match_src2)] ++
                (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   -- Pre-register CDB comparators (same-cycle forwarding bypass)
   let cdb_pre_fwd_cmp_src1_inst : CircuitInstance := {
-    moduleName := "Comparator6"
+    moduleName := "EqualityComparator6"
     instName := "u_cdb_pre_fwd_cmp_src1"
-    portMap := [("one", one), ("eq", cdb_pre_match_src1),
-                ("lt", Wire.mk "cdb_pre_fwd_cmp_src1_lt"), ("ltu", Wire.mk "cdb_pre_fwd_cmp_src1_ltu"),
-                ("gt", Wire.mk "cdb_pre_fwd_cmp_src1_gt"), ("gtu", Wire.mk "cdb_pre_fwd_cmp_src1_gtu")] ++
+    portMap := [("eq", cdb_pre_match_src1)] ++
                (cdb_pre_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   let cdb_pre_fwd_cmp_src2_inst : CircuitInstance := {
-    moduleName := "Comparator6"
+    moduleName := "EqualityComparator6"
     instName := "u_cdb_pre_fwd_cmp_src2"
-    portMap := [("one", one), ("eq", cdb_pre_match_src2),
-                ("lt", Wire.mk "cdb_pre_fwd_cmp_src2_lt"), ("ltu", Wire.mk "cdb_pre_fwd_cmp_src2_ltu"),
-                ("gt", Wire.mk "cdb_pre_fwd_cmp_src2_gt"), ("gtu", Wire.mk "cdb_pre_fwd_cmp_src2_gtu")] ++
+    portMap := [("eq", cdb_pre_match_src2)] ++
                (cdb_pre_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
