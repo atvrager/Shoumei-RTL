@@ -27,7 +27,10 @@ SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
 
-.PHONY: sim sim-trace sim-debug run-elf tests run-all-tests clean
+# X-propagation flags: randomize uninitialized regs to catch reset bugs
+VFLAGS_XPROP := --x-assign unique --x-initial unique
+
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@mkdir -p $(BUILD_DIR)/verilator
@@ -35,6 +38,14 @@ sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 		-o $(BUILD_DIR)/sim_shoumei \
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei"
+
+sim-xprop: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@mkdir -p $(BUILD_DIR)/verilator_xprop
+	$(VERILATOR) $(VFLAGS) $(VFLAGS_XPROP) \
+		--Mdir $(BUILD_DIR)/verilator_xprop \
+		-o $(BUILD_DIR)/sim_shoumei_xprop \
+		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+	@echo "Built: $(BUILD_DIR)/sim_shoumei_xprop (with X-propagation)"
 
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@mkdir -p $(BUILD_DIR)/verilator
@@ -81,7 +92,27 @@ run-all-tests: sim tests
 	echo "$$pass/$$total passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
+run-all-tests-xprop: sim-xprop tests
+	@pass=0; fail=0; total=0; \
+	for elf in $(TB_DIR)/tests/*.elf; do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		result=$$($(BUILD_DIR)/sim_shoumei_xprop +elf=$$elf +timeout=3000 2>&1); \
+		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
+		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		if [ "$$tohost" = "0x00000001" ]; then \
+			echo "PASS  $$name  (cycle $$cycles)"; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name  (tohost=$$tohost, cycle $$cycles)"; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
+	[ $$fail -eq 0 ]
+
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(BUILD_DIR)/sim_shoumei_xprop
 	rm -f shoumei_cpu.vcd
 	$(MAKE) -C $(TB_DIR)/tests clean
