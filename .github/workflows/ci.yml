@@ -39,6 +39,7 @@ jobs:
               --language=c++ \
               --suppress=missingIncludeSystem \
               --suppress=knownConditionTrueFalse \
+              --suppress=unusedStructMember \
               $CPP_FILES
           fi
           if [ -n "$C_FILES" ]; then
