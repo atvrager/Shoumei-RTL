@@ -1917,6 +1917,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 32).map (fun i =>
         Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
 
+  let lsu_pipeline_insts : List CircuitInstance := []
+
   -- === DMEM RESPONSE PATH ===
   let load_no_fwd := Wire.mk "load_no_fwd"
   let load_no_fwd_tmp := Wire.mk "load_no_fwd_tmp"
@@ -2099,7 +2101,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   auipc_adder_inst, br_pc_plus_4_adder_inst,
                   branch_target_adder_inst, jalr_target_adder_inst,
                   br_cmp_inst] ++
-                  cdb_reg_insts
+                  cdb_reg_insts ++
+                  lsu_pipeline_insts
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
        { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },

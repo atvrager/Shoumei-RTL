@@ -32,9 +32,9 @@ structure CPUConfig where
   entryPoint : UInt32 := 0x80000000
   /-- Pipeline stages on store buffer forwarding path before CDB merge.
       0 = combinational (current behavior), 1 = registered (for timing closure).
-      When 1, SB forwarding result is registered and merged after the CDB DFF,
-      bypassing the main CDB arbiter to avoid double-delay. -/
-  sbFwdPipelineStages : Nat := 1
+      WARNING: sbFwdPipelineStages=1 requires CDB arbiter changes to handle
+      the 1-cycle latency shift on lsu_valid. Currently only 0 is correct. -/
+  sbFwdPipelineStages : Nat := 0
   deriving Repr, BEq, DecidableEq
 
 /-- Map config flags to riscv-opcodes extension strings.

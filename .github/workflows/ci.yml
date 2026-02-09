@@ -206,6 +206,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-sbt-
 
+      - name: Clean stale build artifacts
+        run: lake clean
+
       - name: Generate code
         run: make codegen
 
