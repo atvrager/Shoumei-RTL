@@ -82,6 +82,8 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .FMV_X_W | .FMV_W_X | .FCLASS_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
   | .FLW | .FSW => 0
+  -- Zicsr (CSR ops routed to Integer, but handled specially)
+  | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => 0
 
 /-! ## Behavioral Model -/
 

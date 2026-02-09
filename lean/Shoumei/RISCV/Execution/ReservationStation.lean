@@ -72,6 +72,12 @@ structure RSEntry where
   src2_tag : Fin 64
   /-- Source operand 2 data value (if ready) -/
   src2_data : UInt32
+  /-- Source operand 3 ready flag (for R4-type fused FP ops; default true for non-fused) -/
+  src3_ready : Bool := true
+  /-- Source operand 3 physical register tag -/
+  src3_tag : Fin 64 := 0
+  /-- Source operand 3 data value -/
+  src3_data : UInt32 := 0
   /-- Immediate value (for memory offsets, branch targets) -/
   immediate : Option Int
   /-- Program counter (for branch target calculation) -/
@@ -97,13 +103,14 @@ def empty : RSEntry :=
 
 /-- Is this entry ready for dispatch? (valid and both operands ready) -/
 def isReady (e : RSEntry) : Bool :=
-  e.valid && e.src1_ready && e.src2_ready
+  e.valid && e.src1_ready && e.src2_ready && e.src3_ready
 
 /-- Is this entry waiting for a specific tag? -/
 def isWaitingFor (e : RSEntry) (tag : Fin 64) : Bool :=
   e.valid && (
     (!e.src1_ready && e.src1_tag == tag) ||
-    (!e.src2_ready && e.src2_tag == tag)
+    (!e.src2_ready && e.src2_tag == tag) ||
+    (!e.src3_ready && e.src3_tag == tag)
   )
 
 end RSEntry
@@ -180,6 +187,14 @@ def issue
           let value := prf.read tag
           (true, tag, value)
 
+    -- Capture operand 3 (for R4-type fused FP ops)
+    let (src3_ready, src3_tag, src3_data) :=
+      match instr.physRs3 with
+      | none => (true, (0 : Fin 64), (0 : UInt32))  -- No src3 (non-fused ops)
+      | some tag =>
+          let value := prf.read tag
+          (true, tag, value)
+
     -- Create new entry
     let newEntry : RSEntry := {
       valid := true
@@ -191,6 +206,9 @@ def issue
       src2_ready := src2_ready
       src2_tag := src2_tag
       src2_data := src2_data
+      src3_ready := src3_ready
+      src3_tag := src3_tag
+      src3_data := src3_data
       immediate := instr.imm           -- Immediate value for memory/branch ops
       pc := instr.pc                   -- Program counter for branch target calc
     }
@@ -249,7 +267,12 @@ def cdbBroadcast
         { e1 with src2_ready := true, src2_data := cdb_data }
       else e1
 
-      e2
+      -- Check src3 match (on possibly updated e2)
+      let e3 := if !e2.src3_ready && e2.src3_tag == cdb_tag then
+        { e2 with src3_ready := true, src3_data := cdb_data }
+      else e2
+
+      e3
 
   { rs with entries := newEntries }
 
@@ -297,7 +320,7 @@ def selectReady (rs : RSState n) : Option (Fin n) :=
 def dispatch
     (rs : RSState n)
     (idx : Fin n)
-    : RSState n × Option (OpType × UInt32 × UInt32 × Fin 64 × Option Int × UInt32) :=
+    : RSState n × Option (OpType × UInt32 × UInt32 × UInt32 × Fin 64 × Option Int × UInt32) :=
   let e := rs.entries idx
   if e.isReady then
     -- Invalidate entry (mark as free)
@@ -307,8 +330,8 @@ def dispatch
 
     let rs' := { rs with entries := newEntries }
 
-    -- Return operation bundle for execution unit (now includes immediate and pc)
-    let result := (e.opcode, e.src1_data, e.src2_data, e.dest_tag, e.immediate, e.pc)
+    -- Return operation bundle for execution unit (includes src3 for fused FP ops)
+    let result := (e.opcode, e.src1_data, e.src2_data, e.src3_data, e.dest_tag, e.immediate, e.pc)
     (rs', some result)
   else
     -- Entry not ready, shouldn't be dispatched
@@ -443,7 +466,7 @@ axiom rs_dispatch_returns_operands (n : Nat) (rs : RSState n) (idx : Fin n) :
   let e := rs.entries idx
   let (_, result) := rs.dispatch idx
   e.isReady →
-    result = some (e.opcode, e.src1_data, e.src2_data, e.dest_tag, e.immediate, e.pc)
+    result = some (e.opcode, e.src1_data, e.src2_data, e.src3_data, e.dest_tag, e.immediate, e.pc)
 
 /-! ## Structural Circuit (Hardware Implementation) -/
 

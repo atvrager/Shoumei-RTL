@@ -31,6 +31,7 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.MulDivExecUnit
+import Shoumei.RISCV.Execution.FPExecUnit
 import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Retirement.Queue16x32
 import Shoumei.RISCV.Memory.LSU
@@ -373,6 +374,8 @@ structure CPUState (config : CPUConfig) where
   rsBranch : RSState 4
   /-- MulDiv reservation station (4 entries, only if M extension enabled) -/
   rsMulDiv : if config.enableM then RSState 4 else Unit
+  /-- FP reservation station (4 entries, only if F extension enabled) -/
+  rsFPExec : if config.enableF then RSState 4 else Unit
 
   -- ==== Back-End ====
   /-- Reorder Buffer (16 entries) -/
@@ -385,6 +388,14 @@ structure CPUState (config : CPUConfig) where
   -- ==== Execution Unit State ====
   /-- MulDiv execution state (pipelined multiplier + divider, only if M extension enabled) -/
   mulDivExecState : if config.enableM then MulDivExecState else Unit
+  /-- FP execution state (multi-cycle div/sqrt, only if F extension enabled) -/
+  fpExecState : if config.enableF then FPExecState else Unit
+
+  -- ==== FCSR State (F extension) ====
+  /-- Floating-point exception flags (fflags CSR 0x001): NV|DZ|OF|UF|NX -/
+  fflags : UInt32 := 0
+  /-- Floating-point rounding mode (frm CSR 0x002): 3 bits -/
+  frm : UInt32 := 0
 
   -- ==== RVVI Infrastructure (Future Cosimulation) ====
   /-- PC queue for RVVI-TRACE output -/
@@ -418,6 +429,16 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
       cast (by simp [h]) MulDivExecState.init
     else
       cast (by simp [h]) ()
+  let fpRS : if config.enableF then RSState 4 else Unit :=
+    if h : config.enableF then
+      cast (by simp [h]) (RSState.init 4)
+    else
+      cast (by simp [h]) ()
+  let fpExec : if config.enableF then FPExecState else Unit :=
+    if h : config.enableF then
+      cast (by simp [h]) FPExecState.init
+    else
+      cast (by simp [h]) ()
   { fetch := FetchState.init config.entryPoint
     decode := DecodeState.empty
     rename := RenameStageState.init
@@ -425,10 +446,12 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
     rsMemory := RSState.init 4
     rsBranch := RSState.init 4
     rsMulDiv := mulDivRS
+    rsFPExec := fpRS
     rob := ROBState.empty
     lsu := LSUState.empty
     committedRAT := CommittedRATState.init
     mulDivExecState := mulDivExec
+    fpExecState := fpExec
     pcQueue := PCQueue.init
     insnQueue := InsnQueue.init
     globalStall := false
@@ -550,7 +573,8 @@ def cpuStep
   -- ========== FLUSH HANDLING ==========
   -- If commit triggered flush, clear pipeline and RS
   let (rob_postFlush, rename_postFlush, rsInteger_postFlush, rsMemory_postFlush,
-       rsBranch_postFlush, rsMulDiv_postFlush, decode_postFlush, globalStall_postFlush) :=
+       rsBranch_postFlush, rsMulDiv_postFlush, rsFPExec_postFlush,
+       decode_postFlush, globalStall_postFlush) :=
     match flushPC with
     | some _ =>
         -- Clear all speculative state
@@ -564,11 +588,16 @@ def cpuStep
             cast (by rw [if_pos h]) (RSState.init 4)
           else
             cast (by rw [if_neg h]) ()
+        let rsFPExecEmpty : if config.enableF then RSState 4 else Unit :=
+          if h : config.enableF then
+            cast (by rw [if_pos h]) (RSState.init 4)
+          else
+            cast (by rw [if_neg h]) ()
         let decodeEmpty := DecodeState.empty
-        (robEmpty, renameRestored, rsIntEmpty, rsMemEmpty, rsBrEmpty, rsMulDivEmpty, decodeEmpty, false)
+        (robEmpty, renameRestored, rsIntEmpty, rsMemEmpty, rsBrEmpty, rsMulDivEmpty, rsFPExecEmpty, decodeEmpty, false)
     | none =>
         (rob_afterCommit, rename_afterCommit, cpu.rsInteger, cpu.rsMemory,
-         cpu.rsBranch, cpu.rsMulDiv, cpu.decode, cpu.globalStall)
+         cpu.rsBranch, cpu.rsMulDiv, cpu.rsFPExec, cpu.decode, cpu.globalStall)
 
   -- ========== STAGE 6: EXECUTE & CDB BROADCAST ==========
 
@@ -583,7 +612,7 @@ def cpuStep
       | some idx =>
           let (_, dispatchResult) := rs.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag, _immediate, _pc) =>
+          | some (opcode, src1, src2, _src3, destTag, _immediate, _pc) =>
               -- Use mulDivStep with proper state tracking
               let op := Execution.opTypeToMulDivOpcode opcode
               let (newExecState, result) := Execution.mulDivStep execState src1 src2 destTag op true
@@ -608,6 +637,47 @@ def cpuStep
     else
       (cpu.mulDivExecState, [])
 
+  -- FP execution state update (only if F extension enabled)
+  -- Returns (newExecState, cdbBroadcasts, newFflags)
+  let (fpExecState', fpBC, fflags') := if h : config.enableF then
+      let rs : RSState 4 := cast (by rw [if_pos h]) rsFPExec_postFlush
+      let execState : FPExecState := cast (by rw [if_pos h]) cpu.fpExecState
+      -- Decode frm CSR to RoundingMode
+      let rm : Shoumei.Circuits.Combinational.FPU.RoundingMode :=
+        match cpu.frm.toNat with
+        | 1 => .RTZ | 2 => .RDN | 3 => .RUP | 4 => .RMM | _ => .RNE
+
+      match rs.selectReady with
+      | some idx =>
+          let (_, dispatchResult) := rs.dispatch idx
+          match dispatchResult with
+          | some (opcode, src1, src2, src3, destTag, _immediate, _pc) =>
+              let (newExecState, result) := Execution.fpExecStep execState opcode src1 src2 src3 rm destTag true
+              let (broadcast, newFflags) := match result with
+                | some (tag, data, exceptions) =>
+                    ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
+                     cpu.fflags ||| exceptions.toBits)
+                | none => ([], cpu.fflags)
+              (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+          | none =>
+              let (newExecState, result) := Execution.fpExecStep execState .ADD 0 0 0 .RNE 0 false
+              let (broadcast, newFflags) := match result with
+                | some (tag, data, exceptions) =>
+                    ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
+                     cpu.fflags ||| exceptions.toBits)
+                | none => ([], cpu.fflags)
+              (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+      | none =>
+          let (newExecState, result) := Execution.fpExecStep execState .ADD 0 0 0 .RNE 0 false
+          let (broadcast, newFflags) := match result with
+            | some (tag, data, exceptions) =>
+                ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
+                 cpu.fflags ||| exceptions.toBits)
+            | none => ([], cpu.fflags)
+          (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+    else
+      (cpu.fpExecState, [], cpu.fflags)
+
   -- Select ready entries from each RS and execute
   -- Returns CDB broadcasts and optional branch redirect target
   let (cdbBroadcasts, branchRedirectTarget) : (List CDBBroadcast × Option UInt32) :=
@@ -617,7 +687,7 @@ def cpuStep
       | some idx =>
           let (_, dispatchResult) := rsInteger_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag, _immediate, _pc) =>
+          | some (opcode, src1, src2, _src3, destTag, _immediate, _pc) =>
               let (_, result) := Execution.executeInteger opcode src1 src2 destTag
               [{ valid := true, tag := destTag, data := result, exception := false, mispredicted := false }]
           | none => []
@@ -629,7 +699,7 @@ def cpuStep
       | some idx =>
           let (_, dispatchResult) := rsMemory_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, _src2, destTag, immediate, _pc) =>
+          | some (opcode, src1, _src2, _src3, destTag, immediate, _pc) =>
               -- Use proper immediate value from RS entry
               let offset : Int := immediate.getD 0
               let addr := Execution.calculateMemoryAddress src1 offset
@@ -644,7 +714,7 @@ def cpuStep
       | some idx =>
           let (_, dispatchResult) := rsBranch_postFlush.dispatch idx
           match dispatchResult with
-          | some (opcode, src1, src2, destTag, immediate, pc) =>
+          | some (opcode, src1, src2, _src3, destTag, immediate, pc) =>
               -- Use proper branch condition evaluation from BranchExecUnit
               let offset : Int := immediate.getD 0
               let branchResult := Execution.executeBranch opcode src1 src2 pc offset destTag
@@ -656,7 +726,7 @@ def cpuStep
           | none => ([], none)
       | none => ([], none)
 
-    (intBC ++ memBC ++ branchBC ++ mulDivBC, branchRedirect)
+    (intBC ++ memBC ++ branchBC ++ mulDivBC ++ fpBC, branchRedirect)
 
   -- ========== UPDATE RS AFTER DISPATCH ==========
   -- Dispatch clears the dispatched entries from RS
@@ -681,11 +751,23 @@ def cpuStep
     else
       rsMulDiv_postFlush
 
+  let rsFPExec_postExec := if h : config.enableF then
+      let rs : RSState 4 := cast (by rw [if_pos h]) rsFPExec_postFlush
+      let rs' := match rs.selectReady with
+        | some idx => rs.dispatch idx |>.1
+        | none => rs
+      cast (by rw [if_pos h]) rs'
+    else
+      rsFPExec_postFlush
+
   -- ========== CDB WRITEBACK TO PHYSREGFILE ==========
-  -- Write execution results to physical register file
+  -- Write execution results to physical register file (both int and FP)
+  -- TODO: Separate int/FP CDB buses; for now all broadcasts go to both PRFs
   let rename_postExecute := cdbBroadcasts.foldl (fun (ren : RenameStageState) (bc : CDBBroadcast) =>
     if bc.valid then
-      { ren with physRegFile := ren.physRegFile.write bc.tag bc.data }
+      { ren with
+        physRegFile := ren.physRegFile.write bc.tag bc.data
+        fpPhysRegFile := ren.fpPhysRegFile.write bc.tag bc.data }
     else
       ren
   ) rename_postFlush
@@ -720,12 +802,21 @@ def cpuStep
     else
       rsMulDiv_postFlush
 
+  let rsFPExec_postCDB := if h : config.enableF then
+      let rs := cast (by simp [h]) rsFPExec_postFlush
+      let rs' := cdbBroadcasts.foldl (fun (rs : RSState 4) (bc : CDBBroadcast) =>
+        if bc.valid then rs.cdbBroadcast bc.tag bc.data else rs
+      ) rs
+      cast (by simp [h]) rs'
+    else
+      rsFPExec_postFlush
+
   -- ========== STAGE 4: DISPATCH TO RS ==========
   -- Route renamed instruction to appropriate RS based on OpType
   let (rsInteger_postDispatch, rsMemory_postDispatch, rsBranch_postDispatch,
-       rsMulDiv_postDispatch, rename_postDispatch, rob_postDispatch) :=
+       rsMulDiv_postDispatch, rsFPExec_postDispatch, rename_postDispatch, rob_postDispatch) :=
     (rsInteger_postCDB, rsMemory_postCDB, rsBranch_postCDB, rsMulDiv_postCDB,
-     rename_postExecute, rob_postCDB)
+     rsFPExec_postCDB, rename_postExecute, rob_postCDB)
   -- TODO: Actually dispatch renamed instruction to RS and allocate ROB
 
   -- ========== STAGE 3: RENAME ==========
@@ -764,8 +855,11 @@ def cpuStep
     rsMemory := rsMemory_postDispatch
     rsBranch := rsBranch_postDispatch
     rsMulDiv := rsMulDiv_postDispatch
+    rsFPExec := rsFPExec_postDispatch
     rob := rob_postDispatch
     mulDivExecState := mulDivExecState'
+    fpExecState := fpExecState'
+    fflags := fflags'
     globalStall := globalStall_postFlush
     flushing := flushPC.isSome
     cycleCount := cpu.cycleCount + 1 }
@@ -1807,6 +1901,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rvvi_insn := makeIndexedWires "rvvi_insn" 32
   let rvvi_rd := makeIndexedWires "rvvi_rd" 5
   let rvvi_rd_valid := Wire.mk "rvvi_rd_valid"
+  -- FP RVVI signals (F extension)
+  let rvvi_frd := makeIndexedWires "rvvi_frd" 5
+  let rvvi_frd_valid := Wire.mk "rvvi_frd_valid"
+  let rvvi_frd_data := makeIndexedWires "rvvi_frd_data" 32
 
   let pc_queue_inst : CircuitInstance := {
     moduleName := "Queue16x32"
@@ -1844,6 +1942,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkAND rob_head_hasPhysRd rob_commit_en rvvi_rd_valid] ++
     (List.range 5).map (fun i =>
       Gate.mkBUF rob_head_archRd[i]! rvvi_rd[i]!)
+
+  -- FP RVVI gates (placeholder: tied to zero until FP retirement path is wired)
+  -- TODO: Connect to FP ROB entry's archFpRd and FP PhysRegFile read port
+  let rvvi_fp_gates :=
+    [Gate.mkBUF zero rvvi_frd_valid] ++
+    (List.range 5).map (fun i => Gate.mkBUF zero rvvi_frd[i]!) ++
+    (List.range 32).map (fun i => Gate.mkBUF zero rvvi_frd_data[i]!)
 
   -- === CDB REPLAY BUFFER ===
   let replay_valid := Wire.mk "replay_valid"
@@ -2111,7 +2216,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let global_stall_out := Wire.mk "global_stall_out"
   let output_gates := [Gate.mkBUF global_stall global_stall_out]
 
-  { name := if enableM then "CPU_RV32IM" else "CPU_RV32I"
+  { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one] ++
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
@@ -2120,7 +2225,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [rob_empty] ++
                -- RVVI-TRACE outputs
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
-               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data
+               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
+               rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data
     gates := flush_gate ++ dispatch_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
@@ -2139,7 +2245,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++
              lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
              load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
-             commit_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates
+             commit_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates ++
+             rvvi_fp_gates
     instances := [fetch_inst, decoder_inst, rename_inst,
                   redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++
                   redirect_target_dff_insts ++
@@ -2237,5 +2344,11 @@ def mkCPU_RV32I : Circuit := mkCPU rv32iConfig
 
 /-- RV32IM CPU (backward-compatible alias) -/
 def mkCPU_RV32IM : Circuit := mkCPU rv32imConfig
+
+/-- RV32IF CPU (F extension only) -/
+def mkCPU_RV32IF : Circuit := mkCPU rv32ifConfig
+
+/-- RV32IMF CPU (M + F extensions) -/
+def mkCPU_RV32IMF : Circuit := mkCPU rv32imfConfig
 
 end Shoumei.RISCV.CPU

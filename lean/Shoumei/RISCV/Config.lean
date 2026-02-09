@@ -59,6 +59,9 @@ def rv32iConfig : CPUConfig := {}
 /-- RV32IM configuration (M extension enabled) -/
 def rv32imConfig : CPUConfig := { enableM := true }
 
+/-- RV32IF configuration (F extension enabled, no M) -/
+def rv32ifConfig : CPUConfig := { enableF := true }
+
 /-- RV32IMF configuration (M + F extensions enabled) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true }
 

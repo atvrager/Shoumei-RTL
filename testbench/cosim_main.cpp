@@ -198,6 +198,12 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // Compare FP register writeback (when Spike detects FP write)
+            if (spike_r.frd_valid) {
+                // TODO: Compare against RTL RVVI FP signals when available
+                // For now, just log FP writes from Spike for debugging
+            }
+
 #ifdef HAS_SYSTEMC
             // 3-way: compare SystemC
             SystemCStepResult sc_r = sc->step();

@@ -204,7 +204,9 @@ def allCircuits : List Circuit := [
   mkFetchStage,
   mkRenameStage,
   mkCPU_RV32I,
-  mkCPU_RV32IM
+  mkCPU_RV32IM,
+  mkCPU_RV32IF,
+  mkCPU_RV32IMF
 ]
 
 def main : IO Unit := do

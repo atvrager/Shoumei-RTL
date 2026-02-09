@@ -154,6 +154,13 @@ inductive OpType where
   | DIVU   : OpType  -- Divide unsigned: rd = unsigned(rs1) / unsigned(rs2)
   | REM    : OpType  -- Remainder signed: rd = signed(rs1) % signed(rs2)
   | REMU   : OpType  -- Remainder unsigned: rd = unsigned(rs1) % unsigned(rs2)
+  -- Zicsr: CSR instructions (minimal, for F extension FCSR support)
+  | CSRRW  : OpType  -- CSR read/write: rd = csr; csr = rs1
+  | CSRRS  : OpType  -- CSR read/set: rd = csr; csr |= rs1
+  | CSRRC  : OpType  -- CSR read/clear: rd = csr; csr &= ~rs1
+  | CSRRWI : OpType  -- CSR read/write immediate: rd = csr; csr = zimm
+  | CSRRSI : OpType  -- CSR read/set immediate: rd = csr; csr |= zimm
+  | CSRRCI : OpType  -- CSR read/clear immediate: rd = csr; csr &= ~zimm
   deriving Repr, BEq, DecidableEq
 
 instance : ToString OpType where
@@ -181,6 +188,8 @@ instance : ToString OpType where
     | .FLW => "FLW" | .FSW => "FSW"
     | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU" | .MULHU => "MULHU"
     | .DIV => "DIV" | .DIVU => "DIVU" | .REM => "REM" | .REMU => "REMU"
+    | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC"
+    | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
 
 /-- Parse OpType from instruction name (uppercase) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -261,6 +270,12 @@ def OpType.fromString (s : String) : Option OpType :=
   | "DIVU"   => some .DIVU
   | "REM"    => some .REM
   | "REMU"   => some .REMU
+  | "CSRRW"  => some .CSRRW
+  | "CSRRS"  => some .CSRRS
+  | "CSRRC"  => some .CSRRC
+  | "CSRRWI" => some .CSRRWI
+  | "CSRRSI" => some .CSRRSI
+  | "CSRRCI" => some .CSRRCI
   | _        => none
 
 /--

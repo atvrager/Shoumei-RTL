@@ -72,6 +72,8 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   | .MUL | .MULH | .MULHSU | .MULHU
   | .DIV | .DIVU | .REM | .REMU =>
       if config.enableM then .MulDiv else .Illegal
+  -- Zicsr (CSR instructions routed to Integer unit)
+  | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => .Integer
   -- System
   | .FENCE | .ECALL | .EBREAK => .System
 

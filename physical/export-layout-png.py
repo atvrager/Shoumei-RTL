@@ -25,8 +25,8 @@ from matplotlib.patches import Rectangle, FancyBboxPatch, FancyArrowPatch, Patch
 from scipy.ndimage import gaussian_filter
 
 gds_path = sys.argv[1] if len(sys.argv) > 1 else \
-    "third_party/orfs/flow/results/asap7/CPU_RV32IM_synth/base/6_final.gds"
-out_path = sys.argv[2] if len(sys.argv) > 2 else "cpu_rv32im_asap7.png"
+    "third_party/orfs/flow/results/asap7/CPU_RV32IMF_synth/base/6_final.gds"
+out_path = sys.argv[2] if len(sys.argv) > 2 else "cpu_rv32imf_asap7.png"
 
 # -- Config --
 BG = '#04040a'
