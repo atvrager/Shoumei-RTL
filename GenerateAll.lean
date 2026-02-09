@@ -50,6 +50,9 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
+-- F-Extension
+import Shoumei.RISCV.Execution.FPExecUnit
+
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Retirement.Queue16x32
@@ -185,6 +188,9 @@ def allCircuits : List Circuit := [
   mkDividerCircuit,
   mkMulDivExecUnit,
   mkMulDivRS4,
+
+  -- F-Extension
+  mkFPExecUnit,
 
   -- Phase 6: Retirement
   mkROB16,
