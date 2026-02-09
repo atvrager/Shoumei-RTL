@@ -2,7 +2,7 @@
   "name": "Shoumei-RTL",
   "build": {
     "dockerfile": "Dockerfile",
-    "context": "."
+    "context": ".."
   },
   "features": {},
 

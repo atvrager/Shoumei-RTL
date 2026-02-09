@@ -388,7 +388,7 @@ jobs:
       - name: Install Verilator
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator device-tree-compiler
+          sudo apt-get install -y verilator
 
       - name: Cache Spike
         uses: actions/cache@v4

@@ -1,0 +1,4 @@
+# Only send Spike source to Docker build context (for pre-building in image).
+# Everything else is mounted at runtime, not needed during image build.
+*
+!third_party/riscv-isa-sim/

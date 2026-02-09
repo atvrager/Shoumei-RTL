@@ -66,6 +66,16 @@ RUN mkdir -p /home/dev/.local/riscv32-elf \
     && curl -fSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${RISCV_TAG}/riscv32-elf-ubuntu-22.04-gcc.tar.xz" \
         | tar xJ -C /home/dev/.local/riscv32-elf --strip-components=1
 
+# ── Spike RISC-V ISA simulator (cosimulation oracle) ─────────────
+# Built from submodule source; --without-dtc avoids needing device-tree-compiler.
+COPY --chown=dev:dev third_party/riscv-isa-sim /home/dev/spike-src
+RUN cd /home/dev/spike-src \
+    && mkdir -p build && cd build \
+    && ../configure --prefix=/home/dev/.local/spike --enable-commitlog --without-dtc \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd /home/dev && rm -rf spike-src
+
 # ── pyslang (SystemVerilog IEEE 1800-2017 lint) ──────────────────
 RUN pip install --break-system-packages pyslang
 
