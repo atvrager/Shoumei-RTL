@@ -40,6 +40,12 @@ SPIKE_PREFIX ?= $(HOME)/.local/spike
 SPIKE_INC    := $(SPIKE_PREFIX)/include
 SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 
+# Auto-build Spike if missing (check for .so or .a)
+$(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
+	@echo "Spike not found at $(SPIKE_PREFIX), building from source..."
+	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
+	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
+
 .PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
@@ -126,7 +132,12 @@ run-all-tests-xprop: sim-xprop tests
 	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
 	[ $$fail -eq 0 ]
 
-cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
+SPIKE_LIB_FILE := $(firstword $(wildcard $(SPIKE_LIB)/libriscv.*))
+ifeq ($(SPIKE_LIB_FILE),)
+  SPIKE_LIB_FILE := $(SPIKE_LIB)/libriscv.so
+endif
+
+cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) --cc --exe --build -j 0 \
@@ -138,7 +149,7 @@ cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei (2-way: RTL + Spike)"
 
-cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
+cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim3
 	@mkdir -p $(BUILD_DIR)/verilator_cosim3
 	$(VERILATOR) --cc --exe --build -j 0 \

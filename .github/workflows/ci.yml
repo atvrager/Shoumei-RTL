@@ -400,7 +400,7 @@ jobs:
 
       - name: Build Spike
         run: |
-          if [ ! -f "$HOME/.local/spike/lib/libriscv.a" ]; then
+          if [ ! -f "$HOME/.local/spike/lib/libriscv.a" ] && [ ! -f "$HOME/.local/spike/lib/libriscv.so" ]; then
             chmod +x scripts/build-spike.sh
             scripts/build-spike.sh
           fi
