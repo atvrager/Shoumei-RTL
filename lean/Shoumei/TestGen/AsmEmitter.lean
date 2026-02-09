@@ -69,14 +69,13 @@ def passEpilogue : List AsmInstr :=
   , .label ".Lhalt"
   , .pseudo "j .Lhalt" ]
 
-/-- Fail epilogue: write test_num << 1 | 1 to tohost -/
-def failEpilogue (failLabel : String) (testReg : Fin 32) : List AsmInstr :=
+/-- Fail epilogue: write 0xDEAD to tohost (distinct from PASS=1) -/
+def failEpilogue (failLabel : String) : List AsmInstr :=
   [ .label failLabel
-  , .comment "FAIL: write (test_num << 1) | 1 to tohost"
-  , .itype "slli" testReg testReg 1
-  , .itype "ori" testReg testReg 1
-  , .pseudo "li x1, 0x1000"
-  , .stype "sw" testReg ⟨1, by omega⟩ 0
+  , .comment "FAIL: write 0xDEAD to tohost"
+  , .pseudo "li x30, 0x1000"
+  , .pseudo "li x31, 0xDEAD"
+  , .stype "sw" ⟨31, by omega⟩ ⟨30, by omega⟩ 0
   , .label ".Lhalt_fail"
   , .pseudo "j .Lhalt_fail" ]
 
