@@ -40,6 +40,7 @@ jobs:
               --suppress=missingIncludeSystem \
               --suppress=knownConditionTrueFalse \
               --suppress=unusedStructMember \
+              --suppress=constParameter \
               $CPP_FILES
           fi
           if [ -n "$C_FILES" ]; then

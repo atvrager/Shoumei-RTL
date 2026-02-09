@@ -66,8 +66,8 @@ private:
     std::vector<char> mem_;
 };
 
-SpikeOracle::SpikeOracle(const std::string& elf_path) {
-    cfg_ = std::make_unique<cfg_t>();
+SpikeOracle::SpikeOracle(const std::string& elf_path)
+    : cfg_(std::make_unique<cfg_t>()) {
     cfg_->isa = "rv32im";
     cfg_->priv = "m";
     cfg_->hartids = {0};
