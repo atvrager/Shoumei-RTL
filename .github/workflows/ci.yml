@@ -96,9 +96,8 @@ jobs:
           path: |
             .lake
             lake-packages
-          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
-          restore-keys: |
-            ${{ runner.os }}-lean-
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+          # No restore-keys fallback: stale oleans cause codegen bugs
 
       - name: Build
         run: lake build
@@ -178,9 +177,8 @@ jobs:
           path: |
             .lake
             lake-packages
-          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
-          restore-keys: |
-            ${{ runner.os }}-lean-
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+          # No restore-keys fallback: stale oleans cause codegen bugs
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -207,6 +205,9 @@ jobs:
           key: ${{ runner.os }}-sbt-${{ hashFiles('chisel/build.sbt', 'chisel/project/**') }}
           restore-keys: |
             ${{ runner.os }}-sbt-
+
+      - name: Clean stale build artifacts
+        run: lake clean
 
       - name: Generate code
         run: make codegen
