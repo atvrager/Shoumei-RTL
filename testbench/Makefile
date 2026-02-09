@@ -43,6 +43,7 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 .PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) $(VFLAGS) \
 		-o $(BUILD_DIR)/sim_shoumei \
@@ -50,6 +51,7 @@ sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei"
 
 sim-xprop: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator_xprop
 	@mkdir -p $(BUILD_DIR)/verilator_xprop
 	$(VERILATOR) $(VFLAGS) $(VFLAGS_XPROP) \
 		--Mdir $(BUILD_DIR)/verilator_xprop \
@@ -58,6 +60,7 @@ sim-xprop: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_xprop (with X-propagation)"
 
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) $(VFLAGS) --trace \
 		-CFLAGS "-DVM_TRACE=1" \
@@ -66,6 +69,7 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with VCD trace)"
 
 sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator_dbg
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_dbg \
@@ -123,6 +127,7 @@ run-all-tests-xprop: sim-xprop tests
 	[ $$fail -eq 0 ]
 
 cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
+	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
@@ -134,6 +139,7 @@ cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei (2-way: RTL + Spike)"
 
 cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
+	@rm -rf $(BUILD_DIR)/verilator_cosim3
 	@mkdir -p $(BUILD_DIR)/verilator_cosim3
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_cosim3 \
