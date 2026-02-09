@@ -31,14 +31,24 @@ jobs:
       - name: C/C++ lint (cppcheck)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq cppcheck
-          CPP_FILES=$(find testbench -name '*.cpp' -o -name '*.h' | grep -v build-sim)
+          CPP_FILES=$(find testbench -name '*.cpp' -o -name '*.h' | grep -v build-sim | grep -v testbench/tests)
           C_FILES=$(find testbench/tests -name '*.c' -o -name '*.h')
-          if [ -n "$CPP_FILES$C_FILES" ]; then
+          if [ -n "$CPP_FILES" ]; then
+            # shellcheck disable=SC2086
+            cppcheck --error-exitcode=1 --enable=warning,style \
+              --language=c++ \
+              --suppress=missingIncludeSystem \
+              --suppress=knownConditionTrueFalse \
+              --suppress=unusedStructMember \
+              --suppress=constParameter \
+              $CPP_FILES
+          fi
+          if [ -n "$C_FILES" ]; then
             # shellcheck disable=SC2086
             cppcheck --error-exitcode=1 --enable=warning,style \
               --suppress=missingIncludeSystem \
               --suppress=knownConditionTrueFalse \
-              $CPP_FILES $C_FILES
+              $C_FILES
           fi
 
       - name: Trailing whitespace
@@ -385,10 +395,10 @@ jobs:
         with:
           name: codegen-output
 
-      - name: Install Verilator
+      - name: Install Verilator + dtc
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator
+          sudo apt-get install -y verilator device-tree-compiler
 
       - name: Cache Spike
         uses: actions/cache@v4

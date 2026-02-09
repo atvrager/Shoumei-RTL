@@ -17,7 +17,7 @@ class flat_simif_t : public simif_t {
 public:
     static constexpr size_t MEM_SIZE = 0x10000; // 64KB
 
-    flat_simif_t(cfg_t* cfg) : cfg_(cfg), mem_(MEM_SIZE, 0) {}
+    explicit flat_simif_t(cfg_t* cfg) : cfg_(cfg), mem_(MEM_SIZE, 0) {}
 
     char* addr_to_mem(reg_t paddr) override {
         if (paddr < MEM_SIZE)
@@ -66,8 +66,8 @@ private:
     std::vector<char> mem_;
 };
 
-SpikeOracle::SpikeOracle(const std::string& elf_path) {
-    cfg_ = std::make_unique<cfg_t>();
+SpikeOracle::SpikeOracle(const std::string& elf_path)
+    : cfg_(std::make_unique<cfg_t>()) {
     cfg_->isa = "rv32im";
     cfg_->priv = "m";
     cfg_->hartids = {0};

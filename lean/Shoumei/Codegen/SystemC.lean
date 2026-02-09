@@ -660,6 +660,17 @@ def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : S
   let bindings := c.instances.map fun inst =>
     let mapping := buildPortNameMapping allCircuits inst.moduleName
     let comment := s!"    // {inst.instName} ({inst.moduleName})"
+    -- Check if submodule uses bundled IO (sc_vector)
+    let subMod := allCircuits.find? (fun (sc : Circuit) => sc.name == inst.moduleName)
+    let subUseBundled := match subMod with
+      | some sm => (sm.inputs.length + sm.outputs.length) > 500 && sm.instances.isEmpty
+      | none => false
+    let subInputNames := match subMod with
+      | some sm => sm.inputs.map Wire.name
+      | none => []
+    let subOutputNames := match subMod with
+      | some sm => sm.outputs.map Wire.name
+      | none => []
     let (lines, _) := inst.portMap.foldl (fun (acc : List String × List (String × Nat)) (portName, wire) =>
       let (ls, bareIdxMap) := acc
       let candidates := mapping.filter (fun (key, _) => key == portName)
@@ -679,7 +690,19 @@ def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : S
       else bareIdxMap
       let wireExpr := if portNames.contains wire.name then wire.name
                       else s!"pImpl->{wire.name}"
-      (ls ++ [s!"    pImpl->{inst.instName}.{actualName}({wireExpr});"], newMap)
+      if subUseBundled then
+        -- Submodule uses sc_vector: map to inputs[N] / outputs[N]
+        match subInputNames.findIdx? (· == actualName) with
+        | some idx =>
+            (ls ++ [s!"    pImpl->{inst.instName}.inputs[{idx}]({wireExpr});"], newMap)
+        | none =>
+            match subOutputNames.findIdx? (· == actualName) with
+            | some idx =>
+                (ls ++ [s!"    pImpl->{inst.instName}.outputs[{idx}]({wireExpr});"], newMap)
+            | none =>
+                (ls ++ [s!"    pImpl->{inst.instName}.{actualName}({wireExpr});"], newMap)
+      else
+        (ls ++ [s!"    pImpl->{inst.instName}.{actualName}({wireExpr});"], newMap)
     ) ([], [])
     comment ++ "\n" ++ joinLines lines
   joinLines bindings
