@@ -104,7 +104,7 @@ def failEpilogue (failLabel : String) : List AsmInstr :=
 /-- Render a TestProgram to a complete .S file -/
 def TestProgram.toAsm (prog : TestProgram) : String :=
   let header := s!"# Auto-generated test: {prog.name}\n# {prog.description}\n"
-  let directives := ".section .text\n.globl main\nmain:\n"
+  let directives := ".section .text\n.globl _start\n_start:\n.globl main\nmain:\n"
   let body := prog.instrs.map AsmInstr.toAsm |>.foldl (· ++ "\n" ++ ·) ""
   header ++ directives ++ body ++ "\n"
 

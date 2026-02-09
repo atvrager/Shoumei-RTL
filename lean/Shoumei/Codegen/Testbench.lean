@@ -63,7 +63,8 @@ private def hexLit (_width : Nat) (value : Nat) : String :=
 def toTestbenchSV (cfg : TestbenchConfig) : String :=
   let c := cfg.circuit
   let inputGroups := SystemVerilog.autoDetectSignalGroups c.inputs
-  let outputGroups := SystemVerilog.autoDetectSignalGroups c.outputs
+  let outputGroups := (SystemVerilog.autoDetectSignalGroups c.outputs).filter
+    fun sg => sg.name != "rvvi_frd" && sg.name != "rvvi_frd_data"
 
   let clockWires := findClockWires c
   let resetWires := findResetWires c
@@ -168,6 +169,17 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "    output logic        o_rvvi_frd_valid,\n" ++
   "    output logic [31:0] o_rvvi_frd_data\n" ++
   ");\n\n" ++
+  "  // FP RVVI bus aggregation (codegen emits flat wires, aggregate for outputs)\n" ++
+  "  wire [4:0] rvvi_frd_bus = {rvvi_frd_4, rvvi_frd_3, rvvi_frd_2, rvvi_frd_1, rvvi_frd_0};\n" ++
+  "  wire [31:0] rvvi_frd_data_bus = {\n" ++
+  "    rvvi_frd_data_31, rvvi_frd_data_30, rvvi_frd_data_29, rvvi_frd_data_28,\n" ++
+  "    rvvi_frd_data_27, rvvi_frd_data_26, rvvi_frd_data_25, rvvi_frd_data_24,\n" ++
+  "    rvvi_frd_data_23, rvvi_frd_data_22, rvvi_frd_data_21, rvvi_frd_data_20,\n" ++
+  "    rvvi_frd_data_19, rvvi_frd_data_18, rvvi_frd_data_17, rvvi_frd_data_16,\n" ++
+  "    rvvi_frd_data_15, rvvi_frd_data_14, rvvi_frd_data_13, rvvi_frd_data_12,\n" ++
+  "    rvvi_frd_data_11, rvvi_frd_data_10, rvvi_frd_data_9, rvvi_frd_data_8,\n" ++
+  "    rvvi_frd_data_7, rvvi_frd_data_6, rvvi_frd_data_5, rvvi_frd_data_4,\n" ++
+  "    rvvi_frd_data_3, rvvi_frd_data_2, rvvi_frd_data_1, rvvi_frd_data_0};\n\n" ++
 
   "  // =========================================================================\n" ++
   "  // CPU I/O signals\n" ++
@@ -296,9 +308,9 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  assign o_rvvi_rd         = rvvi_rd;\n" ++
   "  assign o_rvvi_rd_valid   = rvvi_rd_valid;\n" ++
   "  assign o_rvvi_rd_data    = rvvi_rd_data;\n" ++
-  "  assign o_rvvi_frd        = rvvi_frd;\n" ++
+  "  assign o_rvvi_frd        = rvvi_frd_bus;\n" ++
   "  assign o_rvvi_frd_valid  = rvvi_frd_valid;\n" ++
-  "  assign o_rvvi_frd_data   = rvvi_frd_data;\n\n" ++
+  "  assign o_rvvi_frd_data   = rvvi_frd_data_bus;\n\n" ++
   "endmodule\n"
 
 /-! ## SystemC Testbench Generator -/

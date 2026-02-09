@@ -28,7 +28,15 @@ import Shoumei.DSL
 import Shoumei.RISCV.ISA
 import Shoumei.RISCV.Execution.Dispatch
 import Shoumei.Circuits.Combinational.FPU
+import Shoumei.Circuits.Combinational.FPUnpack
+import Shoumei.Circuits.Combinational.FPPack
+import Shoumei.Circuits.Combinational.FPMisc
 import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Sequential.FPAdder
+import Shoumei.Circuits.Sequential.FPMultiplier
+import Shoumei.Circuits.Sequential.FPFMA
+import Shoumei.Circuits.Sequential.FPDivider
+import Shoumei.Circuits.Sequential.FPSqrt
 
 namespace Shoumei.RISCV.Execution
 
@@ -248,30 +256,335 @@ def mkFPExecUnit : Circuit :=
   let valid_out := Wire.mk "valid_out"
   let busy := Wire.mk "busy"
 
-  -- Tag pass-through (BUF gates)
-  let tag_passthrough := List.zipWith (fun src dst =>
-    Gate.mkBUF src dst
-  ) dest_tag tag_out
+  -- ══════════════════════════════════════════════
+  -- Sub-unit output wires
+  -- ══════════════════════════════════════════════
 
-  -- For now, valid_out = valid_in (single-cycle behavioral model)
-  -- Multi-cycle support requires FSM (added when structural sub-units exist)
-  let valid_gate := [Gate.mkBUF valid_in valid_out]
+  -- FPMisc (single-cycle: FSGNJ, FMV, FCLASS, etc.)
+  let misc_result := makeIndexedWires "misc_result" 32
+  let misc_exc := makeIndexedWires "misc_exc" 5
 
-  -- Busy = 0 (placeholder until iterative divider/sqrt is instantiated)
-  let busy_gate := [Gate.mkBUF zero busy]
+  -- FPAdder (4-cycle pipeline: FADD, FSUB)
+  let add_result := makeIndexedWires "add_result" 32
+  let add_tag := makeIndexedWires "add_tag" 6
+  let add_exc := makeIndexedWires "add_exc" 5
+  let add_valid := Wire.mk "add_valid"
 
-  -- Result and exception outputs are placeholder BUF from zero
-  -- (real implementation will come from sub-unit instances)
-  let result_placeholder := result.map (fun w => Gate.mkBUF zero w)
-  let exc_placeholder := exceptions.map (fun w => Gate.mkBUF zero w)
+  -- FPMultiplier (3-cycle pipeline: FMUL)
+  let mul_result := makeIndexedWires "mul_result" 32
+  let mul_tag := makeIndexedWires "mul_tag" 6
+  let mul_exc := makeIndexedWires "mul_exc" 5
+  let mul_valid := Wire.mk "mul_valid"
+
+  -- FPFMA (5-cycle pipeline: FMADD, FMSUB, FNMADD, FNMSUB)
+  let fma_result := makeIndexedWires "fma_result" 32
+  let fma_tag := makeIndexedWires "fma_tag" 6
+  let fma_exc := makeIndexedWires "fma_exc" 5
+  let fma_valid := Wire.mk "fma_valid"
+
+  -- FPDivider (24-cycle iterative: FDIV)
+  let div_result := makeIndexedWires "div_result" 32
+  let div_tag := makeIndexedWires "div_tag" 6
+  let div_exc := makeIndexedWires "div_exc" 5
+  let div_valid := Wire.mk "div_valid"
+  let div_busy := Wire.mk "div_busy"
+
+  -- FPSqrt (24-cycle iterative: FSQRT)
+  let sqrt_result := makeIndexedWires "sqrt_result" 32
+  let sqrt_tag := makeIndexedWires "sqrt_tag" 6
+  let sqrt_exc := makeIndexedWires "sqrt_exc" 5
+  let sqrt_valid := Wire.mk "sqrt_valid"
+  let sqrt_busy := Wire.mk "sqrt_busy"
+
+  -- ══════════════════════════════════════════════
+  -- Operation decoding: detect which sub-unit should fire
+  -- op encodings: FADD=0, FSUB=1, FMUL=2, FDIV=3, FSQRT=4,
+  -- FMADD=5, FMSUB=6, FNMADD=7, FNMSUB=8,
+  -- FEQ=9..FSGNJX=23 (single-cycle, handled by FPMisc)
+  -- ══════════════════════════════════════════════
+
+  -- Decode op_sub for FPAdder: op==0 → sub=0, op==1 → sub=1
+  -- FADD (00000): op[0]=0, FSUB (00001): op[0]=1
+  -- Both have op[4:1]=0000
+  let op_is_add_sub := Wire.mk "op_is_add_sub"  -- op[4:1] == 0000
+  let not_op1 := Wire.mk "not_op1"
+  let not_op3 := Wire.mk "not_op3"
+  let not_op4 := Wire.mk "not_op4"
+  let op_hi_zero_01 := Wire.mk "op_hi_zero_01"
+  let op_hi_zero_23 := Wire.mk "op_hi_zero_23"
+
+  -- op==2 (FMUL): 00010
+  let op_is_mul := Wire.mk "op_is_mul"
+  let op1_only := Wire.mk "op1_only"  -- op[1]=1, op[0]=0
+
+  -- op==3 (FDIV): 00011
+  let op_is_div := Wire.mk "op_is_div"
+  let op01_both := Wire.mk "op01_both"  -- op[1]=1, op[0]=1
+
+  -- op==4 (FSQRT): 00100
+  let op_is_sqrt := Wire.mk "op_is_sqrt"
+  let op2_only := Wire.mk "op2_only"
+  let not_op0 := Wire.mk "not_op0"
+
+  -- op in {5,6,7,8} (FMA variants): op[4:3]=00, op[2]=1, or op==5..8
+  -- 5=00101, 6=00110, 7=00111, 8=01000
+  -- Simpler: op >= 5 && op <= 8
+  -- We detect: (op[2]=1 && op[3]=0 && op[4]=0) || (op[3]=1 && op[2:0]=000 && op[4]=0)
+  let op_is_fma := Wire.mk "op_is_fma"
+  let op2_and_not3 := Wire.mk "op2_and_not3"
+  let op2_and_not34 := Wire.mk "op2_and_not34"
+  let op3_and_not24 := Wire.mk "op3_and_not24"
+  let not_op2_w := Wire.mk "not_op2_w"  -- for op==8 detect
+
+  -- op >= 9 (single-cycle misc ops)
+  let op_is_misc := Wire.mk "op_is_misc"
+
+  -- Start signals for iterative units
+  let div_start := Wire.mk "div_start"
+  let sqrt_start := Wire.mk "sqrt_start"
+
+  -- Valid signals routed to pipelined units
+  let add_valid_in := Wire.mk "add_valid_in"
+  let mul_valid_in := Wire.mk "mul_valid_in"
+  let fma_valid_in := Wire.mk "fma_valid_in"
+
+  let decode_gates := [
+    -- NOT of each op bit
+    Gate.mkNOT (op[0]!) not_op0,
+    Gate.mkNOT (op[1]!) not_op1,
+    Gate.mkNOT (op[2]!) not_op2_w,
+    Gate.mkNOT (op[3]!) not_op3,
+    Gate.mkNOT (op[4]!) not_op4,
+
+    -- op[4:1] == 0000 → FADD or FSUB
+    Gate.mkAND not_op1 not_op2_w op_hi_zero_01,
+    Gate.mkAND not_op3 not_op4 op_hi_zero_23,
+    Gate.mkAND op_hi_zero_01 op_hi_zero_23 op_is_add_sub,
+
+    -- op == 00010 → FMUL: op[1]=1, rest 0
+    Gate.mkAND (op[1]!) not_op0 op1_only,
+    Gate.mkAND op1_only not_op2_w (Wire.mk "mul_t1"),
+    Gate.mkAND (Wire.mk "mul_t1") op_hi_zero_23 op_is_mul,
+
+    -- op == 00011 → FDIV: op[1:0]=11, rest 0
+    Gate.mkAND (op[0]!) (op[1]!) op01_both,
+    Gate.mkAND op01_both not_op2_w (Wire.mk "div_t1"),
+    Gate.mkAND (Wire.mk "div_t1") op_hi_zero_23 op_is_div,
+
+    -- op == 00100 → FSQRT: op[2]=1, rest 0
+    Gate.mkAND (op[2]!) not_op0 op2_only,
+    Gate.mkAND op2_only not_op1 (Wire.mk "sqrt_t1"),
+    Gate.mkAND (Wire.mk "sqrt_t1") op_hi_zero_23 op_is_sqrt,
+
+    -- op in {5,6,7,8} → FMA: (op[2]=1 && !op[3] && !op[4]) || (op[3]=1 && !op[2] && !op[1] && !op[0] && !op[4])
+    Gate.mkAND (op[2]!) not_op3 op2_and_not3,
+    Gate.mkAND op2_and_not3 not_op4 op2_and_not34,
+    -- For op=8 (01000): op[3]=1, op[2:0]=000
+    Gate.mkAND (op[3]!) not_op2_w (Wire.mk "fma8_t1"),
+    Gate.mkAND (Wire.mk "fma8_t1") not_op1 (Wire.mk "fma8_t2"),
+    Gate.mkAND (Wire.mk "fma8_t2") not_op0 (Wire.mk "fma8_t3"),
+    Gate.mkAND (Wire.mk "fma8_t3") not_op4 op3_and_not24,
+    Gate.mkOR op2_and_not34 op3_and_not24 op_is_fma,
+
+    -- op >= 9: anything not matched above is misc
+    -- op_is_misc = NOT(add_sub OR mul OR div OR sqrt OR fma)
+    Gate.mkOR op_is_add_sub op_is_mul (Wire.mk "misc_t1"),
+    Gate.mkOR op_is_div op_is_sqrt (Wire.mk "misc_t2"),
+    Gate.mkOR (Wire.mk "misc_t1") (Wire.mk "misc_t2") (Wire.mk "misc_t3"),
+    Gate.mkOR (Wire.mk "misc_t3") op_is_fma (Wire.mk "misc_t4"),
+    Gate.mkNOT (Wire.mk "misc_t4") op_is_misc,
+
+    -- Gate valid_in to each sub-unit
+    Gate.mkAND valid_in op_is_add_sub add_valid_in,
+    Gate.mkAND valid_in op_is_mul mul_valid_in,
+    Gate.mkAND valid_in op_is_fma fma_valid_in,
+    Gate.mkAND valid_in op_is_div div_start,
+    Gate.mkAND valid_in op_is_sqrt sqrt_start
+  ]
+
+  -- ══════════════════════════════════════════════
+  -- Sub-unit instances
+  -- ══════════════════════════════════════════════
+
+  let misc_inst : CircuitInstance :=
+    { moduleName := "FPMisc"
+      instName := "u_misc"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+        (List.range 5 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+        [("zero", zero), ("one", one)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", misc_result[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", misc_exc[i]!))
+    }
+
+  let adder_inst : CircuitInstance :=
+    { moduleName := "FPAdder"
+      instName := "u_adder"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+        [("op_sub", op[0]!)] ++  -- op[0] distinguishes FADD(0) from FSUB(1)
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [("valid_in", add_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", add_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", add_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", add_exc[i]!)) ++
+        [("valid_out", add_valid)]
+    }
+
+  let mul_inst : CircuitInstance :=
+    { moduleName := "FPMultiplier"
+      instName := "u_mul"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [("valid_in", mul_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", mul_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", mul_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", mul_exc[i]!)) ++
+        [("valid_out", mul_valid)]
+    }
+
+  let fma_inst : CircuitInstance :=
+    { moduleName := "FPFMA"
+      instName := "u_fma"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!), (s!"src3_{i}", src3[i]!) ]) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [("valid_in", fma_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", fma_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", fma_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", fma_exc[i]!)) ++
+        [("valid_out", fma_valid)]
+    }
+
+  let div_inst : CircuitInstance :=
+    { moduleName := "FPDivider"
+      instName := "u_div"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [("start", div_start), ("clock", clock), ("reset", reset),
+         ("zero", zero), ("one", one)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", div_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", div_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", div_exc[i]!)) ++
+        [("valid_out", div_valid), ("busy", div_busy)]
+    }
+
+  let sqrt_inst : CircuitInstance :=
+    { moduleName := "FPSqrt"
+      instName := "u_sqrt"
+      portMap :=
+        (List.range 32 |>.map fun i => (s!"src1_{i}", src1[i]!)) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [("start", sqrt_start), ("clock", clock), ("reset", reset),
+         ("zero", zero), ("one", one)] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", sqrt_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", sqrt_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", sqrt_exc[i]!)) ++
+        [("valid_out", sqrt_valid), ("busy", sqrt_busy)]
+    }
+
+  -- ══════════════════════════════════════════════
+  -- Output MUX: select result from completing sub-unit
+  -- Priority: div_valid > sqrt_valid > fma_valid > add_valid > mul_valid > misc (valid_in && op_is_misc)
+  -- ══════════════════════════════════════════════
+
+  let misc_valid := Wire.mk "misc_valid"
+  let misc_valid_gate := [Gate.mkAND valid_in op_is_misc misc_valid]
+
+  -- Result MUX chain (priority select): start from misc, then layer higher-priority on top
+  -- Level 1: MUX(misc, mul, mul_valid) → t1
+  let t1_result := makeIndexedWires "t1_result" 32
+  let t1_tag := makeIndexedWires "t1_tag" 6
+  let t1_exc := makeIndexedWires "t1_exc" 5
+  let t1_valid := Wire.mk "t1_valid"
+
+  let mux1_gates :=
+    (List.range 32 |>.map fun i =>
+      Gate.mkMUX (misc_result[i]!) (mul_result[i]!) mul_valid (t1_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (dest_tag[i]!) (mul_tag[i]!) mul_valid (t1_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (misc_exc[i]!) (mul_exc[i]!) mul_valid (t1_exc[i]!)) ++
+    [Gate.mkOR misc_valid mul_valid t1_valid]
+
+  -- Level 2: MUX(t1, add, add_valid) → t2
+  let t2_result := makeIndexedWires "t2_result" 32
+  let t2_tag := makeIndexedWires "t2_tag" 6
+  let t2_exc := makeIndexedWires "t2_exc" 5
+  let t2_valid := Wire.mk "t2_valid"
+
+  let mux2_gates :=
+    (List.range 32 |>.map fun i =>
+      Gate.mkMUX (t1_result[i]!) (add_result[i]!) add_valid (t2_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (t1_tag[i]!) (add_tag[i]!) add_valid (t2_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (t1_exc[i]!) (add_exc[i]!) add_valid (t2_exc[i]!)) ++
+    [Gate.mkOR t1_valid add_valid t2_valid]
+
+  -- Level 3: MUX(t2, fma, fma_valid) → t3
+  let t3_result := makeIndexedWires "t3_result" 32
+  let t3_tag := makeIndexedWires "t3_tag" 6
+  let t3_exc := makeIndexedWires "t3_exc" 5
+  let t3_valid := Wire.mk "t3_valid"
+
+  let mux3_gates :=
+    (List.range 32 |>.map fun i =>
+      Gate.mkMUX (t2_result[i]!) (fma_result[i]!) fma_valid (t3_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (t2_tag[i]!) (fma_tag[i]!) fma_valid (t3_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (t2_exc[i]!) (fma_exc[i]!) fma_valid (t3_exc[i]!)) ++
+    [Gate.mkOR t2_valid fma_valid t3_valid]
+
+  -- Level 4: MUX(t3, sqrt, sqrt_valid) → t4
+  let t4_result := makeIndexedWires "t4_result" 32
+  let t4_tag := makeIndexedWires "t4_tag" 6
+  let t4_exc := makeIndexedWires "t4_exc" 5
+  let t4_valid := Wire.mk "t4_valid"
+
+  let mux4_gates :=
+    (List.range 32 |>.map fun i =>
+      Gate.mkMUX (t3_result[i]!) (sqrt_result[i]!) sqrt_valid (t4_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (t3_tag[i]!) (sqrt_tag[i]!) sqrt_valid (t4_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (t3_exc[i]!) (sqrt_exc[i]!) sqrt_valid (t4_exc[i]!)) ++
+    [Gate.mkOR t3_valid sqrt_valid t4_valid]
+
+  -- Level 5: MUX(t4, div, div_valid) → output
+  let mux5_gates :=
+    (List.range 32 |>.map fun i =>
+      Gate.mkMUX (t4_result[i]!) (div_result[i]!) div_valid (result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (t4_tag[i]!) (div_tag[i]!) div_valid (tag_out[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (t4_exc[i]!) (div_exc[i]!) div_valid (exceptions[i]!)) ++
+    [Gate.mkOR t4_valid div_valid valid_out]
+
+  -- Busy = div_busy OR sqrt_busy
+  let busy_gate := [Gate.mkOR div_busy sqrt_busy busy]
 
   { name := "FPExecUnit"
     inputs := src1 ++ src2 ++ src3 ++ op ++ rm ++ dest_tag ++
               [valid_in, clock, reset, zero, one]
     outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy]
-    gates := tag_passthrough ++ valid_gate ++ busy_gate ++
-             result_placeholder ++ exc_placeholder
-    instances := []
+    gates := decode_gates ++ misc_valid_gate ++
+             mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
+             busy_gate
+    instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst]
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
       { name := "src2", width := 32, wires := src2 },
@@ -283,6 +596,7 @@ def mkFPExecUnit : Circuit :=
       { name := "tag_out", width := 6, wires := tag_out },
       { name := "exceptions", width := 5, wires := exceptions }
     ]
+    keepHierarchy := true
   }
 
 /-- Convenience alias -/

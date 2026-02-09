@@ -51,6 +51,14 @@ import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
 -- F-Extension
+import Shoumei.Circuits.Combinational.FPUnpack
+import Shoumei.Circuits.Combinational.FPPack
+import Shoumei.Circuits.Combinational.FPMisc
+import Shoumei.Circuits.Sequential.FPAdder
+import Shoumei.Circuits.Sequential.FPMultiplier
+import Shoumei.Circuits.Sequential.FPFMA
+import Shoumei.Circuits.Sequential.FPDivider
+import Shoumei.Circuits.Sequential.FPSqrt
 import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
@@ -189,7 +197,15 @@ def allCircuits : List Circuit := [
   mkMulDivExecUnit,
   mkMulDivRS4,
 
-  -- F-Extension
+  -- F-Extension: FPU building blocks
+  fpUnpackCircuit,
+  fpPackCircuit,
+  fpMiscCircuit,
+  fpAdderCircuit,
+  fpMultiplierCircuit,
+  fpFMACircuit,
+  fpDividerCircuit,
+  fpSqrtCircuit,
   mkFPExecUnit,
 
   -- Phase 6: Retirement

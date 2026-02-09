@@ -2336,6 +2336,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rvvi_insn", width := 32, wires := rvvi_insn },
        { name := "rvvi_rd", width := 5, wires := rvvi_rd },
        { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
+       -- Note: rvvi_frd/rvvi_frd_data are BUF-from-zero placeholders so codegen
+       -- emits them as flat wires. Testbench handles aggregation manually.
        { name := "rob_head_idx", width := 4, wires := rob_head_idx }]
   }
 
