@@ -97,8 +97,7 @@ jobs:
             .lake
             lake-packages
           key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
-          restore-keys: |
-            ${{ runner.os }}-lean-
+          # No restore-keys fallback: stale oleans cause codegen bugs
 
       - name: Build
         run: lake build
@@ -179,8 +178,7 @@ jobs:
             .lake
             lake-packages
           key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
-          restore-keys: |
-            ${{ runner.os }}-lean-
+          # No restore-keys fallback: stale oleans cause codegen bugs
 
       - name: Setup Java
         uses: actions/setup-java@v4
