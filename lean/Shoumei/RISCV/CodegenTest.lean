@@ -1,6 +1,6 @@
 /-
   Code Generation - Generate SystemVerilog, Chisel, and SystemC decoders
-  Produces both RV32I (base) and RV32IM (with M extension) decoder variants.
+  Produces RV32I (base), RV32IM, and RV32IMF decoder variants as needed.
 -/
 
 import Shoumei.RISCV.ISA
@@ -16,9 +16,35 @@ namespace Shoumei.RISCV
 def hasMExtension (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
-/-- Filter to only base I extension instructions -/
+/-- Check if any instruction belongs to the F extension -/
+def hasFExtension (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_f"))
+
+/-- Filter to only base I extension instructions (no M, no F) -/
 def filterBaseI (defs : List InstructionDef) : List InstructionDef :=
-  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m"))
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m" && ext != "rv_f"))
+
+/-- Filter to I + M (no F) -/
+def filterIM (defs : List InstructionDef) : List InstructionDef :=
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_f"))
+
+/-- Check if instruction is an F-extension instruction -/
+private def isFExtInstruction (d : InstructionDef) : Bool :=
+  d.extension.any (· == "rv_f")
+
+/-- Sort instructions: I+M first (preserving order), then F.
+    This ensures integer opcodes get low enum positions (< 64)
+    so the existing 6-bit integer RS can handle them. -/
+def sortIMFirst (defs : List InstructionDef) : List InstructionDef :=
+  let im := defs.filter (fun d => !isFExtInstruction d)
+  let f := defs.filter isFExtInstruction
+  im ++ f
+
+private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit := do
+  writeSystemVerilogDecoder defs s!"output/sv-from-lean/{name}.sv" name
+  writeChiselDecoder defs s!"chisel/src/main/scala/generated/{name}.scala" name
+  writeSystemCDecoderHeader defs s!"output/systemc/{name}.h" name
+  writeSystemCDecoderImpl defs s!"output/systemc/{name}.cpp" name
 
 /-- Generate all decoder variants from instruction definitions -/
 def generateDecoders (defs : List InstructionDef) : IO Unit := do
@@ -37,26 +63,33 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
 
   -- Always generate RV32I (base) decoder
   IO.println s!"\n── RV32IDecoder ({baseDefs.length} instructions) ──"
-  writeSystemVerilogDecoder baseDefs "output/sv-from-lean/RV32IDecoder.sv" "RV32IDecoder"
-  writeChiselDecoder baseDefs "chisel/src/main/scala/generated/RV32IDecoder.scala" "RV32IDecoder"
-  writeSystemCDecoderHeader baseDefs "output/systemc/RV32IDecoder.h" "RV32IDecoder"
-  writeSystemCDecoderImpl baseDefs "output/systemc/RV32IDecoder.cpp" "RV32IDecoder"
+  writeDecoder baseDefs "RV32IDecoder"
   IO.println "✓ RV32IDecoder complete"
 
+  let hasM := hasMExtension defs
+  let hasF := hasFExtension defs
+
   -- Generate RV32IM decoder if M extension instructions are present
-  if hasMExtension defs then
-    IO.println s!"\n── RV32IMDecoder ({defs.length} instructions) ──"
-    writeSystemVerilogDecoder defs "output/sv-from-lean/RV32IMDecoder.sv" "RV32IMDecoder"
-    writeChiselDecoder defs "chisel/src/main/scala/generated/RV32IMDecoder.scala" "RV32IMDecoder"
-    writeSystemCDecoderHeader defs "output/systemc/RV32IMDecoder.h" "RV32IMDecoder"
-    writeSystemCDecoderImpl defs "output/systemc/RV32IMDecoder.cpp" "RV32IMDecoder"
+  if hasM then
+    let imDefs := filterIM defs
+    IO.println s!"\n── RV32IMDecoder ({imDefs.length} instructions) ──"
+    writeDecoder imDefs "RV32IMDecoder"
     IO.println "✓ RV32IMDecoder complete"
+
+  -- Generate RV32IMF decoder if both M+F present (all instructions, sorted I+M first)
+  if hasM && hasF then
+    let imfDefs := sortIMFirst defs
+    IO.println s!"\n── RV32IMFDecoder ({imfDefs.length} instructions) ──"
+    writeDecoder imfDefs "RV32IMFDecoder"
+    IO.println "✓ RV32IMFDecoder complete"
 
   IO.println "\n==================================================\n"
   IO.println "Code generation summary:"
   IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + Chisel + SystemC)"
-  if hasMExtension defs then
-    IO.println s!"  - RV32IMDecoder: {defs.length} instructions (SV + Chisel + SystemC)"
+  if hasM then
+    IO.println s!"  - RV32IMDecoder: {(filterIM defs).length} instructions (SV + Chisel + SystemC)"
+  if hasM && hasF then
+    IO.println s!"  - RV32IMFDecoder: {defs.length} instructions (SV + Chisel + SystemC)"
   IO.println "\n✓ Code generation complete!"
 
 end Shoumei.RISCV

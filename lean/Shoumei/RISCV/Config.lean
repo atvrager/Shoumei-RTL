@@ -124,6 +124,9 @@ structure OpcodeEncodings where
   lhu : Nat
   lb : Nat
   lbu : Nat
+  -- F extension (only valid when enableF)
+  flw : Nat := 0
+  fsw : Nat := 0
 
 /-- RV32I decoder opcode encodings -/
 def opcodeEncodings_RV32I : OpcodeEncodings :=
@@ -137,8 +140,17 @@ def opcodeEncodings_RV32IM : OpcodeEncodings :=
     beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
     lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28 }
 
+/-- RV32IMF decoder opcode encodings (I+M same as RV32IM, F appended) -/
+def opcodeEncodings_RV32IMF : OpcodeEncodings :=
+  { lui := 25, auipc := 43, jal := 31, jalr := 30,
+    beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
+    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
+    flw := 63, fsw := 48 }
+
 /-- Get opcode encodings for a CPU config -/
 def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
-  if cfg.enableM then opcodeEncodings_RV32IM else opcodeEncodings_RV32I
+  if cfg.enableF && cfg.enableM then opcodeEncodings_RV32IMF
+  else if cfg.enableM then opcodeEncodings_RV32IM
+  else opcodeEncodings_RV32I
 
 end Shoumei.RISCV

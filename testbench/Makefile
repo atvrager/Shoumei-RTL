@@ -22,7 +22,7 @@ TB_DIR    := $(PROJ_ROOT)/testbench
 VERILATOR  := verilator
 VFLAGS     := --cc --exe --build -j 0 \
               --Mdir $(BUILD_DIR)/verilator \
-              -Wno-UNOPTFLAT -Wno-PINMISSING \
+              -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
               --top-module tb_cpu \
               -CFLAGS "-std=c++17 -O2"
 

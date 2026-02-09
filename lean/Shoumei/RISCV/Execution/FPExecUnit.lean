@@ -255,6 +255,7 @@ def mkFPExecUnit : Circuit :=
   let exceptions := makeIndexedWires "exceptions" 5
   let valid_out := Wire.mk "valid_out"
   let busy := Wire.mk "busy"
+  let result_is_int := Wire.mk "result_is_int"  -- high when result targets INT PRF
 
   -- ══════════════════════════════════════════════
   -- Sub-unit output wires
@@ -577,13 +578,64 @@ def mkFPExecUnit : Circuit :=
   -- Busy = div_busy OR sqrt_busy
   let busy_gate := [Gate.mkOR div_busy sqrt_busy busy]
 
+  -- result_is_int: detect when the FP result targets INT register file
+  -- INT-writing FP ops (by FPU opcode): 9=FEQ, 10=FLT, 11=FLE, 12=FCVT_W_S,
+  -- 13=FCVT_WU_S, 16=FMV_X_W, 18=FCLASS
+  -- These are all misc ops (single-cycle), so result_is_int = misc_valid AND NOT overridden AND opcode_is_int
+  -- Since misc has lowest priority in the output MUX, if any pipelined unit is valid,
+  -- misc_valid is irrelevant. We use: result_is_int = misc_valid AND NOT (mul_valid OR add_valid OR fma_valid OR div_valid OR sqrt_valid) AND op_writes_int
+  -- Simplified: if output is from misc path (no higher-priority), check opcode.
+  -- Detect op_writes_int: op in {9..13, 16, 18}
+  -- 9=01001, 10=01010, 11=01011, 12=01100, 13=01101 → op[3]=1, op[4]=0, op[2:0] in {001,010,011,100,101}
+  -- 16=10000, 18=10010 → op[4]=1
+  -- So: op_writes_int = (op[3] AND NOT op[4]) OR (op[4] AND NOT op[3] AND NOT op[2] AND (NOT op[0] OR NOT op[1]))
+  -- Actually simpler: just check op[3]=1 XOR op[4]=1 (one of them set, not both), excluding op=8 (01000) and 14,15 (01110,01111) and 17 (10001) and 19+ (10011+)
+  -- Easiest: enumerate and OR
+  let op_writes_int := Wire.mk "op_writes_int"
+  -- op[3]=1 AND op[4]=0: covers 8-15. Exclude 8 (op[2:0]=000) and 14 (op[2:1]=11,op[0]=0) and 15 (op[2:0]=111)
+  -- So: op[3] AND NOT op[4] AND NOT(op[2] AND op[1]) AND (op[0] OR op[1] OR op[2])
+  let grp_8_15 := Wire.mk "grp_8_15"
+  let not_both_21 := Wire.mk "not_both_21"
+  let any_210 := Wire.mk "any_210"
+  let grp_8_15_filt := Wire.mk "grp_8_15_filt"
+  -- op[4]=1: covers 16-23. INT-writing: 16 (10000), 18 (10010). NOT: 17,19,20,21,22,23
+  -- 16: op[3:0]=0000, 18: op[3:0]=0010
+  -- Both have op[3]=0, op[0]=0. 16: op[2:1]=00, 18: op[2]=0,op[1]=1
+  -- So: op[4] AND NOT op[3] AND NOT op[0] AND NOT op[2]
+  let grp_16_18 := Wire.mk "grp_16_18"
+  let int_result_gates := [
+    -- Group 9-13: op[3]=1, op[4]=0, not (op[2] AND op[1]), and (op[0] OR op[1] OR op[2])
+    Gate.mkAND (op[3]!) not_op4 grp_8_15,
+    Gate.mkAND (op[2]!) (op[1]!) (Wire.mk "both_21"),
+    Gate.mkNOT (Wire.mk "both_21") not_both_21,
+    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "any_01"),
+    Gate.mkOR (Wire.mk "any_01") (op[2]!) any_210,
+    Gate.mkAND grp_8_15 not_both_21 (Wire.mk "grp_filt1"),
+    Gate.mkAND (Wire.mk "grp_filt1") any_210 grp_8_15_filt,
+    -- Group 16,18: op[4]=1, op[3]=0, op[0]=0, op[2]=0
+    Gate.mkAND (op[4]!) not_op3 (Wire.mk "g16_t1"),
+    Gate.mkAND not_op0 not_op2_w (Wire.mk "g16_t2"),
+    Gate.mkAND (Wire.mk "g16_t1") (Wire.mk "g16_t2") grp_16_18,
+    -- Combine
+    Gate.mkOR grp_8_15_filt grp_16_18 op_writes_int,
+    -- result_is_int = misc_valid AND no higher-priority AND op_writes_int
+    -- Since misc is lowest priority: if any other valid, misc result is overridden
+    Gate.mkOR mul_valid add_valid (Wire.mk "rint_t1"),
+    Gate.mkOR fma_valid div_valid (Wire.mk "rint_t2"),
+    Gate.mkOR sqrt_valid (Wire.mk "rint_t1") (Wire.mk "rint_t3"),
+    Gate.mkOR (Wire.mk "rint_t2") (Wire.mk "rint_t3") (Wire.mk "rint_t4"),
+    Gate.mkNOT (Wire.mk "rint_t4") (Wire.mk "no_override"),
+    Gate.mkAND misc_valid (Wire.mk "no_override") (Wire.mk "rint_t5"),
+    Gate.mkAND (Wire.mk "rint_t5") op_writes_int result_is_int
+  ]
+
   { name := "FPExecUnit"
     inputs := src1 ++ src2 ++ src3 ++ op ++ rm ++ dest_tag ++
               [valid_in, clock, reset, zero, one]
-    outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy]
+    outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy, result_is_int]
     gates := decode_gates ++ misc_valid_gate ++
              mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
-             busy_gate
+             busy_gate ++ int_result_gates
     instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst]
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
