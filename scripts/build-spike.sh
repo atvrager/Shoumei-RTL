@@ -9,7 +9,8 @@ echo "Install prefix: $SPIKE_PREFIX"
 
 cd "$SPIKE_SRC"
 mkdir -p build && cd build
-../configure --prefix="$SPIKE_PREFIX" --enable-commitlog
+# --without-dtc: device tree compiler not needed for cosim use
+../configure --prefix="$SPIKE_PREFIX" --enable-commitlog --without-dtc
 make -j"$(nproc)"
 make install
 

@@ -127,8 +127,8 @@ cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP)
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
 		-Wno-UNOPTFLAT --top-module tb_cpu \
-		-CFLAGS "-std=c++17 -O2 -I$(SPIKE_INC)" \
-		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -Wl,-rpath,$(SPIKE_LIB)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC)" \
+		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $(BUILD_DIR)/cosim_shoumei \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei (2-way: RTL + Spike)"
@@ -138,8 +138,8 @@ cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_cosim3 \
 		-Wno-UNOPTFLAT --top-module tb_cpu \
-		-CFLAGS "-std=c++17 -O2 -I$(SPIKE_INC) -DHAS_SYSTEMC" \
-		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lsystemc -Wl,-rpath,$(SPIKE_LIB)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -DHAS_SYSTEMC" \
+		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -lsystemc -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $(BUILD_DIR)/cosim_shoumei_3way \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei_3way (3-way: RTL + Spike + SystemC)"

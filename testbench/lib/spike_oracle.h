@@ -4,9 +4,9 @@
 #include <memory>
 #include <string>
 
-// Forward declarations to avoid pulling in Spike headers everywhere
-class sim_t;
+// Forward declarations
 class processor_t;
+class simif_t;
 struct cfg_t;
 
 struct SpikeStepResult {
@@ -33,6 +33,7 @@ public:
     uint32_t get_pc() const;
 
 private:
-    std::unique_ptr<sim_t> sim_;
-    processor_t* proc_;  // non-owning, owned by sim_
+    std::unique_ptr<cfg_t> cfg_;
+    std::unique_ptr<simif_t> simif_;
+    std::unique_ptr<processor_t> proc_;
 };
