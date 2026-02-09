@@ -19,7 +19,7 @@ export SDC_FILE      = $(PROJECT_ROOT)/physical/constraints.sdc
 #   500 MHz = 2000ps (stretch goal)
 #  1000 MHz = 1000ps (aspirational)
 FMAX_MHZ ?= 200
-export CLK_PERIOD_PS = $(shell echo "1000000 / $(FMAX_MHZ)" | bc)
+export CLK_PERIOD_PS = $(shell expr 1000000 / $(FMAX_MHZ))
 
 # Floorplan Configuration
 export CORE_UTILIZATION = 30
