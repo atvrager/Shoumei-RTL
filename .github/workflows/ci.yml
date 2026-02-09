@@ -395,10 +395,10 @@ jobs:
         with:
           name: codegen-output
 
-      - name: Install Verilator
+      - name: Install Verilator + dtc
         run: |
           sudo apt-get update
-          sudo apt-get install -y verilator
+          sudo apt-get install -y verilator device-tree-compiler
 
       - name: Cache Spike
         uses: actions/cache@v4
