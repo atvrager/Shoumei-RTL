@@ -94,7 +94,7 @@ tests:
 
 run-all-tests: sim tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
@@ -114,7 +114,7 @@ run-all-tests: sim tests
 
 run-all-tests-xprop: sim-xprop tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei_xprop +elf=$$elf +timeout=3000 2>&1); \
@@ -163,7 +163,7 @@ cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 
 run-cosim-no-sc: cosim-no-sc tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
@@ -180,7 +180,7 @@ run-cosim-no-sc: cosim-no-sc tests
 
 run-cosim: cosim tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(BUILD_DIR)/cosim_shoumei_3way +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \

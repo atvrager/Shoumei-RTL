@@ -309,7 +309,7 @@ jobs:
       - name: Run all ELF tests (SystemC)
         run: |
           pass=0; fail=0; total=0
-          for elf in testbench/tests/*.elf; do
+          for elf in testbench/tests/*.elf testbench/tests/generated/*.elf; do
             total=$((total+1))
             name=$(basename "$elf")
             if timeout 60 ./systemc/build/sc_main_CPU_RV32IM "+elf=$elf" "+timeout=100000" 2>&1 | grep -q "TEST PASS"; then
