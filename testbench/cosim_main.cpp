@@ -97,7 +97,7 @@ struct RVVIState {
     uint32_t rd_data;
 };
 
-static RVVIState read_rvvi(Vtb_cpu* dut) {
+static RVVIState read_rvvi(const Vtb_cpu* dut) {
     RVVIState s = {};
     s.valid    = dut->o_rvvi_valid;
     s.trap     = dut->o_rvvi_trap;
