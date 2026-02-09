@@ -1,89 +1,96 @@
 # Shoumei RTL
 
-[![CI](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml) [![Full Verification](https://github.com/atvrager/Shoumei-RTL/actions/workflows/verify.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/verify.yml) [![Smoke Tests](https://github.com/atvrager/Shoumei-RTL/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/smoke-test.yml) [![LEC](https://github.com/atvrager/Shoumei-RTL/actions/workflows/lec.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/lec.yml)
+[![CI](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml)
 
 **Formally verified hardware design with Lean 4 theorem proving.**
 
-> Shoumei (Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and dual code generators produce SystemVerilog and Chisel that are verified equivalent by LEC.
+> Shoumei (証明, Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and multiple code generators produce equivalent RTL verified by LEC.
 
 ## What This Is
 
-A complete pipeline from formal specification to verified RTL:
+A complete pipeline from formal specification to verified, simulated RTL:
 
 1. **Define** circuits in a Lean 4 embedded DSL (gates, wires, instances)
 2. **Prove** properties using Lean's type system (`native_decide`, structural induction)
-3. **Generate** both SystemVerilog and Chisel/Scala from the same proven source
-4. **Compile** Chisel to SystemVerilog via FIRRTL/CIRCT (firtool)
-5. **Verify** both SystemVerilog outputs are logically equivalent (Yosys LEC)
+3. **Generate** SystemVerilog, Chisel/Scala, and SystemC from the same proven source
+4. **Verify** Lean SV and Chisel SV are logically equivalent (Yosys LEC)
+5. **Simulate** with Verilator and SystemC, validated against Spike ISA reference
 
 ```
                     Lean 4 DSL
               (theorems + proofs)
                        |
-              +--------+--------+
-              |                 |
-              v                 v
-        SystemVerilog       Chisel/Scala
-         Generator           Generator
-              |                 |
-              |                 v
-              |          FIRRTL + CIRCT
-              |            (firtool)
-              |                 |
-              v                 v
-        SystemVerilog     SystemVerilog
-        (from Lean)      (from Chisel)
-              |                 |
-              +--------+--------+
-                       |
-                       v
-              Equivalence Checking
-             (Yosys SAT/induction)
+              +--------+--------+--------+
+              |        |        |        |
+              v        v        v        v
+         SystemVerilog  Chisel  SystemC  SV Netlist
+          (hierarchical)  |    (cycle-   (flat)
+              |           v    accurate)
+              |     FIRRTL/CIRCT
+              |        |
+              v        v
+         SV (Lean)  SV (Chisel)
+              |        |
+              +---+----+         Spike (libriscv)
+                  |                    |
+                  v                    v
+           LEC (Yosys)     Cosimulation (RVVI lock-step)
 ```
 
 ## Current Status
 
-**63 modules verified** -- 100% LEC coverage across all generated circuits.
+**89 modules** -- 100% LEC coverage. Complete RV32IM out-of-order Tomasulo CPU.
 
 | Category | Modules | Examples |
 |----------|---------|---------|
-| Arithmetic | 15 | FullAdder, RCA (4/8/32), Subtractor (4/8/32), ALU32 |
-| Comparison | 5 | Comparator (4/6/8/32-bit), 5-output (eq/lt/ltu/gt/gtu) |
-| Logic/Shift | 5 | LogicUnit (4/8/32), Shifter (4/32) barrel shifters |
-| Mux/Decoder | 12 | Decoder (1-6 bit), Mux (2:1 to 64:1, 6-32 bit wide) |
+| Arithmetic | 15 | FullAdder, RCA, Subtractor, ALU32 |
+| Comparison | 5 | Comparator (4/6/8/32-bit) |
+| Logic/Shift | 5 | LogicUnit, Barrel Shifter |
+| Mux/Decoder | 14 | Decoder (1-6 bit), Mux (2:1 to 64:1) |
 | Arbitration | 3 | PriorityArbiter (2/4/8-input) |
-| Sequential | 14 | DFF, Register (1-91 bit), Queue (1-deep, N-deep) |
-| RISC-V | 9 | RV32I decoder, RAT, FreeList, PhysRegFile, RS4, exec units |
+| Sequential | 16 | DFF, Register (1-91 bit), Queue |
+| RISC-V Pipeline | 31 | Decoder, RAT, FreeList, PhysRegFile, RS4, ROB, LSU, CPU top |
 
-**Verification method:**
-- 54 modules via direct LEC (Yosys SAT solver / sequential induction)
-- 9 modules via compositional proofs (Lean theorem proving + dependency verification)
+**Verification:**
+- 49 modules via direct LEC (Yosys SAT / sequential induction)
+- 9 modules via compositional proofs (Lean theorems + dependency verification)
+- 31 modules verified through hierarchy
 
 ### Implementation Progress
-
-Building toward a formally verified RV32IM out-of-order (Tomasulo) CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for the full roadmap.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Sequential DSL (DFF, Queue, Register) | Complete |
 | 1 | Arithmetic (Adder, Subtractor, Comparator, ALU32) | Complete |
-| 2 | RV32I Decoder (40 instructions, all formats) | Complete |
+| 2 | RV32IM Decoder (48 instructions, all formats) | Complete |
 | 3 | Register Renaming (RAT, FreeList, PhysRegFile) | Complete |
-| 4 | Reservation Stations (RS4 + Decoupled interfaces) | In Progress |
-| 5-9 | Execution, ROB, Memory, Integration, Verification | Planned |
+| 4 | Reservation Stations (RS4, Decoupled interfaces) | Complete |
+| 5 | Execution Units (ALU, Multiplier, Divider, Memory) | Complete |
+| 6 | ROB & Retirement (16-entry, in-order commit) | Complete |
+| 7 | Memory System (LSU, StoreBuffer, TSO ordering) | Complete |
+| 8 | CPU Integration (behavioral + structural, 89 modules) | Complete |
+| 9 | Compliance Testing | Planned |
+
+See [docs/FEATURES.md](docs/FEATURES.md) for details on what's built, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.
 
 ## Quick Start
 
-No system packages or sudo required. Everything installs to `~/.elan` and `~/.local`.
-
 ```bash
 # Clone and setup
-git clone https://github.com/atvrager/Shoumei-RTL.git
+git clone --recurse-submodules https://github.com/atvrager/Shoumei-RTL.git
 cd Shoumei-RTL
 make setup          # installs elan, lean, coursier, sbt
 
 # Build and verify
 make all            # lean -> codegen -> chisel -> lec
+
+# Simulate
+export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
+make -C testbench/tests             # compile test ELFs
+make -C testbench sim               # build Verilator simulation
+make -C testbench run-all-tests     # run all 8 ELF tests
+make -C testbench cosim-no-sc       # build cosimulation (auto-builds Spike)
+make -C testbench run-cosim-no-sc   # RTL vs Spike lock-step cosim
 ```
 
 Or step by step:
@@ -100,39 +107,9 @@ cd chisel && sbt run && cd ..           # compile Chisel -> SV via CIRCT
 - **Lean 4** (v4.27.0) -- installed via elan by `make setup`
 - **sbt** + **Scala 2.13** -- installed via coursier by `make setup`
 - **Chisel 7.7.0** -- pulled by sbt, auto-manages firtool binary
-- **Yosys** -- for LEC verification (`pacman -S yosys` / `apt install yosys`)
-
-## Project Structure
-
-```
-Shoumei-RTL/
-├── lean/Shoumei/                  # Lean 4 source (83 files, ~5200 lines)
-│   ├── DSL.lean                   #   Core types: Wire, Gate, Circuit, CircuitInstance
-│   ├── Semantics.lean             #   Operational semantics (eval, state transitions)
-│   ├── Codegen/                   #   Code generators (SV, Chisel, SystemC)
-│   ├── Circuits/                  #   Circuit library
-│   │   ├── Combinational/         #     Adder, ALU, Comparator, Decoder, Mux, Shifter, ...
-│   │   └── Sequential/            #     DFF, Register, Queue, QueueN components
-│   ├── RISCV/                     #   RISC-V specific circuits
-│   │   ├── Decoder.lean           #     RV32I instruction decoder (40 instructions)
-│   │   ├── Execution/             #     Integer/Branch/Memory exec units, RS4
-│   │   └── Renaming/              #     RAT, FreeList, PhysRegFile, RenameStage
-│   └── Verification/              #   Compositional verification certificates
-├── chisel/                        # Chisel/Scala project
-│   ├── src/main/scala/generated/  #   Generated Chisel modules (auto-discovered)
-│   └── build.sbt                  #   Scala 2.13 + Chisel 7.7.0
-├── output/                        # Generated artifacts
-│   ├── sv-from-lean/              #   SystemVerilog from Lean (63 modules)
-│   ├── sv-from-chisel/            #   SystemVerilog from Chisel via CIRCT (65 modules)
-│   └── systemc/                   #   SystemC backend (.h + .cpp)
-├── verification/                  # Verification scripts
-│   ├── run-lec.sh                 #   Yosys LEC with topological sort + compositional certs
-│   └── smoke-test.sh              #   Full CI pipeline test
-├── docs/                          # Detailed documentation
-├── lakefile.lean                  # Lake build config (14 executable targets)
-├── Makefile                       # Top-level orchestration
-└── RISCV_TOMASULO_PLAN.md         # Implementation roadmap
-```
+- **Yosys** -- for LEC verification (`apt install yosys`)
+- **Verilator** -- for RTL simulation (`apt install verilator`)
+- **RISC-V GCC** -- for test compilation (`./scripts/setup-riscv-toolchain.sh`)
 
 ## How It Works
 
@@ -173,62 +150,56 @@ def mkReservationStation4 : Circuit :=
 
 ### Proofs
 
-Properties are proven using Lean's type system. Structural proofs use `native_decide` for concrete circuits; behavioral proofs use `simp` and manual tactics:
-
 ```lean
--- Proven: full adder has exactly 5 gates
+-- Structural: full adder has exactly 5 gates
 theorem fullAdder_gate_count : fullAdderCircuit.gates.length = 5 := by native_decide
 
--- Proven: register file write-then-read returns written value
+-- Behavioral: register file write-then-read returns written value
 theorem physregfile_read_after_write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) :
     (prf.write tag val).read tag = val := by simp [PhysRegFileState.write, PhysRegFileState.read]
 ```
 
 ### Verification
 
-LEC runs in topological order, loading compositional certificates from Lean:
-
 ```
 $ ./verification/run-lec.sh
 Loading compositional verification certificates from Lean...
-Loaded 9 compositional certificate(s)
 Sorting modules in topological order...
 
   Verifying: FullAdder         -> EQUIVALENT (SAT)
   Verifying: DFlipFlop         -> EQUIVALENT (induction)
   Verifying: Register91        -> COMPOSITIONALLY VERIFIED (Lean proof)
   ...
-Total modules: 63
-  LEC verified: 54
-  Compositionally verified (Lean): 9
-  Total verified: 63 (100% coverage)
+Total modules: 89
+  Total verified: 89 (100% coverage)
 ```
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [docs/FEATURES.md](docs/FEATURES.md) | What's built -- complete feature list |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What's planned -- near/medium/long-term |
 | [CLAUDE.md](CLAUDE.md) | Development guide -- procedures, workflows, conventions |
-| [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Implementation roadmap for the Tomasulo CPU |
-| [RISCV_TOMASULO_DESIGN.md](RISCV_TOMASULO_DESIGN.md) | Architecture specification |
-| [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for building new modules |
-| [docs/verification-guide.md](docs/verification-guide.md) | LEC, compositional proofs, troubleshooting |
+| [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Detailed implementation roadmap |
+| [RISCV_TOMASULO_DESIGN.md](RISCV_TOMASULO_DESIGN.md) | Microarchitecture specification |
+| [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |
+| [docs/verification-guide.md](docs/verification-guide.md) | LEC and compositional proofs |
 | [docs/proof-strategies.md](docs/proof-strategies.md) | Parameterized circuit proof techniques |
-| [GETTING_STARTED.md](GETTING_STARTED.md) | Installation and environment setup |
-| [COMMANDS.md](COMMANDS.md) | Build command reference |
+| [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) | Interactive proof development |
 
 ## Technology Stack
 
 | Component | Tool | Version |
 |-----------|------|---------|
 | Theorem prover | Lean 4 | v4.27.0 |
-| Lean build system | Lake | (bundled with Lean) |
 | Hardware DSL | Chisel | 7.7.0 |
 | Scala | Scala | 2.13.18 |
-| Scala build | sbt | 1.10+ |
 | RTL compiler | CIRCT/firtool | (managed by Chisel) |
-| Equivalence checking | Yosys | open-source |
-| CI | GitHub Actions | 4 workflows |
+| Equivalence checking | Yosys | system package |
+| RTL simulation | Verilator | system package |
+| ISA reference | Spike (riscv-isa-sim) | built from source |
+| CI | GitHub Actions | 11 checks |
 
 ## License
 

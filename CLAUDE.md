@@ -6,7 +6,7 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, dual code generators produce SystemVerilog + Chisel, Yosys LEC verifies equivalence.
 
-**Current state:** 63 modules, 100% LEC coverage, building toward RV32IM Tomasulo CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
+**Current state:** 89 modules, 100% LEC coverage, complete RV32IM Tomasulo CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
 
 ## Key Toolchain Versions
 
@@ -30,6 +30,9 @@ export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
 make -C testbench/tests             # Compile C tests -> ELF binaries
 make -C testbench sim               # Build Verilator simulation
 make -C testbench run-all-tests     # Run all ELF tests
+make -C testbench run-all-tests-xprop  # X-prop simulation
+make -C testbench cosim-no-sc       # Build cosim (auto-builds Spike)
+make -C testbench run-cosim-no-sc   # RTL vs Spike lock-step cosim
 ```
 
 ## Procedure: Adding a New Module
