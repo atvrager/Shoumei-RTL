@@ -350,6 +350,27 @@ jobs:
       - name: Run all ELF tests
         run: make -C testbench run-all-tests
 
+      - name: Run all ELF tests (X-prop)
+        run: make -C testbench run-all-tests-xprop
+
+  slang-lint:
+    name: Slang Lint
+    runs-on: ubuntu-latest
+    needs: [codegen]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codegen-output
+
+      - name: Install pyslang
+        run: pip install --break-system-packages pyslang
+
+      - name: Lint Lean-generated SV
+        run: python3 verification/slang-lint.py output/sv-from-lean
+
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest

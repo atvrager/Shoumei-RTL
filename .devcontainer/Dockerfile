@@ -66,6 +66,9 @@ RUN mkdir -p /home/dev/.local/riscv32-elf \
     && curl -fSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${RISCV_TAG}/riscv32-elf-ubuntu-22.04-gcc.tar.xz" \
         | tar xJ -C /home/dev/.local/riscv32-elf --strip-components=1
 
+# ── pyslang (SystemVerilog IEEE 1800-2017 lint) ──────────────────
+RUN pip install --break-system-packages pyslang
+
 # ── uv (Python package manager) ────────────────────────────────────
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
