@@ -90,7 +90,13 @@ run-elf: sim
 	$(BUILD_DIR)/sim_shoumei +elf=$(ELF)
 
 gen-tests:
-	cd $(PROJ_ROOT) && lake exe gen_tests
+	@if command -v lake >/dev/null 2>&1; then \
+		cd $(PROJ_ROOT) && lake exe gen_tests; \
+	elif ls $(TB_DIR)/tests/generated/*.S >/dev/null 2>&1; then \
+		echo "lake not found, using pre-generated .S files"; \
+	else \
+		echo "ERROR: no lake and no generated .S files" >&2; exit 1; \
+	fi
 
 tests: gen-tests
 	$(MAKE) -C $(TB_DIR)/tests
