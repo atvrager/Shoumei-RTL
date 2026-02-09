@@ -96,7 +96,7 @@ jobs:
           path: |
             .lake
             lake-packages
-          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
           restore-keys: |
             ${{ runner.os }}-lean-
 
@@ -178,7 +178,7 @@ jobs:
           path: |
             .lake
             lake-packages
-          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
           restore-keys: |
             ${{ runner.os }}-lean-
 
