@@ -93,6 +93,9 @@ __pycache__/
 .venv/
 venv/
 
+# Layout render outputs
+*.png
+
 # Temporary files
 /tmp/
 *.tmp
