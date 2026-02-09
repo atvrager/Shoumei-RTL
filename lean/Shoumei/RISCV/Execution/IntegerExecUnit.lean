@@ -74,6 +74,14 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   -- M extension operations (handled by MulDivExecUnit)
   | .MUL | .MULH | .MULHSU | .MULHU => 0
   | .DIV | .DIVU | .REM | .REMU => 0
+  -- F extension operations (handled by FPExecUnit)
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FEQ_S | .FLT_S | .FLE_S
+  | .FCVT_W_S | .FCVT_WU_S | .FCVT_S_W | .FCVT_S_WU
+  | .FMV_X_W | .FMV_W_X | .FCLASS_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FLW | .FSW => 0
 
 /-! ## Behavioral Model -/
 

@@ -23,6 +23,8 @@ inductive FieldType where
   | fm       : FieldType  -- Fence mode (FENCE instruction)
   | pred     : FieldType  -- Predecessor set (FENCE instruction)
   | succ     : FieldType  -- Successor set (FENCE instruction)
+  | rs3      : FieldType  -- Source register 3 (bits 31:27, R4-type FP fused ops)
+  | rm       : FieldType  -- Rounding mode (bits 14:12, F extension)
   deriving Repr, BEq, DecidableEq
 
 instance : ToString FieldType where
@@ -41,6 +43,8 @@ instance : ToString FieldType where
     | .fm => "fm"
     | .pred => "pred"
     | .succ => "succ"
+    | .rs3 => "rs3"
+    | .rm => "rm"
 
 /-- Parse field type from string (as appears in JSON) -/
 def FieldType.fromString (s : String) : Option FieldType :=
@@ -59,6 +63,8 @@ def FieldType.fromString (s : String) : Option FieldType :=
   | "fm"       => some .fm
   | "pred"     => some .pred
   | "succ"     => some .succ
+  | "rs3"      => some .rs3
+  | "rm"       => some .rm
   | _          => none
 
 /-- Instruction operation types (high-level categories) -/
@@ -112,6 +118,34 @@ inductive OpType where
   | ECALL  : OpType  -- Environment call
   | EBREAK : OpType  -- Environment break
   -- M extension: Multiply/Divide
+  -- F extension: Single-precision floating-point
+  | FADD_S   : OpType  -- FP add single
+  | FSUB_S   : OpType  -- FP subtract single
+  | FMUL_S   : OpType  -- FP multiply single
+  | FDIV_S   : OpType  -- FP divide single
+  | FSQRT_S  : OpType  -- FP square root single
+  | FMADD_S  : OpType  -- FP fused multiply-add single (R4-type)
+  | FMSUB_S  : OpType  -- FP fused multiply-sub single (R4-type)
+  | FNMADD_S : OpType  -- FP negated fused multiply-add single (R4-type)
+  | FNMSUB_S : OpType  -- FP negated fused multiply-sub single (R4-type)
+  | FEQ_S    : OpType  -- FP compare equal (result → int rd)
+  | FLT_S    : OpType  -- FP compare less than (result → int rd)
+  | FLE_S    : OpType  -- FP compare less or equal (result → int rd)
+  | FCVT_W_S  : OpType  -- FP → signed int32
+  | FCVT_WU_S : OpType  -- FP → unsigned int32
+  | FCVT_S_W  : OpType  -- Signed int32 → FP
+  | FCVT_S_WU : OpType  -- Unsigned int32 → FP
+  | FMV_X_W  : OpType  -- Move FP bits → int register
+  | FMV_W_X  : OpType  -- Move int bits → FP register
+  | FCLASS_S : OpType  -- FP classify (result → int rd)
+  | FMIN_S   : OpType  -- FP minimum single
+  | FMAX_S   : OpType  -- FP maximum single
+  | FSGNJ_S  : OpType  -- FP sign inject single
+  | FSGNJN_S : OpType  -- FP sign inject negated single
+  | FSGNJX_S : OpType  -- FP sign inject XOR single
+  | FLW      : OpType  -- FP load word (from memory → FP reg)
+  | FSW      : OpType  -- FP store word (FP reg → memory)
+  -- M extension: Multiply/Divide
   | MUL    : OpType  -- Multiply low: rd = (rs1 * rs2)[31:0]
   | MULH   : OpType  -- Multiply high signed: rd = (signed(rs1) * signed(rs2))[63:32]
   | MULHSU : OpType  -- Multiply high signed-unsigned: rd = (signed(rs1) * unsigned(rs2))[63:32]
@@ -134,6 +168,17 @@ instance : ToString OpType where
     | .SB => "SB" | .SH => "SH" | .SW => "SW"
     | .LUI => "LUI" | .AUIPC => "AUIPC"
     | .FENCE => "FENCE" | .ECALL => "ECALL" | .EBREAK => "EBREAK"
+    | .FADD_S => "FADD_S" | .FSUB_S => "FSUB_S" | .FMUL_S => "FMUL_S"
+    | .FDIV_S => "FDIV_S" | .FSQRT_S => "FSQRT_S"
+    | .FMADD_S => "FMADD_S" | .FMSUB_S => "FMSUB_S"
+    | .FNMADD_S => "FNMADD_S" | .FNMSUB_S => "FNMSUB_S"
+    | .FEQ_S => "FEQ_S" | .FLT_S => "FLT_S" | .FLE_S => "FLE_S"
+    | .FCVT_W_S => "FCVT_W_S" | .FCVT_WU_S => "FCVT_WU_S"
+    | .FCVT_S_W => "FCVT_S_W" | .FCVT_S_WU => "FCVT_S_WU"
+    | .FMV_X_W => "FMV_X_W" | .FMV_W_X => "FMV_W_X" | .FCLASS_S => "FCLASS_S"
+    | .FMIN_S => "FMIN_S" | .FMAX_S => "FMAX_S"
+    | .FSGNJ_S => "FSGNJ_S" | .FSGNJN_S => "FSGNJN_S" | .FSGNJX_S => "FSGNJX_S"
+    | .FLW => "FLW" | .FSW => "FSW"
     | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU" | .MULHU => "MULHU"
     | .DIV => "DIV" | .DIVU => "DIVU" | .REM => "REM" | .REMU => "REMU"
 
@@ -180,6 +225,33 @@ def OpType.fromString (s : String) : Option OpType :=
   | "FENCE"  => some .FENCE
   | "ECALL"  => some .ECALL
   | "EBREAK" => some .EBREAK
+  -- F extension
+  | "FADD_S" | "FADD.S"   => some .FADD_S
+  | "FSUB_S" | "FSUB.S"   => some .FSUB_S
+  | "FMUL_S" | "FMUL.S"   => some .FMUL_S
+  | "FDIV_S" | "FDIV.S"   => some .FDIV_S
+  | "FSQRT_S" | "FSQRT.S" => some .FSQRT_S
+  | "FMADD_S" | "FMADD.S"   => some .FMADD_S
+  | "FMSUB_S" | "FMSUB.S"   => some .FMSUB_S
+  | "FNMADD_S" | "FNMADD.S" => some .FNMADD_S
+  | "FNMSUB_S" | "FNMSUB.S" => some .FNMSUB_S
+  | "FEQ_S" | "FEQ.S"     => some .FEQ_S
+  | "FLT_S" | "FLT.S"     => some .FLT_S
+  | "FLE_S" | "FLE.S"     => some .FLE_S
+  | "FCVT_W_S" | "FCVT.W.S"   => some .FCVT_W_S
+  | "FCVT_WU_S" | "FCVT.WU.S" => some .FCVT_WU_S
+  | "FCVT_S_W" | "FCVT.S.W"   => some .FCVT_S_W
+  | "FCVT_S_WU" | "FCVT.S.WU" => some .FCVT_S_WU
+  | "FMV_X_W" | "FMV.X.W" => some .FMV_X_W
+  | "FMV_W_X" | "FMV.W.X" => some .FMV_W_X
+  | "FCLASS_S" | "FCLASS.S" => some .FCLASS_S
+  | "FMIN_S" | "FMIN.S"   => some .FMIN_S
+  | "FMAX_S" | "FMAX.S"   => some .FMAX_S
+  | "FSGNJ_S" | "FSGNJ.S"   => some .FSGNJ_S
+  | "FSGNJN_S" | "FSGNJN.S" => some .FSGNJN_S
+  | "FSGNJX_S" | "FSGNJX.S" => some .FSGNJX_S
+  | "FLW"     => some .FLW
+  | "FSW"     => some .FSW
   -- M extension
   | "MUL"    => some .MUL
   | "MULH"   => some .MULH
@@ -230,5 +302,59 @@ def InstructionDef.matches (self : InstructionDef) (instr : UInt32) : Bool :=
 def rv32i_instructions : List InstructionDef :=
   -- This will be populated by OpcodeParser.lean from JSON
   []
+
+/-! ## F Extension Register File Classification -/
+
+/-- Does this op write to an FP destination register? -/
+def OpType.hasFpRd : OpType → Bool
+  -- FP arithmetic, fused, sign-inject, min/max all write FP rd
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  -- int→FP conversions and moves write FP rd
+  | .FCVT_S_W | .FCVT_S_WU | .FMV_W_X
+  -- FP load writes FP rd
+  | .FLW => true
+  | _ => false
+
+/-- Does this op read FP source register rs1? -/
+def OpType.hasFpRs1 : OpType → Bool
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FEQ_S | .FLT_S | .FLE_S
+  | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W | .FCLASS_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FSW => true
+  | _ => false
+
+/-- Does this op read FP source register rs2? -/
+def OpType.hasFpRs2 : OpType → Bool
+  | .FADD_S | .FSUB_S | .FMUL_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FEQ_S | .FLT_S | .FLE_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S => true
+  | _ => false
+
+/-- Does this op read FP source register rs3? (R4-type fused ops only) -/
+def OpType.hasFpRs3 : OpType → Bool
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S => true
+  | _ => false
+
+/-- Does this op read integer rs1? (FLW/FSW use int rs1 for address) -/
+def OpType.hasIntRs1 : OpType → Bool
+  | .FLW | .FSW => true
+  -- FMV_W_X reads int rs1
+  | .FMV_W_X => true
+  -- FCVT_S_W/FCVT_S_WU read int rs1
+  | .FCVT_S_W | .FCVT_S_WU => true
+  -- All non-F ops read int rs1 (when they have rs1)
+  | op => !op.hasFpRs1
+
+/-- Does this op write to an integer destination register?
+    (Compare, classify, FP→int conversion, FMV_X_W) -/
+def OpType.hasIntRd : OpType → Bool
+  | .FEQ_S | .FLT_S | .FLE_S | .FCLASS_S
+  | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W => true
+  | op => !op.hasFpRd
 
 end Shoumei.RISCV

@@ -57,6 +57,8 @@ structure ROBEntry where
   archRd : Fin 32
   /-- Exception occurred during execution -/
   exception : Bool
+  /-- Does this instruction write to an FP register? -/
+  isFpDest : Bool
   /-- Is this a branch/jump instruction? -/
   isBranch : Bool
   /-- Branch was mispredicted (set via CDB) -/
@@ -69,7 +71,7 @@ instance : Inhabited ROBEntry where
     physRd := 0, hasPhysRd := false,
     oldPhysRd := 0, hasOldPhysRd := false,
     archRd := 0, exception := false,
-    isBranch := false, branchMispredicted := false
+    isFpDest := false, isBranch := false, branchMispredicted := false
   }
 
 /-- Create an empty ROB entry. -/
@@ -145,7 +147,7 @@ def ROBState.allocate
     (rob : ROBState)
     (physRd : Fin 64) (hasPhysRd : Bool)
     (oldPhysRd : Fin 64) (hasOldPhysRd : Bool)
-    (archRd : Fin 32) (isBranch : Bool)
+    (archRd : Fin 32) (isFpDest : Bool := false) (isBranch : Bool)
     : ROBState × Option (Fin 16) :=
   if h : rob.count >= 16 then
     (rob, none)
@@ -159,6 +161,7 @@ def ROBState.allocate
       hasOldPhysRd := hasOldPhysRd
       archRd := archRd
       exception := false
+      isFpDest := isFpDest
       isBranch := isBranch
       branchMispredicted := false
     }

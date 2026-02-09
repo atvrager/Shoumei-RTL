@@ -22,6 +22,7 @@ inductive ExecUnit where
   | Branch  : ExecUnit   -- Branch and jump operations
   | Memory  : ExecUnit   -- Load and store operations
   | MulDiv  : ExecUnit   -- M-extension multiply/divide
+  | FPExec  : ExecUnit   -- F-extension floating-point operations
   | System  : ExecUnit   -- FENCE, ECALL, EBREAK
   | Illegal : ExecUnit   -- Unsupported operation for current config
   deriving Repr, BEq, DecidableEq
@@ -32,6 +33,7 @@ instance : ToString ExecUnit where
     | .Branch  => "Branch"
     | .Memory  => "Memory"
     | .MulDiv  => "MulDiv"
+    | .FPExec  => "FPExec"
     | .System  => "System"
     | .Illegal => "Illegal"
 
@@ -52,6 +54,20 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   -- Memory (loads and stores)
   | .LB | .LH | .LW | .LBU | .LHU
   | .SB | .SH | .SW => .Memory
+  -- Memory (FP loads/stores go to Memory unit like integer loads/stores)
+  | .FLW | .FSW => if config.enableF then .Memory else .Illegal
+  -- F extension (floating-point arithmetic)
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S =>
+      if config.enableF then .FPExec else .Illegal
+  -- F extension (FP compare/classify/convert → integer result)
+  | .FEQ_S | .FLT_S | .FLE_S | .FCLASS_S
+  | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W =>
+      if config.enableF then .FPExec else .Illegal
+  -- F extension (integer → FP conversions, FP move)
+  | .FCVT_S_W | .FCVT_S_WU | .FMV_W_X =>
+      if config.enableF then .FPExec else .Illegal
   -- M extension (multiply/divide)
   | .MUL | .MULH | .MULHSU | .MULHU
   | .DIV | .DIVU | .REM | .REMU =>

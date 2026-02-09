@@ -50,16 +50,20 @@ def needsBranchRS (op : OpType) (config : CPUConfig) : Bool :=
 def needsMulDivRS (op : OpType) (config : CPUConfig) : Bool :=
   classifyToUnit op config == ExecUnit.MulDiv
 
+/-- Check if an operation needs the FP RS -/
+def needsFPExecRS (op : OpType) (config : CPUConfig) : Bool :=
+  classifyToUnit op config == ExecUnit.FPExec
+
 /-- Check if an operation is a load -/
 def isLoad (op : OpType) : Bool :=
   match op with
-  | .LB | .LH | .LW | .LBU | .LHU => true
+  | .LB | .LH | .LW | .LBU | .LHU | .FLW => true
   | _ => false
 
 /-- Check if an operation is a store -/
 def isStore (op : OpType) : Bool :=
   match op with
-  | .SB | .SH | .SW => true
+  | .SB | .SH | .SW | .FSW => true
   | _ => false
 
 /-- Generate global stall signal from all structural hazard sources.
@@ -72,6 +76,7 @@ def isStore (op : OpType) : Bool :=
     - rsMemoryFull: Memory RS is full
     - rsBranchFull: Branch RS is full
     - rsMulDivFull: MulDiv RS is full (only checked if M extension enabled)
+    - rsFPExecFull: FP RS is full (only checked if F extension enabled)
     - lsuCanAcceptLoad: LSU can accept a new load
     - lsuCanAcceptStore: LSU can accept a new store
     - instrType: OpType of instruction attempting to issue
@@ -86,6 +91,7 @@ def generateStall
     (rsMemoryFull : Bool)
     (rsBranchFull : Bool)
     (rsMulDivFull : Bool)
+    (rsFPExecFull : Bool)
     (lsuCanAcceptLoad : Bool)
     (lsuCanAcceptStore : Bool)
     (instrType : OpType)
@@ -96,6 +102,7 @@ def generateStall
   (needsMemoryRS instrType config && rsMemoryFull) ||
   (needsBranchRS instrType config && rsBranchFull) ||
   (needsMulDivRS instrType config && rsMulDivFull) ||
+  (needsFPExecRS instrType config && rsFPExecFull) ||
   (isLoad instrType && !lsuCanAcceptLoad) ||
   (isStore instrType && !lsuCanAcceptStore)
 

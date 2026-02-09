@@ -16,6 +16,8 @@ structure CPUConfig where
   enableI : Bool := true
   /-- M extension: integer multiply/divide (MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU) -/
   enableM : Bool := false
+  /-- F extension: single-precision floating-point (IEEE 754) -/
+  enableF : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (future) -/
@@ -43,6 +45,7 @@ structure CPUConfig where
 def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableI then ["rv_i", "rv32_i"] else []) ++
   (if config.enableM then ["rv_m"] else []) ++
+  (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else [])
 
@@ -55,6 +58,9 @@ def rv32iConfig : CPUConfig := {}
 
 /-- RV32IM configuration (M extension enabled) -/
 def rv32imConfig : CPUConfig := { enableM := true }
+
+/-- RV32IMF configuration (M + F extensions enabled) -/
+def rv32imfConfig : CPUConfig := { enableM := true, enableF := true }
 
 
 
@@ -92,8 +98,9 @@ def CPUConfig.rvviConfig (cfg : CPUConfig) : RVVIConfig :=
 def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let base := s!"RV{cfg.xlen}I"
   let mExt := if cfg.enableM then "M" else ""
+  let fExt := if cfg.enableF then "F" else ""
   let cExt := if cfg.enableC then "C" else ""
-  base ++ mExt ++ cExt
+  base ++ mExt ++ fExt ++ cExt
 
 /-- Opcode encodings that differ between RV32I and RV32IM decoders.
     The decoder assigns sequential numbers to instructions; M-extension

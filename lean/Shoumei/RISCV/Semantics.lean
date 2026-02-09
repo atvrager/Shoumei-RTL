@@ -419,6 +419,16 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
     -- Breakpoint - return special result
     .ebreak
 
+  -- F extension: not yet implemented in behavioral semantics
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FEQ_S | .FLT_S | .FLE_S
+  | .FCVT_W_S | .FCVT_WU_S | .FCVT_S_W | .FCVT_S_WU
+  | .FMV_X_W | .FMV_W_X | .FCLASS_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FLW | .FSW =>
+    .illegalInstruction  -- TODO: implement FP semantics
+
 /-- Execute a full instruction fetch-decode-execute cycle -/
 def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResult :=
   -- Fetch instruction from memory at PC

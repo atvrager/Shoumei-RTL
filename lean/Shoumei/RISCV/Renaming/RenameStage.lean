@@ -45,6 +45,10 @@ structure RenamedInstruction where
   physRs1 : Option (Fin 64)
   /-- Physical source register 2 tag (from RAT lookup) -/
   physRs2 : Option (Fin 64)
+  /-- Physical source register 3 tag (from RAT lookup, R4-type FP fused ops) -/
+  physRs3 : Option (Fin 64) := none
+  /-- Rounding mode (from decoded instruction, F extension) -/
+  rm : Option (Fin 8) := none
   /-- Immediate value - pass-through from DecodedInstruction -/
   imm : Option Int
   /-- Previous physical register mapped to rd (for ROB retirement/deallocation) -/
@@ -60,6 +64,8 @@ instance : Inhabited RenamedInstruction where
     physRd := none
     physRs1 := none
     physRs2 := none
+    physRs3 := none
+    rm := none
     imm := none
     oldPhysRd := none
     pc := 0
@@ -67,75 +73,112 @@ instance : Inhabited RenamedInstruction where
 
 /-! ## Behavioral Model -/
 
-/-- RenameStage state: composite of RAT, FreeList, and PhysRegFile -/
+/-- RenameStage state: composite of RAT, FreeList, and PhysRegFile
+    for both integer and floating-point register files -/
 structure RenameStageState where
-  /-- Register Alias Table: architectural register → physical register mapping -/
+  /-- Integer Register Alias Table: arch int reg → phys int reg mapping -/
   rat : RATState 64
-  /-- Free List: pool of available physical registers -/
+  /-- Integer Free List: pool of available physical integer registers -/
   freeList : FreeListState 64
-  /-- Physical Register File: storage for 64 physical registers -/
+  /-- Integer Physical Register File: storage for 64 physical registers -/
   physRegFile : PhysRegFileState 64
+  /-- FP Register Alias Table: arch FP reg → phys FP reg mapping -/
+  fpRat : RATState 64 := RATState.init (by omega)
+  /-- FP Free List: pool of available physical FP registers -/
+  fpFreeList : FreeListState 64 := mkFreeList64Init
+  /-- FP Physical Register File: storage for 64 physical FP registers -/
+  fpPhysRegFile : PhysRegFileState 64 := PhysRegFileState.init 64
 
 /-- Initialize RenameStage with identity RAT mapping, FreeList with regs 32-63 free,
-    and PhysRegFile all zeros -/
+    and PhysRegFile all zeros (both integer and FP) -/
 def RenameStageState.init : RenameStageState :=
   { rat := RATState.init (by omega)           -- Identity mapping (0→0, 1→1, ..., 31→31)
     freeList := mkFreeList64Init              -- Registers 32-63 free
     physRegFile := PhysRegFileState.init 64   -- All zeros
+    fpRat := RATState.init (by omega)         -- FP identity mapping
+    fpFreeList := mkFreeList64Init            -- FP registers 32-63 free
+    fpPhysRegFile := PhysRegFileState.init 64 -- FP all zeros
   }
 
 /-- Core rename operation: transform DecodedInstruction → RenamedInstruction.
-    Returns updated state and optionally renamed instruction (None = stall). -/
+    Returns updated state and optionally renamed instruction (None = stall).
+    FP-aware: uses integer or FP RAT/FreeList based on OpType classification. -/
 def renameInstruction
     (state : RenameStageState)
     (instr : DecodedInstruction)
     : RenameStageState × Option RenamedInstruction :=
-  -- 1. Lookup physical tags for source registers
-  let physRs1 := instr.rs1.map state.rat.lookup
-  let physRs2 := instr.rs2.map state.rat.lookup
+  let op := instr.opType
+  -- 1. Lookup physical tags for source registers from appropriate RAT
+  let physRs1 := instr.rs1.map (if op.hasFpRs1 then state.fpRat.lookup else state.rat.lookup)
+  let physRs2 := instr.rs2.map (if op.hasFpRs2 then state.fpRat.lookup else state.rat.lookup)
+  let physRs3 := instr.rs3.map state.fpRat.lookup  -- rs3 is always FP (R4-type)
 
   -- 2. Handle destination register (if exists and not x0)
+  let useFpDest := op.hasFpRd
   match instr.rd with
   | none =>
       -- No destination (branches, stores, etc.)
       (state, some {
-        opType := instr.opType
+        opType := op
         physRd := none
         physRs1 := physRs1
         physRs2 := physRs2
+        physRs3 := physRs3
+        rm := instr.rm
         imm := instr.imm
         oldPhysRd := none
         pc := instr.pc
       })
   | some rd =>
-      if rd.val = 0 then
-        -- x0 special case: never allocate, never update RAT
+      if !useFpDest && rd.val = 0 then
+        -- x0 special case: never allocate, never update RAT (FP has no x0 equiv)
         (state, some {
-          opType := instr.opType
-          physRd := none  -- x0 is not a real physical register
+          opType := op
+          physRd := none
           physRs1 := physRs1
           physRs2 := physRs2
+          physRs3 := physRs3
+          rm := instr.rm
           imm := instr.imm
           oldPhysRd := none
           pc := instr.pc
         })
-      else
-        -- Normal destination register: allocate new physical register
-        let oldPhysRd := state.rat.lookup rd
-        let (freeList', newPhysRd) := state.freeList.allocate
+      else if useFpDest then
+        -- FP destination: allocate from FP free list and update FP RAT
+        let oldPhysRd := state.fpRat.lookup rd
+        let (fpFreeList', newPhysRd) := state.fpFreeList.allocate
         match newPhysRd with
-        | none =>
-            -- Stall: no free physical registers available
-            (state, none)
+        | none => (state, none)  -- Stall: no free FP physical registers
         | some physRd =>
-            -- Success: update RAT and return renamed instruction
-            let rat' := state.rat.allocate rd physRd
-            ({ state with rat := rat', freeList := freeList' },
+            let fpRat' := state.fpRat.allocate rd physRd
+            ({ state with fpRat := fpRat', fpFreeList := fpFreeList' },
              some {
-               opType := instr.opType
+               opType := op
                physRd := some physRd
                physRs1 := physRs1
                physRs2 := physRs2
+               physRs3 := physRs3
+               rm := instr.rm
+               imm := instr.imm
+               oldPhysRd := some oldPhysRd
+               pc := instr.pc
+             })
+      else
+        -- Integer destination: allocate from integer free list and update integer RAT
+        let oldPhysRd := state.rat.lookup rd
+        let (freeList', newPhysRd) := state.freeList.allocate
+        match newPhysRd with
+        | none => (state, none)  -- Stall: no free integer physical registers
+        | some physRd =>
+            let rat' := state.rat.allocate rd physRd
+            ({ state with rat := rat', freeList := freeList' },
+             some {
+               opType := op
+               physRd := some physRd
+               physRs1 := physRs1
+               physRs2 := physRs2
+               physRs3 := physRs3
+               rm := instr.rm
                imm := instr.imm
                oldPhysRd := some oldPhysRd
                pc := instr.pc
