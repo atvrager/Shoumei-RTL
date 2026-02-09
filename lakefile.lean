@@ -103,3 +103,8 @@ lean_exe test_chisel_v2 where
 lean_exe test_svv2 where
   root := `TestSVV2
   supportInterpreter := true
+
+-- Executable target for generating RISC-V test assembly (.S files)
+lean_exe gen_tests where
+  root := `GenTests
+  supportInterpreter := true

@@ -46,7 +46,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@rm -rf $(BUILD_DIR)/verilator
@@ -89,12 +89,21 @@ sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 run-elf: sim
 	$(BUILD_DIR)/sim_shoumei +elf=$(ELF)
 
-tests:
+gen-tests:
+	@if command -v lake >/dev/null 2>&1; then \
+		cd $(PROJ_ROOT) && lake exe gen_tests; \
+	elif ls $(TB_DIR)/tests/generated/*.S >/dev/null 2>&1; then \
+		echo "lake not found, using pre-generated .S files"; \
+	else \
+		echo "ERROR: no lake and no generated .S files" >&2; exit 1; \
+	fi
+
+tests: gen-tests
 	$(MAKE) -C $(TB_DIR)/tests
 
 run-all-tests: sim tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
@@ -114,7 +123,7 @@ run-all-tests: sim tests
 
 run-all-tests-xprop: sim-xprop tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei_xprop +elf=$$elf +timeout=3000 2>&1); \
@@ -163,7 +172,7 @@ cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 
 run-cosim-no-sc: cosim-no-sc tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
@@ -180,7 +189,7 @@ run-cosim-no-sc: cosim-no-sc tests
 
 run-cosim: cosim tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(BUILD_DIR)/cosim_shoumei_3way +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \

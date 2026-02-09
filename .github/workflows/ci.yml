@@ -222,6 +222,9 @@ jobs:
       - name: Generate code
         run: make codegen
 
+      - name: Generate test assembly
+        run: lake exe gen_tests
+
       - name: Compile Chisel
         run: make chisel
 
@@ -235,6 +238,7 @@ jobs:
             output/systemc/
             chisel/src/main/scala/generated/
             testbench/generated/
+            testbench/tests/generated/
             verification/compositional-certs.txt
           retention-days: 5
 
@@ -305,7 +309,7 @@ jobs:
       - name: Run all ELF tests (SystemC)
         run: |
           pass=0; fail=0; total=0
-          for elf in testbench/tests/*.elf; do
+          for elf in testbench/tests/*.elf testbench/tests/generated/*.elf; do
             total=$((total+1))
             name=$(basename "$elf")
             if timeout 60 ./systemc/build/sc_main_CPU_RV32IM "+elf=$elf" "+timeout=100000" 2>&1 | grep -q "TEST PASS"; then
