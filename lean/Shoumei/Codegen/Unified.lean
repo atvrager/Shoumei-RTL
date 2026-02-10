@@ -71,11 +71,25 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
     let path := s!"{asap7OutputDir}/{c.name}.sv"
     IO.FS.writeFile path sv
 
+-- Modules with known Chisel codegen limitations (instance bus-port bit mapping)
+-- These are verified via SV LEC + compositional certs instead
+-- TODO: Fix Chisel codegen for these modules so this skip list can be removed:
+--   - FP circuits: JVM method size limits (flat circuits too large for single Scala method)
+--   - FPAdder/FPDivider: FIRRTL false-positive combinational cycle on carry-chain topology
+--   - CPU_RV32IF/IMF: instance bus-port bit mapping (issue_opcode_5 as individual port)
+-- All are verified via SV LEC + compositional certs.
+private def chiselSkipList : List String :=
+  ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
+   "CPU_RV32IF", "CPU_RV32IMF"]
+
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
-  writeCircuitChisel c allCircuits
+  if chiselSkipList.contains c.name then
+    IO.println s!"  (skipping Chisel for {c.name} — verified via SV LEC)"
+  else
+    writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits
   writeCircuitASAP7 c allCircuits
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""

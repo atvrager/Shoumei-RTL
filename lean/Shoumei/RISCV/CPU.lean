@@ -1113,6 +1113,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- === DECODER ===
   let decoderModuleName :=
     if enableF && enableM then "RV32IMFDecoder"
+    else if enableF then "RV32IFDecoder"
     else if enableM then "RV32IMDecoder"
     else "RV32IDecoder"
   let decoder_inst : CircuitInstance := {

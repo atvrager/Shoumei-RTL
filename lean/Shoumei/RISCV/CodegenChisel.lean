@@ -68,6 +68,9 @@ def genChiselDecoderCase (instrDef : InstructionDef) : String :=
 private def hasMChisel (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
+private def hasFChisel (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_f"))
+
 /-- Generate complete Chisel decoder module -/
 private def ceilLog2 (n : Nat) : Nat :=
   if n <= 2 then 1
@@ -108,6 +111,17 @@ import chisel3.util._
   let muldivPort := if hasMChisel defs then
     "  val io_is_muldiv  = IO(Output(Bool()))       // M-extension multiply/divide\n" else ""
 
+  let fpPorts := if hasFChisel defs then
+    "  val io_rs3          = IO(Output(UInt(5.W)))    // Source register 3 (R4-type)\n" ++
+    "  val io_rm           = IO(Output(UInt(3.W)))    // Rounding mode\n" ++
+    "  val io_is_fp        = IO(Output(Bool()))       // FP arithmetic\n" ++
+    "  val io_has_fp_rd    = IO(Output(Bool()))       // FP destination register\n" ++
+    "  val io_fp_rs1_read  = IO(Output(Bool()))       // Reads FP rs1\n" ++
+    "  val io_fp_rs2_read  = IO(Output(Bool()))       // Reads FP rs2\n" ++
+    "  val io_fp_rs3_used  = IO(Output(Bool()))       // Uses FP rs3\n" ++
+    "  val io_is_fp_load   = IO(Output(Bool()))       // FP load (FLW)\n" ++
+    "  val io_is_fp_store  = IO(Output(Bool()))       // FP store (FSW)\n" else ""
+
   let moduleDecl :=
     "\n\nclass " ++ moduleName ++ " extends RawModule {\n" ++
     "  val io_instr      = IO(Input(UInt(32.W)))    // 32-bit instruction word\n" ++
@@ -124,13 +138,19 @@ import chisel3.util._
     "  val io_is_store   = IO(Output(Bool()))       // Instruction is a store\n" ++
     "  val io_use_imm    = IO(Output(Bool()))       // Uses immediate (not R-type)\n" ++
     muldivPort ++
+    fpPorts ++
     "\n" ++
     "  val instr = io_instr\n" ++
     "  val opcode = instr(6, 0)\n\n" ++
     "  // Extract register fields\n" ++
     "  io_rd  := instr(11, 7)\n" ++
     "  io_rs1 := instr(19, 15)\n" ++
-    "  io_rs2 := instr(24, 20)\n\n" ++
+    "  io_rs2 := instr(24, 20)\n" ++
+    (if hasFChisel defs then
+      "  io_rs3 := instr(31, 27)\n" ++
+      "  io_rm  := instr(14, 12)\n"
+    else "") ++
+    "\n" ++
     "  // Extract immediate values for each format\n"
 
   let immExtractors := String.intercalate "\n" [
@@ -163,7 +183,53 @@ import chisel3.util._
   let muldivClassify := if hasMChisel defs then
     "\n  io_is_muldiv  := io_valid && (opcode === \"b0110011\".U) && instr(25)" else ""
 
+  let fpClassify := if hasFChisel defs then
+    "\n\n  // FP classification" ++
+    "\n  io_is_fp := io_valid && (" ++
+    "\n    (opcode === \"b1010011\".U) ||" ++  -- OP-FP
+    "\n    (opcode === \"b1000011\".U) ||" ++  -- FMADD
+    "\n    (opcode === \"b1000111\".U) ||" ++  -- FMSUB
+    "\n    (opcode === \"b1001011\".U) ||" ++  -- FNMSUB
+    "\n    (opcode === \"b1001111\".U))" ++    -- FNMADD
+    "\n  io_has_fp_rd := io_valid && (" ++
+    "\n    (opcode === \"b1010011\".U && !(instr(31, 28) === \"b1110\".U || instr(31, 28) === \"b1010\".U)) ||" ++
+    "\n    (opcode === \"b1000011\".U) || (opcode === \"b1000111\".U) ||" ++
+    "\n    (opcode === \"b1001011\".U) || (opcode === \"b1001111\".U) ||" ++
+    "\n    (opcode === \"b0000111\".U))" ++  -- FLW
+    "\n  io_fp_rs1_read := io_valid && (" ++
+    "\n    (opcode === \"b1010011\".U && instr(31, 28) =/= \"b1111\".U) ||" ++  -- not FMV.W.X
+    "\n    (opcode === \"b1000011\".U) || (opcode === \"b1000111\".U) ||" ++
+    "\n    (opcode === \"b1001011\".U) || (opcode === \"b1001111\".U))" ++
+    "\n  io_fp_rs2_read := io_valid && (" ++
+    "\n    (opcode === \"b1010011\".U && !(instr(31, 25) === \"b0101100\".U || instr(31, 25) === \"b1100000\".U || instr(31, 25) === \"b1101000\".U || instr(31, 25) === \"b1110000\".U || instr(31, 25) === \"b1111000\".U)) ||" ++
+    "\n    (opcode === \"b1000011\".U) || (opcode === \"b1000111\".U) ||" ++
+    "\n    (opcode === \"b1001011\".U) || (opcode === \"b1001111\".U) ||" ++
+    "\n    (opcode === \"b0100111\".U))" ++  -- FSW
+    "\n  io_fp_rs3_used := io_valid && (" ++
+    "\n    (opcode === \"b1000011\".U) || (opcode === \"b1000111\".U) ||" ++
+    "\n    (opcode === \"b1001011\".U) || (opcode === \"b1001111\".U))" ++
+    "\n  io_is_fp_load  := io_valid && (opcode === \"b0000111\".U)" ++
+    "\n  io_is_fp_store := io_valid && (opcode === \"b0100111\".U)"
+  else ""
+
   let integerMuldivExclude := if hasMChisel defs then " && !instr(25)" else ""
+
+  let fpImmExtra := if hasFChisel defs then
+    "\n    is(\"b0000111\".U) { io_imm := immI }  // FLW (I-type)" ++
+    "\n    is(\"b0100111\".U) { io_imm := immS }  // FSW (S-type)"
+  else ""
+
+  let fpMemExtra := if hasFChisel defs then
+    " ||\n    (opcode === \"b0000111\".U) ||  // FLW\n    (opcode === \"b0100111\".U)     // FSW"
+  else ""
+
+  let fpStoreExtra := if hasFChisel defs then
+    " || (opcode === \"b0100111\".U)"
+  else ""
+
+  let fpNotStoreExtra := if hasFChisel defs then
+    " &&\n    (opcode =/= \"b0100111\".U)     // not FSW"
+  else ""
 
   let immMux :=
 "
@@ -174,7 +240,7 @@ import chisel3.util._
     is(\"b0100011\".U)                                 { io_imm := immS }  // S-type
     is(\"b1100011\".U)                                 { io_imm := immB }  // B-type
     is(\"b0110111\".U, \"b0010111\".U)                { io_imm := immU }  // U-type
-    is(\"b1101111\".U)                                 { io_imm := immJ }  // J-type
+    is(\"b1101111\".U)                                 { io_imm := immJ }  // J-type" ++ fpImmExtra ++ "
   }
 
   // Dispatch classification
@@ -182,7 +248,7 @@ import chisel3.util._
     (opcode =/= \"b0100011\".U) &&  // not STORE
     (opcode =/= \"b1100011\".U) &&  // not BRANCH
     (opcode =/= \"b0001111\".U) &&  // not FENCE
-    (opcode =/= \"b1110011\".U)     // not ECALL/EBREAK
+    (opcode =/= \"b1110011\".U)" ++ fpNotStoreExtra ++ "     // not ECALL/EBREAK
 
   io_is_integer := io_valid && (
     (opcode === \"b0110011\".U" ++ integerMuldivExclude ++ ") ||  // R-type
@@ -193,7 +259,7 @@ import chisel3.util._
 
   io_is_memory := io_valid && (
     (opcode === \"b0000011\".U) ||  // LOAD
-    (opcode === \"b0100011\".U)     // STORE
+    (opcode === \"b0100011\".U)" ++ fpMemExtra ++ "
   )
 
   io_is_branch := io_valid && (
@@ -202,9 +268,9 @@ import chisel3.util._
     (opcode === \"b1100111\".U)     // JALR
   )
 
-  io_is_store := io_valid && (opcode === \"b0100011\".U)  // STORE
+  io_is_store := io_valid && ((opcode === \"b0100011\".U)" ++ fpStoreExtra ++ ")
   io_use_imm  := io_valid && (opcode =/= \"b0110011\".U)  // All except R-type
-" ++ muldivClassify ++ "
+" ++ muldivClassify ++ fpClassify ++ "
 }
 "
 

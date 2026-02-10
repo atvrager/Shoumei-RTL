@@ -28,6 +28,10 @@ def filterBaseI (defs : List InstructionDef) : List InstructionDef :=
 def filterIM (defs : List InstructionDef) : List InstructionDef :=
   defs.filter (fun d => d.extension.all (fun ext => ext != "rv_f"))
 
+/-- Filter to I + F (no M) -/
+def filterIF (defs : List InstructionDef) : List InstructionDef :=
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m"))
+
 /-- Check if instruction is an F-extension instruction -/
 private def isFExtInstruction (d : InstructionDef) : Bool :=
   d.extension.any (· == "rv_f")
@@ -39,6 +43,12 @@ def sortIMFirst (defs : List InstructionDef) : List InstructionDef :=
   let im := defs.filter (fun d => !isFExtInstruction d)
   let f := defs.filter isFExtInstruction
   im ++ f
+
+/-- Sort IF instructions: I first (preserving order), then F. -/
+def sortIFirst (defs : List InstructionDef) : List InstructionDef :=
+  let i := defs.filter (fun d => !isFExtInstruction d)
+  let f := defs.filter isFExtInstruction
+  i ++ f
 
 private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit := do
   writeSystemVerilogDecoder defs s!"output/sv-from-lean/{name}.sv" name
@@ -76,6 +86,13 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
     writeDecoder imDefs "RV32IMDecoder"
     IO.println "✓ RV32IMDecoder complete"
 
+  -- Generate RV32IFDecoder if F extension instructions are present
+  if hasF then
+    let ifDefs := sortIFirst (filterIF defs)
+    IO.println s!"\n── RV32IFDecoder ({ifDefs.length} instructions) ──"
+    writeDecoder ifDefs "RV32IFDecoder"
+    IO.println "✓ RV32IFDecoder complete"
+
   -- Generate RV32IMF decoder if both M+F present (all instructions, sorted I+M first)
   if hasM && hasF then
     let imfDefs := sortIMFirst defs
@@ -88,6 +105,8 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
   IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + Chisel + SystemC)"
   if hasM then
     IO.println s!"  - RV32IMDecoder: {(filterIM defs).length} instructions (SV + Chisel + SystemC)"
+  if hasF then
+    IO.println s!"  - RV32IFDecoder: {(filterIF defs).length} instructions (SV + Chisel + SystemC)"
   if hasM && hasF then
     IO.println s!"  - RV32IMFDecoder: {defs.length} instructions (SV + Chisel + SystemC)"
   IO.println "\n✓ Code generation complete!"

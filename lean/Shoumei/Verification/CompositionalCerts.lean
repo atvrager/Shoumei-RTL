@@ -264,6 +264,12 @@ def lsu_cert : CompositionalCert := {
 /-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
     Verified by construction: the Lean DSL generates the truth table directly
     from the ISA spec, and the decoder proof shows it matches. -/
+def rv32ifDecoder_cert : CompositionalCert := {
+  moduleName := "RV32IFDecoder"
+  dependencies := []
+  proofReference := "Shoumei.RISCV.DecoderProofs"
+}
+
 def rv32imfDecoder_cert : CompositionalCert := {
   moduleName := "RV32IMFDecoder"
   dependencies := []
@@ -413,6 +419,7 @@ def allCerts : List CompositionalCert := [
   storeBuffer8_cert,
   lsu_cert,
   -- Decoders
+  rv32ifDecoder_cert,
   rv32imfDecoder_cert,
   -- F-Extension
   fpAdder_cert,

@@ -140,6 +140,13 @@ def opcodeEncodings_RV32IM : OpcodeEncodings :=
     beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
     lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28 }
 
+/-- RV32IF decoder opcode encodings (I same as RV32I, F appended after 40 I instructions) -/
+def opcodeEncodings_RV32IF : OpcodeEncodings :=
+  { lui := 19, auipc := 35, jal := 25, jalr := 24,
+    beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
+    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
+    flw := 55, fsw := 40 }
+
 /-- RV32IMF decoder opcode encodings (I+M same as RV32IM, F appended) -/
 def opcodeEncodings_RV32IMF : OpcodeEncodings :=
   { lui := 25, auipc := 43, jal := 31, jalr := 30,
@@ -150,6 +157,7 @@ def opcodeEncodings_RV32IMF : OpcodeEncodings :=
 /-- Get opcode encodings for a CPU config -/
 def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
   if cfg.enableF && cfg.enableM then opcodeEncodings_RV32IMF
+  else if cfg.enableF then opcodeEncodings_RV32IF
   else if cfg.enableM then opcodeEncodings_RV32IM
   else opcodeEncodings_RV32I
 
