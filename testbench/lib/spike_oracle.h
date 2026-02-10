@@ -19,6 +19,7 @@ struct SpikeStepResult {
     uint32_t frd;       // FP destination register (0 if none)
     uint32_t frd_value; // FP written value (0 if frd==0)
     bool     frd_valid; // FP register was written
+    uint32_t fflags;    // Accumulated FP exception flags (NV|DZ|OF|UF|NX)
 };
 
 class SpikeOracle {

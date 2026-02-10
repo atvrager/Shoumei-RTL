@@ -271,6 +271,18 @@ def fpSmokeTest : TestProgram := {
     , .fr4type "fmadd.s" (f 9) (f 2) (f 3) (f 1)  -- f9 = 2.0*3.0+1.0 = 7.0
     , .fr4type "fmsub.s" (f 10) (f 2) (f 3) (f 1) -- f10 = 2.0*3.0-1.0 = 5.0
     , blank
+    , comment "--- Negated fused multiply-add ---"
+    , .fr4type "fnmadd.s" (f 17) (f 2) (f 3) (f 1) -- f17 = -(2.0*3.0)-1.0 = -7.0
+    , .fr4type "fnmsub.s" (f 18) (f 2) (f 3) (f 1) -- f18 = -(2.0*3.0)+1.0 = -5.0
+    , blank
+    , comment "--- Square root ---"
+    , pseudo "fsqrt.s f19, f4"                       -- f19 = sqrt(1.0) = 1.0
+    , blank
+    , comment "--- Unsigned conversions ---"
+    , .fcvt_to_int "fcvt.wu.s" (x 18) (f 2)         -- x18 = uint(2.0) = 2
+    , itype "addi" (x 19) (x 0) 7
+    , .fcvt_from_int "fcvt.s.wu" (f 20) (x 19)      -- f20 = float(7u) = 7.0
+    , blank
     , comment "--- Min/Max ---"
     , .frtype "fmin.s" (f 11) (f 1) (f 2)   -- f11 = min(1.0, 2.0) = 1.0
     , .frtype "fmax.s" (f 12) (f 1) (f 2)   -- f12 = max(1.0, 2.0) = 2.0
@@ -311,6 +323,45 @@ def fpSmokeTest : TestProgram := {
     , comment "Check fcvt.w.s: x14 should be 2"
     , itype "addi" (x 23) (x 0) 2
     , btype "bne" (x 14) (x 23) ".Lfp_fail"
+    , blank
+    , comment "Check fdiv: f8 should be 1.0 (0x3F800000)"
+    , .fmv_to_int (x 24) (f 8)
+    , pseudo "li x25, 0x3F800000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fmadd: f9 should be 7.0 (0x40E00000)"
+    , .fmv_to_int (x 24) (f 9)
+    , pseudo "li x25, 0x40E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fmsub: f10 should be 5.0 (0x40A00000)"
+    , .fmv_to_int (x 24) (f 10)
+    , pseudo "li x25, 0x40A00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fnmadd: f17 should be -7.0 (0xC0E00000)"
+    , .fmv_to_int (x 24) (f 17)
+    , pseudo "li x25, 0xC0E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fnmsub: f18 should be -5.0 (0xC0A00000)"
+    , .fmv_to_int (x 24) (f 18)
+    , pseudo "li x25, 0xC0A00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fsqrt: f19 should be 1.0 (0x3F800000)"
+    , .fmv_to_int (x 24) (f 19)
+    , pseudo "li x25, 0x3F800000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fcvt.wu.s: x18 should be 2"
+    , itype "addi" (x 25) (x 0) 2
+    , btype "bne" (x 18) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fcvt.s.wu: f20 should be 7.0 (0x40E00000)"
+    , .fmv_to_int (x 24) (f 20)
+    , pseudo "li x25, 0x40E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
     ] ++
     passEpilogue ++
     failEpilogue ".Lfp_fail"

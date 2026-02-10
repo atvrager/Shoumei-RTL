@@ -440,6 +440,27 @@ def fpMiscCircuit : Circuit :=
     Gate.mkMUX (fcvt_mag[i]!) (fcvt_neg[i]!) (src1[31]!) (fcvt_res[i]!)
 
   -- ============================================================
+  -- FCVT.WU.S (op=13 = 01101): !op4 & op3 & op2 & !op1 & op0
+  -- Convert float32 to unsigned int32.
+  -- Reuses fcvt_mag (barrel-shifted mantissa). If input is negative, clamp to 0.
+  -- ============================================================
+  let fcvtwu_t0 := Wire.mk "fcvtwu_t0"
+  let fcvtwu_t1 := Wire.mk "fcvtwu_t1"
+  let fcvtwu_t2 := Wire.mk "fcvtwu_t2"
+  let is_fcvt_wu := Wire.mk "is_fcvt_wu"
+  let dec_fcvt_wu := [
+    Gate.mkAND (nop[4]!) (op[3]!) fcvtwu_t0,
+    Gate.mkAND (op[2]!) (nop[1]!) fcvtwu_t1,
+    Gate.mkAND fcvtwu_t0 fcvtwu_t1 fcvtwu_t2,
+    Gate.mkAND fcvtwu_t2 (op[0]!) is_fcvt_wu
+  ]
+
+  -- Result: if src1 negative (src1[31]=1), clamp to 0; else use fcvt_mag
+  let fcvtwu_res := makeIndexedWires "fcvtwu_res" 32
+  let fcvtwu_res_gates := (List.range 32).map fun i =>
+    Gate.mkMUX (fcvt_mag[i]!) zero (src1[31]!) (fcvtwu_res[i]!)
+
+  -- ============================================================
   -- FMIN.S (op=19 = 10011): op4 & !op3 & !op2 & op1 & op0
   -- ============================================================
   let fmin_t0 := Wire.mk "fmin_t0"
@@ -622,6 +643,98 @@ def fpMiscCircuit : Circuit :=
       Gate.mkMUX (src1[31]!) zero fcvtsw_is_zero (fcvtsw_res[i]!)
 
   -- ============================================================
+  -- FCVT.S.WU (op=15 = 01111): !op4 & op3 & op2 & op1 & op0
+  -- Convert unsigned int32 (src1) to float32. Like FCVT.S.W but
+  -- magnitude = src1 (no abs value), sign = 0.
+  -- ============================================================
+  let fcvtswu_t0 := Wire.mk "fcvtswu_t0"
+  let fcvtswu_t1 := Wire.mk "fcvtswu_t1"
+  let fcvtswu_t2 := Wire.mk "fcvtswu_t2"
+  let is_fcvt_s_wu := Wire.mk "is_fcvt_s_wu"
+  let dec_fcvt_s_wu := [
+    Gate.mkAND (nop[4]!) (op[3]!) fcvtswu_t0,
+    Gate.mkAND (op[2]!) (op[1]!) fcvtswu_t1,
+    Gate.mkAND fcvtswu_t0 fcvtswu_t1 fcvtswu_t2,
+    Gate.mkAND fcvtswu_t2 (op[0]!) is_fcvt_s_wu
+  ]
+
+  -- Check if src1 == 0
+  -- Reuse fcvtsw_is_zero from FCVT.S.W (already checks src1 for zero)
+
+  -- Priority encoder on src1 directly (unsigned magnitude)
+  let fcvtswu_lpos := makeIndexedWires "fcvtswu_lpos" 5
+  let fcvtswu_pe_init := makeIndexedWires "fcvtswu_pe_pos_init" 5
+  let fcvtswu_pe_init_gates := (List.range 5).map fun k =>
+    Gate.mkBUF zero (fcvtswu_pe_init[k]!)
+  let (_, _, fcvtswu_penc_fold_gates) := (List.range 32).foldl
+    (fun (acc : Wire × (List Wire × List Gate)) idx =>
+      let i := 31 - idx
+      let old_found := acc.1
+      let old_pos := acc.2.1
+      let gates_acc := acc.2.2
+      let nf := Wire.mk s!"fcvtswu_pe_nf_{i}"
+      let take := Wire.mk s!"fcvtswu_pe_take_{i}"
+      let g_nf := Gate.mkNOT old_found nf
+      let g_take := Gate.mkAND (src1[i]!) nf take
+      let new_found := Wire.mk s!"fcvtswu_pe_found_{i}"
+      let g_found := Gate.mkOR old_found (src1[i]!) new_found
+      let new_pos := makeIndexedWires s!"fcvtswu_pe_pos_{i}" 5
+      let pos_gates := (List.range 5).map fun k =>
+        let bit_val := if (i / Nat.pow 2 k) % 2 == 1 then one else zero
+        Gate.mkMUX (old_pos[k]!) bit_val take (new_pos[k]!)
+      (new_found, (new_pos, gates_acc ++ [g_nf, g_take, g_found] ++ pos_gates))
+    ) (zero, (fcvtswu_pe_init, []))
+  let fcvtswu_penc_gates := fcvtswu_pe_init_gates ++ fcvtswu_penc_fold_gates
+
+  let fcvtswu_final_pos := makeIndexedWires "fcvtswu_pe_pos_0" 5
+  let fcvtswu_lpos_gates := (List.range 5).map fun k =>
+    Gate.mkBUF (fcvtswu_final_pos[k]!) (fcvtswu_lpos[k]!)
+
+  -- Shift amount = 31 - lead_pos = NOT(lead_pos) in 5 bits
+  let fcvtswu_shamt := makeIndexedWires "fcvtswu_shamt" 5
+  let fcvtswu_shamt_gates := (List.range 5).map fun k =>
+    Gate.mkNOT (fcvtswu_lpos[k]!) (fcvtswu_shamt[k]!)
+
+  -- Barrel left shift src1 by shamt
+  let (fcvtswu_shifted, fcvtswu_bsl_gates) :=
+    mkBarrelShiftLeft "fcvtswu_bsl" src1 32 fcvtswu_shamt 5 zero
+
+  -- Exponent = lead_pos + 127
+  let fcvtswu_lpos8 := (List.range 5).map (fun k => fcvtswu_lpos[k]!) ++
+    [zero, zero, zero]
+  let fcvtswu_exp := makeIndexedWires "fcvtswu_exp" 8
+  let (_, fcvtswu_exp_gates) := (List.range 8).foldl (fun (acc : Wire × List Gate) i =>
+    let cin := acc.1
+    let a := const127[i]!
+    let b := fcvtswu_lpos8[i]!
+    let xor1 := Wire.mk s!"fcvtswu_exp_xor1_{i}"
+    let g_xor1 := Gate.mkXOR a b xor1
+    let g_sum := Gate.mkXOR xor1 cin (fcvtswu_exp[i]!)
+    let t0 := Wire.mk s!"fcvtswu_exp_t0_{i}"
+    let t1 := Wire.mk s!"fcvtswu_exp_t1_{i}"
+    let t2 := Wire.mk s!"fcvtswu_exp_t2_{i}"
+    let or0 := Wire.mk s!"fcvtswu_exp_or0_{i}"
+    let cout := Wire.mk s!"fcvtswu_exp_co_{i}"
+    let g_t0 := Gate.mkAND a b t0
+    let g_t1 := Gate.mkAND a cin t1
+    let g_t2 := Gate.mkAND b cin t2
+    let g_or0 := Gate.mkOR t0 t1 or0
+    let g_cout := Gate.mkOR or0 t2 cout
+    (cout, acc.2 ++ [g_xor1, g_sum, g_t0, g_t1, g_t2, g_or0, g_cout])
+  ) (zero, [])
+
+  -- Pack: {0 (sign), exp[7:0], mantissa[22:0]}. If zero, all zeros.
+  let fcvtswu_res := makeIndexedWires "fcvtswu_res" 32
+  let fcvtswu_pack_gates := (List.range 32).map fun i =>
+    if i < 23 then
+      Gate.mkMUX (fcvtswu_shifted[i + 8]!) zero fcvtsw_is_zero (fcvtswu_res[i]!)
+    else if i < 31 then
+      Gate.mkMUX (fcvtswu_exp[i - 23]!) zero fcvtsw_is_zero (fcvtswu_res[i]!)
+    else
+      -- bit 31 = sign = always 0 for unsigned
+      Gate.mkBUF zero (fcvtswu_res[i]!)
+
+  -- ============================================================
   -- FCLASS.S (op=18 = 10010): op4 & !op3 & !op2 & op1 & !op0
   -- ============================================================
   let fclass_t0 := Wire.mk "fclass_t0"
@@ -775,7 +888,7 @@ def fpMiscCircuit : Circuit :=
   ]
 
   -- Now layer comparison results (bit 0 only, rest 0)
-  -- After base, layer FCVT (32-bit result)
+  -- After base, layer FCVT.W.S (32-bit result)
   let after_fcvt := makeIndexedWires "after_fcvt" 32
   let after_fcvt_gates := (List.range 32).map fun i =>
     if i < 31 then
@@ -783,13 +896,18 @@ def fpMiscCircuit : Circuit :=
     else
       Gate.mkMUX base_bit31 (fcvt_res[31]!) is_fcvt (after_fcvt[31]!)
 
+  -- Layer FCVT.WU.S
+  let after_fcvtwu := makeIndexedWires "after_fcvtwu" 32
+  let after_fcvtwu_gates := (List.range 32).map fun i =>
+    Gate.mkMUX (after_fcvt[i]!) (fcvtwu_res[i]!) is_fcvt_wu (after_fcvtwu[i]!)
+
   -- Layer FEQ
   let after_feq := makeIndexedWires "after_feq" 32
   let after_feq_gates := (List.range 32).map fun i =>
     if i == 0 then
-      Gate.mkMUX (after_fcvt[0]!) feq_result is_feq (after_feq[0]!)
+      Gate.mkMUX (after_fcvtwu[0]!) feq_result is_feq (after_feq[0]!)
     else
-      Gate.mkMUX (after_fcvt[i]!) zero is_feq (after_feq[i]!)
+      Gate.mkMUX (after_fcvtwu[i]!) zero is_feq (after_feq[i]!)
 
   -- Layer FLT
   let after_flt := makeIndexedWires "after_flt" 32
@@ -822,9 +940,14 @@ def fpMiscCircuit : Circuit :=
   let after_fcvtsw_gates := (List.range 32).map fun i =>
     Gate.mkMUX (after_fmax[i]!) (fcvtsw_res[i]!) is_fcvt_s_w (after_fcvtsw[i]!)
 
+  -- Layer FCVT.S.WU
+  let after_fcvtswu := makeIndexedWires "after_fcvtswu" 32
+  let after_fcvtswu_gates := (List.range 32).map fun i =>
+    Gate.mkMUX (after_fcvtsw[i]!) (fcvtswu_res[i]!) is_fcvt_s_wu (after_fcvtswu[i]!)
+
   -- Layer FCLASS (final layer -> writes to result)
   let after_fclass_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (after_fcvtsw[i]!) (fclass_bits[i]!) is_fclass (result[i]!)
+    Gate.mkMUX (after_fcvtswu[i]!) (fclass_bits[i]!) is_fclass (result[i]!)
 
   -- Exception flags: all zero for these operations
   let exc_gates := (List.range 5).map fun i =>
@@ -839,8 +962,8 @@ def fpMiscCircuit : Circuit :=
       dec_fsgnj ++ dec_fsgnjn ++ dec_fsgnjx ++ dec_fmv ++
       dec_sgnj_any ++ sgnj_sign_gates ++
       -- Op decoders
-      dec_feq ++ dec_flt ++ dec_fle ++ dec_fcvt ++
-      dec_fmin ++ dec_fmax ++ dec_fcvt_s_w ++ dec_fclass ++
+      dec_feq ++ dec_flt ++ dec_fle ++ dec_fcvt ++ dec_fcvt_wu ++
+      dec_fmin ++ dec_fmax ++ dec_fcvt_s_w ++ dec_fcvt_s_wu ++ dec_fclass ++
       -- FEQ logic
       feq_xor_gates ++ feq_or_gates ++ [g_feq_inv] ++
       -- FLT logic
@@ -851,6 +974,8 @@ def fpMiscCircuit : Circuit :=
       -- FCVT logic
       fcvt_sub_gates ++ fcvt_big_gates ++ fcvt_shift_gates ++
       fcvt_mag_gates ++ fcvt_inv_gates ++ fcvt_neg_gates ++ fcvt_sel_gates ++
+      -- FCVT.WU.S logic
+      fcvtwu_res_gates ++
       -- FMIN/FMAX logic
       fmin_res_gates ++ fmax_res_gates ++
       -- FCVT.S.W logic
@@ -858,6 +983,9 @@ def fpMiscCircuit : Circuit :=
       fcvtsw_inv_gates ++ fcvtsw_neg_gates ++ fcvtsw_mag_gates ++
       fcvtsw_penc_gates ++ fcvtsw_lpos_gates ++ fcvtsw_shamt_gates ++
       fcvtsw_bsl_gates ++ fcvtsw_exp_gates ++ [g_fcvtsw_nz] ++ fcvtsw_pack_gates ++
+      -- FCVT.S.WU logic
+      fcvtswu_penc_gates ++ fcvtswu_lpos_gates ++ fcvtswu_shamt_gates ++
+      fcvtswu_bsl_gates ++ fcvtswu_exp_gates ++ fcvtswu_pack_gates ++
       -- FCLASS logic
       fclass_exp_ones_gates ++ fclass_exp_or_gates ++ [g_fclass_eaz] ++
       fclass_mant_nz_gates ++ [g_fclass_mz, g_fclass_ns, g_fclass_neao, g_fclass_neaz] ++
@@ -866,8 +994,10 @@ def fpMiscCircuit : Circuit :=
       [g_fclass_nm22] ++ fclass_b8_gates ++ fclass_b9_gates ++
       -- Output MUX chain
       [g_active_base] ++ base_low_gates ++ base_bit31_gates ++
-      after_fcvt_gates ++ after_feq_gates ++ after_flt_gates ++ after_fle_gates ++
-      after_fmin_gates ++ after_fmax_gates ++ after_fcvtsw_gates ++ after_fclass_gates ++
+      after_fcvt_gates ++ after_fcvtwu_gates ++
+      after_feq_gates ++ after_flt_gates ++ after_fle_gates ++
+      after_fmin_gates ++ after_fmax_gates ++ after_fcvtsw_gates ++
+      after_fcvtswu_gates ++ after_fclass_gates ++
       exc_gates
     instances := []
     signalGroups := [

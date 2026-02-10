@@ -259,6 +259,73 @@ def lsu_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.LSUProofs"
 }
 
+/-! ## Decoders (LUT-based, no Chisel equivalent) -/
+
+/-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
+    Verified by construction: the Lean DSL generates the truth table directly
+    from the ISA spec, and the decoder proof shows it matches. -/
+def rv32imfDecoder_cert : CompositionalCert := {
+  moduleName := "RV32IMFDecoder"
+  dependencies := []
+  proofReference := "Shoumei.RISCV.DecoderProofs"
+}
+
+/-! ## F-Extension -/
+
+/-- FPAdder: IEEE 754 SP adder (sequential, pipeline DFFs cause induction failure) -/
+def fpAdder_cert : CompositionalCert := {
+  moduleName := "FPAdder"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.FPAdderProofs"
+}
+
+/-- FPMultiplier: IEEE 754 SP multiplier (sequential, pipeline DFFs cause induction failure) -/
+def fpMultiplier_cert : CompositionalCert := {
+  moduleName := "FPMultiplier"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.FPMultiplierProofs"
+}
+
+/-- FPFMA: Fused multiply-add (FPMultiplier + FPAdder) -/
+def fpFMA_cert : CompositionalCert := {
+  moduleName := "FPFMA"
+  dependencies := ["FPMultiplier", "FPAdder"]
+  proofReference := "Shoumei.Circuits.Sequential.FPFMAProofs"
+}
+
+/-- FPDivider: IEEE 754 SP divider (iterative, sequential) -/
+def fpDivider_cert : CompositionalCert := {
+  moduleName := "FPDivider"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.FPDividerProofs"
+}
+
+/-- FPExecUnit: Top-level FP execution unit (all FP sub-units) -/
+def fpExecUnit_cert : CompositionalCert := {
+  moduleName := "FPExecUnit"
+  dependencies := ["FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt", "DFlipFlop"]
+  proofReference := "Shoumei.RISCV.Execution.FPExecUnitProofs"
+}
+
+/-- CPU_RV32IMF: RV32IMF with F extension -/
+def cpu_rv32imf_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
+    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
+/-- CPU_RV32IF: RV32IF (F extension without M) -/
+def cpu_rv32if_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IF"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Phase 8: Top-Level Integration -/
 
 /-- RenameStage_32x64: Composite rename stage (RAT + FreeList + PhysRegFile) -/
@@ -345,6 +412,16 @@ def allCerts : List CompositionalCert := [
   -- Memory
   storeBuffer8_cert,
   lsu_cert,
+  -- Decoders
+  rv32imfDecoder_cert,
+  -- F-Extension
+  fpAdder_cert,
+  fpMultiplier_cert,
+  fpFMA_cert,
+  fpDivider_cert,
+  fpExecUnit_cert,
+  cpu_rv32imf_cert,
+  cpu_rv32if_cert,
   -- Phase 8: Top-Level Integration
   renameStage_cert,
   fetchStage_cert,

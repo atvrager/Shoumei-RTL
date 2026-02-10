@@ -300,7 +300,7 @@ def mkFPExecUnit : Circuit :=
   -- ══════════════════════════════════════════════
   -- Operation decoding: detect which sub-unit should fire
   -- op encodings: FADD=0, FSUB=1, FMUL=2, FDIV=3, FSQRT=4,
-  -- FMADD=5, FMSUB=6, FNMADD=7, FNMSUB=8,
+  -- FMADD=5, FMSUB=6, FNMSUB=7, FNMADD=8,
   -- FEQ=9..FSGNJX=23 (single-cycle, handled by FPMisc)
   -- ══════════════════════════════════════════════
 
@@ -404,13 +404,12 @@ def mkFPExecUnit : Circuit :=
 
     -- FMA variant control: decode negate_product and subtract_addend from op
     -- FMADD(5)=00101: neg=0,sub=0  FMSUB(6)=00110: neg=0,sub=1
-    -- FNMADD(7)=00111: neg=1,sub=0  FNMSUB(8)=01000: neg=1,sub=1
-    -- For ops 5-7 (op2_and_not34): sub = op[1] AND NOT op[0] (only 6=110)
+    -- FNMADD(7)=00111: neg=1,sub=1  FNMSUB(8)=01000: neg=1,sub=0
+    -- For ops 5-7 (op2_and_not34): sub = op[1] (matches 6=110 and 7=111)
     --                               neg = op[1] AND op[0] (only 7=111)
-    -- For op 8 (op3_and_not24): both sub=1 and neg=1
-    Gate.mkAND (op[1]!) not_op0 (Wire.mk "fma_sub_57"),
-    Gate.mkAND op2_and_not34 (Wire.mk "fma_sub_57") (Wire.mk "fma_sub_a"),
-    Gate.mkOR (Wire.mk "fma_sub_a") op3_and_not24 (Wire.mk "fma_subtract_addend"),
+    -- For op 8 (op3_and_not24): neg=1 only (sub=0)
+    Gate.mkAND op2_and_not34 (op[1]!) (Wire.mk "fma_sub_a"),
+    Gate.mkBUF (Wire.mk "fma_sub_a") (Wire.mk "fma_subtract_addend"),
     Gate.mkAND (op[1]!) (op[0]!) (Wire.mk "fma_neg_57"),
     Gate.mkAND op2_and_not34 (Wire.mk "fma_neg_57") (Wire.mk "fma_neg_a"),
     Gate.mkOR (Wire.mk "fma_neg_a") op3_and_not24 (Wire.mk "fma_negate_product")

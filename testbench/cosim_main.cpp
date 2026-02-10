@@ -98,6 +98,7 @@ struct RVVIState {
     uint32_t frd;       // FP architectural destination register
     bool     frd_valid;
     uint32_t frd_data;
+    uint32_t fflags;    // Accumulated FP exception flags
 };
 
 static RVVIState read_rvvi(const Vtb_cpu* dut) {
@@ -112,6 +113,7 @@ static RVVIState read_rvvi(const Vtb_cpu* dut) {
     s.frd      = dut->o_rvvi_frd;
     s.frd_valid = dut->o_rvvi_frd_valid;
     s.frd_data = dut->o_rvvi_frd_data;
+    s.fflags   = dut->o_fflags_acc;
     return s;
 }
 
@@ -228,6 +230,15 @@ int main(int argc, char** argv) {
                         retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);
                     mismatches++;
                 }
+            }
+
+            // Compare fflags accumulator
+            if (rvvi.fflags != spike_r.fflags) {
+                fprintf(stderr,
+                    "MISMATCH at retirement #%lu (cycle %lu): "
+                    "fflags RTL=0x%x Spike=0x%x\n",
+                    retired, cycle, rvvi.fflags, spike_r.fflags);
+                mismatches++;
             }
 
 #ifdef HAS_SYSTEMC

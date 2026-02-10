@@ -2522,6 +2522,33 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 5).map (fun i => Gate.mkBUF zero rvvi_frd[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF zero rvvi_frd_data[i]!)
 
+  -- === FFLAGS ACCUMULATOR ===
+  -- Accumulate FP exception flags: fflags_new[i] = fflags_reg[i] | (fp_valid_out & exceptions[i])
+  let fflags_acc := makeIndexedWires "fflags_acc" 5
+  let fflags_reg := makeIndexedWires "fflags_reg" 5
+  let fflags_new := makeIndexedWires "fflags_new" 5
+  let fflags_masked := makeIndexedWires "fflags_masked" 5
+
+  let fflags_gates :=
+    if enableF then
+      (List.range 5).map (fun i =>
+        Gate.mkAND fp_valid_out fp_exceptions[i]! fflags_masked[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkOR fflags_reg[i]! fflags_masked[i]! fflags_new[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkBUF fflags_reg[i]! fflags_acc[i]!)
+    else
+      (List.range 5).map (fun i => Gate.mkBUF zero fflags_acc[i]!)
+
+  let fflags_dff_instances :=
+    if enableF then
+      (List.range 5).map (fun i =>
+        { moduleName := "DFlipFlop"
+          instName := s!"u_fflags_dff_{i}"
+          portMap := [("d", fflags_new[i]!), ("q", fflags_reg[i]!),
+                      ("clock", clock), ("reset", reset)] : CircuitInstance })
+    else []
+
   -- === CDB REPLAY BUFFER ===
   let replay_valid := Wire.mk "replay_valid"
   let replay_valid_next := Wire.mk "replay_valid_next"
@@ -3068,7 +3095,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                -- RVVI-TRACE outputs
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
-               rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data
+               rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
+               fflags_acc
     gates := flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates else []) ++
@@ -3097,7 +3125,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
              lsu_is_fp_gates ++ dmem_is_fp_gates ++
              commit_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates ++
-             rvvi_fp_gates
+             rvvi_fp_gates ++
+             fflags_gates
     instances := [fetch_inst, decoder_inst, rename_inst] ++
                   (if enableF then [fp_rename_inst] else []) ++
                   [redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++
@@ -3121,7 +3150,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   br_cmp_inst] ++
                   cdb_reg_insts ++
                   lsu_pipeline_insts ++
-                  [pc_queue_inst, insn_queue_inst]
+                  [pc_queue_inst, insn_queue_inst] ++
+                  fflags_dff_instances
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
        { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
@@ -3194,6 +3224,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
        { name := "rvvi_frd", width := 5, wires := rvvi_frd },
        { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
+       { name := "fflags_acc", width := 5, wires := fflags_acc },
        { name := "rob_head_idx", width := 4, wires := rob_head_idx }] ++
       (if enableF then [
        { name := "fp_rs1_phys", width := 6, wires := fp_rs1_phys },

@@ -142,6 +142,9 @@ SpikeStepResult SpikeOracle::step() {
         }
     }
 
+    // Read accumulated fflags (CSR 0x001)
+    r.fflags = static_cast<uint32_t>(proc_->get_csr(0x001)) & 0x1F;
+
     return r;
 }
 
