@@ -50,6 +50,17 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
+-- F-Extension
+import Shoumei.Circuits.Combinational.FPUnpack
+import Shoumei.Circuits.Combinational.FPPack
+import Shoumei.Circuits.Combinational.FPMisc
+import Shoumei.Circuits.Sequential.FPAdder
+import Shoumei.Circuits.Sequential.FPMultiplier
+import Shoumei.Circuits.Sequential.FPFMA
+import Shoumei.Circuits.Sequential.FPDivider
+import Shoumei.Circuits.Sequential.FPSqrt
+import Shoumei.RISCV.Execution.FPExecUnit
+
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Retirement.Queue16x32
@@ -186,6 +197,17 @@ def allCircuits : List Circuit := [
   mkMulDivExecUnit,
   mkMulDivRS4,
 
+  -- F-Extension: FPU building blocks
+  fpUnpackCircuit,
+  fpPackCircuit,
+  fpMiscCircuit,
+  fpAdderCircuit,
+  fpMultiplierCircuit,
+  fpFMACircuit,
+  fpDividerCircuit,
+  fpSqrtCircuit,
+  mkFPExecUnit,
+
   -- Phase 6: Retirement
   mkROB16,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
@@ -198,7 +220,9 @@ def allCircuits : List Circuit := [
   mkFetchStage,
   mkRenameStage,
   mkCPU_RV32I,
-  mkCPU_RV32IM
+  mkCPU_RV32IM,
+  mkCPU_RV32IF,
+  mkCPU_RV32IMF
 ]
 
 def main : IO Unit := do
@@ -220,6 +244,16 @@ def main : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+
+  -- Generate filelist.f for each output directory
+  IO.println ""
+  IO.println "Generating filelists..."
+  writeFilelist svOutputDir ".sv"
+  writeFilelist svNetlistOutputDir ".sv"
+  writeFilelist chiselOutputDir ".scala"
+  writeFilelist systemcOutputDir ".h"
+  writeFilelist asap7OutputDir ".sv"
+  IO.println "✓ Generated filelist.f in each output directory"
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

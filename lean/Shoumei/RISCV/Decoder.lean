@@ -20,6 +20,10 @@ structure DecodedInstruction where
   rs1 : Option (Fin 32)
   /-- Source register 2 (5 bits, bits 24:20) -/
   rs2 : Option (Fin 32)
+  /-- Source register 3 (5 bits, bits 31:27, R4-type FP fused ops) -/
+  rs3 : Option (Fin 32) := none
+  /-- Rounding mode (3 bits, bits 14:12, F extension) -/
+  rm : Option (Fin 8) := none
   /-- Immediate value (sign-extended to 32 bits) -/
   imm : Option Int
   /-- Program counter (for branch target calculation and RVVI tracking) -/
@@ -45,6 +49,13 @@ def extractRs1 (instr : UInt32) : Fin 32 := extractReg instr 19 15
 
 /-- Extract rs2 field (bits 24:20) -/
 def extractRs2 (instr : UInt32) : Fin 32 := extractReg instr 24 20
+
+/-- Extract rs3 field (bits 31:27, R4-type FP fused multiply-add) -/
+def extractRs3 (instr : UInt32) : Fin 32 := extractReg instr 31 27
+
+/-- Extract rounding mode field (bits 14:12, F extension) -/
+def extractRm (instr : UInt32) : Fin 8 :=
+  ⟨(extractBits instr 14 12).toNat % 8, by omega⟩
 
 /-- Sign-extend a value from N bits to 32 bits -/
 def signExtend (value : UInt32) (bits : Nat) : Int :=
@@ -106,6 +117,8 @@ def decodeInstruction (defs : List InstructionDef) (instr : UInt32) (pc : UInt32
     let hasRd := instrDef.variableFields.contains .rd
     let hasRs1 := instrDef.variableFields.contains .rs1
     let hasRs2 := instrDef.variableFields.contains .rs2
+    let hasRs3 := instrDef.variableFields.contains .rs3
+    let hasRm := instrDef.variableFields.contains .rm
 
     -- Determine immediate type from variable fields
     let imm :=
@@ -127,6 +140,8 @@ def decodeInstruction (defs : List InstructionDef) (instr : UInt32) (pc : UInt32
       rd := if hasRd then some (extractRd instr) else none
       rs1 := if hasRs1 then some (extractRs1 instr) else none
       rs2 := if hasRs2 then some (extractRs2 instr) else none
+      rs3 := if hasRs3 then some (extractRs3 instr) else none
+      rm := if hasRm then some (extractRm instr) else none
       imm := imm
       pc := pc
     }

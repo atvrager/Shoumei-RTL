@@ -238,11 +238,210 @@ def mextCornerTest : TestProgram := {
     failEpilogue ".Lfail"
 }
 
+-- Helper: Fin 32 for FP registers (same encoding, different namespace)
+private def f (n : Nat) (h : n < 32 := by omega) : Fin 32 := ⟨n, h⟩
+
+/-- F1: FP smoke test — one of each F-extension instruction type.
+    Loads FP constants via integer regs + fmv.w.x, then exercises all FP ops. -/
+def fpSmokeTest : TestProgram := {
+  name := "fp_smoke"
+  description := "F1: One of each RV32F instruction, verifies FP execution coverage"
+  instrs :=
+    [ comment "--- Load FP constants via integer regs ---"
+    , comment "1.0f = 0x3F800000, 2.0f = 0x40000000, 3.0f = 0x40400000"
+    , pseudo "li x1, 0x3F800000"
+    , pseudo "li x2, 0x40000000"
+    , pseudo "li x3, 0x40400000"
+    , .fmv_from_int (f 1) (x 1)   -- f1 = 1.0
+    , .fmv_from_int (f 2) (x 2)   -- f2 = 2.0
+    , .fmv_from_int (f 3) (x 3)   -- f3 = 3.0
+    , blank
+    , comment "--- FP memory: store and reload ---"
+    , pseudo "li x10, 0x2000"
+    , .fsw (f 1) (x 10) 0          -- fsw f1, 0(x10)
+    , .flw (f 4) (x 10) 0          -- flw f4, 0(x10)  -> f4 = 1.0
+    , blank
+    , comment "--- Arithmetic ---"
+    , .frtype "fadd.s" (f 5) (f 1) (f 2)    -- f5 = 1.0 + 2.0 = 3.0
+    , .frtype "fsub.s" (f 6) (f 2) (f 1)    -- f6 = 2.0 - 1.0 = 1.0
+    , .frtype "fmul.s" (f 7) (f 2) (f 3)    -- f7 = 2.0 * 3.0 = 6.0
+    , .frtype "fdiv.s" (f 8) (f 2) (f 2)    -- f8 = 2.0 / 2.0 = 1.0
+    , blank
+    , comment "--- Fused multiply-add ---"
+    , .fr4type "fmadd.s" (f 9) (f 2) (f 3) (f 1)  -- f9 = 2.0*3.0+1.0 = 7.0
+    , .fr4type "fmsub.s" (f 10) (f 2) (f 3) (f 1) -- f10 = 2.0*3.0-1.0 = 5.0
+    , blank
+    , comment "--- Negated fused multiply-add ---"
+    , .fr4type "fnmadd.s" (f 17) (f 2) (f 3) (f 1) -- f17 = -(2.0*3.0)-1.0 = -7.0
+    , .fr4type "fnmsub.s" (f 18) (f 2) (f 3) (f 1) -- f18 = -(2.0*3.0)+1.0 = -5.0
+    , blank
+    , comment "--- Square root ---"
+    , pseudo "fsqrt.s f19, f4"                       -- f19 = sqrt(1.0) = 1.0
+    , blank
+    , comment "--- Unsigned conversions ---"
+    , .fcvt_to_int "fcvt.wu.s" (x 18) (f 2)         -- x18 = uint(2.0) = 2
+    , itype "addi" (x 19) (x 0) 7
+    , .fcvt_from_int "fcvt.s.wu" (f 20) (x 19)      -- f20 = float(7u) = 7.0
+    , blank
+    , comment "--- Min/Max ---"
+    , .frtype "fmin.s" (f 11) (f 1) (f 2)   -- f11 = min(1.0, 2.0) = 1.0
+    , .frtype "fmax.s" (f 12) (f 1) (f 2)   -- f12 = max(1.0, 2.0) = 2.0
+    , blank
+    , comment "--- Sign injection ---"
+    , .frtype "fsgnj.s" (f 13) (f 1) (f 2)   -- f13 = |1.0| with sign of 2.0 = 1.0
+    , .frtype "fsgnjn.s" (f 14) (f 1) (f 2)  -- f14 = |1.0| with neg sign of 2.0 = -1.0
+    , .frtype "fsgnjx.s" (f 15) (f 1) (f 2)  -- f15 = 1.0 with XOR'd signs = 1.0
+    , blank
+    , comment "--- Compare (result → integer rd) ---"
+    , .fcmp "feq.s" (x 11) (f 1) (f 1)  -- x11 = (1.0 == 1.0) = 1
+    , .fcmp "flt.s" (x 12) (f 1) (f 2)  -- x12 = (1.0 < 2.0) = 1
+    , .fcmp "fle.s" (x 13) (f 1) (f 1)  -- x13 = (1.0 <= 1.0) = 1
+    , blank
+    , comment "--- Convert FP→int ---"
+    , .fcvt_to_int "fcvt.w.s" (x 14) (f 2)  -- x14 = int(2.0) = 2
+    , blank
+    , comment "--- Convert int→FP ---"
+    , itype "addi" (x 15) (x 0) 5
+    , .fcvt_from_int "fcvt.s.w" (f 16) (x 15)  -- f16 = float(5) = 5.0
+    , blank
+    , comment "--- Move FP→int (bitwise) ---"
+    , .fmv_to_int (x 16) (f 1)   -- x16 = bits(1.0) = 0x3F800000
+    , blank
+    , comment "--- Classify ---"
+    , pseudo "fclass.s x17, f1"    -- x17 = class(1.0) = 0x040 (pos normal)
+    , blank
+    , comment "--- Verify key results ---"
+    , comment "Check fadd: f5 should be 3.0 (0x40400000)"
+    , .fmv_to_int (x 20) (f 5)
+    , pseudo "li x21, 0x40400000"
+    , btype "bne" (x 20) (x 21) ".Lfp_fail"
+    , blank
+    , comment "Check feq: x11 should be 1"
+    , itype "addi" (x 22) (x 0) 1
+    , btype "bne" (x 11) (x 22) ".Lfp_fail"
+    , blank
+    , comment "Check fcvt.w.s: x14 should be 2"
+    , itype "addi" (x 23) (x 0) 2
+    , btype "bne" (x 14) (x 23) ".Lfp_fail"
+    , blank
+    , comment "Check fdiv: f8 should be 1.0 (0x3F800000)"
+    , .fmv_to_int (x 24) (f 8)
+    , pseudo "li x25, 0x3F800000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fmadd: f9 should be 7.0 (0x40E00000)"
+    , .fmv_to_int (x 24) (f 9)
+    , pseudo "li x25, 0x40E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fmsub: f10 should be 5.0 (0x40A00000)"
+    , .fmv_to_int (x 24) (f 10)
+    , pseudo "li x25, 0x40A00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fnmadd: f17 should be -7.0 (0xC0E00000)"
+    , .fmv_to_int (x 24) (f 17)
+    , pseudo "li x25, 0xC0E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fnmsub: f18 should be -5.0 (0xC0A00000)"
+    , .fmv_to_int (x 24) (f 18)
+    , pseudo "li x25, 0xC0A00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fsqrt: f19 should be 1.0 (0x3F800000)"
+    , .fmv_to_int (x 24) (f 19)
+    , pseudo "li x25, 0x3F800000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fcvt.wu.s: x18 should be 2"
+    , itype "addi" (x 25) (x 0) 2
+    , btype "bne" (x 18) (x 25) ".Lfp_fail"
+    , blank
+    , comment "Check fcvt.s.wu: f20 should be 7.0 (0x40E00000)"
+    , .fmv_to_int (x 24) (f 20)
+    , pseudo "li x25, 0x40E00000"
+    , btype "bne" (x 24) (x 25) ".Lfp_fail"
+    ] ++
+    passEpilogue ++
+    failEpilogue ".Lfp_fail"
+}
+
+/-- F2: FP RAW hazard — FP producer → N NOPs → FP consumer.
+    Tests FP CDB forwarding at different pipeline depths. -/
+def fpRawChainTest (nNops : Nat) : TestProgram :=
+  let nops := List.replicate nNops (pseudo "nop")
+  { name := s!"fp_raw_nop{nNops}"
+    description := s!"F2: FP RAW hazard, fadd.s → {nNops} NOPs → fmul.s consumer"
+    instrs :=
+      [ comment "Load FP constants"
+      , pseudo "li x1, 0x3F800000"
+      , pseudo "li x2, 0x40000000"
+      , .fmv_from_int (f 1) (x 1)   -- f1 = 1.0
+      , .fmv_from_int (f 2) (x 2)   -- f2 = 2.0
+      , blank
+      , comment "Producer: fadd.s f3, f1, f2  (f3 = 3.0)"
+      , .frtype "fadd.s" (f 3) (f 1) (f 2)
+      ] ++ nops ++
+      [ comment "Consumer: fmul.s f4, f3, f2  (f4 = 3.0 * 2.0 = 6.0)"
+      , .frtype "fmul.s" (f 4) (f 3) (f 2)
+      , blank
+      , comment "Verify: f4 should be 6.0 (0x40C00000)"
+      , .fmv_to_int (x 3) (f 4)
+      , pseudo "li x4, 0x40C00000"
+      , btype "bne" (x 3) (x 4) ".Lfail"
+      ] ++
+      passEpilogue ++
+      failEpilogue ".Lfail"
+  }
+
+/-- F3: FP memory test — FLW/FSW at various offsets. -/
+def fpMemoryTest : TestProgram := {
+  name := "fp_memory"
+  description := "F3: FP load/store at various addresses and offsets"
+  instrs :=
+    [ pseudo "li x1, 0x2000"
+    , pseudo "li x2, 0x3F800000"
+    , pseudo "li x3, 0x40000000"
+    , .fmv_from_int (f 1) (x 2)   -- f1 = 1.0
+    , .fmv_from_int (f 2) (x 3)   -- f2 = 2.0
+    , blank
+    , comment "Store two FP values at adjacent addresses"
+    , .fsw (f 1) (x 1) 0
+    , .fsw (f 2) (x 1) 4
+    , blank
+    , comment "Load them back"
+    , .flw (f 3) (x 1) 0           -- f3 should be 1.0
+    , .flw (f 4) (x 1) 4           -- f4 should be 2.0
+    , blank
+    , comment "Verify via fmv.x.w"
+    , .fmv_to_int (x 10) (f 3)
+    , btype "bne" (x 10) (x 2) ".Lfail"
+    , .fmv_to_int (x 11) (f 4)
+    , btype "bne" (x 11) (x 3) ".Lfail"
+    , blank
+    , comment "Store-to-load forwarding: fsw then immediate flw"
+    , .frtype "fadd.s" (f 5) (f 1) (f 2)  -- f5 = 3.0
+    , .fsw (f 5) (x 1) 8
+    , .flw (f 6) (x 1) 8                   -- f6 should be 3.0
+    , .fmv_to_int (x 12) (f 6)
+    , pseudo "li x13, 0x40400000"
+    , btype "bne" (x 12) (x 13) ".Lfail"
+    ] ++
+    passEpilogue ++
+    failEpilogue ".Lfail"
+}
+
 /-- All test patterns -/
 def allPatterns : List TestProgram :=
   [smokeTest] ++
   rawChainTests ++
   [robFillTest, storeLoadFwdTest]
   -- mextCornerTest disabled: exposes DIV-by-zero RTL bug (tracked separately)
+
+/-- F-extension test patterns (separate so they can be gated on enableF) -/
+def fpPatterns : List TestProgram :=
+  [fpSmokeTest, fpMemoryTest] ++
+  (List.range 5 |>.map fpRawChainTest)  -- nop0..nop4
 
 end Shoumei.TestGen

@@ -57,6 +57,8 @@ structure ROBEntry where
   archRd : Fin 32
   /-- Exception occurred during execution -/
   exception : Bool
+  /-- Does this instruction write to an FP register? -/
+  isFpDest : Bool
   /-- Is this a branch/jump instruction? -/
   isBranch : Bool
   /-- Branch was mispredicted (set via CDB) -/
@@ -69,7 +71,7 @@ instance : Inhabited ROBEntry where
     physRd := 0, hasPhysRd := false,
     oldPhysRd := 0, hasOldPhysRd := false,
     archRd := 0, exception := false,
-    isBranch := false, branchMispredicted := false
+    isFpDest := false, isBranch := false, branchMispredicted := false
   }
 
 /-- Create an empty ROB entry. -/
@@ -145,7 +147,7 @@ def ROBState.allocate
     (rob : ROBState)
     (physRd : Fin 64) (hasPhysRd : Bool)
     (oldPhysRd : Fin 64) (hasOldPhysRd : Bool)
-    (archRd : Fin 32) (isBranch : Bool)
+    (archRd : Fin 32) (isFpDest : Bool := false) (isBranch : Bool)
     : ROBState × Option (Fin 16) :=
   if h : rob.count >= 16 then
     (rob, none)
@@ -159,6 +161,7 @@ def ROBState.allocate
       hasOldPhysRd := hasOldPhysRd
       archRd := archRd
       exception := false
+      isFpDest := isFpDest
       isBranch := isBranch
       branchMispredicted := false
     }
@@ -405,6 +408,10 @@ def mkROB16 : Circuit :=
   let cdb_tag := mkWires "cdb_tag" 6
   let cdb_exception := Wire.mk "cdb_exception"
   let cdb_mispredicted := Wire.mk "cdb_mispredicted"
+  let cdb_is_fp := Wire.mk "cdb_is_fp"
+
+  -- === Per-entry FP domain shadow (from CPU.lean shadow registers) ===
+  let is_fp_shadow := (List.range 16).map (fun i => Wire.mk s!"is_fp_shadow_{i}")
 
   -- === Commit/Flush Interface ===
   let commit_en := Wire.mk "commit_en"
@@ -546,18 +553,25 @@ def mkROB16 : Circuit :=
     -- Control: CDB tag match (from Comparator6 eq output)
     let cdb_match := Wire.mk s!"e{i}_cdb_match"
 
-    -- Control: CDB write enable = valid AND NOT(complete) AND hasPhysRd AND match AND cdb_valid
+    -- Control: CDB write enable = valid AND NOT(complete) AND hasPhysRd AND match AND cdb_valid AND domain_match
+    -- domain_match = NOT(cdb_is_fp XOR is_fp_shadow[i])
     let complete_n := Wire.mk s!"e{i}_complete_n"
     let cdb_tmp1 := Wire.mk s!"e{i}_cdb_tmp1"
     let cdb_tmp2 := Wire.mk s!"e{i}_cdb_tmp2"
     let cdb_tmp3 := Wire.mk s!"e{i}_cdb_tmp3"
+    let cdb_tmp4 := Wire.mk s!"e{i}_cdb_tmp4"
+    let domain_xor := Wire.mk s!"e{i}_domain_xor"
+    let domain_match := Wire.mk s!"e{i}_domain_match"
     let cdb_we := Wire.mk s!"e{i}_cdb_we"
     let cdb_we_gates := [
       Gate.mkNOT cur_complete complete_n,
       Gate.mkAND cur_valid complete_n cdb_tmp1,
       Gate.mkAND cdb_tmp1 cur_hasPhysRd cdb_tmp2,
       Gate.mkAND cdb_tmp2 cdb_match cdb_tmp3,
-      Gate.mkAND cdb_tmp3 cdb_valid cdb_we
+      Gate.mkAND cdb_tmp3 cdb_valid cdb_tmp4,
+      Gate.mkXOR cdb_is_fp is_fp_shadow[i]! domain_xor,
+      Gate.mkNOT domain_xor domain_match,
+      Gate.mkAND cdb_tmp4 domain_match cdb_we
     ]
 
     -- Control: commit clear = AND(commit_en, commit_decode[i])
@@ -760,7 +774,8 @@ def mkROB16 : Circuit :=
     [clock, reset, zero, one] ++
     [alloc_en] ++ alloc_physRd ++ [alloc_hasPhysRd] ++
     alloc_oldPhysRd ++ [alloc_hasOldPhysRd] ++ alloc_archRd ++ [alloc_isBranch] ++
-    [cdb_valid] ++ cdb_tag ++ [cdb_exception, cdb_mispredicted] ++
+    [cdb_valid] ++ cdb_tag ++ [cdb_exception, cdb_mispredicted, cdb_is_fp] ++
+    is_fp_shadow ++
     [commit_en, flush_en]
 
   let all_outputs :=

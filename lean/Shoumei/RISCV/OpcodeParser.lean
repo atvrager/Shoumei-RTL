@@ -102,10 +102,13 @@ def parseInstrDict (jsonStr : String) : Except String (List InstructionDef) := d
   let obj ← json.getObj?
 
   -- Parse each instruction using foldl (TreeMap.Raw API in Lean 4.27.0)
+  -- Skip instructions with unrecognized OpType (e.g., FCSR pseudo-instructions)
   obj.foldl (fun acc name instrJson =>
-    acc.bind fun instrs => do
-      let instrDef ← parseInstructionDef name instrJson
-      pure (instrDef :: instrs)) (Except.ok [])
+    acc.bind fun instrs =>
+      match parseInstructionDef name instrJson with
+      | Except.ok instrDef => pure (instrDef :: instrs)
+      | Except.error _ => pure instrs  -- Skip unrecognized instructions
+  ) (Except.ok [])
 
 /-- Read and parse instr_dict.json from file system -/
 def loadInstrDictFromFile (path : System.FilePath) : IO (List InstructionDef) := do

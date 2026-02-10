@@ -12,6 +12,9 @@ namespace Shoumei.TestGen
 /-- Register name: x0..x31 -/
 def regName (r : Fin 32) : String := s!"x{r.val}"
 
+/-- FP register name: f0..f31 -/
+def fregName (r : Fin 32) : String := s!"f{r.val}"
+
 /-- Symbolic assembly instruction -/
 inductive AsmInstr where
   | rtype (mnem : String) (rd rs1 rs2 : Fin 32)
@@ -25,6 +28,16 @@ inductive AsmInstr where
   | pseudo (text : String)
   | comment (text : String)
   | blank
+  -- F extension: FP register names use f0..f31
+  | frtype (mnem : String) (fd fs1 fs2 : Fin 32)       -- fadd.s fd, fs1, fs2
+  | fr4type (mnem : String) (fd fs1 fs2 fs3 : Fin 32)  -- fmadd.s fd, fs1, fs2, fs3
+  | flw (fd rs1 : Fin 32) (offset : Int)                -- flw fd, offset(rs1)
+  | fsw (fs2 rs1 : Fin 32) (offset : Int)               -- fsw fs2, offset(rs1)
+  | fcvt_to_int (mnem : String) (rd : Fin 32) (fs1 : Fin 32)  -- fcvt.w.s rd, fs1
+  | fcvt_from_int (mnem : String) (fd : Fin 32) (rs1 : Fin 32) -- fcvt.s.w fd, rs1
+  | fmv_to_int (rd : Fin 32) (fs1 : Fin 32)             -- fmv.x.w rd, fs1
+  | fmv_from_int (fd : Fin 32) (rs1 : Fin 32)           -- fmv.w.x fd, rs1
+  | fcmp (mnem : String) (rd : Fin 32) (fs1 fs2 : Fin 32) -- feq.s rd, fs1, fs2
 
 /-- Convert Nat to hex string -/
 private def hexDigit (n : Nat) : Char :=
@@ -52,6 +65,15 @@ def AsmInstr.toAsm : AsmInstr → String
   | .pseudo text => s!"    {text}"
   | .comment text => s!"    # {text}"
   | .blank => ""
+  | .frtype mnem fd fs1 fs2 => s!"    {mnem} {fregName fd}, {fregName fs1}, {fregName fs2}"
+  | .fr4type mnem fd fs1 fs2 fs3 => s!"    {mnem} {fregName fd}, {fregName fs1}, {fregName fs2}, {fregName fs3}"
+  | .flw fd rs1 off => s!"    flw {fregName fd}, {off}({regName rs1})"
+  | .fsw fs2 rs1 off => s!"    fsw {fregName fs2}, {off}({regName rs1})"
+  | .fcvt_to_int mnem rd fs1 => s!"    {mnem} {regName rd}, {fregName fs1}"
+  | .fcvt_from_int mnem fd rs1 => s!"    {mnem} {fregName fd}, {regName rs1}"
+  | .fmv_to_int rd fs1 => s!"    fmv.x.w {regName rd}, {fregName fs1}"
+  | .fmv_from_int fd rs1 => s!"    fmv.w.x {fregName fd}, {regName rs1}"
+  | .fcmp mnem rd fs1 fs2 => s!"    {mnem} {regName rd}, {fregName fs1}, {fregName fs2}"
 
 /-- A complete test program -/
 structure TestProgram where
@@ -82,7 +104,7 @@ def failEpilogue (failLabel : String) : List AsmInstr :=
 /-- Render a TestProgram to a complete .S file -/
 def TestProgram.toAsm (prog : TestProgram) : String :=
   let header := s!"# Auto-generated test: {prog.name}\n# {prog.description}\n"
-  let directives := ".section .text\n.globl main\nmain:\n"
+  let directives := ".section .text\n.globl _start\n_start:\n.globl main\nmain:\n"
   let body := prog.instrs.map AsmInstr.toAsm |>.foldl (· ++ "\n" ++ ·) ""
   header ++ directives ++ body ++ "\n"
 
@@ -101,5 +123,20 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   | .FENCE => "fence" | .ECALL => "ecall" | .EBREAK => "ebreak"
   | .MUL => "mul" | .MULH => "mulh" | .MULHSU => "mulhsu" | .MULHU => "mulhu"
   | .DIV => "div" | .DIVU => "divu" | .REM => "rem" | .REMU => "remu"
+  -- F extension
+  | .FADD_S => "fadd.s" | .FSUB_S => "fsub.s" | .FMUL_S => "fmul.s"
+  | .FDIV_S => "fdiv.s" | .FSQRT_S => "fsqrt.s"
+  | .FMADD_S => "fmadd.s" | .FMSUB_S => "fmsub.s"
+  | .FNMADD_S => "fnmadd.s" | .FNMSUB_S => "fnmsub.s"
+  | .FEQ_S => "feq.s" | .FLT_S => "flt.s" | .FLE_S => "fle.s"
+  | .FCVT_W_S => "fcvt.w.s" | .FCVT_WU_S => "fcvt.wu.s"
+  | .FCVT_S_W => "fcvt.s.w" | .FCVT_S_WU => "fcvt.s.wu"
+  | .FMV_X_W => "fmv.x.w" | .FMV_W_X => "fmv.w.x" | .FCLASS_S => "fclass.s"
+  | .FMIN_S => "fmin.s" | .FMAX_S => "fmax.s"
+  | .FSGNJ_S => "fsgnj.s" | .FSGNJN_S => "fsgnjn.s" | .FSGNJX_S => "fsgnjx.s"
+  | .FLW => "flw" | .FSW => "fsw"
+  -- Zicsr
+  | .CSRRW => "csrrw" | .CSRRS => "csrrs" | .CSRRC => "csrrc"
+  | .CSRRWI => "csrrwi" | .CSRRSI => "csrrsi" | .CSRRCI => "csrrci"
 
 end Shoumei.TestGen

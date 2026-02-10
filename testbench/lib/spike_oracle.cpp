@@ -68,7 +68,7 @@ private:
 
 SpikeOracle::SpikeOracle(const std::string& elf_path)
     : cfg_(std::make_unique<cfg_t>()) {
-    cfg_->isa = "rv32im";
+    cfg_->isa = "rv32imf";
     cfg_->priv = "m";
     cfg_->hartids = {0};
     cfg_->start_pc = 0;
@@ -84,6 +84,11 @@ SpikeOracle::SpikeOracle(const std::string& elf_path)
 
     flat->register_hart(0, proc_.get());
     proc_->get_state()->pc = 0;
+
+    // Enable FP: set MSTATUS.FS = Dirty (bits 14:13 = 11)
+    // Without this, Spike traps on any FP instruction with illegal-insn
+    proc_->put_csr(/*CSR_MSTATUS*/ 0x300,
+                   proc_->get_csr(/*CSR_MSTATUS*/ 0x300) | 0x6000);
 }
 
 SpikeOracle::~SpikeOracle() = default;
@@ -95,6 +100,11 @@ SpikeStepResult SpikeOracle::step() {
     uint32_t regs_before[32];
     for (int i = 0; i < 32; i++)
         regs_before[i] = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+
+    // Snapshot FP registers before stepping
+    uint32_t fregs_before[32];
+    for (int i = 0; i < 32; i++)
+        fregs_before[i] = static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
 
     try {
         r.insn = static_cast<uint32_t>(
@@ -110,6 +120,7 @@ SpikeStepResult SpikeOracle::step() {
         r.trap = true;
     }
 
+    // Detect integer register change
     for (int i = 1; i < 32; i++) {
         uint32_t val = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
         if (val != regs_before[i]) {
@@ -119,11 +130,30 @@ SpikeStepResult SpikeOracle::step() {
         }
     }
 
+    // Detect FP register change
+    r.frd_valid = false;
+    for (int i = 0; i < 32; i++) {
+        uint32_t val = static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
+        if (val != fregs_before[i]) {
+            r.frd = static_cast<uint32_t>(i);
+            r.frd_value = val;
+            r.frd_valid = true;
+            break;
+        }
+    }
+
+    // Read accumulated fflags (CSR 0x001)
+    r.fflags = static_cast<uint32_t>(proc_->get_csr(0x001)) & 0x1F;
+
     return r;
 }
 
 uint32_t SpikeOracle::get_xreg(int i) const {
     return static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+}
+
+uint32_t SpikeOracle::get_freg(int i) const {
+    return static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
 }
 
 uint32_t SpikeOracle::get_pc() const {

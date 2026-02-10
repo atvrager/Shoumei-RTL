@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im
+.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -11,10 +11,6 @@ export PATH := $(HOME)/.elan/bin:$(HOME)/.local/share/coursier/bin:$(PATH)
 HAS_LAKE := $(shell command -v lake 2> /dev/null)
 HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
-
-# Configurable RISC-V extension list for opcode generation
-# Default includes M extension. Override with: make opcodes RISCV_EXTS="rv_i rv32_i"
-RISCV_EXTS ?= rv_i rv32_i rv_m
 
 # Default target: run entire pipeline
 all: check-tools lean codegen chisel systemverilog systemc lec
@@ -86,7 +82,8 @@ endif
 	lake build
 
 # Generate RISC-V instruction definitions from riscv-opcodes
-# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m)
+# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f)
+RISCV_EXTS ?= rv_i rv32_i rv_m rv_f
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
@@ -105,14 +102,33 @@ codegen: lean opcodes
 	@echo "==> Running code generators..."
 	@echo "    Phase 1: All circuits (SV + Chisel + SystemC)..."
 	lake exe generate_all
-	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM)..."
+	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM + RV32IF + RV32IMF)..."
 	lake exe generate_riscv_decoder
 	@echo "    Phase 3: Exporting compositional verification certificates..."
 	@mkdir -p verification
 	lake exe export_verification_certs > verification/compositional-certs.txt
+	@echo "    Phase 4: Generating synthesis filelists..."
+	@$(MAKE) --no-print-directory filelists
+
+# Generate per-synth-target filelists (physical/<design>.f)
+# Each lists the synth wrapper + ASAP7 overrides + generic SV modules
+SYNTH_DESIGNS := CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth
+filelists:
+	@ASAP7_SV=$$(ls output/sv-asap7/*.sv 2>/dev/null || true); \
+	ASAP7_NAMES=$$(basename -a $$ASAP7_SV 2>/dev/null || true); \
+	for design in $(SYNTH_DESIGNS); do \
+		{ echo "physical/$$design.sv"; \
+		  for f in $$ASAP7_SV; do echo "$$f"; done; \
+		  for f in output/sv-from-lean/*.sv; do \
+			b=$$(basename "$$f"); \
+			case " $$ASAP7_NAMES " in *" $$b "*) ;; *) echo "$$f" ;; esac; \
+		  done; \
+		} | sort > "physical/$$design.f"; \
+	done
+	@echo "✓ Generated filelists: $(addsuffix .f,$(SYNTH_DESIGNS))"
 
 # Compile Chisel to SystemVerilog
-# Main.scala auto-discovers all generated modules (including RV32I/RV32IM decoders)
+# Main.scala auto-discovers all generated modules (including RV32I/RV32IM/RV32IF/RV32IMF decoders)
 chisel:
 ifndef HAS_SBT
 	@echo "Error: sbt not found. Cannot build Chisel code."
@@ -121,6 +137,7 @@ ifndef HAS_SBT
 endif
 	@echo "==> Compiling Chisel to SystemVerilog..."
 	cd chisel && sbt run
+	@ls output/sv-from-chisel/*.sv 2>/dev/null | xargs -n1 basename | sort > output/sv-from-chisel/filelist.f
 
 # Validate generated SystemVerilog modules with Yosys
 # Checks syntax and hierarchy of all generated SV files

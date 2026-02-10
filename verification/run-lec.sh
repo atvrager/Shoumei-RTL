@@ -6,6 +6,8 @@
 #   ./run-lec.sh                    # Verify all modules
 #   ./run-lec.sh -m ROB16           # Verify ROB16 + its dependencies only
 #   ./run-lec.sh -m ROB16 -m RAT_32x6  # Verify multiple targets + deps
+#   ./run-lec.sh -j 8               # Parallel LEC with 8 jobs per dependency level
+#   ./run-lec.sh --force            # Ignore cache, re-verify everything
 #   ./run-lec.sh --use-slang        # Force use of yosys-slang (errors if not available)
 #   ./run-lec.sh --no-slang         # Force use of $READ_CMD
 
@@ -15,12 +17,24 @@ LEAN_DIR="output/sv-from-lean"
 CHISEL_DIR="output/sv-from-chisel"
 declare -a TARGET_MODULES=()
 USE_SLANG="auto"  # auto, yes, no
+PARALLEL_JOBS=$(( $(nproc) - 1 ))  # -j N for parallel LEC within dependency levels
+[ "$PARALLEL_JOBS" -lt 1 ] && PARALLEL_JOBS=1
+FORCE_RERUN=0      # --force to ignore cache
+LEC_CACHE_DIR=".lec-cache"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -m|--module)
             TARGET_MODULES+=("$2")
             shift 2
+            ;;
+        -j|--jobs)
+            PARALLEL_JOBS="$2"
+            shift 2
+            ;;
+        --force)
+            FORCE_RERUN=1
+            shift
             ;;
         --use-slang)
             USE_SLANG="yes"
@@ -241,6 +255,7 @@ echo ""
 
 # Create temporary working directory
 TMPDIR=$(mktemp -d)
+mkdir -p "$LEC_CACHE_DIR"
 trap 'rm -rf "$TMPDIR" "$VERIFIED_MODULES_FILE" "$COMPOSITIONAL_MODULES_FILE"' EXIT
 
 # Clean all Chisel files upfront for hierarchical support
@@ -274,19 +289,25 @@ verify_module() {
 
     local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
 
-    # Check if corresponding Chisel file exists
-    if [ ! -f "$CHISEL_FILE" ]; then
-        echo -e "${RED}✗ No Chisel output found for $MODULE_NAME${NC}"
-        echo "  Expected: $CHISEL_FILE"
-        return 1
+    # Cache check: skip if sources haven't changed since last successful LEC
+    local CACHE_STAMP="$LEC_CACHE_DIR/$MODULE_NAME.ok"
+    local CERT_FILE="verification/compositional-certs.txt"
+    if [ "$FORCE_RERUN" -eq 0 ] && [ -f "$CACHE_STAMP" ]; then
+        local stale=0
+        # Re-run if Lean SV, Chisel SV, or certs file changed
+        if [ "$LEAN_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
+        if [ -f "$CHISEL_FILE" ] && [ "$CHISEL_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
+        if [ -f "$CERT_FILE" ] && [ "$CERT_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
+        if [ "$stale" -eq 0 ]; then
+            echo -e "  ${GREEN}✓ $MODULE_NAME${NC} (cached)"
+            echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
+            # Also record compositional if applicable
+            if [ -n "${COMPOSITIONAL_CERTS[$MODULE_NAME]}" ]; then
+                echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
+            fi
+            return 0
+        fi
     fi
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Verifying: $MODULE_NAME"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  LEAN:   $LEAN_FILE"
-    echo "  Chisel: $CHISEL_FILE"
-    echo ""
 
     # Check if this module is compositionally verified FIRST (skip LEC if so)
     if [ -n "${COMPOSITIONAL_CERTS[$MODULE_NAME]}" ]; then
@@ -317,6 +338,7 @@ verify_module() {
             # Record as compositionally verified
             echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
+            touch "$CACHE_STAMP"
             return 0
         else
             echo -e "${YELLOW}⚠ COMPOSITIONAL VERIFICATION INCOMPLETE${NC}"
@@ -325,6 +347,20 @@ verify_module() {
             echo ""
         fi
     fi
+
+    # Check if corresponding Chisel file exists (needed for direct LEC)
+    if [ ! -f "$CHISEL_FILE" ]; then
+        echo -e "${RED}✗ No Chisel output found for $MODULE_NAME${NC}"
+        echo "  Expected: $CHISEL_FILE"
+        return 1
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Verifying: $MODULE_NAME (direct LEC)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  LEAN:   $LEAN_FILE"
+    echo "  Chisel: $CHISEL_FILE"
+    echo ""
 
     # Check if this is a sequential circuit
     # Detection: always block OR clock/reset inputs
@@ -590,6 +626,7 @@ YOSYS_EOF
             echo ""
             # Record this module as verified for hierarchical checking
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
+            touch "$CACHE_STAMP"
             return 0
         fi
     else
@@ -604,15 +641,127 @@ YOSYS_EOF
 
 # Main loop: verify each module
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Running LEC on all modules"
+echo "  Running LEC on all modules (jobs=$PARALLEL_JOBS)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-while IFS= read -r LEAN_FILE; do
-    if ! verify_module "$LEAN_FILE"; then
+if [ "$PARALLEL_JOBS" -le 1 ]; then
+    # Serial mode (original behavior)
+    while IFS= read -r LEAN_FILE; do
+        if ! verify_module "$LEAN_FILE"; then
+            ALL_PASSED=0
+        fi
+    done <<< "$LEAN_MODULES"
+else
+    # Parallel mode: compute dependency levels, run each level in parallel
+    # Build dependency depth map using compositional certs
+    declare -A MODULE_DEPTH
+
+    # First pass: initialize depths
+    while IFS= read -r file; do
+        mod=$(basename "$file" .sv)
+        mod=$(basename "$mod" .v)
+        MODULE_DEPTH[$mod]=0
+    done <<< "$LEAN_MODULES"
+
+    # Iteratively compute depths from compositional cert dependencies
+    changed=1
+    while [ "$changed" -eq 1 ]; do
+        changed=0
+        for mod in "${!MODULE_DEPTH[@]}"; do
+            if [ -n "${COMPOSITIONAL_CERTS[$mod]}" ]; then
+                IFS='|' read -r deps _proof <<< "${COMPOSITIONAL_CERTS[$mod]}"
+                IFS=',' read -ra DEP_ARRAY <<< "$deps"
+                max_dep=0
+                for dep in "${DEP_ARRAY[@]}"; do
+                    dep=$(echo "$dep" | xargs)
+                    dep_d=${MODULE_DEPTH[$dep]:-0}
+                    if [ "$dep_d" -gt "$max_dep" ]; then
+                        max_dep=$dep_d
+                    fi
+                done
+                new_depth=$((max_dep + 1))
+                if [ "$new_depth" -gt "${MODULE_DEPTH[$mod]}" ]; then
+                    MODULE_DEPTH[$mod]=$new_depth
+                    changed=1
+                fi
+            fi
+        done
+    done
+
+    # Find max depth
+    max_level=0
+    for mod in "${!MODULE_DEPTH[@]}"; do
+        if [ "${MODULE_DEPTH[$mod]}" -gt "$max_level" ]; then
+            max_level=${MODULE_DEPTH[$mod]}
+        fi
+    done
+
+    echo "Dependency levels: 0..$max_level (parallel within each level)"
+    echo ""
+
+    # Process each level
+    FAIL_FILE=$(mktemp)
+    echo "0" > "$FAIL_FILE"
+    PARALLEL_LOG_DIR=$(mktemp -d)
+
+    for level in $(seq 0 "$max_level"); do
+        # Collect modules at this level (preserving topo order)
+        LEVEL_FILES=""
+        while IFS= read -r file; do
+            mod=$(basename "$file" .sv)
+            mod=$(basename "$mod" .v)
+            if [ "${MODULE_DEPTH[$mod]}" -eq "$level" ]; then
+                LEVEL_FILES="$LEVEL_FILES"$'\n'"$file"
+            fi
+        done <<< "$LEAN_MODULES"
+        LEVEL_FILES=$(echo "$LEVEL_FILES" | sed '/^$/d')
+
+        if [ -z "$LEVEL_FILES" ]; then continue; fi
+        LEVEL_COUNT=$(echo "$LEVEL_FILES" | wc -l)
+        echo "── Level $level ($LEVEL_COUNT modules) ──"
+
+        # Run modules at this level in parallel via background jobs
+        pids=()
+        running=0
+        while IFS= read -r LEAN_FILE; do
+            if [ "$running" -ge "$PARALLEL_JOBS" ]; then
+                wait -n 2>/dev/null || true
+                running=$((running - 1))
+            fi
+            mod=$(basename "$LEAN_FILE" .sv)
+            mod=$(basename "$mod" .v)
+            (
+                if ! verify_module "$LEAN_FILE" > "$PARALLEL_LOG_DIR/$mod.log" 2>&1; then
+                    echo "1" > "$FAIL_FILE"
+                fi
+            ) &
+            pids+=($!)
+            running=$((running + 1))
+        done <<< "$LEVEL_FILES"
+
+        # Wait for all jobs in this level to complete
+        for pid in "${pids[@]}"; do
+            wait "$pid" 2>/dev/null || true
+        done
+
+        # Print collected output in order
+        while IFS= read -r file; do
+            mod=$(basename "$file" .sv)
+            mod=$(basename "$mod" .v)
+            if [ -f "$PARALLEL_LOG_DIR/$mod.log" ]; then
+                cat "$PARALLEL_LOG_DIR/$mod.log"
+                rm -f "$PARALLEL_LOG_DIR/$mod.log"
+            fi
+        done <<< "$LEVEL_FILES"
+    done
+
+    if [ "$(cat "$FAIL_FILE")" = "1" ]; then
         ALL_PASSED=0
     fi
-done <<< "$LEAN_MODULES"
+    rm -f "$FAIL_FILE"
+    rm -rf "$PARALLEL_LOG_DIR"
+fi
 
 # Final summary
 echo ""

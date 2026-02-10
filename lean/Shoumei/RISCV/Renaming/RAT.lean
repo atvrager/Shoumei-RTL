@@ -92,11 +92,13 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let write_data := (List.range tagWidth).map (fun i => Wire.mk s!"write_data_{i}")
   let rs1_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs1_addr_{i}")
   let rs2_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs2_addr_{i}")
+  let rs3_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs3_addr_{i}")
 
   -- Outputs
   let rs1_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_data_{i}")
   let rs2_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_data_{i}")
-  -- Third read port: old mapping for write_addr (before write, for ROB oldPhysRd tracking)
+  let rs3_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs3_data_{i}")
+  -- Fourth read port: old mapping for write_addr (before write, for ROB oldPhysRd tracking)
   let old_rd_data := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_data_{i}")
 
   -- Internal: Write Decoder (5→32 one-hot)
@@ -165,7 +167,14 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     portMap := mux_in_map ++ mkMuxSelMap rs2_addr ++ mkMuxOutMap rs2_data
   }
 
-  -- Third read port: read RAT[write_addr] to get old mapping before write
+  -- Third read port: rs3 lookup
+  let mux_rs3_inst : CircuitInstance := {
+    moduleName := s!"Mux{numArchRegs}x{tagWidth}"
+    instName := "u_mux_rs3"
+    portMap := mux_in_map ++ mkMuxSelMap rs3_addr ++ mkMuxOutMap rs3_data
+  }
+
+  -- Fourth read port: read RAT[write_addr] to get old mapping before write
   let mux_old_rd_inst : CircuitInstance := {
     moduleName := s!"Mux{numArchRegs}x{tagWidth}"
     instName := "u_mux_old_rd"
@@ -173,18 +182,20 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   }
 
   { name := s!"RAT_{numArchRegs}x{tagWidth}"
-    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr
-    outputs := rs1_data ++ rs2_data ++ old_rd_data
+    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++ rs3_addr
+    outputs := rs1_data ++ rs2_data ++ rs3_data ++ old_rd_data
     gates := we_gates ++ storage_gates
-    instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_old_rd_inst]
+    instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_rs3_inst, mux_old_rd_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "write_addr", width := addrWidth, wires := write_addr },
       { name := "write_data", width := tagWidth, wires := write_data },
       { name := "rs1_addr", width := addrWidth, wires := rs1_addr },
       { name := "rs2_addr", width := addrWidth, wires := rs2_addr },
+      { name := "rs3_addr", width := addrWidth, wires := rs3_addr },
       { name := "rs1_data", width := tagWidth, wires := rs1_data },
       { name := "rs2_data", width := tagWidth, wires := rs2_data },
+      { name := "rs3_data", width := tagWidth, wires := rs3_data },
       { name := "write_sel", width := numArchRegs, wires := write_sel },
       { name := "we", width := numArchRegs, wires := we },
       { name := "old_rd_data", width := tagWidth, wires := old_rd_data }

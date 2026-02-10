@@ -3,9 +3,12 @@
 # Based on docs/physical-design.md
 #
 # Usage:
-#   ./physical/run-openroad.sh                  # 200 MHz (default)
-#   FMAX_MHZ=500 ./physical/run-openroad.sh     # 500 MHz stretch
-#   FMAX_MHZ=1000 ./physical/run-openroad.sh    # 1 GHz aspirational
+#   ./physical/run-openroad.sh                          # CPU_RV32IMF at 200 MHz (default)
+#   ./physical/run-openroad.sh CPU_RV32I_synth          # RV32I variant
+#   ./physical/run-openroad.sh CPU_RV32IM_synth 500     # RV32IM at 500 MHz
+#   FMAX_MHZ=1000 ./physical/run-openroad.sh            # 1 GHz aspirational
+#
+# Available designs: CPU_RV32I_synth, CPU_RV32IF_synth, CPU_RV32IM_synth, CPU_RV32IMF_synth
 #
 #   If Docker permission denied, use sg:
 #   sg docker -c './physical/run-openroad.sh'
@@ -70,11 +73,22 @@ fi
 
 echo -e "${GREEN}✓ ORFS submodule initialized${NC}"
 
-# Check generated Verilog (read from config.mk)
-DESIGN_NAME=$(grep "^export DESIGN_NAME" physical/config.mk | cut -d= -f2 | tr -d ' ')
+# Parse positional arguments: [DESIGN_NAME] [FMAX_MHZ]
+if [ -n "${1:-}" ]; then
+    DESIGN_NAME="$1"
+else
+    DESIGN_NAME="${DESIGN_NAME:-CPU_RV32IMF_synth}"
+fi
 
-if [ -z "$DESIGN_NAME" ]; then
-    echo -e "${RED}✗ DESIGN_NAME not found in physical/config.mk${NC}"
+if [ -n "${2:-}" ]; then
+    FMAX_MHZ="$2"
+fi
+
+# Validate design name
+VALID_DESIGNS="CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth"
+if ! echo "$VALID_DESIGNS" | grep -qw "$DESIGN_NAME"; then
+    echo -e "${RED}✗ Unknown design: $DESIGN_NAME${NC}"
+    echo "Available designs: $VALID_DESIGNS"
     exit 1
 fi
 
@@ -127,7 +141,7 @@ docker run --rm \
   -v "$PROJECT_ROOT:/project" \
   -w /OpenROAD-flow-scripts/flow \
   openroad/flow-ubuntu22.04-builder:3d5d5a \
-  bash -c "source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project FMAX_MHZ=${FMAX_MHZ} ABC_CLOCK_PERIOD_IN_PS=${CLK_PERIOD_PS}" 2>&1 | \
+  bash -c "source ../env.sh && make DESIGN_CONFIG=/project/physical/config.mk PROJECT_ROOT=/project DESIGN_NAME=${DESIGN_NAME} FMAX_MHZ=${FMAX_MHZ} ABC_CLOCK_PERIOD_IN_PS=${CLK_PERIOD_PS}" 2>&1 | \
   grep -v "fatal: not a git repository" | \
   grep -v "Stopping at filesystem boundary"
 

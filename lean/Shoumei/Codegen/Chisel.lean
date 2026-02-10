@@ -669,7 +669,10 @@ def generateCombGate (ctx : Context) (c : Circuit) (g : Gate) : String :=
   | GateType.MUX =>
       match g.inputs with
       | [in0, in1, sel] =>
-          s!"  {outRef} := Mux({wireRef ctx c sel}, {wireRef ctx c in1}, {wireRef ctx c in0})"
+          let selRef := wireRef ctx c sel
+          -- Mux select must be Bool; 1-bit ShoumeiReg is UInt(1.W), needs .asBool
+          let selBool := if selRef.endsWith "_reg" then s!"{selRef}.asBool" else selRef
+          s!"  {outRef} := Mux({selBool}, {wireRef ctx c in1}, {wireRef ctx c in0})"
       | _ => "  // ERROR: MUX gate should have 3 inputs"
   | GateType.DFF | GateType.DFF_SET =>
       ""  -- DFFs handled separately
@@ -803,7 +806,9 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                       let outRef := signalGroupRef ctx bus.name
                       let in1Ref := signalGroupRefForBusOp ctx _c b1
                       let in0Ref := signalGroupRefForBusOp ctx _c b0
-                      some s!"  {outRef} := Mux({sel.name}, {in1Ref}, {in0Ref})"
+                      let selRef := wireRef ctx _c sel
+                      let selBool := if selRef.endsWith "_reg" then s!"{selRef}.asBool" else selRef
+                      some s!"  {outRef} := Mux({selBool}, {in1Ref}, {in0Ref})"
                   | some b0, some b1, some selB, some idx =>
                       -- Bus mux with indexed select: out := Mux(selBus(idx), in1, in0)
                       let outRef := signalGroupRef ctx bus.name

@@ -49,6 +49,14 @@ chisel/src/main/scala/generated_v2/*.scala
 # Verilator simulation build
 build-sim/
 
+# LEC cache
+.lec-cache/
+
+# Generated filelists
+physical/*.f
+output/*/filelist.f
+chisel/src/main/scala/generated/filelist.f
+
 # SystemC build directory
 systemc/build/
 

@@ -162,9 +162,14 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "    output logic [31:0] o_rvvi_insn,\n" ++
   "    output logic [4:0]  o_rvvi_rd,\n" ++
   "    output logic        o_rvvi_rd_valid,\n" ++
-  "    output logic [31:0] o_rvvi_rd_data\n" ++
+  "    output logic [31:0] o_rvvi_rd_data,\n" ++
+  "    // RVVI-TRACE FP outputs (F extension cosimulation)\n" ++
+  "    output logic [4:0]  o_rvvi_frd,\n" ++
+  "    output logic        o_rvvi_frd_valid,\n" ++
+  "    output logic [31:0] o_rvvi_frd_data,\n" ++
+  "    // FP exception flags accumulator\n" ++
+  "    output logic [4:0]  o_fflags_acc\n" ++
   ");\n\n" ++
-
   "  // =========================================================================\n" ++
   "  // CPU I/O signals\n" ++
   "  // =========================================================================\n" ++
@@ -291,7 +296,11 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  assign o_rvvi_insn       = rvvi_insn;\n" ++
   "  assign o_rvvi_rd         = rvvi_rd;\n" ++
   "  assign o_rvvi_rd_valid   = rvvi_rd_valid;\n" ++
-  "  assign o_rvvi_rd_data    = rvvi_rd_data;\n\n" ++
+  "  assign o_rvvi_rd_data    = rvvi_rd_data;\n" ++
+  "  assign o_rvvi_frd        = rvvi_frd;\n" ++
+  "  assign o_rvvi_frd_valid  = rvvi_frd_valid;\n" ++
+  "  assign o_rvvi_frd_data   = rvvi_frd_data;\n" ++
+  "  assign o_fflags_acc      = fflags_acc;\n\n" ++
   "endmodule\n"
 
 /-! ## SystemC Testbench Generator -/

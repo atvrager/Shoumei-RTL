@@ -24,7 +24,7 @@ open Shoumei.RISCV.CPU
     Maps fetch_pc → instruction memory read address,
     dmem_req_* → data memory request interface. -/
 def cpuTestbenchConfig : TestbenchConfig := {
-  circuit := mkCPU_RV32IM
+  circuit := mkCPU_RV32IMF
   imemPort := {
     addrSignal := "fetch_pc"
     dataInSignal := some "imem_resp_data"

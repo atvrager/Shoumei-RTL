@@ -16,6 +16,8 @@ structure CPUConfig where
   enableI : Bool := true
   /-- M extension: integer multiply/divide (MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU) -/
   enableM : Bool := false
+  /-- F extension: single-precision floating-point (IEEE 754) -/
+  enableF : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (future) -/
@@ -43,6 +45,7 @@ structure CPUConfig where
 def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableI then ["rv_i", "rv32_i"] else []) ++
   (if config.enableM then ["rv_m"] else []) ++
+  (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else [])
 
@@ -55,6 +58,12 @@ def rv32iConfig : CPUConfig := {}
 
 /-- RV32IM configuration (M extension enabled) -/
 def rv32imConfig : CPUConfig := { enableM := true }
+
+/-- RV32IF configuration (F extension enabled, no M) -/
+def rv32ifConfig : CPUConfig := { enableF := true }
+
+/-- RV32IMF configuration (M + F extensions enabled) -/
+def rv32imfConfig : CPUConfig := { enableM := true, enableF := true }
 
 
 
@@ -92,8 +101,9 @@ def CPUConfig.rvviConfig (cfg : CPUConfig) : RVVIConfig :=
 def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let base := s!"RV{cfg.xlen}I"
   let mExt := if cfg.enableM then "M" else ""
+  let fExt := if cfg.enableF then "F" else ""
   let cExt := if cfg.enableC then "C" else ""
-  base ++ mExt ++ cExt
+  base ++ mExt ++ fExt ++ cExt
 
 /-- Opcode encodings that differ between RV32I and RV32IM decoders.
     The decoder assigns sequential numbers to instructions; M-extension
@@ -114,6 +124,9 @@ structure OpcodeEncodings where
   lhu : Nat
   lb : Nat
   lbu : Nat
+  -- F extension (only valid when enableF)
+  flw : Nat := 0
+  fsw : Nat := 0
 
 /-- RV32I decoder opcode encodings -/
 def opcodeEncodings_RV32I : OpcodeEncodings :=
@@ -127,8 +140,25 @@ def opcodeEncodings_RV32IM : OpcodeEncodings :=
     beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
     lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28 }
 
+/-- RV32IF decoder opcode encodings (I same as RV32I, F appended after 40 I instructions) -/
+def opcodeEncodings_RV32IF : OpcodeEncodings :=
+  { lui := 19, auipc := 35, jal := 25, jalr := 24,
+    beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
+    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
+    flw := 55, fsw := 40 }
+
+/-- RV32IMF decoder opcode encodings (I+M same as RV32IM, F appended) -/
+def opcodeEncodings_RV32IMF : OpcodeEncodings :=
+  { lui := 25, auipc := 43, jal := 31, jalr := 30,
+    beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
+    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
+    flw := 63, fsw := 48 }
+
 /-- Get opcode encodings for a CPU config -/
 def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
-  if cfg.enableM then opcodeEncodings_RV32IM else opcodeEncodings_RV32I
+  if cfg.enableF && cfg.enableM then opcodeEncodings_RV32IMF
+  else if cfg.enableF then opcodeEncodings_RV32IF
+  else if cfg.enableM then opcodeEncodings_RV32IM
+  else opcodeEncodings_RV32I
 
 end Shoumei.RISCV

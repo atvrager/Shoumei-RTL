@@ -45,9 +45,9 @@ open Shoumei.RISCV
     - 0100: AND
     - 0101: OR
     - 0110: XOR
-    - 0111: SLL (shift left logical)
-    - 1000: SRL (shift right logical)
-    - 1001: SRA (shift right arithmetic)
+    - 1000: SLL (shift left logical)   — dir=0, arith=0
+    - 1001: SRL (shift right logical)  — dir=1, arith=0
+    - 1011: SRA (shift right arithmetic) — dir=1, arith=1
 
     Note: Immediate variants (ADDI, ANDI, etc.) use the same ALU operations,
     just with src2 = immediate value (already handled by RS).
@@ -61,9 +61,9 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .AND | .ANDI  => 4  -- AND bitwise
   | .OR | .ORI    => 5  -- OR bitwise
   | .XOR | .XORI  => 6  -- XOR bitwise
-  | .SLL | .SLLI  => 7  -- Shift left logical
-  | .SRL | .SRLI  => 8  -- Shift right logical
-  | .SRA | .SRAI  => 9  -- Shift right arithmetic
+  | .SLL | .SLLI  => 8  -- Shift left logical  (1000: dir=0, arith=0)
+  | .SRL | .SRLI  => 9  -- Shift right logical (1001: dir=1, arith=0)
+  | .SRA | .SRAI  => 11 -- Shift right arith   (1011: dir=1, arith=1)
   -- Non-ALU operations (shouldn't reach IntegerExecUnit)
   | .BEQ | .BNE | .BLT | .BGE | .BLTU | .BGEU => 0  -- Branches (handled by BranchUnit)
   | .JAL | .JALR => 0  -- Jumps (handled by JumpUnit)
@@ -74,6 +74,16 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   -- M extension operations (handled by MulDivExecUnit)
   | .MUL | .MULH | .MULHSU | .MULHU => 0
   | .DIV | .DIVU | .REM | .REMU => 0
+  -- F extension operations (handled by FPExecUnit)
+  | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FEQ_S | .FLT_S | .FLE_S
+  | .FCVT_W_S | .FCVT_WU_S | .FCVT_S_W | .FCVT_S_WU
+  | .FMV_X_W | .FMV_W_X | .FCLASS_S
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FLW | .FSW => 0
+  -- Zicsr (CSR ops routed to Integer, but handled specially)
+  | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => 0
 
 /-! ## Behavioral Model -/
 
@@ -116,13 +126,13 @@ def executeInteger
     | 4 => src1 &&& src2  -- AND
     | 5 => src1 ||| src2  -- OR
     | 6 => src1 ^^^ src2  -- XOR
-    | 7 =>  -- SLL (shift left logical)
+    | 8 =>  -- SLL (shift left logical)
         let shamt := src2.toNat % 32
         (src1.toNat <<< shamt).toUInt32
-    | 8 =>  -- SRL (shift right logical)
+    | 9 =>  -- SRL (shift right logical)
         let shamt := src2.toNat % 32
         (src1.toNat >>> shamt).toUInt32
-    | 9 =>  -- SRA (shift right arithmetic)
+    | 11 => -- SRA (shift right arithmetic)
         -- Note: UInt32 doesn't have arithmetic shift, use Int conversion
         let signed_src1 := (src1.toNat : Int)
         let shift_amount := src2.toNat % 32
@@ -256,7 +266,7 @@ open Shoumei.Circuits.Combinational
     **Note:** Opcode encoding must match ALU32:
     - 0000=ADD, 0001=SUB, 0010=SLT, 0011=SLTU
     - 0100=AND, 0101=OR, 0110=XOR
-    - 0111=SLL, 1000=SRL, 1001=SRA
+    - 1000=SLL, 1001=SRL, 1011=SRA
 -/
 def mkIntegerExecUnit : Circuit :=
   let a := makeIndexedWires "a" 32

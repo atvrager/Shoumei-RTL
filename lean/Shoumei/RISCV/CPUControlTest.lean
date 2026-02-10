@@ -27,6 +27,7 @@ theorem test_no_stall_all_available :
       false  -- rsMemoryFull
       false  -- rsBranchFull
       false  -- rsMulDivFull
+      false  -- rsFPExecFull
       true   -- lsuCanAcceptLoad
       true   -- lsuCanAcceptStore
       OpType.ADD  -- instrType
@@ -45,6 +46,7 @@ theorem test_freelist_empty_stall :
       false  -- rsMemoryFull
       false  -- rsBranchFull
       false  -- rsMulDivFull
+      false  -- rsFPExecFull
       true   -- lsuCanAcceptLoad
       true   -- lsuCanAcceptStore
       OpType.ADD
@@ -63,6 +65,7 @@ theorem test_rob_full_stall :
       false
       false
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.ADD
@@ -81,6 +84,7 @@ theorem test_integer_rs_full_stalls_integer_instr :
       false
       false
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.ADD  -- Integer instruction
@@ -99,6 +103,7 @@ theorem test_integer_rs_full_no_stall_memory_instr :
       false  -- rsMemoryFull = FALSE
       false
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.LW  -- Memory instruction (should not stall)
@@ -117,6 +122,7 @@ theorem test_memory_rs_full_stalls_load :
       true   -- rsMemoryFull = TRUE
       false
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.LW  -- Load instruction
@@ -135,6 +141,7 @@ theorem test_branch_rs_full_stalls_branch :
       false
       true   -- rsBranchFull = TRUE
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.BEQ  -- Branch instruction
@@ -153,6 +160,7 @@ theorem test_muldiv_rs_full_stalls_mul_with_m_ext :
       false
       false
       true   -- rsMulDivFull = TRUE
+      false  -- rsFPExecFull
       true
       true
       OpType.MUL  -- MulDiv instruction
@@ -174,6 +182,7 @@ theorem test_muldiv_instr_no_stall_without_m_ext :
       false
       false
       false  -- rsMulDivFull = FALSE (doesn't matter)
+      false  -- rsFPExecFull
       true
       true
       OpType.DIV  -- MulDiv instruction (classified as Illegal)
@@ -192,6 +201,7 @@ theorem test_lsu_cannot_accept_load_stalls :
       false
       false
       false
+      false  -- rsFPExecFull
       false  -- lsuCanAcceptLoad = FALSE
       true
       OpType.LW  -- Load instruction
@@ -210,6 +220,7 @@ theorem test_lsu_cannot_accept_store_stalls :
       false
       false
       false
+      false  -- rsFPExecFull
       true
       false  -- lsuCanAcceptStore = FALSE
       OpType.SW  -- Store instruction
@@ -228,6 +239,7 @@ theorem test_multiple_stall_sources :
       false
       false
       false
+      false  -- rsFPExecFull
       true
       true
       OpType.ADD

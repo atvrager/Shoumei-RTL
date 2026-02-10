@@ -30,9 +30,10 @@
 | Phase 6: ROB & Retirement | ✅ Complete | 1 day | 16-entry ROB, commit logic, flush |
 | Phase 7: Memory System | ✅ Complete | 1.5 days | LSU with store buffer, TSO ordering |
 | **Phase 8: Integration** | **✅ Complete** | **2 days** | **Complete CPU (behavioral + structural, 89 modules)** |
-| Phase 9: Verification | ⏸️ Pending | 3-4 weeks | Compliance tests |
+| **Phase 9: F Extension** | **✅ Complete** | **2 days** | **RV32IMF with FPU, 110 modules at 100% LEC** |
+| Phase 10: Verification | ⏸️ Pending | 3-4 weeks | Compliance tests |
 
-**Total: ~40 weeks (~10 months) for complete verified RV32IM Tomasulo CPU**
+**Total: ~40 weeks (~10 months) for complete verified RV32IMF Tomasulo CPU**
 
 ---
 
@@ -1837,7 +1838,48 @@ structure MulDivExecState where
 
 ---
 
-## Phase 9: Verification & Testing
+## Phase 9: F Extension (RV32IMF) - ✅ COMPLETE
+
+**Goal:** Add IEEE 754 single-precision floating-point support (RISC-V F extension)
+
+**Architecture:**
+- 9 FPU building blocks: FPAdder, FPMultiplier, FPDivider, FPFMA, FPSqrt, FPMisc, FPPack, FPUnpack, FPExecUnit
+- FP rename stage with separate RAT/FreeList/PRF for FP registers
+- FP reservation station with 3-source sidecar (for fused multiply-add rs3)
+- CDB arbitration: FP results compete with integer/branch/muldiv/LSU
+- RVVI-TRACE extended with FP register writeback and fflags comparison
+
+**Supported Instructions (26 total):**
+- Arithmetic: FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S
+- Fused: FMADD.S, FMSUB.S, FNMADD.S, FNMSUB.S
+- Compare: FEQ.S, FLT.S, FLE.S
+- Convert: FCVT.W.S, FCVT.WU.S, FCVT.S.W, FCVT.S.WU
+- Move: FMV.X.W, FMV.W.X
+- Classify: FCLASS.S
+- Min/Max: FMIN.S, FMAX.S
+- Sign inject: FSGNJ.S, FSGNJN.S, FSGNJX.S
+
+**Test Coverage:**
+- 34/34 tests passing (including fp_smoke with all instruction types)
+- RTL vs Spike lock-step cosimulation with FP register + fflags comparison
+- fflags accumulator compares IEEE exception flags (NV|DZ|OF|UF|NX)
+
+**Verification:**
+- 110/110 modules at 100% LEC coverage
+- FP leaf modules verified compositionally (SEC induction fails on pipeline DFFs)
+- RV32IMFDecoder verified compositionally (LUT-based, no Chisel equivalent)
+- LEC script enhanced: incremental cache (.lec-cache/), parallel execution (-j N)
+
+**Known Limitations:**
+- No Zicsr support (FRRM, FRFLAGS, FSCSR not implemented)
+- Default rounding mode (RNE) only — rm field ignored
+- FP pipeline latencies are behavioral (1-cycle), not yet structurally pipelined
+
+**Timeline:** 2 days (2026-02-09 to 2026-02-10)
+
+---
+
+## Phase 10: Verification & Testing
 
 **Goal:** Comprehensive validation
 
@@ -1880,8 +1922,8 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 
 ## Document Status
 
-**Status:** Active Development - Phase 7 Substantially Complete, Ready for Phase 8
-**Last Updated:** 2026-02-02
+**Status:** Phase 9 Complete - RV32IMF with F Extension, 110 modules at 100% LEC
+**Last Updated:** 2026-02-10
 **Author:** Claude Code (with human guidance)
 **Project:** Shoumei RTL - Formally Verified Hardware Design
 
@@ -1911,8 +1953,8 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 - ✅ Phase 8E: Branch Redirect Wiring (branch misprediction recovery to fetch stage)
 - ✅ Phase 8F: Test Infrastructure (CPUTest.lean with 69 tests, all compiling)
 
-**Current Phase:** Phase 8 - Top-Level Integration (behavioral model complete, structural circuit pending)
+**Current Phase:** Phase 9 Complete - F Extension (RV32IMF)
 
-**Verification Status:** 77/77 modules verified (61 LEC + 16 compositional = 100% coverage)
+**Verification Status:** 110/110 modules verified (65 LEC + 45 compositional = 100% coverage)
 
-**Next Milestone:** Phase 8G - Structural Circuit & LEC Verification
+**Next Milestone:** Phase 10 - Compliance tests and formal verification
