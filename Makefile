@@ -86,7 +86,8 @@ endif
 	lake build
 
 # Generate RISC-V instruction definitions from riscv-opcodes
-# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m)
+# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f rv32_f)
+RISCV_EXTS ?= rv_i rv32_i rv_m rv_f rv32_f
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
@@ -105,7 +106,7 @@ codegen: lean opcodes
 	@echo "==> Running code generators..."
 	@echo "    Phase 1: All circuits (SV + Chisel + SystemC)..."
 	lake exe generate_all
-	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM)..."
+	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM + RV32IF + RV32IMF)..."
 	lake exe generate_riscv_decoder
 	@echo "    Phase 3: Exporting compositional verification certificates..."
 	@mkdir -p verification
@@ -131,7 +132,7 @@ filelists:
 	@echo "✓ Generated filelists: $(addsuffix .f,$(SYNTH_DESIGNS))"
 
 # Compile Chisel to SystemVerilog
-# Main.scala auto-discovers all generated modules (including RV32I/RV32IM decoders)
+# Main.scala auto-discovers all generated modules (including RV32I/RV32IM/RV32IF/RV32IMF decoders)
 chisel:
 ifndef HAS_SBT
 	@echo "Error: sbt not found. Cannot build Chisel code."

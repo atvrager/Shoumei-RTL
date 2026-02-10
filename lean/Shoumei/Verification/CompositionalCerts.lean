@@ -306,6 +306,13 @@ def fpDivider_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.FPDividerProofs"
 }
 
+/-- FPMisc: FP sign-inject, min/max, compare, classify, convert (combinational, JVM method size limit) -/
+def fpMisc_cert : CompositionalCert := {
+  moduleName := "FPMisc"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Combinational.FPMisc"
+}
+
 /-- FPExecUnit: Top-level FP execution unit (all FP sub-units) -/
 def fpExecUnit_cert : CompositionalCert := {
   moduleName := "FPExecUnit"
@@ -422,6 +429,7 @@ def allCerts : List CompositionalCert := [
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,
   -- F-Extension
+  fpMisc_cert,
   fpAdder_cert,
   fpMultiplier_cert,
   fpFMA_cert,

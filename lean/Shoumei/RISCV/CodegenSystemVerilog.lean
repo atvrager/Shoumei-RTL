@@ -98,8 +98,9 @@ s!"//===========================================================================
   let hasF := hasF defs
   let hasTrailingPorts := hasM || hasF
 
+  let muldivComma := if hasF then "," else ""
   let muldivPort := if hasM then
-    "\n    output logic        io_is_muldiv,  // M-extension multiply/divide" else ""
+    s!"\n    output logic        io_is_muldiv{muldivComma}  // M-extension multiply/divide" else ""
 
   let fpPorts := if hasF then
     "\n    output logic [4:0]  io_rs3,        // Source register 3 (R4-type, bits 31:27)" ++
