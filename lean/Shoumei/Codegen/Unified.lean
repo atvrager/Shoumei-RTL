@@ -76,11 +76,15 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- TODO: Fix Chisel codegen for these modules so this skip list can be removed:
 --   - FP circuits: JVM method size limits (flat circuits too large for single Scala method)
 --   - FPAdder/FPDivider: FIRRTL false-positive combinational cycle on carry-chain topology
---   - CPU_RV32IF/IMF: instance bus-port bit mapping (issue_opcode_5 as individual port)
+--   - CPU_RV32IF/IMF: instance bus-port bit mapping (issue_opcode_6 as individual port)
 -- All are verified via SV LEC + compositional certs.
 private def chiselSkipList : List String :=
   ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
    "CPU_RV32IF", "CPU_RV32IMF"]
+
+-- Modules that also need to skip SystemC (same bus-port bit mapping issue)
+private def systemcSkipList : List String :=
+  ["CPU_RV32IF", "CPU_RV32IMF"]
 
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
@@ -90,7 +94,10 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := d
     IO.println s!"  (skipping Chisel for {c.name} — verified via SV LEC)"
   else
     writeCircuitChisel c allCircuits
-  writeCircuitSystemC c allCircuits
+  if systemcSkipList.contains c.name then
+    IO.println s!"  (skipping SystemC for {c.name} — instance bus-port bit mapping)"
+  else
+    writeCircuitSystemC c allCircuits
   writeCircuitASAP7 c allCircuits
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
