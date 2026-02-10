@@ -36,10 +36,7 @@ compilation.addSyntaxTree(tree)
 # Force full elaboration
 diagnostics = compilation.getAllDiagnostics()
 
-# Known benign warnings to suppress:
-#   - PortWidthTruncate: CPU connects 7-bit decode_optype to 6-bit RS issue_opcode
-#     (upper bit is FP flag, intentionally not stored in integer RS)
-SUPPRESSED_CODES = {"PortWidthTruncate"}
+SUPPRESSED_CODES = set()
 
 errors = 0
 warnings = 0

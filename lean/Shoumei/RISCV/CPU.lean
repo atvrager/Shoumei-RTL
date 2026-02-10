@@ -1614,7 +1614,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
                 ("issue_full", rs_int_issue_full), ("dispatch_valid", rs_int_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by integer RS
+               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -1667,7 +1668,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", mem_src2_ready),
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by memory RS
+               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (mem_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -1824,7 +1826,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
                 ("issue_full", rs_branch_issue_full), ("dispatch_valid", rs_branch_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by branch RS
+               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -1933,7 +1936,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
                 ("issue_full", rs_muldiv_issue_full), ("dispatch_valid", rs_muldiv_dispatch_valid)] ++
-               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by muldiv RS
+               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
