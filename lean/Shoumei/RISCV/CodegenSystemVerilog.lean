@@ -125,7 +125,7 @@ module {moduleName} (
     output logic [4:0]  io_rd,         // Destination register
     output logic [4:0]  io_rs1,        // Source register 1
     output logic [4:0]  io_rs2,        // Source register 2
-    output logic [31:0] io_imm,        // Immediate value (sign-extended)
+    output logic signed [31:0] io_imm,  // Immediate value (sign-extended)
     output logic        io_valid,      // Instruction is valid
     output logic        io_has_rd,     // Instruction writes a register
     output logic        io_is_integer, // Dispatch to integer ALU
