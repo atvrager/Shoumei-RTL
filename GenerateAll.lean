@@ -245,6 +245,16 @@ def main : IO Unit := do
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
 
+  -- Generate filelist.f for each output directory
+  IO.println ""
+  IO.println "Generating filelists..."
+  writeFilelist svOutputDir ".sv"
+  writeFilelist svNetlistOutputDir ".sv"
+  writeFilelist chiselOutputDir ".scala"
+  writeFilelist systemcOutputDir ".h"
+  writeFilelist asap7OutputDir ".sv"
+  IO.println "✓ Generated filelist.f in each output directory"
+
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println s!"✓ Generated {count} circuits (all formats)"

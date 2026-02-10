@@ -228,6 +228,9 @@ jobs:
       - name: Compile Chisel
         run: make chisel
 
+      - name: Generate synthesis filelists
+        run: make filelists
+
       - name: Upload codegen artifact
         uses: actions/upload-artifact@v4
         with:
@@ -243,6 +246,19 @@ jobs:
             testbench/tests/generated/
             verification/compositional-certs.txt
           retention-days: 5
+
+      - name: Upload synthesis-ready artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shoumei-synth
+          path: |
+            output/sv-from-lean/
+            output/sv-asap7/
+            physical/*.sv
+            physical/*.f
+            physical/constraints.sdc
+            physical/config.mk
+          retention-days: 30
 
   lec:
     name: LEC Verification

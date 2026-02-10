@@ -97,6 +97,14 @@ def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Un
 
   IO.println s!"  ({c.gates.length} gates, {c.instances.length} instances)"
 
+-- Write a filelist.f for a directory listing all files matching an extension
+def writeFilelist (dir : String) (ext : String) : IO Unit := do
+  let entries ← System.FilePath.readDir dir
+  let files := entries.filter (fun e => e.fileName.endsWith ext)
+  let sorted := files.toList.map (fun e => e.fileName) |>.mergeSort (· < ·)
+  let content := String.intercalate "\n" sorted ++ "\n"
+  IO.FS.writeFile s!"{dir}/filelist.f" content
+
 -- Initialize output directories
 def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir
