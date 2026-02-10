@@ -125,7 +125,7 @@ module {moduleName} (
     output logic [4:0]  io_rd,         // Destination register
     output logic [4:0]  io_rs1,        // Source register 1
     output logic [4:0]  io_rs2,        // Source register 2
-    output logic signed [31:0] io_imm,  // Immediate value (sign-extended)
+    output logic [31:0] io_imm,        // Immediate value (sign-extended)
     output logic        io_valid,      // Instruction is valid
     output logic        io_has_rd,     // Instruction writes a register
     output logic        io_is_integer, // Dispatch to integer ALU
@@ -141,7 +141,7 @@ assign io_rs1 = io_instr[19:15];
 assign io_rs2 = io_instr[24:20];
 " ++ (if hasF then "assign io_rs3 = io_instr[31:27];\nassign io_rm  = io_instr[14:12];\n" else "") ++ "
 // Extract immediate values for each format
-logic signed [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
+logic [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
 "
 
   let immExtractors := String.intercalate "\n" [
