@@ -146,12 +146,15 @@ ifeq ($(SPIKE_LIB_FILE),)
   SPIKE_LIB_FILE := $(SPIKE_LIB)/libriscv.so
 endif
 
+VFLAGS_COMMON := --cc --exe --build -j 0 \
+                 -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
+                 --top-module tb_cpu
+
 cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
-	$(VERILATOR) --cc --exe --build -j 0 \
+	$(VERILATOR) $(VFLAGS_COMMON) \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
-		-Wno-UNOPTFLAT --top-module tb_cpu \
 		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $(BUILD_DIR)/cosim_shoumei \
@@ -161,9 +164,8 @@ cosim-no-sc: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim3
 	@mkdir -p $(BUILD_DIR)/verilator_cosim3
-	$(VERILATOR) --cc --exe --build -j 0 \
+	$(VERILATOR) $(VFLAGS_COMMON) \
 		--Mdir $(BUILD_DIR)/verilator_cosim3 \
-		-Wno-UNOPTFLAT --top-module tb_cpu \
 		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -DHAS_SYSTEMC" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -lsystemc -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $(BUILD_DIR)/cosim_shoumei_3way \

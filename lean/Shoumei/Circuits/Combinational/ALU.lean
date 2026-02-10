@@ -33,9 +33,9 @@ Opcode encoding (4 bits):
 - 0100: AND
 - 0101: OR
 - 0110: XOR
-- 0111: SLL (shift left logical)
-- 1000: SRL (shift right logical)
-- 1001: SRA (shift right arithmetic)
+- 1000: SLL (shift left logical)   — op[1:0]=00: dir=0=left, arith=0
+- 1001: SRL (shift right logical)  — op[1:0]=01: dir=1=right, arith=0
+- 1011: SRA (shift right arithmetic) — op[1:0]=11: dir=1=right, arith=1
 - 1010-1111: Reserved (currently output 0)
 -/
 

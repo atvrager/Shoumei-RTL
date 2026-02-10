@@ -84,6 +84,11 @@ SpikeOracle::SpikeOracle(const std::string& elf_path)
 
     flat->register_hart(0, proc_.get());
     proc_->get_state()->pc = 0;
+
+    // Enable FP: set MSTATUS.FS = Dirty (bits 14:13 = 11)
+    // Without this, Spike traps on any FP instruction with illegal-insn
+    proc_->put_csr(/*CSR_MSTATUS*/ 0x300,
+                   proc_->get_csr(/*CSR_MSTATUS*/ 0x300) | 0x6000);
 }
 
 SpikeOracle::~SpikeOracle() = default;

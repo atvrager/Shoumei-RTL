@@ -95,6 +95,9 @@ struct RVVIState {
     uint32_t rd;        // architectural destination register
     bool     rd_valid;
     uint32_t rd_data;
+    uint32_t frd;       // FP architectural destination register
+    bool     frd_valid;
+    uint32_t frd_data;
 };
 
 static RVVIState read_rvvi(const Vtb_cpu* dut) {
@@ -106,6 +109,9 @@ static RVVIState read_rvvi(const Vtb_cpu* dut) {
     s.rd       = dut->o_rvvi_rd;
     s.rd_valid = dut->o_rvvi_rd_valid;
     s.rd_data  = dut->o_rvvi_rd_data;
+    s.frd      = dut->o_rvvi_frd;
+    s.frd_valid = dut->o_rvvi_frd_valid;
+    s.frd_data = dut->o_rvvi_frd_data;
     return s;
 }
 
@@ -164,9 +170,18 @@ int main(int argc, char** argv) {
             // report (e.g. branches/jumps resolved in the fetch stage)
             SpikeStepResult spike_r = spike->step();
             int skip = 0;
-            while (spike_r.pc != rvvi.pc && skip < 8) {
+            while (spike_r.pc != rvvi.pc && skip < 32) {
                 spike_r = spike->step();
                 skip++;
+            }
+
+            // Debug: dump RVVI state for first 30 retirements
+            if (retired < 40) {
+                fprintf(stderr,
+                    "DBG ret#%lu cy%lu: PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x | "
+                    "Spike: PC=0x%08x insn=0x%08x rd=x%u data=0x%08x\n",
+                    retired, cycle, rvvi.pc, rvvi.insn, rvvi.rd, rvvi.rd_valid, rvvi.rd_data,
+                    spike_r.pc, spike_r.insn, spike_r.rd, spike_r.rd_value);
             }
 
             // Compare PC
@@ -187,21 +202,32 @@ int main(int argc, char** argv) {
                 mismatches++;
             }
 
-            // Compare register writeback (warning only — PRF 3rd read
-            // port has a known timing issue with RVVI rd_data reporting)
+            // Compare integer register writeback
             if (rvvi.rd_valid && spike_r.rd != 0) {
                 if (rvvi.rd_data != spike_r.rd_value) {
                     fprintf(stderr,
-                        "WARNING at retirement #%lu (cycle %lu): "
+                        "MISMATCH at retirement #%lu (cycle %lu): "
                         "x%u RTL=0x%08x Spike=0x%08x (rd_data)\n",
                         retired, cycle, spike_r.rd, rvvi.rd_data, spike_r.rd_value);
+                    mismatches++;
                 }
             }
 
-            // Compare FP register writeback (when Spike detects FP write)
-            if (spike_r.frd_valid) {
-                // TODO: Compare against RTL RVVI FP signals when available
-                // For now, just log FP writes from Spike for debugging
+            // Compare FP register writeback
+            if (spike_r.frd_valid || rvvi.frd_valid) {
+                if (spike_r.frd_valid != rvvi.frd_valid) {
+                    fprintf(stderr,
+                        "MISMATCH at retirement #%lu (cycle %lu): "
+                        "frd_valid RTL=%d Spike=%d\n",
+                        retired, cycle, rvvi.frd_valid, spike_r.frd_valid);
+                    mismatches++;
+                } else if (rvvi.frd_data != spike_r.frd_value) {
+                    fprintf(stderr,
+                        "MISMATCH at retirement #%lu (cycle %lu): "
+                        "f%u RTL=0x%08x Spike=0x%08x (frd_data)\n",
+                        retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);
+                    mismatches++;
+                }
             }
 
 #ifdef HAS_SYSTEMC

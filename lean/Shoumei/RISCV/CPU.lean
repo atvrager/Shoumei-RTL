@@ -140,9 +140,9 @@ def aluMapping_RV32I : List (Nat × Nat) :=
     (37, 4), (36, 4),   -- AND, ANDI → 4
     (17, 5), (16, 5),   -- OR, ORI → 5
     (1, 6), (0, 6),     -- XOR, XORI → 6
-    (13, 7), (12, 7),   -- SLL, SLLI → 7
-    (5, 8), (4, 8),     -- SRL, SRLI → 8
-    (7, 9), (6, 9) ]    -- SRA, SRAI → 9
+    (13, 8), (12, 8),   -- SLL, SLLI → 8  (1000: dir=0=left, arith=0)
+    (5, 9), (4, 9),     -- SRL, SRLI → 9  (1001: dir=1=right, arith=0)
+    (7, 11), (6, 11) ]  -- SRA, SRAI → 11 (1011: dir=1=right, arith=1)
 
 /-- OpType → ALU4 mapping for RV32IM decoder encoding.
     Encoding order (from generated RV32IMDecoder.sv):
@@ -161,9 +161,9 @@ def aluMapping_RV32IM : List (Nat × Nat) :=
     (45, 4), (44, 4),   -- AND, ANDI → 4
     (19, 5), (18, 5),   -- OR, ORI → 5
     (1, 6), (0, 6),     -- XOR, XORI → 6
-    (13, 7), (12, 7),   -- SLL, SLLI → 7
-    (5, 8), (4, 8),     -- SRL, SRLI → 8
-    (7, 9), (6, 9) ]    -- SRA, SRAI → 9
+    (13, 8), (12, 8),   -- SLL, SLLI → 8  (1000: dir=0=left, arith=0)
+    (5, 9), (4, 9),     -- SRL, SRLI → 9  (1001: dir=1=right, arith=0)
+    (7, 11), (6, 11) ]  -- SRA, SRAI → 11 (1011: dir=1=right, arith=1)
 
 /-- Generic optype→opcode LUT for N-bit input → M-bit output.
     Same algorithm as mkOpTypeToALU4 but parameterized on widths. -/
@@ -1023,6 +1023,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dispatch_is_fp_load := Wire.mk "dispatch_is_fp_load"
   let dispatch_is_fp_store := Wire.mk "dispatch_is_fp_store"
   let decode_has_any_rd := Wire.mk "decode_has_any_rd"
+  let decode_rd_nonzero := Wire.mk "decode_rd_nonzero"
+  let decode_has_rd_nox0 := Wire.mk "decode_has_rd_nox0"
+  let decode_has_any_rd_nox0 := Wire.mk "decode_has_any_rd_nox0"
 
   -- Forward-declare FP wires needed by INT rename and cross-domain logic
   let cdb_is_fp_rd := Wire.mk "cdb_is_fp_rd"
@@ -1179,6 +1182,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
   let retire_recycle_valid := Wire.mk "retire_recycle_valid"
   let rvvi_rd_data := makeIndexedWires "rvvi_rd_data" 32
+  let int_rename_rd_data3 := makeIndexedWires "int_rename_rd_data3" 32  -- unused rs3 data (INT has no FMA)
 
   -- Gate rename's instr_valid during redirect/flush
   let decode_valid_rename := Wire.mk "decode_valid_rename"
@@ -1193,13 +1197,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("has_rd", if enableF then Wire.mk "decode_has_rd_int" else decode_has_rd)] ++
       (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
+      ((List.range 5).map (fun i => (s!"rs3_addr_{i}", zero))) ++  -- rs3_addr: unused on INT rename
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
       [("cdb_valid", if enableF then cdb_valid_int_prf else cdb_valid_prf)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid)] ++
       (rob_head_oldPhysRd.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
-      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++  -- 3rd read port: RVVI commit readback
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++  -- 4th read port: RVVI commit readback
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
@@ -1207,7 +1212,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
       (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w))) ++
-      (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w)))
+      (int_rename_rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
+      (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1265,6 +1271,25 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- INT rename has_rd: use masked version when F enabled (exclude FP-only-write ops)
   let decode_has_rd_for_int := if enableF then Wire.mk "decode_has_rd_int" else decode_has_rd
+
+  -- Compute decode_rd_nonzero = OR of all 5 bits of decode_rd (for x0 exclusion)
+  -- Used to gate alloc_hasPhysRd/alloc_hasOldPhysRd in the ROB:
+  -- if rd=x0, the rename stage doesn't allocate a physRd, so the ROB shouldn't
+  -- record hasPhysRd=1 (otherwise it frees oldPhysRd=p0 at commit, putting p0
+  -- back in the free list where CDB writes to tag=0 are blocked by cdb_tag_nonzero).
+  let rd_nz_or1 := Wire.mk "rd_nz_or1"
+  let rd_nz_or2 := Wire.mk "rd_nz_or2"
+  let rd_nz_or3 := Wire.mk "rd_nz_or3"
+  let rd_nonzero_gates := [
+    Gate.mkOR decode_rd[0]! decode_rd[1]! rd_nz_or1,
+    Gate.mkOR rd_nz_or1 decode_rd[2]! rd_nz_or2,
+    Gate.mkOR rd_nz_or2 decode_rd[3]! rd_nz_or3,
+    Gate.mkOR rd_nz_or3 decode_rd[4]! decode_rd_nonzero,
+    Gate.mkAND decode_has_rd decode_rd_nonzero decode_has_rd_nox0
+  ] ++ (if enableF then [
+    -- For FP path: FP rd is always valid (f0 is a real register), so only gate INT rd on x0
+    Gate.mkOR decode_has_rd_nox0 decode_has_fp_rd decode_has_any_rd_nox0
+  ] else [])
 
   -- === BUSY-BIT TABLE ===
   let busy_set_en := Wire.mk "busy_set_en"
@@ -1366,6 +1391,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let fp_rename_valid := Wire.mk "fp_rename_valid"
   let fp_rename_stall := Wire.mk "fp_rename_stall"
   let fp_rs3_data := makeIndexedWires "fp_rs3_data" 32
+  let fp_rvvi_rd_data := makeIndexedWires "fp_rvvi_rd_data" 32  -- FP PRF 4th read port for RVVI
 
   -- CDB routing: split CDB writes between INT and FP PRFs
   let cdb_prf_route_gates :=
@@ -1385,13 +1411,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("has_rd", decode_has_fp_rd)] ++
       (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
+      (decode_rs3.enum.map (fun ⟨i, w⟩ => (s!"rs3_addr_{i}", w))) ++  -- rs3 lookup via FP RAT
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
       [("cdb_valid", cdb_valid_fp_prf)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", fp_retire_recycle_valid)] ++
       (fp_old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
-      (decode_rs3.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++  -- 4th read port: RVVI FP commit readback
       [("rename_valid", fp_rename_valid), ("stall", fp_rename_stall)] ++
       (fp_rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
       (fp_rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_phys_out_{i}", w))) ++
@@ -1399,7 +1426,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
       (fp_rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
       (fp_old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w))) ++
-      (fp_rs3_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w)))
+      (fp_rs3_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
+      (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
   }
 
   -- Mask dest_tag to 0 when has_rd=0 (prevents tag collision from NOP/rd=x0)
@@ -2023,8 +2051,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let fp_rs_dispatch_gate :=
     if enableF then
       let not_fp_hold := Wire.mk "not_fp_hold_for_bp"
+      let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
+      let fp_dispatch_ok := Wire.mk "fp_dispatch_ok"
       [Gate.mkNOT fp_hold_valid not_fp_hold,
-       Gate.mkBUF not_fp_hold fp_rs_dispatch_en]
+       Gate.mkNOT (Wire.mk "fp_busy") not_fp_eu_busy,
+       Gate.mkAND not_fp_hold not_fp_eu_busy fp_dispatch_ok,
+       Gate.mkBUF fp_dispatch_ok fp_rs_dispatch_en]
     else [Gate.mkBUF one fp_rs_dispatch_en]
 
   let rs_fp_inst : CircuitInstance := {
@@ -2052,6 +2084,64 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (rs_fp_grant.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
+  -- === FP SRC3 SIDECAR: 4-entry × 32-bit storage for FMA rs3 data ===
+  -- Written at issue time (alloc_ptr selects slot), read at dispatch (grant one-hot mux)
+  let fp_src3_dispatch := makeIndexedWires "fp_src3_dispatch" 32
+
+  -- Decode alloc_ptr to one-hot write-enable
+  let fp_src3_we := (List.range 4).map (fun slot => Wire.mk s!"fp_src3_we_{slot}")
+  let fp_src3_alloc_decode :=
+    if enableF then
+      let ap0 := rs_fp_alloc_ptr[0]!
+      let ap1 := rs_fp_alloc_ptr[1]!
+      let not_ap0 := Wire.mk "fp_src3_not_ap0"
+      let not_ap1 := Wire.mk "fp_src3_not_ap1"
+      [Gate.mkNOT ap0 not_ap0, Gate.mkNOT ap1 not_ap1] ++
+      -- slot 0: !ap1 & !ap0 & issue_en
+      [Gate.mkAND not_ap1 not_ap0 (Wire.mk "fp_src3_sel0"),
+       Gate.mkAND (Wire.mk "fp_src3_sel0") dispatch_fp_valid fp_src3_we[0]!] ++
+      -- slot 1: !ap1 & ap0 & issue_en
+      [Gate.mkAND not_ap1 ap0 (Wire.mk "fp_src3_sel1"),
+       Gate.mkAND (Wire.mk "fp_src3_sel1") dispatch_fp_valid fp_src3_we[1]!] ++
+      -- slot 2: ap1 & !ap0 & issue_en
+      [Gate.mkAND ap1 not_ap0 (Wire.mk "fp_src3_sel2"),
+       Gate.mkAND (Wire.mk "fp_src3_sel2") dispatch_fp_valid fp_src3_we[2]!] ++
+      -- slot 3: ap1 & ap0 & issue_en
+      [Gate.mkAND ap1 ap0 (Wire.mk "fp_src3_sel3"),
+       Gate.mkAND (Wire.mk "fp_src3_sel3") dispatch_fp_valid fp_src3_we[3]!]
+    else []
+
+  -- 4 slots × 32 DFFs each, with write-enable MUX
+  let fp_src3_slots := (List.range 4).map (fun slot =>
+    makeIndexedWires s!"fp_src3_slot{slot}" 32)
+  let fp_src3_dff_gates :=
+    if enableF then
+      (List.range 4).flatMap (fun slot =>
+        (List.range 32).flatMap (fun bit =>
+          let d_mux := Wire.mk s!"fp_src3_slot{slot}_d_{bit}"
+          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! d_mux,
+           Gate.mkDFF d_mux clock reset fp_src3_slots[slot]![bit]!]))
+    else []
+
+  -- Read mux: one-hot grant selects which slot's data to output
+  let fp_src3_read_gates :=
+    if enableF then
+      (List.range 32).flatMap (fun bit =>
+        let and0 := Wire.mk s!"fp_src3_rd0_{bit}"
+        let and1 := Wire.mk s!"fp_src3_rd1_{bit}"
+        let and2 := Wire.mk s!"fp_src3_rd2_{bit}"
+        let and3 := Wire.mk s!"fp_src3_rd3_{bit}"
+        let or01 := Wire.mk s!"fp_src3_or01_{bit}"
+        let or23 := Wire.mk s!"fp_src3_or23_{bit}"
+        [Gate.mkAND fp_src3_slots[0]![bit]! rs_fp_grant[0]! and0,
+         Gate.mkAND fp_src3_slots[1]![bit]! rs_fp_grant[1]! and1,
+         Gate.mkAND fp_src3_slots[2]![bit]! rs_fp_grant[2]! and2,
+         Gate.mkAND fp_src3_slots[3]![bit]! rs_fp_grant[3]! and3,
+         Gate.mkOR and0 and1 or01,
+         Gate.mkOR and2 and3 or23,
+         Gate.mkOR or01 or23 fp_src3_dispatch[bit]!])
+    else []
+
   -- === FP EXECUTION UNIT (conditional) ===
   let fp_result := makeIndexedWires "fp_result" 32
   let fp_tag_out := makeIndexedWires "fp_tag_out" 6
@@ -2069,6 +2159,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- The FPExecUnit expects opTypeToFPUOpcode encoding
   let fp_op_gates :=
     if enableF then
+      -- Gate EU valid_in with dispatch_en to prevent processing when stalled
+      [Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en (Wire.mk "fp_eu_valid_in")] ++
       (List.range 5).map (fun i =>
         Gate.mkBUF rs_fp_dispatch_opcode[i]! fp_op[i]!) ++
       -- rm: use bits from dispatch opcode or default to 0 (RNE)
@@ -2083,12 +2175,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap :=
       (rs_fp_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"src1_{i}", w))) ++
       (rs_fp_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"src2_{i}", w))) ++
-      -- src3: tied to zero for now (no 3-source RS yet)
-      ((List.range 32).map (fun i => (s!"src3_{i}", zero))) ++
+      -- src3: from sidecar storage (rs3 data captured at issue time)
+      (fp_src3_dispatch.enum.map (fun ⟨i, w⟩ => (s!"src3_{i}", w))) ++
       (fp_op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
       (fp_rm.enum.map (fun ⟨i, w⟩ => (s!"rm_{i}", w))) ++
       (rs_fp_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("valid_in", rs_fp_dispatch_valid),
+      [("valid_in", Wire.mk "fp_eu_valid_in"),
        ("clock", clock), ("reset", reset),
        ("zero", zero), ("one", one)] ++
       (fp_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
@@ -2337,16 +2429,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("alloc_en", rename_valid)] ++
       -- When enableF, dest tag could be from FP pool; ROB needs whichever pool is active
       ((if enableF then fp_issue_dest_tag else int_dest_tag_masked).enum.map (fun ⟨i, w⟩ => (s!"alloc_physRd[{i}]", w))) ++
-      [("alloc_hasPhysRd", if enableF then decode_has_any_rd else decode_has_rd)] ++
+      [("alloc_hasPhysRd", if enableF then decode_has_any_rd_nox0 else decode_has_rd_nox0)] ++
       ((if enableF then rob_old_phys_muxed else old_rd_phys).enum.map (fun ⟨i, w⟩ => (s!"alloc_oldPhysRd[{i}]", w))) ++
-      [("alloc_hasOldPhysRd", if enableF then decode_has_any_rd else decode_has_rd)] ++
+      [("alloc_hasOldPhysRd", if enableF then decode_has_any_rd_nox0 else decode_has_rd_nox0)] ++
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"alloc_archRd[{i}]", w))) ++
       [("alloc_isBranch", dispatch_is_branch),
        ("cdb_valid", cdb_valid)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag[{i}]", w))) ++
       [("cdb_exception", zero),
        ("cdb_mispredicted", zero),
-       ("commit_en", rob_commit_en),
+       ("cdb_is_fp", if enableF then cdb_is_fp_rd else zero)] ++
+      ((List.range 16).map (fun i =>
+        (s!"is_fp_shadow_{i}", if enableF then Wire.mk s!"rob_is_fp_e{i}" else zero))) ++
+      [("commit_en", rob_commit_en),
        ("flush_en", zero),
        ("full", rob_full),
        ("empty", rob_empty)] ++
@@ -2406,7 +2501,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- rvvi_trap = rob_head_exception AND rob_commit_en
   -- rvvi_rd[4:0] = rob_head_archRd
   -- rvvi_rd_valid = rob_head_hasPhysRd AND rob_commit_en
-  -- rvvi_rd_data = prf rd_data3 (via rename stage 3rd read port, already wired)
+  -- rvvi_rd_data = prf rd_data4 (via rename stage 4th read port, already wired)
   let rvvi_gates :=
     [Gate.mkBUF rob_commit_en rvvi_valid,
      Gate.mkAND rob_head_exception rob_commit_en rvvi_trap,
@@ -2414,12 +2509,18 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (List.range 5).map (fun i =>
       Gate.mkBUF rob_head_archRd[i]! rvvi_rd[i]!)
 
-  -- FP RVVI gates (placeholder: tied to zero until FP retirement path is wired)
-  -- TODO: Connect to FP ROB entry's archFpRd and FP PhysRegFile read port
+  -- FP RVVI gates: rvvi_frd_valid = rob_head_is_fp AND rob_commit_en
+  -- rvvi_frd = rob_head_archRd (same arch rd field, FP regs share encoding)
+  -- rvvi_frd_data = FP PRF rd_data4 (via fp_rename 4th read port)
   let rvvi_fp_gates :=
-    [Gate.mkBUF zero rvvi_frd_valid] ++
-    (List.range 5).map (fun i => Gate.mkBUF zero rvvi_frd[i]!) ++
-    (List.range 32).map (fun i => Gate.mkBUF zero rvvi_frd_data[i]!)
+    if enableF then
+      [Gate.mkAND (Wire.mk "rob_head_is_fp") rob_commit_en rvvi_frd_valid] ++
+      (List.range 5).map (fun i => Gate.mkBUF rob_head_archRd[i]! rvvi_frd[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF fp_rvvi_rd_data[i]! rvvi_frd_data[i]!)
+    else
+      [Gate.mkBUF zero rvvi_frd_valid] ++
+      (List.range 5).map (fun i => Gate.mkBUF zero rvvi_frd[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF zero rvvi_frd_data[i]!)
 
   -- === CDB REPLAY BUFFER ===
   let replay_valid := Wire.mk "replay_valid"
@@ -2822,7 +2923,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
           else none)
         let t01 := Wire.mk s!"rob_fp_sd_t01_{e}"
         let t012 := Wire.mk s!"rob_fp_sd_t012_{e}"
-        let next := Wire.mk s!"rob_fp_sd_next_{e}"
+        let next := Wire.mk s!"rob_fp_sdnx_e{e}"
         not_gates ++ [
           Gate.mkAND match_bits[0]! match_bits[1]! t01,
           Gate.mkAND t01 match_bits[2]! t012,
@@ -2968,11 +3069,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data
-    gates := flush_gate ++ dispatch_gates ++ int_dest_tag_mask_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+    gates := flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++
+             fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              (if enableF then fp_op_gates else []) ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
@@ -3090,8 +3192,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rvvi_insn", width := 32, wires := rvvi_insn },
        { name := "rvvi_rd", width := 5, wires := rvvi_rd },
        { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
-       -- Note: rvvi_frd/rvvi_frd_data are BUF-from-zero placeholders so codegen
-       -- emits them as flat wires. Testbench handles aggregation manually.
+       { name := "rvvi_frd", width := 5, wires := rvvi_frd },
+       { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
        { name := "rob_head_idx", width := 4, wires := rob_head_idx }] ++
       (if enableF then [
        { name := "fp_rs1_phys", width := 6, wires := fp_rs1_phys },
@@ -3102,7 +3204,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rs_fp_dispatch_opcode", width := 6, wires := rs_fp_dispatch_opcode },
        { name := "rs_fp_dispatch_src1", width := 32, wires := rs_fp_dispatch_src1 },
        { name := "rs_fp_dispatch_src2", width := 32, wires := rs_fp_dispatch_src2 },
-       { name := "rs_fp_dispatch_tag", width := 6, wires := rs_fp_dispatch_tag }] else [])
+       { name := "rs_fp_dispatch_tag", width := 6, wires := rs_fp_dispatch_tag },
+       { name := "fp_rvvi_rd_data", width := 32, wires := fp_rvvi_rd_data }] else [])
   }
 
 /-- RV32I CPU (backward-compatible alias) -/

@@ -233,8 +233,10 @@ jobs:
         with:
           name: codegen-output
           path: |
+            output/sv-asap7/
             output/sv-from-lean/
             output/sv-from-chisel/
+            output/sv-netlist/
             output/systemc/
             chisel/src/main/scala/generated/
             testbench/generated/

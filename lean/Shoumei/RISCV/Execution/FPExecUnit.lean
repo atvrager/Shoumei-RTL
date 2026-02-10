@@ -400,7 +400,20 @@ def mkFPExecUnit : Circuit :=
     Gate.mkAND valid_in op_is_mul mul_valid_in,
     Gate.mkAND valid_in op_is_fma fma_valid_in,
     Gate.mkAND valid_in op_is_div div_start,
-    Gate.mkAND valid_in op_is_sqrt sqrt_start
+    Gate.mkAND valid_in op_is_sqrt sqrt_start,
+
+    -- FMA variant control: decode negate_product and subtract_addend from op
+    -- FMADD(5)=00101: neg=0,sub=0  FMSUB(6)=00110: neg=0,sub=1
+    -- FNMADD(7)=00111: neg=1,sub=0  FNMSUB(8)=01000: neg=1,sub=1
+    -- For ops 5-7 (op2_and_not34): sub = op[1] AND NOT op[0] (only 6=110)
+    --                               neg = op[1] AND op[0] (only 7=111)
+    -- For op 8 (op3_and_not24): both sub=1 and neg=1
+    Gate.mkAND (op[1]!) not_op0 (Wire.mk "fma_sub_57"),
+    Gate.mkAND op2_and_not34 (Wire.mk "fma_sub_57") (Wire.mk "fma_sub_a"),
+    Gate.mkOR (Wire.mk "fma_sub_a") op3_and_not24 (Wire.mk "fma_subtract_addend"),
+    Gate.mkAND (op[1]!) (op[0]!) (Wire.mk "fma_neg_57"),
+    Gate.mkAND op2_and_not34 (Wire.mk "fma_neg_57") (Wire.mk "fma_neg_a"),
+    Gate.mkOR (Wire.mk "fma_neg_a") op3_and_not24 (Wire.mk "fma_negate_product")
   ]
 
   -- ══════════════════════════════════════════════
@@ -458,7 +471,9 @@ def mkFPExecUnit : Circuit :=
           [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!), (s!"src3_{i}", src3[i]!) ]) ++
         (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
-        [("valid_in", fma_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        [("negate_product", Wire.mk "fma_negate_product"),
+         ("subtract_addend", Wire.mk "fma_subtract_addend"),
+         ("valid_in", fma_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", fma_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", fma_tag[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", fma_exc[i]!)) ++
@@ -575,8 +590,36 @@ def mkFPExecUnit : Circuit :=
       Gate.mkMUX (t4_exc[i]!) (div_exc[i]!) div_valid (exceptions[i]!)) ++
     [Gate.mkOR t4_valid div_valid valid_out]
 
-  -- Busy = div_busy OR sqrt_busy
-  let busy_gate := [Gate.mkOR div_busy sqrt_busy busy]
+  -- Pipeline collision prevention: after dispatching to a pipelined sub-unit (adder, mul, FMA),
+  -- set busy for 1 cycle to prevent back-to-back dispatches to different pipelines.
+  -- Without this, e.g., FADD(4-cycle) then FMUL(3-cycle) on consecutive cycles collide.
+  let pipe_dispatched := Wire.mk "pipe_dispatched"
+  let pipe_was_active := Wire.mk "pipe_was_active"
+  let _pipe_any := Wire.mk "pipe_any"
+  let pipe_collision_gates := [
+    Gate.mkOR add_valid_in mul_valid_in (Wire.mk "pipe_am"),
+    Gate.mkOR (Wire.mk "pipe_am") fma_valid_in pipe_dispatched
+  ]
+  let pipe_collision_inst : CircuitInstance := {
+    moduleName := "DFlipFlop"
+    instName := "u_pipe_active_reg"
+    portMap := [("d", pipe_dispatched), ("q", pipe_was_active),
+                ("clock", clock), ("reset", reset)]
+  }
+
+  -- Busy = div_busy OR sqrt_busy OR pipe_was_active OR any_pipe_output
+  -- any_pipe_output prevents misc from dispatching on the same cycle as a pipeline result,
+  -- which would cause the misc result to be dropped by the priority MUX.
+  let busy_gate := [
+    Gate.mkOR div_busy sqrt_busy (Wire.mk "busy_ds"),
+    Gate.mkOR (Wire.mk "busy_ds") pipe_was_active (Wire.mk "busy_core"),
+    -- Detect any pipeline output active
+    Gate.mkOR add_valid mul_valid (Wire.mk "pout_am"),
+    Gate.mkOR fma_valid sqrt_valid (Wire.mk "pout_fs"),
+    Gate.mkOR (Wire.mk "pout_am") (Wire.mk "pout_fs") (Wire.mk "pout_amfs"),
+    Gate.mkOR (Wire.mk "pout_amfs") div_valid (Wire.mk "any_pipe_output"),
+    Gate.mkOR (Wire.mk "busy_core") (Wire.mk "any_pipe_output") busy
+  ]
 
   -- result_is_int: detect when the FP result targets INT register file
   -- INT-writing FP ops (by FPU opcode): 9=FEQ, 10=FLT, 11=FLE, 12=FCVT_W_S,
@@ -635,8 +678,9 @@ def mkFPExecUnit : Circuit :=
     outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy, result_is_int]
     gates := decode_gates ++ misc_valid_gate ++
              mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
-             busy_gate ++ int_result_gates
-    instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst]
+             pipe_collision_gates ++ busy_gate ++ int_result_gates
+    instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst,
+                  pipe_collision_inst]
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
       { name := "src2", width := 32, wires := src2 },

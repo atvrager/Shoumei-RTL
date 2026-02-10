@@ -6,7 +6,7 @@ Used in Tomasulo out-of-order execution to hold renamed register values.
 
 Design:
 - 64 entries, each 32 bits wide (full RISC-V word)
-- 3 read ports (asynchronous, for rs1/rs2 operand fetch + RVVI commit readback)
+- 4 read ports (asynchronous, for rs1/rs2 operand fetch + RVVI commit readback + RVVI FP readback)
 - 1 write port (synchronous, from CDB writeback)
 - Synchronous reset to all zeros
 
@@ -88,6 +88,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   let rd_tag1 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag1_{i}")
   let rd_tag2 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag2_{i}")
   let rd_tag3 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag3_{i}")
+  let rd_tag4 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag4_{i}")
   let wr_tag := (List.range tagWidth).map (fun i => Wire.mk s!"wr_tag_{i}")
   let wr_data := (List.range dataWidth).map (fun i => Wire.mk s!"wr_data_{i}")
 
@@ -95,6 +96,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   let rd_data1 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data1_{i}")
   let rd_data2 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data2_{i}")
   let rd_data3 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data3_{i}")
+  let rd_data4 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data4_{i}")
 
   -- Internal: Write Decoder (6→64 one-hot)
   let write_sel := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_{i}")
@@ -179,6 +181,12 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     portMap := mux_in_map ++ mkMuxSelMap rd_tag3 ++ mkMuxOutMap rd_data3
   }
 
+  let mux_rd4_inst : CircuitInstance := {
+    moduleName := s!"Mux{numRegs}x{dataWidth}"
+    instName := "u_mux_rd4"
+    portMap := mux_in_map ++ mkMuxSelMap rd_tag4 ++ mkMuxOutMap rd_data4
+  }
+
   -- Signal groups for next and reg internal wires (for Vec grouping in Chisel)
   let next_groups := (List.range numRegs).map (fun i =>
     { name := s!"next_{i}",
@@ -190,20 +198,22 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
       wires := (List.range dataWidth).map (fun j => getReg i j) })
 
   { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
-    inputs := [clock, reset, wr_en] ++ rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ wr_tag ++ wr_data
-    outputs := rd_data1 ++ rd_data2 ++ rd_data3
+    inputs := [clock, reset, wr_en] ++ rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ wr_tag ++ wr_data
+    outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4
     gates := we_gates ++ write_mux_gates
-    instances := [decoder_inst] ++ storage_instances ++ [mux_rd1_inst, mux_rd2_inst, mux_rd3_inst]
+    instances := [decoder_inst] ++ storage_instances ++ [mux_rd1_inst, mux_rd2_inst, mux_rd3_inst, mux_rd4_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "rd_tag1", width := tagWidth, wires := rd_tag1 },
       { name := "rd_tag2", width := tagWidth, wires := rd_tag2 },
       { name := "rd_tag3", width := tagWidth, wires := rd_tag3 },
+      { name := "rd_tag4", width := tagWidth, wires := rd_tag4 },
       { name := "wr_tag", width := tagWidth, wires := wr_tag },
       { name := "wr_data", width := dataWidth, wires := wr_data },
       { name := "rd_data1", width := dataWidth, wires := rd_data1 },
       { name := "rd_data2", width := dataWidth, wires := rd_data2 },
       { name := "rd_data3", width := dataWidth, wires := rd_data3 },
+      { name := "rd_data4", width := dataWidth, wires := rd_data4 },
       { name := "write_sel", width := numRegs, wires := write_sel },
       { name := "we", width := numRegs, wires := we }
     ] ++ next_groups ++ reg_groups

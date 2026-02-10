@@ -1,29 +1,26 @@
 /-
-Circuits/Sequential/FPFMA.lean - 5-Stage Pipelined Fused Multiply-Add
+Circuits/Sequential/FPFMA.lean - Pipelined Fused Multiply-Add via FPMultiplier + FPAdder
 
-A pipeline timing skeleton for IEEE 754 binary32 fused multiply-add (FMA).
-Real arithmetic is computed by the behavioral model; this circuit
-provides the structural pipeline registers for timing/scheduling.
+Computes src1 * src2 ± src3 by chaining:
+  FPMultiplier (2 cycles) → sign adjustment → FPAdder (4 cycles) = 6 cycles total.
 
-Pipeline stages:
-  Stage 1: Latch inputs (src1, src2, src3, rm, tag, valid)
-  Stage 2: Hold (placeholder for multiply)
-  Stage 3: Hold (placeholder for alignment/add)
-  Stage 4: Hold (placeholder for normalize/round)
-  Stage 5: Output
+src3, negate_product, subtract_addend, and rm are delayed 2 cycles to align
+with the multiplier output.
 
-Inputs (109):
+Inputs (111):
   src1[31:0], src2[31:0], src3[31:0] - three FP operands
   rm[2:0]                            - rounding mode
   dest_tag[5:0]                      - physical register tag
+  negate_product                     - flip sign of product (FNMADD/FNMSUB)
+  subtract_addend                    - subtract addend (FMSUB/FNMSUB)
   valid_in                           - input valid
   clock, reset                       - sequential control
   zero                               - constant low
 
 Outputs (44):
-  result[31:0]  - FP FMA result (placeholder: BUF s4_src1)
+  result[31:0]  - FP FMA result
   tag_out[5:0]  - destination tag
-  exc[4:0]      - exception flags (tied to zero)
+  exc[4:0]      - exception flags
   valid_out     - output valid
 -/
 
@@ -39,31 +36,7 @@ open Shoumei.Circuits.Combinational
 private def mkDFFBank (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
 
-/-- Build a 5-stage pipelined FP fused multiply-add skeleton circuit.
-
-    **Inputs (109 total):**
-    - src1[31:0]: First FP operand
-    - src2[31:0]: Second FP operand
-    - src3[31:0]: Third FP operand (addend)
-    - rm[2:0]: Rounding mode
-    - dest_tag[5:0]: Physical register destination tag
-    - valid_in: Input valid signal
-    - clock, reset: Sequential control
-    - zero: Constant low
-
-    **Outputs (44 total):**
-    - result[31:0]: FP FMA result (placeholder)
-    - tag_out[5:0]: Pass-through destination tag
-    - exc[4:0]: Exception flags (tied low)
-    - valid_out: Output valid
-
-    **Pipeline DFF banks (106 DFFs per stage boundary):**
-    - Stage 1→2: s1_src1[31:0], s1_src2[31:0], s1_src3[31:0], s1_rm[2:0], s1_tag[5:0], s1_valid
-    - Stage 2→3: s2_*
-    - Stage 3→4: s3_*
-    - Stage 4→5: s4_*
-    Total: 424 DFFs
--/
+/-- Build a pipelined FP FMA circuit using FPMultiplier and FPAdder sub-modules. -/
 def mkFPFMA : Circuit :=
   -- ══════════════════════════════════════════════
   -- Input wires
@@ -73,6 +46,8 @@ def mkFPFMA : Circuit :=
   let src3 := makeIndexedWires "src3" 32
   let rm := makeIndexedWires "rm" 3
   let dest_tag := makeIndexedWires "dest_tag" 6
+  let negate_product := Wire.mk "negate_product"
+  let subtract_addend := Wire.mk "subtract_addend"
   let valid_in := Wire.mk "valid_in"
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -87,113 +62,117 @@ def mkFPFMA : Circuit :=
   let valid_out := Wire.mk "valid_out"
 
   -- ══════════════════════════════════════════════
-  -- Stage 1 pipeline registers (input → stage 1)
+  -- Internal wires: FPMultiplier outputs
   -- ══════════════════════════════════════════════
-  let s1_src1 := makeIndexedWires "s1_src1" 32
-  let s1_src2 := makeIndexedWires "s1_src2" 32
-  let s1_src3 := makeIndexedWires "s1_src3" 32
-  let s1_rm := makeIndexedWires "s1_rm" 3
-  let s1_tag := makeIndexedWires "s1_tag" 6
-  let s1_valid := Wire.mk "s1_valid"
-
-  let s1_dffs :=
-    mkDFFBank src1 s1_src1 clock reset ++
-    mkDFFBank src2 s1_src2 clock reset ++
-    mkDFFBank src3 s1_src3 clock reset ++
-    mkDFFBank rm s1_rm clock reset ++
-    mkDFFBank dest_tag s1_tag clock reset ++
-    [Gate.mkDFF valid_in clock reset s1_valid]
+  let mul_result := makeIndexedWires "mul_result" 32
+  let mul_tag := makeIndexedWires "mul_tag" 6
+  let mul_exc := makeIndexedWires "mul_exc" 5
+  let mul_valid := Wire.mk "mul_valid"
 
   -- ══════════════════════════════════════════════
-  -- Stage 2 pipeline registers (stage 1 → stage 2)
+  -- src3 delay line: 2 stages × 32 bits (matches FPMultiplier 2-cycle latency)
   -- ══════════════════════════════════════════════
-  let s2_src1 := makeIndexedWires "s2_src1" 32
-  let s2_src2 := makeIndexedWires "s2_src2" 32
-  let s2_src3 := makeIndexedWires "s2_src3" 32
-  let s2_rm := makeIndexedWires "s2_rm" 3
-  let s2_tag := makeIndexedWires "s2_tag" 6
-  let s2_valid := Wire.mk "s2_valid"
+  let dl1_src3 := makeIndexedWires "dl1_src3" 32
+  let dl2_src3 := makeIndexedWires "dl2_src3" 32
 
-  let s2_dffs :=
-    mkDFFBank s1_src1 s2_src1 clock reset ++
-    mkDFFBank s1_src2 s2_src2 clock reset ++
-    mkDFFBank s1_src3 s2_src3 clock reset ++
-    mkDFFBank s1_rm s2_rm clock reset ++
-    mkDFFBank s1_tag s2_tag clock reset ++
-    [Gate.mkDFF s1_valid clock reset s2_valid]
+  let src3_dl_dffs :=
+    mkDFFBank src3 dl1_src3 clock reset ++
+    mkDFFBank dl1_src3 dl2_src3 clock reset
 
   -- ══════════════════════════════════════════════
-  -- Stage 3 pipeline registers (stage 2 → stage 3)
+  -- Control delay lines: 2 stages each
   -- ══════════════════════════════════════════════
-  let s3_src1 := makeIndexedWires "s3_src1" 32
-  let s3_src2 := makeIndexedWires "s3_src2" 32
-  let s3_src3 := makeIndexedWires "s3_src3" 32
-  let s3_rm := makeIndexedWires "s3_rm" 3
-  let s3_tag := makeIndexedWires "s3_tag" 6
-  let s3_valid := Wire.mk "s3_valid"
+  let dl1_neg := Wire.mk "dl1_neg"
+  let dl2_neg := Wire.mk "dl2_neg"
 
-  let s3_dffs :=
-    mkDFFBank s2_src1 s3_src1 clock reset ++
-    mkDFFBank s2_src2 s3_src2 clock reset ++
-    mkDFFBank s2_src3 s3_src3 clock reset ++
-    mkDFFBank s2_rm s3_rm clock reset ++
-    mkDFFBank s2_tag s3_tag clock reset ++
-    [Gate.mkDFF s2_valid clock reset s3_valid]
+  let neg_dl_dffs :=
+    [ Gate.mkDFF negate_product clock reset dl1_neg,
+      Gate.mkDFF dl1_neg clock reset dl2_neg ]
 
-  -- ══════════════════════════════════════════════
-  -- Stage 4 pipeline registers (stage 3 → stage 4)
-  -- ══════════════════════════════════════════════
-  let s4_src1 := makeIndexedWires "s4_src1" 32
-  let s4_src2 := makeIndexedWires "s4_src2" 32
-  let s4_src3 := makeIndexedWires "s4_src3" 32
-  let s4_rm := makeIndexedWires "s4_rm" 3
-  let s4_tag := makeIndexedWires "s4_tag" 6
-  let s4_valid := Wire.mk "s4_valid"
+  let dl1_sub := Wire.mk "dl1_sub"
+  let dl2_sub := Wire.mk "dl2_sub"
 
-  let s4_dffs :=
-    mkDFFBank s3_src1 s4_src1 clock reset ++
-    mkDFFBank s3_src2 s4_src2 clock reset ++
-    mkDFFBank s3_src3 s4_src3 clock reset ++
-    mkDFFBank s3_rm s4_rm clock reset ++
-    mkDFFBank s3_tag s4_tag clock reset ++
-    [Gate.mkDFF s3_valid clock reset s4_valid]
+  let sub_dl_dffs :=
+    [ Gate.mkDFF subtract_addend clock reset dl1_sub,
+      Gate.mkDFF dl1_sub clock reset dl2_sub ]
+
+  let dl1_rm := makeIndexedWires "dl1_rm" 3
+  let dl2_rm := makeIndexedWires "dl2_rm" 3
+
+  let rm_dl_dffs :=
+    mkDFFBank rm dl1_rm clock reset ++
+    mkDFFBank dl1_rm dl2_rm clock reset
 
   -- ══════════════════════════════════════════════
-  -- Output logic (placeholder: result = BUF s4_src1)
+  -- Sign adjustment: adj_result[31] = mul_result[31] XOR dl2_neg
+  --                  adj_result[30:0] = mul_result[30:0]
   -- ══════════════════════════════════════════════
-  let result_gates := (List.range 32).map (fun i =>
-    Gate.mkBUF (s4_src1[i]!) (result[i]!)
-  )
+  let adj_result := makeIndexedWires "adj_result" 32
+  let adj_sign := Wire.mk "adj_sign"
 
-  let tag_out_gates := (List.range 6).map (fun i =>
-    Gate.mkBUF (s4_tag[i]!) (tag_out[i]!)
-  )
+  let sign_adj_gates :=
+    [ Gate.mkXOR (mul_result[31]!) dl2_neg adj_sign,
+      Gate.mkBUF adj_sign (adj_result[31]!) ] ++
+    (List.range 31).map (fun i =>
+      Gate.mkBUF (mul_result[i]!) (adj_result[i]!))
 
-  let valid_gate := [Gate.mkBUF s4_valid valid_out]
+  -- ══════════════════════════════════════════════
+  -- FPMultiplier instance
+  -- ══════════════════════════════════════════════
+  let mul_inst : CircuitInstance :=
+    { moduleName := "FPMultiplier"
+      instName := "u_mul"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+        [ ("valid_in", valid_in),
+          ("clock", clock),
+          ("reset", reset),
+          ("zero", zero) ] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", mul_result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", mul_tag[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", mul_exc[i]!)) ++
+        [ ("valid_out", mul_valid) ] }
 
-  -- Exception flags tied to zero
-  let exc_gates := (List.range 5).map (fun i =>
-    Gate.mkBUF zero (exc[i]!)
-  )
+  -- ══════════════════════════════════════════════
+  -- FPAdder instance
+  -- ══════════════════════════════════════════════
+  let add_inst : CircuitInstance :=
+    { moduleName := "FPAdder"
+      instName := "u_add"
+      portMap :=
+        (List.range 32 |>.flatMap fun i =>
+          [ (s!"src1_{i}", adj_result[i]!), (s!"src2_{i}", dl2_src3[i]!) ]) ++
+        [ ("op_sub", dl2_sub) ] ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", dl2_rm[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"dest_tag_{i}", mul_tag[i]!)) ++
+        [ ("valid_in", mul_valid),
+          ("clock", clock),
+          ("reset", reset),
+          ("zero", zero) ] ++
+        (List.range 32 |>.map fun i => (s!"result_{i}", result[i]!)) ++
+        (List.range 6 |>.map fun i => (s!"tag_out_{i}", tag_out[i]!)) ++
+        (List.range 5 |>.map fun i => (s!"exc_{i}", exc[i]!)) ++
+        [ ("valid_out", valid_out) ] }
 
   -- ══════════════════════════════════════════════
   -- Assemble circuit
   -- ══════════════════════════════════════════════
   let all_gates :=
-    s1_dffs ++
-    s2_dffs ++
-    s3_dffs ++
-    s4_dffs ++
-    result_gates ++
-    tag_out_gates ++
-    valid_gate ++
-    exc_gates
+    src3_dl_dffs ++
+    neg_dl_dffs ++
+    sub_dl_dffs ++
+    rm_dl_dffs ++
+    sign_adj_gates
 
   { name := "FPFMA"
-    inputs := src1 ++ src2 ++ src3 ++ rm ++ dest_tag ++ [valid_in, clock, reset, zero]
+    inputs := src1 ++ src2 ++ src3 ++ rm ++ dest_tag ++
+              [negate_product, subtract_addend, valid_in, clock, reset, zero]
     outputs := result ++ tag_out ++ exc ++ [valid_out]
     gates := all_gates
-    instances := []
+    instances := [mul_inst, add_inst]
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
       { name := "src2", width := 32, wires := src2 },

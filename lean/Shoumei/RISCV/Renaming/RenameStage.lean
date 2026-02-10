@@ -260,21 +260,25 @@ def mkRenameStage : Circuit :=
   let has_rd := Wire.mk "has_rd"
   let rs1_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs1_addr_{i}")
   let rs2_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs2_addr_{i}")
+  let rs3_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs3_addr_{i}")
   let rd_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rd_addr_{i}")
   let cdb_valid := Wire.mk "cdb_valid"
   let cdb_tag := (List.range tagWidth).map (fun i => Wire.mk s!"cdb_tag_{i}")
   let cdb_data := (List.range dataWidth).map (fun i => Wire.mk s!"cdb_data_{i}")
   let retire_valid := Wire.mk "retire_valid"
   let retire_tag := (List.range tagWidth).map (fun i => Wire.mk s!"retire_tag_{i}")
-  -- 3rd read port: RVVI commit readback (rd_tag3 → rd_data3)
-  let rd_tag3 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag3_{i}")
+  -- 3rd read port: rs3 data (PRF read via rs3_phys from RAT)
   let rd_data3 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data3_{i}")
+  -- 4th read port: RVVI FP commit readback (rd_tag4 → rd_data4)
+  let rd_tag4 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag4_{i}")
+  let rd_data4 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data4_{i}")
 
   -- Output ports
   let rename_valid := Wire.mk "rename_valid"
   let stall := Wire.mk "stall"
   let rs1_phys := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_phys_{i}")
   let rs2_phys := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_phys_{i}")
+  let rs3_phys := (List.range tagWidth).map (fun i => Wire.mk s!"rs3_phys_{i}")
   let rd_phys := (List.range tagWidth).map (fun i => Wire.mk s!"rd_phys_{i}")
   let rs1_data := (List.range dataWidth).map (fun i => Wire.mk s!"rs1_data_{i}")
   let rs2_data := (List.range dataWidth).map (fun i => Wire.mk s!"rs2_data_{i}")
@@ -323,16 +327,42 @@ def mkRenameStage : Circuit :=
 
   -- === Counter-based Allocation ===
   -- 6-bit counter starts at 32 (0b100000), increments on allocate_fire
-  -- Counter provides rd_phys; wraps at 64→0 (ok: by then, tags recycled via FreeList)
+  -- Counter provides rd_phys = counter XOR 0x20 (values 32..63,0..31)
+  -- We must skip counter=32 (which maps to rd_phys=0=p0), since p0 is the
+  -- permanent x0 mapping and CDB writes to tag=0 are blocked by cdb_tag_nonzero.
   let ctr := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_{i}")
+  let ctr_raw_next := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_raw_next_{i}")
   let ctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_next_{i}")
   -- +1 adder chain
   let ctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"ctr_carry_{i}")
   let ctr_adder_inner := (List.range tagWidth).map (fun i =>
-    [Gate.mkXOR (ctr[i]!) (ctr_carry[i]!) (ctr_next[i]!),
+    [Gate.mkXOR (ctr[i]!) (ctr_carry[i]!) (ctr_raw_next[i]!),
      Gate.mkAND (ctr[i]!) (ctr_carry[i]!) (ctr_carry[i + 1]!)])
   let ctr_adder_gates :=
     [Gate.mkBUF allocate_fire (ctr_carry[0]!)] ++ ctr_adder_inner.flatten
+  -- Skip counter=32 (0b100000) which would produce rd_phys=0
+  -- Detect: bits 0-4 all zero AND bit 5 is one
+  let ctr_low_or1 := Wire.mk "ctr_low_or1"
+  let ctr_low_or2 := Wire.mk "ctr_low_or2"
+  let ctr_low_or3 := Wire.mk "ctr_low_or3"
+  let ctr_low_any := Wire.mk "ctr_low_any"
+  let ctr_is_32 := Wire.mk "ctr_is_32"
+  let ctr_skip_gates := [
+    Gate.mkOR ctr_raw_next[0]! ctr_raw_next[1]! ctr_low_or1,
+    Gate.mkOR ctr_low_or1 ctr_raw_next[2]! ctr_low_or2,
+    Gate.mkOR ctr_low_or2 ctr_raw_next[3]! ctr_low_or3,
+    Gate.mkOR ctr_low_or3 ctr_raw_next[4]! ctr_low_any,
+    -- ctr_is_32 = bit5 AND NOT(any of bits 0-4)
+    Gate.mkNOT ctr_low_any (Wire.mk "ctr_low_none"),
+    Gate.mkAND ctr_raw_next[5]! (Wire.mk "ctr_low_none") ctr_is_32,
+    -- If ctr_is_32, set bit 0 to 1 (making counter=33 instead of 32 → rd_phys=1)
+    Gate.mkOR ctr_raw_next[0]! ctr_is_32 ctr_next[0]!,
+    Gate.mkBUF ctr_raw_next[1]! ctr_next[1]!,
+    Gate.mkBUF ctr_raw_next[2]! ctr_next[2]!,
+    Gate.mkBUF ctr_raw_next[3]! ctr_next[3]!,
+    Gate.mkBUF ctr_raw_next[4]! ctr_next[4]!,
+    Gate.mkBUF ctr_raw_next[5]! ctr_next[5]!
+  ]
   -- DFFs for counter (resets to 0; we add 32 by inverting bit 5 for rd_phys)
   let ctr_dff_gates := (List.range tagWidth).map (fun i =>
     Gate.mkDFF (ctr_next[i]!) clock reset (ctr[i]!))
@@ -360,8 +390,10 @@ def mkRenameStage : Circuit :=
       (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"write_data_{i}", w))) ++
       (rs1_addr.enum.map (fun ⟨i, w⟩ => (s!"rs1_addr_{i}", w))) ++
       (rs2_addr.enum.map (fun ⟨i, w⟩ => (s!"rs2_addr_{i}", w))) ++
+      (rs3_addr.enum.map (fun ⟨i, w⟩ => (s!"rs3_addr_{i}", w))) ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
+      (rs3_phys.enum.map (fun ⟨i, w⟩ => (s!"rs3_data_{i}", w))) ++
       (old_rd_raw.enum.map (fun ⟨i, w⟩ => (s!"old_rd_data_{i}", w)))
   }
 
@@ -392,12 +424,14 @@ def mkRenameStage : Circuit :=
       [("wr_en", cdb_valid)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag1_{i}", w))) ++  -- Read port 1 uses renamed rs1
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag2_{i}", w))) ++  -- Read port 2 uses renamed rs2
-      (rd_tag3.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++   -- Read port 3: RVVI commit readback
+      (rs3_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++  -- Read port 3: rs3 via RAT lookup
+      (rd_tag4.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++   -- Read port 4: RVVI FP commit readback
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"wr_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"wr_data_{i}", w))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data1_{i}", w))) ++
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data2_{i}", w))) ++
-      (rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w)))
+      (rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
+      (rd_data4.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
   }
 
   -- Output wires (separate from internal to avoid Chisel IO conflicts)
@@ -413,22 +447,23 @@ def mkRenameStage : Circuit :=
 
   { name := "RenameStage_32x64"
     inputs := [clock, reset, zero, one, instr_valid, has_rd] ++
-              rs1_addr ++ rs2_addr ++ rd_addr ++
+              rs1_addr ++ rs2_addr ++ rs3_addr ++ rd_addr ++
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag ++
-              rd_tag3
+              rd_tag4
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
-               rs1_data ++ rs2_data ++ rd_data3
+               rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             ctr_adder_gates ++ ctr_dff_gates ++ rd_phys_assign_gates ++
+             ctr_adder_gates ++ ctr_skip_gates ++ ctr_dff_gates ++ rd_phys_assign_gates ++
              old_rd_assign_gates ++ phys_out_gates
     instances := [rat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "rs1_addr", width := 5, wires := rs1_addr },
       { name := "rs2_addr", width := 5, wires := rs2_addr },
+      { name := "rs3_addr", width := 5, wires := rs3_addr },
       { name := "rd_addr", width := 5, wires := rd_addr },
       { name := "cdb_tag", width := 6, wires := cdb_tag },
       { name := "cdb_data", width := 32, wires := cdb_data },
@@ -444,8 +479,10 @@ def mkRenameStage : Circuit :=
       { name := "rd_phys", width := 6, wires := rd_phys },
       { name := "old_rd_phys", width := 6, wires := old_rd_phys },
       { name := "freelist_deq", width := 6, wires := freelist_deq_data },
-      { name := "rd_tag3", width := 6, wires := rd_tag3 },
-      { name := "rd_data3", width := 32, wires := rd_data3 }
+      { name := "rs3_phys", width := 6, wires := rs3_phys },
+      { name := "rd_data3", width := 32, wires := rd_data3 },
+      { name := "rd_tag4", width := 6, wires := rd_tag4 },
+      { name := "rd_data4", width := 32, wires := rd_data4 }
     ]
   }
 

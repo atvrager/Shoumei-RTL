@@ -29,32 +29,32 @@ open Shoumei.Verification
 theorem physregfile64_name : mkPhysRegFile64.name = "PhysRegFile_64x32" := by native_decide
 
 /-- PhysRegFile64 has correct number of inputs:
-    clock(1) + reset(1) + wr_en(1) + rd_tag1(6) + rd_tag2(6) + wr_tag(6) + wr_data(32) = 53 -/
-theorem physregfile64_input_count : mkPhysRegFile64.inputs.length = 53 := by native_decide
+    clock(1) + reset(1) + wr_en(1) + rd_tag1(6) + rd_tag2(6) + rd_tag3(6) + rd_tag4(6) + wr_tag(6) + wr_data(32) = 65 -/
+theorem physregfile64_input_count : mkPhysRegFile64.inputs.length = 65 := by native_decide
 
 /-- PhysRegFile64 has correct number of outputs:
-    rd_data1(32) + rd_data2(32) = 64 -/
-theorem physregfile64_output_count : mkPhysRegFile64.outputs.length = 64 := by native_decide
+    rd_data1(32) + rd_data2(32) + rd_data3(32) + rd_data4(32) = 128 -/
+theorem physregfile64_output_count : mkPhysRegFile64.outputs.length = 128 := by native_decide
 
-/-- PhysRegFile64 uses 3 submodule instances (1 decoder + 2 muxes) -/
-theorem physregfile64_instance_count : mkPhysRegFile64.instances.length = 3 := by native_decide
+/-- PhysRegFile64 uses 69 submodule instances (1 decoder + 64 storage + 4 muxes) -/
+theorem physregfile64_instance_count : mkPhysRegFile64.instances.length = 69 := by native_decide
 
 /-- PhysRegFile64 gate count: 64 write-enable ANDs + 64×32×2 storage gates (MUX + DFF) = 4160 -/
-theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 4160 := by native_decide
+theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 2112 := by native_decide
 
 /-! ## Structural Proofs (4×8 test configuration) -/
 
 /-- Small PRF for testing has expected name -/
 theorem physregfile4x8_name : mkPhysRegFile4x8.name = "PhysRegFile_4x8" := by native_decide
 
-/-- Small PRF: clock(1) + reset(1) + wr_en(1) + rd_tag1(2) + rd_tag2(2) + wr_tag(2) + wr_data(8) = 17 -/
-theorem physregfile4x8_input_count : mkPhysRegFile4x8.inputs.length = 17 := by native_decide
+/-- Small PRF: clock(1) + reset(1) + wr_en(1) + rd_tag1(2) + rd_tag2(2) + rd_tag3(2) + rd_tag4(2) + wr_tag(2) + wr_data(8) = 21 -/
+theorem physregfile4x8_input_count : mkPhysRegFile4x8.inputs.length = 21 := by native_decide
 
-/-- Small PRF: rd_data1(8) + rd_data2(8) = 16 -/
-theorem physregfile4x8_output_count : mkPhysRegFile4x8.outputs.length = 16 := by native_decide
+/-- Small PRF: rd_data1(8) + rd_data2(8) + rd_data3(8) + rd_data4(8) = 32 -/
+theorem physregfile4x8_output_count : mkPhysRegFile4x8.outputs.length = 32 := by native_decide
 
 /-- Small PRF: 4 AND + 4×8×2 = 68 gates -/
-theorem physregfile4x8_gate_count : mkPhysRegFile4x8.gates.length = 68 := by native_decide
+theorem physregfile4x8_gate_count : mkPhysRegFile4x8.gates.length = 36 := by native_decide
 
 /-! ## Behavioral Proofs -/
 
@@ -141,7 +141,7 @@ theorem prf4_dual_read :
     All these modules must pass LEC before PhysRegFile is considered verified. -/
 def physregfile_dependencies : List String := [
   "Decoder6",    -- Write address decoder (6→64)
-  "Mux64x32"     -- Read port mux (64:1, 32 bits) × 2
+  "Mux64x32"     -- Read port mux (64:1, 32 bits) × 4
 ]
 
 /-- PhysRegFile_64x32 compositional verification certificate -/

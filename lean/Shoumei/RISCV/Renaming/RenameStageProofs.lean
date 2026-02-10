@@ -41,21 +41,22 @@ theorem renamestage_name : mkRenameStage.name = "RenameStage_32x64" := by native
     + rs1_addr(5) + rs2_addr(5) + rd_addr(5)
     + cdb_valid(1) + cdb_tag(6) + cdb_data(32)
     + retire_valid(1) + retire_tag(6)
-    = 67 inputs -/
-theorem renamestage_input_count : mkRenameStage.inputs.length = 67 := by native_decide
+    + rd_tag3(6) + rd_tag4(6)
+    = 79 inputs -/
+theorem renamestage_input_count : mkRenameStage.inputs.length = 79 := by native_decide
 
 /-- RenameStage output count:
     rename_valid(1) + stall(1)
-    + rs1_phys(6) + rs2_phys(6) + rd_phys(6)
-    + rs1_data(32) + rs2_data(32)
-    = 84 outputs -/
-theorem renamestage_output_count : mkRenameStage.outputs.length = 84 := by native_decide
+    + rs1_phys(6) + rs2_phys(6) + rd_phys(6) + old_rd_phys(6)
+    + rs1_data(32) + rs2_data(32) + rd_data3(32) + rd_data4(32)
+    = 154 outputs -/
+theorem renamestage_output_count : mkRenameStage.outputs.length = 154 := by native_decide
 
 /-- RenameStage uses 3 submodule instances (RAT + FreeList + PhysRegFile) -/
 theorem renamestage_instance_count : mkRenameStage.instances.length = 3 := by native_decide
 
 /-- RenameStage gate count (control logic + allocation counter + output buffers) -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 79 := by native_decide
+theorem renamestage_gate_count : mkRenameStage.gates.length = 67 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 
@@ -77,7 +78,7 @@ theorem renamestage_simple_rename : True := simple_rename_proof
 /-- x0 special case: ADD x0, x1, x2 (x0 is never allocated) -/
 theorem renamestage_x0_no_alloc :
     let instr := { opType := .ADD, rd := some ⟨0, by omega⟩, rs1 := some ⟨1, by omega⟩,
-                   rs2 := some ⟨2, by omega⟩, imm := none }
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 }
     let (state', result) := renameInstruction RenameStageState.init instr
     result.isSome ∧
     result.get!.physRd = none ∧                              -- No physical register allocated
@@ -87,7 +88,7 @@ theorem renamestage_x0_no_alloc :
 /-- No-destination instruction: SW (stores don't write to registers) -/
 theorem renamestage_no_dest :
     let instr := { opType := .SW, rd := none, rs1 := some ⟨1, by omega⟩,
-                   rs2 := some ⟨2, by omega⟩, imm := some 16 }
+                   rs2 := some ⟨2, by omega⟩, imm := some 16, pc := 0 }
     let (state', result) := renameInstruction RenameStageState.init instr
     result.isSome ∧
     result.get!.physRd = none ∧
@@ -132,21 +133,9 @@ theorem renamestage_read_operands :
 /-- Rename doesn't modify PhysRegFile -/
 theorem renamestage_rename_preserves_prf (state : RenameStageState) (instr : DecodedInstruction) :
     (renameInstruction state instr).1.physRegFile = state.physRegFile := by
-  simp [renameInstruction]
-  split
-  · -- Case: no destination register
-    rfl
-  · -- Case: has destination register
-    rename_i rd
-    split
-    · -- Case: rd = x0
-      rfl
-    · -- Case: normal register
-      split
-      · -- Case: allocation failed (empty FreeList)
-        rfl
-      · -- Case: allocation succeeded
-        rfl
+  unfold renameInstruction
+  simp only
+  repeat (first | split | rfl)
 
 /-- ReadOperands is independent of RAT/FreeList state (only depends on PhysRegFile) -/
 theorem renamestage_read_independent (state : RenameStageState) (t1 t2 : Fin 64) :
