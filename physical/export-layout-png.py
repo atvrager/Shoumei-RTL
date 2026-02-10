@@ -5,28 +5,35 @@
 # ///
 """Export GDS layout as a presentation-quality die shot poster.
 
+Auto-extracts PPA metrics from ORFS report files adjacent to the GDS.
+
 Features:
   - Per-layer colored density heatmap (high-res)
   - Wire polygon overlay for routing texture
   - Zoomed inset showing wire-level detail
-  - Stats panel with key PPA metrics
+  - Stats panel with key PPA metrics (auto-extracted from ORFS reports)
   - Scale bar and project branding
 
 Usage: ./physical/export-layout-png.py [input.gds] [output.png]
 """
 
+import json
+import re
 import sys
+from pathlib import Path
+
 import gdstk
-import numpy as np
-import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.collections import PolyCollection
-from matplotlib.patches import Rectangle, FancyBboxPatch, FancyArrowPatch, Patch
+from matplotlib.patches import FancyBboxPatch, Patch, Rectangle
 from scipy.ndimage import gaussian_filter
 
 gds_path = sys.argv[1] if len(sys.argv) > 1 else \
     "third_party/orfs/flow/results/asap7/CPU_RV32IMF_synth/base/6_final.gds"
-out_path = sys.argv[2] if len(sys.argv) > 2 else "cpu_rv32imf_asap7.png"
+out_path = sys.argv[2] if len(sys.argv) > 2 else None  # auto-derived below
 
 # -- Config --
 BG = '#04040a'
@@ -35,8 +42,130 @@ SIGMA = 2
 WIRE_MAX = 500000
 GAMMA = 0.55
 
+# ============================================================
+# Auto-extract ORFS metrics from report files
+# ============================================================
+
+def find_orfs_paths(gds: str) -> dict:
+    """Derive ORFS report/log paths from the GDS path."""
+    p = Path(gds).resolve()
+    # Expected: .../results/<pdk>/<design>/base/6_final.gds
+    base_dir = p.parent  # .../base/
+    design_name = base_dir.parent.name  # e.g. CPU_RV32IMF_synth
+    pdk = base_dir.parent.parent.name  # e.g. asap7
+    flow_root = base_dir.parent.parent.parent  # .../flow/results -> .../flow
+    if flow_root.name == 'results':
+        flow_root = flow_root.parent
+
+    reports_dir = flow_root / 'reports' / pdk / design_name / 'base'
+    logs_dir = flow_root / 'logs' / pdk / design_name / 'base'
+    return {
+        'design_name': design_name,
+        'pdk': pdk,
+        'report_json': logs_dir / '6_report.json',
+        'finish_rpt': reports_dir / '6_finish.rpt',
+        'drc_rpt': reports_dir / '5_route_drc.rpt',
+        'synth_stat': reports_dir / 'synth_stat.txt',
+    }
+
+
+def parse_metrics(paths: dict) -> dict:
+    """Extract all PPA metrics from ORFS outputs."""
+    m = {}
+
+    # -- 6_report.json (primary source for post-route metrics) --
+    rj = paths.get('report_json')
+    if rj and Path(rj).exists():
+        with open(rj) as f:
+            rpt = json.load(f)
+
+        m['fmax_hz'] = rpt.get('finish__timing__fmax', 0)
+        m['fmax_mhz'] = m['fmax_hz'] / 1e6 if m['fmax_hz'] else 0
+        m['wns_ps'] = rpt.get('finish__timing__setup__ws', 0)
+        m['tns_ps'] = rpt.get('finish__timing__setup__tns', 0)
+        m['hold_tns_ps'] = rpt.get('finish__timing__hold__tns', 0)
+        m['setup_violations'] = rpt.get('finish__timing__drv__setup_violation_count', 0)
+        m['hold_violations'] = rpt.get('finish__timing__drv__hold_violation_count', 0)
+        m['max_slew_violations'] = rpt.get('finish__timing__drv__max_slew', 0)
+        m['max_cap_violations'] = rpt.get('finish__timing__drv__max_cap', 0)
+        m['max_fanout_violations'] = rpt.get('finish__timing__drv__max_fanout', 0)
+        m['die_area_um2'] = rpt.get('finish__design__die__area', 0)
+        m['core_area_um2'] = rpt.get('finish__design__core__area', 0)
+        m['instance_count'] = rpt.get('finish__design__instance__count', 0)
+        m['stdcell_count'] = rpt.get('finish__design__instance__count__stdcell', 0)
+        m['seq_cell_count'] = rpt.get('finish__design__instance__count__class:sequential_cell', 0)
+        m['utilization'] = rpt.get('finish__design__instance__utilization', 0)
+        m['power_w'] = rpt.get('finish__power__total', 0)
+        m['power_mw'] = m['power_w'] * 1000 if m['power_w'] else 0
+        m['power_internal_w'] = rpt.get('finish__power__internal__total', 0)
+        m['power_switching_w'] = rpt.get('finish__power__switching__total', 0)
+        m['power_leakage_w'] = rpt.get('finish__power__leakage__total', 0)
+        m['ir_drop_worst_vdd'] = rpt.get('finish__design_powergrid__drop__worst__net:VDD__corner:default', 0)
+
+    # -- DRC report (empty file = 0 DRC violations) --
+    drc = paths.get('drc_rpt')
+    if drc and Path(drc).exists():
+        m['drc_violations'] = sum(1 for line in open(drc) if line.strip())
+    else:
+        m['drc_violations'] = None
+
+    # -- Derive target clock from the SDC or default 200 MHz --
+    m['target_mhz'] = 200  # default from physical/config.mk
+
+    return m
+
+
+def derive_isa(design_name: str) -> str:
+    """Derive ISA string from ORFS design name like CPU_RV32IMF_synth."""
+    match = re.search(r'(RV\d+\w+?)(?:_synth|_flat|$)', design_name, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return design_name
+
+
+def format_violations(m: dict) -> str:
+    """Format violation summary string."""
+    setup = m.get('setup_violations', 0)
+    hold = m.get('hold_violations', 0)
+    slew = m.get('max_slew_violations', 0)
+    cap = m.get('max_cap_violations', 0)
+    fanout = m.get('max_fanout_violations', 0)
+    total = setup + hold
+    parts = []
+    if slew:
+        parts.append(f'{slew} slew')
+    if cap:
+        parts.append(f'{cap} cap')
+    if fanout:
+        parts.append(f'{fanout} fanout')
+    timing_str = f'{total} timing (setup/hold)'
+    if parts:
+        return f'{timing_str}, {", ".join(parts)}'
+    return f'{total} (setup/hold/slew/cap)' if not (slew or cap or fanout) else timing_str
+
+
+# ============================================================
+# Load data
+# ============================================================
+
+orfs = find_orfs_paths(gds_path)
+metrics = parse_metrics(orfs)
+design_name = orfs['design_name']
+isa = derive_isa(design_name)
+pdk = orfs['pdk'].upper()
+
+# Auto-derive output path if not specified
+if out_path is None:
+    out_path = f"{design_name.lower()}_{orfs['pdk']}.png"
+
+print(f"Design: {design_name} ({isa})")
+print(f"PDK: {pdk}")
+if metrics.get('fmax_mhz'):
+    print(f"Fmax: {metrics['fmax_mhz']:.1f} MHz (target {metrics['target_mhz']})")
+if metrics.get('power_mw'):
+    print(f"Power: {metrics['power_mw']:.1f} mW")
+
 # Try to find a CJK-capable font
-import matplotlib.font_manager as fm
 cjk_font = None
 for pattern in ['Noto Sans CJK', 'Noto Sans JP', 'Source Han Sans',
                 'WenQuanYi', 'Droid Sans Fallback', 'IPAGothic', 'IPAexGothic',
@@ -218,26 +347,48 @@ ax_inset2.tick_params(colors='#333344', labelsize=6)
 ax_main.add_patch(Rectangle((corner_x - zoom2, corner_y - zoom2), 2 * zoom2, 2 * zoom2,
                   fill=False, edgecolor='#44ff44', linewidth=1.5, linestyle='--'))
 
-# -- Stats panel --
+# -- Stats panel (auto-extracted) --
 ax_stats = fig.add_subplot(gs[1, 2])
 ax_stats.set_facecolor('#0a0a16')
 ax_stats.set_xlim(0, 1)
 ax_stats.set_ylim(0, 1)
 ax_stats.axis('off')
 
+# Build stats from extracted metrics
+fmax = metrics.get('fmax_mhz', 0)
+target = metrics.get('target_mhz', 200)
+wns = metrics.get('wns_ps', 0)
+tns = metrics.get('tns_ps', 0)
+util = metrics.get('utilization', 0)
+power = metrics.get('power_mw', 0)
+stdcells = metrics.get('stdcell_count', 0)
+seq_cells = metrics.get('seq_cell_count', 0)
+
+# Format WNS: positive = slack (good), show with sign
+wns_str = f'+{wns:,.0f} ps' if wns >= 0 else f'{wns:,.0f} ps'
+
+# PDK display name
+pdk_display = {
+    'ASAP7': 'ASAP7 \u2014 7nm FinFET',
+    'NANGATE45': 'NanGate \u2014 45nm',
+    'SKY130HD': 'SkyWater \u2014 130nm',
+    'SKY130HS': 'SkyWater \u2014 130nm HS',
+    'GF180': 'GF \u2014 180nm',
+}.get(pdk, pdk)
+
 stats_text = [
-    ('DESIGN',      'CPU_RV32IM'),
-    ('PROCESS',     'ASAP7 — 7nm FinFET'),
-    ('FREQUENCY',   '407 MHz (target 200)'),
-    ('WNS',         '+2,547 ps'),
-    ('TNS',         '0 ps'),
-    ('VIOLATIONS',  '0 (setup/hold/slew/cap)'),
-    ('STD CELLS',   '74,206'),
-    ('UTILIZATION',  '32%'),
-    ('POWER',       '12.0 mW'),
+    ('DESIGN',      design_name),
+    ('PROCESS',     pdk_display),
+    ('FREQUENCY',   f'{fmax:.0f} MHz (target {target})'),
+    ('WNS',         wns_str),
+    ('TNS',         f'{tns:,.0f} ps'),
+    ('VIOLATIONS',  format_violations(metrics)),
+    ('STD CELLS',   f'{stdcells:,} ({seq_cells:,} seq)'),
+    ('UTILIZATION', f'{util*100:.0f}%'),
+    ('POWER',       f'{power:.1f} mW'),
     ('DIE AREA',    f'{chip_w:.0f} \u00d7 {chip_h:.0f} \u00b5m\u00b2'),
-    ('ISA',         'RV32IM (Tomasulo OoO)'),
-    ('PROOF',       'Lean 4 — verified RTL'),
+    ('ISA',         f'{isa} (Tomasulo OoO)'),
+    ('PROOF',       'Lean 4 \u2014 verified RTL'),
 ]
 
 y = 0.95
@@ -253,17 +404,26 @@ ax_stats.add_patch(FancyBboxPatch((0.01, 0.02), 0.98, 0.96,
                    boxstyle='round,pad=0.02', facecolor='#0a0a16',
                    edgecolor='#334466', linewidth=1.5))
 
-# -- Title / branding --
+# -- Title / branding (uses actual design name) --
+title_name = f'Shoumei RTL \u2014 {design_name}'
+subtitle_parts = [
+    'Formally verified RISC-V CPU',
+    'Lean 4 proofs',
+    f'{pdk_display}',
+    f'{fmax:.0f} MHz',
+    format_violations(metrics),
+]
+subtitle = '  \u00b7  '.join(subtitle_parts)
+
 if cjk_font:
-    fig.text(0.44, 0.97, '証明', color='#aabbdd', fontsize=28, fontweight='bold',
+    fig.text(0.44, 0.97, '\u8a3c\u660e', color='#aabbdd', fontsize=28, fontweight='bold',
              ha='right', va='top', fontproperties=cjk_font)
-    fig.text(0.45, 0.97, ' Shoumei RTL — CPU_RV32IM', color='white', fontsize=26,
+    fig.text(0.45, 0.97, f' {title_name}', color='white', fontsize=26,
              fontweight='bold', ha='left', va='top', fontfamily='sans-serif')
 else:
-    fig.text(0.5, 0.97, 'Shoumei RTL — CPU_RV32IM', color='white', fontsize=26,
+    fig.text(0.5, 0.97, title_name, color='white', fontsize=26,
              fontweight='bold', ha='center', va='top', fontfamily='sans-serif')
-fig.text(0.5, 0.945,
-         'Formally verified RISC-V CPU  ·  Lean 4 proofs  ·  ASAP7 7nm  ·  407 MHz  ·  0 violations',
+fig.text(0.5, 0.945, subtitle,
          color='#8899bb', fontsize=13, ha='center', va='top')
 
 # Layer legend on main plot
