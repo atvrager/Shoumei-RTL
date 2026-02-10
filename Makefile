@@ -12,10 +12,6 @@ HAS_LAKE := $(shell command -v lake 2> /dev/null)
 HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
 
-# Configurable RISC-V extension list for opcode generation
-# Default includes M extension. Override with: make opcodes RISCV_EXTS="rv_i rv32_i"
-RISCV_EXTS ?= rv_i rv32_i rv_m
-
 # Default target: run entire pipeline
 all: check-tools lean codegen chisel systemverilog systemc lec
 	@echo ""
