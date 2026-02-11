@@ -60,6 +60,10 @@ structure DividerState where
       4 = DIV (signed), 5 = DIVU (unsigned),
       6 = REM (signed), 7 = REMU (unsigned) -/
   op : Nat := 0
+  /-- Whether the original dividend was negative (for signed result correction) -/
+  a_neg : Bool := false
+  /-- Whether the original divisor was negative (for signed result correction) -/
+  b_neg : Bool := false
   deriving Repr
 
 /-- Initialize the divider for a new division operation.
@@ -69,13 +73,22 @@ structure DividerState where
     Clears quotient and resets counter to 0.
 -/
 def dividerStart (a b : UInt32) (tag : Fin 64) (op : Nat) : DividerState :=
-  { remainder := a.toUInt64
-    divisor := b
+  -- Signed operations (DIV=4, REM=6) have op[0]=0; unsigned (DIVU=5, REMU=7) have op[0]=1
+  let is_signed := op % 2 == 0
+  let a_neg := is_signed && (a >>> 31 == 1)
+  let b_neg := is_signed && (b >>> 31 == 1)
+  -- Take absolute values for signed operations
+  let abs_a := if a_neg then (0 : UInt32) - a else a
+  let abs_b := if b_neg then (0 : UInt32) - b else b
+  { remainder := abs_a.toUInt64
+    divisor := abs_b
     quotient := 0
     counter := 0
     busy := true
     tag := tag
     op := op
+    a_neg := a_neg
+    b_neg := b_neg
   }
 
 /-- Perform one iteration of the restoring division algorithm.
@@ -132,14 +145,22 @@ def dividerStep (state : DividerState) : DividerState × Option (Fin 64 × UInt3
 
     -- Check if this is the final cycle
     if state.counter == 31 then
-      -- Select result based on operation type
-      let result_val :=
+      -- Select raw result based on operation type
+      let raw_result :=
         if state.op == 6 || state.op == 7 then
           -- REM/REMU: return upper remainder
           (new_remainder >>> 32).toUInt32
         else
           -- DIV/DIVU: return quotient
           new_quotient
+      -- Apply sign correction for signed operations
+      -- DIV: negate quotient if signs of dividend and divisor differ
+      -- REM: negate remainder if dividend was negative
+      let needs_negate :=
+        if state.op == 4 then state.a_neg != state.b_neg  -- DIV: xor signs
+        else if state.op == 6 then state.a_neg             -- REM: dividend sign
+        else false                                          -- DIVU/REMU: no correction
+      let result_val := if needs_negate then (0 : UInt32) - raw_result else raw_result
       let final_state := { state with
         remainder := new_remainder
         quotient := new_quotient
@@ -272,6 +293,8 @@ def mkDividerCircuit : Circuit :=
   let busy_q := Wire.mk "busy_q"             -- busy flag
   let tag_q := makeIndexedWires "tag_q" 6     -- tag register
   let op_q := makeIndexedWires "op_q" 3       -- op register
+  let a_neg_q := Wire.mk "a_neg_q"           -- dividend was negative (signed ops)
+  let b_neg_q := Wire.mk "b_neg_q"           -- divisor was negative (signed ops)
 
   -- Next-state wires (DFF inputs)
   let rem_d := makeIndexedWires "rem_d" 64
@@ -281,6 +304,8 @@ def mkDividerCircuit : Circuit :=
   let busy_d := Wire.mk "busy_d"
   let tag_d := makeIndexedWires "tag_d" 6
   let op_d := makeIndexedWires "op_d" 3
+  let a_neg_d := Wire.mk "a_neg_d"
+  let b_neg_d := Wire.mk "b_neg_d"
 
   -- ══════════════════════════════════════════════
   -- Control signals (combinational)
@@ -317,6 +342,59 @@ def mkDividerCircuit : Circuit :=
   -- busy_d = start_and_not_busy || busy_and_not_done
   let busy_gates := [
     Gate.mkOR start_and_not_busy busy_and_not_done busy_d
+  ]
+
+  -- ══════════════════════════════════════════════
+  -- Sign detection and input conditioning (for signed DIV/REM)
+  -- is_signed = ~op_in[0] (DIV=4=100b, REM=6=110b have bit0=0)
+  -- a_neg_start = a_in[31] & is_signed
+  -- b_neg_start = b_in[31] & is_signed
+  -- abs_a = a_neg_start ? -a_in : a_in
+  -- abs_b = b_neg_start ? -b_in : b_in
+  -- ══════════════════════════════════════════════
+  let is_signed := Wire.mk "is_signed"
+  let a_neg_start := Wire.mk "a_neg_start"
+  let b_neg_start := Wire.mk "b_neg_start"
+
+  let sign_detect_gates := [
+    Gate.mkNOT (op_in[0]!) is_signed,
+    Gate.mkAND (a_in[31]!) is_signed a_neg_start,
+    Gate.mkAND (b_in[31]!) is_signed b_neg_start
+  ]
+
+  -- Conditional negation: abs = val XOR flag + flag (two's complement negate when flag=1)
+  let abs_a := makeIndexedWires "abs_a" 32
+  let abs_a_xor := makeIndexedWires "abs_a_xor" 32
+  let abs_a_carry := makeIndexedWires "abs_a_carry" 33
+
+  let abs_a_gates :=
+    [Gate.mkBUF a_neg_start (abs_a_carry[0]!)] ++
+    (List.range 32).flatMap (fun i =>
+      [
+        Gate.mkXOR (a_in[i]!) a_neg_start (abs_a_xor[i]!),
+        Gate.mkXOR (abs_a_xor[i]!) (abs_a_carry[i]!) (abs_a[i]!),
+        Gate.mkAND (abs_a_xor[i]!) (abs_a_carry[i]!) (abs_a_carry[i + 1]!)
+      ]
+    )
+
+  let abs_b := makeIndexedWires "abs_b" 32
+  let abs_b_xor := makeIndexedWires "abs_b_xor" 32
+  let abs_b_carry := makeIndexedWires "abs_b_carry" 33
+
+  let abs_b_gates :=
+    [Gate.mkBUF b_neg_start (abs_b_carry[0]!)] ++
+    (List.range 32).flatMap (fun i =>
+      [
+        Gate.mkXOR (b_in[i]!) b_neg_start (abs_b_xor[i]!),
+        Gate.mkXOR (abs_b_xor[i]!) (abs_b_carry[i]!) (abs_b[i]!),
+        Gate.mkAND (abs_b_xor[i]!) (abs_b_carry[i]!) (abs_b_carry[i + 1]!)
+      ]
+    )
+
+  -- Sign register next-state: latch on start, hold otherwise
+  let sign_mux_gates := [
+    Gate.mkMUX a_neg_q a_neg_start start_and_not_busy a_neg_d,
+    Gate.mkMUX b_neg_q b_neg_start start_and_not_busy b_neg_d
   ]
 
   -- ══════════════════════════════════════════════
@@ -470,8 +548,8 @@ def mkDividerCircuit : Circuit :=
   --   m1 = MUX(rem_q, new_rem, busy_and_not_done)    -- hold vs iterate
   --   rem_d = MUX(m1, init_val, start_and_not_busy)  -- iterate vs start
 
-  -- Init remainder: lower 32 bits = a_in, upper 32 bits = 0
-  let rem_init_lower := a_in
+  -- Init remainder: lower 32 bits = abs_a (absolute value), upper 32 bits = 0
+  let rem_init_lower := abs_a
   let rem_m1 := makeIndexedWires "rem_m1" 64
 
   let rem_mux_gates :=
@@ -479,7 +557,7 @@ def mkDividerCircuit : Circuit :=
     (List.range 32).flatMap (fun i => [
       -- m1[i] = MUX(rem_q[i], new_rem[i], busy_and_not_done)
       Gate.mkMUX (rem_q[i]!) (new_rem[i]!) busy_and_not_done (rem_m1[i]!),
-      -- rem_d[i] = MUX(m1[i], a_in[i], start_and_not_busy)
+      -- rem_d[i] = MUX(m1[i], abs_a[i], start_and_not_busy)
       Gate.mkMUX (rem_m1[i]!) (rem_init_lower[i]!) start_and_not_busy (rem_d[i]!)
     ]) ++
     -- Upper 32 bits (init to 0 on start, new_rem on iterate, hold otherwise)
@@ -492,10 +570,10 @@ def mkDividerCircuit : Circuit :=
     ])
 
   -- Divisor next state:
-  -- If start_and_not_busy: div_d = b_in (latch new divisor)
+  -- If start_and_not_busy: div_d = abs_b (latch absolute value of divisor)
   -- Else: div_d = div_q (hold)
   let div_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (div_q[i]!) (b_in[i]!) start_and_not_busy (div_d[i]!)
+    Gate.mkMUX (div_q[i]!) (abs_b[i]!) start_and_not_busy (div_d[i]!)
   )
 
   -- Quotient next state:
@@ -554,15 +632,53 @@ def mkDividerCircuit : Circuit :=
   let op_dffs := (List.range 3).map (fun i =>
     Gate.mkDFF (op_d[i]!) clock reset (op_q[i]!)
   )
+  let sign_dffs := [
+    Gate.mkDFF a_neg_d clock reset a_neg_q,
+    Gate.mkDFF b_neg_d clock reset b_neg_q
+  ]
 
   -- ══════════════════════════════════════════════
-  -- Result selection MUX
+  -- Result selection MUX (raw, before sign correction)
   -- op_q[1] selects between quotient (op=4,5 -> bit1=0) and remainder (op=6,7 -> bit1=1)
-  -- result[i] = MUX(quo_q[i], rem_q[32+i], op_q[1])
   -- ══════════════════════════════════════════════
+  let raw_result := makeIndexedWires "raw_result" 32
   let result_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (quo_q[i]!) (rem_q[32 + i]!) (op_q[1]!) (result[i]!)
+    Gate.mkMUX (quo_q[i]!) (rem_q[32 + i]!) (op_q[1]!) (raw_result[i]!)
   )
+
+  -- ══════════════════════════════════════════════
+  -- Result sign correction
+  -- For signed ops (~op_q[0]):
+  --   DIV (op_q[1]=0): negate if a_neg XOR b_neg
+  --   REM (op_q[1]=1): negate if a_neg
+  -- needs_negate = ~op_q[0] & (op_q[1] ? a_neg_q : (a_neg_q XOR b_neg_q))
+  -- ══════════════════════════════════════════════
+  let is_signed_op := Wire.mk "is_signed_op"
+  let sign_xor := Wire.mk "sign_xor"       -- a_neg XOR b_neg (for DIV)
+  let negate_sel := Wire.mk "negate_sel"    -- MUX(sign_xor, a_neg_q, op_q[1])
+  let needs_negate := Wire.mk "needs_negate"
+
+  let sign_correct_ctrl := [
+    Gate.mkNOT (op_q[0]!) is_signed_op,
+    Gate.mkXOR a_neg_q b_neg_q sign_xor,
+    -- For DIV (bit1=0): use sign_xor. For REM (bit1=1): use a_neg_q
+    Gate.mkMUX sign_xor a_neg_q (op_q[1]!) negate_sel,
+    Gate.mkAND is_signed_op negate_sel needs_negate
+  ]
+
+  -- Conditional negation of raw_result: result = raw XOR flag + flag
+  let res_xor := makeIndexedWires "res_xor" 32
+  let res_carry := makeIndexedWires "res_carry" 33
+
+  let sign_correct_gates :=
+    [Gate.mkBUF needs_negate (res_carry[0]!)] ++
+    (List.range 32).flatMap (fun i =>
+      [
+        Gate.mkXOR (raw_result[i]!) needs_negate (res_xor[i]!),
+        Gate.mkXOR (res_xor[i]!) (res_carry[i]!) (result[i]!),
+        Gate.mkAND (res_xor[i]!) (res_carry[i]!) (res_carry[i + 1]!)
+      ]
+    )
 
   -- ══════════════════════════════════════════════
   -- Output connections
@@ -585,6 +701,10 @@ def mkDividerCircuit : Circuit :=
   let all_gates :=
     ctrl_gates ++
     busy_gates ++
+    sign_detect_gates ++
+    abs_a_gates ++
+    abs_b_gates ++
+    sign_mux_gates ++
     shift_gates ++
     trial_input_gates ++
     borrow_gates ++
@@ -606,7 +726,10 @@ def mkDividerCircuit : Circuit :=
     busy_dff ++
     tag_dffs ++
     op_dffs ++
+    sign_dffs ++
     result_mux_gates ++
+    sign_correct_ctrl ++
+    sign_correct_gates ++
     tag_out_gates ++
     valid_gate ++
     busy_gate

@@ -167,7 +167,8 @@ def mkMulDivExecUnit : Circuit :=
       [("valid_in", mul_valid),
        ("clock", clock),
        ("reset", reset),
-       ("zero", zero)] ++
+       ("zero", zero),
+       ("one", one)] ++
       (mul_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
       (mul_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
       [("valid_out", mul_valid_out)]

@@ -16,7 +16,7 @@ arranged hierarchically. This keeps each module within JVM class file limits
 for Chisel code generation.
 
 Interface:
-  Inputs:  a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero
+  Inputs:  a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero, one
   Outputs: result[31:0], tag_out[5:0], valid_out
 
 Operation types (op encoding):
@@ -29,6 +29,7 @@ Operation types (op encoding):
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Combinational.Subtractor
 
 namespace Shoumei.Circuits.Combinational
 
@@ -70,7 +71,20 @@ def mulPipelineStep
     if state.result_op == 0 then (product.toNat % (2^32)).toUInt32
     else (product.toNat / (2^32)).toUInt32
   let output := if state.result_valid then some (state.result_tag, result32) else none
-  let full_product : UInt64 := (a.toNat * b.toNat).toUInt64
+  -- Compute full 64-bit product with sign handling based on op
+  let full_product : UInt64 := match op with
+    | 1 => -- MULH: signed × signed
+      let sa : Int := if a.toNat >= 2^31 then (a.toNat : Int) - 2^32 else a.toNat
+      let sb : Int := if b.toNat >= 2^31 then (b.toNat : Int) - 2^32 else b.toNat
+      let prod := sa * sb
+      let wrapped := ((prod % (2^64 : Int)) + (2^64 : Int)).toNat % (2^64)
+      wrapped.toUInt64
+    | 2 => -- MULHSU: signed × unsigned
+      let sa : Int := if a.toNat >= 2^31 then (a.toNat : Int) - 2^32 else a.toNat
+      let prod := sa * (b.toNat : Int)
+      let wrapped := ((prod % (2^64 : Int)) + (2^64 : Int)).toNat % (2^64)
+      wrapped.toUInt64
+    | _ => (a.toNat * b.toNat).toUInt64  -- MUL, MULHU: unsigned
   let newState : MulPipelineState :=
     { stage1_valid := valid, stage1_tag := tag, stage1_op := op
       stage1_partial := full_product
@@ -231,10 +245,10 @@ private partial def mkCSATreeHierarchical
     Uses CSACompressor64 instances for the reduction tree, keeping each
     module within Chisel/JVM class file size limits.
 
-    Inputs (77): a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero
+    Inputs (78): a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero, one
     Outputs (39): result[31:0], tag_out[5:0], valid_out
 
-    Instances: ~30 CSACompressor64 + 1 KoggeStoneAdder64 -/
+    Instances: ~30 CSACompressor64 + 1 KoggeStoneAdder64 + 4 Register32 + 2 Subtractor32 -/
 def mkPipelinedMultiplier : Circuit :=
   let a := makeIndexedWires "a" 32
   let b := makeIndexedWires "b" 32
@@ -244,6 +258,7 @@ def mkPipelinedMultiplier : Circuit :=
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
 
   let result := makeIndexedWires "result" 32
   let tag_out := makeIndexedWires "tag_out" 6
@@ -354,7 +369,53 @@ def mkPipelinedMultiplier : Circuit :=
   let pipe_reg2_valid_gates := [Gate.mkDFF s1_valid_q clock reset s2_valid_q]
 
   -- ========================================================================
-  -- Stage 3: Final Addition + Output Selection
+  -- Pipeline a and b through stages 1-2 for sign correction at stage 3
+  -- ========================================================================
+  let s1_a_q := makeIndexedWires "s1_a_q" 32
+  let s1_b_q := makeIndexedWires "s1_b_q" 32
+  let s2_a_q := makeIndexedWires "s2_a_q" 32
+  let s2_b_q := makeIndexedWires "s2_b_q" 32
+
+  let pipe_ab_stage1_instances := [
+    {
+      moduleName := "Register32"
+      instName := "u_pipe1_a"
+      portMap :=
+        (a.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_a_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register32"
+      instName := "u_pipe1_b"
+      portMap :=
+        (b.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s1_b_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+  ]
+
+  let pipe_ab_stage2_instances := [
+    {
+      moduleName := "Register32"
+      instName := "u_pipe2_a"
+      portMap :=
+        (s1_a_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_a_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    },
+    {
+      moduleName := "Register32"
+      instName := "u_pipe2_b"
+      portMap :=
+        (s1_b_q.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+        [("clock", clock), ("reset", reset)] ++
+        (s2_b_q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+  ]
+
+  -- ========================================================================
+  -- Stage 3: Final Addition + Sign Correction + Output Selection
   -- ========================================================================
 
   let adder_sum := makeIndexedWires "add_sum" 64
@@ -369,7 +430,82 @@ def mkPipelinedMultiplier : Circuit :=
       (adder_sum.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
 
-  -- Output selection: op==000 → low 32 bits, else → high 32 bits
+  -- Baugh-Wooley sign correction for high 32 bits:
+  --   MULH   (op=001): corrected_high = unsigned_high - (a[31]?b:0) - (b[31]?a:0)
+  --   MULHSU (op=010): corrected_high = unsigned_high - (a[31]?b:0)
+  --   MUL/MULHU:       no correction needed
+
+  -- Decode op: is_mulh = !op[2] & !op[1] & op[0], is_mulhsu = !op[2] & op[1] & !op[0]
+  let not_op2 := Wire.mk "sc_not_op2"
+  let not_op1 := Wire.mk "sc_not_op1"
+  let not_op0 := Wire.mk "sc_not_op0"
+  let is_mulh_a := Wire.mk "sc_is_mulh_a"
+  let is_mulh := Wire.mk "sc_is_mulh"
+  let is_mulhsu_a := Wire.mk "sc_is_mulhsu_a"
+  let is_mulhsu := Wire.mk "sc_is_mulhsu"
+  let needs_sub_b_pre := Wire.mk "sc_needs_sub_b_pre"
+  let needs_sub_b := Wire.mk "sc_needs_sub_b"
+  let needs_sub_a := Wire.mk "sc_needs_sub_a"
+
+  let sc_decode_gates := [
+    Gate.mkNOT s2_op_q[2]! not_op2,
+    Gate.mkNOT s2_op_q[1]! not_op1,
+    Gate.mkNOT s2_op_q[0]! not_op0,
+    -- is_mulh = !op[2] & !op[1] & op[0]
+    Gate.mkAND not_op2 not_op1 is_mulh_a,
+    Gate.mkAND is_mulh_a s2_op_q[0]! is_mulh,
+    -- is_mulhsu = !op[2] & op[1] & !op[0]
+    Gate.mkAND not_op2 s2_op_q[1]! is_mulhsu_a,
+    Gate.mkAND is_mulhsu_a not_op0 is_mulhsu,
+    -- needs_sub_b = (is_mulh | is_mulhsu) & a[31]
+    Gate.mkOR is_mulh is_mulhsu needs_sub_b_pre,
+    Gate.mkAND needs_sub_b_pre s2_a_q[31]! needs_sub_b,
+    -- needs_sub_a = is_mulh & b[31]
+    Gate.mkAND is_mulh s2_b_q[31]! needs_sub_a
+  ]
+
+  -- sub_b[i] = b[i] & needs_sub_b (32 AND gates)
+  let sub_b := makeIndexedWires "sc_sub_b" 32
+  let sub_b_gates := (List.range 32).map fun i =>
+    Gate.mkAND (s2_b_q[i]!) needs_sub_b (sub_b[i]!)
+
+  -- sub_a[i] = a[i] & needs_sub_a (32 AND gates)
+  let sub_a := makeIndexedWires "sc_sub_a" 32
+  let sub_a_gates := (List.range 32).map fun i =>
+    Gate.mkAND (s2_a_q[i]!) needs_sub_a (sub_a[i]!)
+
+  -- high32 = adder_sum[63:32]
+  let high32 := makeIndexedWires "sc_high32" 32
+  let high32_buf_gates := (List.range 32).map fun i =>
+    Gate.mkBUF (adder_sum[i + 32]!) (high32[i]!)
+
+  -- corrected1 = high32 - sub_b
+  let corrected1 := makeIndexedWires "sc_corr1" 32
+  let sub1_inst : CircuitInstance := {
+    moduleName := "Subtractor32"
+    instName := "u_sign_sub1"
+    portMap :=
+      (high32.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (sub_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one)] ++
+      (corrected1.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
+      [("borrow", Wire.mk "sc_borrow1")]
+  }
+
+  -- corrected2 = corrected1 - sub_a
+  let corrected2 := makeIndexedWires "sc_corr2" 32
+  let sub2_inst : CircuitInstance := {
+    moduleName := "Subtractor32"
+    instName := "u_sign_sub2"
+    portMap :=
+      (corrected1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (sub_a.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one)] ++
+      (corrected2.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
+      [("borrow", Wire.mk "sc_borrow2")]
+  }
+
+  -- Output selection: op==000 → low 32 bits, else → corrected high 32 bits
   let op_nonzero_01 := Wire.mk "op_nz_01"
   let op_nonzero := Wire.mk "op_nonzero"
   let op_sel_gates := [
@@ -378,7 +514,7 @@ def mkPipelinedMultiplier : Circuit :=
   ]
 
   let result_mux_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (adder_sum[i]!) (adder_sum[i + 32]!) op_nonzero (result[i]!)
+    Gate.mkMUX (adder_sum[i]!) (corrected2[i]!) op_nonzero (result[i]!)
 
   let tag_passthrough := List.zipWith (fun src dst =>
     Gate.mkBUF src dst) s2_tag_q tag_out
@@ -394,16 +530,22 @@ def mkPipelinedMultiplier : Circuit :=
     csa_routing_gates ++
     pipe_reg1_valid_gates ++
     pipe_reg2_valid_gates ++
+    sc_decode_gates ++
+    sub_b_gates ++
+    sub_a_gates ++
+    high32_buf_gates ++
     op_sel_gates ++
     result_mux_gates ++
     tag_passthrough ++
     valid_passthrough
 
   { name := "PipelinedMultiplier"
-    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero]
+    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero, one]
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
-    instances := csa_instances ++ pipe_reg1_instances ++ pipe_reg2_instances ++ [ksa64_inst]
+    instances := csa_instances ++ pipe_reg1_instances ++ pipe_ab_stage1_instances ++
+      pipe_reg2_instances ++ pipe_ab_stage2_instances ++
+      [ksa64_inst, sub1_inst, sub2_inst]
     keepHierarchy := true
     signalGroups := [
       { name := "a", width := 32, wires := a },
@@ -420,7 +562,16 @@ def mkPipelinedMultiplier : Circuit :=
       { name := "s2_carry_q", width := 64, wires := s2_carry_q },
       { name := "s2_op_q", width := 3, wires := s2_op_q },
       { name := "s2_tag_q", width := 6, wires := s2_tag_q },
-      { name := "add_sum", width := 64, wires := adder_sum }
+      { name := "add_sum", width := 64, wires := adder_sum },
+      { name := "s1_a_q", width := 32, wires := s1_a_q },
+      { name := "s1_b_q", width := 32, wires := s1_b_q },
+      { name := "s2_a_q", width := 32, wires := s2_a_q },
+      { name := "s2_b_q", width := 32, wires := s2_b_q },
+      { name := "sc_sub_b", width := 32, wires := sub_b },
+      { name := "sc_sub_a", width := 32, wires := sub_a },
+      { name := "sc_high32", width := 32, wires := high32 },
+      { name := "sc_corr1", width := 32, wires := corrected1 },
+      { name := "sc_corr2", width := 32, wires := corrected2 }
     ]
   }
 

@@ -269,7 +269,7 @@ import chisel3.util._
   )
 
   io_is_store := io_valid && ((opcode === \"b0100011\".U)" ++ fpStoreExtra ++ ")
-  io_use_imm  := io_valid && (opcode =/= \"b0110011\".U)  // All except R-type
+  io_use_imm  := io_valid && (opcode =/= \"b0110011\".U) && (opcode =/= \"b1100011\".U)  // All except R-type and branches
 " ++ muldivClassify ++ fpClassify ++ "
 }
 "

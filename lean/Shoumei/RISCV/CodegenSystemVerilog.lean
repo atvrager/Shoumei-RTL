@@ -312,8 +312,8 @@ assign io_is_branch = io_valid && (
 // Store: STORE (0100011)" ++ (if hasF then " + FSW (0100111)" else "") ++ "
 assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011" ++ fpStore ++ ");
 
-// Use immediate: all instructions except R-type (OP = 0110011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
-assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
+// Use immediate: all instructions except R-type (OP = 0110011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
+assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
 muldivClassify ++ fpClassify ++ "
 
 endmodule
