@@ -533,7 +533,7 @@ private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
     **Note:** This stub provides correct interface for code generation and LEC.
     Full gate-level implementation follows the architecture described above.
 -/
-def mkReservationStation4 : Circuit :=
+def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
   let tagWidth := 6
   let dataWidth := 32
   let opcodeWidth := 6
@@ -547,6 +547,8 @@ def mkReservationStation4 : Circuit :=
 
   -- Issue interface
   let issue_en := Wire.mk "issue_en"
+  -- Store-load ordering (only when enableStoreLoadOrdering)
+  let issue_is_store := Wire.mk "issue_is_store"
   let issue_opcode := makeIndexedWires "issue_opcode" opcodeWidth
   let issue_dest_tag := makeIndexedWires "issue_dest_tag" tagWidth
   let issue_src1_ready := Wire.mk "issue_src1_ready"
@@ -790,24 +792,89 @@ def mkReservationStation4 : Circuit :=
   let entry_instances := entry_logic.map Prod.snd |>.flatten
 
   -- ============================================================================
-  -- 4. READY CHECKING AND ARBITRATION
+  -- 4. STORE-LOAD ORDERING (only when enableStoreLoadOrdering)
+  -- ============================================================================
+
+  -- Per-entry is_store DFFs: track which entries hold store instructions
+  -- is_store is set on issue (issue_we AND issue_is_store), cleared on dispatch_clear
+  let store_order_gates := if enableStoreLoadOrdering then
+    -- Use per-entry named wires (not indexed) to avoid codegen bus grouping
+    let is_store_regs := (List.range 4).map (fun i => Wire.mk s!"e{i}_is_store")
+    let store_entry_gates := (List.range 4).map (fun i =>
+      let is_store_reg := is_store_regs[i]!
+      let issue_we := Wire.mk s!"e{i}_issue_we"
+      let dispatch_clear := Wire.mk s!"e{i}_dispatch_clear"
+      let is_store_tmp := Wire.mk s!"e{i}_is_store_tmp"
+      let is_store_next := Wire.mk s!"e{i}_is_store_next"
+      [
+        -- Clear on dispatch, hold otherwise
+        Gate.mkMUX is_store_reg zero dispatch_clear is_store_tmp,
+        -- Set on issue with is_store flag
+        Gate.mkMUX is_store_tmp issue_is_store issue_we is_store_next,
+        -- DFF
+        Gate.mkDFF is_store_next clock reset is_store_reg
+      ]
+    ) |>.flatten
+
+    -- has_valid_store = OR(valid[i] AND is_store[i]) for all entries
+    let has_store_per := (List.range 4).map (fun i => Wire.mk s!"e{i}_has_store")
+    let has_store_gates := (List.range 4).map (fun i =>
+      let valid := Wire.mk s!"e{i}_0"
+      Gate.mkAND valid is_store_regs[i]! has_store_per[i]!
+    )
+    let has_valid_store := Wire.mk "has_valid_store"
+    let has_store_or_tmp1 := Wire.mk "has_store_or_tmp1"
+    let has_store_or_tmp2 := Wire.mk "has_store_or_tmp2"
+    let has_store_or_gates := [
+      Gate.mkOR has_store_per[0]! has_store_per[1]! has_store_or_tmp1,
+      Gate.mkOR has_store_per[2]! has_store_per[3]! has_store_or_tmp2,
+      Gate.mkOR has_store_or_tmp1 has_store_or_tmp2 has_valid_store
+    ]
+
+    store_entry_gates ++ has_store_gates ++ has_store_or_gates
+  else []
+
+  -- ============================================================================
+  -- 5. READY CHECKING AND ARBITRATION
   -- ============================================================================
 
   let ready := makeIndexedWires "ready" 4
   let dispatch_grant := makeIndexedWires "dispatch_grant" 4
 
   -- Per-entry ready: valid AND src1_ready AND src2_ready
-  -- Accessing entry bits: entry[0]=valid, entry[13]=src1_ready, entry[52]=src2_ready
-  let ready_gates := (List.range 4).map (fun i =>
-    let valid := Wire.mk s!"e{i}_0"  -- Bit 0 of entry (with underscore to match makeIndexedWires)
-    let src1_ready := Wire.mk s!"e{i}_13"  -- Bit 13
-    let src2_ready := Wire.mk s!"e{i}_52"  -- Bit 52
-    let tmp := Wire.mk s!"ready{i}_tmp"
-    [
-      Gate.mkAND valid src1_ready tmp,
-      Gate.mkAND tmp src2_ready ready[i]!
-    ]
-  ) |>.flatten
+  -- With store-load ordering: suppress loads when stores are present
+  let ready_gates := if enableStoreLoadOrdering then
+    let has_valid_store := Wire.mk "has_valid_store"
+    let is_store_regs := (List.range 4).map (fun i => Wire.mk s!"e{i}_is_store")
+    (List.range 4).map (fun i =>
+      let valid := Wire.mk s!"e{i}_0"
+      let src1_ready := Wire.mk s!"e{i}_13"
+      let src2_ready := Wire.mk s!"e{i}_52"
+      let base_ready_tmp := Wire.mk s!"ready{i}_tmp"
+      let base_ready := Wire.mk s!"base_ready{i}"
+      let is_load := Wire.mk s!"is_load{i}"
+      let suppress := Wire.mk s!"suppress{i}"
+      [
+        Gate.mkAND valid src1_ready base_ready_tmp,
+        Gate.mkAND base_ready_tmp src2_ready base_ready,
+        -- suppress = has_valid_store AND NOT(is_store[i])
+        Gate.mkNOT is_store_regs[i]! is_load,
+        Gate.mkAND has_valid_store is_load suppress,
+        -- ready = base_ready AND NOT(suppress)
+        Gate.mkMUX base_ready zero suppress ready[i]!
+      ]
+    ) |>.flatten
+  else
+    (List.range 4).map (fun i =>
+      let valid := Wire.mk s!"e{i}_0"
+      let src1_ready := Wire.mk s!"e{i}_13"
+      let src2_ready := Wire.mk s!"e{i}_52"
+      let tmp := Wire.mk s!"ready{i}_tmp"
+      [
+        Gate.mkAND valid src1_ready tmp,
+        Gate.mkAND tmp src2_ready ready[i]!
+      ]
+    ) |>.flatten
 
   -- PriorityArbiter4 instance
   let arbiter_inst : CircuitInstance := {
@@ -932,8 +999,9 @@ def mkReservationStation4 : Circuit :=
   -- FINAL ASSEMBLY
   -- ============================================================================
 
-  { name := "ReservationStation4"
+  { name := if enableStoreLoadOrdering then "MemoryRS4" else "ReservationStation4"
     inputs := [clock, reset, zero, one, issue_en] ++
+              (if enableStoreLoadOrdering then [issue_is_store] else []) ++
               issue_opcode ++ issue_dest_tag ++
               [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
               [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data ++
@@ -943,7 +1011,7 @@ def mkReservationStation4 : Circuit :=
                dispatch_opcode ++ dispatch_src1_data ++
                dispatch_src2_data ++ dispatch_dest_tag ++
                alloc_ptr ++ dispatch_grant
-    gates := alloc_incr_gates ++ entry_gates ++ ready_gates ++
+    gates := alloc_incr_gates ++ entry_gates ++ store_order_gates ++ ready_gates ++
              priority_enc_gates ++ issue_full_mux_gates
     instances := [alloc_ptr_inst, decoder_inst, arbiter_inst,
                   opcode_mux_inst, src1_mux_inst, src2_mux_inst, tag_mux_inst] ++
@@ -988,6 +1056,18 @@ def mkReservationStation4 : Circuit :=
 
 /-- RS4 alias for common usage -/
 def rs4 : Circuit := mkReservationStation4
+
+/-- Build Memory Reservation Station with store-load ordering (4 entries).
+
+    When any store entry exists in the RS, load entries are suppressed from
+    dispatch. Stores dispatch first; once all stores have left the RS, loads
+    can dispatch and will find store data in the store buffer.
+
+    Additional input: issue_is_store (1 bit) -/
+def mkMemoryRS4 : Circuit := mkReservationStation4 (enableStoreLoadOrdering := true)
+
+/-- MemoryRS4 alias for common usage -/
+def memoryRS4 : Circuit := mkMemoryRS4
 
 /-- Build MulDiv Reservation Station (4 entries).
 

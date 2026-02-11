@@ -220,6 +220,13 @@ def muldivExecUnit_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Execution.MulDivExecUnitProofs"
 }
 
+/-- MemoryRS4: Memory reservation station with store-load ordering -/
+def memoryRS4_cert : CompositionalCert := {
+  moduleName := "MemoryRS4"
+  dependencies := ["Register2", "Register91", "Comparator6", "Mux4x6", "Mux4x32", "Decoder2", "PriorityArbiter4"]
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
 /-- MulDivRS4: Reservation station for MulDiv operations -/
 def muldivRS4_cert : CompositionalCert := {
   moduleName := "MulDivRS4"
@@ -366,7 +373,7 @@ def cpu_rv32i_cert : CompositionalCert := {
     -- Transitive dependencies through Fetch:
     "Register32", "KoggeStoneAdder32",
     -- Additional dependencies (for full implementation):
-    "ReservationStation4", "IntegerExecUnit", "MemoryExecUnit",
+    "ReservationStation4", "MemoryRS4", "IntegerExecUnit", "MemoryExecUnit",
     "ROB16", "LSU", "StoreBuffer8"
   ]
   proofReference := "Shoumei.RISCV.CPUProofs"
@@ -414,6 +421,7 @@ def allCerts : List CompositionalCert := [
   freelist_cert,
   -- Execution
   rs4_cert,
+  memoryRS4_cert,
   -- M-Extension
   pipelinedMultiplier_cert,
   divider32_cert,
