@@ -26,3 +26,8 @@ set_input_delay 0 -clock ${clk_name} [get_ports reset]
 
 # Set false paths for asynchronous reset
 set_false_path -from [get_ports reset]
+
+# flush_busy drives pipeline_reset_busy (async reset for pipeline DFFs).
+# This is a flush/reset path, not a functional data path — false-path it
+# so the resizer doesn't try to buffer the entire reset tree for timing.
+set_false_path -through [get_nets {u_cpu.pipeline_reset_busy}]
