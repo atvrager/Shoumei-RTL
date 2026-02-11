@@ -3095,9 +3095,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_req_data := makeIndexedWires "dmem_req_data" 32
 
   let not_is_load := Wire.mk "not_is_load"
+  let sb_enq_ungated := Wire.mk "sb_enq_ungated"
+  let not_flush_comb := Wire.mk "not_flush_comb"
   let sb_enq_gate_gates := [
     Gate.mkNOT is_load not_is_load,
-    Gate.mkAND rs_mem_dispatch_valid not_is_load sb_enq_en
+    Gate.mkAND rs_mem_dispatch_valid not_is_load sb_enq_ungated,
+    -- Block wrong-path stores from entering SB during pipeline flush
+    Gate.mkNOT pipeline_flush_comb not_flush_comb,
+    Gate.mkAND sb_enq_ungated not_flush_comb sb_enq_en
   ]
 
   let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"

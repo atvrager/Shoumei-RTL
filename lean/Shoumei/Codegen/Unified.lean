@@ -80,7 +80,7 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- All are verified via SV LEC + compositional certs.
 private def chiselSkipList : List String :=
   ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
-   "CPU_RV32IM", "CPU_RV32IF", "CPU_RV32IMF"]
+   "CPU_RV32I", "CPU_RV32IM", "CPU_RV32IF", "CPU_RV32IMF"]
 
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
