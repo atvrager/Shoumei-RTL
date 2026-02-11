@@ -410,7 +410,7 @@ def mkStoreBuffer8 : Circuit :=
       Gate.mkMUX cur_valid one enq_we e_next[0]!
 
     -- committed_next: MUX priority: enq (sets committed=1) > commit (sets) > hold
-    -- NOTE: Auto-commit on enqueue (simplified model, no ROB index tracking needed)
+    -- Auto-commit on enqueue; wrong-path stores are blocked at sb_enq_en gate
     let committed_mux1 := Wire.mk s!"e{i}_committed_mux1"
     let committed_gates := [
       Gate.mkMUX cur_committed one commit_we committed_mux1,  -- commit sets committed
