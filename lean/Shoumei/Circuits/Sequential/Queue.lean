@@ -187,6 +187,104 @@ def mkQueue1Structural (width : Nat) : Circuit :=
     instances := []
   }
 
+-- Flow-through Queue1: supports simultaneous drain+enqueue and output bypass.
+-- When empty, data flows through combinationally (zero-cycle latency).
+-- When occupied, buffers one entry (1-cycle latency).
+-- Key differences from mkQueue1Structural:
+--   enq_ready = NOT valid OR deq_fire  (can accept while draining)
+--   deq_valid = valid OR enq_valid     (bypass when empty)
+--   deq_data  = MUX(enq_data, data_reg, valid)  (bypass output)
+def mkQueue1FlowStructural (width : Nat) : Circuit :=
+  let name := s!"Queue1Flow_{width}"
+
+  let enq_data := List.range width |>.map (wireWithIndex "enq_data")
+  let enq_valid := Wire.mk "enq_valid"
+  let deq_ready := Wire.mk "deq_ready"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+
+  let enq_ready := Wire.mk "enq_ready"
+  let deq_data := List.range width |>.map (wireWithIndex "deq_data")
+  let deq_valid := Wire.mk "deq_valid"
+
+  let valid := Wire.mk "valid"
+  let valid_next := Wire.mk "valid_next"
+  let data_reg := List.range width |>.map (wireWithIndex "data_reg")
+  let data_next := List.range width |>.map (wireWithIndex "data_next")
+
+  let enq_fire := Wire.mk "enq_fire"
+  let deq_fire := Wire.mk "deq_fire"
+  let not_valid := Wire.mk "not_valid"
+  let valid_hold := Wire.mk "valid_hold"
+  let not_deq_fire := Wire.mk "not_deq_fire"
+  let bypass_consumed := Wire.mk "bypass_consumed"
+  let bypass_tmp := Wire.mk "bypass_tmp"
+  let not_bypass_consumed := Wire.mk "not_bypass_consumed"
+  let actual_enq := Wire.mk "actual_enq"
+
+  let gates := [
+    Gate.mkNOT valid not_valid,
+    -- deq_fire = valid AND deq_ready (drain from FIFO register)
+    Gate.mkAND valid deq_ready deq_fire,
+    -- enq_ready = NOT valid OR deq_fire (can accept if empty or draining)
+    Gate.mkOR not_valid deq_fire enq_ready,
+
+    -- enq_fire = enq_valid AND enq_ready
+    Gate.mkAND enq_valid enq_ready enq_fire,
+
+    -- deq_valid = valid OR enq_valid (bypass: show enq data when empty)
+    Gate.mkOR valid enq_valid deq_valid,
+
+    -- bypass_consumed: data bypassed AND consumer accepted it
+    -- = NOT valid AND enq_valid AND deq_ready
+    Gate.mkAND not_valid enq_valid bypass_tmp,
+    Gate.mkAND bypass_tmp deq_ready bypass_consumed,
+    Gate.mkNOT bypass_consumed not_bypass_consumed,
+
+    -- actual_enq: only store in FIFO if bypass wasn't consumed
+    Gate.mkAND enq_fire not_bypass_consumed actual_enq,
+
+    -- valid_next = actual_enq OR (valid AND NOT deq_fire)
+    Gate.mkNOT deq_fire not_deq_fire,
+    Gate.mkAND valid not_deq_fire valid_hold,
+    Gate.mkOR actual_enq valid_hold valid_next,
+
+    Gate.mkDFF valid_next clock reset valid
+  ] ++
+  -- deq_data = MUX(enq_data, data_reg, valid) — bypass enq_data when FIFO empty
+  (List.range width).map (fun i =>
+    Gate.mkMUX (enq_data[i]!) (data_reg[i]!) valid (deq_data[i]!)
+  ) ++
+  -- data_next = MUX(data_reg, enq_data, enq_fire)
+  (List.range width).map (fun i =>
+    Gate.mkMUX (data_reg[i]!) (enq_data[i]!) enq_fire (data_next[i]!)
+  ) ++
+  (List.range width).map (fun i =>
+    Gate.mkDFF (data_next[i]!) clock reset (data_reg[i]!)
+  )
+
+  { name := name
+    inputs := enq_data ++ [enq_valid, deq_ready, clock, reset]
+    outputs := [enq_ready] ++ deq_data ++ [deq_valid]
+    gates := gates
+    instances := []
+    signalGroups := [
+      { name := "enq_data", width := width, wires := enq_data },
+      { name := "deq_data", width := width, wires := deq_data },
+      { name := "data_reg", width := width, wires := data_reg }
+    ]
+    inputBundles := [
+      { name := "enq"
+        signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
+        protocol := some "decoupled" }
+    ]
+    outputBundles := [
+      { name := "deq"
+        signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
+        protocol := some "decoupled" }
+    ]
+  }
+
 -- Helper: create structural queue with proper output connections
 -- Map outputs to internal wires (deq_data -> data_reg, deq_valid -> valid)
 def mkQueue1StructuralComplete (width : Nat) : Circuit :=

@@ -2066,20 +2066,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_fp_dispatch_src2 := makeIndexedWires "rs_fp_dispatch_src2" 32
   let rs_fp_dispatch_tag := makeIndexedWires "rs_fp_dispatch_tag" 6
 
-  -- Forward-declare fp_hold_valid for backpressure (defined later in FP hold section)
-  let fp_hold_valid := Wire.mk "fp_hold_valid"
-
-  -- Gate FP RS dispatch when fp_hold buffer is occupied (backpressure)
+  -- Gate FP RS dispatch when FP EU is busy (multi-cycle FP operations)
   let fp_rs_dispatch_en := Wire.mk "fp_rs_dispatch_en"
   let fp_rs_dispatch_gate :=
     if enableF then
-      let not_fp_hold := Wire.mk "not_fp_hold_for_bp"
       let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
-      let fp_dispatch_ok := Wire.mk "fp_dispatch_ok"
-      [Gate.mkNOT fp_hold_valid not_fp_hold,
-       Gate.mkNOT (Wire.mk "fp_busy") not_fp_eu_busy,
-       Gate.mkAND not_fp_hold not_fp_eu_busy fp_dispatch_ok,
-       Gate.mkBUF fp_dispatch_ok fp_rs_dispatch_en]
+      [Gate.mkNOT (Wire.mk "fp_busy") not_fp_eu_busy,
+       Gate.mkBUF not_fp_eu_busy fp_rs_dispatch_en]
     else [Gate.mkBUF one fp_rs_dispatch_en]
 
   let rs_fp_inst : CircuitInstance := {
@@ -2572,16 +2565,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
                       ("clock", clock), ("reset", reset)] : CircuitInstance })
     else []
 
-  -- === CDB REPLAY BUFFER ===
-  let replay_valid := Wire.mk "replay_valid"
-  let replay_valid_next := Wire.mk "replay_valid_next"
-  let replay_tag := makeIndexedWires "replay_tag" 6
-  let replay_tag_next := makeIndexedWires "replay_tag_next" 6
-  let replay_data := makeIndexedWires "replay_data" 32
-  let replay_data_next := makeIndexedWires "replay_data_next" 32
+  -- === CDB FIFO-BASED ARBITRATION ===
+  -- Each execution unit output enters a Queue1_39 FIFO (6 tag + 32 data + 1 is_fp_rd).
+  -- The CDB arbiter is a priority drain over FIFO deq_valid signals.
+  -- Backpressure (enq_ready) stalls the RS when the FIFO is occupied.
 
-  -- === CDB ARBITRATION ===
-  -- Level 0: Merge Branch into Integer (Integer has priority)
+  -- Level 0: Merge Branch into Integer (mutually exclusive — same dispatch slot)
   let int_branch_valid := Wire.mk "int_branch_valid"
   let int_branch_tag := makeIndexedWires "int_branch_tag" 6
   let int_branch_data := makeIndexedWires "int_branch_data" 32
@@ -2593,192 +2582,109 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX branch_result_final[i]! int_result_final[i]! rs_int_dispatch_valid int_branch_data[i]!)
 
-  -- Level 1 (M-extension only): Merge Int/Branch with MulDiv (MulDiv has priority)
-  -- When both int/branch and muldiv are valid simultaneously, muldiv wins and
-  -- the int/branch result is saved into a hold buffer for replay next cycle.
-  let int_muldiv_valid := Wire.mk "int_muldiv_valid"
-  let int_muldiv_tag := makeIndexedWires "int_muldiv_tag" 6
-  let int_muldiv_data := makeIndexedWires "int_muldiv_data" 32
+  -- FP is_fp_rd computation: NOT fp_result_is_int (FMV.X.W etc. target INT PRF)
+  let fp_enq_is_fp := Wire.mk "fp_enq_is_fp"
+  let fp_enq_is_fp_gate :=
+    if enableF then [Gate.mkNOT fp_result_is_int fp_enq_is_fp]
+    else [Gate.mkBUF zero fp_enq_is_fp]
 
-  -- Int/branch hold buffer for muldiv collisions
-  let ib_hold_valid := Wire.mk "ib_hold_valid"
-  let ib_hold_valid_next := Wire.mk "ib_hold_valid_next"
-  let ib_hold_tag := makeIndexedWires "ib_hold_tag" 6
-  let ib_hold_tag_next := makeIndexedWires "ib_hold_tag_next" 6
-  let ib_hold_data := makeIndexedWires "ib_hold_data" 32
-  let ib_hold_data_next := makeIndexedWires "ib_hold_data_next" 32
-  let ib_dropped := Wire.mk "ib_dropped"
-  let ib_hold_consumed := Wire.mk "ib_hold_consumed"
+  -- FIFO enqueue data buses (39 bits: tag[5:0] ++ data[37:6] ++ is_fp_rd[38])
+  -- Assembled via BUF gates so Chisel codegen sees them as coherent signal groups.
+  let ib_fifo_enq_data := makeIndexedWires "ib_fifo_enq_data" 39
+  let muldiv_fifo_enq_data := makeIndexedWires "muldiv_fifo_enq_data" 39
+  let fp_fifo_enq_data := makeIndexedWires "fp_fifo_enq_data" 39
+  let lsu_fifo_enq_data := makeIndexedWires "lsu_fifo_enq_data" 39
 
-  -- Effective int/branch: fresh OR held
-  let eff_ib_valid := Wire.mk "eff_ib_valid"
-  let eff_ib_tag := makeIndexedWires "eff_ib_tag" 6
-  let eff_ib_data := makeIndexedWires "eff_ib_data" 32
+  let ib_fifo_enq_assemble :=
+    (List.range 6).map (fun i => Gate.mkBUF int_branch_tag[i]! ib_fifo_enq_data[i]!) ++
+    (List.range 32).map (fun i => Gate.mkBUF int_branch_data[i]! ib_fifo_enq_data[6+i]!) ++
+    [Gate.mkBUF zero ib_fifo_enq_data[38]!]  -- is_fp_rd = 0
 
-  let arb_level1_gates :=
+  let muldiv_fifo_enq_assemble :=
     if enableM then
-      -- ib_dropped: fresh int/branch AND muldiv both valid → int/branch loses
-      [Gate.mkAND int_branch_valid muldiv_valid_out ib_dropped,
-       -- eff_ib_valid: fresh int/branch OR held
-       Gate.mkOR int_branch_valid ib_hold_valid eff_ib_valid] ++
-      -- eff_ib_tag/data: prefer held when held is valid (it was dropped earlier)
-      (List.range 6).map (fun i =>
-        Gate.mkMUX int_branch_tag[i]! ib_hold_tag[i]! ib_hold_valid eff_ib_tag[i]!) ++
-      (List.range 32).map (fun i =>
-        Gate.mkMUX int_branch_data[i]! ib_hold_data[i]! ib_hold_valid eff_ib_data[i]!) ++
-      -- Merge eff_ib with muldiv (muldiv still has priority)
-      [Gate.mkMUX eff_ib_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
-      (List.range 6).map (fun i =>
-        Gate.mkMUX eff_ib_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
-      (List.range 32).map (fun i =>
-        Gate.mkMUX eff_ib_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!) ++
-      -- ib_hold_consumed: held result gets through (eff_ib valid AND muldiv not valid)
-      let not_muldiv_valid := Wire.mk "not_muldiv_valid_arb"
-      [Gate.mkNOT muldiv_valid_out not_muldiv_valid,
-       Gate.mkAND ib_hold_valid not_muldiv_valid ib_hold_consumed,
-       -- hold valid next: set on drop, clear on consumed
-       Gate.mkMUX ib_hold_valid one ib_dropped (Wire.mk "ib_hold_v_tmp"),
-       Gate.mkMUX (Wire.mk "ib_hold_v_tmp") zero ib_hold_consumed ib_hold_valid_next,
-       Gate.mkDFF ib_hold_valid_next clock reset ib_hold_valid] ++
-      -- hold tag DFFs
-      ((List.range 6).map (fun i =>
-        [Gate.mkMUX ib_hold_tag[i]! int_branch_tag[i]! ib_dropped ib_hold_tag_next[i]!,
-         Gate.mkDFF ib_hold_tag_next[i]! clock reset ib_hold_tag[i]!])).flatten ++
-      -- hold data DFFs
-      ((List.range 32).map (fun i =>
-        [Gate.mkMUX ib_hold_data[i]! int_branch_data[i]! ib_dropped ib_hold_data_next[i]!,
-         Gate.mkDFF ib_hold_data_next[i]! clock reset ib_hold_data[i]!])).flatten
-    else []
-
-  -- Wire names for the merged signal that feeds CDB arb level 2
-  -- RV32I: int_branch_*; RV32IM: int_muldiv_*
-  let int_merged_valid := if enableM then int_muldiv_valid else int_branch_valid
-  let int_merged_tag := if enableM then int_muldiv_tag else int_branch_tag
-  let int_merged_data := if enableM then int_muldiv_data else int_branch_data
-
-  -- Level 1.5 (F-extension only): Merge int_merged with FP (FP has lowest exec priority)
-  -- FP hold buffer: when FP loses to INT, save result; re-present next cycle
-  let all_merged_valid := Wire.mk "all_merged_valid"
-  let all_merged_tag := makeIndexedWires "all_merged_tag" 6
-  let all_merged_data := makeIndexedWires "all_merged_data" 32
-  let all_merged_is_fp := Wire.mk "all_merged_is_fp"
-
-  -- Effective FP = fresh FP result OR held FP result
-  let eff_fp_valid := Wire.mk "eff_fp_valid"
-  let eff_fp_tag := makeIndexedWires "eff_fp_tag" 6
-  let eff_fp_data := makeIndexedWires "eff_fp_data" 32
-  let eff_fp_is_int := Wire.mk "eff_fp_is_int"  -- targets INT PRF (FMV.X.W etc.)
-
-  -- Hold buffer wires
-  let fp_hold_valid := Wire.mk "fp_hold_valid"
-  let fp_hold_valid_next := Wire.mk "fp_hold_valid_next"
-  let fp_hold_tag := makeIndexedWires "fp_hold_tag" 6
-  let fp_hold_tag_next := makeIndexedWires "fp_hold_tag_next" 6
-  let fp_hold_data := makeIndexedWires "fp_hold_data" 32
-  let fp_hold_data_next := makeIndexedWires "fp_hold_data_next" 32
-  let fp_hold_is_int := Wire.mk "fp_hold_is_int"
-  let fp_hold_is_int_next := Wire.mk "fp_hold_is_int_next"
-  let fp_dropped := Wire.mk "fp_dropped"
-  let fp_hold_consumed := Wire.mk "fp_hold_consumed"
-
-  let fp_hold_gates :=
-    if enableF then
-      -- fp_dropped: fresh FP result AND int_merged wins → must save
-      let fp_and_int := Wire.mk "fp_and_int_both_valid"
-      [Gate.mkAND fp_valid_out int_merged_valid fp_and_int,
-       -- Only drop if hold buffer is empty (backpressure prevents RS dispatch when full)
-       Gate.mkBUF fp_and_int fp_dropped,
-       -- eff_fp_valid: fresh FP OR held FP
-       Gate.mkOR fp_valid_out fp_hold_valid eff_fp_valid,
-       -- eff_fp_is_int: select fresh or held
-       Gate.mkMUX fp_result_is_int fp_hold_is_int fp_hold_valid eff_fp_is_int] ++
-      -- eff_fp_tag: MUX(fresh, held, fp_hold_valid) — when hold valid, use held
-      (List.range 6).map (fun i =>
-        Gate.mkMUX fp_tag_out[i]! fp_hold_tag[i]! fp_hold_valid eff_fp_tag[i]!) ++
-      -- eff_fp_data: MUX(fresh, held, fp_hold_valid) — when hold valid, use held
-      (List.range 32).map (fun i =>
-        Gate.mkMUX fp_result[i]! fp_hold_data[i]! fp_hold_valid eff_fp_data[i]!) ++
-      -- fp_hold_consumed: held result wins the merged arbiter (eff_fp valid AND int not valid)
-      let not_int_merged := Wire.mk "not_int_merged_valid"
-      [Gate.mkNOT int_merged_valid not_int_merged,
-       Gate.mkAND fp_hold_valid not_int_merged fp_hold_consumed,
-       -- hold valid next: set on drop, clear on consumed
-       -- If dropped: set; elif consumed: clear; else keep
-       Gate.mkMUX fp_hold_valid one fp_dropped (Wire.mk "fp_hold_v_tmp"),
-       Gate.mkMUX (Wire.mk "fp_hold_v_tmp") zero fp_hold_consumed fp_hold_valid_next,
-       Gate.mkDFF fp_hold_valid_next clock reset fp_hold_valid,
-       -- hold is_int next
-       Gate.mkMUX fp_hold_is_int fp_result_is_int fp_dropped fp_hold_is_int_next,
-       Gate.mkDFF fp_hold_is_int_next clock reset fp_hold_is_int] ++
-      -- hold tag DFFs
-      ((List.range 6).map (fun i =>
-        [Gate.mkMUX fp_hold_tag[i]! fp_tag_out[i]! fp_dropped fp_hold_tag_next[i]!,
-         Gate.mkDFF fp_hold_tag_next[i]! clock reset fp_hold_tag[i]!])).flatten ++
-      -- hold data DFFs
-      ((List.range 32).map (fun i =>
-        [Gate.mkMUX fp_hold_data[i]! fp_result[i]! fp_dropped fp_hold_data_next[i]!,
-         Gate.mkDFF fp_hold_data_next[i]! clock reset fp_hold_data[i]!])).flatten
+      (List.range 6).map (fun i => Gate.mkBUF muldiv_tag_out[i]! muldiv_fifo_enq_data[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF muldiv_result[i]! muldiv_fifo_enq_data[6+i]!) ++
+      [Gate.mkBUF zero muldiv_fifo_enq_data[38]!]  -- is_fp_rd = 0
     else
-      [Gate.mkBUF zero eff_fp_valid,
-       Gate.mkBUF zero fp_hold_valid,
-       Gate.mkBUF zero fp_dropped,
-       Gate.mkBUF zero fp_hold_consumed,
-       Gate.mkBUF zero eff_fp_is_int] ++
-      (List.range 6).map (fun i => Gate.mkBUF zero eff_fp_tag[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF zero eff_fp_data[i]!) ++
-      (List.range 6).map (fun i => Gate.mkBUF zero fp_hold_tag[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF zero fp_hold_data[i]!)
+      (List.range 39).map (fun i => Gate.mkBUF zero muldiv_fifo_enq_data[i]!)
 
-  let arb_level1_5_gates :=
+  let fp_fifo_enq_assemble :=
     if enableF then
-      -- Use effective FP (fresh or held) for merged arbiter
-      [Gate.mkMUX eff_fp_valid int_merged_valid int_merged_valid all_merged_valid] ++
-      (List.range 6).map (fun i =>
-        Gate.mkMUX eff_fp_tag[i]! int_merged_tag[i]! int_merged_valid all_merged_tag[i]!) ++
-      (List.range 32).map (fun i =>
-        Gate.mkMUX eff_fp_data[i]! int_merged_data[i]! int_merged_valid all_merged_data[i]!) ++
-      -- is_fp tracking: FP result that writes FP PRF
-      let not_int_merged_arb := Wire.mk "not_int_merged_valid_arb"
-      let fp_wins := Wire.mk "eff_fp_wins"
-      let not_eff_fp_is_int := Wire.mk "not_eff_fp_is_int"
-      [Gate.mkNOT int_merged_valid not_int_merged_arb,
-       Gate.mkAND eff_fp_valid not_int_merged_arb fp_wins,
-       Gate.mkNOT eff_fp_is_int not_eff_fp_is_int,
-       Gate.mkAND fp_wins not_eff_fp_is_int all_merged_is_fp]
-    else []
+      (List.range 6).map (fun i => Gate.mkBUF fp_tag_out[i]! fp_fifo_enq_data[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF fp_result[i]! fp_fifo_enq_data[6+i]!) ++
+      [Gate.mkBUF fp_enq_is_fp fp_fifo_enq_data[38]!]  -- is_fp_rd = NOT is_int
+    else
+      (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_enq_data[i]!)
 
-  let merged_valid := if enableF then all_merged_valid else int_merged_valid
-  let merged_tag := if enableF then all_merged_tag else int_merged_tag
-  let merged_data := if enableF then all_merged_data else int_merged_data
+  -- FIFO output wires
+  let ib_fifo_enq_ready := Wire.mk "ib_fifo_enq_ready"
+  let ib_fifo_deq_valid := Wire.mk "ib_fifo_deq_valid"
+  let ib_fifo_deq := makeIndexedWires "ib_fifo_deq" 39
+  let ib_fifo_drain := Wire.mk "ib_fifo_drain"
 
-  -- Save condition: merged has result AND LSU wins AND no replay pending
-  let int_dropped := Wire.mk "int_dropped"
-  let int_dropped_tmp := Wire.mk "int_dropped_tmp"
-  let not_replay_valid := Wire.mk "not_replay_valid"
-  let replay_wins := Wire.mk "replay_wins"
-  -- Forward-declare lsu_valid for replay save logic
-  let lsu_valid := Wire.mk "lsu_valid"
+  let muldiv_fifo_enq_ready := Wire.mk "muldiv_fifo_enq_ready"
+  let muldiv_fifo_deq_valid := Wire.mk "muldiv_fifo_deq_valid"
+  let muldiv_fifo_deq := makeIndexedWires "muldiv_fifo_deq" 39
+  let muldiv_fifo_drain := Wire.mk "muldiv_fifo_drain"
 
-  let int_higher_priority := Wire.mk "int_higher_priority"
-  let replay_save_gates := [
-    Gate.mkNOT replay_valid not_replay_valid,
-    Gate.mkOR lsu_valid dmem_resp_valid int_higher_priority,
-    Gate.mkAND merged_valid int_higher_priority int_dropped_tmp,
-    Gate.mkAND int_dropped_tmp not_replay_valid int_dropped,
-    Gate.mkMUX replay_valid one int_dropped (Wire.mk "replay_v_tmp1"),
-    Gate.mkMUX (Wire.mk "replay_v_tmp1") zero replay_wins replay_valid_next,
-    Gate.mkDFF replay_valid_next clock reset replay_valid
-  ]
+  let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
+  let fp_fifo_deq_valid := Wire.mk "fp_fifo_deq_valid"
+  let fp_fifo_deq := makeIndexedWires "fp_fifo_deq" 39
+  let fp_fifo_drain := Wire.mk "fp_fifo_drain"
 
-  let replay_tag_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX replay_tag[i]! merged_tag[i]! int_dropped replay_tag_next[i]!,
-     Gate.mkDFF replay_tag_next[i]! clock reset replay_tag[i]!]) |>.flatten
+  let lsu_fifo_enq_ready := Wire.mk "lsu_fifo_enq_ready"
+  let lsu_fifo_deq_valid := Wire.mk "lsu_fifo_deq_valid"
+  let lsu_fifo_deq := makeIndexedWires "lsu_fifo_deq" 39
+  let lsu_fifo_drain := Wire.mk "lsu_fifo_drain"
 
-  let replay_data_gates := (List.range 32).map (fun i =>
-    [Gate.mkMUX replay_data[i]! merged_data[i]! int_dropped replay_data_next[i]!,
-     Gate.mkDFF replay_data_next[i]! clock reset replay_data[i]!]) |>.flatten
+  -- INT/Branch FIFO instance
+  let ib_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_ib",
+    portMap := [("clock", clock), ("reset", pipeline_reset_busy),
+                ("enq_valid", int_branch_valid),
+                ("deq_ready", ib_fifo_drain),
+                ("enq_ready", ib_fifo_enq_ready),
+                ("deq_valid", ib_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", ib_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", ib_fifo_deq[i]!))
+  }
 
-  -- (FP hold buffer gates defined above in level 1.5 section)
+  -- MulDiv FIFO instance (conditional on M-extension)
+  let muldiv_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_muldiv",
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_muldiv),
+                ("enq_valid", muldiv_valid_out),
+                ("deq_ready", muldiv_fifo_drain),
+                ("enq_ready", muldiv_fifo_enq_ready),
+                ("deq_valid", muldiv_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", muldiv_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", muldiv_fifo_deq[i]!))
+  }
+
+  -- FP FIFO instance (conditional on F-extension)
+  let fp_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_fp",
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_fp),
+                ("enq_valid", fp_valid_out),
+                ("deq_ready", fp_fifo_drain),
+                ("enq_ready", fp_fifo_enq_ready),
+                ("deq_valid", fp_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", fp_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", fp_fifo_deq[i]!))
+  }
+
+  -- Dummy gates to tie off unused FIFO wires when extensions disabled
+  let muldiv_fifo_dummy_gates :=
+    if enableM then []
+    else [Gate.mkBUF one muldiv_fifo_enq_ready,
+          Gate.mkBUF zero muldiv_fifo_deq_valid] ++
+         (List.range 39).map (fun i => Gate.mkBUF zero muldiv_fifo_deq[i]!)
+
+  let fp_fifo_dummy_gates :=
+    if enableF then []
+    else [Gate.mkBUF one fp_fifo_enq_ready,
+          Gate.mkBUF zero fp_fifo_deq_valid] ++
+         (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_deq[i]!)
 
   -- === LSU STORE-TO-LOAD FORWARDING ===
   let is_lw := Wire.mk "is_lw"
@@ -2845,7 +2751,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   let lsu_pipeline_insts : List CircuitInstance := []
 
-  -- Track is_fp_load through LSU and dmem paths for cdb_is_fp_rd
+  -- Track is_fp_load through LSU path for FIFO is_fp_rd bit
   let lsu_is_fp := Wire.mk "lsu_is_fp"
   let lsu_is_fp_gates :=
     if enableF then
@@ -2854,6 +2760,24 @@ def mkCPU (config : CPUConfig) : Circuit :=
       else
         [Gate.mkBUF is_flw lsu_is_fp]
     else [Gate.mkBUF zero lsu_is_fp]
+
+  -- Assemble LSU FIFO enqueue data bus
+  let lsu_fifo_enq_assemble :=
+    (List.range 6).map (fun i => Gate.mkBUF lsu_tag[i]! lsu_fifo_enq_data[i]!) ++
+    (List.range 32).map (fun i => Gate.mkBUF lsu_data[i]! lsu_fifo_enq_data[6+i]!) ++
+    [Gate.mkBUF lsu_is_fp lsu_fifo_enq_data[38]!]
+
+  -- LSU FIFO instance: SB-forwarded load results enter here
+  let lsu_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_lsu",
+    portMap := [("clock", clock), ("reset", pipeline_reset_misc),
+                ("enq_valid", lsu_valid),
+                ("deq_ready", lsu_fifo_drain),
+                ("enq_ready", lsu_fifo_enq_ready),
+                ("deq_valid", lsu_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", lsu_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", lsu_fifo_deq[i]!))
+  }
 
   -- === DMEM RESPONSE PATH ===
   let load_no_fwd := Wire.mk "load_no_fwd"
@@ -2881,97 +2805,135 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkDFF dmem_is_fp_next clock pipeline_reset_misc dmem_is_fp_reg]
     else []
 
-  -- CDB level 2: Priority: Replay > dmem_resp > LSU > merged
-  let replay_wins_gate := [Gate.mkBUF replay_valid replay_wins]
+  -- === CDB PRIORITY DRAIN MUX ===
+  -- Priority: DMEM (no FIFO) > LSU FIFO > MulDiv FIFO > FP FIFO > INT/Branch FIFO
+  -- DMEM has highest priority because it has no buffering.
 
   let dmem_wins := Wire.mk "dmem_wins"
-  let dmem_wins_gate := [Gate.mkAND dmem_resp_valid not_replay_valid dmem_wins]
+  let not_dmem := Wire.mk "not_dmem_resp_drain"
 
   let lsu_wins := Wire.mk "lsu_wins"
-  let lsu_wins_tmp := Wire.mk "lsu_wins_tmp"
-  let not_dmem_resp := Wire.mk "not_dmem_resp"
-  let lsu_wins_gate := [
-    Gate.mkNOT dmem_resp_valid not_dmem_resp,
-    Gate.mkAND lsu_valid not_replay_valid lsu_wins_tmp,
-    Gate.mkAND lsu_wins_tmp not_dmem_resp lsu_wins
+  let not_lsu := Wire.mk "not_lsu_fifo_drain"
+
+  let muldiv_wins := Wire.mk "muldiv_wins"
+  let not_muldiv := Wire.mk "not_muldiv_fifo_drain"
+  let muldiv_wins_tmp := Wire.mk "muldiv_wins_tmp"
+
+  let fp_wins := Wire.mk "fp_wins"
+  let not_fp := Wire.mk "not_fp_fifo_drain"
+  let fp_wins_tmp := Wire.mk "fp_wins_tmp"
+  let fp_wins_tmp2 := Wire.mk "fp_wins_tmp2"
+
+  let ib_wins := Wire.mk "ib_wins"
+  let ib_wins_tmp := Wire.mk "ib_wins_tmp"
+  let ib_wins_tmp2 := Wire.mk "ib_wins_tmp2"
+  let ib_wins_tmp3 := Wire.mk "ib_wins_tmp3"
+
+  let drain_priority_gates := [
+    -- DMEM wins if valid (highest priority)
+    Gate.mkBUF dmem_resp_valid dmem_wins,
+    Gate.mkNOT dmem_resp_valid not_dmem,
+
+    -- LSU FIFO wins if valid and no DMEM
+    Gate.mkAND lsu_fifo_deq_valid not_dmem lsu_wins,
+    Gate.mkNOT lsu_wins not_lsu,
+
+    -- MulDiv FIFO wins if valid and no DMEM/LSU
+    Gate.mkAND muldiv_fifo_deq_valid not_dmem muldiv_wins_tmp,
+    Gate.mkAND muldiv_wins_tmp not_lsu muldiv_wins,
+    Gate.mkNOT muldiv_wins not_muldiv,
+
+    -- FP FIFO wins if valid and no DMEM/LSU/MulDiv
+    Gate.mkAND fp_fifo_deq_valid not_dmem fp_wins_tmp,
+    Gate.mkAND fp_wins_tmp not_lsu fp_wins_tmp2,
+    Gate.mkAND fp_wins_tmp2 not_muldiv fp_wins,
+    Gate.mkNOT fp_wins not_fp,
+
+    -- INT/Branch FIFO wins if valid and no higher-priority source
+    Gate.mkAND ib_fifo_deq_valid not_dmem ib_wins_tmp,
+    Gate.mkAND ib_wins_tmp not_lsu ib_wins_tmp2,
+    Gate.mkAND ib_wins_tmp2 not_muldiv ib_wins_tmp3,
+    Gate.mkAND ib_wins_tmp3 not_fp ib_wins,
+
+    -- Connect drain signals to FIFOs (deq_ready = this source wins)
+    Gate.mkBUF lsu_wins lsu_fifo_drain,
+    Gate.mkBUF muldiv_wins muldiv_fifo_drain,
+    Gate.mkBUF fp_wins fp_fifo_drain,
+    Gate.mkBUF ib_wins ib_fifo_drain
   ]
 
-  let int_wins := Wire.mk "int_wins"
-  let int_wins_tmp := Wire.mk "int_wins_tmp"
-  let int_wins_tmp2 := Wire.mk "int_wins_tmp2"
-  let not_lsu_valid := Wire.mk "not_lsu_valid"
-  let int_wins_gates := [
-    Gate.mkNOT lsu_valid not_lsu_valid,
-    Gate.mkAND merged_valid not_lsu_valid int_wins_tmp,
-    Gate.mkAND int_wins_tmp not_replay_valid int_wins_tmp2,
-    Gate.mkAND int_wins_tmp2 not_dmem_resp int_wins
-  ]
-
+  -- CDB valid: any source won
   let cdb_valid_tmp := Wire.mk "cdb_valid_tmp"
   let cdb_valid_tmp2 := Wire.mk "cdb_valid_tmp2"
+  let cdb_valid_tmp3 := Wire.mk "cdb_valid_tmp3"
   let cdb_valid_gates := [
-    Gate.mkOR replay_wins dmem_wins cdb_valid_tmp,
-    Gate.mkOR cdb_valid_tmp lsu_wins cdb_valid_tmp2,
-    Gate.mkOR cdb_valid_tmp2 int_wins cdb_pre_valid
+    Gate.mkOR dmem_wins lsu_wins cdb_valid_tmp,
+    Gate.mkOR cdb_valid_tmp muldiv_wins cdb_valid_tmp2,
+    Gate.mkOR cdb_valid_tmp2 fp_wins cdb_valid_tmp3,
+    Gate.mkOR cdb_valid_tmp3 ib_wins cdb_pre_valid
   ]
 
+  -- CDB tag MUX: 4-level priority select from FIFO outputs + DMEM
+  -- FIFO deq bits: [5:0]=tag, [37:6]=data, [38]=is_fp_rd
   let cdb_tag_mux_gates := (List.range 6).map (fun i =>
     let m1 := Wire.mk s!"cdb_tag_m1_{i}"
     let m2 := Wire.mk s!"cdb_tag_m2_{i}"
-    [Gate.mkMUX merged_tag[i]! lsu_tag[i]! lsu_wins m1,
-     Gate.mkMUX m1 dmem_load_tag_reg[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_tag[i]! replay_wins cdb_pre_tag[i]!])
+    let m3 := Wire.mk s!"cdb_tag_m3_{i}"
+    [Gate.mkMUX ib_fifo_deq[i]! fp_fifo_deq[i]! fp_wins m1,
+     Gate.mkMUX m1 muldiv_fifo_deq[i]! muldiv_wins m2,
+     Gate.mkMUX m2 lsu_fifo_deq[i]! lsu_wins m3,
+     Gate.mkMUX m3 dmem_load_tag_reg[i]! dmem_wins cdb_pre_tag[i]!])
+
   let cdb_data_mux_gates := (List.range 32).map (fun i =>
     let m1 := Wire.mk s!"cdb_data_m1_{i}"
     let m2 := Wire.mk s!"cdb_data_m2_{i}"
-    [Gate.mkMUX merged_data[i]! lsu_data[i]! lsu_wins m1,
-     Gate.mkMUX m1 dmem_resp_data[i]! dmem_wins m2,
-     Gate.mkMUX m2 replay_data[i]! replay_wins cdb_pre_data[i]!])
+    let m3 := Wire.mk s!"cdb_data_m3_{i}"
+    [Gate.mkMUX ib_fifo_deq[6+i]! fp_fifo_deq[6+i]! fp_wins m1,
+     Gate.mkMUX m1 muldiv_fifo_deq[6+i]! muldiv_wins m2,
+     Gate.mkMUX m2 lsu_fifo_deq[6+i]! lsu_wins m3,
+     Gate.mkMUX m3 dmem_resp_data[i]! dmem_wins cdb_pre_data[i]!])
+
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
 
-  -- cdb_is_fp_rd tracking: which CDB results target FP PRF
-  -- FP exec results (when FP wins in arbiter) → is_fp = 1
-  -- FLW responses (dmem_resp for FP load) → is_fp = 1 (TODO: needs is_fp_load tracking)
-  -- All other sources → is_fp = 0
+  -- cdb_is_fp_rd tracking: bit 38 of winning FIFO + DMEM is_fp_reg
   let cdb_pre_is_fp := Wire.mk "cdb_pre_is_fp"
   let cdb_is_fp_rd_gates :=
     if enableF then
-      let fp_from_exec := Wire.mk "cdb_fp_from_exec"
-      let fp_from_dmem := Wire.mk "cdb_fp_from_dmem"
-      let fp_from_lsu := Wire.mk "cdb_fp_from_lsu"
-      let fp_tmp1 := Wire.mk "cdb_fp_tmp1"
-      -- FP exec path (int_wins covers merged exec including FP)
-      [Gate.mkAND all_merged_is_fp int_wins fp_from_exec,
-       -- dmem response for FLW
-       Gate.mkAND dmem_is_fp_reg dmem_wins fp_from_dmem,
-       -- LSU SB-forward for FLW
-       Gate.mkAND lsu_is_fp lsu_wins fp_from_lsu,
-       Gate.mkOR fp_from_exec fp_from_dmem fp_tmp1,
-       Gate.mkOR fp_tmp1 fp_from_lsu cdb_pre_is_fp]
+      -- Bit 38 carries is_fp_rd for all FIFO sources
+      let fp_from_fifo := Wire.mk "cdb_fp_from_fifo"
+      let fp_mux1 := Wire.mk "cdb_fp_mux1"
+      let fp_mux2 := Wire.mk "cdb_fp_mux2"
+      let fp_mux3 := Wire.mk "cdb_fp_mux3"
+      [-- MUX tree on bit 38 of each FIFO output
+       Gate.mkMUX ib_fifo_deq[38]! fp_fifo_deq[38]! fp_wins fp_mux1,
+       Gate.mkMUX fp_mux1 muldiv_fifo_deq[38]! muldiv_wins fp_mux2,
+       Gate.mkMUX fp_mux2 lsu_fifo_deq[38]! lsu_wins fp_mux3,
+       -- DMEM is_fp_rd from registered flag
+       Gate.mkMUX fp_mux3 dmem_is_fp_reg dmem_wins fp_from_fifo,
+       Gate.mkBUF fp_from_fifo cdb_pre_is_fp]
     else
       [Gate.mkBUF zero cdb_pre_is_fp]
 
-  -- CDB pipeline register
+  -- CDB pipeline register (with flush-aware reset)
   let cdb_reg_insts : List CircuitInstance :=
     [{ moduleName := "DFlipFlop", instName := "u_cdb_valid_reg",
        portMap := [("d", cdb_pre_valid), ("q", cdb_valid),
-                   ("clock", clock), ("reset", reset)] }] ++
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }] ++
     (List.range 6).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_{i}",
        portMap := [("d", cdb_pre_tag[i]!), ("q", cdb_tag[i]!),
-                   ("clock", clock), ("reset", reset)] }) ++
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
     (List.range 32).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_{i}",
        portMap := [("d", cdb_pre_data[i]!), ("q", cdb_data[i]!),
-                   ("clock", clock), ("reset", reset)] }) ++
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
     (if enableF then
       [{ moduleName := "DFlipFlop", instName := "u_cdb_is_fp_rd_reg",
          portMap := [("d", cdb_pre_is_fp), ("q", cdb_is_fp_rd),
-                     ("clock", clock), ("reset", reset)] }]
+                     ("clock", clock), ("reset", pipeline_reset_misc)] }]
     else [])
 
   -- CDB domain gating: prevent tag collisions between INT/FP phys reg pools
-  -- not_cdb_is_fp is already created by cdb_prf_route_gates, reuse it
   let not_cdb_pre_is_fp := Wire.mk "not_cdb_pre_is_fp"
   let cdb_domain_gates :=
     if enableF then
@@ -2982,12 +2944,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkAND cdb_pre_valid cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_fp")]
     else []
 
-  let cdb_arb_gates := arb_level0_gates ++ arb_level1_gates ++ arb_level1_5_gates ++
-    replay_save_gates ++
-    replay_tag_gates ++ replay_data_gates ++
+  let cdb_arb_gates := arb_level0_gates ++ fp_enq_is_fp_gate ++
+    ib_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++ fp_fifo_enq_assemble ++
+    lsu_fifo_enq_assemble ++
+    muldiv_fifo_dummy_gates ++ fp_fifo_dummy_gates ++
     load_no_fwd_gates ++ dmem_tag_capture_gates ++
-    fp_hold_gates ++
-    replay_wins_gate ++ dmem_wins_gate ++ lsu_wins_gate ++ int_wins_gates ++
+    drain_priority_gates ++
     cdb_valid_gates ++ cdb_mux_gates ++ cdb_is_fp_rd_gates ++ cdb_domain_gates
 
   -- === ROB is_fp_rd SHADOW REGISTER (conditional) ===
@@ -3215,6 +3177,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   branch_target_adder_inst, jalr_target_adder_inst,
                   br_cmp_inst] ++
                   cdb_reg_insts ++
+                  [ib_fifo_inst, lsu_fifo_inst] ++
+                  (if enableM then [muldiv_fifo_inst] else []) ++
+                  (if enableF then [fp_fifo_inst] else []) ++
                   lsu_pipeline_insts ++
                   [pc_queue_inst, insn_queue_inst] ++
                   fflags_dff_instances
@@ -3257,7 +3222,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "mem_tag_out", width := 6, wires := mem_tag_out }] ++
       (if enableM then [
        { name := "muldiv_result", width := 32, wires := muldiv_result },
-       { name := "muldiv_tag_out", width := 6, wires := muldiv_tag_out }] else []) ++
+       { name := "muldiv_tag_out", width := 6, wires := muldiv_tag_out },
+       { name := "muldiv_fifo_enq_data", width := 39, wires := muldiv_fifo_enq_data },
+       { name := "muldiv_fifo_deq", width := 39, wires := muldiv_fifo_deq }] else []) ++
+      [{ name := "ib_fifo_enq_data", width := 39, wires := ib_fifo_enq_data },
+       { name := "ib_fifo_deq", width := 39, wires := ib_fifo_deq },
+       { name := "lsu_fifo_enq_data", width := 39, wires := lsu_fifo_enq_data },
+       { name := "lsu_fifo_deq", width := 39, wires := lsu_fifo_deq }] ++
+      (if enableF then [
+       { name := "fp_fifo_enq_data", width := 39, wires := fp_fifo_enq_data },
+       { name := "fp_fifo_deq", width := 39, wires := fp_fifo_deq }] else []) ++
       [{ name := "lsu_agu_address", width := 32, wires := lsu_agu_address },
        { name := "lsu_agu_tag", width := 6, wires := lsu_agu_tag },
        { name := "lsu_sb_fwd_data", width := 32, wires := lsu_sb_fwd_data },
@@ -3282,8 +3256,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rs_muldiv_dispatch_src1", width := 32, wires := rs_muldiv_dispatch_src1 },
        { name := "rs_muldiv_dispatch_src2", width := 32, wires := rs_muldiv_dispatch_src2 },
        { name := "rs_muldiv_dispatch_tag", width := 6, wires := rs_muldiv_dispatch_tag },
-       { name := "int_muldiv_tag", width := 6, wires := int_muldiv_tag },
-       { name := "int_muldiv_data", width := 32, wires := int_muldiv_data }] else []) ++
+       { name := "muldiv_fifo_deq", width := 39, wires := muldiv_fifo_deq }] else []) ++
       [{ name := "rvvi_pc_rdata", width := 32, wires := rvvi_pc_rdata },
        { name := "rvvi_insn", width := 32, wires := rvvi_insn },
        { name := "rvvi_rd", width := 5, wires := rvvi_rd },

@@ -32,10 +32,9 @@ structure CPUConfig where
   numHarts : Nat := 1
   /-- Entry point address for program execution (typically 0x80000000 for bare-metal RISC-V) -/
   entryPoint : UInt32 := 0x80000000
-  /-- Pipeline stages on store buffer forwarding path before CDB merge.
-      0 = combinational (current behavior), 1 = registered (for timing closure).
-      WARNING: sbFwdPipelineStages=1 requires CDB arbiter changes to handle
-      the 1-cycle latency shift on lsu_valid. Currently only 0 is correct. -/
+  /-- Pipeline stages on store buffer forwarding path before CDB FIFO enqueue.
+      0 = combinational (default), 1 = registered (for timing closure).
+      The CDB FIFO decouples timing, so both settings are correct. -/
   sbFwdPipelineStages : Nat := 0
   deriving Repr, BEq, DecidableEq
 
