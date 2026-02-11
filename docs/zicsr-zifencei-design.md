@@ -137,6 +137,85 @@ This is 16 CSRs x 32 bits. The structural circuit is a 16-entry register file: D
 
 The existing `fflags`/`frm` fields in `CPUState` get replaced by reads from the CSR file. The FP exec unit reads `frm` from the CSR file instead of the standalone field.
 
+#### Counter CSR Semantics (mcycle, minstret)
+
+These four CSRs are special: they're not just storage, they're live counters with auto-increment behavior. Getting them right requires careful attention to *when* the read and write take effect relative to the counter's own ticking.
+
+**mcycle / mcycleh (cycle counter)**
+
+`mcycle` increments every clock cycle, unconditionally. It counts wall-clock time, not retired instructions or pipeline events. The full counter is 64 bits wide, split across `mcycle` (low 32) and `mcycleh` (high 32).
+
+Key design points:
+- The counter increments **during the drain**. If the serialize FSM takes 12 cycles to drain, the value read by the CSR instruction is 12 higher than when it entered decode. This is correct — the spec says the read occurs at retirement, not at dispatch.
+- A **write** sets the counter to the written value. On the next cycle, it increments to written_value + 1. The write and the auto-increment must not collide: on the write cycle, the explicit write wins and the auto-increment is suppressed.
+- Reading `mcycleh` while `mcycle` is near overflow is a known RISC-V pitfall. Software is expected to use the standard read-high/read-low/read-high-again loop. We don't need to handle this in hardware — it's a software pattern.
+
+In the structural circuit, `mcycle` is a 32-bit register with an adder (KoggeStone or ripple — it's not timing-critical) and a write-vs-increment mux:
+
+```
+mcycle_next = if csr_write_en && csr_addr == MCYCLE then
+               csr_write_data          -- explicit write wins
+             else
+               mcycle + 1              -- auto-increment
+```
+
+`mcycleh` is the same but increments only when `mcycle` wraps (carry out from mcycle's adder).
+
+**minstret / minstreth (retired instruction counter)**
+
+`minstret` counts instructions that retire from the ROB. This interacts with serialization in a subtle way.
+
+The spec (Volume II, 3.1.11) says the counter increments "for each instruction that retires." But what value does a `csrr x5, minstret` instruction itself see? There are two valid readings:
+
+1. The count *before* this instruction retires (i.e., the instruction doesn't count itself)
+2. The count *after* this instruction retires (i.e., it does count itself)
+
+Spike uses interpretation (1): the read sees the count of all *previously* retired instructions, not including the `csrr` itself. Most hardware implementations agree. We follow Spike for cosim compatibility.
+
+In Option A this falls out naturally from the ordering:
+
+```
+1. Pipeline drains (all prior instructions retire, incrementing minstret)
+2. CSR read happens (sees count including all prior retirements)
+3. CSR instruction itself retires (minstret increments again)
+```
+
+The read at step 2 does not include step 3's increment. The `csrr` sees N, and after it retires, `minstret` becomes N+1.
+
+For **writes** to `minstret`: the written value takes effect immediately. The CSR instruction's own retirement then increments it by 1. So `csrw minstret, x0` (write zero) results in `minstret = 1` after the `csrw` retires — the counter resumes from the written value.
+
+Wait — should the `csrw` itself increment the counter after writing? This depends on whether the increment happens *at* retirement or *after* the CSR write. The clean answer: the auto-increment for the retiring instruction happens **after** the CSR write within the same cycle, as a separate step. This means:
+
+```
+csrw minstret, 0     -- writes 0, then retires, minstret becomes 0 + 1 = 1
+csrr x5, minstret    -- reads 1, then retires, minstret becomes 2
+```
+
+This matches Spike's behavior and avoids a special case where CSR writes to `minstret` suppress the retirement increment.
+
+In the structural circuit, `minstret` has the same write-vs-increment structure as `mcycle`, but the increment is gated by `rob_commit_en` (an instruction actually retiring) rather than being unconditional:
+
+```
+minstret_next = if csr_write_en && csr_addr == MINSTRET then
+                  csr_write_data + (if rob_commit_en then 1 else 0)
+                else if rob_commit_en then
+                  minstret + 1
+                else
+                  minstret
+```
+
+Note the `+ 1` in the write path when `rob_commit_en` is also asserted: this handles the case where the `csrw minstret` instruction itself is the one retiring. Since the CSR write and the retirement happen in the same cycle (the pipeline is drained, so the CSR instruction is the only thing retiring), both the write and the +1 apply.
+
+**Separate from the CSR register file?**
+
+Because `mcycle`/`minstret` have auto-increment logic, they don't fit cleanly into a plain register file. Two options:
+
+1. **Keep them in the CSR file** but add increment inputs alongside the write port. The file becomes slightly irregular: 12 of 16 entries are plain registers, 4 have adders. This complicates the structural circuit but keeps the address decoding uniform.
+
+2. **Pull them out** as standalone counter modules with their own read/write interface. The `CSRAddrDecoder` routes reads/writes for 0xB00/0xB02/0xB80/0xB82 to the counter modules instead of the register file. Cleaner hardware, slightly more complex wiring.
+
+Option (2) is more natural in the DSL — a `Counter64` module (two Register32 + KoggeStoneAdder32 + carry chain) is a reusable building block. The CSR file stays as a pure 12-entry register file for the non-counter CSRs.
+
 #### Decode Stage Changes
 
 ```lean
@@ -331,8 +410,8 @@ The sequencer emits µops from this instruction set. Each µop maps to an existi
 |---|---|---|
 | `DRAIN` | Wait for ROB to empty | Assert `globalStall`, wait for `rob.isEmpty` |
 | `DRAIN_SB` | Wait for store buffer empty | Assert `globalStall`, wait for `lsu.sbEmpty` |
-| `READ_CSR tmp, csr` | Read CSR → internal temp | New: CSR file read port → temp latch |
-| `WRITE_CSR csr, tmp` | Write internal temp → CSR | New: temp latch → CSR file write port |
+| `READ_CSR tmp, csr` | Read CSR → internal temp | New: CSR file read port → temp latch (counter CSRs read live value) |
+| `WRITE_CSR csr, tmp` | Write internal temp → CSR | New: temp latch → CSR file write port (counter CSRs suppress auto-increment on write cycle) |
 | `MOV_TO_RD tmp` | Internal temp → rd via PRF write | PRF write port (no CDB, pipeline is drained) |
 | `ALU_OR tmp, tmp, rs1` | Bitwise OR on temp | Combinational, internal to sequencer |
 | `ALU_ANDN tmp, tmp, rs1` | Bitwise AND-NOT on temp | Combinational, internal to sequencer |
@@ -561,5 +640,9 @@ New hazard patterns for [hazard-patterns.md](hazard-patterns.md):
 | Z5 | FENCE.I self-modifying code | Store new instruction, FENCE.I, execute it |
 | Z6 | fcsr/frm/fflags aliasing | Write fcsr, read frm and fflags separately, verify consistency |
 | Z7 | CSR after long-latency op | DIV in flight when CSR arrives, verify correct drain timing |
-| Z8 | mcycle/minstret reads | Read cycle counter, execute NOPs, read again, verify delta |
-| Z9 | Illegal CSR address | Access non-existent CSR, verify exception |
+| Z8 | minstret self-count | `csrr x5, minstret` — verify it does NOT count itself (matches Spike) |
+| Z9 | minstret write-then-resume | `csrw minstret, x0` then 3 NOPs then `csrr x5, minstret` — expect 4 (write 0, +1 for csrw retire, +3 NOPs, +1 for csrr itself... but csrr doesn't count itself, so 4) |
+| Z10 | mcycle monotonicity | Two `csrr` reads of mcycle with NOPs between — verify delta > 0 and plausible |
+| Z11 | mcycleh carry | Write 0xFFFFFFFF to mcycle, NOP, read mcycleh — verify it incremented |
+| Z12 | minstret write + retire interaction | `csrw minstret, 0` retires → counter = 1, verify with immediate read |
+| Z13 | Illegal CSR address | Access non-existent CSR, verify exception |
