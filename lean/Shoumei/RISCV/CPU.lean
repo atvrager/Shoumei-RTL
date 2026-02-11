@@ -165,6 +165,20 @@ def aluMapping_RV32IM : List (Nat × Nat) :=
     (5, 9), (4, 9),     -- SRL, SRLI → 9  (1001: dir=1=right, arith=0)
     (7, 11), (6, 11) ]  -- SRA, SRAI → 11 (1011: dir=1=right, arith=1)
 
+/-- OpType → MulDiv 3-bit opcode mapping for RV32IM/RV32IMF decoder encoding.
+    MUL=0, MULH=1, MULHSU=2, MULHU=3, DIV=4, DIVU=5, REM=6, REMU=7
+    Decoder enum positions (same for IM and IMF):
+    16=REMU, 17=REM, 20=MULHU, 21=MULHSU, 22=MULH, 23=MUL, 35=DIVU, 36=DIV -/
+def mulDivMapping : List (Nat × Nat) :=
+  [ (23, 0),   -- MUL → 0
+    (22, 1),   -- MULH → 1
+    (21, 2),   -- MULHSU → 2
+    (20, 3),   -- MULHU → 3
+    (36, 4),   -- DIV → 4
+    (35, 5),   -- DIVU → 5
+    (17, 6),   -- REM → 6
+    (16, 7) ]  -- REMU → 7
+
 /-- Generic optype→opcode LUT for N-bit input → M-bit output.
     Same algorithm as mkOpTypeToALU4 but parameterized on widths. -/
 def mkOpTypeLUT (pfx : String) (optype : List Wire) (outOp : List Wire)
@@ -2012,15 +2026,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let muldiv_valid_out := Wire.mk "muldiv_valid_out"
   let muldiv_busy := Wire.mk "muldiv_busy"
 
+  -- MulDiv opcode LUT: translate 6-bit dispatch optype → 3-bit MulDiv op
+  let muldiv_op := makeIndexedWires "muldiv_op" 3
+  let muldiv_lut_gates :=
+    if enableM then mkOpTypeLUT "mdlut" rs_muldiv_dispatch_opcode muldiv_op mulDivMapping
+    else []
+
   let muldiv_exec_inst : CircuitInstance := {
     moduleName := "MulDivExecUnit"
     instName := "u_exec_muldiv"
     portMap :=
       (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (rs_muldiv_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [(s!"op_0", rs_muldiv_dispatch_opcode[0]!),
-       (s!"op_1", rs_muldiv_dispatch_opcode[1]!),
-       (s!"op_2", rs_muldiv_dispatch_opcode[2]!)] ++
+      (muldiv_op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
       (rs_muldiv_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", rs_muldiv_dispatch_valid),
        ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
@@ -2576,17 +2594,60 @@ def mkCPU (config : CPUConfig) : Circuit :=
       Gate.mkMUX branch_result_final[i]! int_result_final[i]! rs_int_dispatch_valid int_branch_data[i]!)
 
   -- Level 1 (M-extension only): Merge Int/Branch with MulDiv (MulDiv has priority)
+  -- When both int/branch and muldiv are valid simultaneously, muldiv wins and
+  -- the int/branch result is saved into a hold buffer for replay next cycle.
   let int_muldiv_valid := Wire.mk "int_muldiv_valid"
   let int_muldiv_tag := makeIndexedWires "int_muldiv_tag" 6
   let int_muldiv_data := makeIndexedWires "int_muldiv_data" 32
 
+  -- Int/branch hold buffer for muldiv collisions
+  let ib_hold_valid := Wire.mk "ib_hold_valid"
+  let ib_hold_valid_next := Wire.mk "ib_hold_valid_next"
+  let ib_hold_tag := makeIndexedWires "ib_hold_tag" 6
+  let ib_hold_tag_next := makeIndexedWires "ib_hold_tag_next" 6
+  let ib_hold_data := makeIndexedWires "ib_hold_data" 32
+  let ib_hold_data_next := makeIndexedWires "ib_hold_data_next" 32
+  let ib_dropped := Wire.mk "ib_dropped"
+  let ib_hold_consumed := Wire.mk "ib_hold_consumed"
+
+  -- Effective int/branch: fresh OR held
+  let eff_ib_valid := Wire.mk "eff_ib_valid"
+  let eff_ib_tag := makeIndexedWires "eff_ib_tag" 6
+  let eff_ib_data := makeIndexedWires "eff_ib_data" 32
+
   let arb_level1_gates :=
     if enableM then
-      [Gate.mkMUX int_branch_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
+      -- ib_dropped: fresh int/branch AND muldiv both valid → int/branch loses
+      [Gate.mkAND int_branch_valid muldiv_valid_out ib_dropped,
+       -- eff_ib_valid: fresh int/branch OR held
+       Gate.mkOR int_branch_valid ib_hold_valid eff_ib_valid] ++
+      -- eff_ib_tag/data: prefer held when held is valid (it was dropped earlier)
       (List.range 6).map (fun i =>
-        Gate.mkMUX int_branch_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
+        Gate.mkMUX int_branch_tag[i]! ib_hold_tag[i]! ib_hold_valid eff_ib_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX int_branch_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!)
+        Gate.mkMUX int_branch_data[i]! ib_hold_data[i]! ib_hold_valid eff_ib_data[i]!) ++
+      -- Merge eff_ib with muldiv (muldiv still has priority)
+      [Gate.mkMUX eff_ib_valid muldiv_valid_out muldiv_valid_out int_muldiv_valid] ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX eff_ib_tag[i]! muldiv_tag_out[i]! muldiv_valid_out int_muldiv_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX eff_ib_data[i]! muldiv_result[i]! muldiv_valid_out int_muldiv_data[i]!) ++
+      -- ib_hold_consumed: held result gets through (eff_ib valid AND muldiv not valid)
+      let not_muldiv_valid := Wire.mk "not_muldiv_valid_arb"
+      [Gate.mkNOT muldiv_valid_out not_muldiv_valid,
+       Gate.mkAND ib_hold_valid not_muldiv_valid ib_hold_consumed,
+       -- hold valid next: set on drop, clear on consumed
+       Gate.mkMUX ib_hold_valid one ib_dropped (Wire.mk "ib_hold_v_tmp"),
+       Gate.mkMUX (Wire.mk "ib_hold_v_tmp") zero ib_hold_consumed ib_hold_valid_next,
+       Gate.mkDFF ib_hold_valid_next clock reset ib_hold_valid] ++
+      -- hold tag DFFs
+      ((List.range 6).map (fun i =>
+        [Gate.mkMUX ib_hold_tag[i]! int_branch_tag[i]! ib_dropped ib_hold_tag_next[i]!,
+         Gate.mkDFF ib_hold_tag_next[i]! clock reset ib_hold_tag[i]!])).flatten ++
+      -- hold data DFFs
+      ((List.range 32).map (fun i =>
+        [Gate.mkMUX ib_hold_data[i]! int_branch_data[i]! ib_dropped ib_hold_data_next[i]!,
+         Gate.mkDFF ib_hold_data_next[i]! clock reset ib_hold_data[i]!])).flatten
     else []
 
   -- Wire names for the merged signal that feeds CDB arb level 2
@@ -3110,7 +3171,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              (if enableF then fp_op_gates else []) ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
-             alu_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
+             alu_lut_gates ++ muldiv_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
              rob_fp_shadow_gates ++ rob_old_phys_mux_gates ++ fp_retire_gates ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              int_imm_rf_we_gates ++ int_imm_rf_gates ++ int_imm_rf_sel_gates ++

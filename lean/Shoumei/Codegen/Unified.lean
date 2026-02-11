@@ -80,7 +80,7 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- All are verified via SV LEC + compositional certs.
 private def chiselSkipList : List String :=
   ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
-   "CPU_RV32IF", "CPU_RV32IMF"]
+   "CPU_RV32IM", "CPU_RV32IF", "CPU_RV32IMF"]
 
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
@@ -88,6 +88,10 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := d
   writeCircuitNetlist c
   if chiselSkipList.contains c.name then
     IO.println s!"  (skipping Chisel for {c.name} — verified via SV LEC)"
+    -- Remove stale Chisel file if it exists from a previous run
+    let stalePath := s!"chisel/src/main/scala/generated/{c.name}.scala"
+    if ← System.FilePath.pathExists stalePath then
+      IO.FS.removeFile stalePath
   else
     writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits

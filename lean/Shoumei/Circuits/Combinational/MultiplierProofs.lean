@@ -39,9 +39,9 @@ theorem csa_instance_count :
 theorem multiplier_name :
     pipelinedMultiplier.name = "PipelinedMultiplier" := by native_decide
 
-/-- The multiplier has 77 input signals. -/
+/-- The multiplier has 78 input signals. -/
 theorem multiplier_input_count :
-    pipelinedMultiplier.inputs.length = 77 := by native_decide
+    pipelinedMultiplier.inputs.length = 78 := by native_decide
 
 /-- The multiplier has 39 output signals. -/
 theorem multiplier_output_count :
@@ -51,9 +51,9 @@ theorem multiplier_output_count :
 theorem multiplier_sequential :
     pipelinedMultiplier.hasSequentialElements = true := by native_decide
 
-/-- The multiplier uses 31 submodule instances (30 CSACompressor64 + 1 RippleCarryAdder64). -/
+/-- The multiplier uses 37 submodule instances (CSACompressor64s + pipeline regs + KSA64 + sign correction). -/
 theorem multiplier_instance_count :
-    pipelinedMultiplier.instances.length = 31 := by native_decide
+    pipelinedMultiplier.instances.length = 45 := by native_decide
 
 /-! ## Behavioral Proofs -/
 

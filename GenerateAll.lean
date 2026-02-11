@@ -33,7 +33,8 @@ import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.Circuits.Sequential.Register
 
 -- Phase 4: RISC-V Components
--- Note: RISC-V Decoder uses dynamic code generation (not static Circuit)
+import Shoumei.RISCV.CodegenTest  -- RISC-V decoder generation (dynamic, from riscv-opcodes)
+import Shoumei.RISCV.InstructionList
 import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
@@ -177,7 +178,6 @@ def allCircuits : List Circuit := [
   mkRegister91Hierarchical,
 
   -- Phase 4: RISC-V Components
-  -- Note: RV32IDecoder generated separately via generate_riscv_decoder
   mkRAT64,
   mkFreeList64,
   mkPhysRegFile64,
@@ -239,6 +239,12 @@ def main : IO Unit := do
   for c in allCircuits do
     writeCircuit c allCircuits
     count := count + 1
+
+  -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
+  IO.println ""
+  IO.println "Generating RISC-V decoders..."
+  let defs ← Shoumei.RISCV.loadInstrDictFromFile Shoumei.RISCV.instrDictPath
+  Shoumei.RISCV.generateDecoders defs
 
   -- Generate testbenches
   IO.println ""

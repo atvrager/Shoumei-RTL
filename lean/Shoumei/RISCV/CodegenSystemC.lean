@@ -229,7 +229,7 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "  io_is_memory.write(valid && ((opcode == 0x03) || (opcode == 0x23)));",
     "  io_is_branch.write(valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67)));",
     "  io_is_store.write(valid && (opcode == 0x23));",
-    "  io_use_imm.write(valid && (opcode != 0x33));",
+    "  io_use_imm.write(valid && (opcode != 0x33) && (opcode != 0x63));",
     if hasMSC defs then
     "  io_is_muldiv.write(valid && is_mext);"
     else "",
