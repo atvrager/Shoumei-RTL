@@ -97,6 +97,8 @@ def allCircuits : List Circuit := [
   dff,
   mkQueue1StructuralComplete 8,
   mkQueue1StructuralComplete 32,
+  mkQueue1StructuralComplete 39,  -- CDB result FIFOs (6 tag + 32 data + 1 is_fp_rd)
+  mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
 
   -- Phase 1: Arithmetic
   mkRippleCarryAdder4,
