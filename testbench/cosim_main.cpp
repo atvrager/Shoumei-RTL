@@ -271,6 +271,11 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Check for test completion (tohost write)
+        if (dut->o_test_done) {
+            done = true;
+        }
+
         // Negedge
         dut->clk = 0;
         dut->eval();
