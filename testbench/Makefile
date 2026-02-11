@@ -102,43 +102,57 @@ tests: gen-tests
 	$(MAKE) -C $(TB_DIR)/tests
 
 run-all-tests: sim tests
-	@pass=0; fail=0; total=0; \
+	@mkdir -p $(PROJ_ROOT)/output
+	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results.csv; \
+	pass=0; fail=0; total=0; \
 	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
 		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycle $$cycles)"; \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results.csv; \
 			pass=$$((pass+1)); \
 		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycle $$cycles)"; \
+			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results.csv; \
 			fail=$$((fail+1)); \
 		fi; \
 	done; \
 	echo ""; \
 	echo "$$pass/$$total passed, $$fail failed"; \
+	echo "CSV: $(PROJ_ROOT)/output/test-results.csv"; \
 	[ $$fail -eq 0 ]
 
 run-all-tests-xprop: sim-xprop tests
-	@pass=0; fail=0; total=0; \
+	@mkdir -p $(PROJ_ROOT)/output
+	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-xprop.csv; \
+	pass=0; fail=0; total=0; \
 	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei_xprop +elf=$$elf +timeout=3000 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
 		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycle $$cycles)"; \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-xprop.csv; \
 			pass=$$((pass+1)); \
 		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycle $$cycles)"; \
+			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-xprop.csv; \
 			fail=$$((fail+1)); \
 		fi; \
 	done; \
 	echo ""; \
 	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
+	echo "CSV: $(PROJ_ROOT)/output/test-results-xprop.csv"; \
 	[ $$fail -eq 0 ]
 
 SPIKE_LIB_FILE := $(firstword $(wildcard $(SPIKE_LIB)/libriscv.*))
@@ -173,20 +187,29 @@ cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei_3way (3-way: RTL + Spike + SystemC)"
 
 run-cosim-no-sc: cosim-no-sc tests
-	@pass=0; fail=0; total=0; \
+	@mkdir -p $(PROJ_ROOT)/output
+	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
+	pass=0; fail=0; total=0; \
 	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		if $(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
-			echo "PASS  $$name"; \
+		result=$$($(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1); \
+		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
+		if echo "$$result" | grep -q "COSIM PASS"; then \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results.csv; \
 			pass=$$((pass+1)); \
 		else \
-			echo "FAIL  $$name"; \
+			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results.csv; \
 			fail=$$((fail+1)); \
 		fi; \
 	done; \
 	echo ""; \
 	echo "$$pass/$$total passed, $$fail failed (2-way cosim)"; \
+	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
 
 run-cosim: cosim tests

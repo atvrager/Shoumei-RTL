@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
     uint64_t sim_time = 10;
     #endif
     uint32_t cycle = 0;
+    uint32_t retired = 0;
     bool done = false;
 
     printf("Simulation started (timeout=%u cycles)\n", timeout);
@@ -204,6 +205,9 @@ int main(int argc, char** argv) {
 #if VM_TRACE
         if (trace) trace->dump(sim_time++);
 #endif
+
+        // Count retired instructions
+        if (dut->o_rvvi_valid) retired++;
 
         // Debug: print key signals for first 30 cycles if +verbose
         if (verbose && cycle < 30) {
@@ -225,6 +229,8 @@ int main(int argc, char** argv) {
                 printf("  test_num:  %u\n", dut->o_test_code >> 1);
             }
             printf("  Cycle:     %u\n", cycle);
+            printf("  Retired:   %u\n", retired);
+            printf("  IPC:       %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
             printf("  PC:        0x%08x\n", dut->o_fetch_pc);
             printf("  tohost:    0x%08x\n", dut->o_test_code);
         }
@@ -254,6 +260,8 @@ int main(int argc, char** argv) {
 
     printf("─────────────────────────────────────────────\n");
     printf("Total cycles: %u\n", cycle);
+    printf("Total retired: %u\n", retired);
+    printf("IPC: %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
 
 #if VM_TRACE
     if (trace) {

@@ -328,6 +328,16 @@ jobs:
       - name: Run all ELF tests (X-prop)
         run: make -C testbench run-all-tests-xprop
 
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            output/test-results.csv
+            output/test-results-xprop.csv
+          retention-days: 90
+
   slang-lint:
     name: Slang Lint
     runs-on: ubuntu-latest
@@ -399,6 +409,14 @@ jobs:
 
       - name: Run 2-way cosim (RTL vs Spike)
         run: make -C testbench run-cosim-no-sc
+
+      - name: Upload cosim results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cosim-results
+          path: output/cosim-results.csv
+          retention-days: 90
 
   smoke-test:
     name: Smoke Test
