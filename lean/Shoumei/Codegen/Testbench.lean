@@ -233,20 +233,30 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  // =========================================================================\n" ++
   "  // HTIF: tohost termination\n" ++
   "  // =========================================================================\n" ++
+  "  // Drain counter: after first tohost write, keep updating for 8 more cycles\n" ++
+  "  // so committed stores overwrite any speculative wrong-path stores.\n" ++
   "  logic        test_done;\n" ++
   "  logic        test_pass;\n" ++
-  "  logic [31:0] test_code;\n\n" ++
+  "  logic [31:0] test_code;\n" ++
+  "  logic [3:0]  tohost_drain;\n\n" ++
   s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
   s!"    if ({resetName}) begin\n" ++
   "      test_done <= 1'b0;\n" ++
   "      test_pass <= 1'b0;\n" ++
   "      test_code <= 32'b0;\n" ++
+  "      tohost_drain <= 4'd0;\n" ++
   "    end else begin\n" ++
   s!"      if ({dmemValid} && {dmemWe} &&\n" ++
   s!"          {dmemAddr} == TOHOST_ADDR) begin\n" ++
-  "        test_done <= 1'b1;\n" ++
+  "        // Update on every tohost write (last writer wins)\n" ++
   s!"        test_code <= {dmemDataOut};\n" ++
   s!"        test_pass <= ({dmemDataOut} == 32'h1);\n" ++
+  "        tohost_drain <= 4'd8;\n" ++
+  "      end else if (tohost_drain > 4'd1) begin\n" ++
+  "        tohost_drain <= tohost_drain - 4'd1;\n" ++
+  "      end else if (tohost_drain == 4'd1) begin\n" ++
+  "        test_done <= 1'b1;\n" ++
+  "        tohost_drain <= 4'd0;\n" ++
   "      end\n" ++
   "    end\n" ++
   "  end\n\n" ++

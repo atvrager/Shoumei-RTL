@@ -1675,10 +1675,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else []
 
   let rs_mem_inst : CircuitInstance := {
-    moduleName := "ReservationStation4"
+    moduleName := "MemoryRS4"
     instName := "u_rs_memory"
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
+                ("issue_is_store", dispatch_is_store),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", mem_src2_ready),
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
@@ -2733,16 +2734,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- When sbFwdPipelineStages = 0, use combinational BUF (current behavior).
   let lsu_valid_gate :=
     if sbFwdPipelined then
-      [Gate.mkDFF load_fwd_valid clock reset lsu_valid]
+      [Gate.mkDFF load_fwd_valid clock pipeline_reset_misc lsu_valid]
     else
       [Gate.mkBUF load_fwd_valid lsu_valid]
 
   let lsu_tag_data_mux_gates :=
     if sbFwdPipelined then
       (List.range 6).map (fun i =>
-        Gate.mkDFF rs_mem_dispatch_tag[i]! clock reset lsu_tag[i]!) ++
+        Gate.mkDFF rs_mem_dispatch_tag[i]! clock pipeline_reset_misc lsu_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkDFF lsu_sb_fwd_data[i]! clock reset lsu_data[i]!)
+        Gate.mkDFF lsu_sb_fwd_data[i]! clock pipeline_reset_misc lsu_data[i]!)
     else
       (List.range 6).map (fun i =>
         Gate.mkBUF rs_mem_dispatch_tag[i]! lsu_tag[i]!) ++
@@ -2756,7 +2757,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_is_fp_gates :=
     if enableF then
       if sbFwdPipelined then
-        [Gate.mkDFF is_flw clock reset lsu_is_fp]
+        [Gate.mkDFF is_flw clock pipeline_reset_misc lsu_is_fp]
       else
         [Gate.mkBUF is_flw lsu_is_fp]
     else [Gate.mkBUF zero lsu_is_fp]

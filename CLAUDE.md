@@ -225,6 +225,40 @@ shellcheck verification/run-lec.sh
 
 IEEE 1800-2017 compliant, synthesizable subset only.
 
+## Debugging RTL
+
+### Cosimulation (primary debugging tool)
+
+Lock-step comparison of RTL vs Spike reference model. Shows exact instruction where RTL diverges:
+
+```bash
+make -C testbench cosim-no-sc && ./build-sim/cosim_shoumei +elf=testbench/tests/failing_test.elf
+```
+
+Output format: `DBG ret#N cyC: PC=0x... insn=0x... rd=xR(wr) data=0x... | Spike: ...`
+- `MISMATCH` lines pinpoint the first divergence
+- Check `data` field for wrong register values (e.g., load returning 0 instead of expected value)
+
+### VCD Waveform Traces
+
+```bash
+make -C testbench sim-trace                                    # Build with VCD support
+./build-sim/sim_shoumei_trace +trace +elf=testbench/tests/test.elf  # Run with VCD
+python3 scripts/vcd_inspect.py shoumei_cpu.vcd                 # Inspect signals
+```
+
+Key signals for memory path debugging:
+- `load_fwd_valid` / `load_no_fwd` — which path a load takes (SB fwd vs DMEM)
+- `lsu_sb_fwd_hit` — store buffer forwarding hit
+- `lsu_valid` / `lsu_fifo_enq_ready` — FIFO enqueue handshake
+- `pipeline_flush_comb` — pipeline flush events
+
+### Debugging workflow
+
+1. Run cosim to find the diverging instruction and wrong data value
+2. Use VCD to trace the signal path that produced the wrong value
+3. Check timing of store-buffer commits vs load dispatches for memory ordering issues
+
 ## Important Notes
 
 - Always read existing Lean files before modifying

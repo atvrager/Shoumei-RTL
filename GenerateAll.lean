@@ -189,6 +189,7 @@ def allCircuits : List Circuit := [
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
+  mkMemoryRS4,
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkRippleCarryAdder64,
