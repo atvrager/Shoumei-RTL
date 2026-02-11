@@ -282,6 +282,7 @@ int main(int argc, char** argv) {
     printf("Cosimulation complete:\n");
     printf("  Cycles:      %lu\n", cycle);
     printf("  Retired:     %lu\n", retired);
+    printf("  IPC:         %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
     printf("  Mismatches:  %lu\n", mismatches);
     printf("  tohost:      0x%08x\n", tohost);
 
