@@ -28,6 +28,10 @@ structure MemoryPort where
   validSignal : Option String := none
   readySignal : Option String := none
   weSignal : Option String := none
+  /-- Store size signal (2-bit): 00=byte, 01=half, 10=word. When set, byte-enable
+      store logic is generated. The signal may be a bus or individual bits
+      (detected automatically from the circuit outputs). -/
+  sizeSignal : Option String := none
   respValidSignal : Option String := none
   respDataSignal : Option String := none
   deriving Repr
@@ -92,9 +96,22 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
     if width > 1 then s!"  logic [{width-1}:0] {name};"
     else s!"  logic        {name};"
 
+  -- Size signal handling (must be before signalDecls/portConns)
+  let dmemSize := cfg.dmemPort.sizeSignal
+  -- Check RAW circuit outputs (before signal group reconstruction) for individual bits
+  let sizeIsBitwise := match dmemSize with
+    | some sizeName => c.outputs.any (fun w => w.name == s!"{sizeName}_0")
+    | none => false
+
+  -- When size signal uses individual bits, exclude the grouped bus from declarations
+  -- and port connections (we'll add individual bit connections instead)
+  let isSizeBus (name : String) : Bool := match dmemSize with
+    | some sizeName => sizeIsBitwise && name == sizeName
+    | none => false
+
   let signalDecls := String.intercalate "\n" (
     (inputSignals.filter (fun (n, _) => !isSpecial n)).map (fun (n, w) => mkDecl n w) ++
-    (outputSignals.filter (fun (n, _) => !isSpecial n)).map (fun (n, w) => mkDecl n w)
+    (outputSignals.filter (fun (n, _) => !isSpecial n && !isSizeBus n)).map (fun (n, w) => mkDecl n w)
   )
 
   -- Port connections for CPU instance
@@ -105,7 +122,15 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
       s!"      .{name}(1'b{if value then "1" else "0"})") ++
     (inputSignals.filter (fun (n, _) => !isSpecial n)).map (fun (n, _) =>
       s!"      .{n}({n})") ++
-    outputSignals.map (fun (n, _) => s!"      .{n}({n})")
+    (outputSignals.filter (fun (n, _) => !isSizeBus n)).map (fun (n, _) =>
+      s!"      .{n}({n})") ++
+    -- Add individual bit connections for size signal
+    (match dmemSize with
+     | some sizeName => if sizeIsBitwise then
+         [s!"      .{sizeName}_0({sizeName}_0)",
+          s!"      .{sizeName}_1({sizeName}_1)"]
+       else []
+     | none => [])
   )
 
   let pcSig := cfg.imemPort.addrSignal
@@ -123,6 +148,16 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   let tohostHex := hexLit 32 cfg.tohostAddr
 
   let tbName := optOrDefault cfg.tbName s!"tb_{c.name}"
+
+  -- Size signal declarations (individual bits → combined wire, or just reference bus)
+  let sizeDeclStr := match dmemSize with
+    | some sizeName =>
+      if sizeIsBitwise then
+        s!"  logic       {sizeName}_0;\n" ++
+        s!"  logic       {sizeName}_1;\n" ++
+        "  wire  [1:0] " ++ sizeName ++ " = {" ++ sizeName ++ "_1, " ++ sizeName ++ "_0};\n"
+      else ""
+    | none => ""
 
   -- Build the complete SV string
   "//==============================================================================\n" ++
@@ -173,7 +208,8 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  // =========================================================================\n" ++
   "  // CPU I/O signals\n" ++
   "  // =========================================================================\n" ++
-  signalDecls ++ "\n\n" ++
+  signalDecls ++ "\n" ++
+  sizeDeclStr ++ "\n" ++
   s!"  logic        {resetName};\n" ++
   s!"  assign {resetName} = ~rst_n;\n\n" ++
 
@@ -215,8 +251,32 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   s!"      {dmemRespValid} <= 1'b0;\n\n" ++
   s!"      if ({dmemValid}) begin\n" ++
   s!"        if ({dmemWe}) begin\n" ++
-  "          // Store\n" ++
-  s!"          mem[addr_to_idx({dmemAddr})] <= {dmemDataOut};\n" ++
+  (match dmemSize with
+   | some sizeName =>
+     s!"          // Store with byte-enable based on {sizeName} and addr[1:0]\n" ++
+     s!"          // {sizeName}: 00=byte, 01=half, 10=word\n" ++
+     s!"          case ({sizeName})\n" ++
+     s!"            2'b00: begin // SB: store byte\n" ++
+     s!"              case ({dmemAddr}[1:0])\n" ++
+     s!"                2'b00: mem[addr_to_idx({dmemAddr})][7:0]   <= {dmemDataOut}[7:0];\n" ++
+     s!"                2'b01: mem[addr_to_idx({dmemAddr})][15:8]  <= {dmemDataOut}[7:0];\n" ++
+     s!"                2'b10: mem[addr_to_idx({dmemAddr})][23:16] <= {dmemDataOut}[7:0];\n" ++
+     s!"                2'b11: mem[addr_to_idx({dmemAddr})][31:24] <= {dmemDataOut}[7:0];\n" ++
+     s!"              endcase\n" ++
+     s!"            end\n" ++
+     s!"            2'b01: begin // SH: store halfword\n" ++
+     s!"              case ({dmemAddr}[1])\n" ++
+     s!"                1'b0: mem[addr_to_idx({dmemAddr})][15:0]  <= {dmemDataOut}[15:0];\n" ++
+     s!"                1'b1: mem[addr_to_idx({dmemAddr})][31:16] <= {dmemDataOut}[15:0];\n" ++
+     s!"              endcase\n" ++
+     s!"            end\n" ++
+     s!"            default: begin // SW: store word\n" ++
+     s!"              mem[addr_to_idx({dmemAddr})] <= {dmemDataOut};\n" ++
+     s!"            end\n" ++
+     s!"          endcase\n"
+   | none =>
+     s!"          // Store\n" ++
+     s!"          mem[addr_to_idx({dmemAddr})] <= {dmemDataOut};\n") ++
   "        end else begin\n" ++
   "          // Load: respond next cycle\n" ++
   s!"          dmem_read_data  <= mem[addr_to_idx({dmemAddr})];\n" ++

@@ -313,6 +313,9 @@ jobs:
           ./scripts/setup-riscv-toolchain.sh
           echo "$HOME/.local/riscv32-elf/bin" >> $GITHUB_PATH
 
+      - name: Fetch riscv-tests submodule
+        run: git submodule update --init third_party/riscv-tests
+
       - name: Build test ELFs
         run: make -C testbench/tests
 

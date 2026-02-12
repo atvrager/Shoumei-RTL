@@ -797,6 +797,11 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
 
   -- Per-entry is_store DFFs: track which entries hold store instructions
   -- is_store is set on issue (issue_we AND issue_is_store), cleared on dispatch_clear
+  --
+  -- Age-based ordering: 3-bit allocation counter assigns ages to entries.
+  -- A load is only suppressed if there exists an OLDER valid store in the RS.
+  -- "j older than i" iff 0 < (age_i - age_j) mod 8 < 4, checked via MSB of
+  -- the 3-bit difference being 0 and the result being nonzero.
   let store_order_gates := if enableStoreLoadOrdering then
     -- Use per-entry named wires (not indexed) to avoid codegen bus grouping
     let is_store_regs := (List.range 4).map (fun i => Wire.mk s!"e{i}_is_store")
@@ -817,6 +822,7 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
     ) |>.flatten
 
     -- has_valid_store = OR(valid[i] AND is_store[i]) for all entries
+    -- (kept for output / debug, not used for suppression)
     let has_store_per := (List.range 4).map (fun i => Wire.mk s!"e{i}_has_store")
     let has_store_gates := (List.range 4).map (fun i =>
       let valid := Wire.mk s!"e{i}_0"
@@ -831,7 +837,56 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
       Gate.mkOR has_store_or_tmp1 has_store_or_tmp2 has_valid_store
     ]
 
-    store_entry_gates ++ has_store_gates ++ has_store_or_gates
+    -- ====== Age matrix (wrapping-free) ======
+    -- older[i][j] = 1 iff entry j was allocated BEFORE entry i (j is older than i).
+    -- On issue to entry k: older[k][j] = valid[j] for all j!=k (existing entries are older)
+    --                       older[j][k] = 0         for all j!=k (k is newest)
+    -- No counter needed; no wrapping issues.
+    -- Matrix elements: older_i_j for i,j in 0..3, i != j (12 DFFs)
+    let older_matrix_gates := (List.range 4).map (fun i =>
+      ((List.range 4).filter (· != i)).map (fun j =>
+        -- older[i][j]: "j is older than i"
+        let reg := Wire.mk s!"older_{i}_{j}"
+        let issue_we_i := Wire.mk s!"e{i}_issue_we"
+        let issue_we_j := Wire.mk s!"e{j}_issue_we"
+        let valid_j := Wire.mk s!"e{j}_0"
+        -- When entry i is issued: set to valid[j] (existing j is older)
+        -- When entry j is issued: clear to 0 (new j is not older than i)
+        -- Otherwise: hold
+        let tmp1 := Wire.mk s!"older_{i}_{j}_tmp1"
+        let nxt := Wire.mk s!"older_{i}_{j}_next"
+        [
+          -- Step 1: if j is being issued, clear to 0; else hold
+          Gate.mkMUX reg zero issue_we_j tmp1,
+          -- Step 2: if i is being issued, set to valid[j]; else keep tmp1
+          Gate.mkMUX tmp1 valid_j issue_we_i nxt,
+          -- DFF
+          Gate.mkDFF nxt clock reset reg
+        ])) |>.flatten |>.flatten
+
+    -- Per-entry: has_older_store[i] = OR over j!=i of (older[i][j] AND valid[j] AND is_store[j])
+    let older_store_check_gates := (List.range 4).map (fun i =>
+      let j_indices := (List.range 4).filter (· != i)
+      let checks := j_indices.map (fun j =>
+        let older_ij := Wire.mk s!"older_{i}_{j}"
+        let valid_j := Wire.mk s!"e{j}_0"
+        let chk_tmp := Wire.mk s!"older_chk_{i}_{j}_tmp"
+        let chk := Wire.mk s!"older_chk_{i}_{j}"
+        [
+          Gate.mkAND older_ij valid_j chk_tmp,
+          Gate.mkAND chk_tmp is_store_regs[j]! chk
+        ])
+      let or_gates :=
+        let a := Wire.mk s!"older_chk_{i}_{j_indices[0]!}"
+        let b := Wire.mk s!"older_chk_{i}_{j_indices[1]!}"
+        let c := Wire.mk s!"older_chk_{i}_{j_indices[2]!}"
+        let tmp := Wire.mk s!"has_older_store_{i}_tmp"
+        let result := Wire.mk s!"has_older_store_{i}"
+        [Gate.mkOR a b tmp, Gate.mkOR tmp c result]
+      checks.flatten ++ or_gates) |>.flatten
+
+    store_entry_gates ++ has_store_gates ++ has_store_or_gates ++
+    older_matrix_gates ++ older_store_check_gates
   else []
 
   -- ============================================================================
@@ -842,9 +897,8 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
   let dispatch_grant := makeIndexedWires "dispatch_grant" 4
 
   -- Per-entry ready: valid AND src1_ready AND src2_ready
-  -- With store-load ordering: suppress loads when stores are present
+  -- With store-load ordering: suppress loads only when an OLDER store exists
   let ready_gates := if enableStoreLoadOrdering then
-    let has_valid_store := Wire.mk "has_valid_store"
     let is_store_regs := (List.range 4).map (fun i => Wire.mk s!"e{i}_is_store")
     (List.range 4).map (fun i =>
       let valid := Wire.mk s!"e{i}_0"
@@ -854,12 +908,13 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
       let base_ready := Wire.mk s!"base_ready{i}"
       let is_load := Wire.mk s!"is_load{i}"
       let suppress := Wire.mk s!"suppress{i}"
+      let has_older_store := Wire.mk s!"has_older_store_{i}"
       [
         Gate.mkAND valid src1_ready base_ready_tmp,
         Gate.mkAND base_ready_tmp src2_ready base_ready,
-        -- suppress = has_valid_store AND NOT(is_store[i])
+        -- suppress = has_older_store_i AND NOT(is_store[i])
         Gate.mkNOT is_store_regs[i]! is_load,
-        Gate.mkAND has_valid_store is_load suppress,
+        Gate.mkAND has_older_store is_load suppress,
         -- ready = base_ready AND NOT(suppress)
         Gate.mkMUX base_ready zero suppress ready[i]!
       ]

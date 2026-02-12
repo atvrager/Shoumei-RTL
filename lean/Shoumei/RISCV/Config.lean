@@ -123,6 +123,9 @@ structure OpcodeEncodings where
   lhu : Nat
   lb : Nat
   lbu : Nat
+  sw : Nat
+  sh : Nat
+  sb : Nat
   -- F extension (only valid when enableF)
   flw : Nat := 0
   fsw : Nat := 0
@@ -131,19 +134,22 @@ structure OpcodeEncodings where
 def opcodeEncodings_RV32I : OpcodeEncodings :=
   { lui := 19, auipc := 35, jal := 25, jalr := 24,
     beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
-    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22 }
+    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
+    sw := 2, sh := 14, sb := 15 }
 
 /-- RV32IM decoder opcode encodings -/
 def opcodeEncodings_RV32IM : OpcodeEncodings :=
   { lui := 25, auipc := 43, jal := 31, jalr := 30,
     beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
-    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28 }
+    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
+    sw := 2, sh := 14, sb := 15 }
 
 /-- RV32IF decoder opcode encodings (I same as RV32I, F appended after 40 I instructions) -/
 def opcodeEncodings_RV32IF : OpcodeEncodings :=
   { lui := 19, auipc := 35, jal := 25, jalr := 24,
     beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
     lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
+    sw := 2, sh := 14, sb := 15,
     flw := 55, fsw := 40 }
 
 /-- RV32IMF decoder opcode encodings (I+M same as RV32IM, F appended) -/
@@ -151,6 +157,7 @@ def opcodeEncodings_RV32IMF : OpcodeEncodings :=
   { lui := 25, auipc := 43, jal := 31, jalr := 30,
     beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
     lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
+    sw := 2, sh := 14, sb := 15,
     flw := 63, fsw := 48 }
 
 /-- Get opcode encodings for a CPU config -/

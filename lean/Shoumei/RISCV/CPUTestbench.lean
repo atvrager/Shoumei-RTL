@@ -35,6 +35,7 @@ def cpuTestbenchConfig : TestbenchConfig := {
     validSignal := some "dmem_req_valid"
     readySignal := some "dmem_req_ready"
     weSignal := some "dmem_req_we"
+    sizeSignal := some "dmem_req_size"
     respValidSignal := some "dmem_resp_valid"
     respDataSignal := some "dmem_resp_data"
   }
