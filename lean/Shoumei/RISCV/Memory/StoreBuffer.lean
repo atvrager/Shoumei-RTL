@@ -404,10 +404,13 @@ def mkStoreBuffer8 : Circuit :=
 
     -- === Next-State Logic ===
 
-    -- valid_next: MUX priority: flush/reset (via combined_reset) > enq > hold
-    -- Since combined_reset goes to Register68 reset, we just handle enq > hold
-    let valid_gate :=
+    -- valid_next: enq sets valid, otherwise hold. Flush/reset via combined_reset
+    -- on Register68. Entries are NOT cleared on dequeue (they get overwritten by
+    -- future enqueues). Stale-entry matching is prevented by gating fwd_committed_hit
+    -- with NOT sb_empty in the CPU.
+    let valid_gates := [
       Gate.mkMUX cur_valid one enq_we e_next[0]!
+    ]
 
     -- committed_next: MUX priority: enq (sets committed=1) > commit (sets) > hold
     -- Auto-commit on enqueue; wrong-path stores are blocked at sb_enq_en gate
@@ -433,21 +436,26 @@ def mkStoreBuffer8 : Circuit :=
     let fwd_match := Wire.mk s!"e{i}_fwd_match"
     let fwd_match_gate := Gate.mkAND cur_valid cmp_eq fwd_match
 
+    -- Committed forwarding match: valid AND committed AND address_eq
+    let fwd_committed_match := Wire.mk s!"e{i}_fwd_committed_match"
+    let fwd_committed_match_gate := Gate.mkAND fwd_match cur_committed fwd_committed_match
+
     -- Collect all per-entry gates
     let entry_gates :=
       [enq_we_gate, commit_we_gate] ++
-      [valid_gate] ++ committed_gates ++
+      valid_gates ++ committed_gates ++
       address_gates ++ data_gates ++ size_gates ++
-      [fwd_match_gate]
+      [fwd_match_gate, fwd_committed_match_gate]
 
-    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, cur_data)
+    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, cur_data)
 
   -- Flatten per-entry results
-  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _) => g)).flatten
-  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _) => insts)).flatten
-  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _) => cur)
-  let fwd_matches := entryResults.map (fun (_, _, _, m, _) => m)
-  let all_entry_data := entryResults.map (fun (_, _, _, _, d) => d)
+  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _, _) => g)).flatten
+  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _, _) => insts)).flatten
+  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _, _) => cur)
+  let fwd_matches := entryResults.map (fun (_, _, _, m, _, _) => m)
+  let fwd_committed_matches := entryResults.map (fun (_, _, _, _, cm, _) => cm)
+  let all_entry_data := entryResults.map (fun (_, _, _, _, _, d) => d)
 
   -- === Forwarding Logic: Youngest-Match via Barrel Rotation ===
 
@@ -497,6 +505,24 @@ def mkStoreBuffer8 : Circuit :=
 
   -- fwd_hit = arbiter has a valid selection
   let fwd_hit_gate := Gate.mkBUF arb_valid fwd_hit
+
+  -- fwd_committed_hit = OR of all committed matches (any committed entry matches address)
+  let fwd_committed_hit := Wire.mk "fwd_committed_hit"
+  let fch_t0 := Wire.mk "fch_t0"
+  let fch_t1 := Wire.mk "fch_t1"
+  let fch_t2 := Wire.mk "fch_t2"
+  let fch_t3 := Wire.mk "fch_t3"
+  let fch_t4 := Wire.mk "fch_t4"
+  let fch_t5 := Wire.mk "fch_t5"
+  let fwd_committed_hit_gates := [
+    Gate.mkOR fwd_committed_matches[0]! fwd_committed_matches[1]! fch_t0,
+    Gate.mkOR fwd_committed_matches[2]! fwd_committed_matches[3]! fch_t1,
+    Gate.mkOR fwd_committed_matches[4]! fwd_committed_matches[5]! fch_t2,
+    Gate.mkOR fwd_committed_matches[6]! fwd_committed_matches[7]! fch_t3,
+    Gate.mkOR fch_t0 fch_t1 fch_t4,
+    Gate.mkOR fch_t2 fch_t3 fch_t5,
+    Gate.mkOR fch_t4 fch_t5 fwd_committed_hit
+  ]
 
   -- Step 3: Reverse-rotate the grant vector back to original entry indices.
   -- The grant is in reversed-rotated domain. Un-reverse first:
@@ -556,6 +582,20 @@ def mkStoreBuffer8 : Circuit :=
       )).flatten ++
       (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       (fwd_data.enum.map (fun ⟨j, w⟩ => (s!"out[{j}]", w)))
+  }
+
+  -- Step 5: Mux8x2 selects forwarding entry's size
+  let fwd_size := mkWires "fwd_size_" 2
+  let fwd_size_mux_inst : CircuitInstance := {
+    moduleName := "Mux8x2"
+    instName := "u_fwd_size_mux"
+    portMap :=
+      ((List.range 8).map (fun i =>
+        let e := all_entry_cur[i]!
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[66+j]!))
+      )).flatten ++
+      (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
+      (fwd_size.enum.map (fun ⟨j, w⟩ => (s!"out[{j}]", w)))
   }
 
   -- === Dequeue Readout ===
@@ -641,14 +681,14 @@ def mkStoreBuffer8 : Circuit :=
   let all_outputs :=
     [full, empty] ++ enq_idx ++
     [deq_valid] ++ deq_bits ++
-    [fwd_hit] ++ fwd_data
+    [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
     [combined_reset_gate, full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
-    arb_request_gates ++ [fwd_hit_gate] ++
+    arb_request_gates ++ [fwd_hit_gate] ++ fwd_committed_hit_gates ++
     unreversed_gates ++ unrot_l0_gates ++ unrot_l1_gates ++ unrot_l2_gates ++
     oh2b_gates ++
     head_valid_gates ++ head_committed_gates
@@ -656,7 +696,7 @@ def mkStoreBuffer8 : Circuit :=
   let all_instances :=
     [head_inst, tail_inst, count_inst, enq_dec_inst, commit_dec_inst] ++
     all_entry_instances ++
-    [arb_inst, fwd_mux_inst] ++
+    [arb_inst, fwd_mux_inst, fwd_size_mux_inst] ++
     [deq_addr_mux_inst, deq_data_mux_inst, deq_size_mux_inst]
 
   { name := "StoreBuffer8"
@@ -673,6 +713,7 @@ def mkStoreBuffer8 : Circuit :=
       { name := "deq_bits_", width := 66, wires := deq_bits },
       { name := "fwd_address_", width := 32, wires := fwd_address },
       { name := "fwd_data_", width := 32, wires := fwd_data },
+      { name := "fwd_size_", width := 2, wires := fwd_size },
       { name := "enq_idx_", width := 3, wires := enq_idx },
       { name := "head_ptr_", width := 3, wires := head_ptr },
       { name := "tail_ptr_", width := 3, wires := tail_ptr },

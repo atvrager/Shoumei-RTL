@@ -358,7 +358,9 @@ def mkLSU : Circuit :=
   let sb_full := Wire.mk "sb_full"
   let sb_empty := Wire.mk "sb_empty"
   let sb_fwd_hit := Wire.mk "sb_fwd_hit"
+  let sb_fwd_committed_hit := Wire.mk "sb_fwd_committed_hit"
   let sb_fwd_data := mkWires "sb_fwd_data_" 32
+  let sb_fwd_size := mkWires "sb_fwd_size_" 2
   let sb_deq_valid := Wire.mk "sb_deq_valid"
   let sb_deq_bits := mkWires "sb_deq_bits_" 66
   let sb_enq_idx := mkWires "sb_enq_idx_" 3
@@ -396,13 +398,15 @@ def mkLSU : Circuit :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
        ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
-       ("fwd_hit", sb_fwd_hit), ("deq_valid", sb_deq_valid)] ++
+       ("fwd_hit", sb_fwd_hit), ("fwd_committed_hit", sb_fwd_committed_hit),
+       ("deq_valid", sb_deq_valid)] ++
       (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_[{i}]", w))) ++
       (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_[{i}]", w))) ++
       (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_[{i}]", w))) ++
       (commit_store_idx.enum.map (fun ⟨i, w⟩ => (s!"commit_idx_[{i}]", w))) ++
       (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_[{i}]", w))) ++
       (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_[{i}]", w))) ++
+      (sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"fwd_size_[{i}]", w))) ++
       (sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"deq_bits_[{i}]", w))) ++
       (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_[{i}]", w)))
   }
@@ -422,8 +426,8 @@ def mkLSU : Circuit :=
 
   let all_outputs :=
     agu_address ++ agu_tag_out ++
-    [sb_full, sb_empty, sb_fwd_hit] ++
-    sb_fwd_data ++
+    [sb_full, sb_empty, sb_fwd_hit, sb_fwd_committed_hit] ++
+    sb_fwd_data ++ sb_fwd_size ++
     [sb_deq_valid] ++
     sb_deq_bits ++
     sb_enq_idx
@@ -448,6 +452,7 @@ def mkLSU : Circuit :=
       { name := "agu_address", width := 32, wires := agu_address },
       { name := "agu_tag_out", width := 6, wires := agu_tag_out },
       { name := "sb_fwd_data", width := 32, wires := sb_fwd_data },
+      { name := "sb_fwd_size", width := 2, wires := sb_fwd_size },
       { name := "sb_deq_bits", width := 66, wires := sb_deq_bits },
       { name := "sb_enq_idx", width := 3, wires := sb_enq_idx },
       { name := "sb_enq_address", width := 32, wires := sb_enq_address },

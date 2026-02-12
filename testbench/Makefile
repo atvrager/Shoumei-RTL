@@ -6,7 +6,9 @@
 #   make sim-debug    - Build with TRACE_PIPELINE $display output
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
 #   make tests        - Build ELF test programs
-#   make run-all-tests- Build sim + tests, run all
+#   make riscv-tests  - Build upstream riscv-tests rv32ui ELFs
+#   make run-riscv-tests - Run riscv-tests through simulator
+#   make run-all-tests- Build sim + tests + riscv-tests, run all
 #   make cosim        - Build cosimulation binary (RTL + Spike + SystemC)
 #   make cosim-no-sc  - Build 2-way cosimulation (RTL + Spike only)
 #   make run-cosim    - Run 3-way cosim on all ELFs
@@ -46,7 +48,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
 
 sim: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@rm -rf $(BUILD_DIR)/verilator
@@ -101,11 +103,36 @@ gen-tests:
 tests: gen-tests
 	$(MAKE) -C $(TB_DIR)/tests
 
-run-all-tests: sim tests
+riscv-tests:
+	$(MAKE) -C $(TB_DIR)/riscv-tests
+
+run-riscv-tests: sim riscv-tests
+	@pass=0; fail=0; total=0; \
+	for elf in $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
+		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
+		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
+		if [ "$$tohost" = "0x00000001" ]; then \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "riscv-tests: $$pass/$$total passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+run-all-tests: sim tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei +elf=$$elf +timeout=3000 2>&1); \
@@ -128,11 +155,11 @@ run-all-tests: sim tests
 	echo "CSV: $(PROJ_ROOT)/output/test-results.csv"; \
 	[ $$fail -eq 0 ]
 
-run-all-tests-xprop: sim-xprop tests
+run-all-tests-xprop: sim-xprop tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-xprop.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/sim_shoumei_xprop +elf=$$elf +timeout=3000 2>&1); \
@@ -186,11 +213,11 @@ cosim: $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
 	@echo "Built: $(BUILD_DIR)/cosim_shoumei_3way (3-way: RTL + Spike + SystemC)"
 
-run-cosim-no-sc: cosim-no-sc tests
+run-cosim-no-sc: cosim-no-sc tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(BUILD_DIR)/cosim_shoumei +elf=$$elf +timeout=3000 2>&1); \
@@ -212,9 +239,9 @@ run-cosim-no-sc: cosim-no-sc tests
 	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
 
-run-cosim: cosim tests
+run-cosim: cosim tests riscv-tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(BUILD_DIR)/cosim_shoumei_3way +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
@@ -233,3 +260,4 @@ clean:
 	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(BUILD_DIR)/verilator_cosim3 $(BUILD_DIR)/sim_shoumei $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(BUILD_DIR)/sim_shoumei_xprop $(BUILD_DIR)/cosim_shoumei $(BUILD_DIR)/cosim_shoumei_3way
 	rm -f shoumei_cpu.vcd
 	$(MAKE) -C $(TB_DIR)/tests clean
+	$(MAKE) -C $(TB_DIR)/riscv-tests clean

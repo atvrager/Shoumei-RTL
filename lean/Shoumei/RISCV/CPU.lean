@@ -1174,7 +1174,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cdb_tag := makeIndexedWires "cdb_tag" 6
   let cdb_data := makeIndexedWires "cdb_data" 32
   -- Domain-gated CDB valid: prevent tag collisions between INT/FP phys reg pools
-  let cdb_valid_int_domain := if enableF then Wire.mk "cdb_valid_for_int" else cdb_valid
+  let cdb_valid_int_domain := if enableF then Wire.mk "cdb_valid_for_int" else Wire.mk "cdb_valid_nz"
   let cdb_valid_fp_domain := if enableF then Wire.mk "cdb_valid_for_fp" else cdb_valid
   -- Pre-register CDB signals (before pipeline register)
   let cdb_pre_valid := Wire.mk "cdb_pre_valid"
@@ -1368,7 +1368,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
 
-  let cdb_pre_valid_int_dom := if enableF then Wire.mk "cdb_pre_valid_for_int" else cdb_pre_valid
+  let cdb_pre_valid_int_dom := if enableF then Wire.mk "cdb_pre_valid_for_int" else Wire.mk "cdb_pre_valid_nz"
   let cdb_fwd_gates := [
     Gate.mkAND cdb_valid_int_domain cdb_match_src1 cdb_fwd_src1,
     Gate.mkAND cdb_valid_int_domain cdb_match_src2 cdb_fwd_src2,
@@ -1445,10 +1445,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
   }
 
-  -- Mask dest_tag to 0 when has_rd=0 (prevents tag collision from NOP/rd=x0)
+  -- Mask dest_tag to 0 when no INT rd writeback (has_rd=0, rd=x0, or FP-only rd).
+  -- This prevents stale tags from matching in RS entries via CDB forwarding.
+  let int_has_rd_nox0 := Wire.mk "int_has_rd_nox0"
+  let int_has_rd_nox0_gate :=
+    if enableF then
+      -- decode_has_rd_nox0 already excludes x0 and no-rd; just also exclude FP-only
+      Gate.mkAND decode_has_rd_nox0 (Wire.mk "not_has_fp_rd") int_has_rd_nox0
+    else
+      Gate.mkBUF decode_has_rd_nox0 int_has_rd_nox0
   let int_dest_tag_masked := makeIndexedWires "int_dest_tag_masked" 6
-  let int_dest_tag_mask_gates := (List.range 6).map (fun i =>
-    Gate.mkAND rd_phys[i]! decode_has_rd_for_int int_dest_tag_masked[i]!)
+  let int_dest_tag_mask_gates := [int_has_rd_nox0_gate] ++
+    (List.range 6).map (fun i =>
+      Gate.mkAND rd_phys[i]! int_has_rd_nox0 int_dest_tag_masked[i]!)
 
   -- === CROSS-DOMAIN SOURCE ROUTING ===
   let fp_issue_src1_tag := makeIndexedWires "fp_issue_src1_tag" 6
@@ -1674,6 +1683,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [Gate.mkMUX issue_src2_ready_reg fp_issue_src2_ready dispatch_is_fp_store mem_src2_ready]
     else []
 
+  -- Forward-declare cross-size stall wires (driven later by load forwarding logic)
+  let mem_dispatch_en := Wire.mk "mem_dispatch_en"
+  let cross_size_stall := Wire.mk "cross_size_stall"
+  let not_cross_size_stall := Wire.mk "not_cross_size_stall"
+  let branch_dispatch_en := Wire.mk "branch_dispatch_en"
+
   let rs_mem_inst : CircuitInstance := {
     moduleName := "MemoryRS4"
     instName := "u_rs_memory"
@@ -1681,7 +1696,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("zero", zero), ("one", one), ("issue_en", dispatch_mem_valid),
                 ("issue_is_store", dispatch_is_store),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", mem_src2_ready),
-                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
+                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", mem_dispatch_en),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by memory RS
                ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
@@ -1839,7 +1854,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_br),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_branch_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
+                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", branch_dispatch_en),
                 ("issue_full", rs_branch_issue_full), ("dispatch_valid", rs_branch_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by branch RS
                ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
@@ -2383,7 +2398,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
   ]
 
   let branch_redirect_valid := Wire.mk "branch_redirect_valid"
-  let branch_redirect_gate := [Gate.mkAND branch_taken rs_branch_dispatch_valid branch_redirect_valid]
+  let branch_redirect_tmp := Wire.mk "branch_redirect_tmp"
+  let branch_redirect_gate := [
+    Gate.mkAND branch_taken rs_branch_dispatch_valid branch_redirect_tmp,
+    Gate.mkAND branch_redirect_tmp not_cross_size_stall branch_redirect_valid
+  ]
 
   let branch_target_wire_gates := (List.range 32).map (fun i =>
     Gate.mkBUF final_branch_target[i]! branch_redirect_target[i]!)
@@ -2394,7 +2413,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_full := Wire.mk "lsu_sb_full"
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
   let lsu_sb_fwd_hit := Wire.mk "lsu_sb_fwd_hit"
+  let lsu_sb_fwd_committed_hit := Wire.mk "lsu_sb_fwd_committed_hit"
   let lsu_sb_fwd_data := makeIndexedWires "lsu_sb_fwd_data" 32
+  let lsu_sb_fwd_size := makeIndexedWires "lsu_sb_fwd_size" 2
   let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
   let lsu_sb_deq_bits := makeIndexedWires "lsu_sb_deq_bits" 66
   let lsu_sb_enq_idx := makeIndexedWires "lsu_sb_enq_idx" 3
@@ -2409,17 +2430,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("flush_en", zero),
                 ("sb_enq_en", sb_enq_en),
                 ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty), ("sb_fwd_hit", lsu_sb_fwd_hit),
+                ("sb_fwd_committed_hit", lsu_sb_fwd_committed_hit),
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_base_{i}", w))) ++
                (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
                (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
-               (rs_mem_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
+               ((makeIndexedWires "store_data_masked" 32).enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
                ((makeIndexedWires "lsu_commit_idx" 3).enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
                (mem_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
                ((makeIndexedWires "lsu_sb_enq_size" 2).enum.map (fun ⟨i, w⟩ => (s!"sb_enq_size_{i}", w))) ++
                (lsu_agu_address.enum.map (fun ⟨i, w⟩ => (s!"agu_address_{i}", w))) ++
                (lsu_agu_tag.enum.map (fun ⟨i, w⟩ => (s!"agu_tag_out_{i}", w))) ++
                (lsu_sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_data_{i}", w))) ++
+               (lsu_sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_size_{i}", w))) ++
                (lsu_sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"sb_deq_bits_{i}", w))) ++
                (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w)))
   }
@@ -2576,8 +2599,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let int_branch_tag := makeIndexedWires "int_branch_tag" 6
   let int_branch_data := makeIndexedWires "int_branch_data" 32
 
+  let branch_dispatch_gated := Wire.mk "branch_dispatch_gated"
   let arb_level0_gates :=
-    [Gate.mkOR rs_int_dispatch_valid rs_branch_dispatch_valid int_branch_valid] ++
+    [Gate.mkAND rs_branch_dispatch_valid not_cross_size_stall branch_dispatch_gated,
+     Gate.mkOR rs_int_dispatch_valid branch_dispatch_gated int_branch_valid] ++
     (List.range 6).map (fun i =>
       Gate.mkMUX branch_tag_out[i]! int_tag_out[i]! rs_int_dispatch_valid int_branch_tag[i]!) ++
     (List.range 32).map (fun i =>
@@ -2717,12 +2742,154 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkOR (Wire.mk "is_load_int") is_flw is_load
   ]
 
+  -- === STORE TYPE DECODE ===
+  let is_sw := Wire.mk "is_sw"
+  let is_sh := Wire.mk "is_sh"
+  let is_sb := Wire.mk "is_sb"
+  let is_fsw := Wire.mk "is_fsw"
+  let sw_match_gates := mkOpcodeMatch6 "sw_match" enc.sw rs_mem_dispatch_opcode is_sw
+  let sh_match_gates := mkOpcodeMatch6 "sh_match" enc.sh rs_mem_dispatch_opcode is_sh
+  let sb_match_gates := mkOpcodeMatch6 "sb_match" enc.sb rs_mem_dispatch_opcode is_sb
+  let fsw_match_gates :=
+    if enableF then mkOpcodeMatch6 "fsw_match" enc.fsw rs_mem_dispatch_opcode is_fsw
+    else [Gate.mkBUF zero is_fsw]
+
+  -- Derive mem_size[1:0]: 00=byte, 01=half, 10=word
+  -- For loads: is_lb|is_lbu → 00, is_lh|is_lhu → 01, is_lw|is_flw → 10
+  -- For stores: is_sb → 00, is_sh → 01, is_sw|is_fsw → 10
+  -- mem_size_0 = is_lh | is_lhu | is_sh
+  -- mem_size_1 = is_lw | is_flw | is_sw | is_fsw
+  let mem_size := makeIndexedWires "mem_size" 2
+  let mem_size_0_tmp1 := Wire.mk "mem_size_0_tmp1"
+  let mem_size_0_tmp2 := Wire.mk "mem_size_0_tmp2"
+  let mem_size_1_tmp1 := Wire.mk "mem_size_1_tmp1"
+  let mem_size_1_tmp2 := Wire.mk "mem_size_1_tmp2"
+  let mem_size_gates := [
+    Gate.mkOR is_lh is_lhu mem_size_0_tmp1,
+    Gate.mkOR mem_size_0_tmp1 is_sh mem_size_0_tmp2,
+    Gate.mkBUF mem_size_0_tmp2 mem_size[0]!,
+    Gate.mkOR is_lw is_sw mem_size_1_tmp1,
+    Gate.mkOR mem_size_1_tmp1 is_flw mem_size_1_tmp2,
+    Gate.mkOR mem_size_1_tmp2 is_fsw mem_size[1]!
+  ]
+
+  -- sign_extend: 1 for LB/LH, 0 for LBU/LHU/LW/FLW and all stores
+  let sign_extend := Wire.mk "sign_extend"
+  let sign_extend_gates := [
+    Gate.mkOR is_lb is_lh sign_extend
+  ]
+
+  -- Drive lsu_sb_enq_size[1:0] from store type
+  -- sb_enq_size = mem_size (00=byte, 01=half, 10=word)
+  let lsu_sb_enq_size := makeIndexedWires "lsu_sb_enq_size" 2
+  let sb_enq_size_gates :=
+    (List.range 2).map (fun i => Gate.mkBUF mem_size[i]! lsu_sb_enq_size[i]!)
+
+  -- Mask store data: SB keeps [7:0], SH keeps [15:0], SW keeps all 32
+  -- For SB: zero bits [31:8]; for SH: zero bits [31:16]
+  -- is_sw means keep all bits. is_sh means keep [15:0]. is_sb means keep [7:0].
+  -- mask_bit[i] = is_sw | (is_sh & i<16) | (is_sb & i<8)
+  -- Equivalently: keep bit i if mem_size_1 | (mem_size_0 & i<16) | (!mem_size_0 & !mem_size_1 & i<8)
+  -- Simpler: keep_hi16 = mem_size[1] (word), keep_lo16_hi8 = mem_size[1] | mem_size[0] (word or half)
+  let store_data_masked := makeIndexedWires "store_data_masked" 32
+  let keep_hi16 := Wire.mk "keep_hi16"
+  let keep_lo16_hi8 := Wire.mk "keep_lo16_hi8"
+  let store_mask_gates :=
+    [Gate.mkBUF mem_size[1]! keep_hi16,
+     Gate.mkOR mem_size[1]! mem_size[0]! keep_lo16_hi8] ++
+    -- Bits [7:0]: always kept (AND with one = passthrough)
+    (List.range 8).map (fun i =>
+      Gate.mkBUF rs_mem_dispatch_src2[i]! store_data_masked[i]!) ++
+    -- Bits [15:8]: kept for half or word
+    (List.range 8).map (fun i =>
+      Gate.mkAND rs_mem_dispatch_src2[8+i]! keep_lo16_hi8 store_data_masked[8+i]!) ++
+    -- Bits [31:16]: kept for word only
+    (List.range 16).map (fun i =>
+      Gate.mkAND rs_mem_dispatch_src2[16+i]! keep_hi16 store_data_masked[16+i]!)
+
+  -- SB fwd size check: only forward when store covers the full load
+  -- size_ok = store[1] | (!load[1] & (store[0] | !load[0]))
+  let fwd_size_ok := Wire.mk "fwd_size_ok"
+  let not_load_size1 := Wire.mk "not_load_size1"
+  let not_load_size0 := Wire.mk "not_load_size0"
+  let fwd_sz_tmp1 := Wire.mk "fwd_sz_tmp1"
+  let fwd_sz_tmp2 := Wire.mk "fwd_sz_tmp2"
+  let fwd_size_check_gates := [
+    Gate.mkNOT mem_size[1]! not_load_size1,
+    Gate.mkNOT mem_size[0]! not_load_size0,
+    Gate.mkOR lsu_sb_fwd_size[0]! not_load_size0 fwd_sz_tmp1,
+    Gate.mkAND not_load_size1 fwd_sz_tmp1 fwd_sz_tmp2,
+    Gate.mkOR lsu_sb_fwd_size[1]! fwd_sz_tmp2 fwd_size_ok
+  ]
+
   let load_fwd_valid := Wire.mk "load_fwd_valid"
   let load_fwd_tmp := Wire.mk "load_fwd_tmp"
+  let load_fwd_tmp2 := Wire.mk "load_fwd_tmp2"
+  -- Cross-size stall: load has SB address hit but store size < load size.
+  -- Stall the RS dispatch (don't clear entry) so the load retries next cycle.
+  -- Eventually the store drains from SB and the load goes to DMEM with committed data.
+  let not_fwd_size_ok := Wire.mk "not_fwd_size_ok"
+  let cross_size_any := Wire.mk "cross_size_any"
+  let cross_size_uncommitted := Wire.mk "cross_size_uncommitted"
+  let not_fwd_committed_hit := Wire.mk "not_fwd_committed_hit"
+  -- Gate fwd_committed_hit with NOT sb_empty to prevent stale-entry matching
+  -- after all stores have drained. Without dequeue clearing, old entries retain
+  -- valid=1 even after dequeue; sb_empty=1 means count=0 so no real entries exist.
+  let fwd_committed_gated := Wire.mk "fwd_committed_gated"
+  let not_sb_empty := Wire.mk "not_sb_empty"
   let load_fwd_gates := [
     Gate.mkAND lsu_sb_fwd_hit rs_mem_dispatch_valid load_fwd_tmp,
-    Gate.mkAND load_fwd_tmp is_load load_fwd_valid
+    Gate.mkAND load_fwd_tmp is_load load_fwd_tmp2,
+    Gate.mkAND load_fwd_tmp2 fwd_size_ok load_fwd_valid,
+    -- Cross-size detection: SB hit but size insufficient
+    Gate.mkNOT fwd_size_ok not_fwd_size_ok,
+    Gate.mkAND load_fwd_tmp2 not_fwd_size_ok cross_size_any,
+    -- Gate committed hit with SB non-empty to ignore stale entries
+    Gate.mkNOT lsu_sb_empty not_sb_empty,
+    Gate.mkAND lsu_sb_fwd_committed_hit not_sb_empty fwd_committed_gated,
+    -- Only stall for COMMITTED cross-size entries (they'll drain to DMEM soon)
+    Gate.mkAND cross_size_any fwd_committed_gated cross_size_stall,
+    Gate.mkNOT cross_size_stall mem_dispatch_en,
+    Gate.mkNOT cross_size_stall not_cross_size_stall,
+    Gate.mkBUF not_cross_size_stall branch_dispatch_en,
+    -- Uncommitted cross-size: skip SB, go to DMEM (DMEM has latest committed data)
+    Gate.mkNOT fwd_committed_gated not_fwd_committed_hit,
+    Gate.mkAND cross_size_any not_fwd_committed_hit cross_size_uncommitted
   ]
+
+  -- === LOAD BYTE/HALF FORMATTING (SB forwarding path) ===
+  -- SB fwd data is already low-aligned (store data was masked before SB entry):
+  --   SB stores: data[7:0]; SH stores: data[15:0]; SW stores: data[31:0]
+  -- NO barrel shift needed — just sign/zero extend directly.
+  -- (Barrel shift is only needed on the DMEM path where data is word-positioned.)
+  let lsu_sb_fwd_formatted := makeIndexedWires "lsu_sb_fwd_fmt" 32
+
+  -- Sign/zero extension for SB fwd path
+  -- For byte (mem_size=00): sign bit = data[7], extend bits [31:8]
+  -- For half (mem_size=01): sign bit = data[15], extend bits [31:16]
+  -- For word (mem_size=10): no extension needed
+  let sb_fwd_sign_bit := Wire.mk "sb_fwd_sign_bit"
+  let sb_fwd_sign_bit_raw := Wire.mk "sb_fwd_sign_bit_raw"
+  let sb_fwd_sign_gates := [
+    Gate.mkMUX lsu_sb_fwd_data[7]! lsu_sb_fwd_data[15]! mem_size[0]! sb_fwd_sign_bit_raw,
+    Gate.mkAND sb_fwd_sign_bit_raw sign_extend sb_fwd_sign_bit
+  ]
+  let sb_fwd_ext_lo := Wire.mk "sb_fwd_ext_lo"  -- keep bits [15:8]?
+  let sb_fwd_ext_hi := Wire.mk "sb_fwd_ext_hi"  -- keep bits [31:16]?
+  let sb_fwd_format_gates :=
+    [Gate.mkOR mem_size[0]! mem_size[1]! sb_fwd_ext_lo,
+     Gate.mkBUF mem_size[1]! sb_fwd_ext_hi] ++
+    -- Bits [7:0]: passthrough
+    (List.range 8).map (fun i =>
+      Gate.mkBUF lsu_sb_fwd_data[i]! lsu_sb_fwd_formatted[i]!) ++
+    -- Bits [15:8]: MUX(sign_bit, data[i], ext_lo)
+    (List.range 8).map (fun i =>
+      Gate.mkMUX sb_fwd_sign_bit lsu_sb_fwd_data[8+i]! sb_fwd_ext_lo lsu_sb_fwd_formatted[8+i]!) ++
+    -- Bits [31:16]: MUX(sign_bit, data[i], ext_hi)
+    (List.range 16).map (fun i =>
+      Gate.mkMUX sb_fwd_sign_bit lsu_sb_fwd_data[16+i]! sb_fwd_ext_hi lsu_sb_fwd_formatted[16+i]!)
+
+  let lsu_sb_fwd_format_all := sb_fwd_sign_gates ++ sb_fwd_format_gates
 
   let lsu_valid := Wire.mk "lsu_valid"
   let lsu_tag := makeIndexedWires "lsu_tag" 6
@@ -2743,12 +2910,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i =>
         Gate.mkDFF rs_mem_dispatch_tag[i]! clock pipeline_reset_misc lsu_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkDFF lsu_sb_fwd_data[i]! clock pipeline_reset_misc lsu_data[i]!)
+        Gate.mkDFF lsu_sb_fwd_formatted[i]! clock pipeline_reset_misc lsu_data[i]!)
     else
       (List.range 6).map (fun i =>
         Gate.mkBUF rs_mem_dispatch_tag[i]! lsu_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkBUF lsu_sb_fwd_data[i]! lsu_data[i]!)
+        Gate.mkBUF lsu_sb_fwd_formatted[i]! lsu_data[i]!)
 
   let lsu_pipeline_insts : List CircuitInstance := []
 
@@ -2787,24 +2954,109 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_load_tag_reg := makeIndexedWires "dmem_load_tag_reg" 6
   let dmem_load_tag_next := makeIndexedWires "dmem_load_tag_next" 6
 
+  let load_no_fwd_base := Wire.mk "load_no_fwd_base"
   let load_no_fwd_gates := [
     Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
-    Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd
+    -- Normal DMEM path: no SB hit at all
+    Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
+    -- Also go to DMEM for uncommitted cross-size (SB hit but wrong size, uncommitted)
+    Gate.mkOR load_no_fwd_base cross_size_uncommitted load_no_fwd
   ]
 
+  -- DMEM metadata DFFs use CircuitInstance DFlipFlop with external `reset`
+  -- (NOT pipeline_reset_misc) because the DMEM response arrives 1 cycle after
+  -- the request, and the pipeline flush happens in between. The metadata must
+  -- survive the flush. Flat Gate.mkDFF gets grouped into pipeline_reset_busy
+  -- by the codegen, so we must use instances.
   let dmem_tag_capture_gates := (List.range 6).map (fun i =>
-    [Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!,
-     Gate.mkDFF dmem_load_tag_next[i]! clock pipeline_reset_misc dmem_load_tag_reg[i]!]) |>.flatten
+    Gate.mkMUX dmem_load_tag_reg[i]! rs_mem_dispatch_tag[i]! load_no_fwd dmem_load_tag_next[i]!)
+  let dmem_tag_capture_insts := (List.range 6).map (fun i =>
+    ({ moduleName := "DFlipFlop", instName := s!"u_dmem_tag_{i}",
+       portMap := [("d", dmem_load_tag_next[i]!), ("q", dmem_load_tag_reg[i]!),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance))
 
   -- Track is_fp_load through dmem response path (1-cycle load latency)
   let dmem_is_fp_reg := Wire.mk "dmem_is_fp_reg"
   let dmem_is_fp_next := Wire.mk "dmem_is_fp_next"
   let dmem_is_fp_gates :=
     if enableF then
-      [Gate.mkMUX dmem_is_fp_reg is_flw load_no_fwd dmem_is_fp_next,
-       Gate.mkDFF dmem_is_fp_next clock pipeline_reset_misc dmem_is_fp_reg]
+      [Gate.mkMUX dmem_is_fp_reg is_flw load_no_fwd dmem_is_fp_next]
     else []
+  let dmem_is_fp_insts :=
+    if enableF then
+      [({ moduleName := "DFlipFlop", instName := "u_dmem_is_fp",
+          portMap := [("d", dmem_is_fp_next), ("q", dmem_is_fp_reg),
+                      ("clock", clock), ("reset", reset)] } : CircuitInstance)]
+    else []
+
+  -- === DMEM LOAD METADATA CAPTURE (for sub-word load formatting) ===
+  -- Capture addr[1:0], mem_size[1:0], sign_extend alongside dmem_load_tag
+  let dmem_addr_lo_reg := makeIndexedWires "dmem_addr_lo_reg" 2
+  let dmem_addr_lo_next := makeIndexedWires "dmem_addr_lo_next" 2
+  let dmem_mem_size_reg := makeIndexedWires "dmem_mem_size_reg" 2
+  let dmem_mem_size_next := makeIndexedWires "dmem_mem_size_next" 2
+  let dmem_sign_ext_reg := Wire.mk "dmem_sign_ext_reg"
+  let dmem_sign_ext_next := Wire.mk "dmem_sign_ext_next"
+
+  let dmem_addr_lo_capture_gates := (List.range 2).map (fun i =>
+      Gate.mkMUX dmem_addr_lo_reg[i]! mem_address[i]! load_no_fwd dmem_addr_lo_next[i]!)
+  let dmem_addr_lo_capture_insts := (List.range 2).map (fun i =>
+    ({ moduleName := "DFlipFlop", instName := s!"u_dmem_addr_lo_{i}",
+       portMap := [("d", dmem_addr_lo_next[i]!), ("q", dmem_addr_lo_reg[i]!),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance))
+  let dmem_mem_size_capture_gates := (List.range 2).map (fun i =>
+      Gate.mkMUX dmem_mem_size_reg[i]! mem_size[i]! load_no_fwd dmem_mem_size_next[i]!)
+  let dmem_mem_size_capture_insts := (List.range 2).map (fun i =>
+    ({ moduleName := "DFlipFlop", instName := s!"u_dmem_mem_size_{i}",
+       portMap := [("d", dmem_mem_size_next[i]!), ("q", dmem_mem_size_reg[i]!),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance))
+  let dmem_meta_capture_gates :=
+    dmem_addr_lo_capture_gates ++ dmem_mem_size_capture_gates ++
+    [Gate.mkMUX dmem_sign_ext_reg sign_extend load_no_fwd dmem_sign_ext_next]
+  let dmem_sign_ext_inst : CircuitInstance :=
+    { moduleName := "DFlipFlop", instName := "u_dmem_sign_ext",
+      portMap := [("d", dmem_sign_ext_next), ("q", dmem_sign_ext_reg),
+                  ("clock", clock), ("reset", reset)] }
+  let dmem_meta_capture_insts :=
+    dmem_addr_lo_capture_insts ++ dmem_mem_size_capture_insts ++ [dmem_sign_ext_inst]
+
+  -- === DMEM RESPONSE LOAD FORMATTING ===
+  -- Same barrel-shift + sign/zero-extend as SB fwd path, using registered metadata
+  let dmem_resp_formatted := makeIndexedWires "dmem_resp_fmt" 32
+  let dmem_resp_shifted := makeIndexedWires "dmem_resp_shifted" 32
+  let dmem_sh8 := makeIndexedWires "dmem_sh8" 32
+  let dmem_sh8_gates :=
+    (List.range 24).map (fun i =>
+      Gate.mkMUX dmem_resp_data[i]! dmem_resp_data[i+8]! dmem_addr_lo_reg[0]! dmem_sh8[i]!) ++
+    (List.range 8).map (fun i =>
+      Gate.mkMUX dmem_resp_data[24+i]! zero dmem_addr_lo_reg[0]! dmem_sh8[24+i]!)
+  let dmem_sh16_gates :=
+    (List.range 16).map (fun i =>
+      Gate.mkMUX dmem_sh8[i]! dmem_sh8[i+16]! dmem_addr_lo_reg[1]! dmem_resp_shifted[i]!) ++
+    (List.range 16).map (fun i =>
+      Gate.mkMUX dmem_sh8[16+i]! zero dmem_addr_lo_reg[1]! dmem_resp_shifted[16+i]!)
+
+  let dmem_sign_bit := Wire.mk "dmem_sign_bit"
+  let dmem_sign_bit_raw := Wire.mk "dmem_sign_bit_raw"
+  let dmem_sign_gates := [
+    Gate.mkMUX dmem_resp_shifted[7]! dmem_resp_shifted[15]! dmem_mem_size_reg[0]! dmem_sign_bit_raw,
+    Gate.mkAND dmem_sign_bit_raw dmem_sign_ext_reg dmem_sign_bit
+  ]
+  let dmem_ext_lo := Wire.mk "dmem_ext_lo"
+  let dmem_ext_hi := Wire.mk "dmem_ext_hi"
+  let dmem_format_gates :=
+    [Gate.mkOR dmem_mem_size_reg[0]! dmem_mem_size_reg[1]! dmem_ext_lo,
+     Gate.mkBUF dmem_mem_size_reg[1]! dmem_ext_hi] ++
+    (List.range 8).map (fun i =>
+      Gate.mkBUF dmem_resp_shifted[i]! dmem_resp_formatted[i]!) ++
+    (List.range 8).map (fun i =>
+      Gate.mkMUX dmem_sign_bit dmem_resp_shifted[8+i]! dmem_ext_lo dmem_resp_formatted[8+i]!) ++
+    (List.range 16).map (fun i =>
+      Gate.mkMUX dmem_sign_bit dmem_resp_shifted[16+i]! dmem_ext_hi dmem_resp_formatted[16+i]!)
+
+  let dmem_resp_format_all := dmem_sh8_gates ++ dmem_sh16_gates ++
+    dmem_sign_gates ++ dmem_format_gates
 
   -- === CDB PRIORITY DRAIN MUX ===
   -- Priority: DMEM (no FIFO) > LSU FIFO > MulDiv FIFO > FP FIFO > INT/Branch FIFO
@@ -2892,7 +3144,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     [Gate.mkMUX ib_fifo_deq[6+i]! fp_fifo_deq[6+i]! fp_wins m1,
      Gate.mkMUX m1 muldiv_fifo_deq[6+i]! muldiv_wins m2,
      Gate.mkMUX m2 lsu_fifo_deq[6+i]! lsu_wins m3,
-     Gate.mkMUX m3 dmem_resp_data[i]! dmem_wins cdb_pre_data[i]!])
+     Gate.mkMUX m3 dmem_resp_formatted[i]! dmem_wins cdb_pre_data[i]!])
 
   let cdb_mux_gates := cdb_tag_mux_gates.flatten ++ cdb_data_mux_gates.flatten
 
@@ -2915,34 +3167,58 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else
       [Gate.mkBUF zero cdb_pre_is_fp]
 
-  -- CDB pipeline register (with flush-aware reset)
+  -- CDB pipeline register
+  -- Use custom reset that preserves DMEM responses through flush:
+  -- cdb_reset = pipeline_reset_misc AND NOT(dmem_resp_valid)
+  -- This ensures a DMEM response arriving during flush is still broadcast.
+  let not_dmem_resp := Wire.mk "not_dmem_resp_for_cdb"
+  let cdb_reset := Wire.mk "cdb_reset"
+  let cdb_reset_gates := [
+    Gate.mkNOT dmem_resp_valid not_dmem_resp,
+    Gate.mkAND pipeline_reset_misc not_dmem_resp cdb_reset
+  ]
+
   let cdb_reg_insts : List CircuitInstance :=
     [{ moduleName := "DFlipFlop", instName := "u_cdb_valid_reg",
        portMap := [("d", cdb_pre_valid), ("q", cdb_valid),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }] ++
+                   ("clock", clock), ("reset", cdb_reset)] }] ++
     (List.range 6).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_{i}",
        portMap := [("d", cdb_pre_tag[i]!), ("q", cdb_tag[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
+                   ("clock", clock), ("reset", cdb_reset)] }) ++
     (List.range 32).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_{i}",
        portMap := [("d", cdb_pre_data[i]!), ("q", cdb_data[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
+                   ("clock", clock), ("reset", cdb_reset)] }) ++
     (if enableF then
       [{ moduleName := "DFlipFlop", instName := "u_cdb_is_fp_rd_reg",
          portMap := [("d", cdb_pre_is_fp), ("q", cdb_is_fp_rd),
-                     ("clock", clock), ("reset", pipeline_reset_misc)] }]
+                     ("clock", clock), ("reset", cdb_reset)] }]
     else [])
 
   -- CDB domain gating: prevent tag collisions between INT/FP phys reg pools
+  -- Also gate with cdb_tag_nonzero to suppress tag=0 broadcasts (x0 writeback)
+  -- which would otherwise corrupt CDB forwarding in RS for src tags matching p0.
   let not_cdb_pre_is_fp := Wire.mk "not_cdb_pre_is_fp"
+  let cdb_valid_nz := Wire.mk "cdb_valid_nz"
+  -- Pre-register tag nonzero check
+  let cdb_pre_tag_nz_tmp := List.range 5 |>.map (fun i => Wire.mk s!"cdb_pre_tag_nz_t{i}")
+  let cdb_pre_tag_nonzero := Wire.mk "cdb_pre_tag_nonzero"
+  let cdb_pre_valid_nz := Wire.mk "cdb_pre_valid_nz"
+  let cdb_pre_tag_nz_gates :=
+    [Gate.mkOR cdb_pre_tag[0]! cdb_pre_tag[1]! cdb_pre_tag_nz_tmp[0]!] ++
+    (List.range 4).map (fun i =>
+      Gate.mkOR cdb_pre_tag_nz_tmp[i]! cdb_pre_tag[i + 2]! (if i < 3 then cdb_pre_tag_nz_tmp[i + 1]! else cdb_pre_tag_nonzero)) ++
+    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_nz,
+     Gate.mkAND cdb_pre_valid cdb_pre_tag_nonzero cdb_pre_valid_nz]
   let cdb_domain_gates :=
+    cdb_pre_tag_nz_gates ++
     if enableF then
-      [Gate.mkAND cdb_valid not_cdb_is_fp (Wire.mk "cdb_valid_for_int"),
-       Gate.mkAND cdb_valid cdb_is_fp_rd (Wire.mk "cdb_valid_for_fp"),
+      [Gate.mkAND cdb_valid_nz not_cdb_is_fp (Wire.mk "cdb_valid_for_int"),
+       Gate.mkAND cdb_valid_nz cdb_is_fp_rd (Wire.mk "cdb_valid_for_fp"),
        Gate.mkNOT cdb_pre_is_fp not_cdb_pre_is_fp,
-       Gate.mkAND cdb_pre_valid not_cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_int"),
-       Gate.mkAND cdb_pre_valid cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_fp")]
+       Gate.mkAND cdb_pre_valid_nz not_cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_int"),
+       Gate.mkAND cdb_pre_valid_nz cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_fp")]
     else []
 
   let cdb_arb_gates := arb_level0_gates ++ fp_enq_is_fp_gate ++
@@ -2951,7 +3227,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     muldiv_fifo_dummy_gates ++ fp_fifo_dummy_gates ++
     load_no_fwd_gates ++ dmem_tag_capture_gates ++
     drain_priority_gates ++
-    cdb_valid_gates ++ cdb_mux_gates ++ cdb_is_fp_rd_gates ++ cdb_domain_gates
+    cdb_valid_gates ++ cdb_mux_gates ++ cdb_is_fp_rd_gates ++ cdb_reset_gates ++ cdb_domain_gates
 
   -- === ROB is_fp_rd SHADOW REGISTER (conditional) ===
   -- 16-entry DFF array parallel to ROB, tracking whether each entry's rd is FP
@@ -3093,6 +3369,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_req_we := Wire.mk "dmem_req_we"
   let dmem_req_addr := makeIndexedWires "dmem_req_addr" 32
   let dmem_req_data := makeIndexedWires "dmem_req_data" 32
+  let dmem_req_size := makeIndexedWires "dmem_req_size" 2
 
   let not_is_load := Wire.mk "not_is_load"
   let sb_enq_ungated := Wire.mk "sb_enq_ungated"
@@ -3113,7 +3390,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX mem_address[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid dmem_req_addr[i]!) ++
     (List.range 32).map (fun i =>
-      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!)
+      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!) ++
+    -- dmem_req_size: from SB dequeue bits[65:64] on stores, 10 (word) on loads
+    -- On store (dmem_req_we=1): use sb_deq_bits[64:65]
+    -- On load (dmem_req_we=0): size=10 (word) since DMEM always returns full word
+    [Gate.mkMUX zero lsu_sb_deq_bits[64]! dmem_req_we dmem_req_size[0]!,
+     Gate.mkMUX one lsu_sb_deq_bits[65]! dmem_req_we dmem_req_size[1]!]
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
@@ -3124,7 +3406,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
-               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++
+               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty] ++
                -- RVVI-TRACE outputs
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
@@ -3156,8 +3438,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
              fp_mem_mux_gates ++ flw_match_gates ++
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++
              lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
-             load_fwd_gates ++ lsu_valid_gate ++ lsu_tag_data_mux_gates ++
-             lsu_is_fp_gates ++ dmem_is_fp_gates ++
+             sw_match_gates ++ sh_match_gates ++ sb_match_gates ++ fsw_match_gates ++
+             mem_size_gates ++ sign_extend_gates ++ sb_enq_size_gates ++ store_mask_gates ++
+             fwd_size_check_gates ++ load_fwd_gates ++ lsu_sb_fwd_format_all ++
+             lsu_valid_gate ++ lsu_tag_data_mux_gates ++
+             lsu_is_fp_gates ++ dmem_is_fp_gates ++ dmem_meta_capture_gates ++ dmem_resp_format_all ++
              commit_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates ++
              rvvi_fp_gates ++
              fflags_gates
@@ -3188,7 +3473,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   (if enableF then [fp_fifo_inst] else []) ++
                   lsu_pipeline_insts ++
                   [pc_queue_inst, insn_queue_inst] ++
-                  fflags_dff_instances
+                  fflags_dff_instances ++
+                  dmem_tag_capture_insts ++ dmem_is_fp_insts ++
+                  dmem_meta_capture_insts
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
        { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
@@ -3241,10 +3528,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [{ name := "lsu_agu_address", width := 32, wires := lsu_agu_address },
        { name := "lsu_agu_tag", width := 6, wires := lsu_agu_tag },
        { name := "lsu_sb_fwd_data", width := 32, wires := lsu_sb_fwd_data },
+       { name := "lsu_sb_fwd_size", width := 2, wires := lsu_sb_fwd_size },
        { name := "lsu_sb_deq_bits", width := 66, wires := lsu_sb_deq_bits },
        { name := "lsu_sb_enq_idx", width := 3, wires := lsu_sb_enq_idx },
        { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
        { name := "dmem_req_data", width := 32, wires := dmem_req_data },
+       { name := "dmem_req_size", width := 2, wires := dmem_req_size },
        { name := "rs_int_dispatch_opcode", width := 6, wires := rs_int_dispatch_opcode },
        { name := "rs_int_dispatch_src1", width := 32, wires := rs_int_dispatch_src1 },
        { name := "rs_int_dispatch_src2", width := 32, wires := rs_int_dispatch_src2 },
