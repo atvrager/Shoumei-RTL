@@ -95,9 +95,16 @@ fi
 _green "gh $(gh --version 2>&1 | head -1)"
 
 # ── 6. Git submodules ──────────────────────────────────────────────
+_blue "Initialising git submodules"
+git -C "$PROJECT_DIR" submodule update --init \
+    third_party/riscv-opcodes \
+    third_party/riscv-tests \
+    2>/dev/null || true
+
+# Generate instr_dict.json if missing
 if [ ! -f "$PROJECT_DIR/third_party/riscv-opcodes/instr_dict.json" ]; then
-    _blue "Initialising git submodules"
-    git -C "$PROJECT_DIR" submodule update --init third_party/riscv-opcodes 2>/dev/null || true
+    _blue "Generating RISC-V opcodes (make opcodes)"
+    make -C "$PROJECT_DIR" opcodes 2>&1 || _yellow "opcodes generation failed"
 fi
 
 # ── 7. Java proxy bridge (for sbt in sandbox environments) ─────────
