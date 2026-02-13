@@ -12,6 +12,14 @@
   .macro init;                                                          \
   .endm
 
+#define RVTEST_RV64UF                                                   \
+  .macro init;                                                          \
+  .endm
+
+#define RVTEST_RV32UF                                                   \
+  .macro init;                                                          \
+  .endm
+
 #define TESTNUM gp
 
 #define INIT_XREG                                                       \

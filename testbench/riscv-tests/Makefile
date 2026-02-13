@@ -1,11 +1,15 @@
-# Build upstream riscv-tests rv32ui + rv32um suites for Shoumei
+# Build upstream riscv-tests rv32ui + rv32um + rv32uf suites for Shoumei
 # Uses our minimal riscv_test.h (no CSR/trap support)
 
 RISCV_TESTS := ../../third_party/riscv-tests
 CC := riscv32-unknown-elf-gcc
-CFLAGS := -march=rv32im -mabi=ilp32 -static -nostdlib -nostartfiles \
-          -I. -I$(RISCV_TESTS)/isa/macros/scalar
+CFLAGS_BASE := -mabi=ilp32 -static -nostdlib -nostartfiles \
+               -I. -I$(RISCV_TESTS)/isa/macros/scalar
 LDFLAGS := -T shoumei.ld
+
+# Per-ISA arch flags
+CFLAGS_IM  := $(CFLAGS_BASE) -march=rv32im
+CFLAGS_IMF := $(CFLAGS_BASE) -march=rv32imf
 
 # All pure RV32I user-mode integer tests (no fence_i, no ma_data)
 RV32UI_TESTS := simple add addi sub and andi or ori xor xori \
@@ -19,16 +23,23 @@ RV32UI_TESTS := simple add addi sub and andi or ori xor xori \
 # RV32M multiply/divide tests
 RV32UM_TESTS := mul mulh mulhsu mulhu div divu rem remu
 
+# RV32F single-precision floating-point tests
+RV32UF_TESTS := fadd fdiv fclass fcmp fcvt fcvt_w fmadd fmin ldst move recoding
+
 ELFS := $(addprefix rv32ui-p-,$(addsuffix .elf,$(RV32UI_TESTS))) \
-        $(addprefix rv32um-p-,$(addsuffix .elf,$(RV32UM_TESTS)))
+        $(addprefix rv32um-p-,$(addsuffix .elf,$(RV32UM_TESTS))) \
+        $(addprefix rv32uf-p-,$(addsuffix .elf,$(RV32UF_TESTS)))
 
 all: $(ELFS)
 
 rv32ui-p-%.elf: $(RISCV_TESTS)/isa/rv32ui/%.S shoumei.ld riscv_test.h
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+	$(CC) $(CFLAGS_IM) $(LDFLAGS) $< -o $@
 
 rv32um-p-%.elf: $(RISCV_TESTS)/isa/rv32um/%.S shoumei.ld riscv_test.h
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+	$(CC) $(CFLAGS_IM) $(LDFLAGS) $< -o $@
+
+rv32uf-p-%.elf: $(RISCV_TESTS)/isa/rv32uf/%.S shoumei.ld riscv_test.h
+	$(CC) $(CFLAGS_IMF) $(LDFLAGS) $< -o $@
 
 clean:
 	rm -f *.elf
