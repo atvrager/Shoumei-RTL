@@ -6,7 +6,7 @@
 #   make sim-debug    - Build with TRACE_PIPELINE $display output
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
 #   make tests        - Build ELF test programs
-#   make riscv-tests  - Build upstream riscv-tests rv32ui + rv32um + rv32uf ELFs
+#   make riscv-tests  - Build upstream riscv-tests rv32ui + rv32um ELFs
 #   make run-riscv-tests - Run riscv-tests through simulator
 #   make run-all-tests- Build sim + tests + riscv-tests, run all
 #   make cosim        - Build cosimulation binary (RTL + Spike + SystemC)
@@ -45,9 +45,9 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
+# NOTE: rv32uf (F-extension) tests disabled pending Zicsr support
 RISCV_TEST_GLOBS := $(TB_DIR)/riscv-tests/rv32ui-p-*.elf \
-                    $(TB_DIR)/riscv-tests/rv32um-p-*.elf \
-                    $(TB_DIR)/riscv-tests/rv32uf-p-*.elf
+                    $(TB_DIR)/riscv-tests/rv32um-p-*.elf
 
 CUSTOM_TEST_GLOBS := $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf
 

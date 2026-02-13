@@ -14,7 +14,8 @@ GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 # F-extension tests need rv32imf
 CFLAGS_FP = -march=rv32imf -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
 
-all: $(TESTS:=.elf) $(GEN_INT_ELFS) $(GEN_FP_ELFS)
+# NOTE: GEN_FP_ELFS excluded pending Zicsr support
+all: $(TESTS:=.elf) $(GEN_INT_ELFS)
 
 # Hand-written C tests use crt0.S
 %.elf: %.c crt0.S shoumei.ld

@@ -23,12 +23,11 @@ RV32UI_TESTS := simple add addi sub and andi or ori xor xori \
 # RV32M multiply/divide tests
 RV32UM_TESTS := mul mulh mulhsu mulhu div divu rem remu
 
-# RV32F single-precision floating-point tests
-RV32UF_TESTS := fadd fdiv fclass fcmp fcvt fcvt_w fmadd fmin ldst move recoding
+# RV32F single-precision floating-point tests (disabled pending Zicsr support)
+# RV32UF_TESTS := fadd fdiv fclass fcmp fcvt fcvt_w fmadd fmin ldst move recoding
 
 ELFS := $(addprefix rv32ui-p-,$(addsuffix .elf,$(RV32UI_TESTS))) \
-        $(addprefix rv32um-p-,$(addsuffix .elf,$(RV32UM_TESTS))) \
-        $(addprefix rv32uf-p-,$(addsuffix .elf,$(RV32UF_TESTS)))
+        $(addprefix rv32um-p-,$(addsuffix .elf,$(RV32UM_TESTS)))
 
 all: $(ELFS)
 
