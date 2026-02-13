@@ -846,15 +846,17 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
     let older_matrix_gates := (List.range 4).map (fun i =>
       ((List.range 4).filter (· != i)).map (fun j =>
         -- older[i][j]: "j is older than i"
-        let reg := Wire.mk s!"older_{i}_{j}"
+        -- Use distinct wire names to prevent codegen bus grouping bug:
+        -- "older_i_j" would group older_3_0/older_3_1/older_3_2 into bus older_3[2:0]
+        let reg := Wire.mk s!"oldr_e{i}j{j}"
         let issue_we_i := Wire.mk s!"e{i}_issue_we"
         let issue_we_j := Wire.mk s!"e{j}_issue_we"
         let valid_j := Wire.mk s!"e{j}_0"
         -- When entry i is issued: set to valid[j] (existing j is older)
         -- When entry j is issued: clear to 0 (new j is not older than i)
         -- Otherwise: hold
-        let tmp1 := Wire.mk s!"older_{i}_{j}_tmp1"
-        let nxt := Wire.mk s!"older_{i}_{j}_next"
+        let tmp1 := Wire.mk s!"oldr_e{i}j{j}_tmp1"
+        let nxt := Wire.mk s!"oldr_e{i}j{j}_next"
         [
           -- Step 1: if j is being issued, clear to 0; else hold
           Gate.mkMUX reg zero issue_we_j tmp1,
@@ -868,7 +870,7 @@ def mkReservationStation4 (enableStoreLoadOrdering : Bool := false) : Circuit :=
     let older_store_check_gates := (List.range 4).map (fun i =>
       let j_indices := (List.range 4).filter (· != i)
       let checks := j_indices.map (fun j =>
-        let older_ij := Wire.mk s!"older_{i}_{j}"
+        let older_ij := Wire.mk s!"oldr_e{i}j{j}"
         let valid_j := Wire.mk s!"e{j}_0"
         let chk_tmp := Wire.mk s!"older_chk_{i}_{j}_tmp"
         let chk := Wire.mk s!"older_chk_{i}_{j}"

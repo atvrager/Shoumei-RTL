@@ -1201,7 +1201,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   let rob_commit_en := Wire.mk "rob_commit_en"
   let commit_store_en := Wire.mk "commit_store_en"
-  let sb_commit_ptr := makeIndexedWires "sb_commit_ptr" 3
   let rob_head_isStore := Wire.mk "rob_head_isStore"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
@@ -2046,13 +2045,24 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_muldiv_dispatch_src2 := makeIndexedWires "rs_muldiv_dispatch_src2" 32
   let rs_muldiv_dispatch_tag := makeIndexedWires "rs_muldiv_dispatch_tag" 6
 
+  -- Gate MulDiv RS dispatch when divider is busy (prevents RS from consuming
+  -- entries that the divider will ignore due to start_and_not_busy = 0)
+  let muldiv_busy := Wire.mk "muldiv_busy"
+  let muldiv_dispatch_en := Wire.mk "muldiv_dispatch_en"
+  let not_muldiv_busy := Wire.mk "not_muldiv_busy"
+  let muldiv_dispatch_gate :=
+    if enableM then
+      [Gate.mkNOT muldiv_busy not_muldiv_busy,
+       Gate.mkBUF not_muldiv_busy muldiv_dispatch_en]
+    else [Gate.mkBUF one muldiv_dispatch_en]
+
   let rs_muldiv_inst : CircuitInstance := {
     moduleName := "ReservationStation4"
     instName := "u_rs_muldiv"
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_muldiv),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_muldiv_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
+                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", muldiv_dispatch_en),
                 ("issue_full", rs_muldiv_issue_full), ("dispatch_valid", rs_muldiv_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by muldiv RS
                ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
@@ -2128,7 +2138,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let muldiv_result := makeIndexedWires "muldiv_result" 32
   let muldiv_tag_out := makeIndexedWires "muldiv_tag_out" 6
   let muldiv_valid_out := Wire.mk "muldiv_valid_out"
-  let muldiv_busy := Wire.mk "muldiv_busy"
+  -- muldiv_busy already declared above (needed for RS dispatch gating)
 
   -- MulDiv opcode LUT: translate 6-bit dispatch optype → 3-bit MulDiv op
   let muldiv_op := makeIndexedWires "muldiv_op" 3
@@ -2514,7 +2524,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
   let lsu_sb_deq_bits := makeIndexedWires "lsu_sb_deq_bits" 66
   let lsu_sb_enq_idx := makeIndexedWires "lsu_sb_enq_idx" 3
-  let lsu_sb_committed_tail := makeIndexedWires "lsu_sb_committed_tail" 3
 
   let lsu_inst : CircuitInstance := {
     moduleName := "LSU"
@@ -2532,7 +2541,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
                (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
                ((makeIndexedWires "store_data_masked" 32).enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
-               (sb_commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
                (mem_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
                ((makeIndexedWires "lsu_sb_enq_size" 2).enum.map (fun ⟨i, w⟩ => (s!"sb_enq_size_{i}", w))) ++
                (lsu_agu_address.enum.map (fun ⟨i, w⟩ => (s!"agu_address_{i}", w))) ++
@@ -2540,8 +2548,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (lsu_sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_data_{i}", w))) ++
                (lsu_sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_size_{i}", w))) ++
                (lsu_sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"sb_deq_bits_{i}", w))) ++
-               (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w))) ++
-               (lsu_sb_committed_tail.enum.map (fun ⟨i, w⟩ => (s!"sb_committed_tail_{i}", w)))
+               (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w)))
   }
 
   -- === ROB ===
@@ -3096,11 +3103,28 @@ def mkCPU (config : CPUConfig) : Circuit :=
       portMap := [("d", dmem_load_pending_next), ("q", dmem_load_pending),
                   ("clock", clock), ("reset", reset)] }
 
-  -- mem_dispatch_en: gate by both cross_size_stall and dmem_load_pending
+  -- mem_dispatch_en: gate by cross_size_stall, dmem_load_pending, sb_deq_valid,
+  -- AND store-into-full-SB. When the SB is draining a store to DMEM (sb_deq_valid=1),
+  -- the DMEM port is busy. A load that misses SB forwarding would try to use DMEM but
+  -- get blocked by load_no_fwd_no_deq=0, losing the dispatched instruction forever
+  -- (the RS entry is already cleared). Gating dispatch_en prevents this.
+  -- Also: if the dispatching instruction is a store and the SB is full, block dispatch
+  -- to prevent enqueuing into a full SB (the RS entry would be cleared but the store lost).
   let mem_dispatch_en_tmp := Wire.mk "mem_dispatch_en_tmp"
+  let mem_dispatch_en_tmp2 := Wire.mk "mem_dispatch_en_tmp2"
+  let mem_dispatch_en_tmp3 := Wire.mk "mem_dispatch_en_tmp3"
+  let not_sb_deq_for_dispatch := Wire.mk "not_sb_deq_for_dispatch"
+  let store_sb_full_block := Wire.mk "store_sb_full_block"
+  let not_store_sb_full := Wire.mk "not_store_sb_full"
   let mem_dispatch_en_gates := [
     Gate.mkNOT cross_size_stall mem_dispatch_en_tmp,
-    Gate.mkAND mem_dispatch_en_tmp not_dmem_load_pending mem_dispatch_en
+    Gate.mkAND mem_dispatch_en_tmp not_dmem_load_pending mem_dispatch_en_tmp2,
+    Gate.mkNOT lsu_sb_deq_valid not_sb_deq_for_dispatch,
+    Gate.mkAND mem_dispatch_en_tmp2 not_sb_deq_for_dispatch mem_dispatch_en_tmp3,
+    -- Block store dispatch when SB is full (wire driven by gate in sb_enq_gate_gates)
+    Gate.mkAND (Wire.mk "not_is_load") lsu_sb_full store_sb_full_block,
+    Gate.mkNOT store_sb_full_block not_store_sb_full,
+    Gate.mkAND mem_dispatch_en_tmp3 not_store_sb_full mem_dispatch_en
   ]
 
   -- DMEM metadata DFFs use CircuitInstance DFlipFlop with external `reset`
@@ -3624,28 +3648,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   (List.range 6).map (fun i =>
     Gate.mkMUX rob_head_oldPhysRd[i]! rob_head_physRd[i]! branch_tracking retire_tag_muxed[i]!)
 
-  -- SB commit pointer: 3-bit counter, increments when a store retires from ROB
-  let sb_commit_ptr_inc := makeIndexedWires "sb_commit_ptr_inc" 3
-  let sb_commit_ptr_next := makeIndexedWires "sb_commit_ptr_next" 3
-  let sb_commit_carry_0 := Wire.mk "sb_commit_carry_0"
-  let sb_commit_ptr_normal := makeIndexedWires "sb_commit_ptr_normal" 3
-  let sb_commit_ptr_gates := [
-    -- 3-bit incrementer: ptr + 1
-    Gate.mkNOT sb_commit_ptr[0]! sb_commit_ptr_inc[0]!,
-    Gate.mkXOR sb_commit_ptr[1]! sb_commit_ptr[0]! sb_commit_ptr_inc[1]!,
-    Gate.mkAND sb_commit_ptr[0]! sb_commit_ptr[1]! sb_commit_carry_0,
-    Gate.mkXOR sb_commit_ptr[2]! sb_commit_carry_0 sb_commit_ptr_inc[2]!
-  ] ++ (List.range 3).map (fun i =>
-    -- Normal: increment on commit_store_en, else hold
-    Gate.mkMUX sb_commit_ptr[i]! sb_commit_ptr_inc[i]! commit_store_en sb_commit_ptr_normal[i]!)
-  ++ (List.range 3).map (fun i =>
-    -- Flush override: reset to committed tail (= head + popcount(committed), computed by SB)
-    Gate.mkMUX sb_commit_ptr_normal[i]! lsu_sb_committed_tail[i]! pipeline_flush_comb sb_commit_ptr_next[i]!)
-
-  let sb_commit_ptr_insts := (List.range 3).map (fun i =>
-    { moduleName := "DFlipFlop", instName := s!"u_sb_commit_ptr_{i}",
-      portMap := [("d", sb_commit_ptr_next[i]!), ("q", sb_commit_ptr[i]!),
-                  ("clock", clock), ("reset", reset)] : CircuitInstance })
+  -- SB commit pointer is now internal to the StoreBuffer8 module.
+  -- The CPU only drives commit_store_en; the SB tracks its own commit pointer.
 
   -- FP retire routing: split retire_valid between INT and FP free lists
   -- Also: committed RAT routing — INT commit when hasPhysRd AND NOT is_fp
@@ -3723,12 +3727,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let not_is_load := Wire.mk "not_is_load"
   let sb_enq_ungated := Wire.mk "sb_enq_ungated"
   let not_flush_comb := Wire.mk "not_flush_comb"
+  let sb_enq_dispatched := Wire.mk "sb_enq_dispatched"
   let sb_enq_gate_gates := [
     Gate.mkNOT is_load not_is_load,
     Gate.mkAND rs_mem_dispatch_valid not_is_load sb_enq_ungated,
+    -- Only enqueue when RS actually dispatches (mem_dispatch_en=1),
+    -- otherwise the RS won't free the entry and we'd get duplicate enqueues
+    Gate.mkAND sb_enq_ungated mem_dispatch_en sb_enq_dispatched,
     -- Block wrong-path stores from entering SB during pipeline flush
     Gate.mkNOT pipeline_flush_comb not_flush_comb,
-    Gate.mkAND sb_enq_ungated not_flush_comb sb_enq_en
+    Gate.mkAND sb_enq_dispatched not_flush_comb sb_enq_en
   ]
 
   let dmem_valid_tmp := Wire.mk "dmem_valid_tmp"
@@ -3766,13 +3774,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
              cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
-             fpu_lut_gates ++ fp_rs_dispatch_gate ++
+             fpu_lut_gates ++ fp_rs_dispatch_gate ++ muldiv_dispatch_gate ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              (if enableF then fp_op_gates else []) ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ muldiv_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
              rob_fp_shadow_gates ++ rob_isStore_shadow_gates ++ redir_shadow_all_gates ++ rob_old_phys_mux_gates ++ fp_retire_gates ++
-             sb_commit_ptr_gates ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              int_imm_rf_we_gates ++ int_imm_rf_gates ++ int_imm_rf_sel_gates ++
              int_pc_rf_gates ++
@@ -3826,7 +3833,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   lsu_pipeline_insts ++
                   [pc_queue_inst, insn_queue_inst] ++
                   fflags_dff_instances ++
-                  sb_commit_ptr_insts ++
                   rob_isStore_shadow_insts ++
                   redir_tag_cmp_insts ++ redir_target_shadow_insts ++
                   [dmem_pending_inst] ++ dmem_tag_capture_insts ++ dmem_is_fp_insts ++

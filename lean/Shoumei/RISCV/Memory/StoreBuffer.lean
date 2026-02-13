@@ -260,7 +260,8 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Commit Interface ===
   let commit_en := Wire.mk "commit_en"
-  let commit_idx := mkWires "commit_idx_" 3
+  -- Internal commit pointer (replaces external commit_idx)
+  let commit_ptr := mkWires "commit_ptr_" 3
 
   -- === Dequeue Interface (Decoupled) ===
   let deq_ready := Wire.mk "deq_ready"
@@ -368,11 +369,46 @@ def mkStoreBuffer8 : Circuit :=
       (head_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
+  -- Gate commit_en: only advance commit_ptr when target entry is valid.
+  -- This prevents a wasted commit when enqueue wraps tail to the same index
+  -- as commit_ptr (the old entry was already dequeued, so commit is stale).
+  let commit_target_valid := Wire.mk "commit_target_valid"
+  let commit_en_gated := Wire.mk "commit_en_gated"
+  let ctv_bits := (List.range 8).map (fun i => Wire.mk s!"ctv_b{i}")
+  let ctv_or := (List.range 4).map (fun i => Wire.mk s!"ctv_r{i}")
+  let ctv_or2 := (List.range 2).map (fun i => Wire.mk s!"ctv_s{i}")
+  let commit_gate_gates :=
+    -- AND each commit_decode bit with valid bit
+    (List.range 8).map (fun i =>
+      Gate.mkAND commit_decode[i]! valid[i]! ctv_bits[i]!) ++
+    -- OR-reduce: 8→4
+    [Gate.mkOR ctv_bits[0]! ctv_bits[1]! ctv_or[0]!,
+     Gate.mkOR ctv_bits[2]! ctv_bits[3]! ctv_or[1]!,
+     Gate.mkOR ctv_bits[4]! ctv_bits[5]! ctv_or[2]!,
+     Gate.mkOR ctv_bits[6]! ctv_bits[7]! ctv_or[3]!,
+     -- 4→2
+     Gate.mkOR ctv_or[0]! ctv_or[1]! ctv_or2[0]!,
+     Gate.mkOR ctv_or[2]! ctv_or[3]! ctv_or2[1]!,
+     -- 2→1
+     Gate.mkOR ctv_or2[0]! ctv_or2[1]! commit_target_valid,
+     Gate.mkAND commit_en commit_target_valid commit_en_gated]
+
+  -- Internal commit pointer: increments on commit_en_gated, loads flush_tail_load on flush
+  let commit_ptr_inst : CircuitInstance := {
+    moduleName := "QueuePointerLoadable_3"
+    instName := "u_commit_ptr"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", commit_en_gated),
+       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_tail_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
+      (commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
+
   let commit_dec_inst : CircuitInstance := {
     moduleName := "Decoder3"
     instName := "u_commit_dec"
     portMap :=
-      (commit_idx.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
       (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
@@ -424,9 +460,9 @@ def mkStoreBuffer8 : Circuit :=
     let deq_clr := Wire.mk s!"e{i}_deq_clr"
     let deq_clr_gate := Gate.mkAND deq_fire head_decode[i]! deq_clr
 
-    -- Commit write enable = AND(commit_en, commit_decode[i])
+    -- Commit write enable = AND(commit_en_gated, commit_decode[i])
     let commit_we := Wire.mk s!"e{i}_commit_we"
-    let commit_we_gate := Gate.mkAND commit_en commit_decode[i]! commit_we
+    let commit_we_gate := Gate.mkAND commit_en_gated commit_decode[i]! commit_we
 
     -- === Valid bitmap ===
     -- valid_next: priority: deq_clr (clear) > enq (set) > flush (clear uncommitted) > hold
@@ -752,7 +788,7 @@ def mkStoreBuffer8 : Circuit :=
   let all_inputs :=
     [clock, reset, zero, one] ++
     [enq_en] ++ enq_address ++ enq_data ++ enq_size ++
-    [commit_en] ++ commit_idx ++
+    [commit_en] ++
     [deq_ready] ++
     fwd_address ++
     [flush_en]
@@ -760,12 +796,12 @@ def mkStoreBuffer8 : Circuit :=
   let all_outputs :=
     [full, empty] ++ enq_idx ++
     [deq_valid] ++ deq_bits ++
-    [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size ++
-    flush_tail_load  -- committed_tail: new tail value on flush (for CPU commit ptr sync)
+    [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
     [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
+    commit_gate_gates ++
     bitmap_gates ++ surviving_gates ++
     flush_count_gates ++ flush_tail_gates ++
     all_entry_gates ++
@@ -776,7 +812,7 @@ def mkStoreBuffer8 : Circuit :=
     head_valid_gates ++ head_committed_gates
 
   let all_instances :=
-    [head_inst, tail_inst, count_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst] ++
+    [head_inst, tail_inst, count_inst, commit_ptr_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst] ++
     valid_dff_insts ++ committed_dff_insts ++
     all_entry_instances ++
     [arb_inst, fwd_mux_inst, fwd_size_mux_inst] ++
@@ -792,7 +828,7 @@ def mkStoreBuffer8 : Circuit :=
       { name := "enq_address_", width := 32, wires := enq_address },
       { name := "enq_data_", width := 32, wires := enq_data },
       { name := "enq_size_", width := 2, wires := enq_size },
-      { name := "commit_idx_", width := 3, wires := commit_idx },
+      { name := "commit_ptr_", width := 3, wires := commit_ptr },
       { name := "deq_bits_", width := 66, wires := deq_bits },
       { name := "fwd_address_", width := 32, wires := fwd_address },
       { name := "fwd_data_", width := 32, wires := fwd_data },
@@ -803,7 +839,8 @@ def mkStoreBuffer8 : Circuit :=
       { name := "count_", width := 4, wires := count },
       { name := "enq_decode_", width := 8, wires := enq_decode },
       { name := "commit_decode_", width := 8, wires := commit_decode },
-      { name := "flush_tail_load_", width := 3, wires := flush_tail_load }
+      { name := "flush_tail_load_", width := 3, wires := flush_tail_load },
+      { name := "commit_decode_", width := 8, wires := commit_decode }
     ]
   }
 
