@@ -3068,14 +3068,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let not_dmem_load_pending := Wire.mk "not_dmem_load_pending"
 
   let load_no_fwd_base := Wire.mk "load_no_fwd_base"
+  let load_no_fwd_no_deq := Wire.mk "load_no_fwd_no_deq"
+  let not_sb_deq_valid := Wire.mk "not_sb_deq_valid"
   let load_no_fwd_gates := [
     Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
     -- Normal DMEM path: no SB hit
     Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
+    -- Yield to SB store dequeue: DMEM port is shared, store dequeue takes priority
+    Gate.mkNOT lsu_sb_deq_valid not_sb_deq_valid,
+    Gate.mkAND load_no_fwd_base not_sb_deq_valid load_no_fwd_no_deq,
     -- Gate by not_dmem_load_pending: only one DMEM load in flight at a time
     -- (DMEM path has single tag register, back-to-back would overwrite first tag)
-    Gate.mkAND load_no_fwd_base not_dmem_load_pending load_no_fwd
+    Gate.mkAND load_no_fwd_no_deq not_dmem_load_pending load_no_fwd
   ]
 
   let dmem_pending_gates := [
