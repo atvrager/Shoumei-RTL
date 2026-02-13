@@ -440,12 +440,17 @@ def mkDividerCircuit : Circuit :=
 
   -- ══════════════════════════════════════════════
   -- Restore/Keep MUX for remainder update
-  -- no_borrow = NOT(trial_borrow)
-  -- When no borrow (trial >= 0): keep subtracted value
-  -- When borrow (trial < 0): restore shifted value
+  -- trial_negative = trial_diff[31] (MSB = sign bit of 2's complement result)
+  -- When trial >= 0 (MSB=0): keep subtracted value, quotient bit = 1
+  -- When trial < 0 (MSB=1): restore shifted value, quotient bit = 0
+  -- NOTE: Subtractor32's borrow output is hardcoded to 0 (KSA32 doesn't expose
+  -- carry-out), so we use the MSB of the difference instead. This is valid because
+  -- in restoring division the partial remainder is always < 2*divisor, so the
+  -- subtraction result fits in [-divisor, divisor-1] — MSB reliably indicates sign.
   -- ══════════════════════════════════════════════
+  let trial_negative := trial_diff[31]!  -- MSB of trial subtraction result
   let no_borrow := Wire.mk "no_borrow"
-  let borrow_gates := [Gate.mkNOT trial_borrow no_borrow]
+  let borrow_gates := [Gate.mkNOT trial_negative no_borrow]
 
   -- Updated remainder when busy:
   -- new_rem[i] for i in 0..31 = shifted_rem[i] (lower 32 bits unchanged)
@@ -640,10 +645,14 @@ def mkDividerCircuit : Circuit :=
   -- ══════════════════════════════════════════════
   -- Result selection MUX (raw, before sign correction)
   -- op_q[1] selects between quotient (op=4,5 -> bit1=0) and remainder (op=6,7 -> bit1=1)
+  -- NOTE: Use quo_new (combinational) not quo_q (registered) because valid_out fires
+  -- on the same cycle as the last iteration (counter=31). quo_q doesn't include the
+  -- final quotient bit yet; quo_new does.
+  -- Similarly, use new_rem for remainder (includes final iteration's update).
   -- ══════════════════════════════════════════════
   let raw_result := makeIndexedWires "raw_result" 32
   let result_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX (quo_q[i]!) (rem_q[32 + i]!) (op_q[1]!) (raw_result[i]!)
+    Gate.mkMUX (quo_new[i]!) (new_rem[32 + i]!) (op_q[1]!) (raw_result[i]!)
   )
 
   -- ══════════════════════════════════════════════

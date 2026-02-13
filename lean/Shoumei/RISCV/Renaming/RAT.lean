@@ -71,8 +71,10 @@ Parameters:
 
 Ports:
 - Inputs: clock, reset, write_en, write_addr[4:0], write_data[tagWidth-1:0],
-          rs1_addr[4:0], rs2_addr[4:0]
-- Outputs: rs1_data[tagWidth-1:0], rs2_data[tagWidth-1:0]
+          rs1_addr[4:0], rs2_addr[4:0],
+          restore_en, restore_data_{i}_{j} (32×6 = 192 wires)
+- Outputs: rs1_data[tagWidth-1:0], rs2_data[tagWidth-1:0],
+           dump_data_{i}_{j} (32×6 = 192 wires — direct DFF Q readout)
 
 Architecture:
 - 32 × tagWidth DFF registers with synchronous reset to identity mapping
@@ -93,6 +95,10 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let rs1_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs1_addr_{i}")
   let rs2_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs2_addr_{i}")
   let rs3_addr := (List.range addrWidth).map (fun i => Wire.mk s!"rs3_addr_{i}")
+  -- Bulk restore: on restore_en, all 32 entries are overwritten from restore_data
+  let restore_en := Wire.mk "restore_en"
+  let restore_data := (List.range numArchRegs).map (fun i =>
+    (List.range tagWidth).map (fun j => Wire.mk s!"restore_data_{i}_{j}"))
 
   -- Outputs
   let rs1_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs1_data_{i}")
@@ -100,6 +106,9 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let rs3_data := (List.range tagWidth).map (fun i => Wire.mk s!"rs3_data_{i}")
   -- Fourth read port: old mapping for write_addr (before write, for ROB oldPhysRd tracking)
   let old_rd_data := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_data_{i}")
+  -- Dump: direct DFF Q readout for all 32 entries (for committed RAT → speculative RAT restore)
+  let dump_data := (List.range numArchRegs).map (fun i =>
+    (List.range tagWidth).map (fun j => Wire.mk s!"dump_data_{i}_{j}"))
 
   -- Internal: Write Decoder (5→32 one-hot)
   let write_sel := (List.range numArchRegs).map (fun i => Wire.mk s!"write_sel_{i}")
@@ -127,16 +136,24 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   -- This matches standard hardware practice where RAT init is a startup sequence.
   let getReg (i j : Nat) : Wire := Wire.mk s!"reg_{i}_{j}"
   let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
+  let getNormalNext (i j : Nat) : Wire := Wire.mk s!"normal_next_{i}_{j}"
+  let getDump (i j : Nat) : Wire := Wire.mk s!"dump_data_{i}_{j}"
 
   let storage_gates := (List.range numArchRegs).map (fun i =>
     (List.range tagWidth).map (fun j =>
       let reg := getReg i j
       let next := getNext i j
+      let normal_next := getNormalNext i j
       [
-        -- Write data mux: next = we ? write_data : reg (hold)
-        Gate.mkMUX reg (write_data[j]!) (we[i]!) next,
+        -- Write data mux: normal_next = we ? write_data : reg (hold)
+        Gate.mkMUX reg (write_data[j]!) (we[i]!) normal_next,
+        -- Restore override: next = restore_en ? restore_data : normal_next
+        Gate.mkMUX normal_next (restore_data[i]![j]!) restore_en next,
         -- Storage DFF (resets to 0)
-        Gate.mkDFF next clock reset reg
+        Gate.mkDFF next clock reset reg,
+        -- Dump output: write-through (bypass) so committed RAT dump
+        -- reflects current-cycle writes combinationally
+        Gate.mkBUF normal_next (getDump i j)
       ]
     )
   ) |>.flatten |>.flatten
@@ -182,8 +199,9 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   }
 
   { name := s!"RAT_{numArchRegs}x{tagWidth}"
-    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++ rs3_addr
-    outputs := rs1_data ++ rs2_data ++ rs3_data ++ old_rd_data
+    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++ rs3_addr ++
+              [restore_en] ++ restore_data.flatten
+    outputs := rs1_data ++ rs2_data ++ rs3_data ++ old_rd_data ++ dump_data.flatten
     gates := we_gates ++ storage_gates
     instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_rs3_inst, mux_old_rd_inst]
     -- V2 codegen annotations
@@ -199,7 +217,11 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
       { name := "write_sel", width := numArchRegs, wires := write_sel },
       { name := "we", width := numArchRegs, wires := we },
       { name := "old_rd_data", width := tagWidth, wires := old_rd_data }
-    ]
+    ] ++ (List.range numArchRegs).map (fun i =>
+      { name := s!"restore_data_{i}", width := tagWidth, wires := restore_data[i]! }
+    ) ++ (List.range numArchRegs).map (fun i =>
+      { name := s!"dump_data_{i}", width := tagWidth, wires := dump_data[i]! }
+    )
   }
 
 /-- RAT with 64 physical registers (default configuration) -/

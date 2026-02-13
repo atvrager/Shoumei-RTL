@@ -302,7 +302,7 @@ def LSUState.hasPendingLoad (lsu : LSUState) : Bool :=
     - dispatch_offset[31:0]: Offset for address calculation
     - dispatch_dest_tag[5:0]: Destination tag for loads
     - store_data[31:0]: Data to store
-    - commit_store_idx[2:0]: Store buffer index to commit
+    (commit index is now internal to StoreBuffer8)
     - commit_store_en: Commit enable
     - deq_ready: Memory ready to accept stores
     - fwd_address[31:0]: Load address for forwarding check
@@ -339,7 +339,6 @@ def mkLSU : Circuit :=
 
   -- === Store Commit Interface (from ROB) ===
   let commit_store_en := Wire.mk "commit_store_en"
-  let commit_store_idx := mkWires "commit_store_idx_" 3
 
   -- === Memory Interface ===
   let deq_ready := Wire.mk "deq_ready"
@@ -403,7 +402,6 @@ def mkLSU : Circuit :=
       (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_[{i}]", w))) ++
       (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_[{i}]", w))) ++
       (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_[{i}]", w))) ++
-      (commit_store_idx.enum.map (fun ⟨i, w⟩ => (s!"commit_idx_[{i}]", w))) ++
       (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_[{i}]", w))) ++
       (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_[{i}]", w))) ++
       (sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"fwd_size_[{i}]", w))) ++
@@ -417,7 +415,7 @@ def mkLSU : Circuit :=
     [clock, reset, zero, one] ++
     dispatch_base ++ dispatch_offset ++ dispatch_dest_tag ++
     store_data ++
-    [commit_store_en] ++ commit_store_idx ++
+    [commit_store_en] ++
     [deq_ready] ++
     fwd_address ++
     [flush_en] ++
@@ -447,7 +445,6 @@ def mkLSU : Circuit :=
       { name := "dispatch_offset", width := 32, wires := dispatch_offset },
       { name := "dispatch_dest_tag", width := 6, wires := dispatch_dest_tag },
       { name := "store_data", width := 32, wires := store_data },
-      { name := "commit_store_idx", width := 3, wires := commit_store_idx },
       { name := "fwd_address", width := 32, wires := fwd_address },
       { name := "agu_address", width := 32, wires := agu_address },
       { name := "agu_tag_out", width := 6, wires := agu_tag_out },

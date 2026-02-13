@@ -154,7 +154,7 @@ def ROBState.allocate
   else
     let newEntry : ROBEntry := {
       valid := true
-      complete := !hasPhysRd  -- stores/branches are immediately complete
+      complete := !(hasPhysRd || isBranch)  -- only stores auto-complete; branches need CDB
       physRd := physRd
       hasPhysRd := hasPhysRd
       oldPhysRd := oldPhysRd
@@ -188,7 +188,7 @@ def ROBState.cdbBroadcast
     : ROBState :=
   let newEntries := fun i =>
     let e := rob.entries i
-    if e.valid && !e.complete && e.hasPhysRd && e.physRd == cdb_tag then
+    if e.valid && !e.complete && (e.hasPhysRd || e.isBranch) && e.physRd == cdb_tag then
       { e with
         complete := true
         exception := cdb_exception
@@ -553,10 +553,12 @@ def mkROB16 : Circuit :=
     -- Control: CDB tag match (from Comparator6 eq output)
     let cdb_match := Wire.mk s!"e{i}_cdb_match"
 
-    -- Control: CDB write enable = valid AND NOT(complete) AND hasPhysRd AND match AND cdb_valid AND domain_match
+    -- Control: CDB write enable = valid AND NOT(complete) AND (hasPhysRd OR isBranch) AND match AND cdb_valid AND domain_match
     -- domain_match = NOT(cdb_is_fp XOR is_fp_shadow[i])
+    -- Branches need CDB completion for misprediction tracking even without physRd (rd=x0)
     let complete_n := Wire.mk s!"e{i}_complete_n"
     let cdb_tmp1 := Wire.mk s!"e{i}_cdb_tmp1"
+    let hasPhysOrBranch := Wire.mk s!"e{i}_hasPhysOrBranch"
     let cdb_tmp2 := Wire.mk s!"e{i}_cdb_tmp2"
     let cdb_tmp3 := Wire.mk s!"e{i}_cdb_tmp3"
     let cdb_tmp4 := Wire.mk s!"e{i}_cdb_tmp4"
@@ -566,7 +568,8 @@ def mkROB16 : Circuit :=
     let cdb_we_gates := [
       Gate.mkNOT cur_complete complete_n,
       Gate.mkAND cur_valid complete_n cdb_tmp1,
-      Gate.mkAND cdb_tmp1 cur_hasPhysRd cdb_tmp2,
+      Gate.mkOR cur_hasPhysRd cur_isBranch hasPhysOrBranch,
+      Gate.mkAND cdb_tmp1 hasPhysOrBranch cdb_tmp2,
       Gate.mkAND cdb_tmp2 cdb_match cdb_tmp3,
       Gate.mkAND cdb_tmp3 cdb_valid cdb_tmp4,
       Gate.mkXOR cdb_is_fp is_fp_shadow[i]! domain_xor,
@@ -608,24 +611,29 @@ def mkROB16 : Circuit :=
 
     -- === Next-State Logic ===
 
-    -- valid_next: MUX priority: clear > alloc > hold
-    -- sel=0:hold, sel=1:set → MUX(hold, set, condition)
+    -- valid_next: MUX priority: alloc > clear > hold
+    -- When alloc and clear hit the same entry simultaneously (ROB wrap-around),
+    -- the new allocation must win — the clear is for the old entry, alloc is for the new.
     let valid_mux1 := Wire.mk s!"e{i}_valid_mux1"
     let valid_gates := [
-      Gate.mkMUX cur_valid one alloc_we valid_mux1,    -- alloc sets valid
-      Gate.mkMUX valid_mux1 zero clear e_next[0]!      -- clear clears valid
+      Gate.mkMUX cur_valid zero clear valid_mux1,       -- clear clears valid
+      Gate.mkMUX valid_mux1 one alloc_we e_next[0]!     -- alloc sets valid (highest priority)
     ]
 
-    -- complete_next: MUX priority: clear > cdb > alloc > hold
-    -- On alloc: set complete = NOT(hasPhysRd) — stores/branches are immediately complete
+    -- complete_next: MUX priority: alloc > clear > cdb > hold
+    -- On alloc: set complete = NOT(hasPhysRd OR isBranch) — only stores are immediately complete
+    -- Branches always wait for CDB to get misprediction status.
+    -- When alloc and clear hit simultaneously (ROB wrap-around), alloc wins.
     let alloc_imm_complete := Wire.mk s!"e{i}_alloc_imm_complete"
+    let alloc_needs_cdb := Wire.mk s!"e{i}_alloc_needs_cdb"
     let comp_mux1 := Wire.mk s!"e{i}_comp_mux1"
     let comp_mux2 := Wire.mk s!"e{i}_comp_mux2"
     let complete_gates := [
-      Gate.mkNOT alloc_hasPhysRd alloc_imm_complete,
-      Gate.mkMUX cur_complete alloc_imm_complete alloc_we comp_mux1,  -- alloc: complete if no physRd
-      Gate.mkMUX comp_mux1 one cdb_we comp_mux2,       -- CDB sets complete
-      Gate.mkMUX comp_mux2 zero clear e_next[1]!        -- clear clears complete
+      Gate.mkOR alloc_hasPhysRd alloc_isBranch alloc_needs_cdb,
+      Gate.mkNOT alloc_needs_cdb alloc_imm_complete,
+      Gate.mkMUX cur_complete one cdb_we comp_mux1,       -- CDB sets complete
+      Gate.mkMUX comp_mux1 zero clear comp_mux2,          -- clear clears complete
+      Gate.mkMUX comp_mux2 alloc_imm_complete alloc_we e_next[1]!  -- alloc wins (highest priority)
     ]
 
     -- physRd_next: only changes on alloc
@@ -648,26 +656,26 @@ def mkROB16 : Circuit :=
     let archRd_gates := (List.range 5).map fun j =>
       Gate.mkMUX cur_archRd[j]! alloc_archRd[j]! alloc_we e_next[16+j]!
 
-    -- exception_next: MUX priority: clear > cdb > alloc > hold
+    -- exception_next: MUX priority: alloc > clear > cdb > hold
     let exc_mux1 := Wire.mk s!"e{i}_exc_mux1"
     let exc_mux2 := Wire.mk s!"e{i}_exc_mux2"
     let exception_gates := [
-      Gate.mkMUX cur_exception zero alloc_we exc_mux1,
-      Gate.mkMUX exc_mux1 cdb_exception cdb_we exc_mux2,
-      Gate.mkMUX exc_mux2 zero clear e_next[21]!
+      Gate.mkMUX cur_exception cdb_exception cdb_we exc_mux1,
+      Gate.mkMUX exc_mux1 zero clear exc_mux2,
+      Gate.mkMUX exc_mux2 zero alloc_we e_next[21]!   -- alloc clears exception (highest priority)
     ]
 
     -- isBranch_next: only changes on alloc
     let isBranch_gate :=
       Gate.mkMUX cur_isBranch alloc_isBranch alloc_we e_next[22]!
 
-    -- branchMispredicted_next: MUX priority: clear > cdb > alloc > hold
+    -- branchMispredicted_next: MUX priority: alloc > clear > cdb > hold
     let mis_mux1 := Wire.mk s!"e{i}_mis_mux1"
     let mis_mux2 := Wire.mk s!"e{i}_mis_mux2"
     let mispred_gates := [
-      Gate.mkMUX cur_mispred zero alloc_we mis_mux1,
-      Gate.mkMUX mis_mux1 cdb_mispredicted cdb_we mis_mux2,
-      Gate.mkMUX mis_mux2 zero clear e_next[23]!
+      Gate.mkMUX cur_mispred cdb_mispredicted cdb_we mis_mux1,
+      Gate.mkMUX mis_mux1 zero clear mis_mux2,
+      Gate.mkMUX mis_mux2 zero alloc_we e_next[23]!   -- alloc clears mispred (highest priority)
     ]
 
     -- Collect all per-entry gates

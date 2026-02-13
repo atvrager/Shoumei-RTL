@@ -158,6 +158,13 @@ def register24_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
+/-- Register66 = Register64 + Register2 (hierarchical) -/
+def register66_cert : CompositionalCert := {
+  moduleName := "Register66"
+  dependencies := ["Register64", "Register2"]
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-- Register68 = Register64 + Register4 (hierarchical) -/
 def register68_cert : CompositionalCert := {
   moduleName := "Register68"
@@ -252,10 +259,10 @@ def rob16_cert : CompositionalCert := {
 
 /-! ## RISC-V Memory -/
 
-/-- StoreBuffer8: 8-entry store buffer with forwarding -/
+/-- StoreBuffer8: 8-entry store buffer with forwarding (FIFO redesign) -/
 def storeBuffer8_cert : CompositionalCert := {
   moduleName := "StoreBuffer8"
-  dependencies := ["Register68", "QueuePointer_3", "QueueCounterUpDown_4", "Decoder3", "Comparator32", "PriorityArbiter8", "Mux8x32", "Mux8x2"]
+  dependencies := ["Register66", "DFlipFlop", "QueuePointer_3", "QueuePointerLoadable_3", "QueueCounterLoadable_4", "Decoder3", "Comparator32", "PriorityArbiter8", "Mux8x32", "Mux8x2", "Popcount8"]
   proofReference := "Shoumei.RISCV.Memory.StoreBufferProofs"
 }
 
@@ -395,6 +402,7 @@ def cpu_rv32im_cert : CompositionalCert := {
 def allCerts : List CompositionalCert := [
   -- Sequential
   register24_cert,
+  register66_cert,
   register68_cert,
   register91_cert,
   queue2_8_cert,

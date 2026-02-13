@@ -1,15 +1,22 @@
 /-
-RISCV/Memory/StoreBuffer.lean - Store Buffer with Forwarding
+RISCV/Memory/StoreBuffer.lean - Store Buffer with Forwarding (FIFO redesign)
 
 8-entry circular buffer for pending store operations.
 Store-to-load forwarding with youngest-match priority.
 Behavioral model + structural circuit (StoreBuffer8).
 
+Architecture: Split Valid/Committed Bitmaps + QueueRAM
+- QueueRAM_8x66 stores payload (32b addr + 32b data + 2b size)
+- Valid bitmap: 8 DFlipFlops. Set on enqueue, cleared on dequeue.
+- Committed bitmap: 8 DFlipFlops. Cleared on enqueue, set by commit.
+- On flush: valid[i] = valid[i] AND committed[i] (clear uncommitted)
+- Tail pointer and count reloaded via Popcount8 on flush.
+
 Entry lifecycle:
-1. ENQUEUE: Dispatch allocates store at tail (valid=true, committed=false)
+1. ENQUEUE: Dispatch allocates store at tail (valid=1, committed=0)
 2. COMMITTED: ROB commits store → committed flag set via commit_idx
 3. DEQUEUE: Committed head store written to memory via Decoupled port
-4. FLUSH: Pipeline misprediction → full reset (committed stores drained first)
+4. FLUSH: Pipeline misprediction → clear uncommitted entries, reload tail/count
 
 Forwarding:
 - Loads check all valid entries for address match
@@ -20,10 +27,12 @@ Forwarding:
 import Shoumei.DSL
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Sequential.QueueComponents
+import Shoumei.Circuits.Sequential.DFF
 import Shoumei.Circuits.Combinational.Comparator
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.Arbiter
+import Shoumei.Circuits.Combinational.Popcount
 
 namespace Shoumei.RISCV.Memory
 
@@ -119,7 +128,7 @@ def StoreBufferState.enqueue
   else
     let newEntry : StoreBufferEntry := {
       valid := true
-      committed := true  -- Auto-commit on enqueue (simplified model)
+      committed := false  -- Speculative until ROB commits (redirect-from-commit)
       address := address
       data := data
       size := size
@@ -212,33 +221,24 @@ def StoreBufferState.headReady (sb : StoreBufferState) : Bool :=
 
 /-- Build StoreBuffer8 structural circuit: 8-entry store buffer with forwarding.
 
-    **Architecture:**
-    - 8 entries × 68 bits each (Register68)
-    - Head/tail pointers (QueuePointer_3) with up/down count (QueueCounterUpDown_4)
-    - Allocation decoder (Decoder3) + commit decoder (Decoder3)
+    **Architecture (FIFO redesign):**
+    - QueueRAM_8x66 for payload storage (32b addr + 32b data + 2b size)
+    - 8× DFlipFlop valid bitmap (set on enq, cleared on deq)
+    - 8× DFlipFlop committed bitmap (cleared on enq, set by commit)
+    - Loadable head/tail pointers (QueuePointerLoadable_3)
+    - Loadable count (QueueCounterLoadable_4)
+    - Popcount8 for flush recovery (count surviving committed entries)
     - Address matching via 8 parallel Comparator32 instances
     - Youngest-match forwarding: barrel rotation + PriorityArbiter8
     - Dequeue readout via Mux8x32 (address, data) + Mux8x2 (size)
     - Decoupled dequeue: deq_valid/deq_ready handshaking
 
-    **Entry layout (68 bits):**
+    **Payload layout in QueueRAM (66 bits):**
     | Bit(s)  | Width | Field     |
     |---------|-------|-----------|
-    | 0       | 1     | valid     |
-    | 1       | 1     | committed |
-    | 2-33    | 32    | address   |
-    | 34-65   | 32    | data      |
-    | 66-67   | 2     | size      |
-
-    **Instances (26):**
-    - 8× Register68 (entry storage)
-    - 8× Comparator32 (address matching for forwarding)
-    - 2× QueuePointer_3 (head, tail)
-    - 1× QueueCounterUpDown_4 (count)
-    - 2× Decoder3 (enqueue decode, commit decode)
-    - 3× Mux8x32 (fwd data, deq address, deq data)
-    - 1× Mux8x2 (deq size)
-    - 1× PriorityArbiter8 (youngest-match selection)
+    | 0-31    | 32    | address   |
+    | 32-63   | 32    | data      |
+    | 64-65   | 2     | size      |
 -/
 def mkStoreBuffer8 : Circuit :=
   let mkWires := @Shoumei.Circuits.Combinational.makeIndexedWires
@@ -249,10 +249,8 @@ def mkStoreBuffer8 : Circuit :=
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
-  -- Combined reset: OR(reset, flush_en) for full flush support
+  -- Flush enable: clears uncommitted entries only (committed stores survive)
   let flush_en := Wire.mk "flush_en"
-  let combined_reset := Wire.mk "combined_reset"
-  let combined_reset_gate := Gate.mkOR reset flush_en combined_reset
 
   -- === Enqueue Interface ===
   let enq_en := Wire.mk "enq_en"
@@ -262,7 +260,8 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Commit Interface ===
   let commit_en := Wire.mk "commit_en"
-  let commit_idx := mkWires "commit_idx_" 3
+  -- Internal commit pointer (replaces external commit_idx)
+  let commit_ptr := mkWires "commit_ptr_" 3
 
   -- === Dequeue Interface (Decoupled) ===
   let deq_ready := Wire.mk "deq_ready"
@@ -285,6 +284,12 @@ def mkStoreBuffer8 : Circuit :=
   let count := mkWires "count_" 4
   let enq_decode := mkWires "enq_decode_" 8
   let commit_decode := mkWires "commit_decode_" 8
+
+  -- Valid and committed bitmaps
+  let valid := (List.range 8).map (fun i => Wire.mk s!"valid_e{i}")
+  let committed := (List.range 8).map (fun i => Wire.mk s!"committed_e{i}")
+  let valid_next := (List.range 8).map (fun i => Wire.mk s!"valid_next_e{i}")
+  let committed_next := (List.range 8).map (fun i => Wire.mk s!"committed_next_e{i}")
 
   -- === Global Control Gates ===
 
@@ -313,30 +318,37 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Infrastructure Instances ===
 
+  -- Head pointer: loadable (load not used currently, but available for future)
   let head_inst : CircuitInstance := {
     moduleName := "QueuePointer_3"
     instName := "u_head"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("en", deq_fire),
+      [("clock", clock), ("reset", reset), ("en", deq_fire),
        ("one", one), ("zero", zero)] ++
       (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
+  -- Tail pointer: loadable for flush recovery
+  let flush_tail_load := mkWires "flush_tail_load_" 3
   let tail_inst : CircuitInstance := {
-    moduleName := "QueuePointer_3"
+    moduleName := "QueuePointerLoadable_3"
     instName := "u_tail"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("en", enq_en),
-       ("one", one), ("zero", zero)] ++
+      [("clock", clock), ("reset", reset), ("en", enq_en),
+       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_tail_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
       (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
+  -- Count: loadable for flush recovery
+  let flush_count_load := mkWires "flush_count_load_" 4
   let count_inst : CircuitInstance := {
-    moduleName := "QueueCounterUpDown_4"
+    moduleName := "QueueCounterLoadable_4"
     instName := "u_count"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("inc", enq_en),
-       ("dec", deq_fire), ("one", one), ("zero", zero)] ++
+      [("clock", clock), ("reset", reset), ("inc", enq_en),
+       ("dec", deq_fire), ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_count_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
       (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
@@ -348,36 +360,201 @@ def mkStoreBuffer8 : Circuit :=
       (enq_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
+  let head_decode := mkWires "head_decode_" 8
+  let head_dec_inst : CircuitInstance := {
+    moduleName := "Decoder3"
+    instName := "u_head_dec"
+    portMap :=
+      (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (head_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+
+  -- Gate commit_en: only advance commit_ptr when target entry is valid.
+  -- This prevents a wasted commit when enqueue wraps tail to the same index
+  -- as commit_ptr (the old entry was already dequeued, so commit is stale).
+  let commit_target_valid := Wire.mk "commit_target_valid"
+  let commit_en_gated := Wire.mk "commit_en_gated"
+  let ctv_bits := (List.range 8).map (fun i => Wire.mk s!"ctv_b{i}")
+  let ctv_or := (List.range 4).map (fun i => Wire.mk s!"ctv_r{i}")
+  let ctv_or2 := (List.range 2).map (fun i => Wire.mk s!"ctv_s{i}")
+  let commit_gate_gates :=
+    -- AND each commit_decode bit with valid bit
+    (List.range 8).map (fun i =>
+      Gate.mkAND commit_decode[i]! valid[i]! ctv_bits[i]!) ++
+    -- OR-reduce: 8→4
+    [Gate.mkOR ctv_bits[0]! ctv_bits[1]! ctv_or[0]!,
+     Gate.mkOR ctv_bits[2]! ctv_bits[3]! ctv_or[1]!,
+     Gate.mkOR ctv_bits[4]! ctv_bits[5]! ctv_or[2]!,
+     Gate.mkOR ctv_bits[6]! ctv_bits[7]! ctv_or[3]!,
+     -- 4→2
+     Gate.mkOR ctv_or[0]! ctv_or[1]! ctv_or2[0]!,
+     Gate.mkOR ctv_or[2]! ctv_or[3]! ctv_or2[1]!,
+     -- 2→1
+     Gate.mkOR ctv_or2[0]! ctv_or2[1]! commit_target_valid,
+     Gate.mkAND commit_en commit_target_valid commit_en_gated]
+
+  -- Internal commit pointer: increments on commit_en_gated, loads flush_tail_load on flush
+  let commit_ptr_inst : CircuitInstance := {
+    moduleName := "QueuePointerLoadable_3"
+    instName := "u_commit_ptr"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", commit_en_gated),
+       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_tail_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
+      (commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
+
   let commit_dec_inst : CircuitInstance := {
     moduleName := "Decoder3"
     instName := "u_commit_dec"
     portMap :=
-      (commit_idx.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
       (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
-  -- === Per-Entry Logic (8 entries) ===
+  -- === Flush Recovery: Popcount8 + Adder ===
+  -- On flush, count surviving entries = popcount(valid AND committed)
+  -- New tail = head + popcount (mod 8, only low 3 bits matter)
 
-  let entryResults := (List.range 8).map fun i =>
-    let e_cur := mkWires s!"e{i}_" 68
-    let e_next := mkWires s!"e{i}_next_" 68
+  let surviving := (List.range 8).map (fun i => Wire.mk s!"surviving_{i}")
+  let surviving_gates := (List.range 8).map (fun i =>
+    Gate.mkAND valid[i]! committed[i]! surviving[i]!)
 
-    -- Current state field accessors
-    let cur_valid := e_cur[0]!
-    let cur_committed := e_cur[1]!
-    let cur_address := (List.range 32).map (fun j => e_cur[2+j]!)
-    let cur_data := (List.range 32).map (fun j => e_cur[34+j]!)
-    let cur_size := (List.range 2).map (fun j => e_cur[66+j]!)
+  let pop_count := mkWires "pop_count_" 4
+  let pop_inst : CircuitInstance := {
+    moduleName := "Popcount8"
+    instName := "u_popcount"
+    portMap :=
+      (surviving.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (pop_count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
 
-    -- Control: enqueue write enable = AND(enq_en, enq_decode[i])
+  -- flush_count_load = pop_count (surviving entry count)
+  let flush_count_gates := (List.range 4).map (fun i =>
+    Gate.mkBUF pop_count[i]! flush_count_load[i]!)
+
+  -- flush_tail_load = head_ptr + pop_count[2:0] (mod 8, wrapping 3-bit add)
+  -- Simple 3-bit ripple-carry adder
+  let ft_xor := (List.range 3).map (fun i => Wire.mk s!"ft_xor_b{i}")
+  let ft_carry := (List.range 4).map (fun i => Wire.mk s!"ft_carry_b{i}")
+  let ft_and1 := (List.range 3).map (fun i => Wire.mk s!"ft_and1_b{i}")
+  let ft_and2 := (List.range 3).map (fun i => Wire.mk s!"ft_and2_b{i}")
+  let flush_tail_gates := [
+    Gate.mkBUF zero ft_carry[0]!
+  ] ++ ((List.range 3).map (fun i =>
+    [Gate.mkXOR head_ptr[i]! pop_count[i]! ft_xor[i]!,
+     Gate.mkXOR ft_xor[i]! ft_carry[i]! flush_tail_load[i]!,
+     Gate.mkAND head_ptr[i]! pop_count[i]! ft_and1[i]!,
+     Gate.mkAND ft_xor[i]! ft_carry[i]! ft_and2[i]!,
+     Gate.mkOR ft_and1[i]! ft_and2[i]! ft_carry[i+1]!]
+  )).flatten
+
+  -- === Per-Entry Valid/Committed Bitmap Logic ===
+
+  let bitmap_gates := (List.range 8).map (fun i =>
+    -- Enqueue write enable = AND(enq_en, enq_decode[i])
     let enq_we := Wire.mk s!"e{i}_enq_we"
     let enq_we_gate := Gate.mkAND enq_en enq_decode[i]! enq_we
 
-    -- Control: commit write enable = AND(commit_en, commit_decode[i])
-    let commit_we := Wire.mk s!"e{i}_commit_we"
-    let commit_we_gate := Gate.mkAND commit_en commit_decode[i]! commit_we
+    -- Dequeue clear enable = AND(deq_fire, head_decode[i])
+    let deq_clr := Wire.mk s!"e{i}_deq_clr"
+    let deq_clr_gate := Gate.mkAND deq_fire head_decode[i]! deq_clr
 
-    -- Comparator32 instance: fwd_address vs entry address (for forwarding)
+    -- Commit write enable = AND(commit_en_gated, commit_decode[i])
+    let commit_we := Wire.mk s!"e{i}_commit_we"
+    let commit_we_gate := Gate.mkAND commit_en_gated commit_decode[i]! commit_we
+
+    -- === Valid bitmap ===
+    -- valid_next: priority: deq_clr (clear) > enq (set) > flush (clear uncommitted) > hold
+    -- Step 1: hold or set on enq
+    let v_enq := Wire.mk s!"e{i}_v_enq"
+    -- Step 2: clear on deq
+    let v_deq := Wire.mk s!"e{i}_v_deq"
+    let not_deq_clr := Wire.mk s!"e{i}_not_deq_clr"
+    -- Step 3: flush — valid survives only if committed
+    let v_flush := Wire.mk s!"e{i}_v_flush"
+    let v_after_flush := Wire.mk s!"e{i}_v_after_flush"
+    let not_flush := Wire.mk s!"e{i}_not_flush"
+    let valid_gates := [
+      Gate.mkMUX valid[i]! one enq_we v_enq,          -- enq sets valid
+      Gate.mkNOT deq_clr not_deq_clr,
+      Gate.mkAND v_enq not_deq_clr v_deq,             -- deq clears valid
+      -- Flush: valid_next = valid AND (NOT flush OR committed)
+      Gate.mkAND v_deq committed[i]! v_flush,          -- surviving = valid AND committed
+      Gate.mkNOT flush_en not_flush,
+      Gate.mkMUX v_flush v_deq not_flush v_after_flush, -- flush ? surviving : normal
+      Gate.mkBUF v_after_flush valid_next[i]!
+    ]
+
+    -- === Committed bitmap ===
+    -- committed_next: priority: enq (clear) > commit (set) > flush (clear uncommitted) > hold
+    let c_commit := Wire.mk s!"e{i}_c_commit"
+    let c_enq := Wire.mk s!"e{i}_c_enq"
+    let committed_gates := [
+      Gate.mkMUX committed[i]! one commit_we c_commit,   -- commit sets
+      Gate.mkMUX c_commit zero enq_we c_enq              -- enq clears
+      -- No flush logic needed: committed bitmap is not directly cleared by flush.
+      -- Valid bitmap handles the flush (uncommitted entries lose valid, so committed doesn't matter).
+    ]
+    let committed_next_gate := Gate.mkBUF c_enq committed_next[i]!
+
+    ([enq_we_gate, deq_clr_gate, commit_we_gate] ++ valid_gates ++ committed_gates ++ [committed_next_gate])
+  ) |>.flatten
+
+  -- DFlipFlop instances for valid and committed bitmaps
+  -- Use distinct wire names to avoid codegen bus grouping bug
+  let valid_dff_insts := (List.range 8).map (fun i =>
+    { moduleName := "DFlipFlop", instName := s!"u_valid_{i}",
+      portMap := [("d", valid_next[i]!), ("q", valid[i]!),
+                  ("clock", clock), ("reset", reset)] : CircuitInstance })
+
+  let committed_dff_insts := (List.range 8).map (fun i =>
+    { moduleName := "DFlipFlop", instName := s!"u_committed_{i}",
+      portMap := [("d", committed_next[i]!), ("q", committed[i]!),
+                  ("clock", clock), ("reset", reset)] : CircuitInstance })
+
+  -- === Per-Entry Forwarding Logic ===
+  -- Read all entries from QueueRAM for forwarding (parallel read ports via per-entry storage)
+  -- QueueRAM only has 1 read port (for dequeue). For forwarding, we read directly from
+  -- the Register instances inside the QueueRAM. But since QueueRAM is a submodule,
+  -- we can't access its internals. Instead, we use 8× Comparator32 + Mux8x32 with
+  -- separate read logic.
+  --
+  -- Actually, the QueueRAM read port is used for dequeue. For forwarding, we need
+  -- parallel access to all 8 entries' addresses. The cleanest approach:
+  -- use the QueueRAM's internal registers directly by reading entry data from
+  -- per-entry storage. Since QueueRAM uses Register66 instances internally,
+  -- and we need parallel read, we keep the per-entry read wires.
+  --
+  -- Alternative: Don't use QueueRAM. Use 8× Register66 directly (like the old design
+  -- but without valid/committed in the register). This gives us direct parallel read.
+  -- This is simpler and matches the forwarding architecture better.
+
+  -- Per-entry storage: 8× Register66 (address[31:0] + data[31:0] + size[1:0])
+  let entryResults := (List.range 8).map fun i =>
+    let e_cur := mkWires s!"e{i}_" 66
+    let e_next := mkWires s!"e{i}_next_" 66
+
+    let cur_address := (List.range 32).map (fun j => e_cur[j]!)
+    let cur_data := (List.range 32).map (fun j => e_cur[32+j]!)
+    let cur_size := (List.range 2).map (fun j => e_cur[64+j]!)
+
+    -- Enqueue write enable = AND(enq_en, enq_decode[i])
+    let enq_we := Wire.mk s!"e{i}_enq_we"  -- already created in bitmap logic, reuse wire name
+
+    -- address_next: only changes on enq
+    let address_gates := (List.range 32).map fun j =>
+      Gate.mkMUX cur_address[j]! enq_address[j]! enq_we e_next[j]!
+
+    -- data_next: only changes on enq
+    let data_gates := (List.range 32).map fun j =>
+      Gate.mkMUX cur_data[j]! enq_data[j]! enq_we e_next[32+j]!
+
+    -- size_next: only changes on enq
+    let size_gates := (List.range 2).map fun j =>
+      Gate.mkMUX cur_size[j]! enq_size[j]! enq_we e_next[64+j]!
+
+    -- Comparator32 instance: fwd_address vs entry address
     let cmp_eq := Wire.mk s!"e{i}_cmp_eq"
     let cmp_inst : CircuitInstance := {
       moduleName := "Comparator32"
@@ -392,59 +569,25 @@ def mkStoreBuffer8 : Circuit :=
          ("gtu", Wire.mk s!"e{i}_cmp_gtu_unused")]
     }
 
-    -- Register68 instance: entry storage
+    -- Register66 instance: entry storage
     let reg_inst : CircuitInstance := {
-      moduleName := "Register68"
+      moduleName := "Register66"
       instName := s!"u_entry{i}"
       portMap :=
         (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
-        [("clock", clock), ("reset", combined_reset)] ++
+        [("clock", clock), ("reset", reset)] ++
         (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
-    -- === Next-State Logic ===
-
-    -- valid_next: enq sets valid, otherwise hold. Flush/reset via combined_reset
-    -- on Register68. Entries are NOT cleared on dequeue (they get overwritten by
-    -- future enqueues). Stale-entry matching is prevented by gating fwd_committed_hit
-    -- with NOT sb_empty in the CPU.
-    let valid_gates := [
-      Gate.mkMUX cur_valid one enq_we e_next[0]!
-    ]
-
-    -- committed_next: MUX priority: enq (sets committed=1) > commit (sets) > hold
-    -- Auto-commit on enqueue; wrong-path stores are blocked at sb_enq_en gate
-    let committed_mux1 := Wire.mk s!"e{i}_committed_mux1"
-    let committed_gates := [
-      Gate.mkMUX cur_committed one commit_we committed_mux1,  -- commit sets committed
-      Gate.mkMUX committed_mux1 one enq_we e_next[1]!         -- enq also sets committed
-    ]
-
-    -- address_next: only changes on enq
-    let address_gates := (List.range 32).map fun j =>
-      Gate.mkMUX cur_address[j]! enq_address[j]! enq_we e_next[2+j]!
-
-    -- data_next: only changes on enq
-    let data_gates := (List.range 32).map fun j =>
-      Gate.mkMUX cur_data[j]! enq_data[j]! enq_we e_next[34+j]!
-
-    -- size_next: only changes on enq
-    let size_gates := (List.range 2).map fun j =>
-      Gate.mkMUX cur_size[j]! enq_size[j]! enq_we e_next[66+j]!
-
-    -- Forwarding match: valid AND address_eq
+    -- Forwarding match: valid AND address_eq (no stale match possible!)
     let fwd_match := Wire.mk s!"e{i}_fwd_match"
-    let fwd_match_gate := Gate.mkAND cur_valid cmp_eq fwd_match
+    let fwd_match_gate := Gate.mkAND valid[i]! cmp_eq fwd_match
 
     -- Committed forwarding match: valid AND committed AND address_eq
     let fwd_committed_match := Wire.mk s!"e{i}_fwd_committed_match"
-    let fwd_committed_match_gate := Gate.mkAND fwd_match cur_committed fwd_committed_match
+    let fwd_committed_match_gate := Gate.mkAND fwd_match committed[i]! fwd_committed_match
 
-    -- Collect all per-entry gates
-    let entry_gates :=
-      [enq_we_gate, commit_we_gate] ++
-      valid_gates ++ committed_gates ++
-      address_gates ++ data_gates ++ size_gates ++
+    let entry_gates := address_gates ++ data_gates ++ size_gates ++
       [fwd_match_gate, fwd_committed_match_gate]
 
     (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, cur_data)
@@ -460,16 +603,8 @@ def mkStoreBuffer8 : Circuit :=
   -- === Forwarding Logic: Youngest-Match via Barrel Rotation ===
 
   -- Step 1: Barrel rotate match vector so youngest entry maps to position 0.
-  -- We rotate LEFT by tail_ptr, then reverse (youngest = tail-1 → position 0).
-  --
-  -- Barrel rotate left by shift[2:0]:
-  --   Level 0 (shift[0]): conditionally shift by 1
-  --   Level 1 (shift[1]): conditionally shift by 2
-  --   Level 2 (shift[2]): conditionally shift by 4
-
   let barrel_l0 := mkWires "barrel_l0_" 8
   let barrel_l0_gates := (List.range 8).map fun i =>
-    -- If tail_ptr[0], take match[(i+1) mod 8]; else take match[i]
     Gate.mkMUX fwd_matches[i]! fwd_matches[(i+1) % 8]! tail_ptr[0]! barrel_l0[i]!
 
   let barrel_l1 := mkWires "barrel_l1_" 8
@@ -480,13 +615,7 @@ def mkStoreBuffer8 : Circuit :=
   let barrel_l2_gates := (List.range 8).map fun i =>
     Gate.mkMUX barrel_l1[i]! barrel_l1[(i+4) % 8]! tail_ptr[2]! barrel_l2[i]!
 
-  -- After rotate-left by tail_ptr: barrel_l2[k] = match[(k + tail) mod 8]
-  -- Entry at (tail-1) mod 8 is the youngest → it's at barrel_l2[(tail-1-tail+8) mod 8]
-  --   = barrel_l2[7]
   -- Reverse so youngest is at position 0:
-  -- reversed[j] = barrel_l2[7-j]
-  -- PriorityArbiter8 gives lowest-index priority, so reversed[0] = youngest gets highest priority.
-
   let arb_requests := mkWires "arb_req_" 8
   let arb_request_gates := (List.range 8).map fun j =>
     Gate.mkBUF barrel_l2[7-j]! arb_requests[j]!
@@ -506,7 +635,7 @@ def mkStoreBuffer8 : Circuit :=
   -- fwd_hit = arbiter has a valid selection
   let fwd_hit_gate := Gate.mkBUF arb_valid fwd_hit
 
-  -- fwd_committed_hit = OR of all committed matches (any committed entry matches address)
+  -- fwd_committed_hit = OR of all committed matches
   let fwd_committed_hit := Wire.mk "fwd_committed_hit"
   let fch_t0 := Wire.mk "fch_t0"
   let fch_t1 := Wire.mk "fch_t1"
@@ -525,9 +654,6 @@ def mkStoreBuffer8 : Circuit :=
   ]
 
   -- Step 3: Reverse-rotate the grant vector back to original entry indices.
-  -- The grant is in reversed-rotated domain. Un-reverse first:
-  -- unreversed[k] = arb_grants[7-k]
-  -- Then un-rotate (rotate RIGHT by tail_ptr):
   let unreversed := mkWires "unreversed_" 8
   let unreversed_gates := (List.range 8).map fun k =>
     Gate.mkBUF arb_grants[7-k]! unreversed[k]!
@@ -545,11 +671,7 @@ def mkStoreBuffer8 : Circuit :=
   let unrot_l2_gates := (List.range 8).map fun i =>
     Gate.mkMUX unrot_l1[i]! unrot_l1[(i + 8 - 4) % 8]! tail_ptr[2]! unrot_l2[i]!
 
-  -- unrot_l2 is a one-hot vector in the original entry domain.
   -- Convert one-hot to 3-bit binary for Mux8x32 selector:
-  -- sel[0] = grant[1] OR grant[3] OR grant[5] OR grant[7]
-  -- sel[1] = grant[2] OR grant[3] OR grant[6] OR grant[7]
-  -- sel[2] = grant[4] OR grant[5] OR grant[6] OR grant[7]
   let fwd_sel := mkWires "fwd_sel_" 3
   let oh2b_t0 := Wire.mk "oh2b_t0"
   let oh2b_t1 := Wire.mk "oh2b_t1"
@@ -558,15 +680,12 @@ def mkStoreBuffer8 : Circuit :=
   let oh2b_t4 := Wire.mk "oh2b_t4"
   let oh2b_t5 := Wire.mk "oh2b_t5"
   let oh2b_gates := [
-    -- sel[0] = OR(grant[1], grant[3], grant[5], grant[7])
     Gate.mkOR unrot_l2[1]! unrot_l2[3]! oh2b_t0,
     Gate.mkOR unrot_l2[5]! unrot_l2[7]! oh2b_t1,
     Gate.mkOR oh2b_t0 oh2b_t1 fwd_sel[0]!,
-    -- sel[1] = OR(grant[2], grant[3], grant[6], grant[7])
     Gate.mkOR unrot_l2[2]! unrot_l2[3]! oh2b_t2,
     Gate.mkOR unrot_l2[6]! unrot_l2[7]! oh2b_t3,
     Gate.mkOR oh2b_t2 oh2b_t3 fwd_sel[1]!,
-    -- sel[2] = OR(grant[4], grant[5], grant[6], grant[7])
     Gate.mkOR unrot_l2[4]! unrot_l2[5]! oh2b_t4,
     Gate.mkOR unrot_l2[6]! unrot_l2[7]! oh2b_t5,
     Gate.mkOR oh2b_t4 oh2b_t5 fwd_sel[2]!
@@ -592,7 +711,7 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[66+j]!))
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[64+j]!))
       )).flatten ++
       (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       (fwd_size.enum.map (fun ⟨j, w⟩ => (s!"out[{j}]", w)))
@@ -600,33 +719,29 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Dequeue Readout ===
 
-  -- Head entry valid/committed via 3-level MUX tree (8:1 mux for single bits)
-  let mkBitMux8 (entries : List (List Wire)) (bitIdx : Nat)
-      (sel : List Wire) (output : Wire) (pfx : String) : List Gate :=
-    -- Level 0: select between pairs using sel[0]
+  -- deq_valid = AND(head_valid, head_committed)
+  -- With proper valid bitmap, no stale entry check needed!
+  let head_valid := Wire.mk "head_valid"
+  let head_committed := Wire.mk "head_committed"
+
+  -- 8:1 mux for head valid/committed bits using head_ptr
+  let mkBitMux8 (bits : List Wire) (sel : List Wire) (output : Wire) (pfx : String) : List Gate :=
     let l0 := (List.range 4).map fun k =>
       let w := Wire.mk s!"{pfx}_l0_{k}"
-      let e0bit := entries[2*k]![bitIdx]!
-      let e1bit := entries[2*k+1]![bitIdx]!
-      (Gate.mkMUX e0bit e1bit sel[0]! w, w)
+      (Gate.mkMUX bits[2*k]! bits[2*k+1]! sel[0]! w, w)
     let l0_gates := l0.map Prod.fst
     let l0_outs := l0.map Prod.snd
-    -- Level 1: select between pairs using sel[1]
     let l1 := (List.range 2).map fun k =>
       let w := Wire.mk s!"{pfx}_l1_{k}"
       (Gate.mkMUX l0_outs[2*k]! l0_outs[2*k+1]! sel[1]! w, w)
     let l1_gates := l1.map Prod.fst
     let l1_outs := l1.map Prod.snd
-    -- Level 2: final select using sel[2]
     let final := Gate.mkMUX l1_outs[0]! l1_outs[1]! sel[2]! output
     l0_gates ++ l1_gates ++ [final]
 
-  let head_valid := Wire.mk "head_valid"
-  let head_committed := Wire.mk "head_committed"
-  let head_valid_gates := mkBitMux8 all_entry_cur 0 head_ptr head_valid "hv"
-  let head_committed_gates := mkBitMux8 all_entry_cur 1 head_ptr head_committed "hc"
+  let head_valid_gates := mkBitMux8 valid head_ptr head_valid "hv"
+  let head_committed_gates := mkBitMux8 committed head_ptr head_committed "hc"
 
-  -- deq_valid = AND(head_valid, head_committed)
   let deq_valid_gate := Gate.mkAND head_valid head_committed deq_valid
 
   -- Dequeue data readout via Mux8x32 (address)
@@ -636,7 +751,7 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[2+j]!))
+        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       ((List.range 32).map (fun j => (s!"out[{j}]", deq_bits[j]!)))
@@ -649,7 +764,7 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[34+j]!))
+        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[32+j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       ((List.range 32).map (fun j => (s!"out[{j}]", deq_bits[32+j]!)))
@@ -662,7 +777,7 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[66+j]!))
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[64+j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       ((List.range 2).map (fun j => (s!"out[{j}]", deq_bits[64+j]!)))
@@ -673,7 +788,7 @@ def mkStoreBuffer8 : Circuit :=
   let all_inputs :=
     [clock, reset, zero, one] ++
     [enq_en] ++ enq_address ++ enq_data ++ enq_size ++
-    [commit_en] ++ commit_idx ++
+    [commit_en] ++
     [deq_ready] ++
     fwd_address ++
     [flush_en]
@@ -684,8 +799,11 @@ def mkStoreBuffer8 : Circuit :=
     [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
-    [combined_reset_gate, full_gate] ++ empty_gates ++ enq_idx_gates ++
+    [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
+    commit_gate_gates ++
+    bitmap_gates ++ surviving_gates ++
+    flush_count_gates ++ flush_tail_gates ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
     arb_request_gates ++ [fwd_hit_gate] ++ fwd_committed_hit_gates ++
@@ -694,7 +812,8 @@ def mkStoreBuffer8 : Circuit :=
     head_valid_gates ++ head_committed_gates
 
   let all_instances :=
-    [head_inst, tail_inst, count_inst, enq_dec_inst, commit_dec_inst] ++
+    [head_inst, tail_inst, count_inst, commit_ptr_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst] ++
+    valid_dff_insts ++ committed_dff_insts ++
     all_entry_instances ++
     [arb_inst, fwd_mux_inst, fwd_size_mux_inst] ++
     [deq_addr_mux_inst, deq_data_mux_inst, deq_size_mux_inst]
@@ -709,7 +828,7 @@ def mkStoreBuffer8 : Circuit :=
       { name := "enq_address_", width := 32, wires := enq_address },
       { name := "enq_data_", width := 32, wires := enq_data },
       { name := "enq_size_", width := 2, wires := enq_size },
-      { name := "commit_idx_", width := 3, wires := commit_idx },
+      { name := "commit_ptr_", width := 3, wires := commit_ptr },
       { name := "deq_bits_", width := 66, wires := deq_bits },
       { name := "fwd_address_", width := 32, wires := fwd_address },
       { name := "fwd_data_", width := 32, wires := fwd_data },
@@ -719,6 +838,8 @@ def mkStoreBuffer8 : Circuit :=
       { name := "tail_ptr_", width := 3, wires := tail_ptr },
       { name := "count_", width := 4, wires := count },
       { name := "enq_decode_", width := 8, wires := enq_decode },
+      { name := "commit_decode_", width := 8, wires := commit_decode },
+      { name := "flush_tail_load_", width := 3, wires := flush_tail_load },
       { name := "commit_decode_", width := 8, wires := commit_decode }
     ]
   }
