@@ -264,6 +264,9 @@ def mkRenameStage : Circuit :=
   let commit_archRd := (List.range 5).map (fun i => Wire.mk s!"commit_archRd_{i}")
   let commit_physRd := (List.range tagWidth).map (fun i => Wire.mk s!"commit_physRd_{i}")
   let commit_hasPhysRd := Wire.mk "commit_hasPhysRd"
+  -- commit_hasAllocSlot: true if the committed instruction consumed a counter slot
+  -- (i.e. hasPhysRd at allocation time, including branches with force_alloc)
+  let commit_hasAllocSlot := Wire.mk "commit_hasAllocSlot"
   let rs1_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs1_addr_{i}")
   let rs2_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs2_addr_{i}")
   let rs3_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs3_addr_{i}")
@@ -466,10 +469,54 @@ def mkRenameStage : Circuit :=
           (s!"dump_data_{i}_{j}", Wire.mk s!"srat_dump_{i}_{j}")))).flatten
   }
 
-  -- DFFs for speculative counter (no restore — counter must keep advancing to avoid
-  -- re-allocating live phys regs; only the RAT is restored on flush)
+  -- === Committed counter (tracks allocation counter at commit time) ===
+  -- Advances when a committed instruction consumed a counter slot (hasAllocSlot).
+  -- This includes branches (force_alloc) and rd-writing instructions.
+  -- On flush, the speculative counter is restored from committed counter's NEXT value.
+  let cctr := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_e{i}")
+  let cctr_raw_next := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_rn_e{i}")
+  let cctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_nx_e{i}")
+  let cctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"cctr_cy_e{i}")
+  let commit_alloc_advance := Wire.mk "commit_alloc_advance"
+  let cctr_adder_inner := (List.range tagWidth).map (fun i =>
+    [Gate.mkXOR (cctr[i]!) (cctr_carry[i]!) (cctr_raw_next[i]!),
+     Gate.mkAND (cctr[i]!) (cctr_carry[i]!) (cctr_carry[i + 1]!)])
+  let cctr_adder_gates :=
+    [Gate.mkAND commit_valid commit_hasAllocSlot commit_alloc_advance,
+     Gate.mkBUF commit_alloc_advance (cctr_carry[0]!)] ++ cctr_adder_inner.flatten
+  -- Skip counter=32 for committed counter (same logic as speculative)
+  let cctr_low_or1 := Wire.mk "cctr_lo1"
+  let cctr_low_or2 := Wire.mk "cctr_lo2"
+  let cctr_low_or3 := Wire.mk "cctr_lo3"
+  let cctr_low_any := Wire.mk "cctr_la"
+  let cctr_is_32 := Wire.mk "cctr_i32"
+  let cctr_skip_gates := [
+    Gate.mkOR cctr_raw_next[0]! cctr_raw_next[1]! cctr_low_or1,
+    Gate.mkOR cctr_low_or1 cctr_raw_next[2]! cctr_low_or2,
+    Gate.mkOR cctr_low_or2 cctr_raw_next[3]! cctr_low_or3,
+    Gate.mkOR cctr_low_or3 cctr_raw_next[4]! cctr_low_any,
+    Gate.mkNOT cctr_low_any (Wire.mk "cctr_ln"),
+    Gate.mkAND cctr_raw_next[5]! (Wire.mk "cctr_ln") cctr_is_32,
+    Gate.mkOR cctr_raw_next[0]! cctr_is_32 cctr_next[0]!,
+    Gate.mkBUF cctr_raw_next[1]! cctr_next[1]!,
+    Gate.mkBUF cctr_raw_next[2]! cctr_next[2]!,
+    Gate.mkBUF cctr_raw_next[3]! cctr_next[3]!,
+    Gate.mkBUF cctr_raw_next[4]! cctr_next[4]!,
+    Gate.mkBUF cctr_raw_next[5]! cctr_next[5]!
+  ]
+  let cctr_dff_gates := (List.range tagWidth).map (fun i =>
+    Gate.mkDFF (cctr_next[i]!) clock reset (cctr[i]!))
+
+  -- Speculative counter DFFs with flush restore from committed counter
+  -- On flush: restore to cctr (committed counter's registered value).
+  -- Using the registered value is correct because the flush cycle's concurrent commit
+  -- (if any) is for the instruction that CAUSED the flush, which already consumed
+  -- a speculative counter slot — the committed counter catches up at the next edge.
+  let ctr_flush_next := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_flush_next_{i}")
+  let ctr_flush_mux_gates := (List.range tagWidth).map (fun i =>
+    Gate.mkMUX (ctr_next[i]!) (cctr_next[i]!) flush_en (ctr_flush_next[i]!))
   let ctr_dff_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkDFF (ctr_next[i]!) clock reset (ctr[i]!))
+    Gate.mkDFF (ctr_flush_next[i]!) clock reset (ctr[i]!))
 
   -- old_rd_phys output = old_rd_raw (previous RAT mapping for rd)
   let old_rd_assign_gates := (List.range tagWidth).map (fun i =>
@@ -526,16 +573,18 @@ def mkRenameStage : Circuit :=
               [retire_valid] ++ retire_tag ++
               rd_tag4 ++
               [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd] ++
-              [force_alloc]
+              [force_alloc, commit_hasAllocSlot]
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
                rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             ctr_adder_gates ++ ctr_skip_gates ++ ctr_dff_gates ++
+             ctr_adder_gates ++ ctr_skip_gates ++
+             ctr_flush_mux_gates ++ ctr_dff_gates ++
              rd_phys_assign_gates ++
              old_rd_assign_gates ++ phys_out_gates ++
-             crat_we_gates
+             crat_we_gates ++
+             cctr_adder_gates ++ cctr_skip_gates ++ cctr_dff_gates
     instances := [rat_inst, crat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
     signalGroups := [

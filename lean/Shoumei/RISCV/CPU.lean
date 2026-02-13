@@ -1246,7 +1246,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
         if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)] ++
       ((List.range 5).map (fun i => (s!"commit_archRd_{i}", Wire.mk s!"rob_head_archRd_{i}"))) ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w))) ++
-      [("force_alloc", dispatch_is_branch)]
+      [("force_alloc", dispatch_is_branch),
+       ("commit_hasAllocSlot",
+        if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")]
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1467,7 +1469,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        ("commit_hasPhysRd", Wire.mk "rob_head_is_fp")] ++
       ((List.range 5).map (fun i => (s!"commit_archRd_{i}", Wire.mk s!"rob_head_archRd_{i}"))) ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w))) ++
-      [("force_alloc", zero)]  -- FP rename doesn't need branch tracking
+      [("force_alloc", zero),  -- FP rename doesn't need branch tracking
+       ("commit_hasAllocSlot", Wire.mk "rob_head_is_fp")]  -- same as commit_hasPhysRd for FP
   }
 
   -- Mask dest_tag to 0 when no INT rd writeback (has_rd=0, rd=x0, or FP-only rd).
@@ -3657,7 +3660,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     if enableF then [
       Gate.mkAND retire_recycle_valid not_rob_head_is_fp int_retire_valid,
       Gate.mkAND retire_recycle_valid rob_head_is_fp fp_retire_recycle_valid,
-      Gate.mkAND rob_head_hasOldPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasPhysRd")
+      Gate.mkAND rob_head_hasOldPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasPhysRd"),
+      Gate.mkAND rob_head_hasPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasAllocSlot")
     ] else []
 
   -- === CROSS-DOMAIN DISPATCH STALLS ===
