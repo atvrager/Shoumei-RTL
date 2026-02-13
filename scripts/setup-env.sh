@@ -8,6 +8,11 @@
 # Idempotent — safe to run multiple times.
 set -euo pipefail
 
+# Only run in remote (web) sessions — skip on local CLI
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
+    exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
