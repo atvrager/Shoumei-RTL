@@ -6,7 +6,7 @@
 #   make sim-debug    - Build with TRACE_PIPELINE $display output
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
 #   make tests        - Build ELF test programs
-#   make riscv-tests  - Build upstream riscv-tests rv32ui ELFs
+#   make riscv-tests  - Build upstream riscv-tests rv32ui + rv32um ELFs
 #   make run-riscv-tests - Run riscv-tests through simulator
 #   make run-all-tests- Build sim + tests + riscv-tests, run all
 #   make cosim        - Build cosimulation binary (RTL + Spike + SystemC)
@@ -115,7 +115,7 @@ riscv-tests:
 
 run-riscv-tests: $(SIM_BIN) riscv-tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+	for elf in $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -139,7 +139,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -166,7 +166,7 @@ run-all-tests-xprop: $(SIM_XPROP_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-xprop.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_XPROP_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -226,7 +226,7 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(COSIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -250,7 +250,7 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 
 run-cosim: $(COSIM_3WAY_BIN) tests riscv-tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf; do \
+	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(COSIM_3WAY_BIN) +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \

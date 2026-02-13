@@ -157,7 +157,10 @@ def dividerStep (state : DividerState) : DividerState × Option (Fin 64 × UInt3
       -- DIV: negate quotient if signs of dividend and divisor differ
       -- REM: negate remainder if dividend was negative
       let needs_negate :=
-        if state.op == 4 then state.a_neg != state.b_neg  -- DIV: xor signs
+        if state.op == 4 then
+          -- DIV: negate if signs differ, but NOT on divide-by-zero
+          -- (div by zero must return -1 per RISC-V spec; raw quotient is already all-ones)
+          state.a_neg != state.b_neg && state.divisor != 0
         else if state.op == 6 then state.a_neg             -- REM: dividend sign
         else false                                          -- DIVU/REMU: no correction
       let result_val := if needs_negate then (0 : UInt32) - raw_result else raw_result
@@ -440,17 +443,29 @@ def mkDividerCircuit : Circuit :=
 
   -- ══════════════════════════════════════════════
   -- Restore/Keep MUX for remainder update
-  -- trial_negative = trial_diff[31] (MSB = sign bit of 2's complement result)
-  -- When trial >= 0 (MSB=0): keep subtracted value, quotient bit = 1
-  -- When trial < 0 (MSB=1): restore shifted value, quotient bit = 0
-  -- NOTE: Subtractor32's borrow output is hardcoded to 0 (KSA32 doesn't expose
-  -- carry-out), so we use the MSB of the difference instead. This is valid because
-  -- in restoring division the partial remainder is always < 2*divisor, so the
-  -- subtraction result fits in [-divisor, divisor-1] — MSB reliably indicates sign.
+  -- Proper unsigned borrow detection for trial subtraction (upper - divisor).
+  -- We cannot use trial_diff[31] alone as borrow indicator because it fails
+  -- when the divisor >= 2^31 (MSB set). Instead, use the identity:
+  --   borrow = (!a[31] & b[31]) | (!(a[31] ^ b[31]) & diff[31])
+  -- where a = trial_a (upper), b = div_q (divisor), diff = trial_diff.
+  -- no_borrow = !borrow = (upper >= divisor in unsigned)
   -- ══════════════════════════════════════════════
-  let trial_negative := trial_diff[31]!  -- MSB of trial subtraction result
   let no_borrow := Wire.mk "no_borrow"
-  let borrow_gates := [Gate.mkNOT trial_negative no_borrow]
+  let bw_msb_xor := Wire.mk "bw_msb_xor"       -- a[31] XOR b[31]
+  let bw_msb_xnor := Wire.mk "bw_msb_xnor"     -- !(a[31] XOR b[31])
+  let bw_not_a31 := Wire.mk "bw_not_a31"        -- !upper[31]
+  let bw_term1 := Wire.mk "bw_term1"            -- !a[31] & b[31]
+  let bw_term2 := Wire.mk "bw_term2"            -- xnor & diff[31]
+  let bw_borrow := Wire.mk "bw_borrow"          -- actual borrow
+  let borrow_gates := [
+    Gate.mkXOR (trial_a[31]!) (div_q[31]!) bw_msb_xor,
+    Gate.mkNOT bw_msb_xor bw_msb_xnor,
+    Gate.mkNOT (trial_a[31]!) bw_not_a31,
+    Gate.mkAND bw_not_a31 (div_q[31]!) bw_term1,
+    Gate.mkAND bw_msb_xnor (trial_diff[31]!) bw_term2,
+    Gate.mkOR bw_term1 bw_term2 bw_borrow,
+    Gate.mkNOT bw_borrow no_borrow
+  ]
 
   -- Updated remainder when busy:
   -- new_rem[i] for i in 0..31 = shifted_rem[i] (lower 32 bits unchanged)
@@ -656,15 +671,59 @@ def mkDividerCircuit : Circuit :=
   )
 
   -- ══════════════════════════════════════════════
+  -- Divide-by-zero detection
+  -- divisor_is_zero = NOR(div_q[0..31])
+  -- Per RISC-V spec, DIV/DIVU by zero returns -1 (all ones).
+  -- The algorithm naturally produces quotient=all-ones when divisor=0,
+  -- but sign correction would negate it for signed DIV with negative dividend.
+  -- We must bypass sign correction for the quotient on divide-by-zero.
+  -- ══════════════════════════════════════════════
+  let dz := makeIndexedWires "dz_or" 16   -- OR tree intermediate wires
+  let dz_l2 := makeIndexedWires "dz_l2" 8
+  let dz_l3 := makeIndexedWires "dz_l3" 4
+  let dz_l4 := makeIndexedWires "dz_l4" 2
+  let dz_l5 := Wire.mk "dz_l5"
+  let divisor_is_zero := Wire.mk "divisor_is_zero"
+
+  let divzero_gates :=
+    -- Level 1: 16 OR gates (pairs of div_q bits)
+    (List.range 16).map (fun i =>
+      Gate.mkOR (div_q[2*i]!) (div_q[2*i+1]!) (dz[i]!)
+    ) ++
+    -- Level 2: 8 OR gates
+    (List.range 8).map (fun i =>
+      Gate.mkOR (dz[2*i]!) (dz[2*i+1]!) (dz_l2[i]!)
+    ) ++
+    -- Level 3: 4 OR gates
+    (List.range 4).map (fun i =>
+      Gate.mkOR (dz_l2[2*i]!) (dz_l2[2*i+1]!) (dz_l3[i]!)
+    ) ++
+    -- Level 4: 2 OR gates
+    (List.range 2).map (fun i =>
+      Gate.mkOR (dz_l3[2*i]!) (dz_l3[2*i+1]!) (dz_l4[i]!)
+    ) ++
+    -- Level 5: final OR + invert
+    [Gate.mkOR (dz_l4[0]!) (dz_l4[1]!) dz_l5,
+     Gate.mkNOT dz_l5 divisor_is_zero]
+
+  -- ══════════════════════════════════════════════
   -- Result sign correction
   -- For signed ops (~op_q[0]):
   --   DIV (op_q[1]=0): negate if a_neg XOR b_neg
   --   REM (op_q[1]=1): negate if a_neg
   -- needs_negate = ~op_q[0] & (op_q[1] ? a_neg_q : (a_neg_q XOR b_neg_q))
+  --
+  -- Divide-by-zero override: when divisor=0, skip negation for quotient
+  -- results (DIV/DIVU) so that the raw all-ones quotient is returned as -1.
+  -- REM sign correction is left intact (it works correctly for div-by-zero).
   -- ══════════════════════════════════════════════
   let is_signed_op := Wire.mk "is_signed_op"
   let sign_xor := Wire.mk "sign_xor"       -- a_neg XOR b_neg (for DIV)
   let negate_sel := Wire.mk "negate_sel"    -- MUX(sign_xor, a_neg_q, op_q[1])
+  let raw_needs_negate := Wire.mk "raw_needs_negate"
+  let dz_is_quotient := Wire.mk "dz_is_quotient"  -- NOT(op_q[1]): quotient path
+  let dz_skip := Wire.mk "dz_skip"                -- divisor_is_zero AND quotient path
+  let not_dz_skip := Wire.mk "not_dz_skip"
   let needs_negate := Wire.mk "needs_negate"
 
   let sign_correct_ctrl := [
@@ -672,7 +731,12 @@ def mkDividerCircuit : Circuit :=
     Gate.mkXOR a_neg_q b_neg_q sign_xor,
     -- For DIV (bit1=0): use sign_xor. For REM (bit1=1): use a_neg_q
     Gate.mkMUX sign_xor a_neg_q (op_q[1]!) negate_sel,
-    Gate.mkAND is_signed_op negate_sel needs_negate
+    Gate.mkAND is_signed_op negate_sel raw_needs_negate,
+    -- Divide-by-zero bypass: skip negation for quotient when divisor is zero
+    Gate.mkNOT (op_q[1]!) dz_is_quotient,
+    Gate.mkAND divisor_is_zero dz_is_quotient dz_skip,
+    Gate.mkNOT dz_skip not_dz_skip,
+    Gate.mkAND raw_needs_negate not_dz_skip needs_negate
   ]
 
   -- Conditional negation of raw_result: result = raw XOR flag + flag
@@ -737,6 +801,7 @@ def mkDividerCircuit : Circuit :=
     op_dffs ++
     sign_dffs ++
     result_mux_gates ++
+    divzero_gates ++
     sign_correct_ctrl ++
     sign_correct_gates ++
     tag_out_gates ++
