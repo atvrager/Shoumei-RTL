@@ -449,6 +449,10 @@ structure CPUState (config : CPUConfig) where
   globalStall : Bool
   /-- Flush in progress (branch misprediction recovery) -/
   flushing : Bool
+  /-- FENCE.I draining: pipeline drain in progress for instruction fence -/
+  fenceIDraining : Bool
+  /-- PC of the FENCE.I instruction (for redirect to PC+4 after drain) -/
+  fenceIPC : UInt32
   /-- Cycle counter for simulation statistics -/
   cycleCount : Nat
 
@@ -497,6 +501,8 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
     insnQueue := InsnQueue.init
     globalStall := false
     flushing := false
+    fenceIDraining := false
+    fenceIPC := 0
     cycleCount := 0 }
 
 /-
@@ -507,7 +513,8 @@ Helper Functions for CPU State Queries
 def CPUState.isIdle (cpu : CPUState config) : Bool :=
   ROBState.isEmpty cpu.rob &&
   cpu.decode.decodedInstr.isNone &&
-  cpu.fetch.fetchedInstr.isNone
+  cpu.fetch.fetchedInstr.isNone &&
+  !cpu.fenceIDraining
 
 /-- Get current cycle count -/
 def CPUState.getCycleCount (cpu : CPUState config) : Nat :=
@@ -879,18 +886,61 @@ def cpuStep
           decodedInstr := decodedInstr
           pc := cpu.fetch.pc - 4 }  -- PC of instruction that was fetched last cycle
 
+  -- ========== FENCE.I SERIALIZATION FSM ==========
+  -- Detect FENCE.I in decoded instruction
+  let fenceIDetected := match decode'.decodedInstr with
+    | some di => di.opType == .FENCE_I
+    | none => false
+
+  -- FSM transitions:
+  -- idle + FENCE.I detected → draining (stall fetch, wait for ROB + SB empty)
+  -- draining + ROB empty + SB empty → complete (redirect fetch to PC+4, resume)
+  let robEmpty := rob_postDispatch.isEmpty
+  let sbEmpty := cpu.lsu.storeBuffer.isEmpty
+  let drainComplete := cpu.fenceIDraining && robEmpty && sbEmpty
+
+  let fenceIDraining' := if fenceIDetected && !cpu.fenceIDraining then
+    true   -- Start draining
+  else if drainComplete then
+    false  -- Drain complete, resume
+  else
+    cpu.fenceIDraining  -- Hold current state
+
+  let fenceIPC' := if fenceIDetected && !cpu.fenceIDraining then
+    decode'.pc  -- Capture PC of FENCE.I instruction
+  else
+    cpu.fenceIPC
+
+  -- When draining, suppress the FENCE.I from entering the pipeline
+  let decode_postFenceI := if fenceIDetected && !cpu.fenceIDraining then
+    -- Squash the decoded FENCE.I (don't let it enter rename/dispatch)
+    DecodeState.empty
+  else if cpu.fenceIDraining then
+    -- While draining, keep decode empty
+    DecodeState.empty
+  else
+    decode'
+
+  -- FENCE.I redirect: when drain completes, redirect fetch to FENCE.I PC + 4
+  let fenceIRedirect := if drainComplete then
+    some (cpu.fenceIPC + 4)
+  else
+    none
+
   -- ========== STAGE 1: FETCH ==========
-  let stall := globalStall_postFlush
-  -- Priority: branch redirect from execution > flush from commit
-  let branchRedirect := match branchRedirectTarget with
+  let stall := globalStall_postFlush || fenceIDraining'
+  -- Priority: FENCE.I redirect > branch redirect from execution > flush from commit
+  let branchRedirect := match fenceIRedirect with
     | some target => some target
-    | none => flushPC
+    | none => match branchRedirectTarget with
+      | some target => some target
+      | none => flushPC
   let fetch' := fetchStep cpu.fetch imem stall branchRedirect
 
   -- ========== ASSEMBLE FINAL STATE ==========
   { cpu with
     fetch := fetch'
-    decode := decode'
+    decode := decode_postFenceI
     rename := rename_postRename
     rsInteger := rsInteger_postDispatch
     rsMemory := rsMemory_postDispatch
@@ -903,6 +953,8 @@ def cpuStep
     fflags := fflags'
     globalStall := globalStall_postFlush
     flushing := flushPC.isSome
+    fenceIDraining := fenceIDraining'
+    fenceIPC := fenceIPC'
     cycleCount := cpu.cycleCount + 1 }
 
 /-! ## Structural Circuit Implementation -/

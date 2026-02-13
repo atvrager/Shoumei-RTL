@@ -25,7 +25,7 @@ def skipInstructions : List String :=
 
 /-- Extra instructions not in JSON but needed by the CPU (e.g., Zicsr) -/
 def extraInstructions : List String :=
-  ["CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"]
+  ["FENCE_I", "CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"]
 
 /-- Extension grouping for organizing the enum with comments -/
 structure ExtGroup where
@@ -109,9 +109,11 @@ def main : IO Unit := do
     out := out ++ s!"  -- {comment}\n"
     for n in names do
       out := out ++ s!"  | {n} : OpType\n"
-  -- Extra group
+  -- Extra groups
+  out := out ++ "  -- Zifencei: Instruction-Fetch Fence\n"
+  out := out ++ "  | FENCE_I : OpType\n"
   out := out ++ "  -- Zicsr: CSR Instructions\n"
-  for n in extraInstructions do
+  for n in ["CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"] do
     out := out ++ s!"  | {n} : OpType\n"
   out := out ++ "  deriving Repr, BEq, DecidableEq\n\n"
 

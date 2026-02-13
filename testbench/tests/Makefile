@@ -1,6 +1,6 @@
 RISCV_PREFIX ?= riscv32-unknown-elf-
 CC      = $(RISCV_PREFIX)gcc
-CFLAGS  = -march=rv32im -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
+CFLAGS  = -march=rv32im_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib
 TESTS   = pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test sltiu_test
 
@@ -12,7 +12,7 @@ GEN_INT_ELFS := $(GEN_INT_ASM:.S=.elf)
 GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 
 # F-extension tests need rv32imf
-CFLAGS_FP = -march=rv32imf -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
+CFLAGS_FP = -march=rv32imf_zifencei -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
 
 # NOTE: GEN_FP_ELFS excluded pending Zicsr support
 all: $(TESTS:=.elf) $(GEN_INT_ELFS)

@@ -120,7 +120,7 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   | .LB => "lb" | .LH => "lh" | .LW => "lw" | .LBU => "lbu" | .LHU => "lhu"
   | .SB => "sb" | .SH => "sh" | .SW => "sw"
   | .LUI => "lui" | .AUIPC => "auipc"
-  | .FENCE => "fence" | .ECALL => "ecall" | .EBREAK => "ebreak"
+  | .FENCE => "fence" | .FENCE_I => "fence.i" | .ECALL => "ecall" | .EBREAK => "ebreak"
   | .MUL => "mul" | .MULH => "mulh" | .MULHSU => "mulhsu" | .MULHU => "mulhu"
   | .DIV => "div" | .DIVU => "divu" | .REM => "rem" | .REMU => "remu"
   -- F extension

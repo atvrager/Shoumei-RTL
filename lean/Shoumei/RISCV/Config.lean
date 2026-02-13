@@ -22,6 +22,8 @@ structure CPUConfig where
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (future) -/
   enableZicsr : Bool := false
+  /-- Zifencei extension: instruction-fetch fence (FENCE.I) -/
+  enableZifencei : Bool := false
   /-- Number of MulDiv Reservation Station entries -/
   mulDivRSEntries : Nat := 4
   /-- Register width (32 for RV32, 64 for RV64) -/
@@ -46,7 +48,8 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableM then ["rv_m"] else []) ++
   (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
-  (if config.enableZicsr then ["rv_zicsr"] else [])
+  (if config.enableZicsr then ["rv_zicsr"] else []) ++
+  (if config.enableZifencei then ["rv_zifencei"] else [])
 
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
@@ -64,6 +67,9 @@ def rv32ifConfig : CPUConfig := { enableF := true }
 /-- RV32IMF configuration (M + F extensions enabled) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true }
 
+/-- RV32IMF + Zifencei configuration -/
+def rv32imfZifenceiConfig : CPUConfig :=
+  { enableM := true, enableF := true, enableZifencei := true }
 
 
 /-
@@ -102,7 +108,8 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let mExt := if cfg.enableM then "M" else ""
   let fExt := if cfg.enableF then "F" else ""
   let cExt := if cfg.enableC then "C" else ""
-  base ++ mExt ++ fExt ++ cExt
+  let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
+  base ++ mExt ++ fExt ++ cExt ++ zifencei
 
 /-- Compute the decoder instruction name list for a given config.
     Order matches the generated SV decoder enum: reverse alphabetical within
@@ -131,8 +138,12 @@ def CPUConfig.decoderInstrNames (config : CPUConfig) : List String :=
      "BLT", "BGEU", "BGE", "BEQ", "AUIPC", "ANDI", "AND",
      "ADDI", "ADD"]
   else rv32i
+  -- Zifencei: FENCE_I inserts between JAL and FENCE in reverse-alpha order
+  let base := if config.enableZifencei then
+    (im.map fun n => if n == "JAL" then ["JAL", "FENCE_I"] else [n]).flatten
+  else im
   -- For F extension: I (or I+M) first, then F appended
-  if config.enableF then im ++ rv_f else im
+  if config.enableF then base ++ rv_f else base
 
 /-- Find index of a name in the decoder instruction list -/
 private def findIdx (names : List String) (target : String) : Nat :=
