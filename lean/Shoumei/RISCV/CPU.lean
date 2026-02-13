@@ -1677,6 +1677,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- RS Integer
   let rs_int_alloc_ptr := makeIndexedWires "rs_int_alloc_ptr" 2
   let rs_int_grant := makeIndexedWires "rs_int_grant" 4
+  let ib_fifo_enq_ready := Wire.mk "ib_fifo_enq_ready"
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_dispatch_valid := Wire.mk "rs_int_dispatch_valid"
   let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 6
@@ -1690,7 +1691,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_int),
                 ("zero", zero), ("one", one), ("issue_en", dispatch_int_valid),
                 ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
-                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", one),
+                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", ib_fifo_enq_ready),
                 ("issue_full", rs_int_issue_full), ("dispatch_valid", rs_int_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by integer RS
                ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
@@ -2750,8 +2751,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else
       (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_enq_data[i]!)
 
-  -- FIFO output wires
-  let ib_fifo_enq_ready := Wire.mk "ib_fifo_enq_ready"
+  -- FIFO output wires (ib_fifo_enq_ready declared earlier near RS instances)
   let ib_fifo_deq_valid := Wire.mk "ib_fifo_deq_valid"
   let ib_fifo_deq := makeIndexedWires "ib_fifo_deq" 72
   let ib_fifo_drain := Wire.mk "ib_fifo_drain"
@@ -2960,11 +2960,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
     -- Gate committed hit with SB non-empty to ignore stale entries
     Gate.mkAND lsu_sb_fwd_committed_hit not_sb_empty fwd_committed_gated,
     Gate.mkBUF cross_size_any cross_size_stall,
-    Gate.mkNOT cross_size_stall mem_dispatch_en,
     Gate.mkNOT cross_size_stall not_cross_size_stall,
     -- Branch RS dispatch is suppressed when INT RS also dispatches (shared IB FIFO slot)
+    -- Also gated by IB FIFO enq_ready to prevent result loss when FIFO is full
     Gate.mkNOT rs_int_dispatch_valid not_int_dispatching,
-    Gate.mkAND not_cross_size_stall not_int_dispatching branch_dispatch_en,
+    Gate.mkAND not_cross_size_stall not_int_dispatching (Wire.mk "branch_dispatch_en_tmp"),
+    Gate.mkAND (Wire.mk "branch_dispatch_en_tmp") ib_fifo_enq_ready branch_dispatch_en,
     -- cross_size_uncommitted no longer used (all cross-size hits stall)
     Gate.mkNOT fwd_committed_gated not_fwd_committed_hit,
     Gate.mkAND cross_size_any not_fwd_committed_hit cross_size_uncommitted
@@ -3067,15 +3068,42 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_load_tag_reg := makeIndexedWires "dmem_load_tag_reg" 6
   let dmem_load_tag_next := makeIndexedWires "dmem_load_tag_next" 6
 
+  -- DMEM load pending: 1-cycle busy flag to prevent back-to-back DMEM loads.
+  -- The DMEM path has a single tag register, so a second load_no_fwd before
+  -- dmem_resp_valid would overwrite the first load's tag.
+  let dmem_load_pending := Wire.mk "dmem_load_pending"
+  let dmem_load_pending_next := Wire.mk "dmem_load_pending_next"
+  let not_dmem_load_pending := Wire.mk "not_dmem_load_pending"
+
   let load_no_fwd_base := Wire.mk "load_no_fwd_base"
   let load_no_fwd_gates := [
     Gate.mkNOT sb_fwd_hit_real not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
     -- Normal DMEM path: no real SB hit (gated by not_sb_empty)
     Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
-    -- With cross_size_stall, loads stall until the conflicting store drains from SB.
-    -- No need for cross_size_uncommitted path — load retries after store drain.
-    Gate.mkBUF load_no_fwd_base load_no_fwd
+    -- Gate by not_dmem_load_pending: only one DMEM load in flight at a time
+    -- (DMEM path has single tag register, back-to-back would overwrite first tag)
+    Gate.mkAND load_no_fwd_base not_dmem_load_pending load_no_fwd
+  ]
+
+  let dmem_pending_gates := [
+    -- Set on load_no_fwd, clear on dmem_resp_valid (or reset)
+    -- pending_next = load_no_fwd OR (pending AND NOT dmem_resp_valid)
+    Gate.mkNOT dmem_resp_valid (Wire.mk "not_dmem_resp_valid"),
+    Gate.mkAND dmem_load_pending (Wire.mk "not_dmem_resp_valid") (Wire.mk "dmem_pending_hold"),
+    Gate.mkOR load_no_fwd (Wire.mk "dmem_pending_hold") dmem_load_pending_next,
+    Gate.mkNOT dmem_load_pending not_dmem_load_pending
+  ]
+  let dmem_pending_inst : CircuitInstance :=
+    { moduleName := "DFlipFlop", instName := "u_dmem_load_pending",
+      portMap := [("d", dmem_load_pending_next), ("q", dmem_load_pending),
+                  ("clock", clock), ("reset", reset)] }
+
+  -- mem_dispatch_en: gate by both cross_size_stall and dmem_load_pending
+  let mem_dispatch_en_tmp := Wire.mk "mem_dispatch_en_tmp"
+  let mem_dispatch_en_gates := [
+    Gate.mkNOT cross_size_stall mem_dispatch_en_tmp,
+    Gate.mkAND mem_dispatch_en_tmp not_dmem_load_pending mem_dispatch_en
   ]
 
   -- DMEM metadata DFFs use CircuitInstance DFlipFlop with external `reset`
@@ -3358,7 +3386,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     ib_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++ fp_fifo_enq_assemble ++
     lsu_fifo_enq_assemble ++
     muldiv_fifo_dummy_gates ++ fp_fifo_dummy_gates ++
-    load_no_fwd_gates ++ dmem_tag_capture_gates ++
+    load_no_fwd_gates ++ dmem_pending_gates ++ mem_dispatch_en_gates ++
+    dmem_tag_capture_gates ++
     drain_priority_gates ++
     cdb_valid_gates ++ cdb_mux_gates ++ cdb_is_fp_rd_gates ++ cdb_reset_gates ++ cdb_domain_gates
 
@@ -3602,6 +3631,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let sb_commit_ptr_inc := makeIndexedWires "sb_commit_ptr_inc" 3
   let sb_commit_ptr_next := makeIndexedWires "sb_commit_ptr_next" 3
   let sb_commit_carry_0 := Wire.mk "sb_commit_carry_0"
+  let sb_commit_ptr_normal := makeIndexedWires "sb_commit_ptr_normal" 3
   let sb_commit_ptr_gates := [
     -- 3-bit incrementer: ptr + 1
     Gate.mkNOT sb_commit_ptr[0]! sb_commit_ptr_inc[0]!,
@@ -3609,7 +3639,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkAND sb_commit_ptr[0]! sb_commit_ptr[1]! sb_commit_carry_0,
     Gate.mkXOR sb_commit_ptr[2]! sb_commit_carry_0 sb_commit_ptr_inc[2]!
   ] ++ (List.range 3).map (fun i =>
-    Gate.mkMUX sb_commit_ptr[i]! sb_commit_ptr_inc[i]! commit_store_en sb_commit_ptr_next[i]!)
+    -- Normal: increment on commit_store_en, else hold
+    Gate.mkMUX sb_commit_ptr[i]! sb_commit_ptr_inc[i]! commit_store_en sb_commit_ptr_normal[i]!)
+  ++ (List.range 3).map (fun i =>
+    -- Flush override: reset to SB tail (new stores start here after flush clears uncommitted)
+    Gate.mkMUX sb_commit_ptr_normal[i]! lsu_sb_enq_idx[i]! pipeline_flush_comb sb_commit_ptr_next[i]!)
 
   let sb_commit_ptr_insts := (List.range 3).map (fun i =>
     { moduleName := "DFlipFlop", instName := s!"u_sb_commit_ptr_{i}",
@@ -3798,7 +3832,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   sb_commit_ptr_insts ++
                   rob_isStore_shadow_insts ++
                   redir_tag_cmp_insts ++ redir_target_shadow_insts ++
-                  dmem_tag_capture_insts ++ dmem_is_fp_insts ++
+                  [dmem_pending_inst] ++ dmem_tag_capture_insts ++ dmem_is_fp_insts ++
                   dmem_meta_capture_insts
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },

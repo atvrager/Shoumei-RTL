@@ -119,7 +119,7 @@ def StoreBufferState.enqueue
   else
     let newEntry : StoreBufferEntry := {
       valid := true
-      committed := true  -- Auto-commit on enqueue (simplified model)
+      committed := false  -- Speculative until ROB commits (redirect-from-commit)
       address := address
       data := data
       size := size
@@ -429,14 +429,14 @@ def mkStoreBuffer8 : Circuit :=
       Gate.mkMUX cur_valid one enq_we e_next[0]!
     ]
 
-    -- committed_next: MUX priority: enq (sets committed=1) > commit (sets=1) > hold
-    -- Auto-commit: stores are committed on SB enqueue (same as before).
-    -- The commit_we path is kept for future redirect-from-commit (Step 7).
-    -- With early redirect, pre-branch stores are always correct-path, so auto-commit is safe.
+    -- committed_next: MUX priority: enq (clears to 0) > commit (sets to 1) > hold
+    -- With redirect-from-commit, stores enter SB speculatively (committed=0).
+    -- Only ROB commit (via commit_we) marks them committed for DMEM drain.
+    -- Enqueue CLEARS committed to avoid stale committed=1 from prior entry reuse.
     let committed_mux1 := Wire.mk s!"e{i}_committed_mux1"
     let committed_gates := [
       Gate.mkMUX cur_committed one commit_we committed_mux1,  -- commit sets committed
-      Gate.mkMUX committed_mux1 one enq_we e_next[1]!         -- enq also sets committed
+      Gate.mkMUX committed_mux1 zero enq_we e_next[1]!        -- enq clears committed
     ]
 
     -- address_next: only changes on enq
