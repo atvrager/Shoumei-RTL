@@ -42,6 +42,15 @@ SPIKE_PREFIX ?= $(HOME)/.local/spike
 SPIKE_INC    := $(SPIKE_PREFIX)/include
 SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 
+# --------------------------------------------------------------------------
+# Unified ELF lists (single source of truth — add new ISA suites here)
+# --------------------------------------------------------------------------
+# NOTE: rv32uf (F-extension) tests disabled pending Zicsr support
+RISCV_TEST_GLOBS := $(TB_DIR)/riscv-tests/rv32ui-p-*.elf \
+                    $(TB_DIR)/riscv-tests/rv32um-p-*.elf
+
+CUSTOM_TEST_GLOBS := $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf
+
 # Auto-build Spike if missing (check for .so or .a)
 $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@echo "Spike not found at $(SPIKE_PREFIX), building from source..."
@@ -115,7 +124,7 @@ riscv-tests:
 
 run-riscv-tests: $(SIM_BIN) riscv-tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
+	for elf in $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -139,7 +148,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -166,7 +175,7 @@ run-all-tests-xprop: $(SIM_XPROP_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-xprop.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_XPROP_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -226,7 +235,7 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(COSIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
@@ -250,7 +259,7 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 
 run-cosim: $(COSIM_3WAY_BIN) tests riscv-tests
 	@pass=0; fail=0; total=0; \
-	for elf in $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf $(TB_DIR)/riscv-tests/rv32ui-p-*.elf $(TB_DIR)/riscv-tests/rv32um-p-*.elf; do \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		if $(COSIM_3WAY_BIN) +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
