@@ -291,10 +291,14 @@ def mkRenameStage : Circuit :=
   -- Old physical register mapping output (for ROB oldPhysRd tracking)
   let old_rd_phys := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_phys_{i}")
 
+  -- force_alloc: advance counter even for rd=x0 (branch tracking tags)
+  let force_alloc := Wire.mk "force_alloc"
+
   -- Internal signals
   let x0_detect := Wire.mk "x0_detect"
   let needs_alloc := Wire.mk "needs_alloc"
   let allocate_fire := Wire.mk "allocate_fire"
+  let counter_advance := Wire.mk "counter_advance"  -- counter increments on this
   let rat_we := Wire.mk "rat_we"
 
   -- Control logic gates
@@ -317,12 +321,18 @@ def mkRenameStage : Circuit :=
     Gate.mkAND has_rd not_x0 needs_alloc
   ]
 
-  -- allocate_fire = needs_alloc AND instr_valid
+  -- allocate_fire = needs_alloc AND instr_valid (RAT write + counter advance for rd!=x0)
+  let force_alloc_fire := Wire.mk "force_alloc_fire"
   let allocate_fire_gates := [
-    Gate.mkAND needs_alloc instr_valid allocate_fire
+    Gate.mkAND needs_alloc instr_valid allocate_fire,
+    -- force_alloc_fire = force_alloc AND instr_valid AND NOT(needs_alloc)
+    -- (only when force_alloc is set AND rd=x0, advance counter without RAT write)
+    Gate.mkAND force_alloc instr_valid force_alloc_fire,
+    -- counter_advance = allocate_fire OR force_alloc_fire
+    Gate.mkOR allocate_fire force_alloc_fire counter_advance
   ]
 
-  -- rat_we = allocate_fire (update RAT on successful allocation)
+  -- rat_we = allocate_fire (only write RAT for real rd != x0)
   let rat_we_gate := Gate.mkBUF allocate_fire rat_we
 
   -- stall = zero (counter-based allocation never stalls)
@@ -345,7 +355,7 @@ def mkRenameStage : Circuit :=
     [Gate.mkXOR (ctr[i]!) (ctr_carry[i]!) (ctr_raw_next[i]!),
      Gate.mkAND (ctr[i]!) (ctr_carry[i]!) (ctr_carry[i + 1]!)])
   let ctr_adder_gates :=
-    [Gate.mkBUF allocate_fire (ctr_carry[0]!)] ++ ctr_adder_inner.flatten
+    [Gate.mkBUF counter_advance (ctr_carry[0]!)] ++ ctr_adder_inner.flatten
   -- Skip counter=32 (0b100000) which would produce rd_phys=0
   -- Detect: bits 0-4 all zero AND bit 5 is one
   let ctr_low_or1 := Wire.mk "ctr_low_or1"
@@ -515,7 +525,8 @@ def mkRenameStage : Circuit :=
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag ++
               rd_tag4 ++
-              [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd]
+              [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd] ++
+              [force_alloc]
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
                rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
