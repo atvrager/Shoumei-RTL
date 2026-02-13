@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/setup-env.sh"
+          }
+        ]
+      }
+    ]
+  },
   "sandbox": {
     "enabled": true,
     "network": {
@@ -15,7 +28,11 @@
         "astral.sh",
         "static.lean-lang.org",
         "reservoir.lean-lang.org",
-        "leanprover-community.github.io"
+        "leanprover-community.github.io",
+        "*.scala-sbt.org",
+        "*.typesafe.com",
+        "*.scala-lang.org",
+        "releases.lean-lang.org"
       ]
     }
   }

@@ -349,6 +349,59 @@ def install_riscv_gcc():
         print_error("scripts/setup-riscv-toolchain.sh not found")
         print("Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases")
 
+def start_java_proxy_bridge():
+    """Start the Java proxy bridge if an authenticated proxy is detected.
+
+    Java's built-in HTTP client can't handle proxy auth via env vars.
+    The bridge listens on localhost:18080 (no auth) and forwards to the
+    upstream proxy with credentials, letting sbt/Coursier work normally.
+    """
+    print_step("Checking Java proxy bridge")
+
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY", "")
+    if not proxy_url or "@" not in proxy_url:
+        print_success("No authenticated proxy detected — bridge not needed")
+        return
+
+    bridge_port = int(os.environ.get("BRIDGE_PORT", "18080"))
+    bridge_script = Path("scripts/java-proxy-bridge.py")
+
+    if not bridge_script.exists():
+        print_warning("scripts/java-proxy-bridge.py not found — skipping")
+        return
+
+    # Check if already running
+    try:
+        result = run_command(
+            f'curl -s -o /dev/null -x "http://127.0.0.1:{bridge_port}" --max-time 2 https://repo1.maven.org/',
+            check=True, capture=True
+        )
+        print_success(f"Java proxy bridge already running on :{bridge_port}")
+    except (subprocess.CalledProcessError, Exception):
+        print_warning("Starting Java proxy bridge...")
+        proc = subprocess.Popen(
+            [sys.executable, str(bridge_script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        import time
+        time.sleep(1)
+        if proc.poll() is None:
+            print_success(f"Java proxy bridge started (PID {proc.pid}) on :{bridge_port}")
+        else:
+            print_warning("Java proxy bridge failed to start — sbt may not work through proxy")
+            return
+
+    # Set Java proxy env vars
+    java_opts = (
+        f"-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort={bridge_port} "
+        f"-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort={bridge_port}"
+    )
+    os.environ["JAVA_OPTS"] = java_opts
+    os.environ["SBT_OPTS"] = java_opts
+    print_success("JAVA_OPTS/SBT_OPTS configured for proxy bridge")
+
+
 def verify_build():
     """Verify the installation by running lake build"""
     print_step("Verifying installation with 'lake build'")
@@ -427,11 +480,17 @@ def main():
     parser = argparse.ArgumentParser(description="Shoumei RTL development environment setup")
     parser.add_argument("--check-only", action="store_true",
                         help="Only verify tools are present; do not install anything")
+    parser.add_argument("--start-proxy-bridge", action="store_true",
+                        help="Start the Java proxy bridge for sandbox environments")
     args = parser.parse_args()
 
     if args.check_only:
         ok = check_all_tools()
         sys.exit(0 if ok else 1)
+
+    if args.start_proxy_bridge:
+        start_java_proxy_bridge()
+        sys.exit(0)
 
     print(f"{Color.BOLD}Shoumei RTL - Development Environment Bootstrap{Color.RESET}")
     print("=" * 50)
@@ -460,7 +519,10 @@ def main():
     # Step 7: RISC-V cross-compiler
     install_riscv_gcc()
 
-    # Step 8: Verify with lake build
+    # Step 8: Java proxy bridge (for sandbox environments)
+    start_java_proxy_bridge()
+
+    # Step 9: Verify with lake build
     verify_build()
 
     # Final message
