@@ -2514,6 +2514,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
   let lsu_sb_deq_bits := makeIndexedWires "lsu_sb_deq_bits" 66
   let lsu_sb_enq_idx := makeIndexedWires "lsu_sb_enq_idx" 3
+  let lsu_sb_committed_tail := makeIndexedWires "lsu_sb_committed_tail" 3
 
   let lsu_inst : CircuitInstance := {
     moduleName := "LSU"
@@ -2539,7 +2540,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (lsu_sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_data_{i}", w))) ++
                (lsu_sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"sb_fwd_size_{i}", w))) ++
                (lsu_sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"sb_deq_bits_{i}", w))) ++
-               (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w)))
+               (lsu_sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"sb_enq_idx_{i}", w))) ++
+               (lsu_sb_committed_tail.enum.map (fun ⟨i, w⟩ => (s!"sb_committed_tail_{i}", w)))
   }
 
   -- === ROB ===
@@ -2940,25 +2942,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cross_size_any := Wire.mk "cross_size_any"
   let cross_size_uncommitted := Wire.mk "cross_size_uncommitted"
   let not_fwd_committed_hit := Wire.mk "not_fwd_committed_hit"
-  -- Gate fwd_committed_hit with NOT sb_empty to prevent stale-entry matching
-  -- after all stores have drained. Without dequeue clearing, old entries retain
-  -- valid=1 even after dequeue; sb_empty=1 means count=0 so no real entries exist.
-  let fwd_committed_gated := Wire.mk "fwd_committed_gated"
-  let not_sb_empty := Wire.mk "not_sb_empty"
-  -- Gate SB fwd hit with not_sb_empty: stale entries retain valid=1 after dequeue
-  -- (SB never clears valid on deq), so when sb_empty=1 any match is stale.
-  let sb_fwd_hit_real := Wire.mk "sb_fwd_hit_real"
+  -- With FIFO redesign, valid bits are properly cleared on dequeue.
+  -- No stale-entry gating needed — fwd_hit from SB is trustworthy.
   let load_fwd_gates := [
-    Gate.mkNOT lsu_sb_empty not_sb_empty,
-    Gate.mkAND lsu_sb_fwd_hit not_sb_empty sb_fwd_hit_real,
-    Gate.mkAND sb_fwd_hit_real rs_mem_dispatch_valid load_fwd_tmp,
+    Gate.mkAND lsu_sb_fwd_hit rs_mem_dispatch_valid load_fwd_tmp,
     Gate.mkAND load_fwd_tmp is_load load_fwd_tmp2,
     Gate.mkAND load_fwd_tmp2 fwd_size_ok load_fwd_valid,
     -- Cross-size detection: SB hit but size insufficient
     Gate.mkNOT fwd_size_ok not_fwd_size_ok,
     Gate.mkAND load_fwd_tmp2 not_fwd_size_ok cross_size_any,
-    -- Gate committed hit with SB non-empty to ignore stale entries
-    Gate.mkAND lsu_sb_fwd_committed_hit not_sb_empty fwd_committed_gated,
     Gate.mkBUF cross_size_any cross_size_stall,
     Gate.mkNOT cross_size_stall not_cross_size_stall,
     -- Branch RS dispatch is suppressed when INT RS also dispatches (shared IB FIFO slot)
@@ -2966,8 +2958,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkNOT rs_int_dispatch_valid not_int_dispatching,
     Gate.mkAND not_cross_size_stall not_int_dispatching (Wire.mk "branch_dispatch_en_tmp"),
     Gate.mkAND (Wire.mk "branch_dispatch_en_tmp") ib_fifo_enq_ready branch_dispatch_en,
-    -- cross_size_uncommitted no longer used (all cross-size hits stall)
-    Gate.mkNOT fwd_committed_gated not_fwd_committed_hit,
+    -- cross_size_uncommitted: SB hit, size mismatch, but not committed
+    Gate.mkNOT lsu_sb_fwd_committed_hit not_fwd_committed_hit,
     Gate.mkAND cross_size_any not_fwd_committed_hit cross_size_uncommitted
   ]
 
@@ -3077,9 +3069,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   let load_no_fwd_base := Wire.mk "load_no_fwd_base"
   let load_no_fwd_gates := [
-    Gate.mkNOT sb_fwd_hit_real not_sb_fwd_hit,
+    Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
-    -- Normal DMEM path: no real SB hit (gated by not_sb_empty)
+    -- Normal DMEM path: no SB hit
     Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
     -- Gate by not_dmem_load_pending: only one DMEM load in flight at a time
     -- (DMEM path has single tag register, back-to-back would overwrite first tag)
@@ -3642,8 +3634,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     -- Normal: increment on commit_store_en, else hold
     Gate.mkMUX sb_commit_ptr[i]! sb_commit_ptr_inc[i]! commit_store_en sb_commit_ptr_normal[i]!)
   ++ (List.range 3).map (fun i =>
-    -- Flush override: reset to SB tail (new stores start here after flush clears uncommitted)
-    Gate.mkMUX sb_commit_ptr_normal[i]! lsu_sb_enq_idx[i]! pipeline_flush_comb sb_commit_ptr_next[i]!)
+    -- Flush override: reset to committed tail (= head + popcount(committed), computed by SB)
+    Gate.mkMUX sb_commit_ptr_normal[i]! lsu_sb_committed_tail[i]! pipeline_flush_comb sb_commit_ptr_next[i]!)
 
   let sb_commit_ptr_insts := (List.range 3).map (fun i =>
     { moduleName := "DFlipFlop", instName := s!"u_sb_commit_ptr_{i}",

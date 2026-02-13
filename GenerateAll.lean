@@ -67,6 +67,7 @@ import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
+import Shoumei.Circuits.Combinational.Popcount
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.LSU
 
@@ -145,6 +146,7 @@ def allCircuits : List Circuit := [
   mkPriorityArbiter2,
   mkPriorityArbiter4,
   mkPriorityArbiter8,
+  mkPopcount8,  -- Phase 7: Store buffer flush recovery
 
   -- Phase 3: Queues and Registers
   mkQueueNStructural 2 8,
@@ -157,12 +159,14 @@ def allCircuits : List Circuit := [
   mkQueueRAM 64 32,
   mkQueuePointer 1,
   mkQueuePointer 2,
-  mkQueuePointer 3,  -- Phase 7: Store buffer head/tail pointers
+  mkQueuePointer 3,  -- Phase 7: Store buffer head pointer
+  mkQueuePointerLoadable 3,  -- Phase 7: Store buffer tail pointer (loadable for flush)
   mkQueuePointer 4,  -- Phase 6: ROB head/tail pointers
   mkQueuePointer 6,
   mkQueueCounterUpDown 2,
   mkQueueCounterUpDown 3,
   mkQueueCounterUpDown 4,  -- Phase 7: Store buffer entry count (0..8)
+  mkQueueCounterLoadable 4,  -- Phase 7: Store buffer loadable count (flush recovery)
   mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
   mkQueueCounterUpDown 7,
   -- Power-of-2 register building blocks (verified via LEC)
@@ -177,6 +181,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
   mkRegisterNHierarchical 24,  -- Phase 6: ROB entry storage (16+8)
+  mkRegisterNHierarchical 66,  -- Phase 7: Store buffer entry payload (32+32+2)
   mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
   mkRegister91Hierarchical,
 

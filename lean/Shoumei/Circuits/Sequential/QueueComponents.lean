@@ -335,4 +335,128 @@ def mkQueueCounterUpDownInit (width : Nat) (initVal : Nat) : Circuit :=
     ]
   }
 
+-- Loadable Up Counter with Enable and Wrap
+-- Like QueuePointer but with load_en/load_value to overwrite the pointer.
+-- Inputs: clock, reset, en, load_en, load_value[width-1:0]
+-- Outputs: count[width-1:0]
+-- Priority: load_en > en (load overrides increment)
+def mkQueuePointerLoadable (width : Nat) : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let en := Wire.mk "en"
+  let load_en := Wire.mk "load_en"
+  let load_value := (List.range width).map (fun i => Wire.mk s!"load_value_{i}")
+  let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
+
+  -- Constants
+  let one := Wire.mk "one"
+  let zero := Wire.mk "zero"
+
+  -- Increment logic: count + 1
+  let inc := (List.range width).map (fun i => Wire.mk s!"inc_{i}")
+  let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"c_{i}")
+  let add_cin_gate := Gate.mkBUF zero (carries[0]!)
+  let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
+  let adder_gates := buildFullAdderChain count one_vec carries inc "add_"
+
+  -- Mux chain: load_en ? load_value : (en ? inc : count)
+  let mux_en := (List.range width).map (fun i => Wire.mk s!"mux_en_{i}")
+  let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
+  let mux_gates := (List.range width).map (fun i =>
+    [Gate.mkMUX (count[i]!) (inc[i]!) en (mux_en[i]!),
+     Gate.mkMUX (mux_en[i]!) (load_value[i]!) load_en (next[i]!)]
+  ) |>.flatten
+
+  -- DFFs
+  let dff_gates := (List.range width).map (fun i =>
+    Gate.mkDFF (next[i]!) clock reset (count[i]!))
+
+  { name := s!"QueuePointerLoadable_{width}"
+    inputs := [clock, reset, en, load_en, one, zero] ++ load_value
+    outputs := count
+    gates := [add_cin_gate] ++ adder_gates ++ mux_gates ++ dff_gates
+    instances := []
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "load_value", width := width, wires := load_value },
+      { name := "inc", width := width, wires := inc },
+      { name := "next", width := width, wires := next }
+    ]
+  }
+
+-- Loadable Up/Down Counter with Enable
+-- Like QueueCounterUpDown but with load_en/load_value to overwrite.
+-- Inputs: clock, reset, inc, dec, load_en, load_value[width-1:0]
+-- Outputs: count[width-1:0]
+-- Priority: load_en > inc/dec
+def mkQueueCounterLoadable (width : Nat) : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let inc_en := Wire.mk "inc"
+  let dec_en := Wire.mk "dec"
+  let load_en := Wire.mk "load_en"
+  let load_value := (List.range width).map (fun i => Wire.mk s!"load_value_{i}")
+  let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
+
+  -- Constants
+  let one := Wire.mk "one"
+  let zero := Wire.mk "zero"
+
+  -- +1 Logic
+  let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
+  let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
+  let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
+  let add_cin_gate := Gate.mkBUF zero (c_plus[0]!)
+  let add_gates := buildFullAdderChain count one_vec c_plus val_plus "add_"
+
+  -- -1 Logic
+  let all_ones := (List.range width).map (fun _ => one)
+  let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
+  let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
+  let sub_cin_gate := Gate.mkBUF zero (c_minus[0]!)
+  let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
+
+  -- Mux Logic: inc/dec then load override
+  let next_normal := (List.range width).map (fun i => Wire.mk s!"next_normal_{i}")
+  let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
+  let do_inc := Wire.mk "do_inc"
+  let do_dec := Wire.mk "do_dec"
+  let not_dec := Wire.mk "not_dec"
+  let not_inc := Wire.mk "not_inc"
+
+  let ctrl_gates := [
+    Gate.mkNOT dec_en not_dec,
+    Gate.mkAND inc_en not_dec do_inc,
+    Gate.mkNOT inc_en not_inc,
+    Gate.mkAND dec_en not_inc do_dec
+  ]
+
+  let mux_gates := (List.range width).map (fun i =>
+    let m1 := Wire.mk s!"m1_{i}"
+    [
+      Gate.mkMUX (count[i]!) (val_minus[i]!) do_dec m1,
+      Gate.mkMUX m1 (val_plus[i]!) do_inc (next_normal[i]!),
+      Gate.mkMUX (next_normal[i]!) (load_value[i]!) load_en (next[i]!)
+    ]
+  ) |>.flatten
+
+  -- DFFs
+  let dff_gates := (List.range width).map (fun i =>
+    Gate.mkDFF (next[i]!) clock reset (count[i]!))
+
+  { name := s!"QueueCounterLoadable_{width}"
+    inputs := [clock, reset, inc_en, dec_en, load_en, one, zero] ++ load_value
+    outputs := count
+    gates := [add_cin_gate, sub_cin_gate] ++
+             add_gates ++ sub_gates ++ ctrl_gates ++ mux_gates ++ dff_gates
+    instances := []
+    signalGroups := [
+      { name := "count", width := width, wires := count },
+      { name := "load_value", width := width, wires := load_value },
+      { name := "plus", width := width, wires := val_plus },
+      { name := "minus", width := width, wires := val_minus },
+      { name := "next", width := width, wires := next }
+    ]
+  }
+
 end Shoumei.Circuits.Sequential
