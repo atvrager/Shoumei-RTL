@@ -249,10 +249,8 @@ def mkStoreBuffer8 : Circuit :=
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
-  -- Combined reset: OR(reset, flush_en) for full flush support
+  -- Flush enable: clears uncommitted entries only (committed stores survive)
   let flush_en := Wire.mk "flush_en"
-  let combined_reset := Wire.mk "combined_reset"
-  let combined_reset_gate := Gate.mkOR reset flush_en combined_reset
 
   -- === Enqueue Interface ===
   let enq_en := Wire.mk "enq_en"
@@ -313,11 +311,18 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Infrastructure Instances ===
 
+  -- Dequeue skip: advance head past invalid (flushed) entries
+  let not_head_valid := Wire.mk "not_head_valid"
+  let not_sb_empty_int := Wire.mk "not_sb_empty_int"
+  let head_skip := Wire.mk "head_skip"
+  let head_advance := Wire.mk "head_advance"
+  let count_dec := Wire.mk "count_dec"
+
   let head_inst : CircuitInstance := {
     moduleName := "QueuePointer_3"
     instName := "u_head"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("en", deq_fire),
+      [("clock", clock), ("reset", reset), ("en", head_advance),
        ("one", one), ("zero", zero)] ++
       (head_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -326,7 +331,7 @@ def mkStoreBuffer8 : Circuit :=
     moduleName := "QueuePointer_3"
     instName := "u_tail"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("en", enq_en),
+      [("clock", clock), ("reset", reset), ("en", enq_en),
        ("one", one), ("zero", zero)] ++
       (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -335,8 +340,8 @@ def mkStoreBuffer8 : Circuit :=
     moduleName := "QueueCounterUpDown_4"
     instName := "u_count"
     portMap :=
-      [("clock", clock), ("reset", combined_reset), ("inc", enq_en),
-       ("dec", deq_fire), ("one", one), ("zero", zero)] ++
+      [("clock", clock), ("reset", reset), ("inc", enq_en),
+       ("dec", count_dec), ("one", one), ("zero", zero)] ++
       (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
@@ -392,28 +397,42 @@ def mkStoreBuffer8 : Circuit :=
          ("gtu", Wire.mk s!"e{i}_cmp_gtu_unused")]
     }
 
+    -- Per-entry reset: reset OR (flush_en AND NOT committed)
+    -- Committed entries survive flush; uncommitted entries are cleared
+    let not_committed := Wire.mk s!"e{i}_not_committed"
+    let flush_uncommitted := Wire.mk s!"e{i}_flush_uncommitted"
+    let entry_reset := Wire.mk s!"e{i}_entry_reset"
+
     -- Register68 instance: entry storage
     let reg_inst : CircuitInstance := {
       moduleName := "Register68"
       instName := s!"u_entry{i}"
       portMap :=
         (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
-        [("clock", clock), ("reset", combined_reset)] ++
+        [("clock", clock), ("reset", entry_reset)] ++
         (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
+    -- Per-entry reset gates
+    let entry_reset_gates := [
+      Gate.mkNOT cur_committed not_committed,
+      Gate.mkAND flush_en not_committed flush_uncommitted,
+      Gate.mkOR reset flush_uncommitted entry_reset
+    ]
+
     -- === Next-State Logic ===
 
-    -- valid_next: enq sets valid, otherwise hold. Flush/reset via combined_reset
-    -- on Register68. Entries are NOT cleared on dequeue (they get overwritten by
-    -- future enqueues). Stale-entry matching is prevented by gating fwd_committed_hit
-    -- with NOT sb_empty in the CPU.
+    -- valid_next: enq sets valid, otherwise hold. Entry cleared by per-entry reset.
+    -- Entries are NOT cleared on dequeue (they get overwritten by future enqueues).
+    -- Stale-entry matching is prevented by gating fwd_committed_hit with NOT sb_empty.
     let valid_gates := [
       Gate.mkMUX cur_valid one enq_we e_next[0]!
     ]
 
-    -- committed_next: MUX priority: enq (sets committed=1) > commit (sets) > hold
-    -- Auto-commit on enqueue; wrong-path stores are blocked at sb_enq_en gate
+    -- committed_next: MUX priority: enq (sets committed=1) > commit (sets=1) > hold
+    -- Auto-commit: stores are committed on SB enqueue (same as before).
+    -- The commit_we path is kept for future redirect-from-commit (Step 7).
+    -- With early redirect, pre-branch stores are always correct-path, so auto-commit is safe.
     let committed_mux1 := Wire.mk s!"e{i}_committed_mux1"
     let committed_gates := [
       Gate.mkMUX cur_committed one commit_we committed_mux1,  -- commit sets committed
@@ -442,6 +461,7 @@ def mkStoreBuffer8 : Circuit :=
 
     -- Collect all per-entry gates
     let entry_gates :=
+      entry_reset_gates ++
       [enq_we_gate, commit_we_gate] ++
       valid_gates ++ committed_gates ++
       address_gates ++ data_gates ++ size_gates ++
@@ -626,8 +646,24 @@ def mkStoreBuffer8 : Circuit :=
   let head_valid_gates := mkBitMux8 all_entry_cur 0 head_ptr head_valid "hv"
   let head_committed_gates := mkBitMux8 all_entry_cur 1 head_ptr head_committed "hc"
 
-  -- deq_valid = AND(head_valid, head_committed)
-  let deq_valid_gate := Gate.mkAND head_valid head_committed deq_valid
+  -- deq_valid = AND(head_valid, head_committed, NOT(sb_empty))
+  -- Stale entries retain valid=1 after dequeue (valid is never cleared on deq).
+  -- Without the NOT(sb_empty) check, deq_valid would fire on stale entries,
+  -- causing continuous garbage writes to DMEM.
+  let deq_valid_tmp := Wire.mk "deq_valid_tmp"
+  let deq_valid_gate := Gate.mkAND head_valid head_committed deq_valid_tmp
+  let deq_valid_gate2 := Gate.mkAND deq_valid_tmp not_sb_empty_int deq_valid
+
+  -- Dequeue skip logic: advance head past invalid (flushed) entries
+  -- head_skip fires when head entry is invalid but SB is not empty,
+  -- causing head_ptr to advance and count to decrement without draining.
+  let deq_skip_gates := [
+    Gate.mkNOT head_valid not_head_valid,
+    Gate.mkNOT empty not_sb_empty_int,
+    Gate.mkAND not_head_valid not_sb_empty_int head_skip,
+    Gate.mkOR deq_fire head_skip head_advance,
+    Gate.mkOR deq_fire head_skip count_dec
+  ]
 
   -- Dequeue data readout via Mux8x32 (address)
   let deq_addr_mux_inst : CircuitInstance := {
@@ -684,8 +720,8 @@ def mkStoreBuffer8 : Circuit :=
     [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
-    [combined_reset_gate, full_gate] ++ empty_gates ++ enq_idx_gates ++
-    [deq_fire_gate, deq_valid_gate] ++
+    [full_gate] ++ empty_gates ++ enq_idx_gates ++
+    [deq_fire_gate, deq_valid_gate, deq_valid_gate2] ++ deq_skip_gates ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
     arb_request_gates ++ [fwd_hit_gate] ++ fwd_committed_hit_gates ++

@@ -608,24 +608,26 @@ def mkROB16 : Circuit :=
 
     -- === Next-State Logic ===
 
-    -- valid_next: MUX priority: clear > alloc > hold
-    -- sel=0:hold, sel=1:set → MUX(hold, set, condition)
+    -- valid_next: MUX priority: alloc > clear > hold
+    -- When alloc and clear hit the same entry simultaneously (ROB wrap-around),
+    -- the new allocation must win — the clear is for the old entry, alloc is for the new.
     let valid_mux1 := Wire.mk s!"e{i}_valid_mux1"
     let valid_gates := [
-      Gate.mkMUX cur_valid one alloc_we valid_mux1,    -- alloc sets valid
-      Gate.mkMUX valid_mux1 zero clear e_next[0]!      -- clear clears valid
+      Gate.mkMUX cur_valid zero clear valid_mux1,       -- clear clears valid
+      Gate.mkMUX valid_mux1 one alloc_we e_next[0]!     -- alloc sets valid (highest priority)
     ]
 
-    -- complete_next: MUX priority: clear > cdb > alloc > hold
+    -- complete_next: MUX priority: alloc > clear > cdb > hold
     -- On alloc: set complete = NOT(hasPhysRd) — stores/branches are immediately complete
+    -- When alloc and clear hit simultaneously (ROB wrap-around), alloc wins.
     let alloc_imm_complete := Wire.mk s!"e{i}_alloc_imm_complete"
     let comp_mux1 := Wire.mk s!"e{i}_comp_mux1"
     let comp_mux2 := Wire.mk s!"e{i}_comp_mux2"
     let complete_gates := [
       Gate.mkNOT alloc_hasPhysRd alloc_imm_complete,
-      Gate.mkMUX cur_complete alloc_imm_complete alloc_we comp_mux1,  -- alloc: complete if no physRd
-      Gate.mkMUX comp_mux1 one cdb_we comp_mux2,       -- CDB sets complete
-      Gate.mkMUX comp_mux2 zero clear e_next[1]!        -- clear clears complete
+      Gate.mkMUX cur_complete one cdb_we comp_mux1,       -- CDB sets complete
+      Gate.mkMUX comp_mux1 zero clear comp_mux2,          -- clear clears complete
+      Gate.mkMUX comp_mux2 alloc_imm_complete alloc_we e_next[1]!  -- alloc wins (highest priority)
     ]
 
     -- physRd_next: only changes on alloc
@@ -648,26 +650,26 @@ def mkROB16 : Circuit :=
     let archRd_gates := (List.range 5).map fun j =>
       Gate.mkMUX cur_archRd[j]! alloc_archRd[j]! alloc_we e_next[16+j]!
 
-    -- exception_next: MUX priority: clear > cdb > alloc > hold
+    -- exception_next: MUX priority: alloc > clear > cdb > hold
     let exc_mux1 := Wire.mk s!"e{i}_exc_mux1"
     let exc_mux2 := Wire.mk s!"e{i}_exc_mux2"
     let exception_gates := [
-      Gate.mkMUX cur_exception zero alloc_we exc_mux1,
-      Gate.mkMUX exc_mux1 cdb_exception cdb_we exc_mux2,
-      Gate.mkMUX exc_mux2 zero clear e_next[21]!
+      Gate.mkMUX cur_exception cdb_exception cdb_we exc_mux1,
+      Gate.mkMUX exc_mux1 zero clear exc_mux2,
+      Gate.mkMUX exc_mux2 zero alloc_we e_next[21]!   -- alloc clears exception (highest priority)
     ]
 
     -- isBranch_next: only changes on alloc
     let isBranch_gate :=
       Gate.mkMUX cur_isBranch alloc_isBranch alloc_we e_next[22]!
 
-    -- branchMispredicted_next: MUX priority: clear > cdb > alloc > hold
+    -- branchMispredicted_next: MUX priority: alloc > clear > cdb > hold
     let mis_mux1 := Wire.mk s!"e{i}_mis_mux1"
     let mis_mux2 := Wire.mk s!"e{i}_mis_mux2"
     let mispred_gates := [
-      Gate.mkMUX cur_mispred zero alloc_we mis_mux1,
-      Gate.mkMUX mis_mux1 cdb_mispredicted cdb_we mis_mux2,
-      Gate.mkMUX mis_mux2 zero clear e_next[23]!
+      Gate.mkMUX cur_mispred cdb_mispredicted cdb_we mis_mux1,
+      Gate.mkMUX mis_mux1 zero clear mis_mux2,
+      Gate.mkMUX mis_mux2 zero alloc_we e_next[23]!   -- alloc clears mispred (highest priority)
     ]
 
     -- Collect all per-entry gates

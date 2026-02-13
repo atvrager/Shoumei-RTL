@@ -1192,6 +1192,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
     [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_prf]
 
   let rob_commit_en := Wire.mk "rob_commit_en"
+  let commit_store_en := Wire.mk "commit_store_en"
+  let sb_commit_ptr := makeIndexedWires "sb_commit_ptr" 3
+  let rob_head_isStore := Wire.mk "rob_head_isStore"
   let rob_head_physRd := makeIndexedWires "rob_head_physRd" 6
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
   let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
@@ -1228,7 +1231,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
       (old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w))) ++
       (int_rename_rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
-      (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
+      (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
+      -- Committed RAT recovery
+      [("flush_en", zero),  -- Restore disabled: requires ROB partial flush (see MEMORY.md)
+       ("commit_valid", rob_commit_en),
+       ("commit_hasPhysRd",
+        if enableF then Wire.mk "int_commit_hasPhysRd" else Wire.mk "rob_head_hasPhysRd")] ++
+      ((List.range 5).map (fun i => (s!"commit_archRd_{i}", Wire.mk s!"rob_head_archRd_{i}"))) ++
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1442,7 +1452,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
       (fp_old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"old_rd_phys_out_{i}", w))) ++
       (fp_rs3_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
-      (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w)))
+      (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
+      -- Committed RAT recovery (FP uses same commit signals, filtered by is_fp)
+      [("flush_en", zero),  -- Restore disabled: requires ROB partial flush
+       ("commit_valid", rob_commit_en),
+       ("commit_hasPhysRd", Wire.mk "rob_head_is_fp")] ++
+      ((List.range 5).map (fun i => (s!"commit_archRd_{i}", Wire.mk s!"rob_head_archRd_{i}"))) ++
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w)))
   }
 
   -- Mask dest_tag to 0 when no INT rd writeback (has_rd=0, rd=x0, or FP-only rd).
@@ -2425,7 +2441,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     instName := "u_lsu"
     portMap := [("clock", clock), ("reset", reset),
                 ("zero", zero), ("one", one),
-                ("commit_store_en", rob_commit_en),
+                ("commit_store_en", commit_store_en),
                 ("deq_ready", dmem_req_ready),
                 ("flush_en", zero),
                 ("sb_enq_en", sb_enq_en),
@@ -2436,7 +2452,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
                (rs_mem_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
                ((makeIndexedWires "store_data_masked" 32).enum.map (fun ⟨i, w⟩ => (s!"store_data_{i}", w))) ++
-               ((makeIndexedWires "lsu_commit_idx" 3).enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
+               (sb_commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"commit_store_idx_{i}", w))) ++
                (mem_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_{i}", w))) ++
                ((makeIndexedWires "lsu_sb_enq_size" 2).enum.map (fun ⟨i, w⟩ => (s!"sb_enq_size_{i}", w))) ++
                (lsu_agu_address.enum.map (fun ⟨i, w⟩ => (s!"agu_address_{i}", w))) ++
@@ -2837,22 +2853,25 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- valid=1 even after dequeue; sb_empty=1 means count=0 so no real entries exist.
   let fwd_committed_gated := Wire.mk "fwd_committed_gated"
   let not_sb_empty := Wire.mk "not_sb_empty"
+  -- Gate SB fwd hit with not_sb_empty: stale entries retain valid=1 after dequeue
+  -- (SB never clears valid on deq), so when sb_empty=1 any match is stale.
+  let sb_fwd_hit_real := Wire.mk "sb_fwd_hit_real"
   let load_fwd_gates := [
-    Gate.mkAND lsu_sb_fwd_hit rs_mem_dispatch_valid load_fwd_tmp,
+    Gate.mkNOT lsu_sb_empty not_sb_empty,
+    Gate.mkAND lsu_sb_fwd_hit not_sb_empty sb_fwd_hit_real,
+    Gate.mkAND sb_fwd_hit_real rs_mem_dispatch_valid load_fwd_tmp,
     Gate.mkAND load_fwd_tmp is_load load_fwd_tmp2,
     Gate.mkAND load_fwd_tmp2 fwd_size_ok load_fwd_valid,
     -- Cross-size detection: SB hit but size insufficient
     Gate.mkNOT fwd_size_ok not_fwd_size_ok,
     Gate.mkAND load_fwd_tmp2 not_fwd_size_ok cross_size_any,
     -- Gate committed hit with SB non-empty to ignore stale entries
-    Gate.mkNOT lsu_sb_empty not_sb_empty,
     Gate.mkAND lsu_sb_fwd_committed_hit not_sb_empty fwd_committed_gated,
-    -- Only stall for COMMITTED cross-size entries (they'll drain to DMEM soon)
-    Gate.mkAND cross_size_any fwd_committed_gated cross_size_stall,
+    Gate.mkBUF cross_size_any cross_size_stall,
     Gate.mkNOT cross_size_stall mem_dispatch_en,
     Gate.mkNOT cross_size_stall not_cross_size_stall,
     Gate.mkBUF not_cross_size_stall branch_dispatch_en,
-    -- Uncommitted cross-size: skip SB, go to DMEM (DMEM has latest committed data)
+    -- cross_size_uncommitted no longer used (all cross-size hits stall)
     Gate.mkNOT fwd_committed_gated not_fwd_committed_hit,
     Gate.mkAND cross_size_any not_fwd_committed_hit cross_size_uncommitted
   ]
@@ -2956,12 +2975,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   let load_no_fwd_base := Wire.mk "load_no_fwd_base"
   let load_no_fwd_gates := [
-    Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
+    Gate.mkNOT sb_fwd_hit_real not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
-    -- Normal DMEM path: no SB hit at all
+    -- Normal DMEM path: no real SB hit (gated by not_sb_empty)
     Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
-    -- Also go to DMEM for uncommitted cross-size (SB hit but wrong size, uncommitted)
-    Gate.mkOR load_no_fwd_base cross_size_uncommitted load_no_fwd
+    -- With cross_size_stall, loads stall until the conflicting store drains from SB.
+    -- No need for cross_size_uncommitted path — load retries after store drain.
+    Gate.mkBUF load_no_fwd_base load_no_fwd
   ]
 
   -- DMEM metadata DFFs use CircuitInstance DFlipFlop with external `reset`
@@ -3286,6 +3306,60 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   let rob_fp_shadow_gates := rob_fp_shadow_write_gates ++ rob_fp_shadow_read_gates
 
+  -- === isStore SHADOW REGISTER ===
+  -- 16-entry DFF array parallel to ROB, tracking whether each entry is a store instruction
+  -- Written at ROB allocation with dispatch_is_store
+  -- Read at ROB commit to route commit_store_en to SB
+  let rob_isStore_shadow := (List.range 16).map (fun e =>
+    Wire.mk s!"rob_isStore_e{e}")
+
+  -- Shadow register write gates + DFF instances (4-bit equality match on rob_alloc_idx per entry)
+  -- Uses CircuitInstance DFlipFlop to avoid pipeline_reset_busy grouping (must survive flush)
+  let rob_isStore_shadow_results := (List.range 16).map (fun e =>
+      let match_bits := (List.range 4).map (fun b =>
+        if (e / (2 ^ b)) % 2 != 0 then rob_alloc_idx[b]!
+        else Wire.mk s!"rob_st_sd_n{e}_{b}")
+      let not_gates := (List.range 4).filterMap (fun b =>
+        if (e / (2 ^ b)) % 2 == 0 then
+          some (Gate.mkNOT rob_alloc_idx[b]! (Wire.mk s!"rob_st_sd_n{e}_{b}"))
+        else none)
+      let t01 := Wire.mk s!"rob_st_sd_t01_{e}"
+      let t012 := Wire.mk s!"rob_st_sd_t012_{e}"
+      let decoded := Wire.mk s!"rob_st_sd_dec_{e}"
+      let we := Wire.mk s!"rob_st_sd_we_{e}"
+      let next := Wire.mk s!"rob_st_sdnx_e{e}"
+      let gates := not_gates ++ [
+        Gate.mkAND match_bits[0]! match_bits[1]! t01,
+        Gate.mkAND t01 match_bits[2]! t012,
+        Gate.mkAND t012 match_bits[3]! decoded,
+        Gate.mkAND decoded rename_valid we,
+        Gate.mkMUX rob_isStore_shadow[e]! dispatch_is_store we next
+      ]
+      let inst : CircuitInstance := {
+        moduleName := "DFlipFlop", instName := s!"u_rob_isStore_dff_{e}",
+        portMap := [("d", next), ("q", rob_isStore_shadow[e]!),
+                    ("clock", clock), ("reset", reset)]
+      }
+      (gates, inst))
+  let rob_isStore_shadow_write_gates := (rob_isStore_shadow_results.map Prod.fst).flatten
+  let rob_isStore_shadow_insts := rob_isStore_shadow_results.map Prod.snd
+
+  -- Shadow register read: 16:1 mux tree using rob_head_idx
+  let rob_isStore_shadow_read_gates :=
+    let mux_l0_w := (List.range 8).map (fun i => Wire.mk s!"rob_st_rd_m0_{i}")
+    let mux_l0_g := (List.range 8).map (fun i =>
+      Gate.mkMUX rob_isStore_shadow[2*i]! rob_isStore_shadow[2*i+1]! rob_head_idx[0]! mux_l0_w[i]!)
+    let mux_l1_w := (List.range 4).map (fun i => Wire.mk s!"rob_st_rd_m1_{i}")
+    let mux_l1_g := (List.range 4).map (fun i =>
+      Gate.mkMUX mux_l0_w[2*i]! mux_l0_w[2*i+1]! rob_head_idx[1]! mux_l1_w[i]!)
+    let mux_l2_w := (List.range 2).map (fun i => Wire.mk s!"rob_st_rd_m2_{i}")
+    let mux_l2_g := (List.range 2).map (fun i =>
+      Gate.mkMUX mux_l1_w[2*i]! mux_l1_w[2*i+1]! rob_head_idx[2]! mux_l2_w[i]!)
+    mux_l0_g ++ mux_l1_g ++ mux_l2_g ++
+    [Gate.mkMUX mux_l2_w[0]! mux_l2_w[1]! rob_head_idx[3]! rob_head_isStore]
+
+  let rob_isStore_shadow_gates := rob_isStore_shadow_write_gates ++ rob_isStore_shadow_read_gates
+
   -- ROB old_rd_phys MUX: at dispatch, select FP or INT old_rd_phys for ROB storage
   -- When has_fp_rd, use fp_old_rd_phys; else use int old_rd_phys
   let rob_old_phys_mux_gates :=
@@ -3297,14 +3371,36 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- === COMMIT CONTROL ===
   let commit_gates := [
     Gate.mkAND rob_head_valid rob_head_complete rob_commit_en,
-    Gate.mkAND rob_commit_en rob_head_hasOldPhysRd retire_recycle_valid
+    Gate.mkAND rob_commit_en rob_head_hasOldPhysRd retire_recycle_valid,
+    -- Store commit: only commit SB entry when retiring a store instruction
+    Gate.mkAND rob_commit_en rob_head_isStore commit_store_en
   ]
 
+  -- SB commit pointer: 3-bit counter, increments when a store retires from ROB
+  let sb_commit_ptr_inc := makeIndexedWires "sb_commit_ptr_inc" 3
+  let sb_commit_ptr_next := makeIndexedWires "sb_commit_ptr_next" 3
+  let sb_commit_carry_0 := Wire.mk "sb_commit_carry_0"
+  let sb_commit_ptr_gates := [
+    -- 3-bit incrementer: ptr + 1
+    Gate.mkNOT sb_commit_ptr[0]! sb_commit_ptr_inc[0]!,
+    Gate.mkXOR sb_commit_ptr[1]! sb_commit_ptr[0]! sb_commit_ptr_inc[1]!,
+    Gate.mkAND sb_commit_ptr[0]! sb_commit_ptr[1]! sb_commit_carry_0,
+    Gate.mkXOR sb_commit_ptr[2]! sb_commit_carry_0 sb_commit_ptr_inc[2]!
+  ] ++ (List.range 3).map (fun i =>
+    Gate.mkMUX sb_commit_ptr[i]! sb_commit_ptr_inc[i]! commit_store_en sb_commit_ptr_next[i]!)
+
+  let sb_commit_ptr_insts := (List.range 3).map (fun i =>
+    { moduleName := "DFlipFlop", instName := s!"u_sb_commit_ptr_{i}",
+      portMap := [("d", sb_commit_ptr_next[i]!), ("q", sb_commit_ptr[i]!),
+                  ("clock", clock), ("reset", reset)] : CircuitInstance })
+
   -- FP retire routing: split retire_valid between INT and FP free lists
+  -- Also: committed RAT routing — INT commit when hasPhysRd AND NOT is_fp
   let fp_retire_gates :=
     if enableF then [
       Gate.mkAND retire_recycle_valid not_rob_head_is_fp int_retire_valid,
-      Gate.mkAND retire_recycle_valid rob_head_is_fp fp_retire_recycle_valid
+      Gate.mkAND retire_recycle_valid rob_head_is_fp fp_retire_recycle_valid,
+      Gate.mkAND rob_head_hasPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasPhysRd")
     ] else []
 
   -- === CROSS-DOMAIN DISPATCH STALLS ===
@@ -3422,7 +3518,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              (if enableF then fp_op_gates else []) ++
              cdb_fwd_gates ++ fwd_src1_data_gates ++ fwd_src2_data_gates ++
              alu_lut_gates ++ muldiv_lut_gates ++ cdb_tag_nz_gates ++ cdb_arb_gates ++
-             rob_fp_shadow_gates ++ rob_old_phys_mux_gates ++ fp_retire_gates ++
+             rob_fp_shadow_gates ++ rob_isStore_shadow_gates ++ rob_old_phys_mux_gates ++ fp_retire_gates ++
+             sb_commit_ptr_gates ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              int_imm_rf_we_gates ++ int_imm_rf_gates ++ int_imm_rf_sel_gates ++
              int_pc_rf_gates ++
@@ -3474,6 +3571,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   lsu_pipeline_insts ++
                   [pc_queue_inst, insn_queue_inst] ++
                   fflags_dff_instances ++
+                  sb_commit_ptr_insts ++
+                  rob_isStore_shadow_insts ++
                   dmem_tag_capture_insts ++ dmem_is_fp_insts ++
                   dmem_meta_capture_insts
     signalGroups :=

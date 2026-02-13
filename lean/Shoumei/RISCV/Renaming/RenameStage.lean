@@ -258,6 +258,12 @@ def mkRenameStage : Circuit :=
   let one := Wire.mk "one"
   let instr_valid := Wire.mk "instr_valid"
   let has_rd := Wire.mk "has_rd"
+  -- Committed RAT recovery inputs
+  let flush_en := Wire.mk "flush_en"
+  let commit_valid := Wire.mk "commit_valid"
+  let commit_archRd := (List.range 5).map (fun i => Wire.mk s!"commit_archRd_{i}")
+  let commit_physRd := (List.range tagWidth).map (fun i => Wire.mk s!"commit_physRd_{i}")
+  let commit_hasPhysRd := Wire.mk "commit_hasPhysRd"
   let rs1_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs1_addr_{i}")
   let rs2_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs2_addr_{i}")
   let rs3_addr := (List.range archAddrWidth).map (fun i => Wire.mk s!"rs3_addr_{i}")
@@ -363,10 +369,6 @@ def mkRenameStage : Circuit :=
     Gate.mkBUF ctr_raw_next[4]! ctr_next[4]!,
     Gate.mkBUF ctr_raw_next[5]! ctr_next[5]!
   ]
-  -- DFFs for counter (resets to 0; we add 32 by inverting bit 5 for rd_phys)
-  let ctr_dff_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkDFF (ctr_next[i]!) clock reset (ctr[i]!))
-
   -- rd_phys = counter + 32 (invert bit 5, pass bits 0-4 through)
   let rd_phys_assign_gates := (List.range tagWidth).map (fun i =>
     if i == 5 then Gate.mkNOT (ctr[i]!) (rd_phys[i]!)
@@ -379,8 +381,56 @@ def mkRenameStage : Circuit :=
   let freelist_deq_ready := Wire.mk "freelist_deq_ready"
   let freelist_ready_gate := Gate.mkBUF zero freelist_deq_ready  -- never dequeue
 
+  -- === COMMITTED RAT ===
+  -- Dump wires from committed RAT (32×6 = 192 wires)
+  let crat_dump := (List.range 32).map (fun i =>
+    (List.range tagWidth).map (fun j => Wire.mk s!"crat_dump_{i}_{j}"))
+
+  -- Committed RAT write enable: commit_valid AND commit_hasPhysRd AND (archRd != 0)
+  let crat_we := Wire.mk "crat_we"
+  let commit_rd_or_tree := (List.range 5).map (fun i => Wire.mk s!"commit_rd_or_{i}")
+  let commit_rd_is_x0 := Wire.mk "commit_rd_is_x0"
+  let commit_not_x0 := Wire.mk "commit_not_x0"
+  let commit_valid_hasRd := Wire.mk "commit_valid_hasRd"
+  let crat_we_gates :=
+    [Gate.mkOR commit_archRd[0]! commit_archRd[1]! commit_rd_or_tree[0]!] ++
+    (List.range 3).map (fun i =>
+      Gate.mkOR commit_rd_or_tree[i]! commit_archRd[i + 2]! commit_rd_or_tree[i + 1]!) ++
+    [Gate.mkNOT commit_rd_or_tree[3]! commit_rd_is_x0,
+     Gate.mkNOT commit_rd_is_x0 commit_not_x0,
+     Gate.mkAND commit_valid commit_hasPhysRd commit_valid_hasRd,
+     Gate.mkAND commit_valid_hasRd commit_not_x0 crat_we]
+
+  let crat_inst : CircuitInstance := {
+    moduleName := "RAT_32x6"
+    instName := "u_crat"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("write_en", crat_we)] ++
+      (commit_archRd.enum.map (fun ⟨i, w⟩ => (s!"write_addr_{i}", w))) ++
+      (commit_physRd.enum.map (fun ⟨i, w⟩ => (s!"write_data_{i}", w))) ++
+      -- Read ports unused (tied to zero)
+      ((List.range 5).map (fun i => (s!"rs1_addr_{i}", zero))) ++
+      ((List.range 5).map (fun i => (s!"rs2_addr_{i}", zero))) ++
+      ((List.range 5).map (fun i => (s!"rs3_addr_{i}", zero))) ++
+      -- Read outputs unconnected (use unique wire names)
+      ((List.range tagWidth).map (fun i => (s!"rs1_data_{i}", Wire.mk s!"crat_unused_rs1_{i}"))) ++
+      ((List.range tagWidth).map (fun i => (s!"rs2_data_{i}", Wire.mk s!"crat_unused_rs2_{i}"))) ++
+      ((List.range tagWidth).map (fun i => (s!"rs3_data_{i}", Wire.mk s!"crat_unused_rs3_{i}"))) ++
+      ((List.range tagWidth).map (fun i => (s!"old_rd_data_{i}", Wire.mk s!"crat_unused_old_{i}"))) ++
+      -- Committed RAT never restores (restore_en = zero)
+      [("restore_en", zero)] ++
+      ((List.range 32).map (fun i =>
+        (List.range tagWidth).map (fun j =>
+          (s!"restore_data_{i}_{j}", zero)))).flatten ++
+      -- Dump outputs: committed RAT state
+      ((List.range 32).map (fun i =>
+        (List.range tagWidth).map (fun j =>
+          (s!"dump_data_{i}_{j}", crat_dump[i]![j]!)))).flatten
+  }
+
   -- RAT instance (now with old_rd_data output for previous mapping)
   let old_rd_raw := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_raw_{i}")
+  -- Speculative RAT: restore from committed RAT on flush
   let rat_inst : CircuitInstance := {
     moduleName := "RAT_32x6"
     instName := "u_rat"
@@ -394,8 +444,22 @@ def mkRenameStage : Circuit :=
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_data_{i}", w))) ++
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rs2_data_{i}", w))) ++
       (rs3_phys.enum.map (fun ⟨i, w⟩ => (s!"rs3_data_{i}", w))) ++
-      (old_rd_raw.enum.map (fun ⟨i, w⟩ => (s!"old_rd_data_{i}", w)))
+      (old_rd_raw.enum.map (fun ⟨i, w⟩ => (s!"old_rd_data_{i}", w))) ++
+      -- Restore from committed RAT on flush
+      [("restore_en", flush_en)] ++
+      ((List.range 32).map (fun i =>
+        (List.range tagWidth).map (fun j =>
+          (s!"restore_data_{i}_{j}", crat_dump[i]![j]!)))).flatten ++
+      -- Dump outputs unused on speculative RAT
+      ((List.range 32).map (fun i =>
+        (List.range tagWidth).map (fun j =>
+          (s!"dump_data_{i}_{j}", Wire.mk s!"srat_dump_{i}_{j}")))).flatten
   }
+
+  -- DFFs for speculative counter (no restore — counter must keep advancing to avoid
+  -- re-allocating live phys regs; only the RAT is restored on flush)
+  let ctr_dff_gates := (List.range tagWidth).map (fun i =>
+    Gate.mkDFF (ctr_next[i]!) clock reset (ctr[i]!))
 
   -- old_rd_phys output = old_rd_raw (previous RAT mapping for rd)
   let old_rd_assign_gates := (List.range tagWidth).map (fun i =>
@@ -450,15 +514,18 @@ def mkRenameStage : Circuit :=
               rs1_addr ++ rs2_addr ++ rs3_addr ++ rd_addr ++
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag ++
-              rd_tag4
+              rd_tag4 ++
+              [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd]
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
                rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             ctr_adder_gates ++ ctr_skip_gates ++ ctr_dff_gates ++ rd_phys_assign_gates ++
-             old_rd_assign_gates ++ phys_out_gates
-    instances := [rat_inst, freelist_inst, physregfile_inst]
+             ctr_adder_gates ++ ctr_skip_gates ++ ctr_dff_gates ++
+             rd_phys_assign_gates ++
+             old_rd_assign_gates ++ phys_out_gates ++
+             crat_we_gates
+    instances := [rat_inst, crat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
     signalGroups := [
       { name := "rs1_addr", width := 5, wires := rs1_addr },
@@ -482,7 +549,9 @@ def mkRenameStage : Circuit :=
       { name := "rs3_phys", width := 6, wires := rs3_phys },
       { name := "rd_data3", width := 32, wires := rd_data3 },
       { name := "rd_tag4", width := 6, wires := rd_tag4 },
-      { name := "rd_data4", width := 32, wires := rd_data4 }
+      { name := "rd_data4", width := 32, wires := rd_data4 },
+      { name := "commit_archRd", width := 5, wires := commit_archRd },
+      { name := "commit_physRd", width := 6, wires := commit_physRd }
     ]
   }
 
