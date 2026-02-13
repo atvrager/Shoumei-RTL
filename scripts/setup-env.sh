@@ -83,10 +83,14 @@ if ! command -v gh &>/dev/null; then
     GH_VER="2.67.0"
     curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VER}/gh_${GH_VER}_linux_amd64.tar.gz" \
         -o /tmp/gh.tar.gz
-    cd /tmp && tar xzf gh.tar.gz && cp "gh_${GH_VER}_linux_amd64/bin/gh" /usr/local/bin/gh 2>/dev/null \
-        || cp "gh_${GH_VER}_linux_amd64/bin/gh" "$HOME/.local/bin/gh"
-    chmod +x /usr/local/bin/gh 2>/dev/null || chmod +x "$HOME/.local/bin/gh"
-    rm -rf /tmp/gh* && cd "$PROJECT_DIR"
+    tar xzf /tmp/gh.tar.gz -C /tmp
+    if ! cp "/tmp/gh_${GH_VER}_linux_amd64/bin/gh" /usr/local/bin/gh 2>/dev/null; then
+        cp "/tmp/gh_${GH_VER}_linux_amd64/bin/gh" "$HOME/.local/bin/gh"
+        chmod +x "$HOME/.local/bin/gh"
+    else
+        chmod +x /usr/local/bin/gh
+    fi
+    rm -rf /tmp/gh*
 fi
 _green "gh $(gh --version 2>&1 | head -1)"
 
