@@ -53,16 +53,25 @@ fi
 # ── Ensure submodules are initialized (worktrees don't inherit them) ─
 git -C "$REPO_ROOT" submodule update --init --quiet 2>/dev/null || true
 
-# ── Extra mounts for worktrees ────────────────────────────────────────
-# Worktrees need the main repo's .git dir mounted so gitdir pointers resolve.
-EXTRA_MOUNT_ARGS=()
+# ── Workspace mount strategy ──────────────────────────────────────────
+# Mount at the host's absolute path so git's internal absolute paths
+# (worktree gitdirs, submodule core.worktree) all resolve correctly.
+# This avoids the /workspaces/<name> vs /home/user/src/<name> mismatch.
+EXTRA_UP_ARGS=()
+
+# Always mount workspace at its host path for consistency
+EXTRA_UP_ARGS+=(--workspace-mount "type=bind,source=$REPO_ROOT,target=$REPO_ROOT")
+
 if [[ -n "$MAIN_WORKTREE" && "$MAIN_WORKTREE" != "$REPO_ROOT" ]]; then
-  MAIN_GIT_DIR="$MAIN_WORKTREE/.git"
-  EXTRA_MOUNT_ARGS+=(--mount "type=bind,source=$MAIN_GIT_DIR,target=$MAIN_GIT_DIR")
+  # Worktree: also mount main repo's .git for object store access
+  EXTRA_UP_ARGS+=(--mount "type=bind,source=$MAIN_WORKTREE/.git,target=$MAIN_WORKTREE/.git")
 fi
 
+# Disable auto git-root mount (conflicts with our explicit mount)
+EXTRA_UP_ARGS+=(--mount-workspace-git-root=false)
+
 # ── Ensure the container is running ──────────────────────────────────
-if ! devcontainer up --workspace-folder "$REPO_ROOT" "${EXTRA_MOUNT_ARGS[@]}" 2>&1 | tee /dev/stderr | grep -q '"outcome":"success"'; then
+if ! devcontainer up --workspace-folder "$REPO_ROOT" "${EXTRA_UP_ARGS[@]}" 2>&1 | tee /dev/stderr | grep -q '"outcome":"success"'; then
   echo "Error: devcontainer failed to start. See output above." >&2
   exit 1
 fi
