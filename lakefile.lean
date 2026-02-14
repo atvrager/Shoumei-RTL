@@ -104,6 +104,11 @@ lean_exe test_svv2 where
   root := `TestSVV2
   supportInterpreter := true
 
+-- Executable target for generating OpType enum from riscv-opcodes JSON
+lean_exe generate_optype where
+  root := `GenerateOpType
+  supportInterpreter := true
+
 -- Executable target for generating RISC-V test assembly (.S files)
 lean_exe gen_tests where
   root := `GenTests

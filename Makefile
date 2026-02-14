@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists
+.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -71,6 +71,11 @@ ifndef HAS_SBT
 	@echo "Or on macOS: brew install sbt"
 	@echo "Or on Ubuntu: see COMMANDS.md for detailed instructions"
 endif
+
+# Generate OpType enum from riscv-opcodes JSON
+generate-optype: opcodes
+	@echo "==> Generating OpType enum from riscv-opcodes..."
+	lake exe generate_optype
 
 # Build LEAN code
 lean:
