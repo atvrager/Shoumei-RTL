@@ -130,8 +130,17 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     )
   ) |>.flatten
 
+  -- Reset buffer tree: reduce fanout from 1→64 to 1→8→8
+  -- 8 leaf buffers, each driving 8 Register32 instances
+  let numResetLeaves := 8
+  let reset_leaves := (List.range numResetLeaves).map (fun i =>
+    Wire.mk s!"reset_buf_{i}")
+  let reset_buf_gates := (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF reset (reset_leaves[i]!))
+
   -- Storage instances: 64× Register32 (hierarchical, not inline DFFs)
   let storage_instances := (List.range numRegs).map (fun i =>
+    let reset_leaf := reset_leaves[i / 8]!  -- 8 regs per leaf buffer
     {
       moduleName := s!"Register{dataWidth}"
       instName := s!"u_reg_{i}"
@@ -140,8 +149,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
         (List.range dataWidth).map (fun j =>
           (s!"d[{j}]", getNext i j)
         ) ++
-        -- Connect clock and reset
-        [("clock", clock), ("reset", reset)] ++
+        -- Connect clock and reset (via buffered reset tree)
+        [("clock", clock), ("reset", reset_leaf)] ++
         -- Connect q outputs - use bracket notation for Cat grouping
         (List.range dataWidth).map (fun j =>
           (s!"q[{j}]", getReg i j)
@@ -200,7 +209,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
   { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
     inputs := [clock, reset, wr_en] ++ rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ wr_tag ++ wr_data
     outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4
-    gates := we_gates ++ write_mux_gates
+    gates := we_gates ++ reset_buf_gates ++ write_mux_gates
     instances := [decoder_inst] ++ storage_instances ++ [mux_rd1_inst, mux_rd2_inst, mux_rd3_inst, mux_rd4_inst]
     -- V2 codegen annotations
     signalGroups := [
