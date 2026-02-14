@@ -59,8 +59,8 @@ git -C "$REPO_ROOT" submodule update --init --quiet 2>/dev/null || true
 # This avoids the /workspaces/<name> vs /home/user/src/<name> mismatch.
 EXTRA_UP_ARGS=()
 
-# Always mount workspace at its host path for consistency
-EXTRA_UP_ARGS+=(--workspace-mount "type=bind,source=$REPO_ROOT,target=$REPO_ROOT")
+# Workspace mount is configured in devcontainer.json using ${localWorkspaceFolder}
+# so it mounts at the host's absolute path automatically.
 
 if [[ -n "$MAIN_WORKTREE" && "$MAIN_WORKTREE" != "$REPO_ROOT" ]]; then
   # Worktree: also mount main repo's .git for object store access
