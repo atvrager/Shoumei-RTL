@@ -417,6 +417,35 @@ def cpu_rv32imf_zifencei_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
+/-- CPU_RV32IM_Zicsr_Zifencei: RV32IM with Zicsr (CSR instructions) + Zifencei -/
+def cpu_rv32im_zicsr_zifencei_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IM_Zicsr_Zifencei"
+  dependencies := [
+    "MulDivRS4", "MulDivExecUnit",
+    "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
+/-- CPU_RV32IF_Zicsr_Zifencei: RV32IF with Zicsr (CSR instructions) + Zifencei -/
+def cpu_rv32if_zicsr_zifencei_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IF_Zicsr_Zifencei"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
+/-- CPU_RV32IMF_Zicsr_Zifencei: RV32IMF with Zicsr (CSR instructions) + Zifencei -/
+def cpu_rv32imf_zicsr_zifencei_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
+    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -480,7 +509,11 @@ def allCerts : List CompositionalCert := [
   cpu_rv32im_cert,
   -- Zifencei variants
   cpu_rv32im_zifencei_cert,
-  cpu_rv32imf_zifencei_cert
+  cpu_rv32imf_zifencei_cert,
+  -- Zicsr + Zifencei variants
+  cpu_rv32im_zicsr_zifencei_cert,
+  cpu_rv32if_zicsr_zifencei_cert,
+  cpu_rv32imf_zicsr_zifencei_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts
