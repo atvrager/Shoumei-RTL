@@ -71,30 +71,11 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
     let path := s!"{asap7OutputDir}/{c.name}.sv"
     IO.FS.writeFile path sv
 
--- Modules with known Chisel codegen limitations (FIRRTL false-positive comb cycles)
--- These are verified via SV LEC + compositional certs instead.
--- TODO: Fix FIRRTL false-positive combinational cycle detection for FPMisc/FPDivider.
---   FPExecUnit depends on FPMisc+FPDivider; F-variant CPUs depend on FPExecUnit.
---   (JVM method size limits and partial bus connections are now fixed.)
-private def chiselSkipList : List String :=
-  ["FPMisc", "FPDivider", "FPExecUnit",
-   "CPU_RV32IF", "CPU_RV32IMF",
-   "CPU_RV32IMF_Zifencei",
-   "CPU_RV32IF_Zicsr_Zifencei",
-   "CPU_RV32IMF_Zicsr_Zifencei"]
-
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
-  if chiselSkipList.contains c.name then
-    IO.println s!"  (skipping Chisel for {c.name} — verified via SV LEC)"
-    -- Remove stale Chisel file if it exists from a previous run
-    let stalePath := s!"chisel/src/main/scala/generated/{c.name}.scala"
-    if ← System.FilePath.pathExists stalePath then
-      IO.FS.removeFile stalePath
-  else
-    writeCircuitChisel c allCircuits
+  writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits
   writeCircuitASAP7 c allCircuits
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
