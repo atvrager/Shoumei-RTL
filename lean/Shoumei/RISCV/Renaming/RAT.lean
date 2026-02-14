@@ -127,6 +127,14 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let we_gates := (List.range numArchRegs).map (fun i =>
     Gate.mkAND write_en (write_sel[i]!) (we[i]!))
 
+  -- Reset buffer tree: reduce fanout from 1→192 to 1→8→24
+  -- 8 leaf buffers, each driving 4 arch regs × 6 bits = 24 DFFs
+  let numResetLeaves := 8
+  let reset_leaves := (List.range numResetLeaves).map (fun i =>
+    Wire.mk s!"reset_buf_{i}")
+  let reset_buf_gates := (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF reset (reset_leaves[i]!))
+
   -- Internal: Storage registers
   -- On write, reg[i] = we[i] ? write_data : reg[i] (hold)
   -- On reset, all DFFs reset to 0 (initialization done externally via write port)
@@ -140,6 +148,7 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let getDump (i j : Nat) : Wire := Wire.mk s!"dump_data_{i}_{j}"
 
   let storage_gates := (List.range numArchRegs).map (fun i =>
+    let reset_leaf := reset_leaves[i / 4]!  -- 4 arch regs per leaf buffer
     (List.range tagWidth).map (fun j =>
       let reg := getReg i j
       let next := getNext i j
@@ -149,8 +158,8 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
         Gate.mkMUX reg (write_data[j]!) (we[i]!) normal_next,
         -- Restore override: next = restore_en ? restore_data : normal_next
         Gate.mkMUX normal_next (restore_data[i]![j]!) restore_en next,
-        -- Storage DFF (resets to 0)
-        Gate.mkDFF next clock reset reg,
+        -- Storage DFF (reset via buffered reset tree)
+        Gate.mkDFF next clock reset_leaf reg,
         -- Dump output: write-through (bypass) so committed RAT dump
         -- reflects current-cycle writes combinationally
         Gate.mkBUF normal_next (getDump i j)
@@ -202,7 +211,7 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++ rs3_addr ++
               [restore_en] ++ restore_data.flatten
     outputs := rs1_data ++ rs2_data ++ rs3_data ++ old_rd_data ++ dump_data.flatten
-    gates := we_gates ++ storage_gates
+    gates := we_gates ++ reset_buf_gates ++ storage_gates
     instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_rs3_inst, mux_old_rd_inst]
     -- V2 codegen annotations
     signalGroups := [
