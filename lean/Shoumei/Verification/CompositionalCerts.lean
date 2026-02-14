@@ -397,6 +397,26 @@ def cpu_rv32im_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
+/-- CPU_RV32IM_Zifencei: RV32IM with Zifencei (FENCE.I drain FSM) -/
+def cpu_rv32im_zifencei_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IM_Zifencei"
+  dependencies := [
+    "MulDivRS4", "MulDivExecUnit",
+    "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
+/-- CPU_RV32IMF_Zifencei: RV32IMF with Zifencei (FENCE.I drain FSM) -/
+def cpu_rv32imf_zifencei_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zifencei"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
+    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -457,7 +477,10 @@ def allCerts : List CompositionalCert := [
   renameStage_cert,
   fetchStage_cert,
   cpu_rv32i_cert,
-  cpu_rv32im_cert
+  cpu_rv32im_cert,
+  -- Zifencei variants
+  cpu_rv32im_zifencei_cert,
+  cpu_rv32imf_zifencei_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

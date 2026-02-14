@@ -75,7 +75,7 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   -- Zicsr (CSR instructions routed to Integer unit)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => .Integer
   -- System
-  | .FENCE | .ECALL | .EBREAK => .System
+  | .FENCE | .FENCE_I | .ECALL | .EBREAK => .System
 
 /-- Check if an operation is a multiply (as opposed to divide) -/
 def isMulOp (op : OpType) : Bool :=

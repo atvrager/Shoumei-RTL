@@ -411,6 +411,11 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
     -- FENCE is a no-op in our simplified model (no memory reordering)
     .ok state.nextPC
 
+  | .FENCE_I =>
+    -- FENCE.I: in the behavioral model, a no-op (pipeline drain is structural).
+    -- The OoO pipeline handles this via serialize-then-flush in cpuStep.
+    .ok state.nextPC
+
   | .ECALL =>
     -- Environment call - return special result
     .ecall
@@ -428,6 +433,10 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
   | .FLW | .FSW =>
     .illegalInstruction  -- TODO: implement FP semantics
+
+  -- Zicsr: not yet implemented in behavioral semantics
+  | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI =>
+    .illegalInstruction  -- TODO: implement CSR semantics
 
 /-- Execute a full instruction fetch-decode-execute cycle -/
 def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResult :=

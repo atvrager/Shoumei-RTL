@@ -449,6 +449,10 @@ structure CPUState (config : CPUConfig) where
   globalStall : Bool
   /-- Flush in progress (branch misprediction recovery) -/
   flushing : Bool
+  /-- FENCE.I draining: pipeline drain in progress for instruction fence -/
+  fenceIDraining : Bool
+  /-- PC of the FENCE.I instruction (for redirect to PC+4 after drain) -/
+  fenceIPC : UInt32
   /-- Cycle counter for simulation statistics -/
   cycleCount : Nat
 
@@ -497,6 +501,8 @@ def CPUState.init (config : CPUConfig) : CPUState config :=
     insnQueue := InsnQueue.init
     globalStall := false
     flushing := false
+    fenceIDraining := false
+    fenceIPC := 0
     cycleCount := 0 }
 
 /-
@@ -507,7 +513,8 @@ Helper Functions for CPU State Queries
 def CPUState.isIdle (cpu : CPUState config) : Bool :=
   ROBState.isEmpty cpu.rob &&
   cpu.decode.decodedInstr.isNone &&
-  cpu.fetch.fetchedInstr.isNone
+  cpu.fetch.fetchedInstr.isNone &&
+  !cpu.fenceIDraining
 
 /-- Get current cycle count -/
 def CPUState.getCycleCount (cpu : CPUState config) : Nat :=
@@ -879,18 +886,61 @@ def cpuStep
           decodedInstr := decodedInstr
           pc := cpu.fetch.pc - 4 }  -- PC of instruction that was fetched last cycle
 
+  -- ========== FENCE.I SERIALIZATION FSM ==========
+  -- Detect FENCE.I in decoded instruction
+  let fenceIDetected := match decode'.decodedInstr with
+    | some di => di.opType == .FENCE_I
+    | none => false
+
+  -- FSM transitions:
+  -- idle + FENCE.I detected → draining (stall fetch, wait for ROB + SB empty)
+  -- draining + ROB empty + SB empty → complete (redirect fetch to PC+4, resume)
+  let robEmpty := rob_postDispatch.isEmpty
+  let sbEmpty := cpu.lsu.storeBuffer.isEmpty
+  let drainComplete := cpu.fenceIDraining && robEmpty && sbEmpty
+
+  let fenceIDraining' := if fenceIDetected && !cpu.fenceIDraining then
+    true   -- Start draining
+  else if drainComplete then
+    false  -- Drain complete, resume
+  else
+    cpu.fenceIDraining  -- Hold current state
+
+  let fenceIPC' := if fenceIDetected && !cpu.fenceIDraining then
+    decode'.pc  -- Capture PC of FENCE.I instruction
+  else
+    cpu.fenceIPC
+
+  -- When draining, suppress the FENCE.I from entering the pipeline
+  let decode_postFenceI := if fenceIDetected && !cpu.fenceIDraining then
+    -- Squash the decoded FENCE.I (don't let it enter rename/dispatch)
+    DecodeState.empty
+  else if cpu.fenceIDraining then
+    -- While draining, keep decode empty
+    DecodeState.empty
+  else
+    decode'
+
+  -- FENCE.I redirect: when drain completes, redirect fetch to FENCE.I PC + 4
+  let fenceIRedirect := if drainComplete then
+    some (cpu.fenceIPC + 4)
+  else
+    none
+
   -- ========== STAGE 1: FETCH ==========
-  let stall := globalStall_postFlush
-  -- Priority: branch redirect from execution > flush from commit
-  let branchRedirect := match branchRedirectTarget with
+  let stall := globalStall_postFlush || fenceIDraining'
+  -- Priority: FENCE.I redirect > branch redirect from execution > flush from commit
+  let branchRedirect := match fenceIRedirect with
     | some target => some target
-    | none => flushPC
+    | none => match branchRedirectTarget with
+      | some target => some target
+      | none => flushPC
   let fetch' := fetchStep cpu.fetch imem stall branchRedirect
 
   -- ========== ASSEMBLE FINAL STATE ==========
   { cpu with
     fetch := fetch'
-    decode := decode'
+    decode := decode_postFenceI
     rename := rename_postRename
     rsInteger := rsInteger_postDispatch
     rsMemory := rsMemory_postDispatch
@@ -903,6 +953,8 @@ def cpuStep
     fflags := fflags'
     globalStall := globalStall_postFlush
     flushing := flushPC.isSome
+    fenceIDraining := fenceIDraining'
+    fenceIPC := fenceIPC'
     cycleCount := cpu.cycleCount + 1 }
 
 /-! ## Structural Circuit Implementation -/
@@ -1026,6 +1078,32 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
   let fetch_stall := Wire.mk "fetch_stall"
   let rob_redirect_valid := Wire.mk "rob_redirect_valid"
+  -- === FENCE.I FSM ===
+  let fence_i_detected := Wire.mk "fence_i_detected"
+  let fence_i_draining := Wire.mk "fence_i_draining"
+  let fence_i_draining_next := Wire.mk "fence_i_draining_next"
+  let fence_i_start := Wire.mk "fence_i_start"
+  let fence_i_drain_complete := Wire.mk "fence_i_drain_complete"
+  let fence_i_suppress := Wire.mk "fence_i_suppress"
+  let fence_i_not_draining := Wire.mk "fence_i_not_draining"
+  let fence_i_redir_target := (List.range 32).map (fun i => Wire.mk s!"fencei_redir_e{i}")
+  let fence_i_redir_next := (List.range 32).map (fun i => Wire.mk s!"fencei_rnxt_e{i}")
+  -- fetch_pc + 4 for FENCE.I redirect target
+  let fence_i_pc_plus_4 := makeIndexedWires "fencei_pcp4" 32
+  let fence_i_const_4 := (List.range 32).map (fun i => Wire.mk s!"fencei_c4_e{i}")
+  let fence_i_const_4_gates := (List.range 32).map (fun i =>
+    if i == 2 then Gate.mkBUF one fence_i_const_4[i]!
+    else Gate.mkBUF zero fence_i_const_4[i]!)
+  let fence_i_adder_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder32"
+    instName := "u_fencei_pc_plus_4"
+    portMap :=
+      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (fence_i_const_4.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (fence_i_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+  }
+
   let rob_head_isBranch := Wire.mk "rob_head_isBranch"
   let rob_head_mispredicted := Wire.mk "rob_head_mispredicted"
   let rob_head_redirect_target := makeIndexedWires "rob_head_redirect_target" 32
@@ -1041,6 +1119,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "DFlipFlop"
     instName := s!"u_redirect_target_dff_{i}"
     portMap := [("d", branch_redirect_target[i]!), ("q", branch_redirect_target_reg[i]!),
+                ("clock", clock), ("reset", reset)]
+  })
+
+  -- FENCE.I FSM DFFs (use `reset`, not pipeline_reset, so they survive flushes)
+  let fence_i_draining_dff : CircuitInstance := {
+    moduleName := "DFlipFlop"
+    instName := "u_fence_i_draining_dff"
+    portMap := [("d", fence_i_draining_next), ("q", fence_i_draining),
+                ("clock", clock), ("reset", reset)]
+  }
+  let fence_i_redir_dffs : List CircuitInstance := (List.range 32).map (fun i => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_fencei_redir_dff_{i}"
+    portMap := [("d", fence_i_redir_next[i]!), ("q", fence_i_redir_target[i]!),
                 ("clock", clock), ("reset", reset)]
   })
 
@@ -1215,10 +1307,81 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let redirect_or_flush := Wire.mk "redirect_or_flush"
   let decode_valid_no_redirect := Wire.mk "decode_valid_no_redirect"
 
+  -- Forward-declare ROB/SB empty wires (needed by FENCE.I FSM, driven by instances below)
+  let rob_empty := Wire.mk "rob_empty"
+  let lsu_sb_empty := Wire.mk "lsu_sb_empty"
+
+  -- === FENCE.I detection and FSM gates ===
+  -- Match decode_optype against FENCE_I encoding from decoder
+  let fence_i_match := Wire.mk "fence_i_match"
+  let fence_i_detect_gates : List Gate :=
+    if config.enableZifencei then
+      let fenceIEnc := enc.fenceI
+      let bitWires := (List.range opcodeWidth).map fun b =>
+        if Nat.testBit fenceIEnc b then decode_optype[b]! else Wire.mk s!"fencei_n{b}"
+      let notGates := (List.range opcodeWidth).filterMap fun b =>
+        if !Nat.testBit fenceIEnc b then some (Gate.mkNOT decode_optype[b]! (Wire.mk s!"fencei_n{b}")) else none
+      -- Chain AND for opcodeWidth bits
+      let andGates := match opcodeWidth with
+        | 7 =>
+          let t01 := Wire.mk "fencei_t01"
+          let t23 := Wire.mk "fencei_t23"
+          let t45 := Wire.mk "fencei_t45"
+          let t0123 := Wire.mk "fencei_t0123"
+          let t456 := Wire.mk "fencei_t456"
+          [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+           Gate.mkAND bitWires[2]! bitWires[3]! t23,
+           Gate.mkAND bitWires[4]! bitWires[5]! t45,
+           Gate.mkAND t01 t23 t0123,
+           Gate.mkAND t45 bitWires[6]! t456,
+           Gate.mkAND t0123 t456 fence_i_match]
+        | _ =>
+          let t01 := Wire.mk "fencei_t01"
+          let t012 := Wire.mk "fencei_t012"
+          let t0123 := Wire.mk "fencei_t0123"
+          let t01234 := Wire.mk "fencei_t01234"
+          [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+           Gate.mkAND t01 bitWires[2]! t012,
+           Gate.mkAND t012 bitWires[3]! t0123,
+           Gate.mkAND t0123 bitWires[4]! t01234,
+           Gate.mkAND t01234 bitWires[5]! fence_i_match]
+      let dc_tmp := Wire.mk "fencei_dc_tmp"
+      let set_or := Wire.mk "fencei_set_or"
+      let not_dc := Wire.mk "fencei_not_dc"
+      notGates ++ andGates ++
+      [Gate.mkAND decode_valid fence_i_match fence_i_detected,
+       -- FSM logic
+       Gate.mkNOT fence_i_draining fence_i_not_draining,
+       Gate.mkAND fence_i_detected fence_i_not_draining fence_i_start,
+       -- drain_complete = draining AND rob_empty AND lsu_sb_empty
+       Gate.mkAND fence_i_draining rob_empty dc_tmp,
+       Gate.mkAND dc_tmp lsu_sb_empty fence_i_drain_complete,
+       -- draining_next = (fence_i_start OR fence_i_draining) AND NOT(drain_complete)
+       Gate.mkOR fence_i_start fence_i_draining set_or,
+       Gate.mkNOT fence_i_drain_complete not_dc,
+       Gate.mkAND set_or not_dc fence_i_draining_next,
+       -- suppress = start OR draining (gate decode_valid)
+       Gate.mkOR fence_i_start fence_i_draining fence_i_suppress] ++
+      -- Redirect target capture: MUX(fence_i_redir_target[i], fence_i_pc_plus_4[i], fence_i_start)
+      (List.range 32).map (fun i =>
+        Gate.mkMUX fence_i_redir_target[i]! fence_i_pc_plus_4[i]! fence_i_start fence_i_redir_next[i]!)
+    else
+      -- Zifencei disabled: tie everything low
+      [Gate.mkBUF zero fence_i_match,
+       Gate.mkBUF zero fence_i_detected,
+       Gate.mkBUF zero fence_i_start,
+       Gate.mkBUF zero fence_i_drain_complete,
+       Gate.mkBUF zero fence_i_draining_next,
+       Gate.mkBUF zero fence_i_suppress]
+
+  -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
+  let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
+
   -- pipeline_flush_comb = reset OR redirect_valid_reg (feeds flush DFFs)
   let flush_gate :=
     [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
-     Gate.mkOR global_stall pipeline_flush fetch_stall,
+     Gate.mkOR global_stall pipeline_flush fetch_stall_tmp,
+     Gate.mkOR fetch_stall_tmp fence_i_draining_next fetch_stall,
      -- Per-subsystem reset OR gates
      Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
      Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
@@ -1229,12 +1392,17 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkOR reset flush_busy pipeline_reset_busy,
      Gate.mkOR reset flush_misc pipeline_reset_misc]
 
+  let decode_valid_no_redir_raw := Wire.mk "decode_valid_no_redir_raw"
+  let not_fence_i_suppress := Wire.mk "not_fence_i_suppress"
   let dispatch_gates :=
     [Gate.mkNOT global_stall not_stall,
      Gate.mkOR rob_redirect_valid branch_redirect_valid_reg redirect_or,
      Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
      Gate.mkNOT redirect_or_flush not_redirecting,
-     Gate.mkAND decode_valid not_redirecting decode_valid_no_redirect,
+     Gate.mkAND decode_valid not_redirecting decode_valid_no_redir_raw,
+     -- Gate FENCE.I suppress: don't let FENCE.I (or anything during drain) enter pipeline
+     Gate.mkNOT fence_i_suppress not_fence_i_suppress,
+     Gate.mkAND decode_valid_no_redir_raw not_fence_i_suppress decode_valid_no_redirect,
      Gate.mkAND decode_valid_no_redirect not_stall decode_valid_rename,
      Gate.mkBUF decode_valid_rename dispatch_base_valid,
      Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
@@ -2455,15 +2623,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- Redirect now comes from ROB commit, not branch RS dispatch.
   -- branch_redirect_valid = rob_commit_en AND rob_head_isBranch AND rob_head_mispredicted
+  -- OR fence_i_drain_complete (FENCE.I redirect on drain completion)
   let rob_redirect_tmp := Wire.mk "rob_redirect_tmp"
+  let rob_redirect_branch := Wire.mk "rob_redirect_branch"
   let branch_redirect_gate := [
     Gate.mkAND rob_commit_en rob_head_isBranch rob_redirect_tmp,
-    Gate.mkAND rob_redirect_tmp rob_head_mispredicted rob_redirect_valid
+    Gate.mkAND rob_redirect_tmp rob_head_mispredicted rob_redirect_branch,
+    Gate.mkOR rob_redirect_branch fence_i_drain_complete rob_redirect_valid
   ]
 
-  -- Redirect target comes from shadow registers, not execute-stage target
+  -- Redirect target: MUX between branch redirect target and FENCE.I PC+4
+  -- When drain_complete, use fence_i_redir_target (which captured fetch_pc = FENCE.I PC + 4)
   let branch_target_wire_gates := (List.range 32).map (fun i =>
-    Gate.mkBUF rob_head_redirect_target[i]! branch_redirect_target[i]!)
+    Gate.mkMUX rob_head_redirect_target[i]! fence_i_redir_target[i]! fence_i_drain_complete branch_redirect_target[i]!)
 
   -- === LSU ===
   let lsu_agu_address := makeIndexedWires "lsu_agu_address" 32
@@ -3724,7 +3896,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
                fflags_acc
-    gates := flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+    gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
@@ -3759,7 +3931,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              commit_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates ++
              rvvi_fp_gates ++
              fflags_gates
-    instances := [fetch_inst, decoder_inst, rename_inst] ++
+    instances := [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
+                  [fetch_inst, decoder_inst, rename_inst] ++
                   (if enableF then [fp_rename_inst] else []) ++
                   [redirect_valid_dff_inst, flush_dff_dispatch] ++ flush_dff_insts ++
                   redirect_target_dff_insts ++

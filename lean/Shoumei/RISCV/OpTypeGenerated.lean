@@ -84,6 +84,8 @@ inductive OpType where
   | FSQRT_S : OpType
   | FSUB_S : OpType
   | FSW : OpType
+  -- Zifencei: Instruction-Fetch Fence
+  | FENCE_I : OpType
   -- Zicsr: CSR Instructions
   | CSRRW : OpType
   | CSRRS : OpType
@@ -109,8 +111,9 @@ instance : ToString OpType where
     | .FEQ_S => "FEQ_S" | .FLE_S => "FLE_S" | .FLT_S => "FLT_S" | .FLW => "FLW" | .FMADD_S => "FMADD_S"
     | .FMAX_S => "FMAX_S" | .FMIN_S => "FMIN_S" | .FMSUB_S => "FMSUB_S" | .FMUL_S => "FMUL_S" | .FMV_W_X => "FMV_W_X"
     | .FMV_X_W => "FMV_X_W" | .FNMADD_S => "FNMADD_S" | .FNMSUB_S => "FNMSUB_S" | .FSGNJN_S => "FSGNJN_S" | .FSGNJX_S => "FSGNJX_S"
-    | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .CSRRW => "CSRRW"
-    | .CSRRS => "CSRRS" | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
+    | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .FENCE_I => "FENCE_I"
+    | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI"
+    | .CSRRCI => "CSRRCI"
 
 /-- Parse OpType from instruction name (case-insensitive) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -189,6 +192,7 @@ def OpType.fromString (s : String) : Option OpType :=
   | "FSQRT_S" | "FSQRT.S" => some .FSQRT_S
   | "FSUB_S" | "FSUB.S" => some .FSUB_S
   | "FSW" => some .FSW
+  | "FENCE_I" => some .FENCE_I
   | "CSRRW" => some .CSRRW
   | "CSRRS" => some .CSRRS
   | "CSRRC" => some .CSRRC
@@ -208,7 +212,8 @@ def OpType.all : List OpType :=
    .FADD_S, .FCLASS_S, .FCVT_S_W, .FCVT_S_WU, .FCVT_WU_S, .FCVT_W_S, .FDIV_S, .FEQ_S, 
    .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S, .FMIN_S, .FMSUB_S, .FMUL_S, 
    .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S, .FSGNJX_S, .FSGNJ_S, .FSQRT_S, 
-   .FSUB_S, .FSW, .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, .CSRRCI]
+   .FSUB_S, .FSW, .FENCE_I, .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, 
+   .CSRRCI]
 
 /-- Get the index of an OpType in the canonical ordering -/
 def OpType.toIndex : OpType → Nat
@@ -286,12 +291,13 @@ def OpType.toIndex : OpType → Nat
   | .FSQRT_S => 71
   | .FSUB_S => 72
   | .FSW => 73
-  | .CSRRW => 74
-  | .CSRRS => 75
-  | .CSRRC => 76
-  | .CSRRWI => 77
-  | .CSRRSI => 78
-  | .CSRRCI => 79
+  | .FENCE_I => 74
+  | .CSRRW => 75
+  | .CSRRS => 76
+  | .CSRRC => 77
+  | .CSRRWI => 78
+  | .CSRRSI => 79
+  | .CSRRCI => 80
 
 /-- Get OpType from canonical index -/
 def OpType.ofIndex : Nat → Option OpType
@@ -369,12 +375,13 @@ def OpType.ofIndex : Nat → Option OpType
   | 71 => some .FSQRT_S
   | 72 => some .FSUB_S
   | 73 => some .FSW
-  | 74 => some .CSRRW
-  | 75 => some .CSRRS
-  | 76 => some .CSRRC
-  | 77 => some .CSRRWI
-  | 78 => some .CSRRSI
-  | 79 => some .CSRRCI
+  | 74 => some .FENCE_I
+  | 75 => some .CSRRW
+  | 76 => some .CSRRS
+  | 77 => some .CSRRC
+  | 78 => some .CSRRWI
+  | 79 => some .CSRRSI
+  | 80 => some .CSRRCI
   | _ => none
 
 /-- Resolve a name-based mapping to index-based mapping given a decoder's instruction list.

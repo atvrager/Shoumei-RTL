@@ -87,8 +87,8 @@ endif
 	lake build
 
 # Generate RISC-V instruction definitions from riscv-opcodes
-# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f)
-RISCV_EXTS ?= rv_i rv32_i rv_m rv_f
+# Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f rv_zifencei)
+RISCV_EXTS ?= rv_i rv32_i rv_m rv_f rv_zifencei
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
