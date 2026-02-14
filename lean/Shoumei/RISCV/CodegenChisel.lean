@@ -236,7 +236,7 @@ import chisel3.util._
 
   // Select appropriate immediate based on instruction format
   switch(opcode) {
-    is(\"b0010011\".U, \"b0000011\".U, \"b1100111\".U) { io_imm := immI }  // I-type
+    is(\"b0010011\".U, \"b0000011\".U, \"b1100111\".U, \"b1110011\".U) { io_imm := immI }  // I-type (incl. SYSTEM/CSR)
     is(\"b0100011\".U)                                 { io_imm := immS }  // S-type
     is(\"b1100011\".U)                                 { io_imm := immB }  // B-type
     is(\"b0110111\".U, \"b0010111\".U)                { io_imm := immU }  // U-type
@@ -247,8 +247,7 @@ import chisel3.util._
   io_has_rd := io_valid &&
     (opcode =/= \"b0100011\".U) &&  // not STORE
     (opcode =/= \"b1100011\".U) &&  // not BRANCH
-    (opcode =/= \"b0001111\".U) &&  // not FENCE
-    (opcode =/= \"b1110011\".U)" ++ fpNotStoreExtra ++ "     // not ECALL/EBREAK
+    (opcode =/= \"b0001111\".U)" ++ fpNotStoreExtra ++ "     // not FENCE (ECALL/EBREAK/MRET have rd=x0, caught above)
 
   io_is_integer := io_valid && (
     (opcode === \"b0110011\".U" ++ integerMuldivExclude ++ ") ||  // R-type

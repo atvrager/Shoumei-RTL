@@ -2,7 +2,7 @@ PROJECT_ROOT := $(shell git rev-parse --show-toplevel)
 
 # Physical Design Configuration
 # Override DESIGN_NAME via env: DESIGN_NAME=CPU_RV32I_synth make ...
-export DESIGN_NAME ?= CPU_RV32IMF_synth
+export DESIGN_NAME ?= CPU_RV32IMF_Zicsr_Zifencei_synth
 export PLATFORM    = asap7
 
 # CPU requires all submodule SV files (using Lean-generated SV for hierarchical design)
