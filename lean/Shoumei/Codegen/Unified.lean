@@ -82,6 +82,7 @@ private def chiselSkipList : List String :=
   ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
    "CPU_RV32I", "CPU_RV32IM", "CPU_RV32IF", "CPU_RV32IMF",
    "CPU_RV32IM_Zifencei", "CPU_RV32IMF_Zifencei",
+   "CPU_RV32IF_Zicsr_Zifencei",
    "CPU_RV32IM_Zicsr_Zifencei", "CPU_RV32IMF_Zicsr_Zifencei"]
 
 -- Write all output formats for a circuit
