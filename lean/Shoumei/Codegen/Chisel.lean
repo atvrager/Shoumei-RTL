@@ -864,9 +864,10 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                                         s!"{in0Ref}(i)"
                                       else
                                         in0Ref
+                      let in1Ref := wireRef ctx _c in1
                       let forLoop := joinLines [
                         s!"  {outRef} := Cat(",
-                        s!"    (0 until {bus.width}).reverse.map(i => {in0Access} {op} {in1.name})",
+                        s!"    (0 until {bus.width}).reverse.map(i => {in0Access} {op} {in1Ref})",
                         "  )"
                       ]
                       some forLoop
@@ -883,7 +884,8 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                         match g.inputs with
                         | [busIn, scalarIn] =>
                             let busRef := wireRef ctx _c busIn
-                            s!"{busRef} {op} {scalarIn.name}"
+                            let scalarRef := wireRef ctx _c scalarIn
+                            s!"{busRef} {op} {scalarRef}"
                         | _ => "false.B"
                       )
                       let catBody := String.intercalate ", " perBitExprs
@@ -906,9 +908,10 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                                         s!"{in1Ref}(i)"
                                       else
                                         in1Ref
+                      let in0Ref := wireRef ctx _c in0
                       let forLoop := joinLines [
                         s!"  {outRef} := Cat(",
-                        s!"    (0 until {bus.width}).reverse.map(i => {in0.name} {op} {in1Access})",
+                        s!"    (0 until {bus.width}).reverse.map(i => {in0Ref} {op} {in1Access})",
                         "  )"
                       ]
                       some forLoop
@@ -925,7 +928,8 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                         match g.inputs with
                         | [scalarIn, busIn] =>
                             let busRef := wireRef ctx _c busIn
-                            s!"{scalarIn.name} {op} {busRef}"
+                            let scalarRef := wireRef ctx _c scalarIn
+                            s!"{scalarRef} {op} {busRef}"
                         | _ => "false.B"
                       )
                       let catBody := String.intercalate ", " perBitExprs
@@ -1334,11 +1338,17 @@ def extractUnderscoreIndex (portName : String) : Option Nat :=
 def extractPortIndex (portName : String) : Option Nat :=
   extractBracketIndex portName |>.orElse (fun _ => extractUnderscoreIndex portName)
 
-/-- Check if a sub-module has a bus port with the given base name.
-    A bus port exists if the sub-module has a signal group (explicit or auto-detected
-    from internal wires) that matches the base name. This mirrors how mkContext builds
-    wireToGroup: explicit signalGroups + autoDetectSignalGroups on internal wires.
-    IO wires with _N suffixes alone don't count — they generate as individual Bool() ports. -/
+/-- Get the width of a sub-module's bus port, or 0 if not found -/
+def subModuleBusPortWidth (allCircuits : List Circuit) (moduleName : String) (baseName : String) : Nat :=
+  match allCircuits.find? (fun sc => sc.name == moduleName) with
+  | none => 0
+  | some subMod =>
+      let allGroups := subMod.signalGroups ++ autoDetectSignalGroups (findInternalWires subMod)
+      match allGroups.find? (fun sg => sg.name == baseName) with
+      | some sg => sg.width
+      | none => 0
+
+/-- Check if a sub-module has a bus port with the given base name. -/
 def subModuleHasBusPort (allCircuits : List Circuit) (moduleName : String) (baseName : String) : Bool :=
   match allCircuits.find? (fun sc => sc.name == moduleName) with
   | none => true  -- Unknown module: assume bus port exists (conservative)
@@ -1420,13 +1430,27 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
 
     if subModuleHasBusPort allCircuits inst.moduleName portBase then
       -- Sub-module has a bus port: single bus connection
+      -- Check for width mismatches between parent signal group and sub-module port
+      let parentSgWidth := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName) with
+        | some (_, sg) => sg.width
+        | none => entries.length
+      let subPortWidth := subModuleBusPortWidth allCircuits inst.moduleName portBase
+      let isPartial := entries.length < parentSgWidth
       if isInstanceInput then
         let sourceSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
         let sourceIsVec := match sourceSg with
           | some (_, sg) => needsVecDeclarationHelper ctx sg c
           | none => false
         let srcRef := if sourceIsVec then s!"{sgRef}.asUInt" else sgRef
-        [s!"  {inst.instName}.{portBase} := {srcRef}"]
+        -- For partial connections, slice the parent signal group to match entries
+        let slicedRef := if isPartial then
+                           s!"{srcRef}({entries.length - 1}, 0)"
+                         else srcRef
+        -- If sub-module port is wider than what we're providing, pad with zeros
+        let paddedRef := if subPortWidth > 0 && entries.length < subPortWidth then
+                           s!"{slicedRef}.pad({subPortWidth})"
+                         else slicedRef
+        [s!"  {inst.instName}.{portBase} := {paddedRef}"]
       else
         let receivingSg := ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName)
         let needsAsUInt := match receivingSg with
@@ -1464,11 +1488,19 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
         [s!"  {sgRef} := {catExpr}"]
   )
 
+  -- 5b. Collect port bases already handled by bus connections (to skip redundant standalone entries)
+  let busHandledPortBases := busGroups.map (fun (_, portBase, _) => portBase)
+
   -- 6. Group standalone entries by port base name (for bundled ports like alloc_oldPhysRd[0..5])
   --    Groups bracket notation (q[0], q[1]) and underscore notation (q_0, q_1) when
   --    the sub-module has a corresponding bus port with that base name.
+  --    Skip entries whose port base was already handled by a padded bus connection.
+  let standaloneFiltered := standaloneEntries.filter (fun (portName, _) =>
+    let portBase := extractPortBaseName portName
+    !busHandledPortBases.contains portBase
+  )
   let standaloneGrouped : List (String × List (String × Wire)) :=
-    standaloneEntries.foldl (fun acc (portName, wire) =>
+    standaloneFiltered.foldl (fun acc (portName, wire) =>
       -- Check if port name should be grouped (bracket notation or underscore bus port)
       let shouldGroup :=
         if portName.contains '[' then true
@@ -1526,10 +1558,21 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
         let portBaseForDir := extractPortBaseName portName
         let isInstanceInput := determinePortDirection ctx c allCircuits inst portBaseForDir wire
 
-        if isInstanceInput then
-          s!"  {inst.instName}.{chiselPortName} := {wireRefStr}"
+        -- Check if this single entry maps to a sub-module bus port (e.g., issue_opcode_5 → issue_opcode(5))
+        let isBusEntry := match extractUnderscoreIndex portName with
+          | some _ => subModuleHasBusPort allCircuits inst.moduleName portBaseForDir
+          | none => false
+        let chiselRef := if isBusEntry then
+          match extractPortIndex portName with
+          | some idx => s!"{inst.instName}.{portBaseForDir}({idx})"
+          | none => s!"{inst.instName}.{chiselPortName}"
         else
-          s!"  {wireRefStr} := {inst.instName}.{chiselPortName}"
+          s!"{inst.instName}.{chiselPortName}"
+
+        if isInstanceInput then
+          s!"  {chiselRef} := {wireRefStr}"
+        else
+          s!"  {wireRefStr} := {chiselRef}"
       )
   )
 
@@ -1716,6 +1759,92 @@ def generateRegisters (ctx : Context) (c : Circuit) (excludedWires : List String
     else
       result ++ "\n\n" ++ wiringsStr
 
+/-! ## Method Splitting for JVM 64KB Limit -/
+
+/-- Split code into statements respecting multi-line expressions (paren depth tracking) -/
+private def groupIntoStatements (lines : List String) : List String :=
+  let result := lines.foldl (init := (([] : List (List String)), (0 : Int)))
+    (fun acc line =>
+      let stmts := acc.1
+      let depth := acc.2
+      let openCount : Int := (line.toList.filter (· == '(')).length
+      let closeCount : Int := (line.toList.filter (· == ')')).length
+      let newDepth := depth + openCount - closeCount
+      if depth == 0 then
+        (stmts ++ [[line]], newDepth)
+      else
+        match stmts.reverse with
+        | cur :: rest => (((cur ++ [line]) :: rest).reverse, newDepth)
+        | [] => ([[line]], newDepth)
+    )
+  result.1.map (String.intercalate "\n")
+
+/-- Split a block of assignment-only code into Scala helper methods.
+    All lines must be `:=` assignments (no `val` declarations).
+    For blocks with `val` declarations, use splitMixedBlock instead. -/
+private def splitIntoHelperMethods (code : String) (pfx : String) (chunkSize : Nat := 300) : String :=
+  let lines := code.splitOn "\n" |>.filter (· != "")
+  if lines.length ≤ chunkSize then
+    code
+  else
+    let statements := groupIntoStatements lines
+    -- Chunk statements
+    let chunks := statements.foldl (init := #[#[]]) (fun acc stmt =>
+      let lastIdx := acc.size - 1
+      if acc[lastIdx]!.size < chunkSize then
+        acc.set! lastIdx (acc[lastIdx]!.push stmt)
+      else
+        acc.push #[stmt]
+    )
+    let lbrace := "{"
+    let rbrace := "}"
+    let helpers := chunks.toList.enum.map (fun (i, chunk) =>
+      let body := String.intercalate "\n" chunk.toList
+      s!"  private def _{pfx}_{i}(): Unit = {lbrace}\n{body}\n  {rbrace}"
+    )
+    let calls := chunks.toList.enum.map (fun (i, _) =>
+      s!"  _{pfx}_{i}()"
+    )
+    let helpersStr := String.intercalate "\n" helpers
+    let callsStr := String.intercalate "\n" calls
+    helpersStr ++ "\n" ++ callsStr
+
+/-- Split a block with mixed `val` declarations and `:=` assignments.
+    Keeps `val` declarations in the class body, moves assignments to helper methods. -/
+private def splitMixedBlock (code : String) (pfx : String) (chunkSize : Nat := 300) : String :=
+  let lines := code.splitOn "\n" |>.filter (· != "")
+  if lines.length ≤ chunkSize then
+    code
+  else
+    let statements := groupIntoStatements lines
+    -- Classify each statement: is it a val declaration?
+    let isValDecl (s : String) : Bool :=
+      let trimmed := (s.splitOn "\n").head?.getD "" |>.trimAsciiStart.toString
+      trimmed.startsWith "val "
+    let valDecls := statements.filter isValDecl
+    let assigns := statements.filter (fun s => !isValDecl s)
+    -- Chunk assignments into helper methods
+    let chunks := assigns.foldl (init := #[#[]]) (fun acc stmt =>
+      let lastIdx := acc.size - 1
+      if acc[lastIdx]!.size < chunkSize then
+        acc.set! lastIdx (acc[lastIdx]!.push stmt)
+      else
+        acc.push #[stmt]
+    )
+    let lbrace := "{"
+    let rbrace := "}"
+    let helpers := chunks.toList.enum.map (fun (i, chunk) =>
+      let body := String.intercalate "\n" chunk.toList
+      s!"  private def _{pfx}_{i}(): Unit = {lbrace}\n{body}\n  {rbrace}"
+    )
+    let calls := chunks.toList.enum.map (fun (i, _) =>
+      s!"  _{pfx}_{i}()"
+    )
+    let declStr := String.intercalate "\n" valDecls
+    let helpersStr := String.intercalate "\n" helpers
+    let callsStr := String.intercalate "\n" calls
+    declStr ++ "\n" ++ helpersStr ++ "\n" ++ callsStr
+
 /-! ## Module Generation -/
 
 /-- Generate complete Chisel module for a circuit -/
@@ -1800,26 +1929,77 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
   -- Pass instanceOutputNames to avoid double-assignment of instance-driven wires
   let registers := generateRegisters ctx c instanceOutputNames
-  let combGates := generateCombGates ctx c instanceOutputNames
+  let combGatesRaw := generateCombGates ctx c instanceOutputNames
   let instances := generateInstances ctx c allCircuits
 
-  let body := joinLines [
-    io,
-    dontTouchStr,
-    "",
-    internalWires,
-    undrivenStr,
-    "",
-    registers,
-    "",
-    combGates,
-    "",
-    instances
-  ]
+  -- Estimate total body size to decide if trait splitting is needed
+  let allBodyLines := [io, dontTouchStr, internalWires, undrivenStr,
+                       registers, combGatesRaw, instances]
+  let totalBodyLines : Nat := allBodyLines.foldl (fun acc s => acc + (s.splitOn "\n").length) 0
 
-  let footer := "}"
+  if totalBodyLines > 1500 then
+    -- Large module: split into traits to avoid JVM 64KB method size limit.
+    -- Each trait gets its own $init$ method in the JVM, sidestepping the limit.
+    let traitChunkSize := 500  -- lines per trait
+    -- Collect all body lines
+    let bodyLines := (io ++ "\n" ++ dontTouchStr ++ "\n" ++ internalWires ++ "\n" ++
+                      undrivenStr ++ "\n" ++ registers ++ "\n" ++ combGatesRaw ++ "\n" ++
+                      instances).splitOn "\n"
+    -- Group into statements (respecting multi-line expressions)
+    let stmts := groupIntoStatements (bodyLines.filter (· != ""))
+    -- Chunk statements into trait-sized groups
+    let traitChunks := stmts.foldl (init := #[#[]]) (fun acc stmt =>
+      let lastIdx := acc.size - 1
+      let stmtLines := (stmt.splitOn "\n").length
+      let currentSize := acc[lastIdx]!.foldl (fun n s => n + (s.splitOn "\n").length) 0
+      if currentSize + stmtLines > traitChunkSize && currentSize > 0 then
+        acc.push #[stmt]
+      else
+        acc.set! lastIdx (acc[lastIdx]!.push stmt)
+    )
+    let traitNames := traitChunks.toList.enum.map (fun (i, _) =>
+      s!"{c.name}_Part{i}"
+    )
+    let lbrace := "{"
+    let rbrace := "}"
+    let traitDefs := traitChunks.toList.enum.map (fun (i, chunk) =>
+      let body := String.intercalate "\n" chunk.toList
+      s!"trait {c.name}_Part{i} {lbrace} self: {c.name} =>\n{body}\n{rbrace}"
+    )
+    let traitMixins := " with " ++ String.intercalate " with " traitNames
+    let classDecl := "class " ++ c.name ++ " extends " ++ moduleType ++ traitMixins ++ " " ++ lbrace ++ "\n" ++ rbrace
+    let traitsStr := String.intercalate "\n\n" traitDefs
+    let preamble := joinLines ([
+      s!"// Auto-generated by Shoumei Codegen V2",
+      s!"// Source: {c.name}",
+      "",
+      "package generated",
+      "",
+      "import chisel3._",
+      "import chisel3.util._",
+      "import shoumei.ShoumeiReg",
+      "import shoumei.ShoumeiRegInit"
+    ] ++ decoderImports ++ [""])
+    preamble ++ "\n" ++ traitsStr ++ "\n\n" ++ classDecl
+  else
+    -- Small module: single class (no splitting needed)
+    let body := joinLines [
+      io,
+      dontTouchStr,
+      "",
+      internalWires,
+      undrivenStr,
+      "",
+      registers,
+      "",
+      combGatesRaw,
+      "",
+      instances
+    ]
 
-  joinLines [header, body, footer]
+    let footer := "}"
+
+    joinLines [header, body, footer]
 
 /-! ## Public API -/
 
