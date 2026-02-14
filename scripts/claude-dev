@@ -5,18 +5,59 @@
 #   ./scripts/claude-dev            # interactive session
 #   ./scripts/claude-dev --resume   # resume last session
 #   ./scripts/claude-dev -p "..."   # one-shot prompt
+#   ./scripts/claude-dev --workspace /path/to/worktree  # use a worktree
 #
 # Requires: devcontainer CLI (@devcontainers/cli)
 #
 # Forwards from host: API keys, git config, SSH keys, Claude settings,
 # and relevant environment variables.
+#
+# Worktree support: by default, uses the git toplevel of the current
+# directory (works for both the main repo and worktrees). Override with
+# --workspace <path>.
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Determine workspace (repo root or worktree) ──────────────────
+REPO_ROOT=""
+CLAUDE_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --workspace)
+      REPO_ROOT="$(cd "$2" && pwd)"
+      shift 2
+      ;;
+    *)
+      CLAUDE_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}"
+
+if [[ -z "$REPO_ROOT" ]]; then
+  # Prefer git toplevel of cwd (works in worktrees), fall back to script location
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/.." && pwd))"
+fi
+
+# ── Worktree detection ────────────────────────────────────────────
+MAIN_WORKTREE="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')"
+if [[ -n "$MAIN_WORKTREE" && "$MAIN_WORKTREE" != "$REPO_ROOT" ]]; then
+  BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+  echo "🌳 Worktree detected: $REPO_ROOT (branch: $BRANCH)"
+  echo "   Main repo: $MAIN_WORKTREE"
+fi
+
+# ── Ensure submodules are initialized (worktrees don't inherit them) ─
+git -C "$REPO_ROOT" submodule update --init --quiet 2>/dev/null || true
 
 # ── Ensure the container is running ──────────────────────────────────
-devcontainer up --workspace-folder "$REPO_ROOT" >/dev/null 2>&1
+if ! devcontainer up --workspace-folder "$REPO_ROOT" 2>&1 | tee /dev/stderr | grep -q '"outcome":"success"'; then
+  echo "Error: devcontainer failed to start. See output above." >&2
+  exit 1
+fi
 
 # ── Build env var forwarding list ────────────────────────────────────
 ENV_ARGS=()
