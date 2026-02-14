@@ -340,9 +340,44 @@ def outputHasIndividualBitAssignmentsHelper (ctx : Context) (c : Circuit) (sg : 
             -- Check if this will generate individual assignments or bus-wide operation
             willGenerateIndividualAssignments ctx c outputGates
 
+/-- Check if a signal group participates in a combinational cycle through signal group
+    dependencies. Such cycles cause false-positive cycle detection in FIRRTL when groups
+    are declared as UInt (bulk assignment). Forcing Vec + per-bit assignments breaks the
+    cycle by enabling FIRRTL's bit-level dependency tracking.
+
+    Example: carry chain where bo := bor0 | bt2.asUInt (bulk) but bt2(i) := src & bo(i-1)
+    (per-bit). FIRRTL sees bo→bt2→bo cycle, but at bit level it's bo(i)→bt2(i)→bo(i-1). -/
+def hasCombCycleThroughGroup (ctx : Context) (c : Circuit) (sg : SignalGroup) : Bool :=
+  let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
+  let allGroupNames := (ctx.wireToGroup.map (·.2.name)).eraseDups
+  -- Build dependency: signal group name → list of signal group names it depends on
+  let getDeps (sgName : String) : List String :=
+    let sgWireNames := (ctx.wireToGroup.filter (fun (_, g) => g.name == sgName)).map (·.1.name)
+    let writingGates := combGates.filter (fun g => sgWireNames.contains g.output.name)
+    (writingGates.flatMap (fun g =>
+      g.inputs.filterMap (fun inp =>
+        (ctx.wireToGroup.find? (fun (w', _) => w'.name == inp.name)).map (·.2.name))
+    )).eraseDups.filter (· != sgName)
+  -- BFS from sg's dependencies: can we reach sg.name?
+  let target := sg.name
+  let startDeps := getDeps target
+  let rec go (visited : List String) (frontier : List String) : Nat → Bool
+    | 0 => false
+    | fuel + 1 =>
+      match frontier with
+      | [] => false
+      | node :: rest =>
+        if node == target then true
+        else if visited.contains node then go visited rest fuel
+        else
+          let neighbors := getDeps node
+          go (node :: visited) (rest ++ neighbors) fuel
+  go [] startDeps (allGroupNames.length + 1)
+
 /-- Check if a signal group should be declared as Vec(width, Bool()) instead of UInt(width.W).
     Uses context to check actual signal group membership of gate inputs,
-    matching the logic of generateBusWideOp exactly. -/
+    matching the logic of generateBusWideOp exactly.
+    Also forces Vec for groups in combinational cycles to avoid FIRRTL false positives. -/
 def needsVecDeclarationHelper (ctx : Context) (sg : SignalGroup) (c : Circuit) : Bool :=
   if sg.width <= 1 then
     false  -- Single-bit signals don't need Vec
@@ -368,7 +403,13 @@ def needsVecDeclarationHelper (ctx : Context) (sg : SignalGroup) (c : Circuit) :
           else
             -- All bits have same gate type and all bits covered
             -- Check if this will generate individual assignments or bus-wide operation
-            willGenerateIndividualAssignments ctx c outputGates
+            let needsIndividual := willGenerateIndividualAssignments ctx c outputGates
+            if needsIndividual then true
+            else
+              -- Even if bus-wide op is possible, check for combinational cycles
+              -- through signal group dependencies. If sg is in a cycle, we MUST use
+              -- Vec to allow FIRRTL to do bit-level dependency analysis.
+              hasCombCycleThroughGroup ctx c sg
 
 /-! ## Wire and Port Reference Helpers -/
 
@@ -736,7 +777,10 @@ def signalGroupRefForBusOp (ctx : Context) (c : Circuit) (sg : SignalGroup) : St
 
 /-- Generate bus-wide operation for gates that operate on all bits of a bus -/
 def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates : List Gate) : Option String :=
-  if !isCompleteBusOp ctx bus gates then none
+  -- If this output bus needs Vec (e.g., due to combinational cycles), don't generate
+  -- a bulk op; fall through to per-bit assignments to let FIRRTL track bit-level deps
+  if needsVecDeclarationHelper ctx bus _c then none
+  else if !isCompleteBusOp ctx bus gates then none
   else
     -- Get the first gate as template (all should have same structure)
     match gates.head? with
