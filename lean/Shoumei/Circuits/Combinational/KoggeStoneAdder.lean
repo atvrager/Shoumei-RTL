@@ -191,4 +191,81 @@ def mkKoggeStoneAdder32 : Circuit :=
 /-- Convenience alias. -/
 def koggeStoneAdder32 : Circuit := mkKoggeStoneAdder32
 
+/-- Inline Kogge-Stone adder gate generator (parameterized width).
+
+    Like `mkRippleAdd` but with O(log n) carry delay instead of O(n).
+    Returns (gates, carry_out). All wire names are prefixed with `pfx`.
+
+    a, b: n-bit inputs (LSB first). carry_in: single wire.
+    sum_out: n-bit output wires (LSB first). -/
+def mkKoggeStoneAdd (a b : List Wire) (carry_in : Wire)
+    (sum_out : List Wire) (pfx : String) : List Gate × Wire :=
+  let n := a.length
+  if n == 0 then ([], carry_in)
+  else
+  -- Level 0: Initial generate and propagate
+  let g0 := makeIndexedWires (pfx ++ "_g0") n
+  let p0 := makeIndexedWires (pfx ++ "_p0") n
+  let init_gates := List.flatten <| (List.range n).map fun i =>
+    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+  -- Merge carry_in into bit 0's generate
+  let p0_cin := Wire.mk (pfx ++ "_p0cin")
+  let g0_merged := Wire.mk (pfx ++ "_g0m")
+  let cin_gates := [
+    Gate.mkAND (p0[0]!) carry_in p0_cin,
+    Gate.mkOR (g0[0]!) p0_cin g0_merged
+  ]
+
+  -- Compute prefix levels: strides 1, 2, 4, ... up to n
+  let strides := (List.range 20).filterMap fun k =>
+    let s := 1 <<< k
+    if s < n then some s else none
+
+  let (all_prefix_gates, final_g, _final_p) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := pfx ++ "_l" ++ toString stride
+      let g_new := makeIndexedWires (lt ++ "_g") n
+      let p_new := makeIndexedWires (lt ++ "_p") n
+
+      let level_gates := List.flatten <| (List.range n).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk (lt ++ "_pg_" ++ toString i)
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], ([g0_merged] ++ (List.range (n - 1)).map fun i => g0[i + 1]!), p0)
+
+  -- Final sum: sum[0] = p0[0] XOR cin, sum[i] = p0[i] XOR final_g[i-1]
+  let sum_gates :=
+    [Gate.mkXOR (p0[0]!) carry_in (sum_out[0]!)] ++
+    ((List.range (n - 1)).map fun i =>
+      Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum_out[i + 1]!))
+
+  -- carry_out = final_g[n-1]
+  let cout := Wire.mk (pfx ++ "_cout")
+  let cout_gate := Gate.mkBUF (final_g[n - 1]!) cout
+
+  (init_gates ++ cin_gates ++ all_prefix_gates ++ sum_gates ++ [cout_gate], cout)
+
+/-- Inline Kogge-Stone subtractor: out = a - b = a + ~b + 1.
+    Returns (gates, borrow_out) where borrow = NOT carry_out. -/
+def mkKoggeStoneSub (a b : List Wire) (sum_out : List Wire)
+    (pfx : String) (one_wire : Wire) : List Gate × Wire :=
+  let n := b.length
+  let inv_b := makeIndexedWires (pfx ++ "_invb") n
+  let inv_gates := (List.range n).map fun i => Gate.mkNOT (b[i]!) (inv_b[i]!)
+  let (add_gates, carry_out) := mkKoggeStoneAdd a inv_b one_wire sum_out (pfx ++ "_add")
+  let borrow_wire := Wire.mk (pfx ++ "_borrow")
+  let borrow_gate := Gate.mkNOT carry_out borrow_wire
+  (inv_gates ++ add_gates ++ [borrow_gate], borrow_wire)
+
 end Shoumei.Circuits.Combinational
