@@ -280,13 +280,14 @@ always_comb begin
 end
 
 // Dispatch classification (active only when instruction is valid)
-// has_rd: all instructions except stores, branches, and system (FENCE/ECALL/EBREAK)
+// has_rd: all instructions except stores, branches, FENCE, and non-CSR SYSTEM (ECALL/EBREAK/MRET)
+// Note: ECALL/EBREAK/MRET all have rd=x0, caught by the rd!=x0 check.
+// CSR instructions (SYSTEM with funct3!=0) DO write to rd.
 assign io_has_rd = io_valid &&
     (io_instr[11:7] != 5'b00000) &&   // not rd=x0 (writes to x0 are discarded)
     (io_instr[6:0] != 7'b0100011) &&  // not STORE
     (io_instr[6:0] != 7'b1100011) &&  // not BRANCH
-    (io_instr[6:0] != 7'b0001111) &&  // not FENCE
-    (io_instr[6:0] != 7'b1110011)" ++ fpHasRdExclude ++ ";
+    (io_instr[6:0] != 7'b0001111)" ++ fpHasRdExclude ++ ";  // not FENCE
 
 // Integer: R-type ALU (0110011, excluding M-ext), I-type ALU (0010011), LUI (0110111), AUIPC (0010111)
 assign io_is_integer = io_valid && (

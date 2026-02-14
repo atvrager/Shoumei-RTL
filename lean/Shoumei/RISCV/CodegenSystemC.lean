@@ -213,8 +213,8 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "  bool is_store  = (opcode == 0x23);",
     "  bool is_branch_op = (opcode == 0x63);",
     "  bool is_fence  = (opcode == 0x0f);",
-    "  bool is_system = (opcode == 0x73);",
-    "  io_has_rd.write(valid && !is_store && !is_branch_op && !is_fence && !is_system);",
+    "  // Note: ECALL/EBREAK/MRET have rd=x0, excluded by rd!=0 check; CSR instructions write rd",
+    "  io_has_rd.write(valid && !is_store && !is_branch_op && !is_fence);",
     "",
     "  bool is_rtype = (opcode == 0x33);",
     if hasMSC defs then

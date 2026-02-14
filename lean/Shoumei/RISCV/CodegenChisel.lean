@@ -247,8 +247,7 @@ import chisel3.util._
   io_has_rd := io_valid &&
     (opcode =/= \"b0100011\".U) &&  // not STORE
     (opcode =/= \"b1100011\".U) &&  // not BRANCH
-    (opcode =/= \"b0001111\".U) &&  // not FENCE
-    (opcode =/= \"b1110011\".U)" ++ fpNotStoreExtra ++ "     // not ECALL/EBREAK
+    (opcode =/= \"b0001111\".U)" ++ fpNotStoreExtra ++ "     // not FENCE (ECALL/EBREAK/MRET have rd=x0, caught above)
 
   io_is_integer := io_valid && (
     (opcode === \"b0110011\".U" ++ integerMuldivExclude ++ ") ||  // R-type
