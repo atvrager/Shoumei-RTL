@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # HDL tools (lec, verilator-sim, smoke-test CI jobs)
         yosys verilator \
         # SystemC (systemc CI job)
-        libsystemc-dev \
+        libsystemc-dev device-tree-compiler \
         # JDK for Scala/Chisel (scala-build CI job)
         openjdk-${JAVA_VERSION}-jdk-headless \
         # GitHub CLI for PR workflows
@@ -66,16 +66,6 @@ RUN mkdir -p /home/dev/.local/riscv32-elf \
     && curl -fSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${RISCV_TAG}/riscv32-elf-ubuntu-22.04-gcc.tar.xz" \
         | tar xJ -C /home/dev/.local/riscv32-elf --strip-components=1
 
-# ── Spike RISC-V ISA simulator (cosimulation oracle) ─────────────
-# Built from submodule source; --without-dtc avoids needing device-tree-compiler.
-COPY --chown=dev:dev third_party/riscv-isa-sim /home/dev/spike-src
-RUN cd /home/dev/spike-src \
-    && mkdir -p build && cd build \
-    && ../configure --prefix=/home/dev/.local/spike --enable-commitlog --without-dtc \
-    && make -j"$(nproc)" \
-    && make install \
-    && cd /home/dev && rm -rf spike-src
-
 # ── pyslang (SystemVerilog IEEE 1800-2017 lint) ──────────────────
 RUN pip install --break-system-packages pyslang
 
@@ -87,6 +77,17 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # ── PATH ────────────────────────────────────────────────────────────
 # Matches the Makefile's PATH and bootstrap.py's layout.
-ENV PATH="/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/bin:${PATH}"
+ENV PATH="/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/spike/bin:/home/dev/.local/bin:${PATH}"
+
+# ── Spike RISC-V ISA simulator (cosimulation oracle) ─────────────
+# LAST because it COPYs from build context (submodule), busting cache
+# when the submodule commit changes. Everything above is stable.
+COPY --chown=dev:dev third_party/riscv-isa-sim /home/dev/spike-src
+RUN cd /home/dev/spike-src \
+    && mkdir -p build && cd build \
+    && ../configure --prefix=/home/dev/.local/spike --enable-commitlog \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd /home/dev && rm -rf spike-src
 
 WORKDIR /workspace
