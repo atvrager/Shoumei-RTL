@@ -71,19 +71,17 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
     let path := s!"{asap7OutputDir}/{c.name}.sv"
     IO.FS.writeFile path sv
 
--- Modules with known Chisel codegen limitations (instance bus-port bit mapping)
--- These are verified via SV LEC + compositional certs instead
--- TODO: Fix Chisel codegen for these modules so this skip list can be removed:
---   - FP circuits: JVM method size limits (flat circuits too large for single Scala method)
---   - FPAdder/FPDivider: FIRRTL false-positive combinational cycle on carry-chain topology
---   - CPU_RV32IF/IMF: instance bus-port bit mapping (issue_opcode_6 as individual port)
--- All are verified via SV LEC + compositional certs.
+-- Modules with known Chisel codegen limitations (FIRRTL false-positive comb cycles)
+-- These are verified via SV LEC + compositional certs instead.
+-- TODO: Fix FIRRTL false-positive combinational cycle detection for FPMisc/FPDivider.
+--   FPExecUnit depends on FPMisc+FPDivider; F-variant CPUs depend on FPExecUnit.
+--   (JVM method size limits and partial bus connections are now fixed.)
 private def chiselSkipList : List String :=
-  ["FPAdder", "FPDivider", "FPMisc", "FPMultiplier", "FPFMA", "FPExecUnit",
-   "CPU_RV32I", "CPU_RV32IM", "CPU_RV32IF", "CPU_RV32IMF",
-   "CPU_RV32IM_Zifencei", "CPU_RV32IMF_Zifencei",
+  ["FPMisc", "FPDivider", "FPExecUnit",
+   "CPU_RV32IF", "CPU_RV32IMF",
+   "CPU_RV32IMF_Zifencei",
    "CPU_RV32IF_Zicsr_Zifencei",
-   "CPU_RV32IM_Zicsr_Zifencei", "CPU_RV32IMF_Zicsr_Zifencei"]
+   "CPU_RV32IMF_Zicsr_Zifencei"]
 
 -- Write all output formats for a circuit
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
