@@ -25,3 +25,7 @@ export CLK_PERIOD_PS = $(shell expr 1000000 / $(FMAX_MHZ))
 # Floorplan Configuration
 export CORE_UTILIZATION = 30
 export CORE_ASPECT_RATIO = 1
+
+# Repair tuning for slew violations
+export REPAIR_DESIGN_MAX_WIRE_LENGTH = 800
+export CTS_BUF_DISTANCE = 60

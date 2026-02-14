@@ -351,45 +351,65 @@ def fpAdderCircuit : Circuit :=
   let (sum_add_gates, _sum_carry) :=
     mkKoggeStoneAdd big_ext cond_inv_aligned s2_eff_sub sum "fp_mantadd"
 
-  -- Leading-zero priority encoder on 25-bit sum
-  let lz_found := (List.range 26).map fun j => Wire.mk ("fp_lz_found_" ++ toString j)
-  let lz_pos := (List.range 26).map fun j => makeIndexedWires ("fp_lz_pos_" ++ toString j) 5
+  -- Leading-zero count on 25-bit sum using parallel-prefix tree (O(log n) depth)
+  -- Each element is (valid, position[4:0]) where valid=1 means a leading 1 was found.
+  -- Leaf: valid_i = sum[i], pos_i = encode(i)
+  -- Merge(L, R): valid = L.valid OR R.valid
+  --   pos = L.valid ? L.pos : R.pos  (leftmost / highest bit wins)
 
-  let lz_init_gates :=
-    [Gate.mkBUF zero lz_found[0]!] ++
-    (List.range 5).map (fun k => Gate.mkBUF zero (lz_pos[0]!)[k]!)
+  -- Step 1: Create leaf nodes for bits 24 down to 0
+  let lz_v := makeIndexedWires "fp_lz_v" 25    -- valid bit per leaf
+  let lz_p := (List.range 25).map fun i => makeIndexedWires ("fp_lz_p_" ++ toString i) 5
+  let lz_leaf_gates := (List.range 25).flatMap fun i =>
+    [Gate.mkBUF sum[i]! lz_v[i]!] ++
+    (List.range 5).map fun k =>
+      let bit_val := if (i >>> k) &&& 1 == 1 then one else zero
+      Gate.mkBUF bit_val (lz_p[i]!)[k]!
 
-  let lz_cascade_gates := (List.range 25).flatMap fun j =>
-    let bit_idx := 24 - j
-    let prev_found := lz_found[j]!
-    let prev_pos := lz_pos[j]!
-    let cur_found := lz_found[j + 1]!
-    let cur_pos := lz_pos[j + 1]!
-    let sum_bit := sum[bit_idx]!
+  -- Step 2: Parallel prefix merge (recursive doubling)
+  -- We need ceil(log2(25)) = 5 levels, strides 1, 2, 4, 8, 16
+  let strides := [1, 2, 4, 8, 16]
 
-    let nfp := Wire.mk ("fp_lz_nfp_" ++ toString j)
-    let upd := Wire.mk ("fp_lz_upd_" ++ toString j)
-    let ctrl_gates := [
-      Gate.mkNOT prev_found nfp,
-      Gate.mkAND nfp sum_bit upd
-    ]
+  let (lz_prefix_gates, lz_final_v, lz_final_p) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List (List Wire)) stride =>
+      let (gates_acc, v_prev, p_prev) := acc
+      let lt := "fp_lz_s" ++ toString stride
+      let v_new := makeIndexedWires (lt ++ "_v") 25
+      let p_new := (List.range 25).map fun i => makeIndexedWires (lt ++ "_p_" ++ toString i) 5
 
-    let found_gate := Gate.mkOR prev_found sum_bit cur_found
+      let level_gates := (List.range 25).flatMap fun i =>
+        if i + stride < 25 then
+          -- Merge: element i merges with element i+stride (higher bit)
+          -- new_valid = v_prev[i+stride] OR v_prev[i]
+          -- new_pos = v_prev[i+stride] ? p_prev[i+stride] : p_prev[i]
+          let merge_v := Wire.mk (lt ++ "_mv_" ++ toString i)
+          [Gate.mkOR v_prev[i + stride]! v_prev[i]! merge_v,
+           Gate.mkBUF merge_v v_new[i]!] ++
+          (List.range 5).map fun k =>
+            Gate.mkMUX (p_prev[i]!)[k]! (p_prev[i + stride]!)[k]! v_prev[i + stride]! (p_new[i]!)[k]!
+        else
+          -- Pass through (no merge partner at higher index)
+          [Gate.mkBUF v_prev[i]! v_new[i]!] ++
+          (List.range 5).map fun k =>
+            Gate.mkBUF (p_prev[i]!)[k]! (p_new[i]!)[k]!
 
-    let pos_gates := (List.range 5).map fun k =>
-      let const_bit := if (bit_idx >>> k) &&& 1 == 1 then one else zero
-      Gate.mkMUX prev_pos[k]! const_bit upd cur_pos[k]!
+      (gates_acc ++ level_gates, v_new, p_new)
+    ) ([], lz_v, lz_p)
 
-    ctrl_gates ++ [found_gate] ++ pos_gates
+  -- The result is at index 0 after all merges (covers the full range)
+  let lead_pos := lz_final_p[0]!  -- 5-bit position of leading 1
 
-  let lead_pos := lz_pos[25]!  -- 5-bit position of leading 1
+  let lz_all_gates := lz_leaf_gates ++ lz_prefix_gates
+
+  -- lz_found[25] equivalent: was any bit set?
+  let lz_any_found := lz_final_v[0]!
 
   let overflow := Wire.mk "fp_overflow"
   let overflow_gate := Gate.mkBUF sum[24]! overflow
 
   let s3_comb_gates :=
     big_ext_gates ++ aligned_ext_gates ++ cond_inv_gates ++ sum_add_gates ++
-    lz_init_gates ++ lz_cascade_gates ++ [overflow_gate]
+    lz_all_gates ++ [overflow_gate]
 
   ---------------------------------------------------------------
   -- Stage 3 registers
@@ -407,7 +427,7 @@ def fpAdderCircuit : Circuit :=
   let stage3_dff :=
     [Gate.mkDFF s2_big_sign clock reset s3_big_sign,
      Gate.mkDFF overflow clock reset s3_overflow,
-     Gate.mkDFF lz_found[25]! clock reset s3_found,
+     Gate.mkDFF lz_any_found clock reset s3_found,
      Gate.mkDFF s2_valid clock reset s3_valid] ++
     mkDFFBank s2_big_exp s3_big_exp clock reset ++
     mkDFFBank sum s3_sum clock reset ++
