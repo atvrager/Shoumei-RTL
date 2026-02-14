@@ -252,7 +252,14 @@ def main : IO Unit := do
   -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
   IO.println ""
   IO.println "Generating RISC-V decoders..."
-  let defs ← Shoumei.RISCV.loadInstrDictFromFile Shoumei.RISCV.instrDictPath
+  -- Auto-generate opcodes JSON if missing
+  let opcodesPath := Shoumei.RISCV.instrDictPath
+  unless (← opcodesPath.pathExists) do
+    IO.println "  instr_dict.json not found, running 'make opcodes'..."
+    let result ← IO.Process.run { cmd := "make", args := #["opcodes"] }
+    unless result.isEmpty do
+      IO.println result
+  let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
   Shoumei.RISCV.generateDecoders defs
 
   -- Generate testbenches
