@@ -31,3 +31,6 @@ set_false_path -from [get_ports reset]
 # This is a flush/reset path, not a functional data path — false-path it
 # so the resizer doesn't try to buffer the entire reset tree for timing.
 set_false_path -through [get_nets {u_cpu.pipeline_reset_busy}]
+
+# Max transition constraint to fix slew violations (18 DRVs at ~320 ps limit)
+set_max_transition 300 [current_design]

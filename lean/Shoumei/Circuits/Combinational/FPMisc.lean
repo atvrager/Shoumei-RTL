@@ -16,13 +16,11 @@ Outputs:
 -/
 
 import Shoumei.DSL
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
-
-private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 /-- OR-reduce: returns (wire, gates) where wire = OR of all input wires.
     Requires inputs.length >= 1. -/
@@ -423,16 +421,11 @@ def fpMiscCircuit : Circuit :=
   let fcvt_inv_gates := (List.range 32).map fun i =>
     Gate.mkNOT (fcvt_mag[i]!) (fcvt_inv[i]!)
 
-  -- Add 1 using ripple carry (add fcvt_inv + 0 with carry_in = 1)
-  -- This is just a half-adder chain: result[i] = inv[i] XOR carry, carry_out = inv[i] AND carry
+  -- Add 1 using Kogge-Stone adder (O(log n) carry delay instead of O(n) ripple)
   let fcvt_neg := makeIndexedWires "fcvt_neg" 32
-  let (_, fcvt_neg_gates) := (List.range 32).foldl (fun (acc : Wire × List Gate) i =>
-    let cin := acc.1
-    let g_sum := Gate.mkXOR (fcvt_inv[i]!) cin (fcvt_neg[i]!)
-    let cout := Wire.mk s!"fcvt_neg_c_{i}"
-    let g_carry := Gate.mkAND (fcvt_inv[i]!) cin cout
-    (cout, acc.2 ++ [g_sum, g_carry])
-  ) (one, [])
+  let zeros32 := (List.range 32).map fun _ => zero
+  let (fcvt_neg_gates, _fcvt_neg_cout) :=
+    mkKoggeStoneAdd fcvt_inv zeros32 one fcvt_neg "fcvt_neg"
 
   -- Select positive or negative based on src1[31]
   let fcvt_res := makeIndexedWires "fcvt_res" 32
@@ -524,15 +517,11 @@ def fpMiscCircuit : Circuit :=
   let fcvtsw_inv_gates := (List.range 32).map fun i =>
     Gate.mkNOT (src1[i]!) (fcvtsw_inv[i]!)
 
-  -- Add 1 (half-adder chain with carry_in=1)
+  -- Add 1 using Kogge-Stone adder (O(log n) carry delay)
   let fcvtsw_neg := makeIndexedWires "fcvtsw_neg" 32
-  let (_, fcvtsw_neg_gates) := (List.range 32).foldl (fun (acc : Wire × List Gate) i =>
-    let cin := acc.1
-    let g_sum := Gate.mkXOR (fcvtsw_inv[i]!) cin (fcvtsw_neg[i]!)
-    let cout := Wire.mk s!"fcvtsw_neg_c_{i}"
-    let g_carry := Gate.mkAND (fcvtsw_inv[i]!) cin cout
-    (cout, acc.2 ++ [g_sum, g_carry])
-  ) (one, [])
+  let fcvtsw_zeros32 := (List.range 32).map fun _ => zero
+  let (fcvtsw_neg_gates, _fcvtsw_neg_cout) :=
+    mkKoggeStoneAdd fcvtsw_inv fcvtsw_zeros32 one fcvtsw_neg "fcvtsw_neg"
 
   -- Select magnitude: if src1[31]=1, use negated; else use src1
   let fcvtsw_mag := makeIndexedWires "fcvtsw_mag" 32
@@ -601,27 +590,10 @@ def fpMiscCircuit : Circuit :=
   -- 127 = bits: 1,1,1,1,1,1,1,0 (bit0=1, bit1=1, ..., bit6=1, bit7=0)
   let fcvtsw_lpos8 := (List.range 5).map (fun k => fcvtsw_lpos[k]!) ++
     [zero, zero, zero]  -- zero-extend to 8 bits
-  -- Ripple adder for exponent
+  -- Exponent add using Kogge-Stone (O(log n) carry delay)
   let fcvtsw_exp := makeIndexedWires "fcvtsw_exp" 8
-  let (_, fcvtsw_exp_gates) := (List.range 8).foldl (fun (acc : Wire × List Gate) i =>
-    let cin := acc.1
-    let a := const127[i]!
-    let b := fcvtsw_lpos8[i]!
-    let xor1 := Wire.mk s!"fcvtsw_exp_xor1_{i}"
-    let g_xor1 := Gate.mkXOR a b xor1
-    let g_sum := Gate.mkXOR xor1 cin (fcvtsw_exp[i]!)
-    let t0 := Wire.mk s!"fcvtsw_exp_t0_{i}"
-    let t1 := Wire.mk s!"fcvtsw_exp_t1_{i}"
-    let t2 := Wire.mk s!"fcvtsw_exp_t2_{i}"
-    let or0 := Wire.mk s!"fcvtsw_exp_or0_{i}"
-    let cout := Wire.mk s!"fcvtsw_exp_co_{i}"
-    let g_t0 := Gate.mkAND a b t0
-    let g_t1 := Gate.mkAND a cin t1
-    let g_t2 := Gate.mkAND b cin t2
-    let g_or0 := Gate.mkOR t0 t1 or0
-    let g_cout := Gate.mkOR or0 t2 cout
-    (cout, acc.2 ++ [g_xor1, g_sum, g_t0, g_t1, g_t2, g_or0, g_cout])
-  ) (zero, [])
+  let (fcvtsw_exp_gates, _fcvtsw_exp_cout) :=
+    mkKoggeStoneAdd const127 fcvtsw_lpos8 zero fcvtsw_exp "fcvtsw_exp"
 
   -- Step 6: Pack float result {sign, exp[7:0], mantissa[22:0]}
   -- sign = src1[31]
@@ -702,26 +674,10 @@ def fpMiscCircuit : Circuit :=
   -- Exponent = lead_pos + 127
   let fcvtswu_lpos8 := (List.range 5).map (fun k => fcvtswu_lpos[k]!) ++
     [zero, zero, zero]
+  -- Exponent add using Kogge-Stone (O(log n) carry delay)
   let fcvtswu_exp := makeIndexedWires "fcvtswu_exp" 8
-  let (_, fcvtswu_exp_gates) := (List.range 8).foldl (fun (acc : Wire × List Gate) i =>
-    let cin := acc.1
-    let a := const127[i]!
-    let b := fcvtswu_lpos8[i]!
-    let xor1 := Wire.mk s!"fcvtswu_exp_xor1_{i}"
-    let g_xor1 := Gate.mkXOR a b xor1
-    let g_sum := Gate.mkXOR xor1 cin (fcvtswu_exp[i]!)
-    let t0 := Wire.mk s!"fcvtswu_exp_t0_{i}"
-    let t1 := Wire.mk s!"fcvtswu_exp_t1_{i}"
-    let t2 := Wire.mk s!"fcvtswu_exp_t2_{i}"
-    let or0 := Wire.mk s!"fcvtswu_exp_or0_{i}"
-    let cout := Wire.mk s!"fcvtswu_exp_co_{i}"
-    let g_t0 := Gate.mkAND a b t0
-    let g_t1 := Gate.mkAND a cin t1
-    let g_t2 := Gate.mkAND b cin t2
-    let g_or0 := Gate.mkOR t0 t1 or0
-    let g_cout := Gate.mkOR or0 t2 cout
-    (cout, acc.2 ++ [g_xor1, g_sum, g_t0, g_t1, g_t2, g_or0, g_cout])
-  ) (zero, [])
+  let (fcvtswu_exp_gates, _fcvtswu_exp_cout) :=
+    mkKoggeStoneAdd const127 fcvtswu_lpos8 zero fcvtswu_exp "fcvtswu_exp"
 
   -- Pack: {0 (sign), exp[7:0], mantissa[22:0]}. If zero, all zeros.
   let fcvtswu_res := makeIndexedWires "fcvtswu_res" 32
