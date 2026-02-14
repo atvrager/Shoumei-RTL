@@ -6,6 +6,9 @@
   },
   "features": {},
 
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  "workspaceFolder": "${localWorkspaceFolder}",
+
   "remoteUser": "dev",
   "containerUser": "dev",
 
