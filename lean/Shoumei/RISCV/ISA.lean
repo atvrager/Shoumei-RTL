@@ -27,6 +27,8 @@ inductive FieldType where
   | succ     : FieldType  -- Successor set (FENCE instruction)
   | rs3      : FieldType  -- Source register 3 (bits 31:27, R4-type FP fused ops)
   | rm       : FieldType  -- Rounding mode (bits 14:12, F extension)
+  | csr      : FieldType  -- CSR address (bits 31:20, Zicsr)
+  | zimm5    : FieldType  -- Zero-extended 5-bit immediate (bits 19:15, Zicsr)
   deriving Repr, BEq, DecidableEq
 
 instance : ToString FieldType where
@@ -47,6 +49,8 @@ instance : ToString FieldType where
     | .succ => "succ"
     | .rs3 => "rs3"
     | .rm => "rm"
+    | .csr => "csr"
+    | .zimm5 => "zimm5"
 
 /-- Parse field type from string (as appears in JSON) -/
 def FieldType.fromString (s : String) : Option FieldType :=
@@ -67,6 +71,8 @@ def FieldType.fromString (s : String) : Option FieldType :=
   | "succ"     => some .succ
   | "rs3"      => some .rs3
   | "rm"       => some .rm
+  | "csr"      => some .csr
+  | "zimm5"    => some .zimm5
   | _          => none
 
 -- OpType, ToString OpType, OpType.fromString are auto-generated in OpTypeGenerated.lean

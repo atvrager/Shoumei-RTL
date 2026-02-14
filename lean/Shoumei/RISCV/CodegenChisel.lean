@@ -236,7 +236,7 @@ import chisel3.util._
 
   // Select appropriate immediate based on instruction format
   switch(opcode) {
-    is(\"b0010011\".U, \"b0000011\".U, \"b1100111\".U) { io_imm := immI }  // I-type
+    is(\"b0010011\".U, \"b0000011\".U, \"b1100111\".U, \"b1110011\".U) { io_imm := immI }  // I-type (incl. SYSTEM/CSR)
     is(\"b0100011\".U)                                 { io_imm := immS }  // S-type
     is(\"b1100011\".U)                                 { io_imm := immB }  // B-type
     is(\"b0110111\".U, \"b0010111\".U)                { io_imm := immU }  // U-type

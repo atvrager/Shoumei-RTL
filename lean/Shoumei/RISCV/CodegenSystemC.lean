@@ -185,7 +185,7 @@ def genSystemCDecoderImpl (defs : List InstructionDef) (moduleName : String := "
     "  uint32_t opcode = instr & 0x7f;",
     "  int32_t imm = 0;",
     s!"  switch (opcode) {lb}",
-    "    case 0x13: case 0x03: case 0x67:  // I-type",
+    "    case 0x13: case 0x03: case 0x67: case 0x73:  // I-type (incl. SYSTEM/CSR)",
     "      imm = imm_i; break;",
     "    case 0x23:  // S-type",
     "      imm = imm_s; break;",

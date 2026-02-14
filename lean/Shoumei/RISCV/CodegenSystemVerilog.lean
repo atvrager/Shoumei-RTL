@@ -270,7 +270,7 @@ always_comb begin
 "
     // Select appropriate immediate based on instruction format
     casez (io_instr[6:0])
-        7'b0010011, 7'b0000011, 7'b1100111: io_imm = imm_i;  // I-type (ALU-I, LOAD, JALR)" ++ fpImmMux ++ "
+        7'b0010011, 7'b0000011, 7'b1100111, 7'b1110011: io_imm = imm_i;  // I-type (ALU-I, LOAD, JALR, SYSTEM/CSR)" ++ fpImmMux ++ "
         7'b0100011:                          io_imm = imm_s;  // S-type (STORE)" ++ (if hasF then "\n        7'b0100111:                          io_imm = imm_s;  // FSW (S-type)" else "") ++ "
         7'b1100011:                          io_imm = imm_b;  // B-type (BRANCH)
         7'b0110111, 7'b0010111:              io_imm = imm_u;  // U-type (LUI, AUIPC)
