@@ -59,13 +59,13 @@ def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
 def rv32iConfig : CPUConfig := {}
 
 /-- RV32IM configuration (M extension enabled) -/
-def rv32imConfig : CPUConfig := { enableM := true }
+def rv32imConfig : CPUConfig := { enableM := true, enableZifencei := true }
 
 /-- RV32IF configuration (F extension enabled, no M) -/
 def rv32ifConfig : CPUConfig := { enableF := true }
 
 /-- RV32IMF configuration (M + F extensions enabled) -/
-def rv32imfConfig : CPUConfig := { enableM := true, enableF := true }
+def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZifencei := true }
 
 /-- RV32IMF + Zifencei configuration -/
 def rv32imfZifenceiConfig : CPUConfig :=
@@ -176,6 +176,8 @@ structure OpcodeEncodings where
   -- F extension (only valid when enableF)
   flw : Nat := 0
   fsw : Nat := 0
+  -- Zifencei extension
+  fenceI : Nat := 0
 
 /-- Build OpcodeEncodings from the decoder instruction name list (auto-resolved). -/
 def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
@@ -187,6 +189,7 @@ def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
     lw := f "LW", lh := f "LH", lhu := f "LHU", lb := f "LB", lbu := f "LBU",
     sw := f "SW", sh := f "SH", sb := f "SB",
     flw := if cfg.enableF then f "FLW" else 0,
-    fsw := if cfg.enableF then f "FSW" else 0 }
+    fsw := if cfg.enableF then f "FSW" else 0,
+    fenceI := if cfg.enableZifencei then f "FENCE_I" else 0 }
 
 end Shoumei.RISCV
