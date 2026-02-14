@@ -124,60 +124,26 @@ def mkOpTypeToALU4 (pfx : String) (optype : List Wire) (aluOp : List Wire)
     mkBitLogic bit2_terms 2 ++
     mkBitLogic bit3_terms 3
 
-/-- OpType → ALU4 mapping for RV32I decoder encoding.
-    Encoding order (from generated RV32IDecoder.sv):
-    0=XORI, 1=XOR, 2=SW, 3=SUB, 4=SRLI, 5=SRL, 6=SRAI, 7=SRA,
-    8=SLTU, 9=SLTIU, 10=SLTI, 11=SLT, 12=SLLI, 13=SLL, 14=SH, 15=SB,
-    16=ORI, 17=OR, 18=LW, 19=LUI, 20=LHU, 21=LH, 22=LBU, 23=LB,
-    24=JALR, 25=JAL, 26=FENCE, 27=ECALL, 28=EBREAK, 29=BNE, 30=BLTU,
-    31=BLT, 32=BGEU, 33=BGE, 34=BEQ, 35=AUIPC, 36=ANDI, 37=AND,
-    38=ADDI, 39=ADD -/
-def aluMapping_RV32I : List (Nat × Nat) :=
-  [ (39, 0), (38, 0),   -- ADD, ADDI → 0
-    (3, 1),             -- SUB → 1
-    (11, 2), (10, 2),   -- SLT, SLTI → 2
-    (8, 3), (9, 3),     -- SLTU, SLTIU → 3
-    (37, 4), (36, 4),   -- AND, ANDI → 4
-    (17, 5), (16, 5),   -- OR, ORI → 5
-    (1, 6), (0, 6),     -- XOR, XORI → 6
-    (13, 8), (12, 8),   -- SLL, SLLI → 8  (1000: dir=0=left, arith=0)
-    (5, 9), (4, 9),     -- SRL, SRLI → 9  (1001: dir=1=right, arith=0)
-    (7, 11), (6, 11) ]  -- SRA, SRAI → 11 (1011: dir=1=right, arith=1)
+/-- Semantic ALU mapping: OpType → ALU4 opcode.
+    Stable across decoder configurations — indices are resolved at build time.
+    ALU: 0=ADD, 1=SUB, 2=SLT, 3=SLTU, 4=AND, 5=OR, 6=XOR, 8=SLL, 9=SRL, 11=SRA -/
+def aluMappingByName : List (OpType × Nat) :=
+  [ (.ADD, 0), (.ADDI, 0),
+    (.SUB, 1),
+    (.SLT, 2), (.SLTI, 2),
+    (.SLTU, 3), (.SLTIU, 3),
+    (.AND, 4), (.ANDI, 4),
+    (.OR, 5), (.ORI, 5),
+    (.XOR, 6), (.XORI, 6),
+    (.SLL, 8), (.SLLI, 8),
+    (.SRL, 9), (.SRLI, 9),
+    (.SRA, 11), (.SRAI, 11) ]
 
-/-- OpType → ALU4 mapping for RV32IM decoder encoding.
-    Encoding order (from generated RV32IMDecoder.sv):
-    0=XORI, 1=XOR, 2=SW, 3=SUB, 4=SRLI, 5=SRL, 6=SRAI, 7=SRA,
-    8=SLTU, 9=SLTIU, 10=SLTI, 11=SLT, 12=SLLI, 13=SLL, 14=SH, 15=SB,
-    16=REMU, 17=REM, 18=ORI, 19=OR, 20=MULHU, 21=MULHSU, 22=MULH, 23=MUL,
-    24=LW, 25=LUI, 26=LHU, 27=LH, 28=LBU, 29=LB, 30=JALR, 31=JAL,
-    32=FENCE, 33=ECALL, 34=EBREAK, 35=DIVU, 36=DIV, 37=BNE, 38=BLTU,
-    39=BLT, 40=BGEU, 41=BGE, 42=BEQ, 43=AUIPC, 44=ANDI, 45=AND,
-    46=ADDI, 47=ADD -/
-def aluMapping_RV32IM : List (Nat × Nat) :=
-  [ (47, 0), (46, 0),   -- ADD, ADDI → 0
-    (3, 1),             -- SUB → 1
-    (11, 2), (10, 2),   -- SLT, SLTI → 2
-    (8, 3), (9, 3),     -- SLTU, SLTIU → 3
-    (45, 4), (44, 4),   -- AND, ANDI → 4
-    (19, 5), (18, 5),   -- OR, ORI → 5
-    (1, 6), (0, 6),     -- XOR, XORI → 6
-    (13, 8), (12, 8),   -- SLL, SLLI → 8  (1000: dir=0=left, arith=0)
-    (5, 9), (4, 9),     -- SRL, SRLI → 9  (1001: dir=1=right, arith=0)
-    (7, 11), (6, 11) ]  -- SRA, SRAI → 11 (1011: dir=1=right, arith=1)
-
-/-- OpType → MulDiv 3-bit opcode mapping for RV32IM/RV32IMF decoder encoding.
-    MUL=0, MULH=1, MULHSU=2, MULHU=3, DIV=4, DIVU=5, REM=6, REMU=7
-    Decoder enum positions (same for IM and IMF):
-    16=REMU, 17=REM, 20=MULHU, 21=MULHSU, 22=MULH, 23=MUL, 35=DIVU, 36=DIV -/
-def mulDivMapping : List (Nat × Nat) :=
-  [ (23, 0),   -- MUL → 0
-    (22, 1),   -- MULH → 1
-    (21, 2),   -- MULHSU → 2
-    (20, 3),   -- MULHU → 3
-    (36, 4),   -- DIV → 4
-    (35, 5),   -- DIVU → 5
-    (17, 6),   -- REM → 6
-    (16, 7) ]  -- REMU → 7
+/-- Semantic MulDiv mapping: OpType → 3-bit MulDiv opcode.
+    MUL=0, MULH=1, MULHSU=2, MULHU=3, DIV=4, DIVU=5, REM=6, REMU=7 -/
+def mulDivMappingByName : List (OpType × Nat) :=
+  [ (.MUL, 0), (.MULH, 1), (.MULHSU, 2), (.MULHU, 3),
+    (.DIV, 4), (.DIVU, 5), (.REM, 6), (.REMU, 7) ]
 
 /-- Generic optype→opcode LUT for N-bit input → M-bit output.
     Same algorithm as mkOpTypeToALU4 but parameterized on widths. -/
@@ -229,33 +195,15 @@ def mkOpTypeLUT (pfx : String) (optype : List Wire) (outOp : List Wire)
     matchGates ++ orGates
   notGates ++ (bitTerms.enum.map fun ⟨i, terms⟩ => mkBitLogic terms i).flatten
 
-/-- OpType → FPU5 opcode mapping for RV32IMF decoder.
-    Maps 7-bit decoder optype to 5-bit FPU operation code. -/
-def fpuMapping_RV32IMF : List (Nat × Nat) :=
-  [ (73, 0),   -- FADD_S → 0
-    (49, 1),   -- FSUB_S → 1
-    (58, 2),   -- FMUL_S → 2
-    (67, 3),   -- FDIV_S → 3
-    (50, 4),   -- FSQRT_S → 4
-    (62, 5),   -- FMADD_S → 5
-    (59, 6),   -- FMSUB_S → 6
-    (55, 7),   -- FNMADD_S → 7
-    (54, 8),   -- FNMSUB_S → 8
-    (66, 9),   -- FEQ_S → 9
-    (64, 10),  -- FLT_S → 10
-    (65, 11),  -- FLE_S → 11
-    (69, 12),  -- FCVT_W_S → 12
-    (68, 13),  -- FCVT_WU_S → 13
-    (71, 14),  -- FCVT_S_W → 14
-    (70, 15),  -- FCVT_S_WU → 15
-    (56, 16),  -- FMV_X_W → 16
-    (57, 17),  -- FMV_W_X → 17
-    (72, 18),  -- FCLASS_S → 18
-    (60, 19),  -- FMIN_S → 19
-    (61, 20),  -- FMAX_S → 20
-    (53, 21),  -- FSGNJ_S → 21
-    (52, 22),  -- FSGNJN_S → 22
-    (51, 23) ] -- FSGNJX_S → 23
+/-- Semantic FPU mapping: OpType → 5-bit FPU opcode. -/
+def fpuMappingByName : List (OpType × Nat) :=
+  [ (.FADD_S, 0), (.FSUB_S, 1), (.FMUL_S, 2), (.FDIV_S, 3), (.FSQRT_S, 4),
+    (.FMADD_S, 5), (.FMSUB_S, 6), (.FNMADD_S, 7), (.FNMSUB_S, 8),
+    (.FEQ_S, 9), (.FLT_S, 10), (.FLE_S, 11),
+    (.FCVT_W_S, 12), (.FCVT_WU_S, 13), (.FCVT_S_W, 14), (.FCVT_S_WU, 15),
+    (.FMV_X_W, 16), (.FMV_W_X, 17), (.FCLASS_S, 18),
+    (.FMIN_S, 19), (.FMAX_S, 20),
+    (.FSGNJ_S, 21), (.FSGNJN_S, 22), (.FSGNJX_S, 23) ]
 
 /-- Build a 64-bit busy-bit table for operand readiness tracking.
 
@@ -2091,7 +2039,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
   let alu_op := makeIndexedWires "alu_op" 4
   let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op
-    (if enableM then aluMapping_RV32IM else aluMapping_RV32I)
+    (OpType.resolveMapping config.decoderInstrNames aluMappingByName)
 
   let int_exec_inst : CircuitInstance := {
     moduleName := "IntegerExecUnit"
@@ -2146,7 +2094,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- MulDiv opcode LUT: translate 6-bit dispatch optype → 3-bit MulDiv op
   let muldiv_op := makeIndexedWires "muldiv_op" 3
   let muldiv_lut_gates :=
-    if enableM then mkOpTypeLUT "mdlut" rs_muldiv_dispatch_opcode muldiv_op mulDivMapping
+    if enableM then mkOpTypeLUT "mdlut" rs_muldiv_dispatch_opcode muldiv_op
+      (OpType.resolveMapping config.decoderInstrNames mulDivMappingByName)
     else []
 
   let muldiv_exec_inst : CircuitInstance := {
@@ -2170,7 +2119,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let fpu_opcode_padded := fpu_opcode ++ [zero]  -- zero-pad to 6 bits for RS
 
   let fpu_lut_gates :=
-    if enableF then mkOpTypeLUT "fpulut" decode_optype fpu_opcode fpuMapping_RV32IMF
+    if enableF then mkOpTypeLUT "fpulut" decode_optype fpu_opcode
+      (OpType.resolveMapping config.decoderInstrNames fpuMappingByName)
     else []
 
   -- === FP RESERVATION STATION (conditional) ===

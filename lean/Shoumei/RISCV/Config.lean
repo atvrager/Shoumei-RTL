@@ -104,6 +104,42 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   base ++ mExt ++ fExt ++ cExt
 
+/-- Compute the decoder instruction name list for a given config.
+    Order matches the generated SV decoder enum: reverse alphabetical within
+    each extension group (I+M first, then F for configs with F extension).
+    This is determined by OpcodeParser.foldl prepending to a list while
+    iterating TreeMap keys in ascending order. -/
+def CPUConfig.decoderInstrNames (config : CPUConfig) : List String :=
+  let rv32i := ["XORI", "XOR", "SW", "SUB", "SRLI", "SRL", "SRAI", "SRA",
+                "SLTU", "SLTIU", "SLTI", "SLT", "SLLI", "SLL", "SH", "SB",
+                "ORI", "OR", "LW", "LUI", "LHU", "LH", "LBU", "LB",
+                "JALR", "JAL", "FENCE", "ECALL", "EBREAK", "BNE", "BLTU",
+                "BLT", "BGEU", "BGE", "BEQ", "AUIPC", "ANDI", "AND",
+                "ADDI", "ADD"]
+  let rv_f  := ["FSW", "FSUB_S", "FSQRT_S", "FSGNJX_S", "FSGNJN_S", "FSGNJ_S",
+                "FNMSUB_S", "FNMADD_S", "FMV_X_W", "FMV_W_X", "FMUL_S", "FMSUB_S",
+                "FMIN_S", "FMAX_S", "FMADD_S", "FLW", "FLT_S", "FLE_S", "FEQ_S",
+                "FDIV_S", "FCVT_WU_S", "FCVT_W_S", "FCVT_S_WU", "FCVT_S_W",
+                "FCLASS_S", "FADD_S"]
+  -- Combined I+M in reverse alphabetical order
+  let im := if config.enableM then
+    ["XORI", "XOR", "SW", "SUB", "SRLI", "SRL", "SRAI", "SRA",
+     "SLTU", "SLTIU", "SLTI", "SLT", "SLLI", "SLL", "SH", "SB",
+     "REMU", "REM", "ORI", "OR", "MULHU", "MULHSU", "MULH", "MUL",
+     "LW", "LUI", "LHU", "LH", "LBU", "LB", "JALR", "JAL",
+     "FENCE", "ECALL", "EBREAK", "DIVU", "DIV", "BNE", "BLTU",
+     "BLT", "BGEU", "BGE", "BEQ", "AUIPC", "ANDI", "AND",
+     "ADDI", "ADD"]
+  else rv32i
+  -- For F extension: I (or I+M) first, then F appended
+  if config.enableF then im ++ rv_f else im
+
+/-- Find index of a name in the decoder instruction list -/
+private def findIdx (names : List String) (target : String) : Nat :=
+  match names.findIdx? (· == target) with
+  | some idx => idx
+  | none => 0  -- fallback (shouldn't happen for valid configs)
+
 /-- Opcode encodings that differ between RV32I and RV32IM decoders.
     The decoder assigns sequential numbers to instructions; M-extension
     instructions shift the encodings of base instructions. -/
@@ -130,41 +166,16 @@ structure OpcodeEncodings where
   flw : Nat := 0
   fsw : Nat := 0
 
-/-- RV32I decoder opcode encodings -/
-def opcodeEncodings_RV32I : OpcodeEncodings :=
-  { lui := 19, auipc := 35, jal := 25, jalr := 24,
-    beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
-    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
-    sw := 2, sh := 14, sb := 15 }
-
-/-- RV32IM decoder opcode encodings -/
-def opcodeEncodings_RV32IM : OpcodeEncodings :=
-  { lui := 25, auipc := 43, jal := 31, jalr := 30,
-    beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
-    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
-    sw := 2, sh := 14, sb := 15 }
-
-/-- RV32IF decoder opcode encodings (I same as RV32I, F appended after 40 I instructions) -/
-def opcodeEncodings_RV32IF : OpcodeEncodings :=
-  { lui := 19, auipc := 35, jal := 25, jalr := 24,
-    beq := 34, bne := 29, blt := 31, bge := 33, bltu := 30, bgeu := 32,
-    lw := 18, lh := 21, lhu := 20, lb := 23, lbu := 22,
-    sw := 2, sh := 14, sb := 15,
-    flw := 55, fsw := 40 }
-
-/-- RV32IMF decoder opcode encodings (I+M same as RV32IM, F appended) -/
-def opcodeEncodings_RV32IMF : OpcodeEncodings :=
-  { lui := 25, auipc := 43, jal := 31, jalr := 30,
-    beq := 42, bne := 37, blt := 39, bge := 41, bltu := 38, bgeu := 40,
-    lw := 24, lh := 27, lhu := 26, lb := 29, lbu := 28,
-    sw := 2, sh := 14, sb := 15,
-    flw := 63, fsw := 48 }
-
-/-- Get opcode encodings for a CPU config -/
+/-- Build OpcodeEncodings from the decoder instruction name list (auto-resolved). -/
 def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
-  if cfg.enableF && cfg.enableM then opcodeEncodings_RV32IMF
-  else if cfg.enableF then opcodeEncodings_RV32IF
-  else if cfg.enableM then opcodeEncodings_RV32IM
-  else opcodeEncodings_RV32I
+  let names := cfg.decoderInstrNames
+  let f := findIdx names
+  { lui := f "LUI", auipc := f "AUIPC", jal := f "JAL", jalr := f "JALR",
+    beq := f "BEQ", bne := f "BNE", blt := f "BLT", bge := f "BGE",
+    bltu := f "BLTU", bgeu := f "BGEU",
+    lw := f "LW", lh := f "LH", lhu := f "LHU", lb := f "LB", lbu := f "LBU",
+    sw := f "SW", sh := f "SH", sb := f "SB",
+    flw := if cfg.enableF then f "FLW" else 0,
+    fsw := if cfg.enableF then f "FSW" else 0 }
 
 end Shoumei.RISCV
