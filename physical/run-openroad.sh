@@ -77,7 +77,7 @@ echo -e "${GREEN}✓ ORFS submodule initialized${NC}"
 if [ -n "${1:-}" ]; then
     DESIGN_NAME="$1"
 else
-    DESIGN_NAME="${DESIGN_NAME:-CPU_RV32IMF_synth}"
+    DESIGN_NAME="${DESIGN_NAME:-CPU_RV32IMF_Zicsr_Zifencei_synth}"
 fi
 
 if [ -n "${2:-}" ]; then
@@ -85,7 +85,7 @@ if [ -n "${2:-}" ]; then
 fi
 
 # Validate design name
-VALID_DESIGNS="CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth"
+VALID_DESIGNS="CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth CPU_RV32IM_Zicsr_Zifencei_synth CPU_RV32IMF_Zicsr_Zifencei_synth"
 if ! echo "$VALID_DESIGNS" | grep -qw "$DESIGN_NAME"; then
     echo -e "${RED}✗ Unknown design: $DESIGN_NAME${NC}"
     echo "Available designs: $VALID_DESIGNS"

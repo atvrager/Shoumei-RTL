@@ -20,7 +20,7 @@ structure CPUConfig where
   enableF : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
-  /-- Zicsr extension: CSR instructions (future) -/
+  /-- Zicsr extension: CSR instructions (CSRRW/S/C, CSRRWI/SI/CI, mcycle, minstret, mscratch) -/
   enableZicsr : Bool := false
   /-- Zifencei extension: instruction-fetch fence (FENCE.I) -/
   enableZifencei : Bool := false
@@ -62,14 +62,10 @@ def rv32iConfig : CPUConfig := {}
 def rv32imConfig : CPUConfig := { enableM := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IF configuration (F extension enabled, no M) -/
-def rv32ifConfig : CPUConfig := { enableF := true }
+def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZifencei := true }
 
-/-- RV32IMF configuration (M + F extensions enabled) -/
+/-- RV32IMF configuration (M + F + Zicsr + Zifencei) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
-
-/-- RV32IMF + Zifencei configuration -/
-def rv32imfZifenceiConfig : CPUConfig :=
-  { enableM := true, enableF := true, enableZifencei := true }
 
 
 /-
