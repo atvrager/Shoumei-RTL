@@ -1,5 +1,5 @@
 /-
-  Code Generation - Generate SystemVerilog, Chisel, and SystemC decoders
+  Code Generation - Generate SystemVerilog, Chisel, and C++ simulation decoders
   Produces RV32I (base), RV32IM, and RV32IMF decoder variants as needed.
 -/
 
@@ -8,7 +8,7 @@ import Shoumei.RISCV.OpcodeParser
 import Shoumei.RISCV.InstructionList
 import Shoumei.RISCV.CodegenSystemVerilog
 import Shoumei.RISCV.CodegenChisel
-import Shoumei.RISCV.CodegenSystemC
+import Shoumei.RISCV.CodegenCppSim
 
 namespace Shoumei.RISCV
 
@@ -53,8 +53,8 @@ def sortIFirst (defs : List InstructionDef) : List InstructionDef :=
 private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit := do
   writeSystemVerilogDecoder defs s!"output/sv-from-lean/{name}.sv" name
   writeChiselDecoder defs s!"chisel/src/main/scala/generated/{name}.scala" name
-  writeSystemCDecoderHeader defs s!"output/systemc/{name}.h" name
-  writeSystemCDecoderImpl defs s!"output/systemc/{name}.cpp" name
+  writeCppSimDecoderHeader defs s!"output/cpp_sim/{name}.h" name
+  writeCppSimDecoderImpl defs s!"output/cpp_sim/{name}.cpp" name
 
 /-- Generate all decoder variants from instruction definitions -/
 def generateDecoders (defs : List InstructionDef) : IO Unit := do
@@ -66,7 +66,7 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
   IO.println "Creating output directories..."
   let _ ← IO.Process.run {
     cmd := "mkdir"
-    args := #["-p", "output/sv-from-lean", "output/chisel-src", "output/systemc"]
+    args := #["-p", "output/sv-from-lean", "output/chisel-src", "output/cpp_sim"]
   }
 
   let baseDefs := filterBaseI defs
@@ -102,13 +102,13 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
 
   IO.println "\n==================================================\n"
   IO.println "Code generation summary:"
-  IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + Chisel + SystemC)"
+  IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + Chisel + C++)"
   if hasM then
-    IO.println s!"  - RV32IMDecoder: {(filterIM defs).length} instructions (SV + Chisel + SystemC)"
+    IO.println s!"  - RV32IMDecoder: {(filterIM defs).length} instructions (SV + Chisel + C++)"
   if hasF then
-    IO.println s!"  - RV32IFDecoder: {(filterIF defs).length} instructions (SV + Chisel + SystemC)"
+    IO.println s!"  - RV32IFDecoder: {(filterIF defs).length} instructions (SV + Chisel + C++)"
   if hasM && hasF then
-    IO.println s!"  - RV32IMFDecoder: {defs.length} instructions (SV + Chisel + SystemC)"
+    IO.println s!"  - RV32IMFDecoder: {defs.length} instructions (SV + Chisel + C++)"
   IO.println "\n✓ Code generation complete!"
 
 end Shoumei.RISCV

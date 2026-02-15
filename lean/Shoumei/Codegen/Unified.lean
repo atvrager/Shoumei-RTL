@@ -5,21 +5,21 @@ Provides a single, consistent interface for generating all output formats:
 - SystemVerilog (hierarchical, output/sv-from-lean/)
 - SystemVerilog Netlist (flat, output/sv-netlist/)
 - Chisel (hierarchical, chisel/src/main/scala/generated/)
-- SystemC (output/systemc/)
+- C++ Simulation (output/cpp_sim/)
 
 Usage:
   writeCircuit myCircuit  -- Generates all 4 outputs
   writeCircuitSV myCircuit  -- Just SystemVerilog
   writeCircuitNetlist myCircuit  -- Just SystemVerilog netlist
   writeCircuitChisel myCircuit  -- Just Chisel
-  writeCircuitSystemC myCircuit  -- Just SystemC
+  writeCircuitCppSim myCircuit  -- Just C++ Simulation
 -/
 
 import Shoumei.DSL
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.Chisel
-import Shoumei.Codegen.SystemC
+import Shoumei.Codegen.CppSim
 import Shoumei.Codegen.Testbench
 import Shoumei.Codegen.ASAP7
 
@@ -68,7 +68,7 @@ def updateCache (name : String) (h : UInt64) : IO Unit := do
 def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
 def chiselOutputDir : String := "chisel/src/main/scala/generated"
-def systemcOutputDir : String := "output/systemc"
+def cppSimOutputDir : String := "output/cpp_sim"
 def asap7OutputDir : String := "output/sv-asap7"
 
 -- Write SystemVerilog (hierarchical) for a circuit
@@ -91,12 +91,12 @@ def writeCircuitChisel (c : Circuit) (allCircuits : List Circuit := []) : IO Uni
   let path := s!"{chiselOutputDir}/{c.name}.scala"
   IO.FS.writeFile path chisel
 
--- Write SystemC for a circuit (.h and .cpp)
-def writeCircuitSystemC (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
-  let header := SystemC.toSystemCHeader c allCircuits
-  let impl := SystemC.toSystemCImpl c allCircuits
-  let hPath := s!"{systemcOutputDir}/{c.name}.h"
-  let cppPath := s!"{systemcOutputDir}/{c.name}.cpp"
+-- Write C++ Simulation for a circuit (.h and .cpp)
+def writeCircuitCppSim (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+  let header := CppSim.toCppSimHeader c allCircuits
+  let impl := CppSim.toCppSimImpl c allCircuits
+  let hPath := s!"{cppSimOutputDir}/{c.name}.h"
+  let cppPath := s!"{cppSimOutputDir}/{c.name}.cpp"
   IO.FS.writeFile hPath header
   IO.FS.writeFile cppPath impl
 
@@ -121,7 +121,7 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
-  writeCircuitSystemC c allCircuits
+  writeCircuitCppSim c allCircuits
   writeCircuitASAP7 c allCircuits
   -- Update cache after successful generation
   if let some h := lookupHash hashMap c.name then
@@ -140,7 +140,7 @@ def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Un
   writeCircuitChisel c allCircuits
   IO.println s!"  ✓ {c.name}.scala"
 
-  writeCircuitSystemC c allCircuits
+  writeCircuitCppSim c allCircuits
   IO.println s!"  ✓ {c.name}.h / {c.name}.cpp"
 
   IO.println s!"  ({c.gates.length} gates, {c.instances.length} instances)"
@@ -158,16 +158,16 @@ def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir
   IO.FS.createDirAll svNetlistOutputDir
   IO.FS.createDirAll chiselOutputDir
-  IO.FS.createDirAll systemcOutputDir
+  IO.FS.createDirAll cppSimOutputDir
   IO.FS.createDirAll asap7OutputDir
 
 -- Write SystemVerilog testbench for a TestbenchConfig
 def writeTestbenchSV (cfg : Testbench.TestbenchConfig) : IO Unit :=
   Testbench.writeTestbenchSV cfg
 
--- Write SystemC testbench for a TestbenchConfig
-def writeTestbenchSystemC (cfg : Testbench.TestbenchConfig) : IO Unit :=
-  Testbench.writeTestbenchSystemC cfg
+-- Write C++ simulation testbench for a TestbenchConfig
+def writeTestbenchCppSim (cfg : Testbench.TestbenchConfig) : IO Unit :=
+  Testbench.writeTestbenchCppSim cfg
 
 -- Write both testbenches
 def writeTestbenches (cfg : Testbench.TestbenchConfig) : IO Unit :=

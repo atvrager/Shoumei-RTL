@@ -240,7 +240,7 @@ jobs:
             output/sv-from-lean/
             output/sv-from-chisel/
             output/sv-netlist/
-            output/systemc/
+            output/cpp_sim/
             chisel/src/main/scala/generated/
             testbench/generated/
             testbench/tests/generated/

@@ -299,7 +299,7 @@ def main (args : List String) : IO Unit := do
   writeFilelist svOutputDir ".sv"
   writeFilelist svNetlistOutputDir ".sv"
   writeFilelist chiselOutputDir ".scala"
-  writeFilelist systemcOutputDir ".h"
+  writeFilelist cppSimOutputDir ".h"
   writeFilelist asap7OutputDir ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
 
@@ -311,6 +311,6 @@ def main (args : List String) : IO Unit := do
     IO.println s!"✓ Generated {count} circuits (all formats)"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
-  IO.println "  SystemC: output/systemc/"
+  IO.println "  C++ Sim: output/cpp_sim/"
   IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

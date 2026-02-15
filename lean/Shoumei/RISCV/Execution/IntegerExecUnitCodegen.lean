@@ -1,7 +1,7 @@
 /-
 RISCV/Execution/IntegerExecUnitCodegen.lean - Code generation for IntegerExecUnit
 
-Generates SystemVerilog, Chisel, and SystemC output for the Integer Execution Unit.
+Generates SystemVerilog, Chisel, and C++ Sim output for the Integer Execution Unit.
 
 Note: IntegerExecUnit instances ALU32, which was already generated in Phase 1.
 This codegen only generates the wrapper that adds tag pass-through for CDB broadcast.
@@ -21,7 +21,7 @@ def generateIntegerExecUnit : IO Unit := do
   -- Initialize output directories
   initOutputDirs
 
-  -- Generate the IntegerExecUnit wrapper (all 3 formats: SV, Chisel, SystemC)
+  -- Generate the IntegerExecUnit wrapper (all 3 formats: SV, Chisel, C++ Sim)
   let intExecUnit := mkIntegerExecUnit
   writeCircuit intExecUnit
 
