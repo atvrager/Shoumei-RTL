@@ -1,39 +1,43 @@
 /-
-Codegen/SystemC.lean - SystemC Code Generator
+Codegen/CppSim.lean - Plain C++ Simulation Code Generator
 
-Generates SystemC simulation models from DSL circuits.
+Generates plain C++ simulation models from DSL circuits.
+No SystemC dependency — uses bool variables and bool* pointers.
 
 Design:
 - Generates both .h (header) and .cpp (implementation) files
-- SC_MODULE for all circuits
-- SC_METHOD for combinational logic with sensitivity lists
-- SC_CTHREAD for sequential logic (DFFs) with clock edges
-- Hierarchical: submodule instances with port bindings
-- Supports both small and large circuits (bundled I/O with sc_vector)
+- struct for all circuits (no SC_MODULE)
+- Direct bool assignment for combinational logic (no sensitivity lists)
+- Plain function seq_tick() for sequential logic (DFFs)
+- Hierarchical: submodule instances with pointer-based port bindings
+- Supports both small and large circuits (bundled I/O with bool* arrays)
 
-Target: SystemC 2.3.3+ (ISO/IEC 1666-2011)
+Target: C++17
 -/
 
 import Shoumei.DSL
 import Shoumei.Codegen.Common
 
-namespace Shoumei.Codegen.SystemC
+namespace Shoumei.Codegen.CppSim
 
 open Shoumei.Codegen
 
--- Generate SystemC operator for a combinational gate type
+-- Generate C++ operator for a combinational gate type
 def gateTypeToOperator (gt : GateType) : String :=
   match gt with
   | GateType.AND => "&&"
   | GateType.OR => "||"
-  | GateType.NOT => "!"   -- Logical NOT for bool (not bitwise ~)
-  | GateType.XOR => "!="  -- XOR is logical inequality for bool
-  | GateType.BUF => ""    -- Buffer is direct assignment (no operator)
-  | GateType.MUX => "?"   -- Ternary operator (special handling required)
-  | GateType.DFF | GateType.DFF_SET => ""    -- DFFs use SC_CTHREAD, not operators
+  | GateType.NOT => "!"
+  | GateType.XOR => "!="
+  | GateType.BUF => ""
+  | GateType.MUX => "?"
+  | GateType.DFF | GateType.DFF_SET => ""
 
--- Helper: Get wire reference for SystemC (handles both individual and bundled I/O)
--- portNames/implPrefix: for PIMPL mode, internal wires get prefixed with "pImpl->"
+-- Helper: Get wire reference (handles both individual and bundled I/O)
+-- For bundled I/O: inputs[idx] / outputs[idx] (these are bool*)
+-- For ports (in portNames): name (these are bool*)
+-- For internal with implPrefix: pImpl->name (these are plain bool)
+-- For internal without prefix: name (plain bool)
 def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   match inputToIndex.find? (fun p => p.fst.name == w.name) with
@@ -45,88 +49,35 @@ def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × N
         if implPrefix != "" && !portNames.contains w.name then implPrefix ++ w.name
         else w.name
 
+-- Check if a wire is a pointer (bundled I/O or port) — needs dereference for read/write
+private def isPointerWire (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat))
+    (portNames : List String) (w : Wire) : Bool :=
+  inputToIndex.any (fun p => p.fst.name == w.name) ||
+  outputToIndex.any (fun p => p.fst.name == w.name) ||
+  portNames.contains w.name
+
+-- Read expression for a wire: dereference for pointers, direct access for plain bool
+def wireReadExpr (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (w : Wire)
+    (portNames : List String := []) (implPrefix : String := "") : String :=
+  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
+  if isPointerWire inputToIndex outputToIndex portNames w then s!"*{ref}"
+  else ref
+
+-- Write statement for a wire: dereference for pointers, direct assignment for plain bool
+def wireWriteStmt (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (w : Wire) (expr : String)
+    (portNames : List String := []) (implPrefix : String := "") : String :=
+  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
+  if isPointerWire inputToIndex outputToIndex portNames w then s!"  *{ref} = {expr};"
+  else s!"  {ref} = {expr};"
+
 -- Helper: find all internal wires (gate outputs and instance wires that are not circuit I/O)
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
   let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
   let allWires := gateOutputs ++ instanceWires
   (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)).eraseDups
-
--- Helper: find wires that MUST be sc_signal (connected to submodule ports or DFF outputs)
--- These cannot be plain bool because SystemC port binding requires sc_signal.
-def findSignalWires (c : Circuit) : List Wire :=
-  let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
-  let dffOutputs := c.gates.filter (fun g => g.gateType.isDFF) |>.map (fun g => g.output)
-  -- DFF inputs (d, reset) also need to be signals since they're read by seq_logic SC_CTHREAD
-  let dffInputs := c.gates.filterMap (fun g =>
-    if g.gateType.isDFF then
-      match g.inputs with
-      | [d, _, _] => some d
-      | _ => none
-    else none)
-  let dffResets := c.gates.filterMap (fun g =>
-    if g.gateType.isDFF then
-      match g.inputs with
-      | [_, _, reset] => some reset
-      | _ => none
-    else none)
-  (instanceWires ++ dffOutputs ++ dffInputs ++ dffResets).eraseDups
-
--- Build a precomputed list of wire names that must be sc_signal.
--- Includes: I/O ports, instance-connected wires, DFF outputs, DFF inputs.
-def buildSignalNameList (c : Circuit) : List String :=
-  let signalWires := findSignalWires c
-  (signalWires.map (·.name) ++ c.outputs.map (·.name) ++ c.inputs.map (·.name)).eraseDups
-
--- Check if a wire name is in the precomputed signal list
-def isSignalName (sigNames : List String) (name : String) : Bool :=
-  sigNames.contains name
-
--- Find sc_signal wires that are ALSO outputs of combinational gates.
--- These need shadow bool variables for correct single-pass comb_logic evaluation.
--- Without shadows, sc_signal .read() returns stale (previous delta-cycle) values
--- when the signal is both written and read within the same comb_logic method.
-def findCombDrivenSignals (c : Circuit) : List String :=
-  let sigNames := buildSignalNameList c
-  let combGateOutputs := c.gates.filter (·.gateType.isCombinational) |>.map (·.output.name)
-  let inputNames := c.inputs.map (·.name)
-  -- A comb-driven signal needs a shadow bool if it is an sc_signal or sc_out AND a comb gate output.
-  -- This includes output ports: sc_out writes are deferred, so .read() returns stale values
-  -- within the same comb_logic invocation. Shadows provide the fresh value.
-  -- Exclude input ports (they are read-only).
-  combGateOutputs.filter (fun n => sigNames.contains n && !inputNames.contains n) |>.eraseDups
-
--- Read expression for a wire: uses .read() for sc_signal, direct access for bool
--- combShadows: names of sc_signals that have shadow bool variables in comb_logic
-def wireReadExpr (sigNames : List String) (inputToIndex : List (Wire × Nat))
-    (outputToIndex : List (Wire × Nat)) (w : Wire)
-    (combShadows : List String := [])
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
-  -- Bundled I/O always uses .read()
-  if inputToIndex.any (fun p => p.fst.name == w.name) then s!"{ref}.read()"
-  else if outputToIndex.any (fun p => p.fst.name == w.name) then s!"{ref}.read()"
-  -- Comb-driven sc_signals: read from shadow bool in comb_logic
-  else if combShadows.contains w.name then s!"{ref}_shadow"
-  -- sc_signal wires (ports, instance wires, DFF outputs) use .read()
-  else if isSignalName sigNames w.name then s!"{ref}.read()"
-  -- Plain bool intermediates use direct access
-  else ref
-
--- Write statement for a wire: uses .write() for sc_signal, = for bool
--- combShadows: names of sc_signals that have shadow bool variables in comb_logic
-def wireWriteStmt (sigNames : List String) (inputToIndex : List (Wire × Nat))
-    (outputToIndex : List (Wire × Nat)) (w : Wire) (expr : String)
-    (combShadows : List String := [])
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
-  if inputToIndex.any (fun p => p.fst.name == w.name) then s!"  {ref}.write({expr});"
-  else if outputToIndex.any (fun p => p.fst.name == w.name) then s!"  {ref}.write({expr});"
-  -- Comb-driven sc_signals: write to shadow bool AND sc_signal
-  else if combShadows.contains w.name then
-    s!"  {ref}_shadow = {expr};\n  {ref}.write({ref}_shadow);"
-  else if isSignalName sigNames w.name then s!"  {ref}.write({expr});"
-  else s!"  {ref} = {expr};"
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
@@ -142,7 +93,6 @@ def findClockWires (c : Circuit) : List Wire :=
       | _ => none
     else
       none)
-  -- Also detect clocks from instance port connections
   let instanceClocks := c.instances.filterMap (fun inst =>
     inst.portMap.find? (fun (pname, _) => pname == "clock") |>.map (·.snd))
   (dffClocks ++ instanceClocks).eraseDups
@@ -188,11 +138,10 @@ def generateInstanceDeclarations (c : Circuit) : String :=
       s!"  {inst.moduleName} {inst.instName};"
     joinLines decls
 
-/-- Generate instance initializer list entries for constructor.
-    Each submodule needs to be initialized with a string name. -/
+/-- Generate instance initializer list entries for constructor. -/
 def generateInstanceInitList (c : Circuit) : List String :=
   c.instances.map fun inst =>
-    s!"    {inst.instName}(\"{inst.instName}\")"
+    s!"    {inst.instName}()"
 
 /-- Parse a port map key to extract base name and optional bit index.
     "in0[3]" → some ("in0", 3), "sel[0]" → some ("sel", 0), "clock" → none -/
@@ -204,32 +153,26 @@ private def parsePortMapKey (portName : String) : Option (String × Nat) :=
       | some idx => some (base, idx)
       | none => none
   | _ =>
-      -- Try trailing underscore+digits: "in_0" → ("in", 0)
       let chars := portName.toList
       let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
       if digitSuffix.isEmpty then none
       else
         let idxStr := String.ofList digitSuffix
         let baseChars := chars.take (chars.length - digitSuffix.length)
-        -- Strip trailing underscore from base
         let baseChars := if baseChars.getLast? == some '_' then baseChars.dropLast else baseChars
         match idxStr.toNat? with
         | some idx => some (String.ofList baseChars, idx)
         | none => none
 
-/-- Build a mapping from possible portMap key names → actual wire names for a submodule.
-    For each submodule port wire, generates candidate portMap key forms that might reference it. -/
+/-- Build a mapping from possible portMap key names → actual wire names for a submodule. -/
 private def buildPortNameMapping (allCircuits : List Circuit) (moduleName : String)
     : List (String × String) :=
-  -- Returns: list of (candidatePortMapKey, actualWireName)
   match allCircuits.find? (fun sc => sc.name == moduleName) with
   | none => []
   | some subMod =>
       (subMod.inputs ++ subMod.outputs).flatMap fun w =>
         let name := w.name
-        -- Always include identity mapping
         let candidates := [name]
-        -- Parse trailing digits to generate alternate forms
         let chars := name.toList
         let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
         let candidates := if digitSuffix.isEmpty then candidates
@@ -237,8 +180,6 @@ private def buildPortNameMapping (allCircuits : List Circuit) (moduleName : Stri
           let idxStr := String.ofList digitSuffix
           let baseChars := chars.take (chars.length - digitSuffix.length)
           let baseStr := String.ofList baseChars
-          -- Generate: base[idx], base_idx (with various base strippings)
-          -- Strip trailing separators: "_b", "__", "_"
           let strippedBases : List String :=
             [baseStr] ++
             (if baseStr.endsWith "_b" then [(baseStr.dropEnd 2).toString] else []) ++
@@ -249,34 +190,27 @@ private def buildPortNameMapping (allCircuits : List Circuit) (moduleName : Stri
           candidates ++ extraCandidates
         candidates.map fun c => (c, name)
 
-/-- Resolve a portMap key to the actual SystemC port name on the submodule. -/
+/-- Resolve a portMap key to the actual port name on the submodule. -/
 private def resolvePortName (mapping : List (String × String)) (portName : String) : String :=
   match mapping.find? (fun (key, _) => key == portName) with
   | some (_, actualName) => actualName
   | none =>
-      -- Fallback: simple bracket→underscore conversion
       let s := portName.replace "[" "_"
       s.replace "]" ""
 
 /-- Generate port bindings for a single instance in the constructor body.
-    Handles multiple portMap naming conventions:
-    - Direct match: portMap key matches submodule wire name exactly
-    - Indexed: portMap key "in0[3]" matches submodule wire "in0_b3"
-    - Bare repeated: portMap key "a" repeated N times matches "a_0".."a_{N-1}" -/
+    Uses pointer assignment: inst.port = &signal; -/
 def generateInstanceBindings (allCircuits : List Circuit) (inst : CircuitInstance) : String :=
-  -- Check if submodule uses bundled IO (sc_vector)
   match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
   | some subMod =>
     let useBundledIO := (subMod.inputs.length + subMod.outputs.length) > 500 && subMod.instances.isEmpty
     if useBundledIO then
-      -- Bundled IO: map portMap entries to inputs[N] / outputs[N] positionally
       let inputNames := subMod.inputs.map (·.name)
       let outputNames := subMod.outputs.map (·.name)
       let mapping := buildPortNameMapping allCircuits inst.moduleName
       let (bindings, _bareIdxMap) := inst.portMap.foldl
         (fun (acc : List String × List (String × Nat)) (portName, wire) =>
           let (lines, bmap) := acc
-          -- Resolve portMap key to actual submodule wire name
           let curIdx := (bmap.find? (fun (n, _) => n == portName)).map (·.2) |>.getD 0
           let candidates := mapping.filter (fun (key, _) => key == portName)
           let count := inst.portMap.filter (fun (pn, _) => pn == portName) |>.length
@@ -290,27 +224,23 @@ def generateInstanceBindings (allCircuits : List Circuit) (inst : CircuitInstanc
             | some _ => bmap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
             | none => bmap ++ [(portName, 1)]
           else bmap
-          -- Find position: is it an input or output?
           match inputNames.findIdx? (· == actualName) with
           | some idx =>
-              (lines ++ [s!"    {inst.instName}.inputs[{idx}]({wire.name});"], newMap)
+              (lines ++ [s!"    {inst.instName}.inputs[{idx}] = &{wire.name};"], newMap)
           | none =>
               match outputNames.findIdx? (· == actualName) with
               | some idx =>
-                  (lines ++ [s!"    {inst.instName}.outputs[{idx}]({wire.name});"], newMap)
+                  (lines ++ [s!"    {inst.instName}.outputs[{idx}] = &{wire.name};"], newMap)
               | none =>
-                  -- Direct port name (clock, reset, etc.)
-                  (lines ++ [s!"    {inst.instName}.{actualName}({wire.name});"], newMap)
+                  (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], newMap)
         ) ([], [])
       joinLines bindings
     else
-      -- Individual ports: use name mapping
       generateInstanceBindingsNamed allCircuits inst
   | none =>
-      -- Submodule not in allCircuits (e.g., hand-written decoder)
       generateInstanceBindingsNamed allCircuits inst
 where
-  /-- Generate bindings using named ports -/
+  /-- Generate bindings using named ports with pointer assignment -/
   generateInstanceBindingsNamed (allCircuits : List Circuit) (inst : CircuitInstance) : String :=
     let mapping := buildPortNameMapping allCircuits inst.moduleName
     let (bindings, _) := inst.portMap.foldl (fun (acc : List String × List (String × Nat)) (portName, wire) =>
@@ -327,13 +257,13 @@ where
             let newMap := match bareIdxMap.find? (fun (n, _) => n == portName) with
               | some _ => bareIdxMap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
               | none => bareIdxMap ++ [(portName, 1)]
-            (lines ++ [s!"    {inst.instName}.{actualName}({wire.name});"], newMap)
+            (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], newMap)
           else
-            (lines ++ [s!"    {inst.instName}.{actualName}({wire.name});"], bareIdxMap)
+            (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], bareIdxMap)
       | none =>
           let s := portName.replace "[" "_"
-          let scPortName := s.replace "]" ""
-          (lines ++ [s!"    {inst.instName}.{scPortName}({wire.name});"], bareIdxMap)
+          let cppPortName := s.replace "]" ""
+          (lines ++ [s!"    {inst.instName}.{cppPortName} = &{wire.name};"], bareIdxMap)
     ) ([], [])
     joinLines bindings
 
@@ -352,102 +282,29 @@ def generatePortDeclarations (c : Circuit) (useBundledIO : Bool) : String :=
     let inputCount := c.inputs.length
     let outputCount := c.outputs.length
     joinLines [
-      s!"  sc_vector<sc_in<bool>> inputs;    // {inputCount} input ports",
-      s!"  sc_vector<sc_out<bool>> outputs;  // {outputCount} output ports"
+      s!"  bool* inputs[{inputCount}] = " ++ "{};    // " ++ s!"{inputCount} input ports",
+      s!"  bool* outputs[{outputCount}] = " ++ "{};  // " ++ s!"{outputCount} output ports"
     ]
   else
-    -- Individual port declarations (include all inputs/outputs)
-    let inputDecls := c.inputs.map (fun w => s!"  sc_in<bool> {w.name};")
-    let outputDecls := c.outputs.map (fun w => s!"  sc_out<bool> {w.name};")
+    let inputDecls := c.inputs.map (fun w => s!"  bool* {w.name} = nullptr;")
+    let outputDecls := c.outputs.map (fun w => s!"  bool* {w.name} = nullptr;")
     joinLines (inputDecls ++ outputDecls)
 
--- Generate shadow bool declarations for comb-driven output ports.
--- sc_out.write() is deferred, so .read() returns stale values within comb_logic.
--- Shadow bools provide the fresh value for same-cycle reads.
-def generateOutputShadowDecls (c : Circuit) : String :=
-  let combDriven := findCombDrivenSignals c
-  let outputNames := c.outputs.map (·.name)
-  let shadowOutputs := outputNames.filter (fun n => combDriven.contains n)
-  if shadowOutputs.isEmpty then ""
-  else
-    let decls := shadowOutputs.map (fun n => s!"  bool {n}_shadow = false;")
-    joinLines decls
-
--- Generate internal signal declarations
--- Wires connected to submodule ports or DFFs must be sc_signal<bool>.
--- Pure combinational intermediates use plain bool for correct same-cycle evaluation.
+-- Generate internal signal declarations — all plain bool
 def generateSignalDeclarations (c : Circuit) : String :=
   let internalWires := findInternalWires c
   if internalWires.isEmpty then
     ""
   else
-    let sigNames := buildSignalNameList c
-    let combDriven := findCombDrivenSignals c
-    let decls := internalWires.map (fun w =>
-      if isSignalName sigNames w.name then
-        if combDriven.contains w.name then
-          -- Comb-driven: declare both fast_signal (for ports) and shadow bool (for comb_logic)
-          s!"  fast_signal<bool> {w.name};\n  bool {w.name}_shadow = false;"
-        else
-          s!"  fast_signal<bool> {w.name};"
-      else
-        s!"  bool {w.name} = false;")
+    let decls := internalWires.map (fun w => s!"  bool {w.name} = false;")
     joinLines decls
 
--- Generate sensitivity list for SC_METHOD (all non-clock/reset inputs for data)
-def generateSensitivityList (c : Circuit) (useBundledIO : Bool) : String :=
-  if useBundledIO then
-    -- For large bundled I/O circuits, iterate sc_vector for sensitivity
-    let internalWires := findInternalWires c
-    let sigNames := buildSignalNameList c
-    let internalSignalWires := internalWires.filter (fun w => isSignalName sigNames w.name)
-    let internalSense := if internalSignalWires.isEmpty then ""
-      else "\n    sensitive << " ++ String.intercalate " << " (internalSignalWires.map (·.name)) ++ ";"
-    "    for (size_t i = 0; i < inputs.size(); i++) sensitive << inputs[i];" ++ internalSense
-  else
-    -- Individual inputs (exclude clock/reset from combinational sensitivity)
-    let isSeq := hasSequentialElements c
-    let clocks := findClockWires c
-
-    -- Only exclude clock from sensitivity (not reset — reset drives combinational logic too)
-    let dataInputs := if isSeq then
-      c.inputs.filter (fun w => !clocks.contains w)
-    else
-      c.inputs
-
-    -- Also include internal sc_signal wires that are driven by instances (submodule outputs)
-    -- or DFFs. Plain bool intermediates don't need sensitivity (computed inline).
-    let internalWires := findInternalWires c
-    let sigNames := buildSignalNameList c
-    let internalSignalWires := internalWires.filter (fun w =>
-      isSignalName sigNames w.name)
-    let allSenseWires := dataInputs ++ internalSignalWires
-
-    if allSenseWires.isEmpty then
-      "    // No data inputs for sensitivity list"
-    else
-      let inputNames := allSenseWires.map (fun w => w.name)
-      let senseList := String.intercalate " << " inputNames
-      s!"    sensitive << {senseList};"
-
--- Generate constructor (SC_CTOR) with process registration
-def generateConstructor (c : Circuit) (useBundledIO : Bool) (allCircuits : List Circuit := []) : String :=
+-- Generate constructor
+def generateConstructor (c : Circuit) (_useBundledIO : Bool) (allCircuits : List Circuit := []) : String :=
   let moduleName := c.name
   let hasInstances := !c.instances.isEmpty
 
-  -- Build initializer list
-  let initParts : List String :=
-    -- Bundled I/O init
-    (if useBundledIO then
-      [s!"    inputs(\"inputs\", {c.inputs.length}), outputs(\"outputs\", {c.outputs.length})"]
-    else []) ++
-    -- Instance member init
-    generateInstanceInitList c
-
-  -- No SC_METHOD/SC_CTHREAD registration: evaluation is driven by
-  -- the testbench calling eval_seq_all()/eval_comb_all() each cycle.
-  -- This avoids delta-cycle ordering issues in hierarchical designs.
-  let processReg : List String := []
+  let initParts := generateInstanceInitList c
 
   -- Instance port bindings (in constructor body)
   let instanceBindings := if hasInstances then
@@ -455,21 +312,19 @@ def generateConstructor (c : Circuit) (useBundledIO : Bool) (allCircuits : List 
   else []
 
   let ctorLine := if initParts.isEmpty then
-    s!"  SC_CTOR({moduleName}) " ++ "{"
+    s!"  {moduleName}(const char* name = \"\") " ++ "{"
   else
-    s!"  SC_CTOR({moduleName})\n" ++
+    s!"  {moduleName}(const char* name = \"\")\n" ++
     "    : " ++ String.intercalate ",\n      " initParts ++ "\n  {"
 
-  joinLines ([ctorLine] ++ processReg ++ instanceBindings ++ ["  }"])
+  joinLines ([ctorLine] ++ instanceBindings ++ ["  }"])
 
--- Generate a single combinational gate assignment (for .cpp file)
--- Uses plain bool assignment for pure combinational intermediates,
--- and sc_signal .write()/.read() for wires connected to ports/DFFs.
-def generateCombGateSystemC (sigNames : List String) (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (combShadows : List String) (g : Gate)
+-- Generate a single combinational gate assignment
+def generateCombGateCppSim (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   let op := gateTypeToOperator g.gateType
-  let rd := fun w => wireReadExpr sigNames inputToIndex outputToIndex w combShadows portNames implPrefix
-  let wr := fun expr => wireWriteStmt sigNames inputToIndex outputToIndex g.output expr combShadows portNames implPrefix
+  let rd := fun w => wireReadExpr inputToIndex outputToIndex w portNames implPrefix
+  let wr := fun expr => wireWriteStmt inputToIndex outputToIndex g.output expr portNames implPrefix
 
   match g.gateType with
   | GateType.NOT =>
@@ -481,68 +336,38 @@ def generateCombGateSystemC (sigNames : List String) (inputToIndex : List (Wire 
       | [i0] => wr (rd i0)
       | _ => "  // ERROR: BUF gate should have 1 input"
   | GateType.MUX =>
-      -- Ternary operator: sel ? in1 : in0
-      -- inputs: [in0, in1, sel]
       match g.inputs with
       | [in0, in1, sel] =>
           wr s!"{rd sel} ? {rd in1} : {rd in0}"
       | _ => "  // ERROR: MUX gate should have 3 inputs: [in0, in1, sel]"
   | GateType.DFF | GateType.DFF_SET =>
-      ""  -- DFFs handled in seq_logic, not comb_logic
+      ""
   | _ =>
-      -- Binary operators: input1 op input2
       match g.inputs with
       | [i0, i1] =>
           wr s!"{rd i0} {op} {rd i1}"
       | _ => "  // ERROR: Binary gate should have 2 inputs"
 
--- Generate DFF logic for SC_CTHREAD
-def generateDFFSystemC (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  match g.inputs with
-  | [d, _clk, reset] =>
-      let dRef := wireRef inputToIndex outputToIndex d portNames implPrefix
-      let resetRef := wireRef inputToIndex outputToIndex reset portNames implPrefix
-      let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
-      let resetVal := if g.gateType == GateType.DFF_SET then "true" else "false"
-      joinLines [
-        s!"    if ({resetRef}.read()) " ++ "{",
-        s!"      {qRef}.write({resetVal});",
-        "    } else {",
-        s!"      {qRef}.write({dRef}.read());",
-        "    }"
-      ]
-  | _ => "    // ERROR: DFF should have 3 inputs: [d, clk, reset]"
-
 -- Topological sort of combinational gates.
--- Gates are sorted so that a gate's input wires are produced before they are consumed.
--- Wires that are circuit inputs, DFF outputs, or instance port outputs are "available"
--- from the start (they don't need to be produced by a comb gate).
 def topSortCombGates (c : Circuit) : List Gate :=
   let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
-  -- Comb gate outputs that are also sc_signals use shadow bools,
-  -- so they must NOT be treated as pre-available.
   let combGateOutputNames := combGates.map (·.output.name)
-  -- Build set of wire names that are available without a comb gate producing them
   let inputNames := c.inputs.map (·.name)
   let dffOutputNames := c.gates.filter (·.gateType.isDFF) |>.map (·.output.name)
   let instOutputNames := List.flatten (c.instances.map (fun inst =>
     inst.portMap.map (fun p => p.2.name)))
-  -- Filter out wires that are produced by comb gates (they must be topo-sorted)
   let available := (inputNames ++ dffOutputNames ++ instOutputNames).filter
     (fun n => !combGateOutputNames.contains n)
-  -- Iteratively emit gates whose inputs are all available
   let rec loop (remaining : List Gate) (avail : List String) (sorted : List Gate)
       (fuel : Nat) : List Gate :=
     match fuel with
-    | 0 => sorted ++ remaining  -- fallback: append unsorted remainder
+    | 0 => sorted ++ remaining
     | fuel + 1 =>
       if remaining.isEmpty then sorted
       else
         let (ready, notReady) := remaining.partition (fun g =>
           g.inputs.all (fun w => avail.contains w.name))
         if ready.isEmpty then
-          -- No progress; break cycle by emitting first remaining gate
           match remaining with
           | g :: rest => loop rest (avail ++ [g.output.name]) (sorted ++ [g]) fuel
           | [] => sorted
@@ -560,57 +385,38 @@ def generateCombMethod (c : Circuit) (useBundledIO : Bool)
   let combGates := topSortCombGates c
   if combGates.isEmpty then ""
   else
-    let sigNames := buildSignalNameList c
-    let combShadows := findCombDrivenSignals c
-    let assignments := combGates.map (fun g => generateCombGateSystemC sigNames inputToIndex outputToIndex combShadows g portNames implPrefix)
+    let assignments := combGates.map (fun g => generateCombGateCppSim inputToIndex outputToIndex g portNames implPrefix)
     joinLines [
       s!"void {c.name}::comb_logic() " ++ "{",
       joinLines assignments,
       "}"
     ]
 
--- Generate DFF reset initialization line (for SC_CTHREAD reset block)
+-- Generate DFF reset initialization line
 def generateDFFResetInit (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
   let resetVal := if g.gateType == GateType.DFF_SET then "true" else "false"
-  s!"    {qRef}.write({resetVal});"
+  -- DFF output is always internal (plain bool), direct assignment
+  if isPointerWire inputToIndex outputToIndex portNames g.output then
+    s!"    *{qRef} = {resetVal};"
+  else
+    s!"    {qRef} = {resetVal};"
 
--- Generate DFF latch line (for SC_CTHREAD main loop body)
+-- Generate DFF latch line
 def generateDFFLatch (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   match g.inputs with
   | [d, _clk, _reset] =>
-      let dRef := wireRef inputToIndex outputToIndex d portNames implPrefix
+      let dExpr := wireReadExpr inputToIndex outputToIndex d portNames implPrefix
       let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
-      s!"      {qRef}.write({dRef}.read());"
+      if isPointerWire inputToIndex outputToIndex portNames g.output then
+        s!"      *{qRef} = {dExpr};"
+      else
+        s!"      {qRef} = {dExpr};"
   | _ => "      // ERROR: DFF should have 3 inputs: [d, clk, reset]"
 
--- Generate seq_logic method body (SC_CTHREAD pattern with reset block + while loop)
-def generateSeqMethod (c : Circuit) (useBundledIO : Bool)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  let inputToIndex := if useBundledIO then c.inputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
-  let outputToIndex := if useBundledIO then c.outputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
-
-  let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
-  if dffGates.isEmpty then ""
-  else
-    let resetInits := dffGates.map (fun g => generateDFFResetInit inputToIndex outputToIndex g portNames implPrefix)
-    let latchLines := dffGates.map (fun g => generateDFFLatch inputToIndex outputToIndex g portNames implPrefix)
-    joinLines [
-      s!"void {c.name}::seq_logic() " ++ "{",
-      "  // Reset initialization (SC_CTHREAD restarts here on reset)",
-      joinLines resetInits,
-      "  wait();",
-      "  while (true) {",
-      joinLines latchLines,
-      "    wait();",
-      "  }",
-      "}"
-    ]
-
--- Generate seq_tick method: plain function version of DFF update (no SC_CTHREAD/wait).
--- Called by eval_seq_all() for hierarchical manual evaluation.
+-- Generate seq_tick method: plain function version of DFF update.
 def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   let inputToIndex : List (Wire × Nat) := []
@@ -622,7 +428,7 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
     let resetName := match resets.head? with
       | some r => r.name
       | none => "reset"
-    let resetRef := if portNames.contains resetName then resetName
+    let resetExpr := if portNames.contains resetName then s!"*{resetName}"
       else implPrefix ++ resetName
     let resetInits := dffGates.map (fun g =>
       generateDFFResetInit inputToIndex outputToIndex g portNames implPrefix)
@@ -630,7 +436,7 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
       generateDFFLatch inputToIndex outputToIndex g portNames implPrefix)
     joinLines [
       s!"void {c.name}::seq_tick() " ++ "{",
-      s!"  if ({resetRef}.read()) " ++ "{",
+      s!"  if ({resetExpr}) " ++ "{",
       joinLines resetInits,
       "  } else {",
       joinLines latchLines,
@@ -668,10 +474,8 @@ def generateEvalSeqAll (c : Circuit) : String :=
     "}"
   ]
 
--- Main function: Generate SystemC header file (.h)
--- When a circuit has submodule instances, uses PIMPL pattern to keep headers thin.
--- Internal signals and submodule instances go behind struct Impl* in the .cpp.
-def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
+-- Main function: Generate C++ simulation header file (.h)
+def toCppSimHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let moduleName := c.name
   let guardName := moduleName.toUpper ++ "_H"
   let isSeq := hasSequentialElements c
@@ -689,34 +493,32 @@ def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
   let processDecls :=
     (if hasCombLogic then ["  void comb_logic();"] else []) ++
-    (if isSeq && hasDFFs then ["  void seq_logic();", "  void seq_tick();"] else []) ++
+    (if isSeq && hasDFFs then ["  void seq_tick();"] else []) ++
     ["  void eval_comb_all();", "  void eval_seq_all();"]
 
-  let outputShadows := generateOutputShadowDecls c
-
   if usePimpl then
-    -- PIMPL header: ports + method signatures only, no submodule includes
     let parts := [
       s!"#ifndef {guardName}",
       s!"#define {guardName}",
       "",
-      "#include \"fast_signal.h\"",
+      "#include <cstdint>",
+      "#include <cstdbool>",
       "",
-      s!"SC_MODULE({moduleName}) " ++ "{",
+      s!"struct {moduleName} " ++ "{",
       "  // Ports",
-      portDecls
-    ] ++
-    (if outputShadows.isEmpty then [] else ["", "  // Shadow bools for comb-driven outputs", outputShadows]) ++
-    ["",
+      portDecls,
+      "",
       "  // PIMPL: internal signals and submodule instances in .cpp",
       "  struct Impl;",
       "  Impl* pImpl;",
       "",
-      "  // Process methods"
+      "  // Methods"
     ] ++
     processDecls ++
     ["",
-      s!"  SC_CTOR({moduleName});",
+      "  void bind_ports();",
+      "",
+      s!"  {moduleName}(const char* name = \"\");",
       s!"  ~{moduleName}();",
       "};",
       "",
@@ -724,7 +526,7 @@ def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
     ]
     joinLines parts
   else
-    -- Non-PIMPL header: original behavior for leaf modules
+    -- Non-PIMPL header: leaf modules with inline constructor
     let instanceIncludes := generateInstanceIncludes c
     let signalDecls := generateSignalDeclarations c
     let instanceDecls := generateInstanceDeclarations c
@@ -734,19 +536,19 @@ def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
       s!"#ifndef {guardName}",
       s!"#define {guardName}",
       "",
-      "#include \"fast_signal.h\""
+      "#include <cstdint>",
+      "#include <cstdbool>"
     ] ++
     (if instanceIncludes.isEmpty then [] else [instanceIncludes]) ++
     ["",
-      s!"SC_MODULE({moduleName}) " ++ "{",
+      s!"struct {moduleName} " ++ "{",
       "  // Ports",
       portDecls
     ] ++
-    (if outputShadows.isEmpty then [] else ["", "  // Shadow bools for comb-driven outputs", outputShadows]) ++
     (if signalDecls.isEmpty then [] else ["", "  // Internal signals", signalDecls]) ++
     (if instanceDecls.isEmpty then [] else ["", "  // Submodule instances", instanceDecls]) ++
     ["",
-      "  // Process methods"
+      "  // Methods"
     ] ++
     processDecls ++
     ["",
@@ -759,13 +561,12 @@ def toSystemCHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
     joinLines parts
 
 -- Generate PIMPL-aware instance port bindings for the constructor body.
--- Instances and internal wires get "pImpl->" prefix; parent ports don't.
+-- Uses pointer assignment: inst.port = &signal;
 def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : String :=
   let portNames := (c.inputs ++ c.outputs).map (·.name)
   let bindings := c.instances.map fun inst =>
     let mapping := buildPortNameMapping allCircuits inst.moduleName
     let comment := s!"    // {inst.instName} ({inst.moduleName})"
-    -- Check if submodule uses bundled IO (sc_vector)
     let subMod := allCircuits.find? (fun (sc : Circuit) => sc.name == inst.moduleName)
     let subUseBundled := match subMod with
       | some sm => (sm.inputs.length + sm.outputs.length) > 500 && sm.instances.isEmpty
@@ -793,50 +594,45 @@ def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : S
         | some _ => bareIdxMap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
         | none => bareIdxMap ++ [(portName, 1)]
       else bareIdxMap
-      let wireExpr := if portNames.contains wire.name then wire.name
-                      else s!"pImpl->{wire.name}"
+      -- Parent ports are already bool* pointers; internal wires are plain bool (need &)
+      let isPort := portNames.contains wire.name
+      let wireExpr := if isPort then wire.name else s!"&pImpl->{wire.name}"
       if subUseBundled then
-        -- Submodule uses sc_vector: map to inputs[N] / outputs[N]
         match subInputNames.findIdx? (· == actualName) with
         | some idx =>
-            (ls ++ [s!"    pImpl->{inst.instName}.inputs[{idx}]({wireExpr});"], newMap)
+            (ls ++ [s!"    pImpl->{inst.instName}.inputs[{idx}] = {wireExpr};"], newMap)
         | none =>
             match subOutputNames.findIdx? (· == actualName) with
             | some idx =>
-                (ls ++ [s!"    pImpl->{inst.instName}.outputs[{idx}]({wireExpr});"], newMap)
+                (ls ++ [s!"    pImpl->{inst.instName}.outputs[{idx}] = {wireExpr};"], newMap)
             | none =>
-                (ls ++ [s!"    pImpl->{inst.instName}.{actualName}({wireExpr});"], newMap)
+                (ls ++ [s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"], newMap)
       else
-        (ls ++ [s!"    pImpl->{inst.instName}.{actualName}({wireExpr});"], newMap)
+        (ls ++ [s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"], newMap)
     ) ([], [])
     comment ++ "\n" ++ joinLines lines
   joinLines bindings
 
--- Main function: Generate SystemC implementation file (.cpp)
-def toSystemCImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
+-- Main function: Generate C++ simulation implementation file (.cpp)
+def toCppSimImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let moduleName := c.name
-  let isSeq := hasSequentialElements c
   let useBundledIO := (c.inputs.length + c.outputs.length) > 500 && c.instances.isEmpty
   let usePimpl := !c.instances.isEmpty
-  -- PIMPL parameters for method generation
-  let portNames := if usePimpl then (c.inputs ++ c.outputs).map (·.name) else []
+  -- All ports are bool* pointers, so always pass port names for proper dereference
+  let portNames := (c.inputs ++ c.outputs).map (·.name)
   let implPrefix := if usePimpl then "pImpl->" else ""
 
   let combMethod := generateCombMethod c useBundledIO portNames implPrefix
-  let seqMethod := if isSeq then generateSeqMethod c useBundledIO portNames implPrefix else ""
 
   if usePimpl then
-    -- Generate Impl struct with internal signals and submodule instances
     let signalDecls := generateSignalDeclarations c
     let instanceDecls := generateInstanceDeclarations c
     let initList := generateInstanceInitList c
     let initPart := if initList.isEmpty then ""
       else "\n    : " ++ String.intercalate ",\n      " initList
 
-    -- Submodule includes
     let instanceIncludes := generateInstanceIncludes c
 
-    -- Constructor + destructor
     let instanceBindings := generatePimplInstanceBindings allCircuits c
 
     let parts := [
@@ -851,12 +647,21 @@ def toSystemCImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
      s!"  Impl(){initPart} " ++ "{}",
      "};",
      "",
-     s!"{moduleName}::{moduleName}(sc_module_name name) : sc_module(name) " ++ "{",
-     "  pImpl = new Impl();"
+     s!"{moduleName}::{moduleName}(const char* name) " ++ "{",
+     "  pImpl = new Impl();",
+     "}",
+     "",
+     s!"void {moduleName}::bind_ports() " ++ "{"
     ] ++
-    (if instanceBindings.isEmpty then [] else ["", instanceBindings]) ++
-    -- No SC_METHOD/SC_CTHREAD registration: evaluation is driven by
-    -- the testbench calling eval_seq_all()/eval_comb_all() each cycle.
+    (if instanceBindings.isEmpty then [] else [instanceBindings]) ++
+    -- Call bind_ports() on PIMPL sub-instances
+    (let pimplSubInsts := c.instances.filter fun inst =>
+       match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+       | some sc => !sc.instances.isEmpty  -- has instances = uses PIMPL
+       | none => false
+     if pimplSubInsts.isEmpty then []
+     else pimplSubInsts.map fun inst =>
+       s!"  pImpl->{inst.instName}.bind_ports();") ++
     ["}",
      "",
      s!"{moduleName}::~{moduleName}() " ++ "{",
@@ -864,25 +669,21 @@ def toSystemCImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
      "}"
     ] ++
     (if combMethod.isEmpty then [] else ["", combMethod]) ++
-    (if seqMethod.isEmpty then [] else ["", seqMethod]) ++
-    -- seq_tick, eval_comb_all, eval_seq_all
     (let seqTickMethod := generateSeqTickMethod c useBundledIO portNames implPrefix
      if seqTickMethod.isEmpty then [] else ["", seqTickMethod]) ++
     ["", generateEvalCombAll c, "", generateEvalSeqAll c]
 
     joinLines parts
   else
-    -- Non-PIMPL: original behavior
-    let seqTickMethod := generateSeqTickMethod c useBundledIO
+    let seqTickMethod := generateSeqTickMethod c useBundledIO portNames
     let parts := [
       s!"#include \"{moduleName}.h\"",
       ""
     ] ++
     (if combMethod.isEmpty then [] else [combMethod]) ++
-    (if seqMethod.isEmpty then [] else ["", seqMethod]) ++
     (if seqTickMethod.isEmpty then [] else ["", seqTickMethod]) ++
     ["", generateEvalCombAll c, "", generateEvalSeqAll c]
 
     joinLines parts
 
-end Shoumei.Codegen.SystemC
+end Shoumei.Codegen.CppSim

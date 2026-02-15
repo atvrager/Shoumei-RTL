@@ -67,25 +67,25 @@ for mod in RV32IDecoder RV32IMDecoder; do
 done
 echo ""
 
-# --- Test 2: SystemC output ---
-echo "==> Test 2: SystemC Output"
+# --- Test 2: C++ simulation output ---
+echo "==> Test 2: C++ Simulation Output"
 
 SC_H_COUNT=0
-if [ -d "output/systemc" ]; then
-    SC_H_COUNT=$(find output/systemc -name "*.h" 2>/dev/null | wc -l)
+if [ -d "output/cpp_sim" ]; then
+    SC_H_COUNT=$(find output/cpp_sim -name "*.h" 2>/dev/null | wc -l)
 fi
 
 if [ "$SC_H_COUNT" -gt 0 ]; then
-    pass "SystemC headers generated (${SC_H_COUNT} files)"
+    pass "C++ simulation headers generated (${SC_H_COUNT} files)"
     for mod in FullAdder DFlipFlop; do
-        if [ -f "output/systemc/${mod}.h" ] && [ -f "output/systemc/${mod}.cpp" ]; then
-            pass "SystemC: ${mod}.h + ${mod}.cpp"
+        if [ -f "output/cpp_sim/${mod}.h" ] && [ -f "output/cpp_sim/${mod}.cpp" ]; then
+            pass "C++ sim: ${mod}.h + ${mod}.cpp"
         else
-            fail "SystemC: ${mod} files missing"
+            fail "C++ sim: ${mod} files missing"
         fi
     done
 else
-    printf '%b  ⚠ No SystemC output (run make codegen to generate)%b\n' "$YELLOW" "$NC"
+    printf '%b  ⚠ No C++ simulation output (run make codegen to generate)%b\n' "$YELLOW" "$NC"
 fi
 echo ""
 

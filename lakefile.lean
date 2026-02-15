@@ -15,7 +15,7 @@ lean_lib «Shoumei» where
   srcDir := "lean"
 
 -- Executable target for CENTRALIZED code generation
--- Generates ALL circuits in one command (SV + Chisel + SystemC)
+-- Generates ALL circuits in one command (SV + Chisel + C++ Sim)
 -- This is the recommended way to generate code
 @[default_target]
 lean_exe generate_all where
@@ -48,14 +48,14 @@ lean_exe generate_muxtree where
   root := `GenerateMuxTree
   supportInterpreter := true
 
--- Executable target for testing SystemC code generation
-lean_exe test_systemc where
-  root := `TestSystemC
+-- Executable target for testing C++ simulation code generation
+lean_exe test_cppsim where
+  root := `TestCppSim
   supportInterpreter := true
 
--- Executable target for SystemC code generation (all 23 modules)
-lean_exe codegen_systemc where
-  root := `GenerateSystemC
+-- Executable target for C++ simulation code generation (all modules)
+lean_exe codegen_cppsim where
+  root := `GenerateCppSim
   supportInterpreter := true
 
 -- Executable target for generating QueueN variants (2:8, 4:8, 64:6, 64:32)
