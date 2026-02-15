@@ -61,7 +61,7 @@ Yosys-based logical equivalence checking between Lean-generated SV and Chisel-ge
 ### Verilator Simulation
 - Full RTL simulation of all 8 ELF test programs
 - X-prop simulation mode for detecting uninitialized signal issues
-- VCD trace support for waveform debugging
+- FST trace support for waveform debugging
 
 ### SystemC Simulation
 - Cycle-accurate simulation from Lean-generated SystemC

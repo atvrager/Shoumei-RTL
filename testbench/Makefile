@@ -2,7 +2,7 @@
 #
 # Targets:
 #   make sim          - Build Verilator simulation binary
-#   make sim-trace    - Build with VCD trace support
+#   make sim-trace    - Build with FST trace support
 #   make sim-debug    - Build with TRACE_PIPELINE $display output
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
 #   make tests        - Build ELF test programs
@@ -86,11 +86,11 @@ $(SIM_XPROP_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
-	$(VERILATOR) $(VFLAGS) --trace \
+	$(VERILATOR) $(VFLAGS) --trace-fst \
 		-CFLAGS "-DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
-	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with VCD trace)"
+	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
 sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 	@rm -rf $(BUILD_DIR)/verilator_dbg
@@ -282,6 +282,6 @@ run-cosim: $(COSIM_3WAY_BIN) tests riscv-tests
 
 clean:
 	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(BUILD_DIR)/verilator_cosim3 $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(SIM_XPROP_BIN) $(COSIM_BIN) $(COSIM_3WAY_BIN)
-	rm -f shoumei_cpu.vcd
+	rm -f shoumei_cpu.fst
 	$(MAKE) -C $(TB_DIR)/tests clean
 	$(MAKE) -C $(TB_DIR)/riscv-tests clean

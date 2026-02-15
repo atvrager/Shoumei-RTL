@@ -24,7 +24,7 @@
 #include "svdpi.h"
 
 #if VM_TRACE
-#include "verilated_vcd_c.h"
+#include "verilated_fst_c.h"
 #endif
 
 // DPI-C exported from tb_cpu.sv
@@ -194,13 +194,13 @@ int main(int argc, char** argv) {
     uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;
 
 #if VM_TRACE
-    VerilatedVcdC* trace = nullptr;
+    VerilatedFstC* trace = nullptr;
     if (do_trace) {
         Verilated::traceEverOn(true);
-        trace = new VerilatedVcdC;
+        trace = new VerilatedFstC;
         dut->trace(trace, 99);
-        trace->open("shoumei_cpu.vcd");
-        printf("VCD trace enabled: shoumei_cpu.vcd\n");
+        trace->open("shoumei_cpu.fst");
+        printf("FST trace enabled: shoumei_cpu.fst\n");
     }
 #else
     (void)do_trace;
@@ -274,14 +274,11 @@ int main(int argc, char** argv) {
                     dut->o_rvvi_rd, (int)dut->o_rvvi_rd_valid, dut->o_rvvi_rd_data);
         }
 
-        // Debug: print key signals for first 30 cycles if +verbose
-        if (verbose && cycle < 30) {
-            printf("  [%4u] PC=0x%08x stall=%d rob_empty=%d",
-                cycle, dut->o_fetch_pc, (int)dut->o_global_stall, (int)dut->o_rob_empty);
-            if (dut->o_dmem_req_valid)
-                printf(" DMEM: we=%d addr=0x%08x data=0x%08x",
-                    (int)dut->o_dmem_req_we, dut->o_dmem_req_addr, dut->o_dmem_req_data);
-            printf("\n");
+        // Log all dmem accesses if +verbose
+        if (verbose && dut->o_dmem_req_valid) {
+            printf("  %s cy%u addr=0x%08x data=0x%08x\n",
+                dut->o_dmem_req_we ? "STORE" : "LOAD ",
+                cycle, dut->o_dmem_req_addr, dut->o_dmem_req_data);
         }
 
         // Check termination via output ports

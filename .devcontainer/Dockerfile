@@ -20,11 +20,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # Core build tools
         curl ca-certificates git git-lfs openssh-client make cmake pkg-config \
-        gcc g++ python3 python3-pip xz-utils gzip unzip \
+        gcc g++ python3 python3-pip xz-utils gzip unzip zlib1g-dev \
         # Linters (lint CI job)
         shellcheck cppcheck ripgrep \
         # HDL tools (lec, verilator-sim, smoke-test CI jobs)
-        yosys verilator \
+        yosys verilator zlib1g-dev \
         # SystemC (systemc CI job)
         libsystemc-dev device-tree-compiler \
         # JDK for Scala/Chisel (scala-build CI job)
