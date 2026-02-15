@@ -57,7 +57,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc clean
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 SIM_XPROP_BIN:= $(BUILD_DIR)/sim_shoumei_xprop
@@ -256,6 +256,12 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 	echo "$$pass/$$total passed, $$fail failed (2-way cosim)"; \
 	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
+
+coremark:
+	$(MAKE) -C $(TB_DIR)/coremark
+
+run-coremark: $(SIM_BIN) coremark
+	$(SIM_BIN) +elf=$(TB_DIR)/coremark/coremark.elf +timeout=10000000
 
 run-cosim: $(COSIM_3WAY_BIN) tests riscv-tests
 	@pass=0; fail=0; total=0; \

@@ -6,6 +6,6 @@ SECTIONS {
     .rodata    : { *(.rodata*) } > RAM
     .data      : { *(.data*)   } > RAM
     .bss       : { *(.bss* COMMON) } > RAM
-    .tohost 0x1000 (NOLOAD) : { tohost = .; . += 4; } > RAM
+    .tohost 0x1000 (NOLOAD) : { tohost = .; . += 4; putchar_addr = .; . += 4; } > RAM
     _stack_top = 0x10000;
 }
