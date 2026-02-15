@@ -195,6 +195,13 @@ def freelist_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.FreeListProofs"
 }
 
+/-- BitmapFreeList_64: Bitmap-based free list with correct flush recovery -/
+def bitmapFreelist_cert : CompositionalCert := {
+  moduleName := "BitmapFreeList_64"
+  dependencies := ["Decoder6", "PriorityArbiter64", "OneHotEncoder64"]
+  proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
+}
+
 /-! ## RISC-V Execution -/
 
 /-- ReservationStation4: 4-entry Tomasulo reservation station -/
@@ -358,7 +365,7 @@ def cpu_rv32if_cert : CompositionalCert := {
 /-- RenameStage_32x64: Composite rename stage (RAT + FreeList + PhysRegFile) -/
 def renameStage_cert : CompositionalCert := {
   moduleName := "RenameStage_32x64"
-  dependencies := ["RAT_32x6", "FreeList_64", "PhysRegFile_64x32"]
+  dependencies := ["RAT_32x6", "BitmapFreeList_64", "PhysRegFile_64x32"]
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
@@ -476,6 +483,7 @@ def allCerts : List CompositionalCert := [
   physregfile_cert,
   rat_cert,
   freelist_cert,
+  bitmapFreelist_cert,
   -- Execution
   rs4_cert,
   memoryRS4_cert,

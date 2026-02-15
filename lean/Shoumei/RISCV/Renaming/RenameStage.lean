@@ -25,13 +25,13 @@ import Shoumei.RISCV.Decoder
 import Shoumei.RISCV.ISA
 import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
+import Shoumei.RISCV.Renaming.BitmapFreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
 
 namespace Shoumei.RISCV.Renaming
 
 open Shoumei
 open Shoumei.RISCV
-
 /-! ## RenamedInstruction Type -/
 
 /-- Renamed instruction with physical register tags.
@@ -324,13 +324,37 @@ def mkRenameStage : Circuit :=
     Gate.mkAND has_rd not_x0 needs_alloc
   ]
 
-  -- allocate_fire = needs_alloc AND instr_valid (RAT write + counter advance for rd!=x0)
+  -- === Free-List-Based Allocation ===
+  -- FreeList wire declarations (needed before stall and fire logic)
+  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
+  let alloc_avail := Wire.mk "alloc_avail"
+  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
+  let freelist_deq_ready := Wire.mk "freelist_deq_ready"
+
+  -- stall when allocation is needed but free list is empty
+  let not_alloc_avail := Wire.mk "not_alloc_avail"
+  let stall_raw := Wire.mk "stall_raw"
+  let stall_gates := [
+    Gate.mkNOT alloc_avail not_alloc_avail,
+    Gate.mkAND needs_alloc not_alloc_avail stall_raw,
+    Gate.mkBUF stall_raw stall
+  ]
+
+  -- rename_valid = instr_valid AND NOT stall
+  let not_stall := Wire.mk "not_stall_ren"
+  let rename_valid_gates := [
+    Gate.mkNOT stall not_stall,
+    Gate.mkAND instr_valid not_stall rename_valid
+  ]
+
+  -- allocate_fire = needs_alloc AND rename_valid (gated by stall to prevent
+  -- RAT write and free list dequeue when free list is empty)
   let force_alloc_fire := Wire.mk "force_alloc_fire"
   let allocate_fire_gates := [
-    Gate.mkAND needs_alloc instr_valid allocate_fire,
-    -- force_alloc_fire = force_alloc AND instr_valid AND NOT(needs_alloc)
-    -- (only when force_alloc is set AND rd=x0, advance counter without RAT write)
-    Gate.mkAND force_alloc instr_valid force_alloc_fire,
+    Gate.mkAND needs_alloc rename_valid allocate_fire,
+    -- force_alloc_fire = force_alloc AND rename_valid AND NOT(needs_alloc)
+    -- (only when force_alloc is set AND rd=x0, dequeue without RAT write)
+    Gate.mkAND force_alloc rename_valid force_alloc_fire,
     -- counter_advance = allocate_fire OR force_alloc_fire
     Gate.mkOR allocate_fire force_alloc_fire counter_advance
   ]
@@ -338,61 +362,14 @@ def mkRenameStage : Circuit :=
   -- rat_we = allocate_fire (only write RAT for real rd != x0)
   let rat_we_gate := Gate.mkBUF allocate_fire rat_we
 
-  -- stall = zero (counter-based allocation never stalls)
-  let stall_gates := [Gate.mkBUF zero stall]
+  -- Dequeue when counter_advance fires (allocation or force_alloc)
+  let freelist_ready_gate := Gate.mkBUF counter_advance freelist_deq_ready
 
-  -- rename_valid = instr_valid (no stall possible with counter allocator)
-  let rename_valid_gates := [Gate.mkBUF instr_valid rename_valid]
-
-  -- === Counter-based Allocation ===
-  -- 6-bit counter starts at 32 (0b100000), increments on allocate_fire
-  -- Counter provides rd_phys = counter XOR 0x20 (values 32..63,0..31)
-  -- We must skip counter=32 (which maps to rd_phys=0=p0), since p0 is the
-  -- permanent x0 mapping and CDB writes to tag=0 are blocked by cdb_tag_nonzero.
-  let ctr := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_{i}")
-  let ctr_raw_next := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_raw_next_{i}")
-  let ctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"alloc_ctr_next_{i}")
-  -- +1 adder chain
-  let ctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"ctr_carry_{i}")
-  let ctr_adder_inner := (List.range tagWidth).map (fun i =>
-    [Gate.mkXOR (ctr[i]!) (ctr_carry[i]!) (ctr_raw_next[i]!),
-     Gate.mkAND (ctr[i]!) (ctr_carry[i]!) (ctr_carry[i + 1]!)])
-  let ctr_adder_gates :=
-    [Gate.mkBUF counter_advance (ctr_carry[0]!)] ++ ctr_adder_inner.flatten
-  -- Skip counter=32 (0b100000) which would produce rd_phys=0
-  -- Detect: bits 0-4 all zero AND bit 5 is one
-  let ctr_low_or1 := Wire.mk "ctr_low_or1"
-  let ctr_low_or2 := Wire.mk "ctr_low_or2"
-  let ctr_low_or3 := Wire.mk "ctr_low_or3"
-  let ctr_low_any := Wire.mk "ctr_low_any"
-  let ctr_is_32 := Wire.mk "ctr_is_32"
-  let ctr_skip_gates := [
-    Gate.mkOR ctr_raw_next[0]! ctr_raw_next[1]! ctr_low_or1,
-    Gate.mkOR ctr_low_or1 ctr_raw_next[2]! ctr_low_or2,
-    Gate.mkOR ctr_low_or2 ctr_raw_next[3]! ctr_low_or3,
-    Gate.mkOR ctr_low_or3 ctr_raw_next[4]! ctr_low_any,
-    -- ctr_is_32 = bit5 AND NOT(any of bits 0-4)
-    Gate.mkNOT ctr_low_any (Wire.mk "ctr_low_none"),
-    Gate.mkAND ctr_raw_next[5]! (Wire.mk "ctr_low_none") ctr_is_32,
-    -- If ctr_is_32, set bit 0 to 1 (making counter=33 instead of 32 → rd_phys=1)
-    Gate.mkOR ctr_raw_next[0]! ctr_is_32 ctr_next[0]!,
-    Gate.mkBUF ctr_raw_next[1]! ctr_next[1]!,
-    Gate.mkBUF ctr_raw_next[2]! ctr_next[2]!,
-    Gate.mkBUF ctr_raw_next[3]! ctr_next[3]!,
-    Gate.mkBUF ctr_raw_next[4]! ctr_next[4]!,
-    Gate.mkBUF ctr_raw_next[5]! ctr_next[5]!
-  ]
-  -- rd_phys = counter + 32 (invert bit 5, pass bits 0-4 through)
+  -- rd_phys = freelist dequeue data when actually allocating, else 0
+  -- Must be 0 for x0/no-rd instructions to prevent CDB tag collisions
+  -- (stale deq_data could match an in-flight preg and corrupt RS entries)
   let rd_phys_assign_gates := (List.range tagWidth).map (fun i =>
-    if i == 5 then Gate.mkNOT (ctr[i]!) (rd_phys[i]!)
-    else Gate.mkBUF (ctr[i]!) (rd_phys[i]!))
-
-  -- FreeList: dequeue disabled (counter handles allocation), enqueue for retirement
-  let freelist_enq_ready := Wire.mk "freelist_enq_ready"
-  let alloc_avail := Wire.mk "alloc_avail"
-  let freelist_deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"freelist_deq_{i}")
-  let freelist_deq_ready := Wire.mk "freelist_deq_ready"
-  let freelist_ready_gate := Gate.mkBUF zero freelist_deq_ready  -- never dequeue
+    Gate.mkAND (freelist_deq_data[i]!) counter_advance (rd_phys[i]!))
 
   -- === COMMITTED RAT ===
   -- Dump wires from committed RAT (32×6 = 192 wires)
@@ -469,62 +446,18 @@ def mkRenameStage : Circuit :=
           (s!"dump_data_{i}_{j}", Wire.mk s!"srat_dump_{i}_{j}")))).flatten
   }
 
-  -- === Committed counter (tracks allocation counter at commit time) ===
-  -- Advances when a committed instruction consumed a counter slot (hasAllocSlot).
-  -- This includes branches (force_alloc) and rd-writing instructions.
-  -- On flush, the speculative counter is restored from committed counter's NEXT value.
-  let cctr := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_e{i}")
-  let cctr_raw_next := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_rn_e{i}")
-  let cctr_next := (List.range tagWidth).map (fun i => Wire.mk s!"cctr_nx_e{i}")
-  let cctr_carry := (List.range (tagWidth + 1)).map (fun i => Wire.mk s!"cctr_cy_e{i}")
+  -- === Commit-alloc enable: committed instruction consumed a free list slot ===
   let commit_alloc_advance := Wire.mk "commit_alloc_advance"
-  let cctr_adder_inner := (List.range tagWidth).map (fun i =>
-    [Gate.mkXOR (cctr[i]!) (cctr_carry[i]!) (cctr_raw_next[i]!),
-     Gate.mkAND (cctr[i]!) (cctr_carry[i]!) (cctr_carry[i + 1]!)])
-  let cctr_adder_gates :=
-    [Gate.mkAND commit_valid commit_hasAllocSlot commit_alloc_advance,
-     Gate.mkBUF commit_alloc_advance (cctr_carry[0]!)] ++ cctr_adder_inner.flatten
-  -- Skip counter=32 for committed counter (same logic as speculative)
-  let cctr_low_or1 := Wire.mk "cctr_lo1"
-  let cctr_low_or2 := Wire.mk "cctr_lo2"
-  let cctr_low_or3 := Wire.mk "cctr_lo3"
-  let cctr_low_any := Wire.mk "cctr_la"
-  let cctr_is_32 := Wire.mk "cctr_i32"
-  let cctr_skip_gates := [
-    Gate.mkOR cctr_raw_next[0]! cctr_raw_next[1]! cctr_low_or1,
-    Gate.mkOR cctr_low_or1 cctr_raw_next[2]! cctr_low_or2,
-    Gate.mkOR cctr_low_or2 cctr_raw_next[3]! cctr_low_or3,
-    Gate.mkOR cctr_low_or3 cctr_raw_next[4]! cctr_low_any,
-    Gate.mkNOT cctr_low_any (Wire.mk "cctr_ln"),
-    Gate.mkAND cctr_raw_next[5]! (Wire.mk "cctr_ln") cctr_is_32,
-    Gate.mkOR cctr_raw_next[0]! cctr_is_32 cctr_next[0]!,
-    Gate.mkBUF cctr_raw_next[1]! cctr_next[1]!,
-    Gate.mkBUF cctr_raw_next[2]! cctr_next[2]!,
-    Gate.mkBUF cctr_raw_next[3]! cctr_next[3]!,
-    Gate.mkBUF cctr_raw_next[4]! cctr_next[4]!,
-    Gate.mkBUF cctr_raw_next[5]! cctr_next[5]!
-  ]
-  let cctr_dff_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkDFF (cctr_next[i]!) clock reset (cctr[i]!))
-
-  -- Speculative counter DFFs with flush restore from committed counter
-  -- On flush: restore to cctr (committed counter's registered value).
-  -- Using the registered value is correct because the flush cycle's concurrent commit
-  -- (if any) is for the instruction that CAUSED the flush, which already consumed
-  -- a speculative counter slot — the committed counter catches up at the next edge.
-  let ctr_flush_next := (List.range tagWidth).map (fun i => Wire.mk s!"ctr_flush_next_{i}")
-  let ctr_flush_mux_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkMUX (ctr_next[i]!) (cctr_next[i]!) flush_en (ctr_flush_next[i]!))
-  let ctr_dff_gates := (List.range tagWidth).map (fun i =>
-    Gate.mkDFF (ctr_flush_next[i]!) clock reset (ctr[i]!))
+  let commit_alloc_advance_gate :=
+    Gate.mkAND commit_valid commit_hasAllocSlot commit_alloc_advance
 
   -- old_rd_phys output = old_rd_raw (previous RAT mapping for rd)
   let old_rd_assign_gates := (List.range tagWidth).map (fun i =>
     Gate.mkBUF (old_rd_raw[i]!) (old_rd_phys[i]!))
 
-  -- FreeList instance (used for both allocation and deallocation)
+  -- BitmapFreeList instance (replaces FIFO free list + cctr + committed_count)
   let freelist_inst : CircuitInstance := {
-    moduleName := "FreeList_64"
+    moduleName := "BitmapFreeList_64"
     instName := "u_freelist"
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
@@ -533,7 +466,10 @@ def mkRenameStage : Circuit :=
       [("deq_ready", freelist_deq_ready)] ++
       [("enq_ready", freelist_enq_ready)] ++
       (freelist_deq_data.enum.map (fun ⟨i, w⟩ => (s!"deq_data_{i}", w))) ++
-      [("deq_valid", alloc_avail)]
+      [("deq_valid", alloc_avail)] ++
+      [("flush_en", flush_en)] ++
+      [("commit_alloc_en", commit_alloc_advance)] ++
+      (commit_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_alloc_tag_{i}", w)))
   }
 
   -- PhysRegFile instance
@@ -579,12 +515,10 @@ def mkRenameStage : Circuit :=
                rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
-             ctr_adder_gates ++ ctr_skip_gates ++
-             ctr_flush_mux_gates ++ ctr_dff_gates ++
              rd_phys_assign_gates ++
              old_rd_assign_gates ++ phys_out_gates ++
              crat_we_gates ++
-             cctr_adder_gates ++ cctr_skip_gates ++ cctr_dff_gates
+             [commit_alloc_advance_gate]
     instances := [rat_inst, crat_inst, freelist_inst, physregfile_inst]
     -- V2 codegen annotations
     signalGroups := [
