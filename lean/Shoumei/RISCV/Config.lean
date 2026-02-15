@@ -76,7 +76,7 @@ processor verification. RVVI-TRACE parameters are derived from the Lean CPU
 model at code generation time, ensuring consistency between the behavioral model
 and the structural circuit.
 
-See docs/cosimulation.md for details on lock-step cosimulation with Spike and SystemC.
+See docs/cosimulation.md for details on lock-step cosimulation with Spike.
 -/
 
 /-- RVVI-TRACE interface parameters derived from CPU config -/

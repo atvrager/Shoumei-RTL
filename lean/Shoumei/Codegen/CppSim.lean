@@ -2,7 +2,7 @@
 Codegen/CppSim.lean - Plain C++ Simulation Code Generator
 
 Generates plain C++ simulation models from DSL circuits.
-No SystemC dependency — uses bool variables and bool* pointers.
+Uses bool variables and bool* pointers.
 
 Design:
 - Generates both .h (header) and .cpp (implementation) files
@@ -293,11 +293,13 @@ def generatePortDeclarations (c : Circuit) (useBundledIO : Bool) : String :=
 -- Generate internal signal declarations — all plain bool
 def generateSignalDeclarations (c : Circuit) : String :=
   let internalWires := findInternalWires c
-  if internalWires.isEmpty then
+  let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
+  let dffSavedDecls := dffGates.map (fun g => s!"  bool d_saved_{g.output.name} = false;")
+  if internalWires.isEmpty && dffSavedDecls.isEmpty then
     ""
   else
     let decls := internalWires.map (fun w => s!"  bool {w.name} = false;")
-    joinLines decls
+    joinLines (decls ++ dffSavedDecls)
 
 -- Generate constructor
 def generateConstructor (c : Circuit) (_useBundledIO : Bool) (allCircuits : List Circuit := []) : String :=
@@ -403,18 +405,24 @@ def generateDFFResetInit (inputToIndex : List (Wire × Nat)) (outputToIndex : Li
   else
     s!"    {qRef} = {resetVal};"
 
--- Generate DFF latch line
-def generateDFFLatch (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
+-- Generate DFF sample line (save d input to d_saved for two-phase evaluation)
+def generateDFFSample (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   match g.inputs with
   | [d, _clk, _reset] =>
       let dExpr := wireReadExpr inputToIndex outputToIndex d portNames implPrefix
-      let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
-      if isPointerWire inputToIndex outputToIndex portNames g.output then
-        s!"      *{qRef} = {dExpr};"
-      else
-        s!"      {qRef} = {dExpr};"
-  | _ => "      // ERROR: DFF should have 3 inputs: [d, clk, reset]"
+      s!"  {implPrefix}d_saved_{g.output.name} = {dExpr};"
+  | _ => "  // ERROR: DFF should have 3 inputs: [d, clk, reset]"
+
+-- Generate DFF latch line (uses d_saved from two-phase sampling)
+def generateDFFLatch (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
+    (portNames : List String := []) (implPrefix : String := "") : String :=
+  let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
+  let savedRef := s!"{implPrefix}d_saved_{g.output.name}"
+  if isPointerWire inputToIndex outputToIndex portNames g.output then
+    s!"      *{qRef} = {savedRef};"
+  else
+    s!"      {qRef} = {savedRef};"
 
 -- Generate seq_tick method: plain function version of DFF update.
 def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
@@ -443,6 +451,36 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
       "  }",
       "}"
     ]
+
+-- Generate seq_sample method: saves d inputs for two-phase DFF evaluation.
+def generateSeqSampleMethod (c : Circuit) (_useBundledIO : Bool)
+    (portNames : List String := []) (implPrefix : String := "") : String :=
+  let inputToIndex : List (Wire × Nat) := []
+  let outputToIndex : List (Wire × Nat) := []
+  let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
+  if dffGates.isEmpty then ""
+  else
+    let sampleLines := dffGates.map (fun g =>
+      generateDFFSample inputToIndex outputToIndex g portNames implPrefix)
+    joinLines [
+      s!"void {c.name}::seq_sample() " ++ "{",
+      joinLines sampleLines,
+      "}"
+    ]
+
+-- Generate eval_seq_sample_all: recursively sample all DFF d inputs
+def generateEvalSeqSampleAll (c : Circuit) : String :=
+  let hasDFFs := !(c.gates.filter (·.gateType.isDFF)).isEmpty
+  let usePimpl := !c.instances.isEmpty
+  let instSampleCalls := c.instances.map (fun inst =>
+    if usePimpl then s!"  pImpl->{inst.instName}.eval_seq_sample_all();"
+    else s!"  {inst.instName}.eval_seq_sample_all();")
+  let ownSample := if hasDFFs then ["  seq_sample();"] else []
+  joinLines [
+    s!"void {c.name}::eval_seq_sample_all() " ++ "{",
+    joinLines (instSampleCalls ++ ownSample),
+    "}"
+  ]
 
 -- Generate eval_comb_all: own comb_logic + submodule eval_comb_all (recursive)
 def generateEvalCombAll (c : Circuit) : String :=
@@ -493,8 +531,8 @@ def toCppSimHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
   let processDecls :=
     (if hasCombLogic then ["  void comb_logic();"] else []) ++
-    (if isSeq && hasDFFs then ["  void seq_tick();"] else []) ++
-    ["  void eval_comb_all();", "  void eval_seq_all();"]
+    (if isSeq && hasDFFs then ["  void seq_sample();", "  void seq_tick();"] else []) ++
+    ["  void eval_comb_all();", "  void eval_seq_sample_all();", "  void eval_seq_all();"]
 
   if usePimpl then
     let parts := [
@@ -669,9 +707,11 @@ def toCppSimImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
      "}"
     ] ++
     (if combMethod.isEmpty then [] else ["", combMethod]) ++
+    (let seqSampleMethod := generateSeqSampleMethod c useBundledIO portNames implPrefix
+     if seqSampleMethod.isEmpty then [] else ["", seqSampleMethod]) ++
     (let seqTickMethod := generateSeqTickMethod c useBundledIO portNames implPrefix
      if seqTickMethod.isEmpty then [] else ["", seqTickMethod]) ++
-    ["", generateEvalCombAll c, "", generateEvalSeqAll c]
+    ["", generateEvalCombAll c, "", generateEvalSeqSampleAll c, "", generateEvalSeqAll c]
 
     joinLines parts
   else
@@ -681,8 +721,10 @@ def toCppSimImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=
       ""
     ] ++
     (if combMethod.isEmpty then [] else [combMethod]) ++
+    (let seqSampleMethod := generateSeqSampleMethod c useBundledIO portNames
+     if seqSampleMethod.isEmpty then [] else ["", seqSampleMethod]) ++
     (if seqTickMethod.isEmpty then [] else ["", seqTickMethod]) ++
-    ["", generateEvalCombAll c, "", generateEvalSeqAll c]
+    ["", generateEvalCombAll c, "", generateEvalSeqSampleAll c, "", generateEvalSeqAll c]
 
     joinLines parts
 

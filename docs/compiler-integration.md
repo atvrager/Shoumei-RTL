@@ -310,13 +310,13 @@ After this, both `clang -mcpu=shoumei` and `llvm-mca -mcpu=shoumei` use the mode
 
 ### Generator implementation
 
-Add a Lean code generator alongside the existing three (SV, Chisel, SystemC):
+Add a Lean code generator alongside the existing three (SV, Chisel, C++ Sim):
 
 ```
 lean/Shoumei/Codegen/
   SystemVerilog.lean   # existing
   Chisel.lean          # existing
-  SystemC.lean         # existing
+  CPPSim.lean          # existing
   LLVMSched.lean       # new — reads microarch, emits .td
 ```
 
@@ -354,7 +354,7 @@ def generateTableGen (m : MicroarchModel) : String := ...
 -- Output: output/RISCVSchedShoumei.td
 ```
 
-Wire into `GenerateAll.lean` so `lake exe generate_all` produces the `.td` file alongside SV, Chisel, and SystemC.
+Wire into `GenerateAll.lean` so `lake exe generate_all` produces the `.td` file alongside SV, Chisel, and C++ Sim.
 
 ## Iteration plan
 

@@ -467,7 +467,7 @@ def mkROB16 : Circuit :=
 
   -- Safe commit: gate commit_en with NOT(empty) to prevent underflow.
   -- Uses empty_or4 (= any count bit set = not empty) directly instead of reading
-  -- from the empty output port, which has deferred-write semantics in SystemC.
+  -- from the empty output port.
   let commit_en_safe := Wire.mk "commit_en_safe"
   let commit_safe_gates := [
     Gate.mkAND commit_en empty_or4 commit_en_safe

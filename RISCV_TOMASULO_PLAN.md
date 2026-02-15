@@ -1493,7 +1493,7 @@ Resolves transitive dependencies from compositional certificates, verifies in to
 **Generated:**
 9. `output/sv-from-lean/LSU.sv` - SystemVerilog (Lean)
 10. `output/sv-from-chisel/LSU.sv` - SystemVerilog (Chisel)
-11. `output/systemc/LSU.{h,cpp}` - SystemC
+11. `output/cpp_sim/LSU.{h,cpp}` - C++ Sim
 
 ### Verification Summary
 
@@ -1519,7 +1519,7 @@ Resolves transitive dependencies from compositional certificates, verifies in to
 
 **Generated:**
 6. `output/sv-from-lean/LSU.sv` - SystemVerilog (generated)
-7. `output/systemc/LSU.h` / `LSU.cpp` - SystemC (generated)
+7. `output/cpp_sim/LSU.h` / `LSU.cpp` - C++ Sim (generated)
 
 ### Verification Status
 
@@ -1769,7 +1769,7 @@ structure MulDivExecState where
    - LEC: Compositional verification (PASS for both)
 
 4. **Code Generation & LEC Verification** ✅
-   - Generated SV + Chisel + SystemC for all 4 new circuits
+   - Generated SV + Chisel + C++ Sim for all 4 new circuits
    - Chisel compilation: **89/89 modules successful (100%)**
    - LEC verification: **89/89 modules verified (100% coverage)**
      - 67 direct LEC

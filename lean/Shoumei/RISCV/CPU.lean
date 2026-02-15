@@ -15,7 +15,7 @@ Pipeline Stages (7 stages + memory):
 
 RVVI Infrastructure (Phase 8):
 - PC queue and instruction queue track retirement info alongside ROB
-- Prepared for future lock-step cosimulation with Spike and SystemC
+- Prepared for future lock-step cosimulation with Spike
 - See docs/cosimulation.md for details
 
 Phase 8 scope: Behavioral model only. Structural circuit TBD.
