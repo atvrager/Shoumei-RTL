@@ -460,10 +460,10 @@ jobs:
       - name: Build test ELFs
         run: make -C testbench/tests
 
-      - name: Build cosim
+      - name: Build 3-way cosim (RTL + Spike + C++ Sim)
         run: make -C testbench cosim
 
-      - name: Run cosim (RTL vs Spike)
+      - name: Run 3-way cosim
         run: make -C testbench run-cosim
 
       - name: Upload cosim results
