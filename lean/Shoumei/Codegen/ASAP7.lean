@@ -59,8 +59,8 @@ private def generateGateInst (ctx : Context) (c : Circuit) (g : Gate) (idx : Nat
   | GateType.BUF =>
       match g.inputs with
       | [i0] =>
-          -- Use wire assignment for buffers (zero delay, let synthesis buffer as needed)
-          s!"  assign {outRef} = {wireRef ctx c i0};"
+          -- Use actual BUF cell to preserve fanout isolation (synthesis cannot merge nets)
+          s!"  BUFx2_ASAP7_75t_R u_{instBase}_{idx} (.Y({outRef}), .A({wireRef ctx c i0}));"
       | _ => s!"  // ERROR: BUF expects 1 input"
   | GateType.MUX =>
       match g.inputs with
