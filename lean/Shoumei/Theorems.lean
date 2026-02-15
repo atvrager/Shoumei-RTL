@@ -13,6 +13,7 @@ Key theorem categories:
 
 import Shoumei.DSL
 import Shoumei.Semantics
+import Shoumei.Reflection.WireMap
 
 namespace Shoumei
 
@@ -52,12 +53,12 @@ theorem xor_commutative (a b : Wire) (out : Wire) (env : Env) :
   apply Bool.xor_comm
 
 -- Theorem: Double negation returns to original value
--- TODO: Complete proof (requires reasoning about environment updates)
-axiom not_involution (a : Wire) (out1 out2 : Wire) (env : Env) :
+theorem not_involution (a : Wire) (out1 out2 : Wire) (env : Env) :
   let g1 := Gate.mkNOT a out1
   let g2 := Gate.mkNOT out1 out2
   let env1 := fun w => if w == out1 then evalGate g1 env else env w
-  evalGate g2 env1 = env a
+  evalGate g2 env1 = env a := by
+  simp [Gate.mkNOT, evalGate, Reflection.wire_beq_self, Bool.not_not]
 
 -- TODO: Add theorems about code generation correctness
 -- Example structure:

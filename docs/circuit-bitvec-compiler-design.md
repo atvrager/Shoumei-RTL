@@ -1,8 +1,8 @@
 # Design: Verified Circuit-to-BitVec Compiler
 
-## Status: Draft
+## Status: Phase 1 & 3 (partial) complete
 ## Author: (generated)
-## Date: 2025-02
+## Date: 2025-02 (updated 2026-02)
 
 ---
 
@@ -586,3 +586,58 @@ externally.
 
 **Rejected because:** This proves the evaluator is correct, not that the specific
 circuit implements the spec. We need the latter.
+
+---
+
+## 12. Implementation Progress (2026-02)
+
+### Completed
+
+**Phase 1: Core Infrastructure** — All files created and proven correct.
+
+| File | Status | Key content |
+|------|--------|-------------|
+| `Reflection/WireMap.lean` | Done | `WireMap` type, `lookup`/`insert`, `wire_beq_self`/`wire_beq_ne`, `lookup_insert_eq`/`lookup_insert_ne` |
+| `Reflection/CompileGate.lean` | Done | `evalGateMap`, `compileGate`, `compileGate_correct` theorem |
+| `Reflection/CompileCircuit.lean` | Done | `compileCircuit`, `compileCircuit_correct` theorem, `flattenAll`/`flattenAllFuel`, `compileCircuitHier` with `SubmoduleSpec` |
+| `Reflection/BitVecPacking.lean` | Done | `bitVecToBindings`, `readWiresAsNatMap`, `readResultBitVecMap` |
+
+**Phase 3 (partial): ALU32 concrete axioms eliminated.**
+
+- Redefined `evalALU32` to use flattened circuit compilation (was broken: `evalCircuit` ignores `CircuitInstance`)
+- All 10 concrete validation axioms replaced with `native_decide` proofs
+- `alu32_bridge` (universal quantifier over all inputs) remains an axiom
+
+**Foundational axioms proven:**
+
+| Axiom | File | Approach |
+|-------|------|----------|
+| `not_involution` | `Theorems.lean` | `simp [Gate.mkNOT, evalGate, wire_beq_self, Bool.not_not]` |
+| `wire_beq_eq` | `RegisterLemmas.lean` | String BEq roundtrip via `BEq.eq_of_beq` |
+
+**Bug found: ALU opcode encoding.** The `ALUBitVecBridge.lean` opcode table had SLL=0x7, SRL=0x8, SRA=0x9, but the ALU MUX tree uses `op[3:2]` for category selection (00=arith, 01=logic, 10=shift). SLL at 0x7 (op[3:2]=01) was routed to the logic category. Fixed to SLL=0x8, SRL=0x9, SRA=0xB to match the RISCV execution unit encoding (which was already correct). LEC and cosim confirm the generated hardware was unaffected.
+
+### Axiom scorecard
+
+| Category | Before | After | Eliminated |
+|----------|--------|-------|------------|
+| ALU concrete tests | 10 axioms | 0 | 10 |
+| ALU bridge | 1 axiom | 1 axiom | 0 |
+| Foundational (`wire_beq_eq`, `not_involution`) | 2 axioms | 0 | 2 |
+| Other (unchanged) | ~31 axioms | ~31 axioms | 0 |
+| **Total** | **~44** | **~32** | **12** |
+
+### Remaining challenge: `alu32_bridge`
+
+The universal bridge `∀ op a b, evalALU32 a b op.toOpcode = aluSemantics op a b` could not be proven because:
+
+1. `bv_decide` cannot unfold `evalALU32` — it treats `List.foldl` over the 2783-gate flat circuit as opaque
+2. `native_decide` cannot handle the 68-bit universal quantification (2^68 cases)
+3. The original design assumed `bv_decide` would see through `compileCircuit` to the underlying BitVec expression, but the `foldl` over a concrete gate list is not a BitVec expression — it's a general Lean computation
+
+**Possible approaches for future work:**
+
+- **Custom tactic**: A Lean metaprogram that symbolically evaluates `compileCircuit` step-by-step, building up a BitVec expression tree, then hands the result to `bv_decide`
+- **Per-operation proofs**: Fix the opcode to a constant (e.g., `0x0` for ADD), which reduces the gate-level problem to ~500 relevant gates per operation path. This still requires symbolic `foldl` evaluation
+- **Reflection via `Decidable`**: Define a `Decidable` instance for the bridge property that compiles to efficient native code, then use `decide`
+- **AIG compilation**: Compile the circuit directly to an And-Inverter Graph, produce a DRAT proof of equivalence with the spec, and verify the DRAT certificate in Lean
