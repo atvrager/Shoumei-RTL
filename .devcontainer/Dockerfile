@@ -24,9 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Linters (lint CI job)
         shellcheck cppcheck ripgrep \
         # HDL tools (lec, verilator-sim, smoke-test CI jobs)
-        yosys verilator zlib1g-dev \
-        # SystemC (systemc CI job)
-        libsystemc-dev device-tree-compiler \
+        yosys verilator \
+        device-tree-compiler \
         # JDK for Scala/Chisel (scala-build CI job)
         openjdk-${JAVA_VERSION}-jdk-headless \
         # GitHub CLI for PR workflows
@@ -61,7 +60,7 @@ RUN mkdir -p /home/dev/.local/bin \
     && /home/dev/.local/bin/cs setup --yes --jvm ${JAVA_VERSION}
 
 # ── RISC-V GCC cross-compiler ──────────────────────────────────────
-# Same archive as CI's systemc/verilator-sim jobs + setup-riscv-toolchain.sh
+# Same archive as CI's verilator-sim job + setup-riscv-toolchain.sh
 RUN mkdir -p /home/dev/.local/riscv32-elf \
     && curl -fSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${RISCV_TAG}/riscv32-elf-ubuntu-22.04-gcc.tar.xz" \
         | tar xJ -C /home/dev/.local/riscv32-elf --strip-components=1

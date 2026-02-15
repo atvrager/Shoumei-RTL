@@ -61,7 +61,7 @@ if [ "${1:-}" = "--background" ]; then
     # ── 3. System packages ───────────────────────────────────────────
     if [ "$(id -u)" = "0" ]; then
         missing=()
-        for pkg in yosys verilator shellcheck libsystemc-dev; do
+        for pkg in yosys verilator shellcheck; do
             dpkg -s "$pkg" &>/dev/null || missing+=("$pkg")
         done
         if [ ${#missing[@]} -gt 0 ]; then

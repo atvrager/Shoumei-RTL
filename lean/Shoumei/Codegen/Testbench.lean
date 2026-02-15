@@ -6,7 +6,7 @@ TestbenchConfig. The config maps circuit ports to memory interfaces
 (imem/dmem), control signals, and constants. Generators produce:
 
 - SV testbench: module instantiation, memory model, HTIF, DPI-C loader
-- C++ sim testbench: plain bool signals, manual eval loop, no SystemC
+- C++ sim testbench: plain bool signals, manual eval loop
 
 Both share the same ELF loader library (testbench/lib/elf_loader.h).
 -/
@@ -438,7 +438,7 @@ private def generateCppSimBusHelpers (c : Circuit) : String :=
 
 /-! ## CPU Setup File Generator -/
 
-/-- Generate the thin header for CPU setup (plain C++, no SystemC). -/
+/-- Generate the thin header for CPU setup. -/
 private def toCpuSetupHeader (c : Circuit) : String :=
   let lb := "{"
   let rb := "}"
@@ -456,6 +456,7 @@ private def toCpuSetupHeader (c : Circuit) : String :=
   "void cpu_delete(CpuCtx* ctx);\n" ++
   "// Manual evaluation\n" ++
   "void cpu_eval_comb_all(CpuCtx* ctx);\n" ++
+  "void cpu_eval_seq_sample_all(CpuCtx* ctx);\n" ++
   "void cpu_eval_seq_all(CpuCtx* ctx);\n\n" ++
   s!"#endif // CPU_SETUP_{c.name.toUpper}_H\n"
 
@@ -498,11 +499,14 @@ private def toCpuSetupCpp (cfg : TestbenchConfig) : String :=
   s!"void cpu_eval_comb_all(CpuCtx* ctx) {lb}\n" ++
   s!"    static_cast<{c.name}*>(ctx->cpu)->eval_comb_all();\n" ++
   s!"{rb}\n\n" ++
+  s!"void cpu_eval_seq_sample_all(CpuCtx* ctx) {lb}\n" ++
+  s!"    static_cast<{c.name}*>(ctx->cpu)->eval_seq_sample_all();\n" ++
+  s!"{rb}\n\n" ++
   s!"void cpu_eval_seq_all(CpuCtx* ctx) {lb}\n" ++
   s!"    static_cast<{c.name}*>(ctx->cpu)->eval_seq_all();\n" ++
   s!"{rb}\n"
 
-/-- Generate a plain C++ simulation testbench (no SystemC dependency). -/
+/-- Generate a plain C++ simulation testbench. -/
 def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
   let c := cfg.circuit
   let clockWires := findClockWires c
@@ -615,11 +619,10 @@ def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
   s!"    uint32_t test_data = 0;\n" ++
   s!"{rb};\n\n" ++
   s!"static void dmem_tick(DmemState& ds,\n" ++
-  s!"    bool& req_valid_sig, bool& req_we_sig,\n" ++
+  s!"    bool snap_req_valid, bool snap_req_we,\n" ++
+  s!"    uint32_t snap_addr, uint32_t snap_data, uint32_t snap_size,\n" ++
   s!"    bool& req_ready_sig, bool& resp_valid_sig,\n" ++
-  s!"    bool** req_addr_sigs, bool** req_data_sigs,\n" ++
-  s!"    bool** resp_data_sigs,\n" ++
-  s!"    bool** req_size_sigs = nullptr) {lb}\n" ++
+  s!"    bool** resp_data_sigs) {lb}\n" ++
   s!"    req_ready_sig = true;\n\n" ++
   s!"    // Respond to pending load from previous cycle\n" ++
   s!"    if (ds.pending) {lb}\n" ++
@@ -628,15 +631,14 @@ def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
   s!"        ds.pending = false;\n" ++
   s!"    {rb} else {lb}\n" ++
   s!"        resp_valid_sig = false;\n" ++
-  s!"        for (int i = 0; i < 32; i++) *resp_data_sigs[i] = false;\n" ++
+  s!"        // Keep resp_data at last read value (matches SV: assign dmem_resp_data = dmem_read_data)\n" ++
+  s!"        for (int i = 0; i < 32; i++) *resp_data_sigs[i] = (ds.read_data >> i) & 1;\n" ++
   s!"    {rb}\n\n" ++
   s!"    // Handle new request\n" ++
-  s!"    if (req_valid_sig) {lb}\n" ++
-  s!"        uint32_t addr = 0;\n" ++
-  s!"        for (int i = 0; i < 32; i++) addr |= (*req_addr_sigs[i] ? 1u : 0u) << i;\n" ++
-  s!"        if (req_we_sig) {lb}\n" ++
-  s!"            uint32_t data = 0;\n" ++
-  s!"            for (int i = 0; i < 32; i++) data |= (*req_data_sigs[i] ? 1u : 0u) << i;\n" ++
+  s!"    if (snap_req_valid) {lb}\n" ++
+  s!"        uint32_t addr = snap_addr;\n" ++
+  s!"        if (snap_req_we) {lb}\n" ++
+  s!"            uint32_t data = snap_data;\n" ++
   s!"            if (addr == TOHOST_ADDR) {lb}\n" ++
   s!"                ds.test_done = true;\n" ++
   s!"                ds.test_data = data;\n" ++
@@ -649,11 +651,7 @@ def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
   s!"                uint32_t widx = addr >> 2;\n" ++
   s!"                if (widx < MEM_SIZE_WORDS) {lb}\n" ++
   s!"                    // Byte-enable store based on size: 00=byte, 01=half, 10=word\n" ++
-  s!"                    uint32_t size = 2; // default word\n" ++
-  s!"                    if (req_size_sigs) {lb}\n" ++
-  s!"                        size = (*req_size_sigs[0] ? 1u : 0u)\n" ++
-  s!"                             | (*req_size_sigs[1] ? 2u : 0u);\n" ++
-  s!"                    {rb}\n" ++
+  s!"                    uint32_t size = snap_size;\n" ++
   s!"                    uint32_t cur = mem[widx];\n" ++
   s!"                    uint32_t byte_off = addr & 3;\n" ++
   s!"                    if (size == 0) {lb} // SB\n" ++
@@ -727,6 +725,7 @@ def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
   s!"    {resetName}_sig = true;\n" ++
   s!"    {dmemReady}_sig = true;\n" ++
   s!"    for (uint32_t cyc = 0; cyc < 5; cyc++) {lb}\n" ++
+  "        cpu_eval_seq_sample_all(ctx);\n" ++
   "        cpu_eval_seq_all(ctx);\n" ++
   "        settle();\n" ++
   s!"    {rb}\n" ++
@@ -735,21 +734,29 @@ def toTestbenchCppSim (cfg : TestbenchConfig) : String :=
 
   "    // Main simulation loop\n" ++
   s!"    for (uint32_t cyc = 0; cyc < timeout; cyc++) {lb}\n" ++
-  "        // 1. Sample dmem (reads settled combinational outputs from previous cycle)\n" ++
-  s!"        dmem_tick(dmem_state,\n" ++
-  s!"            {dmemValid}_sig, {dmemWe}_sig,\n" ++
-  s!"            {dmemReady}_sig, {dmemRespValid}_sig,\n" ++
-  s!"            {dmemAddr}_sigs, {dmemDataOut}_sigs,\n" ++
-  s!"            {dmemRespData}_sigs" ++
+  "        // 1. Snapshot dmem inputs (both always_ff blocks must see same pre-edge state)\n" ++
+  s!"        bool snap_req_valid = {dmemValid}_sig;\n" ++
+  s!"        bool snap_req_we = {dmemWe}_sig;\n" ++
+  s!"        uint32_t snap_addr = 0;\n" ++
+  s!"        for (int i = 0; i < 32; i++) snap_addr |= (*{dmemAddr}_sigs[i] ? 1u : 0u) << i;\n" ++
+  s!"        uint32_t snap_data = 0;\n" ++
+  s!"        for (int i = 0; i < 32; i++) snap_data |= (*{dmemDataOut}_sigs[i] ? 1u : 0u) << i;\n" ++
+  s!"        uint32_t snap_size = 2;\n" ++
   (match dmemSize with
-   | some sizeName => s!",\n            {sizeName}_sigs"
+   | some sizeName => s!"        snap_size = (*{sizeName}_sigs[0] ? 1u : 0u) | (*{sizeName}_sigs[1] ? 2u : 0u);\n"
    | none => "") ++
-  ");\n\n" ++
-  "        // 2. Advance CPU sequential elements (DFFs sample current signal values)\n" ++
+  "\n" ++
+  "        // 2. Two-phase DFF evaluation: sample all d inputs, then update all q outputs\n" ++
+  "        cpu_eval_seq_sample_all(ctx);\n" ++
   "        cpu_eval_seq_all(ctx);\n\n" ++
-  "        // 3. Settle combinational logic (imem + CPU comb)\n" ++
+  "        // 3. Process dmem with snapshotted inputs (registered response like SV always_ff)\n" ++
+  s!"        dmem_tick(dmem_state,\n" ++
+  s!"            snap_req_valid, snap_req_we, snap_addr, snap_data, snap_size,\n" ++
+  s!"            {dmemReady}_sig, {dmemRespValid}_sig,\n" ++
+  s!"            {dmemRespData}_sigs);\n\n" ++
+  "        // 4. Settle combinational logic (imem + CPU comb)\n" ++
   "        settle();\n\n" ++
-  "        // 4. Check for test completion\n" ++
+  "        // 5. Check for test completion\n" ++
   s!"        if (dmem_state.test_done) break;\n" ++
   s!"    {rb}\n\n" ++
 

@@ -10,7 +10,6 @@ Sets up the complete Shoumei RTL development environment:
 - Installs Coursier + sbt (for Chisel 7.7.0 / Scala 2.13.18)
 - Installs Yosys (LEC verification)
 - Installs Verilator (RTL simulation)
-- Installs SystemC (SystemC simulation)
 - Installs RISC-V GCC cross-compiler (test ELF compilation)
 - Verifies installation with `lake build`
 
@@ -295,37 +294,6 @@ def install_verilator():
     print("  Arch Linux:     sudo pacman -S verilator")
     print("  macOS:          brew install verilator")
 
-def install_systemc():
-    """Install SystemC development library"""
-    print_step("Checking SystemC installation")
-
-    # Check for libsystemc by trying pkg-config or looking for the header
-    has_systemc = False
-    try:
-        run_command("pkg-config --exists systemc 2>/dev/null", check=True, capture=True)
-        has_systemc = True
-    except (subprocess.CalledProcessError, Exception):
-        # Try checking common header locations
-        for p in ["/usr/include/systemc.h", "/usr/local/include/systemc.h"]:
-            if Path(p).exists():
-                has_systemc = True
-                break
-
-    if has_systemc:
-        print_success("SystemC already installed")
-        return
-
-    print_warning("SystemC not found.")
-    print("Install via your system package manager:")
-    print("  Ubuntu/Debian:  sudo apt-get install libsystemc-dev")
-    print("  Arch Linux:     yay -S systemc  (AUR)")
-    print("  macOS:          brew install systemc")
-    print("")
-    print("Or build from source:")
-    print("  curl -fsSL https://github.com/accellera-official/systemc/archive/refs/tags/2.3.4.tar.gz -o systemc.tar.gz")
-    print("  tar xzf systemc.tar.gz && cd systemc-2.3.4")
-    print("  mkdir objdir && cd objdir && ../configure --prefix=/usr/local && make -j$(nproc) && sudo make install")
-
 def install_riscv_gcc():
     """Install RISC-V GCC cross-compiler"""
     print_step("Checking RISC-V GCC cross-compiler")
@@ -447,25 +415,6 @@ def check_all_tools():
             print_error(f"{label} — NOT FOUND")
             missing.append(cmd)
 
-    # Check SystemC separately (header-based)
-    has_systemc = False
-    for p in ["/usr/include/systemc.h", "/usr/local/include/systemc.h"]:
-        if Path(p).exists():
-            has_systemc = True
-            break
-    if not has_systemc:
-        try:
-            run_command("pkg-config --exists systemc 2>/dev/null", check=True, capture=True)
-            has_systemc = True
-        except Exception:
-            pass
-
-    if has_systemc:
-        print_success("SystemC")
-    else:
-        print_error("SystemC — NOT FOUND")
-        missing.append("systemc")
-
     print()
     if missing:
         print_error(f"{len(missing)} tool(s) missing: {', '.join(missing)}")
@@ -514,8 +463,6 @@ def main():
     # Step 6: HDL / simulation tools
     install_yosys()
     install_verilator()
-    install_systemc()
-
     # Step 7: RISC-V cross-compiler
     install_riscv_gcc()
 

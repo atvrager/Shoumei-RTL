@@ -5,7 +5,7 @@
   parsed from riscv-opcodes. Produces both .h (header) and .cpp files.
   Uses bool* pointers matching the Lean DSL gate-level representation.
 
-  Target: C++17 (no SystemC dependency)
+  Target: C++17
 -/
 
 import Shoumei.DSL
@@ -132,6 +132,7 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "  void comb_logic();",
     "  void seq_tick() {}",
     "  void eval_comb_all() { comb_logic(); }",
+    "  void eval_seq_sample_all() {}",
     "  void eval_seq_all() {}",
     "",
     s!"  {moduleName}() {lb}{rb}",

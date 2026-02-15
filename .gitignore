@@ -60,8 +60,8 @@ physical/*.f
 output/*/filelist.f
 chisel/src/main/scala/generated/filelist.f
 
-# SystemC build directory
-systemc/build/
+# C++ sim build directory
+cpp_sim/build/
 
 # Claude Code local settings
 .claude/settings.local.json

@@ -9,10 +9,8 @@
 #   make riscv-tests  - Build upstream riscv-tests rv32ui + rv32um ELFs
 #   make run-riscv-tests - Run riscv-tests through simulator
 #   make run-all-tests- Build sim + tests + riscv-tests, run all
-#   make cosim        - Build cosimulation binary (RTL + Spike + SystemC)
-#   make cosim-no-sc  - Build 2-way cosimulation (RTL + Spike only)
-#   make run-cosim    - Run 3-way cosim on all ELFs
-#   make run-cosim-no-sc - Run 2-way cosim on all ELFs
+#   make cosim        - Build cosimulation binary (RTL + Spike)
+#   make run-cosim    - Run cosim on all ELFs
 #   make clean        - Clean build artifacts
 
 PROJ_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))..
@@ -57,12 +55,11 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim cosim-no-sc run-cosim run-cosim-no-sc coremark run-coremark clean
+.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim run-cosim coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 SIM_XPROP_BIN:= $(BUILD_DIR)/sim_shoumei_xprop
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
-COSIM_3WAY_BIN := $(BUILD_DIR)/cosim_shoumei_3way
 
 sim: $(SIM_BIN)
 $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
@@ -207,7 +204,7 @@ VFLAGS_COMMON := --cc --exe --build -j 0 \
                  -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
                  --top-module tb_cpu
 
-cosim-no-sc: $(COSIM_BIN)
+cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
@@ -217,21 +214,9 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
-	@echo "Built: $@ (2-way: RTL + Spike)"
+	@echo "Built: $@ (RTL + Spike)"
 
-cosim: $(COSIM_3WAY_BIN)
-$(COSIM_3WAY_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp $(SPIKE_LIB_FILE)
-	@rm -rf $(BUILD_DIR)/verilator_cosim3
-	@mkdir -p $(BUILD_DIR)/verilator_cosim3
-	$(VERILATOR) $(VFLAGS_COMMON) \
-		--Mdir $(BUILD_DIR)/verilator_cosim3 \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -DHAS_SYSTEMC" \
-		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -lsystemc -Wl,-rpath,$(SPIKE_LIB)" \
-		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(TB_DIR)/lib/systemc_oracle.cpp
-	@echo "Built: $@ (3-way: RTL + Spike + SystemC)"
-
-run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
+run-cosim: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
 	pass=0; fail=0; total=0; \
@@ -253,35 +238,19 @@ run-cosim-no-sc: $(COSIM_BIN) tests riscv-tests
 		fi; \
 	done; \
 	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (2-way cosim)"; \
+	echo "$$pass/$$total passed, $$fail failed (cosim)"; \
 	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
 
+<<<<<<< HEAD
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark
 
 run-coremark: $(SIM_BIN) coremark
 	$(SIM_BIN) +elf=$(TB_DIR)/coremark/coremark.elf +timeout=10000000
 
-run-cosim: $(COSIM_3WAY_BIN) tests riscv-tests
-	@pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		if $(COSIM_3WAY_BIN) +elf=$$elf +timeout=3000 2>&1 | grep -q "COSIM PASS"; then \
-			echo "PASS  $$name"; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name"; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (3-way cosim)"; \
-	[ $$fail -eq 0 ]
-
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(BUILD_DIR)/verilator_cosim3 $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(SIM_XPROP_BIN) $(COSIM_BIN) $(COSIM_3WAY_BIN)
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(SIM_XPROP_BIN) $(COSIM_BIN)
 	rm -f shoumei_cpu.fst
 	$(MAKE) -C $(TB_DIR)/tests clean
 	$(MAKE) -C $(TB_DIR)/riscv-tests clean

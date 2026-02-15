@@ -9,12 +9,6 @@ What's planned but not yet built.
 - Identify and fix any ISA conformance gaps
 - Target: full RV32IM compliance certification
 
-### 3-Way Cosimulation (RTL vs SystemC vs Spike)
-- Extend current 2-way cosim to include SystemC oracle
-- Compare all three implementations at every retirement
-- Enables fault isolation: SV codegen bug vs SystemC codegen bug vs Lean circuit bug
-- Infrastructure exists (RVVI ports, Spike oracle); needs SystemC oracle wrapper
-
 ### Microarchitecture-Targeted Test Generation
 - Generate test ELFs from Lean behavioral models targeting specific pipeline states
 - 20 hazard patterns cataloged (see `docs/hazard-patterns.md`):

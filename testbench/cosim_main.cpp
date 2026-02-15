@@ -1,12 +1,11 @@
 //==============================================================================
 // cosim_main.cpp - Lock-Step Cosimulation Testbench
 //
-// Three-way comparison: RTL (Verilator) vs Spike (ISA reference) vs SystemC
+// Two-way comparison: RTL (Verilator) vs Spike (ISA reference)
 // Driven by RVVI-TRACE signals from the RTL DUT.
 //
 // Usage:
 //   ./build-sim/cosim_shoumei +elf=path/to/program.elf [+timeout=N]
-//   ./build-sim/cosim_shoumei_no_sc +elf=path/to/program.elf [+timeout=N]
 //
 // See docs/cosimulation.md for design details.
 //==============================================================================
@@ -22,10 +21,6 @@
 #include "svdpi.h"
 
 #include "lib/spike_oracle.h"
-
-#ifdef HAS_SYSTEMC
-#include "lib/systemc_oracle.h"
-#endif
 
 // DPI-C exported from tb_cpu.sv
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
@@ -199,9 +194,6 @@ int main(int argc, char** argv) {
     // Initialize Spike oracle
     auto spike = std::make_unique<SpikeOracle>(elf_path);
 
-#ifdef HAS_SYSTEMC
-    auto sc = std::make_unique<SystemCOracle>(elf_path);
-#endif
 
     // Reset (rst_n is active-low)
     dut->clk = 0;
@@ -313,25 +305,6 @@ int main(int argc, char** argv) {
                     retired, cycle, rvvi.fflags, spike_r.fflags);
                 mismatches++;
             }
-
-#ifdef HAS_SYSTEMC
-            // 3-way: compare SystemC
-            SystemCStepResult sc_r = sc->step();
-            if (rvvi.pc != sc_r.pc) {
-                fprintf(stderr,
-                    "MISMATCH at retirement #%lu: "
-                    "PC RTL=0x%08x SC=0x%08x Spike=0x%08x\n",
-                    retired, rvvi.pc, sc_r.pc, spike_r.pc);
-                // Fault isolation
-                if (sc_r.pc == spike_r.pc)
-                    fprintf(stderr, "  -> SV codegen bug (RTL wrong, SC+Spike agree)\n");
-                else if (rvvi.pc == sc_r.pc)
-                    fprintf(stderr, "  -> Spike disagree (RTL+SC agree)\n");
-                else
-                    fprintf(stderr, "  -> Lean circuit bug (RTL+SC both wrong)\n");
-                mismatches++;
-            }
-#endif
 
             retired++;
 

@@ -203,7 +203,7 @@ This generates all 4 outputs in one command:
 - SystemVerilog (hierarchical): `output/sv-from-lean/`
 - SystemVerilog netlist (flat): `output/sv-netlist/`
 - Chisel → SV via CIRCT: `chisel/src/main/scala/generated/`
-- SystemC: `output/systemc/`
+- C++ Sim: `output/cpp_sim/`
 
 ### Option B: Dedicated codegen file
 
