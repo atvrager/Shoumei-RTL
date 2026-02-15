@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates git git-lfs openssh-client make cmake pkg-config \
         gcc g++ python3 python3-pip xz-utils gzip unzip \
         # Linters (lint CI job)
-        shellcheck cppcheck \
+        shellcheck cppcheck ripgrep \
         # HDL tools (lec, verilator-sim, smoke-test CI jobs)
         yosys verilator \
         # SystemC (systemc CI job)
