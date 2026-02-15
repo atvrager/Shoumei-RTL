@@ -2,7 +2,7 @@ RISCV_PREFIX ?= riscv32-unknown-elf-
 CC      = $(RISCV_PREFIX)gcc
 CFLAGS  = -march=rv32im_zicsr_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib
-TESTS   = pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test sltiu_test ipc_loop csr_test hello_test
+TESTS   = pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test subword_store_test sltiu_test ipc_loop csr_test hello_test branch_flush_x0_test
 
 # Generated assembly tests (self-contained, include their own _start)
 GEN_ASM    := $(wildcard generated/*.S)

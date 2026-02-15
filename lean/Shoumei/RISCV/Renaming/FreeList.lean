@@ -134,4 +134,35 @@ def mkFreeList (numPhysRegs : Nat) : Circuit :=
 /-- Free List with 64 physical registers (6-bit tags) -/
 def mkFreeList64 : Circuit := mkFreeList 64
 
+/--
+Build a Flushable Free List circuit.
+
+Like `mkFreeList` but backed by a flushable queue with:
+- Pre-initialized RAM (positions 0-31 hold pregs 32-63)
+- Pre-initialized tail/count (starts with 32 entries)
+- Loadable head/count (for flush recovery from committed state)
+
+Extra ports: flush_en, flush_head[5:0], flush_count[6:0]
+-/
+def mkFreeListFlushable (numPhysRegs : Nat) : Circuit :=
+  let tagWidth := log2Ceil numPhysRegs
+  let ptrWidth := log2Ceil numPhysRegs
+  let countWidth := ptrWidth + 1
+  let firstFree := numPhysRegs / 2  -- 32 for 64 pregs
+  let initCount := numPhysRegs - firstFree  -- 32 entries initially
+  let initFn := fun (i : Nat) => i + firstFree  -- position 0 → preg 32, etc.
+  let queue := mkQueueNFlushable numPhysRegs tagWidth initCount initFn
+  { queue with
+    name := s!"FreeList_{numPhysRegs}_Flushable"
+    signalGroups := [
+      { name := "enq_data", width := tagWidth, wires := (List.range tagWidth).map (fun i => Wire.mk s!"enq_data_{i}") },
+      { name := "deq_data", width := tagWidth, wires := (List.range tagWidth).map (fun i => Wire.mk s!"deq_data_{i}") },
+      { name := "flush_head", width := ptrWidth, wires := (List.range ptrWidth).map (fun i => Wire.mk s!"flush_head_{i}") },
+      { name := "flush_count", width := countWidth, wires := (List.range countWidth).map (fun i => Wire.mk s!"flush_count_{i}") }
+    ]
+  }
+
+/-- Flushable Free List with 64 physical registers -/
+def mkFreeList64Flushable : Circuit := mkFreeListFlushable 64
+
 end Shoumei.RISCV.Renaming

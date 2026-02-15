@@ -296,14 +296,135 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
     ]
   }
 
--- TODO: Implement mkQueueNStructural similar to mkQueue1Structural
--- This will require:
--- 1. Storage register array (N × width bits)
--- 2. Pointer registers (2 × ptrWidth bits)
--- 3. Count register (ptrWidth+1 bits)
--- 4. Address decoder for write enable
--- 5. MUX tree for read data
--- 6. Increment/wraparound logic for pointers
--- 7. Control logic for ready/valid handshaking
+/--
+Build a flushable N-entry Queue with configurable initial contents.
+
+Like `mkQueueNStructural` but adds:
+- Pre-initialized RAM (via `initFn` for initial contents)
+- Pre-initialized tail pointer (starts at `initCount`)
+- Pre-initialized count (starts at `initCount`)
+- Loadable head pointer (for flush recovery)
+- Loadable count (for flush recovery)
+
+Extra ports: flush_en, flush_head[ptrWidth-1:0], flush_count[countWidth-1:0]
+-/
+def mkQueueNFlushable (depth width _initCount : Nat) (_initFn : Nat → Nat) : Circuit :=
+  let name := s!"Queue{depth}_{width}_Flushable"
+  let ptrWidth := log2Ceil depth
+  let countWidth := log2Ceil (depth + 1)
+
+  -- Inputs
+  let enq_data := (List.range width).map (fun i => Wire.mk s!"enq_data_{i}")
+  let enq_valid := Wire.mk "enq_valid"
+  let deq_ready := Wire.mk "deq_ready"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+  let flush_en := Wire.mk "flush_en"
+  let flush_head := (List.range ptrWidth).map (fun i => Wire.mk s!"flush_head_{i}")
+  let flush_count := (List.range countWidth).map (fun i => Wire.mk s!"flush_count_{i}")
+
+  -- Outputs
+  let enq_ready := Wire.mk "enq_ready"
+  let deq_data := (List.range width).map (fun i => Wire.mk s!"deq_data_{i}")
+  let deq_valid := Wire.mk "deq_valid"
+
+  -- Pointer Registers
+  let head := (List.range ptrWidth).map (fun i => Wire.mk s!"head_{i}")
+  let tail := (List.range ptrWidth).map (fun i => Wire.mk s!"tail_{i}")
+  let count := (List.range countWidth).map (fun i => Wire.mk s!"count_{i}")
+
+  -- Handshaking
+  let full := Wire.mk "full"
+  let empty := Wire.mk "empty"
+  let enq_fire := Wire.mk "enq_fire"
+  let deq_fire := Wire.mk "deq_fire"
+
+  -- Empty detection: count == 0
+  let empty_gates := (List.range countWidth).foldl (fun (gs, prev) i =>
+    let bit_not := Wire.mk s!"count_not_{i}"
+    let and_out := if i == countWidth - 1 then empty else Wire.mk s!"count_empty_and_{i}"
+    let n_gs := gs ++ [Gate.mkNOT (count[i]!) bit_not]
+    let a_gs := n_gs ++ [Gate.mkAND prev bit_not and_out]
+    (a_gs, and_out)
+  ) ([], one)
+
+  -- Full detection: count == depth
+  let full_gates := (List.range countWidth).foldl (fun (gs, prev) i =>
+    let bit_val := count[i]!
+    let check_bit := Wire.mk s!"full_check_bit_{i}"
+    let and_out := if i == countWidth - 1 then full else Wire.mk s!"full_and_{i}"
+    let check_gate := if i == ptrWidth then Gate.mkBUF bit_val check_bit
+                      else Gate.mkNOT bit_val check_bit
+    let n_gs := gs ++ [check_gate]
+    let a_gs := n_gs ++ [Gate.mkAND prev check_bit and_out]
+    (a_gs, and_out)
+  ) ([], one)
+
+  let handshaking_gates := [
+    Gate.mkNOT full enq_ready,
+    Gate.mkNOT empty deq_valid,
+    Gate.mkAND enq_valid enq_ready enq_fire,
+    Gate.mkAND deq_ready deq_valid deq_fire
+  ]
+
+  -- RAM (with initial values)
+  let ram_inst : CircuitInstance := {
+    moduleName := s!"QueueRAMInit_{depth}x{width}"
+    instName := "u_ram"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("write_en", enq_fire)] ++
+      (tail.enum.map (fun ⟨i, w⟩ => (s!"write_addr_{i}", w))) ++
+      (enq_data.enum.map (fun ⟨i, w⟩ => (s!"write_data_{i}", w))) ++
+      (head.enum.map (fun ⟨i, w⟩ => (s!"read_addr_{i}", w))) ++
+      (deq_data.enum.map (fun ⟨i, w⟩ => (s!"read_data_{i}", w)))
+  }
+
+  -- Head Pointer (loadable, for flush recovery)
+  let head_inst : CircuitInstance := {
+    moduleName := s!"QueuePointerLoadable_{ptrWidth}"
+    instName := "u_head"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", deq_fire),
+       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_head.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
+      (head.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
+
+  -- Tail Pointer (init to initCount, no flush needed)
+  let tail_inst : CircuitInstance := {
+    moduleName := s!"QueuePointerInit_{ptrWidth}"
+    instName := "u_tail"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("en", enq_fire),
+       ("one", one), ("zero", zero)] ++
+      (tail.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
+
+  -- Count (loadable + init to initCount)
+  let count_inst : CircuitInstance := {
+    moduleName := s!"QueueCounterLoadableInit_{countWidth}"
+    instName := "u_count"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("inc", enq_fire), ("dec", deq_fire),
+       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+      (flush_count.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
+      (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
+  }
+
+  { name := name
+    inputs := enq_data ++ [enq_valid, deq_ready, clock, reset, zero, one, flush_en] ++
+              flush_head ++ flush_count
+    outputs := [enq_ready] ++ deq_data ++ [deq_valid]
+    gates := empty_gates.1 ++ full_gates.1 ++ handshaking_gates
+    instances := [ram_inst, head_inst, tail_inst, count_inst]
+    signalGroups := [
+      { name := "enq_data", width := width, wires := enq_data },
+      { name := "deq_data", width := width, wires := deq_data },
+      { name := "flush_head", width := ptrWidth, wires := flush_head },
+      { name := "flush_count", width := countWidth, wires := flush_count }
+    ]
+  }
 
 end Shoumei.Circuits.Sequential

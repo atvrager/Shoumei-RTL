@@ -1335,7 +1335,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rob_head_oldPhysRd := makeIndexedWires "rob_head_oldPhysRd" 6
   let rob_head_hasOldPhysRd := Wire.mk "rob_head_hasOldPhysRd"
   let retire_recycle_valid := Wire.mk "retire_recycle_valid"
-  let rvvi_rd_data := makeIndexedWires "rvvi_rd_data" 32
+  let retire_recycle_valid_filtered := Wire.mk "retire_recycle_valid_filtered"
+  let rvvi_rd_data := makeIndexedWires "rvvi_rd_data_raw" 32
   let int_rename_rd_data3 := makeIndexedWires "int_rename_rd_data3" 32  -- unused rs3 data (INT has no FMA)
 
   -- Gate rename's instr_valid during redirect/flush
@@ -1356,7 +1357,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("cdb_valid", if enableF then cdb_valid_int_prf else cdb_valid_prf)] ++
       (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid)] ++
+      [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid_filtered)] ++
       (retire_tag_muxed.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++  -- 4th read port: RVVI commit readback
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
@@ -1371,11 +1372,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
       -- Committed RAT recovery (CSR: suppress flush to keep speculative rd mapping)
       [("flush_en", rename_flush_en),
        ("commit_valid", commit_valid_muxed),
-       ("commit_hasPhysRd", commit_hasPhysRd_muxed)] ++
+       ("commit_hasPhysRd", commit_hasPhysRd_muxed),
+       ("force_alloc", dispatch_is_branch),
+       ("commit_hasAllocSlot", commit_hasAllocSlot_muxed)] ++
       (commit_archRd_muxed.enum.map (fun ⟨i, w⟩ => (s!"commit_archRd_{i}", w))) ++
-      (commit_physRd_muxed.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w))) ++
-      [("force_alloc", dispatch_is_branch),
-       ("commit_hasAllocSlot", commit_hasAllocSlot_muxed)]
+      (commit_physRd_muxed.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w)))
   }
 
   -- === DISPATCH QUALIFICATION ===
@@ -1462,6 +1463,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
     let enableSerialize := config.enableZifencei || config.enableZicsr
     if enableSerialize then
       let dc_tmp := Wire.mk "fencei_dc_tmp"
+      let dc_tmp2 := Wire.mk "fencei_dc_tmp2"
+      let not_flushing_comb := Wire.mk "fencei_not_flushing_comb"
+      let drain_next_tmp := Wire.mk "fencei_drain_next_tmp"
       let set_or := Wire.mk "fencei_set_or"
       let not_dc := Wire.mk "fencei_not_dc"
       let not_redir_reg := Wire.mk "not_redir_reg"
@@ -1480,13 +1484,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
        -- FSM logic (uses serialize_detected instead of fence_i_detected)
        Gate.mkNOT fence_i_draining fence_i_not_draining,
        Gate.mkAND serialize_detected fence_i_not_draining fence_i_start,
-       -- drain_complete = draining AND rob_empty AND lsu_sb_empty
+       -- drain_complete = draining AND rob_empty AND lsu_sb_empty AND NOT(pipeline_flush_comb)
+       -- The NOT(pipeline_flush_comb) suppresses spurious drain_complete when a branch
+       -- misprediction flush empties the ROB while a speculative CSR serialize is pending.
        Gate.mkAND fence_i_draining rob_empty dc_tmp,
-       Gate.mkAND dc_tmp lsu_sb_empty fence_i_drain_complete,
-       -- draining_next = (start OR draining) AND NOT(drain_complete)
+       Gate.mkAND dc_tmp lsu_sb_empty dc_tmp2,
+       Gate.mkNOT pipeline_flush_comb not_flushing_comb,
+       Gate.mkAND dc_tmp2 not_flushing_comb fence_i_drain_complete,
+       -- draining_next = (start OR draining) AND NOT(drain_complete) AND NOT(pipeline_flush_comb)
+       -- Clear draining state on pipeline flush to cancel speculative CSR serialize
        Gate.mkOR fence_i_start fence_i_draining set_or,
        Gate.mkNOT fence_i_drain_complete not_dc,
-       Gate.mkAND set_or not_dc fence_i_draining_next,
+       Gate.mkAND set_or not_dc drain_next_tmp,
+       Gate.mkAND drain_next_tmp not_flushing_comb fence_i_draining_next,
        -- suppress: CSR goes through rename on start cycle (not suppressed); FENCE.I and drain are suppressed
        Gate.mkAND fence_i_start csr_detected csr_rename_en,
        Gate.mkNOT csr_rename_en not_csr_rename_en,
@@ -1589,7 +1599,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else [])
 
   -- INT rename has_rd: use masked version when F enabled (exclude FP-only-write ops)
-  let decode_has_rd_for_int := if enableF then Wire.mk "decode_has_rd_int" else decode_has_rd
+
 
   -- Compute decode_rd_nonzero = OR of all 5 bits of decode_rd (for x0 exclusion)
   -- Used to gate alloc_hasPhysRd/alloc_hasOldPhysRd in the ROB:
@@ -1612,7 +1622,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- === BUSY-BIT TABLE ===
   let busy_set_en := Wire.mk "busy_set_en"
-  let busy_set_gate := Gate.mkAND rename_valid_gated decode_has_rd_for_int busy_set_en
+  let busy_set_gate := Gate.mkAND rename_valid_gated decode_has_rd_nox0 busy_set_en
   let busy_src1_ready := Wire.mk "busy_src1_ready"
   let busy_src2_ready := Wire.mk "busy_src2_ready"
   let busy_src2_ready_reg := Wire.mk "busy_src2_ready_reg"
@@ -1750,11 +1760,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
       -- Committed RAT recovery (FP uses same commit signals, filtered by is_fp)
       [("flush_en", branch_redirect_valid_reg),  -- Committed RAT restore on misprediction
        ("commit_valid", rob_commit_en),
-       ("commit_hasPhysRd", Wire.mk "rob_head_is_fp")] ++
+       ("commit_hasPhysRd", Wire.mk "rob_head_is_fp"),
+       ("force_alloc", zero),  -- FP rename doesn't need branch tracking
+       ("commit_hasAllocSlot", Wire.mk "rob_head_is_fp")] ++  -- same as commit_hasPhysRd for FP
       ((List.range 5).map (fun i => (s!"commit_archRd_{i}", Wire.mk s!"rob_head_archRd_{i}"))) ++
-      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w))) ++
-      [("force_alloc", zero),  -- FP rename doesn't need branch tracking
-       ("commit_hasAllocSlot", Wire.mk "rob_head_is_fp")]  -- same as commit_hasPhysRd for FP
+      (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_physRd_{i}", w)))
   }
 
   -- Mask dest_tag to 0 when no INT rd writeback (has_rd=0, rd=x0, or FP-only rd).
@@ -1783,10 +1793,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
     -- branch_alloc_hasPhysRd = dispatch_is_branch OR decode_has_rd_nox0
     [Gate.mkOR dispatch_is_branch decode_has_rd_nox0 branch_alloc_hasPhysRd] ++
     -- branch_alloc_physRd = MUX(int_dest_tag_masked, rd_phys, dispatch_is_branch)
-    -- When branch: use unmasked tag (unique); otherwise: use masked tag
+    -- Branches use unmasked rd_phys (unique free-list tag for CDB completion tracking)
     (List.range 6).map (fun i =>
       Gate.mkMUX int_dest_tag_masked[i]! rd_phys[i]! dispatch_is_branch branch_alloc_physRd[i]!) ++
-    -- FP-aware: rob_alloc_physRd_fp = MUX(fp_issue_dest_tag, rd_phys, dispatch_is_branch)
+    -- FP-aware: same force_alloc logic for branch override
     (if enableF then
       [Gate.mkOR dispatch_is_branch decode_has_any_rd_nox0 rob_alloc_hasPhysRd_fp] ++
       (List.range 6).map (fun i =>
@@ -2784,10 +2794,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkOR cond_taken is_jal_or_jalr branch_taken
   ]
 
-  -- Misprediction = XOR(predicted_taken, actual_taken)
-  -- predicted_taken comes from shadow DFFs, actual_taken = branch_taken
+  -- Misprediction detection:
+  -- Conditional branches: XOR(predicted_taken, actual_taken)
+  -- JALR: always mispredicted (we don't track predicted target, so always redirect
+  --   to computed target rs1+imm; performance cost is acceptable since JALR is rare)
   let branch_mispredicted := Wire.mk "branch_mispredicted"
-  let branch_mispredicted_gate := [Gate.mkXOR branch_predicted_taken branch_taken branch_mispredicted]
+  let branch_cond_mispredicted := Wire.mk "branch_cond_mispredicted"
+  let branch_mispredicted_gate :=
+    [Gate.mkXOR branch_predicted_taken branch_taken branch_cond_mispredicted,
+     Gate.mkOR branch_cond_mispredicted is_jalr branch_mispredicted]
 
   -- Redirect now comes from ROB commit, not branch RS dispatch.
   -- branch_redirect_valid = rob_commit_en AND rob_head_isBranch AND rob_head_mispredicted
@@ -2821,6 +2836,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
   let lsu_sb_fwd_hit := Wire.mk "lsu_sb_fwd_hit"
   let lsu_sb_fwd_committed_hit := Wire.mk "lsu_sb_fwd_committed_hit"
+  let lsu_sb_fwd_word_hit := Wire.mk "lsu_sb_fwd_word_hit"
+  let lsu_sb_fwd_word_only_hit := Wire.mk "lsu_sb_fwd_word_only_hit"
   let lsu_sb_fwd_data := makeIndexedWires "lsu_sb_fwd_data" 32
   let lsu_sb_fwd_size := makeIndexedWires "lsu_sb_fwd_size" 2
   let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
@@ -2838,6 +2855,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("sb_enq_en", sb_enq_en),
                 ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty), ("sb_fwd_hit", lsu_sb_fwd_hit),
                 ("sb_fwd_committed_hit", lsu_sb_fwd_committed_hit),
+                ("sb_fwd_word_hit", lsu_sb_fwd_word_hit),
+                ("sb_fwd_word_only_hit", lsu_sb_fwd_word_only_hit),
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_base_{i}", w))) ++
                (captured_imm.enum.map (fun ⟨i, w⟩ => (s!"dispatch_offset_{i}", w))) ++
@@ -2946,7 +2965,36 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- rvvi_trap = rob_head_exception AND rob_commit_en
   -- rvvi_rd[4:0] = rob_head_archRd
   -- rvvi_rd_valid = rob_head_hasPhysRd AND rob_commit_en
-  -- rvvi_rd_data = prf rd_data4 (via rename stage 4th read port, already wired)
+  -- rvvi_rd_data = prf rd_data4 with CDB bypass
+  -- When CDB writes to the same preg as rob_head_physRd in the same cycle,
+  -- the PRF DFF hasn't updated yet. Bypass CDB data to get correct RVVI value.
+  -- CDB bypass for RVVI: when CDB writes to rob_head_physRd in same cycle,
+  -- PRF DFF hasn't updated yet. Use CDB data instead.
+  let rvvi_cdb_bypass_match := Wire.mk "rvvi_cdb_bypass_match"
+  let rvvi_cdb_tag_xor := (List.range 6).map (fun i => Wire.mk s!"rvvi_cdb_xor_{i}")
+  let rvvi_cdb_bypass_gates :=
+    -- XOR each bit: 0 if equal, 1 if different
+    (List.range 6).map (fun i =>
+      Gate.mkXOR cdb_tag[i]! rob_head_physRd[i]! rvvi_cdb_tag_xor[i]!) ++
+    -- OR all XOR bits: any_diff = 1 if tags differ
+    (let or01 := Wire.mk "rvvi_xor_or01"
+     let or23 := Wire.mk "rvvi_xor_or23"
+     let or45 := Wire.mk "rvvi_xor_or45"
+     let or0123 := Wire.mk "rvvi_xor_or0123"
+     let any_diff := Wire.mk "rvvi_any_diff"
+     let tags_eq := Wire.mk "rvvi_tags_eq"
+     [Gate.mkOR rvvi_cdb_tag_xor[0]! rvvi_cdb_tag_xor[1]! or01,
+      Gate.mkOR rvvi_cdb_tag_xor[2]! rvvi_cdb_tag_xor[3]! or23,
+      Gate.mkOR rvvi_cdb_tag_xor[4]! rvvi_cdb_tag_xor[5]! or45,
+      Gate.mkOR or01 or23 or0123,
+      Gate.mkOR or0123 or45 any_diff,
+      Gate.mkNOT any_diff tags_eq,
+      Gate.mkAND tags_eq cdb_valid_prf rvvi_cdb_bypass_match]) ++
+    -- MUX: bypass CDB data when match
+    (List.range 32).map (fun i =>
+      Gate.mkMUX rvvi_rd_data[i]! cdb_data[i]! rvvi_cdb_bypass_match (Wire.mk s!"rvvi_rd_data_{i}"))
+  let rvvi_rd_data_final := (List.range 32).map (fun i => Wire.mk s!"rvvi_rd_data_{i}")
+
   let rvvi_gates :=
     [Gate.mkBUF rob_commit_en rvvi_valid,
      Gate.mkAND rob_head_exception rob_commit_en rvvi_trap,
@@ -3022,11 +3070,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else [Gate.mkBUF zero fp_enq_is_fp]
 
   -- Misprediction redirect target mux:
-  -- If predicted taken → redirect is PC+4 (fall-through, since prediction was wrong)
-  -- If predicted not-taken → redirect is branch target (taken path)
+  -- For conditional branches:
+  --   If predicted taken → redirect is PC+4 (fall-through, since prediction was wrong)
+  --   If predicted not-taken → redirect is branch target (taken path)
+  -- For JAL/JALR: always redirect to computed target (JAL/JALR are unconditional,
+  --   misprediction is only about target address, not taken/not-taken)
   let mispredict_redirect_target := makeIndexedWires "mispredict_redirect_target" 32
-  let mispredict_redirect_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX final_branch_target[i]! br_pc_plus_4[i]! branch_predicted_taken mispredict_redirect_target[i]!)
+  let mispredict_sel := Wire.mk "mispredict_sel"
+  let not_jal_or_jalr := Wire.mk "not_jal_or_jalr"
+  let mispredict_redirect_gates :=
+    [Gate.mkNOT is_jal_or_jalr not_jal_or_jalr,
+     Gate.mkAND branch_predicted_taken not_jal_or_jalr mispredict_sel] ++
+    (List.range 32).map (fun i =>
+    Gate.mkMUX final_branch_target[i]! br_pc_plus_4[i]! mispredict_sel mispredict_redirect_target[i]!)
 
   -- FIFO enqueue data buses
   -- IB FIFO: 72 bits: tag[5:0] ++ data[37:6] ++ is_fp_rd[38] ++ redirect_target[70:39] ++ mispredicted[71]
@@ -3256,11 +3312,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let load_fwd_gates := [
     Gate.mkAND lsu_sb_fwd_hit rs_mem_dispatch_valid load_fwd_tmp,
     Gate.mkAND load_fwd_tmp is_load load_fwd_tmp2,
-    Gate.mkAND load_fwd_tmp2 fwd_size_ok load_fwd_valid,
+    Gate.mkAND load_fwd_tmp2 fwd_size_ok (Wire.mk "load_fwd_pre_overlap"),
+    -- Block SB fwd when there's a partial word overlap (forwarded data incomplete)
+    Gate.mkNOT lsu_sb_fwd_word_only_hit (Wire.mk "not_word_only_hit"),
+    Gate.mkAND (Wire.mk "load_fwd_pre_overlap") (Wire.mk "not_word_only_hit") load_fwd_valid,
     -- Cross-size detection: SB hit but size insufficient
     Gate.mkNOT fwd_size_ok not_fwd_size_ok,
     Gate.mkAND load_fwd_tmp2 not_fwd_size_ok cross_size_any,
-    Gate.mkBUF cross_size_any cross_size_stall,
+    -- Word overlap: SB has entry at same word but different byte offset.
+    -- Stall dispatch so the load retries. The overlapping store(s) drain
+    -- from the SB (deq_ready=1 always), clearing the overlap.
+    Gate.mkAND lsu_sb_fwd_word_only_hit rs_mem_dispatch_valid (Wire.mk "wovlp_tmp1"),
+    Gate.mkAND (Wire.mk "wovlp_tmp1") is_load (Wire.mk "word_overlap_stall"),
+    -- cross_size_stall includes both exact cross-size AND word overlap
+    Gate.mkOR cross_size_any (Wire.mk "word_overlap_stall") cross_size_stall,
     Gate.mkNOT cross_size_stall not_cross_size_stall,
     -- Branch RS dispatch is suppressed when INT RS also dispatches (shared IB FIFO slot)
     -- Also gated by IB FIFO enq_ready to prevent result loss when FIFO is full
@@ -3271,6 +3336,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkNOT lsu_sb_fwd_committed_hit not_fwd_committed_hit,
     Gate.mkAND cross_size_any not_fwd_committed_hit cross_size_uncommitted
   ]
+
+  -- Cross-size pending latch: prevents stores from re-filling the SB with the
+  -- same address while a load is stalled on cross-size.  Blocks ALL mem dispatches
+  -- until the load successfully fires to DMEM (load_no_fwd).
+  let cross_size_pending := Wire.mk "cross_size_pending"
+  let cross_size_pending_next := Wire.mk "cross_size_pending_next"
+  let _not_cross_size_pending := Wire.mk "not_cross_size_pending"
 
   -- === LOAD BYTE/HALF FORMATTING (SB forwarding path) ===
   -- SB fwd data is already low-aligned (store data was masked before SB entry):
@@ -3379,11 +3451,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let load_no_fwd_base := Wire.mk "load_no_fwd_base"
   let load_no_fwd_no_deq := Wire.mk "load_no_fwd_no_deq"
   let not_sb_deq_valid := Wire.mk "not_sb_deq_valid"
+  let not_word_overlap := Wire.mk "not_word_overlap"
   let load_no_fwd_gates := [
     Gate.mkNOT lsu_sb_fwd_hit not_sb_fwd_hit,
     Gate.mkAND rs_mem_dispatch_valid is_load load_no_fwd_tmp,
-    -- Normal DMEM path: no SB hit
-    Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit load_no_fwd_base,
+    -- Normal DMEM path: no SB hit AND no word overlap
+    Gate.mkNOT (Wire.mk "word_overlap_stall") not_word_overlap,
+    Gate.mkAND load_no_fwd_tmp not_sb_fwd_hit (Wire.mk "load_no_fwd_pre"),
+    Gate.mkAND (Wire.mk "load_no_fwd_pre") not_word_overlap load_no_fwd_base,
     -- Yield to SB store dequeue: DMEM port is shared, store dequeue takes priority
     Gate.mkNOT lsu_sb_deq_valid not_sb_deq_valid,
     Gate.mkAND load_no_fwd_base not_sb_deq_valid load_no_fwd_no_deq,
@@ -3403,13 +3478,28 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_pending_inst : CircuitInstance :=
     { moduleName := "DFlipFlop", instName := "u_dmem_load_pending",
       portMap := [("d", dmem_load_pending_next), ("q", dmem_load_pending),
-                  ("clock", clock), ("reset", reset)] }
+                  ("clock", clock), ("reset", pipeline_reset_misc)] }
+
+  -- Cross-size pending DFF: latches when cross_size_stall fires, clears when
+  -- the load successfully fires to DMEM (load_no_fwd=1).  While latched, blocks
+  -- ALL mem dispatches to prevent stores from re-filling the SB at the same address.
+  let cross_size_pending_gates := [
+    -- pending_next = cross_size_stall OR (pending AND NOT load_no_fwd)
+    Gate.mkNOT load_no_fwd (Wire.mk "not_load_no_fwd_for_csp"),
+    Gate.mkAND cross_size_pending (Wire.mk "not_load_no_fwd_for_csp") (Wire.mk "csp_hold"),
+    Gate.mkOR cross_size_stall (Wire.mk "csp_hold") cross_size_pending_next
+  ]
+  let cross_size_pending_inst : CircuitInstance :=
+    { moduleName := "DFlipFlop", instName := "u_cross_size_pending",
+      portMap := [("d", cross_size_pending_next), ("q", cross_size_pending),
+                  ("clock", clock), ("reset", pipeline_reset_misc)] }
 
   -- mem_dispatch_en: gate by cross_size_stall, dmem_load_pending, sb_deq_valid,
-  -- AND store-into-full-SB. When the SB is draining a store to DMEM (sb_deq_valid=1),
-  -- the DMEM port is busy. A load that misses SB forwarding would try to use DMEM but
-  -- get blocked by load_no_fwd_no_deq=0, losing the dispatched instruction forever
-  -- (the RS entry is already cleared). Gating dispatch_en prevents this.
+  -- AND store-into-full-SB AND cross_size_pending. When the SB is draining a store
+  -- to DMEM (sb_deq_valid=1), the DMEM port is busy. A load that misses SB
+  -- forwarding would try to use DMEM but get blocked by load_no_fwd_no_deq=0,
+  -- losing the dispatched instruction forever (the RS entry is already cleared).
+  -- Gating dispatch_en prevents this.
   -- Also: if the dispatching instruction is a store and the SB is full, block dispatch
   -- to prevent enqueuing into a full SB (the RS entry would be cleared but the store lost).
   let mem_dispatch_en_tmp := Wire.mk "mem_dispatch_en_tmp"
@@ -3547,10 +3637,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let ib_wins_tmp2 := Wire.mk "ib_wins_tmp2"
   let ib_wins_tmp3 := Wire.mk "ib_wins_tmp3"
 
+  -- Gate DMEM response during flush: suppress stale loads dispatched before flush
+  let not_flushing_for_dmem := Wire.mk "not_flushing_for_dmem"
+  let dmem_wins_tmp := Wire.mk "dmem_wins_tmp"
+  -- (dmem_flush_gate_tmp removed - not needed)
+
   let drain_priority_gates := [
-    -- DMEM wins if valid (highest priority)
-    Gate.mkBUF dmem_resp_valid dmem_wins,
-    Gate.mkNOT dmem_resp_valid not_dmem,
+    -- DMEM wins if valid AND load is still pending AND not in flush window
+    Gate.mkNOT pipeline_flush_comb (Wire.mk "not_flush_comb_for_dmem"),
+    Gate.mkNOT pipeline_flush (Wire.mk "not_flush_reg_for_dmem"),
+    Gate.mkAND (Wire.mk "not_flush_comb_for_dmem") (Wire.mk "not_flush_reg_for_dmem") not_flushing_for_dmem,
+    Gate.mkAND dmem_resp_valid dmem_load_pending dmem_wins_tmp,
+    Gate.mkAND dmem_wins_tmp not_flushing_for_dmem dmem_wins,
+    Gate.mkNOT dmem_wins not_dmem,
 
     -- LSU FIFO wins if valid and no DMEM
     Gate.mkAND lsu_fifo_deq_valid not_dmem lsu_wins,
@@ -3589,12 +3688,18 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
   let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
 
+  let cdb_arb_pre_valid_raw := Wire.mk "cdb_arb_pre_valid_raw"
   let cdb_arb_pre_valid := Wire.mk "cdb_arb_pre_valid"
+  let not_flush_comb := Wire.mk "not_flush_comb_cdb"
   let cdb_valid_gates := [
     Gate.mkOR dmem_wins lsu_wins cdb_valid_tmp,
     Gate.mkOR cdb_valid_tmp muldiv_wins cdb_valid_tmp2,
     Gate.mkOR cdb_valid_tmp2 fp_wins cdb_valid_tmp3,
-    Gate.mkOR cdb_valid_tmp3 ib_wins cdb_arb_pre_valid,
+    Gate.mkOR cdb_valid_tmp3 ib_wins cdb_arb_pre_valid_raw,
+    -- Suppress CDB results that arrive in the same cycle as flush to prevent
+    -- stale writes from dispatched-but-flushed instructions entering the CDB pipeline.
+    Gate.mkNOT pipeline_flush_comb not_flush_comb,
+    Gate.mkAND cdb_arb_pre_valid_raw not_flush_comb cdb_arb_pre_valid,
     -- CSR injection: OR into cdb_pre_valid (CSR fires when pipeline is drained, no conflict)
     Gate.mkOR cdb_arb_pre_valid csr_cdb_inject cdb_pre_valid
   ]
@@ -3657,18 +3762,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
     [Gate.mkAND ib_fifo_deq[71]! ib_wins cdb_pre_mispredicted]
 
   -- CDB pipeline register
-  -- Use custom reset that preserves DMEM responses and CSR CDB injections through flush:
-  -- cdb_reset = pipeline_reset_misc AND NOT(dmem_resp_valid) AND NOT(csr_flush_suppress)
-  -- This ensures a DMEM response or CSR CDB injection arriving during flush is still broadcast.
+  -- Custom reset: preserves CSR CDB injections through flush.
+  -- cdb_reset = pipeline_reset_misc AND NOT(csr_flush_suppress)
+  -- DMEM responses during flush are now gated at dmem_wins (dmem_load_pending cleared on flush),
+  -- so no need to suppress cdb_reset for them.
   -- csr_flush_suppress = DFF(csr_cdb_inject), so it's high 1 cycle after CSR inject,
   -- exactly when the CDB pipeline DFF would be reset by the flush.
-  let not_dmem_resp := Wire.mk "not_dmem_resp_for_cdb"
-  let cdb_reset_tmp := Wire.mk "cdb_reset_tmp"
   let cdb_reset := Wire.mk "cdb_reset"
   let cdb_reset_gates := [
-    Gate.mkNOT dmem_resp_valid not_dmem_resp,
-    Gate.mkAND pipeline_reset_misc not_dmem_resp cdb_reset_tmp,
-    Gate.mkAND cdb_reset_tmp not_csr_flush_suppress cdb_reset
+    Gate.mkAND pipeline_reset_misc not_csr_flush_suppress cdb_reset
   ]
 
   let cdb_reg_insts : List CircuitInstance :=
@@ -3727,7 +3829,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     ib_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++ fp_fifo_enq_assemble ++
     lsu_fifo_enq_assemble ++
     muldiv_fifo_dummy_gates ++ fp_fifo_dummy_gates ++
-    load_no_fwd_gates ++ dmem_pending_gates ++ mem_dispatch_en_gates ++
+    load_no_fwd_gates ++ dmem_pending_gates ++ cross_size_pending_gates ++ mem_dispatch_en_gates ++
     dmem_tag_capture_gates ++
     drain_priority_gates ++
     cdb_valid_gates ++ cdb_mux_gates ++ cdb_is_fp_rd_gates ++ cdb_reset_gates ++ cdb_domain_gates
@@ -3968,6 +4070,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   (List.range 6).map (fun i =>
     Gate.mkMUX rob_head_oldPhysRd[i]! rob_head_physRd[i]! branch_tracking retire_tag_muxed[i]!)
 
+  -- Filter preg 0 from retirement: preg 0 is the permanent x0 mapping and must
+  -- never re-enter the free list.  retire_tag_muxed == 0 means all 6 bits are 0.
+  let retire_tag_any := Wire.mk "retire_tag_any"
+  let retire_tag_or := (List.range 5).map (fun i => Wire.mk s!"retire_tag_or_{i}")
+  let retire_tag_filter_gates :=
+    [Gate.mkOR retire_tag_muxed[0]! retire_tag_muxed[1]! retire_tag_or[0]!] ++
+    (List.range 4).map (fun i =>
+      Gate.mkOR retire_tag_or[i]! retire_tag_muxed[i + 2]!
+        (if i < 3 then retire_tag_or[i + 1]! else retire_tag_any)) ++
+    [Gate.mkAND retire_recycle_valid retire_tag_any (Wire.mk "retire_recycle_valid_filtered")]
+  -- Replace retire_recycle_valid with filtered version for free list enqueue
+  let retire_recycle_valid_filtered := Wire.mk "retire_recycle_valid_filtered"
+
   -- SB commit pointer is now internal to the StoreBuffer8 module.
   -- The CPU only drives commit_store_en; the SB tracks its own commit pointer.
 
@@ -3975,8 +4090,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Also: committed RAT routing — INT commit when hasPhysRd AND NOT is_fp
   let fp_retire_gates :=
     if enableF then [
-      Gate.mkAND retire_recycle_valid not_rob_head_is_fp int_retire_valid,
-      Gate.mkAND retire_recycle_valid rob_head_is_fp fp_retire_recycle_valid,
+      Gate.mkAND retire_recycle_valid_filtered not_rob_head_is_fp int_retire_valid,
+      Gate.mkAND retire_recycle_valid_filtered rob_head_is_fp fp_retire_recycle_valid,
       Gate.mkAND rob_head_hasOldPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasPhysRd"),
       Gate.mkAND rob_head_hasPhysRd not_rob_head_is_fp (Wire.mk "int_commit_hasAllocSlot")
     ] else []
@@ -4458,20 +4573,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_commit_inject_gates : List Gate :=
     if config.enableZicsr then
       [Gate.mkOR rob_commit_en csr_cdb_inject commit_valid_muxed,
-       Gate.mkMUX (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
-                  zero csr_cdb_inject commit_hasAllocSlot_muxed,
        Gate.mkMUX (if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)
-                  one csr_cdb_inject commit_hasPhysRd_muxed] ++
+                  one csr_cdb_inject commit_hasPhysRd_muxed,
+       Gate.mkMUX (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
+                  zero csr_cdb_inject commit_hasAllocSlot_muxed] ++
       (List.range 5).map (fun i =>
         Gate.mkMUX (Wire.mk s!"rob_head_archRd_{i}") csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed[i]!) ++
       (List.range 6).map (fun i =>
         Gate.mkMUX rob_head_physRd[i]! csr_phys_reg[i]! csr_cdb_inject commit_physRd_muxed[i]!)
     else
       [Gate.mkBUF rob_commit_en commit_valid_muxed,
-       Gate.mkBUF (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
-                  commit_hasAllocSlot_muxed,
        Gate.mkBUF (if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)
-                  commit_hasPhysRd_muxed] ++
+                  commit_hasPhysRd_muxed,
+       Gate.mkBUF (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
+                  commit_hasAllocSlot_muxed] ++
       (List.range 5).map (fun i =>
         Gate.mkBUF (Wire.mk s!"rob_head_archRd_{i}") commit_archRd_muxed[i]!) ++
       (List.range 6).map (fun i =>
@@ -4497,7 +4612,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [rob_empty] ++
                -- RVVI-TRACE outputs
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
-               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
+               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data_final ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
                fflags_acc
     gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
@@ -4532,7 +4647,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              lsu_valid_gate ++ lsu_tag_data_mux_gates ++
              lsu_is_fp_gates ++ dmem_is_fp_gates ++ dmem_meta_capture_gates ++ dmem_resp_format_all ++
              cdb_redirect_extract_gates ++
-             commit_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_gates ++
+             commit_gates ++ retire_tag_filter_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_cdb_bypass_gates ++ rvvi_gates ++
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates
@@ -4569,7 +4684,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   fflags_dff_instances ++
                   rob_isStore_shadow_insts ++
                   redir_tag_cmp_insts ++ redir_target_shadow_insts ++
-                  [dmem_pending_inst] ++ dmem_tag_capture_insts ++ dmem_is_fp_insts ++
+                  [dmem_pending_inst, cross_size_pending_inst] ++ dmem_tag_capture_insts ++ dmem_is_fp_insts ++
                   dmem_meta_capture_insts
     signalGroups :=
       [{ name := "imem_resp_data", width := 32, wires := imem_resp_data },
@@ -4650,7 +4765,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [{ name := "rvvi_pc_rdata", width := 32, wires := rvvi_pc_rdata },
        { name := "rvvi_insn", width := 32, wires := rvvi_insn },
        { name := "rvvi_rd", width := 5, wires := rvvi_rd },
-       { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
+       { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data_final },
        { name := "rvvi_frd", width := 5, wires := rvvi_frd },
        { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
        { name := "fflags_acc", width := 5, wires := fflags_acc },
