@@ -9,7 +9,7 @@
 #   make riscv-tests  - Build upstream riscv-tests rv32ui + rv32um ELFs
 #   make run-riscv-tests - Run riscv-tests through simulator
 #   make run-all-tests- Build sim + tests + riscv-tests, run all
-#   make cosim        - Build cosimulation binary (RTL + Spike)
+#   make cosim        - Build cosimulation binary (RTL + Spike + C++ Sim)
 #   make run-cosim    - Run cosim on all ELFs
 #   make clean        - Clean build artifacts
 
@@ -30,7 +30,10 @@ VFLAGS     := --cc --exe --build -j 0 \
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
-COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp
+COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp \
+                $(TB_DIR)/lib/cppsim_oracle.cpp $(TB_DIR)/lib/elf_loader.cpp \
+                $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei.cpp
+CPPSIM_OBJS := $(wildcard $(PROJ_ROOT)/output/cpp_sim/*.cpp)
 
 # X-propagation flags: randomize uninitialized regs to catch reset bugs
 VFLAGS_XPROP := --x-assign unique --x-initial unique
@@ -205,16 +208,16 @@ VFLAGS_COMMON := --cc --exe --build -j 0 \
                  --top-module tb_cpu
 
 cosim: $(COSIM_BIN)
-$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
+$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) $(VFLAGS_COMMON) \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(PROJ_ROOT)/output/cpp_sim -I$(TB_DIR)/lib -I$(TB_DIR)/generated" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
-	@echo "Built: $@ (RTL + Spike)"
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS)
+	@echo "Built: $@ (3-way: RTL + Spike + C++ Sim)"
 
 run-cosim: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
