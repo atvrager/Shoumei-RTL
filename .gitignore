@@ -52,6 +52,9 @@ build-sim/
 # LEC cache
 .lec-cache/
 
+# Codegen incremental cache
+.codegen-cache/
+
 # Generated filelists
 physical/*.f
 output/*/filelist.f
