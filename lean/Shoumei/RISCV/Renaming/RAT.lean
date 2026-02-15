@@ -127,13 +127,19 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let we_gates := (List.range numArchRegs).map (fun i =>
     Gate.mkAND write_en (write_sel[i]!) (we[i]!))
 
-  -- Reset buffer tree: reduce fanout from 1→192 to 1→8→24
-  -- 8 leaf buffers, each driving 4 arch regs × 6 bits = 24 DFFs
-  let numResetLeaves := 8
+  -- Reset buffer tree: 2-level, reduce fanout from 1→192 to 1→4→8→~12 DFFs
+  -- Level 1: 4 root buffers from reset
+  -- Level 2: 16 leaf buffers (4 per root), each driving 2 arch regs × 6 bits = 12 DFFs
+  let numRoots := 4
+  let reset_roots := (List.range numRoots).map (fun i =>
+    Wire.mk s!"reset_root_{i}")
+  let reset_root_gates := (List.range numRoots).map (fun i =>
+    Gate.mkBUF reset (reset_roots[i]!))
+  let numResetLeaves := 16
   let reset_leaves := (List.range numResetLeaves).map (fun i =>
     Wire.mk s!"reset_buf_{i}")
-  let reset_buf_gates := (List.range numResetLeaves).map (fun i =>
-    Gate.mkBUF reset (reset_leaves[i]!))
+  let reset_buf_gates := reset_root_gates ++ (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF (reset_roots[i / 4]!) (reset_leaves[i]!))
 
   -- Internal: Storage registers
   -- On write, reg[i] = we[i] ? write_data : reg[i] (hold)
@@ -147,7 +153,7 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   let getDump (i j : Nat) : Wire := Wire.mk s!"dump_data_{i}_{j}"
 
   let storage_gates := (List.range numArchRegs).map (fun i =>
-    let reset_leaf := reset_leaves[i / 4]!  -- 4 arch regs per leaf buffer
+    let reset_leaf := reset_leaves[i / 2]!  -- 2 arch regs per leaf buffer
     (List.range tagWidth).map (fun j =>
       let reg := getReg i j
       let next := getNext i j

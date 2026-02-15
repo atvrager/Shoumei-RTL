@@ -156,10 +156,21 @@ def mkShifter32 : Circuit :=
   -- Sign bit for arithmetic shift
   let sign := input[31]!
 
-  -- Build all three shifters
-  let sll_gates := mkLeftShifter input shamt zero sll_out
-  let srl_gates := mkRightLogicalShifter input shamt zero srl_out
-  let sra_gates := mkRightArithmeticShifter input shamt sign sra_out
+  -- Buffer shamt inputs: each shamt bit fans out to 96 MUXes (3 shifters × 32 bits).
+  -- Replicate each shamt bit per-shifter to reduce fanout from 96 to 32.
+  let shamt_sll := makeIndexedWires "shamt_sll" 5
+  let shamt_srl := makeIndexedWires "shamt_srl" 5
+  let shamt_sra := makeIndexedWires "shamt_sra" 5
+  let shamt_bufs := (List.range 5 |>.map (fun i => [
+    Gate.mkBUF (shamt[i]!) (shamt_sll[i]!),
+    Gate.mkBUF (shamt[i]!) (shamt_srl[i]!),
+    Gate.mkBUF (shamt[i]!) (shamt_sra[i]!)
+  ])).flatten
+
+  -- Build all three shifters with dedicated buffered shamt copies
+  let sll_gates := mkLeftShifter input shamt_sll zero sll_out
+  let srl_gates := mkRightLogicalShifter input shamt_srl zero srl_out
+  let sra_gates := mkRightArithmeticShifter input shamt_sra sign sra_out
 
   -- Final MUX: select between SLL, SRL, SRA based on op[1:0]
   -- op=00 (0): SLL, op=01 (1): SRL, op=10 (2): SRA, op=11 (3): SRA
@@ -177,7 +188,7 @@ def mkShifter32 : Circuit :=
   { name := "Shifter32"
     inputs := input ++ shamt ++ [op0, op1, zero]
     outputs := result
-    gates := sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
+    gates := shamt_bufs ++ sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
     instances := []
     keepHierarchy := true
     signalGroups := [

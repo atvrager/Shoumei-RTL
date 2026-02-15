@@ -39,8 +39,8 @@ theorem physregfile64_output_count : mkPhysRegFile64.outputs.length = 128 := by 
 /-- PhysRegFile64 uses 69 submodule instances (1 decoder + 64 storage + 4 muxes) -/
 theorem physregfile64_instance_count : mkPhysRegFile64.instances.length = 69 := by native_decide
 
-/-- PhysRegFile64 gate count: 64 write-enable ANDs + 64×32×2 storage gates (MUX + DFF) = 4160 -/
-theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 2112 := by native_decide
+/-- PhysRegFile64 gate count: 16 root bufs + 64 leaf bufs + 64 write-enable ANDs + 64×32 write MUXes -/
+theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 2120 := by native_decide
 
 /-! ## Structural Proofs (4×8 test configuration) -/
 

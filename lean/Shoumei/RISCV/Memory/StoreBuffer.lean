@@ -291,6 +291,15 @@ def mkStoreBuffer8 : Circuit :=
   let valid_next := (List.range 8).map (fun i => Wire.mk s!"valid_next_e{i}")
   let committed_next := (List.range 8).map (fun i => Wire.mk s!"committed_next_e{i}")
 
+  -- === Reset Buffer Tree ===
+  -- Each Register66 has 66 DFFs; raw reset drives 8×66 = 528 DFF RESETN pins.
+  -- 2-level tree: 2 root buffers × 4 leaf buffers each = 8 leaves (one per entry).
+  let reset_roots := (List.range 2).map (fun i => Wire.mk s!"reset_root_{i}")
+  let reset_leaves := (List.range 8).map (fun i => Wire.mk s!"reset_leaf_{i}")
+  let reset_buf_gates :=
+    (List.range 2).map (fun i => Gate.mkBUF reset (reset_roots[i]!)) ++
+    (List.range 8).map (fun i => Gate.mkBUF (reset_roots[i / 4]!) (reset_leaves[i]!))
+
   -- === Global Control Gates ===
 
   -- Full = count[3] (count ≥ 8 iff bit 3 set; count ≤ 8 by construction)
@@ -602,28 +611,24 @@ def mkStoreBuffer8 : Circuit :=
     let size_gates := (List.range 2).map fun j =>
       Gate.mkMUX cur_size[j]! enq_size[j]! enq_we e_next[64+j]!
 
-    -- Comparator32 instance: fwd_address vs entry address
+    -- EqualityComparator32 instance: fwd_address vs entry address (XOR + OR-tree, no subtraction)
     let cmp_eq := Wire.mk s!"e{i}_cmp_eq"
     let cmp_inst : CircuitInstance := {
-      moduleName := "Comparator32"
+      moduleName := "EqualityComparator32"
       instName := s!"u_cmp{i}"
       portMap :=
         (fwd_address.enum.map (fun ⟨j, w⟩ => (s!"a_{j}", w))) ++
         (cur_address.enum.map (fun ⟨j, w⟩ => (s!"b_{j}", w))) ++
-        [("one", one), ("eq", cmp_eq),
-         ("lt", Wire.mk s!"e{i}_cmp_lt_unused"),
-         ("ltu", Wire.mk s!"e{i}_cmp_ltu_unused"),
-         ("gt", Wire.mk s!"e{i}_cmp_gt_unused"),
-         ("gtu", Wire.mk s!"e{i}_cmp_gtu_unused")]
+        [("eq", cmp_eq)]
     }
 
-    -- Register66 instance: entry storage
+    -- Register66 instance: entry storage (uses buffered reset leaf)
     let reg_inst : CircuitInstance := {
       moduleName := "Register66"
       instName := s!"u_entry{i}"
       portMap :=
         (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
-        [("clock", clock), ("reset", reset)] ++
+        [("clock", clock), ("reset", reset_leaves[i]!)] ++
         (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
@@ -927,6 +932,7 @@ def mkStoreBuffer8 : Circuit :=
     [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
+    reset_buf_gates ++
     [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
     commit_gate_gates ++ [pc_reset_gate] ++

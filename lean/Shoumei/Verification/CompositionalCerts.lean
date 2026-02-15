@@ -290,7 +290,7 @@ def rob16_cert : CompositionalCert := {
 /-- StoreBuffer8: 8-entry store buffer with forwarding (FIFO redesign) -/
 def storeBuffer8_cert : CompositionalCert := {
   moduleName := "StoreBuffer8"
-  dependencies := ["Register66", "DFlipFlop", "QueuePointer_3", "QueuePointerLoadable_3", "QueueCounterLoadable_4", "Decoder3", "Comparator32", "PriorityArbiter8", "Mux8x32", "Mux8x2", "Popcount8"]
+  dependencies := ["Register66", "DFlipFlop", "QueuePointer_3", "QueuePointerLoadable_3", "QueueCounterLoadable_4", "Decoder3", "EqualityComparator32", "PriorityArbiter8", "Mux8x32", "Mux8x2", "Popcount8"]
   proofReference := "Shoumei.RISCV.Memory.StoreBufferProofs"
 }
 

@@ -130,17 +130,23 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) : Circuit :=
     )
   ) |>.flatten
 
-  -- Reset buffer tree: reduce fanout from 1→64 to 1→8→8
-  -- 8 leaf buffers, each driving 8 Register32 instances
-  let numResetLeaves := 8
+  -- Reset buffer tree: 2-level, reduce fanout from 1→64 to 1→16→4→1
+  -- Level 1: 16 root buffers from reset
+  -- Level 2: 64 leaf buffers (4 per root), each driving 1 Register32 (32 DFFs)
+  let numRoots := 16
+  let reset_roots := (List.range numRoots).map (fun i =>
+    Wire.mk s!"reset_root_{i}")
+  let reset_root_gates := (List.range numRoots).map (fun i =>
+    Gate.mkBUF reset (reset_roots[i]!))
+  let numResetLeaves := numRegs  -- 64 leaves, one per register
   let reset_leaves := (List.range numResetLeaves).map (fun i =>
     Wire.mk s!"reset_buf_{i}")
-  let reset_buf_gates := (List.range numResetLeaves).map (fun i =>
-    Gate.mkBUF reset (reset_leaves[i]!))
+  let reset_buf_gates := reset_root_gates ++ (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF (reset_roots[i / 4]!) (reset_leaves[i]!))
 
   -- Storage instances: 64× Register32 (hierarchical, not inline DFFs)
   let storage_instances := (List.range numRegs).map (fun i =>
-    let reset_leaf := reset_leaves[i / 8]!  -- 8 regs per leaf buffer
+    let reset_leaf := reset_leaves[i]!  -- 1 reg per leaf buffer
     {
       moduleName := s!"Register{dataWidth}"
       instName := s!"u_reg_{i}"

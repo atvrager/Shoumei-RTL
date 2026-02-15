@@ -46,6 +46,16 @@ def generateComparators : IO Unit := do
   IO.FS.writeFile "chisel/src/main/scala/generated/Comparator32.scala" chisel32
   IO.println "  ✓ Comparator32.scala"
 
+  -- EqualityComparator32 (XOR + OR-tree, no subtraction)
+  let sv_eq32 := Codegen.SystemVerilog.toSystemVerilog mkEqualityComparator32
+  IO.FS.writeFile "output/sv-from-lean/EqualityComparator32.sv" sv_eq32
+  IO.println "  ✓ EqualityComparator32.sv"
+
+  let chisel_eq32 := Codegen.Chisel.toChisel mkEqualityComparator32
+  IO.FS.writeFile "output/chisel-src/EqualityComparator32.scala" chisel_eq32
+  IO.FS.writeFile "chisel/src/main/scala/generated/EqualityComparator32.scala" chisel_eq32
+  IO.println "  ✓ EqualityComparator32.scala"
+
   IO.println "Comparator code generation complete!"
 
 end Shoumei.Circuits.Combinational

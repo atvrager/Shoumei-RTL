@@ -34,6 +34,13 @@ theorem comparator32_structure :
   mkComparator32.outputs.length = 5 ∧
   mkComparator32.instances.length = 1 := by native_decide
 
+-- EqualityComparator32 structural properties (XOR + OR-tree, no subtraction)
+theorem equalityComparator32_structure :
+  mkEqualityComparator32.gates.length = 65 ∧
+  mkEqualityComparator32.inputs.length = 64 ∧
+  mkEqualityComparator32.outputs.length = 1 ∧
+  mkEqualityComparator32.instances.length = 0 := by native_decide
+
 -- TODO: Behavioral proofs
 -- These would prove functional correctness:
 -- - eq output is 1 iff A == B
