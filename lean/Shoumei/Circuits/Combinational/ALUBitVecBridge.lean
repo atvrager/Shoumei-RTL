@@ -23,10 +23,16 @@ import Std.Tactic.BVDecide
 import Shoumei.DSL
 import Shoumei.Semantics
 import Shoumei.Circuits.Combinational.ALU
+import Shoumei.Reflection.BitVecPacking
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Combinational.Subtractor
+import Shoumei.Circuits.Combinational.Comparator
+import Shoumei.Circuits.Combinational.LogicUnit
+import Shoumei.Circuits.Combinational.Shifter
 
 namespace Shoumei.Circuits.Combinational.BitVecBridge
 
-open Shoumei
+open Shoumei Shoumei.Reflection
 
 /-! ## ALU Operation Enum -/
 
@@ -39,9 +45,9 @@ inductive ALUOp where
   | AND   -- 0x4: a & b
   | OR    -- 0x5: a | b
   | XOR   -- 0x6: a ^ b
-  | SLL   -- 0x7: a << b[4:0]
-  | SRL   -- 0x8: a >>> b[4:0]
-  | SRA   -- 0x9: a >> b[4:0] (arithmetic)
+  | SLL   -- 0x8: a << b[4:0]
+  | SRL   -- 0x9: a >>> b[4:0]
+  | SRA   -- 0xB: a >> b[4:0] (arithmetic)
   deriving Repr, BEq, DecidableEq
 
 /-- Map ALU operation to its 4-bit opcode. -/
@@ -53,9 +59,9 @@ def ALUOp.toOpcode : ALUOp → BitVec 4
   | .AND  => 0x4
   | .OR   => 0x5
   | .XOR  => 0x6
-  | .SLL  => 0x7
-  | .SRL  => 0x8
-  | .SRA  => 0x9
+  | .SLL  => 0x8
+  | .SRL  => 0x9
+  | .SRA  => 0xB
 
 /-! ## Word-Level Semantics -/
 
@@ -78,44 +84,41 @@ def aluSemantics (op : ALUOp) (a b : BitVec 32) : BitVec 32 :=
 
 /-! ## Interpretation Functions (BitVec ↔ Env) -/
 
-/-- Create wire bindings from a BitVec (LSB = wire index 0). -/
-def bitVecToBindings (name : String) (n : Nat) (bv : BitVec n) : List (Wire × Bool) :=
-  (List.range n).map fun i => (Wire.mk s!"{name}{i}", bv.getLsbD i)
+/-- Registry of ALU submodule circuits for flattening. -/
+def aluSubCircuitMap : List (String × Circuit) :=
+  [("KoggeStoneAdder32", mkKoggeStoneAdder32),
+   ("Subtractor32", mkSubtractor32),
+   ("Comparator32", mkComparator32),
+   ("LogicUnit32", mkLogicUnit32),
+   ("Shifter32", mkShifter32)]
 
-/-- Create ALU input environment from BitVec values. -/
-def mkALUBitVecEnv (a b : BitVec 32) (op : BitVec 4) : Env :=
-  mkEnv (
-    bitVecToBindings "a" 32 a ++
-    bitVecToBindings "b" 32 b ++
-    bitVecToBindings "op" 4 op ++
-    [(Wire.mk "zero", false), (Wire.mk "one", true)]
-  )
+/-- The ALU32 circuit fully flattened to gates only (no instances).
+    Fuel=3 is sufficient: ALU → Subtractor/Comparator → KoggeStoneAdder (max depth 2). -/
+def mkALU32Flat : Circuit :=
+  flattenAllFuel aluSubCircuitMap mkALU32 3
 
-/-- Read N indexed wire values as a natural number (MSB-first recursion). -/
-def readWiresAsNat (env : Env) (name : String) : Nat → Nat
-  | 0 => 0
-  | n + 1 =>
-    let bit := if env (Wire.mk s!"{name}{n}") then 1 else 0
-    bit * (2 ^ n) + readWiresAsNat env name n
+/-- Create ALU input WireMap from BitVec values. -/
+def mkALUInitMap (a b : BitVec 32) (op : BitVec 4) : WireMap :=
+  bitVecToBindings "a" 32 a ++
+  bitVecToBindings "b" 32 b ++
+  bitVecToBindings "op" 4 op ++
+  [(Wire.mk "zero", false), (Wire.mk "one", true)]
 
-/-- Read the 32 result wires as a BitVec 32. -/
-def readResultBitVec (env : Env) : BitVec 32 :=
-  BitVec.ofNat 32 (readWiresAsNat env "result" 32)
-
-/-- Evaluate ALU32 end-to-end: BitVec inputs → gate-level eval → BitVec output. -/
+/-- Evaluate ALU32 end-to-end: BitVec inputs → flattened gate-level eval → BitVec output. -/
 def evalALU32 (a b : BitVec 32) (op : BitVec 4) : BitVec 32 :=
-  readResultBitVec (evalCircuit mkALU32 (mkALUBitVecEnv a b op))
+  readResultBitVecMap (compileCircuit mkALU32Flat (mkALUInitMap a b op)) "result" 32
 
 /-! ## Layer 1: Bridge Correctness
 
 The bridge connects gate-level evaluation to word-level semantics.
-Proving this requires compiling evalCircuit (a foldl over ~1500 gates)
-into a BitVec expression. Options for future work:
-  (a) Reflection-based prover that compiles circuits to AIG → SAT
-  (b) Verified circuit-to-BitVec compiler
-  (c) Per-operation structural unfolding proofs
+Proving this universally requires symbolic evaluation of ~2800 gates over
+68-bit inputs — beyond `bv_decide`'s capacity (it can't unfold `List.foldl`).
 
-For now, validated by concrete test cases in Layer 3. -/
+Validated by 10 proven concrete test cases (Layer 3) via `native_decide`.
+Future approaches:
+  (a) Reflection-based prover: compile circuit to AIG, let SAT solver verify
+  (b) Per-operation proofs: fix opcode, reduce to ~500-gate subproblem
+  (c) Custom tactic to symbolically evaluate `compileCircuit` step-by-step -/
 
 axiom alu32_bridge (op : ALUOp) (a b : BitVec 32) :
     evalALU32 a b op.toOpcode = aluSemantics op a b
@@ -256,44 +259,44 @@ For now, validated externally via LEC against known-good Chisel output. -/
 section ConcreteValidation
 
 -- ADD: 5 + 3 = 8
-axiom alu32_concrete_add :
-    evalALU32 5 3 0x0 = 8
+theorem alu32_concrete_add :
+    evalALU32 5 3 0x0 = 8 := by native_decide
 
 -- SUB: 10 - 3 = 7
-axiom alu32_concrete_sub :
-    evalALU32 10 3 0x1 = 7
+theorem alu32_concrete_sub :
+    evalALU32 10 3 0x1 = 7 := by native_decide
 
 -- AND: 0xFF00 & 0x0FF0 = 0x0F00
-axiom alu32_concrete_and :
-    evalALU32 0xFF00 0x0FF0 0x4 = 0x0F00
+theorem alu32_concrete_and :
+    evalALU32 0xFF00 0x0FF0 0x4 = 0x0F00 := by native_decide
 
 -- OR: 0xFF00 | 0x00FF = 0xFFFF
-axiom alu32_concrete_or :
-    evalALU32 0xFF00 0x00FF 0x5 = 0xFFFF
+theorem alu32_concrete_or :
+    evalALU32 0xFF00 0x00FF 0x5 = 0xFFFF := by native_decide
 
 -- XOR: 0xAAAA ^ 0x5555 = 0xFFFF
-axiom alu32_concrete_xor :
-    evalALU32 0xAAAA 0x5555 0x6 = 0xFFFF
+theorem alu32_concrete_xor :
+    evalALU32 0xAAAA 0x5555 0x6 = 0xFFFF := by native_decide
 
 -- SLT: signed(3) < signed(5) = 1
-axiom alu32_concrete_slt :
-    evalALU32 3 5 0x2 = 1
+theorem alu32_concrete_slt :
+    evalALU32 3 5 0x2 = 1 := by native_decide
 
 -- SLTU: unsigned(3) < unsigned(5) = 1
-axiom alu32_concrete_sltu :
-    evalALU32 3 5 0x3 = 1
+theorem alu32_concrete_sltu :
+    evalALU32 3 5 0x3 = 1 := by native_decide
 
 -- SLL: 1 << 4 = 16
-axiom alu32_concrete_sll :
-    evalALU32 1 4 0x7 = 16
+theorem alu32_concrete_sll :
+    evalALU32 1 4 0x8 = 16 := by native_decide
 
 -- SRL: 256 >>> 4 = 16
-axiom alu32_concrete_srl :
-    evalALU32 256 4 0x8 = 16
+theorem alu32_concrete_srl :
+    evalALU32 256 4 0x9 = 16 := by native_decide
 
 -- SRA: 0xFFFFFF00 >> 4 = 0xFFFFFFF0 (sign-extends)
-axiom alu32_concrete_sra :
-    evalALU32 0xFFFFFF00 4 0x9 = 0xFFFFFFF0
+theorem alu32_concrete_sra :
+    evalALU32 0xFFFFFF00 4 0xB = 0xFFFFFFF0 := by native_decide
 
 end ConcreteValidation
 

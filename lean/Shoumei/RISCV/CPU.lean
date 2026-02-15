@@ -64,7 +64,7 @@ open Shoumei.RISCV.Memory (LSUState)
     - mapping: List of (optype_encoding, alu_opcode) pairs
 
     ALU opcode encoding:
-      0=ADD, 1=SUB, 2=SLT, 3=SLTU, 4=AND, 5=OR, 6=XOR, 7=SLL, 8=SRL, 9=SRA
+      0=ADD, 1=SUB, 2=SLT, 3=SLTU, 4=AND, 5=OR, 6=XOR, 8=SLL, 9=SRL, 11=SRA
 -/
 def mkOpTypeToALU4 (pfx : String) (optype : List Wire) (aluOp : List Wire)
     (mapping : List (Nat × Nat)) : List Gate :=

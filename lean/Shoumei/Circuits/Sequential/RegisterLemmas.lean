@@ -1,32 +1,31 @@
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Semantics
+import Shoumei.Reflection.WireMap
 
 namespace Shoumei.Circuits.Sequential
 open Shoumei
 
 -- 1. COMPLEX PROPERTY: Keep as Axiom
--- Proving Nat.repr is injective requires extensive lemmas about toDigits/foldl
+-- Proving Nat.repr is injective requires extensive lemmas about toDigitsCore/digitChar.
+-- Not used by any downstream proofs; retained as a goal for future work.
 axiom natToString_injective {i j : Nat} (h : Nat.repr i = Nat.repr j) : i = j
 
--- 2. WIRE EQUALITY: Keep as Axiom (to unblock build)
--- The auto-generated BEq instance is opaque and standard library lemmas
--- for String.eq_of_beq vary by Lean version. This is structurally true.
-axiom wire_beq_eq (w1 w2 : Wire) : (w1 == w2) = true → w1 = w2
+-- 2. WIRE EQUALITY: Proven via String BEq roundtrip
+-- Wire derives BEq from String, and String has LawfulBEq.
+theorem wire_beq_eq (w1 w2 : Wire) : (w1 == w2) = true → w1 = w2 :=
+  Reflection.wire_beq_eq w1 w2
 
 -- 3. INTERPOLATION INEQUALITY: Proven
--- The string "q" ++ toString j starts with 'q', "reset" starts with 'r'.
--- wire_mk_injective normalizes to toString "q" ++ toString j in Lean 4.27.0.
-theorem q_prefix_ne_reset (j : Nat) : toString "q" ++ toString j ≠ "reset" := by
+-- s!"{name}_{j}" (e.g. "q_0") starts with 'q', "reset" starts with 'r'.
+-- In Lean 4.27.0, s!"q_{j}" normalizes to toString "q" ++ toString "_" ++ toString j.
+theorem q_prefix_ne_reset (j : Nat) : toString "q" ++ toString "_" ++ toString j ≠ "reset" := by
   intro h
   simp only [ToString.toString] at h
   have h1 := congrArg String.toList h
-  rw [String.toList_append] at h1
-  -- h1 : "q".toList ++ (Nat.repr j).toList = "reset".toList
-  -- Reduce string literals to char lists
+  rw [String.toList_append, String.toList_append] at h1
   have hq : "q".toList = ['q'] := by decide
   have hr : "reset".toList = ['r', 'e', 's', 'e', 't'] := by decide
   rw [hq, hr] at h1
-  -- h1 : ['q'] ++ ... = ['r', ...], first chars differ
   simp only [List.singleton_append] at h1
   exact absurd (List.cons.inj h1).1 (by decide)
 
@@ -118,17 +117,16 @@ theorem register_comb_foldl_is_id (n : Nat) (env : Env) :
 -- Lemma: Under reset, all DFF evaluations in filterMap produce false
 theorem register_filterMap_all_false (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") = true) :
     ∀ p ∈ (mkRegisterN n).gates.filterMap (fun g =>
-      if g.gateType == GateType.DFF then
+      if g.gateType.isDFF then
         some (g.output, evalDFF g env)
       else none),
     p.2 = false := by
   intro p hp
   simp [mkRegisterN, makeIndexedWires] at hp
-  -- hp is a conjunction: gate matches DFF type AND (output, evalDFF) = p
-  obtain ⟨i, hi, hp_type, hp_eq⟩ := hp
-  -- Extract the second part of the pair equality
+  obtain ⟨idx, _, hp_eq⟩ := hp
+  simp [GateType.isDFF, Gate.mkDFF] at hp_eq
   rw [← hp_eq]
-  simp [Gate.mkDFF, evalDFF, hrst]
+  simp [evalDFF, hrst]
 
 -- Main composition theorem: Register produces all-false outputs under reset
 theorem register_nextState_under_reset (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") = true)
@@ -139,17 +137,20 @@ theorem register_nextState_under_reset (n : Nat) (env : Env) (hrst : env (Wire.m
   -- Step 1: env' preserves reset=true
   have henv' : mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) (Wire.mk "reset") = true :=
     register_env_reset n env hrst
-  -- Step 2: combinational fold is identity
+  -- Step 2: combinational fold is identity (evalCombGate = evalGate)
   have henv'' : (mkRegisterN n).gates.foldl (fun env gate =>
       if gate.gateType.isCombinational then
-        updateEnv env gate.output (evalCombGate gate env)
+        updateEnv env gate.output (evalGate gate env)
       else env) (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n))) =
-    mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) :=
-    register_comb_foldl_is_id n _
+    mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) := by
+    have := register_comb_foldl_is_id n
+      (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)))
+    simp only [evalCombGate] at this
+    exact this
   rw [henv'']
   -- Step 3: All filterMap entries have value false
   have hall : ∀ p ∈ (mkRegisterN n).gates.filterMap (fun g =>
-      if g.gateType == GateType.DFF then
+      if g.gateType.isDFF then
         some (g.output, evalDFF g (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n))))
       else none),
     p.2 = false :=
