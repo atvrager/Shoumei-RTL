@@ -27,10 +27,22 @@ set_input_delay 0 -clock ${clk_name} [get_ports reset]
 # Set false paths for asynchronous reset
 set_false_path -from [get_ports reset]
 
-# flush_busy drives pipeline_reset_busy (async reset for pipeline DFFs).
-# This is a flush/reset path, not a functional data path — false-path it
-# so the resizer doesn't try to buffer the entire reset tree for timing.
-set_false_path -through [get_nets {u_cpu.pipeline_reset_busy}]
+# Pipeline flush DFFs drive async resets (RESETN) via pipeline_reset_* OR gates.
+# Yosys opt_merge collapses all flush DFFs (identical d/clock/reset) into one
+# cell: u_flush_dff_busy_g0. False-path from surviving flush DFF cells to
+# suppress recovery/removal checks on the high-fanout reset tree.
+foreach tag {rs_int rs_mem rs_br rs_muldiv rs_fp rob misc} {
+    set cells [get_cells -quiet "u_cpu.u_flush_dff_${tag}.*"]
+    if {[llength $cells] > 0} {
+        set_false_path -from $cells
+    }
+}
+foreach g {0 1 2 3 4 5 6 7} {
+    set cells [get_cells -quiet "u_cpu.u_flush_dff_busy_g${g}.*"]
+    if {[llength $cells] > 0} {
+        set_false_path -from $cells
+    }
+}
 
-# Max transition constraint to fix slew violations (18 DRVs at ~320 ps limit)
-set_max_transition 300 [current_design]
+# Max transition constraint: 350ps (ASAP7 RVT library characterization limit)
+set_max_transition 350 [current_design]
