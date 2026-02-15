@@ -234,19 +234,32 @@ def allCircuits : List Circuit := [
   mkCPU_RV32IMF
 ]
 
-def main : IO Unit := do
+def main (args : List String) : IO Unit := do
+  let force := args.contains "--force"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if force then
+    IO.println "  (--force: regenerating all circuits)"
   IO.println ""
 
   -- Initialize output directories
   initOutputDirs
 
+  -- Pre-compute dependency-aware hashes for incremental generation
+  let hashMap := computeAllHashes allCircuits
+
   -- Generate all circuits (pass allCircuits for sub-module port direction lookup)
   let mut count := 0
+  let mut skipped := 0
   for c in allCircuits do
-    writeCircuit c allCircuits
+    let wasCached ← if !force then
+      if let some h := Shoumei.Codegen.Unified.lookupHash hashMap c.name then
+        isUpToDate c.name h
+      else pure false
+    else pure false
+    writeCircuit c allCircuits force hashMap
+    if wasCached then skipped := skipped + 1
     count := count + 1
 
   -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
@@ -279,7 +292,10 @@ def main : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println s!"✓ Generated {count} circuits (all formats)"
+  if skipped > 0 then
+    IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
+  else
+    IO.println s!"✓ Generated {count} circuits (all formats)"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  SystemC: output/systemc/"
