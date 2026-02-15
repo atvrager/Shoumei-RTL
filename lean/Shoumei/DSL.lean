@@ -43,14 +43,14 @@ inductive GateType where
   -- Sequential elements
   | DFF       -- D Flip-Flop (inputs: [d, clk, reset], output: q) — resets to 0
   | DFF_SET   -- D Flip-Flop with preset (inputs: [d, clk, reset], output: q) — resets to 1
-  deriving Repr, BEq
+  deriving Repr, BEq, Hashable
 
 -- Gate: represents a logic gate with inputs and output
 structure Gate where
   gateType : GateType
   inputs : List Wire
   output : Wire
-  deriving Repr
+  deriving Repr, Hashable
 
 namespace Gate
 
@@ -92,7 +92,7 @@ structure CircuitInstance where
   moduleName : String     -- Name of the module being instantiated (e.g., "Ram64x32")
   instName : String       -- Name of this instance (e.g., "u_ram")
   portMap : List (String × Wire) -- Mapping from submodule port names to local wires
-  deriving Repr
+  deriving Repr, Hashable
 
 /-! ## Codegen V2: Signal Annotations
 
@@ -106,7 +106,7 @@ inductive SignalType where
   | Bool
   | UInt (width : Nat)
   | SInt (width : Nat)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, Hashable
 
 /-- Group of flat wires that form a single logical signal (e.g., a 32-bit bus). -/
 structure SignalGroup where
@@ -114,27 +114,27 @@ structure SignalGroup where
   width : Nat
   wires : List Wire          -- the underlying flat wires
   stype : SignalType := .UInt width
-  deriving Repr
+  deriving Repr, Hashable
 
 /-- Interface bundle describing a structured port group (e.g., Decoupled). -/
 structure InterfaceBundle where
   name     : String
   signals  : List (String × SignalType)  -- field name → type
   protocol : Option String := none       -- "decoupled" | "regport" | none
-  deriving Repr
+  deriving Repr, Hashable
 
 /-- RAM write port: enable + address + data wires. -/
 structure RAMWritePort where
   en   : Wire
   addr : List Wire         -- log2(depth) wires
   data : List Wire         -- width wires
-  deriving Repr
+  deriving Repr, Hashable
 
 /-- RAM read port: address wires (inputs) + data wires (outputs). -/
 structure RAMReadPort where
   addr : List Wire         -- log2(depth) wires
   data : List Wire         -- width wires (outputs)
-  deriving Repr
+  deriving Repr, Hashable
 
 /-- RAM primitive — opaque to proofs, known to codegen.
     Multi-port: configurable write/read port lists. -/
@@ -146,7 +146,7 @@ structure RAMPrimitive where
   readPorts  : List RAMReadPort
   syncRead   : Bool := false  -- false → Mem (async), true → SyncReadMem (sync)
   clock      : Wire
-  deriving Repr
+  deriving Repr, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules
 structure Circuit where
@@ -161,7 +161,7 @@ structure Circuit where
   outputBundles : List InterfaceBundle  := []
   rams          : List RAMPrimitive     := []
   keepHierarchy : Bool                  := false
-  deriving Repr
+  deriving Repr, Hashable
 
 namespace Circuit
 

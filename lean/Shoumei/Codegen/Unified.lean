@@ -28,6 +28,42 @@ namespace Shoumei.Codegen.Unified
 open Shoumei
 open Shoumei.Codegen
 
+-- Incremental codegen: content-hash circuits, skip unchanged ones
+def cacheDir : String := ".codegen-cache"
+
+/-- Compute a dependency-aware hash for a circuit.
+    Includes hashes of all transitively instantiated sub-circuits. -/
+def lookupHash (hashMap : List (String × UInt64)) (name : String) : Option UInt64 :=
+  hashMap.find? (fun p => p.1 == name) |>.map (·.2)
+
+def circuitHashWithDeps (hashMap : List (String × UInt64)) (c : Circuit) : UInt64 :=
+  let baseHash := hash c
+  let depHashes := c.instances.filterMap fun inst =>
+    lookupHash hashMap inst.moduleName
+  hash (baseHash, hash depHashes)
+
+/-- Pre-compute hashes for all circuits in dependency order.
+    Since allCircuits is already in topological order (leaves first),
+    we can compute hashes in a single pass. -/
+def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
+  allCircuits.foldl (fun acc c =>
+    let h := circuitHashWithDeps acc c
+    acc ++ [(c.name, h)]
+  ) []
+
+/-- Check if circuit hash matches cached value. -/
+def isUpToDate (name : String) (h : UInt64) : IO Bool := do
+  let path := s!"{cacheDir}/{name}.hash"
+  if ← System.FilePath.pathExists path then
+    let stored ← IO.FS.readFile path
+    return stored.trimAscii.toString == toString h
+  return false
+
+/-- Write circuit hash to cache. -/
+def updateCache (name : String) (h : UInt64) : IO Unit := do
+  IO.FS.createDirAll cacheDir
+  IO.FS.writeFile s!"{cacheDir}/{name}.hash" (toString h)
+
 -- Output paths (centralized configuration)
 def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
@@ -72,12 +108,24 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
     IO.FS.writeFile path sv
 
 -- Write all output formats for a circuit
-def writeCircuit (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+-- When force=false, skip generation if the circuit hash matches the cached value.
+-- hashMap provides pre-computed dependency-aware hashes.
+def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
+    (force : Bool := true) (hashMap : List (String × UInt64) := {}) : IO Unit := do
+  -- Check cache (skip if unchanged)
+  if !force then
+    if let some h := lookupHash hashMap c.name then
+      if ← isUpToDate c.name h then
+        IO.println s!"— {c.name} (unchanged, skipping)"
+        return
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
   writeCircuitChisel c allCircuits
   writeCircuitSystemC c allCircuits
   writeCircuitASAP7 c allCircuits
+  -- Update cache after successful generation
+  if let some h := lookupHash hashMap c.name then
+    updateCache c.name h
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
 
