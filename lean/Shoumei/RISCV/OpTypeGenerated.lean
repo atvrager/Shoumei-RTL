@@ -393,4 +393,33 @@ def OpType.resolveMapping (decoderNames : List String) (mapping : List (OpType �
     | some idx => some (idx, code)
     | none => none
 
+/-- Map each OpType to its riscv-opcodes extension group(s) -/
+def OpType.extensionGroup : OpType → List String
+  | .ADD | .ADDI | .AND | .ANDI | .AUIPC
+  | .BEQ | .BGE | .BGEU | .BLT | .BLTU | .BNE
+  | .EBREAK | .ECALL | .FENCE
+  | .JAL | .JALR
+  | .LB | .LBU | .LH | .LHU | .LUI | .LW
+  | .OR | .ORI
+  | .SB | .SH | .SLL | .SLLI | .SLT | .SLTI | .SLTIU | .SLTU
+  | .SRA | .SRAI | .SRL | .SRLI | .SUB | .SW
+  | .XOR | .XORI => ["rv_i"]
+  | .DIV | .DIVU | .MUL | .MULH | .MULHSU | .MULHU | .REM | .REMU => ["rv_m"]
+  | .FADD_S | .FCLASS_S | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_S | .FCVT_W_S
+  | .FDIV_S | .FEQ_S | .FLE_S | .FLT_S | .FLW
+  | .FMADD_S | .FMAX_S | .FMIN_S | .FMSUB_S | .FMUL_S
+  | .FMV_W_X | .FMV_X_W | .FNMADD_S | .FNMSUB_S
+  | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => ["rv_f"]
+  | .FENCE_I => ["rv_zifencei"]
+  | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => ["rv_zicsr"]
+
+/-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/
+def OpType.isFpGroup : OpType → Bool
+  | .FADD_S | .FCLASS_S | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_S | .FCVT_W_S
+  | .FDIV_S | .FEQ_S | .FLE_S | .FLT_S | .FLW
+  | .FMADD_S | .FMAX_S | .FMIN_S | .FMSUB_S | .FMUL_S
+  | .FMV_W_X | .FMV_X_W | .FNMADD_S | .FNMSUB_S
+  | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => true
+  | _ => false
+
 end Shoumei.RISCV

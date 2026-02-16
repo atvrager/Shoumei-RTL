@@ -1011,7 +1011,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
   let sbFwdPipelined := config.sbFwdPipelineStages > 0
-  let enc := config.opcodeEncodings
+  let oi := config.opcodeIndex
   -- Opcode width: 7 bits when F extension (>64 instructions), 6 bits otherwise
   let opcodeWidth := if enableF then 7 else 6
   -- Global signals
@@ -1507,7 +1507,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Match decode_optype against FENCE_I encoding
   let fence_i_match := Wire.mk "fence_i_match"
   let fence_i_match_gates : List Gate :=
-    if config.enableZifencei then mkOpcodeMatch enc.fenceI "fencei" fence_i_match
+    if config.enableZifencei then mkOpcodeMatch (oi .FENCE_I) "fencei" fence_i_match
     else [Gate.mkBUF zero fence_i_match]
 
   -- Match decode_optype against each CSR encoding (6 opcodes → OR → csr_match)
@@ -1515,7 +1515,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (fun n => Wire.mk s!"csr_m_{n}")
   let csr_match_gates : List Gate :=
     if config.enableZicsr then
-      let csrEncs := [enc.csrrw, enc.csrrs, enc.csrrc, enc.csrrwi, enc.csrrsi, enc.csrrci]
+      let csrEncs := [oi .CSRRW, oi .CSRRS, oi .CSRRC, oi .CSRRWI, oi .CSRRSI, oi .CSRRCI]
       let prefixes := ["csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"]
       let matchGates := (csrEncs.zip (prefixes.zip csr_match_wires)).map
         (fun (e, p, w) => mkOpcodeMatch e s!"csr_{p}" w)
@@ -2736,8 +2736,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       Gate.mkAND t01234 bitWires[5]! result
     ]
 
-  let lui_match_gates := mkOpcodeMatch6 "lui_match" enc.lui rs_int_dispatch_opcode is_lui
-  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" enc.auipc rs_int_dispatch_opcode is_auipc
+  let lui_match_gates := mkOpcodeMatch6 "lui_match" (oi .LUI) rs_int_dispatch_opcode is_lui
+  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" (oi .AUIPC) rs_int_dispatch_opcode is_auipc
 
   -- Post-ALU MUX: int_result_final = MUX(MUX(int_result, auipc_result, is_auipc), int_captured_imm, is_lui)
   let int_result_final := makeIndexedWires "int_result_final" 32
@@ -2769,8 +2769,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_jal := Wire.mk "is_jal"
   let is_jalr := Wire.mk "is_jalr"
   let is_jal_or_jalr := Wire.mk "is_jal_or_jalr"
-  let jal_match_gates := mkOpcodeMatch6 "jal_match" enc.jal rs_branch_dispatch_opcode is_jal
-  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" enc.jalr rs_branch_dispatch_opcode is_jalr
+  let jal_match_gates := mkOpcodeMatch6 "jal_match" (oi .JAL) rs_branch_dispatch_opcode is_jal
+  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" (oi .JALR) rs_branch_dispatch_opcode is_jalr
   let jal_jalr_or_gate := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
 
   let branch_result_final := makeIndexedWires "branch_result_final" 32
@@ -2834,12 +2834,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_bltu := Wire.mk "is_bltu"
   let is_bgeu := Wire.mk "is_bgeu"
 
-  let beq_match_gates := mkOpcodeMatch6 "beq_match" enc.beq rs_branch_dispatch_opcode is_beq
-  let bne_match_gates := mkOpcodeMatch6 "bne_match" enc.bne rs_branch_dispatch_opcode is_bne
-  let blt_match_gates := mkOpcodeMatch6 "blt_match" enc.blt rs_branch_dispatch_opcode is_blt
-  let bge_match_gates := mkOpcodeMatch6 "bge_match" enc.bge rs_branch_dispatch_opcode is_bge
-  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" enc.bltu rs_branch_dispatch_opcode is_bltu
-  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" enc.bgeu rs_branch_dispatch_opcode is_bgeu
+  let beq_match_gates := mkOpcodeMatch6 "beq_match" (oi .BEQ) rs_branch_dispatch_opcode is_beq
+  let bne_match_gates := mkOpcodeMatch6 "bne_match" (oi .BNE) rs_branch_dispatch_opcode is_bne
+  let blt_match_gates := mkOpcodeMatch6 "blt_match" (oi .BLT) rs_branch_dispatch_opcode is_blt
+  let bge_match_gates := mkOpcodeMatch6 "bge_match" (oi .BGE) rs_branch_dispatch_opcode is_bge
+  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" (oi .BLTU) rs_branch_dispatch_opcode is_bltu
+  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" (oi .BGEU) rs_branch_dispatch_opcode is_bgeu
 
   -- Condition evaluation
   let not_eq := Wire.mk "br_not_eq"
@@ -3280,15 +3280,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_load_tmp2 := Wire.mk "is_load_tmp2"
   let is_load_tmp3 := Wire.mk "is_load_tmp3"
 
-  let lw_match_gates := mkOpcodeMatch6 "lw_match" enc.lw rs_mem_dispatch_opcode is_lw
-  let lh_match_gates := mkOpcodeMatch6 "lh_match" enc.lh rs_mem_dispatch_opcode is_lh
-  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" enc.lhu rs_mem_dispatch_opcode is_lhu
-  let lb_match_gates := mkOpcodeMatch6 "lb_match" enc.lb rs_mem_dispatch_opcode is_lb
-  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" enc.lbu rs_mem_dispatch_opcode is_lbu
+  let lw_match_gates := mkOpcodeMatch6 "lw_match" (oi .LW) rs_mem_dispatch_opcode is_lw
+  let lh_match_gates := mkOpcodeMatch6 "lh_match" (oi .LH) rs_mem_dispatch_opcode is_lh
+  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
+  let lb_match_gates := mkOpcodeMatch6 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
+  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
   -- FLW detection (conditional on F extension)
   let is_flw := Wire.mk "is_flw"
   let flw_match_gates :=
-    if enableF then mkOpcodeMatch6 "flw_match" enc.flw rs_mem_dispatch_opcode is_flw
+    if enableF then mkOpcodeMatch6 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
     else [Gate.mkBUF zero is_flw]
 
   let is_load_gates := [
@@ -3304,11 +3304,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_sh := Wire.mk "is_sh"
   let is_sb := Wire.mk "is_sb"
   let is_fsw := Wire.mk "is_fsw"
-  let sw_match_gates := mkOpcodeMatch6 "sw_match" enc.sw rs_mem_dispatch_opcode is_sw
-  let sh_match_gates := mkOpcodeMatch6 "sh_match" enc.sh rs_mem_dispatch_opcode is_sh
-  let sb_match_gates := mkOpcodeMatch6 "sb_match" enc.sb rs_mem_dispatch_opcode is_sb
+  let sw_match_gates := mkOpcodeMatch6 "sw_match" (oi .SW) rs_mem_dispatch_opcode is_sw
+  let sh_match_gates := mkOpcodeMatch6 "sh_match" (oi .SH) rs_mem_dispatch_opcode is_sh
+  let sb_match_gates := mkOpcodeMatch6 "sb_match" (oi .SB) rs_mem_dispatch_opcode is_sb
   let fsw_match_gates :=
-    if enableF then mkOpcodeMatch6 "fsw_match" enc.fsw rs_mem_dispatch_opcode is_fsw
+    if enableF then mkOpcodeMatch6 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
     else [Gate.mkBUF zero is_fsw]
 
   -- Derive mem_size[1:0]: 00=byte, 01=half, 10=word
@@ -4444,7 +4444,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fun n => Wire.mk s!"csr_xop_{n}")
   let csr_op_match_gates :=
     if config.enableZicsr then
-      let csrEncs := [enc.csrrw, enc.csrrs, enc.csrrc, enc.csrrwi, enc.csrrsi, enc.csrrci]
+      let csrEncs := [oi .CSRRW, oi .CSRRS, oi .CSRRC, oi .CSRRWI, oi .CSRRSI, oi .CSRRCI]
       let prefixes := ["xrw", "xrs", "xrc", "xrwi", "xrsi", "xrci"]
       -- Match against captured optype register (not decode_optype)
       let mkCsrOpMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
