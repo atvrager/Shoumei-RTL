@@ -348,6 +348,13 @@ def fpDivider_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.FPDividerProofs"
 }
 
+/-- FPSqrt: IEEE 754 SP square root (iterative, sequential) -/
+def fpSqrt_cert : CompositionalCert := {
+  moduleName := "FPSqrt"
+  dependencies := []
+  proofReference := "Shoumei.Circuits.Sequential.FPSqrtProofs"
+}
+
 /-- FPMisc: FP sign-inject, min/max, compare, classify, convert (combinational, JVM method size limit) -/
 def fpMisc_cert : CompositionalCert := {
   moduleName := "FPMisc"
@@ -531,6 +538,7 @@ def allCerts : List CompositionalCert := [
   fpMultiplier_cert,
   fpFMA_cert,
   fpDivider_cert,
+  fpSqrt_cert,
   fpExecUnit_cert,
   cpu_rv32imf_cert,
   cpu_rv32if_cert,

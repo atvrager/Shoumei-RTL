@@ -46,7 +46,9 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-# NOTE: rv32uf-p-fdiv excluded — test 5+ requires FSQRT which is unimplemented (placeholder)
+# NOTE: rv32uf-p-fdiv excluded — test 5 (fsqrt subtest) triggers FPExecUnit CDB
+# writeback issue where fsqrt result gets stale fdiv value.  FPSqrt itself is correct
+# (fp_smoke fsqrt passes).  TODO: fix FPExecUnit CDB priority for fdiv/fsqrt back-to-back.
 RISCV_TEST_EXCLUDE := rv32uf-p-fdiv.elf
 RISCV_TEST_GLOBS := $(filter-out $(addprefix $(TB_DIR)/riscv-tests/,$(RISCV_TEST_EXCLUDE)), \
                     $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
