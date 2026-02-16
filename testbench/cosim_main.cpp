@@ -241,10 +241,10 @@ int main(int argc, char** argv) {
                 if (is_unsyncable_csr_read(spike_r.insn) && spike_r.rd != 0) {
                     uint32_t csr_addr = (spike_r.insn >> 20) & 0xfff;
                     if (csr_addr == 0xB02 || csr_addr == 0xC02) {
+                        // minstret: Spike returns post-increment, RTL returns pre-increment
                         spike->set_xreg(spike_r.rd, spike_r.rd_value - 1);
-                    } else {
-                        spike->set_xreg(spike_r.rd, 0);
                     }
+                    // mcycle/mcycleh: leave Spike's value as-is (nonzero, close enough)
                 }
                 spike_r = spike->step();
                 skip++;

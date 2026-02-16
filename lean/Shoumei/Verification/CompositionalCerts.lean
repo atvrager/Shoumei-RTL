@@ -53,6 +53,27 @@ def queueRAM_64x6_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- QueueRAMInit_64x6: 64-entry RAM with 6-bit data and initial values -/
+def queueRAMInit_64x6_cert : CompositionalCert := {
+  moduleName := "QueueRAMInit_64x6"
+  dependencies := ["Decoder6", "Mux64x6"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- Queue64_6_Flushable: 64-entry flushable queue with 6-bit data -/
+def queue64_6_flushable_cert : CompositionalCert := {
+  moduleName := "Queue64_6_Flushable"
+  dependencies := ["QueueRAMInit_64x6", "QueuePointerLoadable_6", "QueuePointerInit_6", "QueueCounterLoadableInit_7"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- FreeList_64_Flushable: Flushable free list with correct flush recovery -/
+def freeListFlushable_cert : CompositionalCert := {
+  moduleName := "FreeList_64_Flushable"
+  dependencies := ["QueueRAMInit_64x6", "QueuePointerLoadable_6", "QueuePointerInit_6", "QueueCounterLoadableInit_7"]
+  proofReference := "Shoumei.RISCV.Renaming.FreeListProofs"
+}
+
 /-- QueueRAM_2x8: 2-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
 def queueRAM_2x8_cert : CompositionalCert := {
   moduleName := "QueueRAM_2x8"
@@ -469,6 +490,9 @@ def allCerts : List CompositionalCert := [
   queueRAM_64x6_cert,
   queueRAM_2x8_cert,
   queueRAM_4x8_cert,
+  queueRAMInit_64x6_cert,
+  queue64_6_flushable_cert,
+  freeListFlushable_cert,
   queueCounterUpDown_2_cert,
   queueCounterUpDown_3_cert,
   queueCounterUpDown_4_cert,
