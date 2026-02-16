@@ -595,14 +595,97 @@ def mkFPSqrt : Circuit :=
     Gate.mkMUX (exp_q[i]!) (dec_exp[i]!) norm_needed (final_exp[i]!)
   )
 
-  -- Normal result: {0, final_exp[7:0], norm_mant[22:0]}
+  -- ══════════════════════════════════════════════
+  -- IEEE 754 rounding (RNE): guard bit from remainder comparison
+  -- ══════════════════════════════════════════════
+  -- For sqrt, guard = (out_rem > out_root) where out_root is zero-extended to 26 bits.
+  -- This is equivalent to doing one more trial step: 4*rem >= 4*root + 1.
+  -- When guard=1, sticky is always 1 (remainder after extra step >= 3).
+  -- So for RNE: round_up = guard (no tie-breaking needed for sqrt).
+  --
+  -- Compute: out_rem - out_root_ext - 1. If no borrow → out_rem > out_root_ext.
+  let root_ext := makeIndexedWires "sqrt_root_ext" 26
+  let root_ext_gates :=
+    (List.range 24).map (fun i =>
+      Gate.mkBUF (out_root[i]!) (root_ext[i]!)
+    ) ++
+    [Gate.mkBUF zero (root_ext[24]!),
+     Gate.mkBUF zero (root_ext[25]!)]
+
+  -- 26-bit subtractor: out_rem - root_ext with initial borrow = 1 (computes rem - root - 1)
+  let guard_borrow := makeIndexedWires "sqrt_guard_borrow" 27
+  let guard_sub_gates :=
+    [Gate.mkBUF one (guard_borrow[0]!)] ++  -- initial borrow = 1 for "strictly greater"
+    (List.range 26).flatMap (fun i =>
+      let a := out_rem[i]!
+      let b := root_ext[i]!
+      let bi := guard_borrow[i]!
+      let not_a := Wire.mk s!"sqrt_gsub_na_{i}"
+      let t0 := Wire.mk s!"sqrt_gsub_t0_{i}"
+      let t1 := Wire.mk s!"sqrt_gsub_t1_{i}"
+      let t2 := Wire.mk s!"sqrt_gsub_t2_{i}"
+      let t01 := Wire.mk s!"sqrt_gsub_t01_{i}"
+      [
+        Gate.mkNOT a not_a,
+        Gate.mkAND not_a b t0,
+        Gate.mkAND not_a bi t1,
+        Gate.mkAND b bi t2,
+        Gate.mkOR t0 t1 t01,
+        Gate.mkOR t01 t2 (guard_borrow[i + 1]!)
+      ]
+    )
+
+  -- guard = NOT final_borrow (out_rem - root_ext - 1 >= 0 → out_rem > root_ext)
+  let guard := Wire.mk "sqrt_guard"
+  let guard_gate := [Gate.mkNOT (guard_borrow[26]!) guard]
+
+  -- For RNE: round_up = guard
+  -- (When guard=1, sticky is always 1, so round_up = guard AND (1 OR LSB) = guard)
+  let round_up := Wire.mk "sqrt_round_up"
+  let rne_gates := [Gate.mkBUF guard round_up]
+
+  -- ══════════════════════════════════════════════
+  -- Mantissa increment: rounded_mant = norm_mant + round_up
+  -- ══════════════════════════════════════════════
+  let rounded_mant := makeIndexedWires "rounded_mant" 23
+  let mant_carry := makeIndexedWires "sqrt_mant_carry" 24
+  let mant_inc_gates :=
+    [Gate.mkBUF round_up (mant_carry[0]!)] ++
+    (List.range 23).flatMap (fun i =>
+      [Gate.mkXOR (norm_mant[i]!) (mant_carry[i]!) (rounded_mant[i]!),
+       Gate.mkAND (norm_mant[i]!) (mant_carry[i]!) (mant_carry[i + 1]!)]
+    )
+
+  -- If mantissa overflows (carry out), increment exponent
+  let mant_overflow := mant_carry[23]!
+  let inc_exp := makeIndexedWires "sqrt_inc_exp" 8
+  let inc_carry := makeIndexedWires "sqrt_inc_carry" 9
+  let exp_inc_gates :=
+    [Gate.mkBUF mant_overflow (inc_carry[0]!)] ++
+    (List.range 8).flatMap (fun i =>
+      [Gate.mkXOR (final_exp[i]!) (inc_carry[i]!) (inc_exp[i]!),
+       Gate.mkAND (final_exp[i]!) (inc_carry[i]!) (inc_carry[i + 1]!)]
+    )
+
+  -- Select: if mant_overflow, use inc_exp and mantissa=0; else use final_exp and rounded_mant
+  let adj_exp := makeIndexedWires "sqrt_adj_exp" 8
+  let adj_mant := makeIndexedWires "sqrt_adj_mant" 23
+  let adj_gates :=
+    (List.range 8).map (fun i =>
+      Gate.mkMUX (final_exp[i]!) (inc_exp[i]!) mant_overflow (adj_exp[i]!)
+    ) ++
+    (List.range 23).map (fun i =>
+      Gate.mkMUX (rounded_mant[i]!) zero mant_overflow (adj_mant[i]!)
+    )
+
+  -- Normal result: {0, adj_exp[7:0], adj_mant[22:0]}
   let normal_result := makeIndexedWires "normal_result" 32
   let normal_result_gates :=
     (List.range 23).map (fun i =>
-      Gate.mkBUF (norm_mant[i]!) (normal_result[i]!)
+      Gate.mkBUF (adj_mant[i]!) (normal_result[i]!)
     ) ++
     (List.range 8).map (fun i =>
-      Gate.mkBUF (final_exp[i]!) (normal_result[23 + i]!)
+      Gate.mkBUF (adj_exp[i]!) (normal_result[23 + i]!)
     ) ++
     [Gate.mkBUF zero (normal_result[31]!)]
 
@@ -719,6 +802,14 @@ def mkFPSqrt : Circuit :=
     norm_mant_gates ++
     dec_gates ++
     final_exp_gates ++
+    -- Rounding
+    root_ext_gates ++
+    guard_sub_gates ++
+    guard_gate ++
+    rne_gates ++
+    mant_inc_gates ++
+    exp_inc_gates ++
+    adj_gates ++
     normal_result_gates ++
     result_gates ++
     tag_out_gates ++

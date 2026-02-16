@@ -46,14 +46,9 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-# NOTE: rv32uf-p-fdiv excluded — test 5 (fsqrt subtest) triggers FPExecUnit CDB
-# writeback issue where fsqrt result gets stale fdiv value.  FPSqrt itself is correct
-# (fp_smoke fsqrt passes).  TODO: fix FPExecUnit CDB priority for fdiv/fsqrt back-to-back.
-RISCV_TEST_EXCLUDE := rv32uf-p-fdiv.elf
-RISCV_TEST_GLOBS := $(filter-out $(addprefix $(TB_DIR)/riscv-tests/,$(RISCV_TEST_EXCLUDE)), \
-                    $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
+RISCV_TEST_GLOBS := $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
                     $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                    $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf))
+                    $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf)
 
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself

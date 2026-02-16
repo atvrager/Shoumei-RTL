@@ -2615,13 +2615,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_fp_dispatch_src2 := makeIndexedWires "rs_fp_dispatch_src2" 32
   let rs_fp_dispatch_tag := makeIndexedWires "rs_fp_dispatch_tag" 6
 
-  -- Gate FP RS dispatch when FP EU is busy (multi-cycle FP operations)
+  -- Gate FP RS dispatch when FP EU is busy OR FP CDB FIFO is full
+  let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
   let fp_rs_dispatch_en := Wire.mk "fp_rs_dispatch_en"
   let fp_rs_dispatch_gate :=
     if enableF then
       let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
       [Gate.mkNOT (Wire.mk "fp_busy") not_fp_eu_busy,
-       Gate.mkBUF not_fp_eu_busy fp_rs_dispatch_en]
+       Gate.mkAND not_fp_eu_busy fp_fifo_enq_ready fp_rs_dispatch_en]
     else [Gate.mkBUF one fp_rs_dispatch_en]
 
   let rs_fp_inst : CircuitInstance := {
@@ -3372,7 +3373,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let muldiv_fifo_deq := makeIndexedWires "muldiv_fifo_deq" 39
   let muldiv_fifo_drain := Wire.mk "muldiv_fifo_drain"
 
-  let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
   let fp_fifo_deq_valid := Wire.mk "fp_fifo_deq_valid"
   let fp_fifo_deq := makeIndexedWires "fp_fifo_deq" 39
   let fp_fifo_drain := Wire.mk "fp_fifo_drain"
