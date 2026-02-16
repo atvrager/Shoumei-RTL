@@ -5,6 +5,8 @@ Usage: lake exe generate_shoumei
 -/
 
 import Shoumei.Codegen.ShoumeiEmit
+import Shoumei.Codegen.ShoumeiParse
+import Shoumei.Codegen.SystemVerilog
 
 -- Import all circuit definitions (same as GenerateAll.lean)
 -- Phase 0: Foundation
@@ -80,6 +82,8 @@ import Shoumei.RISCV.CPU
 import Shoumei.RISCV.CPUTestbench
 
 open Shoumei.Codegen.ShoumeiEmit
+open Shoumei.Codegen.ShoumeiParse
+open Shoumei.Codegen.SystemVerilog
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
@@ -258,8 +262,29 @@ def main : IO Unit := do
     IO.FS.writeFile path text
     count := count + 1
 
+  IO.println s!"  Emitted {count} .shoumei files"
+  IO.println ""
+
+  -- Phase 2: Round-trip parse → SV generation
+  IO.println "  Round-trip: parse .shoumei → generate SV"
+  IO.FS.createDirAll "output/sv-roundtrip"
+  let mut parseOk := 0
+  let mut parseFail := 0
+  for c in allCircuits do
+    let path := s!"output/shoumei/{c.name}.shoumei"
+    let text ← IO.FS.readFile path
+    match parseShoumei text with
+    | .ok parsed =>
+      let sv := generateModule parsed allCircuits
+      IO.FS.writeFile s!"output/sv-roundtrip/{c.name}.sv" sv
+      parseOk := parseOk + 1
+    | .error err =>
+      IO.eprintln s!"  PARSE ERROR: {c.name}: {err}"
+      parseFail := parseFail + 1
+
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println s!"✓ Generated {count} .shoumei files"
-  IO.println "  Output: output/shoumei/"
+  IO.println s!"✓ Round-trip: {parseOk} OK, {parseFail} failed"
+  IO.println "  Output: output/shoumei/, output/sv-roundtrip/"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
