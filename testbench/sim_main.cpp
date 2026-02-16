@@ -19,6 +19,11 @@
 #include <memory>
 #include <elf.h>
 
+// Disable stdout buffering so output appears immediately in non-TTY contexts
+static struct _StdoutUnbuffer {
+    _StdoutUnbuffer() { setvbuf(stdout, nullptr, _IONBF, 0); }
+} _stdout_unbuffer;
+
 #include "Vtb_cpu.h"
 #include "verilated.h"
 #include "svdpi.h"

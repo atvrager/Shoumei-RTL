@@ -1690,7 +1690,7 @@ def generateRegisterDecl (ctx : Context) (c : Circuit) (g : Gate) : String :=
             if initVal == 0 then
               s!"  val {regName} = ShoumeiReg({sg.width}, {clockRef}, {resetRef})"
             else
-              s!"  val {regName} = ShoumeiRegInit({sg.width}, BigInt({initVal}), {clockRef}, {resetRef})"
+              s!"  val {regName} = ShoumeiRegInit({sg.width}, BigInt(\"{initVal}\"), {clockRef}, {resetRef})"
           else
             ""
       | none =>
