@@ -373,11 +373,204 @@ theorem alu32_bridge_add (a b : BitVec 32) : evalALU32 a b 0x0 = a + b := by
   apply bitwise_bridge a b 0x0 (a + b)
   intro i hi
   exact ksa_bit_correct a b i hi
-axiom alu32_bridge_sub : ∀ (a b : BitVec 32), evalALU32 a b 0x1 = a - b
-axiom alu32_bridge_slt : ∀ (a b : BitVec 32),
-    evalALU32 a b 0x2 = if decide (a.toInt < b.toInt) then 1 else 0
-axiom alu32_bridge_sltu : ∀ (a b : BitVec 32),
-    evalALU32 a b 0x3 = if decide (a < b) then 1 else 0
+
+/-! ## SUB bridge: three-layer proof
+
+SUB uses the identity `a - b = a + ~~~b + 1` (two's complement).
+The KSA computes the addition with complemented b and carry-in = 1. -/
+
+-- Layer 3: Ripple-carry Bool functions for subtraction (complement b, carry-in = 1)
+private def subCarryBit (a b : BitVec 32) : Nat → Bool
+  | 0 => a.getLsbD 0 || !b.getLsbD 0  -- atLeastTwo(a0, !b0, cin=1)
+  | n + 1 => (a.getLsbD (n+1) && !b.getLsbD (n+1)) ||
+             ((a.getLsbD (n+1) ^^ !b.getLsbD (n+1)) && subCarryBit a b n)
+
+private def subSumBit (a b : BitVec 32) : Nat → Bool
+  | 0 => a.getLsbD 0 ^^ b.getLsbD 0  -- a0 ^^ !b0 ^^ cin(=1) = a0 ^^ b0
+  | n + 1 => (a.getLsbD (n+1) ^^ !b.getLsbD (n+1)) ^^ subCarryBit a b n
+
+-- Layer 3: Connect to (a - b).getLsbD via per-bit bv_decide
+private theorem subSumBit_eq_getLsbD_sub (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    subSumBit a b i = (a - b).getLsbD i := by
+  rcases i with _ | _ | _ | _ | _ | _ | _ | _ |
+                 _ | _ | _ | _ | _ | _ | _ | _ |
+                 _ | _ | _ | _ | _ | _ | _ | _ |
+                 _ | _ | _ | _ | _ | _ | _ | _ | i
+  all_goals first | (dsimp only [subSumBit, subCarryBit]; bv_decide) | omega
+
+-- Layer 2: Ripple-carry BoolExpr evaluates to subSumBit
+private def subAdderCarry : Nat → BoolExpr
+  | 0 => .or (.var 0) (.not (.var 32))
+  | n + 1 => .or (.and (.var (n+1)) (.not (.var (33+n))))
+                 (.and (.xor (.var (n+1)) (.not (.var (33+n)))) (subAdderCarry n))
+
+private def subAdderSum : Nat → BoolExpr
+  | 0 => .xor (.var 0) (.var 32)
+  | n + 1 => .xor (.xor (.var (n+1)) (.not (.var (33+n)))) (subAdderCarry n)
+
+private theorem subAdderCarry_eval (a b : BitVec 32) (n : Nat) (hn : n < 32) :
+    (subAdderCarry n).eval (aluAssign a b) = subCarryBit a b n := by
+  induction n with
+  | zero => simp [subAdderCarry, subCarryBit, BoolExpr.eval, aluAssign]
+  | succ k ih =>
+    simp only [subAdderCarry, subCarryBit, BoolExpr.eval, aluAssign]
+    have hk : k < 32 := by omega
+    rw [ih hk]
+    simp only [show k + 1 < 32 from by omega, ite_true,
+               show ¬(33 + k < 32) from by omega, ite_false,
+               show 33 + k - 32 = k + 1 from by omega]
+
+private theorem subAdderSum_eval (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (subAdderSum i).eval (aluAssign a b) = subSumBit a b i := by
+  cases i with
+  | zero => simp [subAdderSum, subSumBit, BoolExpr.eval, aluAssign]
+  | succ k =>
+    simp only [subAdderSum, subSumBit, BoolExpr.eval, aluAssign]
+    have hk : k < 32 := by omega
+    rw [subAdderCarry_eval a b k hk]
+    simp only [show k + 1 < 32 from by omega, ite_true,
+               show ¬(33 + k < 32) from by omega, ite_false,
+               show 33 + k - 32 = k + 1 from by omega]
+
+-- Layer 1: KSA BoolExpr ≡ ripple-carry BoolExpr (via verified semantic checker)
+private theorem ksa_sub_eq_ripple :
+    ∀ i : Fin 32, BoolExpr.beqSem (aluSymResult 0x1 i.val) (subAdderSum i.val) (addVarsForBit i.val) = true := by
+  native_decide
+
+private theorem ksa_sub_bit_correct (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (aluSymResult 0x1 i).eval (aluAssign a b) = (a - b).getLsbD i := by
+  have h1 := BoolExpr.beqSem_correct _ _ _ (ksa_sub_eq_ripple ⟨i, hi⟩) (aluAssign a b)
+  rw [h1, subAdderSum_eval a b i hi, subSumBit_eq_getLsbD_sub a b i hi]
+
+-- Assembly
+theorem alu32_bridge_sub (a b : BitVec 32) : evalALU32 a b 0x1 = a - b := by
+  apply bitwise_bridge a b 0x1 (a - b)
+  intro i hi
+  exact ksa_sub_bit_correct a b i hi
+
+/-! ## SLT bridge: signed less-than comparison
+
+Result is 1 if a <s b, else 0. Only bit 0 is nontrivial. -/
+
+-- Helper: getLsbD of small BitVec constants for i ≥ 1
+private theorem getLsbD_one_high (i : Nat) (hi : i ≥ 1) (_hi32 : i < 32) :
+    (1 : BitVec 32).getLsbD i = false := by
+  simp only [BitVec.getLsbD, BitVec.toNat, Nat.testBit, Nat.shiftRight_eq_div_pow]
+  have h2 : 1 < 2 ^ i := Nat.one_lt_two_pow_iff.mpr (by omega)
+  simp [Nat.div_eq_of_lt h2]
+
+private theorem getLsbD_zero_any (i : Nat) (_hi : i < 32) :
+    (0 : BitVec 32).getLsbD i = false := by
+  simp [BitVec.getLsbD, BitVec.toNat]
+
+-- Bits 1-31 are all zero
+private theorem slt_high_bits_zero :
+    ∀ i : Fin 31, (aluSymResult 0x2 (i.val + 1)).constFold = .lit false := by
+  native_decide
+
+-- Bit 0: signed less-than via subtraction MSB
+private def sltRefExpr : BoolExpr :=
+  .or (.and (.var 31) (.not (.var 63)))
+      (.and (.not (.xor (.var 31) (.var 63))) (subAdderSum 31))
+
+private theorem slt_bit0_eq_ref :
+    BoolExpr.beqSem (aluSymResult 0x2 0) sltRefExpr (addVarsForBit 31) = true := by
+  native_decide
+
+private theorem sltRefExpr_eval (a b : BitVec 32) :
+    sltRefExpr.eval (aluAssign a b) =
+    ((a.getLsbD 31 && !b.getLsbD 31) ||
+     (!(a.getLsbD 31 ^^ b.getLsbD 31) && (a - b).getLsbD 31)) := by
+  simp only [sltRefExpr, BoolExpr.eval, aluAssign,
+             show (31 : Nat) < 32 from by omega, ite_true,
+             show ¬((63 : Nat) < 32) from by omega, ite_false,
+             show (63 : Nat) - 32 = 31 from by omega]
+  rw [subAdderSum_eval a b 31 (by omega), subSumBit_eq_getLsbD_sub a b 31 (by omega)]
+
+-- SLT formula: the bit-level formula equals the signed comparison
+-- We reformulate using BitVec.slt to help bv_decide
+private theorem slt_formula_correct (a b : BitVec 32) :
+    ((a.getLsbD 31 && !b.getLsbD 31) ||
+     (!(a.getLsbD 31 ^^ b.getLsbD 31) && (a - b).getLsbD 31)) =
+    decide (a.toInt < b.toInt) := by
+  rw [← BitVec.slt_eq_decide]
+  bv_decide
+
+theorem alu32_bridge_slt (a b : BitVec 32) :
+    evalALU32 a b 0x2 = if decide (a.toInt < b.toInt) then 1 else 0 := by
+  apply bitwise_bridge a b 0x2 (if decide (a.toInt < b.toInt) then 1 else 0)
+  intro i hi
+  by_cases hi0 : i = 0
+  · subst hi0
+    have h1 := BoolExpr.beqSem_correct _ _ _ slt_bit0_eq_ref (aluAssign a b)
+    rw [h1, sltRefExpr_eval, slt_formula_correct]
+    have h1bit : (1 : BitVec 32).getLsbD 0 = true := by native_decide
+    have h0bit : (0 : BitVec 32).getLsbD 0 = false := by native_decide
+    split <;> simp [*]
+  · have hi31 : i - 1 < 31 := by omega
+    have hcf := slt_high_bits_zero ⟨i - 1, hi31⟩
+    have : i - 1 + 1 = i := by omega
+    rw [this] at hcf
+    rw [← BoolExpr.constFold_correct, hcf, BoolExpr.eval]
+    symm
+    split <;> exact (by
+      first
+      | exact getLsbD_one_high i (by omega) hi
+      | exact getLsbD_zero_any i hi)
+
+/-! ## SLTU bridge: unsigned less-than comparison -/
+
+-- Bits 1-31 are all zero
+private theorem sltu_high_bits_zero :
+    ∀ i : Fin 31, (aluSymResult 0x3 (i.val + 1)).constFold = .lit false := by
+  native_decide
+
+-- Bit 0: unsigned less-than
+private def sltuRefExpr : BoolExpr :=
+  .or (.and (.not (.var 31)) (.var 63))
+      (.and (.not (.xor (.var 31) (.var 63))) (subAdderSum 31))
+
+private theorem sltu_bit0_eq_ref :
+    BoolExpr.beqSem (aluSymResult 0x3 0) sltuRefExpr (addVarsForBit 31) = true := by
+  native_decide
+
+private theorem sltuRefExpr_eval (a b : BitVec 32) :
+    sltuRefExpr.eval (aluAssign a b) =
+    ((!a.getLsbD 31 && b.getLsbD 31) ||
+     (!(a.getLsbD 31 ^^ b.getLsbD 31) && (a - b).getLsbD 31)) := by
+  simp only [sltuRefExpr, BoolExpr.eval, aluAssign,
+             show (31 : Nat) < 32 from by omega, ite_true,
+             show ¬((63 : Nat) < 32) from by omega, ite_false,
+             show (63 : Nat) - 32 = 31 from by omega]
+  rw [subAdderSum_eval a b 31 (by omega), subSumBit_eq_getLsbD_sub a b 31 (by omega)]
+
+private theorem sltu_formula_correct (a b : BitVec 32) :
+    ((!a.getLsbD 31 && b.getLsbD 31) ||
+     (!(a.getLsbD 31 ^^ b.getLsbD 31) && (a - b).getLsbD 31)) =
+    decide (a < b) := by
+  bv_decide
+
+theorem alu32_bridge_sltu (a b : BitVec 32) :
+    evalALU32 a b 0x3 = if decide (a < b) then 1 else 0 := by
+  apply bitwise_bridge a b 0x3 (if decide (a < b) then 1 else 0)
+  intro i hi
+  by_cases hi0 : i = 0
+  · subst hi0
+    have h1 := BoolExpr.beqSem_correct _ _ _ sltu_bit0_eq_ref (aluAssign a b)
+    rw [h1, sltuRefExpr_eval, sltu_formula_correct]
+    have h1bit : (1 : BitVec 32).getLsbD 0 = true := by native_decide
+    have h0bit : (0 : BitVec 32).getLsbD 0 = false := by native_decide
+    split <;> simp [*]
+  · have hi31 : i - 1 < 31 := by omega
+    have hcf := sltu_high_bits_zero ⟨i - 1, hi31⟩
+    have : i - 1 + 1 = i := by omega
+    rw [this] at hcf
+    rw [← BoolExpr.constFold_correct, hcf, BoolExpr.eval]
+    symm
+    split <;> exact (by
+      first
+      | exact getLsbD_one_high i (by omega) hi
+      | exact getLsbD_zero_any i hi)
 axiom alu32_bridge_sll : ∀ (a b : BitVec 32),
     evalALU32 a b 0x8 = a <<< (b &&& 0x1F#32).toNat
 axiom alu32_bridge_srl : ∀ (a b : BitVec 32),
