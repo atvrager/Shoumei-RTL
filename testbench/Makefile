@@ -245,7 +245,6 @@ run-cosim: $(COSIM_BIN) tests riscv-tests
 	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
 
-<<<<<<< HEAD
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark
 

@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Linters (lint CI job)
         shellcheck cppcheck ripgrep \
         # HDL tools (lec, verilator-sim, smoke-test CI jobs)
-        yosys verilator \
+        yosys verilator zlib1g-dev \
         device-tree-compiler \
         # JDK for Scala/Chisel (scala-build CI job)
         openjdk-${JAVA_VERSION}-jdk-headless \
