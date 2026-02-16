@@ -1,6 +1,6 @@
 # Design: Verified Circuit-to-BitVec Compiler
 
-## Status: Phase 1 & 3 (partial) complete
+## Status: Phase 1 & 3 COMPLETE — ALU bridge fully proven
 ## Author: (generated)
 ## Date: 2025-02 (updated 2026-02)
 
@@ -23,11 +23,18 @@ It does not work for anything larger. The ALU has ~1500 gates and 68 input bits.
 cannot reduce a 1500-step `List.foldl` of `updateEnv` calls into a closed-form expression in
 reasonable time.
 
-**Current state of the gap:**
+**Current state of the gap (updated 2026-02-16):**
+
+The ALU bridge axiom has been **fully eliminated**. The original monolithic axiom was
+replaced by 10 per-opcode theorems, all proven via the Reflection module's verified
+symbolic evaluator (Approach 3 from proof-strategies.md). Zero axioms remain in the
+entire `Reflection/` module.
+
+Remaining axioms in the project:
 
 | File | Axiom | What it claims |
 |------|-------|----------------|
-| `ALUBitVecBridge.lean` | `alu32_bridge` | `evalALU32 a b op = aluSemantics op a b` |
+| ~~`ALUBitVecBridge.lean`~~ | ~~`alu32_bridge`~~ | ~~`evalALU32 a b op = aluSemantics op a b`~~ **PROVEN** |
 | `ALUBitVecBridge.lean` | `alu32_concrete_add` (+ 9 more) | `evalALU32 5 3 0x0 = 8` etc. |
 | `FetchProofs.lean` | `mkFetchStage_implements_fetchStep` | Proves `True` (placeholder) |
 | `CPUProofs.lean` | `mkCPU_RV32I_implements_cpuStep` | Circuit implements ISA step |
@@ -602,11 +609,22 @@ circuit implements the spec. We need the latter.
 | `Reflection/CompileCircuit.lean` | Done | `compileCircuit`, `compileCircuit_correct` theorem, `flattenAll`/`flattenAllFuel`, `compileCircuitHier` with `SubmoduleSpec` |
 | `Reflection/BitVecPacking.lean` | Done | `bitVecToBindings`, `readWiresAsNatMap`, `readResultBitVecMap` |
 
-**Phase 3 (partial): ALU32 concrete axioms eliminated.**
+**Phase 3: COMPLETE — ALU32 bridge fully proven.**
 
 - Redefined `evalALU32` to use flattened circuit compilation (was broken: `evalCircuit` ignores `CircuitInstance`)
 - All 10 concrete validation axioms replaced with `native_decide` proofs
-- `alu32_bridge` (universal quantifier over all inputs) remains an axiom
+- **All 10 per-opcode bridge theorems proven** (ADD, SUB, SLT, SLTU, AND, OR, XOR, SLL, SRL, SRA)
+- **Master theorem `alu32_bridge`** dispatches to per-opcode proofs — zero axioms remain
+
+**Approach used (Approach 3 from proof-strategies.md):** The original plan assumed
+`bv_decide` could handle the full compiled circuit. It cannot — `bv_decide` treats
+`List.foldl` as opaque. Instead, the verified symbolic evaluator (`SymbolicCompile.lean`)
+compiles the circuit to BoolExpr trees, and per-opcode proofs use a combination of:
+- `beqSem` + `native_decide` for KSA/barrel-shifter equivalence to reference formulas
+- Structural induction for connecting BoolExpr to Bool recursive functions
+- `bv_decide` for per-bit BitVec equivalence (small SAT problems, ~64 vars each)
+
+See `docs/proof-strategies.md` Approach 3 for full technique descriptions.
 
 **Foundational axioms proven:**
 
@@ -622,22 +640,24 @@ circuit implements the spec. We need the latter.
 | Category | Before | After | Eliminated |
 |----------|--------|-------|------------|
 | ALU concrete tests | 10 axioms | 0 | 10 |
-| ALU bridge | 1 axiom | 1 axiom | 0 |
+| ALU bridge (per-opcode) | 10 axioms | 0 | 10 |
+| ALU master bridge | 1 axiom | 0 (theorem) | 1 |
 | Foundational (`wire_beq_eq`, `not_involution`) | 2 axioms | 0 | 2 |
 | Other (unchanged) | ~31 axioms | ~31 axioms | 0 |
-| **Total** | **~44** | **~32** | **12** |
+| **Total** | **~54** | **~31** | **23** |
 
-### Remaining challenge: `alu32_bridge`
+### Solved: `alu32_bridge`
 
-The universal bridge `∀ op a b, evalALU32 a b op.toOpcode = aluSemantics op a b` could not be proven because:
+The universal bridge `∀ op a b, evalALU32 a b op.toOpcode = aluSemantics op a b` was
+proven by fixing each opcode and using layered proof techniques per category:
 
-1. `bv_decide` cannot unfold `evalALU32` — it treats `List.foldl` over the 2783-gate flat circuit as opaque
-2. `native_decide` cannot handle the 68-bit universal quantification (2^68 cases)
-3. The original design assumed `bv_decide` would see through `compileCircuit` to the underlying BitVec expression, but the `foldl` over a concrete gate list is not a BitVec expression — it's a general Lean computation
+| Category | Opcodes | Technique |
+|----------|---------|-----------|
+| Bitwise | AND/OR/XOR | `constFold` structural equality + direct eval |
+| Arithmetic | ADD/SUB | 3-layer bridge: KSA BoolExpr → ripple carry Bool → BitVec stdlib |
+| Comparison | SLT/SLTU | Subtraction MSB formula + `bv_decide` |
+| Shift | SLL/SRL/SRA | MUX-tree BoolExpr + barrel shifter reference + BitVec shift stdlib |
 
-**Possible approaches for future work:**
-
-- **Custom tactic**: A Lean metaprogram that symbolically evaluates `compileCircuit` step-by-step, building up a BitVec expression tree, then hands the result to `bv_decide`
-- **Per-operation proofs**: Fix the opcode to a constant (e.g., `0x0` for ADD), which reduces the gate-level problem to ~500 relevant gates per operation path. This still requires symbolic `foldl` evaluation
-- **Reflection via `Decidable`**: Define a `Decidable` instance for the bridge property that compiles to efficient native code, then use `decide`
-- **AIG compilation**: Compile the circuit directly to an And-Inverter Graph, produce a DRAT proof of equivalence with the spec, and verify the DRAT certificate in Lean
+The key insight was that `bv_decide` alone cannot handle full circuit evaluation, but
+**layered decomposition** — symbolic evaluation to BoolExpr, then per-bit proofs using
+`beqSem`, induction, and `bv_decide` — makes each individual proof obligation tractable.

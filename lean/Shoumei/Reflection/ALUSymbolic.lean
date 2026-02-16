@@ -571,12 +571,204 @@ theorem alu32_bridge_sltu (a b : BitVec 32) :
       first
       | exact getLsbD_one_high i (by omega) hi
       | exact getLsbD_zero_any i hi)
-axiom alu32_bridge_sll : ∀ (a b : BitVec 32),
-    evalALU32 a b 0x8 = a <<< (b &&& 0x1F#32).toNat
-axiom alu32_bridge_srl : ∀ (a b : BitVec 32),
-    evalALU32 a b 0x9 = a >>> (b &&& 0x1F#32).toNat
-axiom alu32_bridge_sra : ∀ (a b : BitVec 32),
-    evalALU32 a b 0xB = a.sshiftRight (b &&& 0x1F#32).toNat
+/-! ## Shift operations: shared infrastructure
+
+All three shifts (SLL, SRL, SRA) use a barrel shifter controlled by b[4:0].
+We build a MUX-tree BoolExpr reference, verify it matches the circuit via beqSem,
+then prove the MUX tree evaluates to the correct BitVec shift operation. -/
+
+-- Build a 2^n-way MUX tree indexed by vars (32+0),...,(32+n-1)
+private def buildShiftMux : Nat → (Nat → BoolExpr) → Nat → BoolExpr
+  | 0, f, base => f base
+  | n + 1, f, base =>
+    BoolExpr.ite (.var (32 + n))
+      (buildShiftMux n f (base + 2^n))
+      (buildShiftMux n f base)
+
+-- What buildShiftMux decodes to
+private def decodeShift (assign : Nat → Bool) : Nat → Nat
+  | 0 => 0
+  | n + 1 => (if assign (32 + n) then 2^n else 0) + decodeShift assign n
+
+private theorem buildShiftMux_eval (n : Nat) (f : Nat → BoolExpr) (base : Nat)
+    (assign : Nat → Bool) :
+    (buildShiftMux n f base).eval assign =
+    (f (base + decodeShift assign n)).eval assign := by
+  induction n generalizing base with
+  | zero => simp [buildShiftMux, decodeShift]
+  | succ k ih =>
+    unfold buildShiftMux decodeShift
+    simp only [BoolExpr.eval]
+    split
+    · rw [ih]; congr 1; rw [Nat.add_assoc]
+    · rw [ih]; congr 1; rw [Nat.zero_add]
+
+-- Key number-theoretic helper: n % 2^(k+1) = 2^k * (n/2^k % 2) + n % 2^k
+private theorem nat_mod_two_mul (n m : Nat) (_hm : 0 < m) :
+    n % (2 * m) = m * (n / m % 2) + n % m := by
+  have h3 : n / m / 2 = n / (2 * m) := by rw [Nat.div_div_eq_div_mul, Nat.mul_comm]
+  have hm1 := Nat.div_add_mod n m
+  have hm2 := Nat.div_add_mod n (2 * m)
+  have hm3 := Nat.div_add_mod (n / m) 2
+  rw [h3] at hm3
+  rcases Nat.mod_two_eq_zero_or_one (n / m) with h | h
+  · rw [h] at hm3 ⊢
+    simp only [Nat.mul_zero, Nat.zero_add, Nat.add_zero] at hm3 ⊢
+    rw [← hm3, show m * (2 * (n / (2 * m))) = 2 * m * (n / (2 * m)) from by
+      rw [Nat.mul_left_comm, Nat.mul_assoc]] at hm1
+    omega
+  · rw [h] at hm3 ⊢
+    simp only [Nat.mul_one] at ⊢
+    rw [← hm3, show m * (2 * (n / (2 * m)) + 1) = 2 * m * (n / (2 * m)) + m from by
+      rw [Nat.mul_add, Nat.mul_one, Nat.mul_left_comm, Nat.mul_assoc]] at hm1
+    omega
+
+-- Connect testBit to the coefficient in binary expansion
+private theorem testBit_ite_mul_eq (n k : Nat) :
+    (if n.testBit k then 2^k else 0) = 2^k * (n / 2^k % 2) := by
+  have hm : n / 2^k % 2 = 0 ∨ n / 2^k % 2 = 1 := Nat.mod_two_eq_zero_or_one _
+  rw [Nat.testBit_eq_decide_div_mod_eq]
+  rcases hm with h | h <;> simp [h]
+
+-- Connect decodeShift to b.toNat % 2^n
+private theorem decodeShift_eq_mod (a b : BitVec 32) (n : Nat) (hn : n ≤ 32) :
+    decodeShift (aluAssign a b) n = b.toNat % 2^n := by
+  induction n with
+  | zero => simp [decodeShift, Nat.mod_one]
+  | succ k ih =>
+    unfold decodeShift
+    simp only [aluAssign, show ¬(32 + k < 32) from by omega, ite_false,
+               show 32 + k - 32 = k from by omega]
+    rw [ih (by omega)]
+    rw [show b.getLsbD k = b.toNat.testBit k from rfl]
+    rw [testBit_ite_mul_eq]
+    have h2k : (2 : Nat)^(k+1) = 2 * 2^k := by
+      rw [Nat.pow_succ]; exact Nat.mul_comm _ _
+    rw [h2k]
+    exact (nat_mod_two_mul b.toNat (2^k) (Nat.pos_of_ne_zero (by omega))).symm
+
+-- Connect (b &&& 0x1F).toNat to b.toNat % 32
+private theorem and_mask_eq_mod (b : BitVec 32) :
+    (b &&& 0x1F#32).toNat = b.toNat % 32 := by
+  rw [BitVec.toNat_and]
+  show b.toNat &&& (2^5 - 1) = b.toNat % 2^5
+  exact Nat.and_two_pow_sub_one_eq_mod b.toNat 5
+
+private theorem decodeShift_eq_mask (a b : BitVec 32) :
+    decodeShift (aluAssign a b) 5 = (b &&& 0x1F#32).toNat := by
+  rw [and_mask_eq_mod, decodeShift_eq_mod a b 5 (by omega)]
+
+-- Variable list for shift beqSem: control bits first, then data bits
+private def shiftVars : List Nat := [32, 33, 34, 35, 36] ++ List.range 32
+
+/-! ### SLL (shift left logical, opcode 0x8) -/
+
+private def sllRefBit (i : Nat) : BoolExpr :=
+  buildShiftMux 5 (fun s => if i ≥ s then .var (i - s) else .lit false) 0
+
+private theorem sll_beqSem :
+    ∀ i : Fin 32, BoolExpr.beqSem (aluSymResult 0x8 i.val) (sllRefBit i.val) shiftVars = true := by
+  native_decide
+
+private theorem sllRefBit_eval (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (sllRefBit i).eval (aluAssign a b) =
+    (a <<< (b &&& 0x1F#32).toNat).getLsbD i := by
+  simp only [sllRefBit]
+  rw [buildShiftMux_eval, Nat.zero_add, decodeShift_eq_mask]
+  have hs : (b &&& 0x1F#32).toNat < 32 := by rw [and_mask_eq_mod]; omega
+  rw [BitVec.getLsbD_shiftLeft]
+  simp only [show (decide (i < 32) : Bool) = true from by simp [hi], Bool.true_and]
+  split
+  · -- i ≥ s: result is a.getLsbD (i - s)
+    rename_i hge
+    simp only [BoolExpr.eval, aluAssign, show i - (b &&& 0x1F#32).toNat < 32 from by omega, ite_true,
+               show ¬(i < (b &&& 0x1F#32).toNat) from by omega, decide_false, Bool.not_false,
+               Bool.true_and]
+  · -- i < s: result is false
+    rename_i hlt
+    simp only [BoolExpr.eval,
+               show i < (b &&& 0x1F#32).toNat from by omega, decide_true, Bool.not_true,
+               Bool.false_and]
+
+theorem alu32_bridge_sll (a b : BitVec 32) :
+    evalALU32 a b 0x8 = a <<< (b &&& 0x1F#32).toNat := by
+  apply bitwise_bridge a b 0x8 _
+  intro i hi
+  have h := BoolExpr.beqSem_correct _ _ _ (sll_beqSem ⟨i, hi⟩) (aluAssign a b)
+  rw [h]
+  exact sllRefBit_eval a b i hi
+
+/-! ### SRL (shift right logical, opcode 0x9) -/
+
+private def srlRefBit (i : Nat) : BoolExpr :=
+  buildShiftMux 5 (fun s => if i + s < 32 then .var (i + s) else .lit false) 0
+
+private theorem srl_beqSem :
+    ∀ i : Fin 32, BoolExpr.beqSem (aluSymResult 0x9 i.val) (srlRefBit i.val) shiftVars = true := by
+  native_decide
+
+private theorem srlRefBit_eval (a b : BitVec 32) (i : Nat) (_hi : i < 32) :
+    (srlRefBit i).eval (aluAssign a b) =
+    (a >>> (b &&& 0x1F#32).toNat).getLsbD i := by
+  simp only [srlRefBit]
+  rw [buildShiftMux_eval, Nat.zero_add, decodeShift_eq_mask]
+  have hs : (b &&& 0x1F#32).toNat < 32 := by rw [and_mask_eq_mod]; omega
+  rw [BitVec.getLsbD_ushiftRight]
+  split
+  · -- i + s < 32: result is a.getLsbD (i + s)
+    rename_i hlt
+    simp only [BoolExpr.eval, aluAssign, hlt, ite_true]
+    congr 1; omega
+  · -- i + s ≥ 32: result is false
+    rename_i hge
+    simp only [BoolExpr.eval, BitVec.getLsbD]
+    exact (Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le a.isLt
+      (Nat.pow_le_pow_right (by omega) (by omega)))).symm
+
+theorem alu32_bridge_srl (a b : BitVec 32) :
+    evalALU32 a b 0x9 = a >>> (b &&& 0x1F#32).toNat := by
+  apply bitwise_bridge a b 0x9 _
+  intro i hi
+  have h := BoolExpr.beqSem_correct _ _ _ (srl_beqSem ⟨i, hi⟩) (aluAssign a b)
+  rw [h]
+  exact srlRefBit_eval a b i hi
+
+/-! ### SRA (shift right arithmetic, opcode 0xB) -/
+
+private def sraRefBit (i : Nat) : BoolExpr :=
+  buildShiftMux 5 (fun s => if i + s < 32 then .var (i + s) else .var 31) 0
+
+private theorem sra_beqSem :
+    ∀ i : Fin 32, BoolExpr.beqSem (aluSymResult 0xB i.val) (sraRefBit i.val) shiftVars = true := by
+  native_decide
+
+private theorem sraRefBit_eval (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (sraRefBit i).eval (aluAssign a b) =
+    (a.sshiftRight (b &&& 0x1F#32).toNat).getLsbD i := by
+  simp only [sraRefBit]
+  rw [buildShiftMux_eval, Nat.zero_add, decodeShift_eq_mask]
+  have hs : (b &&& 0x1F#32).toNat < 32 := by rw [and_mask_eq_mod]; omega
+  rw [BitVec.getLsbD_sshiftRight]
+  simp only [show ¬(32 ≤ i) from by omega, decide_false, Bool.not_false, Bool.true_and]
+  split
+  · -- i + s < 32: result is a.getLsbD (i + s)
+    rename_i hlt
+    simp only [BoolExpr.eval, aluAssign, hlt, ite_true]
+    rw [if_pos (show (b &&& 0x1F#32).toNat + i < 32 from by omega)]
+    congr 1; omega
+  · -- i + s ≥ 32: result is a.getLsbD 31 (sign extension = msb)
+    rename_i hge
+    simp only [BoolExpr.eval, aluAssign, show (31 : Nat) < 32 from by omega, ite_true]
+    rw [if_neg (show ¬((b &&& 0x1F#32).toNat + i < 32) from by omega)]
+    rw [BitVec.msb_eq_getLsbD_last]
+
+theorem alu32_bridge_sra (a b : BitVec 32) :
+    evalALU32 a b 0xB = a.sshiftRight (b &&& 0x1F#32).toNat := by
+  apply bitwise_bridge a b 0xB _
+  intro i hi
+  have h := BoolExpr.beqSem_correct _ _ _ (sra_beqSem ⟨i, hi⟩) (aluAssign a b)
+  rw [h]
+  exact sraRefBit_eval a b i hi
 
 /-- The main bridge theorem, proven from per-opcode axioms. -/
 theorem alu32_bridge (op : ALUOp) (a b : BitVec 32) :

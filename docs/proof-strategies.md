@@ -414,12 +414,29 @@ evalALU32 a b op
   = aluSemantics op a b    [per-opcode axiom, to be proved]
 ```
 
-### Current Status
+### Current Status: COMPLETE
 
-The infrastructure is verified (no sorry/axiom in BoolExpr, SymbolicCompile,
-or the chain up to `evalALU32_eq_sym`). The monolithic `alu32_bridge` axiom
-has been replaced by 10 per-opcode axioms (`alu32_bridge_add`, etc.), each
-stating `evalALU32 a b <opcode> = <semantics>`.
+**All 10 per-opcode bridge theorems are proven. Zero axioms remain in the
+Reflection module.** The master theorem `alu32_bridge` dispatches to per-opcode
+proofs:
+
+```lean
+theorem alu32_bridge (op : ALUOp) (a b : BitVec 32) :
+    evalALU32 a b op.toOpcode = aluSemantics op a b := by
+  cases op <;> simp only [ALUOp.toOpcode, aluSemantics]
+  · exact alu32_bridge_add a b     -- ADD
+  · exact alu32_bridge_sub a b     -- SUB
+  · exact alu32_bridge_slt a b     -- SLT
+  · exact alu32_bridge_sltu a b    -- SLTU
+  · exact alu32_bridge_and a b     -- AND
+  · exact alu32_bridge_or a b      -- OR
+  · exact alu32_bridge_xor a b     -- XOR
+  · exact alu32_bridge_sll a b     -- SLL
+  · exact alu32_bridge_srl a b     -- SRL
+  · exact alu32_bridge_sra a b     -- SRA
+```
+
+The proofs use three distinct techniques, described in the subsections below.
 
 ### Critical Pitfall: Kernel Reduction of Large Circuits
 
@@ -454,12 +471,115 @@ private theorem evalALU32_as_circuit (a b op) :
 -- Then: rw [evalALU32_as_circuit]
 ```
 
+### Per-Opcode Proof Techniques
+
+The 10 operations fall into four categories, each with a distinct proof pattern.
+
+#### Bitwise (AND/OR/XOR): `constFold` + direct eval
+
+Simplest case. After symbolic compilation, each output bit reduces to a single
+two-input BoolExpr node (e.g., `.and (.var i) (.var (32+i))`). The `constFold`
+pass eliminates all MUX tree overhead, and `native_decide` confirms structural
+equality. The eval step is a one-line `simp`.
+
+#### Arithmetic (ADD/SUB): 3-layer bridge
+
+The most complex proofs. The KSA/subtractor circuit uses a parallel-prefix
+carry tree, while BitVec.add uses ripple carry semantics. A 3-layer bridge
+connects them:
+
+1. **Layer 1: KSA BoolExpr = Ripple-carry BoolExpr** — verified per bit via
+   `beqSem` + `native_decide`. The variable ordering is critical: interleave
+   `[a_0, b_0, a_1, b_1, ...]` so the carry chain collapses early in Shannon
+   expansion.
+
+2. **Layer 2: Ripple-carry BoolExpr = Bool functions** — proven by induction
+   on the bit position. Define `carryBit`/`sumBit` (for ADD) or
+   `subCarryBit`/`subSumBit` (for SUB) as recursive Bool functions, then prove
+   `adderSum_eval` by structural induction.
+
+3. **Layer 3: Bool functions = BitVec stdlib** — proven per-bit (32 branches)
+   via `bv_decide`. Each branch is a small SAT problem (~64 variables). The
+   key stdlib lemma is `BitVec.carry` which connects `Bool.atLeastTwo` to
+   `BitVec.getLsbD (a + b)`.
+
+For SUB, the carry functions use `!b.getLsbD k` (2's complement) with
+carry-in = 1. The simplification `a ^^ !b ^^ 1 = a ^^ b` is non-obvious.
+
+#### Comparisons (SLT/SLTU): Subtraction MSB + `bv_decide`
+
+Bits 1-31 of the result are always 0 — verified by `constFold` reducing each
+to `.lit false`. Bit 0 depends on the subtraction MSB and the sign bits:
+
+```
+SLT bit 0:  (a_31 && !b_31) || (!(a_31 ^^ b_31) && (a-b)_31)
+SLTU bit 0: (!a_31 && b_31) || (!(a_31 ^^ b_31) && (a-b)_31)
+```
+
+Proven equivalent to `decide (a.toInt < b.toInt)` (signed) or
+`decide (a < b)` (unsigned) via `bv_decide`. The key trick:
+**`bv_decide` can't handle `a.toInt`** (it abstracts `toInt` as opaque).
+Rewrite via `← BitVec.slt_eq_decide` to get `a.slt b`, which `bv_decide`
+understands natively.
+
+#### Shifts (SLL/SRL/SRA): MUX tree + barrel shifter reference
+
+The shifter circuit is a 5-stage barrel shifter. The proof builds a matching
+MUX-tree BoolExpr (`buildShiftMux`) and verifies equivalence via `beqSem`:
+
+```lean
+buildShiftMux 5 (fun s => if i ≥ s then .var (i - s) else .lit false) 0
+```
+
+The eval proof connects `decodeShift` (binary decoding of shift amount from
+5 control bits) to `(b &&& 0x1F).toNat` via number-theoretic lemmas:
+
+- `nat_mod_two_mul`: `n % (2*m) = m * (n/m % 2) + n % m`
+- `decodeShift_eq_mod`: decoding k control bits = `b.toNat % 2^k`
+- `and_mask_eq_mod`: `(b &&& 0x1F).toNat = b.toNat % 32`
+
+The final step uses stdlib shift lemmas (`getLsbD_shiftLeft`,
+`getLsbD_ushiftRight`, `getLsbD_sshiftRight`).
+
+### Practical Advice for Adding New Proofs
+
+**Number theory without `ring`:** The project doesn't import `ring`. For Nat
+arithmetic rewrites, use manual lemmas:
+
+```lean
+-- Associativity / commutativity of multiplication
+Nat.mul_assoc, Nat.mul_comm, Nat.mul_left_comm
+-- Distribution
+Nat.add_mul, Nat.mul_add
+-- Division
+Nat.div_div_eq_div_mul  -- gives n/(m*2), may need Nat.mul_comm after
+```
+
+**`omega` limitations:** omega cannot handle `2^k` when `k` is a variable.
+Use explicit `Nat.add_assoc`, `Nat.pow_succ`, or case-split on small ranges.
+
+**`bv_decide` limitations:**
+- Cannot unfold `List.foldl` over large gate lists
+- Cannot handle `toInt` — rewrite to native BitVec operations first
+- Works well for per-bit proofs with ~64 variables
+
+**`native_decide` limitations:**
+- Cannot handle universal quantification over more than ~18 Bool variables
+- Use `beqSem` (Shannon expansion + memoization) to reduce to structural checks
+
+**Variable ordering for `beqSem`:** Interleaved `[a_0, b_0, a_1, b_1, ...]`
+is critical for carry chains. For shifts, put control bits first:
+`[32, 33, 34, 35, 36] ++ List.range 32`.
+
 ### Lean 4 API Notes
 
 - `List.map_congr` does not exist in Lean 4.27.0. Use `List.map_eq_map_iff` instead.
 - `Bool.xor` must be qualified (bare `xor` can be ambiguous with `BoolExpr` in scope).
 - The linter `unusedSimpArgs` is active under `-DwarningAsError=true` — remove
   any simp arg the linter flags.
+- `Nat.div_div_eq_div_mul` gives `n / (m * 2)` not `n / (2 * m)` — append `Nat.mul_comm`.
+- `Nat.div_add_mod` gives `m * (n / m) + n % m = n` — multiplication is `m * q`, not `q * m`.
+- `BitVec.slt_eq_decide`: converts `a.slt b` to `decide (a.toInt < b.toInt)`.
 
 ---
 
