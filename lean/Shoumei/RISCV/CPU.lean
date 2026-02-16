@@ -1348,6 +1348,18 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cdb_valid := Wire.mk "cdb_valid"
   let cdb_tag := makeIndexedWires "cdb_tag" 6
   let cdb_data := makeIndexedWires "cdb_data" 32
+  -- CDB tag buffer tree: each bit fans out to 15 consumers (2 rename + 2 busy tables + 4 fwd cmps
+  -- + 5 RSs + ROB + RVVI + 16 redirect cmps + tag_nz). Split into 4 groups.
+  let cdb_tag_int := makeIndexedWires "cdb_tag_int" 6  -- INT rename + busy + fwd + tag_nz
+  let cdb_tag_fp := makeIndexedWires "cdb_tag_fp" 6   -- FP rename + busy + fwd
+  let cdb_tag_rs := makeIndexedWires "cdb_tag_rs" 6   -- 5 RS instances
+  let cdb_tag_rob := makeIndexedWires "cdb_tag_rob" 6 -- ROB + RVVI + redirect cmps
+  let cdb_tag_buf_gates := (List.range 6).map (fun i => [
+    Gate.mkBUF (cdb_tag[i]!) (cdb_tag_int[i]!),
+    Gate.mkBUF (cdb_tag[i]!) (cdb_tag_fp[i]!),
+    Gate.mkBUF (cdb_tag[i]!) (cdb_tag_rs[i]!),
+    Gate.mkBUF (cdb_tag[i]!) (cdb_tag_rob[i]!)
+  ]) |>.flatten
   -- CDB data buffer tree: each bit fans out to 11 consumers (2 PRFs + 2 fwd MUXes + 5 RSs + 2 FP fwd).
   -- Split into 3 groups: INT (PRF write + issue fwd), FP (PRF write + issue fwd), RS (5 stations).
   let cdb_data_int := makeIndexedWires "cdb_data_int" 32
@@ -1371,9 +1383,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let cdb_tag_nonzero := Wire.mk "cdb_tag_nonzero"
   let cdb_valid_prf := Wire.mk "cdb_valid_prf"
   let cdb_tag_nz_gates :=
-    [Gate.mkOR cdb_tag[0]! cdb_tag[1]! cdb_tag_nz_tmp[0]!] ++
+    [Gate.mkOR cdb_tag_int[0]! cdb_tag_int[1]! cdb_tag_nz_tmp[0]!] ++
     (List.range 4).map (fun i =>
-      Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
+      Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag_int[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
     -- Gate CDB writes to PRF during flush: squashed instructions' CDB broadcasts
     -- must not overwrite pregs that flush recovery will make architecturally live.
     -- Allow CSR CDB inject through (it's the committing instruction, not squashed).
@@ -1416,7 +1428,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       ((List.range 5).map (fun i => (s!"rs3_addr_{i}", zero))) ++  -- rs3_addr: unused on INT rename
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
       [("cdb_valid", if enableF then cdb_valid_int_prf else cdb_valid_prf)] ++
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+      (cdb_tag_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid_filtered)] ++
       (retire_tag_muxed.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
@@ -1690,7 +1702,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let (busy_gates, busy_instances) := mkBusyBitTable
     clock reset flush_busy_groups zero one
     rd_phys busy_set_en
-    cdb_tag cdb_valid_int_domain
+    cdb_tag_int cdb_valid_int_domain
     rs1_phys rs2_phys
     decode_use_imm
     busy_src1_ready busy_src2_ready busy_src2_ready_reg
@@ -1717,14 +1729,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "EqualityComparator6"
     instName := "u_cdb_fwd_cmp_src1"
     portMap := [("eq", cdb_match_src1)] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (cdb_tag_int.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   let cdb_fwd_cmp_src2_inst : CircuitInstance := {
     moduleName := "EqualityComparator6"
     instName := "u_cdb_fwd_cmp_src2"
     portMap := [("eq", cdb_match_src2)] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (cdb_tag_int.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   -- Pre-register CDB comparators (same-cycle forwarding bypass)
@@ -1804,7 +1816,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (decode_rs3.enum.map (fun ⟨i, w⟩ => (s!"rs3_addr_{i}", w))) ++  -- rs3 lookup via FP RAT
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"rd_addr_{i}", w))) ++
       [("cdb_valid", cdb_valid_fp_prf)] ++
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+      (cdb_tag_fp.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data_fp.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
       [("retire_valid", fp_retire_recycle_valid)] ++
       (fp_old_rd_phys.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
@@ -1906,7 +1918,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     if enableF then mkBusyBitTable
       clock reset flush_busy_groups zero one
       fp_rd_phys fp_busy_set_en
-      cdb_tag cdb_valid_fp_domain
+      cdb_tag_fp cdb_valid_fp_domain
       fp_rs1_phys fp_rs2_phys
       zero
       fp_busy_src1_ready_raw fp_busy_src2_ready_raw fp_busy_src2_ready_reg_raw
@@ -1933,14 +1945,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "EqualityComparator6"
     instName := "u_fp_cdb_fwd_cmp_src1"
     portMap := [("eq", fp_cdb_match_src1)] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (cdb_tag_fp.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (fp_issue_src1_tag.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   let fp_cdb_fwd_cmp_src2_inst : CircuitInstance := {
     moduleName := "EqualityComparator6"
     instName := "u_fp_cdb_fwd_cmp_src2"
     portMap := [("eq", fp_cdb_match_src2)] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (cdb_tag_fp.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (fp_issue_src2_tag.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   }
   let fp_cdb_pre_fwd_cmp_src1_inst : CircuitInstance := {
@@ -2057,7 +2069,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_int_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_int_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
@@ -2129,7 +2141,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (mem_src2_tag.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                -- Memory RS: src2 = forwarded register value (store data), NOT immediate
                (mem_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_mem_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_mem_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
@@ -2288,7 +2300,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                -- Branch RS: src2 = forwarded register value, NOT immediate
                (fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_branch_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
@@ -2438,7 +2450,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_muldiv_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_muldiv_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
@@ -2573,7 +2585,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (fp_fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
                (fp_issue_src2_tag.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
                (fp_fwd_src2_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
                (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
                (rs_fp_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
                (rs_fp_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
@@ -2969,7 +2981,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (decode_rd.enum.map (fun ⟨i, w⟩ => (s!"alloc_archRd[{i}]", w))) ++
       [("alloc_isBranch", dispatch_is_branch),
        ("cdb_valid", cdb_valid)] ++
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag[{i}]", w))) ++
+      (cdb_tag_rob.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag[{i}]", w))) ++
       [("cdb_exception", zero),
        ("cdb_mispredicted", Wire.mk "cdb_mispredicted"),
        ("cdb_is_fp", if enableF then cdb_is_fp_rd else zero)] ++
@@ -3045,7 +3057,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rvvi_cdb_bypass_gates :=
     -- XOR each bit: 0 if equal, 1 if different
     (List.range 6).map (fun i =>
-      Gate.mkXOR cdb_tag[i]! rob_head_physRd[i]! rvvi_cdb_tag_xor[i]!) ++
+      Gate.mkXOR cdb_tag_rob[i]! rob_head_physRd[i]! rvvi_cdb_tag_xor[i]!) ++
     -- OR all XOR bits: any_diff = 1 if tags differ
     (let or01 := Wire.mk "rvvi_xor_or01"
      let or23 := Wire.mk "rvvi_xor_or23"
@@ -4060,7 +4072,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "EqualityComparator6"
     instName := s!"u_redir_tag_cmp_{e}"
     portMap := [("eq", redir_tag_match[e]!)] ++
-               (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (cdb_tag_rob.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (redir_tag_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
   })
 
@@ -4732,7 +4744,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
                fflags_acc
     gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
-             cdb_data_buf_gates ++ cdb_prf_route_gates ++
+             cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ muldiv_dispatch_gate ++
@@ -4821,6 +4833,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rs2_data", width := 32, wires := rs2_data },
        { name := "issue_src2_muxed", width := 32, wires := issue_src2_muxed },
        { name := "cdb_tag", width := 6, wires := cdb_tag },
+       { name := "cdb_tag_int", width := 6, wires := cdb_tag_int },
+       { name := "cdb_tag_fp", width := 6, wires := cdb_tag_fp },
+       { name := "cdb_tag_rs", width := 6, wires := cdb_tag_rs },
+       { name := "cdb_tag_rob", width := 6, wires := cdb_tag_rob },
        { name := "cdb_data", width := 32, wires := cdb_data },
        { name := "rob_head_physRd", width := 6, wires := rob_head_physRd },
        { name := "rob_alloc_idx", width := 4, wires := rob_alloc_idx },
