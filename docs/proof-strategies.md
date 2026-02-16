@@ -384,6 +384,85 @@ motivating example for BitVec — the ALU is.
 
 ---
 
+## Approach 3: Verified Symbolic Circuit Evaluator
+
+### Idea
+
+Build a `BoolExpr` (symbolic Boolean expression tree) type and a symbolic
+gate compiler (`symCompileGates`) that mirrors `compileGates` but produces
+expression trees instead of concrete Boolean values. A correctness theorem
+(`symCompileGates_correct`) connects the two. This lets us fix the opcode
+(a small input) while keeping data inputs symbolic, reducing universal
+quantification from 68 bits to 64 bits and enabling per-opcode proofs.
+
+### Architecture
+
+```
+BoolExpr.lean         — inductive type: lit, var, and, or, not, xor, ite + eval
+SymbolicCompile.lean  — symCompileGate/symCompileGates + correctness proofs
+ALUSymbolic.lean      — ALU-specific: init map, sym compilation, bridge theorem
+```
+
+### Proof Chain
+
+```
+evalALU32 a b op
+  = readResultBitVecMap (compileCircuit mkALU32Flat initMap) "result" 32
+  = BitVec.ofNat 32 (readWiresAsNatMap (compileCircuit ...) "result" 32)
+  = BitVec.ofNat 32 (readSymResultAsNat (aluAssign a b) (aluSymResult op) 32)
+        ↑ by symCompileGates_correct + mkALUSymInit_correct
+  = aluSemantics op a b    [per-opcode axiom, to be proved]
+```
+
+### Current Status
+
+The infrastructure is verified (no sorry/axiom in BoolExpr, SymbolicCompile,
+or the chain up to `evalALU32_eq_sym`). The monolithic `alu32_bridge` axiom
+has been replaced by 10 per-opcode axioms (`alu32_bridge_add`, etc.), each
+stating `evalALU32 a b <opcode> = <semantics>`.
+
+### Critical Pitfall: Kernel Reduction of Large Circuits
+
+**Never reference `mkALU32Flat.gates` (or any large circuit's `.gates`)
+explicitly in proof terms or tactic goals.** The `.gates` struct projection
+forces Lean's kernel to reduce `mkALU32Flat`, which evaluates
+`flattenAllFuel aluSubCircuitMap mkALU32 3` — a massive computation that
+produces ~2800 gates. This causes a stack overflow during proof checking.
+
+**Do this:**
+```lean
+-- compileCircuit hides .gates inside its definition body
+exact symCompileCircuit_correct mkALU32Flat (mkALUSymInit op) ...
+```
+
+**Not this:**
+```lean
+-- .gates forces kernel reduction of mkALU32Flat → stack overflow
+exact symCompileGates_correct mkALU32Flat.gates (mkALUSymInit op) ...
+```
+
+The same principle applies to any `Circuit` produced by `flattenAllFuel`:
+always pass the `Circuit` value as-is and let wrappers (like
+`compileCircuit`, `symCompileCircuit_correct`) access `.gates` internally.
+
+Similarly, use `rfl`-lemmas to rewrite between equivalent forms without
+triggering kernel reduction:
+```lean
+-- Good: rfl-lemma proven once, rewritten by name
+private theorem evalALU32_as_circuit (a b op) :
+    evalALU32 a b op = readResultBitVecMap (compileCircuit mkALU32Flat ...) ... := rfl
+-- Then: rw [evalALU32_as_circuit]
+```
+
+### Lean 4 API Notes
+
+- `List.map_congr` does not exist in Lean 4.27.0. Use `List.map_eq_map_iff` instead.
+- `Bool.xor` must be qualified (bare `xor` can be ambiguous with `BoolExpr` in scope).
+- The linter `unusedSimpArgs` is active under `-DwarningAsError=true` — remove
+  any simp arg the linter flags.
+
+---
+
 ## References
 
 - [Lean 4 `BitVec` docs](https://leanprover-community.github.io/mathlib4_docs/Init/Data/BitVec/Basic.html)

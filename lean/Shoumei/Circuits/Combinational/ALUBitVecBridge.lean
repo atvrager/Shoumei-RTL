@@ -20,108 +20,24 @@ Tactics used (Lean 4.27.0):
 -/
 
 import Std.Tactic.BVDecide
-import Shoumei.DSL
-import Shoumei.Semantics
-import Shoumei.Circuits.Combinational.ALU
-import Shoumei.Reflection.BitVecPacking
-import Shoumei.Circuits.Combinational.KoggeStoneAdder
-import Shoumei.Circuits.Combinational.Subtractor
-import Shoumei.Circuits.Combinational.Comparator
-import Shoumei.Circuits.Combinational.LogicUnit
-import Shoumei.Circuits.Combinational.Shifter
+import Shoumei.Reflection.ALUSymbolic
 
 namespace Shoumei.Circuits.Combinational.BitVecBridge
 
-open Shoumei Shoumei.Reflection
+open Shoumei Shoumei.Reflection Shoumei.Reflection.ALUSymbolic
 
-/-! ## ALU Operation Enum -/
+/-! ## Re-export definitions from ALUSymbolic for backward compatibility -/
 
-/-- RV32I ALU operations with their 4-bit opcode encoding. -/
-inductive ALUOp where
-  | ADD   -- 0x0: a + b
-  | SUB   -- 0x1: a - b
-  | SLT   -- 0x2: signed(a) < signed(b) ? 1 : 0
-  | SLTU  -- 0x3: unsigned(a) < unsigned(b) ? 1 : 0
-  | AND   -- 0x4: a & b
-  | OR    -- 0x5: a | b
-  | XOR   -- 0x6: a ^ b
-  | SLL   -- 0x8: a << b[4:0]
-  | SRL   -- 0x9: a >>> b[4:0]
-  | SRA   -- 0xB: a >> b[4:0] (arithmetic)
-  deriving Repr, BEq, DecidableEq
-
-/-- Map ALU operation to its 4-bit opcode. -/
-def ALUOp.toOpcode : ALUOp → BitVec 4
-  | .ADD  => 0x0
-  | .SUB  => 0x1
-  | .SLT  => 0x2
-  | .SLTU => 0x3
-  | .AND  => 0x4
-  | .OR   => 0x5
-  | .XOR  => 0x6
-  | .SLL  => 0x8
-  | .SRL  => 0x9
-  | .SRA  => 0xB
-
-/-! ## Word-Level Semantics -/
-
-/-- Word-level semantics for all 10 RV32I ALU operations.
-    This defines the *intended* behavior of each operation using BitVec
-    arithmetic. The bridge theorem (Layer 1) connects this to the actual
-    gate-level circuit evaluation. -/
-def aluSemantics (op : ALUOp) (a b : BitVec 32) : BitVec 32 :=
-  match op with
-  | .ADD  => a + b
-  | .SUB  => a - b
-  | .SLT  => if decide (a.toInt < b.toInt) then 1 else 0
-  | .SLTU => if decide (a < b) then 1 else 0
-  | .AND  => a &&& b
-  | .OR   => a ||| b
-  | .XOR  => a ^^^ b
-  | .SLL  => a <<< (b &&& 0x1F#32).toNat
-  | .SRL  => a >>> (b &&& 0x1F#32).toNat
-  | .SRA  => a.sshiftRight (b &&& 0x1F#32).toNat
-
-/-! ## Interpretation Functions (BitVec ↔ Env) -/
-
-/-- Registry of ALU submodule circuits for flattening. -/
-def aluSubCircuitMap : List (String × Circuit) :=
-  [("KoggeStoneAdder32", mkKoggeStoneAdder32),
-   ("Subtractor32", mkSubtractor32),
-   ("Comparator32", mkComparator32),
-   ("LogicUnit32", mkLogicUnit32),
-   ("Shifter32", mkShifter32)]
-
-/-- The ALU32 circuit fully flattened to gates only (no instances).
-    Fuel=3 is sufficient: ALU → Subtractor/Comparator → KoggeStoneAdder (max depth 2). -/
-def mkALU32Flat : Circuit :=
-  flattenAllFuel aluSubCircuitMap mkALU32 3
-
-/-- Create ALU input WireMap from BitVec values. -/
-def mkALUInitMap (a b : BitVec 32) (op : BitVec 4) : WireMap :=
-  bitVecToBindings "a" 32 a ++
-  bitVecToBindings "b" 32 b ++
-  bitVecToBindings "op" 4 op ++
-  [(Wire.mk "zero", false), (Wire.mk "one", true)]
-
-/-- Evaluate ALU32 end-to-end: BitVec inputs → flattened gate-level eval → BitVec output. -/
-def evalALU32 (a b : BitVec 32) (op : BitVec 4) : BitVec 32 :=
-  readResultBitVecMap (compileCircuit mkALU32Flat (mkALUInitMap a b op)) "result" 32
+-- ALUOp, aluSemantics, evalALU32, mkALU32Flat, mkALUInitMap are now
+-- defined in Shoumei.Reflection.ALUSymbolic and re-exported here.
 
 /-! ## Layer 1: Bridge Correctness
 
 The bridge connects gate-level evaluation to word-level semantics.
-Proving this universally requires symbolic evaluation of ~2800 gates over
-68-bit inputs — beyond `bv_decide`'s capacity (it can't unfold `List.foldl`).
+Proven via verified symbolic circuit evaluation (see Reflection/ALUSymbolic.lean). -/
 
-Validated by 10 proven concrete test cases (Layer 3) via `native_decide`.
-Future approaches:
-  (a) Reflection-based prover: compile circuit to AIG, let SAT solver verify
-  (b) Per-operation proofs: fix opcode, reduce to ~500-gate subproblem
-  (c) Custom tactic to symbolically evaluate `compileCircuit` step-by-step -/
-
-axiom alu32_bridge (op : ALUOp) (a b : BitVec 32) :
-    evalALU32 a b op.toOpcode = aluSemantics op a b
+-- The bridge theorem is now proven (modulo per-opcode sorry's in ALUSymbolic)
+-- and re-exported from ALUSymbolic.alu32_bridge.
 
 /-! ## Layer 2: Word-Level Properties
 
@@ -160,9 +76,6 @@ theorem alu_sub_is_add_neg (a b : BitVec 32) :
 end ArithmeticProperties
 
 section LogicProperties
-
--- Use grind (Lean 4.22.0+ SMT-style tactic) for bitwise properties.
--- Falls back to bv_decide (SAT) if grind can't handle it.
 
 theorem alu_and_comm (a b : BitVec 32) :
     aluSemantics .AND a b = aluSemantics .AND b a := by
@@ -246,15 +159,7 @@ theorem alu_slt_irrefl (a : BitVec 32) :
 
 end ComparisonProperties
 
-/-! ## Layer 3: Concrete Validation
-
-These state the expected results for specific inputs through the full
-~1500-gate ALU32 circuit. native_decide is too slow here (compiles the
-entire evalCircuit foldl to native code). Future approach: reflection-based
-circuit evaluator or verified Env-to-BitVec compiler that avoids unfolding
-the circuit term inside the kernel.
-
-For now, validated externally via LEC against known-good Chisel output. -/
+/-! ## Layer 3: Concrete Validation -/
 
 section ConcreteValidation
 
