@@ -3,7 +3,7 @@
 # Based on docs/physical-design.md
 #
 # Usage:
-#   ./physical/run-openroad.sh                          # CPU_RV32IMF at 200 MHz (default)
+#   ./physical/run-openroad.sh                          # CPU_RV32IMF at 500 MHz (default)
 #   ./physical/run-openroad.sh CPU_RV32I_synth          # RV32I variant
 #   ./physical/run-openroad.sh CPU_RV32IM_synth 500     # RV32IM at 500 MHz
 #   FMAX_MHZ=1000 ./physical/run-openroad.sh            # 1 GHz aspirational
