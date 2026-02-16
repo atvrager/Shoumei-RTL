@@ -236,11 +236,11 @@ private theorem xor_constFold_all :
 
 -- Generic per-bit proof for bitwise ops via constFold
 private theorem bitwise_bit_correct (a b : BitVec 32)
-    (op : BitVec 4) (i : Nat) (hi : i < 32)
-    (expected : BoolExpr)
+    (op : BitVec 4) (i : Nat)
+    (expected : BoolExpr) (result : Bool)
     (hcf : (aluSymResult op i).constFold = expected)
-    (heval : expected.eval (aluAssign a b) = (a.getLsbD i && b.getLsbD i)) :
-    (aluSymResult op i).eval (aluAssign a b) = (a.getLsbD i && b.getLsbD i) := by
+    (heval : expected.eval (aluAssign a b) = result) :
+    (aluSymResult op i).eval (aluAssign a b) = result := by
   rw [← BoolExpr.constFold_correct, hcf, heval]
 
 private theorem bitwise_bridge (a b : BitVec 32) (op : BitVec 4) (rhs : BitVec 32)
@@ -258,7 +258,7 @@ theorem alu32_bridge_and (a b : BitVec 32) : evalALU32 a b 0x4 = a &&& b := by
   apply bitwise_bridge a b 0x4 (a &&& b)
   intro i hi
   rw [BitVec.getLsbD_and]
-  exact bitwise_bit_correct a b 0x4 i hi _ (and_constFold_all ⟨i, hi⟩)
+  exact bitwise_bit_correct a b 0x4 i _ _ (and_constFold_all ⟨i, hi⟩)
     (by simp [BoolExpr.eval, aluAssign, hi, show ¬(32 + i < 32) from by omega,
               show 32 + i - 32 = i from by omega])
 
@@ -267,7 +267,7 @@ theorem alu32_bridge_or (a b : BitVec 32) : evalALU32 a b 0x5 = a ||| b := by
   apply bitwise_bridge a b 0x5 (a ||| b)
   intro i hi
   rw [BitVec.getLsbD_or]
-  exact bitwise_bit_correct a b 0x5 i hi _ (or_constFold_all ⟨i, hi⟩)
+  exact bitwise_bit_correct a b 0x5 i _ _ (or_constFold_all ⟨i, hi⟩)
     (by simp [BoolExpr.eval, aluAssign, hi, show ¬(32 + i < 32) from by omega,
               show 32 + i - 32 = i from by omega])
 
@@ -276,12 +276,103 @@ theorem alu32_bridge_xor (a b : BitVec 32) : evalALU32 a b 0x6 = a ^^^ b := by
   apply bitwise_bridge a b 0x6 (a ^^^ b)
   intro i hi
   rw [BitVec.getLsbD_xor]
-  exact bitwise_bit_correct a b 0x6 i hi _ (xor_constFold_all ⟨i, hi⟩)
+  exact bitwise_bit_correct a b 0x6 i _ _ (xor_constFold_all ⟨i, hi⟩)
     (by simp [BoolExpr.eval, Bool.xor, aluAssign, hi, show ¬(32 + i < 32) from by omega,
               show 32 + i - 32 = i from by omega])
 
--- Remaining axioms (arithmetic and shift operations)
-axiom alu32_bridge_add : ∀ (a b : BitVec 32), evalALU32 a b 0x0 = a + b
+/-! ## ADD bridge: three-layer proof -/
+
+-- Layer 3: Ripple-carry Bool functions match BitVec addition
+private def carryBit (a b : BitVec 32) : Nat → Bool
+  | 0 => a.getLsbD 0 && b.getLsbD 0
+  | n + 1 => (a.getLsbD (n+1) && b.getLsbD (n+1)) ||
+             ((a.getLsbD (n+1) ^^ b.getLsbD (n+1)) && carryBit a b n)
+
+private def sumBit (a b : BitVec 32) : Nat → Bool
+  | 0 => a.getLsbD 0 ^^ b.getLsbD 0
+  | n + 1 => (a.getLsbD (n+1) ^^ b.getLsbD (n+1)) ^^ carryBit a b n
+
+-- Layer 3: Connect carryBit/sumBit to BitVec.carry/getLsbD_add from stdlib
+
+private theorem atLeastTwo_eq_xor_form (x y c : Bool) :
+    Bool.atLeastTwo x y c = (x && y) || ((x ^^ y) && c) := by
+  cases x <;> cases y <;> cases c <;> rfl
+
+private theorem carryBit_eq_carry (a b : BitVec 32) (n : Nat) :
+    carryBit a b n = BitVec.carry (n + 1) a b false := by
+  induction n with
+  | zero =>
+    simp only [carryBit, BitVec.carry_succ, BitVec.carry_zero,
+               Bool.atLeastTwo_false_right]
+  | succ k ih =>
+    simp only [carryBit, ih, BitVec.carry_succ]
+    cases a.getLsbD (k + 1) <;> cases b.getLsbD (k + 1) <;> simp [Bool.atLeastTwo]
+
+private theorem sumBit_eq_getLsbD_add (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    sumBit a b i = (a + b).getLsbD i := by
+  rw [BitVec.getLsbD_add hi]
+  cases i with
+  | zero =>
+    simp [sumBit, BitVec.carry_zero]
+  | succ k =>
+    simp only [sumBit, carryBit_eq_carry]
+    -- Goal: a.getLsbD (k+1) ^^ b.getLsbD (k+1) ^^ carry (k+1) a b false
+    --     = a.getLsbD (k+1) ^^ (b.getLsbD (k+1) ^^ carry (k+1) a b false)
+    rw [Bool.xor_assoc]
+
+-- Layer 2: Ripple-carry BoolExpr evaluates to sumBit
+private def adderCarry : Nat → BoolExpr
+  | 0 => .and (.var 0) (.var 32)
+  | n + 1 => .or (.and (.var (n+1)) (.var (33+n)))
+                 (.and (.xor (.var (n+1)) (.var (33+n))) (adderCarry n))
+
+private def adderSum : Nat → BoolExpr
+  | 0 => .xor (.var 0) (.var 32)
+  | n + 1 => .xor (.xor (.var (n+1)) (.var (33+n))) (adderCarry n)
+
+private theorem adderCarry_eval (a b : BitVec 32) (n : Nat) (hn : n < 32) :
+    (adderCarry n).eval (aluAssign a b) = carryBit a b n := by
+  induction n with
+  | zero => simp [adderCarry, carryBit, BoolExpr.eval, aluAssign]
+  | succ k ih =>
+    simp only [adderCarry, carryBit, BoolExpr.eval, aluAssign]
+    have hk : k < 32 := by omega
+    rw [ih hk]
+    simp only [show k + 1 < 32 from by omega, ite_true,
+               show ¬(33 + k < 32) from by omega, ite_false,
+               show 33 + k - 32 = k + 1 from by omega]
+
+private theorem adderSum_eval (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (adderSum i).eval (aluAssign a b) = sumBit a b i := by
+  cases i with
+  | zero => simp [adderSum, sumBit, BoolExpr.eval, aluAssign]
+  | succ k =>
+    simp only [adderSum, sumBit, BoolExpr.eval, aluAssign]
+    have hk : k < 32 := by omega
+    rw [adderCarry_eval a b k hk]
+    simp only [show k + 1 < 32 from by omega, ite_true,
+               show ¬(33 + k < 32) from by omega, ite_false,
+               show 33 + k - 32 = k + 1 from by omega]
+
+-- Layer 1: KSA BoolExpr ≡ ripple-carry BoolExpr (via verified semantic checker)
+-- Interleaved var order: [a_0, b_0, a_1, b_1, ...] so carry chains collapse during constFold
+private def addVarsForBit (i : Nat) : List Nat :=
+  (List.range (i + 1)).flatMap (fun k => [k, 32 + k])
+
+private theorem ksa_eq_ripple :
+    ∀ i : Fin 32, BoolExpr.beqSem (aluSymResult 0x0 i.val) (adderSum i.val) (addVarsForBit i.val) = true := by
+  native_decide
+
+private theorem ksa_bit_correct (a b : BitVec 32) (i : Nat) (hi : i < 32) :
+    (aluSymResult 0x0 i).eval (aluAssign a b) = (a + b).getLsbD i := by
+  have h1 := BoolExpr.beqSem_correct _ _ _ (ksa_eq_ripple ⟨i, hi⟩) (aluAssign a b)
+  rw [h1, adderSum_eval a b i hi, sumBit_eq_getLsbD_add a b i hi]
+
+-- Assembly: replace axiom with theorem
+theorem alu32_bridge_add (a b : BitVec 32) : evalALU32 a b 0x0 = a + b := by
+  apply bitwise_bridge a b 0x0 (a + b)
+  intro i hi
+  exact ksa_bit_correct a b i hi
 axiom alu32_bridge_sub : ∀ (a b : BitVec 32), evalALU32 a b 0x1 = a - b
 axiom alu32_bridge_slt : ∀ (a b : BitVec 32),
     evalALU32 a b 0x2 = if decide (a.toInt < b.toInt) then 1 else 0
