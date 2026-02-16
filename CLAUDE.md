@@ -239,12 +239,13 @@ Output format: `DBG ret#N cyC: PC=0x... insn=0x... rd=xR(wr) data=0x... | Spike:
 - `MISMATCH` lines pinpoint the first divergence
 - Check `data` field for wrong register values (e.g., load returning 0 instead of expected value)
 
-### VCD Waveform Traces
+### FST Waveform Traces
 
 ```bash
-make -C testbench sim-trace                                    # Build with VCD support
-./build-sim/sim_shoumei_trace +trace +elf=testbench/tests/test.elf  # Run with VCD
-python3 scripts/vcd_inspect.py shoumei_cpu.vcd                 # Inspect signals
+make -C testbench sim-trace                                    # Build with FST trace support
+./build-sim/sim_shoumei_trace +trace +elf=testbench/tests/test.elf  # Run with FST
+./scripts/fst_inspect shoumei_cpu.fst --list                   # List all signals
+./scripts/fst_inspect shoumei_cpu.fst --cycles 60-100 --signals "rvvi_valid,rvvi_pc_rdata"
 ```
 
 Key signals for memory path debugging:
@@ -256,7 +257,7 @@ Key signals for memory path debugging:
 ### Debugging workflow
 
 1. Run cosim to find the diverging instruction and wrong data value
-2. Use VCD to trace the signal path that produced the wrong value
+2. Use FST trace to inspect the signal path that produced the wrong value
 3. Check timing of store-buffer commits vs load dispatches for memory ordering issues
 
 ## Important Notes

@@ -41,6 +41,7 @@ def cpuTestbenchConfig : TestbenchConfig := {
   }
   memSizeWords := 16384    -- 64KB
   tohostAddr := 0x1000
+  putcharAddr := some 0x1004
   timeoutCycles := 100000
   constantPorts := [("zero", false), ("one", true)]
   tbName := some "tb_cpu"

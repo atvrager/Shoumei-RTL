@@ -638,8 +638,8 @@ When the lock-step checker reports a mismatch, simulation stops at the exact fai
 ### Step 2: Re-run with waveform
 
 ```bash
-./build/shoumei_cosim +vcd=dump.vcd tests/generated/raw_chain_d2.elf
-gtkwave dump.vcd
+./build/shoumei_cosim +trace +elf=tests/generated/raw_chain_d2.elf
+./scripts/fst_inspect shoumei_cpu.fst --list
 ```
 
 Look at the RVVI signals and the internal pipeline state (CDB, RS entries, ROB) around cycle 42.

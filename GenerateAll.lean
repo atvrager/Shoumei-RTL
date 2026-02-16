@@ -26,6 +26,7 @@ import Shoumei.Circuits.Combinational.ALU
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.Arbiter
+import Shoumei.Circuits.Combinational.OneHotEncoder
 
 -- Phase 3: Sequential Components
 import Shoumei.Circuits.Sequential.QueueN
@@ -37,6 +38,7 @@ import Shoumei.RISCV.CodegenTest  -- RISC-V decoder generation (dynamic, from ri
 import Shoumei.RISCV.InstructionList
 import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
+import Shoumei.RISCV.Renaming.BitmapFreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
 
 -- Phase 5: Execution Units
@@ -146,6 +148,8 @@ def allCircuits : List Circuit := [
   mkPriorityArbiter2,
   mkPriorityArbiter4,
   mkPriorityArbiter8,
+  mkPriorityArbiter64,  -- Bitmap free list allocation
+  mkOneHotEncoder64,    -- Bitmap free list one-hot to binary
   mkPopcount8,  -- Phase 7: Store buffer flush recovery
 
   -- Phase 3: Queues and Registers
@@ -161,6 +165,7 @@ def allCircuits : List Circuit := [
   mkQueuePointer 2,
   mkQueuePointer 3,  -- Phase 7: Store buffer head pointer
   mkQueuePointerLoadable 3,  -- Phase 7: Store buffer tail pointer (loadable for flush)
+  mkQueuePointerLoadable 6,  -- Free list head pointer (loadable for flush)
   mkQueuePointer 4,  -- Phase 6: ROB head/tail pointers
   mkQueuePointer 6,
   mkQueueCounterUpDown 2,
@@ -185,9 +190,17 @@ def allCircuits : List Circuit := [
   mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
   mkRegister91Hierarchical,
 
+  -- Phase 3b: Flushable Queue Components
+  mkQueueRAMInit 64 6 (fun i => i + 32),
+  mkQueuePointerInit 6 32,
+  mkQueueCounterLoadableInit 7 32,
+  mkQueueNFlushable 64 6 32 (fun i => i + 32),
+
   -- Phase 4: RISC-V Components
   mkRAT64,
   mkFreeList64,
+  mkFreeList64Flushable,
+  mkBitmapFreeList64,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units

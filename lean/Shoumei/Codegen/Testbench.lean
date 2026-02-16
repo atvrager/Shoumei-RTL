@@ -43,6 +43,8 @@ structure TestbenchConfig where
   dmemPort : MemoryPort
   memSizeWords : Nat := 16384
   tohostAddr : Nat := 0x1000
+  /-- MMIO putchar address. Writes to this address emit the low byte to $write. -/
+  putcharAddr : Option Nat := none
   timeoutCycles : Nat := 100000
   constantPorts : List (String × Bool) := [("zero", false), ("one", true)]
   /-- Override the testbench module/file name (default: tb_<circuit.name>) -/
@@ -146,6 +148,9 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   let memSizeStr := toString cfg.memSizeWords
   let timeoutStr := toString cfg.timeoutCycles
   let tohostHex := hexLit 32 cfg.tohostAddr
+  let putcharParam := match cfg.putcharAddr with
+    | some addr => s!",\n    parameter PUTCHAR_ADDR    = {hexLit 32 addr}"
+    | none => ""
 
   let tbName := optOrDefault cfg.tbName s!"tb_{c.name}"
 
@@ -171,6 +176,7 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   s!"    parameter MEM_SIZE_WORDS = {memSizeStr},\n" ++
   s!"    parameter TIMEOUT_CYCLES = {timeoutStr},\n" ++
   s!"    parameter TOHOST_ADDR    = {tohostHex}\n" ++
+  putcharParam ++
   ") (\n" ++
   "    input logic clk,\n" ++
   "    input logic rst_n,\n" ++
@@ -229,6 +235,22 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  function void dpi_mem_write(input int unsigned word_addr, input int unsigned data);\n" ++
   "    mem[word_addr] = data;\n" ++
   "  endfunction\n\n" ++
+  "  // DPI-C: allow C++ to override HTIF addresses from ELF symbols\n" ++
+  "  logic [31:0] tohost_addr_r;\n" ++
+  "  initial tohost_addr_r = TOHOST_ADDR;\n" ++
+  "  export \"DPI-C\" function dpi_set_tohost_addr;\n" ++
+  "  function void dpi_set_tohost_addr(input int unsigned addr);\n" ++
+  "    tohost_addr_r = addr;\n" ++
+  "  endfunction\n\n" ++
+  (match cfg.putcharAddr with
+   | some _ =>
+     "  logic [31:0] putchar_addr_r;\n" ++
+     "  initial putchar_addr_r = PUTCHAR_ADDR;\n" ++
+     "  export \"DPI-C\" function dpi_set_putchar_addr;\n" ++
+     "  function void dpi_set_putchar_addr(input int unsigned addr);\n" ++
+     "    putchar_addr_r = addr;\n" ++
+     "  endfunction\n\n"
+   | none => "") ++
   "  localparam logic [31:0] MEM_BASE = 32'h00000000;\n\n" ++
   "  function automatic logic [31:0] addr_to_idx(input logic [31:0] addr);\n" ++
   "    return (addr - MEM_BASE) >> 2;\n" ++
@@ -305,13 +327,27 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "      test_code <= 32'b0;\n" ++
   "    end else begin\n" ++
   s!"      if ({dmemValid} && {dmemWe} &&\n" ++
-  s!"          {dmemAddr} == TOHOST_ADDR) begin\n" ++
+  s!"          {dmemAddr} == tohost_addr_r) begin\n" ++
   s!"        test_code <= {dmemDataOut};\n" ++
   s!"        test_pass <= ({dmemDataOut} == 32'h1);\n" ++
   "        test_done <= 1'b1;\n" ++
   "      end\n" ++
   "    end\n" ++
   "  end\n\n" ++
+
+  -- MMIO putchar support
+  (match cfg.putcharAddr with
+   | some _ =>
+     "  // =========================================================================\n" ++
+     "  // MMIO putchar: writes to PUTCHAR_ADDR emit a character\n" ++
+     "  // =========================================================================\n" ++
+     s!"  always_ff @(posedge clk) begin\n" ++
+     s!"    if (!{resetName} && {dmemValid} && {dmemWe} &&\n" ++
+     s!"        {dmemAddr} == putchar_addr_r) begin\n" ++
+     s!"      $write(\"%c\", {dmemDataOut}[7:0]);\n" ++
+     "    end\n" ++
+     "  end\n\n"
+   | none => "") ++
 
   "  // =========================================================================\n" ++
   "  // Cycle counter\n" ++
@@ -512,6 +548,9 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   "#include \"elf_loader.h\"\n\n" ++
   s!"static const uint32_t MEM_SIZE_WORDS = {cfg.memSizeWords};\n" ++
   s!"static const uint32_t TOHOST_ADDR = 0x{natToHexDigits cfg.tohostAddr};\n" ++
+  (match cfg.putcharAddr with
+   | some addr => s!"static const uint32_t PUTCHAR_ADDR = 0x{natToHexDigits addr};\n"
+   | none => "") ++
   s!"static const uint32_t TIMEOUT_CYCLES = {cfg.timeoutCycles};\n\n" ++
 
   "// Memory model (shared between ImemModel and DmemModel)\n" ++
@@ -588,6 +627,11 @@ def toTestbenchSystemC (cfg : TestbenchConfig) : String :=
   s!"                if (addr == TOHOST_ADDR) {lb}\n" ++
   s!"                    test_done = true;\n" ++
   s!"                    test_data = data;\n" ++
+  (match cfg.putcharAddr with
+   | some _ =>
+     s!"                {rb} else if (addr == PUTCHAR_ADDR) {lb}\n" ++
+     s!"                    putchar(data & 0xFF);\n"
+   | none => "") ++
   s!"                {rb} else {lb}\n" ++
   s!"                    uint32_t widx = addr >> 2;\n" ++
   s!"                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;\n" ++
@@ -855,6 +899,9 @@ def toTestbenchSystemCThin (cfg : TestbenchConfig) : String :=
   "#include \"elf_loader.h\"\n\n" ++
   s!"static const uint32_t MEM_SIZE_WORDS = {cfg.memSizeWords};\n" ++
   s!"static const uint32_t TOHOST_ADDR = 0x{natToHexDigits cfg.tohostAddr};\n" ++
+  (match cfg.putcharAddr with
+   | some addr => s!"static const uint32_t PUTCHAR_ADDR = 0x{natToHexDigits addr};\n"
+   | none => "") ++
   s!"static const uint32_t TIMEOUT_CYCLES = {cfg.timeoutCycles};\n\n" ++
 
   "// Memory model (shared between ImemModel and DmemModel)\n" ++
@@ -925,6 +972,11 @@ def toTestbenchSystemCThin (cfg : TestbenchConfig) : String :=
   s!"                if (addr == TOHOST_ADDR) {lb}\n" ++
   s!"                    test_done = true;\n" ++
   s!"                    test_data = data;\n" ++
+  (match cfg.putcharAddr with
+   | some _ =>
+     s!"                {rb} else if (addr == PUTCHAR_ADDR) {lb}\n" ++
+     s!"                    putchar(data & 0xFF);\n"
+   | none => "") ++
   s!"                {rb} else {lb}\n" ++
   s!"                    uint32_t widx = addr >> 2;\n" ++
   s!"                    if (widx < MEM_SIZE_WORDS) mem[widx] = data;\n" ++

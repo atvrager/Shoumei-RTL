@@ -19,16 +19,23 @@
 #include <memory>
 #include <elf.h>
 
+// Disable stdout buffering so output appears immediately in non-TTY contexts
+static struct _StdoutUnbuffer {
+    _StdoutUnbuffer() { setvbuf(stdout, nullptr, _IONBF, 0); }
+} _stdout_unbuffer;
+
 #include "Vtb_cpu.h"
 #include "verilated.h"
 #include "svdpi.h"
 
 #if VM_TRACE
-#include "verilated_vcd_c.h"
+#include "verilated_fst_c.h"
 #endif
 
 // DPI-C exported from tb_cpu.sv
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
+extern "C" void dpi_set_tohost_addr(unsigned int addr);
+extern "C" void dpi_set_putchar_addr(unsigned int addr);
 
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 
@@ -48,6 +55,51 @@ static bool has_plusarg(int argc, char** argv, const char* name) {
         if (strcmp(argv[i], name) == 0) return true;
     }
     return false;
+}
+
+// Look up a symbol by name in the ELF file, returns address or -1 if not found
+static int64_t elf_lookup_symbol(const char* path, const char* sym_name) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+
+    Elf32_Ehdr ehdr;
+    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
+
+    // Find .symtab and .strtab sections
+    for (int i = 0; i < ehdr.e_shnum; i++) {
+        Elf32_Shdr shdr;
+        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+        if (shdr.sh_type != SHT_SYMTAB) continue;
+
+        // Read string table for this symtab
+        Elf32_Shdr strhdr;
+        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+
+        auto* strtab = new char[strhdr.sh_size];
+        fseek(f, strhdr.sh_offset, SEEK_SET);
+        if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) {
+            delete[] strtab; continue;
+        }
+
+        // Search symbols
+        int nsyms = shdr.sh_size / shdr.sh_entsize;
+        for (int j = 0; j < nsyms; j++) {
+            Elf32_Sym sym;
+            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+            if (sym.st_name < strhdr.sh_size &&
+                strcmp(strtab + sym.st_name, sym_name) == 0) {
+                delete[] strtab;
+                fclose(f);
+                return (int64_t)sym.st_value;
+            }
+        }
+        delete[] strtab;
+    }
+    fclose(f);
+    return -1;
 }
 
 // Load ELF file into simulated memory via DPI-C
@@ -147,13 +199,13 @@ int main(int argc, char** argv) {
     uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;
 
 #if VM_TRACE
-    VerilatedVcdC* trace = nullptr;
+    VerilatedFstC* trace = nullptr;
     if (do_trace) {
         Verilated::traceEverOn(true);
-        trace = new VerilatedVcdC;
+        trace = new VerilatedFstC;
         dut->trace(trace, 99);
-        trace->open("shoumei_cpu.vcd");
-        printf("VCD trace enabled: shoumei_cpu.vcd\n");
+        trace->open("shoumei_cpu.fst");
+        printf("FST trace enabled: shoumei_cpu.fst\n");
     }
 #else
     (void)do_trace;
@@ -169,6 +221,18 @@ int main(int argc, char** argv) {
     svSetScope(svGetScopeFromName("TOP.tb_cpu"));
     if (load_elf(elf_path) < 0) {
         return 1;
+    }
+
+    // Override HTIF addresses from ELF symbols
+    int64_t tohost_sym = elf_lookup_symbol(elf_path, "tohost");
+    if (tohost_sym >= 0) {
+        printf("ELF symbol: tohost = 0x%08x\n", (uint32_t)tohost_sym);
+        dpi_set_tohost_addr((uint32_t)tohost_sym);
+    }
+    int64_t putchar_sym = elf_lookup_symbol(elf_path, "putchar_addr");
+    if (putchar_sym >= 0) {
+        printf("ELF symbol: putchar_addr = 0x%08x\n", (uint32_t)putchar_sym);
+        dpi_set_putchar_addr((uint32_t)putchar_sym);
     }
 
     // =====================================================================
@@ -207,16 +271,19 @@ int main(int argc, char** argv) {
 #endif
 
         // Count retired instructions
-        if (dut->o_rvvi_valid) retired++;
+        if (dut->o_rvvi_valid) {
+            retired++;
+            if (verbose)
+                printf("  RET[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\n",
+                    retired, dut->o_rvvi_pc_rdata, dut->o_rvvi_insn,
+                    dut->o_rvvi_rd, (int)dut->o_rvvi_rd_valid, dut->o_rvvi_rd_data);
+        }
 
-        // Debug: print key signals for first 30 cycles if +verbose
-        if (verbose && cycle < 30) {
-            printf("  [%4u] PC=0x%08x stall=%d rob_empty=%d",
-                cycle, dut->o_fetch_pc, (int)dut->o_global_stall, (int)dut->o_rob_empty);
-            if (dut->o_dmem_req_valid)
-                printf(" DMEM: we=%d addr=0x%08x data=0x%08x",
-                    (int)dut->o_dmem_req_we, dut->o_dmem_req_addr, dut->o_dmem_req_data);
-            printf("\n");
+        // Log all dmem accesses if +verbose
+        if (verbose && dut->o_dmem_req_valid) {
+            printf("  %s cy%u addr=0x%08x data=0x%08x\n",
+                dut->o_dmem_req_we ? "STORE" : "LOAD ",
+                cycle, dut->o_dmem_req_addr, dut->o_dmem_req_data);
         }
 
         // Check termination via output ports

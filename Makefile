@@ -182,6 +182,34 @@ verify: lec eqy
 	@echo ""
 	@echo "✓ All verification methods passed"
 
+# Build debugging tools
+FST_INC := -I/usr/share/verilator/include/gtkwave '-DFST_CONFIG_INCLUDE="fstapi.h"'
+# Use system liblz4 if available, otherwise build from /tmp/lz4-src (clone from github.com/lz4/lz4)
+FST_LZ4_SYS := $(shell pkg-config --cflags --libs liblz4 2>/dev/null)
+FST_LZ4_LOCAL := $(wildcard /tmp/lz4-src/lib/lz4.c)
+ifdef FST_LZ4_SYS
+  FST_LZ4_CFLAGS :=
+  FST_LZ4_OBJ :=
+  FST_LZ4_LIBS := $(FST_LZ4_SYS)
+else ifdef FST_LZ4_LOCAL
+  FST_LZ4_CFLAGS := -I/tmp/lz4-src/lib
+  FST_LZ4_OBJ := /tmp/lz4.o
+  FST_LZ4_LIBS :=
+else
+  $(error "liblz4-dev not found and /tmp/lz4-src missing. Install liblz4-dev or: git clone --depth 1 https://github.com/lz4/lz4 /tmp/lz4-src")
+endif
+
+scripts/fst_inspect: scripts/fst_inspect.cpp scripts/fst_stubs.c
+	@echo "==> Building fst_inspect..."
+	@gcc -c -O2 $(FST_INC) $(FST_LZ4_CFLAGS) /usr/share/verilator/include/gtkwave/fstapi.c -o /tmp/fstapi.o
+	@gcc -c -O2 scripts/fst_stubs.c -o /tmp/fst_stubs.o
+	$(if $(FST_LZ4_OBJ),@gcc -c -O2 -I/tmp/lz4-src/lib /tmp/lz4-src/lib/lz4.c -o $(FST_LZ4_OBJ))
+	@g++ -O2 $(FST_INC) $(FST_LZ4_CFLAGS) -o $@ $< /tmp/fstapi.o /tmp/fst_stubs.o $(FST_LZ4_OBJ) -lz -lpthread $(FST_LZ4_LIBS)
+	@echo "✓ Built $@"
+
+.PHONY: tools
+tools: scripts/fst_inspect
+
 # Clean all generated files
 clean:
 	@echo "==> Cleaning generated files..."

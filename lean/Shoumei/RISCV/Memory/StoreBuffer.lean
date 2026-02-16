@@ -369,29 +369,69 @@ def mkStoreBuffer8 : Circuit :=
       (head_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
-  -- Gate commit_en: only advance commit_ptr when target entry is valid.
-  -- This prevents a wasted commit when enqueue wraps tail to the same index
-  -- as commit_ptr (the old entry was already dequeued, so commit is stale).
+  -- Commit gate with pending counter: the ROB may commit a store before it
+  -- enters the SB (stores auto-complete).  A 3-bit counter buffers missed
+  -- commits so they're applied when the target entry becomes valid.
   let commit_target_valid := Wire.mk "commit_target_valid"
   let commit_en_gated := Wire.mk "commit_en_gated"
   let ctv_bits := (List.range 8).map (fun i => Wire.mk s!"ctv_b{i}")
   let ctv_or := (List.range 4).map (fun i => Wire.mk s!"ctv_r{i}")
   let ctv_or2 := (List.range 2).map (fun i => Wire.mk s!"ctv_s{i}")
+
+  -- Pending commit counter (3-bit): tracks commits that arrived before SB entry
+  let pc := (List.range 3).map (fun i => Wire.mk s!"pending_commit_{i}")
+  let pc_next := (List.range 3).map (fun i => Wire.mk s!"pending_commit_next_{i}")
+  let pc_nz := Wire.mk "pending_commit_nz"
+  let pc_inc := Wire.mk "pending_commit_inc"
+  let pc_dec := Wire.mk "pending_commit_dec"
+
+  -- Increment value (pc + 1)
+  let pc_inc_val := (List.range 3).map (fun i => Wire.mk s!"pc_inc_v{i}")
+  -- Decrement value (pc - 1)
+  let pc_dec_val := (List.range 3).map (fun i => Wire.mk s!"pc_dec_v{i}")
+
   let commit_gate_gates :=
     -- AND each commit_decode bit with valid bit
     (List.range 8).map (fun i =>
       Gate.mkAND commit_decode[i]! valid[i]! ctv_bits[i]!) ++
-    -- OR-reduce: 8→4
+    -- OR-reduce: 8→4→2→1
     [Gate.mkOR ctv_bits[0]! ctv_bits[1]! ctv_or[0]!,
      Gate.mkOR ctv_bits[2]! ctv_bits[3]! ctv_or[1]!,
      Gate.mkOR ctv_bits[4]! ctv_bits[5]! ctv_or[2]!,
      Gate.mkOR ctv_bits[6]! ctv_bits[7]! ctv_or[3]!,
-     -- 4→2
      Gate.mkOR ctv_or[0]! ctv_or[1]! ctv_or2[0]!,
      Gate.mkOR ctv_or[2]! ctv_or[3]! ctv_or2[1]!,
-     -- 2→1
      Gate.mkOR ctv_or2[0]! ctv_or2[1]! commit_target_valid,
-     Gate.mkAND commit_en commit_target_valid commit_en_gated]
+     -- pending_commit_nz = OR(pc[0], pc[1], pc[2])
+     Gate.mkOR pc[0]! pc[1]! (Wire.mk "pc_nz_t"),
+     Gate.mkOR (Wire.mk "pc_nz_t") pc[2]! pc_nz,
+     -- commit fires when target valid AND (new commit OR pending > 0)
+     Gate.mkOR commit_en pc_nz (Wire.mk "commit_available"),
+     Gate.mkAND (Wire.mk "commit_available") commit_target_valid commit_en_gated,
+     -- inc = commit_en AND NOT target_valid (missed commit → buffer)
+     Gate.mkNOT commit_target_valid (Wire.mk "not_ctv"),
+     Gate.mkAND commit_en (Wire.mk "not_ctv") pc_inc,
+     -- dec = NOT commit_en AND target_valid AND pending > 0 (drain buffered)
+     Gate.mkNOT commit_en (Wire.mk "not_commit_en"),
+     Gate.mkAND (Wire.mk "not_commit_en") commit_target_valid (Wire.mk "dec_tmp"),
+     Gate.mkAND (Wire.mk "dec_tmp") pc_nz pc_dec,
+     -- pc + 1
+     Gate.mkNOT pc[0]! pc_inc_val[0]!,
+     Gate.mkXOR pc[1]! pc[0]! pc_inc_val[1]!,
+     Gate.mkAND pc[1]! pc[0]! (Wire.mk "pc_carry1"),
+     Gate.mkXOR pc[2]! (Wire.mk "pc_carry1") pc_inc_val[2]!,
+     -- pc - 1
+     Gate.mkNOT pc[0]! pc_dec_val[0]!,
+     Gate.mkNOT pc[0]! (Wire.mk "pc_borrow0"),
+     Gate.mkXOR pc[1]! (Wire.mk "pc_borrow0") pc_dec_val[1]!,
+     Gate.mkNOT pc[1]! (Wire.mk "not_pc1"),
+     Gate.mkAND (Wire.mk "not_pc1") (Wire.mk "pc_borrow0") (Wire.mk "pc_borrow1"),
+     Gate.mkXOR pc[2]! (Wire.mk "pc_borrow1") pc_dec_val[2]!] ++
+    -- pc_next: MUX(MUX(pc, pc-1, dec), pc+1, inc)
+    (List.range 3).map (fun i =>
+      Gate.mkMUX pc[i]! pc_dec_val[i]! pc_dec (Wire.mk s!"pc_mux1_{i}")) ++
+    (List.range 3).map (fun i =>
+      Gate.mkMUX (Wire.mk s!"pc_mux1_{i}") pc_inc_val[i]! pc_inc pc_next[i]!)
 
   -- Internal commit pointer: increments on commit_en_gated, loads flush_tail_load on flush
   let commit_ptr_inst : CircuitInstance := {
@@ -513,6 +553,14 @@ def mkStoreBuffer8 : Circuit :=
       portMap := [("d", committed_next[i]!), ("q", committed[i]!),
                   ("clock", clock), ("reset", reset)] : CircuitInstance })
 
+  -- DFFs for pending commit counter (reset on global reset OR flush)
+  let pc_reset := Wire.mk "pc_reset"
+  let pc_reset_gate := Gate.mkOR reset flush_en pc_reset
+  let pc_dff_insts := (List.range 3).map (fun i =>
+    { moduleName := "DFlipFlop", instName := s!"u_pending_commit_{i}",
+      portMap := [("d", pc_next[i]!), ("q", pc[i]!),
+                  ("clock", clock), ("reset", pc_reset)] : CircuitInstance })
+
   -- === Per-Entry Forwarding Logic ===
   -- Read all entries from QueueRAM for forwarding (parallel read ports via per-entry storage)
   -- QueueRAM only has 1 read port (for dequeue). For forwarding, we read directly from
@@ -587,18 +635,61 @@ def mkStoreBuffer8 : Circuit :=
     let fwd_committed_match := Wire.mk s!"e{i}_fwd_committed_match"
     let fwd_committed_match_gate := Gate.mkAND fwd_match committed[i]! fwd_committed_match
 
-    let entry_gates := address_gates ++ data_gates ++ size_gates ++
-      [fwd_match_gate, fwd_committed_match_gate]
+    -- Word-level address match: compare bits [31:2] (word-aligned address)
+    -- XOR bits 2..31, OR-reduce to check any difference, then NOT for equality
+    let word_xor := (List.range 30).map (fun j => Wire.mk s!"e{i}_wxor_{j}")
+    let word_xor_gates := (List.range 30).map (fun j =>
+      Gate.mkXOR fwd_address[j+2]! cur_address[j+2]! word_xor[j]!)
+    -- OR-tree reduction: 30 → 15 → 8 → 4 → 2 → 1
+    let wor_l0 := (List.range 15).map (fun j => Wire.mk s!"e{i}_wor0_{j}")
+    let wor_l0_gates := (List.range 15).map (fun j =>
+      Gate.mkOR word_xor[2*j]! word_xor[2*j+1]! wor_l0[j]!)
+    -- 15 → 8 (pad last with zero via BUF)
+    let wor_l1_in := Wire.mk s!"e{i}_wor1_pad"
+    let wor_l1_pad_gate := Gate.mkBUF wor_l0[14]! wor_l1_in
+    let wor_l1 := (List.range 8).map (fun j => Wire.mk s!"e{i}_wor1_{j}")
+    let wor_l1_gates := (List.range 7).map (fun j =>
+      Gate.mkOR wor_l0[2*j]! wor_l0[2*j+1]! wor_l1[j]!) ++
+      [Gate.mkBUF wor_l1_in wor_l1[7]!]
+    let wor_l2 := (List.range 4).map (fun j => Wire.mk s!"e{i}_wor2_{j}")
+    let wor_l2_gates := (List.range 4).map (fun j =>
+      Gate.mkOR wor_l1[2*j]! wor_l1[2*j+1]! wor_l2[j]!)
+    let wor_l3 := (List.range 2).map (fun j => Wire.mk s!"e{i}_wor3_{j}")
+    let wor_l3_gates := (List.range 2).map (fun j =>
+      Gate.mkOR wor_l2[2*j]! wor_l2[2*j+1]! wor_l3[j]!)
+    let any_word_neq := Wire.mk s!"e{i}_any_word_neq"
+    let wor_final_gate := Gate.mkOR wor_l3[0]! wor_l3[1]! any_word_neq
+    let word_eq := Wire.mk s!"e{i}_word_eq"
+    let word_eq_gate := Gate.mkNOT any_word_neq word_eq
+    let word_match := Wire.mk s!"e{i}_word_match"
+    let word_match_gate := Gate.mkAND valid[i]! word_eq word_match
 
-    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, cur_data)
+    -- word_only_match: word-level match but NOT exact byte-address match
+    let not_cmp_eq := Wire.mk s!"e{i}_not_cmp_eq"
+    let word_only_match := Wire.mk s!"e{i}_word_only_match"
+    let word_only_gates := [
+      Gate.mkNOT cmp_eq not_cmp_eq,
+      Gate.mkAND word_match not_cmp_eq word_only_match
+    ]
+
+    let word_match_gates := word_xor_gates ++ wor_l0_gates ++ [wor_l1_pad_gate] ++
+      wor_l1_gates ++ wor_l2_gates ++ wor_l3_gates ++ [wor_final_gate, word_eq_gate, word_match_gate] ++
+      word_only_gates
+
+    let entry_gates := address_gates ++ data_gates ++ size_gates ++
+      [fwd_match_gate, fwd_committed_match_gate] ++ word_match_gates
+
+    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, cur_data, word_match, word_only_match)
 
   -- Flatten per-entry results
-  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _, _) => g)).flatten
-  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _, _) => insts)).flatten
-  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _, _) => cur)
-  let fwd_matches := entryResults.map (fun (_, _, _, m, _, _) => m)
-  let fwd_committed_matches := entryResults.map (fun (_, _, _, _, cm, _) => cm)
-  let all_entry_data := entryResults.map (fun (_, _, _, _, _, d) => d)
+  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _, _, _, _) => g)).flatten
+  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _, _, _, _) => insts)).flatten
+  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _, _, _, _) => cur)
+  let fwd_matches := entryResults.map (fun (_, _, _, m, _, _, _, _) => m)
+  let fwd_committed_matches := entryResults.map (fun (_, _, _, _, cm, _, _, _) => cm)
+  let all_entry_data := entryResults.map (fun (_, _, _, _, _, d, _, _) => d)
+  let word_matches := entryResults.map (fun (_, _, _, _, _, _, wm, _) => wm)
+  let word_only_matches := entryResults.map (fun (_, _, _, _, _, _, _, wom) => wom)
 
   -- === Forwarding Logic: Youngest-Match via Barrel Rotation ===
 
@@ -634,6 +725,43 @@ def mkStoreBuffer8 : Circuit :=
 
   -- fwd_hit = arbiter has a valid selection
   let fwd_hit_gate := Gate.mkBUF arb_valid fwd_hit
+
+  -- fwd_word_hit = OR of all word_match[i]
+  let fwd_word_hit := Wire.mk "fwd_word_hit"
+  let fwh_t0 := Wire.mk "fwh_t0"
+  let fwh_t1 := Wire.mk "fwh_t1"
+  let fwh_t2 := Wire.mk "fwh_t2"
+  let fwh_t3 := Wire.mk "fwh_t3"
+  let fwh_t4 := Wire.mk "fwh_t4"
+  let fwh_t5 := Wire.mk "fwh_t5"
+  let fwd_word_hit_gates := [
+    Gate.mkOR word_matches[0]! word_matches[1]! fwh_t0,
+    Gate.mkOR word_matches[2]! word_matches[3]! fwh_t1,
+    Gate.mkOR word_matches[4]! word_matches[5]! fwh_t2,
+    Gate.mkOR word_matches[6]! word_matches[7]! fwh_t3,
+    Gate.mkOR fwh_t0 fwh_t1 fwh_t4,
+    Gate.mkOR fwh_t2 fwh_t3 fwh_t5,
+    Gate.mkOR fwh_t4 fwh_t5 fwd_word_hit
+  ]
+
+  -- fwd_word_only_hit = OR of all word_only_match[i]
+  -- True when any entry has a word-level match but NOT an exact byte-address match
+  let fwd_word_only_hit := Wire.mk "fwd_word_only_hit"
+  let fwoh_t0 := Wire.mk "fwoh_t0"
+  let fwoh_t1 := Wire.mk "fwoh_t1"
+  let fwoh_t2 := Wire.mk "fwoh_t2"
+  let fwoh_t3 := Wire.mk "fwoh_t3"
+  let fwoh_t4 := Wire.mk "fwoh_t4"
+  let fwoh_t5 := Wire.mk "fwoh_t5"
+  let fwd_word_only_hit_gates := [
+    Gate.mkOR word_only_matches[0]! word_only_matches[1]! fwoh_t0,
+    Gate.mkOR word_only_matches[2]! word_only_matches[3]! fwoh_t1,
+    Gate.mkOR word_only_matches[4]! word_only_matches[5]! fwoh_t2,
+    Gate.mkOR word_only_matches[6]! word_only_matches[7]! fwoh_t3,
+    Gate.mkOR fwoh_t0 fwoh_t1 fwoh_t4,
+    Gate.mkOR fwoh_t2 fwoh_t3 fwoh_t5,
+    Gate.mkOR fwoh_t4 fwoh_t5 fwd_word_only_hit
+  ]
 
   -- fwd_committed_hit = OR of all committed matches
   let fwd_committed_hit := Wire.mk "fwd_committed_hit"
@@ -796,24 +924,24 @@ def mkStoreBuffer8 : Circuit :=
   let all_outputs :=
     [full, empty] ++ enq_idx ++
     [deq_valid] ++ deq_bits ++
-    [fwd_hit, fwd_committed_hit] ++ fwd_data ++ fwd_size
+    [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size
 
   let all_gates :=
     [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
-    commit_gate_gates ++
+    commit_gate_gates ++ [pc_reset_gate] ++
     bitmap_gates ++ surviving_gates ++
     flush_count_gates ++ flush_tail_gates ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
-    arb_request_gates ++ [fwd_hit_gate] ++ fwd_committed_hit_gates ++
+    arb_request_gates ++ [fwd_hit_gate] ++ fwd_word_hit_gates ++ fwd_word_only_hit_gates ++ fwd_committed_hit_gates ++
     unreversed_gates ++ unrot_l0_gates ++ unrot_l1_gates ++ unrot_l2_gates ++
     oh2b_gates ++
     head_valid_gates ++ head_committed_gates
 
   let all_instances :=
     [head_inst, tail_inst, count_inst, commit_ptr_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst] ++
-    valid_dff_insts ++ committed_dff_insts ++
+    valid_dff_insts ++ committed_dff_insts ++ pc_dff_insts ++
     all_entry_instances ++
     [arb_inst, fwd_mux_inst, fwd_size_mux_inst] ++
     [deq_addr_mux_inst, deq_data_mux_inst, deq_size_mux_inst]

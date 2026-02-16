@@ -358,6 +358,8 @@ def mkLSU : Circuit :=
   let sb_empty := Wire.mk "sb_empty"
   let sb_fwd_hit := Wire.mk "sb_fwd_hit"
   let sb_fwd_committed_hit := Wire.mk "sb_fwd_committed_hit"
+  let sb_fwd_word_hit := Wire.mk "sb_fwd_word_hit"
+  let sb_fwd_word_only_hit := Wire.mk "sb_fwd_word_only_hit"
   let sb_fwd_data := mkWires "sb_fwd_data_" 32
   let sb_fwd_size := mkWires "sb_fwd_size_" 2
   let sb_deq_valid := Wire.mk "sb_deq_valid"
@@ -398,6 +400,8 @@ def mkLSU : Circuit :=
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
        ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
        ("fwd_hit", sb_fwd_hit), ("fwd_committed_hit", sb_fwd_committed_hit),
+       ("fwd_word_hit", sb_fwd_word_hit),
+       ("fwd_word_only_hit", sb_fwd_word_only_hit),
        ("deq_valid", sb_deq_valid)] ++
       (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_[{i}]", w))) ++
       (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_[{i}]", w))) ++
@@ -424,7 +428,7 @@ def mkLSU : Circuit :=
 
   let all_outputs :=
     agu_address ++ agu_tag_out ++
-    [sb_full, sb_empty, sb_fwd_hit, sb_fwd_committed_hit] ++
+    [sb_full, sb_empty, sb_fwd_hit, sb_fwd_committed_hit, sb_fwd_word_hit, sb_fwd_word_only_hit] ++
     sb_fwd_data ++ sb_fwd_size ++
     [sb_deq_valid] ++
     sb_deq_bits ++

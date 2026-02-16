@@ -97,6 +97,9 @@ testbench/tests/*.o
 *.vcd
 *.fst
 
+# Built tools
+scripts/fst_inspect
+
 # Python (if used for scripts)
 __pycache__/
 *.py[cod]

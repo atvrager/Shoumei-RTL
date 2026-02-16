@@ -139,9 +139,8 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
   -- On write, reg[i] = we[i] ? write_data : reg[i] (hold)
   -- On reset, all DFFs reset to 0 (initialization done externally via write port)
   --
-  -- Note: After reset, all regs map to phys reg 0. The CPU pipeline must
-  -- initialize the identity mapping (reg[i] = i) before dispatching instructions.
-  -- This matches standard hardware practice where RAT init is a startup sequence.
+  -- Identity mapping: after reset, reg[i] = i (arch reg i → phys reg i).
+  -- Uses DFF_SET for bits where identity value has a 1, DFF for 0 bits.
   let getReg (i j : Nat) : Wire := Wire.mk s!"reg_{i}_{j}"
   let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
   let getNormalNext (i j : Nat) : Wire := Wire.mk s!"normal_next_{i}_{j}"
@@ -153,13 +152,17 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
       let reg := getReg i j
       let next := getNext i j
       let normal_next := getNormalNext i j
+      let bitVal := (i >>> j) % 2  -- bit j of identity value i
       [
         -- Write data mux: normal_next = we ? write_data : reg (hold)
         Gate.mkMUX reg (write_data[j]!) (we[i]!) normal_next,
         -- Restore override: next = restore_en ? restore_data : normal_next
         Gate.mkMUX normal_next (restore_data[i]![j]!) restore_en next,
-        -- Storage DFF (reset via buffered reset tree)
-        Gate.mkDFF next clock reset_leaf reg,
+        -- Storage DFF: DFF_SET for 1-bits, DFF for 0-bits (identity reset)
+        if bitVal == 1 then
+          Gate.mkDFF_SET next clock reset_leaf reg
+        else
+          Gate.mkDFF next clock reset_leaf reg,
         -- Dump output: write-through (bypass) so committed RAT dump
         -- reflects current-cycle writes combinationally
         Gate.mkBUF normal_next (getDump i j)

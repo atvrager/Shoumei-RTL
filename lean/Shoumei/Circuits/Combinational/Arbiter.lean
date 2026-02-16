@@ -187,6 +187,9 @@ def mkPriorityArbiter4 : Circuit := mkPriorityArbiter 4
 /-- 8-input arbiter (for RS8 ready selection) -/
 def mkPriorityArbiter8 : Circuit := mkPriorityArbiter 8
 
+/-- 64-input arbiter (for bitmap free list allocation) -/
+def mkPriorityArbiter64 : Circuit := mkPriorityArbiter 64
+
 /-! ## Theorems (Stub Placeholders for Future Proofs) -/
 
 /-- At most one grant signal is high (one-hot property).

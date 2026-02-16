@@ -53,6 +53,27 @@ def queueRAM_64x6_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- QueueRAMInit_64x6: 64-entry RAM with 6-bit data and initial values -/
+def queueRAMInit_64x6_cert : CompositionalCert := {
+  moduleName := "QueueRAMInit_64x6"
+  dependencies := ["Decoder6", "Mux64x6"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- Queue64_6_Flushable: 64-entry flushable queue with 6-bit data -/
+def queue64_6_flushable_cert : CompositionalCert := {
+  moduleName := "Queue64_6_Flushable"
+  dependencies := ["QueueRAMInit_64x6", "QueuePointerLoadable_6", "QueuePointerInit_6", "QueueCounterLoadableInit_7"]
+  proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
+}
+
+/-- FreeList_64_Flushable: Flushable free list with correct flush recovery -/
+def freeListFlushable_cert : CompositionalCert := {
+  moduleName := "FreeList_64_Flushable"
+  dependencies := ["QueueRAMInit_64x6", "QueuePointerLoadable_6", "QueuePointerInit_6", "QueueCounterLoadableInit_7"]
+  proofReference := "Shoumei.RISCV.Renaming.FreeListProofs"
+}
+
 /-- QueueRAM_2x8: 2-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
 def queueRAM_2x8_cert : CompositionalCert := {
   moduleName := "QueueRAM_2x8"
@@ -193,6 +214,13 @@ def freelist_cert : CompositionalCert := {
   moduleName := "FreeList_64"
   dependencies := ["QueueRAM_64x6", "QueuePointer_6", "QueueCounterUpDown_7", "Decoder6", "Mux64x6"]
   proofReference := "Shoumei.RISCV.Renaming.FreeListProofs"
+}
+
+/-- BitmapFreeList_64: Bitmap-based free list with correct flush recovery -/
+def bitmapFreelist_cert : CompositionalCert := {
+  moduleName := "BitmapFreeList_64"
+  dependencies := ["Decoder6", "PriorityArbiter64", "OneHotEncoder64"]
+  proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
 }
 
 /-! ## RISC-V Execution -/
@@ -358,7 +386,7 @@ def cpu_rv32if_cert : CompositionalCert := {
 /-- RenameStage_32x64: Composite rename stage (RAT + FreeList + PhysRegFile) -/
 def renameStage_cert : CompositionalCert := {
   moduleName := "RenameStage_32x64"
-  dependencies := ["RAT_32x6", "FreeList_64", "PhysRegFile_64x32"]
+  dependencies := ["RAT_32x6", "BitmapFreeList_64", "PhysRegFile_64x32"]
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
@@ -462,6 +490,9 @@ def allCerts : List CompositionalCert := [
   queueRAM_64x6_cert,
   queueRAM_2x8_cert,
   queueRAM_4x8_cert,
+  queueRAMInit_64x6_cert,
+  queue64_6_flushable_cert,
+  freeListFlushable_cert,
   queueCounterUpDown_2_cert,
   queueCounterUpDown_3_cert,
   queueCounterUpDown_4_cert,
@@ -476,6 +507,7 @@ def allCerts : List CompositionalCert := [
   physregfile_cert,
   rat_cert,
   freelist_cert,
+  bitmapFreelist_cert,
   -- Execution
   rs4_cert,
   memoryRS4_cert,
