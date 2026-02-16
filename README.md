@@ -12,9 +12,9 @@ A complete pipeline from formal specification to verified, simulated RTL:
 
 1. **Define** circuits in a Lean 4 embedded DSL (gates, wires, instances)
 2. **Prove** properties using Lean's type system (`native_decide`, structural induction)
-3. **Generate** SystemVerilog, Chisel/Scala, and SystemC from the same proven source
+3. **Generate** SystemVerilog, Chisel/Scala, and C++ simulation from the same proven source
 4. **Verify** Lean SV and Chisel SV are logically equivalent (Yosys LEC)
-5. **Simulate** with Verilator and SystemC, validated against Spike ISA reference
+5. **Simulate** with Verilator and C++ sim, validated against Spike ISA reference
 
 ```
                     Lean 4 DSL
@@ -23,7 +23,7 @@ A complete pipeline from formal specification to verified, simulated RTL:
               +--------+--------+--------+
               |        |        |        |
               v        v        v        v
-         SystemVerilog  Chisel  SystemC  SV Netlist
+         SystemVerilog  Chisel  C++ Sim  SV Netlist
           (hierarchical)  |    (cycle-   (flat)
               |           v    accurate)
               |     FIRRTL/CIRCT
@@ -89,15 +89,15 @@ export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
 make -C testbench/tests             # compile test ELFs
 make -C testbench sim               # build Verilator simulation
 make -C testbench run-all-tests     # run all 8 ELF tests
-make -C testbench cosim-no-sc       # build cosimulation (auto-builds Spike)
-make -C testbench run-cosim-no-sc   # RTL vs Spike lock-step cosim
+make -C testbench cosim             # build cosimulation (auto-builds Spike)
+make -C testbench run-cosim         # RTL vs Spike lock-step cosim
 ```
 
 Or step by step:
 
 ```bash
 lake build                              # build Lean proofs + code generators
-lake exe generate_all                   # generate SV + Chisel + SystemC for all modules
+lake exe generate_all                   # generate SV + Chisel + C++ Sim for all modules
 cd chisel && sbt run && cd ..           # compile Chisel -> SV via CIRCT
 ./verification/run-lec.sh              # verify Lean SV == Chisel SV (Yosys)
 ```

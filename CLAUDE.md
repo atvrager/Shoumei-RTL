@@ -20,7 +20,7 @@ Formally verified hardware design: circuits defined in Lean 4 DSL, properties pr
 
 ```bash
 lake build                          # Build Lean proofs + code generators
-lake exe generate_all               # Generate SV + Chisel + SystemC for all modules
+lake exe generate_all               # Generate SV + Chisel + C++ Sim for all modules
 cd chisel && sbt run && cd ..       # Compile Chisel -> SV via CIRCT
 ./verification/run-lec.sh           # Verify Lean SV == Chisel SV
 make all                            # Run entire pipeline
@@ -31,8 +31,8 @@ make -C testbench/tests             # Compile C tests -> ELF binaries
 make -C testbench sim               # Build Verilator simulation
 make -C testbench run-all-tests     # Run all ELF tests
 make -C testbench run-all-tests-xprop  # X-prop simulation
-make -C testbench cosim-no-sc       # Build cosim (auto-builds Spike)
-make -C testbench run-cosim-no-sc   # RTL vs Spike lock-step cosim
+make -C testbench cosim       # Build cosim (auto-builds Spike)
+make -C testbench run-cosim   # RTL vs Spike lock-step cosim
 ```
 
 ## Procedure: Adding a New Module
@@ -116,7 +116,7 @@ Four code generators in `lean/Shoumei/Codegen/`:
 | SystemVerilog | `SystemVerilog.lean` | `output/sv-from-lean/*.sv` (hierarchical) |
 | SystemVerilog Netlist | `SystemVerilogNetlist.lean` | `output/sv-netlist/*.sv` (flat) |
 | Chisel | `Chisel.lean` | `chisel/src/main/scala/generated/*.scala` |
-| SystemC | `SystemC.lean` | `output/systemc/*.{h,cpp}` |
+| C++ Simulation | `CppSim.lean` | `output/cpp_sim/*.{h,cpp}` |
 
 Shared utilities in `Common.lean`:
 - `findClockWires` / `findResetWires` -- detect clock/reset from DFF gates AND instance connections
@@ -139,7 +139,7 @@ The centralized codegen generates all 4 outputs for everything in the list:
 - SystemVerilog (hierarchical)
 - SystemVerilog netlist (flat)
 - Chisel → SystemVerilog via CIRCT
-- SystemC (.h + .cpp)
+- C++ Simulation (.h + .cpp)
 
 ## Proof Patterns
 
@@ -232,7 +232,7 @@ IEEE 1800-2017 compliant, synthesizable subset only.
 Lock-step comparison of RTL vs Spike reference model. Shows exact instruction where RTL diverges:
 
 ```bash
-make -C testbench cosim-no-sc && ./build-sim/cosim_shoumei +elf=testbench/tests/failing_test.elf
+make -C testbench cosim && ./build-sim/cosim_shoumei +elf=testbench/tests/failing_test.elf
 ```
 
 Output format: `DBG ret#N cyC: PC=0x... insn=0x... rd=xR(wr) data=0x... | Spike: ...`
@@ -266,5 +266,5 @@ Key signals for memory path debugging:
 - LEC failures indicate bugs in code generators, not the DSL
 - Clock and reset are implicit in Chisel (Clock/AsyncReset types) -- the codegen handles filtering them from explicit inputs
 - `hasSequentialElements` checks DFF gates only, NOT instances -- use `findClockWires`/`findResetWires` which check both
-- The `generate_all` executable is the recommended codegen entry point (does SV + Chisel + SystemC)
+- The `generate_all` executable is the recommended codegen entry point (does SV + Chisel + C++ Sim)
 - Chisel `Main.scala` auto-discovers all modules in `generated/` directory

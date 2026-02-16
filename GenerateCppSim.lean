@@ -1,8 +1,8 @@
 /-
-GenerateSystemC.lean - SystemC Code Generation Entry Point
+GenerateCppSim.lean - C++ Simulation Code Generation Entry Point
 
-Generates SystemC (.h and .cpp) files for all Shoumei RTL circuits.
-Output directory: output/systemc/
+Generates C++ simulation (.h and .cpp) files for all Shoumei RTL circuits.
+Output directory: output/cpp_sim/
 -/
 
 import Shoumei.Examples.Adder
@@ -23,21 +23,21 @@ import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
-import Shoumei.Codegen.SystemC
+import Shoumei.Codegen.CppSim
 
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
 open Shoumei.RISCV.Renaming
-open Shoumei.Codegen.SystemC
+open Shoumei.Codegen.CppSim
 
--- Helper: Write SystemC .h and .cpp files for a circuit
-def writeSystemCFiles (c : Circuit) : IO Unit := do
-  let header := toSystemCHeader c
-  let impl := toSystemCImpl c
+-- Helper: Write C++ simulation .h and .cpp files for a circuit
+def writeCppSimFiles (c : Circuit) : IO Unit := do
+  let header := toCppSimHeader c
+  let impl := toCppSimImpl c
 
-  let hPath := s!"output/systemc/{c.name}.h"
-  let cppPath := s!"output/systemc/{c.name}.cpp"
+  let hPath := s!"output/cpp_sim/{c.name}.h"
+  let cppPath := s!"output/cpp_sim/{c.name}.cpp"
 
   IO.FS.writeFile hPath header
   IO.FS.writeFile cppPath impl
@@ -47,143 +47,138 @@ def writeSystemCFiles (c : Circuit) : IO Unit := do
 def generateFoundation : IO Unit := do
   IO.println "==> Phase 0: Foundation Circuits"
   IO.println ""
-  writeSystemCFiles fullAdderCircuit
-  writeSystemCFiles dff
+  writeCppSimFiles fullAdderCircuit
+  writeCppSimFiles dff
 
 -- Phase 0b: Queue variants
 def generateQueues : IO Unit := do
   IO.println "==> Phase 0b: Queue Variants"
   IO.println ""
-  writeSystemCFiles (mkQueue1StructuralComplete 8)
-  writeSystemCFiles (mkQueue1StructuralComplete 32)
+  writeCppSimFiles (mkQueue1StructuralComplete 8)
+  writeCppSimFiles (mkQueue1StructuralComplete 32)
 
 -- Phase 0c: Register variants
 def generateRegisters : IO Unit := do
   IO.println "==> Phase 0c: Register Variants"
   IO.println ""
-  writeSystemCFiles mkRegister8
-  writeSystemCFiles mkRegister32
+  writeCppSimFiles mkRegister8
+  writeCppSimFiles mkRegister32
 
 -- Phase 1: Ripple Carry Adders
 def generateRippleCarryAdders : IO Unit := do
   IO.println "==> Phase 1a: Ripple Carry Adders"
   IO.println ""
-  writeSystemCFiles mkRippleCarryAdder4
-  writeSystemCFiles mkRippleCarryAdder8
-  writeSystemCFiles mkRippleCarryAdder32
+  writeCppSimFiles mkRippleCarryAdder4
+  writeCppSimFiles mkRippleCarryAdder8
+  writeCppSimFiles mkRippleCarryAdder32
 
 -- Phase 1: Subtractors
 def generateSubtractors : IO Unit := do
   IO.println "==> Phase 1b: Subtractors"
   IO.println ""
-  writeSystemCFiles mkSubtractor4
-  writeSystemCFiles mkSubtractor8
-  writeSystemCFiles mkSubtractor32
+  writeCppSimFiles mkSubtractor4
+  writeCppSimFiles mkSubtractor8
+  writeCppSimFiles mkSubtractor32
 
 -- Phase 1: Comparators
 def generateComparators : IO Unit := do
   IO.println "==> Phase 1c: Comparators"
   IO.println ""
-  writeSystemCFiles mkComparator4
-  writeSystemCFiles mkComparator8
-  writeSystemCFiles mkComparator32
+  writeCppSimFiles mkComparator4
+  writeCppSimFiles mkComparator8
+  writeCppSimFiles mkComparator32
 
 -- Phase 1: Logic Units
 def generateLogicUnits : IO Unit := do
   IO.println "==> Phase 1d: Logic Units"
   IO.println ""
-  writeSystemCFiles mkLogicUnit4
-  writeSystemCFiles mkLogicUnit8
-  writeSystemCFiles mkLogicUnit32
+  writeCppSimFiles mkLogicUnit4
+  writeCppSimFiles mkLogicUnit8
+  writeCppSimFiles mkLogicUnit32
 
 -- Phase 1: Shifters
 def generateShifters : IO Unit := do
   IO.println "==> Phase 1e: Shifters"
   IO.println ""
-  writeSystemCFiles mkShifter4
-  writeSystemCFiles mkShifter32
+  writeCppSimFiles mkShifter4
+  writeCppSimFiles mkShifter32
 
 -- Phase 1: ALUs
 def generateALUs : IO Unit := do
   IO.println "==> Phase 1f: ALU"
   IO.println ""
-  writeSystemCFiles mkALU32
+  writeCppSimFiles mkALU32
 
 -- Phase 2: Decoders
 def generateDecoders : IO Unit := do
   IO.println "==> Phase 2: Binary Decoders"
   IO.println ""
-  writeSystemCFiles mkDecoder2
-  writeSystemCFiles mkDecoder3
-  writeSystemCFiles mkDecoder5
+  writeCppSimFiles mkDecoder2
+  writeCppSimFiles mkDecoder3
+  writeCppSimFiles mkDecoder5
 
 -- Phase 3: MuxTree variants
 def generateMuxTrees : IO Unit := do
   IO.println "==> Phase 3: MuxTree Variants"
   IO.println ""
-  writeSystemCFiles mkMux2x8
-  writeSystemCFiles mkMux4x8
-  writeSystemCFiles mkMux32x6
-  writeSystemCFiles mkMux64x32
-  writeSystemCFiles (mkMuxTree 64 6)
-
--- Helper: log2 ceiling
-private def log2Ceil (n : Nat) : Nat :=
-  if n <= 1 then 0
-  else Nat.log2 n + (if 2^(Nat.log2 n) < n then 1 else 0)
+  writeCppSimFiles mkMux2x8
+  writeCppSimFiles mkMux4x8
+  writeCppSimFiles mkMux32x6
+  writeCppSimFiles mkMux64x32
+  writeCppSimFiles (mkMuxTree 64 6)
 
 -- Phase 4: QueueN variants (parametric queues)
 def generateQueueNVariants : IO Unit := do
   IO.println "==> Phase 4: QueueN Variants"
   IO.println ""
   -- Queue2_8
-  writeSystemCFiles (mkQueueNStructural 2 8)
-  writeSystemCFiles (mkQueueRAM 2 8)
-  writeSystemCFiles (mkQueuePointer 1)
-  writeSystemCFiles (mkQueueCounterUpDown 2)
+  writeCppSimFiles (mkQueueNStructural 2 8)
+  writeCppSimFiles (mkQueueRAM 2 8)
+  writeCppSimFiles (mkQueuePointer 1)
+  writeCppSimFiles (mkQueueCounterUpDown 2)
   -- Queue4_8
-  writeSystemCFiles (mkQueueNStructural 4 8)
-  writeSystemCFiles (mkQueueRAM 4 8)
-  writeSystemCFiles (mkQueuePointer 2)
-  writeSystemCFiles (mkQueueCounterUpDown 3)
+  writeCppSimFiles (mkQueueNStructural 4 8)
+  writeCppSimFiles (mkQueueRAM 4 8)
+  writeCppSimFiles (mkQueuePointer 2)
+  writeCppSimFiles (mkQueueCounterUpDown 3)
   -- Queue64_32
-  writeSystemCFiles (mkQueueNStructural 64 32)
-  writeSystemCFiles (mkQueueRAM 64 32)
+  writeCppSimFiles (mkQueueNStructural 64 32)
+  writeCppSimFiles (mkQueueRAM 64 32)
   -- Queue64_6
-  writeSystemCFiles (mkQueueNStructural 64 6)
-  writeSystemCFiles (mkQueueRAM 64 6)
+  writeCppSimFiles (mkQueueNStructural 64 6)
+  writeCppSimFiles (mkQueueRAM 64 6)
   -- Shared submodules for depth-64 queues
-  writeSystemCFiles (mkQueuePointer 6)
-  writeSystemCFiles (mkQueueCounterUpDown 7)
-  writeSystemCFiles (mkDecoder 6)
+  writeCppSimFiles (mkQueuePointer 6)
+  writeCppSimFiles (mkQueueCounterUpDown 7)
+  writeCppSimFiles (mkDecoder 6)
 
 -- Phase 5: RAT (Register Alias Table)
-def generateRATSystemC : IO Unit := do
+def generateRAT : IO Unit := do
   IO.println "==> Phase 5: RAT (Register Alias Table)"
   IO.println ""
-  writeSystemCFiles mkRAT64
+  writeCppSimFiles mkRAT64
 
 -- Phase 6: FreeList
-def generateFreeListSystemC : IO Unit := do
+def generateFreeList : IO Unit := do
   IO.println "==> Phase 6: FreeList (Free Physical Register List)"
   IO.println ""
-  writeSystemCFiles mkFreeList64
+  writeCppSimFiles mkFreeList64
 
 -- Phase 7: PhysRegFile
-def generatePhysRegFileSystemC : IO Unit := do
+def generatePhysRegFile : IO Unit := do
   IO.println "==> Phase 7: PhysRegFile (Physical Register File)"
   IO.println ""
-  writeSystemCFiles mkPhysRegFile64
+  writeCppSimFiles mkPhysRegFile64
 
 -- Main entry point
 def main : IO Unit := do
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println "  証明 Shoumei RTL - SystemC Generation"
+  IO.println "  証明 Shoumei RTL - C++ Simulation Generation"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println ""
 
   -- Create output directory if it doesn't exist
-  IO.FS.createDirAll "output/systemc"
+  IO.FS.createDirAll "output/cpp_sim"
 
   -- Generate all circuits
   generateFoundation
@@ -210,14 +205,14 @@ def main : IO Unit := do
   IO.println ""
   generateQueueNVariants
   IO.println ""
-  generateRATSystemC
+  generateRAT
   IO.println ""
-  generateFreeListSystemC
+  generateFreeList
   IO.println ""
-  generatePhysRegFileSystemC
+  generatePhysRegFile
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println "✓ SystemC code generation complete"
-  IO.println "  Output: output/systemc/*.h, *.cpp"
+  IO.println "✓ C++ simulation code generation complete"
+  IO.println "  Output: output/cpp_sim/*.h, *.cpp"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

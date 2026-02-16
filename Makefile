@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates LEAN, Chisel, and verification pipeline
 
-.PHONY: all clean lean codegen chisel systemverilog systemc lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype
+.PHONY: all clean lean codegen chisel systemverilog cppsim lec eqy smoke-test verify help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype
 
 # Add tool directories to PATH
 # This ensures lake (from elan) and sbt (from coursier) are available
@@ -13,9 +13,9 @@ HAS_SBT := $(shell command -v sbt 2> /dev/null)
 HAS_PYTHON := $(shell command -v python3 2> /dev/null)
 
 # Default target: run entire pipeline
-all: check-tools lean codegen chisel systemverilog systemc lec
+all: check-tools lean codegen chisel systemverilog cppsim lec
 	@echo ""
-	@echo "✓ Complete pipeline executed successfully (SV + Chisel + SystemC + LEC)"
+	@echo "✓ Complete pipeline executed successfully (SV + Chisel + C++ Sim + LEC)"
 
 # Help target
 help:
@@ -23,15 +23,15 @@ help:
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  make setup      - Run bootstrap.py to install all dependencies"
-	@echo "  make all        - Run entire pipeline (lean → chisel → systemc → lec)"
+	@echo "  make all        - Run entire pipeline (lean → chisel → cppsim → lec)"
 	@echo "  make lean       - Build LEAN code with Lake"
 	@echo "  make opcodes      - Generate RISC-V instruction definitions (default: RV32I)"
 	@echo "  make opcodes-rv32i  - Generate RV32I instruction definitions"
 	@echo "  make opcodes-rv32im - Generate RV32IM instruction definitions (with M extension)"
-	@echo "  make codegen    - Run code generators (SV + Chisel + SystemC)"
+	@echo "  make codegen    - Run code generators (SV + Chisel + C++ Sim)"
 	@echo "  make chisel     - Compile Chisel to SystemVerilog"
 	@echo "  make systemverilog - Validate generated SystemVerilog with Yosys"
-	@echo "  make systemc    - Compile SystemC modules"
+	@echo "  make cppsim     - Compile C++ simulation modules"
 	@echo ""
 	@echo "Verification Targets:"
 	@echo "  make lec        - Run Yosys SAT-based LEC (miter + SAT solver)"
@@ -105,7 +105,7 @@ opcodes-rv32im: opcodes
 # Run code generators
 codegen: lean opcodes
 	@echo "==> Running code generators..."
-	@echo "    Phase 1: All circuits (SV + Chisel + SystemC)..."
+	@echo "    Phase 1: All circuits (SV + Chisel + C++ Sim)..."
 	lake exe generate_all
 	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM + RV32IF + RV32IMF)..."
 	lake exe generate_riscv_decoder
@@ -150,10 +150,10 @@ systemverilog:
 	@echo "==> Validating generated SystemVerilog modules..."
 	@./verification/validate-sv.sh output/sv-from-lean
 
-# Compile SystemC modules
-systemc:
-	@echo "==> Compiling SystemC modules..."
-	cd systemc && ./build.sh
+# Compile C++ simulation modules
+cppsim:
+	@echo "==> Compiling C++ simulation modules..."
+	cd cpp_sim && mkdir -p build && cd build && cmake .. && make -j$$(nproc)
 
 # Run logical equivalence checking with Yosys
 lec: lean
@@ -223,10 +223,10 @@ endif
 	@# Always clean output directories (doesn't require tools)
 	@find output/sv-from-lean -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/sv-from-chisel -type f ! -name '.gitkeep' -delete 2>/dev/null || true
-	@find output/systemc -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@find output/cpp_sim -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find chisel/src/main/scala/generated -type f ! -name '.gitkeep' -delete 2>/dev/null || true
-	@# Clean SystemC build artifacts
-	@rm -rf systemc/build 2>/dev/null || true
+	@# Clean C++ simulation build artifacts
+	@rm -rf cpp_sim/build 2>/dev/null || true
 	@# Clean riscv-opcodes generated files
 	-rm -f third_party/riscv-opcodes/instr_dict.json third_party/riscv-opcodes/encoding.out.h 2>/dev/null || true
 	@echo "✓ Clean complete"

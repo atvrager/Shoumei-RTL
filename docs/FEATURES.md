@@ -34,7 +34,7 @@ Every circuit generates four outputs from a single Lean definition:
 | SystemVerilog (hierarchical) | Primary RTL for synthesis and simulation |
 | SystemVerilog (flat netlist) | Gate-level for analysis |
 | Chisel/FIRRTL | Leverages CIRCT optimizer, second SV output for LEC |
-| SystemC | Cycle-accurate C++ model for fast simulation |
+| C++ Sim | Cycle-accurate C++ simulation model |
 
 Bus reconstruction groups indexed wires into arrays (`wire [31:0] data` instead of 32 individual wires), giving 60-75% fewer wire declarations.
 
@@ -63,8 +63,8 @@ Yosys-based logical equivalence checking between Lean-generated SV and Chisel-ge
 - X-prop simulation mode for detecting uninitialized signal issues
 - FST trace support for waveform debugging
 
-### SystemC Simulation
-- Cycle-accurate simulation from Lean-generated SystemC
+### C++ Simulation
+- Cycle-accurate simulation from Lean-generated C++ simulation
 - Same 8 ELF tests pass identically
 
 ### 2-Way Lock-Step Cosimulation (RTL vs Spike)
@@ -89,10 +89,10 @@ OpenROAD Flow Scripts integration with ASAP7 7nm PDK for synthesis exploration.
 - Lean build + sorry check
 - Proof coverage analysis
 - Scala build + format check
-- Code generation (SV + Chisel + SystemC)
+- Code generation (SV + Chisel + C++ Sim)
 - LEC verification
 - Slang IEEE 1800-2017 lint
 - Verilator simulation (standard + X-prop)
-- SystemC simulation
+- C++ simulation
 - Smoke tests
 - 2-way cosimulation (RTL vs Spike)

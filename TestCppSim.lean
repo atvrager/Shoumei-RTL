@@ -1,26 +1,26 @@
 /-
-TestSystemC.lean - Quick test for SystemC code generation
+TestCppSim.lean - Quick test for C++ simulation code generation
 
-Generates SystemC code for FullAdder and DFlipFlop to verify the generator works.
+Generates C++ simulation code for FullAdder and DFlipFlop to verify the generator works.
 -/
 
 import Shoumei.Examples.Adder
 import Shoumei.Circuits.Sequential.DFF
-import Shoumei.Codegen.SystemC
+import Shoumei.Codegen.CppSim
 
 open Shoumei.Examples
 open Shoumei.Circuits.Sequential
-open Shoumei.Codegen.SystemC
+open Shoumei.Codegen.CppSim
 
 def main : IO Unit := do
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println "  SystemC Code Generation Test"
+  IO.println "  C++ Simulation Code Generation Test"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   -- Test 1: FullAdder (combinational)
   IO.println "\n==> Generating FullAdder (combinational)"
-  let faHeader := toSystemCHeader fullAdderCircuit
-  let faImpl := toSystemCImpl fullAdderCircuit
+  let faHeader := toCppSimHeader fullAdderCircuit
+  let faImpl := toCppSimImpl fullAdderCircuit
 
   IO.println "--- FullAdder.h ---"
   IO.println faHeader
@@ -29,12 +29,12 @@ def main : IO Unit := do
 
   -- Test 2: DFlipFlop (sequential)
   IO.println "\n==> Generating DFlipFlop (sequential)"
-  let dffHeader := toSystemCHeader dff
-  let dffImpl := toSystemCImpl dff
+  let dffHeader := toCppSimHeader dff
+  let dffImpl := toCppSimImpl dff
 
   IO.println "--- DFlipFlop.h ---"
   IO.println dffHeader
   IO.println "\n--- DFlipFlop.cpp ---"
   IO.println dffImpl
 
-  IO.println "\n✓ SystemC generation test complete"
+  IO.println "\n✓ C++ simulation generation test complete"

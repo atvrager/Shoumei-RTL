@@ -23,18 +23,18 @@ Shoumei has a unique advantage: the ISA semantics, the decoder, and the full mic
       ELF binary ─────────────────────+──────────────+
          |                             |              |
          v                             v              v
-   RTL (Verilator) ◄── RVVI ──► SystemC (Lean)    Spike
-   (SV from Lean)        |      (SC from Lean)   (libriscv)
-                         |             |              |
-                         +------+------+------+-------+
-                                |             |
-                                v             v
-                           3-way compare (per retirement)
-                                |
-                           PASS / FAIL + fault isolation
+   RTL (Verilator) ◄── RVVI ──► Spike
+   (SV from Lean)        |      (libriscv)
+                         |             |
+                         +-----+-------+
+                               |
+                               v
+                           2-way compare (per retirement)
+                               |
+                           PASS / FAIL
 ```
 
-**Lean** generates the programs and emits valid ELF binaries. Three implementations execute the same binary: **RTL** (Verilator, from Lean SV codegen), **SystemC** (from Lean SC codegen), and **Spike** (libriscv, the ISA oracle). All three are linked into the same testbench process. On each RVVI retirement event, the testbench steps both SystemC and Spike, then performs a three-way comparison. Mismatches are detected at the exact cycle they occur, with automatic fault isolation. See [Lock-Step Cosimulation via RVVI](cosimulation.md) for the full integration architecture.
+**Lean** generates the programs and emits valid ELF binaries. Two implementations execute the same binary: **RTL** (Verilator, from Lean SV codegen) and **Spike** (libriscv, the ISA oracle). Both are linked into the same testbench process. On each RVVI retirement event, the testbench steps Spike and compares against the RTL. Mismatches are detected at the exact cycle they occur. See [Lock-Step Cosimulation via RVVI](cosimulation.md) for the full integration architecture.
 
 ### Role of each component
 
@@ -45,7 +45,6 @@ Shoumei has a unique advantage: the ISA semantics, the decoder, and the full mic
 | Lean ELF emitter | Package instructions into valid bare-metal ELF binaries |
 | RVVI-TRACE port | Standard retirement interface on the RTL (output-only signals) |
 | RTL (Verilator) | Primary DUT, drives RVVI, generated from Lean SV codegen |
-| SystemC model | Second DUT, generated from Lean SC codegen, isolates codegen bugs |
 | Spike (libriscv) | ISA-level golden reference, linked into testbench, stepped per retirement |
 
 ### Why Spike and not the Lean semantics model?
