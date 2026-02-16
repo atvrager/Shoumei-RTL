@@ -210,32 +210,62 @@ private def parseForSuffix (s : ParseState) : Except String (Option (String × N
         return (some (var, startN, endN), s)
     | .error _ => return (none, s)
 
-private def parsePortMapping (s : ParseState) : Except String ((String × WireRef) × ParseState) := do
-  -- Port name may be indexed: `portName[idx]` or just `portName`
+private def parsePortMapping (s : ParseState) : Except String (List (String × WireRef) × ParseState) := do
   let (baseName, s) ← parseIdent s
-  let (portName, s) ←
+  if !atEnd s && curr s == '[' then do
+    let s ← expect '[' s
+    -- Check for bracket-style bus compression: name[[width]]
     if !atEnd s && curr s == '[' then do
       let s ← expect '[' s
-      let (idx, s) ← parseNat s
+      let (n, s) ← parseNat s
       let s ← expect ']' s
-      pure (s!"{baseName}_{idx}", s)
-    else pure (baseName, s)
-  let s := skipWS s
-  let s ← expect '=' s
-  let s := skipWS s
-  let (ref, s) ← parseWireRef s
-  return ((portName, ref), s)
+      let s ← expect ']' s
+      let s := skipWS s
+      let s ← expect '=' s
+      let s := skipWS s
+      let (ref, s) ← parseWireRef s
+      match ref with
+      | .scalar busName =>
+        -- Bracket-style bus: baseName[[N]] = bus → baseName_0..baseName_(N-1)
+        let mappings := (List.range n).map fun i =>
+          (s!"{baseName}_{i}", WireRef.indexed busName i)
+        return (mappings, s)
+      | _ => err "expected scalar bus name after bracket bus compression" s
+    else do
+      let (n, s) ← parseNat s
+      let s ← expect ']' s
+      let s := skipWS s
+      let s ← expect '=' s
+      let s := skipWS s
+      let (ref, s) ← parseWireRef s
+      match ref with
+      | .scalar busName =>
+        if n >= 2 then
+          -- Bus compression: prefix[width] = busName → expand to N ports
+          let mappings := (List.range n).map fun i =>
+            (s!"{baseName}{i}", WireRef.indexed busName i)
+          return (mappings, s)
+        else
+          return ([(s!"{baseName}_{n}", ref)], s)
+      | _ =>
+        return ([(s!"{baseName}_{n}", ref)], s)
+  else do
+    let s := skipWS s
+    let s ← expect '=' s
+    let s := skipWS s
+    let (ref, s) ← parseWireRef s
+    return ([(baseName, ref)], s)
 
 private partial def parsePortMappings (s : ParseState) : Except String (List (String × WireRef) × ParseState) := do
   let s := skipWS s
   if atEnd s || curr s == ')' || curr s == '-' then return ([], s)
   else do
-    let (mapping, s) ← parsePortMapping s
+    let (mappings, s) ← parsePortMapping s
     let s := skipWS s
     if !atEnd s && curr s == ',' then do
       let (rest, s) ← parsePortMappings (skipWS (adv s))
-      return (mapping :: rest, s)
-    else return ([mapping], s)
+      return (mappings ++ rest, s)
+    else return (mappings, s)
 
 private def parseStmt (s : ParseState) : Except String (Stmt × ParseState) := do
   let s := skipWS s

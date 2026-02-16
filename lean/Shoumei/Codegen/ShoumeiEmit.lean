@@ -43,6 +43,50 @@ def parseWireName (w : Wire) : Option (String × Nat) :=
         some (baseName, idx)
       | none => none
 
+/-- Port name separator style: underscore (d_0), bare digits (a31), or bracket (in0[0]). -/
+inductive PortSep where | underscore | bare | bracket
+  deriving BEq
+
+/-- Parse a port name into (prefix, index, separator style).
+    Tries bracket ("in0[0]" → ("in0", 0, bracket)),
+    then underscore ("d_0" → ("d_", 0, underscore)),
+    then trailing digits ("a31" → ("a", 31, bare)). -/
+def parsePortName (portName : String) : Option (String × Nat × PortSep) :=
+  -- Try bracket pattern: name[idx]
+  if portName.endsWith "]" then
+    match portName.splitOn "[" with
+    | [base, idxBracket] =>
+      let idxStr := idxBracket.dropEnd 1
+      match idxStr.toNat? with
+      | some idx => some (base, idx, .bracket)
+      | none => none
+    | _ => none
+  else
+    -- Try underscore split: "d_0" → ("d_", 0)
+    let parts := portName.splitOn "_"
+    match parts.reverse with
+    | lastPart :: restRev =>
+      if restRev.isEmpty then trySuffix portName
+      else
+        match lastPart.toNat? with
+        | some idx =>
+          let pfx := String.intercalate "_" restRev.reverse ++ "_"
+          some (pfx, idx, .underscore)
+        | none => trySuffix portName
+    | _ => trySuffix portName
+where
+  trySuffix (s : String) : Option (String × Nat × PortSep) :=
+    let chars := s.toList
+    let revDigits := chars.reverse.takeWhile Char.isDigit
+    if revDigits.isEmpty then none
+    else
+      let numDigits := revDigits.length
+      let pfx := String.ofList (chars.take (chars.length - numDigits))
+      let sfx := String.ofList revDigits.reverse
+      match sfx.toNat? with
+      | some idx => if pfx.isEmpty then none else some (pfx, idx, .bare)
+      | none => none
+
 /-- Group wires by base name for bus reconstruction -/
 def groupWiresByBaseName (wires : List Wire) : List (String × List (Nat × Wire)) :=
   let parsed := wires.filterMap (fun w =>
@@ -413,7 +457,77 @@ def emitGates (c : Circuit) (ctx : EmitCtx) : List String :=
 
 /-! ## Instance Emission -/
 
-/-- Emit instance statements. Phase 1: explicit per-port form. -/
+/-- Compress a port map list into bus-compressed strings where possible.
+    Contiguous port groups (e.g. d_0..d_63) mapping to matching bus wires
+    are collapsed to `d_[64] = d`. -/
+def compressPortMap (ports : List (String × Wire)) (ctx : EmitCtx) : List String :=
+  -- Step 1: Parse port names and group by (prefix, sep)
+  let withParsed := ports.map fun (pn, w) => (pn, w, parsePortName pn)
+  -- Group key: (prefix, sep) — use string encoding for grouping
+  let groupKey := fun (pfx : String) (sep : PortSep) =>
+    match sep with | .bracket => pfx ++ "[" | _ => pfx
+  let groups : List (String × PortSep × List (Nat × String × Wire)) :=
+    withParsed.foldl (fun acc (_pn, w, parsed) =>
+      match parsed with
+      | some (pfx, idx, sep) =>
+        let key := groupKey pfx sep
+        match acc.find? (fun (k, _, _) => k == key) with
+        | some (_, _, entries) =>
+          acc.filter (fun (k, _, _) => k != key) ++ [(key, sep, entries ++ [(idx, _pn, w)])]
+        | none => acc ++ [(key, sep, [(idx, _pn, w)])]
+      | none => acc
+    ) []
+  -- Step 2: Determine which groups can be bus-compressed
+  let busCompressed : List (String × PortSep × String × Nat × String) :=
+    groups.filterMap fun (key, sep, entries) =>
+      if entries.length < 2 then none
+      else
+        let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
+        let indices := sorted.map (·.1)
+        if indices != List.range sorted.length then none
+        else
+          let busInfo := sorted.filterMap fun (idx, _, w) =>
+            match ctx.groupMap[w.name]?, ctx.indexMap[w.name]? with
+            | some sg, some wIdx => if sg.width > 1 && wIdx == idx then some sg.name else none
+            | _, _ => none
+          if busInfo.length != sorted.length then none
+          else
+            let busNames := busInfo.eraseDups
+            -- Recover the base prefix from the first entry
+            match busNames with
+            | [busName] =>
+              let basePfx := match sorted.head? with
+                | some (_, pn, _) =>
+                  match parsePortName pn with
+                  | some (p, _, _) => p
+                  | none => key
+                | none => key
+              some (key, sep, basePfx, sorted.length, busName)
+            | _ => none
+  let compressedSet := busCompressed.map (·.1)
+  -- Step 3: Emit, skipping already-emitted bus members
+  let (_, result) := withParsed.foldl (fun (state : List String × List String) entry =>
+    let (emitted, acc) := state
+    let (pn, w, parsed) := entry
+    match parsed with
+    | some (pfx, _, sep) =>
+      let key := groupKey pfx sep
+      if compressedSet.contains key then
+        if emitted.contains key then (emitted, acc)
+        else
+          match busCompressed.find? (fun (k, _, _, _, _) => k == key) with
+          | some (_, portSep, basePfx, width, busName) =>
+            let compressed := match portSep with
+              | .bracket => s!"{basePfx}[[{width}]] = {busName}"
+              | _ => s!"{basePfx}[{width}] = {busName}"
+            (emitted ++ [key], acc ++ [compressed])
+          | none => (emitted, acc ++ [s!"{pn} = {wireRef w ctx}"])
+      else (emitted, acc ++ [s!"{pn} = {wireRef w ctx}"])
+    | none => (emitted, acc ++ [s!"{pn} = {wireRef w ctx}"])
+  ) ([], [])
+  result
+
+/-- Emit instance statements with bus-compressed port maps. -/
 def emitInstances (c : Circuit) (ctx : EmitCtx) (_allCircuits : List Circuit) : List String :=
   -- Precompute: wires driven by the parent (circuit inputs + gate outputs)
   let drivenByParent : Std.HashSet String :=
@@ -421,19 +535,13 @@ def emitInstances (c : Circuit) (ctx : EmitCtx) (_allCircuits : List Circuit) : 
     c.gates.foldl (fun s g => s.insert g.output.name) s
 
   c.instances.map (fun inst =>
-    -- A port is an output from the submodule if its local wire is NOT driven by anything
-    -- in the parent (not a parent input, not a gate output).
-    -- This wire must be driven by this instance.
     let outputPorts := inst.portMap.filter (fun (_, w) =>
       !drivenByParent.contains w.name)
     let inputPorts := inst.portMap.filter (fun (_, w) =>
       drivenByParent.contains w.name)
 
-    let formatPort := fun (portName : String) (w : Wire) =>
-      s!"{portName} = {wireRef w ctx}"
-
-    let inputStrs := inputPorts.map (fun (pn, w) => formatPort pn w)
-    let outputStrs := outputPorts.map (fun (pn, w) => formatPort pn w)
+    let inputStrs := compressPortMap inputPorts ctx
+    let outputStrs := compressPortMap outputPorts ctx
 
     let portBody := if !inputStrs.isEmpty && !outputStrs.isEmpty then
       let inPart := ",\n    ".intercalate inputStrs
