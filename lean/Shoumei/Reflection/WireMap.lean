@@ -55,6 +55,14 @@ def toEnv (m : WireMap) : Env :=
 -- Core lemmas
 
 @[simp]
+theorem lookup_nil (w : Wire) : WireMap.lookup [] w = false := by
+  unfold WireMap.lookup
+  simp [List.find?]
+
+theorem wire_ne_of_name_ne {w1 w2 : Wire} (h : w1.name ≠ w2.name) : w1 ≠ w2 := by
+  intro heq; exact h (congrArg Wire.name heq)
+
+@[simp]
 theorem lookup_insert_eq (m : WireMap) (w : Wire) (v : Bool) :
     (m.insert w v).lookup w = v := by
   simp [insert, lookup, wire_beq_self]
