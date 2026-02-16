@@ -31,51 +31,56 @@ void CppSimOracle::imem_update() {
     write_bus(imem_resp_data_sigs_, word, 32);
 }
 
+static constexpr uint32_t TOHOST_ADDR = 0x1000;
+static constexpr uint32_t PUTCHAR_ADDR = 0x1004;
+
 void CppSimOracle::dmem_tick(bool req_valid, bool req_we,
                               uint32_t addr, uint32_t data, uint32_t size) {
-    dmem_resp_valid_ = false;
+    dmem_req_ready_ = true;
 
+    // Respond to pending load from previous cycle
     if (dmem_pending_) {
         dmem_resp_valid_ = true;
         write_bus(dmem_resp_data_sigs_, dmem_read_data_, 32);
         dmem_pending_ = false;
+    } else {
+        dmem_resp_valid_ = false;
+        // Keep resp_data at last read value (matches SV: assign dmem_resp_data = dmem_read_data)
+        write_bus(dmem_resp_data_sigs_, dmem_read_data_, 32);
     }
 
+    // Handle new request
     if (req_valid) {
-        uint32_t widx = addr / 4;
-        uint32_t byte_off = addr & 3;
-
         if (req_we) {
             // Store
-            if (widx < MEM_SIZE_WORDS) {
-                uint32_t cur = mem_[widx];
-                if (size == 0) {
-                    // SB
-                    uint32_t mask = 0xFFu << (byte_off * 8);
-                    cur = (cur & ~mask) | ((data & 0xFF) << (byte_off * 8));
-                } else if (size == 1) {
-                    // SH
-                    uint32_t shift = (byte_off & 2) * 8;
-                    uint32_t mask = 0xFFFFu << shift;
-                    cur = (cur & ~mask) | ((data & 0xFFFF) << shift);
-                } else {
-                    // SW
-                    cur = data;
-                }
-                mem_[widx] = cur;
-            }
-            // Check tohost
-            if (addr == 0x1000 && data != 0) {
+            if (addr == TOHOST_ADDR) {
                 test_done_ = true;
                 test_data_ = data;
+            } else if (addr == PUTCHAR_ADDR) {
+                putchar(data & 0xFF);
+            } else {
+                uint32_t widx = addr / 4;
+                if (widx < MEM_SIZE_WORDS) {
+                    uint32_t cur = mem_[widx];
+                    uint32_t byte_off = addr & 3;
+                    if (size == 0) { // SB
+                        uint32_t shift = byte_off * 8;
+                        cur = (cur & ~(0xFFu << shift)) | ((data & 0xFF) << shift);
+                    } else if (size == 1) { // SH
+                        uint32_t shift = (byte_off & 2) * 8;
+                        cur = (cur & ~(0xFFFFu << shift)) | ((data & 0xFFFF) << shift);
+                    } else { // SW
+                        cur = data;
+                    }
+                    mem_[widx] = cur;
+                }
             }
-            dmem_pending_ = true;
-            dmem_read_data_ = 0;
+            // Stores do NOT set pending — no response generated
         } else {
-            // Load
-            uint32_t word = (widx < MEM_SIZE_WORDS) ? mem_[widx] : 0;
+            // Load: respond next cycle
+            uint32_t ridx = addr / 4;
+            dmem_read_data_ = (ridx < MEM_SIZE_WORDS) ? mem_[ridx] : 0;
             dmem_pending_ = true;
-            dmem_read_data_ = word;
         }
     }
 }
