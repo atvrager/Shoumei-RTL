@@ -1034,6 +1034,221 @@ Controlled by `CPUConfig.enableM`:
 Instances: 10 (RV32I) or 12 (RV32IM) verified submodules.
 -/
 
+private def testBit (n : Nat) (b : Nat) : Bool := (n / (2 ^ b)) % 2 != 0
+
+def mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
+  let bitWires := (List.range 6).map fun b =>
+    if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
+  let notGates := (List.range 6).filterMap fun b =>
+    if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
+  let t01 := Wire.mk s!"{pfx}_t01"
+  let t012 := Wire.mk s!"{pfx}_t012"
+  let t0123 := Wire.mk s!"{pfx}_t0123"
+  let t01234 := Wire.mk s!"{pfx}_t01234"
+  notGates ++ [
+    Gate.mkAND bitWires[0]! bitWires[1]! t01,
+    Gate.mkAND t01 bitWires[2]! t012,
+    Gate.mkAND t012 bitWires[3]! t0123,
+    Gate.mkAND t0123 bitWires[4]! t01234,
+    Gate.mkAND t01234 bitWires[5]! result
+  ]
+
+/-- Branch resolution logic: PC+4 link, target computation, condition evaluation,
+    misprediction detection, ROB redirect, and redirect target muxes. -/
+def mkBranchResolve
+    (config : CPUConfig) (oi : OpType → Nat)
+    (zero one : Wire)
+    (br_captured_pc br_captured_imm : List Wire)
+    (rs_branch_dispatch_src1 rs_branch_dispatch_src2 : List Wire)
+    (rs_branch_dispatch_opcode : List Wire)
+    (branch_result : List Wire)
+    (branch_predicted_taken : Wire)
+    (rob_commit_en rob_head_isBranch rob_head_mispredicted : Wire)
+    (rob_head_redirect_target fence_i_redir_target : List Wire)
+    (fence_i_drain_complete : Wire)
+    (csr_flush_suppress not_csr_flush_suppress rename_flush_en redirect_valid_int : Wire)
+    (rob_redirect_valid : Wire)
+    (branch_redirect_target : List Wire)
+    : List Gate × List CircuitInstance × Wire × Wire × List Wire × List Wire × List Wire × Wire × List Wire :=
+  -- === JAL/JALR LINK REGISTER (PC+4) ===
+  let br_pc_plus_4 := makeIndexedWires "br_pc_plus_4" 32
+  let br_pc_plus_4_b := makeIndexedWires "br_pc_plus_4_b" 32
+  let br_pc_plus_4_b_gates := (List.range 32).map (fun i =>
+    if i == 2 then Gate.mkBUF one br_pc_plus_4_b[i]!
+    else Gate.mkBUF zero br_pc_plus_4_b[i]!)
+
+  let br_pc_plus_4_adder_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder32"
+    instName := "u_br_pc_plus_4"
+    portMap :=
+      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (br_pc_plus_4_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (br_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
+      []
+  }
+
+  -- Opcode match: JAL/JALR from config
+  let is_jal := Wire.mk "is_jal"
+  let is_jalr := Wire.mk "is_jalr"
+  let is_jal_or_jalr := Wire.mk "is_jal_or_jalr"
+  let jal_match_gates := mkOpcodeMatch6 "jal_match" (oi .JAL) rs_branch_dispatch_opcode is_jal
+  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" (oi .JALR) rs_branch_dispatch_opcode is_jalr
+  let jal_jalr_or_gate := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
+
+  let branch_result_final := makeIndexedWires "branch_result_final" 32
+  let branch_result_mux_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX branch_result[i]! br_pc_plus_4[i]! is_jal_or_jalr branch_result_final[i]!)
+
+  -- === BRANCH TARGET + PC REDIRECT ===
+  let branch_target := makeIndexedWires "branch_target" 32
+  let branch_target_adder_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder32"
+    instName := "u_branch_target"
+    portMap :=
+      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (branch_target.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
+      []
+  }
+
+  -- JALR target = src1 + br_captured_imm, bit 0 cleared
+  let jalr_target_raw := makeIndexedWires "jalr_target_raw" 32
+  let jalr_target := makeIndexedWires "jalr_target" 32
+  let jalr_target_adder_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder32"
+    instName := "u_jalr_target"
+    portMap :=
+      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (jalr_target_raw.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
+      []
+  }
+  let jalr_target_gates := (List.range 32).map (fun i =>
+    if i == 0 then Gate.mkBUF zero jalr_target[i]!
+    else Gate.mkBUF jalr_target_raw[i]! jalr_target[i]!)
+
+  let final_branch_target := makeIndexedWires "final_branch_target" 32
+  let target_sel_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX branch_target[i]! jalr_target[i]! is_jalr final_branch_target[i]!)
+
+  -- Branch condition evaluation
+  let br_eq := Wire.mk "br_eq"
+  let br_lt := Wire.mk "br_lt"
+  let br_ltu := Wire.mk "br_ltu"
+
+  let br_cmp_inst : CircuitInstance := {
+    moduleName := "Comparator32"
+    instName := "u_br_cmp"
+    portMap :=
+      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one), ("eq", br_eq), ("lt", br_lt), ("ltu", br_ltu),
+       ("gt", Wire.mk "br_gt"), ("gtu", Wire.mk "br_gtu")]
+  }
+
+  -- Decode branch condition from opcode (encodings from config)
+  let is_beq := Wire.mk "is_beq"
+  let is_bne := Wire.mk "is_bne"
+  let is_blt := Wire.mk "is_blt"
+  let is_bge := Wire.mk "is_bge"
+  let is_bltu := Wire.mk "is_bltu"
+  let is_bgeu := Wire.mk "is_bgeu"
+
+  let beq_match_gates := mkOpcodeMatch6 "beq_match" (oi .BEQ) rs_branch_dispatch_opcode is_beq
+  let bne_match_gates := mkOpcodeMatch6 "bne_match" (oi .BNE) rs_branch_dispatch_opcode is_bne
+  let blt_match_gates := mkOpcodeMatch6 "blt_match" (oi .BLT) rs_branch_dispatch_opcode is_blt
+  let bge_match_gates := mkOpcodeMatch6 "bge_match" (oi .BGE) rs_branch_dispatch_opcode is_bge
+  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" (oi .BLTU) rs_branch_dispatch_opcode is_bltu
+  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" (oi .BGEU) rs_branch_dispatch_opcode is_bgeu
+
+  -- Condition evaluation
+  let not_eq := Wire.mk "br_not_eq"
+  let not_lt := Wire.mk "not_lt"
+  let not_ltu := Wire.mk "not_ltu"
+  let beq_taken := Wire.mk "beq_taken"
+  let bne_taken := Wire.mk "bne_taken"
+  let blt_taken := Wire.mk "blt_taken"
+  let bge_taken := Wire.mk "bge_taken"
+  let bltu_taken := Wire.mk "bltu_taken"
+  let bgeu_taken := Wire.mk "bgeu_taken"
+  let cond_taken_tmp1 := Wire.mk "cond_taken_tmp1"
+  let cond_taken_tmp2 := Wire.mk "cond_taken_tmp2"
+  let cond_taken_tmp3 := Wire.mk "cond_taken_tmp3"
+  let cond_taken_tmp4 := Wire.mk "cond_taken_tmp4"
+  let cond_taken := Wire.mk "cond_taken"
+  let branch_taken := Wire.mk "branch_taken"
+
+  let branch_cond_gates := [
+    Gate.mkNOT br_eq not_eq,
+    Gate.mkNOT br_lt not_lt,
+    Gate.mkNOT br_ltu not_ltu,
+    Gate.mkAND is_beq br_eq beq_taken,
+    Gate.mkAND is_bne not_eq bne_taken,
+    Gate.mkAND is_blt br_lt blt_taken,
+    Gate.mkAND is_bge not_lt bge_taken,
+    Gate.mkAND is_bltu br_ltu bltu_taken,
+    Gate.mkAND is_bgeu not_ltu bgeu_taken,
+    Gate.mkOR beq_taken bne_taken cond_taken_tmp1,
+    Gate.mkOR cond_taken_tmp1 blt_taken cond_taken_tmp2,
+    Gate.mkOR cond_taken_tmp2 bge_taken cond_taken_tmp3,
+    Gate.mkOR cond_taken_tmp3 bltu_taken cond_taken_tmp4,
+    Gate.mkOR cond_taken_tmp4 bgeu_taken cond_taken,
+    Gate.mkOR cond_taken is_jal_or_jalr branch_taken
+  ]
+
+  -- Misprediction detection
+  let branch_mispredicted := Wire.mk "branch_mispredicted"
+  let branch_cond_mispredicted := Wire.mk "branch_cond_mispredicted"
+  let branch_mispredicted_gate :=
+    [Gate.mkXOR branch_predicted_taken branch_taken branch_cond_mispredicted,
+     Gate.mkOR branch_cond_mispredicted is_jalr branch_mispredicted]
+
+  -- ROB redirect + CSR flush suppression
+  let rob_redirect_tmp := Wire.mk "rob_redirect_tmp"
+  let rob_redirect_branch := Wire.mk "rob_redirect_branch"
+  let csr_flush_suppress_gates := if config.enableZicsr then [
+    Gate.mkNOT csr_flush_suppress not_csr_flush_suppress,
+    Gate.mkAND redirect_valid_int not_csr_flush_suppress rename_flush_en
+  ] else [
+    Gate.mkBUF redirect_valid_int rename_flush_en,
+    Gate.mkBUF zero not_csr_flush_suppress
+  ]
+  let branch_redirect_gate := [
+    Gate.mkAND rob_commit_en rob_head_isBranch rob_redirect_tmp,
+    Gate.mkAND rob_redirect_tmp rob_head_mispredicted rob_redirect_branch,
+    Gate.mkOR rob_redirect_branch fence_i_drain_complete rob_redirect_valid
+  ]
+
+  -- Redirect target: MUX between branch redirect target and FENCE.I PC+4
+  let branch_target_wire_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX rob_head_redirect_target[i]! fence_i_redir_target[i]! fence_i_drain_complete branch_redirect_target[i]!)
+
+  -- Misprediction redirect target mux
+  let mispredict_redirect_target := makeIndexedWires "mispredict_redirect_target" 32
+  let mispredict_sel := Wire.mk "mispredict_sel"
+  let not_jal_or_jalr := Wire.mk "not_jal_or_jalr"
+  let mispredict_redirect_gates :=
+    [Gate.mkNOT is_jal_or_jalr not_jal_or_jalr,
+     Gate.mkAND branch_predicted_taken not_jal_or_jalr mispredict_sel] ++
+    (List.range 32).map (fun i =>
+    Gate.mkMUX final_branch_target[i]! br_pc_plus_4[i]! mispredict_sel mispredict_redirect_target[i]!)
+
+  let allGates :=
+    br_pc_plus_4_b_gates ++ branch_result_mux_gates ++
+    jal_match_gates ++ jalr_match_gates ++ jal_jalr_or_gate ++
+    beq_match_gates ++ bne_match_gates ++ blt_match_gates ++
+    bge_match_gates ++ bltu_match_gates ++ bgeu_match_gates ++
+    branch_cond_gates ++ branch_mispredicted_gate ++ csr_flush_suppress_gates ++ branch_redirect_gate ++ mispredict_redirect_gates ++ branch_target_wire_gates ++
+    jalr_target_gates ++ target_sel_gates
+
+  let allInsts := [br_pc_plus_4_adder_inst, branch_target_adder_inst, jalr_target_adder_inst, br_cmp_inst]
+
+  (allGates, allInsts, branch_taken, branch_mispredicted, final_branch_target,
+   br_pc_plus_4, branch_result_final, is_jal_or_jalr, mispredict_redirect_target)
+
 /-- Generate ROB shadow registers: is_fp (16×1), isStore (16×1), redirect target (16×6 tag + 16×32 target).
     Returns (gates, instances, rob_head_is_fp, not_rob_head_is_fp, rob_head_isStore, rob_head_redirect_target). -/
 def mkShadowRegisters
@@ -3090,25 +3305,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Opcode match: LUI and AUIPC encodings from config
   let is_lui := Wire.mk "is_lui"
   let is_auipc := Wire.mk "is_auipc"
-  let testBit (n : Nat) (b : Nat) : Bool := (n / (2 ^ b)) % 2 != 0
-
-  let mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
-    let bitWires := (List.range 6).map fun b =>
-      if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
-    let notGates := (List.range 6).filterMap fun b =>
-      if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
-    let t01 := Wire.mk s!"{pfx}_t01"
-    let t012 := Wire.mk s!"{pfx}_t012"
-    let t0123 := Wire.mk s!"{pfx}_t0123"
-    let t01234 := Wire.mk s!"{pfx}_t01234"
-    notGates ++ [
-      Gate.mkAND bitWires[0]! bitWires[1]! t01,
-      Gate.mkAND t01 bitWires[2]! t012,
-      Gate.mkAND t012 bitWires[3]! t0123,
-      Gate.mkAND t0123 bitWires[4]! t01234,
-      Gate.mkAND t01234 bitWires[5]! result
-    ]
-
   let lui_match_gates := mkOpcodeMatch6 "lui_match" (oi .LUI) rs_int_dispatch_opcode is_lui
   let auipc_match_gates := mkOpcodeMatch6 "auipc_match" (oi .AUIPC) rs_int_dispatch_opcode is_auipc
 
@@ -3120,169 +3316,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
       Gate.mkMUX int_auipc_muxed[i]! int_captured_imm[i]! is_lui int_result_final[i]! ]
   ) |>.flatten
 
-  -- === JAL/JALR LINK REGISTER (PC+4) ===
-  let br_pc_plus_4 := makeIndexedWires "br_pc_plus_4" 32
-  let br_pc_plus_4_b := makeIndexedWires "br_pc_plus_4_b" 32
-  let br_pc_plus_4_b_gates := (List.range 32).map (fun i =>
-    if i == 2 then Gate.mkBUF one br_pc_plus_4_b[i]!
-    else Gate.mkBUF zero br_pc_plus_4_b[i]!)
-
-  let br_pc_plus_4_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_br_pc_plus_4"
-    portMap :=
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_pc_plus_4_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (br_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-
-  -- Opcode match: JAL/JALR from config
-  let is_jal := Wire.mk "is_jal"
-  let is_jalr := Wire.mk "is_jalr"
-  let is_jal_or_jalr := Wire.mk "is_jal_or_jalr"
-  let jal_match_gates := mkOpcodeMatch6 "jal_match" (oi .JAL) rs_branch_dispatch_opcode is_jal
-  let jalr_match_gates := mkOpcodeMatch6 "jalr_match" (oi .JALR) rs_branch_dispatch_opcode is_jalr
-  let jal_jalr_or_gate := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
-
-  let branch_result_final := makeIndexedWires "branch_result_final" 32
-  let branch_result_mux_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX branch_result[i]! br_pc_plus_4[i]! is_jal_or_jalr branch_result_final[i]!)
-
-  -- === BRANCH TARGET + PC REDIRECT ===
-  let branch_target := makeIndexedWires "branch_target" 32
-  let branch_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_branch_target"
-    portMap :=
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (branch_target.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-
-  -- JALR target = src1 + br_captured_imm, bit 0 cleared
-  let jalr_target_raw := makeIndexedWires "jalr_target_raw" 32
-  let jalr_target := makeIndexedWires "jalr_target" 32
-  let jalr_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_jalr_target"
-    portMap :=
-      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (jalr_target_raw.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
-  }
-  let jalr_target_gates := (List.range 32).map (fun i =>
-    if i == 0 then Gate.mkBUF zero jalr_target[i]!
-    else Gate.mkBUF jalr_target_raw[i]! jalr_target[i]!)
-
-  let final_branch_target := makeIndexedWires "final_branch_target" 32
-  let target_sel_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX branch_target[i]! jalr_target[i]! is_jalr final_branch_target[i]!)
-
-  -- Branch condition evaluation
-  let br_eq := Wire.mk "br_eq"
-  let br_lt := Wire.mk "br_lt"
-  let br_ltu := Wire.mk "br_ltu"
-
-  let br_cmp_inst : CircuitInstance := {
-    moduleName := "Comparator32"
-    instName := "u_br_cmp"
-    portMap :=
-      (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (rs_branch_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("one", one), ("eq", br_eq), ("lt", br_lt), ("ltu", br_ltu),
-       ("gt", Wire.mk "br_gt"), ("gtu", Wire.mk "br_gtu")]
-  }
-
-  -- Decode branch condition from opcode (encodings from config)
-  let is_beq := Wire.mk "is_beq"
-  let is_bne := Wire.mk "is_bne"
-  let is_blt := Wire.mk "is_blt"
-  let is_bge := Wire.mk "is_bge"
-  let is_bltu := Wire.mk "is_bltu"
-  let is_bgeu := Wire.mk "is_bgeu"
-
-  let beq_match_gates := mkOpcodeMatch6 "beq_match" (oi .BEQ) rs_branch_dispatch_opcode is_beq
-  let bne_match_gates := mkOpcodeMatch6 "bne_match" (oi .BNE) rs_branch_dispatch_opcode is_bne
-  let blt_match_gates := mkOpcodeMatch6 "blt_match" (oi .BLT) rs_branch_dispatch_opcode is_blt
-  let bge_match_gates := mkOpcodeMatch6 "bge_match" (oi .BGE) rs_branch_dispatch_opcode is_bge
-  let bltu_match_gates := mkOpcodeMatch6 "bltu_match" (oi .BLTU) rs_branch_dispatch_opcode is_bltu
-  let bgeu_match_gates := mkOpcodeMatch6 "bgeu_match" (oi .BGEU) rs_branch_dispatch_opcode is_bgeu
-
-  -- Condition evaluation
-  let not_eq := Wire.mk "br_not_eq"
-  let not_lt := Wire.mk "not_lt"
-  let not_ltu := Wire.mk "not_ltu"
-  let beq_taken := Wire.mk "beq_taken"
-  let bne_taken := Wire.mk "bne_taken"
-  let blt_taken := Wire.mk "blt_taken"
-  let bge_taken := Wire.mk "bge_taken"
-  let bltu_taken := Wire.mk "bltu_taken"
-  let bgeu_taken := Wire.mk "bgeu_taken"
-  let cond_taken_tmp1 := Wire.mk "cond_taken_tmp1"
-  let cond_taken_tmp2 := Wire.mk "cond_taken_tmp2"
-  let cond_taken_tmp3 := Wire.mk "cond_taken_tmp3"
-  let cond_taken_tmp4 := Wire.mk "cond_taken_tmp4"
-  let cond_taken := Wire.mk "cond_taken"
-  let branch_taken := Wire.mk "branch_taken"
-
-  let branch_cond_gates := [
-    Gate.mkNOT br_eq not_eq,
-    Gate.mkNOT br_lt not_lt,
-    Gate.mkNOT br_ltu not_ltu,
-    Gate.mkAND is_beq br_eq beq_taken,
-    Gate.mkAND is_bne not_eq bne_taken,
-    Gate.mkAND is_blt br_lt blt_taken,
-    Gate.mkAND is_bge not_lt bge_taken,
-    Gate.mkAND is_bltu br_ltu bltu_taken,
-    Gate.mkAND is_bgeu not_ltu bgeu_taken,
-    Gate.mkOR beq_taken bne_taken cond_taken_tmp1,
-    Gate.mkOR cond_taken_tmp1 blt_taken cond_taken_tmp2,
-    Gate.mkOR cond_taken_tmp2 bge_taken cond_taken_tmp3,
-    Gate.mkOR cond_taken_tmp3 bltu_taken cond_taken_tmp4,
-    Gate.mkOR cond_taken_tmp4 bgeu_taken cond_taken,
-    Gate.mkOR cond_taken is_jal_or_jalr branch_taken
-  ]
-
-  -- Misprediction detection:
-  -- Conditional branches: XOR(predicted_taken, actual_taken)
-  -- JALR: always mispredicted (we don't track predicted target, so always redirect
-  --   to computed target rs1+imm; performance cost is acceptable since JALR is rare)
-  let branch_mispredicted := Wire.mk "branch_mispredicted"
-  let branch_cond_mispredicted := Wire.mk "branch_cond_mispredicted"
-  let branch_mispredicted_gate :=
-    [Gate.mkXOR branch_predicted_taken branch_taken branch_cond_mispredicted,
-     Gate.mkOR branch_cond_mispredicted is_jalr branch_mispredicted]
-
-  -- Redirect now comes from ROB commit, not branch RS dispatch.
-  -- branch_redirect_valid = rob_commit_en AND rob_head_isBranch AND rob_head_mispredicted
-  -- OR fence_i_drain_complete (FENCE.I redirect on drain completion)
-  let rob_redirect_tmp := Wire.mk "rob_redirect_tmp"
-  let rob_redirect_branch := Wire.mk "rob_redirect_branch"
-  -- CSR flush suppression gates: suppress rename stage flush on CSR redirect
-  -- rename_flush_en = redirect_valid_int AND NOT(csr_flush_suppress) (dedicated DFF)
-  let csr_flush_suppress_gates := if config.enableZicsr then [
-    Gate.mkNOT csr_flush_suppress not_csr_flush_suppress,
-    Gate.mkAND redirect_valid_int not_csr_flush_suppress rename_flush_en
-  ] else [
-    Gate.mkBUF redirect_valid_int rename_flush_en,
-    Gate.mkBUF zero not_csr_flush_suppress
-  ]
-  let branch_redirect_gate := [
-    Gate.mkAND rob_commit_en rob_head_isBranch rob_redirect_tmp,
-    Gate.mkAND rob_redirect_tmp rob_head_mispredicted rob_redirect_branch,
-    Gate.mkOR rob_redirect_branch fence_i_drain_complete rob_redirect_valid
-  ]
-
-  -- Redirect target: MUX between branch redirect target and FENCE.I PC+4
-  -- When drain_complete, use fence_i_redir_target (captured fetch_pc + 4)
-  let branch_target_wire_gates := (List.range 32).map (fun i =>
-    Gate.mkMUX rob_head_redirect_target[i]! fence_i_redir_target[i]! fence_i_drain_complete branch_redirect_target[i]!)
+  -- === BRANCH RESOLVE (extracted helper) ===
+  let (branch_resolve_gates, branch_resolve_insts,
+       _branch_taken, branch_mispredicted, final_branch_target,
+       br_pc_plus_4, branch_result_final, _is_jal_or_jalr,
+       mispredict_redirect_target) :=
+    mkBranchResolve config oi zero one
+      br_captured_pc br_captured_imm
+      rs_branch_dispatch_src1 rs_branch_dispatch_src2 rs_branch_dispatch_opcode
+      branch_result branch_predicted_taken
+      rob_commit_en rob_head_isBranch rob_head_mispredicted
+      rob_head_redirect_target fence_i_redir_target fence_i_drain_complete
+      csr_flush_suppress not_csr_flush_suppress rename_flush_en redirect_valid_int
+      rob_redirect_valid branch_redirect_target
 
   -- === LSU ===
   let lsu_agu_address := makeIndexedWires "lsu_agu_address" 32
@@ -3511,21 +3557,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let fp_enq_is_fp_gate :=
     if enableF then [Gate.mkNOT fp_result_is_int fp_enq_is_fp]
     else [Gate.mkBUF zero fp_enq_is_fp]
-
-  -- Misprediction redirect target mux:
-  -- For conditional branches:
-  --   If predicted taken → redirect is PC+4 (fall-through, since prediction was wrong)
-  --   If predicted not-taken → redirect is branch target (taken path)
-  -- For JAL/JALR: always redirect to computed target (JAL/JALR are unconditional,
-  --   misprediction is only about target address, not taken/not-taken)
-  let mispredict_redirect_target := makeIndexedWires "mispredict_redirect_target" 32
-  let mispredict_sel := Wire.mk "mispredict_sel"
-  let not_jal_or_jalr := Wire.mk "not_jal_or_jalr"
-  let mispredict_redirect_gates :=
-    [Gate.mkNOT is_jal_or_jalr not_jal_or_jalr,
-     Gate.mkAND branch_predicted_taken not_jal_or_jalr mispredict_sel] ++
-    (List.range 32).map (fun i =>
-    Gate.mkMUX final_branch_target[i]! br_pc_plus_4[i]! mispredict_sel mispredict_redirect_target[i]!)
 
   -- FIFO enqueue data buses
   -- IB FIFO: 72 bits: tag[5:0] ++ data[37:6] ++ is_fp_rd[38] ++ redirect_target[70:39] ++ mispredicted[71]
@@ -5152,12 +5183,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              br_pred_taken_gates ++ br_pred_read_gates ++
              br_pc_rf_we_gates ++ br_pc_rf_gates ++ br_pc_rf_sel_gates ++
              br_imm_rf_gates ++
-             br_pc_plus_4_b_gates ++ branch_result_mux_gates ++
-             jal_match_gates ++ jalr_match_gates ++ jal_jalr_or_gate ++
-             beq_match_gates ++ bne_match_gates ++ blt_match_gates ++
-             bge_match_gates ++ bltu_match_gates ++ bgeu_match_gates ++
-             branch_cond_gates ++ branch_mispredicted_gate ++ csr_flush_suppress_gates ++ branch_redirect_gate ++ mispredict_redirect_gates ++ branch_target_wire_gates ++
-             jalr_target_gates ++ target_sel_gates ++
+             branch_resolve_gates ++
              fp_mem_mux_gates ++ flw_match_gates ++
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++
              lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
@@ -5192,9 +5218,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   imm_rf_decoder_inst, imm_rf_mux_inst,
                   int_imm_rf_decoder_inst, int_imm_rf_mux_inst, int_pc_rf_mux_inst,
                   br_pc_rf_decoder_inst, br_pc_rf_mux_inst, br_imm_rf_mux_inst,
-                  auipc_adder_inst, br_pc_plus_4_adder_inst,
-                  branch_target_adder_inst, jalr_target_adder_inst,
-                  br_cmp_inst] ++
+                  auipc_adder_inst] ++
+                  branch_resolve_insts ++
                   [cdb_mux_inst] ++ cdb_reg_insts ++
                   [ib_fifo_inst, lsu_fifo_inst] ++
                   (if enableM then [muldiv_fifo_inst] else []) ++
@@ -5244,7 +5269,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "br_captured_pc", width := 32, wires := br_captured_pc },
        { name := "br_captured_imm", width := 32, wires := br_captured_imm },
        { name := "br_pc_plus_4", width := 32, wires := br_pc_plus_4 },
-       { name := "branch_target", width := 32, wires := branch_target },
+       { name := "branch_target", width := 32, wires := makeIndexedWires "branch_target" 32 },
        { name := "final_branch_target", width := 32, wires := final_branch_target },
        { name := "mem_address", width := 32, wires := mem_address },
        { name := "mem_addr_r", width := 32, wires := mem_addr_r },
