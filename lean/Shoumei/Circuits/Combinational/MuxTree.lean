@@ -231,6 +231,9 @@ def mkMux4x8 : Circuit := mkMuxTree 4 8
 /-- 32:1 MUX, 6 bits (for RAT read ports - reads physical register tags) -/
 def mkMux32x6 : Circuit := mkMuxTree 32 6
 
+/-- 4:1 MUX, 32 bits (building block for hierarchical 8:1 muxes) -/
+def mkMux4x32 : Circuit := mkMuxTree 4 32
+
 /-- 64:1 MUX, 32 bits (for PhysRegFile read ports - reads 32-bit register values) -/
 def mkMux64x32 : Circuit := mkMuxTree 64 32
 
@@ -248,6 +251,75 @@ def mkMux8x32 : Circuit := mkMux8xN 32
 
 /-- 8:1 MUX, 6 bits -/
 def mkMux8x6 : Circuit := mkMux8xN 6
+
+/--
+8:1 MUX, 32 bits - Hierarchical version using 4:1 mux building blocks.
+Structure:
+  - Stage 1: 2x Mux4x32 instances (lower 4 and upper 4 inputs)
+  - Stage 2: 2:1 MUX gate array selecting between stage 1 outputs
+Select buffering: sel[0:1] duplicated per Mux4x32 instance (fanout 64→32 per sel bit)
+-/
+def mkMux8x32Hierarchical : Circuit :=
+  let inputWires := makeMultiBitWires "in" 8 32
+  let inputWiresFlat := inputWires.flatten
+  let selWires := makeIndexedWires "sel" 3
+  let outputWires := makeIndexedWires "out" 32
+
+  -- Stage 1 intermediate outputs
+  let stage1Outs := makeMultiBitWires "s1_out" 2 32
+
+  -- Buffer sel[0:1] into 2 copies (one per Mux4x32) to halve fanout
+  let sel_lo_a := (List.range 2).map (fun i => Wire.mk s!"sel_lo_a_{i}")
+  let sel_lo_b := (List.range 2).map (fun i => Wire.mk s!"sel_lo_b_{i}")
+  let sel_hi_buf := Wire.mk "sel_hi_buf"
+
+  let selBufGates :=
+    (List.range 2).map (fun i => Gate.mkBUF (selWires[i]!) (sel_lo_a[i]!)) ++
+    (List.range 2).map (fun i => Gate.mkBUF (selWires[i]!) (sel_lo_b[i]!)) ++
+    [Gate.mkBUF (selWires[2]!) sel_hi_buf]
+
+  -- Stage 1: 2× Mux4x32
+  let stage1_lo : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_mux_lo"
+    portMap :=
+      (List.range 4).flatMap (fun j =>
+        (List.range 32).map (fun b =>
+          (s!"in{j}[{b}]", inputWires[j]![b]!))) ++
+      (List.range 2).map (fun i => (s!"sel[{i}]", sel_lo_a[i]!)) ++
+      (List.range 32).map (fun b => (s!"out[{b}]", stage1Outs[0]![b]!))
+  }
+  let stage1_hi : CircuitInstance := {
+    moduleName := "Mux4x32"
+    instName := "u_mux_hi"
+    portMap :=
+      (List.range 4).flatMap (fun j =>
+        (List.range 32).map (fun b =>
+          (s!"in{j}[{b}]", inputWires[4 + j]![b]!))) ++
+      (List.range 2).map (fun i => (s!"sel[{i}]", sel_lo_b[i]!)) ++
+      (List.range 32).map (fun b => (s!"out[{b}]", stage1Outs[1]![b]!))
+  }
+
+  -- Stage 2: 2:1 MUX using sel[2] (gate-level)
+  let topMuxGates := List.range 32 |>.map (fun b =>
+    Gate.mkMUX (stage1Outs[0]![b]!) (stage1Outs[1]![b]!) sel_hi_buf (outputWires[b]!))
+
+  let inputGroups := (List.range 8).map (fun i =>
+    { name := s!"in{i}"
+      width := 32
+      wires := inputWires[i]! : SignalGroup })
+
+  { name := "Mux8x32"
+    inputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
+    outputs := outputWires
+    gates := selBufGates ++ topMuxGates
+    instances := [stage1_lo, stage1_hi]
+    signalGroups := inputGroups ++ [
+      { name := "sel", width := 3, wires := selWires },
+      { name := "out", width := 32, wires := outputWires }
+    ]
+    keepHierarchy := true
+  }
 
 /--
 64:1 MUX, 32 bits - Hierarchical version using 8:1 mux building blocks.
@@ -271,15 +343,36 @@ def mkMux64x32Hierarchical : Circuit :=
   -- Stage 1 output wires: 8 intermediate results (each 32 bits)
   let stage1Outs := makeMultiBitWires "stage1_out" 8 32
 
+  -- Buffered select lines to reduce fanout on sel[2:0] (drives 8 stage1 instances)
+  -- 4 buffer groups (A-D), each driving 2 stage1 instances
+  let selBufGroups := ["a", "b", "c", "d"].map (fun grp =>
+    (List.range 3).map (fun i => Wire.mk s!"sel_lo_{grp}_{i}"))
+  -- Buffer for stage2 sel[5:3]
+  let selHiBuf := (List.range 3).map (fun i => Wire.mk s!"sel_hi_buf_{i}")
+
+  let selBufGates :=
+    -- Group A: sel[0..2] → sel_lo_a (stage1_0, stage1_1)
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[0]![i]!)) ++
+    -- Group B: sel[0..2] → sel_lo_b (stage1_2, stage1_3)
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[1]![i]!)) ++
+    -- Group C: sel[0..2] → sel_lo_c (stage1_4, stage1_5)
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[2]![i]!)) ++
+    -- Group D: sel[0..2] → sel_lo_d (stage1_6, stage1_7)
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[3]![i]!)) ++
+    -- Group E: sel[3..5] → sel_hi_buf (stage2)
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i + 3]!) (selHiBuf[i]!))
+
   -- Build instances for stage 1: 8x Mux8x32
+  -- Each pair of stage1 instances shares a buffered sel group
   let stage1Instances := (List.range 8).map (fun stageIdx =>
     let inputBase := stageIdx * 8  -- Each stage1 mux handles 8 consecutive inputs
+    let bufGroup := selBufGroups[stageIdx / 2]!
     let portMap := (List.range 8).flatMap (fun inputIdx =>
       let globalInputIdx := inputBase + inputIdx
       (List.range 32).map (fun bitIdx =>
         (s!"in{inputIdx}[{bitIdx}]", inputWires[globalInputIdx]![bitIdx]!))
     ) ++ (List.range 3).map (fun selIdx =>
-      (s!"sel[{selIdx}]", selWires[selIdx]!)
+      (s!"sel[{selIdx}]", bufGroup[selIdx]!)
     ) ++ (List.range 32).map (fun bitIdx =>
       (s!"out[{bitIdx}]", stage1Outs[stageIdx]![bitIdx]!)
     )
@@ -289,12 +382,12 @@ def mkMux64x32Hierarchical : Circuit :=
     }
   )
 
-  -- Build instance for stage 2: 1x Mux8x32
+  -- Build instance for stage 2: 1x Mux8x32 (uses buffered upper select bits)
   let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
     (List.range 32).map (fun bitIdx =>
       (s!"in{inputIdx}[{bitIdx}]", stage1Outs[inputIdx]![bitIdx]!))
   ) ++ (List.range 3).map (fun selIdx =>
-    (s!"sel[{selIdx}]", selWires[selIdx + 3]!)  -- Use upper 3 bits of select
+    (s!"sel[{selIdx}]", selHiBuf[selIdx]!)
   ) ++ (List.range 32).map (fun bitIdx =>
     (s!"out[{bitIdx}]", outputWires[bitIdx]!)
   )
@@ -312,12 +405,13 @@ def mkMux64x32Hierarchical : Circuit :=
   { name := "Mux64x32"
     inputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
     outputs := outputWires
-    gates := []  -- Pure hierarchical, no direct gates
+    gates := selBufGates
     instances := stage1Instances ++ [stage2Instance]
     signalGroups := inputGroups ++ [
       { name := "sel", width := 6, wires := selWires },
       { name := "out", width := 32, wires := outputWires }
     ]
+    keepHierarchy := true  -- Prevent Yosys from flattening (high-fanout select lines)
   }
 
 /--
@@ -338,15 +432,28 @@ def mkMux64x6Hierarchical : Circuit :=
   -- Stage 1 output wires: 8 intermediate results (each 6 bits)
   let stage1Outs := makeMultiBitWires "stage1_out" 8 6
 
+  -- Buffered select lines to reduce fanout (same pattern as Mux64x32)
+  let selBufGroups := ["a", "b", "c", "d"].map (fun grp =>
+    (List.range 3).map (fun i => Wire.mk s!"sel_lo_{grp}_{i}"))
+  let selHiBuf := (List.range 3).map (fun i => Wire.mk s!"sel_hi_buf_{i}")
+
+  let selBufGates :=
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[0]![i]!)) ++
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[1]![i]!)) ++
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[2]![i]!)) ++
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i]!) (selBufGroups[3]![i]!)) ++
+    (List.range 3).map (fun i => Gate.mkBUF (selWires[i + 3]!) (selHiBuf[i]!))
+
   -- Build instances for stage 1: 8x Mux8x6
   let stage1Instances := (List.range 8).map (fun stageIdx =>
     let inputBase := stageIdx * 8
+    let bufGroup := selBufGroups[stageIdx / 2]!
     let portMap := (List.range 8).flatMap (fun inputIdx =>
       let globalInputIdx := inputBase + inputIdx
       (List.range 6).map (fun bitIdx =>
         (s!"in{inputIdx}[{bitIdx}]", inputWires[globalInputIdx]![bitIdx]!))
     ) ++ (List.range 3).map (fun selIdx =>
-      (s!"sel[{selIdx}]", selWires[selIdx]!)
+      (s!"sel[{selIdx}]", bufGroup[selIdx]!)
     ) ++ (List.range 6).map (fun bitIdx =>
       (s!"out[{bitIdx}]", stage1Outs[stageIdx]![bitIdx]!)
     )
@@ -356,12 +463,12 @@ def mkMux64x6Hierarchical : Circuit :=
     }
   )
 
-  -- Build instance for stage 2: 1x Mux8x6
+  -- Build instance for stage 2: 1x Mux8x6 (uses buffered upper select bits)
   let stage2PortMap := (List.range 8).flatMap (fun inputIdx =>
     (List.range 6).map (fun bitIdx =>
       (s!"in{inputIdx}[{bitIdx}]", stage1Outs[inputIdx]![bitIdx]!))
   ) ++ (List.range 3).map (fun selIdx =>
-    (s!"sel[{selIdx}]", selWires[selIdx + 3]!)
+    (s!"sel[{selIdx}]", selHiBuf[selIdx]!)
   ) ++ (List.range 6).map (fun bitIdx =>
     (s!"out[{bitIdx}]", outputWires[bitIdx]!)
   )
@@ -379,12 +486,13 @@ def mkMux64x6Hierarchical : Circuit :=
   { name := "Mux64x6"
     inputs := (inputWiresFlat.map (·.name) |>.map Wire.mk) ++ selWires
     outputs := outputWires
-    gates := []
+    gates := selBufGates
     instances := stage1Instances ++ [stage2Instance]
     signalGroups := inputGroups ++ [
       { name := "sel", width := 6, wires := selWires },
       { name := "out", width := 6, wires := outputWires }
     ]
+    keepHierarchy := true  -- Prevent Yosys from flattening (high-fanout select lines)
   }
 
 end Shoumei.Circuits.Combinational

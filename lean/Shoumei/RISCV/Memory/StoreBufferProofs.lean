@@ -24,14 +24,14 @@ open Shoumei.RISCV.Memory
     deq_ready(1) +
     fwd_address(32) +
     flush_en(1) = 109 -/
-theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 109 := by native_decide
+theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 106 := by native_decide
 
 /-- StoreBuffer8 has correct number of outputs:
     full(1) + empty(1) +
     deq_valid(1) + deq_bits(66) +
     fwd_hit(1) + fwd_data(32) +
     enq_idx(3) = 105 -/
-theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 105 := by native_decide
+theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 108 := by native_decide
 
 /-- StoreBuffer8 uses 26 verified submodule instances:
     - 8 x Register68 (entry storage)
@@ -42,24 +42,27 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 105 := by na
     - 3 x Mux8x32 (fwd data, deq address, deq data)
     - 1 x Mux8x2 (deq size)
     - 1 x PriorityArbiter8 (youngest-match selection) -/
-theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 26 := by native_decide
+theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 46 := by native_decide
 
 /-- StoreBuffer8 gate count: 675 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 675 := by native_decide
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 797 := by native_decide
 
 /-! ## Building Block Verification -/
 
 /-- StoreBuffer8 Building Block Dependencies:
     All these modules must pass LEC before StoreBuffer8 is considered verified. -/
 def storebuffer8_dependencies : List String := [
-  "Register68",           -- Entry storage (68-bit register x 8)
-  "QueuePointer_3",       -- Head/tail pointers (3-bit wrapping counter x 2)
-  "QueueCounterUpDown_4", -- Entry count (4-bit up/down counter)
-  "Decoder3",             -- Enqueue/commit one-hot decode (3→8)
-  "Comparator32",         -- Address matching (32-bit comparator x 8)
-  "Mux8x32",             -- Data selection (8:1 mux, 32 bits x 3)
-  "Mux8x2",              -- Size selection (8:1 mux, 2 bits)
-  "PriorityArbiter8"      -- Youngest-match priority selection
+  "Register66",              -- Entry storage (66-bit register x 8)
+  "DFlipFlop",               -- Valid/committed bitmaps (16 DFFs)
+  "QueuePointer_3",          -- Head pointer (3-bit wrapping counter)
+  "QueuePointerLoadable_3",  -- Tail/commit pointers (loadable for flush)
+  "QueueCounterLoadable_4",  -- Entry count (loadable for flush recovery)
+  "Decoder3",                -- Enqueue/head/commit one-hot decode (3→8)
+  "EqualityComparator32",    -- Address matching (32-bit equality comparator x 8)
+  "Popcount8",               -- Flush recovery (count surviving entries)
+  "Mux8x32",                -- Data selection (8:1 mux, 32 bits x 3)
+  "Mux8x2",                 -- Size selection (8:1 mux, 2 bits x 2)
+  "PriorityArbiter8"         -- Youngest-match priority selection
 ]
 
 /-- All StoreBuffer8 instances use verified building blocks -/

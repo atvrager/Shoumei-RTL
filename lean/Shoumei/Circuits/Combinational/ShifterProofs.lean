@@ -20,8 +20,8 @@ theorem shifter4_structure :
 
 -- Shifter32 structural properties
 theorem shifter32_structure :
-  mkShifter32.gates.length = 544 ∧  -- 3 shifters × 5 stages × 32 bits + 2 MUX levels × 32 bits
-                                     -- = 3 × 5 × 32 + 2 × 32 = 480 + 64 = 544
+  mkShifter32.gates.length = 559 ∧  -- 15 shamt BUFs + 3 shifters × 5 stages × 32 bits + 2 MUX levels × 32 bits
+                                     -- = 15 + 3 × 5 × 32 + 2 × 32 = 15 + 480 + 64 = 559
   mkShifter32.inputs.length = 40 ∧  -- 32 input + 5 shamt + 2 op + 1 zero = 40
   mkShifter32.outputs.length = 32 := by native_decide
 
