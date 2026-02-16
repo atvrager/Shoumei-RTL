@@ -4479,6 +4479,22 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let minstreth_reg := (List.range 32).map (fun i => Wire.mk s!"minstreth_e{i}")
   let minstreth_next := (List.range 32).map (fun i => Wire.mk s!"minstreth_nx_e{i}")
 
+  -- Trap CSR registers (M-mode trap handling)
+  let mstatus_reg := (List.range 32).map (fun i => Wire.mk s!"mstatus_e{i}")
+  let mstatus_next := (List.range 32).map (fun i => Wire.mk s!"mstatus_nx_e{i}")
+  let mie_reg := (List.range 32).map (fun i => Wire.mk s!"mie_e{i}")
+  let mie_next := (List.range 32).map (fun i => Wire.mk s!"mie_nx_e{i}")
+  let mtvec_reg := (List.range 32).map (fun i => Wire.mk s!"mtvec_e{i}")
+  let mtvec_next := (List.range 32).map (fun i => Wire.mk s!"mtvec_nx_e{i}")
+  let mepc_reg := (List.range 32).map (fun i => Wire.mk s!"mepc_e{i}")
+  let mepc_next := (List.range 32).map (fun i => Wire.mk s!"mepc_nx_e{i}")
+  let mcause_reg := (List.range 32).map (fun i => Wire.mk s!"mcause_e{i}")
+  let mcause_next := (List.range 32).map (fun i => Wire.mk s!"mcause_nx_e{i}")
+  let mtval_reg := (List.range 32).map (fun i => Wire.mk s!"mtval_e{i}")
+  let mtval_next := (List.range 32).map (fun i => Wire.mk s!"mtval_nx_e{i}")
+  let mip_reg := (List.range 32).map (fun i => Wire.mk s!"mip_e{i}")
+  let mip_next := (List.range 32).map (fun i => Wire.mk s!"mip_nx_e{i}")
+
   -- CSR register DFFs (use `reset`, not pipeline_reset)
   let csr_reg_instances : List CircuitInstance :=
     if config.enableZicsr then
@@ -4501,6 +4517,34 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 32).map (fun i => {
         moduleName := "DFlipFlop", instName := s!"u_minstreth_dff_{i}",
         portMap := [("d", minstreth_next[i]!), ("q", minstreth_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mstatus_dff_{i}",
+        portMap := [("d", mstatus_next[i]!), ("q", mstatus_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mie_dff_{i}",
+        portMap := [("d", mie_next[i]!), ("q", mie_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mtvec_dff_{i}",
+        portMap := [("d", mtvec_next[i]!), ("q", mtvec_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mepc_dff_{i}",
+        portMap := [("d", mepc_next[i]!), ("q", mepc_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mcause_dff_{i}",
+        portMap := [("d", mcause_next[i]!), ("q", mcause_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mtval_dff_{i}",
+        portMap := [("d", mtval_next[i]!), ("q", mtval_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 32).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_mip_dff_{i}",
+        portMap := [("d", mip_next[i]!), ("q", mip_reg[i]!),
                     ("clock", clock), ("reset", reset)] })
     else []
 
@@ -4540,6 +4584,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let (is_fflags, fflags_match_gates) := mkCsrAddrMatch 0x001 "fflags"
   let (is_frm, frm_match_gates) := mkCsrAddrMatch 0x002 "frm"
   let (is_fcsr, fcsr_match_gates) := mkCsrAddrMatch 0x003 "fcsr"
+  let (is_mstatus, mstatus_match_gates) := mkCsrAddrMatch 0x300 "mstatus"
+  let (is_mie, mie_match_gates) := mkCsrAddrMatch 0x304 "mie"
+  let (is_mtvec, mtvec_match_gates) := mkCsrAddrMatch 0x305 "mtvec"
+  let (is_mepc, mepc_match_gates) := mkCsrAddrMatch 0x341 "mepc"
+  let (is_mcause, mcause_match_gates) := mkCsrAddrMatch 0x342 "mcause"
+  let (is_mtval, mtval_match_gates) := mkCsrAddrMatch 0x343 "mtval"
+  let (is_mip, mip_match_gates) := mkCsrAddrMatch 0x344 "mip"
 
   -- Combine M-mode and U-mode aliases
   let is_mcycle := Wire.mk "csr_is_mcycle"
@@ -4559,7 +4610,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
     minstret_m_match_gates ++ minstret_u_match_gates ++
     minstreth_m_match_gates ++ minstreth_u_match_gates ++
     misa_match_gates ++ mhartid_match_gates ++
-    fflags_match_gates ++ frm_match_gates ++ fcsr_match_gates ++ csr_alias_gates
+    fflags_match_gates ++ frm_match_gates ++ fcsr_match_gates ++
+    mstatus_match_gates ++ mie_match_gates ++ mtvec_match_gates ++
+    mepc_match_gates ++ mcause_match_gates ++ mtval_match_gates ++
+    mip_match_gates ++ csr_alias_gates
 
   -- CSR read MUX: select register value based on address
   -- misa value: RV32I = 0x40000100, + M = 0x40001100, + F = 0x40001120 (approx)
@@ -4569,6 +4623,24 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (if config.enableF then 0x00000020 else 0)
 
   let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  -- mstatus SD bit: SD = FS==dirty. FS bits 13:14 use inverted storage (reset-to-1),
+  -- so actual_FS[0] = NOT(stored_13), actual_FS[1] = NOT(stored_14).
+  -- SD = actual_FS[0] AND actual_FS[1] = NOT(stored_13) AND NOT(stored_14) = NOR(stored_13, stored_14)
+  let mstatus_sd_bit := Wire.mk "mstatus_sd_bit"
+  let mstatus_fs_inv0 := Wire.mk "mstatus_fs_inv0"  -- NOT(stored bit 13) = actual FS[0]
+  let mstatus_fs_inv1 := Wire.mk "mstatus_fs_inv1"  -- NOT(stored bit 14) = actual FS[1]
+  let mstatus_sd_gate :=
+    if config.enableZicsr && enableF then
+      [Gate.mkNOT mstatus_reg[13]! mstatus_fs_inv0,
+       Gate.mkNOT mstatus_reg[14]! mstatus_fs_inv1,
+       Gate.mkAND mstatus_fs_inv0 mstatus_fs_inv1 mstatus_sd_bit]
+    else if config.enableZicsr then
+      -- No F extension: FS always 0, SD always 0
+      [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
+       Gate.mkBUF zero mstatus_sd_bit]
+    else
+      [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
+       Gate.mkBUF zero mstatus_sd_bit]
   -- Build cascaded MUX: default 0, then layer on each CSR
   -- Order: mhartid(=0, default) → misa → mscratch → mcycle → mcycleh → minstret → minstreth
   let csr_read_mux_gates :=
@@ -4585,6 +4657,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
         let r_minh := Wire.mk s!"csr_rminh_e{i}"
         let r_fflags := Wire.mk s!"csr_rfflags_e{i}"
         let r_frm := Wire.mk s!"csr_rfrm_e{i}"
+        let r_fcsr := Wire.mk s!"csr_rfcsr_e{i}"
+        let r_mstatus := Wire.mk s!"csr_rmstatus_e{i}"
+        let r_mie := Wire.mk s!"csr_rmie_e{i}"
+        let r_mtvec := Wire.mk s!"csr_rmtvec_e{i}"
+        let r_mepc := Wire.mk s!"csr_rmepc_e{i}"
+        let r_mcause := Wire.mk s!"csr_rmcause_e{i}"
+        let r_mtval := Wire.mk s!"csr_rmtval_e{i}"
         -- fflags read: bits [4:0] = fflags_reg, bits [31:5] = 0
         let fflags_read_bit := if enableF && i < 5 then fflags_reg[i]! else zero
         -- frm read: bits [2:0] = frm_reg, bits [31:3] = 0
@@ -4595,6 +4674,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
                                else if i < 8 then frm_reg[i - 5]!
                                else zero
                              else zero
+        -- mstatus read: MPP(12:11) hardwired to 11 (M-only), FS(14:13) inverted storage,
+        -- SD(31) computed from actual FS
+        let mstatus_read_bit :=
+          if i == 31 then mstatus_sd_bit          -- SD = actual FS == dirty
+          else if i == 11 || i == 12 then one     -- MPP always 11 (M-only, no U-mode)
+          else if enableF && (i == 13 || i == 14) then
+            -- FS uses inverted storage: actual = NOT(stored)
+            if i == 13 then mstatus_fs_inv0 else mstatus_fs_inv1
+          else mstatus_reg[i]!
+        -- mip reads as 0 (no interrupt sources)
         [-- Start with 0 (mhartid default), select misa if matched
          Gate.mkMUX zero misa_bit is_misa r_misa,
          Gate.mkMUX r_misa mscratch_reg[i]! is_mscratch r_mscr,
@@ -4604,7 +4693,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
          Gate.mkMUX r_mins minstreth_reg[i]! is_minstreth r_minh,
          Gate.mkMUX r_minh fflags_read_bit is_fflags r_fflags,
          Gate.mkMUX r_fflags frm_read_bit is_frm r_frm,
-         Gate.mkMUX r_frm fcsr_read_bit is_fcsr csr_read_data[i]!]) |>.flatten
+         Gate.mkMUX r_frm fcsr_read_bit is_fcsr r_fcsr,
+         Gate.mkMUX r_fcsr mstatus_read_bit is_mstatus r_mstatus,
+         Gate.mkMUX r_mstatus mie_reg[i]! is_mie r_mie,
+         Gate.mkMUX r_mie mtvec_reg[i]! is_mtvec r_mtvec,
+         Gate.mkMUX r_mtvec mepc_reg[i]! is_mepc r_mepc,
+         Gate.mkMUX r_mepc mcause_reg[i]! is_mcause r_mcause,
+         Gate.mkMUX r_mcause mtval_reg[i]! is_mtval r_mtval,
+         -- mip always reads 0 (no interrupt sources yet)
+         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten
     else
       (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
 
@@ -4729,6 +4826,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_we_fflags := Wire.mk "csr_we_fflags"
   let csr_we_frm := Wire.mk "csr_we_frm"
   let csr_we_fcsr := Wire.mk "csr_we_fcsr"
+  let csr_we_mstatus := Wire.mk "csr_we_mstatus"
+  let csr_we_mie := Wire.mk "csr_we_mie"
+  let csr_we_mtvec := Wire.mk "csr_we_mtvec"
+  let csr_we_mepc := Wire.mk "csr_we_mepc"
+  let csr_we_mcause := Wire.mk "csr_we_mcause"
+  let csr_we_mtval := Wire.mk "csr_we_mtval"
+  -- mip has no write enable (WARL to 0, reads always 0)
   let csr_drain_and_writes := Wire.mk "csr_drain_and_writes"
   let csr_we_gates :=
     if config.enableZicsr then
@@ -4752,7 +4856,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkAND csr_drain_and_writes is_minstreth_m csr_we_minstreth,
        Gate.mkAND csr_drain_and_writes is_fflags csr_we_fflags,
        Gate.mkAND csr_drain_and_writes is_frm csr_we_frm,
-       Gate.mkAND csr_drain_and_writes is_fcsr csr_we_fcsr]
+       Gate.mkAND csr_drain_and_writes is_fcsr csr_we_fcsr,
+       Gate.mkAND csr_drain_and_writes is_mstatus csr_we_mstatus,
+       Gate.mkAND csr_drain_and_writes is_mie csr_we_mie,
+       Gate.mkAND csr_drain_and_writes is_mtvec csr_we_mtvec,
+       Gate.mkAND csr_drain_and_writes is_mepc csr_we_mepc,
+       Gate.mkAND csr_drain_and_writes is_mcause csr_we_mcause,
+       Gate.mkAND csr_drain_and_writes is_mtval csr_we_mtval]
     else
       [Gate.mkBUF zero csr_actually_writes, Gate.mkBUF zero csr_src_nonzero,
        Gate.mkBUF zero csr_rs_or_rc, Gate.mkBUF zero csr_drain_and_writes,
@@ -4760,7 +4870,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkBUF zero csr_we_mcycleh, Gate.mkBUF zero csr_we_minstret,
        Gate.mkBUF zero csr_we_minstreth,
        Gate.mkBUF zero csr_we_fflags, Gate.mkBUF zero csr_we_frm,
-       Gate.mkBUF zero csr_we_fcsr]
+       Gate.mkBUF zero csr_we_fcsr,
+       Gate.mkBUF zero csr_we_mstatus, Gate.mkBUF zero csr_we_mie,
+       Gate.mkBUF zero csr_we_mtvec, Gate.mkBUF zero csr_we_mepc,
+       Gate.mkBUF zero csr_we_mcause, Gate.mkBUF zero csr_we_mtval]
 
   -- mscratch next: MUX(hold, write_val, we)
   let mscratch_next_gates :=
@@ -4769,6 +4882,109 @@ def mkCPU (config : CPUConfig) : Circuit :=
         Gate.mkMUX mscratch_reg[i]! csr_write_val[i]! csr_we_mscratch mscratch_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mscratch_next[i]!)
+
+  -- Trap CSR WARL masking and next-value logic
+
+  -- mstatus WARL: writable bits are MIE(3), MPIE(7), MPP(12:11)=always 11, FS(14:13) if F
+  -- SD(31) is computed (not written). All other bits read as 0.
+  let mstatus_warl := (List.range 32).map (fun i => Wire.mk s!"mstatus_warl_e{i}")
+  let mstatus_warl_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        -- Writable: bit 3 (MIE), bit 7 (MPIE), bits 11-12 (MPP, forced to 11),
+        -- bits 13-14 (FS, only if F extension, inverted storage)
+        if i == 11 || i == 12 then
+          -- MPP forced to 11 (M-mode only). Stored as 1 (reads hardwired anyway).
+          Gate.mkBUF one mstatus_warl[i]!
+        else if enableF && (i == 13 || i == 14) then
+          -- FS uses inverted storage: store NOT(write_val)
+          Gate.mkNOT csr_write_val[i]! mstatus_warl[i]!
+        else if i == 3 || i == 7 then
+          Gate.mkBUF csr_write_val[i]! mstatus_warl[i]!
+        else
+          Gate.mkBUF zero mstatus_warl[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mstatus_warl[i]!)
+  let mstatus_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mstatus_reg[i]! mstatus_warl[i]! csr_we_mstatus mstatus_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mstatus_next[i]!)
+
+  -- mie WARL: only bits 3 (MSIE), 7 (MTIE), 11 (MEIE) writable
+  let mie_warl := (List.range 32).map (fun i => Wire.mk s!"mie_warl_e{i}")
+  let mie_warl_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        if i == 3 || i == 7 || i == 11 then
+          Gate.mkBUF csr_write_val[i]! mie_warl[i]!
+        else
+          Gate.mkBUF zero mie_warl[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mie_warl[i]!)
+  let mie_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mie_reg[i]! mie_warl[i]! csr_we_mie mie_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mie_next[i]!)
+
+  -- mtvec WARL: BASE(31:2) writable, MODE(1:0) only 00/01 valid (bit 1 forced 0)
+  let mtvec_warl := (List.range 32).map (fun i => Wire.mk s!"mtvec_warl_e{i}")
+  let mtvec_warl_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        if i == 1 then
+          Gate.mkBUF zero mtvec_warl[i]!  -- bit 1 forced to 0
+        else
+          Gate.mkBUF csr_write_val[i]! mtvec_warl[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mtvec_warl[i]!)
+  let mtvec_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mtvec_reg[i]! mtvec_warl[i]! csr_we_mtvec mtvec_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mtvec_next[i]!)
+
+  -- mepc WARL: bits [1:0] always 00 (IALIGN=4, no C extension), bits 31:2 writable
+  let mepc_warl := (List.range 32).map (fun i => Wire.mk s!"mepc_warl_e{i}")
+  let mepc_warl_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        if i < 2 then
+          Gate.mkBUF zero mepc_warl[i]!  -- bits [1:0] always 00 (IALIGN=4)
+        else
+          Gate.mkBUF csr_write_val[i]! mepc_warl[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mepc_warl[i]!)
+  let mepc_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mepc_reg[i]! mepc_warl[i]! csr_we_mepc mepc_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mepc_next[i]!)
+
+  -- mcause: all 32 bits writable (no WARL constraint)
+  let mcause_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mcause_reg[i]! csr_write_val[i]! csr_we_mcause mcause_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mcause_next[i]!)
+
+  -- mtval: all 32 bits writable (no WARL constraint)
+  let mtval_next_gates :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mtval_reg[i]! csr_write_val[i]! csr_we_mtval mtval_next[i]!)
+    else
+      (List.range 32).map (fun i => Gate.mkBUF zero mtval_next[i]!)
+
+  -- mip: WARL to 0 (no interrupt sources). Always holds 0.
+  let mip_next_gates :=
+    (List.range 32).map (fun i => Gate.mkBUF zero mip_next[i]!)
 
   -- Counter auto-increment: mcycle += 1 every cycle, minstret += rob_commit_en
   -- Priority: CSR write > auto-increment
@@ -4916,8 +5132,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- Collect all CSR gates
   let csr_all_gates := csr_drain_gate ++ csr_addr_decode_gates ++
-    csr_read_mux_gates ++ csr_op_match_gates ++ csr_src_gates ++
+    mstatus_sd_gate ++ csr_read_mux_gates ++ csr_op_match_gates ++ csr_src_gates ++
     csr_write_compute_gates ++ csr_we_gates ++ mscratch_next_gates ++
+    mstatus_warl_gates ++ mstatus_next_gates ++
+    mie_warl_gates ++ mie_next_gates ++
+    mtvec_warl_gates ++ mtvec_next_gates ++
+    mepc_warl_gates ++ mepc_next_gates ++
+    mcause_next_gates ++ mtval_next_gates ++ mip_next_gates ++
     counter_next_gates ++ csr_cdb_inject_gates ++
     csr_commit_inject_gates
 
