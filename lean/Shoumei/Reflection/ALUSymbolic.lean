@@ -186,23 +186,107 @@ def aluSemantics (op : ALUOp) (a b : BitVec 32) : BitVec 32 :=
   | .SRL  => a >>> (b &&& 0x1F#32).toNat
   | .SRA  => a.sshiftRight (b &&& 0x1F#32).toNat
 
-/-! ## Per-opcode bridge axioms
+/-! ## Generic readSymResultAsNat lemmas -/
 
-These replace the single monolithic `alu32_bridge` axiom with 10 more specific
-axioms, each independently verifiable. The verified symbolic infrastructure
-(symCompileGates_correct, mkALUSymInit_correct, evalALU32_eq_sym) reduces each
-to a BoolExpr equivalence check that can be resolved by future automation
-(BDD-based decision procedure or per-subcircuit compositional proofs). -/
+private theorem readSymResultAsNat_bound (assign : Nat → Bool) (f : Nat → BoolExpr) (n : Nat) :
+    readSymResultAsNat assign f n < 2 ^ n := by
+  induction n with
+  | zero => simp [readSymResultAsNat]
+  | succ k ih => simp only [readSymResultAsNat]; split <;> simp <;> omega
 
+private theorem readSymResultAsNat_testBit (assign : Nat → Bool) (f : Nat → BoolExpr)
+    (n i : Nat) (hi : i < n) :
+    (readSymResultAsNat assign f n).testBit i = (f i).eval assign := by
+  induction n with
+  | zero => omega
+  | succ k ih =>
+    simp only [readSymResultAsNat]
+    have hbound := readSymResultAsNat_bound assign f k
+    by_cases hik : i = k
+    · subst hik
+      split <;> rename_i heval <;> simp
+      · rw [Nat.testBit_two_pow_add_eq, Nat.testBit_lt_two_pow hbound]; simp [heval]
+      · rw [Nat.testBit_lt_two_pow hbound]; simp [heval]
+    · have hik' : i < k := by omega
+      split <;> simp
+      · rw [Nat.testBit_two_pow_add_gt (by omega)]; exact ih hik'
+      · exact ih hik'
+
+/-! ## Per-opcode bridge theorems and axioms
+
+The verified symbolic infrastructure reduces each opcode to a BoolExpr
+equivalence check. AND/OR/XOR are proven via constFold; the rest remain axioms
+pending similar treatment for arithmetic/shift operations. -/
+
+-- Bitwise per-bit helper: constFold reduces to the expected simple form
+private theorem and_constFold_all :
+    ∀ i : Fin 32,
+      (aluSymResult 0x4 i.val).constFold = .and (.var i.val) (.var (32 + i.val)) := by
+  native_decide
+
+private theorem or_constFold_all :
+    ∀ i : Fin 32,
+      (aluSymResult 0x5 i.val).constFold = .or (.var i.val) (.var (32 + i.val)) := by
+  native_decide
+
+private theorem xor_constFold_all :
+    ∀ i : Fin 32,
+      (aluSymResult 0x6 i.val).constFold = .xor (.var i.val) (.var (32 + i.val)) := by
+  native_decide
+
+-- Generic per-bit proof for bitwise ops via constFold
+private theorem bitwise_bit_correct (a b : BitVec 32)
+    (op : BitVec 4) (i : Nat) (hi : i < 32)
+    (expected : BoolExpr)
+    (hcf : (aluSymResult op i).constFold = expected)
+    (heval : expected.eval (aluAssign a b) = (a.getLsbD i && b.getLsbD i)) :
+    (aluSymResult op i).eval (aluAssign a b) = (a.getLsbD i && b.getLsbD i) := by
+  rw [← BoolExpr.constFold_correct, hcf, heval]
+
+private theorem bitwise_bridge (a b : BitVec 32) (op : BitVec 4) (rhs : BitVec 32)
+    (hbits : ∀ i, i < 32 → (aluSymResult op i).eval (aluAssign a b) = rhs.getLsbD i) :
+    evalALU32 a b op = rhs := by
+  rw [evalALU32_eq_sym]
+  apply BitVec.eq_of_getLsbD_eq
+  intro i hi
+  rw [BitVec.getLsbD_ofNat, readSymResultAsNat_testBit _ _ 32 i hi]
+  simp only [hi, decide_true, Bool.true_and]
+  exact hbits i hi
+
+-- AND: proven
+theorem alu32_bridge_and (a b : BitVec 32) : evalALU32 a b 0x4 = a &&& b := by
+  apply bitwise_bridge a b 0x4 (a &&& b)
+  intro i hi
+  rw [BitVec.getLsbD_and]
+  exact bitwise_bit_correct a b 0x4 i hi _ (and_constFold_all ⟨i, hi⟩)
+    (by simp [BoolExpr.eval, aluAssign, hi, show ¬(32 + i < 32) from by omega,
+              show 32 + i - 32 = i from by omega])
+
+-- OR: proven
+theorem alu32_bridge_or (a b : BitVec 32) : evalALU32 a b 0x5 = a ||| b := by
+  apply bitwise_bridge a b 0x5 (a ||| b)
+  intro i hi
+  rw [BitVec.getLsbD_or]
+  exact bitwise_bit_correct a b 0x5 i hi _ (or_constFold_all ⟨i, hi⟩)
+    (by simp [BoolExpr.eval, aluAssign, hi, show ¬(32 + i < 32) from by omega,
+              show 32 + i - 32 = i from by omega])
+
+-- XOR: proven
+theorem alu32_bridge_xor (a b : BitVec 32) : evalALU32 a b 0x6 = a ^^^ b := by
+  apply bitwise_bridge a b 0x6 (a ^^^ b)
+  intro i hi
+  rw [BitVec.getLsbD_xor]
+  exact bitwise_bit_correct a b 0x6 i hi _ (xor_constFold_all ⟨i, hi⟩)
+    (by simp [BoolExpr.eval, Bool.xor, aluAssign, hi, show ¬(32 + i < 32) from by omega,
+              show 32 + i - 32 = i from by omega])
+
+-- Remaining axioms (arithmetic and shift operations)
 axiom alu32_bridge_add : ∀ (a b : BitVec 32), evalALU32 a b 0x0 = a + b
 axiom alu32_bridge_sub : ∀ (a b : BitVec 32), evalALU32 a b 0x1 = a - b
 axiom alu32_bridge_slt : ∀ (a b : BitVec 32),
     evalALU32 a b 0x2 = if decide (a.toInt < b.toInt) then 1 else 0
 axiom alu32_bridge_sltu : ∀ (a b : BitVec 32),
     evalALU32 a b 0x3 = if decide (a < b) then 1 else 0
-axiom alu32_bridge_and : ∀ (a b : BitVec 32), evalALU32 a b 0x4 = a &&& b
-axiom alu32_bridge_or : ∀ (a b : BitVec 32), evalALU32 a b 0x5 = a ||| b
-axiom alu32_bridge_xor : ∀ (a b : BitVec 32), evalALU32 a b 0x6 = a ^^^ b
 axiom alu32_bridge_sll : ∀ (a b : BitVec 32),
     evalALU32 a b 0x8 = a <<< (b &&& 0x1F#32).toNat
 axiom alu32_bridge_srl : ∀ (a b : BitVec 32),
