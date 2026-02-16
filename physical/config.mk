@@ -19,13 +19,20 @@ export SDC_FILE      = $(PROJECT_ROOT)/physical/constraints.sdc
 #   200 MHz = 5000ps (default, must pass)
 #   500 MHz = 2000ps (stretch goal)
 #  1000 MHz = 1000ps (aspirational)
-FMAX_MHZ ?= 200
+FMAX_MHZ ?= 500
 export CLK_PERIOD_PS = $(shell expr 1000000 / $(FMAX_MHZ))
 
 # Floorplan Configuration
-export CORE_UTILIZATION = 30
+# Tighter packing reduces wire lengths → lower slew on high-fanout nets
+# Sweet spot: 35%/0.70 minimizes slew violations at 500 MHz.
+# Higher packing (45%/0.82) causes routing congestion; lower (25%/0.60) has long wires.
+export CORE_UTILIZATION = 35
 export CORE_ASPECT_RATIO = 1
+export PLACE_DENSITY = 0.70
 
-# Repair tuning for slew violations
-export REPAIR_DESIGN_MAX_WIRE_LENGTH = 800
-export CTS_BUF_DISTANCE = 60
+# Repair tuning for slew/cap violations
+export REPAIR_DESIGN_MAX_WIRE_LENGTH = 300
+export CTS_BUF_DISTANCE = 45
+export CAP_MARGIN = 0.15
+export SLEW_MARGIN = 0.15
+export SETUP_SLACK_MARGIN = 75

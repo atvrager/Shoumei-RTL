@@ -76,6 +76,7 @@ import Shoumei.RISCV.Memory.LSU
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
+import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
@@ -131,14 +132,14 @@ def allCircuits : List Circuit := [
   mkDecoder 6,
   mkComparatorN 6,
   mkEqualityComparatorN 6,
+  mkEqualityComparator32,  -- Phase 7: Store buffer address matching (XOR + OR-tree)
   mkMux2x8,
   mkMux4x8,
   mkMuxTree 4 6,
   mkMuxTree 4 32,
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
   mkMux8x6,       -- Building block for hierarchical 64:1 muxes
-  mkMux8x32,      -- Building block for hierarchical 64:1 muxes
-  mkMuxTree 8 32, -- Phase 7: Store buffer forwarding/dequeue data
+  mkMux8x32Hierarchical, -- Hierarchical 8:1 (2× Mux4x32 + sel buffers)
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
@@ -239,6 +240,8 @@ def allCircuits : List Circuit := [
   mkLSU,
 
   -- Phase 8: Top-Level Integration
+  cdbMux,
+  cdbMuxF,
   mkFetchStage,
   mkRenameStage,
   mkCPU_RV32I,

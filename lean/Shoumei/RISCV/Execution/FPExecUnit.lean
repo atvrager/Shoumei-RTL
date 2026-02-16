@@ -258,6 +258,24 @@ def mkFPExecUnit : Circuit :=
   let result_is_int := Wire.mk "result_is_int"  -- high when result targets INT PRF
 
   -- ══════════════════════════════════════════════
+  -- Reset buffer tree: fan out reset to 6 sub-units via BUF gates
+  -- Prevents Yosys from merging these into a single high-fanout net
+  -- ══════════════════════════════════════════════
+  let reset_add := Wire.mk "reset_buf_add"
+  let reset_mul := Wire.mk "reset_buf_mul"
+  let reset_fma := Wire.mk "reset_buf_fma"
+  let reset_div := Wire.mk "reset_buf_div"
+  let reset_sqrt := Wire.mk "reset_buf_sqrt"
+  let reset_misc := Wire.mk "reset_buf_misc"
+  let reset_buf_gates := [
+    Gate.mkBUF reset reset_add,
+    Gate.mkBUF reset reset_mul,
+    Gate.mkBUF reset reset_fma,
+    Gate.mkBUF reset reset_div,
+    Gate.mkBUF reset reset_sqrt,
+    Gate.mkBUF reset reset_misc]
+
+  -- ══════════════════════════════════════════════
   -- Sub-unit output wires
   -- ══════════════════════════════════════════════
 
@@ -440,7 +458,7 @@ def mkFPExecUnit : Circuit :=
         [("op_sub", op[0]!)] ++  -- op[0] distinguishes FADD(0) from FSUB(1)
         (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
-        [("valid_in", add_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        [("valid_in", add_valid_in), ("clock", clock), ("reset", reset_add), ("zero", zero)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", add_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", add_tag[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", add_exc[i]!)) ++
@@ -455,7 +473,7 @@ def mkFPExecUnit : Circuit :=
           [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
         (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
-        [("valid_in", mul_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+        [("valid_in", mul_valid_in), ("clock", clock), ("reset", reset_mul), ("zero", zero)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", mul_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", mul_tag[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", mul_exc[i]!)) ++
@@ -472,7 +490,7 @@ def mkFPExecUnit : Circuit :=
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
         [("negate_product", Wire.mk "fma_negate_product"),
          ("subtract_addend", Wire.mk "fma_subtract_addend"),
-         ("valid_in", fma_valid_in), ("clock", clock), ("reset", reset), ("zero", zero)] ++
+         ("valid_in", fma_valid_in), ("clock", clock), ("reset", reset_fma), ("zero", zero)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", fma_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", fma_tag[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", fma_exc[i]!)) ++
@@ -487,7 +505,7 @@ def mkFPExecUnit : Circuit :=
           [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
         (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
-        [("start", div_start), ("clock", clock), ("reset", reset),
+        [("start", div_start), ("clock", clock), ("reset", reset_div),
          ("zero", zero), ("one", one)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", div_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", div_tag[i]!)) ++
@@ -502,7 +520,7 @@ def mkFPExecUnit : Circuit :=
         (List.range 32 |>.map fun i => (s!"src1_{i}", src1[i]!)) ++
         (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
-        [("start", sqrt_start), ("clock", clock), ("reset", reset),
+        [("start", sqrt_start), ("clock", clock), ("reset", reset_sqrt),
          ("zero", zero), ("one", one)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", sqrt_result[i]!)) ++
         (List.range 6 |>.map fun i => (s!"tag_out_{i}", sqrt_tag[i]!)) ++
@@ -603,7 +621,7 @@ def mkFPExecUnit : Circuit :=
     moduleName := "DFlipFlop"
     instName := "u_pipe_active_reg"
     portMap := [("d", pipe_dispatched), ("q", pipe_was_active),
-                ("clock", clock), ("reset", reset)]
+                ("clock", clock), ("reset", reset_misc)]
   }
 
   -- Busy = div_busy OR sqrt_busy OR pipe_was_active OR any_pipe_output
@@ -675,7 +693,7 @@ def mkFPExecUnit : Circuit :=
     inputs := src1 ++ src2 ++ src3 ++ op ++ rm ++ dest_tag ++
               [valid_in, clock, reset, zero, one]
     outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy, result_is_int]
-    gates := decode_gates ++ misc_valid_gate ++
+    gates := reset_buf_gates ++ decode_gates ++ misc_valid_gate ++
              mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
              pipe_collision_gates ++ busy_gate ++ int_result_gates
     instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst,

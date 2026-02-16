@@ -3,7 +3,7 @@
 # Based on docs/physical-design.md
 #
 # Usage:
-#   ./physical/run-openroad.sh                          # CPU_RV32IMF at 200 MHz (default)
+#   ./physical/run-openroad.sh                          # CPU_RV32IMF at 500 MHz (default)
 #   ./physical/run-openroad.sh CPU_RV32I_synth          # RV32I variant
 #   ./physical/run-openroad.sh CPU_RV32IM_synth 500     # RV32IM at 500 MHz
 #   FMAX_MHZ=1000 ./physical/run-openroad.sh            # 1 GHz aspirational
@@ -115,7 +115,7 @@ echo "  Design:    $DESIGN_NAME"
 echo "  Platform:  $(grep "^export PLATFORM" physical/config.mk | cut -d= -f2 | tr -d ' ')"
 echo "  Main SV:   $MAIN_VERILOG"
 echo "  Modules:   $SV_COUNT SystemVerilog files"
-FMAX_MHZ="${FMAX_MHZ:-200}"
+FMAX_MHZ="${FMAX_MHZ:-500}"
 CLK_PERIOD_PS=$((1000000 / FMAX_MHZ))
 echo "  Frequency: ${FMAX_MHZ} MHz (${CLK_PERIOD_PS} ps period)"
 echo ""

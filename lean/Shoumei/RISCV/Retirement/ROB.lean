@@ -528,6 +528,18 @@ def mkROB16 : Circuit :=
       (commit_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
+  -- === Reset Buffer Tree (2-level: 4 roots × 4 leaves = 16 leaf buffers) ===
+  let numRoots := 4
+  let numResetLeaves := 16
+  let reset_roots := (List.range numRoots).map (fun i =>
+    Wire.mk s!"reset_root_{i}")
+  let reset_root_gates := (List.range numRoots).map (fun i =>
+    Gate.mkBUF reset (reset_roots[i]!))
+  let reset_leaves := (List.range numResetLeaves).map (fun i =>
+    Wire.mk s!"reset_buf_{i}")
+  let reset_buf_gates := reset_root_gates ++ (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF (reset_roots[i / 4]!) (reset_leaves[i]!))
+
   -- === Per-Entry Logic (16 entries) ===
 
   let entryResults := (List.range 16).map fun i =>
@@ -605,7 +617,7 @@ def mkROB16 : Circuit :=
       instName := s!"u_entry{i}"
       portMap :=
         (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
-        [("clock", clock), ("reset", reset)] ++
+        [("clock", clock), ("reset", reset_leaves[i]!)] ++
         (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
@@ -794,7 +806,7 @@ def mkROB16 : Circuit :=
 
   let all_gates :=
     global_gates ++ [full_gate] ++ empty_gates ++ commit_safe_gates ++ alloc_idx_gates ++ head_idx_gates ++
-    all_entry_gates ++ head_readout_gates
+    reset_buf_gates ++ all_entry_gates ++ head_readout_gates
 
   let all_instances :=
     [head_inst, tail_inst, count_inst, alloc_dec_inst, commit_dec_inst] ++

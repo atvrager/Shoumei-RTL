@@ -38,7 +38,7 @@ structure CPUConfig where
   /-- Pipeline stages on store buffer forwarding path before CDB FIFO enqueue.
       0 = combinational (default), 1 = registered (for timing closure).
       The CDB FIFO decouples timing, so both settings are correct. -/
-  sbFwdPipelineStages : Nat := 1
+  sbFwdPipelineStages : Nat := 0
   deriving Repr, BEq, DecidableEq
 
 /-- Map config flags to riscv-opcodes extension strings.

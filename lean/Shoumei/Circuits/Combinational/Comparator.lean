@@ -310,4 +310,7 @@ def mkEqualityComparatorN (n : Nat) : Circuit :=
     keepHierarchy := false
   }
 
+-- Specific width: 32-bit equality-only comparator
+def mkEqualityComparator32 : Circuit := mkEqualityComparatorN 32
+
 end Shoumei.Circuits.Combinational
