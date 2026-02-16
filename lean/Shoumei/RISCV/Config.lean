@@ -5,6 +5,7 @@
   Controls which instructions are decoded and which execution units are synthesized.
   This is a build-time parameter -- no runtime mux overhead in hardware.
 -/
+import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
@@ -109,96 +110,26 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei
 
 /-- Compute the decoder instruction name list for a given config.
+    Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.
     Order matches the generated SV decoder enum: reverse alphabetical within
-    each extension group (I+M first in reverse-alpha, then F appended in
-    reverse-alpha). Built by collecting instruction names and sorting. -/
+    each group (integer first, then FP appended). -/
 def CPUConfig.decoderInstrNames (config : CPUConfig) : List String :=
-  let rv32i := ["ADD", "ADDI", "AND", "ANDI", "AUIPC", "BEQ", "BGE", "BGEU",
-                "BLT", "BLTU", "BNE", "EBREAK", "ECALL", "FENCE", "JAL",
-                "JALR", "LB", "LBU", "LH", "LHU", "LUI", "LW", "OR", "ORI",
-                "SB", "SH", "SLL", "SLLI", "SLT", "SLTI", "SLTIU", "SLTU",
-                "SRA", "SRAI", "SRL", "SRLI", "SUB", "SW", "XOR", "XORI"]
-  let rv_m := ["DIV", "DIVU", "MUL", "MULH", "MULHSU", "MULHU", "REM", "REMU"]
-  let rv_zifencei := ["FENCE_I"]
-  let rv_zicsr := ["CSRRC", "CSRRCI", "CSRRS", "CSRRSI", "CSRRW", "CSRRWI"]
-  let rv_f := ["FADD_S", "FCLASS_S", "FCVT_S_W", "FCVT_S_WU", "FCVT_W_S",
-               "FCVT_WU_S", "FDIV_S", "FEQ_S", "FLE_S", "FLT_S", "FLW",
-               "FMADD_S", "FMAX_S", "FMIN_S", "FMSUB_S", "FMUL_S", "FMV_W_X",
-               "FMV_X_W", "FNMADD_S", "FNMSUB_S", "FSGNJ_S", "FSGNJN_S",
-               "FSGNJX_S", "FSQRT_S", "FSUB_S", "FSW"]
-  -- Collect applicable instruction names
-  let intInstrs := rv32i
-    ++ (if config.enableM then rv_m else [])
-    ++ (if config.enableZifencei then rv_zifencei else [])
-    ++ (if config.enableZicsr then rv_zicsr else [])
-  -- Sort in reverse order using lowercase comparison (matches decoder's JSON key
-  -- order reversed by foldl prepend; lowercase ensures _ sorts correctly vs letters)
+  let enabled := config.enabledExtensions
+  let applicable : List OpType := OpType.all.filter fun op =>
+    op.extensionGroup.any fun ext => enabled.contains ext
+  let intOps : List OpType := applicable.filter fun op => !op.isFpGroup
+  let fpOps : List OpType := applicable.filter fun op => op.isFpGroup
   let revAlpha (a b : String) : Bool := a.toLower > b.toLower
-  let sortedInt := intInstrs.toArray.qsort revAlpha |>.toList
-  -- F extension instructions are appended after I+M group, also reverse-sorted
-  if config.enableF then
-    let sortedF := rv_f.toArray.qsort revAlpha |>.toList
-    sortedInt ++ sortedF
-  else sortedInt
+  let sortedInt := (intOps.map (toString ·)).toArray.qsort revAlpha |>.toList
+  let sortedFp := (fpOps.map (toString ·)).toArray.qsort revAlpha |>.toList
+  sortedInt ++ sortedFp
 
-/-- Find index of a name in the decoder instruction list -/
-private def findIdx (names : List String) (target : String) : Nat :=
-  match names.findIdx? (· == target) with
-  | some idx => idx
-  | none => 0  -- fallback (shouldn't happen for valid configs)
-
-/-- Opcode encodings that differ between RV32I and RV32IM decoders.
-    The decoder assigns sequential numbers to instructions; M-extension
-    instructions shift the encodings of base instructions. -/
-structure OpcodeEncodings where
-  lui : Nat
-  auipc : Nat
-  jal : Nat
-  jalr : Nat
-  beq : Nat
-  bne : Nat
-  blt : Nat
-  bge : Nat
-  bltu : Nat
-  bgeu : Nat
-  lw : Nat
-  lh : Nat
-  lhu : Nat
-  lb : Nat
-  lbu : Nat
-  sw : Nat
-  sh : Nat
-  sb : Nat
-  -- F extension (only valid when enableF)
-  flw : Nat := 0
-  fsw : Nat := 0
-  -- Zifencei extension
-  fenceI : Nat := 0
-  -- Zicsr extension
-  csrrw : Nat := 0
-  csrrs : Nat := 0
-  csrrc : Nat := 0
-  csrrwi : Nat := 0
-  csrrsi : Nat := 0
-  csrrci : Nat := 0
-
-/-- Build OpcodeEncodings from the decoder instruction name list (auto-resolved). -/
-def CPUConfig.opcodeEncodings (cfg : CPUConfig) : OpcodeEncodings :=
+/-- Look up the decoder index of an OpType for a given config.
+    Replaces the old `OpcodeEncodings` struct -- indices are derived, not stored. -/
+def CPUConfig.opcodeIndex (cfg : CPUConfig) (op : OpType) : Nat :=
   let names := cfg.decoderInstrNames
-  let f := findIdx names
-  { lui := f "LUI", auipc := f "AUIPC", jal := f "JAL", jalr := f "JALR",
-    beq := f "BEQ", bne := f "BNE", blt := f "BLT", bge := f "BGE",
-    bltu := f "BLTU", bgeu := f "BGEU",
-    lw := f "LW", lh := f "LH", lhu := f "LHU", lb := f "LB", lbu := f "LBU",
-    sw := f "SW", sh := f "SH", sb := f "SB",
-    flw := if cfg.enableF then f "FLW" else 0,
-    fsw := if cfg.enableF then f "FSW" else 0,
-    fenceI := if cfg.enableZifencei then f "FENCE_I" else 0,
-    csrrw := if cfg.enableZicsr then f "CSRRW" else 0,
-    csrrs := if cfg.enableZicsr then f "CSRRS" else 0,
-    csrrc := if cfg.enableZicsr then f "CSRRC" else 0,
-    csrrwi := if cfg.enableZicsr then f "CSRRWI" else 0,
-    csrrsi := if cfg.enableZicsr then f "CSRRSI" else 0,
-    csrrci := if cfg.enableZicsr then f "CSRRCI" else 0 }
+  match names.findIdx? (· == toString op) with
+  | some idx => idx
+  | none => 0
 
 end Shoumei.RISCV
