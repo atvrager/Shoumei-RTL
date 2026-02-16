@@ -496,11 +496,13 @@ def mkRenameStage : Circuit :=
   let rs2_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs2_phys_out_{i}")
   let rd_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rd_phys_out_{i}")
   let old_rd_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"old_rd_phys_out_{i}")
+  let rs3_phys_out := (List.range tagWidth).map (fun i => Wire.mk s!"rs3_phys_out_{i}")
   let phys_out_gates :=
     (List.range tagWidth).map (fun i => Gate.mkBUF (rs1_phys[i]!) (rs1_phys_out[i]!)) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF (rs2_phys[i]!) (rs2_phys_out[i]!)) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF (rd_phys[i]!) (rd_phys_out[i]!)) ++
-    (List.range tagWidth).map (fun i => Gate.mkBUF (old_rd_phys[i]!) (old_rd_phys_out[i]!))
+    (List.range tagWidth).map (fun i => Gate.mkBUF (old_rd_phys[i]!) (old_rd_phys_out[i]!)) ++
+    (List.range tagWidth).map (fun i => Gate.mkBUF (rs3_phys[i]!) (rs3_phys_out[i]!))
 
   { name := "RenameStage_32x64"
     inputs := [clock, reset, zero, one, instr_valid, has_rd] ++
@@ -512,7 +514,7 @@ def mkRenameStage : Circuit :=
               [force_alloc, commit_hasAllocSlot]
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++
-               rs1_data ++ rs2_data ++ rd_data3 ++ rd_data4
+               rs1_data ++ rs2_data ++ rd_data3 ++ rs3_phys_out ++ rd_data4
     gates := x0_detect_gates ++ needs_alloc_gates ++ [freelist_ready_gate] ++
              allocate_fire_gates ++ [rat_we_gate] ++ stall_gates ++ rename_valid_gates ++
              rd_phys_assign_gates ++
@@ -541,6 +543,7 @@ def mkRenameStage : Circuit :=
       { name := "old_rd_phys", width := 6, wires := old_rd_phys },
       { name := "freelist_deq", width := 6, wires := freelist_deq_data },
       { name := "rs3_phys", width := 6, wires := rs3_phys },
+      { name := "rs3_phys_out", width := 6, wires := rs3_phys_out },
       { name := "rd_data3", width := 32, wires := rd_data3 },
       { name := "rd_tag4", width := 6, wires := rd_tag4 },
       { name := "rd_data4", width := 32, wires := rd_data4 },

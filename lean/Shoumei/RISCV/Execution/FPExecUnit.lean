@@ -395,9 +395,12 @@ def mkFPExecUnit : Circuit :=
     Gate.mkAND op2_only not_op1 (Wire.mk "sqrt_t1"),
     Gate.mkAND (Wire.mk "sqrt_t1") op_hi_zero_23 op_is_sqrt,
 
-    -- op in {5,6,7,8} → FMA: (op[2]=1 && !op[3] && !op[4]) || (op[3]=1 && !op[2] && !op[1] && !op[0] && !op[4])
-    Gate.mkAND (op[2]!) not_op3 op2_and_not3,
-    Gate.mkAND op2_and_not3 not_op4 op2_and_not34,
+    -- op in {5,6,7,8} → FMA: (op[2]=1 && (op[0]||op[1]) && !op[3] && !op[4]) || (op[3]=1 && !op[2] && !op[1] && !op[0] && !op[4])
+    -- Note: must require (op[0]||op[1]) to exclude op=4 (FSQRT=00100)
+    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "op01_any"),
+    Gate.mkAND (op[2]!) (Wire.mk "op01_any") op2_and_not3,
+    Gate.mkAND op2_and_not3 not_op3 (Wire.mk "op2_and_not3_real"),
+    Gate.mkAND (Wire.mk "op2_and_not3_real") not_op4 op2_and_not34,
     -- For op=8 (01000): op[3]=1, op[2:0]=000
     Gate.mkAND (op[3]!) not_op2_w (Wire.mk "fma8_t1"),
     Gate.mkAND (Wire.mk "fma8_t1") not_op1 (Wire.mk "fma8_t2"),
@@ -444,6 +447,7 @@ def mkFPExecUnit : Circuit :=
         (List.range 32 |>.flatMap fun i =>
           [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
         (List.range 5 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         [("zero", zero), ("one", one)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", misc_result[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", misc_exc[i]!))
@@ -582,7 +586,7 @@ def mkFPExecUnit : Circuit :=
       Gate.mkMUX (t2_exc[i]!) (fma_exc[i]!) fma_valid (t3_exc[i]!)) ++
     [Gate.mkOR t2_valid fma_valid t3_valid]
 
-  -- Level 4: MUX(t3, sqrt, sqrt_valid) → t4
+  -- Level 4: MUX(t3, div, div_valid) → t4
   let t4_result := makeIndexedWires "t4_result" 32
   let t4_tag := makeIndexedWires "t4_tag" 6
   let t4_exc := makeIndexedWires "t4_exc" 5
@@ -590,22 +594,22 @@ def mkFPExecUnit : Circuit :=
 
   let mux4_gates :=
     (List.range 32 |>.map fun i =>
-      Gate.mkMUX (t3_result[i]!) (sqrt_result[i]!) sqrt_valid (t4_result[i]!)) ++
+      Gate.mkMUX (t3_result[i]!) (div_result[i]!) div_valid (t4_result[i]!)) ++
     (List.range 6 |>.map fun i =>
-      Gate.mkMUX (t3_tag[i]!) (sqrt_tag[i]!) sqrt_valid (t4_tag[i]!)) ++
+      Gate.mkMUX (t3_tag[i]!) (div_tag[i]!) div_valid (t4_tag[i]!)) ++
     (List.range 5 |>.map fun i =>
-      Gate.mkMUX (t3_exc[i]!) (sqrt_exc[i]!) sqrt_valid (t4_exc[i]!)) ++
-    [Gate.mkOR t3_valid sqrt_valid t4_valid]
+      Gate.mkMUX (t3_exc[i]!) (div_exc[i]!) div_valid (t4_exc[i]!)) ++
+    [Gate.mkOR t3_valid div_valid t4_valid]
 
-  -- Level 5: MUX(t4, div, div_valid) → output
+  -- Level 5: MUX(t4, sqrt, sqrt_valid) → output (sqrt gets higher priority)
   let mux5_gates :=
     (List.range 32 |>.map fun i =>
-      Gate.mkMUX (t4_result[i]!) (div_result[i]!) div_valid (result[i]!)) ++
+      Gate.mkMUX (t4_result[i]!) (sqrt_result[i]!) sqrt_valid (result[i]!)) ++
     (List.range 6 |>.map fun i =>
-      Gate.mkMUX (t4_tag[i]!) (div_tag[i]!) div_valid (tag_out[i]!)) ++
+      Gate.mkMUX (t4_tag[i]!) (sqrt_tag[i]!) sqrt_valid (tag_out[i]!)) ++
     (List.range 5 |>.map fun i =>
-      Gate.mkMUX (t4_exc[i]!) (div_exc[i]!) div_valid (exceptions[i]!)) ++
-    [Gate.mkOR t4_valid div_valid valid_out]
+      Gate.mkMUX (t4_exc[i]!) (sqrt_exc[i]!) sqrt_valid (exceptions[i]!)) ++
+    [Gate.mkOR t4_valid sqrt_valid valid_out]
 
   -- Pipeline collision prevention: after dispatching to a pipelined sub-unit (adder, mul, FMA),
   -- set busy for 1 cycle to prevent back-to-back dispatches to different pipelines.

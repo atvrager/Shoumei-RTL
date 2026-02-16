@@ -30,6 +30,40 @@ namespace Shoumei.Circuits.Sequential
 open Shoumei
 open Shoumei.Circuits.Combinational
 
+/-- OR-reduce: returns (wire, gates) where wire = OR of all input wires. -/
+private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
+  match inputs with
+  | [] => (Wire.mk s!"{pfx}_empty", [])
+  | [w] =>
+    let out := Wire.mk s!"{pfx}_buf"
+    (out, [Gate.mkBUF w out])
+  | w0 :: w1 :: rest =>
+    let firstOut := Wire.mk s!"{pfx}_0"
+    let firstGate := Gate.mkOR w0 w1 firstOut
+    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
+      let out := Wire.mk s!"{pfx}_{idx + 1}"
+      let g := Gate.mkOR acc.1 w out
+      (out, acc.2 ++ [g])
+    ) (firstOut, [])
+    (finalW, [firstGate] ++ restGates)
+
+/-- AND-reduce: returns (wire, gates) where wire = AND of all input wires. -/
+private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
+  match inputs with
+  | [] => (Wire.mk s!"{pfx}_empty", [])
+  | [w] =>
+    let out := Wire.mk s!"{pfx}_buf"
+    (out, [Gate.mkBUF w out])
+  | w0 :: w1 :: rest =>
+    let firstOut := Wire.mk s!"{pfx}_0"
+    let firstGate := Gate.mkAND w0 w1 firstOut
+    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
+      let out := Wire.mk s!"{pfx}_{idx + 1}"
+      let g := Gate.mkAND acc.1 w out
+      (out, acc.2 ++ [g])
+    ) (firstOut, [])
+    (finalW, [firstGate] ++ restGates)
+
 /-- Create a bank of DFFs with matching d/q wire lists. -/
 def mkDFFBank (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
@@ -232,14 +266,170 @@ def mkFPMultiplier : Circuit :=
   let final_exp := makeIndexedWires "fp_fexp" 9
   let (final_exp_gates, _) := mkKoggeStoneAdd s2_expub exp_inc_b zero final_exp "fp_fexpadd"
 
-  -- Pack: result[31] = sign, result[30:23] = exp[7:0], result[22:0] = mant
+  -- Pack: packed[31] = sign, packed[30:23] = exp[7:0], packed[22:0] = mant
+  let packed := makeIndexedWires "mul_packed" 32
   let pack_gates := (List.range 32).map fun i =>
     if i < 23 then
-      Gate.mkBUF (norm_mant[i]!) (result[i]!)
+      Gate.mkBUF (norm_mant[i]!) (packed[i]!)
     else if i < 31 then
-      Gate.mkBUF (final_exp[i - 23]!) (result[i]!)
+      Gate.mkBUF (final_exp[i - 23]!) (packed[i]!)
     else
-      Gate.mkBUF s2_rsign (result[i]!)
+      Gate.mkBUF s2_rsign (packed[i]!)
+
+  -- ══════════════════════════════════════════════
+  -- Exception flag computation
+  -- ══════════════════════════════════════════════
+
+  -- NX (Inexact): any lost bits during normalization
+  -- If product[47]=1: lost bits = product[23:0]
+  -- If product[47]=0: lost bits = product[22:0]
+  -- NX = OR(product[22:0]) | (product[47] & product[23])
+  let low23_bits := (List.range 23).map fun i => product[i]!
+  let (low23_or, low23_or_gates) := mkOrTree "mul_low23" low23_bits
+  let mul_extra_lost := Wire.mk "mul_extra_lost"
+  let mul_nx := Wire.mk "mul_nx"
+  let nx_gates := [
+    Gate.mkAND (product[47]!) (product[23]!) mul_extra_lost,
+    Gate.mkOR low23_or mul_extra_lost mul_nx
+  ]
+
+  -- NV (Invalid): NaN input or Inf × 0
+  -- Detect NaN/Inf/zero from stage 1 latched inputs
+  -- src1 is NaN if exp=0xFF and mant!=0
+  -- src1 is Inf if exp=0xFF and mant==0
+  -- src1 is zero if exp=0x00 and mant==0
+  let s1_exp1_bits := (List.range 8).map fun i => s1_src1[23 + i]!
+  let (s1_exp1_ones, s1_exp1_ones_gates) := mkAndTree "mul_e1o" s1_exp1_bits
+  let s1_mant1_bits := (List.range 23).map fun i => s1_src1[i]!
+  let (s1_mant1_nz, s1_mant1_nz_gates) := mkOrTree "mul_m1nz" s1_mant1_bits
+  let s1_exp2_bits := (List.range 8).map fun i => s1_src2[23 + i]!
+  let (s1_exp2_ones, s1_exp2_ones_gates) := mkAndTree "mul_e2o" s1_exp2_bits
+  let s1_mant2_bits := (List.range 23).map fun i => s1_src2[i]!
+  let (s1_mant2_nz, s1_mant2_nz_gates) := mkOrTree "mul_m2nz" s1_mant2_bits
+
+  -- NaN detection
+  let is_nan1 := Wire.mk "mul_is_nan1"
+  let is_nan2 := Wire.mk "mul_is_nan2"
+  let either_nan := Wire.mk "mul_either_nan"
+  let nan_gates := [
+    Gate.mkAND s1_exp1_ones s1_mant1_nz is_nan1,
+    Gate.mkAND s1_exp2_ones s1_mant2_nz is_nan2,
+    Gate.mkOR is_nan1 is_nan2 either_nan
+  ]
+
+  -- Inf detection
+  let not_mant1_nz := Wire.mk "mul_nm1nz"
+  let not_mant2_nz := Wire.mk "mul_nm2nz"
+  let is_inf1 := Wire.mk "mul_is_inf1"
+  let is_inf2 := Wire.mk "mul_is_inf2"
+  let inf_gates := [
+    Gate.mkNOT s1_mant1_nz not_mant1_nz,
+    Gate.mkNOT s1_mant2_nz not_mant2_nz,
+    Gate.mkAND s1_exp1_ones not_mant1_nz is_inf1,
+    Gate.mkAND s1_exp2_ones not_mant2_nz is_inf2
+  ]
+
+  -- Zero detection: exp=0 and mant=0
+  let (s1_exp1_any, s1_exp1_any_gates) := mkOrTree "mul_e1a" s1_exp1_bits
+  let (s1_exp2_any, s1_exp2_any_gates) := mkOrTree "mul_e2a" s1_exp2_bits
+  let not_exp1_any := Wire.mk "mul_ne1a"
+  let not_exp2_any := Wire.mk "mul_ne2a"
+  let is_zero1 := Wire.mk "mul_is_zero1"
+  let is_zero2 := Wire.mk "mul_is_zero2"
+  let zero_det_gates := [
+    Gate.mkNOT s1_exp1_any not_exp1_any,
+    Gate.mkNOT s1_exp2_any not_exp2_any,
+    Gate.mkAND not_exp1_any not_mant1_nz is_zero1,
+    Gate.mkAND not_exp2_any not_mant2_nz is_zero2
+  ]
+
+  -- NV = either_nan | (inf1 & zero2) | (zero1 & inf2)
+  let inf1_zero2 := Wire.mk "mul_inf1_zero2"
+  let zero1_inf2 := Wire.mk "mul_zero1_inf2"
+  let inf_zero := Wire.mk "mul_inf_zero"
+  let mul_nv := Wire.mk "mul_nv"
+  let nv_gates := [
+    Gate.mkAND is_inf1 is_zero2 inf1_zero2,
+    Gate.mkAND is_zero1 is_inf2 zero1_inf2,
+    Gate.mkOR inf1_zero2 zero1_inf2 inf_zero,
+    Gate.mkOR either_nan inf_zero mul_nv
+  ]
+
+  -- NaN/Inf/zero inputs should not generate NX
+  -- any_special = either_nan | inf1 | inf2 | zero1 | zero2
+  let any_special_or1 := Wire.mk "mul_aso1"
+  let any_special_or2 := Wire.mk "mul_aso2"
+  let any_special_or3 := Wire.mk "mul_aso3"
+  let any_special := Wire.mk "mul_any_special"
+  let not_special := Wire.mk "mul_not_special"
+  let mul_nx_final := Wire.mk "mul_nx_final"
+  let special_gates := [
+    Gate.mkOR is_inf1 is_inf2 any_special_or1,
+    Gate.mkOR is_zero1 is_zero2 any_special_or2,
+    Gate.mkOR any_special_or1 any_special_or2 any_special_or3,
+    Gate.mkOR either_nan any_special_or3 any_special,
+    Gate.mkNOT any_special not_special,
+    Gate.mkAND mul_nx not_special mul_nx_final
+  ]
+
+  -- Latch NV, special flags, inf/zero indicators through stage 2
+  let s2_nv := Wire.mk "s2_nv"
+  let s2_not_special := Wire.mk "s2_not_special"
+  let s2_is_inf := Wire.mk "s2_is_inf"  -- either input is inf
+  let s2_is_zero := Wire.mk "s2_is_zero"  -- either input is zero
+  let s2_nv_dff := Gate.mkDFF mul_nv clock reset s2_nv
+  let s2_ns_dff := Gate.mkDFF not_special clock reset s2_not_special
+  let s2_inf_dff := Gate.mkDFF any_special_or1 clock reset s2_is_inf  -- inf1|inf2
+  let s2_zero_dff := Gate.mkDFF any_special_or2 clock reset s2_is_zero  -- zero1|zero2
+
+  -- Final NX = mul_nx (from stage 2 product) AND s2_not_special (latched from stage 1)
+  let final_nx := Wire.mk "mul_final_nx"
+  let final_nx_gate := Gate.mkAND mul_nx s2_not_special final_nx
+
+  -- ══════════════════════════════════════════════
+  -- Special result override: NaN > Inf > Zero > Normal
+  -- ══════════════════════════════════════════════
+  -- If s2_nv → canonical NaN 0x7FC00000 (sign=0, exp=0xFF, mant=0x400000)
+  -- Else if s2_is_inf → signed inf: sign | 0x7F800000
+  -- Else if s2_is_zero → signed zero: sign | 0x00000000
+  -- Else → normal packed result
+  --
+  -- Implementation: MUX chain with priority
+  -- Step 1: zero override: if s2_is_zero, force exp/mant to 0 (sign preserved)
+  let zero_result := makeIndexedWires "mul_zero_res" 32
+  let zero_override_gates := (List.range 32).map fun i =>
+    if i < 31 then
+      Gate.mkMUX (packed[i]!) zero s2_is_zero (zero_result[i]!)
+    else
+      Gate.mkBUF (packed[i]!) (zero_result[i]!)
+
+  -- Step 2: inf override: if s2_is_inf, force exp=0xFF mant=0 (sign preserved)
+  let inf_result := makeIndexedWires "mul_inf_res" 32
+  let inf_override_gates := (List.range 32).map fun i =>
+    if i < 23 then
+      -- Inf has mant = 0
+      Gate.mkMUX (zero_result[i]!) zero s2_is_inf (inf_result[i]!)
+    else if i < 31 then
+      -- Inf has exp = 0xFF (all ones)
+      Gate.mkMUX (zero_result[i]!) one_w s2_is_inf (inf_result[i]!)
+    else
+      Gate.mkBUF (zero_result[i]!) (inf_result[i]!)  -- sign stays
+
+  -- Step 3: NaN override: if s2_nv, force canonical NaN 0x7FC00000
+  -- Write directly to the output `result` wires
+  let nan_override_gates := (List.range 32).map fun i =>
+    if i == 22 then
+      -- Quiet NaN bit
+      Gate.mkMUX (inf_result[i]!) one_w s2_nv (result[i]!)
+    else if i < 22 then
+      -- mant = 0 (except quiet bit)
+      Gate.mkMUX (inf_result[i]!) zero s2_nv (result[i]!)
+    else if i < 31 then
+      -- exp = 0xFF
+      Gate.mkMUX (inf_result[i]!) one_w s2_nv (result[i]!)
+    else
+      -- sign = 0 for canonical NaN
+      Gate.mkMUX (inf_result[i]!) zero s2_nv (result[i]!)
 
   -- ══════════════════════════════════════════════
   -- Tag, valid, exception outputs
@@ -247,8 +437,13 @@ def mkFPMultiplier : Circuit :=
   let tag_out_gates := (List.range 6).map fun i =>
     Gate.mkBUF (s2_tag[i]!) (tag_out[i]!)
   let valid_gate := [Gate.mkBUF s2_valid valid_out]
-  let exc_gates := (List.range 5).map fun i =>
-    Gate.mkBUF zero (exc[i]!)
+  let exc_gates := [
+    Gate.mkBUF final_nx (exc[0]!),     -- NX (inexact)
+    Gate.mkBUF zero (exc[1]!),         -- UF (underflow) - TODO
+    Gate.mkBUF zero (exc[2]!),         -- OF (overflow) - TODO
+    Gate.mkBUF zero (exc[3]!),         -- DZ - N/A for multiply
+    Gate.mkBUF s2_nv (exc[4]!)         -- NV (invalid)
+  ]
 
   -- ══════════════════════════════════════════════
   -- Assemble circuit
@@ -260,11 +455,22 @@ def mkFPMultiplier : Circuit :=
     exp_sub_gates ++
     pp_gates ++
     csa_tree_gates ++
-    s2_dffs ++
+    -- Stage 1 exception detection (NaN/Inf/zero)
+    s1_exp1_ones_gates ++ s1_mant1_nz_gates ++
+    s1_exp2_ones_gates ++ s1_mant2_nz_gates ++
+    nan_gates ++ inf_gates ++
+    s1_exp1_any_gates ++ s1_exp2_any_gates ++
+    zero_det_gates ++ nv_gates ++ special_gates ++
+    -- Stage 2 DFFs (including exception latches)
+    s2_dffs ++ [s2_nv_dff, s2_ns_dff, s2_inf_dff, s2_zero_dff] ++
+    -- Stage 2 combinational
     final_add_gates ++
+    low23_or_gates ++ nx_gates ++ [final_nx_gate] ++
     norm_mant_gates ++
     final_exp_gates ++
     pack_gates ++
+    -- Special result override: NaN > Inf > Zero > Normal
+    zero_override_gates ++ inf_override_gates ++ nan_override_gates ++
     tag_out_gates ++
     valid_gate ++
     exc_gates

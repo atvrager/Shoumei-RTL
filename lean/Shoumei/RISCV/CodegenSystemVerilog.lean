@@ -245,7 +245,8 @@ always_comb begin
     "\n    (io_instr[6:0] == 7'b1010011 &&   // OP-FP 2-source ops" ++
     "\n     (io_instr[31:27] == 5'b00000 ||  // FADD" ++
     "\n      io_instr[31:27] == 5'b00001 ||  // FSUB" ++
-    "\n      io_instr[31:27] == 5'b00010 ||  // FMUL" ++
+    "\n      io_instr[31:27] == 5'b00010 ||  // FMUL
+      io_instr[31:27] == 5'b00011 ||  // FDIV" ++
     "\n      io_instr[31:27] == 5'b10100 ||  // FCMP (FEQ/FLT/FLE)" ++
     "\n      io_instr[31:27] == 5'b00100 ||  // FSGNJ/FSGNJN/FSGNJX" ++
     "\n      io_instr[31:27] == 5'b00101))   // FMIN/FMAX" ++

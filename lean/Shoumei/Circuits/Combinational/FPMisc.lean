@@ -8,17 +8,20 @@ Implements single-cycle FP bit-manipulation operations for RV32F:
 Inputs:
   - src1[31:0], src2[31:0] - source operands
   - op[4:0] - operation select
+  - rm[2:0] - rounding mode (RNE=0, RTZ=1, RDN=2, RUP=3, RMM=4)
   - zero, one - constant wires
 
 Outputs:
   - result[31:0] - operation result
-  - exc[4:0] - exception flags (always 0 for these ops)
+  - exc[4:0] - exception flags (NV, DZ, OF, UF, NX)
 -/
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
+
+set_option maxRecDepth 8192
 
 open Shoumei
 
@@ -133,10 +136,59 @@ def fpMiscCircuit : Circuit :=
   let src1 := makeIndexedWires "src1" 32
   let src2 := makeIndexedWires "src2" 32
   let op := makeIndexedWires "op" 5
+  let rm := makeIndexedWires "rm" 3
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
   let result := makeIndexedWires "result" 32
   let exc := makeIndexedWires "exc" 5
+
+  -- ============================================================
+  -- NaN DETECTION (shared by comparisons, min/max, FCVT)
+  -- ============================================================
+  -- A float is NaN if exponent == 0xFF and mantissa != 0
+  -- is_nan = exp_all_ones & mant_nonzero
+  -- is_snan = is_nan & !src[22] (bit 22 = quiet bit; 0 = signaling)
+
+  -- src1 NaN detection
+  let nan1_exp_bits := (List.range 8).map fun i => src1[23 + i]!
+  let (nan1_exp_ones, nan1_exp_ones_gates) := mkAndTree "nan1_eao" nan1_exp_bits
+  let nan1_mant_bits := (List.range 23).map fun i => src1[i]!
+  let (nan1_mant_nz, nan1_mant_nz_gates) := mkOrTree "nan1_mnz" nan1_mant_bits
+  let is_nan_src1 := Wire.mk "is_nan_src1"
+  let is_snan_src1 := Wire.mk "is_snan_src1"
+  let nan1_not_quiet := Wire.mk "nan1_not_quiet"
+  let nan1_detect_gates := [
+    Gate.mkAND nan1_exp_ones nan1_mant_nz is_nan_src1,
+    Gate.mkNOT (src1[22]!) nan1_not_quiet,
+    Gate.mkAND is_nan_src1 nan1_not_quiet is_snan_src1
+  ]
+
+  -- src2 NaN detection
+  let nan2_exp_bits := (List.range 8).map fun i => src2[23 + i]!
+  let (nan2_exp_ones, nan2_exp_ones_gates) := mkAndTree "nan2_eao" nan2_exp_bits
+  let nan2_mant_bits := (List.range 23).map fun i => src2[i]!
+  let (nan2_mant_nz, nan2_mant_nz_gates) := mkOrTree "nan2_mnz" nan2_mant_bits
+  let is_nan_src2 := Wire.mk "is_nan_src2"
+  let is_snan_src2 := Wire.mk "is_snan_src2"
+  let nan2_not_quiet := Wire.mk "nan2_not_quiet"
+  let nan2_detect_gates := [
+    Gate.mkAND nan2_exp_ones nan2_mant_nz is_nan_src2,
+    Gate.mkNOT (src2[22]!) nan2_not_quiet,
+    Gate.mkAND is_nan_src2 nan2_not_quiet is_snan_src2
+  ]
+
+  -- Combined NaN signals
+  let either_nan := Wire.mk "either_nan"
+  let both_nan := Wire.mk "both_nan"
+  let either_snan := Wire.mk "either_snan"
+  let nan_combined_gates := [
+    Gate.mkOR is_nan_src1 is_nan_src2 either_nan,
+    Gate.mkAND is_nan_src1 is_nan_src2 both_nan,
+    Gate.mkOR is_snan_src1 is_snan_src2 either_snan
+  ]
+
+  -- Canonical NaN: 0x7FC00000 = {0, 0xFF, 1, 0...0}
+  -- bit 31=0, bits 30:23=0xFF, bit 22=1, bits 21:0=0
 
   -- ============================================================
   -- FSGNJ / FSGNJN / FSGNJX (existing)
@@ -259,10 +311,17 @@ def fpMiscCircuit : Circuit :=
   let feq_xor_gates := (List.range 32).map fun i =>
     Gate.mkXOR (src1[i]!) (src2[i]!) (feq_xor[i]!)
 
-  -- OR-reduce all XOR bits, then NOT -> equality
+  -- OR-reduce all XOR bits, then NOT -> equality (before NaN masking)
   let (feq_or_out, feq_or_gates) := mkOrTree "feq_or" feq_xor
+  let feq_raw := Wire.mk "feq_raw"
+  let g_feq_inv := Gate.mkNOT feq_or_out feq_raw
+  -- If either input is NaN, FEQ returns 0
+  let not_either_nan := Wire.mk "not_either_nan"
   let feq_result := Wire.mk "feq_result"
-  let g_feq_inv := Gate.mkNOT feq_or_out feq_result
+  let feq_nan_gates := [
+    Gate.mkNOT either_nan not_either_nan,
+    Gate.mkAND feq_raw not_either_nan feq_result
+  ]
 
   -- ============================================================
   -- FLT.S (op=10 = 01010): !op4 & op3 & !op2 & op1 & !op0
@@ -324,9 +383,12 @@ def fpMiscCircuit : Circuit :=
   let flt_same_result2 := Wire.mk "flt_same_result2"
   let g_flt_same2 := Gate.mkMUX flt_borrow flt_neg_lt (src1[31]!) flt_same_result2
 
-  -- final: signs_differ ? src1[31] : flt_same_result2
+  -- raw FLT result (before NaN masking)
+  let flt_raw := Wire.mk "flt_raw"
+  let g_flt_final := Gate.mkMUX flt_same_result2 (src1[31]!) flt_signs_differ flt_raw
+  -- If either input is NaN, FLT returns 0
   let flt_result := Wire.mk "flt_result"
-  let g_flt_final := Gate.mkMUX flt_same_result2 (src1[31]!) flt_signs_differ flt_result
+  let flt_nan_gate := Gate.mkAND flt_raw not_either_nan flt_result
 
   -- ============================================================
   -- FLE.S (op=11 = 01011): !op4 & op3 & !op2 & op1 & op0
@@ -415,6 +477,10 @@ def fpMiscCircuit : Circuit :=
     -- fcvt_mag[i] = underflow ? 0 : shifted[i]
     Gate.mkMUX (fcvt_shifted[i]!) zero fcvt_underflow (fcvt_mag[i]!)
 
+  -- OR-reduce fcvt_mag to detect nonzero magnitude (for FCVT.WU.S NV)
+  let fcvt_mag_bits := (List.range 32).map fun i => fcvt_mag[i]!
+  let (fcvt_mag_nz, fcvt_mag_nz_gates) := mkOrTree "fcvt_mag_nz" fcvt_mag_bits
+
   -- If src1[31] (negative), negate: result = ~mag + 1 (2's complement)
   -- Invert
   let fcvt_inv := makeIndexedWires "fcvt_inv" 32
@@ -428,9 +494,210 @@ def fpMiscCircuit : Circuit :=
     mkKoggeStoneAdd fcvt_inv zeros32 one fcvt_neg "fcvt_neg"
 
   -- Select positive or negative based on src1[31]
-  let fcvt_res := makeIndexedWires "fcvt_res" 32
+  let fcvt_normal := makeIndexedWires "fcvt_normal" 32
   let fcvt_sel_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (fcvt_mag[i]!) (fcvt_neg[i]!) (src1[31]!) (fcvt_res[i]!)
+    Gate.mkMUX (fcvt_mag[i]!) (fcvt_neg[i]!) (src1[31]!) (fcvt_normal[i]!)
+
+  -- FCVT.W.S special cases: NaN, Inf, overflow
+  -- is_inf_src1 = exp_all_ones & mant_zero (reuse nan1_exp_ones, nan1_mant_nz)
+  let nan1_mant_zero := Wire.mk "nan1_mant_zero"
+  let is_inf_src1 := Wire.mk "is_inf_src1"
+  let nan1_mant_z_gate := Gate.mkNOT nan1_mant_nz nan1_mant_zero
+  let inf1_gate := Gate.mkAND nan1_exp_ones nan1_mant_zero is_inf_src1
+
+  -- fcvt_overflow = shiftBorrow AND NOT is_nan AND NOT is_inf (exp > 150 but finite)
+  let fcvt_overflow := Wire.mk "fcvt_overflow"
+  let _fcvt_special := Wire.mk "fcvt_special"  -- NaN or Inf or overflow
+  let fcvt_special_gates := [
+    -- overflow: exp > 150 (shiftBorrow=1) and not NaN/Inf
+    -- Actually shiftBorrow=1 covers all exp > 150, including Inf/NaN. Let's just use shiftBorrow.
+    Gate.mkBUF shiftBorrow fcvt_overflow
+  ]
+
+  -- For NaN or +overflow: return 0x7FFFFFFF (INT32_MAX)
+  -- For -Inf or -overflow: return 0x80000000 (INT32_MIN)
+  -- NaN always returns INT32_MAX
+  -- Negative Inf/overflow: bit31=1, rest=0 (0x80000000)
+  -- Positive Inf/overflow or NaN: bit31=0, rest=1 (0x7FFFFFFF)
+  let fcvt_is_special := Wire.mk "fcvt_is_special"  -- NaN, Inf, or overflow
+  let fcvt_neg_special := Wire.mk "fcvt_neg_special"  -- negative & special & not NaN
+  let fcvt_not_nan := Wire.mk "fcvt_not_nan"
+  let fcvt_special_det := [
+    Gate.mkOR is_nan_src1 fcvt_overflow fcvt_is_special,
+    Gate.mkNOT is_nan_src1 fcvt_not_nan,
+    -- neg_special = sign & not_nan & special (negative overflow or -Inf)
+    Gate.mkAND (src1[31]!) fcvt_not_nan (Wire.mk "fcvt_neg_and_nn"),
+    Gate.mkAND (Wire.mk "fcvt_neg_and_nn") fcvt_is_special fcvt_neg_special
+  ]
+
+  -- Special result: 0x80000000 if neg_special, else 0x7FFFFFFF
+  let fcvt_res := makeIndexedWires "fcvt_res" 32
+  let fcvt_result_gates := (List.range 32).map fun i =>
+    if i == 31 then
+      -- bit 31: 1 if neg_special, 0 otherwise (for special case)
+      -- normal: fcvt_normal[31]; special: neg_special
+      Gate.mkMUX (fcvt_normal[i]!) fcvt_neg_special fcvt_is_special (fcvt_res[i]!)
+    else
+      -- bits 30:0: 0 if neg_special, 1 otherwise (for special case)
+      let _not_neg_special := Wire.mk s!"fcvt_nns_{i}"
+      -- When special: result = neg_special ? 0 : 1 = NOT neg_special
+      -- We need a wire for "special value bit"
+      let special_bit := Wire.mk s!"fcvt_sb_{i}"
+      -- special_bit = NOT neg_special (1 if positive overflow/NaN, 0 if negative overflow)
+      Gate.mkMUX (fcvt_normal[i]!) special_bit fcvt_is_special (fcvt_res[i]!)
+  -- Extra gates for special bits (NOT neg_special)
+  let fcvt_not_neg_special := Wire.mk "fcvt_not_neg_special"
+  let fcvt_special_bit_gates := [Gate.mkNOT fcvt_neg_special fcvt_not_neg_special] ++
+    (List.range 31).map fun i =>
+      Gate.mkBUF fcvt_not_neg_special (Wire.mk s!"fcvt_sb_{i}")
+
+  -- NX flag for FCVT.W.S: lost bits during right shift
+  -- If shift_amount > 0, check if any shifted-out bits are nonzero.
+  -- The shifted-out bits are the lower `shiftAmt` bits of mant32.
+  -- Simple approach: OR the lower bits of mant32 that get shifted out.
+  -- Since we already have the shifted result, we can detect inexact by comparing:
+  --   mant32 != (shifted << shiftAmt), but that's complex.
+  -- Simpler: OR all bits of mant32 below the shift point.
+  -- For any shiftAmt > 0 with nonzero fractional part, NX=1.
+  -- Actually, the mantissa is 24 bits (bits 0-23 of mant32, rest are zero).
+  -- After shifting right by S, the integer part is mant32[23:S] and fractional is mant32[S-1:0].
+  -- NX = any bit in mant32[S-1:0] is nonzero = mant32 & ((1<<S) - 1) != 0.
+  -- Since we don't have a dynamic mask, use: fcvt_mag != (shifted >> 0) comparison.
+  -- Even simpler: if shiftAmt > 0 and the original mantissa has bits below the shift point.
+  -- Approximate: check if shiftAmt > 0 (any shift loses the LSBs of fractional)
+  -- For now, use the fact that shifted result << shiftAmt != mant32.
+  -- Actually simplest correct approach: NX = shifted_out_bits != 0.
+  -- shifted_out_bits = mant32 XOR (fcvt_shifted << shiftAmt)... too complex.
+  -- Better: compute the sticky bits directly from the barrel shifter's "lost" bits.
+  -- For a right shift by S: lost_bits = mant32 & ((1 << S) - 1).
+  -- We can compute this as: OR(mant[0]..mant[S-1]).
+  -- Since S varies, we need a dynamic OR. Use the barrel shifter stages:
+  -- At stage k (shift by 2^k): if shiftAmt[k]=1, the bits that "fall off" are the bottom 2^k bits.
+  -- After all stages, any bit that was shifted out contributes to sticky.
+  -- For simplicity: check if fcvt_underflow==0 AND shiftAmt[0..4] != 0, then OR-reduce
+  -- the lower bits of the unshifted mantissa.
+  -- Actually, the simplest approach that works: NX = NOT(fcvt_underflow) AND (mant has any bit below shift point).
+  -- Since the shift point is dynamic, let's just OR all 23 mantissa fraction bits (src1[22:0])
+  -- when exp < 150 (i.e., shift > 0). This is an over-approximation (says NX even for exact conversions
+  -- like 1.0 which has mantissa = 1.000...0). Wrong.
+  -- Correct approach: build a 24-bit mask from shiftAmt and AND with mant, then OR-reduce.
+  -- That's quite expensive in gates. Let me do it properly.
+
+  -- NX detection: After right-shifting mant by shiftAmt, the lost bits are:
+  -- lost = mant32[shiftAmt-1 : 0]. NX = (lost != 0) AND NOT fcvt_underflow AND NOT fcvt_overflow
+  -- Build the lost-bits sticky bit using the barrel shifter's intermediate results.
+  -- For each barrel shift stage k: if shift bit k is 1, the lower 2^k bits of the input to that stage
+  -- "fall off". We can OR-reduce those bits as a sticky contribution.
+  -- But this is complex. Let me use a simpler approach:
+  -- fcvt_lost = OR(mant32[0..23]) masked by shift amount.
+  -- For shiftAmt = S: lost bits are mant32[0..S-1].
+  -- Create a cumulative mask: sticky_bit = (S>=1 & mant[0]) | (S>=2 & mant[1]) | ... | (S>=24 & mant[23])
+  -- S >= k iff shiftAmt >= k. This requires 24 comparisons.
+  -- Even simpler for now: just compare the reconstructed integer back.
+  -- fcvt_lost = (mag != (mag_rounded_back_to_float)). Too complex.
+  -- Let me use a practical shortcut that works for riscv-tests:
+  -- fcvt_nx = NOT(is_special) AND NOT(fcvt_shift_too_big) AND NOT(shiftBorrow) AND (shiftAmt != 0)
+  --           AND (src1 represents a non-integer float)
+  -- The condition "src1 is non-integer" = exp < 150 AND mant has bits below decimal point.
+  -- exp < 150 is already !shiftBorrow. shiftAmt != 0 means shift > 0 meaning there ARE fractional bits.
+  -- But even with shiftAmt != 0, the fractional bits might all be zero (e.g., 2.0 = 1.0 * 2^1,
+  -- exp=128, shift=22, mant=0x800000, shifted = 0x00000002, lost = mant[21:0] = 0 → exact).
+  -- So we really do need to check the lost bits.
+
+  -- Build sticky bit from barrel shifter stages (track OR of shifted-out bits)
+  -- Initial: sticky = 0, data = mant32
+  -- Stage k (shift by 2^k): if shiftAmt[k]=1, the lower 2^k bits of current data are lost.
+  --   new_sticky = old_sticky | OR(data[0..2^k-1]) when shiftAmt[k]=1
+  --   new_data = data >> 2^k when shiftAmt[k]=1
+  -- Since we already have the barrel shifter stages, we can compute sticky in parallel.
+  -- Actually, let's just compute: lost_or = OR of (mant32[i] for i where i < shiftAmt).
+  -- Use: for each mant bit i (0..23), check if i < shiftAmt (i.e., shiftAmt > i).
+  -- bit_lost_i = mant32[i] AND (shiftAmt > i)
+  -- Then fcvt_sticky = OR of all bit_lost_i.
+  -- To check shiftAmt > i for a 5-bit shiftAmt, we compare shiftAmt against (i+1).
+  -- This is 24 comparisons × 5 bits each = expensive. Let me just build the sticky from the shifter.
+
+  -- Simpler approach: reverse-shift the shifted result and XOR with original.
+  -- If any bit differs, it was a lost bit. But reverse-shifting is as expensive as the shifter.
+
+  -- Pragmatic approach: use the barrel shifter intermediate stages to accumulate sticky.
+  -- For a 5-stage barrel shifter shifting mant32 right:
+  -- Stage 0 (shift by 1): if sa[0], lost bit = mant32[0]
+  -- Stage 1 (shift by 2): if sa[1], lost bits = prev_data[0..1]
+  -- Stage 2 (shift by 4): if sa[2], lost bits = prev_data[0..3]
+  -- Stage 3 (shift by 8): if sa[3], lost bits = prev_data[0..7]
+  -- Stage 4 (shift by 16): if sa[4], lost bits = prev_data[0..15]
+  -- At each stage, compute OR of lost bits and accumulate into sticky.
+  -- This requires re-doing the barrel shifter with sticky tracking.
+  -- But we already have the barrel shifter result. Let me build a separate sticky computation.
+
+  -- Actually, the easiest correct approach: mant32 has known positions.
+  -- After shifting right by S, bits mant32[S-1:0] are lost.
+  -- The maximum meaningful shift is 23 (mant has 24 bits, position 0-23).
+  -- For S > 23, all bits are lost (but that's the underflow case, result=0, NX=1 if mant!=0).
+  -- For S = 0, no bits are lost (NX=0, exact).
+  -- Let me build a 5-stage sticky accumulator:
+  let fcvt_sticky := Wire.mk "fcvt_sticky_out"
+  -- Build stage-by-stage sticky tracking alongside a copy of the barrel shift
+  -- But this duplicates the barrel shifter. Let me use a different approach.
+  -- Since mant32 bits 24-31 are always 0, and we shift right, the shifted-out bits are
+  -- from the original mant32. We can just check: does the original mant have any bit set
+  -- in positions 0 through (shiftAmt-1)?
+  -- For shiftAmt 0-23, build a priority-OR structure:
+  --   sticky_stage[k] = shiftAmt[k] ? OR(data_at_stage_k [0 .. 2^k-1]) : 0
+  -- Let me compute the sticky per-stage from the barrel shift intermediates.
+
+  -- Recompute barrel shift with sticky tracking
+  let (_, fcvt_sticky_gates) :=
+    (List.range 5).foldl (fun (acc : (List Wire × Wire) × List Gate) stage =>
+      let (prev_data, prev_sticky) := acc.1
+      let shift := Nat.pow 2 stage
+      -- OR-reduce the lower `shift` bits of prev_data (these get shifted out if sa[stage]=1)
+      let lost_bits := (List.range (min shift 32)).map fun i => prev_data[i]!
+      let (lost_or, lost_or_gates) := mkOrTree s!"fcvt_lost_s{stage}" lost_bits
+      -- new_sticky = sa[stage] ? (prev_sticky | lost_or) : prev_sticky
+      let stage_contrib := Wire.mk s!"fcvt_sticky_contrib_{stage}"
+      let new_sticky := Wire.mk s!"fcvt_sticky_{stage}"
+      let g_contrib := Gate.mkAND (shiftCtrl[stage]!) lost_or stage_contrib
+      let g_sticky := Gate.mkOR prev_sticky stage_contrib new_sticky
+      -- Advance data (shift right by 2^stage if sa[stage]=1)
+      let new_data := makeIndexedWires s!"fcvt_bsh2_s{stage}" 32
+      let data_gates := (List.range 32).map fun i =>
+        if i + shift < 32 then
+          Gate.mkMUX (prev_data[i]!) (prev_data[i + shift]!) (shiftCtrl[stage]!) (new_data[i]!)
+        else
+          Gate.mkMUX (prev_data[i]!) zero (shiftCtrl[stage]!) (new_data[i]!)
+      ((new_data, new_sticky), acc.2 ++ lost_or_gates ++ [g_contrib, g_sticky] ++ data_gates)
+    ) ((mant32, zero), [])
+  let fcvt_sticky_final := Wire.mk "fcvt_sticky_4"
+  let fcvt_sticky_buf := [Gate.mkBUF fcvt_sticky_final fcvt_sticky]
+
+  -- FCVT.W.S NX: inexact if sticky != 0, not special, not zero
+  -- is_zero_src1: exp=0 and mant=0 (actually check if src1[30:0] == 0)
+  let fcvt_src1_mag := (List.range 31).map fun i => src1[i]!
+  let (fcvt_src1_nz, fcvt_src1_nz_gates) := mkOrTree "fcvt_s1nz" fcvt_src1_mag
+  -- Also NX when shift_too_big (underflow) and value was nonzero
+  -- Must exclude overflow (shiftBorrow=1): overflow sets NV, not NX
+  let fcvt_underflow_nx := Wire.mk "fcvt_underflow_nx"
+  let not_shiftBorrow := Wire.mk "fcvt_not_shiftBorrow"
+  let fcvt_uflow_real := Wire.mk "fcvt_uflow_real"
+  let g_underflow_nx_gates := [
+    Gate.mkNOT shiftBorrow not_shiftBorrow,
+    Gate.mkAND fcvt_shift_too_big not_shiftBorrow fcvt_uflow_real,
+    Gate.mkAND fcvt_uflow_real fcvt_src1_nz fcvt_underflow_nx
+  ]
+  -- fcvt_nx = (sticky AND NOT is_special) OR underflow_nx
+  let fcvt_nx_pre := Wire.mk "fcvt_nx_pre"
+  let fcvt_nx := Wire.mk "fcvt_nx"
+  let fcvt_nx_gates := [
+    Gate.mkAND fcvt_sticky (Wire.mk "fcvt_not_special") fcvt_nx_pre,
+    Gate.mkOR fcvt_nx_pre fcvt_underflow_nx fcvt_nx
+  ]
+  let fcvt_not_special_gate := [Gate.mkNOT fcvt_is_special (Wire.mk "fcvt_not_special")]
+
+  -- FCVT.W.S NV: NaN, Inf, or overflow
+  let fcvt_nv := Wire.mk "fcvt_nv"
+  let fcvt_nv_gate := [Gate.mkBUF fcvt_is_special fcvt_nv]
 
   -- ============================================================
   -- FCVT.WU.S (op=13 = 01101): !op4 & op3 & op2 & !op1 & op0
@@ -448,10 +715,76 @@ def fpMiscCircuit : Circuit :=
     Gate.mkAND fcvtwu_t2 (op[0]!) is_fcvt_wu
   ]
 
-  -- Result: if src1 negative (src1[31]=1), clamp to 0; else use fcvt_mag
+  -- For unsigned conversion with exp > 150 (shiftBorrow=1, positive):
+  -- Need to LEFT-shift mant32 by (exp - 150) bits.
+  -- Left shift amount = two's complement of shiftAmt[3:0] (since shiftAmt = 150 - exp < 0)
+  -- lsa = (~shiftAmt[3:0]) + 1
+  let fcvtwu_lsa := makeIndexedWires "fcvtwu_lsa" 4
+  let fcvtwu_lsa_inv := (List.range 4).map fun i => Wire.mk s!"fcvtwu_lsa_inv_{i}"
+  let fcvtwu_lsa_inv_gates := (List.range 4).map fun i =>
+    Gate.mkNOT (shiftAmt[i]!) (fcvtwu_lsa_inv[i]!)
+  -- 4-bit increment: inv + 1 using ripple carry
+  let fcvtwu_lsa_carry := (List.range 5).map fun i => Wire.mk s!"fcvtwu_lsa_c_{i}"
+  let fcvtwu_lsa_add_gates :=
+    [Gate.mkBUF one (fcvtwu_lsa_carry[0]!)] ++
+    (List.range 4).map (fun i =>
+      -- sum[i] = inv[i] XOR carry[i], carry[i+1] = inv[i] AND carry[i]
+      Gate.mkXOR (fcvtwu_lsa_inv[i]!) (fcvtwu_lsa_carry[i]!) (fcvtwu_lsa[i]!)) ++
+    (List.range 4).map (fun i =>
+      Gate.mkAND (fcvtwu_lsa_inv[i]!) (fcvtwu_lsa_carry[i]!) (fcvtwu_lsa_carry[i+1]!))
+
+  -- Barrel shift left: mant32 << lsa[3:0]
+  let mant32_list := (List.range 32).map fun i => mant32[i]!
+  let (fcvtwu_lsh, fcvtwu_lsh_gates) :=
+    mkBarrelShiftLeft "fcvtwu_lsh" mant32_list 32 fcvtwu_lsa 4 zero
+
+  -- Detect unsigned overflow: exp >= 159 (left shift > 8)
+  -- When shiftBorrow=1 and shiftAmt[3:0] indicates lsa > 8.
+  -- lsa > 8 iff lsa[3]=1 AND lsa[2:0] != 0, OR lsa[3]=1 AND lsa[2]=0 AND lsa[1]=0 AND lsa[0]=1 means lsa=9.
+  -- Simpler: overflow when lsa > 8, i.e., lsa >= 9.
+  -- lsa[3]=1 means lsa >= 8. lsa=8 is ok (exp=158). lsa=9+ means overflow.
+  -- So overflow = lsa[3] AND (lsa[2] OR lsa[1] OR lsa[0])
+  -- Also overflow if shiftAmt upper bits indicate exp much larger (shiftAmt[7:4] != 1111)
+  -- When shiftBorrow=1, shiftAmt = 256 - (exp-150). For exp 151-158: shiftAmt = 248-255, upper nibble = F.
+  -- For exp >= 159: shiftAmt = 247 or less, upper nibble != F.
+  -- Check: all of shiftAmt[7:4] must be 1 for exp <= 158.
+  let fcvtwu_ov_t0 := Wire.mk "fcvtwu_ov_t0"
+  let fcvtwu_ov_t1 := Wire.mk "fcvtwu_ov_t1"
+  let fcvtwu_overflow := Wire.mk "fcvtwu_overflow"
+  -- Upper nibble all 1s: shiftAmt[7] AND shiftAmt[6] AND shiftAmt[5] AND shiftAmt[4]
+  -- If NOT all 1s, overflow.
+  let fcvtwu_ov_gates := [
+    Gate.mkAND (shiftAmt[7]!) (shiftAmt[6]!) fcvtwu_ov_t0,
+    Gate.mkAND (shiftAmt[5]!) (shiftAmt[4]!) fcvtwu_ov_t1,
+    Gate.mkAND fcvtwu_ov_t0 fcvtwu_ov_t1 (Wire.mk "fcvtwu_upper_ok"),
+    Gate.mkNOT (Wire.mk "fcvtwu_upper_ok") fcvtwu_overflow
+  ]
+
+  -- FCVT.WU.S result MUX:
+  -- If shiftBorrow=0: use fcvt_mag (right-shifted, normal case)
+  -- If shiftBorrow=1 AND NOT overflow: use fcvtwu_lsh (left-shifted)
+  -- If shiftBorrow=1 AND overflow: clamp to 0xFFFFFFFF
+  -- If negative: clamp to 0
+  let fcvtwu_lsh_or_ov := makeIndexedWires "fcvtwu_lsh_ov" 32
+  let fcvtwu_lsh_ov_gates := (List.range 32).map fun i =>
+    -- overflow ? 1 : lsh[i]
+    Gate.mkOR (fcvtwu_lsh[i]!) fcvtwu_overflow (fcvtwu_lsh_or_ov[i]!)
+
+  let fcvtwu_unsigned_mag := makeIndexedWires "fcvtwu_umag" 32
+  let fcvtwu_umag_gates := (List.range 32).map fun i =>
+    -- shiftBorrow ? lsh_or_ov : fcvt_mag
+    Gate.mkMUX (fcvt_mag[i]!) (fcvtwu_lsh_or_ov[i]!) shiftBorrow (fcvtwu_unsigned_mag[i]!)
+
+  -- Final: negative (and not NaN) ? 0 : unsigned_mag
+  -- NaN always returns 0xFFFFFFFF regardless of sign bit
+  let fcvtwu_neg_clamp := Wire.mk "fcvtwu_neg_clamp"
+  let fcvtwu_neg_clamp_gate := [
+    Gate.mkNOT is_nan_src1 (Wire.mk "fcvtwu_not_nan"),
+    Gate.mkAND (src1[31]!) (Wire.mk "fcvtwu_not_nan") fcvtwu_neg_clamp
+  ]
   let fcvtwu_res := makeIndexedWires "fcvtwu_res" 32
   let fcvtwu_res_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (fcvt_mag[i]!) zero (src1[31]!) (fcvtwu_res[i]!)
+    Gate.mkMUX (fcvtwu_unsigned_mag[i]!) zero fcvtwu_neg_clamp (fcvtwu_res[i]!)
 
   -- ============================================================
   -- FMIN.S (op=19 = 10011): op4 & !op3 & !op2 & op1 & op0
@@ -467,10 +800,29 @@ def fpMiscCircuit : Circuit :=
     Gate.mkAND fmin_t2 (op[0]!) is_fmin
   ]
 
-  -- FMIN result: if flt_result=1 (src1 < src2), return src1; else src2
+  -- FMIN result with NaN handling:
+  -- If both NaN: canonical NaN (0x7FC00000)
+  -- If src1 is NaN (only): return src2
+  -- If src2 is NaN (only): return src1
+  -- Else: flt_raw ? src1 : src2 (use raw FLT, not NaN-masked)
+  let fmin_base := makeIndexedWires "fmin_base" 32
+  let fmin_nan1 := makeIndexedWires "fmin_nan1" 32
+  let fmin_nan2 := makeIndexedWires "fmin_nan2" 32
   let fmin_res := makeIndexedWires "fmin_res" 32
-  let fmin_res_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (src2[i]!) (src1[i]!) flt_result (fmin_res[i]!)
+  let fmin_res_gates :=
+    -- Base: flt_raw ? src1 : src2
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (src2[i]!) (src1[i]!) flt_raw (fmin_base[i]!)) ++
+    -- If src1 is NaN: use src2
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (fmin_base[i]!) (src2[i]!) is_nan_src1 (fmin_nan1[i]!)) ++
+    -- If src2 is NaN: use src1
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (fmin_nan1[i]!) (src1[i]!) is_nan_src2 (fmin_nan2[i]!)) ++
+    -- If both NaN: canonical NaN 0x7FC00000
+    (List.range 32).map (fun i =>
+      let canon_bit := if i == 22 || (i >= 23 && i <= 30) then one else zero
+      Gate.mkMUX (fmin_nan2[i]!) canon_bit both_nan (fmin_res[i]!))
 
   -- ============================================================
   -- FMAX.S (op=20 = 10100): op4 & !op3 & op2 & !op1 & !op0
@@ -486,10 +838,25 @@ def fpMiscCircuit : Circuit :=
     Gate.mkAND fmax_t2 (nop[0]!) is_fmax
   ]
 
-  -- FMAX result: if flt_result=1 (src1 < src2), return src2; else src1
+  -- FMAX result with NaN handling (same pattern as FMIN)
+  let fmax_base := makeIndexedWires "fmax_base" 32
+  let fmax_nan1 := makeIndexedWires "fmax_nan1" 32
+  let fmax_nan2 := makeIndexedWires "fmax_nan2" 32
   let fmax_res := makeIndexedWires "fmax_res" 32
-  let fmax_res_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (src1[i]!) (src2[i]!) flt_result (fmax_res[i]!)
+  let fmax_res_gates :=
+    -- Base: flt_raw ? src2 : src1
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (src1[i]!) (src2[i]!) flt_raw (fmax_base[i]!)) ++
+    -- If src1 is NaN: use src2
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (fmax_base[i]!) (src2[i]!) is_nan_src1 (fmax_nan1[i]!)) ++
+    -- If src2 is NaN: use src1
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (fmax_nan1[i]!) (src1[i]!) is_nan_src2 (fmax_nan2[i]!)) ++
+    -- If both NaN: canonical NaN 0x7FC00000
+    (List.range 32).map (fun i =>
+      let canon_bit := if i == 22 || (i >= 23 && i <= 30) then one else zero
+      Gate.mkMUX (fmax_nan2[i]!) canon_bit both_nan (fmax_res[i]!))
 
   -- ============================================================
   -- FCVT.S.W (op=14 = 01110): !op4 & op3 & op2 & op1 & !op0
@@ -595,21 +962,44 @@ def fpMiscCircuit : Circuit :=
   let (fcvtsw_exp_gates, _fcvtsw_exp_cout) :=
     mkKoggeStoneAdd const127 fcvtsw_lpos8 zero fcvtsw_exp "fcvtsw_exp"
 
-  -- Step 6: Pack float result {sign, exp[7:0], mantissa[22:0]}
-  -- sign = src1[31]
-  -- mantissa = shifted[30:8] (bits 30 down to 8 of the left-shifted magnitude)
-  -- If is_zero, output all zeros (+0.0)
+  -- Step 6: Rounding (RNE) and pack float result
+  -- After shifting: bit 31 = hidden 1, bits [30:8] = mantissa, bit 7 = round, bits [6:0] = sticky
+  -- RNE: round_up = round_bit AND (sticky OR guard_bit)
+  --   guard_bit = shifted[8] (LSB of mantissa), round_bit = shifted[7], sticky = OR(shifted[6:0])
+  let fcvtsw_round_bit := fcvtsw_shifted[7]!
+  let fcvtsw_guard_bit := fcvtsw_shifted[8]!
+  let fcvtsw_sticky_bits := (List.range 7).map fun i => fcvtsw_shifted[i]!
+  let (fcvtsw_sticky_or, fcvtsw_sticky_gates) := mkOrTree "fcvtsw_sticky" fcvtsw_sticky_bits
+  let fcvtsw_sticky_or_guard := Wire.mk "fcvtsw_sticky_or_guard"
+  let fcvtsw_round_up := Wire.mk "fcvtsw_round_up"
+  let fcvtsw_round_gates := [
+    Gate.mkOR fcvtsw_sticky_or fcvtsw_guard_bit fcvtsw_sticky_or_guard,
+    Gate.mkAND fcvtsw_round_bit fcvtsw_sticky_or_guard fcvtsw_round_up
+  ]
+  -- NX flag: any lost bits (round_bit OR sticky)
+  let fcvtsw_nx := Wire.mk "fcvtsw_nx"
+  let fcvtsw_nx_gate := Gate.mkOR fcvtsw_round_bit fcvtsw_sticky_or fcvtsw_nx
+
+  -- Pack unrounded: {0_placeholder_sign, exp[7:0], mantissa[22:0]} in bits [30:0]
+  -- Then add round_up as carry-in to bits [30:0] using Kogge-Stone
+  let fcvtsw_unrounded := makeIndexedWires "fcvtsw_unrnd" 31
+  let fcvtsw_unrounded_gates := (List.range 31).map fun i =>
+    if i < 23 then Gate.mkBUF (fcvtsw_shifted[i + 8]!) (fcvtsw_unrounded[i]!)
+    else Gate.mkBUF (fcvtsw_exp[i - 23]!) (fcvtsw_unrounded[i]!)
+  -- Add round_up using Kogge-Stone (31-bit add with carry-in)
+  let fcvtsw_zeros31 := (List.range 31).map fun _ => zero
+  let fcvtsw_rounded := makeIndexedWires "fcvtsw_rnded" 31
+  let (fcvtsw_rnd_add_gates, _fcvtsw_rnd_cout) :=
+    mkKoggeStoneAdd fcvtsw_unrounded fcvtsw_zeros31 fcvtsw_round_up fcvtsw_rounded "fcvtsw_rnd"
+
   let fcvtsw_not_zero := Wire.mk "fcvtsw_not_zero"
   let g_fcvtsw_nz := Gate.mkNOT fcvtsw_is_zero fcvtsw_not_zero
 
   let fcvtsw_res := makeIndexedWires "fcvtsw_res" 32
   let fcvtsw_pack_gates := (List.range 32).map fun i =>
-    if i < 23 then
-      -- mantissa bits: shifted[i+8], zeroed if input was zero
-      Gate.mkMUX (fcvtsw_shifted[i + 8]!) zero fcvtsw_is_zero (fcvtsw_res[i]!)
-    else if i < 31 then
-      -- exponent bits: exp[i-23]
-      Gate.mkMUX (fcvtsw_exp[i - 23]!) zero fcvtsw_is_zero (fcvtsw_res[i]!)
+    if i < 31 then
+      -- mantissa+exponent bits from rounded result, zeroed if input was zero
+      Gate.mkMUX (fcvtsw_rounded[i]!) zero fcvtsw_is_zero (fcvtsw_res[i]!)
     else
       -- bit 31 = sign = src1[31], gated by not_zero
       Gate.mkMUX (src1[31]!) zero fcvtsw_is_zero (fcvtsw_res[i]!)
@@ -679,13 +1069,34 @@ def fpMiscCircuit : Circuit :=
   let (fcvtswu_exp_gates, _fcvtswu_exp_cout) :=
     mkKoggeStoneAdd const127 fcvtswu_lpos8 zero fcvtswu_exp "fcvtswu_exp"
 
-  -- Pack: {0 (sign), exp[7:0], mantissa[22:0]}. If zero, all zeros.
+  -- Rounding (RNE) for FCVT.S.WU
+  let fcvtswu_round_bit := fcvtswu_shifted[7]!
+  let fcvtswu_guard_bit := fcvtswu_shifted[8]!
+  let fcvtswu_sticky_bits := (List.range 7).map fun i => fcvtswu_shifted[i]!
+  let (fcvtswu_sticky_or, fcvtswu_sticky_gates) := mkOrTree "fcvtswu_sticky" fcvtswu_sticky_bits
+  let fcvtswu_sticky_or_guard := Wire.mk "fcvtswu_sticky_or_guard"
+  let fcvtswu_round_up := Wire.mk "fcvtswu_round_up"
+  let fcvtswu_round_gates := [
+    Gate.mkOR fcvtswu_sticky_or fcvtswu_guard_bit fcvtswu_sticky_or_guard,
+    Gate.mkAND fcvtswu_round_bit fcvtswu_sticky_or_guard fcvtswu_round_up
+  ]
+  let fcvtswu_nx := Wire.mk "fcvtswu_nx"
+  let fcvtswu_nx_gate := Gate.mkOR fcvtswu_round_bit fcvtswu_sticky_or fcvtswu_nx
+
+  let fcvtswu_unrounded := makeIndexedWires "fcvtswu_unrnd" 31
+  let fcvtswu_unrounded_gates := (List.range 31).map fun i =>
+    if i < 23 then Gate.mkBUF (fcvtswu_shifted[i + 8]!) (fcvtswu_unrounded[i]!)
+    else Gate.mkBUF (fcvtswu_exp[i - 23]!) (fcvtswu_unrounded[i]!)
+  let fcvtswu_zeros31 := (List.range 31).map fun _ => zero
+  let fcvtswu_rounded := makeIndexedWires "fcvtswu_rnded" 31
+  let (fcvtswu_rnd_add_gates, _fcvtswu_rnd_cout) :=
+    mkKoggeStoneAdd fcvtswu_unrounded fcvtswu_zeros31 fcvtswu_round_up fcvtswu_rounded "fcvtswu_rnd"
+
+  -- Pack: {0 (sign), rounded[30:0]}. If zero, all zeros.
   let fcvtswu_res := makeIndexedWires "fcvtswu_res" 32
   let fcvtswu_pack_gates := (List.range 32).map fun i =>
-    if i < 23 then
-      Gate.mkMUX (fcvtswu_shifted[i + 8]!) zero fcvtsw_is_zero (fcvtswu_res[i]!)
-    else if i < 31 then
-      Gate.mkMUX (fcvtswu_exp[i - 23]!) zero fcvtsw_is_zero (fcvtswu_res[i]!)
+    if i < 31 then
+      Gate.mkMUX (fcvtswu_rounded[i]!) zero fcvtsw_is_zero (fcvtswu_res[i]!)
     else
       -- bit 31 = sign = always 0 for unsigned
       Gate.mkBUF zero (fcvtswu_res[i]!)
@@ -905,14 +1316,98 @@ def fpMiscCircuit : Circuit :=
   let after_fclass_gates := (List.range 32).map fun i =>
     Gate.mkMUX (after_fcvtswu[i]!) (fclass_bits[i]!) is_fclass (result[i]!)
 
-  -- Exception flags: all zero for these operations
-  let exc_gates := (List.range 5).map fun i =>
-    Gate.mkBUF zero (exc[i]!)
+  -- ============================================================
+  -- EXCEPTION FLAG COMPUTATION
+  -- ============================================================
+  -- exc[4] = NV (Invalid Operation)
+  -- exc[3] = DZ (Division by Zero) -- always 0 for misc ops
+  -- exc[2] = OF (Overflow) -- always 0 for misc ops
+  -- exc[1] = UF (Underflow) -- always 0 for misc ops
+  -- exc[0] = NX (Inexact)
+
+  -- NV sources:
+  -- 1. FLT/FLE with any NaN input → NV
+  -- 2. FEQ with signaling NaN input → NV
+  -- 3. FMIN/FMAX with signaling NaN input → NV
+  -- 4. FCVT.W.S/WU.S with NaN/Inf/overflow → NV
+  let cmp_nv := Wire.mk "cmp_nv"  -- NV from comparisons
+  let is_flt_or_fle := Wire.mk "is_flt_or_fle"
+  let cmp_nan_nv := Wire.mk "cmp_nan_nv"  -- FLT/FLE with any NaN
+  let feq_snan_nv := Wire.mk "feq_snan_nv"  -- FEQ with sNaN
+  let minmax_snan_nv := Wire.mk "minmax_snan_nv"  -- FMIN/FMAX with sNaN
+  let is_fmin_or_fmax := Wire.mk "is_fmin_or_fmax"
+  let fcvt_is_fcvt_any := Wire.mk "fcvt_is_fcvt_any"  -- any FCVT FP→int
+  let fcvt_ws_nv := Wire.mk "fcvt_ws_nv"
+
+  let nv_gates := [
+    Gate.mkOR is_flt is_fle is_flt_or_fle,
+    Gate.mkAND is_flt_or_fle either_nan cmp_nan_nv,
+    Gate.mkAND is_feq either_snan feq_snan_nv,
+    Gate.mkOR is_fmin is_fmax is_fmin_or_fmax,
+    Gate.mkAND is_fmin_or_fmax either_snan minmax_snan_nv,
+    Gate.mkOR is_fcvt is_fcvt_wu fcvt_is_fcvt_any,
+    -- FCVT.W.S (signed) NV: NaN/Inf/overflow (shiftBorrow) — only for signed
+    Gate.mkAND is_fcvt fcvt_nv fcvt_ws_nv,
+    -- FCVT.WU.S NV sources:
+    -- 1. NaN or Inf
+    Gate.mkOR is_nan_src1 is_inf_src1 (Wire.mk "fcvtwu_nan_inf"),
+    Gate.mkAND is_fcvt_wu (Wire.mk "fcvtwu_nan_inf") (Wire.mk "fcvtwu_nan_inf_nv"),
+    -- 2. Negative input with magnitude >= 1.0 (integer part nonzero)
+    Gate.mkAND (src1[31]!) fcvt_mag_nz (Wire.mk "fcvtwu_neg_nz"),
+    Gate.mkAND is_fcvt_wu (Wire.mk "fcvtwu_neg_nz") (Wire.mk "fcvtwu_neg_nv"),
+    -- 3. Positive overflow (exp >= 159, value > uint32_max)
+    Gate.mkAND is_fcvt_wu fcvtwu_overflow (Wire.mk "fcvtwu_pos_ov_t"),
+    Gate.mkAND (Wire.mk "fcvtwu_pos_ov_t") shiftBorrow (Wire.mk "fcvtwu_pos_ov_nv"),
+    -- 4. Negative with shiftBorrow (e.g., -3e9: magnitude > 2^23, negative)
+    Gate.mkAND is_fcvt_wu shiftBorrow (Wire.mk "fcvtwu_sb_t"),
+    Gate.mkAND (Wire.mk "fcvtwu_sb_t") (src1[31]!) (Wire.mk "fcvtwu_neg_sb_nv"),
+    -- Combine unsigned NV
+    Gate.mkOR (Wire.mk "fcvtwu_nan_inf_nv") (Wire.mk "fcvtwu_neg_nv") (Wire.mk "fcvtwu_nv_t0"),
+    Gate.mkOR (Wire.mk "fcvtwu_pos_ov_nv") (Wire.mk "fcvtwu_neg_sb_nv") (Wire.mk "fcvtwu_nv_t1"),
+    Gate.mkOR (Wire.mk "fcvtwu_nv_t0") (Wire.mk "fcvtwu_nv_t1") (Wire.mk "fcvtwu_all_nv"),
+    -- Combine all NV sources
+    Gate.mkOR cmp_nan_nv feq_snan_nv (Wire.mk "nv_t0"),
+    Gate.mkOR minmax_snan_nv fcvt_ws_nv (Wire.mk "nv_t1"),
+    Gate.mkOR (Wire.mk "nv_t0") (Wire.mk "nv_t1") (Wire.mk "nv_t2"),
+    Gate.mkOR (Wire.mk "nv_t2") (Wire.mk "fcvtwu_all_nv") cmp_nv
+  ]
+
+  -- NX sources:
+  -- 1. FCVT.W.S/WU.S with inexact result (lost bits)
+  -- 2. FCVT.S.W/S.WU with inexact result (integer > 24 bits significand)
+  -- NX for FCVT.S.W/S.WU: computed in the rounding sections above (fcvtsw_nx, fcvtswu_nx)
+  -- NX = round_bit OR sticky, gated by NOT is_zero
+
+  -- Combine NX: FCVT.W.S NX or FCVT.S.W NX or FCVT.S.WU NX
+  let fcvt_ws_nx := Wire.mk "fcvt_ws_nx"
+  let total_nx := Wire.mk "total_nx"
+  let nx_gates := [
+    Gate.mkAND fcvt_is_fcvt_any fcvt_nx fcvt_ws_nx,
+    Gate.mkOR fcvt_ws_nx (Wire.mk "fcvtsw_nx_contrib") (Wire.mk "nx_t0"),
+    Gate.mkOR (Wire.mk "nx_t0") (Wire.mk "fcvtswu_nx_contrib") total_nx,
+    Gate.mkAND is_fcvt_s_w fcvtsw_nx (Wire.mk "fcvtsw_nx_contrib"),
+    Gate.mkAND is_fcvt_s_wu fcvtswu_nx (Wire.mk "fcvtswu_nx_contrib")
+  ]
+
+  -- Output exception flags
+  -- exc[4] = NV, exc[3] = DZ (0), exc[2] = OF (0), exc[1] = UF (0), exc[0] = NX
+  let exc_gates := [
+    Gate.mkBUF total_nx (exc[0]!),    -- NX (bit 0)
+    Gate.mkBUF zero (exc[1]!),         -- UF (bit 1)
+    Gate.mkBUF zero (exc[2]!),         -- OF (bit 2)
+    Gate.mkBUF zero (exc[3]!),         -- DZ (bit 3)
+    Gate.mkBUF cmp_nv (exc[4]!)        -- NV (bit 4)
+  ]
 
   { name := "FPMisc"
-    inputs := src1 ++ src2 ++ op ++ [zero, one]
+    inputs := src1 ++ src2 ++ op ++ rm ++ [zero, one]
     outputs := result ++ exc
     gates :=
+      -- NaN detection
+      nan1_exp_ones_gates ++ nan1_mant_nz_gates ++ nan1_detect_gates ++
+      nan2_exp_ones_gates ++ nan2_mant_nz_gates ++ nan2_detect_gates ++
+      nan_combined_gates ++
+      -- Sign injection
       [g_fsgnj, g_fsgnjn, g_fsgnjx] ++
       inv_gates ++
       dec_fsgnj ++ dec_fsgnjn ++ dec_fsgnjx ++ dec_fmv ++
@@ -920,28 +1415,40 @@ def fpMiscCircuit : Circuit :=
       -- Op decoders
       dec_feq ++ dec_flt ++ dec_fle ++ dec_fcvt ++ dec_fcvt_wu ++
       dec_fmin ++ dec_fmax ++ dec_fcvt_s_w ++ dec_fcvt_s_wu ++ dec_fclass ++
-      -- FEQ logic
-      feq_xor_gates ++ feq_or_gates ++ [g_feq_inv] ++
-      -- FLT logic
+      -- FEQ logic (with NaN masking)
+      feq_xor_gates ++ feq_or_gates ++ [g_feq_inv] ++ feq_nan_gates ++
+      -- FLT logic (with NaN masking)
       flt_sub_gates ++
-      [g_flt_sd, g_flt_nb, g_flt_neq, g_flt_neg_lt, g_flt_same2, g_flt_final] ++
+      [g_flt_sd, g_flt_nb, g_flt_neq, g_flt_neg_lt, g_flt_same2, g_flt_final, flt_nan_gate] ++
       -- FLE logic
       [g_fle] ++
-      -- FCVT logic
+      -- FCVT.W.S logic (with NaN/overflow handling + NX detection)
       fcvt_sub_gates ++ fcvt_big_gates ++ fcvt_shift_gates ++
-      fcvt_mag_gates ++ fcvt_inv_gates ++ fcvt_neg_gates ++ fcvt_sel_gates ++
+      fcvt_mag_gates ++ fcvt_mag_nz_gates ++ fcvt_inv_gates ++ fcvt_neg_gates ++ fcvt_sel_gates ++
+      [nan1_mant_z_gate, inf1_gate] ++ fcvt_special_gates ++ fcvt_special_det ++
+      fcvt_special_bit_gates ++ fcvt_result_gates ++
+      fcvt_sticky_gates ++ fcvt_sticky_buf ++ fcvt_src1_nz_gates ++ g_underflow_nx_gates ++
+      fcvt_not_special_gate ++ fcvt_nx_gates ++ fcvt_nv_gate ++
       -- FCVT.WU.S logic
-      fcvtwu_res_gates ++
-      -- FMIN/FMAX logic
+      fcvtwu_lsa_inv_gates ++ fcvtwu_lsa_add_gates ++ fcvtwu_lsh_gates ++
+      fcvtwu_ov_gates ++ fcvtwu_lsh_ov_gates ++ fcvtwu_umag_gates ++
+      fcvtwu_neg_clamp_gate ++ fcvtwu_res_gates ++
+      -- FMIN/FMAX logic (with NaN handling)
       fmin_res_gates ++ fmax_res_gates ++
       -- FCVT.S.W logic
       fcvtsw_or_gates ++ [g_fcvtsw_iz] ++
       fcvtsw_inv_gates ++ fcvtsw_neg_gates ++ fcvtsw_mag_gates ++
       fcvtsw_penc_gates ++ fcvtsw_lpos_gates ++ fcvtsw_shamt_gates ++
-      fcvtsw_bsl_gates ++ fcvtsw_exp_gates ++ [g_fcvtsw_nz] ++ fcvtsw_pack_gates ++
+      fcvtsw_bsl_gates ++ fcvtsw_exp_gates ++
+      fcvtsw_sticky_gates ++ fcvtsw_round_gates ++ [fcvtsw_nx_gate] ++
+      fcvtsw_unrounded_gates ++ fcvtsw_rnd_add_gates ++
+      [g_fcvtsw_nz] ++ fcvtsw_pack_gates ++
       -- FCVT.S.WU logic
       fcvtswu_penc_gates ++ fcvtswu_lpos_gates ++ fcvtswu_shamt_gates ++
-      fcvtswu_bsl_gates ++ fcvtswu_exp_gates ++ fcvtswu_pack_gates ++
+      fcvtswu_bsl_gates ++ fcvtswu_exp_gates ++
+      fcvtswu_sticky_gates ++ fcvtswu_round_gates ++ [fcvtswu_nx_gate] ++
+      fcvtswu_unrounded_gates ++ fcvtswu_rnd_add_gates ++
+      fcvtswu_pack_gates ++
       -- FCLASS logic
       fclass_exp_ones_gates ++ fclass_exp_or_gates ++ [g_fclass_eaz] ++
       fclass_mant_nz_gates ++ [g_fclass_mz, g_fclass_ns, g_fclass_neao, g_fclass_neaz] ++
@@ -954,12 +1461,14 @@ def fpMiscCircuit : Circuit :=
       after_feq_gates ++ after_flt_gates ++ after_fle_gates ++
       after_fmin_gates ++ after_fmax_gates ++ after_fcvtsw_gates ++
       after_fcvtswu_gates ++ after_fclass_gates ++
-      exc_gates
+      -- Exception flags
+      nv_gates ++ nx_gates ++ exc_gates
     instances := []
     signalGroups := [
       { name := "src1",   width := 32, wires := src1 },
       { name := "src2",   width := 32, wires := src2 },
       { name := "op",     width := 5,  wires := op },
+      { name := "rm",     width := 3,  wires := rm },
       { name := "result", width := 32, wires := result },
       { name := "exc",    width := 5,  wires := exc }
     ]
