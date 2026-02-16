@@ -444,6 +444,7 @@ def mkFPExecUnit : Circuit :=
         (List.range 32 |>.flatMap fun i =>
           [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
         (List.range 5 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+        (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
         [("zero", zero), ("one", one)] ++
         (List.range 32 |>.map fun i => (s!"result_{i}", misc_result[i]!)) ++
         (List.range 5 |>.map fun i => (s!"exc_{i}", misc_exc[i]!))

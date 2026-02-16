@@ -14,8 +14,7 @@ GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 # F-extension tests need rv32imf
 CFLAGS_FP = -march=rv32imf_zicsr_zifencei -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
 
-# NOTE: GEN_FP_ELFS excluded pending FP CSR registers (fflags/frm/fcsr) in structural circuit
-all: $(TESTS:=.elf) $(GEN_INT_ELFS)
+all: $(TESTS:=.elf) $(GEN_INT_ELFS) $(GEN_FP_ELFS)
 
 # Hand-written C tests use crt0.S
 %.elf: %.c crt0.S shoumei.ld

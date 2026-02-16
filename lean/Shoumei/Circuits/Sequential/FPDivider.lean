@@ -518,10 +518,42 @@ def mkFPDivider : Circuit :=
     Gate.mkBUF (tag_q[i]!) (tag_out[i]!)
   )
 
-  -- exc[4:0] = all zero (placeholder)
-  let exc_gates := (List.range 5).map (fun i =>
-    Gate.mkBUF zero (exc[i]!)
-  )
+  -- exc[4:0]: NX (inexact) = remainder non-zero after division
+  -- Build OR-tree over rem_q[24:0] to detect non-zero remainder
+  let rem_or_l0 := (List.range 12).map fun i =>
+    let o := Wire.mk s!"rem_or_l0_{i}"
+    (Gate.mkOR (rem_q[2*i]!) (rem_q[2*i+1]!) o, o)
+  let rem_or_l0_extra := Wire.mk "rem_or_l0_12"
+  let rem_or_l0_extra_gate := Gate.mkBUF (rem_q[24]!) rem_or_l0_extra
+  let l0_outs := rem_or_l0.map Prod.snd ++ [rem_or_l0_extra]  -- 13 values
+  let rem_or_l1 := (List.range 6).map fun i =>
+    let o := Wire.mk s!"rem_or_l1_{i}"
+    (Gate.mkOR l0_outs[2*i]! l0_outs[2*i+1]! o, o)
+  let rem_or_l1_extra := Wire.mk "rem_or_l1_6"
+  let rem_or_l1_extra_gate := Gate.mkBUF l0_outs[12]! rem_or_l1_extra
+  let l1_outs := rem_or_l1.map Prod.snd ++ [rem_or_l1_extra]  -- 7 values
+  let rem_or_l2_0 := Wire.mk "rem_or_l2_0"
+  let rem_or_l2_1 := Wire.mk "rem_or_l2_1"
+  let rem_or_l2_2 := Wire.mk "rem_or_l2_2"
+  let rem_or_l3_0 := Wire.mk "rem_or_l3_0"
+  let rem_nonzero := Wire.mk "rem_nonzero"
+  let rem_or_tree :=
+    rem_or_l0.map Prod.fst ++ [rem_or_l0_extra_gate] ++
+    rem_or_l1.map Prod.fst ++ [rem_or_l1_extra_gate] ++
+    [Gate.mkOR l1_outs[0]! l1_outs[1]! rem_or_l2_0,
+     Gate.mkOR l1_outs[2]! l1_outs[3]! rem_or_l2_1,
+     Gate.mkOR l1_outs[4]! l1_outs[5]! rem_or_l2_2,
+     Gate.mkOR rem_or_l2_0 rem_or_l2_1 rem_or_l3_0,
+     Gate.mkOR rem_or_l3_0 rem_or_l2_2 rem_nonzero]
+  -- Also OR in the guard bit (quotient bit that gets shifted out during normalization)
+  -- For now, just use remainder non-zero as NX
+  let exc_gates := rem_or_tree ++ [
+    Gate.mkBUF rem_nonzero (exc[0]!),   -- NX (inexact)
+    Gate.mkBUF zero (exc[1]!),           -- UF (underflow) - placeholder
+    Gate.mkBUF zero (exc[2]!),           -- OF (overflow) - placeholder
+    Gate.mkBUF zero (exc[3]!),           -- DZ (divide by zero) - placeholder
+    Gate.mkBUF zero (exc[4]!)            -- NV (invalid) - placeholder
+  ]
 
   -- valid_out = done
   let valid_gate := [Gate.mkBUF done valid_out]

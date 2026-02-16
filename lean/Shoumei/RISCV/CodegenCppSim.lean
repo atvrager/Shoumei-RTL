@@ -229,7 +229,7 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "    (opcode == 0x43) || (opcode == 0x47) ||\n" ++
     "    (opcode == 0x4b) || (opcode == 0x4f) ||\n" ++
     "    (opcode == 0x53 && (\n" ++
-    "      funct5 == 0x00 || funct5 == 0x01 || funct5 == 0x02 ||\n" ++
+    "      funct5 == 0x00 || funct5 == 0x01 || funct5 == 0x02 || funct5 == 0x03 ||\n" ++
     "      funct5 == 0x14 || funct5 == 0x04 || funct5 == 0x05)));\n" ++
     "\n" ++
     "  // fp_rs3_used: R4-type fused ops only\n" ++
