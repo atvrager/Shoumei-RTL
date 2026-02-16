@@ -1,5 +1,6 @@
 // CoreMark port for Shoumei RV32IM CPU
-// Timer: mcycle CSR, Output: MMIO putchar at 0x1004
+// Timer: mcycle CSR (default) or software counter (-DCOSIM_SAFE)
+// Output: MMIO putchar at 0x1004
 #ifndef CORE_PORTME_H
 #define CORE_PORTME_H
 

@@ -27,13 +27,23 @@ CFLAGS  = -march=rv32im_zicsr -mabi=ilp32 -O2 \
 
 LDFLAGS = -T shoumei.ld -nostdlib
 
-.PHONY: all clean
+ALL_SRC = crt0.S $(COREMARK_SRC) $(PORT_SRC)
 
+.PHONY: all cosim clean
+
+# Default: mcycle timer for real performance measurement
 all: coremark.elf
 
-coremark.elf: crt0.S $(COREMARK_SRC) $(PORT_SRC) shoumei.ld
-	$(CC) $(CFLAGS) $(LDFLAGS) crt0.S $(COREMARK_SRC) $(PORT_SRC) -o $@
+# Cosim-safe: software counter avoids CSR perf counter mismatches
+cosim: coremark_cosim.elf
+
+coremark.elf: $(ALL_SRC) shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $(ALL_SRC) -o $@
 	$(OBJDUMP) -d $@ > coremark.dump
 
+coremark_cosim.elf: $(ALL_SRC) shoumei.ld
+	$(CC) $(CFLAGS) -DCOSIM_SAFE $(LDFLAGS) $(ALL_SRC) -o $@
+	$(OBJDUMP) -d $@ > coremark_cosim.dump
+
 clean:
-	rm -f coremark.elf coremark.dump
+	rm -f coremark.elf coremark.dump coremark_cosim.elf coremark_cosim.dump

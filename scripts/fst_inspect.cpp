@@ -116,21 +116,21 @@ int main(int argc, char** argv) {
     }
 
     if (do_list) {
-        std::string scope;
         fstHier* hier;
+        fstReaderResetScope(ctx);
         fstReaderIterateHierRewind(ctx);
         while ((hier = fstReaderIterateHier(ctx)) != nullptr) {
             switch (hier->htyp) {
                 case FST_HT_SCOPE:
-                    if (!scope.empty()) scope += ".";
-                    scope += hier->u.scope.name;
+                    fstReaderPushScope(ctx, hier->u.scope.name, nullptr);
                     break;
                 case FST_HT_UPSCOPE:
-                    { auto pos = scope.rfind('.'); scope = (pos != std::string::npos) ? scope.substr(0, pos) : ""; }
+                    fstReaderPopScope(ctx);
                     break;
                 case FST_HT_VAR: {
-                    std::string name = hier->u.var.name;
-                    std::string full = scope.empty() ? name : scope + "." + name;
+                    const char* flat = fstReaderGetCurrentFlatScope(ctx);
+                    std::string name = hier->u.var.name ? hier->u.var.name : "";
+                    std::string full = (flat && flat[0]) ? std::string(flat) + "." + name : name;
                     if (scope_filter && full.find(scope_filter) == std::string::npos) break;
                     if (list_pattern && fnmatch(list_pattern, name.c_str(), 0) != 0 &&
                         fnmatch(list_pattern, full.c_str(), 0) != 0) break;
@@ -164,14 +164,30 @@ int main(int argc, char** argv) {
       free(buf);
     }
 
-    // Build name->handle map from hierarchy
+    // Build name->handle map from hierarchy using flat scope tracking
     std::unordered_map<std::string, std::pair<fstHandle, uint32_t>> all_sigs;
     {
         fstHier* hier;
+        fstReaderResetScope(ctx);
         fstReaderIterateHierRewind(ctx);
         while ((hier = fstReaderIterateHier(ctx)) != nullptr) {
-            if (hier->htyp == FST_HT_VAR) {
-                all_sigs[hier->u.var.name] = {hier->u.var.handle, hier->u.var.length};
+            switch (hier->htyp) {
+                case FST_HT_SCOPE:
+                    fstReaderPushScope(ctx, hier->u.scope.name, nullptr);
+                    break;
+                case FST_HT_UPSCOPE:
+                    fstReaderPopScope(ctx);
+                    break;
+                case FST_HT_VAR: {
+                    const char* flat = fstReaderGetCurrentFlatScope(ctx);
+                    std::string name = hier->u.var.name ? hier->u.var.name : "";
+                    std::string full = (flat && flat[0]) ? std::string(flat) + "." + name : name;
+                    auto info = std::make_pair(hier->u.var.handle, hier->u.var.length);
+                    all_sigs[full] = info;       // full path
+                    all_sigs[name] = info;        // leaf name (last wins if ambiguous)
+                    break;
+                }
+                default: break;
             }
         }
     }
@@ -188,6 +204,7 @@ int main(int argc, char** argv) {
         if (it != all_sigs.end()) {
             SignalInfo si; si.handle = it->second.first; si.name = name;
             si.width = it->second.second; si.value = "x";
+            fprintf(stderr, "  resolved '%s' → handle=%u width=%u\n", name.c_str(), si.handle, si.width);
             g_handle_map[si.handle] = g_signals.size();
             g_signals.push_back(si);
             fstReaderSetFacProcessMask(ctx, si.handle);

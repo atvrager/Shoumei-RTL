@@ -29,6 +29,7 @@
 
 // DPI-C exported from tb_cpu.sv
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
+extern "C" void dpi_set_tohost_addr(unsigned int addr);
 
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 
@@ -86,6 +87,59 @@ static int load_elf(const char* path) {
     return 0;
 }
 
+// Check if instruction is a CSR read of a performance counter.
+// These CSRs (mcycle, minstret, mcycleh, minstreth, and their read-only
+// aliases cycle, instret, cycleh, instreth) have implementation-defined
+// values that legitimately differ between RTL and Spike.
+static bool is_unsyncable_csr_read(uint32_t insn) {
+    uint32_t opcode = insn & 0x7f;
+    if (opcode != 0x73) return false;  // Not SYSTEM
+    uint32_t funct3 = (insn >> 12) & 0x7;
+    if (funct3 == 0) return false;     // ECALL/EBREAK, not CSR
+    uint32_t csr_addr = (insn >> 20) & 0xfff;
+    // mcycle=0xB00, mcycleh=0xB80, cycle=0xC00, cycleh=0xC80
+    //   RTL cycle count differs from Spike's
+    // minstret=0xB02, minstreth=0xB82, instret=0xC02, instreth=0xC82
+    //   Spec says csrr reads pre-increment value; Spike returns post-increment
+    return csr_addr == 0xB00 || csr_addr == 0xB02 ||
+           csr_addr == 0xB80 || csr_addr == 0xB82 ||
+           csr_addr == 0xC00 || csr_addr == 0xC02 ||
+           csr_addr == 0xC80 || csr_addr == 0xC82;
+}
+
+// Find 'tohost' symbol address in ELF symbol table
+static uint32_t find_tohost_addr(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0x1000;
+    Elf32_Ehdr ehdr;
+    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return 0x1000; }
+    for (int i = 0; i < ehdr.e_shnum; i++) {
+        Elf32_Shdr shdr;
+        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+        if (shdr.sh_type != SHT_SYMTAB) continue;
+        Elf32_Shdr strhdr;
+        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+        std::vector<char> strtab(strhdr.sh_size);
+        fseek(f, strhdr.sh_offset, SEEK_SET);
+        (void)fread(strtab.data(), 1, strhdr.sh_size, f);
+        int nsyms = shdr.sh_size / shdr.sh_entsize;
+        for (int j = 0; j < nsyms; j++) {
+            Elf32_Sym sym;
+            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+            if (sym.st_name < strhdr.sh_size &&
+                strcmp(&strtab[sym.st_name], "tohost") == 0) {
+                fclose(f);
+                return sym.st_value;
+            }
+        }
+    }
+    fclose(f);
+    return 0x1000;
+}
+
 // Extract RVVI signals from the RTL DUT
 struct RVVIState {
     bool     valid;
@@ -138,6 +192,10 @@ int main(int argc, char** argv) {
     svSetScope(svGetScopeFromName("TOP.tb_cpu"));
     if (load_elf(elf_path) != 0) return 1;
 
+    // Set tohost address from ELF symbol table
+    uint32_t tohost_addr = find_tohost_addr(elf_path);
+    dpi_set_tohost_addr(tohost_addr);
+
     // Initialize Spike oracle
     auto spike = std::make_unique<SpikeOracle>(elf_path);
 
@@ -173,17 +231,32 @@ int main(int argc, char** argv) {
             SpikeStepResult spike_r = spike->step();
             int skip = 0;
             while (spike_r.pc != rvvi.pc && skip < 32) {
+                // Spike stepped through an instruction RTL doesn't report via RVVI.
+                // If it was a perf counter CSR read, Spike's register value may
+                // differ from RTL's (mcycle differs entirely; minstret off-by-one).
+                // We can't know RTL's exact value, but for minstret the spec says
+                // the read returns the pre-increment count, so subtract 1 from
+                // Spike's post-increment value. For mcycle, we just zero the reg
+                // since RTL and Spike cycle counts are fundamentally different.
+                if (is_unsyncable_csr_read(spike_r.insn) && spike_r.rd != 0) {
+                    uint32_t csr_addr = (spike_r.insn >> 20) & 0xfff;
+                    if (csr_addr == 0xB02 || csr_addr == 0xC02) {
+                        spike->set_xreg(spike_r.rd, spike_r.rd_value - 1);
+                    } else {
+                        spike->set_xreg(spike_r.rd, 0);
+                    }
+                }
                 spike_r = spike->step();
                 skip++;
             }
 
-            // Debug: dump RVVI state for first 30 retirements
-            if (retired < 40) {
-                fprintf(stderr,
-                    "DBG ret#%lu cy%lu: PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x | "
-                    "Spike: PC=0x%08x insn=0x%08x rd=x%u data=0x%08x\n",
-                    retired, cycle, rvvi.pc, rvvi.insn, rvvi.rd, rvvi.rd_valid, rvvi.rd_data,
-                    spike_r.pc, spike_r.insn, spike_r.rd, spike_r.rd_value);
+            // Sync perf counter CSR reads visible via RVVI
+            bool skip_rd_cmp = false;
+            if (is_unsyncable_csr_read(rvvi.insn)) {
+                if (rvvi.rd_valid && spike_r.rd != 0) {
+                    spike->set_xreg(spike_r.rd, rvvi.rd_data);
+                }
+                skip_rd_cmp = true;
             }
 
             // Compare PC
@@ -205,7 +278,7 @@ int main(int argc, char** argv) {
             }
 
             // Compare integer register writeback
-            if (rvvi.rd_valid && spike_r.rd != 0) {
+            if (rvvi.rd_valid && spike_r.rd != 0 && !skip_rd_cmp) {
                 if (rvvi.rd_data != spike_r.rd_value) {
                     fprintf(stderr,
                         "MISMATCH at retirement #%lu (cycle %lu): "

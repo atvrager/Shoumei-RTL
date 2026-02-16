@@ -10,7 +10,6 @@ SECTIONS {
         *(.bss* COMMON)
         __bss_end = .;
     } > RAM
-    /* HTIF: placed after all code/data sections */
     .tohost ALIGN(4) (NOLOAD) : {
         tohost = .;      . += 4;
         putchar_addr = .; . += 4;

@@ -1,5 +1,4 @@
 // CoreMark port for Shoumei RV32IM CPU
-// Timer via mcycle CSR, termination via tohost
 #include "coremark.h"
 #include "core_portme.h"
 
@@ -21,13 +20,20 @@ volatile ee_s32 seed3_volatile = 0x8;
 volatile ee_s32 seed4_volatile = ITERATIONS;
 volatile ee_s32 seed5_volatile = 0;
 
+#ifdef COSIM_SAFE
+// Cosim-safe timer: software counter avoids CSR perf counter mismatches
+static volatile ee_u32 timer_counter = 0;
+static ee_u32 read_timer(void) { return timer_counter++; }
+#define GETMYTIME(_t)        (*_t = read_timer())
+#else
+// Normal timer: mcycle CSR for real performance measurement
 static ee_u32 read_mcycle(void) {
     ee_u32 val;
     __asm__ volatile("csrr %0, mcycle" : "=r"(val));
     return val;
 }
-
 #define GETMYTIME(_t)        (*_t = read_mcycle())
+#endif
 #define MYTIMEDIFF(fin, ini) ((fin) - (ini))
 #define TIMER_RES_DIVIDER    1
 #define EE_TICKS_PER_SEC     (CLOCKS_PER_SEC / TIMER_RES_DIVIDER)
@@ -58,6 +64,9 @@ void portable_init(core_portable *p, int *argc, char *argv[]) {
     p->portable_id = 1;
 }
 
+extern volatile unsigned int tohost;
+
 void portable_fini(core_portable *p) {
     p->portable_id = 0;
+    tohost = 1;
 }

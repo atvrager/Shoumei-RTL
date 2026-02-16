@@ -1326,7 +1326,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
     [Gate.mkOR cdb_tag[0]! cdb_tag[1]! cdb_tag_nz_tmp[0]!] ++
     (List.range 4).map (fun i =>
       Gate.mkOR cdb_tag_nz_tmp[i]! cdb_tag[i + 2]! (if i < 3 then cdb_tag_nz_tmp[i + 1]! else cdb_tag_nonzero)) ++
-    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_prf]
+    -- Gate CDB writes to PRF during flush: squashed instructions' CDB broadcasts
+    -- must not overwrite pregs that flush recovery will make architecturally live.
+    -- Allow CSR CDB inject through (it's the committing instruction, not squashed).
+    let cdb_valid_nz_pre := Wire.mk "cdb_valid_nz_pre"
+    let not_flushing_prf := Wire.mk "not_flushing_prf"
+    let prf_flush_allow := Wire.mk "prf_flush_allow"
+    [Gate.mkAND cdb_valid cdb_tag_nonzero cdb_valid_nz_pre,
+     Gate.mkNOT pipeline_flush_comb not_flushing_prf] ++
+    (if config.enableZicsr then
+      -- Use csr_flush_suppress (= DFF(csr_cdb_inject)) since cdb_valid is also registered
+      [Gate.mkOR not_flushing_prf csr_flush_suppress prf_flush_allow,
+       Gate.mkAND cdb_valid_nz_pre prf_flush_allow cdb_valid_prf]
+    else
+      [Gate.mkAND cdb_valid_nz_pre not_flushing_prf cdb_valid_prf])
 
   let rob_commit_en := Wire.mk "rob_commit_en"
   let commit_store_en := Wire.mk "commit_store_en"
@@ -4423,20 +4436,43 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 32).map (fun i => Gate.mkBUF zero csr_write_val[i]!)
 
   -- CSR write enables: only write on csr_drain_complete AND M-mode addresses (not U-mode aliases)
+  -- Per spec: CSRRS/CSRRC with rs1=x0 do NOT write the CSR.
+  -- CSRRSI/CSRRCI with uimm=0 do NOT write the CSR.
+  -- This matters for mcycle/minstret: a read-only access should not override the auto-increment.
+  let csr_actually_writes := Wire.mk "csr_actually_writes"
+  let csr_src_nonzero := Wire.mk "csr_src_nonzero"
+  let csr_rs_or_rc := Wire.mk "csr_rs_or_rc"
+  let csr_src_nz_tmp := (List.range 3).map (fun i => Wire.mk s!"csr_snz_e{i}")
   let csr_we_mscratch := Wire.mk "csr_we_mscratch"
   let csr_we_mcycle := Wire.mk "csr_we_mcycle"
   let csr_we_mcycleh := Wire.mk "csr_we_mcycleh"
   let csr_we_minstret := Wire.mk "csr_we_minstret"
   let csr_we_minstreth := Wire.mk "csr_we_minstreth"
+  let csr_drain_and_writes := Wire.mk "csr_drain_and_writes"
   let csr_we_gates :=
     if config.enableZicsr then
-      [Gate.mkAND csr_drain_complete is_mscratch csr_we_mscratch,
-       Gate.mkAND csr_drain_complete is_mcycle_m csr_we_mcycle,
-       Gate.mkAND csr_drain_complete is_mcycleh_m csr_we_mcycleh,
-       Gate.mkAND csr_drain_complete is_minstret_m csr_we_minstret,
-       Gate.mkAND csr_drain_complete is_minstreth_m csr_we_minstreth]
+      -- Check if CSR source (rs1 or zimm) is nonzero: OR all 5 bits of csr_zimm_reg
+      -- (csr_zimm_reg holds rs1 field for register ops, zimm for immediate ops)
+      [Gate.mkOR csr_zimm_reg[0]! csr_zimm_reg[1]! csr_src_nz_tmp[0]!,
+       Gate.mkOR csr_src_nz_tmp[0]! csr_zimm_reg[2]! csr_src_nz_tmp[1]!,
+       Gate.mkOR csr_src_nz_tmp[1]! csr_zimm_reg[3]! csr_src_nz_tmp[2]!,
+       Gate.mkOR csr_src_nz_tmp[2]! csr_zimm_reg[4]! csr_src_nonzero,
+       -- CSRRS/CSRRC (and SI/CI variants) only write if source != 0
+       Gate.mkOR csr_is_rs csr_is_rc csr_rs_or_rc,
+       -- actually_writes = is_rw OR (is_rs_or_rc AND src_nonzero)
+       -- Equivalently: NOT(is_rs_or_rc AND NOT src_nonzero)
+       Gate.mkAND csr_rs_or_rc csr_src_nonzero (Wire.mk "csr_rsrc_write"),
+       Gate.mkOR csr_is_rw (Wire.mk "csr_rsrc_write") csr_actually_writes,
+       Gate.mkAND csr_drain_complete csr_actually_writes csr_drain_and_writes,
+       Gate.mkAND csr_drain_and_writes is_mscratch csr_we_mscratch,
+       Gate.mkAND csr_drain_and_writes is_mcycle_m csr_we_mcycle,
+       Gate.mkAND csr_drain_and_writes is_mcycleh_m csr_we_mcycleh,
+       Gate.mkAND csr_drain_and_writes is_minstret_m csr_we_minstret,
+       Gate.mkAND csr_drain_and_writes is_minstreth_m csr_we_minstreth]
     else
-      [Gate.mkBUF zero csr_we_mscratch, Gate.mkBUF zero csr_we_mcycle,
+      [Gate.mkBUF zero csr_actually_writes, Gate.mkBUF zero csr_src_nonzero,
+       Gate.mkBUF zero csr_rs_or_rc, Gate.mkBUF zero csr_drain_and_writes,
+       Gate.mkBUF zero csr_we_mscratch, Gate.mkBUF zero csr_we_mcycle,
        Gate.mkBUF zero csr_we_mcycleh, Gate.mkBUF zero csr_we_minstret,
        Gate.mkBUF zero csr_we_minstreth]
 
@@ -4475,7 +4511,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("cin", mcycle_carry)] ++
       (mcycleh_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
-  -- minstret + rob_commit_en (use cin for rob_commit_en)
+  -- minstret + commit_valid_muxed (counts both ROB commits and CSR inject commits)
   let minstret_plus_1 := makeIndexedWires "minstret_p1" 32
   let minstret_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -4483,7 +4519,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap :=
       (minstret_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       ((List.range 32).map (fun i => (s!"b_{i}", zero))) ++
-      [("cin", rob_commit_en)] ++
+      [("cin", commit_valid_muxed)] ++
       (minstret_plus_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
   -- minstret carry: all bits AND rob_commit_en
@@ -4514,7 +4550,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 30).map (fun i =>
         Gate.mkAND mcycle_carry_tmp[i]! mcycle_reg[i+2]! (if i < 29 then mcycle_carry_tmp[i+1]! else mcycle_carry))
     else [Gate.mkBUF zero mcycle_carry]
-  -- minstret_carry = AND of all 32 bits of minstret_reg AND rob_commit_en
+  -- minstret_carry = AND of all 32 bits of minstret_reg AND commit_valid_muxed
   let minstret_carry_tmp := (List.range 31).map (fun i => Wire.mk s!"mins_ct_e{i}")
   let minstret_carry_pre := Wire.mk "minstret_carry_pre"
   let minstret_carry_gates :=
@@ -4522,7 +4558,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [Gate.mkAND minstret_reg[0]! minstret_reg[1]! minstret_carry_tmp[0]!] ++
       (List.range 30).map (fun i =>
         Gate.mkAND minstret_carry_tmp[i]! minstret_reg[i+2]! (if i < 29 then minstret_carry_tmp[i+1]! else minstret_carry_pre)) ++
-      [Gate.mkAND minstret_carry_pre rob_commit_en minstret_carry]
+      [Gate.mkAND minstret_carry_pre commit_valid_muxed minstret_carry]
     else [Gate.mkBUF zero minstret_carry]
 
   -- Counter next value: MUX(auto_inc, csr_write_val, csr_we)
@@ -4576,7 +4612,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkMUX (if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)
                   one csr_cdb_inject commit_hasPhysRd_muxed,
        Gate.mkMUX (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
-                  zero csr_cdb_inject commit_hasAllocSlot_muxed] ++
+                  one csr_cdb_inject commit_hasAllocSlot_muxed] ++
       (List.range 5).map (fun i =>
         Gate.mkMUX (Wire.mk s!"rob_head_archRd_{i}") csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed[i]!) ++
       (List.range 6).map (fun i =>

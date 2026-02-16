@@ -152,6 +152,10 @@ uint32_t SpikeOracle::get_xreg(int i) const {
     return static_cast<uint32_t>(proc_->get_state()->XPR[i]);
 }
 
+void SpikeOracle::set_xreg(int i, uint32_t val) {
+    if (i != 0) proc_->get_state()->XPR.write(i, val);
+}
+
 uint32_t SpikeOracle::get_freg(int i) const {
     return static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
 }

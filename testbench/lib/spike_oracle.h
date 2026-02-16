@@ -31,8 +31,9 @@ public:
     // Step one instruction, return state for comparison
     SpikeStepResult step();
 
-    // Read architectural register
+    // Read/write architectural register
     uint32_t get_xreg(int i) const;
+    void set_xreg(int i, uint32_t val);
 
     // Read FP register (as raw bits)
     uint32_t get_freg(int i) const;
