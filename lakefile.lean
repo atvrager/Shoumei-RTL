@@ -109,6 +109,11 @@ lean_exe generate_optype where
   root := `GenerateOpType
   supportInterpreter := true
 
+-- Executable target for generating .shoumei text format files
+lean_exe generate_shoumei where
+  root := `GenerateShoumei
+  supportInterpreter := true
+
 -- Executable target for generating RISC-V test assembly (.S files)
 lean_exe gen_tests where
   root := `GenTests
