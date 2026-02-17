@@ -21,7 +21,7 @@
 #include "svdpi.h"
 
 #include "lib/spike_oracle.h"
-#include "lib/cppsim_oracle.h"
+#include "generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei.h"
 
 // DPI-C exported from tb_cpu.sv
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
@@ -196,7 +196,7 @@ int main(int argc, char** argv) {
     auto spike = std::make_unique<SpikeOracle>(elf_path);
 
     // Initialize C++ sim oracle (same Lean-generated circuit, different codegen path)
-    auto cppsim = std::make_unique<CppSimOracle>(elf_path);
+    auto lean_sim = std::make_unique<LeanSim>(elf_path);
 
     // Reset (rst_n is active-low)
     dut->clk = 0;
@@ -315,27 +315,27 @@ int main(int argc, char** argv) {
             // for architecturally precise fflags tracking.
 
             // 3-way: compare C++ sim
-            CppSimStepResult cs_r = cppsim->step();
+            LeanSimStepResult cs_r = lean_sim->step();
             if (!cs_r.done) {
                 if (rvvi.pc != cs_r.pc) {
                     fprintf(stderr,
                         "MISMATCH at retirement #%lu (cycle %lu): "
-                        "PC RTL=0x%08x CppSim=0x%08x Spike=0x%08x\n",
+                        "PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\n",
                         retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);
                     // Fault isolation
                     if (cs_r.pc == spike_r.pc)
-                        fprintf(stderr, "  -> SV codegen bug (RTL wrong, CppSim+Spike agree)\n");
+                        fprintf(stderr, "  -> SV codegen bug (RTL wrong, LeanSim+Spike agree)\n");
                     else if (rvvi.pc == cs_r.pc)
-                        fprintf(stderr, "  -> Spike disagree (RTL+CppSim agree)\n");
+                        fprintf(stderr, "  -> Spike disagree (RTL+LeanSim agree)\n");
                     else
-                        fprintf(stderr, "  -> Lean circuit bug (RTL+CppSim both wrong)\n");
+                        fprintf(stderr, "  -> Lean circuit bug (RTL+LeanSim both wrong)\n");
                     mismatches++;
                 }
                 if (cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid) {
                     if (cs_r.rd_data != rvvi.rd_data) {
                         fprintf(stderr,
                             "MISMATCH at retirement #%lu (cycle %lu): "
-                            "x%u RTL=0x%08x CppSim=0x%08x\n",
+                            "x%u RTL=0x%08x LeanSim=0x%08x\n",
                             retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);
                         mismatches++;
                     }

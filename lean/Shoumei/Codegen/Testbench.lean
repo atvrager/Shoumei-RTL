@@ -1260,6 +1260,381 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "    return done && dut->o_test_pass ? 0 : 1;\n" ++
   rb ++ "\n"
 
+/-! ## LeanSim Generator (replaces hand-written cppsim_oracle) -/
+
+/-- Generate lean_sim header for a given testbench config. -/
+def toLeanSimH (cfg : TestbenchConfig) : String :=
+  let c := cfg.circuit
+  let isCached := cfg.cacheLineMemPort.isSome
+  let clockWires := findClockWires c
+  let resetWires := findResetWires c
+  let resetName := if resetWires.isEmpty then "reset" else Wire.name (List.head! resetWires)
+  let lb := "{"
+  let rb := "}"
+
+  -- Build signal member declarations from circuit ports
+  let groups := SystemVerilog.autoDetectSignalGroups (c.inputs ++ c.outputs)
+  let busWireNames : List String :=
+    groups.flatMap (fun sg => sg.wires.map Wire.name)
+
+  -- All ports minus reset
+  let allPorts := c.inputs ++ c.outputs
+  let portList := allPorts.filter fun w => w.name != resetName
+
+  -- Scalar signals (not in any bus, not clock/constant)
+  let isSpecial (name : String) : Bool :=
+    (clockWires.any fun cw => cw.name == name) ||
+    name == resetName ||
+    cfg.constantPorts.any (fun (cn, _) => cn == name)
+
+  let scalarPorts := portList.filter fun w =>
+    !busWireNames.contains w.name && !isSpecial w.name
+  let scalarDecls := String.intercalate "\n" (
+    scalarPorts.map fun w => s!"    bool {w.name}_ = false;")
+
+  -- Bus signal declarations
+  let busDecls := String.intercalate "\n" (
+    groups.map fun sg => s!"    bool {sg.name}_[{sg.width}] = {lb}{rb};")
+
+  -- Bus pointer array declarations (for read_bus/write_bus)
+  let busPtrDecls := String.intercalate "\n" (
+    groups.map fun sg => s!"    bool* {sg.name}_sigs_[{sg.width}];")
+
+  "// Auto-generated Lean gate-level simulation. DO NOT EDIT.\n" ++
+  s!"// Generated from circuit: {c.name}\n" ++
+  s!"#pragma once\n\n" ++
+  "#include <cstdint>\n" ++
+  "#include <string>\n\n" ++
+  s!"#include \"cpu_setup_{c.name}.h\"\n" ++
+  "#include \"elf_loader.h\"\n\n" ++
+  s!"struct LeanSimStepResult {lb}\n" ++
+  "    uint32_t pc;\n" ++
+  "    uint32_t insn;\n" ++
+  "    uint32_t rd;\n" ++
+  "    uint32_t rd_data;\n" ++
+  "    bool     rd_valid;\n" ++
+  "    uint32_t frd;\n" ++
+  "    uint32_t frd_data;\n" ++
+  "    bool     frd_valid;\n" ++
+  "    uint32_t fflags;\n" ++
+  "    bool     done;\n" ++
+  "    uint32_t tohost;\n" ++
+  s!"{rb};\n\n" ++
+  s!"class LeanSim {lb}\n" ++
+  "public:\n" ++
+  "    explicit LeanSim(const std::string& elf_path);\n" ++
+  "    ~LeanSim();\n" ++
+  "    LeanSimStepResult step();\n\n" ++
+  "private:\n" ++
+  "    static constexpr uint32_t MEM_SIZE_WORDS = " ++ toString cfg.memSizeWords ++ ";\n" ++
+  "    uint32_t mem_[MEM_SIZE_WORDS] = " ++ lb ++ rb ++ ";\n" ++
+  "    CpuCtx* ctx_ = nullptr;\n\n" ++
+  "    // Special signals\n" ++
+  "    bool clock_sig_ = false;\n" ++
+  "    bool reset_sig_ = false;\n" ++
+  (String.intercalate "\n" (
+    cfg.constantPorts.map fun (name, val) =>
+      s!"    bool {name}_sig_ = {if val then "true" else "false"};")) ++ "\n\n" ++
+  "    // Scalar signals\n" ++
+  scalarDecls ++ "\n\n" ++
+  "    // Bus signals\n" ++
+  busDecls ++ "\n\n" ++
+  "    // Bus pointer arrays\n" ++
+  busPtrDecls ++ "\n\n" ++
+  (if !isCached then
+    "    // Dmem state\n" ++
+    "    bool dmem_pending_ = false;\n" ++
+    "    uint32_t dmem_read_data_ = 0;\n"
+   else
+    "    // Cache-line memory state\n" ++
+    "    bool mem_pending_ = false;\n" ++
+    "    uint32_t mem_read_line_[8] = " ++ lb ++ rb ++ ";\n") ++
+  "    bool test_done_ = false;\n" ++
+  "    uint32_t test_data_ = 0;\n" ++
+  "    uint32_t cycle_ = 0;\n" ++
+  "    static constexpr uint32_t MAX_CYCLES = 200000;\n\n" ++
+  "    uint32_t read_bus(bool** sigs, int bits);\n" ++
+  "    void write_bus(bool** sigs, uint32_t val, int bits);\n" ++
+  (if !isCached then
+    "    void imem_update();\n" ++
+    "    void dmem_tick(bool req_valid, bool req_we, uint32_t addr, uint32_t data, uint32_t size);\n"
+   else
+    "    void mem_tick(bool req_valid, bool req_we, uint32_t addr, uint32_t* data_line);\n") ++
+  "    void settle();\n" ++
+  s!"{rb};\n"
+
+/-- Generate lean_sim cpp for a given testbench config. -/
+def toLeanSimCpp (cfg : TestbenchConfig) : String :=
+  let c := cfg.circuit
+  let isCached := cfg.cacheLineMemPort.isSome
+  let clockWires := findClockWires c
+  let resetWires := findResetWires c
+  let resetName := if resetWires.isEmpty then "reset" else Wire.name (List.head! resetWires)
+  let lb := "{"
+  let rb := "}"
+
+  -- Build port list (same as toCpuSetupCpp: exclude reset only)
+  let allPorts := c.inputs ++ c.outputs
+  let portList := allPorts.filter fun w =>
+    w.name != resetName
+
+  -- Detect signal groups to distinguish bus wires from scalar wires
+  let groups := SystemVerilog.autoDetectSignalGroups (c.inputs ++ c.outputs)
+  let busWireMap : List (String × String × Nat) :=
+    groups.flatMap fun sg =>
+      sg.wires.enum.map fun ⟨i, w⟩ => (w.name, sg.name, i)
+
+  -- Generate the port pointer array entries with correct signal variable names
+  let portPtrEntries := String.intercalate ",\n" (
+    portList.map fun w =>
+      let wireName := w.name
+      -- Clock -> &clock_sig_
+      if (clockWires.any fun cw => cw.name == wireName) then
+        "        &clock_sig_"
+      -- Constants -> &{name}_sig_
+      else if cfg.constantPorts.any (fun (cn, _) => cn == wireName) then
+        s!"        &{wireName}_sig_"
+      -- Bus signals: look up in signal groups
+      else match busWireMap.find? (fun (wn, _, _) => wn == wireName) with
+        | some (_, baseName, idx) => s!"        &{baseName}_[{idx}]"
+        | none => s!"        &{wireName}_"
+  )
+
+  s!"// Auto-generated Lean gate-level simulation. DO NOT EDIT.\n" ++
+  s!"// Generated from circuit: {c.name}\n" ++
+  s!"#include \"lean_sim_{c.name}.h\"\n" ++
+  s!"#include \"cpu_setup_{c.name}.h\"\n" ++
+  "#include \"elf_loader.h\"\n" ++
+  "#include <cstring>\n" ++
+  "#include <cstdio>\n\n" ++
+
+  "// ============================================================================\n" ++
+  "// Bus helpers\n" ++
+  "// ============================================================================\n\n" ++
+  s!"uint32_t LeanSim::read_bus(bool** sigs, int bits) {lb}\n" ++
+  "    uint32_t v = 0;\n" ++
+  "    for (int i = 0; i < bits; i++)\n" ++
+  "        v |= (*sigs[i] ? 1u : 0u) << i;\n" ++
+  "    return v;\n" ++
+  s!"{rb}\n\n" ++
+  s!"void LeanSim::write_bus(bool** sigs, uint32_t val, int bits) {lb}\n" ++
+  "    for (int i = 0; i < bits; i++)\n" ++
+  "        *sigs[i] = (val >> i) & 1;\n" ++
+  s!"{rb}\n\n" ++
+
+  "// ============================================================================\n" ++
+  "// Memory models\n" ++
+  "// ============================================================================\n\n" ++
+
+  (if !isCached then
+    -- Non-cached: imem + dmem
+    "static constexpr uint32_t TOHOST_ADDR = 0x" ++ natToHexDigits cfg.tohostAddr ++ ";\n" ++
+    (match cfg.putcharAddr with
+     | some addr => "static constexpr uint32_t PUTCHAR_ADDR = 0x" ++ natToHexDigits addr ++ ";\n"
+     | none => "") ++
+    "\n" ++
+    s!"void LeanSim::imem_update() {lb}\n" ++
+    "    uint32_t pc = read_bus(fetch_pc_sigs_, 32);\n" ++
+    "    uint32_t widx = pc / 4;\n" ++
+    "    uint32_t word = (widx < MEM_SIZE_WORDS) ? mem_[widx] : 0;\n" ++
+    "    write_bus(imem_resp_data_sigs_, word, 32);\n" ++
+    s!"{rb}\n\n" ++
+    s!"void LeanSim::dmem_tick(bool req_valid, bool req_we,\n" ++
+    s!"                          uint32_t addr, uint32_t data, uint32_t size) {lb}\n" ++
+    "    dmem_req_ready_ = true;\n\n" ++
+    "    if (dmem_pending_) " ++ lb ++ "\n" ++
+    "        dmem_resp_valid_ = true;\n" ++
+    "        write_bus(dmem_resp_data_sigs_, dmem_read_data_, 32);\n" ++
+    "        dmem_pending_ = false;\n" ++
+    "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+    "        dmem_resp_valid_ = false;\n" ++
+    "        write_bus(dmem_resp_data_sigs_, dmem_read_data_, 32);\n" ++
+    "    " ++ rb ++ "\n\n" ++
+    "    if (req_valid) " ++ lb ++ "\n" ++
+    "        if (req_we) " ++ lb ++ "\n" ++
+    "            if (addr == TOHOST_ADDR) " ++ lb ++ "\n" ++
+    "                test_done_ = true;\n" ++
+    "                test_data_ = data;\n" ++
+    (match cfg.putcharAddr with
+     | some _ =>
+       "            " ++ rb ++ " else if (addr == PUTCHAR_ADDR) " ++ lb ++ "\n" ++
+       "                putchar(data & 0xFF);\n"
+     | none => "") ++
+    "            " ++ rb ++ " else " ++ lb ++ "\n" ++
+    "                uint32_t widx = addr / 4;\n" ++
+    "                if (widx < MEM_SIZE_WORDS) " ++ lb ++ "\n" ++
+    "                    uint32_t cur = mem_[widx];\n" ++
+    "                    uint32_t byte_off = addr & 3;\n" ++
+    "                    if (size == 0) " ++ lb ++ " // SB\n" ++
+    "                        uint32_t shift = byte_off * 8;\n" ++
+    "                        cur = (cur & ~(0xFFu << shift)) | ((data & 0xFF) << shift);\n" ++
+    "                    " ++ rb ++ " else if (size == 1) " ++ lb ++ " // SH\n" ++
+    "                        uint32_t shift = (byte_off & 2) * 8;\n" ++
+    "                        cur = (cur & ~(0xFFFFu << shift)) | ((data & 0xFFFF) << shift);\n" ++
+    "                    " ++ rb ++ " else " ++ lb ++ " // SW\n" ++
+    "                        cur = data;\n" ++
+    "                    " ++ rb ++ "\n" ++
+    "                    mem_[widx] = cur;\n" ++
+    "                " ++ rb ++ "\n" ++
+    "            " ++ rb ++ "\n" ++
+    "        " ++ rb ++ " else " ++ lb ++ "\n" ++
+    "            uint32_t ridx = addr / 4;\n" ++
+    "            dmem_read_data_ = (ridx < MEM_SIZE_WORDS) ? mem_[ridx] : 0;\n" ++
+    "            dmem_pending_ = true;\n" ++
+    "        " ++ rb ++ "\n" ++
+    "    " ++ rb ++ "\n" ++
+    s!"{rb}\n\n" ++
+    s!"void LeanSim::settle() {lb}\n" ++
+    "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
+    "        imem_update();\n" ++
+    "        cpu_eval_comb_all(ctx_);\n" ++
+    "    " ++ rb ++ "\n" ++
+    s!"{rb}\n\n"
+   else
+    -- Cached: cache-line memory
+    "static constexpr uint32_t TOHOST_ADDR = 0x" ++ natToHexDigits cfg.tohostAddr ++ ";\n" ++
+    (match cfg.putcharAddr with
+     | some addr => "static constexpr uint32_t PUTCHAR_ADDR = 0x" ++ natToHexDigits addr ++ ";\n"
+     | none => "") ++
+    "\n" ++
+    s!"void LeanSim::mem_tick(bool req_valid, bool req_we,\n" ++
+    s!"                        uint32_t addr, uint32_t* data_line) {lb}\n" ++
+    "    if (mem_pending_) " ++ lb ++ "\n" ++
+    "        mem_resp_valid_ = true;\n" ++
+    "        for (int w = 0; w < 8; w++)\n" ++
+    "            write_bus(&mem_resp_data_sigs_[w * 32], mem_read_line_[w], 32);\n" ++
+    "        mem_pending_ = false;\n" ++
+    "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+    "        mem_resp_valid_ = false;\n" ++
+    "    " ++ rb ++ "\n\n" ++
+    "    if (req_valid) " ++ lb ++ "\n" ++
+    "        if (req_we) " ++ lb ++ "\n" ++
+    "            // Write 8-word cache line\n" ++
+    "            uint32_t widx = addr / 4;\n" ++
+    "            for (int w = 0; w < 8; w++) " ++ lb ++ "\n" ++
+    "                if (widx + w < MEM_SIZE_WORDS)\n" ++
+    "                    mem_[widx + w] = data_line[w];\n" ++
+    "            " ++ rb ++ "\n" ++
+    "        " ++ rb ++ " else " ++ lb ++ "\n" ++
+    "            // Read 8-word cache line\n" ++
+    "            uint32_t widx = addr / 4;\n" ++
+    "            for (int w = 0; w < 8; w++)\n" ++
+    "                mem_read_line_[w] = (widx + w < MEM_SIZE_WORDS) ? mem_[widx + w] : 0;\n" ++
+    "            mem_pending_ = true;\n" ++
+    "        " ++ rb ++ "\n" ++
+    "    " ++ rb ++ "\n" ++
+    s!"{rb}\n\n" ++
+    s!"void LeanSim::settle() {lb}\n" ++
+    "    for (int i = 0; i < 10; i++)\n" ++
+    "        cpu_eval_comb_all(ctx_);\n" ++
+    s!"{rb}\n\n") ++
+
+  "// ============================================================================\n" ++
+  "// Constructor\n" ++
+  "// ============================================================================\n\n" ++
+  s!"LeanSim::LeanSim(const std::string& elf_path) {lb}\n" ++
+  "    // Initialize signal pointer arrays\n" ++
+  (String.intercalate "\n" (
+    groups.map fun sg =>
+      s!"    for (int i = 0; i < {sg.width}; i++) {sg.name}_sigs_[i] = &{sg.name}_[i];")) ++ "\n" ++
+  "\n" ++
+  "    // Build the port pointer array matching the cpu_setup port order\n" ++
+  s!"    bool* cpu_ports[] = {lb}\n" ++
+  portPtrEntries ++ "\n" ++
+  s!"    {rb};\n\n" ++
+  s!"    ctx_ = cpu_create(\"lean_sim\", &reset_sig_, cpu_ports, {portList.length});\n\n" ++
+  "    // Load ELF into memory\n" ++
+  "    load_elf(elf_path.c_str(), [this](uint32_t addr, uint32_t data) " ++ lb ++ "\n" ++
+  "        uint32_t widx = addr / 4;\n" ++
+  "        if (widx < MEM_SIZE_WORDS) mem_[widx] = data;\n" ++
+  "    " ++ rb ++ ");\n\n" ++
+  "    // Reset phase\n" ++
+  "    reset_sig_ = true;\n" ++
+  (if !isCached then "    dmem_req_ready_ = true;\n" else "") ++
+  "    for (int i = 0; i < 5; i++) " ++ lb ++ "\n" ++
+  "        cpu_eval_seq_sample_all(ctx_);\n" ++
+  "        cpu_eval_seq_all(ctx_);\n" ++
+  "        settle();\n" ++
+  "    " ++ rb ++ "\n" ++
+  "    reset_sig_ = false;\n" ++
+  "    settle();\n" ++
+  s!"{rb}\n\n" ++
+
+  s!"LeanSim::~LeanSim() {lb}\n" ++
+  "    if (ctx_) cpu_delete(ctx_);\n" ++
+  s!"{rb}\n\n" ++
+
+  "// ============================================================================\n" ++
+  "// Step: run cycles until next RVVI retirement\n" ++
+  "// ============================================================================\n\n" ++
+  s!"LeanSimStepResult LeanSim::step() {lb}\n" ++
+  "    while (cycle_ < MAX_CYCLES) " ++ lb ++ "\n" ++
+  (if !isCached then
+    "        bool snap_req_valid = dmem_req_valid_;\n" ++
+    "        bool snap_req_we = dmem_req_we_;\n" ++
+    "        uint32_t snap_addr = read_bus(dmem_req_addr_sigs_, 32);\n" ++
+    "        uint32_t snap_data = read_bus(dmem_req_data_sigs_, 32);\n" ++
+    "        uint32_t snap_size = read_bus(dmem_req_size_sigs_, 2);\n"
+   else
+    "        bool snap_req_valid = mem_req_valid_;\n" ++
+    "        bool snap_req_we = mem_req_we_;\n" ++
+    "        uint32_t snap_addr = read_bus(mem_req_addr_sigs_, 32);\n" ++
+    "        uint32_t snap_data_line[8];\n" ++
+    "        for (int w = 0; w < 8; w++)\n" ++
+    "            snap_data_line[w] = read_bus(&mem_req_data_sigs_[w * 32], 32);\n") ++
+  "\n" ++
+  "        cpu_eval_seq_sample_all(ctx_);\n" ++
+  "        cpu_eval_seq_all(ctx_);\n\n" ++
+  (if !isCached then
+    "        dmem_tick(snap_req_valid, snap_req_we, snap_addr, snap_data, snap_size);\n"
+   else
+    "        mem_tick(snap_req_valid, snap_req_we, snap_addr, snap_data_line);\n") ++
+  "        settle();\n" ++
+  "        cycle_++;\n\n" ++
+  (if isCached then
+    "        // Check store snoop for tohost\n" ++
+    "        if (store_snoop_valid_) " ++ lb ++ "\n" ++
+    "            uint32_t snoop_addr = read_bus(store_snoop_addr_sigs_, 32);\n" ++
+    "            uint32_t snoop_data = read_bus(store_snoop_data_sigs_, 32);\n" ++
+    "            if (snoop_addr == TOHOST_ADDR) " ++ lb ++ "\n" ++
+    "                test_done_ = true;\n" ++
+    "                test_data_ = snoop_data;\n" ++
+    "            " ++ rb ++ "\n" ++
+    (match cfg.putcharAddr with
+     | some _ =>
+       "            if (snoop_addr == PUTCHAR_ADDR)\n" ++
+       "                putchar(snoop_data & 0xFF);\n"
+     | none => "") ++
+    "        " ++ rb ++ "\n\n"
+   else "") ++
+  "        if (rvvi_valid_) " ++ lb ++ "\n" ++
+  "            LeanSimStepResult r = " ++ lb ++ rb ++ ";\n" ++
+  "            r.pc       = read_bus(rvvi_pc_rdata_sigs_, 32);\n" ++
+  "            r.insn     = read_bus(rvvi_insn_sigs_, 32);\n" ++
+  "            r.rd       = read_bus(rvvi_rd_sigs_, 5);\n" ++
+  "            r.rd_valid = rvvi_rd_valid_;\n" ++
+  "            r.rd_data  = read_bus(rvvi_rd_data_sigs_, 32);\n" ++
+  "            r.frd      = read_bus(rvvi_frd_sigs_, 5);\n" ++
+  "            r.frd_valid = rvvi_frd_valid_;\n" ++
+  "            r.frd_data = read_bus(rvvi_frd_data_sigs_, 32);\n" ++
+  "            r.fflags   = read_bus(fflags_acc_sigs_, 5);\n" ++
+  "            r.done     = test_done_;\n" ++
+  "            r.tohost   = test_data_;\n" ++
+  "            return r;\n" ++
+  "        " ++ rb ++ "\n\n" ++
+  "        if (test_done_) " ++ lb ++ "\n" ++
+  "            LeanSimStepResult r = " ++ lb ++ rb ++ ";\n" ++
+  "            r.done = true;\n" ++
+  "            r.tohost = test_data_;\n" ++
+  "            return r;\n" ++
+  "        " ++ rb ++ "\n" ++
+  "    " ++ rb ++ "\n\n" ++
+  "    LeanSimStepResult r = " ++ lb ++ rb ++ ";\n" ++
+  "    r.done = true;\n" ++
+  "    r.tohost = 0;\n" ++
+  "    return r;\n" ++
+  s!"{rb}\n"
+
 /-! ## Verilator cosim_main.cpp Generator -/
 
 /-- Generate cosim_main.cpp for Verilator cosimulation, templated on testbench config. -/
@@ -1283,7 +1658,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "#include \"verilated.h\"\n" ++
   "#include \"svdpi.h\"\n\n" ++
   "#include \"lib/spike_oracle.h\"\n" ++
-  "#include \"lib/cppsim_oracle.h\"\n\n" ++
+  s!"#include \"lean_sim_{cfg.circuit.name}.h\"\n\n" ++
   "extern \"C\" void dpi_mem_write(unsigned int word_addr, unsigned int data);\n" ++
   "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n\n" ++
 
@@ -1401,7 +1776,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
   "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
   "    auto spike = std::make_unique<SpikeOracle>(elf_path);\n" ++
-  "    auto cppsim = std::make_unique<CppSimOracle>(elf_path);\n\n" ++
+  "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n" ++
   "    dut->clk = 0; dut->rst_n = 0;\n" ++
   "    for (int i = 0; i < 10; i++) " ++ lb ++ " dut->clk = !dut->clk; dut->eval(); " ++ rb ++ "\n" ++
   "    dut->rst_n = 1;\n\n" ++
@@ -1449,9 +1824,9 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                    retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n\n" ++
-  "            CppSimStepResult cs_r = cppsim->step();\n" ++
+  "            LeanSimStepResult cs_r = lean_sim->step();\n" ++
   "            if (!cs_r.done && rvvi.pc != cs_r.pc) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x CppSim=0x%08x Spike=0x%08x\\n\",\n" ++
+  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\\n\",\n" ++
   "                    retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);\n" ++
   "                if (cs_r.pc == spike_r.pc) fprintf(stderr, \"  -> SV codegen bug\\n\");\n" ++
   "                else if (rvvi.pc == cs_r.pc) fprintf(stderr, \"  -> Spike disagree\\n\");\n" ++
@@ -1459,7 +1834,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n" ++
   "            if (!cs_r.done && cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid && cs_r.rd_data != rvvi.rd_data) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x CppSim=0x%08x\\n\",\n" ++
+  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x LeanSim=0x%08x\\n\",\n" ++
   "                    retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n\n" ++
@@ -1523,10 +1898,20 @@ def writeCosimMainCpp (cfg : TestbenchConfig) : IO Unit := do
   IO.FS.writeFile s!"{testbenchOutputDir}/cosim_main_{tbName}.cpp" cpp
   IO.println s!"  ✓ cosim_main_{tbName}.cpp (Verilator cosim driver)"
 
+def writeLeanSim (cfg : TestbenchConfig) : IO Unit := do
+  IO.FS.createDirAll testbenchOutputDir
+  let c := cfg.circuit
+  let h := toLeanSimH cfg
+  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_{c.name}.h" h
+  let cpp := toLeanSimCpp cfg
+  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_{c.name}.cpp" cpp
+  IO.println s!"  ✓ lean_sim_{c.name}.h + lean_sim_{c.name}.cpp (Lean gate-level sim)"
+
 def writeTestbenches (cfg : TestbenchConfig) : IO Unit := do
   Testbench.writeTestbenchSV cfg
   Testbench.writeTestbenchCppSim cfg
   Testbench.writeSimMainCpp cfg
   Testbench.writeCosimMainCpp cfg
+  Testbench.writeLeanSim cfg
 
 end Shoumei.Codegen.Testbench

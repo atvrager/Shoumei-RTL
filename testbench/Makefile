@@ -31,8 +31,9 @@ SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
 CPP_SOURCES := $(TB_DIR)/sim_main.cpp
 COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-                $(TB_DIR)/lib/cppsim_oracle.cpp $(TB_DIR)/lib/elf_loader.cpp \
-                $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei.cpp
+                $(TB_DIR)/generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei.cpp \
+                $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei.cpp \
+                $(TB_DIR)/lib/elf_loader.cpp
 CPPSIM_OBJS := $(wildcard $(PROJ_ROOT)/output/cpp_sim/*.cpp)
 
 # X-propagation flags: randomize uninitialized regs to catch reset bugs
@@ -75,6 +76,8 @@ COSIM_CACHED_BIN := $(BUILD_DIR)/cosim_cached_shoumei
 TB_CACHED_SOURCES := $(wildcard $(TB_DIR)/generated/tb_cached_*.sv)
 SIM_CACHED_CPP    := $(TB_DIR)/generated/sim_main_tb_cached_cpu.cpp
 COSIM_CACHED_CPP  := $(TB_DIR)/generated/cosim_main_tb_cached_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
+                      $(TB_DIR)/generated/lean_sim_CachedCPU_RV32IM_Zicsr_Zifencei.cpp \
+                      $(TB_DIR)/generated/cpu_setup_CachedCPU_RV32IM_Zicsr_Zifencei.cpp \
                       $(TB_DIR)/lib/elf_loader.cpp
 
 sim: $(SIM_BIN)
@@ -282,7 +285,7 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS) $(SPIKE_LI
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS)
-	@echo "Built: $@ (3-way: RTL + Spike + C++ Sim)"
+	@echo "Built: $@ (3-way: RTL + Spike + LeanSim)"
 
 run-cosim: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
@@ -329,16 +332,16 @@ $(SIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
 	@echo "Built: $@ (cached CPU)"
 
 cosim-cached: $(COSIM_CACHED_BIN)
-$(COSIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(COSIM_CACHED_CPP) $(SPIKE_LIB_FILE)
+$(COSIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(COSIM_CACHED_CPP) $(CPPSIM_OBJS) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim_cached
 	@mkdir -p $(BUILD_DIR)/verilator_cosim_cached
 	$(VERILATOR) $(VFLAGS_CACHED) \
 		--Mdir $(BUILD_DIR)/verilator_cosim_cached \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(PROJ_ROOT)/output/cpp_sim -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(COSIM_CACHED_CPP)
-	@echo "Built: $@ (3-way cached: RTL + Spike + C++ Sim)"
+		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(COSIM_CACHED_CPP) $(CPPSIM_OBJS)
+	@echo "Built: $@ (3-way cached: RTL + Spike + LeanSim)"
 
 run-cosim-cached: $(COSIM_CACHED_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
