@@ -46,15 +46,15 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-RISCV_TEST_GLOBS := $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
-                    $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                    $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf)
+RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf)
 
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself
 # is correct (tohost=1).  TODO: fix RVVI rd_data reporting for FP-to-int moves.
-CUSTOM_TEST_GLOBS := $(filter-out %/fp_memory.elf, \
-                    $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
+CUSTOM_TEST_GLOBS = $(filter-out %/fp_memory.elf, \
+                   $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
 
 # Auto-build Spike if missing (check for .so or .a)
 $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
