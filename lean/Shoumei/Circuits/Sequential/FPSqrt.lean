@@ -37,7 +37,7 @@ Interface:
 -/
 
 import Shoumei.DSL
-import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Sequential
 
@@ -436,39 +436,17 @@ def mkFPSqrt : Circuit :=
       Gate.mkBUF (root_q[i]!) (trial_val[i + 2]!)
     )
 
-  -- 26-bit subtractor: diff = rem_shifted - trial_val
+  -- 26-bit Kogge-Stone subtractor: diff = rem_shifted - trial_val
   let diff := makeIndexedWires "diff" 26
-  let sub_borrow := makeIndexedWires "sqrt_sub_borrow" 27
-
-  let sub_gates :=
-    [Gate.mkBUF zero (sub_borrow[0]!)] ++
-    (List.range 26).flatMap (fun i =>
-      let a := rem_shifted[i]!
-      let b := trial_val[i]!
-      let bi := sub_borrow[i]!
-      let xab := Wire.mk s!"sqrt_sub_xab_{i}"
-      let diff_bit := diff[i]!
-      let not_a := Wire.mk s!"sqrt_sub_na_{i}"
-      let t0 := Wire.mk s!"sqrt_sub_t0_{i}"
-      let t1 := Wire.mk s!"sqrt_sub_t1_{i}"
-      let t2 := Wire.mk s!"sqrt_sub_t2_{i}"
-      let t01 := Wire.mk s!"sqrt_sub_t01_{i}"
-      let bo := sub_borrow[i + 1]!
-      [
-        Gate.mkXOR a b xab,
-        Gate.mkXOR xab bi diff_bit,
-        Gate.mkNOT a not_a,
-        Gate.mkAND not_a b t0,
-        Gate.mkAND not_a bi t1,
-        Gate.mkAND b bi t2,
-        Gate.mkOR t0 t1 t01,
-        Gate.mkOR t01 t2 bo
-      ]
-    )
+  let one_sqrt := Wire.mk "sqrt_sub_one"
+  let (sub_gates_ks, sub_borrow_out) := mkKoggeStoneSub
+    (rem_shifted.toArray.toList) (trial_val.toArray.toList)
+    (diff.toArray.toList) "sqrt_sub" one_sqrt
+  let sub_gates := [Gate.mkBUF one one_sqrt] ++ sub_gates_ks
 
   -- accept = NOT borrow (rem_shifted >= trial)
   let accept := Wire.mk "accept"
-  let accept_gate := [Gate.mkNOT (sub_borrow[26]!) accept]
+  let accept_gate := [Gate.mkNOT sub_borrow_out accept]
 
   -- new_rem[i] = MUX(rem_shifted[i], diff[i], accept)
   let new_rem := makeIndexedWires "new_rem" 26
