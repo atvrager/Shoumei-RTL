@@ -488,6 +488,17 @@ def cpu_rv32imf_zicsr_zifencei_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
+/-- CPU_RV32IMF_Zicsr_Zifencei_Microcoded: Microcoded variant with ROM-driven µop sequencer -/
+def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Microcoded"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
+    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32",
+    "MicrocodeSequencer"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -562,7 +573,9 @@ def allCerts : List CompositionalCert := [
   -- Zicsr + Zifencei variants
   cpu_rv32im_zicsr_zifencei_cert,
   cpu_rv32if_zicsr_zifencei_cert,
-  cpu_rv32imf_zicsr_zifencei_cert
+  cpu_rv32imf_zicsr_zifencei_cert,
+  -- Microcoded variant
+  cpu_rv32imf_zicsr_zifencei_microcoded_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

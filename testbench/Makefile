@@ -62,7 +62,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-microcoded sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim run-cosim coremark run-coremark clean
+.PHONY: sim sim-microcoded sim-microcoded-trace sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop run-all-tests-microcoded cosim run-cosim coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 SIM_UCODE_BIN:= $(BUILD_DIR)/sim_shoumei_microcoded
@@ -90,6 +90,18 @@ $(SIM_UCODE_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $@ (microcoded CSR)"
+
+sim-microcoded-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator_ucode_trace
+	@mkdir -p $(BUILD_DIR)/verilator_ucode_trace
+	$(VERILATOR) --cc --exe --build -j 0 \
+		--Mdir $(BUILD_DIR)/verilator_ucode_trace \
+		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
+		--top-module tb_cpu_microcoded --trace-fst \
+		-CFLAGS '-std=c++17 -O2 -DVM_TRACE=1 -DTOP_MODULE=Vtb_cpu_microcoded -DTOP_HEADER=\"Vtb_cpu_microcoded.h\" -DTOP_SCOPE=\"TOP.tb_cpu_microcoded\"' \
+		-o $(abspath $(BUILD_DIR))/sim_shoumei_microcoded_trace \
+		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+	@echo "Built: $(BUILD_DIR)/sim_shoumei_microcoded_trace (microcoded with FST trace)"
 
 sim-xprop: $(SIM_XPROP_BIN)
 $(SIM_XPROP_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
@@ -214,6 +226,33 @@ run-all-tests-xprop: $(SIM_XPROP_BIN) tests riscv-tests
 	echo ""; \
 	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
 	echo "CSV: $(PROJ_ROOT)/output/test-results-xprop.csv"; \
+	[ $$fail -eq 0 ]
+
+run-all-tests-microcoded: $(SIM_UCODE_BIN) tests riscv-tests
+	@mkdir -p $(PROJ_ROOT)/output
+	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-microcoded.csv; \
+	pass=0; fail=0; total=0; \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		result=$$($(SIM_UCODE_BIN) +elf=$$elf +timeout=5000 2>&1); \
+		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
+		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
+		if [ "$$tohost" = "0x00000001" ]; then \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-microcoded.csv; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-microcoded.csv; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "$$pass/$$total passed, $$fail failed (microcoded)"; \
+	echo "CSV: $(PROJ_ROOT)/output/test-results-microcoded.csv"; \
 	[ $$fail -eq 0 ]
 
 SPIKE_LIB_FILE := $(firstword $(wildcard $(SPIKE_LIB)/libriscv.*))

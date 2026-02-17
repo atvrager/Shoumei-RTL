@@ -402,7 +402,7 @@ def mkMicrocodeSequencer : Circuit :=
       { name := "csr_write_data", width := 32, wires := csr_write_data },
       { name := "csr_addr_out", width := 12, wires := csr_addr_out },
       { name := "fence_i_redir_next", width := 32, wires := fence_i_redir_next },
-      { name := "upc", width := 6, wires := upc_q },
+      { name := "upc_q", width := 6, wires := upc_q },
       { name := "redir_pc4", width := 32, wires := redir_pc4 },
       { name := "seq_id", width := 3, wires := seq_id }
     ] }

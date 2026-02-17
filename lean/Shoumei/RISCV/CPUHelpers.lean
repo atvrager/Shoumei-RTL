@@ -971,6 +971,21 @@ def mkMicrocodeSerializePath
        Gate.mkOR seq_id_tmp0 seq_id_tmp1 is_rs_or_rc,
        Gate.mkAND is_rs_or_rc rs1_is_zero skip_write_pre]
 
+    -- CSR immediate source MUX: for CSRRWI/CSRRSI/CSRRCI, use zero-extended
+    -- decode_rs1[4:0] instead of fwd_src1_data (register value)
+    let csr_is_imm_tmp := Wire.mk "useq_isimm_tmp"
+    let csr_is_imm := Wire.mk "useq_is_imm"
+    let useq_rs1_muxed := (List.range 32).map (fun i => Wire.mk s!"useq_rs1m_{i}")
+    let csr_imm_mux_gates :=
+      [Gate.mkOR csr_match_wires[3]! csr_match_wires[4]! csr_is_imm_tmp,
+       Gate.mkOR csr_is_imm_tmp csr_match_wires[5]! csr_is_imm] ++
+      -- Bits 0-4: MUX between fwd_src1_data and decode_rs1 (the zimm)
+      (List.range 5).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"fwd_src1_data_{i}") decode_rs1[i]! csr_is_imm useq_rs1_muxed[i]!) ++
+      -- Bits 5-31: MUX between fwd_src1_data and zero (zimm is only 5 bits)
+      (List.range 27).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"fwd_src1_data_{i+5}") zero csr_is_imm useq_rs1_muxed[i+5]!)
+
     -- Detection gates (shared with hardwired)
     let not_redir_reg := Wire.mk "not_redir_reg"
     let decode_valid_noredir := Wire.mk "dv_noredir"
@@ -1013,8 +1028,10 @@ def mkMicrocodeSerializePath
        Gate.mkBUF useq_suppress fence_i_suppress,
        -- fence_i_drain_complete = useq_drain_complete
        Gate.mkBUF useq_drain_complete fence_i_drain_complete,
-       -- fence_i_draining_next = useq_active (sequencer active serves as draining)
-       Gate.mkBUF useq_active fence_i_draining_next,
+       -- fence_i_draining_next = (serialize_detected OR useq_active) AND NOT(flush)
+       Gate.mkOR serialize_detected useq_active (Wire.mk "useq_drain_next_pre"),
+       Gate.mkNOT pipeline_flush_comb (Wire.mk "useq_not_flushing"),
+       Gate.mkAND (Wire.mk "useq_drain_next_pre") (Wire.mk "useq_not_flushing") fence_i_draining_next,
        -- fence_i_start = serialize_detected AND NOT(useq_active)
        Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
        Gate.mkAND serialize_detected (Wire.mk "useq_not_active") fence_i_start,
@@ -1034,8 +1051,10 @@ def mkMicrocodeSerializePath
       (List.range 12).map (fun i => Gate.mkBUF useq_addr_out[i]! csr_addr_next[i]!) ++
       -- Tie unused capture next wires (sequencer handles internally)
       (List.range opcodeWidth).map (fun i => Gate.mkBUF zero csr_optype_next[i]!) ++
-      (List.range 5).map (fun i => Gate.mkBUF zero csr_rd_next[i]!) ++
-      (List.range 6).map (fun i => Gate.mkBUF zero csr_phys_next[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX _csr_rd_reg[i]! _decode_rd[i]! fence_i_start csr_rd_next[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX _csr_phys_reg[i]! rd_phys[i]! fence_i_start csr_phys_next[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF zero csr_rs1cap_next[i]!) ++
       (List.range 5).map (fun i => Gate.mkBUF zero csr_zimm_next[i]!)
 
@@ -1047,8 +1066,8 @@ def mkMicrocodeSerializePath
         [("clock", clock), ("reset", reset),
          ("start", fence_i_start), ("vdd_tie", one)] ++
         (List.range 3).map (fun i => (s!"seq_id_{i}", seq_id[i]!)) ++
-        -- rs1_val: forwarded source 1 data
-        (List.range 32).map (fun i => (s!"rs1_val_{i}", Wire.mk s!"fwd_src1_data_{i}")) ++
+        -- rs1_val: fwd_src1_data for register CSR, zero-extended zimm for immediate CSR
+        (List.range 32).map (fun i => (s!"rs1_val_{i}", useq_rs1_muxed[i]!)) ++
         -- csr_addr_in: from decode immediate
         (List.range 12).map (fun i => (s!"csr_addr_in_{i}", decode_imm[i]!)) ++
         -- rd_tag_in: from rename allocation
@@ -1133,6 +1152,7 @@ def mkMicrocodeSerializePath
         orGates) |>.flatten
 
     let allGates := detect_gates ++ seq_id_gates ++ skip_write_gates ++
+                    csr_imm_mux_gates ++
                     romInvGates ++ romAddrGates ++ romOutputGates ++
                     bridge_gates
 

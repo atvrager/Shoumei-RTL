@@ -349,6 +349,12 @@ jobs:
       - name: Run all ELF tests (X-prop)
         run: make -C testbench run-all-tests-xprop
 
+      - name: Build microcoded simulation
+        run: make -C testbench sim-microcoded
+
+      - name: Run all ELF tests (microcoded)
+        run: make -C testbench run-all-tests-microcoded
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
@@ -357,6 +363,7 @@ jobs:
           path: |
             output/test-results.csv
             output/test-results-xprop.csv
+            output/test-results-microcoded.csv
           retention-days: 90
 
   cppsim:
