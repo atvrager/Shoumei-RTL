@@ -8,7 +8,7 @@
 #   ./physical/run-openroad.sh CPU_RV32IM_synth 500     # RV32IM at 500 MHz
 #   FMAX_MHZ=1000 ./physical/run-openroad.sh            # 1 GHz aspirational
 #
-# Available designs: CPU_RV32I_synth, CPU_RV32IF_synth, CPU_RV32IM_synth, CPU_RV32IMF_synth
+# Available designs: auto-detected from physical/*_synth.sv wrappers
 #
 #   If Docker permission denied, use sg:
 #   sg docker -c './physical/run-openroad.sh'
@@ -84,11 +84,12 @@ if [ -n "${2:-}" ]; then
     FMAX_MHZ="$2"
 fi
 
-# Validate design name
-VALID_DESIGNS="CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth CPU_RV32IM_Zicsr_Zifencei_synth CPU_RV32IMF_Zicsr_Zifencei_synth"
-if ! echo "$VALID_DESIGNS" | grep -qw "$DESIGN_NAME"; then
+# Auto-detect available designs from physical/*_synth.sv wrappers
+VALID_DESIGNS=$(find "$SCRIPT_DIR" -maxdepth 1 -name '*_synth.sv' -printf '%f\n' | sed 's/\.sv$//' | sort)
+if ! echo "$VALID_DESIGNS" | grep -qx "$DESIGN_NAME"; then
     echo -e "${RED}✗ Unknown design: $DESIGN_NAME${NC}"
-    echo "Available designs: $VALID_DESIGNS"
+    echo "Available designs:"
+    echo "$VALID_DESIGNS" | sed 's/^/  /'
     exit 1
 fi
 
