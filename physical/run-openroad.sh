@@ -89,7 +89,7 @@ VALID_DESIGNS=$(find "$SCRIPT_DIR" -maxdepth 1 -name '*_synth.sv' -printf '%f\n'
 if ! echo "$VALID_DESIGNS" | grep -qx "$DESIGN_NAME"; then
     echo -e "${RED}✗ Unknown design: $DESIGN_NAME${NC}"
     echo "Available designs:"
-    echo "$VALID_DESIGNS" | sed 's/^/  /'
+    echo "$VALID_DESIGNS" | while read -r d; do echo "  $d"; done
     exit 1
 fi
 
