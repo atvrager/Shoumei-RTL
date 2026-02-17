@@ -78,6 +78,7 @@ import Shoumei.RISCV.Memory.Cache.L1ICache
 import Shoumei.RISCV.Memory.Cache.L1DCache
 import Shoumei.RISCV.Memory.Cache.L2Cache
 import Shoumei.RISCV.Memory.Cache.MemoryHierarchy
+import Shoumei.RISCV.Memory.Cache.CachedCPU
 
 -- Phase 8a: Microcode Sequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
@@ -265,6 +266,7 @@ def allCircuits : List Circuit := [
   mkL1DCache,
   mkL2Cache,
   mkMemoryHierarchy,
+  mkCachedCPU rv32imConfig,
 
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,

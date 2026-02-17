@@ -331,6 +331,13 @@ def memoryHierarchy_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs"
 }
 
+/-- CachedCPU: CPU + MemoryHierarchy composition -/
+def cachedCPU_cert : CompositionalCert := {
+  moduleName := "CachedCPU_RV32IM"
+  dependencies := ["CPU_RV32IM", "MemoryHierarchy"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
+}
+
 /-! ## Decoders (LUT-based, no Chisel equivalent) -/
 
 /-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
@@ -582,6 +589,7 @@ def allCerts : List CompositionalCert := [
   l1dCache_cert,
   l2Cache_cert,
   memoryHierarchy_cert,
+  cachedCPU_cert,
   -- Decoders
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,
