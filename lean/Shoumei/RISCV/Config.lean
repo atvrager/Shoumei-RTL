@@ -76,6 +76,9 @@ def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZi
 /-- RV32IMF configuration (M + F + Zicsr + Zifencei) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
 
+/-- RV32IMF with microcoded CSR sequencer -/
+def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, csrMode := .microcoded }
+
 
 /-
 RVVI-TRACE Interface Parameters
@@ -115,7 +118,8 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
-  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei
+  let ucode := match cfg.csrMode with | .hardwired => "" | .microcoded => "_Microcoded"
+  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.

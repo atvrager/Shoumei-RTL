@@ -2661,8 +2661,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
        cdbGates)
     | .microcoded =>
       -- Microcoded: sequencer drives write_en + write_data + CDB inject directly
-      -- CSR write value comes from sequencer's temp registers
-      let wrVal := useq_write_data
+      -- CSR write value uses same wire names as hardwired path for compatibility
+      -- with downstream fflags/frm/fcsr logic
+      let wrVal := (List.range 32).map (fun i => Wire.mk s!"csr_wv_e{i}")
       -- Per-CSR write enables: useq_write_en AND is_<csr>
       let we_mscr := Wire.mk "csr_we_mscratch"
       let we_mcyc := Wire.mk "csr_we_mcycle"
@@ -2675,6 +2676,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
       let we_mepc := Wire.mk "csr_we_mepc"
       let we_mcause := Wire.mk "csr_we_mcause"
       let we_mtval := Wire.mk "csr_we_mtval"
+      -- F-extension CSR write enables (fflags, frm, fcsr) - used by mkFPFlags
+      let we_fflags := Wire.mk "csr_we_fflags"
+      let we_frm := Wire.mk "csr_we_frm"
+      let we_fcsr := Wire.mk "csr_we_fcsr"
       let weGates :=
         if config.enableZicsr then
           [Gate.mkAND useq_write_en is_mscratch we_mscr,
@@ -2687,16 +2692,28 @@ def mkCPU (config : CPUConfig) : Circuit :=
            Gate.mkAND useq_write_en is_mtvec we_mtvec,
            Gate.mkAND useq_write_en is_mepc we_mepc,
            Gate.mkAND useq_write_en is_mcause we_mcause,
-           Gate.mkAND useq_write_en is_mtval we_mtval]
+           Gate.mkAND useq_write_en is_mtval we_mtval] ++
+          (if enableF then
+            [Gate.mkAND useq_write_en is_fflags we_fflags,
+             Gate.mkAND useq_write_en is_frm we_frm,
+             Gate.mkAND useq_write_en is_fcsr we_fcsr]
+           else
+            [Gate.mkBUF zero we_fflags, Gate.mkBUF zero we_frm,
+             Gate.mkBUF zero we_fcsr])
         else
           [Gate.mkBUF zero we_mscr, Gate.mkBUF zero we_mcyc,
            Gate.mkBUF zero we_mcych, Gate.mkBUF zero we_minst,
            Gate.mkBUF zero we_minsth, Gate.mkBUF zero we_mstat,
            Gate.mkBUF zero we_mie_w, Gate.mkBUF zero we_mtvec,
            Gate.mkBUF zero we_mepc, Gate.mkBUF zero we_mcause,
-           Gate.mkBUF zero we_mtval]
+           Gate.mkBUF zero we_mtval,
+           Gate.mkBUF zero we_fflags, Gate.mkBUF zero we_frm,
+           Gate.mkBUF zero we_fcsr]
+      -- Bridge useq write data to canonical csr_wv_e names
+      let wrBridgeGates := (List.range 32).map (fun i =>
+        Gate.mkBUF useq_write_data[i]! wrVal[i]!)
       -- No op decode or CDB inject gates needed (sequencer handles these)
-      ([], weGates, wrVal,
+      ([], weGates ++ wrBridgeGates, wrVal,
        we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
        we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
        [])
@@ -2943,6 +2960,9 @@ def mkCPU_RV32IF : Circuit := mkCPU rv32ifConfig
 
 /-- RV32IMF CPU (M + F extensions) -/
 def mkCPU_RV32IMF : Circuit := mkCPU rv32imfConfig
+
+/-- RV32IMF CPU with microcoded CSR sequencer -/
+def mkCPU_RV32IMF_Microcoded : Circuit := mkCPU rv32imfMicrocodedConfig
 
 end -- section
 

@@ -47,4 +47,12 @@ def cpuTestbenchConfig : TestbenchConfig := {
   tbName := some "tb_cpu"
 }
 
+/-- Testbench configuration for the microcoded-CSR variant.
+    Same port interface, different CPU module name. -/
+def cpuTestbenchConfigMicrocoded : TestbenchConfig := {
+  cpuTestbenchConfig with
+  circuit := mkCPU_RV32IMF_Microcoded
+  tbName := some "tb_cpu_microcoded"
+}
+
 end Shoumei.RISCV.CPUTestbench

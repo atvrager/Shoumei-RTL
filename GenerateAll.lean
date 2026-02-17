@@ -255,7 +255,8 @@ def allCircuits : List Circuit := [
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,
-  mkCPU_RV32IMF
+  mkCPU_RV32IMF,
+  mkCPU_RV32IMF_Microcoded
 ]
 
 def main (args : List String) : IO Unit := do
@@ -303,6 +304,7 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+  writeTestbenches cpuTestbenchConfigMicrocoded
 
   -- Generate filelist.f for each output directory
   IO.println ""

@@ -62,9 +62,10 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim run-cosim coremark run-coremark clean
+.PHONY: sim sim-microcoded sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop cosim run-cosim coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
+SIM_UCODE_BIN:= $(BUILD_DIR)/sim_shoumei_microcoded
 SIM_XPROP_BIN:= $(BUILD_DIR)/sim_shoumei_xprop
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
 
@@ -76,6 +77,19 @@ $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
 	@echo "Built: $@"
+
+sim-microcoded: $(SIM_UCODE_BIN)
+$(SIM_UCODE_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+	@rm -rf $(BUILD_DIR)/verilator_ucode
+	@mkdir -p $(BUILD_DIR)/verilator_ucode
+	$(VERILATOR) --cc --exe --build -j 0 \
+		--Mdir $(BUILD_DIR)/verilator_ucode \
+		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
+		--top-module tb_cpu_microcoded \
+		-CFLAGS '-std=c++17 -O2 -DTOP_MODULE=Vtb_cpu_microcoded -DTOP_HEADER=\"Vtb_cpu_microcoded.h\" -DTOP_SCOPE=\"TOP.tb_cpu_microcoded\"' \
+		-o $@ \
+		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+	@echo "Built: $@ (microcoded CSR)"
 
 sim-xprop: $(SIM_XPROP_BIN)
 $(SIM_XPROP_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
