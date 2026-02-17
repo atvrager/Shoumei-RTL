@@ -8,6 +8,7 @@ specs in CPUHelperSpecs.lean and proofs in CPUHelperProofs.lean.
 import Shoumei.DSL
 import Shoumei.RISCV.Config
 import Shoumei.RISCV.CPUCircuitHelpers
+import Shoumei.RISCV.Microcode.MicrocodeROM
 
 namespace Shoumei.RISCV.CPU
 
@@ -816,5 +817,325 @@ def mkCsrNextValue
     mepc_warl_gates ++ mepc_next_gates ++ mcause_next_gates ++ mtval_next_gates ++
     mip_next_gates ++ counter_next_gates
   (all_next_gates, csr_counter_instances)
+
+/-- Microcode serialize path: detection logic + MicrocodeSequencer instance.
+    Returns (gates, instances) that drive the same output wires as mkSerializeDetect,
+    plus sequencer-specific outputs (csr_write_en, csr_write_data, csr_read_en).
+
+    In microcoded mode, the sequencer replaces:
+    - Drain FSM (draining_next logic)
+    - Capture latch MUXes (addr, optype, rd, phys, rs1cap, zimm)
+    - CSR read-modify-write computation (ALU_OR, ALU_ANDN in temp regs)
+
+    The CSR register file (addr decode, read MUX, next-value) is still shared.
+    The sequencer's csr_write_en + csr_write_data replace mkCsrOpDecode + mkCsrWriteLogic. -/
+def mkMicrocodeSerializePath
+    (config : CPUConfig) (oi : OpType → Nat) (opcodeWidth : Nat)
+    (zero one : Wire) (clock reset : Wire)
+    (decode_optype : List Wire) (decode_valid : Wire) (decode_imm _decode_rd decode_rs1 : List Wire)
+    (branch_redirect_valid_reg : Wire)
+    (_fence_i_draining _fence_i_not_draining : Wire)
+    (rob_empty lsu_sb_empty : Wire)
+    (pipeline_flush_comb : Wire)
+    (_fence_i_redir_target fence_i_pc_plus_4 : List Wire)
+    (_csr_flag_reg : Wire) (_csr_addr_reg : List Wire) (_csr_optype_reg : List Wire)
+    (_csr_rd_reg : List Wire) (_csr_phys_reg : List Wire) (_csr_rs1cap_reg : List Wire)
+    (_csr_zimm_reg : List Wire)
+    (rd_phys : List Wire)
+    (csr_match : Wire)
+    (fence_i_detected csr_detected serialize_detected : Wire)
+    (fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress : Wire)
+    (csr_rename_en not_csr_rename_en : Wire)
+    (csr_flag_next : Wire) (csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next : List Wire)
+    (fence_i_redir_next : List Wire)
+    (csr_read_data : List Wire)
+    (csr_cdb_inject : Wire) (csr_cdb_tag csr_cdb_data : List Wire)
+    : List Gate × List CircuitInstance :=
+  -- Helper: generate gates to match decode_optype against an encoding value
+  let mkOpcodeMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
+    let bitWires := (List.range opcodeWidth).map fun b =>
+      if Nat.testBit encVal b then decode_optype[b]! else Wire.mk s!"{pfx}_n{b}"
+    let notGates := (List.range opcodeWidth).filterMap fun b =>
+      if !Nat.testBit encVal b then some (Gate.mkNOT decode_optype[b]! (Wire.mk s!"{pfx}_n{b}")) else none
+    let andGates := match opcodeWidth with
+      | 7 =>
+        let t01 := Wire.mk s!"{pfx}_t01"
+        let t23 := Wire.mk s!"{pfx}_t23"
+        let t45 := Wire.mk s!"{pfx}_t45"
+        let t0123 := Wire.mk s!"{pfx}_t0123"
+        let t456 := Wire.mk s!"{pfx}_t456"
+        [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+         Gate.mkAND bitWires[2]! bitWires[3]! t23,
+         Gate.mkAND bitWires[4]! bitWires[5]! t45,
+         Gate.mkAND t01 t23 t0123,
+         Gate.mkAND t45 bitWires[6]! t456,
+         Gate.mkAND t0123 t456 matchOut]
+      | _ =>
+        let t01 := Wire.mk s!"{pfx}_t01"
+        let t012 := Wire.mk s!"{pfx}_t012"
+        let t0123 := Wire.mk s!"{pfx}_t0123"
+        let t01234 := Wire.mk s!"{pfx}_t01234"
+        [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+         Gate.mkAND t01 bitWires[2]! t012,
+         Gate.mkAND t012 bitWires[3]! t0123,
+         Gate.mkAND t0123 bitWires[4]! t01234,
+         Gate.mkAND t01234 bitWires[5]! matchOut]
+    notGates ++ andGates
+
+  -- === Detection (same as hardwired) ===
+  let fence_i_match := Wire.mk "fence_i_match"
+  let fence_i_match_gates : List Gate :=
+    if config.enableZifencei then mkOpcodeMatch (oi .FENCE_I) "fencei" fence_i_match
+    else [Gate.mkBUF zero fence_i_match]
+
+  let csr_match_wires := ["csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"].map
+    (fun n => Wire.mk s!"csr_m_{n}")
+  let csr_match_gates : List Gate :=
+    if config.enableZicsr then
+      let csrEncs := [oi .CSRRW, oi .CSRRS, oi .CSRRC, oi .CSRRWI, oi .CSRRSI, oi .CSRRCI]
+      let prefixes := ["csrrw", "csrrs", "csrrc", "csrrwi", "csrrsi", "csrrci"]
+      let matchGates := (csrEncs.zip (prefixes.zip csr_match_wires)).map
+        (fun (e, p, w) => mkOpcodeMatch e s!"csr_{p}" w)
+      let orChain :=
+        let t01 := Wire.mk "csr_or01"
+        let t23 := Wire.mk "csr_or23"
+        let t45 := Wire.mk "csr_or45"
+        let t0123 := Wire.mk "csr_or0123"
+        [Gate.mkOR csr_match_wires[0]! csr_match_wires[1]! t01,
+         Gate.mkOR csr_match_wires[2]! csr_match_wires[3]! t23,
+         Gate.mkOR csr_match_wires[4]! csr_match_wires[5]! t45,
+         Gate.mkOR t01 t23 t0123,
+         Gate.mkOR t0123 t45 csr_match]
+      matchGates.flatten ++ orChain
+    else [Gate.mkBUF zero csr_match]
+
+  let enableSerialize := config.enableZifencei || config.enableZicsr
+  if !enableSerialize then
+    -- No serialize extensions: tie everything low (same as hardwired disabled path)
+    let tieGates :=
+      [Gate.mkBUF zero fence_i_match,
+       Gate.mkBUF zero fence_i_detected,
+       Gate.mkBUF zero csr_detected,
+       Gate.mkBUF zero serialize_detected,
+       Gate.mkBUF zero fence_i_start,
+       Gate.mkBUF zero fence_i_drain_complete,
+       Gate.mkBUF zero fence_i_draining_next,
+       Gate.mkBUF zero fence_i_suppress,
+       Gate.mkBUF zero csr_flag_next,
+       Gate.mkBUF zero csr_rename_en,
+       Gate.mkBUF one not_csr_rename_en] ++
+      (List.range 12).map (fun i => Gate.mkBUF zero csr_addr_next[i]!) ++
+      (List.range opcodeWidth).map (fun i => Gate.mkBUF zero csr_optype_next[i]!) ++
+      (List.range 5).map (fun i => Gate.mkBUF zero csr_rd_next[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero csr_phys_next[i]!)
+    (tieGates, [])
+  else
+    -- Compute sequence ID from CSR opcode match wires
+    -- seq_id[2:0]: 0=CSRRW, 1=CSRRS, 2=CSRRC, 3=FENCE.I
+    -- Encoding: bit0 = CSRRS|CSRRSI|CSRRC|CSRRCI, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = FENCE.I
+    let seq_id := (List.range 3).map (fun i => Wire.mk s!"useq_id_{i}")
+    let seq_id_tmp0 := Wire.mk "useq_id_tmp0"
+    let seq_id_tmp1 := Wire.mk "useq_id_tmp1"
+    let _seq_id_tmp2 := Wire.mk "useq_id_tmp2"
+    let _seq_id_tmp3 := Wire.mk "useq_id_tmp3"
+
+    -- seq_id encoding: CSRRW=0, CSRRS=1, CSRRC=2, FENCE.I=3
+    -- bit0 = CSRRS|CSRRSI|FENCE.I, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = 0
+    let seq_id_gates :=
+      [-- tmp0 = CSRRS | CSRRSI
+       Gate.mkOR csr_match_wires[1]! csr_match_wires[4]! seq_id_tmp0,
+       -- tmp1 = CSRRC | CSRRCI
+       Gate.mkOR csr_match_wires[2]! csr_match_wires[5]! seq_id_tmp1,
+       -- bit0 = tmp0 | fence_i_match
+       Gate.mkOR seq_id_tmp0 fence_i_match seq_id[0]!,
+       -- bit1 = tmp1 | fence_i_match
+       Gate.mkOR seq_id_tmp1 fence_i_match seq_id[1]!,
+       -- bit2 = 0
+       Gate.mkBUF zero seq_id[2]!]
+
+    -- skipWrite: for CSRRS/CSRRC, skip write when rs1=x0
+    -- rs1 is decode_rs1[0..4], OR-tree to detect nonzero
+    let rs1_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"useq_r1nz_{i}")
+    let rs1_nonzero := Wire.mk "useq_rs1_nonzero"
+    let rs1_is_zero := Wire.mk "useq_rs1_is_zero"
+    let skip_write_pre := Wire.mk "useq_skip_write_pre"
+    let is_rs_or_rc := Wire.mk "useq_is_rs_or_rc"
+
+    let skip_write_gates :=
+      [Gate.mkOR decode_rs1[0]! decode_rs1[1]! rs1_nz_tmp[0]!,
+       Gate.mkOR rs1_nz_tmp[0]! decode_rs1[2]! rs1_nz_tmp[1]!,
+       Gate.mkOR rs1_nz_tmp[1]! decode_rs1[3]! rs1_nz_tmp[2]!,
+       Gate.mkOR rs1_nz_tmp[2]! decode_rs1[4]! rs1_nonzero,
+       Gate.mkNOT rs1_nonzero rs1_is_zero,
+       -- is_rs_or_rc = CSRRS|CSRRSI|CSRRC|CSRRCI (same as seq_id bit0 OR bit1 set)
+       Gate.mkOR seq_id_tmp0 seq_id_tmp1 is_rs_or_rc,
+       Gate.mkAND is_rs_or_rc rs1_is_zero skip_write_pre]
+
+    -- Detection gates (shared with hardwired)
+    let not_redir_reg := Wire.mk "not_redir_reg"
+    let decode_valid_noredir := Wire.mk "dv_noredir"
+
+    let detect_gates :=
+      fence_i_match_gates ++ csr_match_gates ++
+      [Gate.mkNOT branch_redirect_valid_reg not_redir_reg,
+       Gate.mkAND decode_valid not_redir_reg decode_valid_noredir,
+       Gate.mkAND decode_valid_noredir fence_i_match fence_i_detected,
+       Gate.mkAND decode_valid_noredir csr_match csr_detected,
+       Gate.mkOR fence_i_detected csr_detected serialize_detected]
+
+    -- Sequencer ROM data wires (from MicrocodeSequencer's upc output → ROM → rom_data)
+    -- The ROM is a combinational lookup. We need a MuxTree64x24 or equivalent.
+    -- For now, we'll use the MicrocodeSequencer which expects rom_data as an input.
+    -- The CPU must provide a ROM lookup circuit that maps upc → rom_data.
+    -- We'll instantiate a simple MuxTree for the ROM.
+    let useq_upc := (List.range 6).map (fun i => Wire.mk s!"useq_upc_{i}")
+    let useq_rom_data := (List.range 24).map (fun i => Wire.mk s!"useq_rom_{i}")
+
+    -- Sequencer output wires
+    let useq_active := Wire.mk "useq_active"
+    let useq_suppress := Wire.mk "useq_suppress"
+    let useq_drain_complete := Wire.mk "useq_drain_complete"
+    let useq_cdb_inject := Wire.mk "useq_cdb_inject"
+    let useq_write_en := Wire.mk "useq_write_en"
+    let useq_read_en := Wire.mk "useq_read_en"
+    let useq_redir_valid := Wire.mk "useq_redir_valid"
+    let useq_rename_en := Wire.mk "useq_rename_en"
+    let useq_csr_flag := Wire.mk "useq_csr_flag"
+    let useq_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"useq_cdb_tg_{i}")
+    let useq_cdb_data := (List.range 32).map (fun i => Wire.mk s!"useq_cdb_dt_{i}")
+    let useq_write_data := (List.range 32).map (fun i => Wire.mk s!"useq_wr_dt_{i}")
+    let useq_addr_out := (List.range 12).map (fun i => Wire.mk s!"useq_addr_{i}")
+    let useq_redir_next := (List.range 32).map (fun i => Wire.mk s!"useq_redir_{i}")
+
+    -- Wire sequencer outputs to CPU's expected wire names
+    let bridge_gates :=
+      [-- fence_i_suppress = useq_suppress (active while sequencer runs)
+       Gate.mkBUF useq_suppress fence_i_suppress,
+       -- fence_i_drain_complete = useq_drain_complete
+       Gate.mkBUF useq_drain_complete fence_i_drain_complete,
+       -- fence_i_draining_next = useq_active (sequencer active serves as draining)
+       Gate.mkBUF useq_active fence_i_draining_next,
+       -- fence_i_start = serialize_detected AND NOT(useq_active)
+       Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
+       Gate.mkAND serialize_detected (Wire.mk "useq_not_active") fence_i_start,
+       -- csr_rename_en = useq_rename_en
+       Gate.mkBUF useq_rename_en csr_rename_en,
+       Gate.mkNOT useq_rename_en not_csr_rename_en,
+       -- csr_flag = useq_csr_flag
+       Gate.mkBUF useq_csr_flag csr_flag_next,
+       -- csr_cdb_inject = useq_cdb_inject
+       Gate.mkBUF useq_cdb_inject csr_cdb_inject] ++
+      -- CDB tag/data from sequencer
+      (List.range 6).map (fun i => Gate.mkBUF useq_cdb_tag[i]! csr_cdb_tag[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF useq_cdb_data[i]! csr_cdb_data[i]!) ++
+      -- Redirect target
+      (List.range 32).map (fun i => Gate.mkBUF useq_redir_next[i]! fence_i_redir_next[i]!) ++
+      -- CSR address from sequencer (drives addr decode)
+      (List.range 12).map (fun i => Gate.mkBUF useq_addr_out[i]! csr_addr_next[i]!) ++
+      -- Tie unused capture next wires (sequencer handles internally)
+      (List.range opcodeWidth).map (fun i => Gate.mkBUF zero csr_optype_next[i]!) ++
+      (List.range 5).map (fun i => Gate.mkBUF zero csr_rd_next[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero csr_phys_next[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF zero csr_rs1cap_next[i]!) ++
+      (List.range 5).map (fun i => Gate.mkBUF zero csr_zimm_next[i]!)
+
+    -- Sequencer instance
+    let sequencerInst : CircuitInstance := {
+      moduleName := "MicrocodeSequencer"
+      instName := "u_microcode_seq"
+      portMap :=
+        [("clock", clock), ("reset", reset),
+         ("start", fence_i_start), ("vdd_tie", one)] ++
+        (List.range 3).map (fun i => (s!"seq_id_{i}", seq_id[i]!)) ++
+        -- rs1_val: forwarded source 1 data
+        (List.range 32).map (fun i => (s!"rs1_val_{i}", Wire.mk s!"fwd_src1_data_{i}")) ++
+        -- csr_addr_in: from decode immediate
+        (List.range 12).map (fun i => (s!"csr_addr_in_{i}", decode_imm[i]!)) ++
+        -- rd_tag_in: from rename allocation
+        (List.range 6).map (fun i => (s!"rd_tag_in_{i}", rd_phys[i]!)) ++
+        [("has_rd_in", one),  -- CSR instructions always have rd
+         ("skip_write_in", skip_write_pre),
+         ("csr_flag_in", csr_detected),
+         ("rob_empty", rob_empty),
+         ("sb_empty", lsu_sb_empty)] ++
+        -- csr_read_data: from CSR read MUX
+        (List.range 32).map (fun i => (s!"csr_read_data_{i}", csr_read_data[i]!)) ++
+        -- rom_data: from ROM lookup
+        (List.range 24).map (fun i => (s!"rom_data_{i}", useq_rom_data[i]!)) ++
+        -- redir_pc4: PC+4 for FENCE.I redirect
+        (List.range 32).map (fun i => (s!"redir_pc4_{i}", fence_i_pc_plus_4[i]!)) ++
+        [("pipeline_flush", pipeline_flush_comb)] ++
+        -- Outputs
+        [(s!"active_q", useq_active),
+         ("fence_i_suppress", useq_suppress),
+         ("csr_drain_complete", useq_drain_complete),
+         ("csr_cdb_inject", useq_cdb_inject),
+         ("csr_write_en", useq_write_en),
+         ("csr_read_en", useq_read_en),
+         ("fence_i_redir_valid", useq_redir_valid),
+         ("csr_rename_en", useq_rename_en),
+         (s!"csrflag_q", useq_csr_flag)] ++
+        (List.range 6).map (fun i => (s!"csr_cdb_tag_{i}", useq_cdb_tag[i]!)) ++
+        (List.range 32).map (fun i => (s!"csr_cdb_data_{i}", useq_cdb_data[i]!)) ++
+        (List.range 32).map (fun i => (s!"csr_write_data_{i}", useq_write_data[i]!)) ++
+        (List.range 12).map (fun i => (s!"csr_addr_out_{i}", useq_addr_out[i]!)) ++
+        (List.range 32).map (fun i => (s!"fence_i_redir_next_{i}", useq_redir_next[i]!)) ++
+        (List.range 6).map (fun i => (s!"upc_q_{i}", useq_upc[i]!))
+    }
+
+    -- ROM lookup: 6-bit address decoder + AND-OR plane
+    -- Each of 64 addresses gets a match wire, then each output bit is OR of matching entries.
+    let addr_match := (List.range 64).map (fun a => Wire.mk s!"urom_am_{a}")
+    let addr_inv := (List.range 6).map (fun i => Wire.mk s!"urom_ai_{i}")
+
+    let romInvGates := (List.range 6).map (fun i =>
+      Gate.mkNOT useq_upc[i]! addr_inv[i]!)
+
+    -- 64 address decoders (6-bit AND trees)
+    let romAddrGates := (List.range 64).map (fun a =>
+      let bits := (List.range 6).map (fun i =>
+        if Nat.testBit a i then useq_upc[i]! else addr_inv[i]!)
+      let t01 := Wire.mk s!"urom_{a}_t01"
+      let t23 := Wire.mk s!"urom_{a}_t23"
+      let t45 := Wire.mk s!"urom_{a}_t45"
+      let t0123 := Wire.mk s!"urom_{a}_t0123"
+      [Gate.mkAND bits[0]! bits[1]! t01,
+       Gate.mkAND bits[2]! bits[3]! t23,
+       Gate.mkAND bits[4]! bits[5]! t45,
+       Gate.mkAND t01 t23 t0123,
+       Gate.mkAND t0123 t45 addr_match[a]!]) |>.flatten
+
+    -- Precompute ROM encoded bits: 64 entries × 24 bits
+    -- Use Fin to avoid omega issues
+    let romEncoded : List Nat := (List.finRange 64).map (fun a =>
+      (Shoumei.RISCV.Microcode.romContents a).encode)
+
+    -- 24 output bits: OR tree of matching entries
+    let romOutputGates := (List.range 24).map (fun bit =>
+      let activeAddrs := (List.range 64).filter (fun a =>
+        match romEncoded[a]? with
+        | some enc => Nat.testBit enc bit
+        | none => false)
+      if activeAddrs.isEmpty then
+        [Gate.mkBUF zero useq_rom_data[bit]!]
+      else if activeAddrs.length == 1 then
+        [Gate.mkBUF addr_match[activeAddrs[0]!]! useq_rom_data[bit]!]
+      else
+        -- OR tree: chain all matching addresses
+        let n := activeAddrs.length
+        let orWires := (List.range (n - 1)).map (fun i =>
+          if i + 1 == n - 1 then useq_rom_data[bit]!
+          else Wire.mk s!"urom_b{bit}_or{i}")
+        let orGates := (List.range (n - 1)).map (fun i =>
+          let lhs := if i == 0 then addr_match[activeAddrs[0]!]! else orWires[i - 1]!
+          let rhs := addr_match[activeAddrs[i + 1]!]!
+          Gate.mkOR lhs rhs orWires[i]!)
+        orGates) |>.flatten
+
+    let allGates := detect_gates ++ seq_id_gates ++ skip_write_gates ++
+                    romInvGates ++ romAddrGates ++ romOutputGates ++
+                    bridge_gates
+
+    (allGates, [sequencerInst])
 
 end Shoumei.RISCV.CPU

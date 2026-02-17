@@ -508,20 +508,43 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
 
   -- === Serialize detection and FSM gates (FENCE.I + CSR) ===
-  -- Config-gated: .hardwired uses mkSerializeDetect, .microcoded will use MicrocodeSequencer
-  -- (microcode integration is additive — both paths produce the same output wire interface)
-  let fence_i_detect_gates := mkSerializeDetect config oi opcodeWidth zero one
-    decode_optype decode_valid decode_imm decode_rd decode_rs1
-    branch_redirect_valid_reg fence_i_draining fence_i_not_draining
-    rob_empty lsu_sb_empty pipeline_flush_comb
-    fence_i_redir_target fence_i_pc_plus_4
-    csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
-    rd_phys csr_match
-    fence_i_detected csr_detected serialize_detected
-    fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
-    csr_rename_en not_csr_rename_en
-    csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
-    fence_i_redir_next
+  -- Config-gated: .hardwired uses mkSerializeDetect, .microcoded uses MicrocodeSequencer
+  -- Forward-declare csr_read_data for microcode path (driven by CSR read MUX below)
+  let csr_read_data_fwd := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  -- Forward-declare csr_cdb wires for microcode path
+  let csr_cdb_inject := Wire.mk "csr_cdb_inject"
+  let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
+  let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
+  let (fence_i_detect_gates, microcode_instances) := match config.csrMode with
+    | .hardwired =>
+      (mkSerializeDetect config oi opcodeWidth zero one
+        decode_optype decode_valid decode_imm decode_rd decode_rs1
+        branch_redirect_valid_reg fence_i_draining fence_i_not_draining
+        rob_empty lsu_sb_empty pipeline_flush_comb
+        fence_i_redir_target fence_i_pc_plus_4
+        csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
+        rd_phys csr_match
+        fence_i_detected csr_detected serialize_detected
+        fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
+        csr_rename_en not_csr_rename_en
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        fence_i_redir_next,
+       ([] : List CircuitInstance))
+    | .microcoded =>
+      mkMicrocodeSerializePath config oi opcodeWidth zero one clock reset
+        decode_optype decode_valid decode_imm decode_rd decode_rs1
+        branch_redirect_valid_reg fence_i_draining fence_i_not_draining
+        rob_empty lsu_sb_empty pipeline_flush_comb
+        fence_i_redir_target fence_i_pc_plus_4
+        csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
+        rd_phys csr_match
+        fence_i_detected csr_detected serialize_detected
+        fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
+        csr_rename_en not_csr_rename_en
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        fence_i_redir_next
+        csr_read_data_fwd
+        csr_cdb_inject csr_cdb_tag csr_cdb_data
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -2208,9 +2231,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     Gate.mkAND dmem_resp_valid dmem_load_pending (Wire.mk "dmem_valid_pending"),
     Gate.mkAND (Wire.mk "dmem_valid_pending") not_flushing_for_dmem dmem_valid_gated
   ]
-  let csr_cdb_inject := Wire.mk "csr_cdb_inject"
-  let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
-  let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
+  -- csr_cdb_inject/tag/data already declared above (forward-declared for microcode path)
   let cdb_pre_is_fp := Wire.mk "cdb_pre_is_fp"
   let cdb_redirect_target_pre := makeIndexedWires "cdb_redirect_target_pre" 32
   let cdb_pre_mispredicted := Wire.mk "cdb_pre_mispredicted"
@@ -2721,7 +2742,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates
-    instances := [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
+    instances := microcode_instances ++
+                  [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
                   [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
                   csr_reg_instances ++ csr_counter_instances ++
                   [fetch_inst, decoder_inst, rename_inst] ++
