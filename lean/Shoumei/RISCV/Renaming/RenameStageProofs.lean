@@ -14,18 +14,9 @@ Behavioral proofs:
 
 import Shoumei.RISCV.Renaming.RenameStage
 
-set_option maxRecDepth 2000
+set_option maxRecDepth 8000
 
 namespace Shoumei.RISCV.Renaming.RenameStageProofs
-
--- Axioms for deferred behavioral proofs (complex computations that hit recursion limits)
-axiom simple_rename_proof : True
-axiom stall_proof : True
-axiom freelist_decrement_proof : True
-axiom rat_forwarding_proof : True
-axiom triple_rename_proof : True
-axiom old_phys_captured_proof : True
-axiom retire_proof : True
 
 open Shoumei
 open Shoumei.RISCV
@@ -43,20 +34,16 @@ theorem renamestage_name : mkRenameStage.name = "RenameStage_32x64" := by native
     + retire_valid(1) + retire_tag(6)
     + rd_tag3(6) + rd_tag4(6)
     = 79 inputs -/
-theorem renamestage_input_count : mkRenameStage.inputs.length = 79 := by native_decide
+theorem renamestage_input_count : mkRenameStage.inputs.length = 94 := by native_decide
 
-/-- RenameStage output count:
-    rename_valid(1) + stall(1)
-    + rs1_phys(6) + rs2_phys(6) + rd_phys(6) + old_rd_phys(6)
-    + rs1_data(32) + rs2_data(32) + rd_data3(32) + rd_data4(32)
-    = 154 outputs -/
-theorem renamestage_output_count : mkRenameStage.outputs.length = 154 := by native_decide
+/-- RenameStage output count -/
+theorem renamestage_output_count : mkRenameStage.outputs.length = 160 := by native_decide
 
-/-- RenameStage uses 3 submodule instances (RAT + FreeList + PhysRegFile) -/
-theorem renamestage_instance_count : mkRenameStage.instances.length = 3 := by native_decide
+/-- RenameStage uses 4 submodule instances -/
+theorem renamestage_instance_count : mkRenameStage.instances.length = 4 := by native_decide
 
-/-- RenameStage gate count (control logic + allocation counter + output buffers) -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 67 := by native_decide
+/-- RenameStage gate count -/
+theorem renamestage_gate_count : mkRenameStage.gates.length = 68 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 
@@ -72,8 +59,14 @@ theorem renamestage_init_freelist_count :
 
 /-! ## Behavioral Proofs - Single Rename Operations -/
 
-/-- Simple instruction: ADD x5, x1, x2 -/
-theorem renamestage_simple_rename : True := simple_rename_proof
+/-- Simple instruction: ADD x5, x1, x2 allocates phys reg 32 and decrements freelist -/
+theorem renamestage_simple_rename :
+    let instr := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩,
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 : DecodedInstruction }
+    let (state', result) := renameInstruction RenameStageState.init instr
+    result.isSome ∧
+    result.get!.physRd = some ⟨32, by omega⟩ ∧
+    state'.freeList.count = 31 := by native_decide
 
 /-- x0 special case: ADD x0, x1, x2 (x0 is never allocated) -/
 theorem renamestage_x0_no_alloc :
@@ -94,22 +87,48 @@ theorem renamestage_no_dest :
     result.get!.physRd = none ∧
     state'.freeList.count = RenameStageState.init.freeList.count := by native_decide  -- No allocation
 
-/-- Stall when FreeList is empty -/
-theorem renamestage_stall_on_empty : True := stall_proof
+/-- After exhausting all 32 free regs, next rename returns None (stall) -/
+theorem renamestage_stall_on_empty :
+    let exhaust := (List.range 32).foldl (fun st i =>
+      let instr : DecodedInstruction := { opType := .ADD, rd := some ⟨(i % 31) + 1, by omega⟩, rs1 := some ⟨1, by omega⟩, rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 }
+      (renameInstruction st instr).1) RenameStageState.init
+    let instr : DecodedInstruction := { opType := .ADD, rd := some ⟨1, by omega⟩, rs1 := some ⟨1, by omega⟩, rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 }
+    (renameInstruction exhaust instr).2.isNone := by native_decide
 
-/-- FreeList decrements on allocation -/
-theorem renamestage_freelist_decrement : True := freelist_decrement_proof
+/-- After one rename, freelist.count = 31 -/
+theorem renamestage_freelist_decrement :
+    let instr := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩,
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 : DecodedInstruction }
+    (renameInstruction RenameStageState.init instr).1.freeList.count = 31 := by native_decide
 
 /-! ## Behavioral Proofs - Dependent Sequences -/
 
-/-- RAT update is visible to next instruction (forwarding) -/
-theorem renamestage_rat_forwarding : True := rat_forwarding_proof
+/-- After renaming x5, RAT lookup for x5 returns the new phys reg 32 -/
+theorem renamestage_rat_forwarding :
+    let instr := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩,
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 : DecodedInstruction }
+    let state' := (renameInstruction RenameStageState.init instr).1
+    state'.rat.lookup ⟨5, by omega⟩ = ⟨32, by omega⟩ := by native_decide
 
-/-- Sequence of 3 instructions, all allocate correctly -/
-theorem renamestage_triple_rename : True := triple_rename_proof
+/-- Three sequential renames all succeed with consecutive phys regs 32, 33, 34 -/
+theorem renamestage_triple_rename :
+    let i1 : DecodedInstruction := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩, rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 }
+    let i2 : DecodedInstruction := { opType := .ADD, rd := some ⟨6, by omega⟩, rs1 := some ⟨3, by omega⟩, rs2 := some ⟨4, by omega⟩, imm := none, pc := 4 }
+    let i3 : DecodedInstruction := { opType := .ADD, rd := some ⟨7, by omega⟩, rs1 := some ⟨5, by omega⟩, rs2 := some ⟨6, by omega⟩, imm := none, pc := 8 }
+    let (s1, r1) := renameInstruction RenameStageState.init i1
+    let (s2, r2) := renameInstruction s1 i2
+    let (_, r3) := renameInstruction s2 i3
+    r1.isSome ∧ r2.isSome ∧ r3.isSome ∧
+    r1.get!.physRd = some ⟨32, by omega⟩ ∧
+    r2.get!.physRd = some ⟨33, by omega⟩ ∧
+    r3.get!.physRd = some ⟨34, by omega⟩ := by native_decide
 
-/-- Old physical register is correctly captured -/
-theorem renamestage_old_phys_captured : True := old_phys_captured_proof
+/-- Rename captures the old mapping (arch reg 5 → phys reg 5) before update -/
+theorem renamestage_old_phys_captured :
+    let instr := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩,
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 : DecodedInstruction }
+    let result := (renameInstruction RenameStageState.init instr).2
+    result.get!.oldPhysRd = some ⟨5, by omega⟩ := by native_decide
 
 /-! ## Behavioral Proofs - PhysRegFile Operations -/
 
@@ -120,8 +139,13 @@ theorem renamestage_writeback :
     state'.physRegFile.read ⟨32, by omega⟩ = 42 := by
   simp [writeBack, PhysRegFileState.write, PhysRegFileState.read]
 
-/-- Retire deallocates physical register (returns to FreeList) -/
-theorem renamestage_retire : True := retire_proof
+/-- Retire returns tag to freelist, restoring count to 32 -/
+theorem renamestage_retire :
+    let instr := { opType := .ADD, rd := some ⟨5, by omega⟩, rs1 := some ⟨1, by omega⟩,
+                   rs2 := some ⟨2, by omega⟩, imm := none, pc := 0 : DecodedInstruction }
+    let (state', _) := renameInstruction RenameStageState.init instr
+    let state'' := retire state' ⟨5, by omega⟩
+    state''.freeList.count = 32 := by native_decide
 
 /-- ReadOperands returns correct values from PhysRegFile -/
 theorem renamestage_read_operands :

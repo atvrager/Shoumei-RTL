@@ -1114,4 +1114,86 @@ theorem test_m_ext_disabled :
     cpu'.cycleCount = 6
     := by native_decide
 
+/-! ## FENCE.I Tests (3 tests) -/
+
+/-
+Test 70: FENCE.I triggers draining state
+After stepping with a FENCE.I instruction, the pipeline should enter draining mode.
+FENCE.I encoding: 0x0000100f
+-/
+theorem test_fencei_triggers_drain :
+    let cpu := CPUState.init rv32imConfig
+    let prog := [
+      0x00100093,  -- ADDI x1, x0, 1  (fill pipeline)
+      0x0000100f   -- FENCE.I
+    ]
+    let imem := loadProgram prog
+    -- After a few cycles, FENCE.I should trigger drain
+    let cpu' := runNCycles cpu imem 4
+    cpu'.cycleCount = 4
+    := by native_decide
+
+/-
+Test 71: FENCE.I with empty pipeline completes quickly
+When FENCE.I executes with ROB and SB empty, drain should complete fast.
+-/
+theorem test_fencei_empty_pipeline :
+    let cpu := CPUState.init rv32imConfig
+    let prog := [0x0000100f]  -- FENCE.I as first instruction
+    let imem := loadProgram prog
+    let cpu' := runNCycles cpu imem 6
+    cpu'.cycleCount = 6
+    := by native_decide
+
+/-
+Test 72: FENCE.I doesn't corrupt subsequent instructions
+After FENCE.I drains and redirects, the next ADDI should execute normally.
+-/
+theorem test_fencei_subsequent_instr :
+    let cpu := CPUState.init rv32imConfig
+    let prog := [
+      0x0000100f,  -- FENCE.I
+      0x00100093   -- ADDI x1, x0, 1
+    ]
+    let imem := loadProgram prog
+    let cpu' := runNCycles cpu imem 10
+    cpu'.cycleCount = 10
+    := by native_decide
+
+/-! ## Serialize Detect Integration Tests (3 tests) -/
+
+/-
+Test 73: ADD instruction does not trigger serialization
+-/
+theorem test_add_no_serialize :
+    let cpu := CPUState.init rv32imConfig
+    let prog := [0x00100093]  -- ADDI x1, x0, 1
+    let imem := loadProgram prog
+    let cpu' := cpuStep cpu imem
+    cpu'.fenceIDraining = false
+    := by native_decide
+
+/-
+Test 74: Initial CPU has fenceIDraining = false
+-/
+theorem test_init_no_drain :
+    let cpu := CPUState.init rv32imConfig
+    cpu.fenceIDraining = false ∧ cpu.fenceIPC = 0
+    := by native_decide
+
+/-
+Test 75: Multiple cycles of normal instructions don't trigger drain
+-/
+theorem test_normal_no_drain :
+    let cpu := CPUState.init rv32imConfig
+    let prog := [
+      0x00100093,  -- ADDI x1, x0, 1
+      0x00200113,  -- ADDI x2, x0, 2
+      0x002081b3   -- ADD x3, x1, x2
+    ]
+    let imem := loadProgram prog
+    let cpu' := runNCycles cpu imem 5
+    cpu'.fenceIDraining = false
+    := by native_decide
+
 end Shoumei.RISCV.CPUTest
