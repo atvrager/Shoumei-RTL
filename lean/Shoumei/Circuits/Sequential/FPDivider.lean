@@ -39,7 +39,7 @@ Interface:
 -/
 
 import Shoumei.DSL
-import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Sequential
 
@@ -280,43 +280,25 @@ def mkFPDivider : Circuit :=
   -- Determines first quotient bit and initial remainder
   -- ══════════════════════════════════════════════
   let pre_trial := makeIndexedWires "pre_trial" 25
-  let pre_borrow := makeIndexedWires "pre_borrow" 26
 
   -- dividend_mant = {1, src1_in[22:0]}, divisor_mant = {1, src2_in[22:0]}
   -- Extend both to 25 bits (bit 24 = 0)
-  let pre_sub_gates :=
-    [Gate.mkBUF zero (pre_borrow[0]!)] ++
-    (List.range 25).flatMap (fun i =>
-      let a := if i == 24 then zero
-               else if i == 23 then one
-               else src1_in[i]!  -- dividend mantissa
-      let b := if i == 24 then zero
-               else if i == 23 then one
-               else src2_in[i]!  -- divisor mantissa
-      let bi := pre_borrow[i]!
-      let xab := Wire.mk s!"pre_xab_{i}"
-      let diff_bit := pre_trial[i]!
-      let not_a := Wire.mk s!"pre_na_{i}"
-      let t0 := Wire.mk s!"pre_t0_{i}"
-      let t1 := Wire.mk s!"pre_t1_{i}"
-      let t2 := Wire.mk s!"pre_t2_{i}"
-      let t01 := Wire.mk s!"pre_t01_{i}"
-      let bo := pre_borrow[i + 1]!
-      [
-        Gate.mkXOR a b xab,
-        Gate.mkXOR xab bi diff_bit,
-        Gate.mkNOT a not_a,
-        Gate.mkAND not_a b t0,
-        Gate.mkAND not_a bi t1,
-        Gate.mkAND b bi t2,
-        Gate.mkOR t0 t1 t01,
-        Gate.mkOR t01 t2 bo
-      ]
-    )
+  let pre_a := (List.range 25).map (fun i =>
+    if i == 24 then zero
+    else if i == 23 then one
+    else src1_in[i]!)
+  let pre_b := (List.range 25).map (fun i =>
+    if i == 24 then zero
+    else if i == 23 then one
+    else src2_in[i]!)
+  let pre_one := Wire.mk "pre_sub_one"
+  let (pre_sub_gates_ks, pre_borrow_out) := mkKoggeStoneSub
+    pre_a pre_b (pre_trial.toArray.toList) "pre_sub" pre_one
+  let pre_sub_gates := [Gate.mkBUF one pre_one] ++ pre_sub_gates_ks
 
-  -- pre_q = NOT(borrow at bit 24) = 1 if dividend >= divisor
+  -- pre_q = NOT borrow = 1 if dividend >= divisor
   let pre_q := Wire.mk "pre_q"
-  let pre_q_gate := [Gate.mkNOT (pre_borrow[25]!) pre_q]
+  let pre_q_gate := [Gate.mkNOT pre_borrow_out pre_q]
 
   -- ══════════════════════════════════════════════
   -- Division step: executed every cycle while busy_q=1
@@ -331,40 +313,19 @@ def mkFPDivider : Circuit :=
       Gate.mkBUF (rem_q[i]!) (rem_shifted[i + 1]!)
     )
 
-  -- 25-bit subtractor: trial = rem_shifted - {0, div_mant_q}
+  -- 25-bit Kogge-Stone subtractor: trial = rem_shifted - {0, div_mant_q}
   -- divisor_ext[23:0] = div_mant_q, divisor_ext[24] = 0
   let trial := makeIndexedWires "trial" 25
-  let trial_borrow := makeIndexedWires "trial_borrow" 26
+  let div_ext := (List.range 25).map (fun i =>
+    if i < 24 then div_mant_q[i]! else zero)
+  let trial_one := Wire.mk "trial_sub_one"
+  let (trial_sub_gates_ks, trial_borrow_out) := mkKoggeStoneSub
+    (rem_shifted.toArray.toList) div_ext (trial.toArray.toList) "trial_sub" trial_one
+  let trial_sub_gates := [Gate.mkBUF one trial_one] ++ trial_sub_gates_ks
 
-  let trial_sub_gates :=
-    [Gate.mkBUF zero (trial_borrow[0]!)] ++
-    (List.range 25).flatMap (fun i =>
-      let a := rem_shifted[i]!
-      let b := if i < 24 then div_mant_q[i]! else zero  -- divisor_ext[24] = 0
-      let bi := trial_borrow[i]!
-      let xab := Wire.mk s!"trial_xab_{i}"
-      let diff_bit := trial[i]!
-      let not_a := Wire.mk s!"trial_na_{i}"
-      let t0 := Wire.mk s!"trial_t0_{i}"
-      let t1 := Wire.mk s!"trial_t1_{i}"
-      let t2 := Wire.mk s!"trial_t2_{i}"
-      let t01 := Wire.mk s!"trial_t01_{i}"
-      let bo := trial_borrow[i + 1]!
-      [
-        Gate.mkXOR a b xab,
-        Gate.mkXOR xab bi diff_bit,
-        Gate.mkNOT a not_a,
-        Gate.mkAND not_a b t0,
-        Gate.mkAND not_a bi t1,
-        Gate.mkAND b bi t2,
-        Gate.mkOR t0 t1 t01,
-        Gate.mkOR t01 t2 bo
-      ]
-    )
-
-  -- q_bit = NOT trial[24] (no borrow means positive, quotient bit = 1)
+  -- q_bit = NOT borrow (no borrow means positive, quotient bit = 1)
   let q_bit := Wire.mk "q_bit"
-  let q_bit_gate := [Gate.mkNOT (trial[24]!) q_bit]
+  let q_bit_gate := [Gate.mkNOT trial_borrow_out q_bit]
 
   -- new_rem[i] = MUX(rem_shifted[i], trial[i], q_bit)
   -- if q_bit=1 (no borrow): use trial; if q_bit=0 (borrow): use rem_shifted (restore)
