@@ -2612,20 +2612,90 @@ def mkCPU (config : CPUConfig) : Circuit :=
       mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg
       fflags_reg frm_reg
 
-  -- CSR operation decode
-  let (csr_op_decode_gates, csr_is_rw, csr_is_rs, csr_is_rc, _csr_is_imm, csr_src) :=
-    mkCsrOpDecode config oi opcodeWidth zero csr_optype_reg csr_rs1cap_reg csr_zimm_reg
+  -- CSR operation decode + write logic + CDB injection (config-gated)
+  let useq_write_en := Wire.mk "useq_write_en"  -- from sequencer (microcoded mode)
+  let useq_write_data := (List.range 32).map (fun i => Wire.mk s!"useq_wr_dt_{i}")
 
-  -- CSR write logic
-  let (csr_write_logic_gates, csr_write_val,
+  let (csr_op_decode_gates, csr_write_logic_gates, csr_write_val,
        csr_we_mscratch, csr_we_mcycle, csr_we_mcycleh, csr_we_minstret, csr_we_minstreth,
        csr_we_mstatus, csr_we_mie, csr_we_mtvec, csr_we_mepc, csr_we_mcause, csr_we_mtval,
-       _csr_actually_writes, _csr_drain_and_writes) :=
-    mkCsrWriteLogic config zero csr_read_data csr_src csr_is_rw csr_is_rs csr_is_rc
-      csr_drain_complete csr_zimm_reg
-      is_mscratch is_mcycle_m is_mcycleh_m is_minstret_m is_minstreth_m
-      is_fflags is_frm is_fcsr
-      is_mstatus is_mie is_mtvec is_mepc is_mcause is_mtval
+       csr_cdb_inject_gates) := match config.csrMode with
+    | .hardwired =>
+      let (opDecGates, csr_is_rw, csr_is_rs, csr_is_rc, _csr_is_imm, csr_src) :=
+        mkCsrOpDecode config oi opcodeWidth zero csr_optype_reg csr_rs1cap_reg csr_zimm_reg
+      let (wrGates, wrVal,
+           we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
+           we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
+           _act_writes, _drain_writes) :=
+        mkCsrWriteLogic config zero csr_read_data csr_src csr_is_rw csr_is_rs csr_is_rc
+          csr_drain_complete csr_zimm_reg
+          is_mscratch is_mcycle_m is_mcycleh_m is_minstret_m is_minstreth_m
+          is_fflags is_frm is_fcsr
+          is_mstatus is_mie is_mtvec is_mepc is_mcause is_mtval
+      -- CDB injection (hardwired): rd_nonzero check + BUF from csr_read_data
+      let csr_rd_nonzero := Wire.mk "csr_rd_nonzero"
+      let csr_rd_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"csr_rdnz_e{i}")
+      let cdbGates :=
+        if config.enableZicsr then
+          [Gate.mkOR csr_rd_reg[0]! csr_rd_reg[1]! csr_rd_nz_tmp[0]!,
+           Gate.mkOR csr_rd_nz_tmp[0]! csr_rd_reg[2]! csr_rd_nz_tmp[1]!,
+           Gate.mkOR csr_rd_nz_tmp[1]! csr_rd_reg[3]! csr_rd_nz_tmp[2]!,
+           Gate.mkOR csr_rd_nz_tmp[2]! csr_rd_reg[4]! csr_rd_nonzero,
+           Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
+          (List.range 6).map (fun i =>
+            Gate.mkBUF csr_phys_reg[i]! csr_cdb_tag[i]!) ++
+          (List.range 32).map (fun i =>
+            Gate.mkBUF csr_read_data[i]! csr_cdb_data[i]!)
+        else
+          [Gate.mkBUF zero csr_rd_nonzero,
+           Gate.mkBUF zero csr_cdb_inject] ++
+          (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
+          (List.range 32).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
+      (opDecGates, wrGates, wrVal,
+       we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
+       we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
+       cdbGates)
+    | .microcoded =>
+      -- Microcoded: sequencer drives write_en + write_data + CDB inject directly
+      -- CSR write value comes from sequencer's temp registers
+      let wrVal := useq_write_data
+      -- Per-CSR write enables: useq_write_en AND is_<csr>
+      let we_mscr := Wire.mk "csr_we_mscratch"
+      let we_mcyc := Wire.mk "csr_we_mcycle"
+      let we_mcych := Wire.mk "csr_we_mcycleh"
+      let we_minst := Wire.mk "csr_we_minstret"
+      let we_minsth := Wire.mk "csr_we_minstreth"
+      let we_mstat := Wire.mk "csr_we_mstatus"
+      let we_mie_w := Wire.mk "csr_we_mie"
+      let we_mtvec := Wire.mk "csr_we_mtvec"
+      let we_mepc := Wire.mk "csr_we_mepc"
+      let we_mcause := Wire.mk "csr_we_mcause"
+      let we_mtval := Wire.mk "csr_we_mtval"
+      let weGates :=
+        if config.enableZicsr then
+          [Gate.mkAND useq_write_en is_mscratch we_mscr,
+           Gate.mkAND useq_write_en is_mcycle_m we_mcyc,
+           Gate.mkAND useq_write_en is_mcycleh_m we_mcych,
+           Gate.mkAND useq_write_en is_minstret_m we_minst,
+           Gate.mkAND useq_write_en is_minstreth_m we_minsth,
+           Gate.mkAND useq_write_en is_mstatus we_mstat,
+           Gate.mkAND useq_write_en is_mie we_mie_w,
+           Gate.mkAND useq_write_en is_mtvec we_mtvec,
+           Gate.mkAND useq_write_en is_mepc we_mepc,
+           Gate.mkAND useq_write_en is_mcause we_mcause,
+           Gate.mkAND useq_write_en is_mtval we_mtval]
+        else
+          [Gate.mkBUF zero we_mscr, Gate.mkBUF zero we_mcyc,
+           Gate.mkBUF zero we_mcych, Gate.mkBUF zero we_minst,
+           Gate.mkBUF zero we_minsth, Gate.mkBUF zero we_mstat,
+           Gate.mkBUF zero we_mie_w, Gate.mkBUF zero we_mtvec,
+           Gate.mkBUF zero we_mepc, Gate.mkBUF zero we_mcause,
+           Gate.mkBUF zero we_mtval]
+      -- No op decode or CDB inject gates needed (sequencer handles these)
+      ([], weGates, wrVal,
+       we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
+       we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
+       [])
 
   -- CSR next-value logic (WARL masking, MUX, counter auto-increment)
   let (csr_next_value_gates, csr_counter_instances) := mkCsrNextValue config enableF zero one
@@ -2638,31 +2708,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
     mcycle_reg mcycle_next mcycleh_reg mcycleh_next
     minstret_reg minstret_next minstreth_reg minstreth_next
     commit_valid_muxed
-
-  -- CDB injection: route CSR read value to rd via CDB at drain_complete
-  -- CDB tag = old_rd_phys (RAT[decode_rd], combinational output from rename, correct since pipeline drained)
-  -- CDB data = csr_read_data (old CSR value before write)
-  -- Only inject if rd != x0 (check captured csr_rd_reg)
-  let csr_rd_nonzero := Wire.mk "csr_rd_nonzero"
-  let csr_rd_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"csr_rdnz_e{i}")
-  let csr_cdb_inject_gates :=
-    if config.enableZicsr then
-      [Gate.mkOR csr_rd_reg[0]! csr_rd_reg[1]! csr_rd_nz_tmp[0]!,
-       Gate.mkOR csr_rd_nz_tmp[0]! csr_rd_reg[2]! csr_rd_nz_tmp[1]!,
-       Gate.mkOR csr_rd_nz_tmp[1]! csr_rd_reg[3]! csr_rd_nz_tmp[2]!,
-       Gate.mkOR csr_rd_nz_tmp[2]! csr_rd_reg[4]! csr_rd_nonzero,
-       Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
-      -- CDB tag: captured phys reg from rename (unique per CSR instruction)
-      (List.range 6).map (fun i =>
-        Gate.mkBUF csr_phys_reg[i]! csr_cdb_tag[i]!) ++
-      -- CDB data: csr_read_data
-      (List.range 32).map (fun i =>
-        Gate.mkBUF csr_read_data[i]! csr_cdb_data[i]!)
-    else
-      [Gate.mkBUF zero csr_rd_nonzero,
-       Gate.mkBUF zero csr_cdb_inject] ++
-      (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
 
   -- Commit injection: MUX rob_commit vs CSR fake commit
   -- At drain_complete, rob_commit_en is 0 (ROB empty), so OR works as MUX
