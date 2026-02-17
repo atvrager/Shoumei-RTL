@@ -452,6 +452,13 @@ def cpu_rv32imf_zifencei_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
+/-- MicrocodeSequencer: ROM-driven µop sequencer for CSR/FENCE.I -/
+def microcodeSequencer_cert : CompositionalCert := {
+  moduleName := "MicrocodeSequencer"
+  dependencies := ["MicrocodeDecoder", "Register6", "Register32", "Register16"]
+  proofReference := "Shoumei.RISCV.Microcode.MicrocodeSequencerProofs"
+}
+
 /-- CPU_RV32IM_Zicsr_Zifencei: RV32IM with Zicsr (CSR instructions) + Zifencei -/
 def cpu_rv32im_zicsr_zifencei_cert : CompositionalCert := {
   moduleName := "CPU_RV32IM_Zicsr_Zifencei"
@@ -550,6 +557,8 @@ def allCerts : List CompositionalCert := [
   -- Zifencei variants
   cpu_rv32im_zifencei_cert,
   cpu_rv32imf_zifencei_cert,
+  -- Microcode
+  microcodeSequencer_cert,
   -- Zicsr + Zifencei variants
   cpu_rv32im_zicsr_zifencei_cert,
   cpu_rv32if_zicsr_zifencei_cert,

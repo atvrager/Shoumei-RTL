@@ -1248,14 +1248,18 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_fp_dispatch_src2 := makeIndexedWires "rs_fp_dispatch_src2" 32
   let rs_fp_dispatch_tag := makeIndexedWires "rs_fp_dispatch_tag" 6
 
-  -- Gate FP RS dispatch when FP EU is busy OR FP CDB FIFO is full
+  -- Gate FP RS dispatch when FP EU is busy
+  -- Note: we do NOT gate on fp_fifo_enq_ready to avoid a combinational cycle
+  -- (valid_in → valid_out is combinational in FPExecUnit for misc ops).
+  -- The FIFO always has capacity when the EU accepts a new op because it drains
+  -- before the next result arrives (EU latency ≥ 1 cycle).
   let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
   let fp_rs_dispatch_en := Wire.mk "fp_rs_dispatch_en"
   let fp_rs_dispatch_gate :=
     if enableF then
       let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
       [Gate.mkNOT (Wire.mk "fp_busy") not_fp_eu_busy,
-       Gate.mkAND not_fp_eu_busy fp_fifo_enq_ready fp_rs_dispatch_en]
+       Gate.mkBUF not_fp_eu_busy fp_rs_dispatch_en]
     else [Gate.mkBUF one fp_rs_dispatch_en]
 
   let rs_fp_inst : CircuitInstance := {
