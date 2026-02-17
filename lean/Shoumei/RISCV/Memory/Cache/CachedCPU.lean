@@ -88,6 +88,11 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_frd_data := makeIndexedWires "rvvi_frd_data" 32
   let fflags_acc := makeIndexedWires "fflags_acc" 5
 
+  -- Store snoop outputs (for testbench tohost detection)
+  let store_snoop_valid := Wire.mk "store_snoop_valid"
+  let store_snoop_addr := makeIndexedWires "store_snoop_addr" 32
+  let store_snoop_data := makeIndexedWires "store_snoop_data" 32
+
   -- FENCE.I signal from CPU to cache hierarchy
   -- CPU internally generates fence_i_draining_next; we need to extract it.
   -- For the wrapper, we use the fetch_stalled + rob_empty signals.
@@ -102,9 +107,18 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   -- Gate: fence_i tied to zero (placeholder until CPU exports FENCE.I signal)
   let fence_i_gate := Gate.mkBUF zero fence_i
 
+  -- Store snoop gates
+  let snoop_valid_gate := Gate.mkAND dmem_req_valid dmem_req_we store_snoop_valid
+  let snoop_addr_gates := (List.range 32).map fun i =>
+    Gate.mkBUF dmem_req_addr[i]! store_snoop_addr[i]!
+  let snoop_data_gates := (List.range 32).map fun i =>
+    Gate.mkBUF dmem_req_data[i]! store_snoop_data[i]!
+
   -- CPU instance
   let cpu_inst := CircuitInstance.mk s!"CPU_{config.isaString}" "u_cpu"
-    ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
+    ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
+      ("fetch_stall_ext", ifetch_stall),
+      ("dmem_stall_ext", dmem_stall)] ++
      (List.range 32).map (fun i => (s!"imem_resp_data_{i}", imem_resp_data[i]!)) ++
      [("dmem_req_ready", dmem_req_ready),
       ("dmem_resp_valid", dmem_resp_valid)] ++
@@ -163,12 +177,13 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   { name := s!"CachedCPU_{config.isaString}"
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
-               [rob_empty] ++
+               [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
                fflags_acc
-    gates := [stall_gate, ready_gate, fence_i_gate, ifetch_valid_gate]
+    gates := [stall_gate, ready_gate, fence_i_gate, ifetch_valid_gate, snoop_valid_gate] ++
+             snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
     signalGroups := [
       { name := "mem_resp_data", width := 256, wires := mem_resp_data },
@@ -180,7 +195,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
       { name := "rvvi_frd", width := 5, wires := rvvi_frd },
       { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
-      { name := "fflags_acc", width := 5, wires := fflags_acc }
+      { name := "fflags_acc", width := 5, wires := fflags_acc },
+      { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
+      { name := "store_snoop_data", width := 32, wires := store_snoop_data }
     ]
     keepHierarchy := true
   }

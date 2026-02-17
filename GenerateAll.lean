@@ -91,6 +91,7 @@ import Shoumei.RISCV.CPU
 
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
+import Shoumei.RISCV.CachedCPUTestbench
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -105,6 +106,7 @@ open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
+open Shoumei.RISCV.CachedCPUTestbench
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -330,6 +332,7 @@ def main (args : List String) : IO Unit := do
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
   writeTestbenches cpuTestbenchConfigMicrocoded
+  writeTestbenches cachedCpuTestbenchConfig
 
   -- Generate filelist.f for each output directory
   IO.println ""

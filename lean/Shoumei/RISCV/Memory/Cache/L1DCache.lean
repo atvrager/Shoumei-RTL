@@ -180,9 +180,12 @@ def mkL1DCache : Circuit :=
   let wb_ack := Wire.mk "wb_ack"
   let fence_i := Wire.mk "fence_i"
 
-  -- Outputs
+  -- Outputs (registered for 1-cycle hit latency)
   let resp_valid := Wire.mk "resp_valid"
   let resp_data := (List.range 32).map fun i => Wire.mk s!"resp_data_{i}"
+  -- Combinational versions (before register)
+  let resp_valid_comb := Wire.mk "resp_valid_comb"
+  let resp_data_comb := (List.range 32).map fun i => Wire.mk s!"resp_data_comb_{i}"
   let miss_valid := Wire.mk "miss_valid"
   let miss_addr := (List.range 32).map fun i => Wire.mk s!"miss_addr_{i}"
   let wb_valid := Wire.mk "wb_valid"
@@ -199,10 +202,22 @@ def mkL1DCache : Circuit :=
   let word_sel := [req_addr[2]!, req_addr[3]!, req_addr[4]!]
 
   -- FSM: 3-bit state register (6 states)
+  -- IDLE=000, REFILL_WAIT=001 (waiting for L2 refill response)
   let fsm_d := (List.range 3).map fun i => Wire.mk s!"fsm_d_{i}"
   let fsm_q := (List.range 3).map fun i => Wire.mk s!"fsm_q_{i}"
   let fsm_gates := (List.range 3).map fun i =>
     Gate.mkDFF fsm_d[i]! clock reset fsm_q[i]!
+
+  -- Pending address register: captures req_addr on miss_detect
+  let pend_d := (List.range 32).map fun i => Wire.mk s!"pend_d_{i}"
+  let pend_q := (List.range 32).map fun i => Wire.mk s!"pend_q_{i}"
+  let pend_dffs := (List.range 32).map fun i =>
+    Gate.mkDFF pend_d[i]! clock reset pend_q[i]!
+
+  -- Pending victim way register: captures LRU victim on miss_detect
+  let pend_victim_d := Wire.mk "pend_victim_d"
+  let pend_victim_q := Wire.mk "pend_victim_q"
+  let pend_victim_dff := Gate.mkDFF pend_victim_d clock reset pend_victim_q
 
   -- LRU bits: 4 DFFs (one per set)
   let lru_d := (List.range 4).map fun i => Wire.mk s!"lru_d_{i}"
@@ -251,7 +266,7 @@ def mkL1DCache : Circuit :=
     CircuitInstance.mk "Mux4x25" s!"u_tag_mux_w{way}"
       ((List.range 4).foldl (fun acc set =>
         acc ++ (List.range 25).map (fun b =>
-          (s!"in_{set}_{b}", Wire.mk s!"tag_q_w{way}_s{set}_{b}"))
+          (s!"in{set}_b{b}", Wire.mk s!"tag_q_w{way}_s{set}_{b}"))
       ) [] ++
       (List.range 2).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
       (List.range 25).map (fun b => (s!"out_{b}", sel_tag[b]!)))
@@ -307,7 +322,7 @@ def mkL1DCache : Circuit :=
       CircuitInstance.mk "Mux4x32" s!"u_data_set_mux_w{way}_wd{wordIdx}"
         ((List.range 4).foldl (fun acc2 set =>
           acc2 ++ (List.range 32).map (fun b =>
-            (s!"in_{set}_{b}", Wire.mk s!"data_q_w{way}_s{set}_{wordIdx * 32 + b}"))
+            (s!"in{set}_b{b}", Wire.mk s!"data_q_w{way}_s{set}_{wordIdx * 32 + b}"))
         ) [] ++
         (List.range 2).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
         (List.range 32).map (fun b =>
@@ -318,14 +333,14 @@ def mkL1DCache : Circuit :=
     CircuitInstance.mk "Mux8x32" s!"u_data_word_mux_w{way}"
       ((List.range 8).foldl (fun acc wordIdx =>
         acc ++ (List.range 32).map (fun b =>
-          (s!"in_{wordIdx}_{b}", Wire.mk s!"data_set_w{way}_wd{wordIdx}_{b}"))
+          (s!"in{wordIdx}_b{b}", Wire.mk s!"data_set_w{way}_wd{wordIdx}_{b}"))
       ) [] ++
       (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_word[way]!)[b]!)))
 
-  -- Final data mux: way1_hit selects between way0 and way1 data
+  -- Final data mux: way1_hit selects between way0 and way1 data (combinational)
   let resp_data_mux_gates := (List.range 32).map fun b =>
-    Gate.mkMUX way_hit[1]! (way_word[0]![b]!) (way_word[1]![b]!) resp_data[b]!
+    Gate.mkMUX (way_word[0]![b]!) (way_word[1]![b]!) way_hit[1]! resp_data_comb[b]!
 
   -- FSM decode
   let not_fsm := (List.range 3).map fun i => Wire.mk s!"not_fsm_{i}"
@@ -336,14 +351,19 @@ def mkL1DCache : Circuit :=
      Gate.mkAND not_fsm[0]! not_fsm[1]! (Wire.mk "idle_01"),
      Gate.mkAND (Wire.mk "idle_01") not_fsm[2]! is_idle]
 
-  -- resp_valid = hit AND req_valid AND is_idle AND NOT req_we
+  -- resp_valid_comb = hit AND req_valid AND is_idle (for both reads and writes)
   let not_we := Wire.mk "not_we"
   let resp_valid_gates := [
     Gate.mkNOT req_we not_we,
     Gate.mkAND req_valid hit (Wire.mk "rv_tmp1"),
-    Gate.mkAND (Wire.mk "rv_tmp1") is_idle (Wire.mk "rv_tmp2"),
-    Gate.mkAND (Wire.mk "rv_tmp2") not_we resp_valid
+    Gate.mkAND (Wire.mk "rv_tmp1") is_idle resp_valid_comb
   ]
+
+  -- Register resp_valid and resp_data for 1-cycle hit latency
+  let resp_reg_gates :=
+    [Gate.mkDFF resp_valid_comb clock reset resp_valid] ++
+    (List.range 32).map fun b =>
+      Gate.mkDFF resp_data_comb[b]! clock reset resp_data[b]!
 
   -- miss_valid, miss_addr, stall, wb_valid, wb_addr, wb_data, fence_i_busy
   -- Simplified: these are driven by FSM state
@@ -355,22 +375,23 @@ def mkL1DCache : Circuit :=
     Gate.mkAND (Wire.mk "miss_tmp1") not_hit miss_detect
   ]
 
-  -- miss_valid = miss_detect
-  let miss_valid_gate := Gate.mkBUF miss_detect miss_valid
+  -- miss_valid = miss_detect OR is_refill_wait (keep requesting until L2 accepts)
+  -- is_refill_wait is computed later in FSM next-state section; use forward ref
+  let miss_valid_gate := Gate.mkOR miss_detect (Wire.mk "is_refill_wait") miss_valid
 
-  -- miss_addr: line-aligned request address
+  -- miss_addr: line-aligned address, use pend_q when in REFILL_WAIT, else req_addr
+  -- MUX(req_addr, pend_q, is_refill_wait) per bit, with low 5 bits forced to 0
   let miss_addr_gates := (List.range 32).map fun i =>
     if i < 5 then
-      Gate.mkAND reset (Wire.mk s!"not_fsm_0") (miss_addr[i]!)  -- const 0 approx
+      Gate.mkBUF (Wire.mk "const_zero_l1d") miss_addr[i]!
     else
-      Gate.mkBUF req_addr[i]! miss_addr[i]!
+      Gate.mkMUX req_addr[i]! pend_q[i]! (Wire.mk "is_refill_wait") miss_addr[i]!
 
-  -- stall
+  -- stall: unconditional when not idle or on miss_detect (no req_valid gating)
   let not_idle := Wire.mk "not_idle"
   let stall_gates := [
     Gate.mkNOT is_idle not_idle,
-    Gate.mkOR not_idle miss_detect (Wire.mk "stall_tmp"),
-    Gate.mkAND (Wire.mk "stall_tmp") req_valid stall
+    Gate.mkOR not_idle miss_detect stall
   ]
 
   -- Placeholder connections for wb_valid, wb_addr, wb_data, fence_i_busy
@@ -388,43 +409,254 @@ def mkL1DCache : Circuit :=
     Gate.mkAND reset (Wire.mk "not_reset_l1d") (Wire.mk "const_zero_l1d")
   ]
 
-  -- LRU, valid, dirty, tag, data next-state logic (simplified: hold current values)
-  -- Full implementation would include write-hit path and refill path
-  let lru_hold_gates := (List.range 4).map fun i =>
-    Gate.mkBUF lru_q[i]! lru_d[i]!
-  let valid_hold_gates := (List.range 8).map fun i =>
-    Gate.mkBUF valid_q[i]! valid_d[i]!
-  let dirty_hold_gates := (List.range 8).map fun i =>
-    Gate.mkBUF dirty_q[i]! dirty_d[i]!
+  -- === Set decoder for current req_addr (for hit detection + write-hit) ===
+  let set_dec := (List.range 4).map fun i => Wire.mk s!"valid_dec_w0_{i}"
 
-  -- FSM next-state (simplified: stay in IDLE)
-  let fsm_next_gates := (List.range 3).map fun i =>
-    Gate.mkBUF (Wire.mk "const_zero_l1d") fsm_d[i]!
+  -- === Pending set decoder (for refill install) ===
+  let pend_idx := [pend_q[5]!, pend_q[6]!]
+  let not_pidx := (List.range 2).map fun i => Wire.mk s!"not_pidx_{i}"
+  let pend_dec := (List.range 4).map fun i => Wire.mk s!"pend_dec_{i}"
+  let pend_dec_gates :=
+    (List.range 2).map (fun i => Gate.mkNOT pend_idx[i]! not_pidx[i]!) ++
+    [Gate.mkAND not_pidx[0]! not_pidx[1]! pend_dec[0]!,
+     Gate.mkAND pend_idx[0]! not_pidx[1]! pend_dec[1]!,
+     Gate.mkAND not_pidx[0]! pend_idx[1]! pend_dec[2]!,
+     Gate.mkAND pend_idx[0]! pend_idx[1]! pend_dec[3]!]
 
-  -- Tag/data hold (instances manage their own state, driven by d wires)
-  let tag_hold_gates := (List.range 2).foldl (fun acc way =>
+  -- === Pending tag bits (from pend_q[31:7]) ===
+  let pend_tag := (List.range 25).map fun i => pend_q[i + 7]!
+
+  -- === LRU victim way for current set (used at miss_detect time) ===
+  let victim_lru := Wire.mk "victim_lru"
+  let not_victim := Wire.mk "not_victim"
+  let lru_mux_gates :=
+    let la := (List.range 4).map fun i => Wire.mk s!"lru_and_{i}"
+    (List.range 4).map (fun i => Gate.mkAND set_dec[i]! lru_q[i]! la[i]!) ++
+    [Gate.mkOR la[0]! la[1]! (Wire.mk "lru_or01"),
+     Gate.mkOR la[2]! la[3]! (Wire.mk "lru_or23"),
+     Gate.mkOR (Wire.mk "lru_or01") (Wire.mk "lru_or23") victim_lru,
+     Gate.mkNOT victim_lru not_victim]
+
+  -- === Pending victim (from register, for refill install) ===
+  let not_pend_victim := Wire.mk "not_pend_victim"
+  let pend_victim_not_gate := Gate.mkNOT pend_victim_q not_pend_victim
+
+  -- === Write-hit detection ===
+  let write_hit := Wire.mk "write_hit"
+  let write_hit_gates := [
+    Gate.mkAND req_valid req_we (Wire.mk "wh_t1"),
+    Gate.mkAND (Wire.mk "wh_t1") hit (Wire.mk "wh_t2"),
+    Gate.mkAND (Wire.mk "wh_t2") is_idle write_hit
+  ]
+
+  -- === Word decoder (3-to-8) for write-hit ===
+  let not_ws := (List.range 3).map fun i => Wire.mk s!"nws_{i}"
+  let not_ws_gates := (List.range 3).map fun i => Gate.mkNOT word_sel[i]! not_ws[i]!
+  let word_dec := (List.range 8).map fun i => Wire.mk s!"wdc_{i}"
+  let word_dec_gates := (List.range 8).foldl (fun acc i =>
+    let b0 := if i % 2 == 0 then not_ws[0]! else word_sel[0]!
+    let b1 := if (i / 2) % 2 == 0 then not_ws[1]! else word_sel[1]!
+    let b2 := if (i / 4) % 2 == 0 then not_ws[2]! else word_sel[2]!
+    acc ++ [Gate.mkAND b0 b1 (Wire.mk s!"wdct_{i}"), Gate.mkAND (Wire.mk s!"wdct_{i}") b2 word_dec[i]!]
+  ) []
+
+  -- === NOT way1_hit for way 0 matching ===
+  let not_way1_hit_gate := Gate.mkNOT way_hit[1]! (Wire.mk "not_w1h")
+
+  -- === Refill + write-hit enables per way/set ===
+  -- Refill uses pend_dec (pending address) and pend_victim (latched victim way)
+  -- Write-hit uses set_dec (current address) and way_hit
+  let refill_wh_gates := (List.range 2).foldl (fun acc way =>
+    let vmatch := if way == 0 then not_pend_victim else pend_victim_q
+    let hmatch := if way == 0 then (Wire.mk "not_w1h") else way_hit[1]!
     acc ++ (List.range 4).foldl (fun acc2 set =>
-      acc2 ++ (List.range 25).map (fun b =>
-        Gate.mkBUF (Wire.mk s!"tag_q_w{way}_s{set}_{b}") (Wire.mk s!"tag_d_w{way}_s{set}_{b}"))
+      acc2 ++ [
+        Gate.mkAND refill_valid pend_dec[set]! (Wire.mk s!"rfs_{way}_{set}"),
+        Gate.mkAND (Wire.mk s!"rfs_{way}_{set}") vmatch (Wire.mk s!"rfe_{way}_{set}"),
+        Gate.mkAND write_hit set_dec[set]! (Wire.mk s!"whs_{way}_{set}"),
+        Gate.mkAND (Wire.mk s!"whs_{way}_{set}") hmatch (Wire.mk s!"whe_{way}_{set}")
+      ]
     ) []
   ) []
 
-  let data_hold_gates := (List.range 2).foldl (fun acc way =>
+  -- === Byte-enable decode from req_size[1:0] + req_addr[1:0] ===
+  -- req_size: 00=byte, 01=halfword, 10=word
+  -- be_0..be_3: per-byte enables
+  let not_sz := (List.range 2).map fun i => Wire.mk s!"not_sz_{i}"
+  let not_ba := (List.range 2).map fun i => Wire.mk s!"not_ba_{i}"
+  let be := (List.range 4).map fun i => Wire.mk s!"be_{i}"
+  let byte_en_gates :=
+    [Gate.mkNOT req_size[0]! not_sz[0]!, Gate.mkNOT req_size[1]! not_sz[1]!,
+     Gate.mkNOT req_addr[0]! not_ba[0]!, Gate.mkNOT req_addr[1]! not_ba[1]!] ++
+    -- is_byte = NOT sz1 AND NOT sz0;  is_half = NOT sz1 AND sz0;  is_word = sz1
+    -- be_0: word OR (half AND NOT addr1) OR (byte AND NOT addr1 AND NOT addr0)
+    [Gate.mkAND not_sz[1]! not_sz[0]! (Wire.mk "is_byte"),
+     Gate.mkAND not_sz[1]! req_size[0]! (Wire.mk "is_half"),
+     -- be_0: byte AND ba==00, OR half AND ba1==0, OR word
+     Gate.mkAND (Wire.mk "is_byte") not_ba[1]! (Wire.mk "be0_bt"),
+     Gate.mkAND (Wire.mk "be0_bt") not_ba[0]! (Wire.mk "be0_b"),
+     Gate.mkAND (Wire.mk "is_half") not_ba[1]! (Wire.mk "be0_h"),
+     Gate.mkOR (Wire.mk "be0_b") (Wire.mk "be0_h") (Wire.mk "be0_bh"),
+     Gate.mkOR (Wire.mk "be0_bh") req_size[1]! be[0]!,
+     -- be_1: byte AND ba==01, OR half AND ba1==0, OR word
+     Gate.mkAND (Wire.mk "is_byte") not_ba[1]! (Wire.mk "be1_bt"),
+     Gate.mkAND (Wire.mk "be1_bt") req_addr[0]! (Wire.mk "be1_b"),
+     Gate.mkOR (Wire.mk "be1_b") (Wire.mk "be0_h") (Wire.mk "be1_bh"),
+     Gate.mkOR (Wire.mk "be1_bh") req_size[1]! be[1]!,
+     -- be_2: byte AND ba==10, OR half AND ba1==1, OR word
+     Gate.mkAND (Wire.mk "is_byte") req_addr[1]! (Wire.mk "be2_bt"),
+     Gate.mkAND (Wire.mk "be2_bt") not_ba[0]! (Wire.mk "be2_b"),
+     Gate.mkAND (Wire.mk "is_half") req_addr[1]! (Wire.mk "be2_h"),
+     Gate.mkOR (Wire.mk "be2_b") (Wire.mk "be2_h") (Wire.mk "be2_bh"),
+     Gate.mkOR (Wire.mk "be2_bh") req_size[1]! be[2]!,
+     -- be_3: byte AND ba==11, OR half AND ba1==1, OR word
+     Gate.mkAND (Wire.mk "be2_bt") req_addr[0]! (Wire.mk "be3_b"),
+     Gate.mkOR (Wire.mk "be3_b") (Wire.mk "be2_h") (Wire.mk "be3_bh"),
+     Gate.mkOR (Wire.mk "be3_bh") req_size[1]! be[3]!]
+
+  -- === Shifted write data: replicate store data to correct byte lanes ===
+  -- wdata_shifted[7:0]   = req_wdata[7:0]  (always)
+  -- wdata_shifted[15:8]  = is_byte ? req_wdata[7:0] : req_wdata[15:8]
+  -- wdata_shifted[23:16] = is_word ? req_wdata[23:16] : req_wdata[7:0]
+  -- wdata_shifted[31:24] = is_word ? req_wdata[31:24] : (is_byte ? req_wdata[7:0] : req_wdata[15:8])
+  let wdata_shifted := (List.range 32).map fun i => Wire.mk s!"wds_{i}"
+  let wdata_shift_gates :=
+    -- Byte 0: passthrough
+    (List.range 8).map (fun i =>
+      Gate.mkBUF req_wdata[i]! wdata_shifted[i]!) ++
+    -- Byte 1: MUX(req_wdata[15:8], req_wdata[7:0], is_byte)
+    --   = is_byte ? req_wdata[7:0] : req_wdata[15:8]
+    (List.range 8).map (fun i =>
+      Gate.mkMUX req_wdata[8+i]! req_wdata[i]! (Wire.mk "is_byte") wdata_shifted[8+i]!) ++
+    -- Byte 2: MUX(req_wdata[7:0], req_wdata[23:16], req_size[1])
+    --   = is_word ? req_wdata[23:16] : req_wdata[7:0]
+    (List.range 8).map (fun i =>
+      Gate.mkMUX req_wdata[i]! req_wdata[16+i]! req_size[1]! wdata_shifted[16+i]!) ++
+    -- Byte 3: first MUX byte vs half source, then word override
+    --   temp = is_byte ? req_wdata[7:0] : req_wdata[15:8]
+    --   result = is_word ? req_wdata[31:24] : temp
+    (List.range 8).map (fun i =>
+      Gate.mkMUX req_wdata[8+i]! req_wdata[i]! (Wire.mk "is_byte") (Wire.mk s!"wds3t_{i}")) ++
+    (List.range 8).map (fun i =>
+      Gate.mkMUX (Wire.mk s!"wds3t_{i}") req_wdata[24+i]! req_size[1]! wdata_shifted[24+i]!)
+
+  -- === Write-hit word enables per way/set/word ===
+  let wh_word_gates := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 4).foldl (fun acc2 set =>
-      acc2 ++ (List.range 256).map (fun b =>
-        Gate.mkBUF (Wire.mk s!"data_q_w{way}_s{set}_{b}") (Wire.mk s!"data_d_w{way}_s{set}_{b}"))
+      acc2 ++ (List.range 8).map (fun wd =>
+        Gate.mkAND (Wire.mk s!"whe_{way}_{set}") word_dec[wd]! (Wire.mk s!"whw_{way}_{set}_{wd}"))
     ) []
+  ) []
+
+  -- === Write-hit byte enables per way/set/word/byte ===
+  let wh_byte_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 4).foldl (fun acc2 set =>
+      acc2 ++ (List.range 8).foldl (fun acc3 wd =>
+        acc3 ++ (List.range 4).map (fun byte =>
+          Gate.mkAND (Wire.mk s!"whw_{way}_{set}_{wd}") be[byte]! (Wire.mk s!"whb_{way}_{set}_{wd}_{byte}"))
+      ) []
+    ) []
+  ) []
+
+  -- === FSM next-state ===
+  -- IDLE(000) → REFILL_WAIT(001) on miss_detect
+  -- REFILL_WAIT(001) → IDLE(000) on refill_valid, else stay
+  let is_refill_wait := Wire.mk "is_refill_wait"
+  let refill_done := Wire.mk "refill_done"
+  let not_refill_valid := Wire.mk "not_refill_valid"
+  let fsm_next_gates := [
+    Gate.mkAND fsm_q[0]! (Wire.mk "not_fsm_1") (Wire.mk "rw_01"),
+    Gate.mkAND (Wire.mk "rw_01") (Wire.mk "not_fsm_2") is_refill_wait,
+    Gate.mkAND is_refill_wait refill_valid refill_done,
+    Gate.mkNOT refill_valid not_refill_valid,
+    Gate.mkAND is_refill_wait not_refill_valid (Wire.mk "stay_rw"),
+    -- fsm_d[0] = miss_detect OR stay_rw
+    Gate.mkOR miss_detect (Wire.mk "stay_rw") fsm_d[0]!,
+    -- fsm_d[1] = 0 (unused state bits)
+    Gate.mkBUF (Wire.mk "const_zero_l1d") fsm_d[1]!,
+    -- fsm_d[2] = 0
+    Gate.mkBUF (Wire.mk "const_zero_l1d") fsm_d[2]!
+  ]
+  -- Note: NOT gates for fsm_q[1], fsm_q[2] already exist in fsm_decode_gates
+
+  -- === Pending address capture: MUX(hold, req_addr, miss_detect) ===
+  let pend_capture_gates := (List.range 32).map fun i =>
+    Gate.mkMUX pend_q[i]! req_addr[i]! miss_detect pend_d[i]!
+
+  -- === Pending victim capture: MUX(hold, victim_lru, miss_detect) ===
+  let pend_victim_capture := Gate.mkMUX pend_victim_q victim_lru miss_detect pend_victim_d
+
+  -- === Tag next: MUX(hold, pend_tag, refill_en) ===
+  -- Use pend_tag (from pending address) for refill tag installation
+  let tag_next_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 4).foldl (fun acc2 set =>
+      acc2 ++ (List.range 25).map (fun b =>
+        Gate.mkMUX (Wire.mk s!"tag_q_w{way}_s{set}_{b}") pend_tag[b]!
+          (Wire.mk s!"rfe_{way}_{set}") (Wire.mk s!"tag_d_w{way}_s{set}_{b}"))
+    ) []
+  ) []
+
+  -- === Data next: write_hit_byte > refill > hold ===
+  let data_next_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 4).foldl (fun acc2 set =>
+      acc2 ++ (List.range 256).foldl (fun acc3 b =>
+        let wd := b / 32
+        let bb := b % 32
+        let byte := bb / 8  -- which byte within the word
+        acc3 ++ [
+          Gate.mkMUX (Wire.mk s!"data_q_w{way}_s{set}_{b}") refill_data[b]!
+            (Wire.mk s!"rfe_{way}_{set}") (Wire.mk s!"drh_{way}_{set}_{b}"),
+          Gate.mkMUX (Wire.mk s!"drh_{way}_{set}_{b}") wdata_shifted[bb]!
+            (Wire.mk s!"whb_{way}_{set}_{wd}_{byte}") (Wire.mk s!"data_d_w{way}_s{set}_{b}")
+        ]
+      ) []
+    ) []
+  ) []
+
+  -- === Valid next: set on refill (rfe uses pend_dec already) ===
+  let valid_next_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 4).map (fun set =>
+      Gate.mkOR valid_q[way * 4 + set]! (Wire.mk s!"rfe_{way}_{set}") valid_d[way * 4 + set]!)
+  ) []
+
+  -- === Dirty next: set on write-hit, clear on refill, hold otherwise ===
+  let dirty_next_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 4).foldl (fun acc2 set =>
+      let idx := way * 4 + set
+      acc2 ++ [
+        Gate.mkNOT (Wire.mk s!"rfe_{way}_{set}") (Wire.mk s!"nrfe_{way}_{set}"),
+        Gate.mkAND dirty_q[idx]! (Wire.mk s!"nrfe_{way}_{set}") (Wire.mk s!"dh_{way}_{set}"),
+        Gate.mkOR (Wire.mk s!"dh_{way}_{set}") (Wire.mk s!"whe_{way}_{set}") dirty_d[idx]!
+      ]
+    ) []
+  ) []
+
+  -- === LRU next: update on refill (using pend_dec) or write-hit (using set_dec) ===
+  let lru_next_gates := (List.range 4).foldl (fun acc set =>
+    acc ++ [
+      Gate.mkAND refill_valid pend_dec[set]! (Wire.mk s!"lru_rf_{set}"),
+      Gate.mkAND write_hit set_dec[set]! (Wire.mk s!"lru_wh_{set}"),
+      Gate.mkOR (Wire.mk s!"lru_rf_{set}") (Wire.mk s!"lru_wh_{set}") (Wire.mk s!"lru_en_{set}"),
+      -- On refill: new LRU = NOT pend_victim (mark other way as next victim)
+      -- On write-hit: new LRU = NOT way1_hit (if hit way0, evict way1 next)
+      Gate.mkMUX (Wire.mk "not_w1h") not_pend_victim refill_valid (Wire.mk s!"lru_nv_{set}"),
+      Gate.mkMUX lru_q[set]! (Wire.mk s!"lru_nv_{set}") (Wire.mk s!"lru_en_{set}") lru_d[set]!
+    ]
   ) []
 
   let allGates :=
-    fsm_gates ++ lru_gates ++ valid_dffs ++ dirty_dffs ++
+    fsm_gates ++ pend_dffs ++ [pend_victim_dff] ++ lru_gates ++ valid_dffs ++ dirty_dffs ++
     valid_mux_gates ++ hit_gates ++ [hit_gate] ++
-    resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++
+    resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++ resp_reg_gates ++
     miss_gates ++ [miss_valid_gate] ++ miss_addr_gates ++ stall_gates ++
     [wb_valid_gate] ++ wb_addr_gates ++ wb_data_gates ++ [fence_busy_gate] ++
     const_zero_gates ++
-    lru_hold_gates ++ valid_hold_gates ++ dirty_hold_gates ++ fsm_next_gates ++
-    tag_hold_gates ++ data_hold_gates
+    pend_dec_gates ++ lru_mux_gates ++ [pend_victim_not_gate] ++
+    write_hit_gates ++ not_ws_gates ++ word_dec_gates ++
+    [not_way1_hit_gate] ++ refill_wh_gates ++ byte_en_gates ++ wdata_shift_gates ++ wh_word_gates ++ wh_byte_gates ++
+    fsm_next_gates ++ pend_capture_gates ++ [pend_victim_capture] ++
+    tag_next_gates ++ data_next_gates ++
+    valid_next_gates ++ dirty_next_gates ++ lru_next_gates
 
   let allInstances :=
     tag_instances ++ data_instances ++

@@ -54,6 +54,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let one := Wire.mk "one"
 
   -- === EXTERNAL INTERFACES ===
+  let fetch_stall_ext := Wire.mk "fetch_stall_ext"
+  let dmem_stall_ext := Wire.mk "dmem_stall_ext"
   let imem_resp_data := makeIndexedWires "imem_resp_data" 32
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
@@ -553,7 +555,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let flush_gate :=
     [Gate.mkOR reset branch_redirect_valid_reg pipeline_flush_comb,
      Gate.mkOR global_stall pipeline_flush fetch_stall_tmp,
-     Gate.mkOR fetch_stall_tmp fence_i_draining_next fetch_stall,
+     Gate.mkOR fetch_stall_tmp fence_i_draining_next (Wire.mk "fetch_stall_tmp2"),
+     Gate.mkOR (Wire.mk "fetch_stall_tmp2") fetch_stall_ext fetch_stall,
      -- Per-subsystem reset OR gates
      Gate.mkOR reset flush_rs_int pipeline_reset_rs_int,
      Gate.mkOR reset flush_rs_mem pipeline_reset_rs_mem,
@@ -2443,8 +2446,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
        -- L2: 3+1 → 2
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
        Gate.mkOR stall_L1_c lsu_sb_full (Wire.mk "stall_L2b"),
-       -- L3: final
-       Gate.mkOR stall_L2 (Wire.mk "stall_L2b") global_stall]
+       -- L3: final + external DMEM stall
+       Gate.mkOR stall_L2 (Wire.mk "stall_L2b") (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else if enableM then
       -- 6 sources → balanced tree depth 3
       [Gate.mkOR rename_stall rob_full stall_L0_a,
@@ -2452,7 +2456,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c lsu_sb_full stall_L1_b,
-       Gate.mkOR stall_L1_a stall_L1_b global_stall]
+       Gate.mkOR stall_L1_a stall_L1_b (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else if enableF then
       -- 10 sources → balanced tree depth 4
       [Gate.mkOR rename_stall rob_full stall_L0_a,
@@ -2464,14 +2469,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkOR stall_L0_c stall_L0_d stall_L1_b,
        Gate.mkOR stall_L0_e lsu_sb_full stall_L1_c,
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
-       Gate.mkOR stall_L2 stall_L1_c global_stall]
+       Gate.mkOR stall_L2 stall_L1_c (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       -- 5 sources → balanced tree depth 3
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full lsu_sb_full stall_L0_c,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
-       Gate.mkOR stall_L1_a stall_L0_c global_stall]
+       Gate.mkOR stall_L1_a stall_L0_c (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
 
   -- === MEMORY INTERFACE ===
   let dmem_req_valid := Wire.mk "dmem_req_valid"
@@ -2765,7 +2772,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let output_gates := [Gate.mkBUF global_stall global_stall_out]
 
   { name := s!"CPU_{config.isaString}"
-    inputs := [clock, reset, zero, one] ++
+    inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++
               imem_resp_data ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++

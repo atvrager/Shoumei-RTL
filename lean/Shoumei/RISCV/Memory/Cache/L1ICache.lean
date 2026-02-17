@@ -182,10 +182,10 @@ def mkL1ICache : Circuit :=
   -- First: mux the tag from the selected set (8:1 mux of 24-bit values)
   let sel_tag := (List.range 24).map fun b => Wire.mk s!"sel_tag_{b}"
   let tag_mux_inst := CircuitInstance.mk "Mux8x24" "u_tag_mux"
-    (-- 8 inputs × 24 bits
+    (-- 8 inputs × 24 bits (MuxTree port naming: in{i}_b{j})
      (List.range 8).foldl (fun acc set =>
        acc ++ (List.range 24).map (fun b =>
-         (s!"in_{set}_{b}", Wire.mk s!"tag_q_{set}_{b}"))
+         (s!"in{set}_b{b}", Wire.mk s!"tag_q_{set}_{b}"))
      ) [] ++
      -- 3-bit select
      (List.range 3).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
@@ -256,7 +256,7 @@ def mkL1ICache : Circuit :=
     CircuitInstance.mk "Mux8x32" s!"u_line_mux_{wordIdx}"
       ((List.range 8).foldl (fun acc set =>
         acc ++ (List.range 32).map (fun b =>
-          (s!"in_{set}_{b}", Wire.mk s!"data_q_{set}_{wordIdx * 32 + b}"))
+          (s!"in{set}_b{b}", Wire.mk s!"data_q_{set}_{wordIdx * 32 + b}"))
       ) [] ++
       (List.range 3).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", word_out[b]!)))
@@ -265,7 +265,7 @@ def mkL1ICache : Circuit :=
   let word_mux_inst := CircuitInstance.mk "Mux8x32" "u_word_mux"
     ((List.range 8).foldl (fun acc wordIdx =>
       acc ++ (List.range 32).map (fun b =>
-        (s!"in_{wordIdx}_{b}", Wire.mk s!"sel_line_{wordIdx * 32 + b}"))
+        (s!"in{wordIdx}_b{b}", Wire.mk s!"sel_line_{wordIdx * 32 + b}"))
     ) [] ++
     (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
     (List.range 32).map (fun b => (s!"out_{b}", resp_data[b]!)))
@@ -309,13 +309,13 @@ def mkL1ICache : Circuit :=
       Gate.mkBUF req_addr[i]! miss_addr[i]!
 
   -- stall = NOT is_idle OR (is_idle AND req_valid AND NOT hit)
+  -- Note: stall must stay high whenever L1I is not idle (REFILL_REQ/REFILL_WAIT),
+  -- regardless of req_valid, to avoid feedback oscillation with the CPU's
+  -- fetch_stalled signal (which disables ifetch_valid, which would clear stall).
   let not_idle := Wire.mk "not_idle"
-  let stall_tmp := Wire.mk "stall_tmp"
   let stall_gates := [
     Gate.mkNOT is_idle not_idle,
-    Gate.mkOR not_idle miss_detect stall_tmp,
-    -- Don't stall if no request
-    Gate.mkAND stall_tmp req_valid stall
+    Gate.mkOR not_idle miss_detect stall
   ]
 
   -- FSM next-state logic
@@ -365,7 +365,7 @@ def mkL1ICache : Circuit :=
     let refill_match := Wire.mk s!"refill_set_match_{set}"
     acc ++ (List.range 24).foldl (fun acc2 b =>
       -- tag_d = MUX(refill_match, tag_bits[b], tag_q[b])
-      acc2 ++ [Gate.mkMUX refill_match tag_bits[b]! tag_q_wires[b]! tag_d_wires[b]!]
+      acc2 ++ [Gate.mkMUX tag_q_wires[b]! tag_bits[b]! refill_match tag_d_wires[b]!]
     ) []
   ) []
 
@@ -376,7 +376,7 @@ def mkL1ICache : Circuit :=
     let refill_match := Wire.mk s!"refill_set_match_{set}"
     acc ++ (List.range 256).foldl (fun acc2 b =>
       -- data_d = MUX(refill_match, refill_data[b], data_q[b])
-      acc2 ++ [Gate.mkMUX refill_match refill_data[b]! data_q_wires[b]! data_d_wires[b]!]
+      acc2 ++ [Gate.mkMUX data_q_wires[b]! refill_data[b]! refill_match data_d_wires[b]!]
     ) []
   ) []
 
