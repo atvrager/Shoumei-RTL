@@ -24,7 +24,21 @@ static struct _StdoutUnbuffer {
     _StdoutUnbuffer() { setvbuf(stdout, nullptr, _IONBF, 0); }
 } _stdout_unbuffer;
 
-#include "Vtb_cpu.h"
+// Top module can be overridden at compile time:
+//   -DTOP_HEADER=\"Vtb_cpu_microcoded.h\" -DTOP_MODULE=Vtb_cpu_microcoded
+//   -DTOP_SCOPE=\"TOP.tb_cpu_microcoded\"
+#ifndef TOP_MODULE
+#define TOP_MODULE Vtb_cpu
+#endif
+#ifndef TOP_HEADER
+#define TOP_HEADER "Vtb_cpu.h"
+#endif
+#ifndef TOP_SCOPE
+#define TOP_SCOPE "TOP.tb_cpu"
+#endif
+
+#include TOP_HEADER
+
 #include "verilated.h"
 #include "svdpi.h"
 
@@ -188,7 +202,7 @@ static int load_elf(const char* path) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
 
-    auto dut = std::make_unique<Vtb_cpu>();
+    auto dut = std::make_unique<TOP_MODULE>();
 
     // Parse arguments
     const char* elf_path = get_plusarg(argc, argv, "+elf");
@@ -217,8 +231,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Set DPI scope to tb_cpu so dpi_mem_write resolves to the right instance
-    svSetScope(svGetScopeFromName("TOP.tb_cpu"));
+    // Set DPI scope to the testbench top so dpi_mem_write resolves correctly
+    svSetScope(svGetScopeFromName(TOP_SCOPE));
     if (load_elf(elf_path) < 0) {
         return 1;
     }

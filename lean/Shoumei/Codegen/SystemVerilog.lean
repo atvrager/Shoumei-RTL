@@ -670,9 +670,11 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
     them according to the sub-module's signal groups. -/
 def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
     : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
+  let subModFound := allCircuits.any (fun sc => sc.name == inst.moduleName)
   let portGroups := buildSubModulePortGroups allCircuits inst.moduleName
   -- If sub-module not in allCircuits, infer grouping from port name patterns
-  let portGroups := if portGroups.isEmpty then
+  -- If sub-module IS in allCircuits but has no groups, respect that (don't infer)
+  let portGroups := if portGroups.isEmpty && !subModFound then
     inst.portMap.filterMap (fun (pname, _) =>
       match parsePortIndex pname with
       | some (base, idx) => some (pname, base, idx)

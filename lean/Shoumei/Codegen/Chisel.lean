@@ -1899,8 +1899,10 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let moduleType := if ctx.isSequential then "Module" else "RawModule"
 
   -- Collect imports for submodule instances in other packages (e.g. decoder modules)
+  -- Skip instances that are co-generated (in allCircuits) since they share the same package
+  let generatedNames := allCircuits.map (·.name)
   let decoderImports := c.instances.filterMap (fun inst =>
-    if inst.moduleName.endsWith "Decoder" then
+    if inst.moduleName.endsWith "Decoder" && !generatedNames.contains inst.moduleName then
       some s!"import shoumei.riscv.{inst.moduleName.toLower}.{inst.moduleName}"
     else none)
   let decoderImports := decoderImports.eraseDups

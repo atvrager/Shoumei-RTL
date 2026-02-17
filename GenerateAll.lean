@@ -73,6 +73,9 @@ import Shoumei.Circuits.Combinational.Popcount
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.LSU
 
+-- Phase 8a: Microcode Sequencer
+import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
+
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
@@ -92,6 +95,7 @@ open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.CPU
+open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
 
 -- Registry: Add circuits here for automatic generation
@@ -239,6 +243,10 @@ def allCircuits : List Circuit := [
   mkStoreBuffer8,
   mkLSU,
 
+  -- Phase 8a: Microcode Sequencer
+  microcodeDecoderCircuit,
+  microcodeSequencerCircuit,
+
   -- Phase 8: Top-Level Integration
   cdbMux,
   cdbMuxF,
@@ -247,7 +255,8 @@ def allCircuits : List Circuit := [
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,
-  mkCPU_RV32IMF
+  mkCPU_RV32IMF,
+  mkCPU_RV32IMF_Microcoded
 ]
 
 def main (args : List String) : IO Unit := do
@@ -295,6 +304,7 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+  writeTestbenches cpuTestbenchConfigMicrocoded
 
   -- Generate filelist.f for each output directory
   IO.println ""

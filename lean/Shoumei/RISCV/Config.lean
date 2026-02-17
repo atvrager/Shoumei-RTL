@@ -9,6 +9,12 @@ import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
+/-- CSR execution mode: hardwired FSM or ROM-driven microcode sequencer -/
+inductive CSRMode where
+  | hardwired    -- current serialize FSM (mkSerializeDetect)
+  | microcoded   -- ROM-driven microcode sequencer
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
     and the inclusion of instruction definitions at decode time. -/
@@ -39,6 +45,8 @@ structure CPUConfig where
       0 = combinational (default), 1 = registered (for timing closure).
       The CDB FIFO decouples timing, so both settings are correct. -/
   sbFwdPipelineStages : Nat := 0
+  /-- CSR execution mode: hardwired serialize FSM or ROM-driven microcode sequencer -/
+  csrMode : CSRMode := .hardwired
   deriving Repr, BEq, DecidableEq
 
 /-- Map config flags to riscv-opcodes extension strings.
@@ -67,6 +75,9 @@ def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZi
 
 /-- RV32IMF configuration (M + F + Zicsr + Zifencei) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
+
+/-- RV32IMF with microcoded CSR sequencer -/
+def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, csrMode := .microcoded }
 
 
 /-
@@ -107,7 +118,8 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
-  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei
+  let ucode := match cfg.csrMode with | .hardwired => "" | .microcoded => "_Microcoded"
+  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.
