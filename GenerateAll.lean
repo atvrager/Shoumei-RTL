@@ -73,6 +73,9 @@ import Shoumei.Circuits.Combinational.Popcount
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.LSU
 
+-- Phase 8a: Microcode Sequencer
+import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
+
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
@@ -92,6 +95,7 @@ open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.CPU
+open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
 
 -- Registry: Add circuits here for automatic generation
@@ -238,6 +242,10 @@ def allCircuits : List Circuit := [
   -- Phase 7: Memory
   mkStoreBuffer8,
   mkLSU,
+
+  -- Phase 8a: Microcode Sequencer
+  microcodeDecoderCircuit,
+  microcodeSequencerCircuit,
 
   -- Phase 8: Top-Level Integration
   cdbMux,

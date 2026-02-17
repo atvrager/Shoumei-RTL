@@ -9,6 +9,12 @@ import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
+/-- CSR execution mode: hardwired FSM or ROM-driven microcode sequencer -/
+inductive CSRMode where
+  | hardwired    -- current serialize FSM (mkSerializeDetect)
+  | microcoded   -- ROM-driven microcode sequencer
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
     and the inclusion of instruction definitions at decode time. -/
@@ -39,6 +45,8 @@ structure CPUConfig where
       0 = combinational (default), 1 = registered (for timing closure).
       The CDB FIFO decouples timing, so both settings are correct. -/
   sbFwdPipelineStages : Nat := 0
+  /-- CSR execution mode: hardwired serialize FSM or ROM-driven microcode sequencer -/
+  csrMode : CSRMode := .hardwired
   deriving Repr, BEq, DecidableEq
 
 /-- Map config flags to riscv-opcodes extension strings.

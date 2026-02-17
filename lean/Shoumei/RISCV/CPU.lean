@@ -508,6 +508,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
 
   -- === Serialize detection and FSM gates (FENCE.I + CSR) ===
+  -- Config-gated: .hardwired uses mkSerializeDetect, .microcoded will use MicrocodeSequencer
+  -- (microcode integration is additive — both paths produce the same output wire interface)
   let fence_i_detect_gates := mkSerializeDetect config oi opcodeWidth zero one
     decode_optype decode_valid decode_imm decode_rd decode_rs1
     branch_redirect_valid_reg fence_i_draining fence_i_not_draining
