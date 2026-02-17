@@ -7,14 +7,11 @@ specs in CPUHelperSpecs.lean and proofs in CPUHelperProofs.lean.
 
 import Shoumei.DSL
 import Shoumei.RISCV.Config
+import Shoumei.RISCV.CPUCircuitHelpers
 
 namespace Shoumei.RISCV.CPU
 
 open Shoumei
-
-/-- Helper: Create indexed wires -/
-def makeIndexedWiresH (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 /-- CSR address decode: compare csr_addr_reg[11:0] against known CSR addresses.
     Returns (gates, is_mscratch, is_mcycle_m, is_mcycleh_m, is_minstret_m, is_minstreth_m,
@@ -161,14 +158,14 @@ def mkMemPipeline
     Gate.mkAND pipe_load_en_tmp (Wire.mk "not_flush_comb") pipe_load_en
   ]
   -- Pipeline register: MUX(hold_value, new_value, enable) → DFF
-  let mem_addr_next := makeIndexedWiresH "mem_addr_next" 32
+  let mem_addr_next := makeIndexedWires "mem_addr_next" 32
   let mem_addr_pipe_gates := (List.range 32).map (fun i =>
     Gate.mkMUX mem_addr_r[i]! mem_address[i]! pipe_load_en mem_addr_next[i]!)
   let mem_addr_pipe_insts := (List.range 32).map (fun i =>
     ({ moduleName := "DFlipFlop", instName := s!"u_mem_addr_r_{i}",
        portMap := [("d", mem_addr_next[i]!), ("q", mem_addr_r[i]!),
                    ("clock", clock), ("reset", reset)] } : CircuitInstance))
-  let mem_tag_next := makeIndexedWiresH "mem_tag_next" 6
+  let mem_tag_next := makeIndexedWires "mem_tag_next" 6
   let mem_tag_pipe_gates := (List.range 6).map (fun i =>
     Gate.mkMUX mem_tag_r[i]! rs_mem_dispatch_tag[i]! pipe_load_en mem_tag_next[i]!)
   let mem_tag_pipe_insts := (List.range 6).map (fun i =>
@@ -181,7 +178,7 @@ def mkMemPipeline
     { moduleName := "DFlipFlop", instName := "u_is_load_r",
       portMap := [("d", is_load_next), ("q", is_load_r),
                   ("clock", clock), ("reset", reset)] }
-  let mem_size_next := makeIndexedWiresH "mem_size_next" 2
+  let mem_size_next := makeIndexedWires "mem_size_next" 2
   let mem_size_pipe_gates := (List.range 2).map (fun i =>
     Gate.mkMUX mem_size_r[i]! mem_size[i]! pipe_load_en mem_size_next[i]!)
   let mem_size_pipe_insts := (List.range 2).map (fun i =>
@@ -735,7 +732,7 @@ def mkCsrNextValue
   let mip_next_gates :=
     (List.range 32).map (fun i => Gate.mkBUF zero mip_next[i]!)
   -- Counter auto-increment
-  let mcycle_plus_1 := makeIndexedWiresH "mcycle_p1" 32
+  let mcycle_plus_1 := makeIndexedWires "mcycle_p1" 32
   let mcycle_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
     instName := "u_mcycle_adder"
@@ -746,7 +743,7 @@ def mkCsrNextValue
       (mcycle_plus_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
   let mcycle_carry := Wire.mk "mcycle_carry"
-  let mcycleh_plus_c := makeIndexedWiresH "mcycleh_pc" 32
+  let mcycleh_plus_c := makeIndexedWires "mcycleh_pc" 32
   let mcycleh_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
     instName := "u_mcycleh_adder"
@@ -756,7 +753,7 @@ def mkCsrNextValue
       [("cin", mcycle_carry)] ++
       (mcycleh_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
-  let minstret_plus_1 := makeIndexedWiresH "minstret_p1" 32
+  let minstret_plus_1 := makeIndexedWires "minstret_p1" 32
   let minstret_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
     instName := "u_minstret_adder"
@@ -767,7 +764,7 @@ def mkCsrNextValue
       (minstret_plus_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
   let minstret_carry := Wire.mk "minstret_carry"
-  let minstreth_plus_c := makeIndexedWiresH "minstreth_pc" 32
+  let minstreth_plus_c := makeIndexedWires "minstreth_pc" 32
   let minstreth_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
     instName := "u_minstreth_adder"
