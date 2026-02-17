@@ -301,6 +301,36 @@ def lsu_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.LSUProofs"
 }
 
+/-! ## Cache Hierarchy -/
+
+/-- L1ICache: Direct-mapped L1 instruction cache -/
+def l1iCache_cert : CompositionalCert := {
+  moduleName := "L1ICache"
+  dependencies := ["Register24", "Register256", "EqualityComparator24", "Mux8x24", "Mux8x32"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L1ICacheProofs"
+}
+
+/-- L1DCache: 2-way set-associative L1 data cache -/
+def l1dCache_cert : CompositionalCert := {
+  moduleName := "L1DCache"
+  dependencies := ["Register25", "Register256", "EqualityComparator25", "Mux4x25", "Mux4x32", "Mux8x32"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L1DCacheProofs"
+}
+
+/-- L2Cache: 2-way set-associative shared L2 cache -/
+def l2Cache_cert : CompositionalCert := {
+  moduleName := "L2Cache"
+  dependencies := ["Register24", "Register256", "EqualityComparator24"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L2CacheProofs"
+}
+
+/-- MemoryHierarchy: L1I + L1D + L2 composition -/
+def memoryHierarchy_cert : CompositionalCert := {
+  moduleName := "MemoryHierarchy"
+  dependencies := ["L1ICache", "L1DCache", "L2Cache"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs"
+}
+
 /-! ## Decoders (LUT-based, no Chisel equivalent) -/
 
 /-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
@@ -547,6 +577,11 @@ def allCerts : List CompositionalCert := [
   -- Memory
   storeBuffer8_cert,
   lsu_cert,
+  -- Cache Hierarchy
+  l1iCache_cert,
+  l1dCache_cert,
+  l2Cache_cert,
+  memoryHierarchy_cert,
   -- Decoders
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,

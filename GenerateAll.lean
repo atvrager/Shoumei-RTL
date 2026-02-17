@@ -73,6 +73,12 @@ import Shoumei.Circuits.Combinational.Popcount
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.LSU
 
+-- Phase 7b: Cache Hierarchy
+import Shoumei.RISCV.Memory.Cache.L1ICache
+import Shoumei.RISCV.Memory.Cache.L1DCache
+import Shoumei.RISCV.Memory.Cache.L2Cache
+import Shoumei.RISCV.Memory.Cache.MemoryHierarchy
+
 -- Phase 8a: Microcode Sequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 
@@ -94,6 +100,7 @@ open Shoumei.RISCV.Renaming
 open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
+open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
@@ -242,6 +249,22 @@ def allCircuits : List Circuit := [
   -- Phase 7: Memory
   mkStoreBuffer8,
   mkLSU,
+
+  -- Phase 7b: Cache Hierarchy Building Blocks
+  mkRegisterN 24,   -- L1I/L2 tag storage (24-bit tags)
+  mkRegisterN 25,   -- L1D tag storage (25-bit tags)
+  mkRegisterNHierarchical 256,  -- Cache line data storage (8 words)
+  mkEqualityComparatorN 24,     -- L1I/L2 tag comparison
+  mkEqualityComparatorN 25,     -- L1D tag comparison
+  mkMuxTree 4 25,    -- L1D tag set mux (4 sets × 25-bit tags)
+  mkMuxTree 8 24,    -- L1I/L2 tag set mux (8 sets × 24-bit tags)
+  mkMuxTree 4 32,    -- L1D data set mux (4 sets × 32-bit words)
+
+  -- Phase 7b: Cache Hierarchy Modules
+  mkL1ICache,
+  mkL1DCache,
+  mkL2Cache,
+  mkMemoryHierarchy,
 
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,
