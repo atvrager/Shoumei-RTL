@@ -63,7 +63,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-microcoded sim-microcoded-trace sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop run-all-tests-microcoded cosim run-cosim sim-cached cosim-cached run-cosim-cached coremark run-coremark clean
+.PHONY: sim sim-microcoded sim-microcoded-trace sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop run-all-tests-microcoded run-all-tests-cached cosim run-cosim sim-cached cosim-cached run-cosim-cached coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 SIM_UCODE_BIN:= $(BUILD_DIR)/sim_shoumei_microcoded
@@ -330,6 +330,33 @@ $(SIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
 		-o $@ \
 		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(SIM_CACHED_CPP)
 	@echo "Built: $@ (cached CPU)"
+
+run-all-tests-cached: $(SIM_CACHED_BIN) tests riscv-tests
+	@mkdir -p $(PROJ_ROOT)/output
+	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-cached.csv; \
+	pass=0; fail=0; total=0; \
+	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
+		total=$$((total+1)); \
+		name=$$(basename $$elf); \
+		result=$$($(SIM_CACHED_BIN) +elf=$$elf +timeout=5000 2>&1); \
+		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
+		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
+		if [ "$$tohost" = "0x00000001" ]; then \
+			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-cached.csv; \
+			pass=$$((pass+1)); \
+		else \
+			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-cached.csv; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "$$pass/$$total passed, $$fail failed (cached)"; \
+	echo "CSV: $(PROJ_ROOT)/output/test-results-cached.csv"; \
+	[ $$fail -eq 0 ]
 
 sim-cached-trace: $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_cached_trace

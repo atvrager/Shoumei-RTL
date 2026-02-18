@@ -210,14 +210,14 @@ def mkL2Cache : Circuit :=
   let lru_q := (List.range 8).map fun i => Wire.mk s!"l2_lru_q_{i}"
   let lru_dffs := (List.range 8).map fun i => Gate.mkDFF lru_d[i]! clock reset lru_q[i]!
 
-  -- Data storage: 2 ways × 8 sets × 256 bits (Register256 instances)
-  let data_instances := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
-      CircuitInstance.mk "Register256" s!"u_l2_data_w{way}_s{set}"
-        ((List.range 256).map (fun b => (s!"d_{b}", Wire.mk s!"l2_data_d_w{way}_s{set}_{b}")) ++
-         [("clock", clock), ("reset", reset)] ++
-         (List.range 256).map (fun b => (s!"q_{b}", Wire.mk s!"l2_data_q_w{way}_s{set}_{b}"))))
-  ) []
+  -- Data RAM wire declarations (RAMs defined later after read_idx is available)
+  let l2_data_ram_rd := (List.range 2).map fun way =>
+    (List.range 256).map fun b => Wire.mk s!"drd{way}_{b}"
+  let l2_data_ram_wr_en := (List.range 2).map fun way => Wire.mk s!"l2_dwr_en_w{way}"
+  let l2_data_ram_wr_addr := (List.range 2).map fun way =>
+    (List.range 3).map fun i => Wire.mk s!"l2_dwr_addr_w{way}_{i}"
+  let l2_data_ram_wr_data := (List.range 2).map fun way =>
+    (List.range 256).map fun b => Wire.mk s!"l2_dwr_data_w{way}_{b}"
 
   -- === Constants ===
   let const_zero_gates := [
@@ -321,17 +321,7 @@ def mkL2Cache : Circuit :=
     [Gate.mkOR way_hit[0]! way_hit[1]! hit]
 
   -- === Data Read Path ===
-  -- Per way: 8 × Mux8x32 to select each word from indexed set
-  let data_read_instances := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun wd =>
-      CircuitInstance.mk "Mux8x32" s!"u_l2_drd_w{way}_wd{wd}"
-        ((List.range 8).foldl (fun acc2 set =>
-          acc2 ++ (List.range 32).map (fun b =>
-            (s!"in{set}_b{b}", Wire.mk s!"l2_data_q_w{way}_s{set}_{wd * 32 + b}"))
-        ) [] ++
-        (List.range 3).map (fun i => (s!"sel_{i}", read_idx[i]!)) ++
-        (List.range 32).map (fun b => (s!"out_{b}", Wire.mk s!"drd{way}_{wd * 32 + b}"))))
-  ) []
+  -- RAM read ports provide drd{way}_{b} directly (replacing Mux8x32 instances)
   -- Way select MUX: 256 gates, controlled by read_way1
   let way_data_mux := (List.range 256).map fun b =>
     Gate.mkMUX (Wire.mk s!"drd0_{b}") (Wire.mk s!"drd1_{b}") read_way1 (Wire.mk s!"wsd_{b}")
@@ -510,14 +500,40 @@ def mkL2Cache : Circuit :=
           (Wire.mk s!"wen_{way}_{set}") (Wire.mk s!"l2_tag_d_w{way}_s{set}_{b}"))
     ) []
   ) []
-  -- Data: MUX(hold, write_data, write_en)
-  let data_next := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).foldl (fun acc2 set =>
-      acc2 ++ (List.range 256).map (fun b =>
-        Gate.mkMUX (Wire.mk s!"l2_data_q_w{way}_s{set}_{b}") write_data[b]!
-          (Wire.mk s!"wen_{way}_{set}") (Wire.mk s!"l2_data_d_w{way}_s{set}_{b}"))
-    ) []
+  -- Data RAM write control: wen per way, addr, data
+  -- write_en = OR of wen_{way}_{set} for any set (same as any write_en_gates match for this way)
+  let data_ram_wen_gates := (List.range 2).foldl (fun acc way =>
+    -- OR-tree of wen_{way}_{set} for all 8 sets
+    let wen_wires := (List.range 8).map fun set => Wire.mk s!"wen_{way}_{set}"
+    acc ++ [
+      Gate.mkOR wen_wires[0]! wen_wires[1]! (Wire.mk s!"l2_dwen_01_w{way}"),
+      Gate.mkOR wen_wires[2]! wen_wires[3]! (Wire.mk s!"l2_dwen_23_w{way}"),
+      Gate.mkOR wen_wires[4]! wen_wires[5]! (Wire.mk s!"l2_dwen_45_w{way}"),
+      Gate.mkOR wen_wires[6]! wen_wires[7]! (Wire.mk s!"l2_dwen_67_w{way}"),
+      Gate.mkOR (Wire.mk s!"l2_dwen_01_w{way}") (Wire.mk s!"l2_dwen_23_w{way}") (Wire.mk s!"l2_dwen_03_w{way}"),
+      Gate.mkOR (Wire.mk s!"l2_dwen_45_w{way}") (Wire.mk s!"l2_dwen_67_w{way}") (Wire.mk s!"l2_dwen_47_w{way}"),
+      Gate.mkOR (Wire.mk s!"l2_dwen_03_w{way}") (Wire.mk s!"l2_dwen_47_w{way}") l2_data_ram_wr_en[way]!
+    ]
   ) []
+  -- Write addr: refill uses ref_idx, wb uses cur_idx; MUX on refill_done
+  let data_ram_waddr_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 3).map (fun i =>
+      Gate.mkMUX cur_idx[i]! ref_idx[i]! refill_done (l2_data_ram_wr_addr[way]!)[i]!)
+  ) []
+  -- Write data: already computed as write_data[b]
+  let data_ram_wdata_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 256).map (fun b =>
+      Gate.mkBUF write_data[b]! (l2_data_ram_wr_data[way]!)[b]!)
+  ) []
+  -- Define the actual RAM primitives (read_idx is now available)
+  let data_rams := (List.range 2).map fun way =>
+    RAMPrimitive.mk s!"l2_data_ram_w{way}" 8 256
+      [{ en := l2_data_ram_wr_en[way]!
+         addr := l2_data_ram_wr_addr[way]!
+         data := l2_data_ram_wr_data[way]! }]
+      [{ addr := read_idx
+         data := l2_data_ram_rd[way]! }]
+      false clock
   -- Valid: OR(hold, write_en)
   let valid_next := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 8).map (fun set =>
@@ -570,9 +586,11 @@ def mkL2Cache : Circuit :=
              mem_req_gates ++ fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
              cur_lru_gates ++ ref_lru_gates ++ way_sel_gates ++ write_en_gates ++
              write_tag_mux ++ write_data_mux ++ write_dirty_gates ++
-             tag_next ++ data_next ++ valid_next ++ dirty_next ++ lru_next ++ stall_gates
-    instances := tag_instances ++ data_instances ++
-                 tag_mux_instances ++ tag_cmp_instances ++ data_read_instances
+             tag_next ++ data_ram_wen_gates ++ data_ram_waddr_gates ++ data_ram_wdata_gates ++
+             valid_next ++ dirty_next ++ lru_next ++ stall_gates
+    instances := tag_instances ++
+                 tag_mux_instances ++ tag_cmp_instances
+    rams := data_rams
     signalGroups := [
       { name := "l1i_req_addr", width := 32, wires := l1i_req_addr },
       { name := "l1d_req_addr", width := 32, wires := l1d_req_addr },

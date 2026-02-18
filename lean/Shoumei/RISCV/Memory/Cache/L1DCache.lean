@@ -246,14 +246,24 @@ def mkL1DCache : Circuit :=
   let dirty_dffs := (List.range 8).map fun i =>
     Gate.mkDFF dirty_d[i]! clock reset dirty_q[i]!
 
-  -- Data storage: 2 ways × 4 sets × 256 bits
-  let data_instances := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 4).map (fun set =>
-      CircuitInstance.mk "Register256" s!"u_data_w{way}_s{set}"
-        ((List.range 256).map (fun b => (s!"d_{b}", Wire.mk s!"data_d_w{way}_s{set}_{b}")) ++
-         [("clock", clock), ("reset", reset)] ++
-         (List.range 256).map (fun b => (s!"q_{b}", Wire.mk s!"data_q_w{way}_s{set}_{b}"))))
-  ) []
+  -- Data storage: 2 RAMs (depth=4, width=256), one per way
+  -- Read port: addr=idx_bits (for hit data)
+  -- Write port: addr=MUX(pend_idx,idx_bits,is_refill), data=MUX(refill,merged), en=refill|write_hit
+  let data_ram_rd := (List.range 2).map fun way =>
+    (List.range 256).map fun b => Wire.mk s!"data_rd_w{way}_{b}"
+  let data_ram_wr_en := (List.range 2).map fun way => Wire.mk s!"data_wr_en_w{way}"
+  let data_ram_wr_addr := (List.range 2).map fun way =>
+    (List.range 2).map fun i => Wire.mk s!"data_wr_addr_w{way}_{i}"
+  let data_ram_wr_data := (List.range 2).map fun way =>
+    (List.range 256).map fun b => Wire.mk s!"data_wr_data_w{way}_{b}"
+  let data_rams := (List.range 2).map fun way =>
+    RAMPrimitive.mk s!"data_ram_w{way}" 4 256
+      [{ en := data_ram_wr_en[way]!
+         addr := data_ram_wr_addr[way]!
+         data := data_ram_wr_data[way]! }]
+      [{ addr := idx_bits
+         data := data_ram_rd[way]! }]
+      false clock
 
   -- Tag comparators: 2 ways, each comparing stored tag with request tag
   let way_hit := (List.range 2).map fun w => Wire.mk s!"way{w}_hit"
@@ -316,24 +326,13 @@ def mkL1DCache : Circuit :=
   let way_word := (List.range 2).map fun way =>
     (List.range 32).map fun b => Wire.mk s!"way{way}_word_{b}"
 
-  -- Per-way: set mux → word mux
-  let data_set_mux_instances := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun wordIdx =>
-      CircuitInstance.mk "Mux4x32" s!"u_data_set_mux_w{way}_wd{wordIdx}"
-        ((List.range 4).foldl (fun acc2 set =>
-          acc2 ++ (List.range 32).map (fun b =>
-            (s!"in{set}_b{b}", Wire.mk s!"data_q_w{way}_s{set}_{wordIdx * 32 + b}"))
-        ) [] ++
-        (List.range 2).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
-        (List.range 32).map (fun b =>
-          (s!"out_{b}", Wire.mk s!"data_set_w{way}_wd{wordIdx}_{b}"))))
-  ) []
-
+  -- Per-way word mux: select word from RAM-read 256-bit line
+  -- data_rd_w{way} is the selected set's line (from RAM read port)
   let data_word_mux_instances := (List.range 2).map fun way =>
     CircuitInstance.mk "Mux8x32" s!"u_data_word_mux_w{way}"
       ((List.range 8).foldl (fun acc wordIdx =>
         acc ++ (List.range 32).map (fun b =>
-          (s!"in{wordIdx}_b{b}", Wire.mk s!"data_set_w{way}_wd{wordIdx}_{b}"))
+          (s!"in{wordIdx}_b{b}", (data_ram_rd[way]!)[wordIdx * 32 + b]!))
       ) [] ++
       (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_word[way]!)[b]!)))
@@ -561,24 +560,6 @@ def mkL1DCache : Circuit :=
     (List.range 8).map (fun i =>
       Gate.mkMUX (Wire.mk s!"wds3t_{i}") req_wdata[24+i]! req_size[1]! wdata_shifted[24+i]!)
 
-  -- === Write-hit word enables per way/set/word ===
-  let wh_word_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 4).foldl (fun acc2 set =>
-      acc2 ++ (List.range 8).map (fun wd =>
-        Gate.mkAND (Wire.mk s!"whe_{way}_{set}") word_dec[wd]! (Wire.mk s!"whw_{way}_{set}_{wd}"))
-    ) []
-  ) []
-
-  -- === Write-hit byte enables per way/set/word/byte ===
-  let wh_byte_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 4).foldl (fun acc2 set =>
-      acc2 ++ (List.range 8).foldl (fun acc3 wd =>
-        acc3 ++ (List.range 4).map (fun byte =>
-          Gate.mkAND (Wire.mk s!"whw_{way}_{set}_{wd}") be[byte]! (Wire.mk s!"whb_{way}_{set}_{wd}_{byte}"))
-      ) []
-    ) []
-  ) []
-
   -- === FSM next-state ===
   -- IDLE(000) → REFILL_WAIT(001) on miss_detect
   -- REFILL_WAIT(001) → IDLE(000) on refill_valid, else stay
@@ -617,20 +598,47 @@ def mkL1DCache : Circuit :=
     ) []
   ) []
 
-  -- === Data next: write_hit_byte > refill > hold ===
-  let data_next_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 4).foldl (fun acc2 set =>
-      acc2 ++ (List.range 256).foldl (fun acc3 b =>
-        let wd := b / 32
-        let bb := b % 32
-        let byte := bb / 8  -- which byte within the word
-        acc3 ++ [
-          Gate.mkMUX (Wire.mk s!"data_q_w{way}_s{set}_{b}") refill_data[b]!
-            (Wire.mk s!"rfe_{way}_{set}") (Wire.mk s!"drh_{way}_{set}_{b}"),
-          Gate.mkMUX (Wire.mk s!"drh_{way}_{set}_{b}") wdata_shifted[bb]!
-            (Wire.mk s!"whb_{way}_{set}_{wd}_{byte}") (Wire.mk s!"data_d_w{way}_s{set}_{b}")
-        ]
-      ) []
+  -- === Data RAM write logic ===
+  -- Per-way: write_en, write_addr, write_data
+  -- refill_for_way = refill_valid AND (way matches pend_victim)
+  -- write_hit_for_way = write_hit AND way_hit[way]
+  let ram_refill_w0 := Wire.mk "ram_refill_w0"
+  let ram_refill_w1 := Wire.mk "ram_refill_w1"
+  let ram_wh_w0 := Wire.mk "ram_wh_w0"
+  let ram_wh_w1 := Wire.mk "ram_wh_w1"
+  let data_ram_ctl_gates := [
+    Gate.mkAND refill_valid not_pend_victim ram_refill_w0,
+    Gate.mkAND refill_valid pend_victim_q ram_refill_w1,
+    Gate.mkAND write_hit (Wire.mk "not_w1h") ram_wh_w0,
+    Gate.mkAND write_hit way_hit[1]! ram_wh_w1,
+    -- write enables
+    Gate.mkOR ram_refill_w0 ram_wh_w0 data_ram_wr_en[0]!,
+    Gate.mkOR ram_refill_w1 ram_wh_w1 data_ram_wr_en[1]!
+  ]
+  -- Write address: refill uses pend_idx, write-hit uses idx_bits
+  -- Since refill and write-hit are mutually exclusive, MUX on refill_valid
+  let data_ram_addr_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 2).map (fun i =>
+      Gate.mkMUX idx_bits[i]! pend_idx[i]! refill_valid (data_ram_wr_addr[way]!)[i]!)
+  ) []
+  -- Write data: refill uses refill_data, write-hit uses merge(ram_rd, wdata_shifted)
+  -- Merge logic: for each bit, MUX(ram_rd[b], wdata_shifted[b%32], write_hit_byte_en)
+  -- write_hit_byte_en for bit b = word_dec[b/32] AND be[(b%32)/8]
+  -- Note: word_dec and be are already computed (shared across ways)
+  let data_ram_merge_gates := (List.range 2).foldl (fun acc way =>
+    acc ++ (List.range 256).foldl (fun acc2 b =>
+      let wd := b / 32
+      let bb := b % 32
+      let byte := bb / 8
+      -- merged_{way}_{b} = MUX(ram_rd, wdata_shifted, wdc AND be)
+      acc2 ++ [
+        Gate.mkAND word_dec[wd]! be[byte]! (Wire.mk s!"ram_be_w{way}_{b}"),
+        Gate.mkMUX (data_ram_rd[way]!)[b]! wdata_shifted[bb]!
+          (Wire.mk s!"ram_be_w{way}_{b}") (Wire.mk s!"ram_merged_w{way}_{b}"),
+        -- Final write data: MUX(merged, refill_data, refill_valid)
+        Gate.mkMUX (Wire.mk s!"ram_merged_w{way}_{b}") refill_data[b]!
+          refill_valid (data_ram_wr_data[way]!)[b]!
+      ]
     ) []
   ) []
 
@@ -674,15 +682,15 @@ def mkL1DCache : Circuit :=
     const_zero_gates ++
     pend_dec_gates ++ lru_mux_gates ++ [pend_victim_not_gate] ++
     write_hit_gates ++ not_ws_gates ++ word_dec_gates ++
-    [not_way1_hit_gate] ++ refill_wh_gates ++ byte_en_gates ++ wdata_shift_gates ++ wh_word_gates ++ wh_byte_gates ++
+    [not_way1_hit_gate] ++ refill_wh_gates ++ byte_en_gates ++ wdata_shift_gates ++
     fsm_next_gates ++ pend_capture_gates ++ [pend_victim_capture] ++
-    tag_next_gates ++ data_next_gates ++
+    tag_next_gates ++ data_ram_ctl_gates ++ data_ram_addr_gates ++ data_ram_merge_gates ++
     valid_next_gates ++ dirty_next_gates ++ lru_next_gates
 
   let allInstances :=
-    tag_instances ++ data_instances ++
+    tag_instances ++
     tag_mux_instances ++ tag_cmp_instances ++
-    data_set_mux_instances ++ data_word_mux_instances ++
+    data_word_mux_instances ++
     [refill_word_mux_inst]
 
   { name := "L1DCache"
@@ -692,6 +700,7 @@ def mkL1DCache : Circuit :=
                [wb_valid] ++ wb_addr ++ wb_data ++ [stall, fence_i_busy]
     gates := allGates
     instances := allInstances
+    rams := data_rams
     signalGroups := [
       { name := "req_addr", width := 32, wires := req_addr },
       { name := "req_wdata", width := 32, wires := req_wdata },

@@ -106,7 +106,11 @@ def autoDetectSignalGroups (wires : List Wire) : List SignalGroup :=
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
   let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (fun p => p.2))
-  (gateOutputs ++ instanceWires).eraseDups.filter (fun w =>
+  let ramWires := c.rams.flatMap (fun ram =>
+    let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
+    let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
+    wpWires ++ rpWires)
+  (gateOutputs ++ instanceWires ++ ramWires).eraseDups.filter (fun w =>
     !c.inputs.contains w && !c.outputs.contains w
   )
 
@@ -1889,6 +1893,48 @@ private def splitMixedBlock (code : String) (pfx : String) (chunkSize : Nat := 3
     let callsStr := String.intercalate "\n" calls
     declStr ++ "\n" ++ helpersStr ++ "\n" ++ callsStr
 
+/-! ## RAM Primitive Generation -/
+
+/-- Generate Chisel code for a single RAMPrimitive.
+    Uses ShoumeiMem (async read) or ShoumeiMem.syncRead (sync read). -/
+def generateRAM (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
+  let memType := if ram.syncRead then "ShoumeiMem.syncRead" else "ShoumeiMem"
+  let memDecl := s!"  val {ram.name} = {memType}({ram.depth}, {ram.width})"
+  -- Write ports
+  let writePorts := ram.writePorts.enum.map (fun (_, wp) =>
+    let enRef := wireRef ctx c wp.en
+    -- Build address: Cat(MSB, ..., LSB) for multi-bit addr
+    let addrRefs := wp.addr.reverse.map (wireRef ctx c ·)
+    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
+                    else "Cat(" ++ String.intercalate ", " addrRefs ++ ")"
+    -- Build data: Cat(MSB, ..., LSB)
+    let dataRefs := wp.data.reverse.map (wireRef ctx c ·)
+    let dataExpr := if dataRefs.length == 1 then dataRefs.head!
+                    else "Cat(" ++ String.intercalate ", " dataRefs ++ ")"
+    joinLines [
+      s!"  when ({enRef}) " ++ "{",
+      s!"    {ram.name}.write({addrExpr}, {dataExpr})",
+      "  }"
+    ])
+  -- Read ports (async)
+  let readPorts := ram.readPorts.enum.map (fun (_, rp) =>
+    let addrRefs := rp.addr.reverse.map (wireRef ctx c ·)
+    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
+                    else "Cat(" ++ String.intercalate ", " addrRefs ++ ")"
+    let readWire := s!"{ram.name}.read({addrExpr})"
+    -- Assign individual output bits
+    let assigns := rp.data.enum.map (fun (idx, w) =>
+      s!"  {wireRef ctx c w} := {readWire}({idx})")
+    joinLines assigns)
+  joinLines ([memDecl] ++ writePorts ++ readPorts)
+
+/-- Generate all RAM primitives -/
+def generateRAMs (ctx : Context) (c : Circuit) : String :=
+  if c.rams.isEmpty then ""
+  else
+    let ramStrs := c.rams.map (generateRAM ctx c)
+    joinLines ramStrs
+
 /-! ## Module Generation -/
 
 /-- Generate complete Chisel module for a circuit -/
@@ -1917,7 +1963,8 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     "import chisel3.util._",
     "import shoumei.ShoumeiReg",
     "import shoumei.ShoumeiRegInit"
-  ] ++ decoderImports ++ [
+  ] ++ (if c.rams.isEmpty then [] else ["import shoumei.ShoumeiMem"]) ++
+  decoderImports ++ [
     "",
     "class " ++ c.name ++ " extends " ++ moduleType ++ " {"
   ])
@@ -1977,10 +2024,11 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let registers := generateRegisters ctx c instanceOutputNames
   let combGatesRaw := generateCombGates ctx c instanceOutputNames
   let instances := generateInstances ctx c allCircuits
+  let rams := generateRAMs ctx c
 
   -- Estimate total body size to decide if trait splitting is needed
   let allBodyLines := [io, dontTouchStr, internalWires, undrivenStr,
-                       registers, combGatesRaw, instances]
+                       registers, combGatesRaw, instances, rams]
   let totalBodyLines : Nat := allBodyLines.foldl (fun acc s => acc + (s.splitOn "\n").length) 0
 
   if totalBodyLines > 1500 then
@@ -1990,7 +2038,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     -- Collect all body lines
     let bodyLines := (io ++ "\n" ++ dontTouchStr ++ "\n" ++ internalWires ++ "\n" ++
                       undrivenStr ++ "\n" ++ registers ++ "\n" ++ combGatesRaw ++ "\n" ++
-                      instances).splitOn "\n"
+                      instances ++ "\n" ++ rams).splitOn "\n"
     -- Group into statements (respecting multi-line expressions)
     let stmts := groupIntoStatements (bodyLines.filter (· != ""))
     -- Chunk statements into trait-sized groups
@@ -2025,7 +2073,8 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
       "import chisel3.util._",
       "import shoumei.ShoumeiReg",
       "import shoumei.ShoumeiRegInit"
-    ] ++ decoderImports ++ [""])
+    ] ++ (if c.rams.isEmpty then [] else ["import shoumei.ShoumeiMem"]) ++
+    decoderImports ++ [""])
     preamble ++ "\n" ++ traitsStr ++ "\n\n" ++ classDecl
   else
     -- Small module: single class (no splitting needed)
@@ -2040,7 +2089,8 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
       "",
       combGatesRaw,
       "",
-      instances
+      instances,
+      if rams.isEmpty then "" else "\n" ++ rams
     ]
 
     let footer := "}"

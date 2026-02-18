@@ -178,16 +178,16 @@ def mkL1ICache : Circuit :=
   let valid_gates := (List.range 8).map fun i =>
     Gate.mkDFF valid_d[i]! clock reset valid_q[i]!
 
-  -- Data storage: 8 sets × 256 bits (using hierarchical registers)
-  -- Each set stores 8 words = 256 bits
-  let data_instances := (List.range 8).map fun set =>
-    let d_wires := (List.range 256).map fun b => Wire.mk s!"data_d_{set}_{b}"
-    let q_wires := (List.range 256).map fun b => Wire.mk s!"data_q_{set}_{b}"
-    (CircuitInstance.mk "Register256" s!"u_data_{set}"
-      ((List.range 256).map (fun b => (s!"d_{b}", d_wires[b]!)) ++
-       [("clock", clock), ("reset", reset)] ++
-       (List.range 256).map (fun b => (s!"q_{b}", q_wires[b]!))),
-     d_wires, q_wires)
+  -- Data storage: single RAM (8 entries × 256 bits)
+  -- Replaces 8× Register256 + 8× Mux8x32 (line set muxes)
+  let data_ram_rd := (List.range 256).map fun b => Wire.mk s!"sel_line_{b}"
+  let data_ram := RAMPrimitive.mk "data_ram" 8 256
+    [{ en := Wire.mk "refill_done"  -- write on refill completion
+       addr := refill_idx_bits
+       data := refill_data }]
+    [{ addr := idx_bits
+       data := data_ram_rd }]
+    false clock
 
   -- Refill decoder: 3-to-8 from MAR index bits (for refill writes)
   let not_refill_idx := (List.range 3).map fun i => Wire.mk s!"not_ridx_{i}"
@@ -276,23 +276,8 @@ def mkL1ICache : Circuit :=
   let hit := Wire.mk "hit"
   let hit_gate := Gate.mkAND sel_valid tag_match hit
 
-  -- Data mux: select word from selected set's data
-  -- First: mux set data (8:1 mux of 256-bit → 256 bits for selected set)
-  -- Then: mux word from 256-bit line (8:1 mux of 32-bit words)
-  let _sel_line := (List.range 256).map fun b => Wire.mk s!"sel_line_{b}"
-  let line_mux_instances := (List.range 8).map fun wordIdx =>
-    -- For each 32-bit word position, create an 8:1 mux over sets
-    let word_out := (List.range 32).map fun b =>
-      Wire.mk s!"sel_line_{wordIdx * 32 + b}"
-    CircuitInstance.mk "Mux8x32" s!"u_line_mux_{wordIdx}"
-      ((List.range 8).foldl (fun acc set =>
-        acc ++ (List.range 32).map (fun b =>
-          (s!"in{set}_b{b}", Wire.mk s!"data_q_{set}_{wordIdx * 32 + b}"))
-      ) [] ++
-      (List.range 3).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
-      (List.range 32).map (fun b => (s!"out_{b}", word_out[b]!)))
-
-  -- Word select: mux 1 of 8 words from the selected line
+  -- Word select: mux 1 of 8 words from the selected line (data_ram read → sel_line)
+  -- sel_line[255:0] is driven by the data_ram read port
   let word_mux_inst := CircuitInstance.mk "Mux8x32" "u_word_mux"
     ((List.range 8).foldl (fun acc wordIdx =>
       acc ++ (List.range 32).map (fun b =>
@@ -423,16 +408,7 @@ def mkL1ICache : Circuit :=
     ) []
   ) []
 
-  -- Data write logic: on refill, write refill_data to the refill set
-  let data_write_gates := (List.range 8).foldl (fun acc set =>
-    let data_d_wires := (List.range 256).map fun b => Wire.mk s!"data_d_{set}_{b}"
-    let data_q_wires := (List.range 256).map fun b => Wire.mk s!"data_q_{set}_{b}"
-    let refill_match := Wire.mk s!"refill_set_match_{set}"
-    acc ++ (List.range 256).foldl (fun acc2 b =>
-      -- data_d = MUX(refill_match, refill_data[b], data_q[b])
-      acc2 ++ [Gate.mkMUX data_q_wires[b]! refill_data[b]! refill_match data_d_wires[b]!]
-    ) []
-  ) []
+  -- Data write logic: handled by data_ram write port (refill_done + refill_idx)
 
   -- Constant zero wire (for miss_addr low bits)
   let _const_zero_gate := Gate.mkBUF reset (Wire.mk "const_zero_pre")
@@ -452,15 +428,13 @@ def mkL1ICache : Circuit :=
     [hit_gate] ++ fsm_logic_gates ++ miss_gates ++ resp_gates ++
     [miss_valid_gate] ++ not_idle_miss_gates ++ miss_addr_gates ++ stall_gates ++
     fsm_next_gates ++ mar_capture_gates ++
-    valid_next_gates ++ tag_write_gates ++ data_write_gates ++
+    valid_next_gates ++ tag_write_gates ++
     const_zero_gates
 
   -- Collect all instances
   let allInstances :=
     (tag_instances.map (·.1)) ++
-    (data_instances.map (·.1)) ++
     [tag_mux_inst, tag_cmp_inst] ++
-    line_mux_instances ++
     [word_mux_inst]
 
   { name := "L1ICache"
@@ -468,6 +442,7 @@ def mkL1ICache : Circuit :=
     outputs := [resp_valid] ++ resp_data ++ [miss_valid] ++ miss_addr ++ [stall]
     gates := allGates
     instances := allInstances
+    rams := [data_ram]
     signalGroups := [
       { name := "req_addr", width := 32, wires := req_addr },
       { name := "refill_data", width := 256, wires := refill_data },
