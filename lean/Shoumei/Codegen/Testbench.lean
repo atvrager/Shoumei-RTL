@@ -1911,9 +1911,11 @@ def writeLeanSim (cfg : TestbenchConfig) : IO Unit := do
 
 def writeTestbenches (cfg : TestbenchConfig) : IO Unit := do
   Testbench.writeTestbenchSV cfg
-  Testbench.writeTestbenchCppSim cfg
+  -- CppSim and LeanSim generators don't support cache-line memory interface yet
+  if cfg.cacheLineMemPort.isNone then
+    Testbench.writeTestbenchCppSim cfg
+    Testbench.writeLeanSim cfg
   Testbench.writeSimMainCpp cfg
   Testbench.writeCosimMainCpp cfg
-  Testbench.writeLeanSim cfg
 
 end Shoumei.Codegen.Testbench

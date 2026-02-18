@@ -306,21 +306,21 @@ def lsu_cert : CompositionalCert := {
 /-- L1ICache: Direct-mapped L1 instruction cache -/
 def l1iCache_cert : CompositionalCert := {
   moduleName := "L1ICache"
-  dependencies := ["Register24", "Register256", "EqualityComparator24", "Mux8x24", "Mux8x32"]
+  dependencies := ["Register24", "EqualityComparator24", "Mux8x24", "Mux8x32"]
   proofReference := "Shoumei.RISCV.Memory.Cache.L1ICacheProofs"
 }
 
 /-- L1DCache: 2-way set-associative L1 data cache -/
 def l1dCache_cert : CompositionalCert := {
   moduleName := "L1DCache"
-  dependencies := ["Register25", "Register256", "EqualityComparator25", "Mux4x25", "Mux4x32", "Mux8x32"]
+  dependencies := ["Register25", "EqualityComparator25", "Mux4x25", "Mux8x32"]
   proofReference := "Shoumei.RISCV.Memory.Cache.L1DCacheProofs"
 }
 
 /-- L2Cache: 2-way set-associative shared L2 cache -/
 def l2Cache_cert : CompositionalCert := {
   moduleName := "L2Cache"
-  dependencies := ["Register24", "Register256", "EqualityComparator24"]
+  dependencies := ["Register24", "EqualityComparator24", "Mux8x24"]
   proofReference := "Shoumei.RISCV.Memory.Cache.L2CacheProofs"
 }
 
@@ -333,8 +333,8 @@ def memoryHierarchy_cert : CompositionalCert := {
 
 /-- CachedCPU: CPU + MemoryHierarchy composition -/
 def cachedCPU_cert : CompositionalCert := {
-  moduleName := "CachedCPU_RV32IM"
-  dependencies := ["CPU_RV32IM", "MemoryHierarchy"]
+  moduleName := "CachedCPU_RV32IMF_Zicsr_Zifencei"
+  dependencies := ["CPU_RV32IMF_Zicsr_Zifencei", "MemoryHierarchy"]
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
