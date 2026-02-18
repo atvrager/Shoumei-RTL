@@ -862,7 +862,8 @@ def generateBusWideOp (ctx : Context) (_c : Circuit) (bus : SignalGroup) (gates 
                       let outRef := signalGroupRef ctx bus.name
                       let in1Ref := signalGroupRefForBusOp ctx _c b1
                       let in0Ref := signalGroupRefForBusOp ctx _c b0
-                      some s!"  {outRef} := Mux({selB.name}({idx}), {in1Ref}, {in0Ref})"
+                      let selBusRef := signalGroupRef ctx selB.name
+                      some s!"  {outRef} := Mux({selBusRef}({idx}), {in1Ref}, {in0Ref})"
                   | _, _, _, _ =>
                       -- Fall through to individual gates
                       none

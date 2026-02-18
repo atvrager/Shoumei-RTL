@@ -287,7 +287,7 @@ def mkL2Cache : Circuit :=
     CircuitInstance.mk "Mux8x24" s!"u_l2_tag_mux_w{way}"
       ((List.range 8).foldl (fun acc set =>
         acc ++ (List.range 24).map (fun b =>
-          (s!"in{set}_b{b}", Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}"))
+          (s!"in{set}_{b}", Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}"))
       ) [] ++
       (List.range 3).map (fun i => (s!"sel_{i}", cur_idx[i]!)) ++
       (List.range 24).map (fun b => (s!"out_{b}", (way_sel_tag[way]!)[b]!)))

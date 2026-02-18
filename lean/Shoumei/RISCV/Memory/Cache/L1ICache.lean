@@ -213,10 +213,10 @@ def mkL1ICache : Circuit :=
   -- First: mux the tag from the selected set (8:1 mux of 24-bit values)
   let sel_tag := (List.range 24).map fun b => Wire.mk s!"sel_tag_{b}"
   let tag_mux_inst := CircuitInstance.mk "Mux8x24" "u_tag_mux"
-    (-- 8 inputs × 24 bits (MuxTree port naming: in{i}_b{j})
+    (-- 8 inputs × 24 bits (MuxTree port naming: in{i}_{j})
      (List.range 8).foldl (fun acc set =>
        acc ++ (List.range 24).map (fun b =>
-         (s!"in{set}_b{b}", Wire.mk s!"tag_q_{set}_{b}"))
+         (s!"in{set}_{b}", Wire.mk s!"tag_q_{set}_{b}"))
      ) [] ++
      -- 3-bit select
      (List.range 3).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
@@ -281,7 +281,7 @@ def mkL1ICache : Circuit :=
   let word_mux_inst := CircuitInstance.mk "Mux8x32" "u_word_mux"
     ((List.range 8).foldl (fun acc wordIdx =>
       acc ++ (List.range 32).map (fun b =>
-        (s!"in{wordIdx}_b{b}", Wire.mk s!"sel_line_{wordIdx * 32 + b}"))
+        (s!"in{wordIdx}_{b}", Wire.mk s!"sel_line_{wordIdx * 32 + b}"))
     ) [] ++
     (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
     (List.range 32).map (fun b => (s!"out_{b}", resp_data[b]!)))

@@ -276,7 +276,7 @@ def mkL1DCache : Circuit :=
     CircuitInstance.mk "Mux4x25" s!"u_tag_mux_w{way}"
       ((List.range 4).foldl (fun acc set =>
         acc ++ (List.range 25).map (fun b =>
-          (s!"in{set}_b{b}", Wire.mk s!"tag_q_w{way}_s{set}_{b}"))
+          (s!"in{set}_{b}", Wire.mk s!"tag_q_w{way}_s{set}_{b}"))
       ) [] ++
       (List.range 2).map (fun i => (s!"sel_{i}", idx_bits[i]!)) ++
       (List.range 25).map (fun b => (s!"out_{b}", sel_tag[b]!)))
@@ -332,7 +332,7 @@ def mkL1DCache : Circuit :=
     CircuitInstance.mk "Mux8x32" s!"u_data_word_mux_w{way}"
       ((List.range 8).foldl (fun acc wordIdx =>
         acc ++ (List.range 32).map (fun b =>
-          (s!"in{wordIdx}_b{b}", (data_ram_rd[way]!)[wordIdx * 32 + b]!))
+          (s!"in{wordIdx}_{b}", (data_ram_rd[way]!)[wordIdx * 32 + b]!))
       ) [] ++
       (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_word[way]!)[b]!)))
@@ -349,7 +349,7 @@ def mkL1DCache : Circuit :=
   let refill_word_mux_inst := CircuitInstance.mk "Mux8x32" "u_refill_word_mux"
     ((List.range 8).foldl (fun acc wordIdx =>
       acc ++ (List.range 32).map (fun b =>
-        (s!"in{wordIdx}_b{b}", refill_data[wordIdx * 32 + b]!))
+        (s!"in{wordIdx}_{b}", refill_data[wordIdx * 32 + b]!))
     ) [] ++
     (List.range 3).map (fun i => (s!"sel_{i}", pend_word_sel[i]!)) ++
     (List.range 32).map (fun b => (s!"out_{b}", refill_word[b]!)))
