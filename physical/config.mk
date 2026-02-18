@@ -26,6 +26,7 @@ export CLK_PERIOD_PS = $(shell expr 1000000 / $(FMAX_MHZ))
 # Tighter packing reduces wire lengths → lower slew on high-fanout nets
 # Sweet spot: 35%/0.70 minimizes slew violations at 500 MHz.
 # Higher packing (45%/0.82) causes routing congestion; lower (25%/0.60) has long wires.
+# For CachedCPU designs, consider lowering to 25%/0.60 (cache RAMs add significant area).
 export CORE_UTILIZATION = 35
 export CORE_ASPECT_RATIO = 1
 export PLACE_DENSITY = 0.70
