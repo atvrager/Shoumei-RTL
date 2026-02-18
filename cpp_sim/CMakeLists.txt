@@ -24,7 +24,7 @@ add_library(elf_loader STATIC ../testbench/lib/elf_loader.cpp)
 target_include_directories(elf_loader PUBLIC ../testbench/lib)
 
 # Generated C++ simulation testbench executables
-file(GLOB SIM_TESTBENCHES "../testbench/generated/sim_main_*.cpp")
+file(GLOB SIM_TESTBENCHES "../testbench/generated/sim_main_CPU_*.cpp")
 foreach(TB_FILE ${SIM_TESTBENCHES})
   get_filename_component(TB_NAME ${TB_FILE} NAME_WE)
   add_executable(${TB_NAME}

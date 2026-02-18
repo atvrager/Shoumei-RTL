@@ -172,6 +172,13 @@ def queuePointer_6_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- Register256 = Register64 × 4 (hierarchical, cache line data storage) -/
+def register256_cert : CompositionalCert := {
+  moduleName := "Register256"
+  dependencies := ["Register64"]
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-- Register24 = Register16 + Register8 (hierarchical) -/
 def register24_cert : CompositionalCert := {
   moduleName := "Register24"
@@ -333,7 +340,7 @@ def memoryHierarchy_cert : CompositionalCert := {
 
 /-- CachedCPU: CPU + MemoryHierarchy composition -/
 def cachedCPU_cert : CompositionalCert := {
-  moduleName := "CachedCPU_RV32IMF_Zicsr_Zifencei"
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B"
   dependencies := ["CPU_RV32IMF_Zicsr_Zifencei", "MemoryHierarchy"]
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
@@ -544,6 +551,7 @@ def allCerts : List CompositionalCert := [
   register66_cert,
   register68_cert,
   register91_cert,
+  register256_cert,
   queue2_8_cert,
   queue64_32_cert,
   queue64_6_cert,
