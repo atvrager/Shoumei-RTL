@@ -172,6 +172,13 @@ def queuePointer_6_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
+/-- Register256 = Register64 × 4 (hierarchical, cache line data storage) -/
+def register256_cert : CompositionalCert := {
+  moduleName := "Register256"
+  dependencies := ["Register64"]
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-- Register24 = Register16 + Register8 (hierarchical) -/
 def register24_cert : CompositionalCert := {
   moduleName := "Register24"
@@ -299,6 +306,43 @@ def lsu_cert : CompositionalCert := {
   moduleName := "LSU"
   dependencies := ["MemoryExecUnit", "StoreBuffer8"]
   proofReference := "Shoumei.RISCV.Memory.LSUProofs"
+}
+
+/-! ## Cache Hierarchy -/
+
+/-- L1ICache: Direct-mapped L1 instruction cache -/
+def l1iCache_cert : CompositionalCert := {
+  moduleName := "L1ICache"
+  dependencies := ["Register24", "EqualityComparator24", "Mux8x24", "Mux8x32"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L1ICacheProofs"
+}
+
+/-- L1DCache: 2-way set-associative L1 data cache -/
+def l1dCache_cert : CompositionalCert := {
+  moduleName := "L1DCache"
+  dependencies := ["Register25", "EqualityComparator25", "Mux4x25", "Mux8x32"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L1DCacheProofs"
+}
+
+/-- L2Cache: 2-way set-associative shared L2 cache -/
+def l2Cache_cert : CompositionalCert := {
+  moduleName := "L2Cache"
+  dependencies := ["Register24", "EqualityComparator24", "Mux8x24"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.L2CacheProofs"
+}
+
+/-- MemoryHierarchy: L1I + L1D + L2 composition -/
+def memoryHierarchy_cert : CompositionalCert := {
+  moduleName := "MemoryHierarchy"
+  dependencies := ["L1ICache", "L1DCache", "L2Cache"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs"
+}
+
+/-- CachedCPU: CPU + MemoryHierarchy composition -/
+def cachedCPU_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B"
+  dependencies := ["CPU_RV32IMF_Zicsr_Zifencei", "MemoryHierarchy"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
 /-! ## Decoders (LUT-based, no Chisel equivalent) -/
@@ -507,6 +551,7 @@ def allCerts : List CompositionalCert := [
   register66_cert,
   register68_cert,
   register91_cert,
+  register256_cert,
   queue2_8_cert,
   queue64_32_cert,
   queue64_6_cert,
@@ -547,6 +592,12 @@ def allCerts : List CompositionalCert := [
   -- Memory
   storeBuffer8_cert,
   lsu_cert,
+  -- Cache Hierarchy
+  l1iCache_cert,
+  l1dCache_cert,
+  l2Cache_cert,
+  memoryHierarchy_cert,
+  cachedCPU_cert,
   -- Decoders
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,

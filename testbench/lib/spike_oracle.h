@@ -24,8 +24,10 @@ struct SpikeStepResult {
 
 class SpikeOracle {
 public:
-    // Load ELF and configure rv32im, M-mode, memory at 0x0
-    explicit SpikeOracle(const std::string& elf_path);
+    // Load ELF and configure M-mode, memory at 0x0
+    // isa defaults to "rv32imf" if not specified
+    explicit SpikeOracle(const std::string& elf_path,
+                         const std::string& isa = "rv32imf");
     ~SpikeOracle();
 
     // Step one instruction, return state for comparison
@@ -42,6 +44,7 @@ public:
     uint32_t get_pc() const;
 
 private:
+    std::string isa_storage_;  // keeps ISA string alive for cfg_->isa pointer
     std::unique_ptr<cfg_t> cfg_;
     std::unique_ptr<simif_t> simif_;
     std::unique_ptr<processor_t> proc_;

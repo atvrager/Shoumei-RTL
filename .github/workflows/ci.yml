@@ -355,6 +355,12 @@ jobs:
       - name: Run all ELF tests (microcoded)
         run: make -C testbench run-all-tests-microcoded
 
+      - name: Build cached simulation
+        run: make -C testbench sim-cached
+
+      - name: Run cached ELF tests
+        run: make -C testbench run-all-tests-cached
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
@@ -364,6 +370,7 @@ jobs:
             output/test-results.csv
             output/test-results-xprop.csv
             output/test-results-microcoded.csv
+            output/test-results-cached.csv
           retention-days: 90
 
   cppsim:

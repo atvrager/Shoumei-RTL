@@ -62,7 +62,7 @@ private def makeIndexedWires (name : String) (count : Nat) : List Wire :=
 -- Helper: Create multi-bit indexed wires (for each input, create width wires)
 private def makeMultiBitWires (basename : String) (count : Nat) (width : Nat) : List (List Wire) :=
   (List.range count).map (fun i =>
-    (List.range width).map (fun j => Wire.mk s!"{basename}{i}_b{j}"))
+    (List.range width).map (fun j => Wire.mk s!"{basename}{i}_{j}"))
 
 -- Helper: Compute log2 ceiling (number of select bits needed)
 private def log2Ceil (n : Nat) : Nat :=

@@ -76,7 +76,11 @@ def wireWriteStmt (inputToIndex : List (Wire × Nat))
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
   let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
-  let allWires := gateOutputs ++ instanceWires
+  let ramWires := c.rams.flatMap (fun ram =>
+    let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
+    let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
+    wpWires ++ rpWires)
+  let allWires := gateOutputs ++ instanceWires ++ ramWires
   (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)).eraseDups
 
 -- Helper: find all DFF output wires (need special handling)
@@ -114,7 +118,8 @@ def findResetWires (c : Circuit) : List Wire :=
 def hasSequentialElements (c : Circuit) : Bool :=
   c.hasSequentialElements ||
   c.instances.any (fun inst =>
-    inst.portMap.any (fun (pname, _) => pname == "clock"))
+    inst.portMap.any (fun (pname, _) => pname == "clock")) ||
+  !c.rams.isEmpty
 
 /-! ## Instance Support -/
 
@@ -290,16 +295,29 @@ def generatePortDeclarations (c : Circuit) (useBundledIO : Bool) : String :=
     let outputDecls := c.outputs.map (fun w => s!"  bool* {w.name} = nullptr;")
     joinLines (inputDecls ++ outputDecls)
 
+-- Generate RAM storage declarations
+def generateRAMDeclarations (c : Circuit) : String :=
+  if c.rams.isEmpty then ""
+  else
+    let decls := c.rams.map (fun ram =>
+      s!"  bool {ram.name}[{ram.depth}][{ram.width}] = " ++ "{};")
+    joinLines decls
+
 -- Generate internal signal declarations — all plain bool
 def generateSignalDeclarations (c : Circuit) : String :=
   let internalWires := findInternalWires c
   let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
   let dffSavedDecls := dffGates.map (fun g => s!"  bool d_saved_{g.output.name} = false;")
-  if internalWires.isEmpty && dffSavedDecls.isEmpty then
+  let ramDecls := generateRAMDeclarations c
+  let wireDecls := internalWires.map (fun w => s!"  bool {w.name} = false;")
+  let allDecls := wireDecls ++ dffSavedDecls
+  if allDecls.isEmpty && ramDecls.isEmpty then
     ""
   else
-    let decls := internalWires.map (fun w => s!"  bool {w.name} = false;")
-    joinLines (decls ++ dffSavedDecls)
+    let base := joinLines allDecls
+    if ramDecls.isEmpty then base
+    else if base.isEmpty then ramDecls
+    else base ++ "\n" ++ ramDecls
 
 -- Generate constructor
 def generateConstructor (c : Circuit) (_useBundledIO : Bool) (allCircuits : List Circuit := []) : String :=
@@ -378,6 +396,57 @@ def topSortCombGates (c : Circuit) : List Gate :=
           loop notReady newAvail (sorted ++ ready) fuel
   loop combGates available [] (combGates.length + 1)
 
+-- Generate RAM read logic (async reads go in comb_logic)
+def generateRAMReadLogic (c : Circuit) (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (portNames : List String := [])
+    (implPrefix : String := "") : String :=
+  if c.rams.isEmpty then ""
+  else
+    let reads := c.rams.flatMap (fun ram =>
+      ram.readPorts.map (fun rp =>
+        -- Build address computation: addr = addr[n-1]*2^(n-1) + ... + addr[0]
+        let addrParts := rp.addr.enum.map (fun (i, w) =>
+          let ref := wireReadExpr inputToIndex outputToIndex w portNames implPrefix
+          if i == 0 then ref
+          else s!"({ref} ? {1 <<< i} : 0)")
+        let addrExpr := if addrParts.length == 1 then s!"({addrParts.head!} ? 1 : 0)"
+          else String.intercalate " + " addrParts
+        -- Read each output bit
+        let bitReads := rp.data.enum.map (fun (idx, w) =>
+          let lhs := wireWriteStmt inputToIndex outputToIndex w
+            s!"{implPrefix}{ram.name}[{addrExpr}][{idx}]" portNames implPrefix
+          lhs)
+        joinLines bitReads))
+    joinLines reads
+
+-- Generate RAM write logic (clocked writes go in seq_tick)
+def generateRAMWriteLogic (c : Circuit) (inputToIndex : List (Wire × Nat))
+    (outputToIndex : List (Wire × Nat)) (portNames : List String := [])
+    (implPrefix : String := "") : String :=
+  if c.rams.isEmpty then ""
+  else
+    let writes := c.rams.flatMap (fun ram =>
+      ram.writePorts.map (fun wp =>
+        let addrParts := wp.addr.enum.map (fun (i, w) =>
+          let ref := wireReadExpr inputToIndex outputToIndex w portNames implPrefix
+          if i == 0 then ref
+          else s!"({ref} ? {1 <<< i} : 0)")
+        let addrExpr := if addrParts.length == 1 then s!"({addrParts.head!} ? 1 : 0)"
+          else String.intercalate " + " addrParts
+        let enRef := wireReadExpr inputToIndex outputToIndex wp.en portNames implPrefix
+        let bitWrites := wp.data.enum.map (fun (idx, w) =>
+          let ref := wireReadExpr inputToIndex outputToIndex w portNames implPrefix
+          s!"      {implPrefix}{ram.name}[addr][{idx}] = {ref};")
+        joinLines [
+          s!"    " ++ "{",
+          s!"      int addr = {addrExpr};",
+          s!"      if ({enRef}) " ++ "{",
+          joinLines bitWrites,
+          "      }",
+          "    }"
+        ]))
+    joinLines writes
+
 -- Generate comb_logic method body
 def generateCombMethod (c : Circuit) (useBundledIO : Bool)
     (portNames : List String := []) (implPrefix : String := "") : String :=
@@ -385,12 +454,14 @@ def generateCombMethod (c : Circuit) (useBundledIO : Bool)
   let outputToIndex := if useBundledIO then c.outputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
 
   let combGates := topSortCombGates c
-  if combGates.isEmpty then ""
+  let ramReads := generateRAMReadLogic c inputToIndex outputToIndex portNames implPrefix
+  if combGates.isEmpty && ramReads.isEmpty then ""
   else
     let assignments := combGates.map (fun g => generateCombGateCppSim inputToIndex outputToIndex g portNames implPrefix)
     joinLines [
       s!"void {c.name}::comb_logic() " ++ "{",
       joinLines assignments,
+      if ramReads.isEmpty then "" else "  // RAM async reads\n" ++ ramReads,
       "}"
     ]
 
@@ -430,7 +501,8 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
   let inputToIndex : List (Wire × Nat) := []
   let outputToIndex : List (Wire × Nat) := []
   let dffGates := c.gates.filter (fun g => g.gateType.isDFF)
-  if dffGates.isEmpty then ""
+  let ramWrites := generateRAMWriteLogic c inputToIndex outputToIndex portNames implPrefix
+  if dffGates.isEmpty && ramWrites.isEmpty then ""
   else
     let resets := findResetWires c
     let resetName := match resets.head? with
@@ -448,6 +520,7 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
       joinLines resetInits,
       "  } else {",
       joinLines latchLines,
+      if ramWrites.isEmpty then "" else "    // RAM clocked writes\n" ++ ramWrites,
       "  }",
       "}"
     ]
@@ -590,6 +663,8 @@ def toCppSimHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
     ] ++
     processDecls ++
     ["",
+      "  void bind_ports() {}",
+      "",
       "  // Constructor",
       ctor,
       "};",

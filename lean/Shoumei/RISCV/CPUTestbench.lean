@@ -43,7 +43,7 @@ def cpuTestbenchConfig : TestbenchConfig := {
   tohostAddr := 0x1000
   putcharAddr := some 0x1004
   timeoutCycles := 100000
-  constantPorts := [("zero", false), ("one", true)]
+  constantPorts := [("zero", false), ("one", true), ("fetch_stall_ext", false), ("dmem_stall_ext", false)]
   tbName := some "tb_cpu"
 }
 

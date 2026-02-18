@@ -106,7 +106,11 @@ def autoDetectSignalGroups (wires : List Wire) : List SignalGroup :=
 def findInternalWires (c : Circuit) : List Wire :=
   let gateOutputs := c.gates.map (fun g => g.output)
   let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (fun p => p.2))
-  (gateOutputs ++ instanceWires).eraseDups.filter (fun w =>
+  let ramWires := c.rams.flatMap (fun ram =>
+    let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
+    let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
+    wpWires ++ rpWires)
+  (gateOutputs ++ instanceWires ++ ramWires).eraseDups.filter (fun w =>
     !c.inputs.contains w && !c.outputs.contains w
   )
 
@@ -837,6 +841,52 @@ def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
   let instances := c.instances.map (generateInstance ctx c allCircuits)
   joinLines instances
 
+/-! ## RAM Primitive Generation -/
+
+/-- Generate SystemVerilog for a single RAMPrimitive.
+    Emits a reg array with clocked write and combinational (async) read. -/
+def generateRAM (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
+  let addrBits := ram.readPorts.head?.map (·.addr.length) |>.getD 1
+  let depthMinusOne := ram.depth - 1
+  -- RAM array declaration
+  let arrayDecl := s!"  reg [{ram.width - 1}:0] {ram.name} [0:{depthMinusOne}];"
+  -- Write ports
+  let clkRef := wireRef ctx c ram.clock
+  let writePorts := ram.writePorts.enum.map (fun (_, wp) =>
+    let enRef := wireRef ctx c wp.en
+    -- Build address concatenation (MSB first)
+    let addrRefs := wp.addr.reverse.map (wireRef ctx c ·)
+    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
+                    else "{" ++ String.intercalate ", " addrRefs ++ "}"
+    -- Build data concatenation (MSB first)
+    let dataRefs := wp.data.reverse.map (wireRef ctx c ·)
+    let dataExpr := if dataRefs.length == 1 then dataRefs.head!
+                    else "{" ++ String.intercalate ", " dataRefs ++ "}"
+    joinLines [
+      s!"  always @(posedge {clkRef})",
+      s!"    if ({enRef}) {ram.name}[{addrExpr}] <= {dataExpr};"
+    ])
+  -- Read ports (async)
+  let readPorts := ram.readPorts.enum.map (fun (_, rp) =>
+    -- Build address concatenation (MSB first)
+    let addrRefs := rp.addr.reverse.map (wireRef ctx c ·)
+    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
+                    else "{" ++ String.intercalate ", " addrRefs ++ "}"
+    -- Assign individual output bits from the read data
+    let readDataWire := s!"{ram.name}[{addrExpr}]"
+    let assigns := rp.data.enum.map (fun (idx, w) =>
+      s!"  assign {wireRef ctx c w} = {readDataWire}[{idx}];")
+    joinLines assigns)
+  let _ := addrBits  -- suppress unused warning
+  joinLines ([arrayDecl] ++ writePorts ++ readPorts)
+
+/-- Generate all RAM primitives -/
+def generateRAMs (ctx : Context) (c : Circuit) : String :=
+  if c.rams.isEmpty then ""
+  else
+    let ramStrs := c.rams.map (generateRAM ctx c)
+    joinLines ramStrs
+
 /-! ## Module Generation -/
 
 /-- Generate complete SystemVerilog module for a circuit -/
@@ -865,6 +915,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let combLogic := generateCombLogic ctx c
   let registers := generateRegisters ctx c
   let instances := generateInstances ctx c allCircuits
+  let rams := generateRAMs ctx c
 
   let body := joinLines [
     portSection,
@@ -872,6 +923,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     if internalSignals.isEmpty then "" else internalSignals ++ "\n",
     if combLogic.isEmpty then "" else combLogic ++ "\n",
     if registers.isEmpty then "" else registers ++ "\n",
+    if rams.isEmpty then "" else rams ++ "\n",
     if instances.isEmpty then "" else instances
   ]
 

@@ -612,21 +612,32 @@ def mkFPExecUnit : Circuit :=
     [Gate.mkOR t4_valid sqrt_valid valid_out]
 
   -- Pipeline collision prevention: after dispatching to a pipelined sub-unit (adder, mul, FMA),
-  -- set busy for 1 cycle to prevent back-to-back dispatches to different pipelines.
-  -- Without this, e.g., FADD(4-cycle) then FMUL(3-cycle) on consecutive cycles collide.
+  -- keep busy for 2 cycles to prevent output collisions from different pipelines.
+  -- With latencies ADD=3, MUL=3, FMA=5, a 2-cycle gap (1 DFF) allows FMA@t0 and ADD@t2
+  -- to both complete at t+5=t+2+3, dropping one result. A 3-cycle gap (2 DFFs) prevents
+  -- all collisions: min gap=3 means completion times differ by at least |L_A - L_B - 3|.
   let pipe_dispatched := Wire.mk "pipe_dispatched"
-  let pipe_was_active := Wire.mk "pipe_was_active"
+  let pipe_active_d1 := Wire.mk "pipe_active_d1"
+  let pipe_active_d2 := Wire.mk "pipe_active_d2"
   let _pipe_any := Wire.mk "pipe_any"
   let pipe_collision_gates := [
     Gate.mkOR add_valid_in mul_valid_in (Wire.mk "pipe_am"),
     Gate.mkOR (Wire.mk "pipe_am") fma_valid_in pipe_dispatched
   ]
-  let pipe_collision_inst : CircuitInstance := {
+  let pipe_collision_inst1 : CircuitInstance := {
     moduleName := "DFlipFlop"
-    instName := "u_pipe_active_reg"
-    portMap := [("d", pipe_dispatched), ("q", pipe_was_active),
+    instName := "u_pipe_active_reg1"
+    portMap := [("d", pipe_dispatched), ("q", pipe_active_d1),
                 ("clock", clock), ("reset", reset_misc)]
   }
+  let pipe_collision_inst2 : CircuitInstance := {
+    moduleName := "DFlipFlop"
+    instName := "u_pipe_active_reg2"
+    portMap := [("d", pipe_active_d1), ("q", pipe_active_d2),
+                ("clock", clock), ("reset", reset_misc)]
+  }
+  let pipe_was_active := Wire.mk "pipe_was_active"
+  let pipe_active_or_gate := [Gate.mkOR pipe_active_d1 pipe_active_d2 pipe_was_active]
 
   -- Busy = div_busy OR sqrt_busy OR pipe_was_active OR any_pipe_output
   -- any_pipe_output prevents misc from dispatching on the same cycle as a pipeline result,
@@ -699,9 +710,9 @@ def mkFPExecUnit : Circuit :=
     outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy, result_is_int]
     gates := reset_buf_gates ++ decode_gates ++ misc_valid_gate ++
              mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
-             pipe_collision_gates ++ busy_gate ++ int_result_gates
+             pipe_collision_gates ++ pipe_active_or_gate ++ busy_gate ++ int_result_gates
     instances := [misc_inst, adder_inst, mul_inst, fma_inst, div_inst, sqrt_inst,
-                  pipe_collision_inst]
+                  pipe_collision_inst1, pipe_collision_inst2]
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
       { name := "src2", width := 32, wires := src2 },

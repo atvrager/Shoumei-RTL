@@ -1,8 +1,8 @@
-# SDC Constraints for CPU_RV32IM
+# SDC Constraints for Shoumei RTL
 # Generated for OpenROAD physical synthesis flow
 # NOTE: ASAP7 uses picoseconds as the time unit
 
-current_design CPU_RV32IM
+# Design name is set by ORFS from DESIGN_NAME env var
 
 set clk_name  clock
 

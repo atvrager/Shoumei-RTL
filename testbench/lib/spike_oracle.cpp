@@ -66,9 +66,9 @@ private:
     std::vector<char> mem_;
 };
 
-SpikeOracle::SpikeOracle(const std::string& elf_path)
-    : cfg_(std::make_unique<cfg_t>()) {
-    cfg_->isa = "rv32imf";
+SpikeOracle::SpikeOracle(const std::string& elf_path, const std::string& isa)
+    : isa_storage_(isa), cfg_(std::make_unique<cfg_t>()) {
+    cfg_->isa = isa_storage_.c_str();
     cfg_->priv = "m";
     cfg_->hartids = {0};
     cfg_->start_pc = 0;
@@ -85,10 +85,13 @@ SpikeOracle::SpikeOracle(const std::string& elf_path)
     flat->register_hart(0, proc_.get());
     proc_->get_state()->pc = 0;
 
-    // Enable FP: set MSTATUS.FS = Dirty (bits 14:13 = 11)
-    // Without this, Spike traps on any FP instruction with illegal-insn
-    proc_->put_csr(/*CSR_MSTATUS*/ 0x300,
-                   proc_->get_csr(/*CSR_MSTATUS*/ 0x300) | 0x6000);
+    // Enable FP if ISA includes F extension
+    if (isa.find('f') != std::string::npos || isa.find('F') != std::string::npos) {
+        // Set MSTATUS.FS = Dirty (bits 14:13 = 11)
+        // Without this, Spike traps on any FP instruction with illegal-insn
+        proc_->put_csr(/*CSR_MSTATUS*/ 0x300,
+                       proc_->get_csr(/*CSR_MSTATUS*/ 0x300) | 0x6000);
+    }
 }
 
 SpikeOracle::~SpikeOracle() = default;
