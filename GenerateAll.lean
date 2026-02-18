@@ -268,7 +268,7 @@ def allCircuits : List Circuit := [
   mkL1DCache,
   mkL2Cache,
   mkMemoryHierarchy,
-  mkCachedCPU rv32imConfig,
+  mkCachedCPU rv32imfConfig,
 
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,

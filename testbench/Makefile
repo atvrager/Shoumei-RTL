@@ -76,8 +76,8 @@ COSIM_CACHED_BIN := $(BUILD_DIR)/cosim_cached_shoumei
 TB_CACHED_SOURCES := $(wildcard $(TB_DIR)/generated/tb_cached_*.sv)
 SIM_CACHED_CPP    := $(TB_DIR)/generated/sim_main_tb_cached_cpu.cpp
 COSIM_CACHED_CPP  := $(TB_DIR)/generated/cosim_main_tb_cached_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-                      $(TB_DIR)/generated/lean_sim_CachedCPU_RV32IM_Zicsr_Zifencei.cpp \
-                      $(TB_DIR)/generated/cpu_setup_CachedCPU_RV32IM_Zicsr_Zifencei.cpp \
+                      $(TB_DIR)/generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B.cpp \
+                      $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B.cpp \
                       $(TB_DIR)/lib/elf_loader.cpp
 
 sim: $(SIM_BIN)
@@ -330,6 +330,16 @@ $(SIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
 		-o $@ \
 		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(SIM_CACHED_CPP)
 	@echo "Built: $@ (cached CPU)"
+
+sim-cached-trace: $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
+	@rm -rf $(BUILD_DIR)/verilator_cached_trace
+	@mkdir -p $(BUILD_DIR)/verilator_cached_trace
+	$(VERILATOR) $(VFLAGS_CACHED) --trace-fst \
+		--Mdir $(BUILD_DIR)/verilator_cached_trace \
+		-CFLAGS "-std=c++17 -O2 -DVM_TRACE=1" \
+		-o $(BUILD_DIR)/sim_cached_shoumei_trace \
+		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(SIM_CACHED_CPP)
+	@echo "Built: $(BUILD_DIR)/sim_cached_shoumei_trace (cached with FST trace)"
 
 cosim-cached: $(COSIM_CACHED_BIN)
 $(COSIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(COSIM_CACHED_CPP) $(CPPSIM_OBJS) $(SPIKE_LIB_FILE)

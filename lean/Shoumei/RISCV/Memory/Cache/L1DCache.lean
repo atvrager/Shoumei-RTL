@@ -338,9 +338,27 @@ def mkL1DCache : Circuit :=
       (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_word[way]!)[b]!)))
 
-  -- Final data mux: way1_hit selects between way0 and way1 data (combinational)
+  -- Hit data mux: way1_hit selects between way0 and way1 data
+  let hit_data := (List.range 32).map fun b => Wire.mk s!"hit_data_{b}"
+  let hit_data_mux_gates := (List.range 32).map fun b =>
+    Gate.mkMUX (way_word[0]![b]!) (way_word[1]![b]!) way_hit[1]! hit_data[b]!
+
+  -- Refill word mux: extract the requested word from 256-bit refill data using pend_q[4:2]
+  let pend_word_sel := [pend_q[2]!, pend_q[3]!, pend_q[4]!]
+  let refill_word := (List.range 32).map fun b => Wire.mk s!"refill_word_{b}"
+
+  let refill_word_mux_inst := CircuitInstance.mk "Mux8x32" "u_refill_word_mux"
+    ((List.range 8).foldl (fun acc wordIdx =>
+      acc ++ (List.range 32).map (fun b =>
+        (s!"in{wordIdx}_b{b}", refill_data[wordIdx * 32 + b]!))
+    ) [] ++
+    (List.range 3).map (fun i => (s!"sel_{i}", pend_word_sel[i]!)) ++
+    (List.range 32).map (fun b => (s!"out_{b}", refill_word[b]!)))
+
+  -- Final resp_data_comb: MUX(hit_data, refill_word, refill_done)
+  -- On refill_done, return the word from refill data; otherwise return hit data
   let resp_data_mux_gates := (List.range 32).map fun b =>
-    Gate.mkMUX (way_word[0]![b]!) (way_word[1]![b]!) way_hit[1]! resp_data_comb[b]!
+    Gate.mkMUX hit_data[b]! refill_word[b]! (Wire.mk "refill_done") resp_data_comb[b]!
 
   -- FSM decode
   let not_fsm := (List.range 3).map fun i => Wire.mk s!"not_fsm_{i}"
@@ -351,12 +369,15 @@ def mkL1DCache : Circuit :=
      Gate.mkAND not_fsm[0]! not_fsm[1]! (Wire.mk "idle_01"),
      Gate.mkAND (Wire.mk "idle_01") not_fsm[2]! is_idle]
 
-  -- resp_valid_comb = hit AND req_valid AND is_idle (for both reads and writes)
+  -- resp_valid_comb = (read_hit AND is_idle) OR refill_done
   let not_we := Wire.mk "not_we"
+  let read_hit := Wire.mk "read_hit"
   let resp_valid_gates := [
     Gate.mkNOT req_we not_we,
     Gate.mkAND req_valid hit (Wire.mk "rv_tmp1"),
-    Gate.mkAND (Wire.mk "rv_tmp1") is_idle resp_valid_comb
+    Gate.mkAND (Wire.mk "rv_tmp1") not_we (Wire.mk "rv_tmp2"),
+    Gate.mkAND (Wire.mk "rv_tmp2") is_idle read_hit,
+    Gate.mkOR read_hit (Wire.mk "refill_done") resp_valid_comb
   ]
 
   -- Register resp_valid and resp_data for 1-cycle hit latency
@@ -647,7 +668,7 @@ def mkL1DCache : Circuit :=
   let allGates :=
     fsm_gates ++ pend_dffs ++ [pend_victim_dff] ++ lru_gates ++ valid_dffs ++ dirty_dffs ++
     valid_mux_gates ++ hit_gates ++ [hit_gate] ++
-    resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++ resp_reg_gates ++
+    hit_data_mux_gates ++ resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++ resp_reg_gates ++
     miss_gates ++ [miss_valid_gate] ++ miss_addr_gates ++ stall_gates ++
     [wb_valid_gate] ++ wb_addr_gates ++ wb_data_gates ++ [fence_busy_gate] ++
     const_zero_gates ++
@@ -661,7 +682,8 @@ def mkL1DCache : Circuit :=
   let allInstances :=
     tag_instances ++ data_instances ++
     tag_mux_instances ++ tag_cmp_instances ++
-    data_set_mux_instances ++ data_word_mux_instances
+    data_set_mux_instances ++ data_word_mux_instances ++
+    [refill_word_mux_inst]
 
   { name := "L1DCache"
     inputs := [clock, reset, req_valid, req_we] ++ req_addr ++ req_wdata ++ req_size ++

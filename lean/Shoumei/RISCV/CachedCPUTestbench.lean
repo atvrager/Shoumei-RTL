@@ -17,7 +17,7 @@ open Shoumei.RISCV.Memory.Cache
 /-- Testbench configuration for the CachedCPU (CPU + L1I/L1D/L2).
     Uses 256-bit cache-line memory interface instead of separate IMEM/DMEM. -/
 def cachedCpuTestbenchConfig : TestbenchConfig := {
-  circuit := mkCachedCPU rv32imConfig
+  circuit := mkCachedCPU rv32imfConfig
   imemPort := { addrSignal := "unused" }
   dmemPort := { addrSignal := "unused" }
   cacheLineMemPort := some {
@@ -34,6 +34,7 @@ def cachedCpuTestbenchConfig : TestbenchConfig := {
   tohostAddr := 0x1000
   putcharAddr := some 0x1004
   timeoutCycles := 100000
+  spikeIsa := "rv32imf_zicsr_zifencei"
 }
 
 end Shoumei.RISCV.CachedCPUTestbench

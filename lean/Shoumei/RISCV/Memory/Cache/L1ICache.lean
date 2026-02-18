@@ -151,6 +151,17 @@ def mkL1ICache : Circuit :=
   let fsm_gates := (List.range 2).map fun i =>
     Gate.mkDFF fsm_d[i]! clock reset fsm_q[i]!
 
+  -- Miss Address Register (MAR): captures req_addr on miss_detect.
+  -- Needed because CPU's fetch_pc may change during REFILL_WAIT (e.g., branch).
+  let mar_d := (List.range 32).map fun i => Wire.mk s!"mar_d_{i}"
+  let mar_q := (List.range 32).map fun i => Wire.mk s!"mar_q_{i}"
+  let mar_gates := (List.range 32).map fun i =>
+    Gate.mkDFF mar_d[i]! clock reset mar_q[i]!
+
+  -- Refill address decomposition (from MAR, used for refill writes)
+  let refill_idx_bits := [mar_q[5]!, mar_q[6]!, mar_q[7]!]
+  let refill_tag_bits := (List.range 24).map fun i => mar_q[i + 8]!
+
   -- Tag storage: 8 sets × 24-bit tags (using Register24 instances)
   let tag_instances := (List.range 8).map fun set =>
     let d_wires := (List.range 24).map fun b => Wire.mk s!"tag_d_{set}_{b}"
@@ -177,6 +188,26 @@ def mkL1ICache : Circuit :=
        [("clock", clock), ("reset", reset)] ++
        (List.range 256).map (fun b => (s!"q_{b}", q_wires[b]!))),
      d_wires, q_wires)
+
+  -- Refill decoder: 3-to-8 from MAR index bits (for refill writes)
+  let not_refill_idx := (List.range 3).map fun i => Wire.mk s!"not_ridx_{i}"
+  let not_refill_idx_gates := (List.range 3).map fun i =>
+    Gate.mkNOT refill_idx_bits[i]! not_refill_idx[i]!
+
+  let refill_dec_out := (List.range 8).map fun i => Wire.mk s!"rdec_idx_{i}"
+  let refill_dec_and_wires := (List.range 8).map fun i =>
+    let b0 := if i % 2 == 0 then not_refill_idx[0]! else refill_idx_bits[0]!
+    let b1 := if (i / 2) % 2 == 0 then not_refill_idx[1]! else refill_idx_bits[1]!
+    let b2 := if (i / 4) % 2 == 0 then not_refill_idx[2]! else refill_idx_bits[2]!
+    (b0, b1, b2, Wire.mk s!"rdec_tmp01_{i}")
+
+  let refill_dec_gates := (List.range 8).foldl (fun acc i =>
+    let (b0, b1, b2, tmp) := refill_dec_and_wires[i]!
+    acc ++ [
+      Gate.mkAND b0 b1 tmp,
+      Gate.mkAND tmp b2 refill_dec_out[i]!
+    ]
+  ) []
 
   -- Tag comparator for the selected set
   -- First: mux the tag from the selected set (8:1 mux of 24-bit values)
@@ -297,21 +328,23 @@ def mkL1ICache : Circuit :=
     Gate.mkAND resp_tmp is_idle resp_valid
   ]
 
-  -- miss_valid = miss_detect (during IDLE, on miss)
-  let miss_valid_gate := Gate.mkBUF miss_detect miss_valid
+  -- miss_valid = miss_detect OR is_refill_req OR is_refill_wait
+  -- Must persist while waiting, so L2 can accept when it becomes idle
+  let miss_valid_gate := Gate.mkOR miss_detect (Wire.mk "not_idle_for_miss") miss_valid
+  let not_idle_miss_gates := [
+    Gate.mkOR (Wire.mk "is_refill_req") (Wire.mk "is_refill_wait") (Wire.mk "not_idle_for_miss")
+  ]
 
-  -- miss_addr = req_addr (aligned to cache line: bits [31:5] preserved, [4:0] = 0)
+  -- miss_addr = line-aligned address. Use MAR (mar_q) when not idle, req_addr in IDLE.
+  -- MAR captures req_addr on miss_detect and holds it through REFILL_REQ/REFILL_WAIT.
   let miss_addr_gates := (List.range 32).map fun i =>
     if i < 5 then
       -- Clear low 5 bits for line alignment
       Gate.mkBUF (Wire.mk "const_zero") (miss_addr[i]!)
     else
-      Gate.mkBUF req_addr[i]! miss_addr[i]!
+      Gate.mkMUX req_addr[i]! mar_q[i]! (Wire.mk "not_idle_for_miss") miss_addr[i]!
 
-  -- stall = NOT is_idle OR (is_idle AND req_valid AND NOT hit)
-  -- Note: stall must stay high whenever L1I is not idle (REFILL_REQ/REFILL_WAIT),
-  -- regardless of req_valid, to avoid feedback oscillation with the CPU's
-  -- fetch_stalled signal (which disables ifetch_valid, which would clear stall).
+  -- stall = NOT is_idle OR miss_detect
   let not_idle := Wire.mk "not_idle"
   let stall_gates := [
     Gate.mkNOT is_idle not_idle,
@@ -321,22 +354,43 @@ def mkL1ICache : Circuit :=
   -- FSM next-state logic
   -- In IDLE: if miss → go to REFILL_REQ (01)
   -- In REFILL_REQ: go to REFILL_WAIT (10)
-  -- In REFILL_WAIT: if refill_valid → go to IDLE (00), else stay
+  -- In REFILL_WAIT: if refill_valid → go to REFILL_DONE (11), else stay
+  -- In REFILL_DONE: stay until req_valid (CPU re-requests), then go to IDLE (00)
+  --   This prevents the stall→ifetch_valid feedback loop from causing
+  --   a 1-cycle gap where stall=0 but req_valid=0, which would let the CPU
+  --   advance its PC without actually fetching the instruction.
   let is_refill_req := Wire.mk "is_refill_req"
   let is_refill_wait := Wire.mk "is_refill_wait"
+  let is_refill_done := Wire.mk "is_refill_done"
   let refill_done := Wire.mk "refill_done"
+  let not_req_valid := Wire.mk "not_req_valid"
+  let stay_done := Wire.mk "stay_done"
   let fsm_next_gates := [
     Gate.mkAND fsm_q[0]! not_fsm1 is_refill_req,   -- 01
     Gate.mkAND fsm_q[1]! not_fsm0 is_refill_wait,   -- 10
+    Gate.mkAND fsm_q[0]! fsm_q[1]! is_refill_done,  -- 11
     Gate.mkAND is_refill_wait refill_valid refill_done,
-    -- fsm_d[0] = miss_detect (IDLE→REFILL_REQ sets bit 0)
-    Gate.mkBUF miss_detect fsm_d[0]!,
-    -- fsm_d[1] = is_refill_req (REFILL_REQ→REFILL_WAIT sets bit 1)
+    Gate.mkNOT req_valid not_req_valid,
+    Gate.mkAND is_refill_done not_req_valid stay_done,  -- stay in REFILL_DONE
+    -- fsm_d[0] = miss_detect (IDLE→REFILL_REQ)
+    --            OR refill_done (REFILL_WAIT→REFILL_DONE)
+    --            OR stay_done (REFILL_DONE stays until req_valid)
+    Gate.mkOR miss_detect refill_done (Wire.mk "fsm_d0_tmp"),
+    Gate.mkOR (Wire.mk "fsm_d0_tmp") stay_done fsm_d[0]!,
+    -- fsm_d[1] = is_refill_req (REFILL_REQ→REFILL_WAIT)
     --            OR (is_refill_wait AND NOT refill_valid) (stay in REFILL_WAIT)
+    --            OR refill_done (REFILL_WAIT→REFILL_DONE)
+    --            OR stay_done (REFILL_DONE stays until req_valid)
     Gate.mkNOT refill_valid (Wire.mk "not_refill_valid"),
     Gate.mkAND is_refill_wait (Wire.mk "not_refill_valid") (Wire.mk "stay_wait"),
-    Gate.mkOR is_refill_req (Wire.mk "stay_wait") fsm_d[1]!
+    Gate.mkOR is_refill_req (Wire.mk "stay_wait") (Wire.mk "fsm_d1_tmp"),
+    Gate.mkOR (Wire.mk "fsm_d1_tmp") refill_done (Wire.mk "fsm_d1_tmp2"),
+    Gate.mkOR (Wire.mk "fsm_d1_tmp2") stay_done fsm_d[1]!
   ]
+
+  -- MAR capture: save req_addr on miss_detect, hold otherwise
+  let mar_capture_gates := (List.range 32).map fun i =>
+    Gate.mkMUX mar_q[i]! req_addr[i]! miss_detect mar_d[i]!
 
   -- FENCE.I: clear all valid bits on fence_i
   -- valid_d[i] = (current write_en AND set_match) OR (existing valid AND NOT fence_i)
@@ -351,21 +405,21 @@ def mkL1ICache : Circuit :=
       acc ++ [
         -- hold = valid_q AND NOT fence_i
         Gate.mkAND valid_q[i]! not_fence_i hold,
-        -- refill_set_match = refill_done AND dec_idx[i] (reuse decoder)
-        Gate.mkAND refill_done dec_out[i]! refill_set_match,
+        -- refill_set_match = refill_done AND rdec_idx[i] (use MAR decoder)
+        Gate.mkAND refill_done refill_dec_out[i]! refill_set_match,
         -- valid_d = refill_write OR hold
         Gate.mkOR refill_set_match hold valid_d[i]!
       ]
     ) []
 
-  -- Tag write logic: on refill, write tag to the refill set
+  -- Tag write logic: on refill, write tag from MAR (not current req_addr)
   let tag_write_gates := (List.range 8).foldl (fun acc set =>
     let tag_d_wires := (List.range 24).map fun b => Wire.mk s!"tag_d_{set}_{b}"
     let tag_q_wires := (List.range 24).map fun b => Wire.mk s!"tag_q_{set}_{b}"
     let refill_match := Wire.mk s!"refill_set_match_{set}"
     acc ++ (List.range 24).foldl (fun acc2 b =>
-      -- tag_d = MUX(refill_match, tag_bits[b], tag_q[b])
-      acc2 ++ [Gate.mkMUX tag_q_wires[b]! tag_bits[b]! refill_match tag_d_wires[b]!]
+      -- tag_d = MUX(refill_match, refill_tag_bits[b], tag_q[b])
+      acc2 ++ [Gate.mkMUX tag_q_wires[b]! refill_tag_bits[b]! refill_match tag_d_wires[b]!]
     ) []
   ) []
 
@@ -391,11 +445,14 @@ def mkL1ICache : Circuit :=
 
   -- Collect all gates
   let allGates :=
-    fsm_gates ++ valid_gates ++
-    not_idx_gates ++ dec_gates ++ valid_sel_gates ++ valid_or_gates ++
+    fsm_gates ++ mar_gates ++ valid_gates ++
+    not_idx_gates ++ dec_gates ++
+    not_refill_idx_gates ++ refill_dec_gates ++
+    valid_sel_gates ++ valid_or_gates ++
     [hit_gate] ++ fsm_logic_gates ++ miss_gates ++ resp_gates ++
-    [miss_valid_gate] ++ miss_addr_gates ++ stall_gates ++
-    fsm_next_gates ++ valid_next_gates ++ tag_write_gates ++ data_write_gates ++
+    [miss_valid_gate] ++ not_idle_miss_gates ++ miss_addr_gates ++ stall_gates ++
+    fsm_next_gates ++ mar_capture_gates ++
+    valid_next_gates ++ tag_write_gates ++ data_write_gates ++
     const_zero_gates
 
   -- Collect all instances

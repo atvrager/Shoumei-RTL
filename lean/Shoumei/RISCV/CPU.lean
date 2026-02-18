@@ -521,7 +521,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     | .hardwired =>
       (mkSerializeDetect config oi opcodeWidth zero one
         decode_optype decode_valid decode_imm decode_rd decode_rs1
-        branch_redirect_valid_reg fence_i_draining fence_i_not_draining
+        branch_redirect_valid_reg fetch_stall_ext
+        fence_i_draining fence_i_not_draining
         rob_empty lsu_sb_empty pipeline_flush_comb
         fence_i_redir_target fence_i_pc_plus_4
         csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
@@ -535,7 +536,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     | .microcoded =>
       mkMicrocodeSerializePath config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
-        branch_redirect_valid_reg fence_i_draining fence_i_not_draining
+        branch_redirect_valid_reg fetch_stall_ext
+        fence_i_draining fence_i_not_draining
         rob_empty lsu_sb_empty pipeline_flush_comb
         fence_i_redir_target fence_i_pc_plus_4
         csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
@@ -570,7 +572,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let decode_valid_no_redir_raw := Wire.mk "decode_valid_no_redir_raw"
   let not_fence_i_suppress := Wire.mk "not_fence_i_suppress"
   let dispatch_gates :=
-    [Gate.mkNOT global_stall not_stall,
+    [Gate.mkOR global_stall fetch_stall_ext (Wire.mk "dispatch_stall"),
+     Gate.mkNOT (Wire.mk "dispatch_stall") not_stall,
      Gate.mkOR rob_redirect_valid branch_redirect_valid_reg redirect_or,
      Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
      Gate.mkNOT redirect_or_flush not_redirecting,
@@ -2777,7 +2780,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
-               [rob_empty] ++
+               [rob_empty, fence_i_drain_complete] ++
                -- RVVI-TRACE outputs
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data_final ++

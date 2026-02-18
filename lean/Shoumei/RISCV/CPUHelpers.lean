@@ -238,6 +238,7 @@ def mkSerializeDetect
     (zero one : Wire)
     (decode_optype : List Wire) (decode_valid : Wire) (decode_imm decode_rd decode_rs1 : List Wire)
     (branch_redirect_valid_reg : Wire)
+    (fetch_stall_ext : Wire)
     (fence_i_draining fence_i_not_draining : Wire)
     (rob_empty lsu_sb_empty : Wire)
     (pipeline_flush_comb : Wire)
@@ -318,12 +319,18 @@ def mkSerializeDetect
     let set_or := Wire.mk "fencei_set_or"
     let not_dc := Wire.mk "fencei_not_dc"
     let not_redir_reg := Wire.mk "not_redir_reg"
+    let not_fetch_stall_ext := Wire.mk "not_fetch_stall_ext"
     let decode_valid_noredir := Wire.mk "dv_noredir"
+    let decode_valid_noredir_tmp := Wire.mk "dv_noredir_tmp"
     fence_i_match_gates ++ csr_match_gates ++
     [-- Gate detection by NOT(branch_redirect_valid_reg) to prevent re-detecting
-     -- stale decode output on redirect cycle
+     -- stale decode output on redirect cycle.
+     -- Also gate by NOT(fetch_stall_ext) to prevent stale L1I data (during cache miss)
+     -- from being decoded as a CSR/FENCE.I and triggering a spurious pipeline drain.
      Gate.mkNOT branch_redirect_valid_reg not_redir_reg,
-     Gate.mkAND decode_valid not_redir_reg decode_valid_noredir,
+     Gate.mkNOT fetch_stall_ext not_fetch_stall_ext,
+     Gate.mkAND decode_valid not_redir_reg decode_valid_noredir_tmp,
+     Gate.mkAND decode_valid_noredir_tmp not_fetch_stall_ext decode_valid_noredir,
      -- fence_i_detected = decode_valid_noredir AND fence_i_match
      Gate.mkAND decode_valid_noredir fence_i_match fence_i_detected,
      -- csr_detected = decode_valid_noredir AND csr_match
@@ -834,6 +841,7 @@ def mkMicrocodeSerializePath
     (zero one : Wire) (clock reset : Wire)
     (decode_optype : List Wire) (decode_valid : Wire) (decode_imm _decode_rd decode_rs1 : List Wire)
     (branch_redirect_valid_reg : Wire)
+    (fetch_stall_ext : Wire)
     (_fence_i_draining _fence_i_not_draining : Wire)
     (rob_empty lsu_sb_empty : Wire)
     (pipeline_flush_comb : Wire)
@@ -989,11 +997,15 @@ def mkMicrocodeSerializePath
     -- Detection gates (shared with hardwired)
     let not_redir_reg := Wire.mk "not_redir_reg"
     let decode_valid_noredir := Wire.mk "dv_noredir"
+    let decode_valid_noredir_tmp := Wire.mk "dv_noredir_tmp"
+    let not_fetch_stall_ext := Wire.mk "not_fetch_stall_ext"
 
     let detect_gates :=
       fence_i_match_gates ++ csr_match_gates ++
       [Gate.mkNOT branch_redirect_valid_reg not_redir_reg,
-       Gate.mkAND decode_valid not_redir_reg decode_valid_noredir,
+       Gate.mkAND decode_valid not_redir_reg decode_valid_noredir_tmp,
+       Gate.mkNOT fetch_stall_ext not_fetch_stall_ext,
+       Gate.mkAND decode_valid_noredir_tmp not_fetch_stall_ext decode_valid_noredir,
        Gate.mkAND decode_valid_noredir fence_i_match fence_i_detected,
        Gate.mkAND decode_valid_noredir csr_match csr_detected,
        Gate.mkOR fence_i_detected csr_detected serialize_detected]

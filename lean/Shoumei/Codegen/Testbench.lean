@@ -63,6 +63,8 @@ structure TestbenchConfig where
   /-- Override the testbench module/file name (default: tb_<circuit.name>) -/
   tbName : Option String := none
   debugOutputs : List String := []
+  /-- Spike ISA string for cosimulation (e.g. "rv32imf", "rv32im_zicsr_zifencei") -/
+  spikeIsa : String := "rv32imf"
   deriving Repr
 
 /-! ## Helpers -/
@@ -1775,7 +1777,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    if (load_elf(elf_path) != 0) return 1;\n\n" ++
   "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
   "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
-  "    auto spike = std::make_unique<SpikeOracle>(elf_path);\n" ++
+  s!"    auto spike = std::make_unique<SpikeOracle>(elf_path, \"{cfg.spikeIsa}\");\n" ++
   "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n" ++
   "    dut->clk = 0; dut->rst_n = 0;\n" ++
   "    for (int i = 0; i < 10; i++) " ++ lb ++ " dut->clk = !dut->clk; dut->eval(); " ++ rb ++ "\n" ++

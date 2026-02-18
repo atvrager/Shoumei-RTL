@@ -94,18 +94,12 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let store_snoop_data := makeIndexedWires "store_snoop_data" 32
 
   -- FENCE.I signal from CPU to cache hierarchy
-  -- CPU internally generates fence_i_draining_next; we need to extract it.
-  -- For the wrapper, we use the fetch_stalled + rob_empty signals.
-  -- Actually, CPU doesn't currently export fence_i directly.
-  -- We tie fence_i to zero for now (FENCE.I support requires CPU modification).
+  -- CPU exports fence_i_drain_complete: pulses when FENCE.I pipeline drain completes
   let fence_i := Wire.mk "fence_i_signal"
 
   -- Gate: dmem_req_ready = NOT dmem_stall
   let stall_gate := Gate.mkNOT dmem_stall not_dmem_stall
   let ready_gate := Gate.mkBUF not_dmem_stall dmem_req_ready
-
-  -- Gate: fence_i tied to zero (placeholder until CPU exports FENCE.I signal)
-  let fence_i_gate := Gate.mkBUF zero fence_i
 
   -- Store snoop gates
   let snoop_valid_gate := Gate.mkAND dmem_req_valid dmem_req_we store_snoop_valid
@@ -132,7 +126,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"dmem_req_addr_{i}", dmem_req_addr[i]!)) ++
      (List.range 32).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
-     [("rob_empty", rob_empty)] ++
+     [("rob_empty", rob_empty), ("fence_i_drain_complete", fence_i)] ++
      -- RVVI
      [("rvvi_valid", rvvi_valid), ("rvvi_trap", rvvi_trap)] ++
      (List.range 32).map (fun i => (s!"rvvi_pc_rdata_{i}", rvvi_pc_rdata[i]!)) ++
@@ -146,9 +140,11 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 5).map (fun i => (s!"fflags_acc_{i}", fflags_acc[i]!)))
 
   -- MemoryHierarchy instance
-  -- ifetch_valid: always 1 when CPU is not stalled (use NOT fetch_stalled)
+  -- ifetch_valid: always 1 — CPU always presents fetch_pc, L1I always checks.
+  -- This breaks the stall→ifetch_valid→req_valid feedback loop that caused
+  -- the CPU to advance past un-fetched instructions.
   let ifetch_valid := Wire.mk "ifetch_valid"
-  let ifetch_valid_gate := Gate.mkNOT fetch_stalled ifetch_valid
+  let ifetch_valid_gate := Gate.mkBUF one ifetch_valid
 
   let memhier_inst := CircuitInstance.mk "MemoryHierarchy" "u_memhier"
     ([("clock", clock), ("reset", reset),
@@ -174,7 +170,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
      [("fence_i_busy", fence_i_busy)])
 
-  { name := s!"CachedCPU_{config.isaString}"
+  { name := s!"CPU_{config.isaString}_L1I256B_L1D256B_L2512B"
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
@@ -182,7 +178,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
                fflags_acc
-    gates := [stall_gate, ready_gate, fence_i_gate, ifetch_valid_gate, snoop_valid_gate] ++
+    gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
     signalGroups := [
