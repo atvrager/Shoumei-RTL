@@ -41,6 +41,7 @@ jobs:
               --suppress=knownConditionTrueFalse \
               --suppress=unusedStructMember \
               --suppress=constParameter \
+              --suppress=useStlAlgorithm \
               $CPP_FILES
           fi
           if [ -n "$C_FILES" ]; then

@@ -2800,9 +2800,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
                         -- (dispatch_valid = RS has ready entry, dispatch_en = EU can accept)
                         Gate.mkAND rs_int_dispatch_valid ib_fifo_enq_ready trace_dispatch_int,
                         Gate.mkAND rs_mem_dispatch_valid mem_dispatch_en trace_dispatch_mem,
-                        Gate.mkAND rs_branch_dispatch_valid branch_dispatch_en trace_dispatch_branch,
-                        Gate.mkAND rs_muldiv_dispatch_valid muldiv_dispatch_en trace_dispatch_muldiv,
-                        Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en trace_dispatch_fp] ++
+                        Gate.mkAND rs_branch_dispatch_valid branch_dispatch_en trace_dispatch_branch] ++
+    (if enableM then [Gate.mkAND rs_muldiv_dispatch_valid muldiv_dispatch_en trace_dispatch_muldiv]
+     else [Gate.mkBUF zero trace_dispatch_muldiv]) ++
+    (if enableF then [Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en trace_dispatch_fp]
+     else [Gate.mkBUF zero trace_dispatch_fp]) ++
     (List.range 4).map (fun i => Gate.mkBUF rob_alloc_idx[i]! trace_alloc_idx[i]!) ++
     (List.range 6).map (fun i => Gate.mkBUF alloc_physrd_wires[i]! trace_alloc_physrd[i]!) ++
     (List.range 6).map (fun i => Gate.mkBUF cdb_tag[i]! trace_cdb_tag[i]!) ++
@@ -2810,8 +2812,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
     (List.range 6).map (fun i => Gate.mkBUF rs_int_dispatch_tag[i]! trace_dispatch_int_tag[i]!) ++
     (List.range 6).map (fun i => Gate.mkBUF rs_mem_dispatch_tag[i]! trace_dispatch_mem_tag[i]!) ++
     (List.range 6).map (fun i => Gate.mkBUF rs_branch_dispatch_tag[i]! trace_dispatch_branch_tag[i]!) ++
-    (List.range 6).map (fun i => Gate.mkBUF rs_muldiv_dispatch_tag[i]! trace_dispatch_muldiv_tag[i]!) ++
-    (List.range 6).map (fun i => Gate.mkBUF rs_fp_dispatch_tag[i]! trace_dispatch_fp_tag[i]!)
+    (if enableM then (List.range 6).map (fun i => Gate.mkBUF rs_muldiv_dispatch_tag[i]! trace_dispatch_muldiv_tag[i]!)
+     else (List.range 6).map (fun i => Gate.mkBUF zero trace_dispatch_muldiv_tag[i]!)) ++
+    (if enableF then (List.range 6).map (fun i => Gate.mkBUF rs_fp_dispatch_tag[i]! trace_dispatch_fp_tag[i]!)
+     else (List.range 6).map (fun i => Gate.mkBUF zero trace_dispatch_fp_tag[i]!))
 
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++

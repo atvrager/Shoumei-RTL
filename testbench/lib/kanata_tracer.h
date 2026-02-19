@@ -36,6 +36,8 @@ public:
 
     explicit KanataTracer(const char* filename);
     ~KanataTracer();
+    KanataTracer(const KanataTracer&) = delete;
+    KanataTracer& operator=(const KanataTracer&) = delete;
 
     bool is_open() const { return fp_ != nullptr; }
 
