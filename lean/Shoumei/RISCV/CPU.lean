@@ -2772,7 +2772,46 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
-  let output_gates := [Gate.mkBUF global_stall global_stall_out]
+  -- Kanata trace output wires
+  let trace_alloc_valid := Wire.mk "trace_alloc_valid"
+  let trace_alloc_idx := makeIndexedWires "trace_alloc_idx" 4
+  let trace_alloc_physrd := makeIndexedWires "trace_alloc_physrd" 6
+  let trace_cdb_valid := Wire.mk "trace_cdb_valid"
+  let trace_cdb_tag := makeIndexedWires "trace_cdb_tag" 6
+  let trace_flush := Wire.mk "trace_flush"
+  let trace_head_idx := makeIndexedWires "trace_head_idx" 4
+  -- Dispatch tracking: OR of all RS dispatch_valids, with per-RS valid + tag outputs
+  let trace_dispatch_int := Wire.mk "trace_dispatch_int"
+  let trace_dispatch_mem := Wire.mk "trace_dispatch_mem"
+  let trace_dispatch_branch := Wire.mk "trace_dispatch_branch"
+  let trace_dispatch_muldiv := Wire.mk "trace_dispatch_muldiv"
+  let trace_dispatch_fp := Wire.mk "trace_dispatch_fp"
+  let trace_dispatch_int_tag := makeIndexedWires "trace_dispatch_int_tag" 6
+  let trace_dispatch_mem_tag := makeIndexedWires "trace_dispatch_mem_tag" 6
+  let trace_dispatch_branch_tag := makeIndexedWires "trace_dispatch_branch_tag" 6
+  let trace_dispatch_muldiv_tag := makeIndexedWires "trace_dispatch_muldiv_tag" 6
+  let trace_dispatch_fp_tag := makeIndexedWires "trace_dispatch_fp_tag" 6
+  let alloc_physrd_wires := if enableF then rob_alloc_physRd_fp else branch_alloc_physRd
+  let output_gates := [Gate.mkBUF global_stall global_stall_out,
+                        Gate.mkBUF rename_valid_gated trace_alloc_valid,
+                        Gate.mkBUF cdb_valid trace_cdb_valid,
+                        Gate.mkBUF pipeline_flush_comb trace_flush,
+                        -- AND dispatch_valid with dispatch_en for each RS
+                        -- (dispatch_valid = RS has ready entry, dispatch_en = EU can accept)
+                        Gate.mkAND rs_int_dispatch_valid ib_fifo_enq_ready trace_dispatch_int,
+                        Gate.mkAND rs_mem_dispatch_valid mem_dispatch_en trace_dispatch_mem,
+                        Gate.mkAND rs_branch_dispatch_valid branch_dispatch_en trace_dispatch_branch,
+                        Gate.mkAND rs_muldiv_dispatch_valid muldiv_dispatch_en trace_dispatch_muldiv,
+                        Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en trace_dispatch_fp] ++
+    (List.range 4).map (fun i => Gate.mkBUF rob_alloc_idx[i]! trace_alloc_idx[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF alloc_physrd_wires[i]! trace_alloc_physrd[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF cdb_tag[i]! trace_cdb_tag[i]!) ++
+    (List.range 4).map (fun i => Gate.mkBUF rob_head_idx[i]! trace_head_idx[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF rs_int_dispatch_tag[i]! trace_dispatch_int_tag[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF rs_mem_dispatch_tag[i]! trace_dispatch_mem_tag[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF rs_branch_dispatch_tag[i]! trace_dispatch_branch_tag[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF rs_muldiv_dispatch_tag[i]! trace_dispatch_muldiv_tag[i]!) ++
+    (List.range 6).map (fun i => Gate.mkBUF rs_fp_dispatch_tag[i]! trace_dispatch_fp_tag[i]!)
 
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++
@@ -2785,7 +2824,17 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data_final ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
-               fflags_acc
+               fflags_acc ++
+               -- Kanata trace outputs
+               [trace_alloc_valid] ++ trace_alloc_idx ++
+               trace_alloc_physrd ++
+               [trace_cdb_valid] ++ trace_cdb_tag ++
+               [trace_flush] ++ trace_head_idx ++
+               [trace_dispatch_int] ++ trace_dispatch_int_tag ++
+               [trace_dispatch_mem] ++ trace_dispatch_mem_tag ++
+               [trace_dispatch_branch] ++ trace_dispatch_branch_tag ++
+               [trace_dispatch_muldiv] ++ trace_dispatch_muldiv_tag ++
+               [trace_dispatch_fp] ++ trace_dispatch_fp_tag
     gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
@@ -2945,7 +2994,18 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rvvi_frd", width := 5, wires := rvvi_frd },
        { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
        { name := "fflags_acc", width := 5, wires := fflags_acc },
-       { name := "rob_head_idx", width := 4, wires := rob_head_idx }] ++
+       { name := "rob_head_idx", width := 4, wires := rob_head_idx },
+       -- Kanata trace signal groups (source + output wires)
+       { name := "trace_alloc_idx", width := 4, wires := trace_alloc_idx },
+       { name := "trace_alloc_physrd", width := 6, wires := trace_alloc_physrd },
+       { name := "trace_cdb_tag", width := 6, wires := trace_cdb_tag },
+       { name := "trace_head_idx", width := 4, wires := trace_head_idx },
+       { name := "trace_dispatch_int_tag", width := 6, wires := trace_dispatch_int_tag },
+       { name := "trace_dispatch_mem_tag", width := 6, wires := trace_dispatch_mem_tag },
+       { name := "trace_dispatch_branch_tag", width := 6, wires := trace_dispatch_branch_tag },
+       { name := "trace_dispatch_muldiv_tag", width := 6, wires := trace_dispatch_muldiv_tag },
+       { name := "trace_dispatch_fp_tag", width := 6, wires := trace_dispatch_fp_tag },
+       { name := "rob_alloc_physRd_fp", width := 6, wires := rob_alloc_physRd_fp }] ++
       (if enableF then [
        { name := "fp_rs1_phys", width := 6, wires := fp_rs1_phys },
        { name := "fp_rs2_phys", width := 6, wires := fp_rs2_phys },

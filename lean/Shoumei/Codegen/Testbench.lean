@@ -115,21 +115,29 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
 
   -- Size signal handling (must be before signalDecls/portConns)
   let dmemSize := cfg.dmemPort.sizeSignal
-  -- Check RAW circuit outputs (before signal group reconstruction) for individual bits
-  let sizeIsBitwise := match dmemSize with
-    | some sizeName => c.outputs.any (fun w => w.name == s!"{sizeName}_0")
-    | none => false
 
-  -- When size signal uses individual bits, exclude the grouped bus from declarations
-  -- and port connections (we'll add individual bit connections instead)
-  let isSizeBus (name : String) : Bool := match dmemSize with
-    | some sizeName => sizeIsBitwise && name == sizeName
-    | none => false
+  -- Detect output signal groups that need individual bit ports (not bus ports)
+  -- in the generated SV. Uses the same logic as the SV codegen to determine
+  -- which output groups are vectorized vs individual.
+  let svCtx := SystemVerilog.mkContext c
+  let bitwiseOutputGroups := outputGroups.filter (fun sg =>
+    SystemVerilog.outputNeedsIndividualPorts svCtx.wireToGroup svCtx.wireToIndex c sg)
+  let isBitwiseBus (name : String) : Bool :=
+    bitwiseOutputGroups.any (fun sg => sg.name == name)
 
   let signalDecls := String.intercalate "\n" (
     (inputSignals.filter (fun (n, _) => !isSpecial n)).map (fun (n, w) => mkDecl n w) ++
-    (outputSignals.filter (fun (n, _) => !isSpecial n && !isSizeBus n)).map (fun (n, w) => mkDecl n w)
+    (outputSignals.filter (fun (n, _) => !isSpecial n && !isBitwiseBus n)).map (fun (n, w) => mkDecl n w)
   )
+
+  -- Generate individual bit declarations + combined wire for bitwise output groups
+  let bitwiseDeclStrs := bitwiseOutputGroups.map (fun sg =>
+    let bitDecls := (List.range sg.width).map (fun i =>
+      s!"  logic       {sg.name}_{i};")
+    let bits := (List.range sg.width).reverse.map (fun i => s!"{sg.name}_{i}")
+    let wireDecl := s!"  wire  [{sg.width - 1}:0] {sg.name} = " ++
+      "{" ++ String.intercalate ", " bits ++ "};"
+    String.intercalate "\n" bitDecls ++ "\n" ++ wireDecl ++ "\n")
 
   -- Port connections for CPU instance
   let portConns := String.intercalate ",\n" (
@@ -139,15 +147,12 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
       s!"      .{name}(1'b{if value then "1" else "0"})") ++
     (inputSignals.filter (fun (n, _) => !isSpecial n)).map (fun (n, _) =>
       s!"      .{n}({n})") ++
-    (outputSignals.filter (fun (n, _) => !isSizeBus n)).map (fun (n, _) =>
+    (outputSignals.filter (fun (n, _) => !isBitwiseBus n)).map (fun (n, _) =>
       s!"      .{n}({n})") ++
-    -- Add individual bit connections for size signal
-    (match dmemSize with
-     | some sizeName => if sizeIsBitwise then
-         [s!"      .{sizeName}_0({sizeName}_0)",
-          s!"      .{sizeName}_1({sizeName}_1)"]
-       else []
-     | none => [])
+    -- Add individual bit connections for bitwise output groups
+    bitwiseOutputGroups.flatMap (fun sg =>
+      (List.range sg.width).map (fun i =>
+        s!"      .{sg.name}_{i}({sg.name}_{i})"))
   )
 
   let pcSig := cfg.imemPort.addrSignal
@@ -169,15 +174,8 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
 
   let tbName := optOrDefault cfg.tbName s!"tb_{c.name}"
 
-  -- Size signal declarations (individual bits → combined wire, or just reference bus)
-  let sizeDeclStr := match dmemSize with
-    | some sizeName =>
-      if sizeIsBitwise then
-        s!"  logic       {sizeName}_0;\n" ++
-        s!"  logic       {sizeName}_1;\n" ++
-        "  wire  [1:0] " ++ sizeName ++ " = {" ++ sizeName ++ "_1, " ++ sizeName ++ "_0};\n"
-      else ""
-    | none => ""
+  -- Individual bit declarations for all bitwise output groups
+  let bitwiseDeclStr := String.intercalate "" bitwiseDeclStrs
 
   -- Build the complete SV string
   "//==============================================================================\n" ++
@@ -224,13 +222,32 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "    output logic        o_rvvi_frd_valid,\n" ++
   "    output logic [31:0] o_rvvi_frd_data,\n" ++
   "    // FP exception flags accumulator\n" ++
-  "    output logic [4:0]  o_fflags_acc\n" ++
+  "    output logic [4:0]  o_fflags_acc,\n" ++
+  "    // Kanata pipeline trace outputs\n" ++
+  "    output logic        o_trace_alloc_valid,\n" ++
+  "    output logic [3:0]  o_trace_alloc_idx,\n" ++
+  "    output logic [5:0]  o_trace_alloc_physrd,\n" ++
+  "    output logic        o_trace_cdb_valid,\n" ++
+  "    output logic [5:0]  o_trace_cdb_tag,\n" ++
+  "    output logic        o_trace_flush,\n" ++
+  "    output logic [3:0]  o_trace_head_idx,\n" ++
+  "    // Kanata dispatch tracking\n" ++
+  "    output logic        o_trace_dispatch_int,\n" ++
+  "    output logic [5:0]  o_trace_dispatch_int_tag,\n" ++
+  "    output logic        o_trace_dispatch_mem,\n" ++
+  "    output logic [5:0]  o_trace_dispatch_mem_tag,\n" ++
+  "    output logic        o_trace_dispatch_branch,\n" ++
+  "    output logic [5:0]  o_trace_dispatch_branch_tag,\n" ++
+  "    output logic        o_trace_dispatch_muldiv,\n" ++
+  "    output logic [5:0]  o_trace_dispatch_muldiv_tag,\n" ++
+  "    output logic        o_trace_dispatch_fp,\n" ++
+  "    output logic [5:0]  o_trace_dispatch_fp_tag\n" ++
   ");\n\n" ++
   "  // =========================================================================\n" ++
   "  // CPU I/O signals\n" ++
   "  // =========================================================================\n" ++
   signalDecls ++ "\n" ++
-  sizeDeclStr ++ "\n" ++
+  bitwiseDeclStr ++ "\n" ++
   s!"  logic        {resetName};\n" ++
   s!"  assign {resetName} = ~rst_n;\n\n" ++
 
@@ -413,7 +430,24 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   "  assign o_rvvi_frd        = rvvi_frd;\n" ++
   "  assign o_rvvi_frd_valid  = rvvi_frd_valid;\n" ++
   "  assign o_rvvi_frd_data   = rvvi_frd_data;\n" ++
-  "  assign o_fflags_acc      = fflags_acc;\n\n" ++
+  "  assign o_fflags_acc      = fflags_acc;\n" ++
+  "  assign o_trace_alloc_valid = trace_alloc_valid;\n" ++
+  "  assign o_trace_alloc_idx   = trace_alloc_idx;\n" ++
+  "  assign o_trace_alloc_physrd = trace_alloc_physrd;\n" ++
+  "  assign o_trace_cdb_valid   = trace_cdb_valid;\n" ++
+  "  assign o_trace_cdb_tag     = trace_cdb_tag;\n" ++
+  "  assign o_trace_flush       = trace_flush;\n" ++
+  "  assign o_trace_head_idx    = trace_head_idx;\n" ++
+  "  assign o_trace_dispatch_int        = trace_dispatch_int;\n" ++
+  "  assign o_trace_dispatch_int_tag    = trace_dispatch_int_tag;\n" ++
+  "  assign o_trace_dispatch_mem        = trace_dispatch_mem;\n" ++
+  "  assign o_trace_dispatch_mem_tag    = trace_dispatch_mem_tag;\n" ++
+  "  assign o_trace_dispatch_branch     = trace_dispatch_branch;\n" ++
+  "  assign o_trace_dispatch_branch_tag = trace_dispatch_branch_tag;\n" ++
+  "  assign o_trace_dispatch_muldiv        = trace_dispatch_muldiv;\n" ++
+  "  assign o_trace_dispatch_muldiv_tag    = trace_dispatch_muldiv_tag;\n" ++
+  "  assign o_trace_dispatch_fp         = trace_dispatch_fp;\n" ++
+  "  assign o_trace_dispatch_fp_tag     = trace_dispatch_fp_tag;\n\n" ++
   "endmodule\n"
 
 /-! ## Plain C++ Simulation Testbench Generator -/

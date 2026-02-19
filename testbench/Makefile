@@ -24,12 +24,12 @@ VFLAGS     := --cc --exe --build -j 0 \
               --Mdir $(BUILD_DIR)/verilator \
               -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
               --top-module tb_cpu \
-              -CFLAGS "-std=c++17 -O2"
+              -CFLAGS "-std=c++17 -O2 -I$(TB_DIR)"
 
 # Source files: all SV from Lean + generated testbench
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
-CPP_SOURCES := $(TB_DIR)/sim_main.cpp
+CPP_SOURCES := $(TB_DIR)/sim_main.cpp $(TB_DIR)/lib/kanata_tracer.cpp
 COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp \
                 $(TB_DIR)/generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei.cpp \
                 $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei.cpp \

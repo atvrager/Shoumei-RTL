@@ -41,6 +41,7 @@ static struct _StdoutUnbuffer {
 
 #include "verilated.h"
 #include "svdpi.h"
+#include "lib/kanata_tracer.h"
 
 #if VM_TRACE
 #include "verilated_fst_c.h"
@@ -207,10 +208,22 @@ int main(int argc, char** argv) {
     // Parse arguments
     const char* elf_path = get_plusarg(argc, argv, "+elf");
     const char* timeout_str = get_plusarg(argc, argv, "+timeout");
+    const char* kanata_path = get_plusarg(argc, argv, "+kanata");
     bool do_trace = has_plusarg(argc, argv, "+trace");
     bool verbose = has_plusarg(argc, argv, "+verbose");
 
     uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;
+
+    // Kanata pipeline tracer
+    std::unique_ptr<KanataTracer> kanata;
+    if (kanata_path) {
+        kanata = std::make_unique<KanataTracer>(kanata_path);
+        if (!kanata->is_open()) {
+            fprintf(stderr, "ERROR: Cannot open Kanata trace file: %s\n", kanata_path);
+            return 1;
+        }
+        printf("Kanata trace enabled: %s\n", kanata_path);
+    }
 
 #if VM_TRACE
     VerilatedFstC* trace = nullptr;
@@ -291,6 +304,28 @@ int main(int argc, char** argv) {
                 printf("  RET[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\n",
                     retired, dut->o_rvvi_pc_rdata, dut->o_rvvi_insn,
                     dut->o_rvvi_rd, (int)dut->o_rvvi_rd_valid, dut->o_rvvi_rd_data);
+        }
+
+        // Kanata pipeline trace
+        if (kanata) {
+            KanataTracer::Signals ksig;
+            ksig.alloc_valid  = dut->o_trace_alloc_valid;
+            ksig.alloc_idx    = dut->o_trace_alloc_idx;
+            ksig.alloc_physrd = dut->o_trace_alloc_physrd;
+            ksig.cdb_valid    = dut->o_trace_cdb_valid;
+            ksig.cdb_tag      = dut->o_trace_cdb_tag;
+            ksig.flush        = dut->o_trace_flush;
+            ksig.commit_valid = dut->o_rvvi_valid;
+            ksig.head_idx     = dut->o_trace_head_idx;
+            ksig.commit_pc    = dut->o_rvvi_pc_rdata;
+            ksig.commit_insn  = dut->o_rvvi_insn;
+            // RS dispatch signals (int, mem, branch, muldiv, fp)
+            ksig.dispatch[0] = {(bool)dut->o_trace_dispatch_int,    dut->o_trace_dispatch_int_tag};
+            ksig.dispatch[1] = {(bool)dut->o_trace_dispatch_mem,    dut->o_trace_dispatch_mem_tag};
+            ksig.dispatch[2] = {(bool)dut->o_trace_dispatch_branch, dut->o_trace_dispatch_branch_tag};
+            ksig.dispatch[3] = {(bool)dut->o_trace_dispatch_muldiv, dut->o_trace_dispatch_muldiv_tag};
+            ksig.dispatch[4] = {(bool)dut->o_trace_dispatch_fp,     dut->o_trace_dispatch_fp_tag};
+            kanata->tick(cycle, ksig);
         }
 
         // Log all dmem accesses if +verbose
