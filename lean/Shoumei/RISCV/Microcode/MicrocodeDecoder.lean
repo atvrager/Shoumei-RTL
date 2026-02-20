@@ -1,8 +1,8 @@
 /-
-Microcode Decoder - Combinational circuit: 4-bit opcode → 11 one-hot control signals
+Microcode Decoder - Combinational circuit: 4-bit opcode → 15 one-hot control signals
 
 Input: opcode[3:0] (from ROM entry)
-Output: 11 one-hot signals, one per MicroOp
+Output: 15 one-hot signals, one per MicroOp
 -/
 
 import Shoumei.DSL
@@ -12,7 +12,7 @@ namespace Shoumei.RISCV.Microcode
 
 open Shoumei
 
-/-- Build the microcode decoder circuit: 4-bit input → 11 one-hot outputs.
+/-- Build the microcode decoder circuit: 4-bit input → 15 one-hot outputs.
     Each output is high when the input matches that µop's encoding. -/
 def mkMicrocodeDecoder : Circuit :=
   let opcode := (List.range 4).map (fun i => Wire.mk s!"opcode_{i}")
@@ -44,7 +44,11 @@ def mkMicrocodeDecoder : Circuit :=
     (MicroOp.ALU_ANDN.toNat, "is_alu_andn"),
     (MicroOp.FLUSH_FETCH.toNat, "is_flush_fetch"),
     (MicroOp.SET_PC.toNat, "is_set_pc"),
-    (MicroOp.DONE.toNat, "is_done")
+    (MicroOp.DONE.toNat, "is_done"),
+    (MicroOp.LOAD_PC.toNat, "is_load_pc"),
+    (MicroOp.LOAD_CONST.toNat, "is_load_const"),
+    (MicroOp.MSTATUS_TRAP.toNat, "is_mstatus_trap"),
+    (MicroOp.SET_CSR_ADDR.toNat, "is_set_csr_addr")
   ]
 
   let matchResults := ops.map (fun (enc, name) => mkMatch enc name)

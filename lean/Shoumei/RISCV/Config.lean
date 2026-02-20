@@ -14,11 +14,12 @@ namespace Shoumei.RISCV
 inductive MicrocodeSequence where
   | csr       -- CSRRW/S/C and immediate variants (ROM sequences 0–2)
   | fenceI    -- FENCE.I (ROM sequence 3)
-  -- future: | trapEntry | mret
+  | trapEntry -- ECALL trap entry (ROM sequence 4)
+  -- future: | mret
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- All sequences the ROM currently implements. -/
-def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI]
+def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry]
 
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
@@ -146,6 +147,9 @@ def CPUConfig.microcodesCSR (c : CPUConfig) : Bool := c.enabledMicrocode.contain
 /-- Whether the FENCE.I microcode sequence is enabled -/
 def CPUConfig.microcodesFenceI (c : CPUConfig) : Bool := c.enabledMicrocode.contains .fenceI
 
+/-- Whether the trap entry microcode sequence is enabled -/
+def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.contains .trapEntry
+
 /-- THE default config. Edit this single definition to change what gets built.
     RV32IMF + Zicsr + Zifencei + Cache, with standard microarch parameters. -/
 def defaultCPUConfig : CPUConfig := {
@@ -154,6 +158,7 @@ def defaultCPUConfig : CPUConfig := {
   enableZicsr := true
   enableZifencei := true
   enableCache := true
+  enabledMicrocode := [.trapEntry]
 }
 
 /-- Default RV32I configuration (no extensions) -/
@@ -168,8 +173,8 @@ def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZi
 /-- RV32IMF configuration (M + F + Zicsr + Zifencei) -/
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
 
-/-- RV32IMF with microcoded CSR sequencer -/
-def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [] }
+/-- RV32IMF with microcoded trap entry sequencer -/
+def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
 
 
 /-
