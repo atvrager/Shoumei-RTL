@@ -510,30 +510,14 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
 
   -- === Serialize detection and FSM gates (FENCE.I + CSR) ===
-  -- Config-gated: .hardwired uses mkSerializeDetect, .microcoded uses MicrocodeSequencer
+  -- Config-gated: hardwired uses mkSerializeDetect, microcoded uses MicrocodeSequencer
   -- Forward-declare csr_read_data for microcode path (driven by CSR read MUX below)
   let csr_read_data_fwd := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
   -- Forward-declare csr_cdb wires for microcode path
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
   let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
-  let (fence_i_detect_gates, microcode_instances) := match config.csrMode with
-    | .hardwired =>
-      (mkSerializeDetect config oi opcodeWidth zero one
-        decode_optype decode_valid decode_imm decode_rd decode_rs1
-        branch_redirect_valid_reg fetch_stall_ext
-        fence_i_draining fence_i_not_draining
-        rob_empty lsu_sb_empty pipeline_flush_comb
-        fence_i_redir_target fence_i_pc_plus_4
-        csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
-        rd_phys csr_match
-        fence_i_detected csr_detected serialize_detected
-        fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
-        csr_rename_en not_csr_rename_en
-        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
-        fence_i_redir_next,
-       ([] : List CircuitInstance))
-    | .microcoded =>
+  let (fence_i_detect_gates, microcode_instances) := if config.useMicrocode then
       mkMicrocodeSerializePath config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
         branch_redirect_valid_reg fetch_stall_ext
@@ -549,6 +533,21 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_redir_next
         csr_read_data_fwd
         csr_cdb_inject csr_cdb_tag csr_cdb_data
+    else
+      (mkSerializeDetect config oi opcodeWidth zero one
+        decode_optype decode_valid decode_imm decode_rd decode_rs1
+        branch_redirect_valid_reg fetch_stall_ext
+        fence_i_draining fence_i_not_draining
+        rob_empty lsu_sb_empty pipeline_flush_comb
+        fence_i_redir_target fence_i_pc_plus_4
+        csr_flag_reg csr_addr_reg csr_optype_reg csr_rd_reg csr_phys_reg csr_rs1cap_reg csr_zimm_reg
+        rd_phys csr_match
+        fence_i_detected csr_detected serialize_detected
+        fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
+        csr_rename_en not_csr_rename_en
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        fence_i_redir_next,
+       ([] : List CircuitInstance))
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -2633,43 +2632,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let (csr_op_decode_gates, csr_write_logic_gates, csr_write_val,
        csr_we_mscratch, csr_we_mcycle, csr_we_mcycleh, csr_we_minstret, csr_we_minstreth,
        csr_we_mstatus, csr_we_mie, csr_we_mtvec, csr_we_mepc, csr_we_mcause, csr_we_mtval,
-       csr_cdb_inject_gates) := match config.csrMode with
-    | .hardwired =>
-      let (opDecGates, csr_is_rw, csr_is_rs, csr_is_rc, _csr_is_imm, csr_src) :=
-        mkCsrOpDecode config oi opcodeWidth zero csr_optype_reg csr_rs1cap_reg csr_zimm_reg
-      let (wrGates, wrVal,
-           we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
-           we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
-           _act_writes, _drain_writes) :=
-        mkCsrWriteLogic config zero csr_read_data csr_src csr_is_rw csr_is_rs csr_is_rc
-          csr_drain_complete csr_zimm_reg
-          is_mscratch is_mcycle_m is_mcycleh_m is_minstret_m is_minstreth_m
-          is_fflags is_frm is_fcsr
-          is_mstatus is_mie is_mtvec is_mepc is_mcause is_mtval
-      -- CDB injection (hardwired): rd_nonzero check + BUF from csr_read_data
-      let csr_rd_nonzero := Wire.mk "csr_rd_nonzero"
-      let csr_rd_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"csr_rdnz_e{i}")
-      let cdbGates :=
-        if config.enableZicsr then
-          [Gate.mkOR csr_rd_reg[0]! csr_rd_reg[1]! csr_rd_nz_tmp[0]!,
-           Gate.mkOR csr_rd_nz_tmp[0]! csr_rd_reg[2]! csr_rd_nz_tmp[1]!,
-           Gate.mkOR csr_rd_nz_tmp[1]! csr_rd_reg[3]! csr_rd_nz_tmp[2]!,
-           Gate.mkOR csr_rd_nz_tmp[2]! csr_rd_reg[4]! csr_rd_nonzero,
-           Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
-          (List.range 6).map (fun i =>
-            Gate.mkBUF csr_phys_reg[i]! csr_cdb_tag[i]!) ++
-          (List.range 32).map (fun i =>
-            Gate.mkBUF csr_read_data[i]! csr_cdb_data[i]!)
-        else
-          [Gate.mkBUF zero csr_rd_nonzero,
-           Gate.mkBUF zero csr_cdb_inject] ++
-          (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
-          (List.range 32).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
-      (opDecGates, wrGates, wrVal,
-       we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
-       we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
-       cdbGates)
-    | .microcoded =>
+       csr_cdb_inject_gates) := if config.useMicrocode then
       -- Microcoded: sequencer drives write_en + write_data + CDB inject directly
       -- CSR write value uses same wire names as hardwired path for compatibility
       -- with downstream fflags/frm/fcsr logic
@@ -2727,6 +2690,41 @@ def mkCPU (config : CPUConfig) : Circuit :=
        we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
        we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
        [])
+    else
+      let (opDecGates, csr_is_rw, csr_is_rs, csr_is_rc, _csr_is_imm, csr_src) :=
+        mkCsrOpDecode config oi opcodeWidth zero csr_optype_reg csr_rs1cap_reg csr_zimm_reg
+      let (wrGates, wrVal,
+           we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
+           we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
+           _act_writes, _drain_writes) :=
+        mkCsrWriteLogic config zero csr_read_data csr_src csr_is_rw csr_is_rs csr_is_rc
+          csr_drain_complete csr_zimm_reg
+          is_mscratch is_mcycle_m is_mcycleh_m is_minstret_m is_minstreth_m
+          is_fflags is_frm is_fcsr
+          is_mstatus is_mie is_mtvec is_mepc is_mcause is_mtval
+      -- CDB injection (hardwired): rd_nonzero check + BUF from csr_read_data
+      let csr_rd_nonzero := Wire.mk "csr_rd_nonzero"
+      let csr_rd_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"csr_rdnz_e{i}")
+      let cdbGates :=
+        if config.enableZicsr then
+          [Gate.mkOR csr_rd_reg[0]! csr_rd_reg[1]! csr_rd_nz_tmp[0]!,
+           Gate.mkOR csr_rd_nz_tmp[0]! csr_rd_reg[2]! csr_rd_nz_tmp[1]!,
+           Gate.mkOR csr_rd_nz_tmp[1]! csr_rd_reg[3]! csr_rd_nz_tmp[2]!,
+           Gate.mkOR csr_rd_nz_tmp[2]! csr_rd_reg[4]! csr_rd_nonzero,
+           Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
+          (List.range 6).map (fun i =>
+            Gate.mkBUF csr_phys_reg[i]! csr_cdb_tag[i]!) ++
+          (List.range 32).map (fun i =>
+            Gate.mkBUF csr_read_data[i]! csr_cdb_data[i]!)
+        else
+          [Gate.mkBUF zero csr_rd_nonzero,
+           Gate.mkBUF zero csr_cdb_inject] ++
+          (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
+          (List.range 32).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
+      (opDecGates, wrGates, wrVal,
+       we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
+       we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
+       cdbGates)
 
   -- CSR next-value logic (WARL masking, MUX, counter auto-increment)
   let (csr_next_value_gates, csr_counter_instances) := mkCsrNextValue config enableF zero one

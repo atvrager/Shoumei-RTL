@@ -9,11 +9,16 @@ import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
-/-- CSR execution mode: hardwired FSM or ROM-driven microcode sequencer -/
-inductive CSRMode where
-  | hardwired    -- current serialize FSM (mkSerializeDetect)
-  | microcoded   -- ROM-driven microcode sequencer
+/-- Instruction classes the microcode ROM knows how to handle.
+    Add entries here as new ROM sequences are written. -/
+inductive MicrocodeSequence where
+  | csr       -- CSRRW/S/C and immediate variants (ROM sequences 0–2)
+  | fenceI    -- FENCE.I (ROM sequence 3)
+  -- future: | trapEntry | mret
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- All sequences the ROM currently implements. -/
+def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI]
 
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
@@ -44,8 +49,9 @@ structure CPUConfig where
       0 = combinational (default), 1 = registered (for timing closure).
       The CDB FIFO decouples timing, so both settings are correct. -/
   sbFwdPipelineStages : Nat := 0
-  /-- CSR execution mode: hardwired serialize FSM or ROM-driven microcode sequencer -/
-  csrMode : CSRMode := .hardwired
+  /-- Microcode sequences to enable. Empty = all-hardwired (default).
+      Only sequences listed in knownMicrocodeSequences are valid. -/
+  enabledMicrocode : List MicrocodeSequence := []
 
   -- ═══ Microarchitecture ═══
   /-- Number of physical registers (default 64, giving 6-bit tags) -/
@@ -131,6 +137,15 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
   config.enableM
 
+/-- Whether any microcode sequences are enabled -/
+def CPUConfig.useMicrocode (c : CPUConfig) : Bool := !c.enabledMicrocode.isEmpty
+
+/-- Whether the CSR microcode sequence is enabled -/
+def CPUConfig.microcodesCSR (c : CPUConfig) : Bool := c.enabledMicrocode.contains .csr
+
+/-- Whether the FENCE.I microcode sequence is enabled -/
+def CPUConfig.microcodesFenceI (c : CPUConfig) : Bool := c.enabledMicrocode.contains .fenceI
+
 /-- THE default config. Edit this single definition to change what gets built.
     RV32IMF + Zicsr + Zifencei + Cache, with standard microarch parameters. -/
 def defaultCPUConfig : CPUConfig := {
@@ -154,7 +169,7 @@ def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZi
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMF with microcoded CSR sequencer -/
-def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, csrMode := .microcoded }
+def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [] }
 
 
 /-
@@ -195,7 +210,7 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
-  let ucode := match cfg.csrMode with | .hardwired => "" | .microcoded => "_Microcoded"
+  let ucode := if cfg.useMicrocode then "_Microcoded" else ""
   base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
 
 /-- Full CPU module name including ISA string and optional cache suffix -/
