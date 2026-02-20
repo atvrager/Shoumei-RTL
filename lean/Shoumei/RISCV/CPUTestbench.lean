@@ -39,10 +39,10 @@ def cpuTestbenchConfig : TestbenchConfig := {
     respValidSignal := some "dmem_resp_valid"
     respDataSignal := some "dmem_resp_data"
   }
-  memSizeWords := 16384    -- 64KB
+  memSizeWords := defaultCPUConfig.memSizeWords
   tohostAddr := 0x1000
   putcharAddr := some 0x1004
-  timeoutCycles := 100000
+  timeoutCycles := defaultCPUConfig.timeoutCycles
   constantPorts := [("zero", false), ("one", true), ("fetch_stall_ext", false), ("dmem_stall_ext", false)]
   tbName := some "tb_cpu"
 }

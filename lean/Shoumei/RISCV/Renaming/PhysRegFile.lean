@@ -21,6 +21,7 @@ Structural components:
 -/
 
 import Shoumei.DSL
+import Shoumei.RISCV.Config
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.DFF
@@ -239,5 +240,9 @@ def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32
 
 /-- Small Physical Register File for proof testing (4 registers × 8 bits) -/
 def mkPhysRegFile4x8 : Circuit := mkPhysRegFile 4 8
+
+/-- Config-driven Physical Register File -/
+def mkPhysRegFileFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkPhysRegFile config.numPhysRegs 32
 
 end Shoumei.RISCV.Renaming

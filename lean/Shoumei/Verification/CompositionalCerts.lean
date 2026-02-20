@@ -16,6 +16,29 @@ namespace Shoumei.Verification.CompositionalCerts
 
 open Shoumei.Verification
 
+/-! ## Combinational Circuits (Large Hierarchical Muxes) -/
+
+/-- Mux64x32: 64:1 mux, 32-bit, hierarchical (9× Mux8x32 + select buffers) -/
+def mux64x32_cert : CompositionalCert := {
+  moduleName := "Mux64x32"
+  dependencies := ["Mux8x32"]
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
+/-- Mux64x6: 64:1 mux, 6-bit, hierarchical (9× Mux8x6 + select buffers) -/
+def mux64x6_cert : CompositionalCert := {
+  moduleName := "Mux64x6"
+  dependencies := ["Mux8x6"]
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
+/-- Mux8x32: 8:1 mux, 32-bit, hierarchical (2× Mux4x32 + select buffers) -/
+def mux8x32_cert : CompositionalCert := {
+  moduleName := "Mux8x32"
+  dependencies := ["Mux4x32"]
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
 /-! ## Sequential Circuits -/
 
 /-- Register91 = Register64 + Register16 + Register8 + Register2 + Register1 -/
@@ -546,6 +569,10 @@ def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
+  -- Combinational (hierarchical muxes)
+  mux64x32_cert,
+  mux64x6_cert,
+  mux8x32_cert,
   -- Sequential
   register24_cert,
   register66_cert,

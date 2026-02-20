@@ -20,6 +20,7 @@ Structural circuit implementation is in future phases.
 -/
 
 import Shoumei.RISCV.ISA
+import Shoumei.RISCV.Config
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.Renaming.PhysRegFile
 import Shoumei.DSL
@@ -1134,5 +1135,17 @@ def mkMulDivRS4 : Circuit :=
 
 /-- MulDivRS4 alias for common usage -/
 def mulDivRS4 : Circuit := mkMulDivRS4
+
+/-- Config-driven Reservation Station -/
+def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) (enableStoreLoadOrdering : Bool := false) : Circuit :=
+  mkReservationStation4 enableStoreLoadOrdering
+
+/-- Config-driven Memory RS -/
+def mkMemoryRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkReservationStationFromConfig config (enableStoreLoadOrdering := true)
+
+/-- Config-driven MulDiv RS -/
+def mkMulDivRSFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkMulDivRS4
 
 end Shoumei.RISCV.Execution

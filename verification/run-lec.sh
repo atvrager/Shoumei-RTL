@@ -123,34 +123,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CERTS_FILE="$PROJECT_ROOT/verification/compositional-certs.txt"
 
-# Try sources in order: pre-generated file (from make codegen) > built binary > lake exe
-CERT_SOURCE=""
-if [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
-    CERT_SOURCE="$CERTS_FILE"
-    echo "  Reading from $CERTS_FILE"
+# Try live export first (always up-to-date), fall back to pre-generated file
+CERT_OUTPUT=""
+if CERT_OUTPUT=$(.lake/build/bin/export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
+    echo "  Exported live from .lake/build/bin/export_verification_certs"
+elif CERT_OUTPUT=$(lake exe export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
+    echo "  Exported live from lake exe export_verification_certs"
+elif [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
+    CERT_OUTPUT=$(cat "$CERTS_FILE")
+    echo "  Reading from $CERTS_FILE (pre-generated)"
 fi
 
-if [ -n "$CERT_SOURCE" ]; then
-    while IFS='|' read -r module deps proof; do
-        [[ -z "$module" ]] && continue
-        module=$(echo "$module" | xargs)
-        deps=$(echo "$deps" | xargs)
-        proof=$(echo "$proof" | xargs)
-        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-    done < "$CERT_SOURCE"
-else
-    echo "  No pre-generated certs file found, trying to export from Lean..."
-    while IFS='|' read -r module deps proof; do
-        [[ -z "$module" ]] && continue
-        module=$(echo "$module" | xargs)
-        deps=$(echo "$deps" | xargs)
-        proof=$(echo "$proof" | xargs)
-        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-    done < <(.lake/build/bin/export_verification_certs 2>/dev/null || \
-        lake exe export_verification_certs 2>/dev/null || \
-        "$HOME/.elan/bin/lake" exe export_verification_certs 2>/dev/null || \
-        true)
-fi
+while IFS='|' read -r module deps proof; do
+    [[ -z "$module" ]] && continue
+    module=$(echo "$module" | xargs)
+    deps=$(echo "$deps" | xargs)
+    proof=$(echo "$proof" | xargs)
+    COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
+done <<< "$CERT_OUTPUT"
 
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
 if [ ${#COMPOSITIONAL_CERTS[@]} -eq 0 ]; then
@@ -281,7 +271,16 @@ has_submodules() {
 }
 
 # Function to verify a single module
-verify_module() {
+# Timing log for per-module LEC durations
+LEC_TIMING_LOG="verification/lec-timing.log"
+
+# Record timing for a module verification
+record_timing() {
+    local mod="$1" elapsed="$2" result="$3" method="$4"
+    printf "%-40s %6ds  %-6s  %s\n" "$mod" "$elapsed" "$result" "$method" >> "$LEC_TIMING_LOG"
+}
+
+_verify_module_inner() {
     local LEAN_FILE="$1"
     local MODULE_NAME
     MODULE_NAME=$(basename "$LEAN_FILE" .sv)
@@ -639,7 +638,29 @@ YOSYS_EOF
     fi
 }
 
+# Wrapper that times the inner function and logs results
+verify_module() {
+    local LEAN_FILE="$1"
+    local MODULE_NAME
+    MODULE_NAME=$(basename "$LEAN_FILE" .sv)
+    MODULE_NAME=$(basename "$MODULE_NAME" .v)
+    local _start_epoch
+    _start_epoch=$(date +%s)
+    _verify_module_inner "$@"
+    local _rc=$?
+    local _end_epoch
+    _end_epoch=$(date +%s)
+    local _elapsed=$(( _end_epoch - _start_epoch ))
+    local _result="PASS"; [ $_rc -ne 0 ] && _result="FAIL"
+    local _method="lec"
+    if [ -n "${COMPOSITIONAL_CERTS[$MODULE_NAME]}" ]; then _method="comp"; fi
+    record_timing "$MODULE_NAME" "$_elapsed" "$_result" "$_method"
+    return $_rc
+}
+
 # Main loop: verify each module
+printf "%-40s %8s  %-6s  %s\n" "# Module" "Time" "Result" "Method" > "$LEC_TIMING_LOG"
+LEC_TOTAL_START=$SECONDS
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Running LEC on all modules (jobs=$PARALLEL_JOBS)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -788,6 +809,18 @@ if [ "$COMPOSITIONAL_COUNT" -gt 0 ]; then
     done < "$COMPOSITIONAL_MODULES_FILE"
     echo ""
 fi
+
+LEC_TOTAL_ELAPSED=$(( SECONDS - LEC_TOTAL_START ))
+
+# Print timing report: top 10 slowest modules
+echo "Timing (top 10 slowest):"
+sort -k2 -n -r "$LEC_TIMING_LOG" | grep -v '^#' | head -10 | while read -r line; do
+    echo "  $line"
+done
+echo ""
+echo "Total LEC wall time: ${LEC_TOTAL_ELAPSED}s"
+echo "Full timing log: $LEC_TIMING_LOG"
+echo ""
 
 if [ $ALL_PASSED -eq 1 ]; then
     COVERAGE=$((VERIFIED_COUNT * 100 / MODULE_COUNT))

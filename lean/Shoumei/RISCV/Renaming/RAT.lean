@@ -20,6 +20,7 @@ Structural components:
 -/
 
 import Shoumei.DSL
+import Shoumei.RISCV.Config
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.DFF
@@ -244,5 +245,9 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
 
 /-- RAT with 64 physical registers (default configuration) -/
 def mkRAT64 : Circuit := mkRAT 64
+
+/-- Config-driven Register Alias Table -/
+def mkRATFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkRAT config.numPhysRegs
 
 end Shoumei.RISCV.Renaming

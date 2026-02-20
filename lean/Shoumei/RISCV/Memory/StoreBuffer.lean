@@ -33,6 +33,7 @@ import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.Arbiter
 import Shoumei.Circuits.Combinational.Popcount
+import Shoumei.RISCV.Config
 
 namespace Shoumei.RISCV.Memory
 
@@ -977,5 +978,9 @@ def mkStoreBuffer8 : Circuit :=
       { name := "commit_decode_", width := 8, wires := commit_decode }
     ]
   }
+
+/-- Config-driven Store Buffer (currently only supports 8 entries) -/
+def mkStoreBufferFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkStoreBuffer8
 
 end Shoumei.RISCV.Memory

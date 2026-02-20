@@ -30,6 +30,7 @@ import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.Comparator
+import Shoumei.RISCV.Config
 
 namespace Shoumei.RISCV.Retirement
 
@@ -831,5 +832,9 @@ def mkROB16 : Circuit :=
       { name := "head_archRd", width := 5, wires := head_archRd }
     ]
   }
+
+/-- Config-driven ROB (currently only supports 16 entries) -/
+def mkROBFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkROB16
 
 end Shoumei.RISCV.Retirement

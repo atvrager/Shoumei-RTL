@@ -18,6 +18,9 @@ SV_DIR    := $(PROJ_ROOT)/output/sv-from-lean
 BUILD_DIR := $(PROJ_ROOT)/build-sim
 TB_DIR    := $(PROJ_ROOT)/testbench
 
+# Include auto-generated config from Lean (provides CPU_NAME, SPIKE_ISA, etc.)
+-include $(PROJ_ROOT)/output/config.mk
+
 # Verilator flags
 VERILATOR  := verilator
 VFLAGS     := --cc --exe --build -j 0 \
