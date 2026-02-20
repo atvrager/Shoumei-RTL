@@ -170,7 +170,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
      [("fence_i_busy", fence_i_busy)])
 
-  { name := s!"CPU_{config.isaString}_L1I256B_L1D256B_L2512B"
+  { name := s!"CPU_{config.isaString}_{config.cacheString}"
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++

@@ -20,6 +20,7 @@ Structural components:
 -/
 
 import Shoumei.DSL
+import Shoumei.RISCV.Config
 import Shoumei.Circuits.Sequential.QueueN
 
 namespace Shoumei.RISCV.Renaming
@@ -164,5 +165,13 @@ def mkFreeListFlushable (numPhysRegs : Nat) : Circuit :=
 
 /-- Flushable Free List with 64 physical registers -/
 def mkFreeList64Flushable : Circuit := mkFreeListFlushable 64
+
+/-- Config-driven Free List -/
+def mkFreeListFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkFreeList config.numPhysRegs
+
+/-- Config-driven Flushable Free List -/
+def mkFreeListFlushableFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkFreeListFlushable config.numPhysRegs
 
 end Shoumei.RISCV.Renaming

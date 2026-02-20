@@ -14,17 +14,17 @@ open Shoumei.RISCV
 namespace Shoumei.RISCV.Memory.Cache
 
 def generateCachedCPU : IO Unit := do
-  let circuit := mkCachedCPU rv32imConfig
+  let circuit := mkCachedCPU defaultCPUConfig
 
   let sv := SystemVerilog.toSystemVerilog circuit
-  IO.FS.writeFile "output/sv-from-lean/CachedCPU_RV32IM.sv" sv
+  IO.FS.writeFile s!"output/sv-from-lean/{circuit.name}.sv" sv
 
   let chisel := Chisel.toChisel circuit
-  IO.FS.writeFile "chisel/src/main/scala/generated/CachedCPU_RV32IM.scala" chisel
+  IO.FS.writeFile s!"chisel/src/main/scala/generated/{circuit.name}.scala" chisel
 
   let header := CppSim.toCppSimHeader circuit
   let impl := CppSim.toCppSimImpl circuit
-  IO.FS.writeFile "output/cpp_sim/CachedCPU_RV32IM.h" header
-  IO.FS.writeFile "output/cpp_sim/CachedCPU_RV32IM.cpp" impl
+  IO.FS.writeFile s!"output/cpp_sim/{circuit.name}.h" header
+  IO.FS.writeFile s!"output/cpp_sim/{circuit.name}.cpp" impl
 
 end Shoumei.RISCV.Memory.Cache

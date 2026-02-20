@@ -19,6 +19,7 @@ inductive CSRMode where
     Each Bool flag gates the inclusion of circuits at code generation time
     and the inclusion of instruction definitions at decode time. -/
 structure CPUConfig where
+  -- ═══ ISA Extensions ═══
   /-- RV32I base ISA (always true) -/
   enableI : Bool := true
   /-- M extension: integer multiply/divide (MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU) -/
@@ -31,8 +32,6 @@ structure CPUConfig where
   enableZicsr : Bool := false
   /-- Zifencei extension: instruction-fetch fence (FENCE.I) -/
   enableZifencei : Bool := false
-  /-- Number of MulDiv Reservation Station entries -/
-  mulDivRSEntries : Nat := 4
   /-- Register width (32 for RV32, 64 for RV64) -/
   xlen : Nat := 32
   /-- ROB commit width (number of instructions retired per cycle) -/
@@ -47,7 +46,75 @@ structure CPUConfig where
   sbFwdPipelineStages : Nat := 0
   /-- CSR execution mode: hardwired serialize FSM or ROM-driven microcode sequencer -/
   csrMode : CSRMode := .hardwired
+
+  -- ═══ Microarchitecture ═══
+  /-- Number of physical registers (default 64, giving 6-bit tags) -/
+  numPhysRegs : Nat := 64
+  /-- Number of Reorder Buffer entries -/
+  robEntries : Nat := 16
+  /-- Number of store buffer entries -/
+  storeBufferEntries : Nat := 8
+  /-- Number of reservation station entries (integer, memory, MulDiv, FP) -/
+  rsEntries : Nat := 4
+
+  -- ═══ Cache Hierarchy ═══
+  /-- Enable L1I/L1D/L2 cache hierarchy (wraps CPU in CachedCPU) -/
+  enableCache : Bool := false
+  /-- L1 Instruction cache: number of sets -/
+  l1iSets : Nat := 8
+  /-- L1 Data cache: number of sets -/
+  l1dSets : Nat := 4
+  /-- L1 Data cache: number of ways (associativity) -/
+  l1dWays : Nat := 2
+  /-- L2 Unified cache: number of sets -/
+  l2Sets : Nat := 8
+  /-- L2 Unified cache: number of ways (associativity) -/
+  l2Ways : Nat := 2
+  /-- Words per cache line (8 words = 32 bytes) -/
+  cacheLineWords : Nat := 8
+
+  -- ═══ Simulation ═══
+  /-- Memory size in words for testbench -/
+  memSizeWords : Nat := 16384
+  /-- Simulation timeout in clock cycles -/
+  timeoutCycles : Nat := 100000
   deriving Repr, BEq, DecidableEq
+
+/-! ## Derived Helpers -/
+
+/-- Helper: compute log2 of a power of 2 (or ceiling for non-powers) -/
+private def log2Ceil (n : Nat) : Nat :=
+  if n <= 1 then 0
+  else Nat.log2 n + (if 2^(Nat.log2 n) < n then 1 else 0)
+
+/-- Physical register tag width in bits (e.g., 6 for 64 registers) -/
+def CPUConfig.physTagWidth (c : CPUConfig) : Nat := log2Ceil c.numPhysRegs
+
+/-- ROB index width in bits (e.g., 4 for 16 entries) -/
+def CPUConfig.robIdxWidth (c : CPUConfig) : Nat := log2Ceil c.robEntries
+
+/-- Store buffer index width in bits (e.g., 3 for 8 entries) -/
+def CPUConfig.sbIdxWidth (c : CPUConfig) : Nat := log2Ceil c.storeBufferEntries
+
+/-- Cache line offset bits (e.g., 5 for 8 words × 4 bytes = 32 bytes) -/
+def CPUConfig.cacheOffsetBits (c : CPUConfig) : Nat := log2Ceil (c.cacheLineWords * 4)
+
+/-- L1I tag bits (address width - index bits - offset bits) -/
+def CPUConfig.l1iTagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l1iSets - c.cacheOffsetBits
+
+/-- L1D tag bits -/
+def CPUConfig.l1dTagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l1dSets - c.cacheOffsetBits
+
+/-- L2 tag bits -/
+def CPUConfig.l2TagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l2Sets - c.cacheOffsetBits
+
+/-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B") -/
+def CPUConfig.cacheString (c : CPUConfig) : String :=
+  let lineBytes := c.cacheLineWords * 4
+  let l1iBytes := c.l1iSets * lineBytes
+  let l1dBytes := c.l1dSets * c.l1dWays * lineBytes
+  let l2Bytes := c.l2Sets * c.l2Ways * lineBytes
+  s!"L1I{l1iBytes}B_L1D{l1dBytes}B_L2{l2Bytes}B"
 
 /-- Map config flags to riscv-opcodes extension strings.
     This bridges CPUConfig and the JSON-based instruction definitions
@@ -63,6 +130,16 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
   config.enableM
+
+/-- THE default config. Edit this single definition to change what gets built.
+    RV32IMF + Zicsr + Zifencei + Cache, with standard microarch parameters. -/
+def defaultCPUConfig : CPUConfig := {
+  enableM := true
+  enableF := true
+  enableZicsr := true
+  enableZifencei := true
+  enableCache := true
+}
 
 /-- Default RV32I configuration (no extensions) -/
 def rv32iConfig : CPUConfig := {}
@@ -120,6 +197,21 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
   let ucode := match cfg.csrMode with | .hardwired => "" | .microcoded => "_Microcoded"
   base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
+
+/-- Full CPU module name including ISA string and optional cache suffix -/
+def CPUConfig.fullName (c : CPUConfig) : String :=
+  let base := s!"CPU_{c.isaString}"
+  if c.enableCache then s!"{base}_{c.cacheString}" else base
+
+/-- Spike ISA string for cosimulation (e.g., "rv32imf_zicsr_zifencei") -/
+def CPUConfig.spikeIsa (c : CPUConfig) : String :=
+  let base := s!"rv{c.xlen}i"
+  let m := if c.enableM then "m" else ""
+  let f := if c.enableF then "f" else ""
+  let c_ := if c.enableC then "c" else ""
+  let zicsr := if c.enableZicsr then "_zicsr" else ""
+  let zifencei := if c.enableZifencei then "_zifencei" else ""
+  base ++ m ++ f ++ c_ ++ zicsr ++ zifencei
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.

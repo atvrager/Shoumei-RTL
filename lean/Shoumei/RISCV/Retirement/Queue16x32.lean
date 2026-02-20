@@ -22,6 +22,7 @@ import Shoumei.DSL
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.Register
+import Shoumei.RISCV.Config
 
 namespace Shoumei.RISCV.Retirement
 
@@ -129,5 +130,9 @@ def mkQueue16x32 : Circuit :=
       { name := "we", width := numEntries, wires := we }
     ] ++ next_groups ++ reg_groups
   }
+
+/-- Config-driven RVVI queue (currently only supports 16 entries matching ROB depth) -/
+def mkRVVIQueueFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkQueue16x32
 
 end Shoumei.RISCV.Retirement
