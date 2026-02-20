@@ -597,9 +597,11 @@ def mkSerializeDetect
           Gate.mkMUX csr_rd_reg[i]! decode_rd[i]! fence_i_start csr_rd_next[i]!) ++
         (List.range 6).map (fun i =>
           Gate.mkMUX csr_phys_reg[i]! rd_phys[i]! fence_i_start csr_phys_next[i]!) ++
-        -- rs1cap: capture on fence_i_start (forwarded data with CDB bypass)
+        -- rs1cap: use fence_i_draining (not fence_i_start) so value updates each cycle
+        -- during drain as CDB broadcasts commit in-flight results to PRF.
+        -- After drain, the committed rs1 value is captured.
         (List.range 32).map (fun i =>
-          Gate.mkMUX csr_rs1cap_reg[i]! (Wire.mk s!"fwd_src1_data_{i}") fence_i_start csr_rs1cap_next[i]!) ++
+          Gate.mkMUX csr_rs1cap_reg[i]! (Wire.mk s!"fwd_src1_data_{i}") fence_i_draining csr_rs1cap_next[i]!) ++
         (List.range 5).map (fun i =>
           Gate.mkMUX csr_zimm_reg[i]! decode_rs1[i]! fence_i_start csr_zimm_next[i]!)
       (hw_detect_gates ++ ser_detect_gates ++ hw_fsm_gates ++ hw_start_gates ++ hw_capture_gates, [])
