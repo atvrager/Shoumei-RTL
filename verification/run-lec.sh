@@ -123,34 +123,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CERTS_FILE="$PROJECT_ROOT/verification/compositional-certs.txt"
 
-# Try sources in order: pre-generated file (from make codegen) > built binary > lake exe
-CERT_SOURCE=""
-if [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
-    CERT_SOURCE="$CERTS_FILE"
-    echo "  Reading from $CERTS_FILE"
+# Try live export first (always up-to-date), fall back to pre-generated file
+CERT_OUTPUT=""
+if CERT_OUTPUT=$(.lake/build/bin/export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
+    echo "  Exported live from .lake/build/bin/export_verification_certs"
+elif CERT_OUTPUT=$(lake exe export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
+    echo "  Exported live from lake exe export_verification_certs"
+elif [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
+    CERT_OUTPUT=$(cat "$CERTS_FILE")
+    echo "  Reading from $CERTS_FILE (pre-generated)"
 fi
 
-if [ -n "$CERT_SOURCE" ]; then
-    while IFS='|' read -r module deps proof; do
-        [[ -z "$module" ]] && continue
-        module=$(echo "$module" | xargs)
-        deps=$(echo "$deps" | xargs)
-        proof=$(echo "$proof" | xargs)
-        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-    done < "$CERT_SOURCE"
-else
-    echo "  No pre-generated certs file found, trying to export from Lean..."
-    while IFS='|' read -r module deps proof; do
-        [[ -z "$module" ]] && continue
-        module=$(echo "$module" | xargs)
-        deps=$(echo "$deps" | xargs)
-        proof=$(echo "$proof" | xargs)
-        COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
-    done < <(.lake/build/bin/export_verification_certs 2>/dev/null || \
-        lake exe export_verification_certs 2>/dev/null || \
-        "$HOME/.elan/bin/lake" exe export_verification_certs 2>/dev/null || \
-        true)
-fi
+while IFS='|' read -r module deps proof; do
+    [[ -z "$module" ]] && continue
+    module=$(echo "$module" | xargs)
+    deps=$(echo "$deps" | xargs)
+    proof=$(echo "$proof" | xargs)
+    COMPOSITIONAL_CERTS["$module"]="$deps|$proof"
+done <<< "$CERT_OUTPUT"
 
 echo "Loaded ${#COMPOSITIONAL_CERTS[@]} compositional certificate(s)"
 if [ ${#COMPOSITIONAL_CERTS[@]} -eq 0 ]; then
