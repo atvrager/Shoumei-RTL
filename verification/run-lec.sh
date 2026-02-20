@@ -654,10 +654,13 @@ verify_module() {
     local MODULE_NAME
     MODULE_NAME=$(basename "$LEAN_FILE" .sv)
     MODULE_NAME=$(basename "$MODULE_NAME" .v)
-    local _start=$SECONDS
+    local _start_epoch
+    _start_epoch=$(date +%s)
     _verify_module_inner "$@"
     local _rc=$?
-    local _elapsed=$(( SECONDS - _start ))
+    local _end_epoch
+    _end_epoch=$(date +%s)
+    local _elapsed=$(( _end_epoch - _start_epoch ))
     local _result="PASS"; [ $_rc -ne 0 ] && _result="FAIL"
     local _method="lec"
     if [ -n "${COMPOSITIONAL_CERTS[$MODULE_NAME]}" ]; then _method="comp"; fi
