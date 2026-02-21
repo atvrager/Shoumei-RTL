@@ -1694,7 +1694,10 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "#include \"verilated.h\"\n" ++
   "#include \"svdpi.h\"\n\n" ++
   "#include \"lib/spike_oracle.h\"\n" ++
-  s!"#include \"lean_sim_{cfg.circuit.name}.h\"\n\n" ++
+  (if cfg.cacheLineMemPort.isNone then
+    s!"#include \"lean_sim_{cfg.circuit.name}.h\"\n\n"
+  else
+    "\n") ++
   "extern \"C\" void dpi_mem_write(unsigned int word_addr, unsigned int data);\n" ++
   "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n\n" ++
 
@@ -1812,7 +1815,9 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
   "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
   s!"    auto spike = std::make_unique<SpikeOracle>(elf_path, \"{cfg.spikeIsa}\");\n" ++
-  "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n" ++
+  (if cfg.cacheLineMemPort.isNone then
+    "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n"
+  else "\n") ++
   "    dut->clk = 0; dut->rst_n = 0;\n" ++
   "    for (int i = 0; i < 10; i++) " ++ lb ++ " dut->clk = !dut->clk; dut->eval(); " ++ rb ++ "\n" ++
   "    dut->rst_n = 1;\n\n" ++
@@ -1860,20 +1865,22 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                    retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n\n" ++
-  "            LeanSimStepResult cs_r = lean_sim->step();\n" ++
-  "            if (!cs_r.done && rvvi.pc != cs_r.pc) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\\n\",\n" ++
-  "                    retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);\n" ++
-  "                if (cs_r.pc == spike_r.pc) fprintf(stderr, \"  -> SV codegen bug\\n\");\n" ++
-  "                else if (rvvi.pc == cs_r.pc) fprintf(stderr, \"  -> Spike disagree\\n\");\n" ++
-  "                else fprintf(stderr, \"  -> Lean circuit bug\\n\");\n" ++
-  "                mismatches++;\n" ++
-  "            " ++ rb ++ "\n" ++
-  "            if (!cs_r.done && cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid && cs_r.rd_data != rvvi.rd_data) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x LeanSim=0x%08x\\n\",\n" ++
-  "                    retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);\n" ++
-  "                mismatches++;\n" ++
-  "            " ++ rb ++ "\n\n" ++
+  (if cfg.cacheLineMemPort.isNone then
+    "            LeanSimStepResult cs_r = lean_sim->step();\n" ++
+    "            if (!cs_r.done && rvvi.pc != cs_r.pc) " ++ lb ++ "\n" ++
+    "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\\n\",\n" ++
+    "                    retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);\n" ++
+    "                if (cs_r.pc == spike_r.pc) fprintf(stderr, \"  -> SV codegen bug\\n\");\n" ++
+    "                else if (rvvi.pc == cs_r.pc) fprintf(stderr, \"  -> Spike disagree\\n\");\n" ++
+    "                else fprintf(stderr, \"  -> Lean circuit bug\\n\");\n" ++
+    "                mismatches++;\n" ++
+    "            " ++ rb ++ "\n" ++
+    "            if (!cs_r.done && cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid && cs_r.rd_data != rvvi.rd_data) " ++ lb ++ "\n" ++
+    "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x LeanSim=0x%08x\\n\",\n" ++
+    "                    retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);\n" ++
+    "                mismatches++;\n" ++
+    "            " ++ rb ++ "\n\n"
+  else "\n") ++
   "            retired++;\n" ++
   "            if (mismatches > 10) " ++ lb ++ " fprintf(stderr, \"Too many mismatches\\n\"); done = true; " ++ rb ++ "\n" ++
   "        " ++ rb ++ "\n\n" ++

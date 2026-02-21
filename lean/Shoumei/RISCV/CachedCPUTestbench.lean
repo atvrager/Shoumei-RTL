@@ -29,7 +29,7 @@ def cachedCpuTestbenchConfig : TestbenchConfig := {
     respDataSignal := "mem_resp_data"
   }
   constantPorts := [("zero", false), ("one", true)]
-  tbName := some "tb_cached_cpu"
+  tbName := some "tb_cpu"
   memSizeWords := defaultCPUConfig.memSizeWords
   tohostAddr := 0x1000
   putcharAddr := some 0x1004
