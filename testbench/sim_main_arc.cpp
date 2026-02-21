@@ -1,15 +1,9 @@
 //==============================================================================
-// sim_main_arc.cpp - Arcilator testbench for Shoumei CPU
+// sim_main_arc.cpp - Arcilator simulation driver for Shoumei CPU
 //
-// Drives the tb_cpu model compiled by arcilator (CIRCT's MLIR/LLVM simulator):
-//   1. Loads an ELF binary into memory via direct state array writes
-//   2. Runs clock cycles until tohost is written or timeout
-//   3. Reports PASS/FAIL with cycle count
-//
-// Key differences from Verilator sim_main.cpp:
-//   - No DPI-C: memory loaded directly into model state array
-//   - No Verilated:: API: uses arcilator's eval() function
-//   - State accessed via generated header from arcilator --state-file JSON
+// Drives the CPU model compiled by arcilator (no SV testbench wrapper).
+// Implements cache-line memory, tohost/putchar detection, and ELF loading
+// entirely in C++.
 //
 // Build:  make -C testbench sim-arc
 // Run:    ./build-sim/sim_shoumei_arc +elf=path/to/program.elf [+timeout=N]
@@ -21,34 +15,41 @@
 #include <cstdint>
 #include <elf.h>
 
-#include "tb_cpu_arc.h"
+#include "cpu_arc.h"
 #include "lib/elf_loader.h"
 
-// Disable stdout buffering for non-TTY contexts
+// Use a shorter alias for the long model name
+using Model = CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B_model;
+
 static struct _StdoutUnbuffer {
     _StdoutUnbuffer() { setvbuf(stdout, nullptr, _IONBF, 0); }
 } _stdout_unbuffer;
 
 static const uint32_t DEFAULT_TIMEOUT = 100000;
+static const uint32_t MEM_SIZE_WORDS = 16384;
+static const uint32_t TOHOST_DEFAULT = 0x1000;
+static const uint32_t PUTCHAR_DEFAULT = 0x1004;
+static const uint32_t MEM_BASE = 0x00000000;
+
+// C++ memory model (replaces SV testbench memory)
+static uint32_t mem[MEM_SIZE_WORDS];
 
 static const char* get_plusarg(int argc, char** argv, const char* name) {
     size_t len = strlen(name);
     for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], name, len) == 0 && argv[i][len] == '=') {
+        if (strncmp(argv[i], name, len) == 0 && argv[i][len] == '=')
             return argv[i] + len + 1;
-        }
     }
     return nullptr;
 }
 
 static bool has_plusarg(int argc, char** argv, const char* name) {
-    for (int i = 1; i < argc; i++) {
+    for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], name) == 0) return true;
-    }
     return false;
 }
 
-// Look up a symbol by name in the ELF file, returns address or -1 if not found
+// ELF symbol lookup
 static int64_t elf_lookup_symbol(const char* path, const char* sym_name) {
     FILE* f = fopen(path, "rb");
     if (!f) return -1;
@@ -90,8 +91,26 @@ static int64_t elf_lookup_symbol(const char* path, const char* sym_name) {
     return -1;
 }
 
+// Pack 8 consecutive memory words into a 256-bit cache line (little-endian)
+static void pack_cache_line(uint32_t base_word_idx, uint8_t* dest) {
+    for (int w = 0; w < 8; w++) {
+        uint32_t idx = base_word_idx + w;
+        uint32_t val = (idx < MEM_SIZE_WORDS) ? mem[idx] : 0;
+        memcpy(dest + w * 4, &val, 4);
+    }
+}
+
+// Unpack a 256-bit cache line into 8 consecutive memory words
+static void unpack_cache_line(uint32_t base_word_idx, const uint8_t* src) {
+    for (int w = 0; w < 8; w++) {
+        uint32_t idx = base_word_idx + w;
+        if (idx < MEM_SIZE_WORDS) {
+            memcpy(&mem[idx], src + w * 4, 4);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
-    // Parse arguments
     const char* elf_path = get_plusarg(argc, argv, "+elf");
     const char* timeout_str = get_plusarg(argc, argv, "+timeout");
     bool verbose = has_plusarg(argc, argv, "+verbose");
@@ -103,96 +122,137 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Initialize model
-    tb_cpu_model model;
-    memset(model.state, 0, sizeof(model.state));
-
-    // Load ELF directly into model state memory.
-    // The memory base offset in the state array is determined by gen-arc-header.py
-    // from the arcilator state JSON. We need to discover it at build time.
-    // For now, use the MEM_STATE_OFFSET constant from the generated header.
+    // Load ELF into C++ memory array
+    memset(mem, 0, sizeof(mem));
     printf("Loading ELF: %s\n", elf_path);
 
     int elf_bytes = load_elf(elf_path, [&](uint32_t byte_addr, uint32_t data) {
-        model.write_mem_word(MEM_STATE_OFFSET, byte_addr, data);
+        uint32_t word_idx = (byte_addr - MEM_BASE) >> 2;
+        if (word_idx < MEM_SIZE_WORDS)
+            mem[word_idx] = data;
     });
     if (elf_bytes < 0) return 1;
 
     // Look up tohost/putchar symbols
     int64_t tohost_sym = elf_lookup_symbol(elf_path, "tohost");
-    uint32_t tohost_addr = (tohost_sym >= 0) ? (uint32_t)tohost_sym : 0x1000;
+    uint32_t tohost_addr = (tohost_sym >= 0) ? (uint32_t)tohost_sym : TOHOST_DEFAULT;
+    int64_t putchar_sym = elf_lookup_symbol(elf_path, "putchar_addr");
+    uint32_t putchar_addr = (putchar_sym >= 0) ? (uint32_t)putchar_sym : PUTCHAR_DEFAULT;
     if (tohost_sym >= 0)
         printf("ELF symbol: tohost = 0x%08x\n", tohost_addr);
 
-    // Reset: assert rst_n=0, clock several times, then deassert
-    model.set_rst_n(0);
-    model.set_clk(0);
+    // Initialize model
+    Model model;
+    model.set_zero(0);
+    model.set_one(1);
+
+    // Reset sequence
+    model.set_mem_resp_valid(0);
+    model.set_reset(1);
     for (int i = 0; i < 10; i++) {
-        model.set_clk(i & 1);
+        model.set_clock(0);
+        model.eval();
+        model.set_clock(1);
         model.eval();
     }
-    model.set_rst_n(1);
+    model.set_reset(0);
+    model.set_clock(0);
+    model.eval();
 
-    // Main simulation loop
+    // Memory state machine (mirrors SV testbench: 2-cycle read latency)
+    // Cycle N: request seen, data latched → Cycle N+1: pending → Cycle N+2: response valid
+    bool mem_pending = false;
+    bool mem_ready = false;
+    uint8_t mem_read_line[32] = {};
+
     uint32_t cycle = 0;
     uint32_t retired = 0;
     bool done = false;
+    bool pass = false;
+    uint32_t test_code = 0;
 
     printf("Simulation started (timeout=%u cycles, backend=arcilator)\n", timeout);
-    printf("─────────────────────────────────────────────\n");
 
     while (!done && cycle < timeout) {
         // Rising edge
-        model.set_clk(1);
+        model.set_clock(1);
+
+        // Drive memory response (2-cycle read latency like SV testbench)
+        if (mem_ready) {
+            model.set_mem_resp_valid(1);
+            memcpy(model.mem_resp_data_ptr(), mem_read_line, 32);
+            mem_ready = false;
+        } else {
+            model.set_mem_resp_valid(0);
+        }
+        if (mem_pending) {
+            mem_ready = true;
+            mem_pending = false;
+        }
+
         model.eval();
 
+        // Process memory request (after eval, check outputs)
+        if (model.get_mem_req_valid()) {
+            uint32_t addr = model.get_mem_req_addr();
+            uint32_t word_idx = (addr - MEM_BASE) >> 2;
+
+            if (model.get_mem_req_we()) {
+                // Cache-line write
+                unpack_cache_line(word_idx, model.mem_req_data_ptr());
+            } else {
+                // Cache-line read (1-cycle latency)
+                pack_cache_line(word_idx, mem_read_line);
+                mem_pending = true;
+            }
+        }
+
         // Check RVVI retirement
-        if (model.get_o_rvvi_valid()) {
+        if (model.get_rvvi_valid()) {
             retired++;
             if (verbose)
                 printf("  RET[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\n",
-                    retired, model.get_o_rvvi_pc_rdata(), model.get_o_rvvi_insn(),
-                    model.get_o_rvvi_rd(), (int)model.get_o_rvvi_rd_valid(),
-                    model.get_o_rvvi_rd_data());
+                    retired, model.get_rvvi_pc_rdata(), model.get_rvvi_insn(),
+                    model.get_rvvi_rd(), (int)model.get_rvvi_rd_valid(),
+                    model.get_rvvi_rd_data());
         }
 
-        // Check termination via output ports
-        if (model.get_o_test_done()) {
-            done = true;
-            if (model.get_o_test_pass()) {
-                printf("\n══════ TEST PASS ══════\n");
-            } else {
-                printf("\n══════ TEST FAIL ══════\n");
-                printf("  test_num:  %u\n", model.get_o_test_code() >> 1);
+        // Check store snooping for tohost/putchar
+        if (model.get_store_snoop_valid()) {
+            uint32_t saddr = model.get_store_snoop_addr();
+            uint32_t sdata = model.get_store_snoop_data();
+
+            if (saddr == tohost_addr) {
+                test_code = sdata;
+                pass = (sdata == 1);
+                done = true;
+            } else if (saddr == putchar_addr) {
+                putchar(sdata & 0xFF);
             }
-            printf("  Cycle:     %u\n", cycle);
-            printf("  Retired:   %u\n", retired);
-            printf("  IPC:       %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
-            printf("  PC:        0x%08x\n", model.get_o_fetch_pc());
-            printf("  tohost:    0x%08x\n", model.get_o_test_code());
         }
 
         // Falling edge
-        model.set_clk(0);
+        model.set_clock(0);
         model.eval();
 
         cycle++;
 
-        if (cycle % 10000 == 0) {
-            printf("  [%u cycles] PC=0x%08x\n", cycle, model.get_o_fetch_pc());
-        }
+        if (cycle % 10000 == 0)
+            printf("  [%u cycles] PC=0x%08x\n", cycle, model.get_rvvi_pc_rdata());
     }
 
-    if (!done) {
-        printf("\n══════ TIMEOUT ══════\n");
-        printf("  Cycle:     %u\n", cycle);
-        printf("  PC:        0x%08x\n", model.get_o_fetch_pc());
+    if (done) {
+        if (pass)
+            printf("\nPASS\n");
+        else
+            printf("\nFAIL (test_num=%u)\n", test_code >> 1);
+        printf("  Cycle:   %u\n", cycle);
+        printf("  Retired: %u\n", retired);
+        printf("  IPC:     %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
+    } else {
+        printf("\nTIMEOUT after %u cycles\n", cycle);
+        printf("  PC: 0x%08x\n", model.get_rvvi_pc_rdata());
     }
 
-    printf("─────────────────────────────────────────────\n");
-    printf("Total cycles: %u\n", cycle);
-    printf("Total retired: %u\n", retired);
-    printf("IPC: %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
-
-    return done && model.get_o_test_pass() ? 0 : 1;
+    return done && pass ? 0 : 1;
 }
