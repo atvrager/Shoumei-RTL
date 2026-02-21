@@ -74,6 +74,10 @@ private def hasM (defs : List InstructionDef) : Bool :=
 private def hasF (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+/-- Check if decoder includes Zve32x vector instructions -/
+private def hasVector (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_zve32x"))
+
 /-- Generate complete SystemVerilog decoder module -/
 def genSystemVerilogDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let header :=
@@ -96,9 +100,10 @@ s!"//===========================================================================
 
   let hasM := hasM defs
   let hasF := hasF defs
-  let hasTrailingPorts := hasM || hasF
+  let hasV := hasVector defs
+  let hasTrailingPorts := hasM || hasF || hasV
 
-  let muldivComma := if hasF then "," else ""
+  let muldivComma := if hasF || hasV then "," else ""
   let muldivPort := if hasM then
     s!"\n    output logic        io_is_muldiv{muldivComma}  // M-extension multiply/divide" else ""
 
@@ -111,7 +116,12 @@ s!"//===========================================================================
     "\n    output logic        io_fp_rs2_read, // rs2 from FP register file" ++
     "\n    output logic        io_fp_rs3_used, // Needs rs3 (R4-type fused ops)" ++
     "\n    output logic        io_is_fp_load, // FP load (FLW)" ++
-    "\n    output logic        io_is_fp_store // FP store (FSW)"
+    (if hasV then "\n    output logic        io_is_fp_store, // FP store (FSW)"
+     else "\n    output logic        io_is_fp_store // FP store (FSW)")
+  else ""
+
+  let vectorPort := if hasV then
+    "\n    output logic        io_is_vector   // Vector instruction (dispatch to RvvCore)"
   else ""
 
   -- Determine comma/no-comma for io_use_imm line
@@ -132,7 +142,7 @@ module {moduleName} (
     output logic        io_is_memory,  // Dispatch to load/store unit
     output logic        io_is_branch,  // Dispatch to branch unit
     output logic        io_is_store,   // Instruction is a store (SB/SH/SW/FSW)
-    output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ "
+    output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ vectorPort ++ "
 );
 
 // Extract register fields
@@ -316,7 +326,17 @@ assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011" ++ fpStore ++ ");
 
 // Use immediate: all instructions except R-type (OP = 0110011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
 assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
-muldivClassify ++ fpClassify ++ "
+muldivClassify ++ fpClassify ++
+  (if hasV then
+    "\n\n// Vector: OP-V (1010111), VL (0000111 with width!=010), VS (0100111 with width!=010)" ++
+    "\n// Vector loads/stores share opcodes with FLW/FSW but differ in width field (funct3)." ++
+    "\n// FLW/FSW use width=010 (W). Vector uses other width encodings." ++
+    "\nassign io_is_vector = io_valid && (" ++
+    "\n    (io_instr[6:0] == 7'b1010111) ||  // OP-V (vector arithmetic/config)" ++
+    "\n    (io_instr[6:0] == 7'b0000111 && io_instr[14:12] != 3'b010) ||  // VL (not FLW)" ++
+    "\n    (io_instr[6:0] == 7'b0100111 && io_instr[14:12] != 3'b010)     // VS (not FSW)" ++
+    "\n);"
+  else "") ++ "
 
 endmodule
 "

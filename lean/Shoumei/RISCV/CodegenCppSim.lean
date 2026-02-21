@@ -65,6 +65,10 @@ private def hasMCpp (defs : List InstructionDef) : Bool :=
 private def hasFCpp (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+/-- Check if decoder includes Zve32x vector instructions (C++ simulation) -/
+private def hasVectorCpp (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_zve32x"))
+
 /-- Generate individual bool* port declarations for a multi-bit signal -/
 private def genBoolPtrPorts (baseName : String) (width : Nat) : String :=
   let ports := (List.range width).map fun i =>
@@ -97,6 +101,9 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "  bool* io_is_fp_store;"
   else ""
 
+  let vectorPort := if hasVectorCpp defs then
+    "\n  bool* io_is_vector;" else ""
+
   String.intercalate "\n" [
     s!"#ifndef {guardName}",
     s!"#define {guardName}",
@@ -127,7 +134,7 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "  bool* io_is_memory;",
     "  bool* io_is_branch;",
     "  bool* io_is_store;",
-    "  bool* io_use_imm;" ++ muldivPort ++ fpPorts,
+    "  bool* io_use_imm;" ++ muldivPort ++ fpPorts ++ vectorPort,
     "",
     "  void comb_logic();",
     "  void seq_tick() {}",
@@ -328,6 +335,14 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "  *io_is_muldiv = valid && is_mext;"
     else "",
     fpClassify,
+    if hasVectorCpp defs then
+    "  // Vector: OP-V (0x57), VL (0x07 with width!=2), VS (0x27 with width!=2)\n" ++
+    "  uint32_t width_field = (instr >> 12) & 0x7;\n" ++
+    "  *io_is_vector = valid && (\n" ++
+    "    (opcode == 0x57) ||\n" ++
+    "    (opcode == 0x07 && width_field != 2) ||\n" ++
+    "    (opcode == 0x27 && width_field != 2));"
+    else "",
     s!"{rb}",
     "",
     ""

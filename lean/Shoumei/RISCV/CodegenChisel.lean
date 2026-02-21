@@ -71,6 +71,9 @@ private def hasMChisel (defs : List InstructionDef) : Bool :=
 private def hasFChisel (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+private def hasVectorChisel (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_zve32x"))
+
 /-- Generate complete Chisel decoder module -/
 private def ceilLog2 (n : Nat) : Nat :=
   if n <= 2 then 1
@@ -122,6 +125,9 @@ import chisel3.util._
     "  val io_is_fp_load   = IO(Output(Bool()))       // FP load (FLW)\n" ++
     "  val io_is_fp_store  = IO(Output(Bool()))       // FP store (FSW)\n" else ""
 
+  let vectorPort := if hasVectorChisel defs then
+    "  val io_is_vector    = IO(Output(Bool()))       // Vector instruction (dispatch to RvvCore)\n" else ""
+
   let moduleDecl :=
     "\n\nclass " ++ moduleName ++ " extends RawModule {\n" ++
     "  val io_instr      = IO(Input(UInt(32.W)))    // 32-bit instruction word\n" ++
@@ -139,6 +145,7 @@ import chisel3.util._
     "  val io_use_imm    = IO(Output(Bool()))       // Uses immediate (not R-type)\n" ++
     muldivPort ++
     fpPorts ++
+    vectorPort ++
     "\n" ++
     "  val instr = io_instr\n" ++
     "  val opcode = instr(6, 0)\n\n" ++
@@ -269,7 +276,15 @@ import chisel3.util._
 
   io_is_store := io_valid && ((opcode === \"b0100011\".U)" ++ fpStoreExtra ++ ")
   io_use_imm  := io_valid && (opcode =/= \"b0110011\".U) && (opcode =/= \"b1100011\".U)  // All except R-type and branches
-" ++ muldivClassify ++ fpClassify ++ "
+" ++ muldivClassify ++ fpClassify ++
+  (if hasVectorChisel defs then
+    "\n\n  // Vector classification" ++
+    "\n  io_is_vector := io_valid && (" ++
+    "\n    (opcode === \"b1010111\".U) ||  // OP-V (vector arith/config)" ++
+    "\n    (opcode === \"b0000111\".U && instr(14, 12) =/= \"b010\".U) ||  // VL (not FLW)" ++
+    "\n    (opcode === \"b0100111\".U && instr(14, 12) =/= \"b010\".U)     // VS (not FSW)" ++
+    "\n  )"
+  else "") ++ "
 }
 "
 

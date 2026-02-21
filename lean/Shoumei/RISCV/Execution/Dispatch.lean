@@ -23,6 +23,7 @@ inductive ExecUnit where
   | Memory  : ExecUnit   -- Load and store operations
   | MulDiv  : ExecUnit   -- M-extension multiply/divide
   | FPExec  : ExecUnit   -- F-extension floating-point operations
+  | Vector  : ExecUnit   -- Zve32x vector operations (forwarded to RvvCore)
   | System  : ExecUnit   -- FENCE, ECALL, EBREAK
   | Illegal : ExecUnit   -- Unsupported operation for current config
   deriving Repr, BEq, DecidableEq
@@ -34,6 +35,7 @@ instance : ToString ExecUnit where
     | .Memory  => "Memory"
     | .MulDiv  => "MulDiv"
     | .FPExec  => "FPExec"
+    | .Vector  => "Vector"
     | .System  => "System"
     | .Illegal => "Illegal"
 
@@ -74,6 +76,9 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
       if config.enableM then .MulDiv else .Illegal
   -- Zicsr (CSR instructions routed to Integer unit)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => .Integer
+  -- Zve32x (vector operations forwarded to external RvvCore)
+  | .VECTOR_ARITH | .VECTOR_LOAD | .VECTOR_STORE =>
+      if config.enableVector then .Vector else .Illegal
   -- System
   | .FENCE | .FENCE_I | .ECALL | .EBREAK => .System
 

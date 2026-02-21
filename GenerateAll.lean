@@ -53,6 +53,10 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
+-- Zve32x Vector Extension
+import Shoumei.RISCV.Execution.VectorExecUnit
+import Shoumei.RISCV.Execution.VectorExecUnitCodegen
+
 -- F-Extension
 import Shoumei.Circuits.Combinational.FPUnpack
 import Shoumei.Circuits.Combinational.FPPack
@@ -282,7 +286,8 @@ def allCircuits : List Circuit := [
   mkCPU_RV32IM,
   mkCPU_RV32IF,
   mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded
+  mkCPU_RV32IMF_Microcoded,
+  mkCPU_RV32IMF_Vector
 ]
 
 def main (args : List String) : IO Unit := do

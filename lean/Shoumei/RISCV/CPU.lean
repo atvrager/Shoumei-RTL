@@ -43,6 +43,7 @@ set_option maxHeartbeats 800000
 def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableVector := config.enableVector
   let sbFwdPipelined := config.sbFwdPipelineStages > 0
   let oi := config.opcodeIndex
   -- Opcode width: 7 bits when F extension (>64 instructions), 6 bits otherwise
@@ -86,6 +87,36 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let decode_fp_rs3_used := Wire.mk "decode_fp_rs3_used"
   let dispatch_is_fp_load := Wire.mk "dispatch_is_fp_load"
   let dispatch_is_fp_store := Wire.mk "dispatch_is_fp_store"
+
+  -- Vector decoder outputs (only used when enableVector)
+  let dispatch_is_vector := Wire.mk "dispatch_is_vector"
+  -- Vector dispatch signals
+  let dispatch_vector_valid := Wire.mk "dispatch_vector_valid"
+  -- RvvCore interface wires
+  let rvv_inst_ready := Wire.mk "rvv_inst_ready"
+  let rvv_inst_valid := Wire.mk "rvv_inst_valid"
+  -- RVVInstruction bits: pc[31:0] + opcode[1:0] + bits[24:0] = 59 bits
+  -- We pack instruction bits[31:7] = 25 bits for the RvvCore
+  let rvv_inst_bits := makeIndexedWires "rvv_inst_bits" 25
+  let rvv_opcode := makeIndexedWires "rvv_opcode" 2
+  -- Async scalar writeback from RvvCore (vmv.x.s etc.)
+  let rvv_async_rd_valid := Wire.mk "rvv_async_rd_valid"
+  let rvv_async_rd_addr := makeIndexedWires "rvv_async_rd_addr" 5
+  let rvv_async_rd_data := makeIndexedWires "rvv_async_rd_data" 32
+  let rvv_async_rd_ready := Wire.mk "rvv_async_rd_ready"
+  -- Synchronous scalar writeback (vsetvl config ops)
+  let rvv_reg_write_valid := Wire.mk "rvv_reg_write_valid"
+  let rvv_reg_write_addr := makeIndexedWires "rvv_reg_write_addr" 5
+  let rvv_reg_write_data := makeIndexedWires "rvv_reg_write_data" 32
+  -- RvvCore status signals
+  let rvv_idle := Wire.mk "rvv_idle"
+  let rvv_queue_capacity := makeIndexedWires "rvv_queue_cap" 4  -- $clog2(2*4+1) = 4 bits
+  let rvv_trap_valid := Wire.mk "rvv_trap_valid"
+  -- Vector DMEM port (exposed as CPU I/O for external memory connection)
+  let vec_dmem_req_ready := Wire.mk "vec_dmem_req_ready"
+  let vec_dmem_resp_valid := Wire.mk "vec_dmem_resp_valid"
+  let vec_dmem_resp_rdata := makeIndexedWires "vec_dmem_resp_rdata" 32
+
   let decode_has_any_rd := Wire.mk "decode_has_any_rd"
   let decode_rd_nonzero := Wire.mk "decode_rd_nonzero"
   let decode_has_rd_nox0 := Wire.mk "decode_has_rd_nox0"
@@ -369,6 +400,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
          ("io_is_fp_load", dispatch_is_fp_load),
          ("io_is_fp_store", dispatch_is_fp_store)]
       else [])
+      -- Note: dispatch_is_vector is computed from raw instruction bits in CPU gates,
+      -- not from the decoder (since vector instructions aren't in instr_dict.json)
   }
 
   -- === RENAME STAGE ===
@@ -593,6 +626,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
      Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid] ++
     (if enableM then [Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid] else []) ++
+    (if enableVector then [Gate.mkAND dispatch_base_valid dispatch_is_vector dispatch_vector_valid] else []) ++
     (if enableF then
       let not_has_fp_rd := Wire.mk "not_has_fp_rd"
       let decode_has_rd_int := Wire.mk "decode_has_rd_int"
@@ -1469,6 +1503,110 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("valid_out", fp_valid_out), ("busy", fp_busy),
        ("result_is_int", fp_result_is_int)]
   }
+
+  -- === VECTOR EXECUTION UNIT (RvvCore instance, conditional on enableVector) ===
+  -- RvvCore is an external SV module from coralnpu. N=4 with lanes 1-3 tied off.
+  -- The scalar CPU packs instruction bits and forwards scalar register values.
+  let rvv_core_inst : CircuitInstance := {
+    moduleName := "RvvCore"
+    instName := "u_rvv_core"
+    portMap :=
+      [("clk", clock), ("rstn", reset)] ++
+      -- CSR inputs (TODO: wire from actual CSR state; tie off for now)
+      (List.range 7).map (fun i => (s!"vstart[{i}]", zero)) ++
+      [("vxrm[1]", zero), ("vxrm[0]", zero), ("vxsat", zero),
+       ("frm[2]", zero), ("frm[1]", zero), ("frm[0]", zero)] ++
+      -- Instruction input: only lane 0 used, lanes 1-3 tied off
+      [("inst_valid[0]", rvv_inst_valid),
+       ("inst_valid[1]", zero), ("inst_valid[2]", zero), ("inst_valid[3]", zero)] ++
+      -- inst_data[0]: packed RVVInstruction {pc, opcode, bits}
+      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].pc[{i}]", w))) ++
+      (rvv_opcode.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].opcode[{i}]", w))) ++
+      (rvv_inst_bits.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].bits[{i}]", w))) ++
+      -- Tie off inst_data for lanes 1-3
+      ((List.range 3).map (fun lane =>
+        (List.range 59).map (fun bit => (s!"inst_data[{lane+1}][{bit}]", zero)))).flatten ++
+      [("inst_ready[0]", rvv_inst_ready)] ++
+      -- Scalar register read data (2*N = 8 ports, only 0-1 used)
+      [("reg_read_valid[0]", rvv_inst_valid), ("reg_read_valid[1]", rvv_inst_valid)] ++
+      (List.range 6).map (fun j => (s!"reg_read_valid[{j+2}]", zero)) ++
+      (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data[0][{i}]", w))) ++
+      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data[1][{i}]", w))) ++
+      ((List.range 6).map (fun j =>
+        (List.range 32).map (fun bit => (s!"reg_read_data[{j+2}][{bit}]", zero)))).flatten ++
+      -- FP register read data (N=4 ports, all tied off for Zve32x integer-only)
+      ((List.range 4).map (fun j =>
+        (List.range 32).map (fun bit => (s!"freg_read_data[{j}][{bit}]", zero)))).flatten ++
+      -- Scalar writeback outputs (config ops)
+      [("reg_write_valid[0]", rvv_reg_write_valid)] ++
+      (rvv_reg_write_addr.enum.map (fun ⟨i, w⟩ => (s!"reg_write_addr[0][{i}]", w))) ++
+      (rvv_reg_write_data.enum.map (fun ⟨i, w⟩ => (s!"reg_write_data[0][{i}]", w))) ++
+      -- Async scalar writeback (vmv.x.s etc.)
+      [("async_rd_valid", rvv_async_rd_valid),
+       ("async_rd_ready", rvv_async_rd_ready)] ++
+      (rvv_async_rd_addr.enum.map (fun ⟨i, w⟩ => (s!"async_rd_addr[{i}]", w))) ++
+      (rvv_async_rd_data.enum.map (fun ⟨i, w⟩ => (s!"async_rd_data[{i}]", w))) ++
+      -- Status
+      [("rvv_idle", rvv_idle)] ++
+      (rvv_queue_capacity.enum.map (fun ⟨i, w⟩ => (s!"queue_capacity[{i}]", w))) ++
+      -- Trap
+      [("trap_valid_o", rvv_trap_valid)] ++
+      -- Vector DMEM port (directly exposed as CPU outputs)
+      -- LSU ports are complex (structured types) — will be connected via top-level wrapper
+      -- For now, tie off the LSU ports that require structured types
+      ((List.range 2).map (fun j =>
+        [(s!"uop_lsu_ready_lsu2rvv[{j}]", zero),
+         (s!"uop_lsu_valid_lsu2rvv[{j}]", zero)] ++
+        (List.range 5).map (fun b => (s!"uop_lsu_addr_lsu2rvv[{j}][{b}]", zero)) ++
+        (List.range 128).map (fun b => (s!"uop_lsu_wdata_lsu2rvv[{j}][{b}]", zero)) ++
+        [(s!"uop_lsu_last_lsu2rvv[{j}]", zero)])).flatten ++
+      -- VCSR and config state outputs (unused for now)
+      [("vcsr_ready", one)] ++
+      -- Async FP writeback (tie off for Zve32x)
+      [("async_frd_ready", zero)]
+  }
+
+  -- Vector instruction valid: gate dispatch with backpressure
+  -- rvv_inst_valid = dispatch_vector_valid AND rvv_inst_ready already handled by dispatch
+  -- Pack instruction bits[31:7] from raw instruction word
+  -- Vector opcode detection from raw instruction bits (imem_resp_data[6:0])
+  -- OP-V = 1010111: bit0=1, bit1=1, bit2=1, bit3=0, bit4=1, bit5=0, bit6=1
+  let rvv_detect_opv := Wire.mk "rvv_detect_opv"
+  let rvv_pack_gates :=
+    if enableVector then
+      -- Detect OP-V opcode (1010111 = 0x57)
+      let n3 := Wire.mk "rvv_n3"  -- NOT bit3
+      let n5 := Wire.mk "rvv_n5"  -- NOT bit5
+      let a01 := Wire.mk "rvv_a01"
+      let a23 := Wire.mk "rvv_a23"
+      let a45 := Wire.mk "rvv_a45"
+      let a0123 := Wire.mk "rvv_a0123"
+      let a01234 := Wire.mk "rvv_a01234"
+      let _a456 := Wire.mk "rvv_a456"
+      [Gate.mkNOT (imem_resp_data[3]!) n3,
+       Gate.mkNOT (imem_resp_data[5]!) n5,
+       Gate.mkAND (imem_resp_data[0]!) (imem_resp_data[1]!) a01,
+       Gate.mkAND (imem_resp_data[2]!) n3 a23,
+       Gate.mkAND (imem_resp_data[4]!) n5 a45,
+       Gate.mkAND a01 a23 a0123,
+       Gate.mkAND a0123 a45 a01234,
+       Gate.mkAND a01234 (imem_resp_data[6]!) rvv_detect_opv,
+       -- dispatch_is_vector = OP-V detected AND instruction valid
+       Gate.mkAND rvv_detect_opv decode_valid dispatch_is_vector] ++
+      -- rvv_inst_valid = dispatch_vector_valid (backpressure handled externally)
+      [Gate.mkBUF dispatch_vector_valid rvv_inst_valid] ++
+      -- rvv_inst_bits = imem_resp_data[31:7] (bits[31:7] of the instruction)
+      (List.range 25).map (fun i => Gate.mkBUF (imem_resp_data[i + 7]!) (rvv_inst_bits[i]!)) ++
+      -- rvv_opcode: for OP-V, opcode = RVV (2 = 10 binary)
+      -- For now only OP-V supported (LOAD=0, STORE=1 need LSU integration)
+      [Gate.mkBUF zero (rvv_opcode[0]!),  -- opcode[0] = 0
+       Gate.mkBUF one (rvv_opcode[1]!)]    -- opcode[1] = 1 → RVV=2
+    else []
+
+  -- Async rd ready: always accept for now
+  let rvv_async_gates :=
+    if enableVector then [Gate.mkBUF one rvv_async_rd_ready]
+    else []
 
   -- === LUI/AUIPC POST-ALU MUX ===
   let auipc_result := makeIndexedWires "auipc_result" 32
@@ -2865,7 +3003,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++
               imem_resp_data ++
-              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
+              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
+              (if enableVector then [vec_dmem_req_ready, vec_dmem_resp_valid] ++ vec_dmem_resp_rdata else [])
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty, fence_i_drain_complete] ++
@@ -2883,7 +3022,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [trace_dispatch_mem] ++ trace_dispatch_mem_tag ++
                [trace_dispatch_branch] ++ trace_dispatch_branch_tag ++
                [trace_dispatch_muldiv] ++ trace_dispatch_muldiv_tag ++
-               [trace_dispatch_fp] ++ trace_dispatch_fp_tag
+               [trace_dispatch_fp] ++ trace_dispatch_fp_tag ++
+               (if enableVector then
+                 [rvv_async_rd_valid] ++ rvv_async_rd_addr ++ rvv_async_rd_data ++
+                 [rvv_reg_write_valid] ++ rvv_reg_write_addr ++ rvv_reg_write_data ++
+                 [rvv_trap_valid, rvv_idle] ++ rvv_queue_capacity
+               else [])
     gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
@@ -2915,7 +3059,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
              commit_gates ++ retire_tag_filter_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_cdb_bypass_gates ++ rvvi_gates ++
              rvvi_fp_gates ++
              fflags_gates ++
-             csr_all_gates
+             csr_all_gates ++
+             rvv_pack_gates ++ rvv_async_gates
     instances := microcode_instances ++
                   [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
                   [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
@@ -2935,6 +3080,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   [int_exec_inst, branch_exec_inst, mem_exec_inst] ++
                   (if enableM then [muldiv_exec_inst] else []) ++
                   (if enableF then [fp_exec_inst] else []) ++
+                  (if enableVector then [rvv_core_inst] else []) ++
                   [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst,
                   int_imm_rf_decoder_inst, int_imm_rf_mux_inst, int_pc_rf_mux_inst,
@@ -3082,6 +3228,9 @@ def mkCPU_RV32IMF : Circuit := mkCPU rv32imfConfig
 
 /-- RV32IMF CPU with microcoded CSR sequencer -/
 def mkCPU_RV32IMF_Microcoded : Circuit := mkCPU rv32imfMicrocodedConfig
+
+/-- RV32IMF_Zve32x CPU with vector extension (RvvCore) -/
+def mkCPU_RV32IMF_Vector : Circuit := mkCPU rv32imfVectorConfig
 
 end -- section
 
