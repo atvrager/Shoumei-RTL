@@ -26,7 +26,7 @@ open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
 
 def mkROB16_W2 : Circuit :=
-  let mkWires := @makeIndexedWires
+  let mkWires := Shoumei.Circuits.Sequential.makeIndexedWires
   -- === Global Signals ===
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -125,8 +125,10 @@ def mkROB16_W2 : Circuit :=
   let alloc_idx_1_gates := List.zipWith Gate.mkBUF tail1_ptr alloc_idx_1
 
   -- empty / full
-  let eo1 := Wire.mk "w2_eo1"; let eo2 := Wire.mk "w2_eo2"
-  let eo3 := Wire.mk "w2_eo3"; let eo4 := Wire.mk "w2_eo4"
+  let eo1 := Wire.mk "w2_eo1"
+  let eo2 := Wire.mk "w2_eo2"
+  let eo3 := Wire.mk "w2_eo3"
+  let eo4 := Wire.mk "w2_eo4"
   let empty_gates := [
     Gate.mkOR count[0]! count[1]! eo1,
     Gate.mkOR eo1 count[2]! eo2,
@@ -227,16 +229,19 @@ def mkROB16_W2 : Circuit :=
     let (g_isBr, sel_isBr)        := sel "ibr"  alloc_isBranch_0 alloc_isBranch_1
 
     let sel_gates := g_physRd ++ [g_hasPhRd] ++ g_oldPhRd ++ [g_hasOPR] ++ g_archRd ++ [g_isBr]
-    let sel_hasPhRd_w := sel_hasPhRd.2
-    let sel_isBr_w    := sel_isBr.2
+    let sel_hasPhRd_w := sel_hasPhRd
+    let sel_isBr_w    := sel_isBr
 
     -- CDB match (Comparator6 instance)
     let cdb_match  := Wire.mk s!"e{i}_cm"
     let cn         := Wire.mk s!"e{i}_cn"
-    let ct1 := Wire.mk s!"e{i}_ct1"; let ct2 := Wire.mk s!"e{i}_ct2"
-    let ct3 := Wire.mk s!"e{i}_ct3"; let ct4 := Wire.mk s!"e{i}_ct4"
+    let ct1 := Wire.mk s!"e{i}_ct1"
+    let ct2 := Wire.mk s!"e{i}_ct2"
+    let ct3 := Wire.mk s!"e{i}_ct3"
+    let ct4 := Wire.mk s!"e{i}_ct4"
     let hpob := Wire.mk s!"e{i}_hpob"
-    let dxor := Wire.mk s!"e{i}_dxor"; let dm := Wire.mk s!"e{i}_dm"
+    let dxor := Wire.mk s!"e{i}_dxor"
+    let dm := Wire.mk s!"e{i}_dm"
     let cwe  := Wire.mk s!"e{i}_cwe"
     let cdb_we_gates := [
       Gate.mkNOT cur_complete cn,
@@ -250,17 +255,19 @@ def mkROB16_W2 : Circuit :=
       Gate.mkAND ct4 dm cwe
     ]
     let cmp_inst : CircuitInstance := {
-      moduleName := "Comparator6"; instName := s!"u_cmp{i}"
+      moduleName := "Comparator6"
+      instName := s!"u_cmp{i}"
       portMap :=
-        (cdb_tag.enum.map fun ⟨j,w⟩ => (s!"a_{j}", w)) ++
-        (cur_physRd.enum.map fun ⟨j,w⟩ => (s!"b_{j}", w)) ++
+        (cdb_tag.enum.map (fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2))) ++
+        (cur_physRd.enum.map (fun (jw : Nat × Wire) => (s!"b_{jw.1}", jw.2))) ++
         [("one", one), ("eq", cdb_match),
          ("lt",  Wire.mk s!"e{i}_clt"),  ("ltu", Wire.mk s!"e{i}_cltu"),
          ("gt",  Wire.mk s!"e{i}_cgt"),  ("gtu", Wire.mk s!"e{i}_cgtu")]
     }
 
     -- Commit clear
-    let cc0 := Wire.mk s!"e{i}_cc0"; let cc1 := Wire.mk s!"e{i}_cc1"
+    let cc0 := Wire.mk s!"e{i}_cc0"
+    let cc1 := Wire.mk s!"e{i}_cc1"
     let commit_clear := Wire.mk s!"e{i}_cc"
     let cc_gates := [
       Gate.mkAND commit_en_0_safe commit_dec_0[i]! cc0,
@@ -280,7 +287,8 @@ def mkROB16_W2 : Circuit :=
       Gate.mkMUX cur_valid zero clear vm1,
       Gate.mkMUX vm1 one awe e_next[0]!
     ]
-    let cpm1 := Wire.mk s!"e{i}_cpm1"; let cpm2 := Wire.mk s!"e{i}_cpm2"
+    let cpm1 := Wire.mk s!"e{i}_cpm1"
+    let cpm2 := Wire.mk s!"e{i}_cpm2"
     let comp_gates := [
       Gate.mkOR  sel_hasPhRd_w sel_isBr_w anc,
       Gate.mkNOT anc aic,
@@ -293,17 +301,19 @@ def mkROB16_W2 : Circuit :=
     let hasPR_gate   := Gate.mkMUX cur_hasPhRd sel_hasPhRd_w awe e_next[8]!
     let oldPR_gates  := (List.range 6).map fun j =>
       Gate.mkMUX cur_oldPhRd[j]! sel_oldPhRd[j]! awe e_next[9+j]!
-    let hasOPR_gate  := Gate.mkMUX cur_hasOPR sel_hasOPR.2 awe e_next[15]!
+    let hasOPR_gate  := Gate.mkMUX cur_hasOPR sel_hasOPR awe e_next[15]!
     let archRd_gates := (List.range 5).map fun j =>
       Gate.mkMUX cur_archRd[j]! sel_archRd[j]! awe e_next[16+j]!
-    let em1 := Wire.mk s!"e{i}_em1"; let em2 := Wire.mk s!"e{i}_em2"
+    let em1 := Wire.mk s!"e{i}_em1"
+    let em2 := Wire.mk s!"e{i}_em2"
     let exc_gates := [
       Gate.mkMUX cur_exc cdb_exception cwe em1,
       Gate.mkMUX em1 zero clear em2,
       Gate.mkMUX em2 zero awe e_next[21]!
     ]
     let isBr_gate := Gate.mkMUX cur_isBr sel_isBr_w awe e_next[22]!
-    let mm1 := Wire.mk s!"e{i}_mm1"; let mm2 := Wire.mk s!"e{i}_mm2"
+    let mm1 := Wire.mk s!"e{i}_mm1"
+    let mm2 := Wire.mk s!"e{i}_mm2"
     let misp_gates := [
       Gate.mkMUX cur_misp cdb_mispred cwe mm1,
       Gate.mkMUX mm1 zero clear mm2,
@@ -311,11 +321,12 @@ def mkROB16_W2 : Circuit :=
     ]
 
     let reg_inst : CircuitInstance := {
-      moduleName := "Register24"; instName := s!"u_entry{i}"
+      moduleName := "Register24"
+      instName := s!"u_entry{i}"
       portMap :=
-        (e_next.enum.map fun ⟨j,w⟩ => (s!"d_{j}", w)) ++
+        (e_next.enum.map (fun (jw : Nat × Wire) => (s!"d_{jw.1}", jw.2))) ++
         [("clock", clock), ("reset", rb[i]!)] ++
-        (e_cur.enum.map fun ⟨j,w⟩ => (s!"q_{j}", w))
+        (e_cur.enum.map (fun (jw : Nat × Wire) => (s!"q_{jw.1}", jw.2)))
     }
 
     let entry_gates :=
@@ -352,18 +363,20 @@ def mkROB16_W2 : Circuit :=
   -- Mux readout helper
   let mkMuxReadout (instName modName : String) (bitStart bitCount : Nat)
       (sel_ptr : List Wire) (outs : List Wire) : CircuitInstance := {
-    moduleName := modName; instName := instName
+    moduleName := modName
+    instName := instName
     portMap :=
       ((List.range 16).map fun i =>
         let e := all_entry_cur[i]!
         (List.range bitCount).map fun j => (s!"in{i}[{j}]", e[bitStart+j]!)
       ).flatten ++
-      (sel_ptr.enum.map fun ⟨k,w⟩ => (s!"sel[{k}]", w)) ++
-      (outs.enum.map fun ⟨j,w⟩ => (s!"out[{j}]", w))
+      (sel_ptr.enum.map (fun (jw : Nat × Wire) => (s!"sel[{jw.1}]", jw.2))) ++
+      (outs.enum.map (fun (jw : Nat × Wire) => (s!"out[{jw.1}]", jw.2)))
   }
 
   -- === Commit Slot 0 Outputs ===
-  let hv0 := Wire.mk "head_valid_0";    let hcmp0 := Wire.mk "head_complete_0"
+  let hv0 := Wire.mk "head_valid_0"
+  let hcmp0 := Wire.mk "head_complete_0"
   let hpr0 := mkWires "head_physRd_0" 6
   let hhpr0 := Wire.mk "head_hasPhysRd_0"
   let hopr0 := mkWires "head_oldPhysRd_0" 6
@@ -374,7 +387,8 @@ def mkROB16_W2 : Circuit :=
   let hmisp0 := Wire.mk "head_mispredicted_0"
 
   -- === Commit Slot 1 Outputs ===
-  let hv1 := Wire.mk "head_valid_1";    let hcmp1 := Wire.mk "head_complete_1"
+  let hv1 := Wire.mk "head_valid_1"
+  let hcmp1 := Wire.mk "head_complete_1"
   let hpr1 := mkWires "head_physRd_1" 6
   let hhpr1 := Wire.mk "head_hasPhysRd_1"
   let hopr1 := mkWires "head_oldPhysRd_1" 6
@@ -420,21 +434,21 @@ def mkROB16_W2 : Circuit :=
     instName := "u_head"
     portMap := [("clock", clock), ("reset", reset), ("en", commit_en_0_safe),
                 ("one", one), ("zero", zero)] ++
-               (head_ptr.enum.map fun ⟨i,w⟩ => (s!"count_{i}", w))
+               (head_ptr.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
   }
   let tail_inst_0 : CircuitInstance := {
     moduleName := "QueuePointer_4"
     instName := "u_tail_s0"
     portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_0),
                 ("one", one), ("zero", zero)] ++
-               (mkWires "tail_mid" 4).enum.map fun ⟨i,w⟩ => (s!"count_{i}", w)
+               (mkWires "tail_mid" 4).enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2))
   }
   let tail_inst_1 : CircuitInstance := {
     moduleName := "QueuePointer_4"
     instName := "u_tail_s1"
     portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_1),
                 ("one", one), ("zero", zero)] ++
-               (tail_ptr.enum.map fun ⟨i,w⟩ => (s!"count_{i}", w))
+               (tail_ptr.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
   }
   -- head slot-1 pointer: separate QueuePointer advancing on commit_en_1_safe
   -- (not used as a register; we combine head+1 combinationally via head1_ptr)
@@ -444,7 +458,7 @@ def mkROB16_W2 : Circuit :=
     portMap := [("clock", clock), ("reset", reset),
                 ("inc", alloc_en_0), ("dec", commit_en_0_safe),
                 ("one", one), ("zero", zero)] ++
-               (mkWires "count_mid" 5).enum.map fun ⟨i,w⟩ => (s!"count_{i}", w)
+               (mkWires "count_mid" 5).enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2))
   }
   let count_inst_1 : CircuitInstance := {
     moduleName := "QueueCounterUpDown_5"
@@ -452,7 +466,7 @@ def mkROB16_W2 : Circuit :=
     portMap := [("clock", clock), ("reset", reset),
                 ("inc", alloc_en_1), ("dec", commit_en_1_safe),
                 ("one", one), ("zero", zero)] ++
-               (count.enum.map fun ⟨i,w⟩ => (s!"count_{i}", w))
+               (count.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
   }
 
   -- === Assemble ===
@@ -483,8 +497,10 @@ def mkROB16_W2 : Circuit :=
     [pr_mux_0, opr_mux_0, ar_mux_0, pr_mux_1, opr_mux_1, ar_mux_1]
 
   { name := "ROB16_W2"
-    inputs := all_inputs; outputs := all_outputs
-    gates := all_gates; instances := all_instances
+    inputs := all_inputs
+    outputs := all_outputs
+    gates := all_gates
+    instances := all_instances
     signalGroups := [
       { name := "alloc_physRd_0",    width := 6, wires := alloc_physRd_0 },
       { name := "alloc_oldPhysRd_0", width := 6, wires := alloc_oldPhysRd_0 },

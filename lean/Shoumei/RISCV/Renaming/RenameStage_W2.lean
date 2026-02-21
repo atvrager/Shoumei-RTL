@@ -142,7 +142,8 @@ def mkRenameStage_W2 : Circuit :=
     [Gate.mkNOT rd_or_1[3]! x0_1]
 
   -- needs_alloc_{k} = has_rd_{k} AND NOT(x0_{k})
-  let not_x0_0     := Wire.mk "not_x0_0"; let not_x0_1 := Wire.mk "not_x0_1"
+  let not_x0_0     := Wire.mk "not_x0_0"
+  let not_x0_1     := Wire.mk "not_x0_1"
   let needs_alloc_0 := Wire.mk "needs_alloc_0"
   let needs_alloc_1 := Wire.mk "needs_alloc_1"
   let needs_alloc_gates :=
@@ -160,8 +161,10 @@ def mkRenameStage_W2 : Circuit :=
 
   -- Stall per slot: stall_k = needs_alloc_k AND NOT(alloc_avail_k)
   -- Global stall: stall_any = stall_0 OR stall_1 (all-or-nothing)
-  let not_avail_0 := Wire.mk "not_avail_0"; let not_avail_1 := Wire.mk "not_avail_1"
-  let stall_raw0  := Wire.mk "stall_raw_0"; let stall_raw1  := Wire.mk "stall_raw_1"
+  let not_avail_0 := Wire.mk "not_avail_0"
+  let not_avail_1 := Wire.mk "not_avail_1"
+  let stall_raw0  := Wire.mk "stall_raw_0"
+  let stall_raw1  := Wire.mk "stall_raw_1"
   let stall_any   := Wire.mk "stall_any"
   let stall_gates :=
     [Gate.mkNOT alloc_avail_0 not_avail_0,
@@ -182,8 +185,10 @@ def mkRenameStage_W2 : Circuit :=
   -- allocate_fire_{k} = needs_alloc_{k} AND rename_valid_{k}
   let alloc_fire_0 := Wire.mk "alloc_fire_0"
   let alloc_fire_1 := Wire.mk "alloc_fire_1"
-  let ff0 := Wire.mk "ff_fire_0"; let ff1 := Wire.mk "ff_fire_1"
-  let cnt0 := Wire.mk "counter_advance_0"; let cnt1 := Wire.mk "counter_advance_1"
+  let ff0 := Wire.mk "ff_fire_0"
+  let ff1 := Wire.mk "ff_fire_1"
+  let cnt0 := Wire.mk "counter_advance_0"
+  let cnt1 := Wire.mk "counter_advance_1"
   let fire_gates :=
     [Gate.mkAND needs_alloc_0 rename_valid_0 alloc_fire_0,
      Gate.mkAND force_alloc_0 rename_valid_0 ff0,
@@ -218,8 +223,10 @@ def mkRenameStage_W2 : Circuit :=
     let xnor_gates := (List.range archWidth).map fun i =>
       Gate.mkNOT xors[i]! xnors[i]!
     -- AND-reduce: eq = AND(xnors[0..4])
-    let a1 := Wire.mk s!"{pfx}_a1"; let a2 := Wire.mk s!"{pfx}_a2"
-    let a3 := Wire.mk s!"{pfx}_a3"; let eq := Wire.mk s!"{pfx}_eq"
+    let a1 := Wire.mk s!"{pfx}_a1"
+    let a2 := Wire.mk s!"{pfx}_a2"
+    let a3 := Wire.mk s!"{pfx}_a3"
+    let eq := Wire.mk s!"{pfx}_eq"
     let and_gates :=
       [Gate.mkAND xnors[0]! xnors[1]! a1,
        Gate.mkAND xnors[2]! xnors[3]! a2,
@@ -241,10 +248,14 @@ def mkRenameStage_W2 : Circuit :=
 
   -- === Committed RAT write-enable per channel ===
   let mkCratWe (pfx : String) (v : Wire) (arch : List Wire) (hasPR : Wire) : List Gate × Wire :=
-    let or1 := Wire.mk s!"{pfx}_cor1"; let or2 := Wire.mk s!"{pfx}_cor2"
-    let or3 := Wire.mk s!"{pfx}_cor3"; let or4 := Wire.mk s!"{pfx}_cor4"
-    let is_x0 := Wire.mk s!"{pfx}_is_x0"; let not_x0w := Wire.mk s!"{pfx}_nx0"
-    let vh := Wire.mk s!"{pfx}_vh"; let we := Wire.mk s!"{pfx}_we"
+    let or1 := Wire.mk s!"{pfx}_cor1"
+    let or2 := Wire.mk s!"{pfx}_cor2"
+    let or3 := Wire.mk s!"{pfx}_cor3"
+    let or4 := Wire.mk s!"{pfx}_cor4"
+    let is_x0 := Wire.mk s!"{pfx}_is_x0"
+    let not_x0w := Wire.mk s!"{pfx}_nx0"
+    let vh := Wire.mk s!"{pfx}_vh"
+    let we := Wire.mk s!"{pfx}_we"
     ([Gate.mkOR arch[0]! arch[1]! or1,
       Gate.mkOR or1 arch[2]! or2, Gate.mkOR or2 arch[3]! or3,
       Gate.mkOR or3 arch[4]! or4,
@@ -459,8 +470,10 @@ def mkRenameStage_W2 : Circuit :=
     [crat_0_inst, crat_1_inst, rat_inst_0, rat_inst_1, freelist_inst, physregfile_inst]
 
   { name := "RenameStage_W2"
-    inputs := all_inputs; outputs := all_outputs
-    gates := all_gates; instances := all_instances
+    inputs := all_inputs
+    outputs := all_outputs
+    gates := all_gates
+    instances := all_instances
     signalGroups := [
       { name := "rs1_addr",   width := archWidth, wires := rs1_addr_0 },
       { name := "rs2_addr",   width := archWidth, wires := rs2_addr_0 },
