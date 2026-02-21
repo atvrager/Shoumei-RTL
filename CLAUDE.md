@@ -28,9 +28,8 @@ make all                            # Run entire pipeline
 # RISC-V test compilation and simulation
 export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
 make -C testbench/tests             # Compile C tests -> ELF binaries
-make -C testbench sim               # Build Verilator simulation
+make -C testbench sim               # Build Verilator simulation (X-prop on by default)
 make -C testbench run-all-tests     # Run all ELF tests
-make -C testbench run-all-tests-xprop  # X-prop simulation
 make -C testbench cosim       # Build cosim (auto-builds Spike)
 make -C testbench run-cosim   # RTL vs Spike lock-step cosim
 ```

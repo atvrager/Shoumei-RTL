@@ -1,7 +1,7 @@
 # Testbench Makefile - Verilator simulation of Shoumei CPU
 #
 # Targets:
-#   make sim          - Build Verilator simulation binary
+#   make sim          - Build Verilator simulation binary (X-prop enabled)
 #   make sim-trace    - Build with FST trace support
 #   make sim-debug    - Build with TRACE_PIPELINE $display output
 #   make run-elf      - Run with an ELF file: make run-elf ELF=path/to/prog.elf
@@ -21,26 +21,21 @@ TB_DIR    := $(PROJ_ROOT)/testbench
 # Include auto-generated config from Lean (provides CPU_NAME, SPIKE_ISA, etc.)
 -include $(PROJ_ROOT)/output/config.mk
 
-# Verilator flags
+# Verilator flags (X-prop always on to catch reset bugs)
 VERILATOR  := verilator
 VFLAGS     := --cc --exe --build -j 0 \
               --Mdir $(BUILD_DIR)/verilator \
               -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
               --top-module tb_cpu \
-              -CFLAGS "-std=c++17 -O2 -I$(TB_DIR)"
+              --x-assign unique --x-initial unique \
+              -CFLAGS "-std=c++17 -O2"
 
 # Source files: all SV from Lean + generated testbench
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
 TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
-CPP_SOURCES := $(TB_DIR)/sim_main.cpp $(TB_DIR)/lib/kanata_tracer.cpp
-COSIM_CPP   := $(TB_DIR)/cosim_main.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-                $(TB_DIR)/generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei.cpp \
-                $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei.cpp \
-                $(TB_DIR)/lib/elf_loader.cpp
-CPPSIM_OBJS := $(wildcard $(PROJ_ROOT)/output/cpp_sim/*.cpp)
-
-# X-propagation flags: randomize uninitialized regs to catch reset bugs
-VFLAGS_XPROP := --x-assign unique --x-initial unique
+SIM_CPP    := $(TB_DIR)/generated/sim_main_tb_cpu.cpp
+COSIM_CPP  := $(TB_DIR)/generated/cosim_main_tb_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
+              $(TB_DIR)/lib/elf_loader.cpp
 
 # Spike paths (override with SPIKE_PREFIX=...)
 SPIKE_PREFIX ?= $(HOME)/.local/spike
@@ -57,11 +52,7 @@ RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself
 # is correct (tohost=1).  TODO: fix RVVI rd_data reporting for FP-to-int moves.
-# ecall_test excluded from non-microcoded runs (requires ECALL trap support)
-CUSTOM_TEST_GLOBS = $(filter-out %/fp_memory.elf %/ecall_test.elf, \
-                   $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
-# Microcoded runs include ecall_test
-CUSTOM_TEST_GLOBS_UCODE = $(filter-out %/fp_memory.elf, \
+CUSTOM_TEST_GLOBS = $(filter-out %/fp_memory.elf, \
                    $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
 
 # Auto-build Spike if missing (check for .so or .a)
@@ -70,86 +61,45 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-.PHONY: sim sim-microcoded sim-microcoded-trace sim-xprop sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests run-all-tests-xprop run-all-tests-microcoded run-all-tests-cached cosim run-cosim sim-cached cosim-cached run-cosim-cached coremark run-coremark clean
+.PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests cosim run-cosim coremark run-coremark clean
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
-SIM_UCODE_BIN:= $(BUILD_DIR)/sim_shoumei_microcoded
-SIM_XPROP_BIN:= $(BUILD_DIR)/sim_shoumei_xprop
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
 
-# Cached CPU variants
-SIM_CACHED_BIN   := $(BUILD_DIR)/sim_cached_shoumei
-COSIM_CACHED_BIN := $(BUILD_DIR)/cosim_cached_shoumei
-TB_CACHED_SOURCES := $(wildcard $(TB_DIR)/generated/tb_cached_*.sv)
-SIM_CACHED_CPP    := $(TB_DIR)/generated/sim_main_tb_cached_cpu.cpp
-COSIM_CACHED_CPP  := $(TB_DIR)/generated/cosim_main_tb_cached_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-                      $(TB_DIR)/generated/lean_sim_CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B.cpp \
-                      $(TB_DIR)/generated/cpu_setup_CPU_RV32IMF_Zicsr_Zifencei_L1I256B_L1D256B_L2512B.cpp \
-                      $(TB_DIR)/lib/elf_loader.cpp
-
 sim: $(SIM_BIN)
-$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) $(VFLAGS) \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	@echo "Built: $@"
 
-sim-microcoded: $(SIM_UCODE_BIN)
-$(SIM_UCODE_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@rm -rf $(BUILD_DIR)/verilator_ucode
-	@mkdir -p $(BUILD_DIR)/verilator_ucode
+sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+	@rm -rf $(BUILD_DIR)/verilator_trace
+	@mkdir -p $(BUILD_DIR)/verilator_trace
 	$(VERILATOR) --cc --exe --build -j 0 \
-		--Mdir $(BUILD_DIR)/verilator_ucode \
+		--Mdir $(BUILD_DIR)/verilator_trace \
 		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-		--top-module tb_cpu_microcoded \
-		-CFLAGS '-std=c++17 -O2 -DTOP_MODULE=Vtb_cpu_microcoded -DTOP_HEADER=\"Vtb_cpu_microcoded.h\" -DTOP_SCOPE=\"TOP.tb_cpu_microcoded\"' \
-		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
-	@echo "Built: $@ (microcoded CSR)"
-
-sim-microcoded-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@rm -rf $(BUILD_DIR)/verilator_ucode_trace
-	@mkdir -p $(BUILD_DIR)/verilator_ucode_trace
-	$(VERILATOR) --cc --exe --build -j 0 \
-		--Mdir $(BUILD_DIR)/verilator_ucode_trace \
-		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-		--top-module tb_cpu_microcoded --trace-fst \
-		-CFLAGS '-std=c++17 -O2 -DVM_TRACE=1 -DTOP_MODULE=Vtb_cpu_microcoded -DTOP_HEADER=\"Vtb_cpu_microcoded.h\" -DTOP_SCOPE=\"TOP.tb_cpu_microcoded\"' \
-		-o $(abspath $(BUILD_DIR))/sim_shoumei_microcoded_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
-	@echo "Built: $(BUILD_DIR)/sim_shoumei_microcoded_trace (microcoded with FST trace)"
-
-sim-xprop: $(SIM_XPROP_BIN)
-$(SIM_XPROP_BIN): $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@rm -rf $(BUILD_DIR)/verilator_xprop
-	@mkdir -p $(BUILD_DIR)/verilator_xprop
-	$(VERILATOR) $(VFLAGS) $(VFLAGS_XPROP) \
-		--Mdir $(BUILD_DIR)/verilator_xprop \
-		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
-	@echo "Built: $@ (with X-propagation)"
-
-sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
-	@rm -rf $(BUILD_DIR)/verilator
-	@mkdir -p $(BUILD_DIR)/verilator
-	$(VERILATOR) $(VFLAGS) --trace-fst \
-		-CFLAGS "-DVM_TRACE=1" \
+		--top-module tb_cpu --trace-fst \
+		--x-assign unique --x-initial unique \
+		-CFLAGS "-std=c++17 -O2 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
-sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(CPP_SOURCES)
+sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_dbg
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
 	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_dbg \
-		-Wno-UNOPTFLAT --top-module tb_cpu \
+		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
+		--top-module tb_cpu \
+		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -O2" \
 		-DTRACE_PIPELINE \
 		-o $(BUILD_DIR)/sim_shoumei_dbg \
-		$(TB_SOURCES) $(SV_SOURCES) $(CPP_SOURCES)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_dbg (with pipeline trace)"
 
 run-elf: $(SIM_BIN)
@@ -199,7 +149,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
+		result=$$($(SIM_BIN) +elf=$$elf +timeout=5000 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
@@ -219,80 +169,24 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	echo "CSV: $(PROJ_ROOT)/output/test-results.csv"; \
 	[ $$fail -eq 0 ]
 
-run-all-tests-xprop: $(SIM_XPROP_BIN) tests riscv-tests
-	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-xprop.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(SIM_XPROP_BIN) +elf=$$elf +timeout=3000 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-xprop.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-xprop.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (X-prop mode)"; \
-	echo "CSV: $(PROJ_ROOT)/output/test-results-xprop.csv"; \
-	[ $$fail -eq 0 ]
-
-run-all-tests-microcoded: $(SIM_UCODE_BIN) tests riscv-tests
-	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-microcoded.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS_UCODE) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(SIM_UCODE_BIN) +elf=$$elf +timeout=5000 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-microcoded.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-microcoded.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (microcoded)"; \
-	echo "CSV: $(PROJ_ROOT)/output/test-results-microcoded.csv"; \
-	[ $$fail -eq 0 ]
-
 SPIKE_LIB_FILE := $(firstword $(wildcard $(SPIKE_LIB)/libriscv.*))
 ifeq ($(SPIKE_LIB_FILE),)
   SPIKE_LIB_FILE := $(SPIKE_LIB)/libriscv.so
 endif
 
-VFLAGS_COMMON := --cc --exe --build -j 0 \
-                 -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-                 --top-module tb_cpu
-
 cosim: $(COSIM_BIN)
-$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS) $(SPIKE_LIB_FILE)
+$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
-	$(VERILATOR) $(VFLAGS_COMMON) \
+	$(VERILATOR) --cc --exe --build -j 0 \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(PROJ_ROOT)/output/cpp_sim -I$(TB_DIR)/lib -I$(TB_DIR)/generated" \
+		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
+		--top-module tb_cpu \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(CPPSIM_OBJS)
-	@echo "Built: $@ (3-way: RTL + Spike + LeanSim)"
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
+	@echo "Built: $@ (RTL + Spike cosim)"
 
 run-cosim: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
@@ -320,99 +214,6 @@ run-cosim: $(COSIM_BIN) tests riscv-tests
 	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
 	[ $$fail -eq 0 ]
 
-# --------------------------------------------------------------------------
-# Cached CPU targets (CachedCPU = CPU + L1I + L1D + L2)
-# --------------------------------------------------------------------------
-VFLAGS_CACHED := --cc --exe --build -j 0 \
-                 -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-                 --top-module tb_cached_cpu
-
-sim-cached: $(SIM_CACHED_BIN)
-$(SIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
-	@rm -rf $(BUILD_DIR)/verilator_cached
-	@mkdir -p $(BUILD_DIR)/verilator_cached
-	$(VERILATOR) $(VFLAGS_CACHED) \
-		--Mdir $(BUILD_DIR)/verilator_cached \
-		-CFLAGS "-std=c++17 -O2" \
-		-o $@ \
-		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(SIM_CACHED_CPP)
-	@echo "Built: $@ (cached CPU)"
-
-run-all-tests-cached: $(SIM_CACHED_BIN) tests riscv-tests
-	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-cached.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(SIM_CACHED_BIN) +elf=$$elf +timeout=5000 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-cached.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-cached.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (cached)"; \
-	echo "CSV: $(PROJ_ROOT)/output/test-results-cached.csv"; \
-	[ $$fail -eq 0 ]
-
-sim-cached-trace: $(SV_SOURCES) $(TB_CACHED_SOURCES) $(SIM_CACHED_CPP)
-	@rm -rf $(BUILD_DIR)/verilator_cached_trace
-	@mkdir -p $(BUILD_DIR)/verilator_cached_trace
-	$(VERILATOR) $(VFLAGS_CACHED) --trace-fst \
-		--Mdir $(BUILD_DIR)/verilator_cached_trace \
-		-CFLAGS "-std=c++17 -O2 -DVM_TRACE=1" \
-		-o $(BUILD_DIR)/sim_cached_shoumei_trace \
-		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(SIM_CACHED_CPP)
-	@echo "Built: $(BUILD_DIR)/sim_cached_shoumei_trace (cached with FST trace)"
-
-cosim-cached: $(COSIM_CACHED_BIN)
-$(COSIM_CACHED_BIN): $(SV_SOURCES) $(TB_CACHED_SOURCES) $(COSIM_CACHED_CPP) $(CPPSIM_OBJS) $(SPIKE_LIB_FILE)
-	@rm -rf $(BUILD_DIR)/verilator_cosim_cached
-	@mkdir -p $(BUILD_DIR)/verilator_cosim_cached
-	$(VERILATOR) $(VFLAGS_CACHED) \
-		--Mdir $(BUILD_DIR)/verilator_cosim_cached \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(PROJ_ROOT)/output/cpp_sim -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
-		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
-		-o $@ \
-		$(TB_CACHED_SOURCES) $(SV_SOURCES) $(COSIM_CACHED_CPP) $(CPPSIM_OBJS)
-	@echo "Built: $@ (3-way cached: RTL + Spike + LeanSim)"
-
-run-cosim-cached: $(COSIM_CACHED_BIN) tests riscv-tests
-	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-cached-results.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(COSIM_CACHED_BIN) +elf=$$elf +timeout=3000 2>&1); \
-		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
-		if echo "$$result" | grep -q "COSIM PASS"; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-cached-results.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-cached-results.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (cosim-cached)"; \
-	echo "CSV: $(PROJ_ROOT)/output/cosim-cached-results.csv"; \
-	[ $$fail -eq 0 ]
-
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark
 
@@ -420,7 +221,7 @@ run-coremark: $(SIM_BIN) coremark
 	$(SIM_BIN) +elf=$(TB_DIR)/coremark/coremark.elf +timeout=10000000
 
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_xprop $(BUILD_DIR)/verilator_cosim $(BUILD_DIR)/verilator_cached $(BUILD_DIR)/verilator_cosim_cached $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(SIM_XPROP_BIN) $(COSIM_BIN) $(SIM_CACHED_BIN) $(COSIM_CACHED_BIN)
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
 	rm -f shoumei_cpu.fst
 	$(MAKE) -C $(TB_DIR)/tests clean
 	$(MAKE) -C $(TB_DIR)/riscv-tests clean

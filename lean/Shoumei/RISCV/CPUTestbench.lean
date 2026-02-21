@@ -1,15 +1,8 @@
 /-
-RISCV/CPUTestbench.lean - Testbench Configuration for CPU_RV32IM
+RISCV/CPUTestbench.lean - (Deprecated: configs removed, see CachedCPUTestbench.lean)
 
-Maps the CPU_RV32IM circuit's ports to semantic memory interfaces
-for automatic testbench generation.
-
-Port mapping (from CPU.lean mkCPU_RV32IM):
-  Inputs:  clock, reset, zero, one, imem_resp_data[31:0],
-           dmem_req_ready, dmem_resp_valid, dmem_resp_data[31:0]
-  Outputs: fetch_pc[31:0], fetch_stalled, global_stall_out,
-           dmem_req_valid, dmem_req_we, dmem_req_addr[31:0],
-           dmem_req_data[31:0], rob_empty
+The cached+microcoded CPU is now the single testbench target.
+This file is kept only so existing imports don't break.
 -/
 
 import Shoumei.Codegen.Testbench
@@ -19,40 +12,5 @@ namespace Shoumei.RISCV.CPUTestbench
 
 open Shoumei.Codegen.Testbench
 open Shoumei.RISCV.CPU
-
-/-- Testbench configuration for the RV32IM CPU.
-    Maps fetch_pc → instruction memory read address,
-    dmem_req_* → data memory request interface. -/
-def cpuTestbenchConfig : TestbenchConfig := {
-  circuit := mkCPU_RV32IMF
-  imemPort := {
-    addrSignal := "fetch_pc"
-    dataInSignal := some "imem_resp_data"
-  }
-  dmemPort := {
-    addrSignal := "dmem_req_addr"
-    dataOutSignal := some "dmem_req_data"
-    validSignal := some "dmem_req_valid"
-    readySignal := some "dmem_req_ready"
-    weSignal := some "dmem_req_we"
-    sizeSignal := some "dmem_req_size"
-    respValidSignal := some "dmem_resp_valid"
-    respDataSignal := some "dmem_resp_data"
-  }
-  memSizeWords := defaultCPUConfig.memSizeWords
-  tohostAddr := 0x1000
-  putcharAddr := some 0x1004
-  timeoutCycles := defaultCPUConfig.timeoutCycles
-  constantPorts := [("zero", false), ("one", true), ("fetch_stall_ext", false), ("dmem_stall_ext", false)]
-  tbName := some "tb_cpu"
-}
-
-/-- Testbench configuration for the microcoded-CSR variant.
-    Same port interface, different CPU module name. -/
-def cpuTestbenchConfigMicrocoded : TestbenchConfig := {
-  cpuTestbenchConfig with
-  circuit := mkCPU_RV32IMF_Microcoded
-  tbName := some "tb_cpu_microcoded"
-}
 
 end Shoumei.RISCV.CPUTestbench
