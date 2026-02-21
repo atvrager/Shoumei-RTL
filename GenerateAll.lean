@@ -87,6 +87,7 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
+import Shoumei.RISCV.Fetch_W2
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CPU
@@ -281,6 +282,7 @@ def allCircuits : List Circuit := [
   cdbMux,
   cdbMuxF,
   mkFetchStage,
+  mkFetchStage_W2,
   mkRenameStage,
   mkRenameStage_W2,
   mkCPU_RV32I,
