@@ -460,6 +460,66 @@ jobs:
           path: output/cosim-results.csv
           retention-days: 90
 
+  arcilator-sim:
+    name: Arcilator Simulation
+    runs-on: ubuntu-latest
+    needs: [codegen]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codegen-output
+
+      - name: Cache CIRCT
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/circt
+          key: circt-firtool-1.140.0
+
+      - name: Install CIRCT (firtool, arcilator, circt-verilog)
+        run: |
+          chmod +x scripts/install-circt.sh
+          scripts/install-circt.sh
+          echo "$HOME/.local/circt/bin" >> $GITHUB_PATH
+
+      - name: Install LLVM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/riscv32-elf
+          key: riscv32-elf-2026.01.23
+
+      - name: Setup RISC-V toolchain
+        run: |
+          ./scripts/setup-riscv-toolchain.sh
+          echo "$HOME/.local/riscv32-elf/bin" >> $GITHUB_PATH
+
+      - name: Fetch riscv-tests submodule
+        run: git submodule update --init third_party/riscv-tests
+
+      - name: Build test ELFs
+        run: make -C testbench/tests
+
+      - name: Build arcilator simulation
+        run: make -C testbench sim-arc
+
+      - name: Run all ELF tests (arcilator)
+        run: make -C testbench run-all-tests-arc
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-arc
+          path: output/test-results-arc.csv
+          retention-days: 90
+
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest
@@ -481,3 +541,30 @@ jobs:
         run: |
           chmod +x verification/smoke-test.sh
           ./verification/smoke-test.sh
+
+  ci-pass:
+    name: CI Pass
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [lint, proof-coverage, lec, verilator-sim, cppsim, slang-lint, cosim, smoke-test, arcilator-sim]
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results=( \
+            "${{ needs.lint.result }}" \
+            "${{ needs.proof-coverage.result }}" \
+            "${{ needs.lec.result }}" \
+            "${{ needs.verilator-sim.result }}" \
+            "${{ needs.cppsim.result }}" \
+            "${{ needs.slang-lint.result }}" \
+            "${{ needs.cosim.result }}" \
+            "${{ needs.smoke-test.result }}" \
+            "${{ needs.arcilator-sim.result }}" \
+          )
+          for r in "${results[@]}"; do
+            if [ "$r" != "success" ]; then
+              echo "One or more jobs failed or were cancelled"
+              exit 1
+            fi
+          done
+          echo "All 9 leaf jobs passed"

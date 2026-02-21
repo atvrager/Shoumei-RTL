@@ -99,6 +99,20 @@ object Main extends App {
         firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "--disable-opt")
       )
 
+      // Also emit FIRRTL dialect for arcilator flow
+      val firrtlDir = new File(projectRoot, "output/firrtl-from-chisel")
+      firrtlDir.mkdirs()
+      try {
+        ChiselStage.emitFIRRTLDialectFile(
+          generatorFn(),
+          args = Array("--target-dir", firrtlDir.getAbsolutePath),
+          firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "--disable-opt")
+        )
+      } catch {
+        case e: Exception =>
+          println(s"  ⚠ FIRRTL emission failed for $moduleName: ${e.getMessage}")
+      }
+
       println(s"✓ $moduleName compilation successful")
       println(s"Output: ${new File(outputDir, s"$moduleName.sv").getAbsolutePath}")
       true
