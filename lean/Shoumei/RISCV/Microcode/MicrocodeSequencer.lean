@@ -242,14 +242,35 @@ def mkMicrocodeSequencer : Circuit :=
   let upc_next_mux := (List.range 6).map (fun i =>
     Gate.mkMUX upc_nostall[i]! seq_base[i]! start upc_d[i]!)
 
-  -- DONE or pipeline_flush clears active
+  -- Active deactivation logic:
+  -- Kill on DONE always.
+  -- Kill on pipeline_flush ONLY before drain is confirmed (speculative ECALL/MRET
+  -- from a mispredicted branch). A `drain_done` DFF latches 1 once the ROB has
+  -- been observed empty while the sequencer is active. Because it's registered,
+  -- it lags one cycle behind rob_empty, so on the exact cycle the last ROB entry
+  -- retires AND causes a branch redirect (rob_empty=1, pipeline_flush=1),
+  -- drain_done_q is still 0 → spec_flush fires → sequencer correctly killed.
+  -- Once drain_done_q=1, the ecall/mret is confirmed non-speculative.
   let done_or_flush := Wire.mk "done_or_flush"
+  let spec_flush := Wire.mk "spec_flush"
+  let drain_done_q := Wire.mk "drain_done_q"
+  let drain_done_d := Wire.mk "drain_done_d"
+  let drain_done_set := Wire.mk "drain_done_set"
+  let not_drain_done := Wire.mk "not_drain_done"
   let not_done_flush := Wire.mk "not_done_flush"
   let active_hold := Wire.mk "active_hold"
   let active_next := Wire.mk "active_next"
 
   let activeGates := [
-    Gate.mkOR is_done pipeline_flush done_or_flush,
+    -- drain_done latch: set when active & rob_empty, held until sequencer deactivates
+    Gate.mkAND active_q rob_empty drain_done_set,
+    Gate.mkOR drain_done_set drain_done_q (Wire.mk "drain_done_hold"),
+    Gate.mkAND (Wire.mk "drain_done_hold") active_q drain_done_d,
+    Gate.mkDFF drain_done_d clock reset drain_done_q,
+    -- spec_flush: kill on flush if drain not yet confirmed
+    Gate.mkNOT drain_done_q not_drain_done,
+    Gate.mkAND pipeline_flush not_drain_done spec_flush,
+    Gate.mkOR is_done spec_flush done_or_flush,
     Gate.mkNOT done_or_flush not_done_flush,
     Gate.mkAND active_q not_done_flush active_hold,
     Gate.mkOR start active_hold active_next,

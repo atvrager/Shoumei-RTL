@@ -260,6 +260,8 @@ def mkRenameStage : Circuit :=
   let has_rd := Wire.mk "has_rd"
   -- Committed RAT recovery inputs
   let flush_en := Wire.mk "flush_en"
+  -- Separate flush for free list (not suppressed by CSR flush suppress)
+  let freelist_flush_en := Wire.mk "freelist_flush_en"
   let commit_valid := Wire.mk "commit_valid"
   let commit_archRd := (List.range 5).map (fun i => Wire.mk s!"commit_archRd_{i}")
   let commit_physRd := (List.range tagWidth).map (fun i => Wire.mk s!"commit_physRd_{i}")
@@ -467,7 +469,7 @@ def mkRenameStage : Circuit :=
       [("enq_ready", freelist_enq_ready)] ++
       (freelist_deq_data.enum.map (fun ⟨i, w⟩ => (s!"deq_data_{i}", w))) ++
       [("deq_valid", alloc_avail)] ++
-      [("flush_en", flush_en)] ++
+      [("flush_en", freelist_flush_en)] ++
       [("commit_alloc_en", commit_alloc_advance)] ++
       (commit_physRd.enum.map (fun ⟨i, w⟩ => (s!"commit_alloc_tag_{i}", w)))
   }
@@ -510,7 +512,7 @@ def mkRenameStage : Circuit :=
               [cdb_valid] ++ cdb_tag ++ cdb_data ++
               [retire_valid] ++ retire_tag ++
               rd_tag4 ++
-              [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd] ++
+              [flush_en, freelist_flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++ [commit_hasPhysRd] ++
               [force_alloc, commit_hasAllocSlot]
     outputs := [rename_valid, stall] ++
                rs1_phys_out ++ rs2_phys_out ++ rd_phys_out ++ old_rd_phys_out ++

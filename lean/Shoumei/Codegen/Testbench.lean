@@ -1053,9 +1053,16 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
      "  // MMIO putchar: monitor CPU store snoop for putchar address\n" ++
      "  // =========================================================================\n" ++
      "  wire putchar_store = store_snoop_valid && (store_snoop_addr == putchar_addr_r);\n\n" ++
+     s!"  logic putchar_store_prev;\n" ++
+     s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
+     s!"    if ({resetName}) putchar_store_prev <= 1'b0;\n" ++
+     s!"    else       putchar_store_prev <= putchar_store;\n" ++
+     s!"  end\n" ++
+     s!"  wire putchar_store_rising = putchar_store && !putchar_store_prev;\n\n" ++
      s!"  always_ff @(posedge clk) begin\n" ++
-     s!"    if (!{resetName} && putchar_store) begin\n" ++
+     s!"    if (!{resetName} && putchar_store_rising) begin\n" ++
      "      $write(\"%c\", store_snoop_data[7:0]);\n" ++
+     "      $fflush;\n" ++
      "    end\n" ++
      "  end\n\n"
    | none => "") ++
@@ -1285,16 +1292,12 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   s!"    svSetScope(svGetScopeFromName(\"TOP.{tbName}\"));\n" ++
   "    if (load_elf(elf_path) < 0) return 1;\n\n" ++
   "    int64_t tohost_sym = elf_lookup_symbol(elf_path, \"tohost\");\n" ++
-  "    if (tohost_sym >= 0) " ++ lb ++ "\n" ++
+  "    if (tohost_sym >= 0)\n" ++
   "        printf(\"ELF symbol: tohost = 0x%08x\\n\", (uint32_t)tohost_sym);\n" ++
-  "        dpi_set_tohost_addr((uint32_t)tohost_sym);\n" ++
-  "    " ++ rb ++ "\n" ++
   (if cfg.putcharAddr.isSome then
     "    int64_t putchar_sym = elf_lookup_symbol(elf_path, \"putchar_addr\");\n" ++
-    "    if (putchar_sym >= 0) " ++ lb ++ "\n" ++
-    "        printf(\"ELF symbol: putchar_addr = 0x%08x\\n\", (uint32_t)putchar_sym);\n" ++
-    "        dpi_set_putchar_addr((uint32_t)putchar_sym);\n" ++
-    "    " ++ rb ++ "\n"
+    "    if (putchar_sym >= 0)\n" ++
+    "        printf(\"ELF symbol: putchar_addr = 0x%08x\\n\", (uint32_t)putchar_sym);\n"
    else "") ++
   "\n" ++
   "    // Reset\n" ++
@@ -1306,6 +1309,12 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "#endif\n" ++
   "    " ++ rb ++ "\n" ++
   "    dut->rst_n = 1;\n\n" ++
+  "    // Override HTIF addresses AFTER reset (so initial blocks don't overwrite)\n" ++
+  "    if (tohost_sym >= 0) dpi_set_tohost_addr((uint32_t)tohost_sym);\n" ++
+  (if cfg.putcharAddr.isSome then
+    "    if (putchar_sym >= 0) dpi_set_putchar_addr((uint32_t)putchar_sym);\n"
+   else "") ++
+  "\n" ++
   "#if VM_TRACE\n" ++
   "    uint64_t sim_time = 10;\n" ++
   "#endif\n" ++

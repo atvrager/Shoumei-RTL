@@ -159,10 +159,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_phnxt_e{i}")
   -- CSR rs1 data capture (32 bits, captured at serialize_start for CSR write source)
   let csr_rs1cap_reg := (List.range 32).map (fun i => Wire.mk s!"csr_r1c_e{i}")
+  -- Pre-CDB-snoop rs1 capture (written by serialize path, then overridden by CDB snoop below)
+  let csr_rs1cap_next_pre := (List.range 32).map (fun i => Wire.mk s!"csr_r1np_e{i}")
+  -- Final rs1 capture (after CDB snoop MUX)
   let csr_rs1cap_next := (List.range 32).map (fun i => Wire.mk s!"csr_r1n_e{i}")
+  -- CSR rs1 phys tag capture (6 bits, for CDB snooping during drain)
+  let csr_rs1phys_reg := (List.range 6).map (fun i => Wire.mk s!"csr_r1p_e{i}")
+  let csr_rs1phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_r1pn_e{i}")
   -- CSR zimm capture (5 bits, rs1 field used as immediate for CSRRWI/CSRRSI/CSRRCI)
   let csr_zimm_reg := (List.range 5).map (fun i => Wire.mk s!"csr_zmc_e{i}")
   let csr_zimm_next := (List.range 5).map (fun i => Wire.mk s!"csr_zmn_e{i}")
+  -- CSR old_rd_phys capture (6 bits, old mapping to return to free list on CSR inject)
+  let csr_old_phys_reg := (List.range 6).map (fun i => Wire.mk s!"csr_opc_e{i}")
+  let csr_old_phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_opn_e{i}")
   -- CSR rename gating wires
   let csr_rename_en := Wire.mk "csr_rename_en"
   let not_csr_rename_en := Wire.mk "not_csr_rename_en"
@@ -278,10 +287,22 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap := [("d", csr_rs1cap_next[i]!), ("q", csr_rs1cap_reg[i]!),
                 ("clock", clock), ("reset", reset)]
   })
+  let csr_rs1phys_dffs : List CircuitInstance := (List.range 6).map (fun i => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_csr_rs1phys_dff_{i}"
+    portMap := [("d", csr_rs1phys_next[i]!), ("q", csr_rs1phys_reg[i]!),
+                ("clock", clock), ("reset", reset)]
+  })
   let csr_zimm_dffs : List CircuitInstance := (List.range 5).map (fun i => {
     moduleName := "DFlipFlop"
     instName := s!"u_csr_zimm_dff_{i}"
     portMap := [("d", csr_zimm_next[i]!), ("q", csr_zimm_reg[i]!),
+                ("clock", clock), ("reset", reset)]
+  })
+  let csr_old_phys_dffs : List CircuitInstance := (List.range 6).map (fun i => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_csr_old_phys_dff_{i}"
+    portMap := [("d", csr_old_phys_next[i]!), ("q", csr_old_phys_reg[i]!),
                 ("clock", clock), ("reset", reset)]
   })
   -- CSR flush suppress DFF: captures csr_cdb_inject, so it's high 1 cycle later
@@ -467,8 +488,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("cdb_valid", if enableF then cdb_valid_int_prf else cdb_valid_prf)] ++
       (cdb_tag_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid_filtered)] ++
-      (retire_tag_muxed.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
+      [("retire_valid", if config.enableZicsr then
+                          Wire.mk "retire_valid_with_csr"
+                        else if enableF then int_retire_valid
+                        else retire_recycle_valid_filtered)] ++
+      ((if config.enableZicsr
+        then (List.range 6).map (fun i => Wire.mk s!"retire_tag_with_csr_{i}")
+        else retire_tag_muxed).enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++  -- 4th read port: RVVI commit readback
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
@@ -482,6 +508,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
       -- Committed RAT recovery (CSR: suppress flush to keep speculative rd mapping)
       [("flush_en", rename_flush_en),
+       ("freelist_flush_en", redirect_valid_int),
        ("commit_valid", commit_valid_muxed),
        ("commit_hasPhysRd", commit_hasPhysRd_muxed),
        ("force_alloc", dispatch_is_branch),
@@ -534,7 +561,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_detected csr_detected serialize_detected
         fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
         csr_rename_en not_csr_rename_en
-        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next_pre csr_zimm_next
         fence_i_redir_next
         csr_read_data_fwd
         csr_cdb_inject csr_cdb_tag csr_cdb_data
@@ -552,11 +579,46 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_detected csr_detected serialize_detected
         fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
         csr_rename_en not_csr_rename_en
-        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next_pre csr_zimm_next
         fence_i_redir_next
         csr_read_data_fwd
         fetch_pc
         mip_reg_fwd mie_reg_fwd mstatus_reg_fwd
+
+  -- === CDB snoop for CSR rs1 source capture ===
+  -- The serialize path captures fwd_src1_data at fence_i_start, but if the source
+  -- instruction (e.g. a load) hasn't retired yet, the captured value may be wrong.
+  -- Solution: save rs1_phys at fence_i_start, then snoop the CDB during drain.
+  -- When CDB broadcasts a value with a matching tag, override csr_rs1cap_next.
+  -- Note: rs1_phys, cdb_valid, cdb_tag_int, cdb_data are forward-referenced by wire name.
+  let rs1_phys_fwd := (List.range 6).map (fun i => Wire.mk s!"rs1_phys_{i}")
+  let csr_rs1phys_capture_gates :=
+    (List.range 6).map (fun i =>
+      Gate.mkMUX csr_rs1phys_reg[i]! rs1_phys_fwd[i]! fence_i_start csr_rs1phys_next[i]!)
+  -- Capture old_rd_phys at fence_i_start for CSR retire (return old mapping to free list)
+  let csr_old_phys_capture_gates :=
+    (List.range 6).map (fun i =>
+      Gate.mkMUX csr_old_phys_reg[i]! old_rd_phys[i]! fence_i_start csr_old_phys_next[i]!)
+  -- CDB snoop: compare cdb_tag against saved rs1_phys tag
+  let csr_cdb_snoop_match := Wire.mk "csr_cdb_snoop_match"
+  let csr_cdb_snoop_update := Wire.mk "csr_cdb_snoop_update"
+  let cdb_valid_fwd := Wire.mk "cdb_valid"
+  let cdb_tag_int_fwd := (List.range 6).map (fun i => Wire.mk s!"cdb_tag_int_{i}")
+  let cdb_data_fwd := (List.range 32).map (fun i => Wire.mk s!"cdb_data_{i}")
+  let csr_cdb_snoop_inst : CircuitInstance := {
+    moduleName := "EqualityComparator6"
+    instName := "u_csr_cdb_snoop_cmp"
+    portMap := [("eq", csr_cdb_snoop_match)] ++
+               (cdb_tag_int_fwd.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (csr_rs1phys_reg.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  -- Only update when CDB is valid AND match AND CSR is draining (csr_flag_reg=1)
+  let csr_cdb_snoop_gates :=
+    [Gate.mkAND cdb_valid_fwd csr_cdb_snoop_match (Wire.mk "csr_cdb_match_valid"),
+     Gate.mkAND (Wire.mk "csr_cdb_match_valid") csr_flag_reg csr_cdb_snoop_update] ++
+    -- MUX: if CDB snoop hit, use CDB data; else use serialize path's pre-capture value
+    (List.range 32).map (fun i =>
+      Gate.mkMUX csr_rs1cap_next_pre[i]! cdb_data_fwd[i]! csr_cdb_snoop_update csr_rs1cap_next[i]!)
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -727,6 +789,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
       -- Committed RAT recovery (FP uses same commit signals, filtered by is_fp)
       [("flush_en", redirect_valid_fp),  -- Committed RAT restore on misprediction (dedicated DFF)
+       ("freelist_flush_en", redirect_valid_fp),  -- FP free list flush (same as RAT flush)
        ("commit_valid", rob_commit_en),
        ("commit_hasPhysRd", Wire.mk "rob_head_is_fp"),
        ("force_alloc", zero),  -- FP rename doesn't need branch tracking
@@ -2118,29 +2181,40 @@ def mkCPU (config : CPUConfig) : Circuit :=
       portMap := [("d", cross_size_pending_next), ("q", cross_size_pending),
                   ("clock", clock), ("reset", pipeline_reset_misc)] }
 
-  -- mem_dispatch_en: gate by cross_size_stall, dmem_load_pending, sb_deq_valid,
+  -- mem_dispatch_en: gate by cross_size_stall, dmem_load_pending, sb_deq_valid (loads only),
   -- AND store-into-full-SB AND cross_size_pending. When the SB is draining a store
   -- to DMEM (sb_deq_valid=1), the DMEM port is busy. A load that misses SB
   -- forwarding would try to use DMEM but get blocked by load_no_fwd_no_deq=0,
   -- losing the dispatched instruction forever (the RS entry is already cleared).
-  -- Gating dispatch_en prevents this.
+  -- Gating dispatch_en prevents this FOR LOADS ONLY.
+  -- Stores only need the SB enqueue port (not DMEM), so they can dispatch during
+  -- SB drain. Blocking stores during drain risks losing committed stores if a
+  -- pipeline flush occurs while the store waits in the RS.
   -- Also: if the dispatching instruction is a store and the SB is full, block dispatch
   -- to prevent enqueuing into a full SB (the RS entry would be cleared but the store lost).
   let mem_dispatch_en_tmp := Wire.mk "mem_dispatch_en_tmp"
   let mem_dispatch_en_tmp2 := Wire.mk "mem_dispatch_en_tmp2"
   let mem_dispatch_en_tmp3 := Wire.mk "mem_dispatch_en_tmp3"
-  let not_sb_deq_for_dispatch := Wire.mk "not_sb_deq_for_dispatch"
+  let mem_dispatch_en_tmp4 := Wire.mk "mem_dispatch_en_tmp4"
+  let sb_deq_blocks_load := Wire.mk "sb_deq_blocks_load"
+  let not_sb_deq_blocks_load := Wire.mk "not_sb_deq_blocks_load"
   let store_sb_full_block := Wire.mk "store_sb_full_block"
   let not_store_sb_full := Wire.mk "not_store_sb_full"
   let mem_dispatch_en_gates := [
     Gate.mkNOT cross_size_stall mem_dispatch_en_tmp,
     Gate.mkAND mem_dispatch_en_tmp not_dmem_load_pending mem_dispatch_en_tmp2,
-    Gate.mkNOT lsu_sb_deq_valid not_sb_deq_for_dispatch,
-    Gate.mkAND mem_dispatch_en_tmp2 not_sb_deq_for_dispatch mem_dispatch_en_tmp3,
+    -- Only block loads during SB drain (stores just enqueue, don't need DMEM port)
+    Gate.mkAND lsu_sb_deq_valid is_load sb_deq_blocks_load,
+    Gate.mkNOT sb_deq_blocks_load not_sb_deq_blocks_load,
+    Gate.mkAND mem_dispatch_en_tmp2 not_sb_deq_blocks_load mem_dispatch_en_tmp3,
     -- Block store dispatch when SB is full (wire driven by gate in sb_enq_gate_gates)
     Gate.mkAND (Wire.mk "not_is_load") lsu_sb_full store_sb_full_block,
     Gate.mkNOT store_sb_full_block not_store_sb_full,
-    Gate.mkAND mem_dispatch_en_tmp3 not_store_sb_full mem_dispatch_en
+    Gate.mkAND mem_dispatch_en_tmp3 not_store_sb_full mem_dispatch_en_tmp4,
+    -- Block dispatch when pipeline register holds a stuck load (pipe_valid_hold).
+    -- Without this, a new dispatch overwrites the stuck load's tag/address in the
+    -- pipeline register, losing the load forever (RS entry already cleared).
+    Gate.mkAND mem_dispatch_en_tmp4 (Wire.mk "not_pipe_valid_hold") mem_dispatch_en
   ]
 
   -- DMEM metadata DFFs use CircuitInstance DFlipFlop with external `reset`
@@ -2770,13 +2844,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
       -- Merged write data (MUX: useq_write_en selects useq_write_data, else hardwired)
       let merged_wr := (List.range 32).map (fun i => Wire.mk s!"csr_mwv_e{i}")
       let useq_any_mstatus := Wire.mk "useq_any_mstatus"
+      let not_useq_mstatus := Wire.mk "not_useq_any_mstatus"
+      let useq_write_csr_only := Wire.mk "useq_write_csr_only"
       let weGates :=
         [-- MSTATUS_TRAP or MSTATUS_MRET: use dedicated signals (addr forced combinationally)
          Gate.mkOR useq_mstatus_trap useq_mstatus_mret useq_any_mstatus,
          Gate.mkOR csr_we_mstatus useq_any_mstatus merged_we_mstat,
-         -- WRITE_CSR for mepc/mcause: addr was set by SET_CSR_ADDR and registered
-         Gate.mkAND useq_write_en is_mepc useq_we_mepc,
-         Gate.mkAND useq_write_en is_mcause useq_we_mcause,
+         -- WRITE_CSR for mepc/mcause: exclude MSTATUS_TRAP/MSTATUS_MRET which also
+         -- assert useq_write_en but target mstatus (0x300), not the addr in csr_addr_reg.
+         -- Without this gate, stale is_mepc from a prior READ_CSR step causes
+         -- MSTATUS_MRET to corrupt mepc with mstatus transform data.
+         Gate.mkNOT useq_any_mstatus not_useq_mstatus,
+         Gate.mkAND useq_write_en not_useq_mstatus useq_write_csr_only,
+         Gate.mkAND useq_write_csr_only is_mepc useq_we_mepc,
+         Gate.mkAND useq_write_csr_only is_mcause useq_we_mcause,
          Gate.mkOR csr_we_mepc useq_we_mepc merged_we_mepc,
          Gate.mkOR csr_we_mcause useq_we_mcause merged_we_mcause] ++
         (List.range 32).map (fun i =>
@@ -2821,11 +2902,31 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i =>
         Gate.mkBUF rob_head_physRd[i]! commit_physRd_muxed[i]!)
 
+  -- CSR retire injection: return old_rd_phys to free list during csr_cdb_inject
+  -- Normal retire doesn't fire during CSR inject because rob_commit_en=0.
+  -- We OR csr_cdb_inject into retire_valid and MUX retire_tag.
+  let csr_retire_inject_gates : List Gate :=
+    if config.enableZicsr then
+      let csr_retire_valid := Wire.mk "csr_retire_valid"
+      let retire_base_valid := if enableF then int_retire_valid else retire_recycle_valid_filtered
+      -- csr_retire_valid = csr_cdb_inject AND csr_rd_nonzero
+      [Gate.mkAND csr_cdb_inject (Wire.mk "csr_rd_nonzero") csr_retire_valid,
+       -- OR into retire valid (rename stage retire_valid).
+       -- During CSR inject, rob_commit_en=0 so retire base is 0,
+       -- making the OR effectively a MUX.
+       Gate.mkOR retire_base_valid csr_retire_valid
+         (Wire.mk "retire_valid_with_csr")] ++
+      -- MUX retire_tag: when csr_cdb_inject, use csr_old_phys_reg; else keep normal
+      (List.range 6).map (fun i =>
+        Gate.mkMUX retire_tag_muxed[i]! csr_old_phys_reg[i]! csr_cdb_inject
+          (Wire.mk s!"retire_tag_with_csr_{i}"))
+    else []
+
   -- Collect all CSR gates
   let csr_all_gates := csr_drain_gate ++ csr_addr_decode_gates ++
     mstatus_force_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
     csr_write_logic_gates ++ trap_we_merge_gates ++ csr_next_value_gates ++
-    csr_cdb_inject_gates ++ csr_commit_inject_gates
+    csr_cdb_inject_gates ++ csr_commit_inject_gates ++ csr_retire_inject_gates
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
@@ -2896,7 +2997,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [trace_dispatch_branch] ++ trace_dispatch_branch_tag ++
                [trace_dispatch_muldiv] ++ trace_dispatch_muldiv_tag ++
                [trace_dispatch_fp] ++ trace_dispatch_fp_tag
-    gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+    gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ csr_rs1phys_capture_gates ++ csr_old_phys_capture_gates ++ csr_cdb_snoop_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
@@ -2928,9 +3029,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates
-    instances := microcode_instances ++
+    instances := microcode_instances ++ [csr_cdb_snoop_inst] ++
                   [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
-                  [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
+                  [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_rs1phys_dffs ++ csr_zimm_dffs ++ csr_old_phys_dffs ++
                   csr_reg_instances ++ csr_counter_instances ++
                   [fetch_inst, decoder_inst, rename_inst] ++
                   (if enableF then [fp_rename_inst] else []) ++

@@ -135,6 +135,9 @@ def mkMemoryHierarchy : Circuit :=
   let l1d_wb_data := (List.range 256).map fun i => Wire.mk s!"l1d_wb_data_{i}"
   let l1d_wb_ack := Wire.mk "l1d_wb_ack"
 
+  -- L1D→L2 address MUX: writeback uses wb_addr, read miss uses miss_addr
+  let l1d_to_l2_addr := (List.range 32).map fun i => Wire.mk s!"l1d_to_l2_addr_{i}"
+
   -- L1I Cache instance
   let l1i_inst := CircuitInstance.mk "L1ICache" "u_l1i"
     ([("clock", clock), ("reset", reset), ("req_valid", ifetch_valid)] ++
@@ -173,7 +176,7 @@ def mkMemoryHierarchy : Circuit :=
       ("l1i_req_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"l1i_req_addr_{i}", l1i_miss_addr[i]!)) ++
      [("l1d_req_valid", l1d_miss_valid)] ++
-     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_miss_addr[i]!)) ++
+     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_to_l2_addr[i]!)) ++
      [("l1d_req_we", l1d_wb_valid)] ++
      (List.range 256).map (fun i => (s!"l1d_req_data_{i}", l1d_wb_data[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
@@ -197,7 +200,14 @@ def mkMemoryHierarchy : Circuit :=
                dmem_resp_valid] ++ dmem_resp_data ++ [dmem_stall] ++
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [fence_i_busy]
-    gates := []  -- Pure hierarchical composition
+    gates :=
+      -- L1D→L2 address MUX: wb_valid ? wb_addr : miss_addr
+      (List.range 32).map (fun i =>
+        Gate.mkMUX l1d_miss_addr[i]! l1d_wb_addr[i]! l1d_wb_valid l1d_to_l2_addr[i]!) ++
+      [-- wb_ack: L2 accepts the writeback when it's not stalled
+       Gate.mkNOT (Wire.mk "l2_stall_d") (Wire.mk "l2_not_stall_d"),
+       Gate.mkAND l1d_wb_valid (Wire.mk "l2_not_stall_d") l1d_wb_ack
+      ]
     instances := [l1i_inst, l1d_inst, l2_inst]
     signalGroups := [
       { name := "ifetch_addr", width := 32, wires := ifetch_addr },

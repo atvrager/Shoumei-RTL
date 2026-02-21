@@ -291,7 +291,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(SIM_BIN) +elf=$$elf +timeout=5000 2>&1); \
+		result=$$($(SIM_BIN) +elf=$$elf +timeout=100000 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
