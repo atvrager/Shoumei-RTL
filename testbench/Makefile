@@ -90,10 +90,25 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 # Arcilator targets
 # ==========================================================================
 
+# Step 0: Preprocess testbench SV to remove constructs unsupported by circt-verilog
+# (DPI-C exports, $write/%c format specifiers, svSetScope, etc.)
+ARC_TB_DIR := $(BUILD_DIR)/arc/tb_sv
+$(ARC_TB_DIR)/%.sv: $(TB_DIR)/generated/%.sv
+	@mkdir -p $(ARC_TB_DIR)
+	sed -e '/export "DPI-C"/d' \
+	    -e '/import "DPI-C"/d' \
+	    -e '/\$$write/d' \
+	    -e '/\$$display/d' \
+	    -e '/\$$fwrite/d' \
+	    -e '/\$$finish/d' \
+	    $< > $@
+
+ARC_TB_SOURCES := $(patsubst $(TB_DIR)/generated/%.sv,$(ARC_TB_DIR)/%.sv,$(TB_SOURCES))
+
 # Step 1: SV -> MLIR (via circt-verilog)
-$(BUILD_DIR)/arc/tb_cpu.mlir: $(SV_SOURCES) $(TB_SOURCES)
+$(BUILD_DIR)/arc/tb_cpu.mlir: $(SV_SOURCES) $(ARC_TB_SOURCES)
 	@mkdir -p $(BUILD_DIR)/arc
-	$(CIRCT_VERILOG) --ir-hw $(TB_SOURCES) $(SV_SOURCES) -o $@
+	$(CIRCT_VERILOG) --ir-hw $(ARC_TB_SOURCES) $(SV_SOURCES) -o $@
 
 # Step 2: MLIR -> LLVM IR + state JSON (via arcilator)
 $(BUILD_DIR)/arc/tb_cpu.ll: $(BUILD_DIR)/arc/tb_cpu.mlir
