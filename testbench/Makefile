@@ -57,7 +57,11 @@ RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself
 # is correct (tohost=1).  TODO: fix RVVI rd_data reporting for FP-to-int moves.
-CUSTOM_TEST_GLOBS = $(filter-out %/fp_memory.elf, \
+# ecall_test excluded from non-microcoded runs (requires ECALL trap support)
+CUSTOM_TEST_GLOBS = $(filter-out %/fp_memory.elf %/ecall_test.elf, \
+                   $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
+# Microcoded runs include ecall_test
+CUSTOM_TEST_GLOBS_UCODE = $(filter-out %/fp_memory.elf, \
                    $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf))
 
 # Auto-build Spike if missing (check for .so or .a)
@@ -246,7 +250,7 @@ run-all-tests-microcoded: $(SIM_UCODE_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-microcoded.csv; \
 	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
+	for elf in $(CUSTOM_TEST_GLOBS_UCODE) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		result=$$($(SIM_UCODE_BIN) +elf=$$elf +timeout=5000 2>&1); \
