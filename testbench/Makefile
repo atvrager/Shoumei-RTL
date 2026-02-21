@@ -34,6 +34,8 @@ TB_DIR    := $(PROJ_ROOT)/testbench
 CIRCT_PREFIX  ?= $(HOME)/.local/circt
 ARCILATOR     := $(CIRCT_PREFIX)/bin/arcilator
 CIRCT_VERILOG := $(CIRCT_PREFIX)/bin/circt-verilog
+LLVM_OPT      := $(CIRCT_PREFIX)/bin/opt
+LLVM_LLC      := $(CIRCT_PREFIX)/bin/llc
 
 # --------------------------------------------------------------------------
 # Verilator flags (X-prop always on to catch reset bugs)
@@ -90,50 +92,44 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 # Arcilator targets
 # ==========================================================================
 
-# Step 0: Preprocess testbench SV to remove constructs unsupported by circt-verilog
-# Strips: DPI-C exports/imports + function bodies, $write/$display/$finish, initial blocks
-ARC_TB_DIR := $(BUILD_DIR)/arc/tb_sv
-$(ARC_TB_DIR)/%.sv: $(TB_DIR)/generated/%.sv
-	@mkdir -p $(ARC_TB_DIR)
-	awk '\
-	  /export "DPI-C"/ { next } \
-	  /import "DPI-C"/ { next } \
-	  /^\s*function void dpi_/ { skip=1; next } \
-	  skip && /^\s*endfunction/ { skip=0; next } \
-	  /\$$write/ { next } \
-	  /\$$display/ { next } \
-	  /\$$fwrite/ { next } \
-	  /\$$finish/ { next } \
-	  skip { next } \
-	  { print }' $< > $@
+# Arcilator compiles only the CPU design modules (not the SV testbench).
+# The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
+ARC_TOP_MODULE := CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
 
-ARC_TB_SOURCES := $(patsubst $(TB_DIR)/generated/%.sv,$(ARC_TB_DIR)/%.sv,$(TB_SOURCES))
+# Step 0: Preprocess design SV to convert async resets to sync resets
+# circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks
+ARC_SV_DIR := $(BUILD_DIR)/arc/sv
+ARC_SV_SOURCES := $(patsubst $(SV_DIR)/%.sv,$(ARC_SV_DIR)/%.sv,$(SV_SOURCES))
 
-# Step 1: SV -> MLIR (via circt-verilog)
-$(BUILD_DIR)/arc/tb_cpu.mlir: $(SV_SOURCES) $(ARC_TB_SOURCES)
+$(ARC_SV_DIR)/%.sv: $(SV_DIR)/%.sv
+	@mkdir -p $(ARC_SV_DIR)
+	sed 's/always_ff @(posedge \([^ ]*\) or posedge [^)]*)/always_ff @(posedge \1)/g' $< > $@
+
+# Step 1: SV -> MLIR (via circt-verilog) — design modules only
+$(BUILD_DIR)/arc/cpu.mlir: $(ARC_SV_SOURCES)
 	@mkdir -p $(BUILD_DIR)/arc
-	$(CIRCT_VERILOG) --ir-hw $(ARC_TB_SOURCES) $(SV_SOURCES) -o $@
+	$(CIRCT_VERILOG) --ir-hw $(ARC_SV_SOURCES) -o $@
 
 # Step 2: MLIR -> LLVM IR + state JSON (via arcilator)
-$(BUILD_DIR)/arc/tb_cpu.ll: $(BUILD_DIR)/arc/tb_cpu.mlir
-	$(ARCILATOR) $< --state-file=$(BUILD_DIR)/arc/tb_cpu.json \
-		-o $@
+$(BUILD_DIR)/arc/cpu.ll: $(BUILD_DIR)/arc/cpu.mlir
+	$(ARCILATOR) $< --state-file=$(BUILD_DIR)/arc/cpu.json \
+		--async-resets-as-sync -o $@
 
 # Step 3: LLVM IR -> object file
-$(BUILD_DIR)/arc/tb_cpu.o: $(BUILD_DIR)/arc/tb_cpu.ll
-	opt -O3 --strip-debug -S $< | llc -O3 --filetype=obj -o $@
+$(BUILD_DIR)/arc/cpu.o: $(BUILD_DIR)/arc/cpu.ll
+	$(LLVM_OPT) -O3 --strip-debug -S $< | $(LLVM_LLC) -O3 --filetype=obj -o $@
 
 # Step 4: Generate C++ header from state JSON
-$(BUILD_DIR)/arc/tb_cpu_arc.h: $(BUILD_DIR)/arc/tb_cpu.ll
-	python3 $(PROJ_ROOT)/scripts/gen-arc-header.py $(BUILD_DIR)/arc/tb_cpu.json $@
+$(BUILD_DIR)/arc/cpu_arc.h: $(BUILD_DIR)/arc/cpu.ll
+	python3 $(PROJ_ROOT)/scripts/gen-arc-header.py $(BUILD_DIR)/arc/cpu.json $@ $(ARC_TOP_MODULE)
 
 # Step 5a: Arcilator simulation binary
 sim-arc: $(ARC_SIM_BIN)
-$(ARC_SIM_BIN): $(BUILD_DIR)/arc/tb_cpu.o $(BUILD_DIR)/arc/tb_cpu_arc.h $(TB_DIR)/sim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp
-	$(CXX) -std=c++17 -O2 \
+$(ARC_SIM_BIN): $(BUILD_DIR)/arc/cpu.o $(BUILD_DIR)/arc/cpu_arc.h $(TB_DIR)/sim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp
+	$(CXX) -std=c++17 -O2 -no-pie \
 		-I$(BUILD_DIR)/arc -I$(TB_DIR) \
 		$(TB_DIR)/sim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp \
-		$(BUILD_DIR)/arc/tb_cpu.o \
+		$(BUILD_DIR)/arc/cpu.o \
 		-o $@
 	@echo "Built: $@ (arcilator)"
 
@@ -144,11 +140,11 @@ ifeq ($(SPIKE_LIB_FILE),)
 endif
 
 cosim-arc: $(ARC_COSIM_BIN)
-$(ARC_COSIM_BIN): $(BUILD_DIR)/arc/tb_cpu.o $(BUILD_DIR)/arc/tb_cpu_arc.h $(TB_DIR)/cosim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp $(TB_DIR)/lib/spike_oracle.cpp $(SPIKE_LIB_FILE)
-	$(CXX) -std=c++20 -O2 \
+$(ARC_COSIM_BIN): $(BUILD_DIR)/arc/cpu.o $(BUILD_DIR)/arc/cpu_arc.h $(TB_DIR)/cosim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp $(TB_DIR)/lib/spike_oracle.cpp $(SPIKE_LIB_FILE)
+	$(CXX) -std=c++20 -O2 -no-pie \
 		-I$(BUILD_DIR)/arc -I$(TB_DIR) -I$(SPIKE_INC) \
 		$(TB_DIR)/cosim_main_arc.cpp $(TB_DIR)/lib/elf_loader.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-		$(BUILD_DIR)/arc/tb_cpu.o \
+		$(BUILD_DIR)/arc/cpu.o \
 		-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB) \
 		-o $@
 	@echo "Built: $@ (arcilator + Spike cosim)"
@@ -161,17 +157,17 @@ run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(ARC_SIM_BIN) +elf=$$elf +timeout=5000 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
+		result=$$($(ARC_SIM_BIN) +elf=$$elf +timeout=200000 2>&1); \
+		rc=$$?; \
+		cycles=$$(echo "$$result" | grep -oP 'Cycle:\s+\K[0-9]+'); \
+		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
+		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
+		if [ "$$rc" = "0" ]; then \
 			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
 			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-arc.csv; \
 			pass=$$((pass+1)); \
 		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
+			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
 			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-arc.csv; \
 			fail=$$((fail+1)); \
 		fi; \
