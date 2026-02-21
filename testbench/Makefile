@@ -96,10 +96,10 @@ ARC_TB_DIR := $(BUILD_DIR)/arc/tb_sv
 $(ARC_TB_DIR)/%.sv: $(TB_DIR)/generated/%.sv
 	@mkdir -p $(ARC_TB_DIR)
 	awk '\
-	  /export "DPI-C"/ { skip=1; next } \
-	  /import "DPI-C"/ { skip=1; next } \
-	  /^\s*function\s/ { skip=1; next } \
-	  /^\s*endfunction/ { skip=0; next } \
+	  /export "DPI-C"/ { next } \
+	  /import "DPI-C"/ { next } \
+	  /^\s*function void dpi_/ { skip=1; next } \
+	  skip && /^\s*endfunction/ { skip=0; next } \
 	  /\$$write/ { next } \
 	  /\$$display/ { next } \
 	  /\$$fwrite/ { next } \
