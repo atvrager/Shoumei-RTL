@@ -40,6 +40,7 @@ import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.RISCV.Renaming.BitmapFreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
+import Shoumei.RISCV.Renaming.RenameStage_W2
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
@@ -66,6 +67,7 @@ import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
+import Shoumei.RISCV.Retirement.ROB_W2
 import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
@@ -215,6 +217,7 @@ def allCircuits : List Circuit := [
   mkFreeList64,
   mkFreeList64Flushable,
   mkBitmapFreeList64,
+  mkBitmapFreeList64_W2,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
@@ -246,6 +249,7 @@ def allCircuits : List Circuit := [
 
   -- Phase 6: Retirement
   mkROB16,
+  mkROB16_W2,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
 
   -- Phase 7: Memory
@@ -278,6 +282,7 @@ def allCircuits : List Circuit := [
   cdbMuxF,
   mkFetchStage,
   mkRenameStage,
+  mkRenameStage_W2,
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,
