@@ -94,6 +94,7 @@ import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CDBMux_W2
 import Shoumei.RISCV.CPU
+import Shoumei.RISCV.CPU_W2
 
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
@@ -297,7 +298,8 @@ def allCircuits : List Circuit := [
   mkCPU_RV32IM,
   mkCPU_RV32IF,
   mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded
+  mkCPU_RV32IMF_Microcoded,
+  CPU_W2.mkCPU_W2 defaultCPUConfig
 ]
 
 def main (args : List String) : IO Unit := do

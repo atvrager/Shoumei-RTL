@@ -53,12 +53,19 @@ def mkROB16_W2 : Circuit :=
   let alloc_isBranch_1  := Wire.mk "alloc_isBranch_1"
   let alloc_idx_1       := mkWires "alloc_idx_1" 4
 
-  -- === CDB Interface ===
-  let cdb_valid     := Wire.mk "cdb_valid"
-  let cdb_tag       := mkWires "cdb_tag" 6
-  let cdb_exception := Wire.mk "cdb_exception"
-  let cdb_mispred   := Wire.mk "cdb_mispredicted"
-  let cdb_is_fp     := Wire.mk "cdb_is_fp"
+  -- === CDB Interface (W=2) ===
+  let cdb_valid_0     := Wire.mk "cdb_valid"
+  let cdb_tag_0       := mkWires "cdb_tag" 6
+  let cdb_exception_0 := Wire.mk "cdb_exception"
+  let cdb_mispred_0   := Wire.mk "cdb_mispredicted"
+  let cdb_is_fp_0     := Wire.mk "cdb_is_fp"
+
+  let cdb_valid_1     := Wire.mk "cdb_valid_1"
+  let cdb_tag_1       := mkWires "cdb_tag_1" 6
+  let cdb_exception_1 := Wire.mk "cdb_exception_1"
+  let cdb_mispred_1   := Wire.mk "cdb_mispredicted_1"
+  let cdb_is_fp_1     := Wire.mk "cdb_is_fp_1"
+
   let is_fp_shadow  := (List.range 16).map (fun i => Wire.mk s!"is_fp_shadow_{i}")
 
   -- === Commit / Flush ===
@@ -232,38 +239,54 @@ def mkROB16_W2 : Circuit :=
     let sel_hasPhRd_w := sel_hasPhRd
     let sel_isBr_w    := sel_isBr
 
-    -- CDB match (Comparator6 instance)
-    let cdb_match  := Wire.mk s!"e{i}_cm"
-    let cn         := Wire.mk s!"e{i}_cn"
-    let ct1 := Wire.mk s!"e{i}_ct1"
-    let ct2 := Wire.mk s!"e{i}_ct2"
-    let ct3 := Wire.mk s!"e{i}_ct3"
-    let ct4 := Wire.mk s!"e{i}_ct4"
+    -- CDB match (dual port)
+    let cm0 := Wire.mk s!"e{i}_cm0"; let cm1 := Wire.mk s!"e{i}_cm1"
+    let cmp0_inst : CircuitInstance := {
+      moduleName := "Comparator6", instName := s!"u_cmp{i}_0",
+      portMap := (cdb_tag_0.enum.map fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2)) ++
+                 (cur_physRd.enum.map fun (jw : Nat × Wire) => (s!"b_{jw.1}", jw.2)) ++
+                 [("one", one), ("eq", cm0)]
+    }
+    let cmp1_inst : CircuitInstance := {
+      moduleName := "Comparator6", instName := s!"u_cmp{i}_1",
+      portMap := (cdb_tag_1.enum.map fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2)) ++
+                 (cur_physRd.enum.map fun (jw : Nat × Wire) => (s!"b_{jw.1}", jw.2)) ++
+                 [("one", one), ("eq", cm1)]
+    }
+
+    let cn := Wire.mk s!"e{i}_cn"
     let hpob := Wire.mk s!"e{i}_hpob"
-    let dxor := Wire.mk s!"e{i}_dxor"
-    let dm := Wire.mk s!"e{i}_dm"
-    let cwe  := Wire.mk s!"e{i}_cwe"
+    let cdb_we_0 := Wire.mk s!"e{i}_cwe0"; let cdb_we_1 := Wire.mk s!"e{i}_cwe1"
+    let cwe := Wire.mk s!"e{i}_cwe"
+    
+    let exc_sel := Wire.mk s!"e{i}_exc_sel"
+    let mis_sel := Wire.mk s!"e{i}_mis_sel"
+
     let cdb_we_gates := [
       Gate.mkNOT cur_complete cn,
-      Gate.mkAND cur_valid cn ct1,
       Gate.mkOR  cur_hasPhRd cur_isBr hpob,
-      Gate.mkAND ct1 hpob ct2,
-      Gate.mkAND ct2 cdb_match ct3,
-      Gate.mkAND ct3 cdb_valid ct4,
-      Gate.mkXOR cdb_is_fp is_fp_shadow[i]! dxor,
-      Gate.mkNOT dxor dm,
-      Gate.mkAND ct4 dm cwe
+      -- Port 0 write
+      Gate.mkAND cur_valid cn (Wire.mk s!"e{i}_ct0_1"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct0_1") hpob (Wire.mk s!"e{i}_ct0_2"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct0_2") cm0 (Wire.mk s!"e{i}_ct0_3"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct0_3") cdb_valid_0 (Wire.mk s!"e{i}_ct0_4"),
+      Gate.mkXOR cdb_is_fp_0 is_fp_shadow[i]! (Wire.mk s!"e{i}_dx0"),
+      Gate.mkNOT (Wire.mk s!"e{i}_dx0") (Wire.mk s!"e{i}_dm0"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct0_4") (Wire.mk s!"e{i}_dm0") cdb_we_0,
+      -- Port 1 write
+      Gate.mkAND cur_valid cn (Wire.mk s!"e{i}_ct1_1"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct1_1") hpob (Wire.mk s!"e{i}_ct1_2"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct1_2") cm1 (Wire.mk s!"e{i}_ct1_3"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct1_3") cdb_valid_1 (Wire.mk s!"e{i}_ct1_4"),
+      Gate.mkXOR cdb_is_fp_1 is_fp_shadow[i]! (Wire.mk s!"e{i}_dx1"),
+      Gate.mkNOT (Wire.mk s!"e{i}_dx1") (Wire.mk s!"e{i}_dm1"),
+      Gate.mkAND (Wire.mk s!"e{i}_ct1_4") (Wire.mk s!"e{i}_dm1") cdb_we_1,
+      -- Combined WE
+      Gate.mkOR cdb_we_0 cdb_we_1 cwe,
+      -- Mux exception and mispred from the winning port (Port 1 priority if both, but tags should be unique)
+      Gate.mkMUX cdb_exception_0 cdb_exception_1 cdb_we_1 exc_sel,
+      Gate.mkMUX cdb_mispred_0 cdb_mispred_1 cdb_we_1 mis_sel
     ]
-    let cmp_inst : CircuitInstance := {
-      moduleName := "Comparator6"
-      instName := s!"u_cmp{i}"
-      portMap :=
-        (cdb_tag.enum.map (fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2))) ++
-        (cur_physRd.enum.map (fun (jw : Nat × Wire) => (s!"b_{jw.1}", jw.2))) ++
-        [("one", one), ("eq", cdb_match),
-         ("lt",  Wire.mk s!"e{i}_clt"),  ("ltu", Wire.mk s!"e{i}_cltu"),
-         ("gt",  Wire.mk s!"e{i}_cgt"),  ("gtu", Wire.mk s!"e{i}_cgtu")]
-    }
 
     -- Commit clear
     let cc0 := Wire.mk s!"e{i}_cc0"
@@ -307,7 +330,7 @@ def mkROB16_W2 : Circuit :=
     let em1 := Wire.mk s!"e{i}_em1"
     let em2 := Wire.mk s!"e{i}_em2"
     let exc_gates := [
-      Gate.mkMUX cur_exc cdb_exception cwe em1,
+      Gate.mkMUX cur_exc exc_sel cwe em1,
       Gate.mkMUX em1 zero clear em2,
       Gate.mkMUX em2 zero awe e_next[21]!
     ]
@@ -315,7 +338,7 @@ def mkROB16_W2 : Circuit :=
     let mm1 := Wire.mk s!"e{i}_mm1"
     let mm2 := Wire.mk s!"e{i}_mm2"
     let misp_gates := [
-      Gate.mkMUX cur_misp cdb_mispred cwe mm1,
+      Gate.mkMUX cur_misp mis_sel cwe mm1,
       Gate.mkMUX mm1 zero clear mm2,
       Gate.mkMUX mm2 zero awe e_next[23]!
     ]
@@ -335,7 +358,7 @@ def mkROB16_W2 : Circuit :=
       physRd_gates ++ [hasPR_gate] ++ oldPR_gates ++ [hasOPR_gate] ++
       archRd_gates ++ exc_gates ++ [isBr_gate] ++ misp_gates
 
-    (entry_gates, [cmp_inst, reg_inst], e_cur)
+    (entry_gates, [cmp0_inst, cmp1_inst, reg_inst], e_cur)
 
   let all_entry_gates     := (entryResults.map (fun (g,_,_) => g)).flatten
   let all_entry_instances := (entryResults.map (fun (_,i,_) => i)).flatten
@@ -476,7 +499,8 @@ def mkROB16_W2 : Circuit :=
     alloc_oldPhysRd_0 ++ [alloc_hasOldPR_0] ++ alloc_archRd_0 ++ [alloc_isBranch_0] ++
     [alloc_en_1] ++ alloc_physRd_1 ++ [alloc_hasPhysRd_1] ++
     alloc_oldPhysRd_1 ++ [alloc_hasOldPR_1] ++ alloc_archRd_1 ++ [alloc_isBranch_1] ++
-    [cdb_valid] ++ cdb_tag ++ [cdb_exception, cdb_mispred, cdb_is_fp] ++
+    [cdb_valid_0] ++ cdb_tag_0 ++ [cdb_exception_0, cdb_mispred_0, cdb_is_fp_0] ++
+    [cdb_valid_1] ++ cdb_tag_1 ++ [cdb_exception_1, cdb_mispred_1, cdb_is_fp_1] ++
     is_fp_shadow ++ [commit_en_0, commit_en_1, flush_en]
 
   let all_outputs :=
@@ -508,7 +532,8 @@ def mkROB16_W2 : Circuit :=
       { name := "alloc_physRd_1",    width := 6, wires := alloc_physRd_1 },
       { name := "alloc_oldPhysRd_1", width := 6, wires := alloc_oldPhysRd_1 },
       { name := "alloc_archRd_1",    width := 5, wires := alloc_archRd_1 },
-      { name := "cdb_tag",           width := 6, wires := cdb_tag },
+      { name := "cdb_tag_0",         width := 6, wires := cdb_tag_0 },
+      { name := "cdb_tag_1",         width := 6, wires := cdb_tag_1 },
       { name := "alloc_idx_0",       width := 4, wires := alloc_idx_0 },
       { name := "alloc_idx_1",       width := 4, wires := alloc_idx_1 },
       { name := "head_idx_0",        width := 4, wires := head_idx_0 },

@@ -82,9 +82,13 @@ def mkRenameStage_W2 : Circuit :=
   let commit_hasAllocSlot_1 := Wire.mk "commit_hasAllocSlot_1"
 
   -- === CDB / retire ===
-  let cdb_valid  := Wire.mk "cdb_valid"
-  let cdb_tag    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_{i}"
-  let cdb_data   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_{i}"
+  let cdb_valid_0  := Wire.mk "cdb_valid"
+  let cdb_tag_0    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_{i}"
+  let cdb_data_0   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_{i}"
+  let cdb_valid_1  := Wire.mk "cdb_valid_1"
+  let cdb_tag_1    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_1_{i}"
+  let cdb_data_1   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_1_{i}"
+  
   let retire_valid := Wire.mk "retire_valid"
   let retire_tag   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_{i}"
   let rd_tag4    := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag4_{i}"
@@ -110,6 +114,8 @@ def mkRenameStage_W2 : Circuit :=
   let old_rd_phys_1   := (List.range tagWidth).map fun i => Wire.mk s!"old_rd_phys_out_1_{i}"
   let rename_valid_1  := Wire.mk "rename_valid_1"
   let stall_1         := Wire.mk "stall_1"
+  let rs1_data_1      := (List.range dataWidth).map fun i => Wire.mk s!"rs1_data_1_{i}"
+  let rs2_data_1      := (List.range dataWidth).map fun i => Wire.mk s!"rs2_data_1_{i}"
 
   -- === Internal: speculative RAT read/write wires ===
   -- Slot 0: reads rs1_0/rs2_0/rs3_0 → phys tags; writes rd_0 → alloc tag
@@ -405,22 +411,25 @@ def mkRenameStage_W2 : Circuit :=
       (commit_physRd_0.enum.map fun ⟨i,w⟩ => (s!"commit_alloc_tag_{i}", w))
   }
 
-  -- PhysRegFile (shared, single write port from CDB)
+  -- PhysRegFile (shared, dual write port from CDB)
   let physregfile_inst : CircuitInstance := {
-    moduleName := "PhysRegFile_64x32"
+    moduleName := "PhysRegFile_64x32_W2"
     instName := "u_prf"
     portMap :=
-      [("clock", clock), ("reset", reset), ("wr_en", cdb_valid)] ++
+      [("clock", clock), ("reset", reset), 
+       ("wr_en_0", cdb_valid_0), ("wr_en_1", cdb_valid_1)] ++
       (rs1_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag1_{i}", w)) ++
       (rs2_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag2_{i}", w)) ++
-      (rs3_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++
-      (rd_tag4.enum.map fun ⟨i,w⟩ => (s!"rd_tag4_{i}", w)) ++
-      (cdb_tag.enum.map fun ⟨i,w⟩ => (s!"wr_tag_{i}", w)) ++
-      (cdb_data.enum.map fun ⟨i,w⟩ => (s!"wr_data_{i}", w)) ++
+      (rs1_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++ -- Slot 1 rs1
+      (rs2_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag4_{i}", w)) ++ -- Slot 1 rs2
+      (cdb_tag_0.enum.map fun ⟨i,w⟩ => (s!"wr_tag_0_{i}", w)) ++
+      (cdb_data_0.enum.map fun ⟨i,w⟩ => (s!"wr_data_0_{i}", w)) ++
+      (cdb_tag_1.enum.map fun ⟨i,w⟩ => (s!"wr_tag_1_{i}", w)) ++
+      (cdb_data_1.enum.map fun ⟨i,w⟩ => (s!"wr_data_1_{i}", w)) ++
       (rs1_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data1_{i}", w)) ++
       (rs2_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data2_{i}", w)) ++
-      (rd_data3_0.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
-      (rd_data4.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w))
+      (rs1_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
+      (rs2_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w))
   }
 
   -- Output buffer gates (slot 0)
@@ -450,14 +459,15 @@ def mkRenameStage_W2 : Circuit :=
     [commit_hasPhysRd_0, commit_hasAllocSlot_0,
      commit_valid_1] ++ commit_archRd_1 ++ commit_physRd_1 ++
     [commit_hasPhysRd_1, commit_hasAllocSlot_1,
-     cdb_valid] ++ cdb_tag ++ cdb_data ++
+     cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+     [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
     [retire_valid] ++ retire_tag ++ rd_tag4
 
   let all_outputs :=
     [rename_valid_0, stall_0] ++ rs1_phys_out_0 ++ rs2_phys_out_0 ++ rs3_phys_out_0 ++
     rd_phys_out_0 ++ old_rd_phys_0 ++ rs1_data_0 ++ rs2_data_0 ++ rd_data3_0 ++ rd_data4 ++
     [rename_valid_1, stall_1] ++ rs1_phys_out_1 ++ rs2_phys_out_1 ++ rs3_phys_out_1 ++
-    rd_phys_out_1 ++ old_rd_phys_1
+    rd_phys_out_1 ++ old_rd_phys_1 ++ rs1_data_1 ++ rs2_data_1
 
   let all_gates :=
     x0_gates_0 ++ x0_gates_1 ++ needs_alloc_gates ++ stall_gates ++ rvalid_gates ++
@@ -487,8 +497,10 @@ def mkRenameStage_W2 : Circuit :=
       { name := "commit_physRd",   width := tagWidth,  wires := commit_physRd_0 },
       { name := "commit_archRd_1", width := archWidth, wires := commit_archRd_1 },
       { name := "commit_physRd_1", width := tagWidth,  wires := commit_physRd_1 },
-      { name := "cdb_tag",    width := tagWidth,  wires := cdb_tag },
-      { name := "cdb_data",   width := dataWidth, wires := cdb_data },
+      { name := "cdb_tag_0",   width := tagWidth,  wires := cdb_tag_0 },
+      { name := "cdb_data_0",  width := dataWidth, wires := cdb_data_0 },
+      { name := "cdb_tag_1",   width := tagWidth,  wires := cdb_tag_1 },
+      { name := "cdb_data_1",  width := dataWidth, wires := cdb_data_1 },
       { name := "retire_tag", width := tagWidth,  wires := retire_tag },
       { name := "rs1_phys_out",   width := tagWidth, wires := rs1_phys_out_0 },
       { name := "rs2_phys_out",   width := tagWidth, wires := rs2_phys_out_0 },
