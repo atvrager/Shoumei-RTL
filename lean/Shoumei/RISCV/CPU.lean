@@ -60,6 +60,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
+  let mtip_in := Wire.mk "mtip_in"
 
   -- === DECODER OUTPUTS (internal, driven by decoder instance) ===
   let decode_optype := makeIndexedWires "decode_optype" opcodeWidth
@@ -513,6 +514,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Config-gated: hardwired uses mkSerializeDetect, microcoded uses MicrocodeSequencer
   -- Forward-declare csr_read_data for microcode path (driven by CSR read MUX below)
   let csr_read_data_fwd := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  -- Forward-declare CSR registers for interrupt detection (driven by DFFs below)
+  let mip_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mip_e{i}")
+  let mie_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mie_e{i}")
+  let mstatus_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mstatus_e{i}")
   -- Forward-declare csr_cdb wires for microcode path
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
@@ -534,6 +539,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         csr_read_data_fwd
         csr_cdb_inject csr_cdb_tag csr_cdb_data
         fetch_pc
+        mip_reg_fwd mie_reg_fwd mstatus_reg_fwd
     else
       mkSerializeDetect config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
@@ -550,6 +556,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_redir_next
         csr_read_data_fwd
         fetch_pc
+        mip_reg_fwd mie_reg_fwd mstatus_reg_fwd
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -2614,13 +2621,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
        is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
     mkCsrAddrDecode csr_addr_reg
 
-  -- Force is_mstatus high during MSTATUS_TRAP so the CSR read mux outputs
-  -- the current mstatus value (needed for MPIE = old MIE transform).
-  -- useq_mstatus_trap is declared later but the wire name is stable.
+  -- Force is_mstatus high during MSTATUS_TRAP or MSTATUS_MRET so the CSR read mux outputs
+  -- the current mstatus value (needed for MPIE/MIE transform).
+  -- useq_mstatus_trap / useq_mstatus_mret are declared later but wire names are stable.
   let (is_mstatus_for_read, mstatus_force_gates) :=
-    if config.microcodesTraps && !config.microcodesCSR then
+    if (config.microcodesTraps || config.microcodesMRET) && !config.microcodesCSR then
       let forced := Wire.mk "is_mstatus_forced"
-      (forced, [Gate.mkOR is_mstatus (Wire.mk "useq_mstatus_trap") forced])
+      let any_mstatus_op := Wire.mk "any_mstatus_op"
+      (forced, [Gate.mkOR (Wire.mk "useq_mstatus_trap") (Wire.mk "useq_mstatus_mret") any_mstatus_op,
+                Gate.mkOR is_mstatus any_mstatus_op forced])
     else
       (is_mstatus, [])
 
@@ -2742,14 +2751,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
   -- also needs to write mepc, mcause, mstatus via useq_write_en.
   -- OR the sequencer write-enables with hardwired write-enables, and MUX write data.
-  -- Merge trap sequencer writes into hardwired CSR write path
-  -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
+  -- Merge trap/MRET sequencer writes into hardwired CSR write path
+  -- When microcodesTraps or microcodesMRET is true (but not microcodesCSR), the sequencer
   -- also needs to write mepc, mcause, mstatus via useq_write_en.
-  -- MSTATUS_TRAP uses mstatus_trap_active (addr is forced combinationally, not registered).
+  -- MSTATUS_TRAP/MSTATUS_MRET use dedicated signals (addr forced combinationally).
   -- WRITE_CSR for mepc/mcause uses useq_write_en AND is_<csr> (addr is pre-registered via SET_CSR_ADDR).
   let useq_mstatus_trap := Wire.mk "useq_mstatus_trap"
+  let useq_mstatus_mret := Wire.mk "useq_mstatus_mret"
   let (csr_write_val, csr_we_mstatus, csr_we_mepc, csr_we_mcause, trap_we_merge_gates) :=
-    if config.microcodesTraps && !config.microcodesCSR && config.enableZicsr then
+    if (config.microcodesTraps || config.microcodesMRET) && !config.microcodesCSR && config.enableZicsr then
       -- Per-CSR sequencer write enables
       let useq_we_mepc := Wire.mk "useq_we_mepc"
       let useq_we_mcause := Wire.mk "useq_we_mcause"
@@ -2759,9 +2769,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
       let merged_we_mcause := Wire.mk "merged_we_mcause"
       -- Merged write data (MUX: useq_write_en selects useq_write_data, else hardwired)
       let merged_wr := (List.range 32).map (fun i => Wire.mk s!"csr_mwv_e{i}")
+      let useq_any_mstatus := Wire.mk "useq_any_mstatus"
       let weGates :=
-        [-- MSTATUS_TRAP: use dedicated signal (addr forced combinationally, not in csr_addr_reg)
-         Gate.mkOR csr_we_mstatus useq_mstatus_trap merged_we_mstat,
+        [-- MSTATUS_TRAP or MSTATUS_MRET: use dedicated signals (addr forced combinationally)
+         Gate.mkOR useq_mstatus_trap useq_mstatus_mret useq_any_mstatus,
+         Gate.mkOR csr_we_mstatus useq_any_mstatus merged_we_mstat,
          -- WRITE_CSR for mepc/mcause: addr was set by SET_CSR_ADDR and registered
          Gate.mkAND useq_write_en is_mepc useq_we_mepc,
          Gate.mkAND useq_write_en is_mcause useq_we_mcause,
@@ -2780,7 +2792,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     csr_we_mstatus csr_we_mie csr_we_mtvec csr_we_mepc csr_we_mcause csr_we_mtval
     mscratch_reg mscratch_next mstatus_reg mstatus_next
     mie_reg mie_next mtvec_reg mtvec_next mepc_reg mepc_next
-    mcause_reg mcause_next mtval_reg mtval_next mip_next
+    mcause_reg mcause_next mtval_reg mtval_next mip_next mtip_in
     mcycle_reg mcycle_next mcycleh_reg mcycleh_next
     minstret_reg minstret_next minstreth_reg minstreth_next
     commit_valid_muxed
@@ -2865,7 +2877,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++
               imem_resp_data ++
-              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
+              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++ [mtip_in]
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty, fence_i_drain_complete] ++

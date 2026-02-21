@@ -434,6 +434,12 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
   | .FLW | .FSW =>
     .illegalInstruction  -- TODO: implement FP semantics
 
+  -- System: MRET returns from trap, WFI is NOP in M-mode
+  | .MRET =>
+    .illegalInstruction  -- TODO: implement MRET semantics (restore mstatus, jump to mepc)
+  | .WFI =>
+    .ok state.nextPC  -- WFI is legal as NOP
+
   -- Zicsr: not yet implemented in behavioral semantics
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI =>
     .illegalInstruction  -- TODO: implement CSR semantics

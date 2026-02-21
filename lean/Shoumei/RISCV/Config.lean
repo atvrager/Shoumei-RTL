@@ -15,11 +15,11 @@ inductive MicrocodeSequence where
   | csr       -- CSRRW/S/C and immediate variants (ROM sequences 0–2)
   | fenceI    -- FENCE.I (ROM sequence 3)
   | trapEntry -- ECALL trap entry (ROM sequence 4)
-  -- future: | mret
+  | mret      -- MRET trap return (ROM sequence 5)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- All sequences the ROM currently implements. -/
-def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry]
+def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry, .mret]
 
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
@@ -69,6 +69,8 @@ structure CPUConfig where
   enableCache : Bool := false
   /-- L1 Instruction cache: number of sets -/
   l1iSets : Nat := 8
+  /-- L1 Instruction cache: number of ways (associativity) -/
+  l1iWays : Nat := 1
   /-- L1 Data cache: number of sets -/
   l1dSets : Nat := 4
   /-- L1 Data cache: number of ways (associativity) -/
@@ -118,7 +120,7 @@ def CPUConfig.l2TagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l2Sets - c.cach
 /-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B") -/
 def CPUConfig.cacheString (c : CPUConfig) : String :=
   let lineBytes := c.cacheLineWords * 4
-  let l1iBytes := c.l1iSets * lineBytes
+  let l1iBytes := c.l1iSets * c.l1iWays * lineBytes
   let l1dBytes := c.l1dSets * c.l1dWays * lineBytes
   let l2Bytes := c.l2Sets * c.l2Ways * lineBytes
   s!"L1I{l1iBytes}B_L1D{l1dBytes}B_L2{l2Bytes}B"
@@ -132,7 +134,8 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
-  (if config.enableZifencei then ["rv_zifencei"] else [])
+  (if config.enableZifencei then ["rv_zifencei"] else []) ++
+  (if config.enabledMicrocode.contains .mret || config.enabledMicrocode.contains .trapEntry then ["rv_system"] else [])
 
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
@@ -150,6 +153,9 @@ def CPUConfig.microcodesFenceI (c : CPUConfig) : Bool := c.enabledMicrocode.cont
 /-- Whether the trap entry microcode sequence is enabled -/
 def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.contains .trapEntry
 
+/-- Whether the MRET microcode sequence is enabled -/
+def CPUConfig.microcodesMRET (c : CPUConfig) : Bool := c.enabledMicrocode.contains .mret
+
 /-- THE default config. Edit this single definition to change what gets built.
     RV32IMF + Zicsr + Zifencei + Cache, with standard microarch parameters. -/
 def defaultCPUConfig : CPUConfig := {
@@ -158,7 +164,8 @@ def defaultCPUConfig : CPUConfig := {
   enableZicsr := true
   enableZifencei := true
   enableCache := true
-  enabledMicrocode := [.trapEntry]
+  enabledMicrocode := [.trapEntry, .mret]
+  memSizeWords := 65536  -- 256KB RAM for FreeRTOS
 }
 
 /-- Default RV32I configuration (no extensions) -/
@@ -174,7 +181,7 @@ def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZi
 def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMF with microcoded trap entry sequencer -/
-def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
+def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry, .mret] }
 
 
 /-

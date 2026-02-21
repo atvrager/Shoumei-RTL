@@ -255,6 +255,7 @@ def mkSerializeDetect
     (fence_i_redir_next : List Wire)
     (csr_read_data : List Wire)
     (fetch_pc : List Wire)
+    (mip_reg mie_reg mstatus_reg : List Wire)
     : List Gate × List CircuitInstance :=
   -- Helper: generate gates to match decode_optype against an encoding value
   let mkOpcodeMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
@@ -318,8 +319,23 @@ def mkSerializeDetect
   let ecall_match_gates : List Gate :=
     mkOpcodeMatch (oi .ECALL) "ecall" ecall_match
 
+  -- MRET detection (for trap return via microcode sequencer)
+  let mret_match := Wire.mk "mret_match"
+  let mret_detected := Wire.mk "mret_detected"
+  let mret_match_gates : List Gate :=
+    if config.microcodesMRET then mkOpcodeMatch (oi .MRET) "mret" mret_match
+    else [Gate.mkBUF zero mret_match]
+
+  -- WFI detection (NOP — flows through hw drain path)
+  let wfi_match := Wire.mk "wfi_match"
+  let wfi_detected := Wire.mk "wfi_detected"
+  let wfi_match_gates : List Gate :=
+    if config.microcodesMRET || config.microcodesTraps then mkOpcodeMatch (oi .WFI) "wfi" wfi_match
+    else [Gate.mkBUF zero wfi_match]
+
   let enableSerialize := config.enableZifencei || config.enableZicsr
   let enableTraps := config.microcodesTraps
+  let enableMRET := config.microcodesMRET
   if enableSerialize then
     let dc_tmp := Wire.mk "fencei_dc_tmp"
     let dc_tmp2 := Wire.mk "fencei_dc_tmp2"
@@ -335,6 +351,8 @@ def mkSerializeDetect
     let hw_detect_gates :=
       fence_i_match_gates ++ csr_match_gates ++
       (if enableTraps then ecall_match_gates else []) ++
+      (if enableMRET then mret_match_gates else []) ++
+      wfi_match_gates ++
       [Gate.mkNOT branch_redirect_valid_reg not_redir_reg,
        Gate.mkNOT fetch_stall_ext not_fetch_stall_ext,
        Gate.mkAND decode_valid not_redir_reg decode_valid_noredir_tmp,
@@ -344,22 +362,29 @@ def mkSerializeDetect
       (if enableTraps then
         [Gate.mkAND decode_valid_noredir ecall_match ecall_detected]
        else
-        [Gate.mkBUF zero ecall_detected])
-    -- serialize_detected includes ECALL when traps enabled
+        [Gate.mkBUF zero ecall_detected]) ++
+      (if enableMRET then
+        [Gate.mkAND decode_valid_noredir mret_match mret_detected]
+       else
+        [Gate.mkBUF zero mret_detected]) ++
+      [Gate.mkAND decode_valid_noredir wfi_match wfi_detected]
+    -- serialize_detected includes ECALL, MRET, WFI when enabled
     let ser_detect_gates :=
-      if enableTraps then
+      if enableTraps || enableMRET then
         [Gate.mkOR fence_i_detected csr_detected (Wire.mk "hw_ser_pre"),
-         Gate.mkOR (Wire.mk "hw_ser_pre") ecall_detected serialize_detected]
+         Gate.mkOR ecall_detected mret_detected (Wire.mk "trap_ser_pre"),
+         Gate.mkOR (Wire.mk "hw_ser_pre") (Wire.mk "trap_ser_pre") (Wire.mk "ser_pre2"),
+         Gate.mkOR (Wire.mk "ser_pre2") wfi_detected serialize_detected]
       else
         [Gate.mkOR fence_i_detected csr_detected serialize_detected]
     -- Hardwired FSM
     let hw_fsm_gates :=
       [Gate.mkNOT fence_i_draining fence_i_not_draining]
-    -- Trap sequencer integration
-    if enableTraps then
-      -- Instantiate microcode sequencer for ECALL only.
+    -- Trap/MRET sequencer integration
+    if enableTraps || enableMRET then
+      -- Instantiate microcode sequencer for ECALL and MRET.
       -- The sequencer runs in parallel with the hardwired CSR/FENCE.I FSM.
-      -- They are mutually exclusive (ECALL vs CSR/FENCE.I).
+      -- They are mutually exclusive (ECALL/MRET vs CSR/FENCE.I/WFI).
       let trap_seq_start := Wire.mk "trap_seq_start"
       let hw_csr_fence_start := Wire.mk "hw_csrfi_start"
 
@@ -380,7 +405,15 @@ def mkSerializeDetect
       let useq_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"useq_cdb_tg_{i}")
       let useq_cdb_data := (List.range 32).map (fun i => Wire.mk s!"useq_cdb_dt_{i}")
 
-      -- Start logic: trap_seq_start for ECALL, hw_csr_fence_start for CSR/FENCE.I
+      -- Interrupt detection: mip[7] AND mie[7] AND mstatus[3] (MTIP & MTIE & MIE)
+      let irq_pending := Wire.mk "irq_pending"
+      let irq_inject := Wire.mk "irq_inject"
+      let is_interrupt := Wire.mk "is_interrupt"
+      let irq_detect_gates :=
+        [Gate.mkAND mip_reg[7]! mie_reg[7]! (Wire.mk "mtip_and_mtie"),
+         Gate.mkAND (Wire.mk "mtip_and_mtie") mstatus_reg[3]! irq_pending]
+
+      -- Start logic: trap_seq_start for ECALL/MRET/interrupt, hw_csr_fence_start for CSR/FENCE.I/WFI
       -- Both gated by NOT(any_active) to prevent starting during an active operation
       let not_any_active := Wire.mk "not_any_active"
       let any_serialize_start := Wire.mk "any_ser_start"
@@ -388,11 +421,19 @@ def mkSerializeDetect
         [-- Neither hardwired FSM nor trap sequencer is active
          Gate.mkOR fence_i_draining useq_active (Wire.mk "any_active"),
          Gate.mkNOT (Wire.mk "any_active") not_any_active,
-         -- ECALL starts trap sequencer
-         Gate.mkAND ecall_detected not_any_active trap_seq_start,
-         -- CSR/FENCE.I starts hardwired FSM
+         -- Interrupt injection: irq_pending AND NOT(any_active)
+         Gate.mkAND irq_pending not_any_active irq_inject,
+         -- ECALL or MRET starts trap sequencer
+         Gate.mkOR ecall_detected mret_detected (Wire.mk "trap_det"),
+         -- trap_seq_start = (ECALL/MRET AND not_active) OR irq_inject
+         Gate.mkAND (Wire.mk "trap_det") not_any_active (Wire.mk "sw_trap_start"),
+         Gate.mkOR (Wire.mk "sw_trap_start") irq_inject trap_seq_start,
+         -- is_interrupt: latched into sequencer to override LOAD_CONST mcause
+         Gate.mkBUF irq_inject is_interrupt,
+         -- CSR/FENCE.I/WFI starts hardwired FSM
          Gate.mkOR fence_i_detected csr_detected (Wire.mk "csrfi_det"),
-         Gate.mkAND (Wire.mk "csrfi_det") not_any_active hw_csr_fence_start,
+         Gate.mkOR (Wire.mk "csrfi_det") wfi_detected (Wire.mk "csrfi_wfi_det"),
+         Gate.mkAND (Wire.mk "csrfi_wfi_det") not_any_active hw_csr_fence_start,
          -- any_serialize_start = either start type
          Gate.mkOR trap_seq_start hw_csr_fence_start any_serialize_start,
          -- fence_i_start = any_serialize_start (drives capture latches)
@@ -440,8 +481,10 @@ def mkSerializeDetect
          Gate.mkAND hw_csr_fence_start not_csr_rename_en (Wire.mk "fi_start_nocsr"),
          Gate.mkOR (Wire.mk "fi_start_nocsr") fence_i_draining (Wire.mk "hw_suppress"),
          Gate.mkOR (Wire.mk "hw_suppress") useq_suppress (Wire.mk "suppress_pre"),
-         -- ECALL detected also suppresses (prevent dispatch on detection cycle)
-         Gate.mkOR (Wire.mk "suppress_pre") ecall_detected fence_i_suppress]
+         -- ECALL/MRET/WFI detected also suppresses (prevent dispatch on detection cycle)
+         Gate.mkOR ecall_detected mret_detected (Wire.mk "trap_suppress"),
+         Gate.mkOR (Wire.mk "suppress_pre") (Wire.mk "trap_suppress") (Wire.mk "suppress_pre2"),
+         Gate.mkOR (Wire.mk "suppress_pre2") wfi_detected fence_i_suppress]
 
       -- Redirect: for hw path use captured PC+4, for trap use sequencer's redirect
       let redir_merge_gates :=
@@ -516,9 +559,12 @@ def mkSerializeDetect
       -- Sequencer instance (trap-only, seq_id hardwired to 4 = TRAP_ENTRY)
       let seq_id := (List.range 3).map (fun i => Wire.mk s!"trap_seq_id_{i}")
       let seq_id_gates :=
-        [-- seq_id = 4 (binary 100) for TRAP_ENTRY
+        [-- seq_id: ECALL=4 (100), MRET=6 (110)
+         -- bit0 = 0 for both
          Gate.mkBUF zero seq_id[0]!,
-         Gate.mkBUF zero seq_id[1]!,
+         -- bit1 = mret_detected (0 for ECALL, 1 for MRET)
+         Gate.mkBUF mret_detected seq_id[1]!,
+         -- bit2 = 1 for both
          Gate.mkBUF one seq_id[2]!]
 
       let sequencerInst : CircuitInstance := {
@@ -542,7 +588,8 @@ def mkSerializeDetect
           (List.range 32).map (fun i => (s!"csr_read_data_{i}", csr_read_data[i]!)) ++
           (List.range 24).map (fun i => (s!"rom_data_{i}", useq_rom_data[i]!)) ++
           (List.range 32).map (fun i => (s!"redir_pc4_{i}", fence_i_pc_plus_4[i]!)) ++
-          [("pipeline_flush", pipeline_flush_comb)] ++
+          [("pipeline_flush", pipeline_flush_comb),
+           ("is_interrupt_in", is_interrupt)] ++
           (List.range 32).map (fun i => (s!"pc_in_{i}", fetch_pc[i]!)) ++
           -- Outputs
           [(s!"active_q", useq_active),
@@ -555,6 +602,7 @@ def mkSerializeDetect
            ("csr_rename_en", Wire.mk "useq_rename_en_unused"),
            (s!"csrflag_q", useq_csr_flag),
            ("mstatus_trap_active", Wire.mk "useq_mstatus_trap"),
+           ("mstatus_mret_active", Wire.mk "useq_mstatus_mret"),
            ("trap_taken", Wire.mk "useq_trap_taken")] ++
           (List.range 6).map (fun i => (s!"csr_cdb_tag_{i}", useq_cdb_tag[i]!)) ++
           (List.range 32).map (fun i => (s!"csr_cdb_data_{i}", useq_cdb_data[i]!)) ++
@@ -565,7 +613,7 @@ def mkSerializeDetect
       }
 
       let allGates := hw_detect_gates ++ ser_detect_gates ++ hw_fsm_gates ++
-                       start_gates ++ hw_fsm_drain_gates ++ merge_gates ++
+                       irq_detect_gates ++ start_gates ++ hw_fsm_drain_gates ++ merge_gates ++
                        redir_merge_gates ++ csr_addr_merge_gates ++ capture_gates ++
                        seq_id_gates ++ romInvGates ++ romAddrGates ++ romOutputGates
       (allGates, [sequencerInst, useq_dc_dff])
@@ -869,6 +917,7 @@ def mkCsrNextValue
     (mcause_reg mcause_next : List Wire)
     (mtval_reg mtval_next : List Wire)
     (mip_next : List Wire)
+    (mtip_in : Wire)
     (mcycle_reg mcycle_next mcycleh_reg mcycleh_next : List Wire)
     (minstret_reg minstret_next minstreth_reg minstreth_next : List Wire)
     (commit_valid_muxed : Wire)
@@ -955,9 +1004,11 @@ def mkCsrNextValue
         Gate.mkMUX mtval_reg[i]! csr_write_val[i]! csr_we_mtval mtval_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mtval_next[i]!)
-  -- mip: WARL to 0
+  -- mip: read-only, bit 7 (MTIP) driven by external mtip_in, rest zero
   let mip_next_gates :=
-    (List.range 32).map (fun i => Gate.mkBUF zero mip_next[i]!)
+    (List.range 32).map (fun i =>
+      if i == 7 then Gate.mkBUF mtip_in mip_next[i]!
+      else Gate.mkBUF zero mip_next[i]!)
   -- Counter auto-increment
   let mcycle_plus_1 := makeIndexedWires "mcycle_p1" 32
   let mcycle_adder_inst : CircuitInstance := {
@@ -1078,6 +1129,7 @@ def mkMicrocodeSerializePath
     (csr_read_data : List Wire)
     (csr_cdb_inject : Wire) (csr_cdb_tag csr_cdb_data : List Wire)
     (fetch_pc : List Wire)
+    (mip_reg mie_reg mstatus_reg : List Wire)
     : List Gate × List CircuitInstance :=
   -- Helper: generate gates to match decode_optype against an encoding value
   let mkOpcodeMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
@@ -1164,6 +1216,11 @@ def mkMicrocodeSerializePath
       (List.range 6).map (fun i => Gate.mkBUF zero csr_phys_next[i]!)
     (tieGates, [])
   else
+    -- Forward-declare interrupt wires (needed for seq_id encoding)
+    let irq_pending := Wire.mk "irq_pending"
+    let irq_inject := Wire.mk "irq_inject"
+    let is_interrupt := Wire.mk "is_interrupt"
+
     -- Compute sequence ID from CSR opcode match wires
     -- seq_id[2:0]: 0=CSRRW, 1=CSRRS, 2=CSRRC, 3=FENCE.I
     -- Encoding: bit0 = CSRRS|CSRRSI|CSRRC|CSRRCI, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = FENCE.I
@@ -1173,7 +1230,7 @@ def mkMicrocodeSerializePath
     let _seq_id_tmp2 := Wire.mk "useq_id_tmp2"
     let _seq_id_tmp3 := Wire.mk "useq_id_tmp3"
 
-    -- seq_id encoding: CSRRW=0, CSRRS=1, CSRRC=2, FENCE.I=3, ECALL=4
+    -- seq_id encoding: CSRRW=0, CSRRS=1, CSRRC=2, FENCE.I=3, ECALL=4, IRQ=4
     -- bit0 = CSRRS|CSRRSI|FENCE.I, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = ECALL
     let seq_id_gates :=
       [-- tmp0 = CSRRS | CSRRSI
@@ -1184,8 +1241,8 @@ def mkMicrocodeSerializePath
        Gate.mkOR seq_id_tmp0 fence_i_match seq_id[0]!,
        -- bit1 = tmp1 | fence_i_match
        Gate.mkOR seq_id_tmp1 fence_i_match seq_id[1]!,
-       -- bit2 = ecall_detected
-       Gate.mkBUF ecall_detected seq_id[2]!]
+       -- bit2 = ecall_detected OR irq_inject (both use TRAP_ENTRY = seq 4)
+       Gate.mkOR ecall_detected irq_inject seq_id[2]!]
 
     -- skipWrite: for CSRRS/CSRRC, skip write when rs1=x0
     -- rs1 is decode_rs1[0..4], OR-tree to detect nonzero
@@ -1263,19 +1320,31 @@ def mkMicrocodeSerializePath
     let useq_addr_out := (List.range 12).map (fun i => Wire.mk s!"useq_addr_{i}")
     let useq_redir_next := (List.range 32).map (fun i => Wire.mk s!"useq_redir_{i}")
 
+    -- Interrupt detection: mip[7] AND mie[7] AND mstatus[3] (MTIP & MTIE & MIE)
+    let irq_detect_gates :=
+      [Gate.mkAND mip_reg[7]! mie_reg[7]! (Wire.mk "mtip_and_mtie"),
+       Gate.mkAND (Wire.mk "mtip_and_mtie") mstatus_reg[3]! irq_pending]
+
     -- Wire sequencer outputs to CPU's expected wire names
     let bridge_gates :=
       [-- fence_i_suppress = useq_suppress (active while sequencer runs)
        Gate.mkBUF useq_suppress fence_i_suppress,
        -- fence_i_drain_complete = useq_drain_complete
        Gate.mkBUF useq_drain_complete fence_i_drain_complete,
-       -- fence_i_draining_next = (serialize_detected OR useq_active) AND NOT(flush)
-       Gate.mkOR serialize_detected useq_active (Wire.mk "useq_drain_next_pre"),
+       -- NOT(useq_active)
+       Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
+       -- irq_inject = irq_pending AND NOT(useq_active)
+       Gate.mkAND irq_pending (Wire.mk "useq_not_active") irq_inject,
+       -- is_interrupt for LOAD_CONST override
+       Gate.mkBUF irq_inject is_interrupt,
+       -- fence_i_draining_next = (serialize_detected OR useq_active OR irq_inject) AND NOT(flush)
+       Gate.mkOR serialize_detected useq_active (Wire.mk "useq_drain_next_pre0"),
+       Gate.mkOR (Wire.mk "useq_drain_next_pre0") irq_inject (Wire.mk "useq_drain_next_pre"),
        Gate.mkNOT pipeline_flush_comb (Wire.mk "useq_not_flushing"),
        Gate.mkAND (Wire.mk "useq_drain_next_pre") (Wire.mk "useq_not_flushing") fence_i_draining_next,
-       -- fence_i_start = serialize_detected AND NOT(useq_active)
-       Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
-       Gate.mkAND serialize_detected (Wire.mk "useq_not_active") fence_i_start,
+       -- fence_i_start = (serialize_detected OR irq_inject) AND NOT(useq_active)
+       Gate.mkOR serialize_detected irq_inject (Wire.mk "ser_or_irq"),
+       Gate.mkAND (Wire.mk "ser_or_irq") (Wire.mk "useq_not_active") fence_i_start,
        -- csr_rename_en = useq_rename_en
        Gate.mkBUF useq_rename_en csr_rename_en,
        Gate.mkNOT useq_rename_en not_csr_rename_en,
@@ -1324,7 +1393,8 @@ def mkMicrocodeSerializePath
         (List.range 24).map (fun i => (s!"rom_data_{i}", useq_rom_data[i]!)) ++
         -- redir_pc4: PC+4 for FENCE.I redirect
         (List.range 32).map (fun i => (s!"redir_pc4_{i}", fence_i_pc_plus_4[i]!)) ++
-        [("pipeline_flush", pipeline_flush_comb)] ++
+        [("pipeline_flush", pipeline_flush_comb),
+         ("is_interrupt_in", is_interrupt)] ++
         -- pc_in: fetch PC for LOAD_PC µop
         (List.range 32).map (fun i => (s!"pc_in_{i}", fetch_pc[i]!)) ++
         -- Outputs
@@ -1338,6 +1408,7 @@ def mkMicrocodeSerializePath
          ("csr_rename_en", useq_rename_en),
          (s!"csrflag_q", useq_csr_flag)] ++
         [("mstatus_trap_active", Wire.mk "useq_mstatus_trap"),
+         ("mstatus_mret_active", Wire.mk "useq_mstatus_mret"),
          ("trap_taken", Wire.mk "useq_trap_taken")] ++
         (List.range 6).map (fun i => (s!"csr_cdb_tag_{i}", useq_cdb_tag[i]!)) ++
         (List.range 32).map (fun i => (s!"csr_cdb_data_{i}", useq_cdb_data[i]!)) ++
@@ -1396,7 +1467,7 @@ def mkMicrocodeSerializePath
           Gate.mkOR lhs rhs orWires[i]!)
         orGates) |>.flatten
 
-    let allGates := detect_gates ++ seq_id_gates ++ skip_write_gates ++
+    let allGates := detect_gates ++ irq_detect_gates ++ seq_id_gates ++ skip_write_gates ++
                     csr_imm_mux_gates ++
                     romInvGates ++ romAddrGates ++ romOutputGates ++
                     bridge_gates
