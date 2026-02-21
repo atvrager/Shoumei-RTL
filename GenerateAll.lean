@@ -91,6 +91,7 @@ import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Fetch_W2
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
+import Shoumei.RISCV.CDBMux_W2
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
@@ -284,6 +285,8 @@ def allCircuits : List Circuit := [
   -- Phase 8: Top-Level Integration
   cdbMux,
   cdbMuxF,
+  cdbMuxW2,
+  cdbMuxFW2,
   mkFetchStage,
   mkFetchStage_W2,
   mkRenameStage,
