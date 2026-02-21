@@ -13,3 +13,6 @@
 [submodule "third_party/coremark"]
 	path = third_party/coremark
 	url = https://github.com/eembc/coremark.git
+[submodule "third_party/coralnpu"]
+	path = third_party/coralnpu
+	url = https://github.com/google-coral/coralnpu
