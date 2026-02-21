@@ -51,6 +51,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let mem_req_we := Wire.mk "mem_req_we"
   let mem_req_data := makeIndexedWires "mem_req_data" 256
 
+  -- External interrupt input
+  let mtip_in := Wire.mk "mtip_in"
+
   -- Internal wires: CPU ↔ MemoryHierarchy
   let fetch_pc := makeIndexedWires "cpu_fetch_pc" 32
   let fetch_stalled := Wire.mk "cpu_fetch_stalled"
@@ -117,6 +120,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("dmem_req_ready", dmem_req_ready),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
+     [("mtip_in", mtip_in)] ++
      -- CPU outputs
      (List.range 32).map (fun i => (s!"fetch_pc_{i}", fetch_pc[i]!)) ++
      [("fetch_stalled", fetch_stalled),
@@ -171,7 +175,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("fence_i_busy", fence_i_busy)])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
-    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
+    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data ++ [mtip_in]
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++

@@ -25,7 +25,7 @@ def skipInstructions : List String :=
 
 /-- Extra instructions not in JSON but needed by the CPU (e.g., Zicsr) -/
 def extraInstructions : List String :=
-  ["FENCE_I", "CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"]
+  ["MRET", "WFI", "FENCE_I", "CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"]
 
 /-- Extension grouping for organizing the enum with comments -/
 structure ExtGroup where

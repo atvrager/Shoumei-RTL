@@ -1817,19 +1817,23 @@ def generateRegisters (ctx : Context) (c : Circuit) (excludedWires : List String
 
 /-- Split code into statements respecting multi-line expressions (paren depth tracking) -/
 private def groupIntoStatements (lines : List String) : List String :=
-  let result := lines.foldl (init := (([] : List (List String)), (0 : Int)))
+  let result := lines.foldl (init := (([] : List (List String)), (0 : Int), (0 : Int)))
     (fun acc line =>
       let stmts := acc.1
-      let depth := acc.2
-      let openCount : Int := (line.toList.filter (· == '(')).length
-      let closeCount : Int := (line.toList.filter (· == ')')).length
-      let newDepth := depth + openCount - closeCount
-      if depth == 0 then
-        (stmts ++ [[line]], newDepth)
+      let parenDepth := acc.2.1
+      let braceDepth := acc.2.2
+      let parenOpen : Int := (line.toList.filter (· == '(')).length
+      let parenClose : Int := (line.toList.filter (· == ')')).length
+      let braceOpen : Int := (line.toList.filter (· == '{')).length
+      let braceClose : Int := (line.toList.filter (· == '}')).length
+      let newParenDepth := parenDepth + parenOpen - parenClose
+      let newBraceDepth := braceDepth + braceOpen - braceClose
+      if parenDepth == 0 && braceDepth == 0 then
+        (stmts ++ [[line]], newParenDepth, newBraceDepth)
       else
         match stmts.reverse with
-        | cur :: rest => (((cur ++ [line]) :: rest).reverse, newDepth)
-        | [] => ([[line]], newDepth)
+        | cur :: rest => (((cur ++ [line]) :: rest).reverse, newParenDepth, newBraceDepth)
+        | [] => ([[line]], newParenDepth, newBraceDepth)
     )
   result.1.map (String.intercalate "\n")
 
@@ -2061,6 +2065,16 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
                       instances ++ "\n" ++ rams).splitOn "\n"
     -- Group into statements (respecting multi-line expressions)
     let stmts := groupIntoStatements (bodyLines.filter (· != ""))
+    -- Merge any lone "}" statements into the previous statement (handles for/if blocks
+    -- that weren't properly grouped due to whitespace variations)
+    let stmts : List String := stmts.foldl (init := ([] : List String)) (fun (acc : List String) (stmt : String) =>
+      if stmt.trimAscii == "}" then
+        match acc.reverse with
+        | prev :: rest => ((prev ++ "\n" ++ stmt) :: rest).reverse
+        | [] => [stmt]
+      else
+        acc ++ [stmt]
+    )
     -- Chunk statements into trait-sized groups
     let traitChunks := stmts.foldl (init := #[#[]]) (fun acc stmt =>
       let lastIdx := acc.size - 1

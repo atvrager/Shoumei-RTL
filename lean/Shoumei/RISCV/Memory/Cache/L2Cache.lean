@@ -210,6 +210,27 @@ def mkL2Cache : Circuit :=
   let lru_q := (List.range 8).map fun i => Wire.mk s!"l2_lru_q_{i}"
   let lru_dffs := (List.range 8).map fun i => Gate.mkDFF lru_d[i]! clock reset lru_q[i]!
 
+  -- Writeback buffer: victim data (256-bit) + tag (24-bit) + dirty flag (1-bit)
+  let wb_buf_d := (List.range 256).map fun i => Wire.mk s!"l2_wb_buf_d_{i}"
+  let wb_buf_q := (List.range 256).map fun i => Wire.mk s!"l2_wb_buf_q_{i}"
+  let wb_buf_dffs := (List.range 256).map fun i => Gate.mkDFF wb_buf_d[i]! clock reset wb_buf_q[i]!
+  let wb_tag_d := (List.range 24).map fun i => Wire.mk s!"l2_wb_tag_d_{i}"
+  let wb_tag_q := (List.range 24).map fun i => Wire.mk s!"l2_wb_tag_q_{i}"
+  let wb_tag_dffs := (List.range 24).map fun i => Gate.mkDFF wb_tag_d[i]! clock reset wb_tag_q[i]!
+  let wb_dirty_d := Wire.mk "l2_wb_dirty_d"
+  let wb_dirty_q := Wire.mk "l2_wb_dirty_q"
+  let wb_dirty_dff := Gate.mkDFF wb_dirty_d clock reset wb_dirty_q
+
+  -- wb_is_write: 1 if WB_REQ was triggered by L1D writeback (not read miss)
+  let wb_is_write_d := Wire.mk "l2_wb_iswr_d"
+  let wb_is_write_q := Wire.mk "l2_wb_iswr_q"
+  let wb_is_write_dff := Gate.mkDFF wb_is_write_d clock reset wb_is_write_q
+
+  -- wb_way: which way the victim was (captured on miss_detect or wb_miss_dirty)
+  let wb_way_d := Wire.mk "l2_wb_way_d"
+  let wb_way_q := Wire.mk "l2_wb_way_q"
+  let wb_way_dff := Gate.mkDFF wb_way_d clock reset wb_way_q
+
   -- Data RAM wire declarations (RAMs defined later after read_idx is available)
   let l2_data_ram_rd := (List.range 2).map fun way =>
     (List.range 256).map fun b => Wire.mk s!"drd{way}_{b}"
@@ -333,6 +354,7 @@ def mkL2Cache : Circuit :=
   let is_hit_resp := Wire.mk "l2_is_hr"
   let is_mem_req := Wire.mk "l2_is_mr"
   let is_mem_wait := Wire.mk "l2_is_mw"
+  let is_wb_req := Wire.mk "l2_is_wb"
   let fsm_decode_gates :=
     (List.range 3).map (fun i => Gate.mkNOT fsm_q[i]! not_fsm[i]!) ++
     [Gate.mkAND not_fsm[0]! not_fsm[1]! (Wire.mk "l2f01n"),
@@ -345,6 +367,8 @@ def mkL2Cache : Circuit :=
      Gate.mkAND (Wire.mk "l2f01m") not_fsm[2]! is_mem_req,        -- 011
      Gate.mkAND not_fsm[0]! not_fsm[1]! (Wire.mk "l2f01w"),
      Gate.mkAND (Wire.mk "l2f01w") fsm_q[2]! is_mem_wait,         -- 100
+     Gate.mkAND fsm_q[0]! not_fsm[1]! (Wire.mk "l2f01wb"),
+     Gate.mkAND (Wire.mk "l2f01wb") fsm_q[2]! is_wb_req,          -- 101
      Gate.mkNOT is_idle not_idle]
 
   -- Read way mux: idle ? way_hit[1] : lat_way_q
@@ -369,6 +393,79 @@ def mkL2Cache : Circuit :=
     Gate.mkAND is_mem_wait mem_resp_valid refill_done
   ]
 
+  -- === LRU Lookup (moved before victim detection) ===
+  -- Current set LRU: gate-based 8:1 mux of lru_q by cur_dec
+  let cur_lru := Wire.mk "clru"
+  let cur_lru_gates :=
+    let la := (List.range 8).map fun i => Wire.mk s!"cla_{i}"
+    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! lru_q[i]! la[i]!) ++
+    [Gate.mkOR la[0]! la[1]! (Wire.mk "clo01"), Gate.mkOR la[2]! la[3]! (Wire.mk "clo23"),
+     Gate.mkOR la[4]! la[5]! (Wire.mk "clo45"), Gate.mkOR la[6]! la[7]! (Wire.mk "clo67"),
+     Gate.mkOR (Wire.mk "clo01") (Wire.mk "clo23") (Wire.mk "clo03"),
+     Gate.mkOR (Wire.mk "clo45") (Wire.mk "clo67") (Wire.mk "clo47"),
+     Gate.mkOR (Wire.mk "clo03") (Wire.mk "clo47") cur_lru]
+
+  -- === Victim Dirty Detection ===
+  -- Victim way dirty: select dirty bit for victim way (cur_lru) at current set
+  -- dirty_q layout: [way0_set0..way0_set7, way1_set0..way1_set7]
+  -- victim_dirty_w0 = OR of (cur_dec[set] AND dirty_q[set]) for way0
+  -- victim_dirty_w1 = OR of (cur_dec[set] AND dirty_q[8+set]) for way1
+  -- victim_dirty = cur_lru ? victim_dirty_w1 : victim_dirty_w0
+  let victim_dirty := Wire.mk "l2_vdirty"
+  let miss_dirty := Wire.mk "l2_miss_dirty"
+  let miss_clean := Wire.mk "l2_miss_clean"
+  let victim_dirty_gates :=
+    let vda0 := (List.range 8).map fun i => Wire.mk s!"vda0_{i}"
+    let vda1 := (List.range 8).map fun i => Wire.mk s!"vda1_{i}"
+    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! dirty_q[i]! vda0[i]!) ++
+    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! dirty_q[8 + i]! vda1[i]!) ++
+    [Gate.mkOR vda0[0]! vda0[1]! (Wire.mk "vdo0_01"), Gate.mkOR vda0[2]! vda0[3]! (Wire.mk "vdo0_23"),
+     Gate.mkOR vda0[4]! vda0[5]! (Wire.mk "vdo0_45"), Gate.mkOR vda0[6]! vda0[7]! (Wire.mk "vdo0_67"),
+     Gate.mkOR (Wire.mk "vdo0_01") (Wire.mk "vdo0_23") (Wire.mk "vdo0_03"),
+     Gate.mkOR (Wire.mk "vdo0_45") (Wire.mk "vdo0_67") (Wire.mk "vdo0_47"),
+     Gate.mkOR (Wire.mk "vdo0_03") (Wire.mk "vdo0_47") (Wire.mk "l2_vdirty_w0"),
+     Gate.mkOR vda1[0]! vda1[1]! (Wire.mk "vdo1_01"), Gate.mkOR vda1[2]! vda1[3]! (Wire.mk "vdo1_23"),
+     Gate.mkOR vda1[4]! vda1[5]! (Wire.mk "vdo1_45"), Gate.mkOR vda1[6]! vda1[7]! (Wire.mk "vdo1_67"),
+     Gate.mkOR (Wire.mk "vdo1_01") (Wire.mk "vdo1_23") (Wire.mk "vdo1_03"),
+     Gate.mkOR (Wire.mk "vdo1_45") (Wire.mk "vdo1_67") (Wire.mk "vdo1_47"),
+     Gate.mkOR (Wire.mk "vdo1_03") (Wire.mk "vdo1_47") (Wire.mk "l2_vdirty_w1"),
+     Gate.mkMUX (Wire.mk "l2_vdirty_w0") (Wire.mk "l2_vdirty_w1") cur_lru victim_dirty]
+  -- Also need victim valid: check if the victim way has a valid line
+  let victim_valid := Wire.mk "l2_vvalid"
+  let victim_valid_gates :=
+    let vva0 := (List.range 8).map fun i => Wire.mk s!"vva0_{i}"
+    let vva1 := (List.range 8).map fun i => Wire.mk s!"vva1_{i}"
+    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! valid_q[i]! vva0[i]!) ++
+    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! valid_q[8 + i]! vva1[i]!) ++
+    [Gate.mkOR vva0[0]! vva0[1]! (Wire.mk "vvo0_01"), Gate.mkOR vva0[2]! vva0[3]! (Wire.mk "vvo0_23"),
+     Gate.mkOR vva0[4]! vva0[5]! (Wire.mk "vvo0_45"), Gate.mkOR vva0[6]! vva0[7]! (Wire.mk "vvo0_67"),
+     Gate.mkOR (Wire.mk "vvo0_01") (Wire.mk "vvo0_23") (Wire.mk "vvo0_03"),
+     Gate.mkOR (Wire.mk "vvo0_45") (Wire.mk "vvo0_67") (Wire.mk "vvo0_47"),
+     Gate.mkOR (Wire.mk "vvo0_03") (Wire.mk "vvo0_47") (Wire.mk "l2_vvalid_w0"),
+     Gate.mkOR vva1[0]! vva1[1]! (Wire.mk "vvo1_01"), Gate.mkOR vva1[2]! vva1[3]! (Wire.mk "vvo1_23"),
+     Gate.mkOR vva1[4]! vva1[5]! (Wire.mk "vvo1_45"), Gate.mkOR vva1[6]! vva1[7]! (Wire.mk "vvo1_67"),
+     Gate.mkOR (Wire.mk "vvo1_01") (Wire.mk "vvo1_23") (Wire.mk "vvo1_03"),
+     Gate.mkOR (Wire.mk "vvo1_45") (Wire.mk "vvo1_67") (Wire.mk "vvo1_47"),
+     Gate.mkOR (Wire.mk "vvo1_03") (Wire.mk "vvo1_47") (Wire.mk "l2_vvalid_w1"),
+     Gate.mkMUX (Wire.mk "l2_vvalid_w0") (Wire.mk "l2_vvalid_w1") cur_lru victim_valid]
+  -- miss_dirty = miss_detect AND victim_dirty AND victim_valid
+  -- miss_clean = miss_detect AND NOT(victim_dirty AND victim_valid)
+  let not_vdv := Wire.mk "l2_nvdv"
+  let vdv := Wire.mk "l2_vdv"
+  let miss_detect_gates := [
+    Gate.mkAND victim_dirty victim_valid vdv,
+    Gate.mkNOT vdv not_vdv,
+    Gate.mkAND miss_detect vdv miss_dirty,
+    Gate.mkAND miss_detect not_vdv miss_clean
+  ]
+
+  -- wb_miss_dirty: L1D writeback that misses in L2 and victim is dirty+valid
+  let wb_miss_dirty := Wire.mk "l2_wb_md"
+  let wb_miss_dirty_gates := [
+    Gate.mkAND wb_detect not_hit (Wire.mk "l2_wb_miss"),
+    Gate.mkAND (Wire.mk "l2_wb_miss") vdv wb_miss_dirty
+  ]
+
   -- === Response Logic ===
   -- resp_valid = (is_hit_resp OR refill_done) AND source_match
   let resp_any := Wire.mk "l2_ra"
@@ -386,34 +483,86 @@ def mkL2Cache : Circuit :=
   let resp_mux_d := (List.range 256).map fun b =>
     Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! refill_done l1d_resp_data[b]!
 
+  -- === Writeback Buffer Capture ===
+  -- On miss_detect, capture victim data (cur_lru selects way) and victim tag
+  let victim_data_mux := (List.range 256).map fun b => Wire.mk s!"l2_vdata_{b}"
+  let victim_data_gates := (List.range 256).map fun b =>
+    Gate.mkMUX (Wire.mk s!"drd0_{b}") (Wire.mk s!"drd1_{b}") cur_lru victim_data_mux[b]!
+  let victim_tag_mux := (List.range 24).map fun b => Wire.mk s!"l2_vtag_{b}"
+  let victim_tag_gates := (List.range 24).map fun b =>
+    Gate.mkMUX (way_sel_tag[0]!)[b]! (way_sel_tag[1]!)[b]! cur_lru victim_tag_mux[b]!
+  -- wb_buf_d: capture on miss_detect OR wb_miss_dirty, hold otherwise
+  let capture_victim := Wire.mk "l2_cap_v"
+  let capture_victim_gate := Gate.mkOR miss_detect wb_miss_dirty capture_victim
+  let wb_buf_next := (List.range 256).map fun b =>
+    Gate.mkMUX wb_buf_q[b]! victim_data_mux[b]! capture_victim wb_buf_d[b]!
+  let wb_tag_next := (List.range 24).map fun b =>
+    Gate.mkMUX wb_tag_q[b]! victim_tag_mux[b]! capture_victim wb_tag_d[b]!
+  let wb_dirty_next := Gate.mkMUX wb_dirty_q vdv capture_victim wb_dirty_d
+  -- wb_is_write: set 1 on wb_miss_dirty, 0 on read miss_dirty, hold otherwise
+  let wb_is_write_next := [
+    Gate.mkMUX wb_is_write_q wb_miss_dirty capture_victim wb_is_write_d
+  ]
+  -- wb_way: capture cur_lru on capture_victim
+  let wb_way_next := Gate.mkMUX wb_way_q cur_lru capture_victim wb_way_d
+
   -- === Memory Request ===
-  -- mem_req_valid = is_mem_req; addr = pend_q (line-aligned); we = 0; data = 0
+  -- mem_req_valid = is_mem_req OR is_wb_req
+  -- mem_req_we = is_wb_req
+  -- mem_req_addr: wb_req ? {wb_tag, pend_idx, 5'b0} : {pend_tag, pend_idx, 5'b0}
+  -- mem_req_data: wb_buf_q
+  let mem_req_valid_or := Wire.mk "l2_mrv_or"
   let mem_req_gates :=
-    [Gate.mkBUF is_mem_req mem_req_valid,
-     Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_we] ++
+    [Gate.mkOR is_mem_req is_wb_req mem_req_valid_or,
+     Gate.mkBUF mem_req_valid_or mem_req_valid,
+     Gate.mkBUF is_wb_req mem_req_we] ++
     (List.range 32).map (fun i =>
       if i < 5 then Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_addr[i]!
-      else Gate.mkBUF pend_q[i]! mem_req_addr[i]!) ++
-    (List.range 256).map (fun i => Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_data[i]!)
+      else if i < 8 then
+        -- Bits 5-7: always from pend_q (same set index for both wb and refill)
+        Gate.mkBUF pend_q[i]! mem_req_addr[i]!
+      else
+        -- Bits 8-31: tag. wb_req ? wb_tag : pend_tag (=ref_tag)
+        Gate.mkMUX pend_q[i]! wb_tag_q[i - 8]! is_wb_req mem_req_addr[i]!) ++
+    (List.range 256).map (fun i => Gate.mkBUF wb_buf_q[i]! mem_req_data[i]!)
 
   -- === FSM Next State ===
-  -- fsm_d[0] = hit_detect OR miss_detect
-  -- fsm_d[1] = is_hit_latch OR miss_detect
-  -- fsm_d[2] = is_mem_req OR (is_mem_wait AND NOT mem_resp_valid)
+  -- IDLE(000) → hit: HIT_LATCH(001), miss_clean: MEM_REQ(011), miss_dirty: WB_REQ(101),
+  --              wb_miss_dirty: WB_REQ(101)
+  -- HIT_LATCH(001) → HIT_RESP(010)
+  -- HIT_RESP(010) → IDLE(000)
+  -- MEM_REQ(011) → MEM_WAIT(100)
+  -- MEM_WAIT(100) → done: IDLE(000), !done: MEM_WAIT(100)
+  -- WB_REQ(101) → wb_is_write ? IDLE(000) : MEM_REQ(011)
   let not_mem_resp := Wire.mk "l2_nmr"
   let stay_wait := Wire.mk "l2_sw"
+  let not_wb_iswr := Wire.mk "l2_nwbiw"
+  let wb_req_to_mr := Wire.mk "l2_wbmr"
   let fsm_next_gates := [
-    Gate.mkOR hit_detect miss_detect fsm_d[0]!,
-    Gate.mkOR is_hit_latch miss_detect fsm_d[1]!,
+    Gate.mkNOT wb_is_write_q not_wb_iswr,
+    Gate.mkAND is_wb_req not_wb_iswr wb_req_to_mr,
+    -- fsm_d[0]: HIT_LATCH from hit_detect, MEM_REQ from miss_clean/miss_detect/wb_req_to_mr,
+    --           WB_REQ from miss_dirty/wb_miss_dirty
+    Gate.mkOR hit_detect miss_detect (Wire.mk "l2_fd0_hm"),
+    Gate.mkOR (Wire.mk "l2_fd0_hm") wb_req_to_mr (Wire.mk "l2_fd0_hmw"),
+    Gate.mkOR (Wire.mk "l2_fd0_hmw") wb_miss_dirty fsm_d[0]!,
+    -- fsm_d[1]: HIT_RESP from hit_latch, MEM_REQ from miss_clean/wb_req_to_mr
+    Gate.mkOR is_hit_latch miss_clean (Wire.mk "l2_fd1_hc"),
+    Gate.mkOR (Wire.mk "l2_fd1_hc") wb_req_to_mr fsm_d[1]!,
+    -- fsm_d[2]: WB_REQ from miss_dirty/wb_miss_dirty, MEM_WAIT from mem_req/stay_wait
     Gate.mkNOT mem_resp_valid not_mem_resp,
     Gate.mkAND is_mem_wait not_mem_resp stay_wait,
-    Gate.mkOR is_mem_req stay_wait fsm_d[2]!
+    Gate.mkOR miss_dirty wb_miss_dirty (Wire.mk "l2_fd2_dirty"),
+    Gate.mkOR (Wire.mk "l2_fd2_dirty") is_mem_req (Wire.mk "l2_fd2_dm"),
+    Gate.mkOR (Wire.mk "l2_fd2_dm") stay_wait fsm_d[2]!
   ]
 
   -- === Register Capture ===
-  -- Pending address + source: capture on miss_detect
+  -- Pending address + source: capture on miss_detect OR wb_miss_dirty
+  let capture_pend := Wire.mk "l2_cap_p"
+  let capture_pend_gate := Gate.mkOR miss_detect wb_miss_dirty capture_pend
   let pend_next := (List.range 32).map fun i =>
-    Gate.mkMUX pend_q[i]! arb_addr[i]! miss_detect pend_d[i]!
+    Gate.mkMUX pend_q[i]! arb_addr[i]! capture_pend pend_d[i]!
   -- Source: capture on hit_detect OR miss_detect
   let capture_src := Wire.mk "l2_cs"
   let src_next := [
@@ -426,17 +575,6 @@ def mkL2Cache : Circuit :=
   -- Latched way: capture on hit_detect
   let lat_way_next := Gate.mkMUX lat_way_q way_hit[1]! hit_detect lat_way_d
 
-  -- === LRU Lookup ===
-  -- Current set LRU: gate-based 8:1 mux of lru_q by cur_dec
-  let cur_lru := Wire.mk "clru"
-  let cur_lru_gates :=
-    let la := (List.range 8).map fun i => Wire.mk s!"cla_{i}"
-    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! lru_q[i]! la[i]!) ++
-    [Gate.mkOR la[0]! la[1]! (Wire.mk "clo01"), Gate.mkOR la[2]! la[3]! (Wire.mk "clo23"),
-     Gate.mkOR la[4]! la[5]! (Wire.mk "clo45"), Gate.mkOR la[6]! la[7]! (Wire.mk "clo67"),
-     Gate.mkOR (Wire.mk "clo01") (Wire.mk "clo23") (Wire.mk "clo03"),
-     Gate.mkOR (Wire.mk "clo45") (Wire.mk "clo67") (Wire.mk "clo47"),
-     Gate.mkOR (Wire.mk "clo03") (Wire.mk "clo47") cur_lru]
   -- Refill set LRU
   let ref_lru := Wire.mk "rlru"
   let ref_lru_gates :=
@@ -463,12 +601,19 @@ def mkL2Cache : Circuit :=
 
   -- === Write Enables ===
   -- Per way/set: wb_we OR refill_we
+  -- wb_safe = wb_detect AND NOT wb_miss_dirty (don't write if victim needs saving)
+  let not_wb_miss_dirty := Wire.mk "l2_nwbmd"
+  let wb_safe := Wire.mk "l2_wb_safe"
+  let wb_safe_gates := [
+    Gate.mkNOT wb_miss_dirty not_wb_miss_dirty,
+    Gate.mkAND wb_detect not_wb_miss_dirty wb_safe
+  ]
   let write_en_gates := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 8).foldl (fun acc2 set =>
       let wm := if way == 0 then not_wb_w1 else wb_use_way1
       let rm := if way == 0 then not_ref_lru else ref_lru
       acc2 ++ [
-        Gate.mkAND wb_detect cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
+        Gate.mkAND wb_safe cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
         Gate.mkAND (Wire.mk s!"wbs_{way}_{set}") wm (Wire.mk s!"wbw_{way}_{set}"),
         Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"rfs_{way}_{set}"),
         Gate.mkAND (Wire.mk s!"rfs_{way}_{set}") rm (Wire.mk s!"rfw_{way}_{set}"),
@@ -539,16 +684,26 @@ def mkL2Cache : Circuit :=
     acc ++ (List.range 8).map (fun set =>
       Gate.mkOR valid_q[way * 8 + set]! (Wire.mk s!"wen_{way}_{set}") valid_d[way * 8 + set]!)
   ) []
-  -- Dirty: MUX(hold, write_dirty, write_en)
+  -- Dirty: MUX(hold, write_dirty, write_en), with clearing for wb_miss_dirty victim
+  -- When is_wb_req AND wb_is_write_q, clear the dirty bit for wb_way_q at ref_dec set
+  let wb_clear_dirty := Wire.mk "l2_wbcd"
+  let wb_clear_dirty_gate := Gate.mkAND is_wb_req wb_is_write_q wb_clear_dirty
   let dirty_next := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
+    acc ++ ((List.range 8).map (fun set =>
       let idx := way * 8 + set
-      Gate.mkMUX dirty_q[idx]! write_dirty (Wire.mk s!"wen_{way}_{set}") dirty_d[idx]!)
+      let way_match := if way == 0 then Wire.mk "l2_nwbwq" else wb_way_q
+      [Gate.mkAND way_match ref_dec[set]! (Wire.mk s!"wbcs_{way}_{set}"),
+       Gate.mkAND (Wire.mk s!"wbcs_{way}_{set}") wb_clear_dirty (Wire.mk s!"wbcl_{way}_{set}"),
+       Gate.mkMUX dirty_q[idx]! (Wire.mk "l2_const_zero") (Wire.mk s!"wbcl_{way}_{set}") (Wire.mk s!"dh_{idx}"),
+       Gate.mkMUX (Wire.mk s!"dh_{idx}") write_dirty (Wire.mk s!"wen_{way}_{set}") dirty_d[idx]!]
+    )).flatten
   ) []
+  let not_wb_way_q := Wire.mk "l2_nwbwq"
+  let not_wb_way_q_gate := Gate.mkNOT wb_way_q not_wb_way_q
   -- LRU: update on hit, wb, or refill
   let lru_next := (List.range 8).foldl (fun acc set =>
     acc ++ [
-      Gate.mkOR hit_detect wb_detect (Wire.mk s!"lca_{set}"),
+      Gate.mkOR hit_detect wb_safe (Wire.mk s!"lca_{set}"),
       Gate.mkAND (Wire.mk s!"lca_{set}") cur_dec[set]! (Wire.mk s!"lcu_{set}"),
       Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"lru_{set}"),
       Gate.mkOR (Wire.mk s!"lcu_{set}") (Wire.mk s!"lru_{set}") (Wire.mk s!"lua_{set}"),
@@ -564,7 +719,7 @@ def mkL2Cache : Circuit :=
     Gate.mkAND is_idle arb_sel_d (Wire.mk "l2_dp"),
     Gate.mkAND (Wire.mk "l2_dp") l1i_req_valid (Wire.mk "l2_ib"),
     Gate.mkOR not_idle (Wire.mk "l2_ib") stall_i,
-    Gate.mkBUF not_idle stall_d
+    Gate.mkOR not_idle wb_miss_dirty stall_d
   ]
 
   -- === Assemble ===
@@ -578,16 +733,26 @@ def mkL2Cache : Circuit :=
                [stall_i, stall_d]
     gates := fsm_dffs ++ [src_dff] ++ pend_dffs ++ lat_idx_dffs ++ [lat_way_dff] ++
              valid_dffs ++ dirty_dffs ++ lru_dffs ++
+             wb_buf_dffs ++ wb_tag_dffs ++ [wb_dirty_dff, wb_is_write_dff, wb_way_dff] ++
              const_zero_gates ++ arb_gates ++ arb_addr_mux ++
              not_cur_idx_gates ++ cur_dec_gates ++ not_ref_idx_gates ++ ref_dec_gates ++
              read_idx_mux ++ valid_mux_gates ++ hit_gates ++ way_data_mux ++
              fsm_decode_gates ++ [read_way1_mux] ++
-             detect_gates ++ resp_valid_gates ++ resp_mux_i ++ resp_mux_d ++
-             mem_req_gates ++ fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
-             cur_lru_gates ++ ref_lru_gates ++ way_sel_gates ++ write_en_gates ++
+             detect_gates ++
+             cur_lru_gates ++
+             victim_dirty_gates ++ victim_valid_gates ++ miss_detect_gates ++
+             wb_miss_dirty_gates ++ [capture_victim_gate] ++
+             resp_valid_gates ++ resp_mux_i ++ resp_mux_d ++
+             victim_data_gates ++ victim_tag_gates ++
+             wb_buf_next ++ wb_tag_next ++ [wb_dirty_next] ++
+             wb_is_write_next ++ [wb_way_next] ++
+             mem_req_gates ++ fsm_next_gates ++
+             [capture_pend_gate] ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
+             ref_lru_gates ++ way_sel_gates ++ wb_safe_gates ++ write_en_gates ++
              write_tag_mux ++ write_data_mux ++ write_dirty_gates ++
              tag_next ++ data_ram_wen_gates ++ data_ram_waddr_gates ++ data_ram_wdata_gates ++
-             valid_next ++ dirty_next ++ lru_next ++ stall_gates
+             valid_next ++ [wb_clear_dirty_gate, not_wb_way_q_gate] ++ dirty_next ++
+             lru_next ++ stall_gates
     instances := tag_instances ++
                  tag_mux_instances ++ tag_cmp_instances
     rams := data_rams

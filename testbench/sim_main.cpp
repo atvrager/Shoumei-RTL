@@ -250,16 +250,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Override HTIF addresses from ELF symbols
+    // Look up HTIF addresses from ELF symbols (applied after reset below)
     int64_t tohost_sym = elf_lookup_symbol(elf_path, "tohost");
     if (tohost_sym >= 0) {
         printf("ELF symbol: tohost = 0x%08x\n", (uint32_t)tohost_sym);
-        dpi_set_tohost_addr((uint32_t)tohost_sym);
     }
     int64_t putchar_sym = elf_lookup_symbol(elf_path, "putchar_addr");
     if (putchar_sym >= 0) {
         printf("ELF symbol: putchar_addr = 0x%08x\n", (uint32_t)putchar_sym);
-        dpi_set_putchar_addr((uint32_t)putchar_sym);
     }
 
     // =====================================================================
@@ -275,6 +273,14 @@ int main(int argc, char** argv) {
 #endif
     }
     dut->rst_n = 1;
+
+    // Override HTIF addresses AFTER reset (initial blocks have run)
+    if (tohost_sym >= 0) {
+        dpi_set_tohost_addr((uint32_t)tohost_sym);
+    }
+    if (putchar_sym >= 0) {
+        dpi_set_putchar_addr((uint32_t)putchar_sym);
+    }
 
     // =====================================================================
     // Main simulation loop

@@ -463,12 +463,20 @@ def mkStoreBuffer8 : Circuit :=
   }
 
   -- === Flush Recovery: Popcount8 + Adder ===
-  -- On flush, count surviving entries = popcount(valid AND committed)
+  -- On flush, count surviving entries = popcount(valid AND committed AND NOT dequeuing)
+  -- Must exclude the entry being dequeued (deq_fire AND head_decode[i]) to avoid
+  -- count/valid bitmap mismatch when flush and deq happen simultaneously.
   -- New tail = head + popcount (mod 8, only low 3 bits matter)
 
   let surviving := (List.range 8).map (fun i => Wire.mk s!"surviving_{i}")
   let surviving_gates := (List.range 8).map (fun i =>
-    Gate.mkAND valid[i]! committed[i]! surviving[i]!)
+    let vc := Wire.mk s!"surv_vc_{i}"
+    let not_deq_i := Wire.mk s!"surv_not_deq_{i}"
+    let deq_i := Wire.mk s!"surv_deq_{i}"
+    [Gate.mkAND valid[i]! committed[i]! vc,
+     Gate.mkAND deq_fire head_decode[i]! deq_i,
+     Gate.mkNOT deq_i not_deq_i,
+     Gate.mkAND vc not_deq_i surviving[i]!]) |>.flatten
 
   let pop_count := mkWires "pop_count_" 4
   let pop_inst : CircuitInstance := {
