@@ -47,6 +47,7 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
+import Shoumei.RISCV.Execution.ReservationStation_W2
 
 -- M-Extension Building Blocks
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
@@ -226,6 +227,8 @@ def allCircuits : List Circuit := [
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
+  mkReservationStation4_W2 false,
+  mkReservationStation4_W2 true,
   mkMemoryRS4,
 
   -- M-Extension (conditional on CPUConfig.enableM)
