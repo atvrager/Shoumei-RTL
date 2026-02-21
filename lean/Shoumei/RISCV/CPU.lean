@@ -340,11 +340,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   }
 
   -- === DECODER ===
-  let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
-    else if enableF then "RV32IFDecoder"
-    else if enableM then "RV32IMDecoder"
-    else "RV32IDecoder"
+  let decoderModuleName := config.isaString ++ "Decoder"
   let decoder_inst : CircuitInstance := {
     moduleName := decoderModuleName
     instName := "u_decoder"
@@ -373,7 +369,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
          ("io_fp_rs3_used", decode_fp_rs3_used),
          ("io_is_fp_load", dispatch_is_fp_load),
          ("io_is_fp_store", dispatch_is_fp_store)]
-      else [])
+      else []) ++
+      (if enableVME then [("io_is_matrix", dispatch_is_matrix)] else [])
   }
 
   -- === RENAME STAGE ===
@@ -1299,14 +1296,26 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let matrix_tag_out := makeIndexedWires "matrix_tag_out" 6
   let matrix_valid_out := Wire.mk "matrix_valid_out"
 
-  -- VS1/VS2 tied to zero for now (vector register data path is a stub)
-  let matrix_vs1_stub := makeIndexedWires "matrix_vs1_stub" 128
-  let matrix_vs2_stub := makeIndexedWires "matrix_vs2_stub" 128
-  let matrix_stub_gates :=
-    if enableVME then
-      (List.range 128).map (fun i => Gate.mkBUF zero matrix_vs1_stub[i]!) ++
-      (List.range 128).map (fun i => Gate.mkBUF zero matrix_vs2_stub[i]!)
-    else []
+  -- VS1/VS2 data from VecRegStub32x128 (vector register file stub)
+  let matrix_vs1_data := makeIndexedWires "matrix_vs1_data" 128
+  let matrix_vs2_data := makeIndexedWires "matrix_vs2_data" 128
+
+  let vec_reg_stub_inst : CircuitInstance := {
+    moduleName := "VecRegStub32x128"
+    instName := "u_vec_reg_stub"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("wr_en", zero)] ++
+      -- Read port 1: vreg index from lower 5 bits of matrix RS dispatch src1
+      (List.range 5).map (fun i => (s!"rd_idx1_{i}", rs_matrix_dispatch_src1[i]!)) ++
+      -- Read port 2: vreg index from lower 5 bits of matrix RS dispatch src2
+      (List.range 5).map (fun i => (s!"rd_idx2_{i}", rs_matrix_dispatch_src2[i]!)) ++
+      -- Write port tied off
+      (List.range 5).map (fun i => (s!"wr_idx_{i}", zero)) ++
+      (List.range 128).map (fun i => (s!"wr_data_{i}", zero)) ++
+      -- Read data outputs
+      (List.range 128).map (fun i => (s!"rd_data1_{i}", matrix_vs1_data[i]!)) ++
+      (List.range 128).map (fun i => (s!"rd_data2_{i}", matrix_vs2_data[i]!))
+  }
 
   -- Row/col index from lower 4 bits of src2
   let matrix_row_col_idx := makeIndexedWires "matrix_row_col_idx" 4
@@ -1319,8 +1328,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "MatrixExecUnit"
     instName := "u_exec_matrix"
     portMap :=
-      (matrix_vs1_stub.enum.map (fun ⟨i, w⟩ => (s!"vs1_data_{i}", w))) ++
-      (matrix_vs2_stub.enum.map (fun ⟨i, w⟩ => (s!"vs2_data_{i}", w))) ++
+      (matrix_vs1_data.enum.map (fun ⟨i, w⟩ => (s!"vs1_data_{i}", w))) ++
+      (matrix_vs2_data.enum.map (fun ⟨i, w⟩ => (s!"vs2_data_{i}", w))) ++
       (rs_matrix_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"scalar_{i}", w))) ++
       (matrix_op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
       (rs_matrix_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
@@ -3058,7 +3067,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ muldiv_dispatch_gate ++ matrix_dispatch_gate ++
-             matrix_lut_gates ++ matrix_stub_gates ++ matrix_idx_gates ++
+             matrix_lut_gates ++ matrix_idx_gates ++
              matrix_fifo_enq_assemble ++ matrix_fifo_dummy_gates ++
              combined_muldiv_mux_gates ++ muldiv_matrix_stall_gates ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
@@ -3107,7 +3116,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   (if enableF then [rs_fp_inst] else []) ++
                   [int_exec_inst, branch_exec_inst, mem_exec_inst] ++
                   (if enableM then [muldiv_exec_inst] else []) ++
-                  (if enableVME then [matrix_exec_inst] else []) ++
+                  (if enableVME then [matrix_exec_inst, vec_reg_stub_inst] else []) ++
                   (if enableF then [fp_exec_inst] else []) ++
                   [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst,

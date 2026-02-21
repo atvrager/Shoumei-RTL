@@ -1,0 +1,79 @@
+{
+  "msetcli": {
+    "encoding": "0000000----------000-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x5b",
+    "mask": "0xfe00707f"
+  },
+  "msetrli": {
+    "encoding": "0000000----------001-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x105b",
+    "mask": "0xfe00707f"
+  },
+  "vop_avv": {
+    "encoding": "0000000----------010-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x205b",
+    "mask": "0xfe00707f"
+  },
+  "vopacc_avv": {
+    "encoding": "0000000----------011-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x305b",
+    "mask": "0xfe00707f"
+  },
+  "vmacc_avx": {
+    "encoding": "0000000----------100-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x405b",
+    "mask": "0xfe00707f"
+  },
+  "vraccr": {
+    "encoding": "0000000----------101-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x505b",
+    "mask": "0xfe00707f"
+  },
+  "vraccc": {
+    "encoding": "0000000----------110-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x605b",
+    "mask": "0xfe00707f"
+  },
+  "vwaccr": {
+    "encoding": "0000000----------111-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x705b",
+    "mask": "0xfe00707f"
+  },
+  "vwaccc": {
+    "encoding": "0000001----------000-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x200005b",
+    "mask": "0xfe00707f"
+  },
+  "vrraccr": {
+    "encoding": "0000001----------001-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x200105b",
+    "mask": "0xfe00707f"
+  },
+  "vrwaccr": {
+    "encoding": "0000001----------010-----1011011",
+    "variable_fields": ["rd", "rs1", "rs2"],
+    "extension": ["rv_vme"],
+    "match": "0x200205b",
+    "mask": "0xfe00707f"
+  }
+}

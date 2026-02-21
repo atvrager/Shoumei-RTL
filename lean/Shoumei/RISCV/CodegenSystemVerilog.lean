@@ -74,6 +74,10 @@ private def hasM (defs : List InstructionDef) : Bool :=
 private def hasF (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+/-- Check if decoder includes VME-extension instructions -/
+private def hasVME (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_vme"))
+
 /-- Generate complete SystemVerilog decoder module -/
 def genSystemVerilogDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let header :=
@@ -96,9 +100,12 @@ s!"//===========================================================================
 
   let hasM := hasM defs
   let hasF := hasF defs
-  let hasTrailingPorts := hasM || hasF
+  let hasVME := hasVME defs
+  let hasTrailingPorts := hasM || hasF || hasVME
 
-  let muldivComma := if hasF then "," else ""
+  let optypeWidth := if defs.length > 64 then 6 else if defs.length > 32 then 5 else 4
+
+  let muldivComma := if hasF || hasVME then "," else ""
   let muldivPort := if hasM then
     s!"\n    output logic        io_is_muldiv{muldivComma}  // M-extension multiply/divide" else ""
 
@@ -111,7 +118,11 @@ s!"//===========================================================================
     "\n    output logic        io_fp_rs2_read, // rs2 from FP register file" ++
     "\n    output logic        io_fp_rs3_used, // Needs rs3 (R4-type fused ops)" ++
     "\n    output logic        io_is_fp_load, // FP load (FLW)" ++
-    "\n    output logic        io_is_fp_store // FP store (FSW)"
+    "\n    output logic        io_is_fp_store" ++ (if hasVME then "," else "") ++ " // FP store (FSW)"
+  else ""
+
+  let vmePort := if hasVME then
+    "\n    output logic        io_is_matrix   // VME matrix dispatch"
   else ""
 
   -- Determine comma/no-comma for io_use_imm line
@@ -121,7 +132,7 @@ s!"//===========================================================================
 s!"
 module {moduleName} (
     input  logic [31:0] io_instr,      // 32-bit instruction word
-    output logic [{if hasF then "6" else "5"}:0]  io_optype,     // Decoded operation type
+    output logic [{optypeWidth}:0]  io_optype,     // Decoded operation type
     output logic [4:0]  io_rd,         // Destination register
     output logic [4:0]  io_rs1,        // Source register 1
     output logic [4:0]  io_rs2,        // Source register 2
@@ -132,7 +143,7 @@ module {moduleName} (
     output logic        io_is_memory,  // Dispatch to load/store unit
     output logic        io_is_branch,  // Dispatch to branch unit
     output logic        io_is_store,   // Instruction is a store (SB/SH/SW/FSW)
-    output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ "
+    output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ vmePort ++ "
 );
 
 // Extract register fields
@@ -315,8 +326,9 @@ assign io_is_branch = io_valid && (
 assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011" ++ fpStore ++ ");
 
 // Use immediate: all instructions except R-type (OP = 0110011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
-assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
-muldivClassify ++ fpClassify ++ "
+assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ (if hasVME then " && (io_instr[6:0] != 7'b1011011)" else "") ++ ";" ++
+muldivClassify ++ fpClassify ++
+(if hasVME then "\n\n// Matrix: VME custom-2 opcode (1011011)\nassign io_is_matrix = io_valid && (io_instr[6:0] == 7'b1011011);" else "") ++ "
 
 endmodule
 "

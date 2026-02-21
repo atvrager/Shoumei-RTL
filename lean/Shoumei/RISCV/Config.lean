@@ -172,6 +172,7 @@ def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.conta
 def defaultCPUConfig : CPUConfig := {
   enableM := true
   enableF := true
+  enableVME := true
   enableZicsr := true
   enableZifencei := true
   enableCache := true

@@ -617,6 +617,18 @@ def matrixExecUnit_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Matrix.MatrixExecUnitProofs"
 }
 
+/-- CPU_RV32IMF_Zicsr_Zifencei_Xvme_Microcoded: THE one CPU with VME -/
+def cpu_rv32imf_zicsr_zifencei_xvme_microcoded_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Xvme_Microcoded"
+  dependencies := [
+    "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
+    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32",
+    "MicrocodeSequencer",
+    "MatrixExecUnit", "VecRegStub32x128"
+  ]
+  proofReference := "Shoumei.RISCV.CPUProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -713,7 +725,8 @@ def allCerts : List CompositionalCert := [
   macArray16x16_8_cert,
   macArray8x8_16_cert,
   vecRegStub_cert,
-  matrixExecUnit_cert
+  matrixExecUnit_cert,
+  cpu_rv32imf_zicsr_zifencei_xvme_microcoded_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

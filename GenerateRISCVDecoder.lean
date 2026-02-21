@@ -9,9 +9,15 @@ open Shoumei.RISCV
 
 def main : IO Unit := do
   -- Load instruction definitions
-  let defs ← loadInstrDictFromFile instrDictPath
+  let baseDefs ← loadInstrDictFromFile instrDictPath
+  -- Load custom opcodes (VME etc.) if file exists
+  let customExists ← customInstrDictPath.pathExists
+  let customDefs ←
+    if customExists then loadInstrDictFromFile customInstrDictPath
+    else pure []
+  let defs := baseDefs ++ customDefs
 
   IO.println s!"Loaded {defs.length} instructions from riscv-opcodes\n"
 
-  -- Generate decoder variants (RV32I always; RV32IM if M-ext present)
+  -- Generate decoder variants (RV32I always; RV32IM if M-ext present; VME if present)
   generateDecoders defs

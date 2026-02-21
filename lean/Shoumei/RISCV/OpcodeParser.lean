@@ -124,6 +124,10 @@ def loadInstrDictFromFile (path : System.FilePath) : IO (List InstructionDef) :=
 def instrDictPath : System.FilePath :=
   "third_party/riscv-opcodes/instr_dict.json"
 
+/-- Path to custom VME instruction definitions (separate from third-party) -/
+def customInstrDictPath : System.FilePath :=
+  "custom_opcodes/vme_instr_dict.json"
+
 /-- Load instruction definitions filtered by a CPUConfig's enabled extensions.
 
     This is the primary config-aware entry point. It loads all instructions from

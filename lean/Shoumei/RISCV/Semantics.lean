@@ -7,6 +7,7 @@
 
 import Shoumei.RISCV.ISA
 import Shoumei.RISCV.Decoder
+import Shoumei.RISCV.Matrix.AccumulatorState
 
 namespace Shoumei.RISCV
 
@@ -18,6 +19,10 @@ structure ArchState where
   regs : Fin 32 → UInt32
   /-- Memory (simplified: address → value) -/
   memory : UInt32 → UInt32
+  /-- VME accumulator state (optional, only for VME-enabled configs) -/
+  vmeAccum : Option (Matrix.AccumulatorState 16 16) := none
+  /-- VME vector register file (32 × 128-bit registers, simplified as 32 × 4 words) -/
+  vmeVRegs : Option (Fin 32 → Fin 4 → UInt32) := none
   deriving Inhabited
 
 instance : Repr ArchState where
@@ -438,10 +443,47 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI =>
     .illegalInstruction  -- TODO: implement CSR semantics
 
-  -- VME: not yet implemented in behavioral semantics
-  | .MSETCLI | .MSETRLI | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX
-  | .VRACCR | .VRACCC | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR =>
-    .illegalInstruction  -- TODO: implement VME semantics
+  -- VME: Vector Matrix Extension
+  | .MSETCLI =>
+    -- Set vector length: old VL → rd, rs1 value → new VL
+    let accum := state.vmeAccum.getD (Matrix.AccumulatorState.init 16 16)
+    let oldVL := UInt32.ofNat accum.vl
+    let newVL := state.readReg rs1
+    let accum' := { accum with vl := newVL.toNat }
+    let state' := (state.writeReg rd oldVL)
+    .ok { state' with pc := state.pc + 4, vmeAccum := some accum' }
+  | .MSETRLI =>
+    -- Set tile row length: old TR → rd, rs1 value → new TR
+    let accum := state.vmeAccum.getD (Matrix.AccumulatorState.init 16 16)
+    let oldTR := UInt32.ofNat accum.tr
+    let newTR := state.readReg rs1
+    let accum' := { accum with tr := newTR.toNat }
+    let state' := (state.writeReg rd oldTR)
+    .ok { state' with pc := state.pc + 4, vmeAccum := some accum' }
+  | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX =>
+    -- Outer product / accumulate (stub: advance PC, no accumulator update yet)
+    .ok { state with pc := state.pc + 4 }
+  | .VRACCR =>
+    -- Read accumulator row destructively, first element → rd
+    let accum := state.vmeAccum.getD (Matrix.AccumulatorState.init 16 16)
+    let rowIdx := (state.readReg rs2).toNat
+    let val := if h : rowIdx < 16 then
+      if h2 : 0 < 16 then accum.data ⟨rowIdx, h⟩ ⟨0, h2⟩ else 0
+    else 0
+    let state' := state.writeReg rd (UInt32.ofNat val)
+    .ok { state' with pc := state.pc + 4 }
+  | .VRACCC =>
+    -- Read accumulator column destructively, first element → rd
+    let accum := state.vmeAccum.getD (Matrix.AccumulatorState.init 16 16)
+    let colIdx := (state.readReg rs2).toNat
+    let val := if h : colIdx < 16 then
+      if h2 : 0 < 16 then accum.data ⟨0, h2⟩ ⟨colIdx, h⟩ else 0
+    else 0
+    let state' := state.writeReg rd (UInt32.ofNat val)
+    .ok { state' with pc := state.pc + 4 }
+  | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR =>
+    -- Write/raw-read accumulator (stub: advance PC)
+    .ok { state with pc := state.pc + 4 }
 
 /-- Execute a full instruction fetch-decode-execute cycle -/
 def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResult :=
