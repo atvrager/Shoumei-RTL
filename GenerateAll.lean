@@ -53,6 +53,11 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
+-- Zve32x Vector Extension
+import Shoumei.RISCV.Execution.VectorExecUnit
+import Shoumei.RISCV.Execution.VectorExecUnitCodegen
+import Shoumei.RISCV.VecLsu
+
 -- F-Extension
 import Shoumei.Circuits.Combinational.FPUnpack
 import Shoumei.Circuits.Combinational.FPPack
@@ -282,7 +287,11 @@ def allCircuits : List Circuit := [
   mkCPU_RV32IM,
   mkCPU_RV32IF,
   mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded
+  mkCPU_RV32IMF_Microcoded,
+  mkCPU_RV32IMF_Vector,
+
+  -- Zve32x Vector LSU
+  vecLsuCircuit
 ]
 
 def main (args : List String) : IO Unit := do
@@ -325,6 +334,12 @@ def main (args : List String) : IO Unit := do
       IO.println result
   let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
   Shoumei.RISCV.generateDecoders defs
+
+  -- Generate RVV integration files (rvv_pkg.sv, RvvCoreWrapper.sv)
+  if defaultCPUConfig.enableVector then
+    IO.println ""
+    IO.println "Generating RVV integration files..."
+    Shoumei.RISCV.Execution.writeRvvIntegrationFiles svOutputDir
 
   -- Generate testbenches
   IO.println ""

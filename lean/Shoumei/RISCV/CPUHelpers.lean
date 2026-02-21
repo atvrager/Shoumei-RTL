@@ -17,10 +17,11 @@ open Shoumei
 /-- CSR address decode: compare csr_addr_reg[11:0] against known CSR addresses.
     Returns (gates, is_mscratch, is_mcycle_m, is_mcycleh_m, is_minstret_m, is_minstreth_m,
     is_misa, is_fflags, is_frm, is_fcsr, is_mstatus, is_mie, is_mtvec, is_mepc, is_mcause,
-    is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth). -/
+    is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth,
+    is_vstart, is_vxsat, is_vxrm, is_vcsr, is_vl, is_vtype, is_vlenb). -/
 def mkCsrAddrDecode
-    (csr_addr_reg : List Wire)
-    : List Gate × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire :=
+    (csr_addr_reg : List Wire) (enableVector : Bool := false)
+    : List Gate × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire × Wire :=
   -- Helper: generate 12-bit match using NOT + AND tree
   let mkCsrAddrMatch (expected : Nat) (pfx : String) : Wire × List Gate :=
     let matchW := Wire.mk s!"csr_is_{pfx}"
@@ -62,6 +63,19 @@ def mkCsrAddrDecode
   let (is_mcause, mcause_match_gates) := mkCsrAddrMatch 0x342 "mcause"
   let (is_mtval, mtval_match_gates) := mkCsrAddrMatch 0x343 "mtval"
   let (is_mip, mip_match_gates) := mkCsrAddrMatch 0x344 "mip"
+  -- Vector CSR address matches (guarded by enableVector)
+  let (is_vstart, vstart_match_gates) := mkCsrAddrMatch 0x008 "vstart"
+  let (is_vxsat, vxsat_match_gates) := mkCsrAddrMatch 0x009 "vxsat"
+  let (is_vxrm, vxrm_match_gates) := mkCsrAddrMatch 0x00A "vxrm"
+  let (is_vcsr, vcsr_match_gates) := mkCsrAddrMatch 0x00F "vcsr"
+  let (is_vl, vl_match_gates) := mkCsrAddrMatch 0xC20 "vl"
+  let (is_vtype, vtype_match_gates) := mkCsrAddrMatch 0xC21 "vtype"
+  let (is_vlenb, vlenb_match_gates) := mkCsrAddrMatch 0xC22 "vlenb"
+  let vec_csr_gates :=
+    if enableVector then
+      vstart_match_gates ++ vxsat_match_gates ++ vxrm_match_gates ++ vcsr_match_gates ++
+      vl_match_gates ++ vtype_match_gates ++ vlenb_match_gates
+    else []
   -- Combine M-mode and U-mode aliases
   let is_mcycle := Wire.mk "csr_is_mcycle"
   let is_mcycleh := Wire.mk "csr_is_mcycleh"
@@ -82,10 +96,11 @@ def mkCsrAddrDecode
     fflags_match_gates ++ frm_match_gates ++ fcsr_match_gates ++
     mstatus_match_gates ++ mie_match_gates ++ mtvec_match_gates ++
     mepc_match_gates ++ mcause_match_gates ++ mtval_match_gates ++
-    mip_match_gates ++ csr_alias_gates
+    mip_match_gates ++ csr_alias_gates ++ vec_csr_gates
   (gates, is_mscratch, is_mcycle_m, is_mcycleh_m, is_minstret_m, is_minstreth_m,
    is_misa, is_fflags, is_frm, is_fcsr, is_mstatus, is_mie, is_mtvec, is_mepc, is_mcause,
-   is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth)
+   is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth,
+   is_vstart, is_vxsat, is_vxrm, is_vcsr, is_vl, is_vtype, is_vlenb)
 
 /-- Load forwarding logic: SB forwarding size checks, cross-size stall detection,
     and dispatch gating for branch/INT RS conflict resolution. -/
@@ -634,6 +649,9 @@ def mkCsrReadMux
     (mscratch_reg mcycle_reg mcycleh_reg minstret_reg minstreth_reg : List Wire)
     (mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg : List Wire)
     (fflags_reg : List Wire) (frm_reg : List Wire)
+    (is_vstart is_vxsat is_vxrm is_vcsr is_vl is_vtype is_vlenb : Wire)
+    (vstart_reg : List Wire) (vxsat_reg : List Wire) (vxrm_reg : List Wire)
+    (rvv_vl : List Wire) (rvv_vtype : List Wire)
     : List Gate × List Wire × Wire × Wire × Wire :=
   let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
   let mstatus_sd_bit := Wire.mk "mstatus_sd_bit"
@@ -682,6 +700,7 @@ def mkCsrReadMux
           else if enableF && (i == 13 || i == 14) then
             if i == 13 then mstatus_fs_inv0 else mstatus_fs_inv1
           else mstatus_reg[i]!
+        let base_mux :=
         [Gate.mkMUX zero misa_bit is_misa r_misa,
          Gate.mkMUX r_misa mscratch_reg[i]! is_mscratch r_mscr,
          Gate.mkMUX r_mscr mcycle_reg[i]! is_mcycle r_mcyc,
@@ -696,8 +715,39 @@ def mkCsrReadMux
          Gate.mkMUX r_mie mtvec_reg[i]! is_mtvec r_mtvec,
          Gate.mkMUX r_mtvec mepc_reg[i]! is_mepc r_mepc,
          Gate.mkMUX r_mepc mcause_reg[i]! is_mcause r_mcause,
-         Gate.mkMUX r_mcause mtval_reg[i]! is_mtval r_mtval,
-         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten
+         Gate.mkMUX r_mcause mtval_reg[i]! is_mtval r_mtval]
+        if config.enableVector then
+          let r_vstart := Wire.mk s!"csr_rvstart_e{i}"
+          let r_vxsat := Wire.mk s!"csr_rvxsat_e{i}"
+          let r_vxrm := Wire.mk s!"csr_rvxrm_e{i}"
+          let r_vcsr := Wire.mk s!"csr_rvcsr_e{i}"
+          let r_vl := Wire.mk s!"csr_rvl_e{i}"
+          let r_vtype := Wire.mk s!"csr_rvtype_e{i}"
+          let r_vlenb := Wire.mk s!"csr_rvlenb_e{i}"
+          let vstart_read_bit := if i < 7 then vstart_reg[i]! else zero
+          let vxsat_read_bit := if i == 0 then vxsat_reg[0]! else zero
+          let vxrm_read_bit := if i < 2 then vxrm_reg[i]! else zero
+          let vcsr_read_bit :=
+            if i == 0 then vxsat_reg[0]!
+            else if i < 3 then vxrm_reg[i - 1]!
+            else zero
+          let vl_read_bit := rvv_vl[i]!
+          let vtype_read_bit := rvv_vtype[i]!
+          -- vlenb = 16 = 0x10, so bit 4 is 1, rest 0
+          let vlenb_read_bit := if i == 4 then one else zero
+          base_mux ++
+          [Gate.mkMUX r_mtval zero is_mip (Wire.mk s!"csr_rmip_e{i}"),
+           Gate.mkMUX (Wire.mk s!"csr_rmip_e{i}") vstart_read_bit is_vstart r_vstart,
+           Gate.mkMUX r_vstart vxsat_read_bit is_vxsat r_vxsat,
+           Gate.mkMUX r_vxsat vxrm_read_bit is_vxrm r_vxrm,
+           Gate.mkMUX r_vxrm vcsr_read_bit is_vcsr r_vcsr,
+           Gate.mkMUX r_vcsr vl_read_bit is_vl r_vl,
+           Gate.mkMUX r_vl vtype_read_bit is_vtype r_vtype,
+           Gate.mkMUX r_vtype vlenb_read_bit is_vlenb r_vlenb,
+           Gate.mkBUF r_vlenb csr_read_data[i]!]
+        else
+          base_mux ++
+          [Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten
     else
       (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
   (mstatus_sd_gate ++ csr_read_mux_gates, csr_read_data, mstatus_sd_bit, mstatus_fs_inv0, mstatus_fs_inv1)

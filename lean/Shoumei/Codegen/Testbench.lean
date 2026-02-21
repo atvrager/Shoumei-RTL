@@ -46,6 +46,18 @@ structure CacheLineMemPort where
   respDataSignal : String     -- "mem_resp_data" (256-bit)
   deriving Repr
 
+/-- A vector DMEM port that bypasses caches (direct word-level access). -/
+structure VecMemPort where
+  reqValidSignal : String     -- "vec_dmem_req_valid"
+  reqWeSignal : String        -- "vec_dmem_req_we"
+  reqAddrSignal : String      -- "vec_dmem_req_addr" (32-bit)
+  reqDataSignal : String      -- "vec_dmem_req_data" (32-bit)
+  reqSizeSignal : String      -- "vec_dmem_req_size" (2-bit)
+  reqReadySignal : String     -- "vec_dmem_req_ready"
+  respValidSignal : String    -- "vec_dmem_resp_valid"
+  respDataSignal : String     -- "vec_dmem_resp_rdata" (32-bit)
+  deriving Repr
+
 /-- Configuration for testbench generation. -/
 structure TestbenchConfig where
   circuit : Circuit
@@ -54,6 +66,8 @@ structure TestbenchConfig where
   /-- Cache-line memory port. When set, generates 256-bit memory model instead of
       separate imem/dmem. -/
   cacheLineMemPort : Option CacheLineMemPort := none
+  /-- Vector DMEM port (bypasses caches). -/
+  vecMemPort : Option VecMemPort := none
   memSizeWords : Nat := 16384
   tohostAddr : Nat := 0x1000
   /-- MMIO putchar address. Writes to this address emit the low byte to $write. -/
@@ -1000,6 +1014,57 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "    end\n" ++
   "  end\n\n" ++
   s!"  assign {clmp.respDataSignal} = mem_read_line;\n\n" ++
+
+  -- Vector DMEM memory model (bypasses caches)
+  (match cfg.vecMemPort with
+   | some vmp =>
+     "  // =========================================================================\n" ++
+     "  // Vector DMEM: word-level access, 1-cycle read latency\n" ++
+     "  // =========================================================================\n" ++
+     s!"  assign {vmp.reqReadySignal} = 1'b1;  // Always ready\n\n" ++
+     "  logic        vec_dmem_pending;\n" ++
+     "  logic [31:0] vec_dmem_read_data;\n\n" ++
+     s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
+     s!"    if ({resetName}) begin\n" ++
+     s!"      {vmp.respValidSignal} <= 1'b0;\n" ++
+     "      vec_dmem_read_data  <= 32'b0;\n" ++
+     "      vec_dmem_pending    <= 1'b0;\n" ++
+     "    end else begin\n" ++
+     "      vec_dmem_pending    <= 1'b0;\n" ++
+     s!"      {vmp.respValidSignal} <= 1'b0;\n\n" ++
+     s!"      if ({vmp.reqValidSignal}) begin\n" ++
+     s!"        if ({vmp.reqWeSignal}) begin\n" ++
+     s!"          case ({vmp.reqSizeSignal})\n" ++
+     s!"            2'b00: begin // byte\n" ++
+     s!"              case ({vmp.reqAddrSignal}[1:0])\n" ++
+     s!"                2'b00: mem[addr_to_idx({vmp.reqAddrSignal})][7:0]   <= {vmp.reqDataSignal}[7:0];\n" ++
+     s!"                2'b01: mem[addr_to_idx({vmp.reqAddrSignal})][15:8]  <= {vmp.reqDataSignal}[7:0];\n" ++
+     s!"                2'b10: mem[addr_to_idx({vmp.reqAddrSignal})][23:16] <= {vmp.reqDataSignal}[7:0];\n" ++
+     s!"                2'b11: mem[addr_to_idx({vmp.reqAddrSignal})][31:24] <= {vmp.reqDataSignal}[7:0];\n" ++
+     "              endcase\n" ++
+     "            end\n" ++
+     s!"            2'b01: begin // halfword\n" ++
+     s!"              case ({vmp.reqAddrSignal}[1])\n" ++
+     s!"                1'b0: mem[addr_to_idx({vmp.reqAddrSignal})][15:0]  <= {vmp.reqDataSignal}[15:0];\n" ++
+     s!"                1'b1: mem[addr_to_idx({vmp.reqAddrSignal})][31:16] <= {vmp.reqDataSignal}[15:0];\n" ++
+     "              endcase\n" ++
+     "            end\n" ++
+     s!"            default: begin // word\n" ++
+     s!"              mem[addr_to_idx({vmp.reqAddrSignal})] <= {vmp.reqDataSignal};\n" ++
+     "            end\n" ++
+     "          endcase\n" ++
+     "        end else begin\n" ++
+     s!"          vec_dmem_read_data <= mem[addr_to_idx({vmp.reqAddrSignal})];\n" ++
+     "          vec_dmem_pending   <= 1'b1;\n" ++
+     "        end\n" ++
+     "      end\n\n" ++
+     "      if (vec_dmem_pending) begin\n" ++
+     s!"        {vmp.respValidSignal} <= 1'b1;\n" ++
+     "      end\n" ++
+     "    end\n" ++
+     "  end\n\n" ++
+     s!"  assign {vmp.respDataSignal} = vec_dmem_read_data;\n\n"
+   | none => "") ++
 
   "  // =========================================================================\n" ++
   "  // HTIF: tohost termination (detected from CPU store snoop)\n" ++

@@ -93,6 +93,10 @@ inductive OpType where
   | CSRRWI : OpType
   | CSRRSI : OpType
   | CSRRCI : OpType
+  -- Zve32x: Vector Instructions (opaque to scalar core, forwarded to RvvCore)
+  | VECTOR_ARITH : OpType
+  | VECTOR_LOAD : OpType
+  | VECTOR_STORE : OpType
   deriving Repr, BEq, DecidableEq
 
 instance : ToString OpType where
@@ -114,6 +118,7 @@ instance : ToString OpType where
     | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .FENCE_I => "FENCE_I"
     | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI"
     | .CSRRCI => "CSRRCI"
+    | .VECTOR_ARITH => "VECTOR_ARITH" | .VECTOR_LOAD => "VECTOR_LOAD" | .VECTOR_STORE => "VECTOR_STORE"
 
 /-- Parse OpType from instruction name (case-insensitive) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -199,6 +204,9 @@ def OpType.fromString (s : String) : Option OpType :=
   | "CSRRWI" => some .CSRRWI
   | "CSRRSI" => some .CSRRSI
   | "CSRRCI" => some .CSRRCI
+  | "VECTOR_ARITH" => some .VECTOR_ARITH
+  | "VECTOR_LOAD" => some .VECTOR_LOAD
+  | "VECTOR_STORE" => some .VECTOR_STORE
   | _ => none
 
 /-- All OpType constructors in canonical order -/
@@ -213,7 +221,7 @@ def OpType.all : List OpType :=
    .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S, .FMIN_S, .FMSUB_S, .FMUL_S, 
    .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S, .FSGNJX_S, .FSGNJ_S, .FSQRT_S, 
    .FSUB_S, .FSW, .FENCE_I, .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, 
-   .CSRRCI]
+   .CSRRCI, .VECTOR_ARITH, .VECTOR_LOAD, .VECTOR_STORE]
 
 /-- Get the index of an OpType in the canonical ordering -/
 def OpType.toIndex : OpType → Nat
@@ -298,6 +306,9 @@ def OpType.toIndex : OpType → Nat
   | .CSRRWI => 78
   | .CSRRSI => 79
   | .CSRRCI => 80
+  | .VECTOR_ARITH => 81
+  | .VECTOR_LOAD => 82
+  | .VECTOR_STORE => 83
 
 /-- Get OpType from canonical index -/
 def OpType.ofIndex : Nat → Option OpType
@@ -382,6 +393,9 @@ def OpType.ofIndex : Nat → Option OpType
   | 78 => some .CSRRWI
   | 79 => some .CSRRSI
   | 80 => some .CSRRCI
+  | 81 => some .VECTOR_ARITH
+  | 82 => some .VECTOR_LOAD
+  | 83 => some .VECTOR_STORE
   | _ => none
 
 /-- Resolve a name-based mapping to index-based mapping given a decoder's instruction list.
@@ -412,6 +426,7 @@ def OpType.extensionGroup : OpType → List String
   | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => ["rv_f"]
   | .FENCE_I => ["rv_zifencei"]
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => ["rv_zicsr"]
+  | .VECTOR_ARITH | .VECTOR_LOAD | .VECTOR_STORE => ["rv_zve32x"]
 
 /-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/
 def OpType.isFpGroup : OpType → Bool

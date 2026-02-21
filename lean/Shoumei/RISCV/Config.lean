@@ -32,6 +32,8 @@ structure CPUConfig where
   enableM : Bool := false
   /-- F extension: single-precision floating-point (IEEE 754) -/
   enableF : Bool := false
+  /-- Zve32x extension: vector (integer, VLEN=128, SEW 8/16/32) via external RvvCore -/
+  enableVector : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (CSRRW/S/C, CSRRWI/SI/CI, mcycle, minstret, mscratch) -/
@@ -132,7 +134,8 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
-  (if config.enableZifencei then ["rv_zifencei"] else [])
+  (if config.enableZifencei then ["rv_zifencei"] else []) ++
+  (if config.enableVector then ["rv_zve32x"] else [])
 
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
@@ -155,6 +158,7 @@ def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.conta
 def defaultCPUConfig : CPUConfig := {
   enableM := true
   enableF := true
+  enableVector := true
   enableZicsr := true
   enableZifencei := true
   enableCache := true
@@ -175,6 +179,9 @@ def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr
 
 /-- RV32IMF with microcoded trap entry sequencer -/
 def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
+
+/-- RV32IMF_Zve32x configuration (M + F + Vector + Zicsr + Zifencei) -/
+def rv32imfVectorConfig : CPUConfig := { enableM := true, enableF := true, enableVector := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
 
 
 /-
@@ -215,8 +222,9 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
+  let zve32x := if cfg.enableVector then "_Zve32x" else ""
   let ucode := if cfg.useMicrocode then "_Microcoded" else ""
-  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
+  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ zve32x ++ ucode
 
 /-- Full CPU module name including ISA string and optional cache suffix -/
 def CPUConfig.fullName (c : CPUConfig) : String :=
@@ -231,7 +239,8 @@ def CPUConfig.spikeIsa (c : CPUConfig) : String :=
   let c_ := if c.enableC then "c" else ""
   let zicsr := if c.enableZicsr then "_zicsr" else ""
   let zifencei := if c.enableZifencei then "_zifencei" else ""
-  base ++ m ++ f ++ c_ ++ zicsr ++ zifencei
+  let zve32x := if c.enableVector then "_zve32x" else ""
+  base ++ m ++ f ++ c_ ++ zicsr ++ zifencei ++ zve32x
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.
@@ -241,8 +250,14 @@ def CPUConfig.decoderInstrNames (config : CPUConfig) : List String :=
   let enabled := config.enabledExtensions
   let applicable : List OpType := OpType.all.filter fun op =>
     op.extensionGroup.any fun ext => enabled.contains ext
-  let intOps : List OpType := applicable.filter fun op => !op.isFpGroup
-  let fpOps : List OpType := applicable.filter fun op => op.isFpGroup
+  -- Exclude vector pseudo-ops: the scalar decoder doesn't handle them,
+  -- so they must not shift opcode indices.
+  let isVectorPseudoOp : OpType → Bool
+    | .VECTOR_ARITH | .VECTOR_LOAD | .VECTOR_STORE => true
+    | _ => false
+  let scalarOps := applicable.filter fun op => !isVectorPseudoOp op
+  let intOps : List OpType := scalarOps.filter fun op => !op.isFpGroup
+  let fpOps : List OpType := scalarOps.filter fun op => op.isFpGroup
   let revAlpha (a b : String) : Bool := a.toLower > b.toLower
   let sortedInt := (intOps.map (toString ·)).toArray.qsort revAlpha |>.toList
   let sortedFp := (fpOps.map (toString ·)).toArray.qsort revAlpha |>.toList

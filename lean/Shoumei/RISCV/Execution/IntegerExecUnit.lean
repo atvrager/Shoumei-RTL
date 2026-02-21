@@ -84,6 +84,8 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .FLW | .FSW => 0
   -- Zicsr (CSR ops routed to Integer, but handled specially)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => 0
+  -- Vector (handled by RvvCore)
+  | .VECTOR_ARITH | .VECTOR_LOAD | .VECTOR_STORE => 0
 
 /-! ## Behavioral Model -/
 

@@ -14,11 +14,19 @@ GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 # F-extension tests need rv32imf
 CFLAGS_FP = -march=rv32imf_zicsr_zifencei -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
 
-all: $(TESTS:=.elf) $(GEN_INT_ELFS) $(GEN_FP_ELFS)
+# Vector tests need rv32imf_zve32x
+CFLAGS_VEC = -march=rv32imf_zicsr_zifencei_zve32x -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
+VEC_TESTS = vector_basic
+
+all: $(TESTS:=.elf) $(VEC_TESTS:=.elf) $(GEN_INT_ELFS) $(GEN_FP_ELFS)
 
 # Hand-written C tests use crt0.S
 %.elf: %.c crt0.S shoumei.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) crt0.S $< -o $@
+
+# Vector tests
+vector_%.elf: vector_%.c crt0.S shoumei.ld
+	$(CC) $(CFLAGS_VEC) $(LDFLAGS) crt0.S $< -o $@
 
 # Generated integer tests are self-contained (have _start + main)
 generated/%.elf: generated/%.S shoumei.ld

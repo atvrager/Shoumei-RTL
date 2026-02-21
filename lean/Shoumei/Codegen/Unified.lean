@@ -120,7 +120,12 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
         return
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
-  writeCircuitChisel c allCircuits
+  -- Skip Chisel for circuits with SV-style structured ports (e.g., RvvCore instance)
+  let hasStructuredPorts := c.instances.any fun inst =>
+    inst.portMap.any fun (portName, _) => portName.toList.any (· == '[')
+
+  if !hasStructuredPorts then
+    writeCircuitChisel c allCircuits
   writeCircuitCppSim c allCircuits
   writeCircuitASAP7 c allCircuits
   -- Update cache after successful generation

@@ -93,6 +93,16 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let store_snoop_addr := makeIndexedWires "store_snoop_addr" 32
   let store_snoop_data := makeIndexedWires "store_snoop_data" 32
 
+  -- Vector DMEM passthrough (bypasses caches)
+  let vec_dmem_req_ready := Wire.mk "vec_dmem_req_ready"
+  let vec_dmem_resp_valid := Wire.mk "vec_dmem_resp_valid"
+  let vec_dmem_resp_rdata := makeIndexedWires "vec_dmem_resp_rdata" 32
+  let vec_dmem_req_valid := Wire.mk "vec_dmem_req_valid"
+  let vec_dmem_req_we := Wire.mk "vec_dmem_req_we"
+  let vec_dmem_req_addr := makeIndexedWires "vec_dmem_req_addr" 32
+  let vec_dmem_req_data := makeIndexedWires "vec_dmem_req_data" 32
+  let vec_dmem_req_size := makeIndexedWires "vec_dmem_req_size" 2
+
   -- FENCE.I signal from CPU to cache hierarchy
   -- CPU exports fence_i_drain_complete: pulses when FENCE.I pipeline drain completes
   let fence_i := Wire.mk "fence_i_signal"
@@ -137,7 +147,18 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 5).map (fun i => (s!"rvvi_frd_{i}", rvvi_frd[i]!)) ++
      [("rvvi_frd_valid", rvvi_frd_valid)] ++
      (List.range 32).map (fun i => (s!"rvvi_frd_data_{i}", rvvi_frd_data[i]!)) ++
-     (List.range 5).map (fun i => (s!"fflags_acc_{i}", fflags_acc[i]!)))
+     (List.range 5).map (fun i => (s!"fflags_acc_{i}", fflags_acc[i]!)) ++
+     -- Vector DMEM passthrough
+     (if config.enableVector then
+       [("vec_dmem_req_ready", vec_dmem_req_ready),
+        ("vec_dmem_resp_valid", vec_dmem_resp_valid)] ++
+       (List.range 32).map (fun i => (s!"vec_dmem_resp_rdata_{i}", vec_dmem_resp_rdata[i]!)) ++
+       [("vec_dmem_req_valid", vec_dmem_req_valid),
+        ("vec_dmem_req_we", vec_dmem_req_we)] ++
+       (List.range 32).map (fun i => (s!"vec_dmem_req_addr_{i}", vec_dmem_req_addr[i]!)) ++
+       (List.range 32).map (fun i => (s!"vec_dmem_req_data_{i}", vec_dmem_req_data[i]!)) ++
+       (List.range 2).map (fun i => (s!"vec_dmem_req_size_{i}", vec_dmem_req_size[i]!))
+      else []))
 
   -- MemoryHierarchy instance
   -- ifetch_valid: always 1 — CPU always presents fetch_pc, L1I always checks.
@@ -171,13 +192,17 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("fence_i_busy", fence_i_busy)])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
-    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
+    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data ++
+              (if config.enableVector then [vec_dmem_req_ready, vec_dmem_resp_valid] ++ vec_dmem_resp_rdata else [])
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
                [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
                rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
                rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
-               fflags_acc
+               fflags_acc ++
+               (if config.enableVector then
+                 [vec_dmem_req_valid, vec_dmem_req_we] ++ vec_dmem_req_addr ++ vec_dmem_req_data ++ vec_dmem_req_size
+                else [])
     gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
@@ -194,7 +219,12 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "fflags_acc", width := 5, wires := fflags_acc },
       { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
       { name := "store_snoop_data", width := 32, wires := store_snoop_data }
-    ]
+    ] ++ (if config.enableVector then [
+      { name := "vec_dmem_resp_rdata", width := 32, wires := vec_dmem_resp_rdata },
+      { name := "vec_dmem_req_addr", width := 32, wires := vec_dmem_req_addr },
+      { name := "vec_dmem_req_data", width := 32, wires := vec_dmem_req_data },
+      { name := "vec_dmem_req_size", width := 2, wires := vec_dmem_req_size }
+    ] else [])
     keepHierarchy := true
   }
 
