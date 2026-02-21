@@ -351,6 +351,91 @@ def ROBState.countValid (rob : ROBState) : Nat :=
     if h : i < 16 then (rob.entries ⟨i, h⟩).valid else false
   ) |>.length
 
+/-! ## N-Wide Allocate / Commit (superscalar behavioral model) -/
+
+/-- Arguments bundle for a single ROB allocation (one dispatched instruction). -/
+structure ROBAllocArgs where
+  physRd      : Fin 64
+  hasPhysRd   : Bool
+  oldPhysRd   : Fin 64
+  hasOldPhysRd : Bool
+  archRd      : Fin 32
+  isFpDest    : Bool
+  isBranch    : Bool
+
+/-- Allocate up to N entries in program order.
+    Stops early if ROB fills mid-group; slots after the first failure return `none`.
+    Returns (updated ROB, list of optional allocated indices, count actually allocated). -/
+def ROBState.allocateN
+    (rob : ROBState)
+    (args : List ROBAllocArgs)
+    : ROBState × List (Option (Fin 16)) :=
+  args.foldl (fun (state, idxs) a =>
+    let (state', idx) := state.allocate
+      a.physRd a.hasPhysRd a.oldPhysRd a.hasOldPhysRd a.archRd a.isFpDest a.isBranch
+    -- If allocation failed (ROB full), propagate failure for remaining slots
+    match idx with
+    | none   => (state, idxs ++ [none])   -- state unchanged, slot gets none
+    | some i => (state', idxs ++ [some i])
+  ) (rob, [])
+
+/-- Commit up to `maxCommit` instructions from the head in program order.
+    Stops at the first entry that is not valid and complete (in-order constraint).
+    Returns (updated ROB, list of committed entries). -/
+def ROBState.commitN
+    (rob : ROBState)
+    (maxCommit : Nat)
+    : ROBState × List ROBEntry :=
+  (List.range maxCommit).foldl (fun (acc : ROBState × List ROBEntry) _ =>
+    let (state, committed) := acc
+    let (state', entry) := state.commit
+    match entry with
+    | none   => (state', committed)
+    | some e => (state', committed ++ [e])
+  ) (rob, [])
+
+/-- Result of an N-wide commit step. -/
+structure CommitResultN where
+  /-- Updated ROB state -/
+  rob : ROBState
+  /-- Updated committed RAT -/
+  committedRAT : CommittedRATState
+  /-- Old physical registers to deallocate (one per committed instruction, in order) -/
+  deallocTags : List (Option (Fin 64))
+  /-- True if ANY committed instruction caused a misprediction (stops at first) -/
+  misprediction : Bool
+  /-- True if ANY committed instruction raised an exception -/
+  exceptionDetected : Bool
+  /-- Number of instructions actually committed this cycle -/
+  commitCount : Nat
+
+/-- N-wide commit step: commit up to `maxCommit` instructions, updating RAT + dealloc list.
+    Stops at first misprediction — later slots are never committed (in-order semantics). -/
+def commitStepN
+    (rob : ROBState)
+    (crat : CommittedRATState)
+    (maxCommit : Nat)
+    : CommitResultN :=
+  let go (acc : ROBState × CommittedRATState × List (Option (Fin 64)) × Bool × Bool × Nat)
+      : ROBState × CommittedRATState × List (Option (Fin 64)) × Bool × Bool × Nat :=
+    let (rob, crat, deallocs, misp, exc, cnt) := acc
+    if misp || exc then (rob, crat, deallocs, misp, exc, cnt)
+    else
+      let (rob', entry) := rob.commit
+      match entry with
+      | none => (rob', crat, deallocs, false, false, cnt)
+      | some e =>
+          let crat'   := crat.update e.archRd e.physRd e.hasPhysRd
+          let dealloc := if e.hasOldPhysRd then some e.oldPhysRd else none
+          (rob', crat', deallocs ++ [dealloc],
+           e.isBranch && e.branchMispredicted, e.exception, cnt + 1)
+  let init : ROBState × CommittedRATState × List (Option (Fin 64)) × Bool × Bool × Nat :=
+    (rob, crat, [], false, false, 0)
+  let (rob', crat', deallocs, misp, exc, cnt) :=
+    (List.range maxCommit).foldl (fun acc _ => go acc) init
+  { rob := rob', committedRAT := crat', deallocTags := deallocs,
+    misprediction := misp, exceptionDetected := exc, commitCount := cnt }
+
 /-! ## Structural Circuit -/
 
 /-- Build ROB16 structural circuit: 16-entry Reorder Buffer.
@@ -833,8 +918,8 @@ def mkROB16 : Circuit :=
     ]
   }
 
-/-- Config-driven ROB (currently only supports 16 entries) -/
-def mkROBFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
-  mkROB16
+
+
+-- mkROBFromConfig and mkROB16_W2 are defined in ROB_W2.lean
 
 end Shoumei.RISCV.Retirement

@@ -66,6 +66,7 @@ import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
+import Shoumei.RISCV.Retirement.ROB_W2
 import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
@@ -232,6 +233,7 @@ def allCircuits : List Circuit := [
 
   -- Phase 6: Retirement
   mkROB16,
+  mkROB16_W2,
   mkQueue16x32,
 
   -- Phase 7: Memory
