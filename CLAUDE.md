@@ -14,6 +14,7 @@ Formally verified hardware design: circuits defined in Lean 4 DSL, properties pr
 - **Chisel:** 7.7.0 (in `chisel/build.sbt`)
 - **Scala:** 2.13.18 (required for Chisel 7.x)
 - **Yosys:** system package (for LEC)
+- **CIRCT/firtool:** 1.140.0 (for arcilator simulation backend; install via `scripts/install-circt.sh`)
 - **RISC-V GCC:** `riscv32-unknown-elf-gcc` at `~/.local/riscv32-elf/bin/` (add to PATH for test compilation)
 
 ## Build Commands
@@ -29,9 +30,16 @@ make all                            # Run entire pipeline
 export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
 make -C testbench/tests             # Compile C tests -> ELF binaries
 make -C testbench sim               # Build Verilator simulation (X-prop on by default)
-make -C testbench run-all-tests     # Run all ELF tests
-make -C testbench cosim       # Build cosim (auto-builds Spike)
-make -C testbench run-cosim   # RTL vs Spike lock-step cosim
+make -C testbench run-all-tests     # Run all ELF tests (Verilator)
+make -C testbench cosim       # Build Verilator cosim (auto-builds Spike)
+make -C testbench run-cosim   # RTL vs Spike lock-step cosim (Verilator)
+
+# Arcilator simulation (CIRCT/MLIR/LLVM-based, requires scripts/install-circt.sh)
+scripts/install-circt.sh            # Install CIRCT 1.140.0 (firtool, arcilator, circt-verilog)
+make -C testbench sim-arc           # Build Arcilator simulation
+make -C testbench run-all-tests-arc # Run all ELF tests (Arcilator)
+make -C testbench cosim-arc         # Build Arcilator cosim
+make -C testbench run-cosim-arc     # RTL vs Spike lock-step cosim (Arcilator)
 ```
 
 ## Procedure: Adding a New Module
