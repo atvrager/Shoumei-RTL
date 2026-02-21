@@ -82,19 +82,34 @@ decode is purely combinational (happens within the same cycle).
 PC is tracked alongside the instruction for branch target calculation.
 -/
 
+/--
+Decode Stage State — N-slot (superscalar).
+
+Holds up to N decoded instructions per cycle.
+For N=1: fetchedInstrs = [some instr] (or [none] for bubble).
+For N=2: fetchedInstrs = [some i0, some i1] (2nd = none if only 1 fetched).
+-/
 structure DecodeState where
-  /-- Fetched instruction word (None if invalid/stalled) -/
-  fetchedInstr : Option UInt32
-  /-- Decoded instruction (None if decode failed) -/
-  decodedInstr : Option DecodedInstruction
-  /-- Program counter for the fetched instruction -/
-  pc : UInt32
+  /-- Fetched instruction words (one per slot). -/
+  fetchedInstrs : List (Option UInt32)
+  /-- Decoded instructions (one per slot). -/
+  decodedInstrs : List (Option DecodedInstruction)
+  /-- Program counters per slot (PC, PC+4, ...) -/
+  pcs : List UInt32
+  /-- Dispatch width for this decode group (how many slots are valid) -/
+  dispatchWidth : Nat
 deriving Repr
 
+-- Backwards-compatible aliases for single-slot access
+def DecodeState.fetchedInstr (ds : DecodeState) : Option UInt32 := ds.fetchedInstrs.head?.join
+def DecodeState.decodedInstr  (ds : DecodeState) : Option DecodedInstruction := ds.decodedInstrs.head?.join
+def DecodeState.pc            (ds : DecodeState) : UInt32 := ds.pcs.headD 0
+
 def DecodeState.empty : DecodeState :=
-  { fetchedInstr := none
-    decodedInstr := none
-    pc := 0 }
+  { fetchedInstrs  := [none]
+    decodedInstrs  := [none]
+    pcs            := [0]
+    dispatchWidth  := 1 }
 
 /-
 Top-Level CPU State
@@ -565,43 +580,44 @@ def cpuStep
     else
       rsFPExec_postFlush
 
-  -- ========== STAGE 4: DISPATCH TO RS ==========
-  -- Route renamed instruction to appropriate RS based on OpType
-  let (rsInteger_postDispatch, rsMemory_postDispatch, rsBranch_postDispatch,
-       rsMulDiv_postDispatch, rsFPExec_postDispatch, rename_postDispatch, rob_postDispatch) :=
-    (rsInteger_postCDB, rsMemory_postCDB, rsBranch_postCDB, rsMulDiv_postCDB,
-     rsFPExec_postCDB, rename_postExecute, rob_postCDB)
-  -- TODO: Actually dispatch renamed instruction to RS and allocate ROB
-
-  -- ========== STAGE 3: RENAME ==========
-  -- Transform decoded instruction into renamed instruction (phys register tags)
-  let (rename_postRename, renamedInstr) : (RenameStageState × Option RenamedInstruction) :=
-    (rename_postDispatch, none)
-  -- TODO: Call renameInstruction on decoded instruction
+  -- (Stages 3+4 RENAME and DISPATCH are now positioned AFTER stage 2+FENCE.I below,
+  --  because they consume decode_postFenceI which is bound later.)
+  -- Keep these binding names available for FENCE.I FSM's rob_postDispatch reference:
+  let rob_preDispatch   := rob_postCDB
+  let rename_preDispatch := rename_postExecute
 
   -- ========== STAGE 2: DECODE ==========
-  -- Decode instruction word into operation and fields
+  -- Decode fetched instruction words into DecodedInstruction per slot
+  let dispW := config.dispatchWidth
   let decode' : DecodeState :=
     match cpu.fetch.fetchedInstr with
-    | none => DecodeState.empty
+    | none =>
+        { fetchedInstrs := List.replicate dispW none
+          decodedInstrs := List.replicate dispW none
+          pcs := (List.range dispW).map fun k => cpu.fetch.pc - 4 + (k.toUInt32 * 4)
+          dispatchWidth := dispW }
     | some instr =>
-        -- Use provided decodedInstr parameter (for testing)
-        -- TODO: Config-aware decoder call (decodeRV32I vs decodeRV32IM)
-        -- PC of fetched instruction is the previous PC (before fetch incremented it)
-        { fetchedInstr := some instr
-          decodedInstr := decodedInstr
-          pc := cpu.fetch.pc - 4 }  -- PC of instruction that was fetched last cycle
+        -- Primary slot: use provided/auto-decoded instruction
+        let di0 := decodedInstr
+        -- Secondary slot: in behavioral model, TODO plumb second fetch
+        -- For now: second slot bubble (will be filled in by Fetch widening)
+        let di1 : Option DecodedInstruction := none
+        let allDI := if dispW >= 2 then [di0, di1] else [di0]
+        { fetchedInstrs := [some instr] ++ List.replicate (dispW - 1) none
+          decodedInstrs := allDI
+          pcs := (List.range dispW).map fun k => cpu.fetch.pc - 4 + (k.toUInt32 * 4)
+          dispatchWidth := dispW }
 
   -- ========== FENCE.I SERIALIZATION FSM ==========
-  -- Detect FENCE.I in decoded instruction
-  let fenceIDetected := match decode'.decodedInstr with
-    | some di => di.opType == .FENCE_I
-    | none => false
+  -- Detect FENCE.I in any decoded slot
+  let fenceIDetected := decode'.decodedInstrs.any fun mdi =>
+    mdi.map (fun di => di.opType == .FENCE_I) |>.getD false
 
   -- FSM transitions:
   -- idle + FENCE.I detected → draining (stall fetch, wait for ROB + SB empty)
   -- draining + ROB empty + SB empty → complete (redirect fetch to PC+4, resume)
-  let robEmpty := rob_postDispatch.isEmpty
+  -- Uses rob_preDispatch for FENCE.I drain check (before dispatch happens)
+  let robEmpty := rob_preDispatch.isEmpty
   let sbEmpty := cpu.lsu.storeBuffer.isEmpty
   let drainComplete := cpu.fenceIDraining && robEmpty && sbEmpty
 
@@ -632,6 +648,60 @@ def cpuStep
     some (cpu.fenceIPC + 4)
   else
     none
+
+  -- ========== STAGE 3+4: RENAME + DISPATCH (consumes decode_postFenceI) ==========
+  let (rename_postRename, renamedInstrs) : (RenameStageState × List (Option RenamedInstruction)) :=
+    let validInstrs := decode_postFenceI.decodedInstrs.filterMap id
+    if validInstrs.isEmpty then
+      (rename_preDispatch, decode_postFenceI.decodedInstrs.map fun _ => none)
+    else
+      let (st', results, _stalled) := renameInstructionGroup rename_preDispatch validInstrs
+      (st', results)
+
+  let prf := rename_postRename.physRegFile
+  let isBranchOp := fun op => Execution.classifyToUnit op config == .Branch
+  let (rob_postDispatch, rsInteger_postDispatch, rsMemory_postDispatch,
+       rsBranch_postDispatch, rsMulDiv_postDispatch, rsFPExec_postDispatch) :=
+    renamedInstrs.foldl
+      (fun (rob, rsInt, rsMem, rsBr, rsMD, rsFP) optRI =>
+        match optRI with
+        | none => (rob, rsInt, rsMem, rsBr, rsMD, rsFP)
+        | some ri =>
+            let physRd  := ri.physRd.getD ⟨0, by omega⟩
+            let hasPhRd := ri.physRd.isSome
+            let oldPhRd := ri.oldPhysRd.getD ⟨0, by omega⟩
+            let hasOPR  := ri.oldPhysRd.isSome
+            let archRd  : Fin 32 := ⟨0, by omega⟩  -- placeholder; add archRd to RenamedInstruction later
+            let isBr    := isBranchOp ri.opType
+            let (rob', robIdx?) := rob.allocate
+              physRd hasPhRd oldPhRd hasOPR archRd ri.opType.hasFpRd isBr
+            match robIdx? with
+            | none => (rob, rsInt, rsMem, rsBr, rsMD, rsFP)
+            | some _idx =>
+                match Execution.classifyToUnit ri.opType config with
+                | .Integer =>
+                    let (rsInt', _) := rsInt.issue ri prf; (rob', rsInt', rsMem, rsBr, rsMD, rsFP)
+                | .Branch =>
+                    let (rsBr', _) := rsBr.issue ri prf;  (rob', rsInt, rsMem, rsBr', rsMD, rsFP)
+                | .Memory =>
+                    let (rsMem', _) := rsMem.issue ri prf; (rob', rsInt, rsMem', rsBr, rsMD, rsFP)
+                | .MulDiv =>
+                    if h : config.enableM then
+                      let rs : RSState 4 := cast (by rw [if_pos h]) rsMD
+                      let (rs', _) := rs.issue ri prf
+                      (rob', rsInt, rsMem, rsBr, cast (by rw [if_pos h]) rs', rsFP)
+                    else (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
+                | .FPExec =>
+                    if h : config.enableF then
+                      let rs : RSState 4 := cast (by rw [if_pos h]) rsFP
+                      let (rs', _) := rs.issue ri prf
+                      (rob', rsInt, rsMem, rsBr, rsMD, cast (by rw [if_pos h]) rs')
+                    else (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
+                | .System | .Illegal => (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
+      )
+      (rob_preDispatch,
+       rsInteger_postCDB, rsMemory_postCDB, rsBranch_postCDB,
+       rsMulDiv_postCDB, rsFPExec_postCDB)
 
   -- ========== STAGE 1: FETCH ==========
   let stall := globalStall_postFlush || fenceIDraining'

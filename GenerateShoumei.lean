@@ -77,6 +77,7 @@ import Shoumei.RISCV.Memory.LSU
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
+import Shoumei.RISCV.Renaming.RenameStage_W2
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
@@ -243,6 +244,7 @@ def allCircuits : List Circuit := [
   -- Phase 8: Top-Level Integration
   mkFetchStage,
   mkRenameStage,
+  mkRenameStage_W2,
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,

@@ -195,6 +195,59 @@ def renameSequence
     (st', results ++ [result])
   ) (state, [])
 
+/-- N-wide group rename for superscalar dispatch.
+
+    Renames `N` instructions IN PROGRAM ORDER, threading the RAT state through
+    each slot so that intra-group forwarding is handled correctly:
+    - Slot[k] sees rd writes from all slots[0..k-1] in the same group
+    - This is the behavioral model equivalent of the N-1 bypass MUXes in hardware
+
+    Stall policy: **all-or-nothing**.
+    If slot[k] stalls (FreeList empty when it needs a physRd), all slots[k+1..N-1]
+    also return None, and the state is rolled back to before the failing slot.
+    This simplifies dispatch logic (the CPU never has a half-renamed group).
+
+    Returns: (updated state, results list of length N, stalled: Bool)
+    - results[k] = some ri  → slot k renamed OK
+    - results[k] = none     → slot k stalled (all subsequent are also none)
+    - stalled = true        → at least one slot stalled; state may be partial
+-/
+def renameInstructionGroup
+    (state : RenameStageState)
+    (instrs : List DecodedInstruction)
+    : RenameStageState × List (Option RenamedInstruction) × Bool :=
+  -- Thread state through each slot. On first stall, stop and fill remaining with None.
+  let (finalState, results, stalled) :=
+    instrs.foldl (fun (st, results, stalledSoFar) instr =>
+      if stalledSoFar then
+        -- Already stalled — propagate None without touching state
+        (st, results ++ [none], true)
+      else
+        -- Try to rename this slot with current state
+        let stateBeforeThisSlot := st
+        let (st', result) := renameInstruction st instr
+        match result with
+        | none =>
+            -- Stall on this slot — roll back to state before this slot
+            (stateBeforeThisSlot, results ++ [none], true)
+        | some ri =>
+            (st', results ++ [some ri], false)
+    ) (state, [], false)
+  -- If stalled, revert to original state (no partial updates escape)
+  let outState := if stalled then state else finalState
+  (outState, results, stalled)
+
+/-- Convenience wrapper: rename exactly 2 instructions (N=2 dual-dispatch). -/
+def renameInstructionPair
+    (state : RenameStageState)
+    (i0 i1 : DecodedInstruction)
+    : RenameStageState × Option RenamedInstruction × Option RenamedInstruction × Bool :=
+  let (st', results, stalled) := renameInstructionGroup state [i0, i1]
+  let r0 := results.head?.join
+  let r1 := results.tail.head?.join
+  (st', r0, r1, stalled)
+
+
 /-- Read operand values from physical register file (for dispatch to execution units).
     Returns pair of 32-bit values for the given physical register tags. -/
 def readOperands
