@@ -139,13 +139,15 @@ def mkROB16_W2 : Circuit :=
   -- === Alloc Decoders (Decoder4) ===
   let alloc_dec_0 := mkWires "alloc_dec_0" 16
   let alloc_dec_0_inst : CircuitInstance := {
-    moduleName := "Decoder4"; instName := "u_alloc_dec_0"
+    moduleName := "Decoder4"
+    instName := "u_alloc_dec_0"
     portMap := (tail_ptr.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
                (alloc_dec_0.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
   }
   let alloc_dec_1 := mkWires "alloc_dec_1" 16
   let alloc_dec_1_inst : CircuitInstance := {
-    moduleName := "Decoder4"; instName := "u_alloc_dec_1"
+    moduleName := "Decoder4"
+    instName := "u_alloc_dec_1"
     portMap := (tail1_ptr.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
                (alloc_dec_1.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
   }
@@ -153,13 +155,15 @@ def mkROB16_W2 : Circuit :=
   -- === Commit Decoders ===
   let commit_dec_0 := mkWires "commit_dec_0" 16
   let commit_dec_0_inst : CircuitInstance := {
-    moduleName := "Decoder4"; instName := "u_commit_dec_0"
+    moduleName := "Decoder4"
+    instName := "u_commit_dec_0"
     portMap := (head_ptr.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
                (commit_dec_0.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
   }
   let commit_dec_1 := mkWires "commit_dec_1" 16
   let commit_dec_1_inst : CircuitInstance := {
-    moduleName := "Decoder4"; instName := "u_commit_dec_1"
+    moduleName := "Decoder4"
+    instName := "u_commit_dec_1"
     portMap := (head1_ptr.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
                (commit_dec_1.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
   }
@@ -412,19 +416,22 @@ def mkROB16_W2 : Circuit :=
     List.zipWith Gate.mkBUF head1_ptr head_idx_1
 
   let head_inst : CircuitInstance := {
-    moduleName := "QueuePointer_4"; instName := "u_head"
+    moduleName := "QueuePointer_4"
+    instName := "u_head"
     portMap := [("clock", clock), ("reset", reset), ("en", commit_en_0_safe),
                 ("one", one), ("zero", zero)] ++
                (head_ptr.enum.map fun ⟨i,w⟩ => (s!"count_{i}", w))
   }
   let tail_inst_0 : CircuitInstance := {
-    moduleName := "QueuePointer_4"; instName := "u_tail_s0"
+    moduleName := "QueuePointer_4"
+    instName := "u_tail_s0"
     portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_0),
                 ("one", one), ("zero", zero)] ++
                (mkWires "tail_mid" 4).enum.map fun ⟨i,w⟩ => (s!"count_{i}", w)
   }
   let tail_inst_1 : CircuitInstance := {
-    moduleName := "QueuePointer_4"; instName := "u_tail_s1"
+    moduleName := "QueuePointer_4"
+    instName := "u_tail_s1"
     portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_1),
                 ("one", one), ("zero", zero)] ++
                (tail_ptr.enum.map fun ⟨i,w⟩ => (s!"count_{i}", w))
@@ -432,14 +439,16 @@ def mkROB16_W2 : Circuit :=
   -- head slot-1 pointer: separate QueuePointer advancing on commit_en_1_safe
   -- (not used as a register; we combine head+1 combinationally via head1_ptr)
   let count_inst_0 : CircuitInstance := {
-    moduleName := "QueueCounterUpDown_5"; instName := "u_count_s0"
+    moduleName := "QueueCounterUpDown_5"
+    instName := "u_count_s0"
     portMap := [("clock", clock), ("reset", reset),
                 ("inc", alloc_en_0), ("dec", commit_en_0_safe),
                 ("one", one), ("zero", zero)] ++
                (mkWires "count_mid" 5).enum.map fun ⟨i,w⟩ => (s!"count_{i}", w)
   }
   let count_inst_1 : CircuitInstance := {
-    moduleName := "QueueCounterUpDown_5"; instName := "u_count_s1"
+    moduleName := "QueueCounterUpDown_5"
+    instName := "u_count_s1"
     portMap := [("clock", clock), ("reset", reset),
                 ("inc", alloc_en_1), ("dec", commit_en_1_safe),
                 ("one", one), ("zero", zero)] ++

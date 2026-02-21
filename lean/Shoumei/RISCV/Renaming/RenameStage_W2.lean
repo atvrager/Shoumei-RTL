@@ -282,7 +282,8 @@ def mkRenameStage_W2 : Circuit :=
     (List.range tagWidth).map fun j => Wire.mk s!"crat_mid_{i}_{j}"
 
   let crat_0_inst : CircuitInstance := {
-    moduleName := "RAT_32x6"; instName := "u_crat_0"
+    moduleName := "RAT_32x6"
+    instName := "u_crat_0"
     portMap :=
       [("clock", clock), ("reset", reset), ("write_en", crat_we_0)] ++
       (commit_archRd_0.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
@@ -301,7 +302,8 @@ def mkRenameStage_W2 : Circuit :=
         (s!"dump_data_{i}_{j}", crat_mid_dump[i]![j]!)).flatten
   }
   let crat_1_inst : CircuitInstance := {
-    moduleName := "RAT_32x6"; instName := "u_crat_1"
+    moduleName := "RAT_32x6"
+    instName := "u_crat_1"
     portMap :=
       [("clock", clock), ("reset", reset), ("write_en", crat_we_1)] ++
       (commit_archRd_1.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
@@ -329,7 +331,8 @@ def mkRenameStage_W2 : Circuit :=
     (List.range tagWidth).map fun j => Wire.mk s!"srat0_dump_{i}_{j}"
 
   let rat_inst_0 : CircuitInstance := {
-    moduleName := "RAT_32x6"; instName := "u_rat_0"
+    moduleName := "RAT_32x6"
+    instName := "u_rat_0"
     portMap :=
       [("clock", clock), ("reset", reset), ("write_en", rat_we_0)] ++
       (rd_addr_0.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
@@ -351,7 +354,8 @@ def mkRenameStage_W2 : Circuit :=
   -- Slot 1 RAT reads from after slot 0's write (uses slot 0's dump as "current state")
   -- For register reads by slot 1 from RAT (before bypass applies):
   let rat_inst_1 : CircuitInstance := {
-    moduleName := "RAT_32x6"; instName := "u_rat_1"
+    moduleName := "RAT_32x6"
+    instName := "u_rat_1"
     portMap :=
       [("clock", clock), ("reset", reset), ("write_en", rat_we_1)] ++
       (rd_addr_1.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
@@ -373,7 +377,8 @@ def mkRenameStage_W2 : Circuit :=
 
   -- BitmapFreeList W2 instance
   let freelist_inst : CircuitInstance := {
-    moduleName := "BitmapFreeList_64_W2"; instName := "u_freelist"
+    moduleName := "BitmapFreeList_64_W2"
+    instName := "u_freelist"
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
       (retire_tag.enum.map fun ⟨i,w⟩ => (s!"enq_data_{i}", w)) ++
@@ -391,7 +396,8 @@ def mkRenameStage_W2 : Circuit :=
 
   -- PhysRegFile (shared, single write port from CDB)
   let physregfile_inst : CircuitInstance := {
-    moduleName := "PhysRegFile_64x32"; instName := "u_prf"
+    moduleName := "PhysRegFile_64x32"
+    instName := "u_prf"
     portMap :=
       [("clock", clock), ("reset", reset), ("wr_en", cdb_valid)] ++
       (rs1_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag1_{i}", w)) ++
