@@ -112,6 +112,17 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rvv_idle := Wire.mk "rvv_idle"
   let rvv_queue_capacity := makeIndexedWires "rvv_queue_cap" 4  -- $clog2(2*4+1) = 4 bits
   let rvv_trap_valid := Wire.mk "rvv_trap_valid"
+  -- Vector CSR state wires (declared early for RvvCore portMap)
+  let vstart_reg := (List.range 7).map (fun i => Wire.mk s!"vstart_e{i}")
+  let vstart_next := (List.range 7).map (fun i => Wire.mk s!"vstart_nx_e{i}")
+  let vxrm_reg := (List.range 2).map (fun i => Wire.mk s!"vxrm_e{i}")
+  let vxrm_next := (List.range 2).map (fun i => Wire.mk s!"vxrm_nx_e{i}")
+  let vxsat_reg := [Wire.mk "vxsat_e0"]
+  let vxsat_next := [Wire.mk "vxsat_nx_e0"]
+  let rvv_config_vl := (List.range 32).map (fun i => Wire.mk s!"rvv_cfg_vl_e{i}")
+  let rvv_config_vtype := (List.range 32).map (fun i => Wire.mk s!"rvv_cfg_vtype_e{i}")
+  let rvv_wr_vxsat_valid := Wire.mk "rvv_wr_vxsat_valid"
+  let rvv_wr_vxsat := Wire.mk "rvv_wr_vxsat"
   -- Vector DMEM port (exposed as CPU I/O for external memory connection)
   let vec_dmem_req_ready := Wire.mk "vec_dmem_req_ready"
   let vec_dmem_resp_valid := Wire.mk "vec_dmem_resp_valid"
@@ -314,12 +325,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap := [("d", csr_zimm_next[i]!), ("q", csr_zimm_reg[i]!),
                 ("clock", clock), ("reset", reset)]
   })
-  -- CSR flush suppress DFF: captures csr_cdb_inject, so it's high 1 cycle later
-  -- (aligned with branch_redirect_valid_reg)
+  -- CSR flush suppress DFF: captures merged_cdb_inject (CSR + RVV vsetvl),
+  -- so it's high 1 cycle later (aligned with branch_redirect_valid_reg)
   let csr_flush_suppress_dff : CircuitInstance := {
     moduleName := "DFlipFlop"
     instName := "u_csr_flush_sup"
-    portMap := [("d", Wire.mk "csr_cdb_inject"), ("q", csr_flush_suppress),
+    portMap := [("d", Wire.mk "merged_cdb_inject"), ("q", csr_flush_suppress),
                 ("clock", clock), ("reset", reset)]
   }
   -- Per-subsystem flush DFFs
@@ -1512,10 +1523,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
     instName := "u_rvv_core"
     portMap :=
       [("clk", clock), ("rstn", reset)] ++
-      -- CSR inputs (TODO: wire from actual CSR state; tie off for now)
-      (List.range 7).map (fun i => (s!"vstart[{i}]", zero)) ++
-      [("vxrm[1]", zero), ("vxrm[0]", zero), ("vxsat", zero),
-       ("frm[2]", zero), ("frm[1]", zero), ("frm[0]", zero)] ++
+      -- CSR inputs (wired from scalar CSR state)
+      (List.range 7).map (fun i => (s!"vstart[{i}]", vstart_reg[i]!)) ++
+      [("vxrm[1]", vxrm_reg[1]!), ("vxrm[0]", vxrm_reg[0]!), ("vxsat", vxsat_reg[0]!),
+       ("frm[2]", frm_reg[2]!), ("frm[1]", frm_reg[1]!), ("frm[0]", frm_reg[0]!)] ++
       -- Instruction input: only lane 0 used, lanes 1-3 tied off
       [("inst_valid[0]", rvv_inst_valid),
        ("inst_valid[1]", zero), ("inst_valid[2]", zero), ("inst_valid[3]", zero)] ++
@@ -1560,7 +1571,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
         (List.range 5).map (fun b => (s!"uop_lsu_addr_lsu2rvv[{j}][{b}]", zero)) ++
         (List.range 128).map (fun b => (s!"uop_lsu_wdata_lsu2rvv[{j}][{b}]", zero)) ++
         [(s!"uop_lsu_last_lsu2rvv[{j}]", zero)])).flatten ++
-      -- VCSR and config state outputs (unused for now)
+      -- VCSR writeback from RvvCore (saturation flag)
+      [("wr_vxsat_valid_o", rvv_wr_vxsat_valid),
+       ("wr_vxsat_o", rvv_wr_vxsat)] ++
+      -- Config state outputs (vl/vtype for CSR reads)
+      (rvv_config_vl.enum.map (fun ⟨i, w⟩ => (s!"config_state_vl[{i}]", w))) ++
+      (rvv_config_vtype.enum.map (fun ⟨i, w⟩ => (s!"config_state_vtype[{i}]", w))) ++
       [("vcsr_ready", one)] ++
       -- Async FP writeback (tie off for Zve32x)
       [("async_frd_ready", zero)]
@@ -1607,6 +1623,53 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rvv_async_gates :=
     if enableVector then [Gate.mkBUF one rvv_async_rd_ready]
     else []
+
+  -- vsetvl scalar writeback: detect OPCFG (funct3=111) at dispatch, capture rd_phys
+  -- funct3 = imem_resp_data[14:12], OPCFG = 111
+  let rvv_vsetvl_detect := Wire.mk "rvv_vsetvl_detect"
+  let rvv_vsetvl_dispatch := Wire.mk "rvv_vsetvl_dispatch"
+  let rvv_sidecar_phys := makeIndexedWires "rvv_sidecar_phys" 6
+  let rvv_sidecar_phys_next := makeIndexedWires "rvv_sidecar_phys_nx" 6
+  let rvv_vsetvl_gates : List Gate :=
+    if enableVector then
+      -- Detect funct3 = 111 (all three bits high)
+      let f3_and := Wire.mk "rvv_f3_and01"
+      [Gate.mkAND (imem_resp_data[12]!) (imem_resp_data[13]!) f3_and,
+       Gate.mkAND f3_and (imem_resp_data[14]!) rvv_vsetvl_detect,
+       -- vsetvl dispatch = vector dispatch AND funct3==111
+       Gate.mkAND dispatch_vector_valid rvv_vsetvl_detect rvv_vsetvl_dispatch] ++
+      -- Sidecar: capture rd_phys when vsetvl dispatches, hold otherwise
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rvv_sidecar_phys[i]! rd_phys[i]! rvv_vsetvl_dispatch rvv_sidecar_phys_next[i]!)
+    else []
+  let rvv_sidecar_dffs : List CircuitInstance :=
+    if enableVector then
+      (List.range 6).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_rvv_sidecar_phys_dff_{i}",
+        portMap := [("d", rvv_sidecar_phys_next[i]!), ("q", rvv_sidecar_phys[i]!),
+                    ("clock", clock), ("reset", reset)] })
+    else []
+
+  -- OR RvvCore scalar writeback into CSR CDB inject path
+  -- rvv_reg_write_valid is mutually exclusive with csr_cdb_inject (both serialize)
+  -- Create merged inject/tag/data wires that combine CSR and RVV sources
+  let merged_cdb_inject := Wire.mk "merged_cdb_inject"
+  let merged_cdb_tag := makeIndexedWires "merged_cdb_tg" 6
+  let merged_cdb_data := makeIndexedWires "merged_cdb_dt" 32
+  let rvv_cdb_or_gates : List Gate :=
+    if enableVector then
+      [Gate.mkOR csr_cdb_inject rvv_reg_write_valid merged_cdb_inject] ++
+      -- MUX tag: if rvv_reg_write_valid, use sidecar phys; else use csr_cdb_tag
+      (List.range 6).map (fun i =>
+        Gate.mkMUX csr_cdb_tag[i]! rvv_sidecar_phys[i]! rvv_reg_write_valid merged_cdb_tag[i]!) ++
+      -- MUX data: if rvv_reg_write_valid, use rvv_reg_write_data; else use csr_cdb_data
+      (List.range 32).map (fun i =>
+        Gate.mkMUX csr_cdb_data[i]! rvv_reg_write_data[i]! rvv_reg_write_valid merged_cdb_data[i]!)
+    else
+      -- No vector: just BUF through
+      [Gate.mkBUF csr_cdb_inject merged_cdb_inject] ++
+      (List.range 6).map (fun i => Gate.mkBUF csr_cdb_tag[i]! merged_cdb_tag[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF csr_cdb_data[i]! merged_cdb_data[i]!)
 
   -- === LUI/AUIPC POST-ALU MUX ===
   let auipc_result := makeIndexedWires "auipc_result" 32
@@ -2406,10 +2469,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
         (List.range 32).map (fun i => (s!"dmem_fmt_{i}", dmem_resp_formatted[i]!)) ++
         (List.range 6).map (fun i => (s!"dmem_tag_{i}", dmem_load_tag_reg[i]!)) ++
         [("dmem_is_fp", if enableF then dmem_is_fp_reg else zero)] ++
-        -- Inputs: CSR
-        [("csr_inject", csr_cdb_inject)] ++
-        (List.range 6).map (fun i => (s!"csr_tag_{i}", csr_cdb_tag[i]!)) ++
-        (List.range 32).map (fun i => (s!"csr_data_{i}", csr_cdb_data[i]!)) ++
+        -- Inputs: CSR (merged with RVV vsetvl inject when enableVector)
+        [("csr_inject", merged_cdb_inject)] ++
+        (List.range 6).map (fun i => (s!"csr_tag_{i}", merged_cdb_tag[i]!)) ++
+        (List.range 32).map (fun i => (s!"csr_data_{i}", merged_cdb_data[i]!)) ++
         [("zero", zero)] ++
         -- Outputs
         [("pre_valid", cdb_pre_valid)] ++
@@ -2746,11 +2809,28 @@ def mkCPU (config : CPUConfig) : Circuit :=
                     ("clock", clock), ("reset", reset)] })
     else []
 
+  -- Vector CSR DFFs (use `reset`, not pipeline_reset)
+  let vec_csr_reg_instances : List CircuitInstance :=
+    if enableVector then
+      (List.range 7).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_vstart_dff_{i}",
+        portMap := [("d", vstart_next[i]!), ("q", vstart_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      (List.range 2).map (fun i => {
+        moduleName := "DFlipFlop", instName := s!"u_vxrm_dff_{i}",
+        portMap := [("d", vxrm_next[i]!), ("q", vxrm_reg[i]!),
+                    ("clock", clock), ("reset", reset)] }) ++
+      [{ moduleName := "DFlipFlop", instName := "u_vxsat_dff_0",
+         portMap := [("d", vxsat_next[0]!), ("q", vxsat_reg[0]!),
+                     ("clock", clock), ("reset", reset)] }]
+    else []
+
   -- CSR address decode
   let (csr_addr_decode_gates, is_mscratch, is_mcycle_m, is_mcycleh_m, is_minstret_m, is_minstreth_m,
        is_misa, is_fflags, is_frm, is_fcsr, is_mstatus, is_mie, is_mtvec, is_mepc, is_mcause,
-       is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
-    mkCsrAddrDecode csr_addr_reg
+       is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth,
+       is_vstart, is_vxsat, is_vxrm, is_vcsr, is_vl, is_vtype, is_vlenb) :=
+    mkCsrAddrDecode csr_addr_reg enableVector
 
   -- Force is_mstatus high during MSTATUS_TRAP so the CSR read mux outputs
   -- the current mstatus value (needed for MPIE = old MIE transform).
@@ -2774,6 +2854,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       mscratch_reg mcycle_reg mcycleh_reg minstret_reg minstreth_reg
       mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg
       fflags_reg frm_reg
+      is_vstart is_vxsat is_vxrm is_vcsr is_vl is_vtype is_vlenb
+      vstart_reg vxsat_reg vxrm_reg rvv_config_vl rvv_config_vtype
 
   -- CSR operation decode + write logic + CDB injection (config-gated)
   let useq_write_en := Wire.mk "useq_write_en"  -- from sequencer (microcoded mode)
@@ -2923,19 +3005,71 @@ def mkCPU (config : CPUConfig) : Circuit :=
     minstret_reg minstret_next minstreth_reg minstreth_next
     commit_valid_muxed
 
+  -- Vector CSR write enables and next-value logic
+  let vec_csr_write_gates : List Gate :=
+    if enableVector && config.enableZicsr then
+      -- Write enables for vstart, vxrm, vxsat (from CSR instruction path)
+      let csr_we_vstart := Wire.mk "csr_we_vstart"
+      let csr_we_vxrm := Wire.mk "csr_we_vxrm"
+      let csr_we_vxsat := Wire.mk "csr_we_vxsat"
+      let csr_we_vcsr := Wire.mk "csr_we_vcsr"
+      -- Write enable source: microcoded uses useq_write_en, hardwired uses csr_drain_and_writes
+      let we_src := if config.microcodesCSR then useq_write_en
+                    else Wire.mk "csr_drain_and_writes"
+      -- Per-CSR write enables
+      [Gate.mkAND we_src is_vstart csr_we_vstart,
+       Gate.mkAND we_src is_vxrm csr_we_vxrm,
+       Gate.mkAND we_src is_vxsat csr_we_vxsat,
+       Gate.mkAND we_src is_vcsr csr_we_vcsr] ++
+      -- vcsr composes vxrm and vxsat: OR write enables
+      let we_vxsat_final := Wire.mk "we_vxsat_final"
+      let we_vxrm_final := Wire.mk "we_vxrm_final"
+      -- Also OR in RvvCore vxsat writeback
+      let we_vxsat_csr_or_vcsr := Wire.mk "we_vxsat_csr_or_vcsr"
+      [Gate.mkOR csr_we_vxsat csr_we_vcsr we_vxsat_csr_or_vcsr,
+       Gate.mkOR we_vxsat_csr_or_vcsr rvv_wr_vxsat_valid we_vxsat_final,
+       Gate.mkOR csr_we_vxrm csr_we_vcsr we_vxrm_final] ++
+      -- vstart next-value: MUX(hold, write_val, we)
+      (List.range 7).map (fun i =>
+        Gate.mkMUX vstart_reg[i]! csr_write_val[i]! csr_we_vstart vstart_next[i]!) ++
+      -- vxrm next-value: MUX(hold, write_val, we)
+      -- For vcsr write: vxrm comes from bits [2:1] of write value
+      let vxrm_wval := (List.range 2).map (fun i => Wire.mk s!"vxrm_wval_e{i}")
+      (List.range 2).map (fun i =>
+        Gate.mkMUX csr_write_val[i]! csr_write_val[i + 1]! csr_we_vcsr vxrm_wval[i]!) ++
+      (List.range 2).map (fun i =>
+        Gate.mkMUX vxrm_reg[i]! vxrm_wval[i]! we_vxrm_final vxrm_next[i]!) ++
+      -- vxsat next-value: MUX(hold, write_val, we) with RvvCore OR path
+      -- For vcsr write: vxsat comes from bit [0] of write value (same as csr_write_val[0])
+      -- For RvvCore writeback: OR into current value
+      let vxsat_or_rvv := Wire.mk "vxsat_or_rvv"
+      let vxsat_wval := Wire.mk "vxsat_wval"
+      [Gate.mkOR vxsat_reg[0]! rvv_wr_vxsat vxsat_or_rvv,
+       Gate.mkMUX vxsat_or_rvv csr_write_val[0]! we_vxsat_final vxsat_wval,
+       -- When only rvv_wr_vxsat_valid (no CSR write), use the OR'd value
+       -- When CSR write, use csr_write_val. The MUX above handles this since
+       -- we_vxsat_final includes rvv_wr_vxsat_valid
+       Gate.mkMUX vxsat_reg[0]! vxsat_wval we_vxsat_final vxsat_next[0]!]
+    else if enableVector then
+      -- No Zicsr: tie next to current (hold)
+      (List.range 7).map (fun i => Gate.mkBUF zero vstart_next[i]!) ++
+      (List.range 2).map (fun i => Gate.mkBUF zero vxrm_next[i]!) ++
+      [Gate.mkBUF zero vxsat_next[0]!]
+    else []
+
   -- Commit injection: MUX rob_commit vs CSR fake commit
   -- At drain_complete, rob_commit_en is 0 (ROB empty), so OR works as MUX
   let csr_commit_inject_gates : List Gate :=
     if config.enableZicsr then
-      [Gate.mkOR rob_commit_en csr_cdb_inject commit_valid_muxed,
+      [Gate.mkOR rob_commit_en merged_cdb_inject commit_valid_muxed,
        Gate.mkMUX (if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)
-                  one csr_cdb_inject commit_hasPhysRd_muxed,
+                  one merged_cdb_inject commit_hasPhysRd_muxed,
        Gate.mkMUX (if enableF then Wire.mk "int_commit_hasAllocSlot" else Wire.mk "rob_head_hasPhysRd")
-                  one csr_cdb_inject commit_hasAllocSlot_muxed] ++
+                  one merged_cdb_inject commit_hasAllocSlot_muxed] ++
       (List.range 5).map (fun i =>
-        Gate.mkMUX (Wire.mk s!"rob_head_archRd_{i}") csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed[i]!) ++
+        Gate.mkMUX (Wire.mk s!"rob_head_archRd_{i}") csr_rd_reg[i]! merged_cdb_inject commit_archRd_muxed[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX rob_head_physRd[i]! csr_phys_reg[i]! csr_cdb_inject commit_physRd_muxed[i]!)
+        Gate.mkMUX rob_head_physRd[i]! csr_phys_reg[i]! merged_cdb_inject commit_physRd_muxed[i]!)
     else
       [Gate.mkBUF rob_commit_en commit_valid_muxed,
        Gate.mkBUF (if enableF then Wire.mk "int_commit_hasPhysRd" else rob_head_hasOldPhysRd)
@@ -2951,6 +3085,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_all_gates := csr_drain_gate ++ csr_addr_decode_gates ++
     mstatus_force_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
     csr_write_logic_gates ++ trap_we_merge_gates ++ csr_next_value_gates ++
+    vec_csr_write_gates ++
     csr_cdb_inject_gates ++ csr_commit_inject_gates
 
   -- === OUTPUT BUFFERS ===
@@ -3060,11 +3195,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates ++
-             rvv_pack_gates ++ rvv_async_gates
+             rvv_pack_gates ++ rvv_async_gates ++ rvv_vsetvl_gates ++ rvv_cdb_or_gates
     instances := microcode_instances ++
                   [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
                   [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
-                  csr_reg_instances ++ csr_counter_instances ++
+                  csr_reg_instances ++ vec_csr_reg_instances ++ csr_counter_instances ++
                   [fetch_inst, decoder_inst, rename_inst] ++
                   (if enableF then [fp_rename_inst] else []) ++
                   [redirect_valid_dff_inst, redirect_valid_fp_dff, redirect_valid_int_dff,
@@ -3080,7 +3215,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   [int_exec_inst, branch_exec_inst, mem_exec_inst] ++
                   (if enableM then [muldiv_exec_inst] else []) ++
                   (if enableF then [fp_exec_inst] else []) ++
-                  (if enableVector then [rvv_core_inst] else []) ++
+                  (if enableVector then [rvv_core_inst] ++ rvv_sidecar_dffs else []) ++
                   [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst,
                   int_imm_rf_decoder_inst, int_imm_rf_mux_inst, int_pc_rf_mux_inst,
