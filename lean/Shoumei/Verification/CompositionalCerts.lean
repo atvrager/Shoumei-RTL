@@ -368,6 +368,13 @@ def cachedCPU_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
+/-- CachedCPU (Microcoded): Microcoded CPU + MemoryHierarchy composition -/
+def cachedCPU_microcoded_cert : CompositionalCert := {
+  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B"
+  dependencies := ["CPU_RV32IMF_Zicsr_Zifencei_Microcoded", "MemoryHierarchy"]
+  proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
+}
+
 /-! ## Decoders (LUT-based, no Chisel equivalent) -/
 
 /-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
@@ -653,7 +660,9 @@ def allCerts : List CompositionalCert := [
   cpu_rv32if_zicsr_zifencei_cert,
   cpu_rv32imf_zicsr_zifencei_cert,
   -- Microcoded variant
-  cpu_rv32imf_zicsr_zifencei_microcoded_cert
+  cpu_rv32imf_zicsr_zifencei_microcoded_cert,
+  -- Microcoded cached variant
+  cachedCPU_microcoded_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

@@ -13,8 +13,8 @@ namespace Shoumei.RISCV.Microcode
 open MicroOp
 
 /-- Helper to construct a ROM entry with temp register indices -/
-private def re (op : MicroOp) (dst src : Nat) : ROMEntry :=
-  { opcode := op, dst := ⟨dst % 2, by omega⟩, src := ⟨src % 2, by omega⟩ }
+private def re (op : MicroOp) (dst src : Nat) (imm : Nat := 0) : ROMEntry :=
+  { opcode := op, dst := ⟨dst % 2, by omega⟩, src := ⟨src % 2, by omega⟩, imm := ⟨imm % 65536, by omega⟩ }
 
 /-- The microcode ROM contents: Fin 64 → ROMEntry -/
 def romContents : Fin 64 → ROMEntry
@@ -54,8 +54,25 @@ def romContents : Fin 64 → ROMEntry
   | ⟨29, _⟩ => re DONE      0 0
   | ⟨30, _⟩ => re DONE      0 0
   | ⟨31, _⟩ => re DONE      0 0
-  -- Sequences 4-5: Reserved (TRAP_ENTRY, MRET) — all DONE
-  | ⟨_, _⟩  => re DONE      0 0
+  -- Sequence 4: TRAP_ENTRY (addr 32-47, uses 16-entry range)
+  | ⟨32, _⟩ => re DRAIN          0 0         -- wait for ROB empty
+  | ⟨33, _⟩ => re MSTATUS_TRAP   0 0         -- mstatus: MPIE=MIE, MIE=0, MPP=M
+  | ⟨34, _⟩ => re SET_CSR_ADDR   0 0 0x341   -- csrAddr := mepc
+  | ⟨35, _⟩ => re LOAD_PC        0 0         -- temp0 := PC of ECALL
+  | ⟨36, _⟩ => re WRITE_CSR      0 0         -- mepc := temp0
+  | ⟨37, _⟩ => re SET_CSR_ADDR   0 0 0x342   -- csrAddr := mcause
+  | ⟨38, _⟩ => re LOAD_CONST     0 0 11      -- temp0 := 11 (ecall from M-mode)
+  | ⟨39, _⟩ => re WRITE_CSR      0 0         -- mcause := temp0
+  | ⟨40, _⟩ => re SET_CSR_ADDR   0 0 0x305   -- csrAddr := mtvec
+  | ⟨41, _⟩ => re DRAIN_SB       0 0         -- wait 1 cycle for addr to register
+  | ⟨42, _⟩ => re READ_CSR       1 0         -- temp1 := mtvec
+  | ⟨43, _⟩ => re SET_PC         0 1         -- redirect PC to temp1
+  | ⟨44, _⟩ => re DONE           0 0
+  | ⟨45, _⟩ => re DONE           0 0
+  | ⟨46, _⟩ => re DONE           0 0
+  | ⟨47, _⟩ => re DONE           0 0
+  -- Sequence 5: MRET (reserved) — all DONE
+  | ⟨_, _⟩  => re DONE           0 0
 
 /-- Number of active (non-DONE) steps in each sequence -/
 def sequenceLength : SequenceID → Nat
@@ -63,7 +80,7 @@ def sequenceLength : SequenceID → Nat
   | .CSRRS     => 6
   | .CSRRC     => 6
   | .FENCE_I   => 4
-  | .TRAP_ENTRY => 0
+  | .TRAP_ENTRY => 13
   | .MRET       => 0
 
 /-- Look up a ROM entry by sequence ID and step offset -/
@@ -124,6 +141,24 @@ def stepMicrocode (s : MicrocodeState) (csrReadVal : UInt32) (robEmpty sbEmpty :
       ({ s with upc := nextUpc }, false, false, false, true, false)
     | .SET_PC =>
       ({ s with upc := nextUpc }, false, false, false, true, false)
+    | .LOAD_PC =>
+      let s' := if entry.dst == ⟨0, by omega⟩
+                then { s with temp0 := s.pcVal, upc := nextUpc }
+                else { s with temp1 := s.pcVal, upc := nextUpc }
+      (s', false, false, false, false, false)
+    | .LOAD_CONST =>
+      let constVal : UInt32 := UInt32.ofNat entry.imm.val
+      let s' := if entry.dst == ⟨0, by omega⟩
+                then { s with temp0 := constVal, upc := nextUpc }
+                else { s with temp1 := constVal, upc := nextUpc }
+      (s', false, false, false, false, false)
+    | .MSTATUS_TRAP =>
+      -- Read mstatus, set MPIE=MIE, clear MIE, set MPP=M, write back
+      -- Handled externally via CSR read/write ports; sequencer signals the operation
+      ({ s with upc := nextUpc }, true, true, false, false, false)
+    | .SET_CSR_ADDR =>
+      let newAddr : Fin 4096 := ⟨entry.imm.val % 4096, by omega⟩
+      ({ s with csrAddr := newAddr, upc := nextUpc }, false, false, false, false, false)
     | .DONE =>
       ({ s with active := false, waitDrain := false, waitSB := false }, false, false, false, false, true)
 

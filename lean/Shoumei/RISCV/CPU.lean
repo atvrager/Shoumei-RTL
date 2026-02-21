@@ -517,7 +517,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
   let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
-  let (fence_i_detect_gates, microcode_instances) := if config.useMicrocode then
+  let (fence_i_detect_gates, microcode_instances) := if config.microcodesCSR || config.microcodesFenceI then
       mkMicrocodeSerializePath config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
         branch_redirect_valid_reg fetch_stall_ext
@@ -533,8 +533,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_redir_next
         csr_read_data_fwd
         csr_cdb_inject csr_cdb_tag csr_cdb_data
+        fetch_pc
     else
-      (mkSerializeDetect config oi opcodeWidth zero one
+      mkSerializeDetect config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
         branch_redirect_valid_reg fetch_stall_ext
         fence_i_draining fence_i_not_draining
@@ -546,8 +547,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
         csr_rename_en not_csr_rename_en
         csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
-        fence_i_redir_next,
-       ([] : List CircuitInstance))
+        fence_i_redir_next
+        csr_read_data_fwd
+        fetch_pc
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -2612,6 +2614,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
        is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
     mkCsrAddrDecode csr_addr_reg
 
+  -- Force is_mstatus high during MSTATUS_TRAP so the CSR read mux outputs
+  -- the current mstatus value (needed for MPIE = old MIE transform).
+  -- useq_mstatus_trap is declared later but the wire name is stable.
+  let (is_mstatus_for_read, mstatus_force_gates) :=
+    if config.microcodesTraps && !config.microcodesCSR then
+      let forced := Wire.mk "is_mstatus_forced"
+      (forced, [Gate.mkOR is_mstatus (Wire.mk "useq_mstatus_trap") forced])
+    else
+      (is_mstatus, [])
+
   -- CSR read MUX
   let misa_val : Nat := 0x40000100 +
     (if config.enableM then 0x00001000 else 0) +
@@ -2620,7 +2632,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     mkCsrReadMux config enableF zero one misa_val
       is_misa is_mscratch is_mcycle is_mcycleh is_minstret is_minstreth
       is_fflags is_frm is_fcsr
-      is_mstatus is_mie is_mtvec is_mepc is_mcause is_mtval is_mip
+      is_mstatus_for_read is_mie is_mtvec is_mepc is_mcause is_mtval is_mip
       mscratch_reg mcycle_reg mcycleh_reg minstret_reg minstreth_reg
       mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg
       fflags_reg frm_reg
@@ -2632,8 +2644,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let (csr_op_decode_gates, csr_write_logic_gates, csr_write_val,
        csr_we_mscratch, csr_we_mcycle, csr_we_mcycleh, csr_we_minstret, csr_we_minstreth,
        csr_we_mstatus, csr_we_mie, csr_we_mtvec, csr_we_mepc, csr_we_mcause, csr_we_mtval,
-       csr_cdb_inject_gates) := if config.useMicrocode then
-      -- Microcoded: sequencer drives write_en + write_data + CDB inject directly
+       csr_cdb_inject_gates) := if config.microcodesCSR then
+      -- Fully microcoded CSR: sequencer drives write_en + write_data + CDB inject directly
       -- CSR write value uses same wire names as hardwired path for compatibility
       -- with downstream fflags/frm/fcsr logic
       let wrVal := (List.range 32).map (fun i => Wire.mk s!"csr_wv_e{i}")
@@ -2726,6 +2738,41 @@ def mkCPU (config : CPUConfig) : Circuit :=
        we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
        cdbGates)
 
+  -- Merge trap sequencer writes into hardwired CSR write path
+  -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
+  -- also needs to write mepc, mcause, mstatus via useq_write_en.
+  -- OR the sequencer write-enables with hardwired write-enables, and MUX write data.
+  -- Merge trap sequencer writes into hardwired CSR write path
+  -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
+  -- also needs to write mepc, mcause, mstatus via useq_write_en.
+  -- MSTATUS_TRAP uses mstatus_trap_active (addr is forced combinationally, not registered).
+  -- WRITE_CSR for mepc/mcause uses useq_write_en AND is_<csr> (addr is pre-registered via SET_CSR_ADDR).
+  let useq_mstatus_trap := Wire.mk "useq_mstatus_trap"
+  let (csr_write_val, csr_we_mstatus, csr_we_mepc, csr_we_mcause, trap_we_merge_gates) :=
+    if config.microcodesTraps && !config.microcodesCSR && config.enableZicsr then
+      -- Per-CSR sequencer write enables
+      let useq_we_mepc := Wire.mk "useq_we_mepc"
+      let useq_we_mcause := Wire.mk "useq_we_mcause"
+      -- Merged write enables
+      let merged_we_mstat := Wire.mk "merged_we_mstatus"
+      let merged_we_mepc := Wire.mk "merged_we_mepc"
+      let merged_we_mcause := Wire.mk "merged_we_mcause"
+      -- Merged write data (MUX: useq_write_en selects useq_write_data, else hardwired)
+      let merged_wr := (List.range 32).map (fun i => Wire.mk s!"csr_mwv_e{i}")
+      let weGates :=
+        [-- MSTATUS_TRAP: use dedicated signal (addr forced combinationally, not in csr_addr_reg)
+         Gate.mkOR csr_we_mstatus useq_mstatus_trap merged_we_mstat,
+         -- WRITE_CSR for mepc/mcause: addr was set by SET_CSR_ADDR and registered
+         Gate.mkAND useq_write_en is_mepc useq_we_mepc,
+         Gate.mkAND useq_write_en is_mcause useq_we_mcause,
+         Gate.mkOR csr_we_mepc useq_we_mepc merged_we_mepc,
+         Gate.mkOR csr_we_mcause useq_we_mcause merged_we_mcause] ++
+        (List.range 32).map (fun i =>
+          Gate.mkMUX csr_write_val[i]! useq_write_data[i]! useq_write_en merged_wr[i]!)
+      (merged_wr, merged_we_mstat, merged_we_mepc, merged_we_mcause, weGates)
+    else
+      (csr_write_val, csr_we_mstatus, csr_we_mepc, csr_we_mcause, [])
+
   -- CSR next-value logic (WARL masking, MUX, counter auto-increment)
   let (csr_next_value_gates, csr_counter_instances) := mkCsrNextValue config enableF zero one
     csr_write_val
@@ -2764,8 +2811,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- Collect all CSR gates
   let csr_all_gates := csr_drain_gate ++ csr_addr_decode_gates ++
-    csr_read_mux_all_gates ++ csr_op_decode_gates ++
-    csr_write_logic_gates ++ csr_next_value_gates ++
+    mstatus_force_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
+    csr_write_logic_gates ++ trap_we_merge_gates ++ csr_next_value_gates ++
     csr_cdb_inject_gates ++ csr_commit_inject_gates
 
   -- === OUTPUT BUFFERS ===

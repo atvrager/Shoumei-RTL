@@ -622,7 +622,7 @@ def generateInternalWireDecl (ctx : Context) (c : Circuit) (w : Wire) : Option S
         some s!"  val {w.name} = Wire(Bool())"
 
 /-- Detect indexed signal group patterns and group them into Vec declarations -/
-def detectVecPatterns (ctx : Context) (internalWires : List Wire) : List (String × Nat × String) × List Wire :=
+def detectVecPatterns (ctx : Context) (c : Circuit) (internalWires : List Wire) : List (String × Nat × String) × List Wire :=
   -- Extract unique signal groups from wireToGroup
   let signalGroups := dedupSignalGroups (ctx.wireToGroup.map (·.2))
 
@@ -634,7 +634,12 @@ def detectVecPatterns (ctx : Context) (internalWires : List Wire) : List (String
         | some ((_, width, chiselType), indices) =>
             acc.filter (fun ((b, _, _), _) => b != base) ++ [((base, width, chiselType), indices ++ [(idx, sg)])]
         | none =>
-            let chiselType := signalGroupToChisel sg
+            let needsVec := needsVecDeclarationHelper ctx sg c
+            let chiselType := Id.run do
+              if needsVec && sg.width > 1 then
+                return s!"Vec({sg.width}, Bool())"
+              else
+                return signalGroupToChisel sg
             acc ++ [((base, sg.width, chiselType), [(idx, sg)])]
     | none => acc
   ) [] signalGroups
@@ -673,7 +678,7 @@ def detectVecPatterns (ctx : Context) (internalWires : List Wire) : List (String
 /-- Generate all internal wire declarations -/
 def generateInternalWires (ctx : Context) (c : Circuit) : String :=
   let internalWires := findInternalWires c
-  let (vecDecls, remainingWires) := detectVecPatterns ctx internalWires
+  let (vecDecls, remainingWires) := detectVecPatterns ctx c internalWires
 
   -- Generate Vec declarations
   let vecDeclStrs := vecDecls.map (fun (base, count, chiselType) =>
@@ -1923,10 +1928,24 @@ def generateRAM (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
     let addrExpr := if addrRefs.length == 1 then addrRefs.head!
                     else "Cat(" ++ String.intercalate ", " addrRefs ++ ")"
     let readWire := s!"{ram.name}.read({addrExpr})"
-    -- Assign individual output bits
-    let assigns := rp.data.enum.map (fun (idx, w) =>
-      s!"  {wireRef ctx c w} := {readWire}({idx})")
-    joinLines assigns)
+    -- Check if all data wires belong to the same signal group for bulk assignment.
+    -- Per-bit assignment to a UInt Wire after DontCare init causes Chisel
+    -- "Cannot reassign to read-only" errors.
+    let firstGroup := rp.data.head?.bind (fun w =>
+      ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) |>.map (·.2))
+    let allSameGroup := match firstGroup with
+      | some sg => rp.data.length == sg.width &&
+          rp.data.all (fun w =>
+            ctx.wireToGroup.any (fun (w', sg') => w'.name == w.name && sg'.name == sg.name))
+      | none => false
+    if allSameGroup then
+      match firstGroup with
+      | some sg => s!"  {sg.name} := {readWire}"
+      | none => "" -- unreachable
+    else
+      let assigns := rp.data.enum.map (fun (idx, w) =>
+        s!"  {wireRef ctx c w} := {readWire}({idx})")
+      joinLines assigns)
   joinLines ([memDecl] ++ writePorts ++ readPorts)
 
 /-- Generate all RAM primitives -/

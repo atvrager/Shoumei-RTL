@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    void* ctx = fstReaderOpen(fst_path);
+    auto ctx = fstReaderOpen(fst_path);
     if (!ctx) {
         fprintf(stderr, "ERROR: Cannot open FST file: %s\n", fst_path);
         return 1;
