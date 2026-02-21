@@ -250,8 +250,14 @@ def CPUConfig.decoderInstrNames (config : CPUConfig) : List String :=
   let enabled := config.enabledExtensions
   let applicable : List OpType := OpType.all.filter fun op =>
     op.extensionGroup.any fun ext => enabled.contains ext
-  let intOps : List OpType := applicable.filter fun op => !op.isFpGroup
-  let fpOps : List OpType := applicable.filter fun op => op.isFpGroup
+  -- Exclude vector pseudo-ops: the scalar decoder doesn't handle them,
+  -- so they must not shift opcode indices.
+  let isVectorPseudoOp : OpType → Bool
+    | .VECTOR_ARITH | .VECTOR_LOAD | .VECTOR_STORE => true
+    | _ => false
+  let scalarOps := applicable.filter fun op => !isVectorPseudoOp op
+  let intOps : List OpType := scalarOps.filter fun op => !op.isFpGroup
+  let fpOps : List OpType := scalarOps.filter fun op => op.isFpGroup
   let revAlpha (a b : String) : Bool := a.toLower > b.toLower
   let sortedInt := (intOps.map (toString ·)).toArray.qsort revAlpha |>.toList
   let sortedFp := (fpOps.map (toString ·)).toArray.qsort revAlpha |>.toList

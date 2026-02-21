@@ -315,28 +315,44 @@ def vecLsuCircuit : Circuit :=
   let handshake_gates : List Gate :=
     [Gate.mkBUF state_is_idle rvv2lsu_ready,
      Gate.mkBUF state_is_writeback lsu2rvv_valid,
-     Gate.mkBUF one lsu2rvv_last] ++
+     Gate.mkBUF is_store_reg lsu2rvv_last] ++
     (List.range 128).map (fun i => Gate.mkBUF load_data_reg[i]! lsu2rvv_data[i]!) ++
     (List.range 5).map (fun i => Gate.mkBUF vd_addr_reg[i]! lsu2rvv_addr[i]!)
 
   -- Next-state logic for FSM state register
-  let sn0_or := Wire.mk "sn0o"
+  -- Compute candidate next-state, then MUX with hold (current state) if no transition fires
   let sn1_a := Wire.mk "sn1a"
-  let sn1_b := Wire.mk "sn1b"
   let sn1_c := Wire.mk "sn1c"
+  let sn0_cand := Wire.mk "sn0c"
+  let sn1_cand := Wire.mk "sn1c_cand"
+  let sn2_cand := Wire.mk "sn2c"
+  -- any_transition: any condition that causes a state change
+  let any_trans := Wire.mk "any_trans"
+  let at_a := Wire.mk "at_a"
+  let at_b := Wire.mk "at_b"
   let state_next_gates : List Gate :=
-    [Gate.mkOR idle_is_store req_accepted sn0_or,
-     Gate.mkBUF sn0_or state_next[0]!,
-     Gate.mkOR idle_is_load setup_accept sn1_a,
-     Gate.mkOR advance_not_done req_accepted sn1_b,
-     Gate.mkOR sn1_a sn1_b sn1_c,
-     Gate.mkBUF sn1_c state_next[1]!,
-     Gate.mkBUF advance_done state_next[2]!]
+    -- Candidate next-state values
+    -- Both loads and stores go directly to ELEM_REQ (010) from IDLE,
+    -- so idle_is_store no longer sets sn0 (SETUP state eliminated).
+    [Gate.mkBUF req_accepted sn0_cand,
+     Gate.mkOR idle_accept advance_not_done sn1_a,
+     Gate.mkOR sn1_a req_accepted sn1_c,
+     Gate.mkBUF sn1_c sn1_cand,
+     Gate.mkBUF advance_done sn2_cand,
+     -- any_transition = idle_accept | req_accepted | resp_received | wb_accepted | skip_advance
+     Gate.mkOR idle_accept req_accepted at_a,
+     Gate.mkOR resp_received wb_accepted at_b,
+     Gate.mkOR at_a at_b (Wire.mk "at_ab"),
+     Gate.mkOR (Wire.mk "at_ab") skip_advance any_trans,
+     -- MUX: if any_transition, use candidate; else hold current state
+     Gate.mkMUX state_reg[0]! sn0_cand any_trans state_next[0]!,
+     Gate.mkMUX state_reg[1]! sn1_cand any_trans state_next[1]!,
+     Gate.mkMUX state_reg[2]! sn2_cand any_trans state_next[2]!]
 
   -- elem_idx_next: 0 on load/setup, increment on advance, else hold
   let ei_load := Wire.mk "ei_ld"
   let elem_idx_next_gates : List Gate :=
-    [Gate.mkOR idle_is_load setup_accept ei_load] ++
+    [Gate.mkBUF idle_accept ei_load] ++
     ((List.range 4).map (fun i =>
       let m1 := Wire.mk s!"ei_m{i}"
       [Gate.mkMUX elem_idx_reg[i]! elem_idx_inc[i]! advance m1,
@@ -345,7 +361,7 @@ def vecLsuCircuit : Circuit :=
   -- addr_acc_next: base_addr on accept, stride_sum on advance, else hold
   let aa_load := Wire.mk "aa_ld"
   let addr_acc_next_gates : List Gate :=
-    [Gate.mkOR idle_accept setup_accept aa_load] ++
+    [Gate.mkBUF idle_accept aa_load] ++
     ((List.range 32).map (fun i =>
       let m1 := Wire.mk s!"aa_m{i}"
       [Gate.mkMUX addr_acc_reg[i]! stride_sum[i]! advance m1,
@@ -374,10 +390,10 @@ def vecLsuCircuit : Circuit :=
         Gate.mkMUX load_data_reg[chunk * 32 + b]! dmem_resp_data[b]!
           e32_slot_act[chunk]! load_data_next[chunk * 32 + b]!))).flatten
 
-  -- store_buf_next: capture on setup_accept, else hold
+  -- store_buf_next: capture on idle_is_store (store data arrives with dispatch), else hold
   let store_buf_next_gates : List Gate :=
     (List.range 128).map (fun i =>
-      Gate.mkMUX store_buf_reg[i]! rvv2lsu_vregfile_data[i]! setup_accept store_buf_next[i]!)
+      Gate.mkMUX store_buf_reg[i]! rvv2lsu_vregfile_data[i]! idle_is_store store_buf_next[i]!)
 
   -- idx_buf_next: capture on idle_accept when idx_valid, else hold
   let idx_capture := Wire.mk "idx_cap"

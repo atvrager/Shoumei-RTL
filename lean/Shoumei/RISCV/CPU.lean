@@ -68,6 +68,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let decode_rs1 := makeIndexedWires "decode_rs1" 5
   let decode_rs2 := makeIndexedWires "decode_rs2" 5
   let decode_imm := makeIndexedWires "decode_imm" 32
+  let decode_valid_scalar := Wire.mk "decode_valid_scalar"
   let decode_valid := Wire.mk "decode_valid"
   let decode_has_rd := Wire.mk "decode_has_rd"
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
@@ -94,6 +95,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Vector dispatch signals
   let dispatch_vector_valid := Wire.mk "dispatch_vector_valid"
   -- RvvCore interface wires
+  let rvv_rstn := Wire.mk "rvv_rstn"  -- active-low reset for RvvCore
   let rvv_inst_ready := Wire.mk "rvv_inst_ready"
   let rvv_inst_valid := Wire.mk "rvv_inst_valid"
   -- RVVInstruction bits: pc[31:0] + opcode[1:0] + bits[24:0] = 59 bits
@@ -150,6 +152,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rvv_lsu_addr_lsu2rvv := makeIndexedWires "rvv_lsu_addr_lsu2rvv" 5
   let rvv_lsu_last_lsu2rvv := Wire.mk "rvv_lsu_last_lsu2rvv"
   let rvv_lsu_ready_lsu2rvv := Wire.mk "rvv_lsu_ready_lsu2rvv"
+  -- Vector: force ROB auto-complete for all vector instructions
+  let not_dispatch_is_vector := Wire.mk "not_dispatch_is_vector"
   -- Vector load/store dispatch detection
   let dispatch_is_vector_mem := Wire.mk "dispatch_is_vector_mem"
   -- Base address + stride sidecar registers
@@ -163,6 +167,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Has-stride flag sidecar
   let rvv_has_stride_reg := Wire.mk "rvv_has_stride_e"
   let rvv_has_stride_next := Wire.mk "rvv_has_stride_nx"
+  -- Is-store sidecar (must be registered, not combinational, because RvvCore
+  -- dispatches uops to VecLsu several cycles after CPU dispatch)
+  let rvv_is_store_reg := Wire.mk "rvv_is_store_e"
+  let rvv_is_store_next := Wire.mk "rvv_is_store_nx"
 
   let decode_has_any_rd := Wire.mk "decode_has_any_rd"
   let decode_rd_nonzero := Wire.mk "decode_rd_nonzero"
@@ -428,7 +436,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (decode_rs1.enum.map (fun ⟨i, w⟩ => (s!"io_rs1_{i}", w))) ++
       (decode_rs2.enum.map (fun ⟨i, w⟩ => (s!"io_rs2_{i}", w))) ++
       (decode_imm.enum.map (fun ⟨i, w⟩ => (s!"io_imm_{i}", w))) ++
-      [("io_valid", decode_valid),
+      [("io_valid", decode_valid_scalar),
        ("io_has_rd", decode_has_rd),
        ("io_is_integer", dispatch_is_integer),
        ("io_is_memory", dispatch_is_memory),
@@ -830,6 +838,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let branch_alloc_hasPhysRd := Wire.mk "branch_alloc_hasPhysRd"
   let rob_alloc_physRd_fp := makeIndexedWires "rob_alloc_physRd_fp" 6
   let rob_alloc_hasPhysRd_fp := Wire.mk "rob_alloc_hasPhysRd_fp"
+  let rob_alloc_hasPhysRd_pre := Wire.mk "rob_alloc_hasPhysRd_pre"
   let fp_issue_dest_tag := makeIndexedWires "fp_issue_dest_tag" 6
   let branch_alloc_physRd_gates :=
     -- branch_alloc_hasPhysRd = dispatch_is_branch OR decode_has_rd_nox0
@@ -840,13 +849,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
       Gate.mkMUX int_dest_tag_masked[i]! rd_phys[i]! dispatch_is_branch branch_alloc_physRd[i]!) ++
     -- FP-aware: same force_alloc logic for branch override
     (if enableF then
-      [Gate.mkOR dispatch_is_branch decode_has_any_rd_nox0 rob_alloc_hasPhysRd_fp] ++
+      [Gate.mkOR dispatch_is_branch decode_has_any_rd_nox0 rob_alloc_hasPhysRd_pre] ++
       (List.range 6).map (fun i =>
         Gate.mkMUX fp_issue_dest_tag[i]! rd_phys[i]! dispatch_is_branch rob_alloc_physRd_fp[i]!)
     else
-      [Gate.mkBUF branch_alloc_hasPhysRd rob_alloc_hasPhysRd_fp] ++
+      [Gate.mkBUF branch_alloc_hasPhysRd rob_alloc_hasPhysRd_pre] ++
       (List.range 6).map (fun i =>
-        Gate.mkBUF branch_alloc_physRd[i]! rob_alloc_physRd_fp[i]!))
+        Gate.mkBUF branch_alloc_physRd[i]! rob_alloc_physRd_fp[i]!)) ++
+    -- Vector instructions auto-complete in ROB (no scalar CDB expected).
+    -- RvvCore handles its own execution ordering; scalar writebacks (vsetvl)
+    -- use the merged_cdb_inject path which bypasses the ROB.
+    (if enableVector then
+      [Gate.mkAND rob_alloc_hasPhysRd_pre not_dispatch_is_vector rob_alloc_hasPhysRd_fp]
+    else
+      [Gate.mkBUF rob_alloc_hasPhysRd_pre rob_alloc_hasPhysRd_fp])
   -- For retire: branches with rd=x0 need to free their tracking tag at commit
   let _branch_tracking := Wire.mk "branch_tracking"
   let _not_hasOldPhysRd := Wire.mk "not_hasOldPhysRd"
@@ -1558,7 +1574,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     moduleName := "RvvCoreWrapper"
     instName := "u_rvv_core"
     portMap :=
-      [("clk", clock), ("rstn", reset)] ++
+      [("clk", clock), ("rstn", rvv_rstn)] ++
       -- CSR inputs (wired from scalar CSR state)
       (List.range 7).map (fun i => (s!"vstart_{i}", vstart_reg[i]!)) ++
       [("vxrm_1", vxrm_reg[1]!), ("vxrm_0", vxrm_reg[0]!), ("vxsat", vxsat_reg[0]!),
@@ -1608,8 +1624,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("uop_lsu_v0_valid_rvv2lsu_0", rvv_lsu_v0_valid_rvv2lsu)] ++
       (rvv_lsu_v0_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_v0_data_rvv2lsu_0_{i}", w))) ++
       [("uop_lsu_ready_rvv2lsu_0", rvv_lsu_ready_rvv2lsu)] ++
-      -- RvvCore also outputs vd_addr and is_store via idx_addr/vregfile_addr
-      (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_idx_addr_rvv2lsu_0_{i}", w))) ++
+      -- RvvCore outputs vd_addr via vregfile_addr
+      (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_vregfile_addr_rvv2lsu_0_{i}", w))) ++
       -- RvvCore inputs (lsu2rvv): driven by VecLsu
       [("uop_lsu_ready_lsu2rvv_0", rvv_lsu_ready_lsu2rvv),
        ("uop_lsu_valid_lsu2rvv_0", rvv_lsu_valid_lsu2rvv)] ++
@@ -1717,19 +1733,26 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkAND not_b12 (imem_resp_data[13]!) b13_nb14,
        Gate.mkAND b13_nb14 not_b14 f3_is_010,
        Gate.mkNOT f3_is_010 funct3_not_010,
-       -- dispatch_is_vector_mem = (vload OR vstore) AND funct3_not_010 AND decode_valid
+       -- vls_f3 = (vload OR vstore) AND funct3_not_010 (raw, no decode_valid)
        Gate.mkOR is_vload_opcode is_vstore_opcode vls_or,
        Gate.mkAND vls_or funct3_not_010 vls_f3,
+       -- vec_or = OP-V OR vls_f3 (raw vector opcode detection)
+       Gate.mkOR rvv_detect_opv vls_f3 vec_or,
+       -- Extend decode_valid to include vector instructions (decoder doesn't know them)
+       Gate.mkOR decode_valid_scalar vec_or decode_valid,
+       -- dispatch_is_vector_mem = vls_f3 AND decode_valid
        Gate.mkAND vls_f3 decode_valid dispatch_is_vector_mem,
-       -- dispatch_is_vector = OP-V OR vector_mem
-       Gate.mkOR rvv_detect_opv dispatch_is_vector_mem vec_or,
+       -- dispatch_is_vector = vec_or AND decode_valid
        Gate.mkAND vec_or decode_valid dispatch_is_vector,
+       Gate.mkNOT dispatch_is_vector not_dispatch_is_vector,
        -- Strided mode: mop = bits[27:26] == 10
        Gate.mkBUF (imem_resp_data[26]!) mop0,
        Gate.mkBUF (imem_resp_data[27]!) mop1,
        Gate.mkNOT mop0 not_mop0,
        Gate.mkNOT mop1 not_mop1,
        Gate.mkAND not_mop0 mop1 mop_strided] ++
+      -- Active-low reset for RvvCore (invert active-high CPU reset)
+      [Gate.mkNOT reset rvv_rstn] ++
       -- rvv_inst_valid = dispatch_vector_valid (backpressure handled externally)
       [Gate.mkBUF dispatch_vector_valid rvv_inst_valid] ++
       -- rvv_inst_bits = imem_resp_data[31:7] (bits[31:7] of the instruction)
@@ -1745,21 +1768,28 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkNOT dispatch_is_vector_mem not_vec_mem,
        Gate.mkAND dispatch_is_memory not_vec_mem dispatch_is_scalar_memory] ++
       -- rvv_lsu_is_store output for VecLsu
-      [Gate.mkBUF is_vstore_opcode rvv_lsu_is_store_rvv2lsu] ++
-      -- Sidecar capture: base_addr, stride, eew, has_stride on dispatch_is_vector_mem
+      [Gate.mkBUF rvv_is_store_reg rvv_lsu_is_store_rvv2lsu] ++
+      -- Sidecar capture: base_addr, stride, eew, has_stride
+      -- Only capture when VecLsu is idle (ready), preventing overwrites from
+      -- back-to-back vector mem instructions before VecLsu consumes the first.
+      let sidecar_capture := Wire.mk "sidecar_capture"
+      [Gate.mkAND dispatch_is_vector_mem rvv_idle sidecar_capture] ++
       -- base_addr ← rs1_data
       (List.range 32).map (fun i =>
-        Gate.mkMUX rvv_base_addr_reg[i]! rs1_data[i]! dispatch_is_vector_mem rvv_base_addr_next[i]!) ++
+        Gate.mkMUX rvv_base_addr_reg[i]! rs1_data[i]! sidecar_capture rvv_base_addr_next[i]!) ++
       -- stride ← rs2_data
       (List.range 32).map (fun i =>
-        Gate.mkMUX rvv_stride_reg[i]! rs2_data[i]! dispatch_is_vector_mem rvv_stride_next[i]!) ++
+        Gate.mkMUX rvv_stride_reg[i]! rs2_data[i]! sidecar_capture rvv_stride_next[i]!) ++
       -- EEW from funct3: funct3[1:0] encodes width (00=e8, 01=e16, 10=e32, 11=reserved)
       -- funct3 = bits[14:12], but width encoding is in bits[13:12] for VL/VS
       (List.range 2).map (fun i =>
-        Gate.mkMUX rvv_eew_reg[i]! (imem_resp_data[i + 12]!) dispatch_is_vector_mem rvv_eew_next[i]!) ++
+        Gate.mkMUX rvv_eew_reg[i]! (imem_resp_data[i + 12]!) sidecar_capture rvv_eew_next[i]!) ++
       -- has_stride ← mop_strided
-      [Gate.mkMUX rvv_has_stride_reg mop_strided dispatch_is_vector_mem rvv_has_stride_next]
-    else [Gate.mkBUF dispatch_is_memory dispatch_is_scalar_memory]
+      [Gate.mkMUX rvv_has_stride_reg mop_strided sidecar_capture rvv_has_stride_next,
+       Gate.mkMUX rvv_is_store_reg is_vstore_opcode sidecar_capture rvv_is_store_next]
+    else [Gate.mkBUF decode_valid_scalar decode_valid,
+          Gate.mkBUF dispatch_is_memory dispatch_is_scalar_memory,
+          Gate.mkBUF one not_dispatch_is_vector]
 
   -- Async rd ready: always accept for now
   let rvv_async_gates :=
@@ -1809,6 +1839,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
                     ("clock", clock), ("reset", reset)] }) ++
       [{ moduleName := "DFlipFlop", instName := "u_rvv_has_stride_dff",
          portMap := [("d", rvv_has_stride_next), ("q", rvv_has_stride_reg),
+                     ("clock", clock), ("reset", reset)] },
+       { moduleName := "DFlipFlop", instName := "u_rvv_is_store_dff",
+         portMap := [("d", rvv_is_store_next), ("q", rvv_is_store_reg),
                      ("clock", clock), ("reset", reset)] }]
     else []
 
@@ -2838,36 +2871,52 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let stall_L0_e := Wire.mk "stall_L0_e"
   let stall_L1_c := Wire.mk "stall_L1_c"
 
+  -- Vector memory fence stall: stall pipeline when
+  -- (a) a scalar memory instruction is decoded while RvvCore is busy, OR
+  -- (b) a vector memory instruction is decoded while VecLsu is busy (sidecar protection)
+  let vec_mem_fence_stall := Wire.mk "vec_mem_fence_stall"
+  let vec_fence_gates : List Gate :=
+    if enableVector then
+      let not_rvv_idle := Wire.mk "not_rvv_idle"
+      let scalar_mem_stall := Wire.mk "scalar_mem_fence_stall"
+      let vec_lsu_busy_stall := Wire.mk "vec_lsu_busy_stall"
+      [Gate.mkNOT rvv_idle not_rvv_idle,
+       Gate.mkAND dispatch_is_scalar_memory not_rvv_idle scalar_mem_stall,
+       Gate.mkAND dispatch_is_vector_mem not_rvv_idle vec_lsu_busy_stall,
+       Gate.mkOR scalar_mem_stall vec_lsu_busy_stall vec_mem_fence_stall]
+    else
+      [Gate.mkBUF zero vec_mem_fence_stall]
+
   let stall_gates :=
     if enableM && enableF then
-      -- 11 sources → balanced tree depth 4
+      -- 11+1 sources → balanced tree depth 4
       -- L0: pair up sources
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
        Gate.mkOR rs_fp_issue_full fp_rename_stall stall_L0_d,
        Gate.mkOR fp_crossdomain_stall mem_fp_src_stall stall_L0_e,
-       -- L1: pair up 5+2 (fp_src3_stall, lsu_sb_full) → 4
+       -- L1: pair up 5+2 (fp_src3_stall, lsu_sb_full, vec_fence) → 4
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c stall_L0_d stall_L1_b,
        Gate.mkOR stall_L0_e fp_src3_stall stall_L1_c,
        -- L2: 3+1 → 2
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
        Gate.mkOR stall_L1_c lsu_sb_full (Wire.mk "stall_L2b"),
-       -- L3: final + external DMEM stall
+       -- L3: final + external DMEM stall + vec fence
        Gate.mkOR stall_L2 (Wire.mk "stall_L2b") (Wire.mk "global_stall_int"),
-       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext (Wire.mk "global_stall_pre"),
+       Gate.mkOR (Wire.mk "global_stall_pre") vec_mem_fence_stall global_stall]
     else if enableM then
-      -- 6 sources → balanced tree depth 3
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c lsu_sb_full stall_L1_b,
        Gate.mkOR stall_L1_a stall_L1_b (Wire.mk "global_stall_int"),
-       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext (Wire.mk "global_stall_pre"),
+       Gate.mkOR (Wire.mk "global_stall_pre") vec_mem_fence_stall global_stall]
     else if enableF then
-      -- 10 sources → balanced tree depth 4
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full rs_fp_issue_full stall_L0_c,
@@ -2878,15 +2927,16 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkOR stall_L0_e lsu_sb_full stall_L1_c,
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
        Gate.mkOR stall_L2 stall_L1_c (Wire.mk "global_stall_int"),
-       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext (Wire.mk "global_stall_pre"),
+       Gate.mkOR (Wire.mk "global_stall_pre") vec_mem_fence_stall global_stall]
     else
-      -- 5 sources → balanced tree depth 3
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full lsu_sb_full stall_L0_c,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L1_a stall_L0_c (Wire.mk "global_stall_int"),
-       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
+       Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext (Wire.mk "global_stall_pre"),
+       Gate.mkOR (Wire.mk "global_stall_pre") vec_mem_fence_stall global_stall]
 
   -- === MEMORY INTERFACE ===
   let dmem_req_valid := Wire.mk "dmem_req_valid"
@@ -3395,7 +3445,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
              fwd_size_check_gates_and_load_fwd_gates ++ lsu_sb_fwd_format_all ++
              lsu_valid_gate ++ lsu_tag_data_mux_gates ++
              lsu_is_fp_gates ++ dmem_is_fp_gates ++ dmem_meta_capture_gates ++ dmem_resp_format_all ++
-             commit_gates ++ retire_tag_filter_gates ++ crossdomain_stall_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_cdb_bypass_gates ++ rvvi_gates ++
+             commit_gates ++ retire_tag_filter_gates ++ crossdomain_stall_gates ++ vec_fence_gates ++ stall_gates ++ dmem_gates ++ output_gates ++ rvvi_cdb_bypass_gates ++ rvvi_gates ++
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates ++

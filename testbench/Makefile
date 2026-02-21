@@ -90,10 +90,6 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 	@git -C $(PROJ_ROOT) submodule update --init third_party/riscv-isa-sim
 	SPIKE_PREFIX=$(SPIKE_PREFIX) $(PROJ_ROOT)/scripts/build-spike.sh
 
-# Apply submodule patches before building (idempotent)
-.PHONY: apply-patches
-apply-patches:
-	@$(PROJ_ROOT)/scripts/apply-patches.sh
 
 .PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests \
         cosim run-cosim coremark run-coremark clean \

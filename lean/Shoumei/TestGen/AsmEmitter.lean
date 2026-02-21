@@ -138,5 +138,7 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   -- Zicsr
   | .CSRRW => "csrrw" | .CSRRS => "csrrs" | .CSRRC => "csrrc"
   | .CSRRWI => "csrrwi" | .CSRRSI => "csrrsi" | .CSRRCI => "csrrci"
+  -- Vector pseudo-ops (not directly emittable)
+  | .VECTOR_LOAD => "vle32.v" | .VECTOR_STORE => "vse32.v" | .VECTOR_ARITH => "vadd.vv"
 
 end Shoumei.TestGen

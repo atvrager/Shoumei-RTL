@@ -335,6 +335,12 @@ def main (args : List String) : IO Unit := do
   let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
   Shoumei.RISCV.generateDecoders defs
 
+  -- Generate RVV integration files (rvv_pkg.sv, RvvCoreWrapper.sv)
+  if defaultCPUConfig.enableVector then
+    IO.println ""
+    IO.println "Generating RVV integration files..."
+    Shoumei.RISCV.Execution.writeRvvIntegrationFiles svOutputDir
+
   -- Generate testbenches
   IO.println ""
   IO.println "Generating testbenches..."
