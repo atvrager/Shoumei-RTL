@@ -44,6 +44,7 @@ import Shoumei.RISCV.Renaming.RenameStage_W2
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
+import Shoumei.RISCV.Execution.IntegerExecUnit_W2
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
@@ -225,6 +226,7 @@ def allCircuits : List Circuit := [
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
+  mkIntegerExecUnit_W2,
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
