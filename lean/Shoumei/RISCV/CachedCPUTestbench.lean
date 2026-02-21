@@ -28,6 +28,16 @@ def cachedCpuTestbenchConfig : TestbenchConfig := {
     respValidSignal := "mem_resp_valid"
     respDataSignal := "mem_resp_data"
   }
+  vecMemPort := if defaultCPUConfig.enableVector then some {
+    reqValidSignal := "vec_dmem_req_valid"
+    reqWeSignal := "vec_dmem_req_we"
+    reqAddrSignal := "vec_dmem_req_addr"
+    reqDataSignal := "vec_dmem_req_data"
+    reqSizeSignal := "vec_dmem_req_size"
+    reqReadySignal := "vec_dmem_req_ready"
+    respValidSignal := "vec_dmem_resp_valid"
+    respDataSignal := "vec_dmem_resp_rdata"
+  } else none
   constantPorts := [("zero", false), ("one", true)]
   tbName := some "tb_cpu"
   memSizeWords := defaultCPUConfig.memSizeWords

@@ -72,6 +72,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let decode_has_rd := Wire.mk "decode_has_rd"
   let dispatch_is_integer := Wire.mk "dispatch_is_integer"
   let dispatch_is_memory := Wire.mk "dispatch_is_memory"
+  let dispatch_is_scalar_memory := Wire.mk "dispatch_is_scalar_memory"
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
   let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
   let dispatch_is_store := Wire.mk "dispatch_is_store"
@@ -669,7 +670,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkAND rename_valid not_csr_rename_en rename_valid_gated,
      Gate.mkAND decode_valid_rename not_csr_rename_en dispatch_base_valid,
      Gate.mkAND dispatch_base_valid dispatch_is_integer dispatch_int_valid,
-     Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
+     Gate.mkAND dispatch_base_valid dispatch_is_scalar_memory dispatch_mem_valid,
      Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid] ++
     (if enableM then [Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid] else []) ++
     (if enableVector then [Gate.mkAND dispatch_base_valid dispatch_is_vector dispatch_vector_valid] else []) ++
@@ -1554,79 +1555,79 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- RvvCore is an external SV module from coralnpu. N=4 with lanes 1-3 tied off.
   -- The scalar CPU packs instruction bits and forwards scalar register values.
   let rvv_core_inst : CircuitInstance := {
-    moduleName := "RvvCore"
+    moduleName := "RvvCoreWrapper"
     instName := "u_rvv_core"
     portMap :=
       [("clk", clock), ("rstn", reset)] ++
       -- CSR inputs (wired from scalar CSR state)
-      (List.range 7).map (fun i => (s!"vstart[{i}]", vstart_reg[i]!)) ++
-      [("vxrm[1]", vxrm_reg[1]!), ("vxrm[0]", vxrm_reg[0]!), ("vxsat", vxsat_reg[0]!),
-       ("frm[2]", frm_reg[2]!), ("frm[1]", frm_reg[1]!), ("frm[0]", frm_reg[0]!)] ++
+      (List.range 7).map (fun i => (s!"vstart_{i}", vstart_reg[i]!)) ++
+      [("vxrm_1", vxrm_reg[1]!), ("vxrm_0", vxrm_reg[0]!), ("vxsat", vxsat_reg[0]!),
+       ("frm_2", frm_reg[2]!), ("frm_1", frm_reg[1]!), ("frm_0", frm_reg[0]!)] ++
       -- Instruction input: only lane 0 used, lanes 1-3 tied off
-      [("inst_valid[0]", rvv_inst_valid),
-       ("inst_valid[1]", zero), ("inst_valid[2]", zero), ("inst_valid[3]", zero)] ++
-      -- inst_data[0]: packed RVVInstruction {pc, opcode, bits}
-      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].pc[{i}]", w))) ++
-      (rvv_opcode.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].opcode[{i}]", w))) ++
-      (rvv_inst_bits.enum.map (fun ⟨i, w⟩ => (s!"inst_data[0].bits[{i}]", w))) ++
-      -- Tie off inst_data for lanes 1-3
+      [("inst_valid_0", rvv_inst_valid),
+       ("inst_valid_1", zero), ("inst_valid_2", zero), ("inst_valid_3", zero)] ++
+      -- inst_data lane 0: flat struct fields
+      (fetch_pc.enum.map (fun ⟨i, w⟩ => (s!"inst_data_0_pc_{i}", w))) ++
+      (rvv_opcode.enum.map (fun ⟨i, w⟩ => (s!"inst_data_0_opcode_{i}", w))) ++
+      (rvv_inst_bits.enum.map (fun ⟨i, w⟩ => (s!"inst_data_0_bits_{i}", w))) ++
+      -- Tie off inst_data for lanes 1-3 (59-bit flat vectors)
       ((List.range 3).map (fun lane =>
-        (List.range 59).map (fun bit => (s!"inst_data[{lane+1}][{bit}]", zero)))).flatten ++
-      [("inst_ready[0]", rvv_inst_ready)] ++
+        (List.range 59).map (fun bit => (s!"inst_data_{lane+1}_{bit}", zero)))).flatten ++
+      [("inst_ready_0", rvv_inst_ready)] ++
       -- Scalar register read data (2*N = 8 ports, only 0-1 used)
-      [("reg_read_valid[0]", rvv_inst_valid), ("reg_read_valid[1]", rvv_inst_valid)] ++
-      (List.range 6).map (fun j => (s!"reg_read_valid[{j+2}]", zero)) ++
-      (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data[0][{i}]", w))) ++
-      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data[1][{i}]", w))) ++
+      [("reg_read_valid_0", rvv_inst_valid), ("reg_read_valid_1", rvv_inst_valid)] ++
+      (List.range 6).map (fun j => (s!"reg_read_valid_{j+2}", zero)) ++
+      (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data_0_{i}", w))) ++
+      (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"reg_read_data_1_{i}", w))) ++
       ((List.range 6).map (fun j =>
-        (List.range 32).map (fun bit => (s!"reg_read_data[{j+2}][{bit}]", zero)))).flatten ++
+        (List.range 32).map (fun bit => (s!"reg_read_data_{j+2}_{bit}", zero)))).flatten ++
       -- FP register read data (N=4 ports, all tied off for Zve32x integer-only)
       ((List.range 4).map (fun j =>
-        (List.range 32).map (fun bit => (s!"freg_read_data[{j}][{bit}]", zero)))).flatten ++
+        (List.range 32).map (fun bit => (s!"freg_read_data_{j}_{bit}", zero)))).flatten ++
       -- Scalar writeback outputs (config ops)
-      [("reg_write_valid[0]", rvv_reg_write_valid)] ++
-      (rvv_reg_write_addr.enum.map (fun ⟨i, w⟩ => (s!"reg_write_addr[0][{i}]", w))) ++
-      (rvv_reg_write_data.enum.map (fun ⟨i, w⟩ => (s!"reg_write_data[0][{i}]", w))) ++
+      [("reg_write_valid_0", rvv_reg_write_valid)] ++
+      (rvv_reg_write_addr.enum.map (fun ⟨i, w⟩ => (s!"reg_write_addr_0_{i}", w))) ++
+      (rvv_reg_write_data.enum.map (fun ⟨i, w⟩ => (s!"reg_write_data_0_{i}", w))) ++
       -- Async scalar writeback (vmv.x.s etc.)
       [("async_rd_valid", rvv_async_rd_valid),
        ("async_rd_ready", rvv_async_rd_ready)] ++
-      (rvv_async_rd_addr.enum.map (fun ⟨i, w⟩ => (s!"async_rd_addr[{i}]", w))) ++
-      (rvv_async_rd_data.enum.map (fun ⟨i, w⟩ => (s!"async_rd_data[{i}]", w))) ++
+      (rvv_async_rd_addr.enum.map (fun ⟨i, w⟩ => (s!"async_rd_addr_{i}", w))) ++
+      (rvv_async_rd_data.enum.map (fun ⟨i, w⟩ => (s!"async_rd_data_{i}", w))) ++
       -- Status
       [("rvv_idle", rvv_idle)] ++
-      (rvv_queue_capacity.enum.map (fun ⟨i, w⟩ => (s!"queue_capacity[{i}]", w))) ++
+      (rvv_queue_capacity.enum.map (fun ⟨i, w⟩ => (s!"queue_capacity_{i}", w))) ++
       -- Trap
       [("trap_valid_o", rvv_trap_valid)] ++
       -- LSU slot 0: connected to VecLsu
       -- RvvCore outputs (rvv2lsu): read by VecLsu
-      [("uop_lsu_valid_rvv2lsu[0]", rvv_lsu_valid_rvv2lsu),
-       ("uop_lsu_idx_valid_rvv2lsu[0]", rvv_lsu_idx_valid_rvv2lsu)] ++
-      (rvv_lsu_idx_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_idx_data_rvv2lsu[0][{i}]", w))) ++
-      [("uop_lsu_vregfile_valid_rvv2lsu[0]", rvv_lsu_vregfile_valid_rvv2lsu)] ++
-      (rvv_lsu_vregfile_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_vregfile_data_rvv2lsu[0][{i}]", w))) ++
-      [("uop_lsu_v0_valid_rvv2lsu[0]", rvv_lsu_v0_valid_rvv2lsu)] ++
-      (rvv_lsu_v0_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_v0_data_rvv2lsu[0][{i}]", w))) ++
-      [("uop_lsu_ready_rvv2lsu[0]", rvv_lsu_ready_rvv2lsu)] ++
+      [("uop_lsu_valid_rvv2lsu_0", rvv_lsu_valid_rvv2lsu),
+       ("uop_lsu_idx_valid_rvv2lsu_0", rvv_lsu_idx_valid_rvv2lsu)] ++
+      (rvv_lsu_idx_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_idx_data_rvv2lsu_0_{i}", w))) ++
+      [("uop_lsu_vregfile_valid_rvv2lsu_0", rvv_lsu_vregfile_valid_rvv2lsu)] ++
+      (rvv_lsu_vregfile_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_vregfile_data_rvv2lsu_0_{i}", w))) ++
+      [("uop_lsu_v0_valid_rvv2lsu_0", rvv_lsu_v0_valid_rvv2lsu)] ++
+      (rvv_lsu_v0_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_v0_data_rvv2lsu_0_{i}", w))) ++
+      [("uop_lsu_ready_rvv2lsu_0", rvv_lsu_ready_rvv2lsu)] ++
       -- RvvCore also outputs vd_addr and is_store via idx_addr/vregfile_addr
-      (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_idx_addr_rvv2lsu[0][{i}]", w))) ++
+      (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_idx_addr_rvv2lsu_0_{i}", w))) ++
       -- RvvCore inputs (lsu2rvv): driven by VecLsu
-      [("uop_lsu_ready_lsu2rvv[0]", rvv_lsu_ready_lsu2rvv),
-       ("uop_lsu_valid_lsu2rvv[0]", rvv_lsu_valid_lsu2rvv)] ++
-      (rvv_lsu_addr_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_addr_lsu2rvv[0][{i}]", w))) ++
-      (rvv_lsu_data_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_wdata_lsu2rvv[0][{i}]", w))) ++
-      [("uop_lsu_last_lsu2rvv[0]", rvv_lsu_last_lsu2rvv)] ++
+      [("uop_lsu_ready_lsu2rvv_0", rvv_lsu_ready_lsu2rvv),
+       ("uop_lsu_valid_lsu2rvv_0", rvv_lsu_valid_lsu2rvv)] ++
+      (rvv_lsu_addr_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_addr_lsu2rvv_0_{i}", w))) ++
+      (rvv_lsu_data_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"uop_lsu_wdata_lsu2rvv_0_{i}", w))) ++
+      [("uop_lsu_last_lsu2rvv_0", rvv_lsu_last_lsu2rvv)] ++
       -- LSU slot 1: tied off
-      [("uop_lsu_ready_lsu2rvv[1]", zero),
-       ("uop_lsu_valid_lsu2rvv[1]", zero)] ++
-      (List.range 5).map (fun b => (s!"uop_lsu_addr_lsu2rvv[1][{b}]", zero)) ++
-      (List.range 128).map (fun b => (s!"uop_lsu_wdata_lsu2rvv[1][{b}]", zero)) ++
-      [("uop_lsu_last_lsu2rvv[1]", zero)] ++
+      [("uop_lsu_ready_lsu2rvv_1", zero),
+       ("uop_lsu_valid_lsu2rvv_1", zero)] ++
+      (List.range 5).map (fun b => (s!"uop_lsu_addr_lsu2rvv_1_{b}", zero)) ++
+      (List.range 128).map (fun b => (s!"uop_lsu_wdata_lsu2rvv_1_{b}", zero)) ++
+      [("uop_lsu_last_lsu2rvv_1", zero)] ++
       -- VCSR writeback from RvvCore (saturation flag)
       [("wr_vxsat_valid_o", rvv_wr_vxsat_valid),
        ("wr_vxsat_o", rvv_wr_vxsat)] ++
       -- Config state outputs (vl/vtype for CSR reads)
-      (rvv_config_vl.enum.map (fun ⟨i, w⟩ => (s!"config_state_vl[{i}]", w))) ++
-      (rvv_config_vtype.enum.map (fun ⟨i, w⟩ => (s!"config_state_vtype[{i}]", w))) ++
+      (rvv_config_vl.enum.map (fun ⟨i, w⟩ => (s!"config_state_vl_{i}", w))) ++
+      (rvv_config_vtype.enum.map (fun ⟨i, w⟩ => (s!"config_state_vtype_{i}", w))) ++
       [("vcsr_ready", one)] ++
       -- Async FP writeback (tie off for Zve32x)
       [("async_frd_ready", zero)]
@@ -1741,7 +1742,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkBUF is_vstore_opcode (rvv_opcode[0]!),
        Gate.mkBUF not_vmem (rvv_opcode[1]!),
        -- Gate dispatch_is_memory: exclude vector memory from scalar memory path
-       Gate.mkNOT dispatch_is_vector_mem not_vec_mem] ++
+       Gate.mkNOT dispatch_is_vector_mem not_vec_mem,
+       Gate.mkAND dispatch_is_memory not_vec_mem dispatch_is_scalar_memory] ++
       -- rvv_lsu_is_store output for VecLsu
       [Gate.mkBUF is_vstore_opcode rvv_lsu_is_store_rvv2lsu] ++
       -- Sidecar capture: base_addr, stride, eew, has_stride on dispatch_is_vector_mem
@@ -1757,7 +1759,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         Gate.mkMUX rvv_eew_reg[i]! (imem_resp_data[i + 12]!) dispatch_is_vector_mem rvv_eew_next[i]!) ++
       -- has_stride ← mop_strided
       [Gate.mkMUX rvv_has_stride_reg mop_strided dispatch_is_vector_mem rvv_has_stride_next]
-    else []
+    else [Gate.mkBUF dispatch_is_memory dispatch_is_scalar_memory]
 
   -- Async rd ready: always accept for now
   let rvv_async_gates :=
@@ -1816,38 +1818,38 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [{ moduleName := "VecLsu", instName := "u_vec_lsu",
          portMap :=
            [("clock", clock), ("reset", reset), ("zero_const", zero), ("one_const", one)] ++
-           (rvv_base_addr_reg.enum.map (fun ⟨i, w⟩ => (s!"base_addr[{i}]", w))) ++
-           (rvv_stride_reg.enum.map (fun ⟨i, w⟩ => (s!"stride[{i}]", w))) ++
+           (rvv_base_addr_reg.enum.map (fun ⟨i, w⟩ => (s!"base_addr_{i}", w))) ++
+           (rvv_stride_reg.enum.map (fun ⟨i, w⟩ => (s!"stride_{i}", w))) ++
            [("has_stride", rvv_has_stride_reg)] ++
            -- rvv2lsu inputs (from RvvCore)
            [("rvv2lsu_valid", rvv_lsu_valid_rvv2lsu),
             ("rvv2lsu_idx_valid", rvv_lsu_idx_valid_rvv2lsu)] ++
-           (rvv_lsu_idx_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_idx_data[{i}]", w))) ++
+           (rvv_lsu_idx_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_idx_data_{i}", w))) ++
            [("rvv2lsu_vregfile_valid", rvv_lsu_vregfile_valid_rvv2lsu)] ++
-           (rvv_lsu_vregfile_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_vregfile_data[{i}]", w))) ++
+           (rvv_lsu_vregfile_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_vregfile_data_{i}", w))) ++
            [("rvv2lsu_mask_valid", rvv_lsu_v0_valid_rvv2lsu)] ++
-           (rvv_lsu_v0_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_mask[{i}]", w))) ++
-           (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_vd_addr[{i}]", w))) ++
+           (rvv_lsu_v0_data_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_mask_{i}", w))) ++
+           (rvv_lsu_vd_addr_rvv2lsu.enum.map (fun ⟨i, w⟩ => (s!"rvv2lsu_vd_addr_{i}", w))) ++
            [("rvv2lsu_is_store", rvv_lsu_is_store_rvv2lsu)] ++
            -- lsu2rvv ready (from RvvCore)
            [("lsu2rvv_ready", rvv_lsu_ready_rvv2lsu)] ++
            -- DMEM interface
            [("dmem_req_ready", vec_dmem_req_ready),
             ("dmem_resp_valid", vec_dmem_resp_valid)] ++
-           (vec_dmem_resp_rdata.enum.map (fun ⟨i, w⟩ => (s!"dmem_resp_data[{i}]", w))) ++
+           (vec_dmem_resp_rdata.enum.map (fun ⟨i, w⟩ => (s!"dmem_resp_data_{i}", w))) ++
            -- EEW
-           (rvv_eew_reg.enum.map (fun ⟨i, w⟩ => (s!"eew[{i}]", w))) ++
+           (rvv_eew_reg.enum.map (fun ⟨i, w⟩ => (s!"eew_{i}", w))) ++
            -- Outputs
            [("rvv2lsu_ready", rvv_lsu_ready_lsu2rvv)] ++
            [("lsu2rvv_valid", rvv_lsu_valid_lsu2rvv)] ++
-           (rvv_lsu_data_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"lsu2rvv_data[{i}]", w))) ++
-           (rvv_lsu_addr_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"lsu2rvv_addr[{i}]", w))) ++
+           (rvv_lsu_data_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"lsu2rvv_data_{i}", w))) ++
+           (rvv_lsu_addr_lsu2rvv.enum.map (fun ⟨i, w⟩ => (s!"lsu2rvv_addr_{i}", w))) ++
            [("lsu2rvv_last", rvv_lsu_last_lsu2rvv)] ++
            [("dmem_req_valid", vec_dmem_req_valid),
             ("dmem_req_we", vec_dmem_req_we)] ++
-           (vec_dmem_req_addr.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_addr[{i}]", w))) ++
-           (vec_dmem_req_data.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_data[{i}]", w))) ++
-           (vec_dmem_req_size.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_size[{i}]", w)))
+           (vec_dmem_req_addr.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_addr_{i}", w))) ++
+           (vec_dmem_req_data.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_data_{i}", w))) ++
+           (vec_dmem_req_size.enum.map (fun ⟨i, w⟩ => (s!"dmem_req_size_{i}", w)))
        }]
     else []
 
