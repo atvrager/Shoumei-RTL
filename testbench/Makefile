@@ -91,17 +91,21 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 # ==========================================================================
 
 # Step 0: Preprocess testbench SV to remove constructs unsupported by circt-verilog
-# (DPI-C exports, $write/%c format specifiers, svSetScope, etc.)
+# Strips: DPI-C exports/imports + function bodies, $write/$display/$finish, initial blocks
 ARC_TB_DIR := $(BUILD_DIR)/arc/tb_sv
 $(ARC_TB_DIR)/%.sv: $(TB_DIR)/generated/%.sv
 	@mkdir -p $(ARC_TB_DIR)
-	sed -e '/export "DPI-C"/d' \
-	    -e '/import "DPI-C"/d' \
-	    -e '/\$$write/d' \
-	    -e '/\$$display/d' \
-	    -e '/\$$fwrite/d' \
-	    -e '/\$$finish/d' \
-	    $< > $@
+	awk '\
+	  /export "DPI-C"/ { skip=1; next } \
+	  /import "DPI-C"/ { skip=1; next } \
+	  /^\s*function\s/ { skip=1; next } \
+	  /^\s*endfunction/ { skip=0; next } \
+	  /\$$write/ { next } \
+	  /\$$display/ { next } \
+	  /\$$fwrite/ { next } \
+	  /\$$finish/ { next } \
+	  skip { next } \
+	  { print }' $< > $@
 
 ARC_TB_SOURCES := $(patsubst $(TB_DIR)/generated/%.sv,$(ARC_TB_DIR)/%.sv,$(TB_SOURCES))
 
