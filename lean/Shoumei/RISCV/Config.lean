@@ -32,12 +32,16 @@ structure CPUConfig where
   enableM : Bool := false
   /-- F extension: single-precision floating-point (IEEE 754) -/
   enableF : Bool := false
+  /-- VME extension: vector matrix (IME outer-product variant) -/
+  enableVME : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (CSRRW/S/C, CSRRWI/SI/CI, mcycle, minstret, mscratch) -/
   enableZicsr : Bool := false
   /-- Zifencei extension: instruction-fetch fence (FENCE.I) -/
   enableZifencei : Bool := false
+  /-- Vector register length in bits (for VME) -/
+  vlen : Nat := 128
   /-- Register width (32 for RV32, 64 for RV64) -/
   xlen : Nat := 32
   /-- ROB commit width (number of instructions retired per cycle) -/
@@ -103,6 +107,18 @@ def CPUConfig.robIdxWidth (c : CPUConfig) : Nat := log2Ceil c.robEntries
 /-- Store buffer index width in bits (e.g., 3 for 8 entries) -/
 def CPUConfig.sbIdxWidth (c : CPUConfig) : Nat := log2Ceil c.storeBufferEntries
 
+/-- Max tile rows for int8 (VLEN/8) -/
+def CPUConfig.maxTileRowsInt8 (c : CPUConfig) : Nat := c.vlen / 8
+
+/-- Max tile rows for int16 (VLEN/16) -/
+def CPUConfig.maxTileRowsInt16 (c : CPUConfig) : Nat := c.vlen / 16
+
+/-- Accumulator element width (always 32 for int8→int32 and int16→int32) -/
+def CPUConfig.accumBits : Nat := 32
+
+/-- Tile row index width in bits -/
+def CPUConfig.tileRowIdxWidth (c : CPUConfig) : Nat := log2Ceil (c.maxTileRowsInt8)
+
 /-- Cache line offset bits (e.g., 5 for 8 words × 4 bytes = 32 bytes) -/
 def CPUConfig.cacheOffsetBits (c : CPUConfig) : Nat := log2Ceil (c.cacheLineWords * 4)
 
@@ -132,7 +148,8 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
-  (if config.enableZifencei then ["rv_zifencei"] else [])
+  (if config.enableZifencei then ["rv_zifencei"] else []) ++
+  (if config.enableVME then ["rv_vme"] else [])
 
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
@@ -155,6 +172,7 @@ def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.conta
 def defaultCPUConfig : CPUConfig := {
   enableM := true
   enableF := true
+  enableVME := true
   enableZicsr := true
   enableZifencei := true
   enableCache := true
@@ -175,6 +193,9 @@ def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr
 
 /-- RV32IMF with microcoded trap entry sequencer -/
 def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
+
+/-- RV32IMF + VME (M + F + Zicsr + Zifencei + Vector Matrix Extension) -/
+def rv32imfVmeConfig : CPUConfig := { enableM := true, enableF := true, enableVME := true, enableZicsr := true, enableZifencei := true }
 
 
 /-
@@ -215,8 +236,9 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
+  let vme := if cfg.enableVME then "_Xvme" else ""
   let ucode := if cfg.useMicrocode then "_Microcoded" else ""
-  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
+  base ++ mExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ vme ++ ucode
 
 /-- Full CPU module name including ISA string and optional cache suffix -/
 def CPUConfig.fullName (c : CPUConfig) : String :=
@@ -231,7 +253,8 @@ def CPUConfig.spikeIsa (c : CPUConfig) : String :=
   let c_ := if c.enableC then "c" else ""
   let zicsr := if c.enableZicsr then "_zicsr" else ""
   let zifencei := if c.enableZifencei then "_zifencei" else ""
-  base ++ m ++ f ++ c_ ++ zicsr ++ zifencei
+  let vme := if c.enableVME then "_xvme" else ""
+  base ++ m ++ f ++ c_ ++ zicsr ++ zifencei ++ vme
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.

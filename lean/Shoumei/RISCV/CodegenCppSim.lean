@@ -65,6 +65,10 @@ private def hasMCpp (defs : List InstructionDef) : Bool :=
 private def hasFCpp (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+/-- Check if decoder includes VME-extension instructions (C++ simulation) -/
+private def hasVMECpp (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_vme"))
+
 /-- Generate individual bool* port declarations for a multi-bit signal -/
 private def genBoolPtrPorts (baseName : String) (width : Nat) : String :=
   let ports := (List.range width).map fun i =>
@@ -82,7 +86,8 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "\n  bool* io_is_muldiv;" else ""
 
   let hasF := hasFCpp defs
-  let optypeWidth := if hasF then 7 else 6
+  let hasVME := hasVMECpp defs
+  let optypeWidth := if defs.length > 64 then 7 else if defs.length > 32 then 6 else 5
 
   let fpPorts := if hasF then
     "\n" ++
@@ -127,7 +132,7 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "  bool* io_is_memory;",
     "  bool* io_is_branch;",
     "  bool* io_is_store;",
-    "  bool* io_use_imm;" ++ muldivPort ++ fpPorts,
+    "  bool* io_use_imm;" ++ muldivPort ++ fpPorts ++ (if hasVME then "\n  bool* io_is_matrix;" else ""),
     "",
     "  void comb_logic();",
     "  void seq_tick() {}",
@@ -167,7 +172,7 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     String.intercalate "\n" ((List.range width).map fun i =>
       s!"  *{name}_{i} = ({varName} >> {i}) & 1;")
 
-  let optypeWidth := if hasF then 7 else 6
+  let optypeWidth := if defs.length > 64 then 7 else if defs.length > 32 then 6 else 5
 
   let rs3RmExtract := if hasF then
     "  uint32_t rs3 = (instr >> 27) & 0x1f;\n" ++
@@ -323,11 +328,14 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "  *io_is_memory = valid && ((opcode == 0x03) || (opcode == 0x23)" ++ fpMemoryCheck ++ ");",
     "  *io_is_branch = valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67));",
     "  *io_is_store = valid && (opcode == 0x23)" ++ fpStoreCheck ++ ";",
-    "  *io_use_imm = valid && (opcode != 0x33) && (opcode != 0x63)" ++ fpUseImmExclude ++ ";",
+    "  *io_use_imm = valid && (opcode != 0x33) && (opcode != 0x63)" ++ fpUseImmExclude ++ (if hasVMECpp defs then " && (opcode != 0x5b)" else "") ++ ";",
     if hasMCpp defs then
     "  *io_is_muldiv = valid && is_mext;"
     else "",
     fpClassify,
+    if hasVMECpp defs then
+    "  *io_is_matrix = valid && (opcode == 0x5b);"
+    else "",
     s!"{rb}",
     "",
     ""

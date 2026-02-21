@@ -138,5 +138,11 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   -- Zicsr
   | .CSRRW => "csrrw" | .CSRRS => "csrrs" | .CSRRC => "csrrc"
   | .CSRRWI => "csrrwi" | .CSRRSI => "csrrsi" | .CSRRCI => "csrrci"
+  -- VME (no standard mnemonics yet, use custom names)
+  | .MSETCLI => "msetcli" | .MSETRLI => "msetrli"
+  | .VOP_AVV => "vop.avv" | .VOPACC_AVV => "vopacc.avv" | .VMACC_AVX => "vmacc.avx"
+  | .VRACCR => "vraccr" | .VRACCC => "vraccc"
+  | .VWACCR => "vwaccr" | .VWACCC => "vwaccc"
+  | .VRRACCR => "vrraccr" | .VRWACCR => "vrwaccr"
 
 end Shoumei.TestGen

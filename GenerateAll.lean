@@ -53,16 +53,14 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
--- F-Extension
+-- VME (Vector Matrix Extension) Building Blocks
+import Shoumei.Circuits.Combinational.MACUnit
+import Shoumei.Circuits.Combinational.MACArray
+import Shoumei.RISCV.Matrix.AccumulatorState
+
+-- F-Extension (unpack/pack only; large FP units use compositional certs)
 import Shoumei.Circuits.Combinational.FPUnpack
 import Shoumei.Circuits.Combinational.FPPack
-import Shoumei.Circuits.Combinational.FPMisc
-import Shoumei.Circuits.Sequential.FPAdder
-import Shoumei.Circuits.Sequential.FPMultiplier
-import Shoumei.Circuits.Sequential.FPFMA
-import Shoumei.Circuits.Sequential.FPDivider
-import Shoumei.Circuits.Sequential.FPSqrt
-import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
@@ -78,7 +76,6 @@ import Shoumei.RISCV.Memory.Cache.L1ICache
 import Shoumei.RISCV.Memory.Cache.L1DCache
 import Shoumei.RISCV.Memory.Cache.L2Cache
 import Shoumei.RISCV.Memory.Cache.MemoryHierarchy
-import Shoumei.RISCV.Memory.Cache.CachedCPU
 
 -- Phase 8a: Microcode Sequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
@@ -87,7 +84,6 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
-import Shoumei.RISCV.CPU
 
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
@@ -104,6 +100,7 @@ open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
+open Shoumei.RISCV.Matrix
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CachedCPUTestbench
 
@@ -155,7 +152,7 @@ def allCircuits : List Circuit := [
   mkMux8x32Hierarchical, -- Hierarchical 8:1 (2× Mux4x32 + sel buffers)
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
-  mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
+  -- mkMuxTree 16 32, -- 1920 gates, compositional
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
   mkMux64x6Hierarchical,   -- Hierarchical version (9 instances instead of 1512 gates)
@@ -169,12 +166,12 @@ def allCircuits : List Circuit := [
   -- Phase 3: Queues and Registers
   mkQueueNStructural 2 8,
   mkQueueNStructural 4 8,
-  mkQueueNStructural 64 6,
-  mkQueueNStructural 64 32,
+  -- mkQueueNStructural 64 6,   -- compositional
+  -- mkQueueNStructural 64 32,  -- 2112 gates, compositional
   mkQueueRAM 2 8,
   mkQueueRAM 4 8,
-  mkQueueRAM 64 6,
-  mkQueueRAM 64 32,
+  -- mkQueueRAM 64 6,   -- large, compositional
+  -- mkQueueRAM 64 32,  -- large, compositional
   mkQueuePointer 1,
   mkQueuePointer 2,
   mkQueuePointer 3,  -- Phase 7: Store buffer head pointer
@@ -205,7 +202,7 @@ def allCircuits : List Circuit := [
   mkRegister91Hierarchical,
 
   -- Phase 3b: Flushable Queue Components
-  mkQueueRAMInit 64 6 (fun i => i + 32),
+  -- mkQueueRAMInit 64 6 (fun i => i + 32),  -- 832 gates, compositional
   mkQueuePointerInit 6 32,
   mkQueueCounterLoadableInit 7 32,
   mkQueueNFlushable 64 6 32 (fun i => i + 32),
@@ -215,7 +212,7 @@ def allCircuits : List Circuit := [
   mkFreeList64,
   mkFreeList64Flushable,
   mkBitmapFreeList64,
-  mkPhysRegFile64,
+  -- mkPhysRegFile64,     -- 2192 gates, compositional
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
@@ -226,35 +223,44 @@ def allCircuits : List Circuit := [
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkRippleCarryAdder64,
-  mkKoggeStoneAdder64,
+  -- mkKoggeStoneAdder64,  -- 1283 gates, compositional
   csaCompressor64,
-  mkPipelinedMultiplier,
-  mkDividerCircuit,
+  -- mkPipelinedMultiplier, -- 2197 gates, compositional
+  -- mkDividerCircuit,      -- 1150 gates, compositional
   mkMulDivExecUnit,
   mkMulDivRS4,
 
   -- F-Extension: FPU building blocks
   fpUnpackCircuit,
   fpPackCircuit,
-  fpMiscCircuit,
-  fpAdderCircuit,
-  fpMultiplierCircuit,
-  fpFMACircuit,
-  fpDividerCircuit,
-  fpSqrtCircuit,
-  mkFPExecUnit,
+  -- fpMiscCircuit,        -- 5509 gates, compositional
+  -- fpAdderCircuit,        -- 3166 gates, compositional
+  -- fpMultiplierCircuit,   -- 11404 gates, compositional
+  -- fpFMACircuit,          -- large, compositional
+  -- fpDividerCircuit,      -- compositional
+  -- fpSqrtCircuit,         -- compositional
+  -- mkFPExecUnit,          -- compositional (depends on FP units)
 
-  -- Phase 6: Retirement
-  mkROB16,
-  mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
+  -- VME (Vector Matrix Extension)
+  -- mkMACUnit8,           -- 2144 gates, compositional
+  -- mkMACUnit16,          -- 2144 gates, compositional
+  -- mkMACArray16x16_8,     -- 256 instances, codegen too slow; compositional
+  -- mkMACArray8x8_16,      -- 64 instances, codegen too slow; compositional
+  -- mkVecRegStub32x128,   -- ~16K gates, compositional
+  -- mkMatrixExecUnit,      -- 16K SV lines, compositional
 
-  -- Phase 7: Memory
-  mkStoreBuffer8,
-  mkLSU,
+  -- Phase 6: Retirement (compositional)
+  -- mkROB16,
+  -- mkQueue16x32,
+
+  -- Phase 7: Memory (compositional)
+  -- mkStoreBuffer8,
+  -- mkLSU,
 
   -- Phase 7b: Cache Hierarchy Building Blocks
   mkRegisterN 24,   -- L1I/L2 tag storage (24-bit tags)
   mkRegisterN 25,   -- L1D tag storage (25-bit tags)
+  mkRegisterNHierarchical 128,  -- VecRegStub: vector register storage (128-bit VLEN)
   mkRegisterNHierarchical 256,  -- Cache line data storage (8 words)
   mkEqualityComparatorN 24,     -- L1I/L2 tag comparison
   mkEqualityComparatorN 25,     -- L1D tag comparison
@@ -262,12 +268,13 @@ def allCircuits : List Circuit := [
   mkMuxTree 8 24,    -- L1I/L2 tag set mux (8 sets × 24-bit tags)
   mkMuxTree 4 32,    -- L1D data set mux (4 sets × 32-bit words)
 
-  -- Phase 7b: Cache Hierarchy Modules
-  mkL1ICache,
-  mkL1DCache,
-  mkL2Cache,
-  mkMemoryHierarchy,
-  mkCachedCPU defaultCPUConfig,
+  -- Phase 7b: Cache Hierarchy Modules (compositional)
+  -- mkL1ICache,
+  -- mkL1DCache,
+  -- mkL2Cache,
+  mkMemoryHierarchy,  -- hierarchical, fast
+  -- mkCPU defaultCPUConfig,        -- massive, compositional
+  -- mkCachedCPU defaultCPUConfig,   -- compositional (wraps CPU)
 
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,
@@ -277,12 +284,7 @@ def allCircuits : List Circuit := [
   cdbMux,
   cdbMuxF,
   mkFetchStage,
-  mkRenameStage,
-  mkCPU_RV32I,
-  mkCPU_RV32IM,
-  mkCPU_RV32IF,
-  mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded
+  mkRenameStage
 ]
 
 def main (args : List String) : IO Unit := do
@@ -297,25 +299,31 @@ def main (args : List String) : IO Unit := do
   -- Initialize output directories
   initOutputDirs
 
-  -- Pre-compute dependency-aware hashes for incremental generation
-  let hashMap := computeAllHashes allCircuits
-
-  -- Generate all circuits (pass allCircuits for sub-module port direction lookup)
+  -- Generate all circuits with incremental hashing
+  -- (hashes computed per-circuit to avoid forcing evaluation of all circuits upfront)
   let mut count := 0
   let mut skipped := 0
+  let mut hashMap : List (String × UInt64) := []
+  let stdout ← IO.getStdout
   for c in allCircuits do
-    let wasCached ← if !force then
-      if let some h := Shoumei.Codegen.Unified.lookupHash hashMap c.name then
-        isUpToDate c.name h
-      else pure false
-    else pure false
-    writeCircuit c allCircuits force hashMap
-    if wasCached then skipped := skipped + 1
+    let h := circuitHashWithDeps hashMap c
+    hashMap := hashMap ++ [(c.name, h)]
+    let cached ← if !force then isUpToDate c.name h else pure false
+    if cached then
+      IO.println s!"— {c.name} (unchanged, skipping)"
+      skipped := skipped + 1
+    else
+      IO.print s!"  Generating {c.name}..."
+      stdout.flush
+      writeCircuit c allCircuits true  -- force=true since we already checked cache
+      updateCache c.name h
+      IO.println s!" ✓ ({c.gates.length} gates, {c.instances.length} instances)"
+    stdout.flush
     count := count + 1
 
-  -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
+  -- Generate RISC-V decoder (from riscv-opcodes + custom VME instruction definitions)
   IO.println ""
-  IO.println "Generating RISC-V decoders..."
+  IO.println "Generating RISC-V decoder..."
   -- Auto-generate opcodes JSON if missing
   let opcodesPath := Shoumei.RISCV.instrDictPath
   unless (← opcodesPath.pathExists) do
@@ -323,8 +331,17 @@ def main (args : List String) : IO Unit := do
     let result ← IO.Process.run { cmd := "make", args := #["opcodes"] }
     unless result.isEmpty do
       IO.println result
-  let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
-  Shoumei.RISCV.generateDecoders defs
+  -- Load base defs + custom VME defs, filtered by defaultCPUConfig
+  let defs ← Shoumei.RISCV.loadInstrDefsForConfig defaultCPUConfig opcodesPath
+  -- Load custom VME opcodes
+  let customPath := Shoumei.RISCV.customInstrDictPath
+  let customExists ← customPath.pathExists
+  let allDefs ← if customExists then do
+    let customDefs ← Shoumei.RISCV.loadInstrDictFromFile customPath
+    IO.println s!"  Loaded {customDefs.length} custom VME instructions"
+    pure (defs ++ customDefs)
+  else pure defs
+  Shoumei.RISCV.generateDecoders allDefs
 
   -- Generate testbenches
   IO.println ""

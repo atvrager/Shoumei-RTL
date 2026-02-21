@@ -93,6 +93,18 @@ inductive OpType where
   | CSRRWI : OpType
   | CSRRSI : OpType
   | CSRRCI : OpType
+  -- VME (Vector Matrix Extension): IME outer-product variant
+  | MSETCLI : OpType    -- Set tile column dimension (immediate)
+  | MSETRLI : OpType    -- Set tile row dimension (immediate)
+  | VOP_AVV : OpType    -- Outer product (vs1 × vs2 → acc)
+  | VOPACC_AVV : OpType -- Outer product accumulate (vs1 × vs2 + acc → acc)
+  | VMACC_AVX : OpType  -- Vector-scalar MAC (vs1 × scalar + acc → acc)
+  | VRACCR : OpType     -- Read accumulator row (destructive)
+  | VRACCC : OpType     -- Read accumulator column (destructive)
+  | VWACCR : OpType     -- Write accumulator row
+  | VWACCC : OpType     -- Write accumulator column
+  | VRRACCR : OpType    -- Raw read accumulator row (context switch)
+  | VRWACCR : OpType    -- Raw write accumulator row (context switch)
   deriving Repr, BEq, DecidableEq
 
 instance : ToString OpType where
@@ -114,6 +126,10 @@ instance : ToString OpType where
     | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .FENCE_I => "FENCE_I"
     | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI"
     | .CSRRCI => "CSRRCI"
+    | .MSETCLI => "MSETCLI" | .MSETRLI => "MSETRLI"
+    | .VOP_AVV => "VOP_AVV" | .VOPACC_AVV => "VOPACC_AVV" | .VMACC_AVX => "VMACC_AVX"
+    | .VRACCR => "VRACCR" | .VRACCC => "VRACCC" | .VWACCR => "VWACCR" | .VWACCC => "VWACCC"
+    | .VRRACCR => "VRRACCR" | .VRWACCR => "VRWACCR"
 
 /-- Parse OpType from instruction name (case-insensitive) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -199,6 +215,17 @@ def OpType.fromString (s : String) : Option OpType :=
   | "CSRRWI" => some .CSRRWI
   | "CSRRSI" => some .CSRRSI
   | "CSRRCI" => some .CSRRCI
+  | "MSETCLI" => some .MSETCLI
+  | "MSETRLI" => some .MSETRLI
+  | "VOP_AVV" => some .VOP_AVV
+  | "VOPACC_AVV" => some .VOPACC_AVV
+  | "VMACC_AVX" => some .VMACC_AVX
+  | "VRACCR" => some .VRACCR
+  | "VRACCC" => some .VRACCC
+  | "VWACCR" => some .VWACCR
+  | "VWACCC" => some .VWACCC
+  | "VRRACCR" => some .VRRACCR
+  | "VRWACCR" => some .VRWACCR
   | _ => none
 
 /-- All OpType constructors in canonical order -/
@@ -213,7 +240,9 @@ def OpType.all : List OpType :=
    .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S, .FMIN_S, .FMSUB_S, .FMUL_S, 
    .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S, .FSGNJX_S, .FSGNJ_S, .FSQRT_S, 
    .FSUB_S, .FSW, .FENCE_I, .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, 
-   .CSRRCI]
+   .CSRRCI,
+   .MSETCLI, .MSETRLI, .VOP_AVV, .VOPACC_AVV, .VMACC_AVX,
+   .VRACCR, .VRACCC, .VWACCR, .VWACCC, .VRRACCR, .VRWACCR]
 
 /-- Get the index of an OpType in the canonical ordering -/
 def OpType.toIndex : OpType → Nat
@@ -298,6 +327,17 @@ def OpType.toIndex : OpType → Nat
   | .CSRRWI => 78
   | .CSRRSI => 79
   | .CSRRCI => 80
+  | .MSETCLI => 81
+  | .MSETRLI => 82
+  | .VOP_AVV => 83
+  | .VOPACC_AVV => 84
+  | .VMACC_AVX => 85
+  | .VRACCR => 86
+  | .VRACCC => 87
+  | .VWACCR => 88
+  | .VWACCC => 89
+  | .VRRACCR => 90
+  | .VRWACCR => 91
 
 /-- Get OpType from canonical index -/
 def OpType.ofIndex : Nat → Option OpType
@@ -382,6 +422,17 @@ def OpType.ofIndex : Nat → Option OpType
   | 78 => some .CSRRWI
   | 79 => some .CSRRSI
   | 80 => some .CSRRCI
+  | 81 => some .MSETCLI
+  | 82 => some .MSETRLI
+  | 83 => some .VOP_AVV
+  | 84 => some .VOPACC_AVV
+  | 85 => some .VMACC_AVX
+  | 86 => some .VRACCR
+  | 87 => some .VRACCC
+  | 88 => some .VWACCR
+  | 89 => some .VWACCC
+  | 90 => some .VRRACCR
+  | 91 => some .VRWACCR
   | _ => none
 
 /-- Resolve a name-based mapping to index-based mapping given a decoder's instruction list.
@@ -412,6 +463,8 @@ def OpType.extensionGroup : OpType → List String
   | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => ["rv_f"]
   | .FENCE_I => ["rv_zifencei"]
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => ["rv_zicsr"]
+  | .MSETCLI | .MSETRLI | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX
+  | .VRACCR | .VRACCC | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR => ["rv_vme"]
 
 /-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/
 def OpType.isFpGroup : OpType → Bool

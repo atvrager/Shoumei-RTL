@@ -43,6 +43,7 @@ set_option maxHeartbeats 800000
 def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableVME := config.enableVME
   let sbFwdPipelined := config.sbFwdPipelineStages > 0
   let oi := config.opcodeIndex
   -- Opcode width: 7 bits when F extension (>64 instructions), 6 bits otherwise
@@ -74,6 +75,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dispatch_is_branch := Wire.mk "dispatch_is_branch"
   let dispatch_is_muldiv := Wire.mk "dispatch_is_muldiv"
   let dispatch_is_store := Wire.mk "dispatch_is_store"
+  let dispatch_is_matrix := Wire.mk "dispatch_is_matrix"
   let decode_use_imm := Wire.mk "decode_use_imm"
 
   -- FP decoder outputs (only used when enableF)
@@ -124,6 +126,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let pipeline_reset_rs_br := Wire.mk "pipeline_reset_rs_br"
   let pipeline_reset_rs_muldiv := Wire.mk "pipeline_reset_rs_muldiv"
   let pipeline_reset_rs_fp := Wire.mk "pipeline_reset_rs_fp"
+  let flush_rs_matrix := Wire.mk "flush_rs_matrix"
+  let pipeline_reset_rs_matrix := Wire.mk "pipeline_reset_rs_matrix"
   let pipeline_reset_rob := Wire.mk "pipeline_reset_rob"
   let pipeline_reset_busy := Wire.mk "pipeline_reset_busy"
   let pipeline_reset_misc := Wire.mk "pipeline_reset_misc"
@@ -302,6 +306,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     ["rs_int", "rs_mem", "rs_br"] ++
     (if enableM then ["rs_muldiv"] else []) ++
     (if enableF then ["rs_fp"] else []) ++
+    (if enableVME then ["rs_matrix"] else []) ++
     ["rob", "misc"]
   let flush_dff_insts : List CircuitInstance := flush_tags.map (fun tag => {
     moduleName := "DFlipFlop"
@@ -335,11 +340,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   }
 
   -- === DECODER ===
-  let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
-    else if enableF then "RV32IFDecoder"
-    else if enableM then "RV32IMDecoder"
-    else "RV32IDecoder"
+  let decoderModuleName := config.isaString ++ "Decoder"
   let decoder_inst : CircuitInstance := {
     moduleName := decoderModuleName
     instName := "u_decoder"
@@ -368,7 +369,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
          ("io_fp_rs3_used", decode_fp_rs3_used),
          ("io_is_fp_load", dispatch_is_fp_load),
          ("io_is_fp_store", dispatch_is_fp_store)]
-      else [])
+      else []) ++
+      (if enableVME then [("io_is_matrix", dispatch_is_matrix)] else [])
   }
 
   -- === RENAME STAGE ===
@@ -497,6 +499,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dispatch_branch_valid := Wire.mk "dispatch_branch_valid"
   let dispatch_muldiv_valid := Wire.mk "dispatch_muldiv_valid"
   let dispatch_fp_valid := Wire.mk "dispatch_fp_valid"
+  let dispatch_matrix_valid := Wire.mk "dispatch_matrix_valid"
 
   let sb_enq_en := Wire.mk "sb_enq_en"
 
@@ -566,6 +569,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkOR reset flush_rs_br pipeline_reset_rs_br] ++
     (if enableM then [Gate.mkOR reset flush_rs_muldiv pipeline_reset_rs_muldiv] else []) ++
     (if enableF then [Gate.mkOR reset flush_rs_fp pipeline_reset_rs_fp] else []) ++
+    (if enableVME then [Gate.mkOR reset flush_rs_matrix pipeline_reset_rs_matrix] else []) ++
     [Gate.mkOR reset flush_rob pipeline_reset_rob,
      Gate.mkOR reset flush_busy_groups[0]! pipeline_reset_busy,
      Gate.mkOR reset flush_misc pipeline_reset_misc]
@@ -593,6 +597,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
      Gate.mkAND dispatch_base_valid dispatch_is_memory dispatch_mem_valid,
      Gate.mkAND dispatch_base_valid dispatch_is_branch dispatch_branch_valid] ++
     (if enableM then [Gate.mkAND dispatch_base_valid dispatch_is_muldiv dispatch_muldiv_valid] else []) ++
+    (if enableVME then [Gate.mkAND dispatch_base_valid dispatch_is_matrix dispatch_matrix_valid] else []) ++
     (if enableF then
       let not_has_fp_rd := Wire.mk "not_has_fp_rd"
       let decode_has_rd_int := Wire.mk "decode_has_rd_int"
@@ -1154,6 +1159,50 @@ def mkCPU (config : CPUConfig) : Circuit :=
                (rs_muldiv_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
   }
 
+  -- === MATRIX RS (conditional on enableVME) ===
+  let rs_matrix_alloc_ptr_unused := makeIndexedWires "rs_matrix_alloc_ptr_unused" 2
+  let rs_matrix_grant_unused := makeIndexedWires "rs_matrix_grant_unused" 4
+  let rs_matrix_issue_full := Wire.mk "rs_matrix_issue_full"
+  let rs_matrix_dispatch_valid := Wire.mk "rs_matrix_dispatch_valid"
+  let rs_matrix_dispatch_opcode := makeIndexedWires "rs_matrix_dispatch_opcode" 6
+  let rs_matrix_dispatch_src1 := makeIndexedWires "rs_matrix_dispatch_src1" 32
+  let rs_matrix_dispatch_src2 := makeIndexedWires "rs_matrix_dispatch_src2" 32
+  let rs_matrix_dispatch_tag := makeIndexedWires "rs_matrix_dispatch_tag" 6
+
+  -- Gate Matrix RS dispatch when matrix unit is busy
+  let matrix_busy := Wire.mk "matrix_busy"
+  let matrix_dispatch_en := Wire.mk "matrix_dispatch_en"
+  let not_matrix_busy := Wire.mk "not_matrix_busy"
+  let matrix_dispatch_gate :=
+    if enableVME then
+      [Gate.mkNOT matrix_busy not_matrix_busy,
+       Gate.mkBUF not_matrix_busy matrix_dispatch_en]
+    else [Gate.mkBUF one matrix_dispatch_en]
+
+  let rs_matrix_inst : CircuitInstance := {
+    moduleName := "ReservationStation4"
+    instName := "u_rs_matrix"
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_matrix),
+                ("zero", zero), ("one", one), ("issue_en", dispatch_matrix_valid),
+                ("issue_src1_ready", issue_src1_ready), ("issue_src2_ready", issue_src2_ready),
+                ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", matrix_dispatch_en),
+                ("issue_full", rs_matrix_issue_full), ("dispatch_valid", rs_matrix_dispatch_valid)] ++
+               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
+               (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
+               (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
+               (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_tag_{i}", w))) ++
+               (issue_src2_muxed.enum.map (fun ⟨i, w⟩ => (s!"issue_src2_data_{i}", w))) ++
+               (cdb_tag_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
+               (cdb_data_rs.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
+               (rs_matrix_dispatch_opcode.enum.map (fun ⟨i, w⟩ => (s!"dispatch_opcode_{i}", w))) ++
+               (rs_matrix_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src1_data_{i}", w))) ++
+               (rs_matrix_dispatch_src2.enum.map (fun ⟨i, w⟩ => (s!"dispatch_src2_data_{i}", w))) ++
+               (rs_matrix_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dispatch_dest_tag_{i}", w))) ++
+               (rs_matrix_alloc_ptr_unused.enum.map (fun ⟨i, w⟩ => (s!"alloc_ptr_{i}", w))) ++
+               (rs_matrix_grant_unused.enum.map (fun ⟨i, w⟩ => (s!"dispatch_grant_{i}", w)))
+  }
+
   -- === EXECUTION UNITS ===
   let int_result := makeIndexedWires "int_result" 32
   let int_tag_out := makeIndexedWires "int_tag_out" 6
@@ -1234,6 +1283,63 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (muldiv_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
       (muldiv_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
       [("valid_out", muldiv_valid_out), ("busy", muldiv_busy)]
+  }
+
+  -- === MATRIX OPCODE LUT + EXEC UNIT (conditional on enableVME) ===
+  let matrix_op := makeIndexedWires "matrix_op" 4
+  let matrix_lut_gates :=
+    if enableVME then mkOpTypeLUT "mxlut" rs_matrix_dispatch_opcode matrix_op
+      (OpType.resolveMapping config.decoderInstrNames matrixMappingByName)
+    else []
+
+  let matrix_result := makeIndexedWires "matrix_result" 32
+  let matrix_tag_out := makeIndexedWires "matrix_tag_out" 6
+  let matrix_valid_out := Wire.mk "matrix_valid_out"
+
+  -- VS1/VS2 data from VecRegStub32x128 (vector register file stub)
+  let matrix_vs1_data := makeIndexedWires "matrix_vs1_data" 128
+  let matrix_vs2_data := makeIndexedWires "matrix_vs2_data" 128
+
+  let vec_reg_stub_inst : CircuitInstance := {
+    moduleName := "VecRegStub32x128"
+    instName := "u_vec_reg_stub"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("wr_en", zero)] ++
+      -- Read port 1: vreg index from lower 5 bits of matrix RS dispatch src1
+      (List.range 5).map (fun i => (s!"rd_idx1_{i}", rs_matrix_dispatch_src1[i]!)) ++
+      -- Read port 2: vreg index from lower 5 bits of matrix RS dispatch src2
+      (List.range 5).map (fun i => (s!"rd_idx2_{i}", rs_matrix_dispatch_src2[i]!)) ++
+      -- Write port tied off
+      (List.range 5).map (fun i => (s!"wr_idx_{i}", zero)) ++
+      (List.range 128).map (fun i => (s!"wr_data_{i}", zero)) ++
+      -- Read data outputs
+      (List.range 128).map (fun i => (s!"rd_data1_{i}", matrix_vs1_data[i]!)) ++
+      (List.range 128).map (fun i => (s!"rd_data2_{i}", matrix_vs2_data[i]!))
+  }
+
+  -- Row/col index from lower 4 bits of src2
+  let matrix_row_col_idx := makeIndexedWires "matrix_row_col_idx" 4
+  let matrix_idx_gates :=
+    if enableVME then
+      (List.range 4).map (fun i => Gate.mkBUF rs_matrix_dispatch_src2[i]! matrix_row_col_idx[i]!)
+    else []
+
+  let matrix_exec_inst : CircuitInstance := {
+    moduleName := "MatrixExecUnit"
+    instName := "u_exec_matrix"
+    portMap :=
+      (matrix_vs1_data.enum.map (fun ⟨i, w⟩ => (s!"vs1_data_{i}", w))) ++
+      (matrix_vs2_data.enum.map (fun ⟨i, w⟩ => (s!"vs2_data_{i}", w))) ++
+      (rs_matrix_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"scalar_{i}", w))) ++
+      (matrix_op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
+      (rs_matrix_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
+      (matrix_row_col_idx.enum.map (fun ⟨i, w⟩ => (s!"row_col_idx_{i}", w))) ++
+      [("valid_in", rs_matrix_dispatch_valid),
+       ("clock", clock), ("reset", pipeline_reset_rs_matrix),
+       ("zero", zero), ("one", one)] ++
+      (matrix_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
+      (matrix_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
+      [("valid_out", matrix_valid_out), ("busy", matrix_busy)]
   }
 
   -- === FP OPCODE LUT: 7-bit decoder optype → 5-bit FPU opcode ===
@@ -1841,6 +1947,66 @@ def mkCPU (config : CPUConfig) : Circuit :=
           Gate.mkBUF zero fp_fifo_deq_valid] ++
          (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_deq[i]!)
 
+  -- Matrix FIFO: shares CDB muldiv slot via pre-mux
+  let matrix_fifo_enq_data := makeIndexedWires "matrix_fifo_enq_data" 39
+  let matrix_fifo_enq_assemble :=
+    if enableVME then
+      (List.range 6).map (fun i => Gate.mkBUF matrix_tag_out[i]! matrix_fifo_enq_data[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF matrix_result[i]! matrix_fifo_enq_data[6+i]!) ++
+      [Gate.mkBUF zero matrix_fifo_enq_data[38]!]  -- is_fp_rd = 0
+    else
+      (List.range 39).map (fun i => Gate.mkBUF zero matrix_fifo_enq_data[i]!)
+
+  let matrix_fifo_enq_ready := Wire.mk "matrix_fifo_enq_ready"
+  let matrix_fifo_deq_valid := Wire.mk "matrix_fifo_deq_valid"
+  let matrix_fifo_deq := makeIndexedWires "matrix_fifo_deq" 39
+  let matrix_fifo_drain := Wire.mk "matrix_fifo_drain"
+
+  let matrix_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_matrix",
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_matrix),
+                ("enq_valid", matrix_valid_out),
+                ("deq_ready", matrix_fifo_drain),
+                ("enq_ready", matrix_fifo_enq_ready),
+                ("deq_valid", matrix_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", matrix_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", matrix_fifo_deq[i]!))
+  }
+
+  let matrix_fifo_dummy_gates :=
+    if enableVME then []
+    else [Gate.mkBUF one matrix_fifo_enq_ready,
+          Gate.mkBUF zero matrix_fifo_deq_valid] ++
+         (List.range 39).map (fun i => Gate.mkBUF zero matrix_fifo_deq[i]!)
+
+  -- Pre-mux: merge matrix FIFO with muldiv FIFO before CDB mux's muldiv slot
+  -- Matrix gets priority when both valid (rare collision)
+  let combined_muldiv_valid := Wire.mk "combined_muldiv_valid"
+  let combined_muldiv_deq := makeIndexedWires "combined_muldiv_deq" 39
+  let combined_muldiv_drain := Wire.mk "combined_muldiv_drain"
+  let matrix_fifo_wins := Wire.mk "matrix_fifo_wins"
+  let not_matrix_fifo_valid := Wire.mk "not_matrix_fifo_valid"
+
+  let combined_muldiv_mux_gates :=
+    if enableVME then
+      -- matrix_fifo_wins = matrix_fifo_deq_valid (matrix has priority)
+      [Gate.mkBUF matrix_fifo_deq_valid matrix_fifo_wins,
+       Gate.mkNOT matrix_fifo_deq_valid not_matrix_fifo_valid,
+       Gate.mkOR matrix_fifo_deq_valid muldiv_fifo_deq_valid combined_muldiv_valid] ++
+      -- Mux data: matrix wins → use matrix_fifo_deq, else muldiv_fifo_deq
+      (List.range 39).map (fun i =>
+        Gate.mkMUX matrix_fifo_wins matrix_fifo_deq[i]! muldiv_fifo_deq[i]! combined_muldiv_deq[i]!) ++
+      -- Drain routing: combined drain → route to winner
+      [Gate.mkAND combined_muldiv_drain matrix_fifo_wins matrix_fifo_drain,
+       Gate.mkAND combined_muldiv_drain not_matrix_fifo_valid muldiv_fifo_drain]
+    else
+      -- No VME: pass through muldiv directly
+      [Gate.mkBUF muldiv_fifo_deq_valid combined_muldiv_valid,
+       Gate.mkBUF combined_muldiv_drain muldiv_fifo_drain,
+       Gate.mkBUF zero matrix_fifo_drain] ++
+      (List.range 39).map (fun i =>
+        Gate.mkBUF muldiv_fifo_deq[i]! combined_muldiv_deq[i]!)
+
   -- === LSU STORE-TO-LOAD FORWARDING ===
   let is_lw := Wire.mk "is_lw"
   let is_lh := Wire.mk "is_lh"
@@ -2256,13 +2422,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
         -- Inputs: valid signals
         [("ib_valid", ib_fifo_deq_valid),
          ("fp_valid", fp_fifo_deq_valid),
-         ("muldiv_valid", muldiv_fifo_deq_valid),
+         ("muldiv_valid", combined_muldiv_valid),
          ("lsu_valid", lsu_fifo_deq_valid),
          ("dmem_valid", dmem_valid_gated)] ++
         -- Inputs: FIFO deq buses
         (List.range 72).map (fun i => (s!"ib_deq_{i}", ib_fifo_deq[i]!)) ++
         (List.range 39).map (fun i => (s!"fp_deq_{i}", fp_fifo_deq[i]!)) ++
-        (List.range 39).map (fun i => (s!"muldiv_deq_{i}", muldiv_fifo_deq[i]!)) ++
+        (List.range 39).map (fun i => (s!"muldiv_deq_{i}", combined_muldiv_deq[i]!)) ++
         (List.range 39).map (fun i => (s!"lsu_deq_{i}", lsu_fifo_deq[i]!)) ++
         -- Inputs: DMEM
         (List.range 32).map (fun i => (s!"dmem_fmt_{i}", dmem_resp_formatted[i]!)) ++
@@ -2279,7 +2445,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         (List.range 32).map (fun i => (s!"pre_data_{i}", cdb_pre_data[i]!)) ++
         [("pre_is_fp", cdb_pre_is_fp),
          ("drain_lsu", lsu_fifo_drain),
-         ("drain_muldiv", muldiv_fifo_drain),
+         ("drain_muldiv", combined_muldiv_drain),
          ("drain_fp", fp_fifo_drain),
          ("drain_ib", ib_fifo_drain)] ++
         (List.range 32).map (fun i => (s!"redirect_{i}", cdb_redirect_target_pre[i]!)) ++
@@ -2434,13 +2600,25 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let stall_L0_e := Wire.mk "stall_L0_e"
   let stall_L1_c := Wire.mk "stall_L1_c"
 
+  -- Combine matrix + muldiv issue_full for stall tree
+  let muldiv_matrix_issue_full := Wire.mk "muldiv_matrix_issue_full"
+  let muldiv_matrix_stall_gates :=
+    if enableVME && enableM then
+      [Gate.mkOR rs_muldiv_issue_full rs_matrix_issue_full muldiv_matrix_issue_full]
+    else if enableVME then
+      [Gate.mkBUF rs_matrix_issue_full muldiv_matrix_issue_full]
+    else if enableM then
+      [Gate.mkBUF rs_muldiv_issue_full muldiv_matrix_issue_full]
+    else
+      [Gate.mkBUF zero muldiv_matrix_issue_full]
+
   let stall_gates :=
     if enableM && enableF then
       -- 11 sources → balanced tree depth 4
       -- L0: pair up sources
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
-       Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
+       Gate.mkOR rs_branch_issue_full muldiv_matrix_issue_full stall_L0_c,
        Gate.mkOR rs_fp_issue_full fp_rename_stall stall_L0_d,
        Gate.mkOR fp_crossdomain_stall mem_fp_src_stall stall_L0_e,
        -- L1: pair up 5+2 (fp_src3_stall, lsu_sb_full) → 4
@@ -2457,7 +2635,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       -- 6 sources → balanced tree depth 3
       [Gate.mkOR rename_stall rob_full stall_L0_a,
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
-       Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
+       Gate.mkOR rs_branch_issue_full muldiv_matrix_issue_full stall_L0_c,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c lsu_sb_full stall_L1_b,
        Gate.mkOR stall_L1_a stall_L1_b (Wire.mk "global_stall_int"),
@@ -2888,7 +3066,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
              cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
-             fpu_lut_gates ++ fp_rs_dispatch_gate ++ muldiv_dispatch_gate ++
+             fpu_lut_gates ++ fp_rs_dispatch_gate ++ muldiv_dispatch_gate ++ matrix_dispatch_gate ++
+             matrix_lut_gates ++ matrix_idx_gates ++
+             matrix_fifo_enq_assemble ++ matrix_fifo_dummy_gates ++
+             combined_muldiv_mux_gates ++ muldiv_matrix_stall_gates ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
              frm_gates ++
@@ -2931,9 +3112,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   fp_cdb_fwd_instances ++
                   [rs_int_inst, rs_mem_inst, rs_branch_inst] ++
                   (if enableM then [rs_muldiv_inst] else []) ++
+                  (if enableVME then [rs_matrix_inst] else []) ++
                   (if enableF then [rs_fp_inst] else []) ++
                   [int_exec_inst, branch_exec_inst, mem_exec_inst] ++
                   (if enableM then [muldiv_exec_inst] else []) ++
+                  (if enableVME then [matrix_exec_inst, vec_reg_stub_inst] else []) ++
                   (if enableF then [fp_exec_inst] else []) ++
                   [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst,
@@ -2944,6 +3127,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   [cdb_mux_inst] ++ cdb_reg_insts ++
                   [ib_fifo_inst, lsu_fifo_inst] ++
                   (if enableM then [muldiv_fifo_inst] else []) ++
+                  (if enableVME then [matrix_fifo_inst] else []) ++
                   (if enableF then [fp_fifo_inst] else []) ++
                   lsu_pipeline_insts ++
                   [pc_queue_inst, insn_queue_inst] ++

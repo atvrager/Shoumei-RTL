@@ -22,9 +22,10 @@ inductive ExecUnit where
   | Branch  : ExecUnit   -- Branch and jump operations
   | Memory  : ExecUnit   -- Load and store operations
   | MulDiv  : ExecUnit   -- M-extension multiply/divide
-  | FPExec  : ExecUnit   -- F-extension floating-point operations
-  | System  : ExecUnit   -- FENCE, ECALL, EBREAK
-  | Illegal : ExecUnit   -- Unsupported operation for current config
+  | FPExec     : ExecUnit   -- F-extension floating-point operations
+  | MatrixExec : ExecUnit   -- VME matrix operations
+  | System     : ExecUnit   -- FENCE, ECALL, EBREAK
+  | Illegal    : ExecUnit   -- Unsupported operation for current config
   deriving Repr, BEq, DecidableEq
 
 instance : ToString ExecUnit where
@@ -33,9 +34,10 @@ instance : ToString ExecUnit where
     | .Branch  => "Branch"
     | .Memory  => "Memory"
     | .MulDiv  => "MulDiv"
-    | .FPExec  => "FPExec"
-    | .System  => "System"
-    | .Illegal => "Illegal"
+    | .FPExec     => "FPExec"
+    | .MatrixExec => "MatrixExec"
+    | .System     => "System"
+    | .Illegal    => "Illegal"
 
 /-- Classify an instruction to its execution unit based on CPU configuration.
 
@@ -74,6 +76,10 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
       if config.enableM then .MulDiv else .Illegal
   -- Zicsr (CSR instructions routed to Integer unit)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => .Integer
+  -- VME (Vector Matrix Extension)
+  | .MSETCLI | .MSETRLI | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX
+  | .VRACCR | .VRACCC | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR =>
+      if config.enableVME then .MatrixExec else .Illegal
   -- System
   | .FENCE | .FENCE_I | .ECALL | .EBREAK => .System
 
