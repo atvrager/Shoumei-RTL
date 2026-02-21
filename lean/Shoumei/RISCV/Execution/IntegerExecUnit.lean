@@ -84,6 +84,9 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .FLW | .FSW => 0
   -- Zicsr (CSR ops routed to Integer, but handled specially)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => 0
+  -- VME (handled by MatrixExecUnit)
+  | .MSETCLI | .MSETRLI | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX
+  | .VRACCR | .VRACCC | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR => 0
 
 /-! ## Behavioral Model -/
 

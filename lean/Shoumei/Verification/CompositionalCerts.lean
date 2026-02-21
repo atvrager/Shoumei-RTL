@@ -573,6 +573,50 @@ def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
+/-! ## VME (Vector Matrix Extension) -/
+
+/-- MACUnit8: 8-bit MAC cell (sign-extend → multiply → accumulate) -/
+def macUnit8_cert : CompositionalCert := {
+  moduleName := "MACUnit8"
+  dependencies := ["RippleCarryAdder32"]
+  proofReference := "Shoumei.Circuits.Combinational.MACUnitProofs"
+}
+
+/-- MACUnit16: 16-bit MAC cell (sign-extend → multiply → accumulate) -/
+def macUnit16_cert : CompositionalCert := {
+  moduleName := "MACUnit16"
+  dependencies := ["RippleCarryAdder32"]
+  proofReference := "Shoumei.Circuits.Combinational.MACUnitProofs"
+}
+
+/-- MACArray16x16_8: 16×16 grid of 8-bit MAC units -/
+def macArray16x16_8_cert : CompositionalCert := {
+  moduleName := "MACArray16x16_8"
+  dependencies := ["MACUnit8"]
+  proofReference := "Shoumei.Circuits.Combinational.MACArray"
+}
+
+/-- MACArray8x8_16: 8×8 grid of 16-bit MAC units -/
+def macArray8x8_16_cert : CompositionalCert := {
+  moduleName := "MACArray8x8_16"
+  dependencies := ["MACUnit16"]
+  proofReference := "Shoumei.Circuits.Combinational.MACArray"
+}
+
+/-- VecRegStub32x128: 32-entry × 128-bit vector register stub -/
+def vecRegStub_cert : CompositionalCert := {
+  moduleName := "VecRegStub32x128"
+  dependencies := ["Decoder5"]
+  proofReference := "Shoumei.RISCV.Matrix.VecRegStub"
+}
+
+/-- MatrixExecUnit: VME execution unit with MAC arrays + accumulator -/
+def matrixExecUnit_cert : CompositionalCert := {
+  moduleName := "MatrixExecUnit"
+  dependencies := ["MACArray16x16_8", "MACArray8x8_16"]
+  proofReference := "Shoumei.RISCV.Matrix.MatrixExecUnitProofs"
+}
+
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
@@ -662,7 +706,14 @@ def allCerts : List CompositionalCert := [
   -- Microcoded variant
   cpu_rv32imf_zicsr_zifencei_microcoded_cert,
   -- Microcoded cached variant
-  cachedCPU_microcoded_cert
+  cachedCPU_microcoded_cert,
+  -- VME (Vector Matrix Extension)
+  macUnit8_cert,
+  macUnit16_cert,
+  macArray16x16_8_cert,
+  macArray8x8_16_cert,
+  vecRegStub_cert,
+  matrixExecUnit_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

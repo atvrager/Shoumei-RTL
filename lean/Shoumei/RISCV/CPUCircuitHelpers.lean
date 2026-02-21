@@ -122,6 +122,14 @@ def mulDivMappingByName : List (OpType × Nat) :=
   [ (.MUL, 0), (.MULH, 1), (.MULHSU, 2), (.MULHU, 3),
     (.DIV, 4), (.DIVU, 5), (.REM, 6), (.REMU, 7) ]
 
+/-- Semantic Matrix mapping: OpType → 4-bit VME opcode.
+    MSETCLI=0, MSETRLI=1, VOP_AVV=2, VOPACC_AVV=3, VMACC_AVX=4,
+    VRACCR=5, VRACCC=6, VWACCR=7, VWACCC=8, VRRACCR=9, VRWACCR=10 -/
+def matrixMappingByName : List (OpType × Nat) :=
+  [ (.MSETCLI, 0), (.MSETRLI, 1), (.VOP_AVV, 2), (.VOPACC_AVV, 3),
+    (.VMACC_AVX, 4), (.VRACCR, 5), (.VRACCC, 6), (.VWACCR, 7),
+    (.VWACCC, 8), (.VRRACCR, 9), (.VRWACCR, 10) ]
+
 /-- Generic optype→opcode LUT for N-bit input → M-bit output.
     Same algorithm as mkOpTypeToALU4 but parameterized on widths. -/
 def mkOpTypeLUT (pfx : String) (optype : List Wire) (outOp : List Wire)

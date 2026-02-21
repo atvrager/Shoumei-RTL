@@ -438,6 +438,11 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI =>
     .illegalInstruction  -- TODO: implement CSR semantics
 
+  -- VME: not yet implemented in behavioral semantics
+  | .MSETCLI | .MSETRLI | .VOP_AVV | .VOPACC_AVV | .VMACC_AVX
+  | .VRACCR | .VRACCC | .VWACCR | .VWACCC | .VRRACCR | .VRWACCR =>
+    .illegalInstruction  -- TODO: implement VME semantics
+
 /-- Execute a full instruction fetch-decode-execute cycle -/
 def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResult :=
   -- Fetch instruction from memory at PC

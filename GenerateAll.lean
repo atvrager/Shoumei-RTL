@@ -53,6 +53,13 @@ import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.RISCV.Execution.MulDivExecUnit
 
+-- VME (Vector Matrix Extension) Building Blocks
+import Shoumei.Circuits.Combinational.MACUnit
+import Shoumei.Circuits.Combinational.MACArray
+import Shoumei.RISCV.Matrix.VecRegStub
+import Shoumei.RISCV.Matrix.AccumulatorState
+import Shoumei.RISCV.Matrix.MatrixExecUnit
+
 -- F-Extension
 import Shoumei.Circuits.Combinational.FPUnpack
 import Shoumei.Circuits.Combinational.FPPack
@@ -104,6 +111,7 @@ open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
+open Shoumei.RISCV.Matrix
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CachedCPUTestbench
 
@@ -243,6 +251,14 @@ def allCircuits : List Circuit := [
   fpDividerCircuit,
   fpSqrtCircuit,
   mkFPExecUnit,
+
+  -- VME (Vector Matrix Extension)
+  mkMACUnit8,
+  mkMACUnit16,
+  mkMACArray16x16_8,
+  mkMACArray8x8_16,
+  mkVecRegStub32x128,
+  mkMatrixExecUnit,
 
   -- Phase 6: Retirement
   mkROB16,
