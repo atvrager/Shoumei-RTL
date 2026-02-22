@@ -245,6 +245,7 @@ def allCircuits : List Circuit := [
   -- Phase 6: Retirement
   mkROB16,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
+  mkQueue16x32_DualPort,  -- W=2 dual-port RVVI PC/instruction queues
 
   -- Phase 7: Memory
   mkStoreBuffer8,

@@ -78,8 +78,20 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
 
   -- CPU pass-through outputs
   let rob_empty := Wire.mk "rob_empty"
-  let rvvi_valid_0 := Wire.mk "rvvi_valid_0"
-  let rvvi_valid_1 := Wire.mk "rvvi_valid_1"
+  let rvvi_valid_0 := Wire.mk "rvvi_validS0"
+  let rvvi_valid_1 := Wire.mk "rvvi_validS1"
+  let rvvi_trap_0 := Wire.mk "rvvi_trapS0"
+  let rvvi_trap_1 := Wire.mk "rvvi_trapS1"
+  let rvvi_rd_valid_0 := Wire.mk "rvvi_rd_validS0"
+  let rvvi_rd_valid_1 := Wire.mk "rvvi_rd_validS1"
+  let rvvi_pc_0 := makeIndexedWires "rvvi_pc_0" 32
+  let rvvi_pc_1 := makeIndexedWires "rvvi_pc_1" 32
+  let rvvi_insn_0 := makeIndexedWires "rvvi_insn_0" 32
+  let rvvi_insn_1 := makeIndexedWires "rvvi_insn_1" 32
+  let rvvi_rd_0 := makeIndexedWires "rvvi_rd_0" 5
+  let rvvi_rd_1 := makeIndexedWires "rvvi_rd_1" 5
+  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" 32
+  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" 32
 
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
@@ -122,7 +134,17 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("rob_empty", rob_empty),
-      ("rvvi_valid_0", rvvi_valid_0), ("rvvi_valid_1", rvvi_valid_1)])
+      ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
+      ("rvvi_trapS0", rvvi_trap_0), ("rvvi_trapS1", rvvi_trap_1),
+      ("rvvi_rd_validS0", rvvi_rd_valid_0), ("rvvi_rd_validS1", rvvi_rd_valid_1)] ++
+     (rvvi_pc_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_pc_0_{i}", w)) ++
+     (rvvi_pc_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_pc_1_{i}", w)) ++
+     (rvvi_insn_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_insn_0_{i}", w)) ++
+     (rvvi_insn_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_insn_1_{i}", w)) ++
+     (rvvi_rd_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_0_{i}", w)) ++
+     (rvvi_rd_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_1_{i}", w)) ++
+     (rvvi_rd_data_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_0_{i}", w)) ++
+     (rvvi_rd_data_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_1_{i}", w)))
 
   -- MemoryHierarchy instance
   let ifetch_valid := Wire.mk "ifetch_valid"
@@ -156,7 +178,14 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
-               [rvvi_retire]
+               [rvvi_retire,
+                rvvi_valid_0, rvvi_valid_1,
+                rvvi_trap_0, rvvi_trap_1,
+                rvvi_rd_valid_0, rvvi_rd_valid_1] ++
+               rvvi_pc_0 ++ rvvi_pc_1 ++
+               rvvi_insn_0 ++ rvvi_insn_1 ++
+               rvvi_rd_0 ++ rvvi_rd_1 ++
+               rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate, rvvi_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
@@ -165,7 +194,16 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
       { name := "mem_req_data", width := 256, wires := mem_req_data },
       { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
-      { name := "store_snoop_data", width := 32, wires := store_snoop_data }
+      { name := "store_snoop_data", width := 32, wires := store_snoop_data },
+      -- RVVI trace buses
+      { name := "rvvi_pc_0", width := 32, wires := rvvi_pc_0 },
+      { name := "rvvi_pc_1", width := 32, wires := rvvi_pc_1 },
+      { name := "rvvi_insn_0", width := 32, wires := rvvi_insn_0 },
+      { name := "rvvi_insn_1", width := 32, wires := rvvi_insn_1 },
+      { name := "rvvi_rd_0", width := 5, wires := rvvi_rd_0 },
+      { name := "rvvi_rd_1", width := 5, wires := rvvi_rd_1 },
+      { name := "rvvi_rdd_0", width := 32, wires := rvvi_rd_data_0 },
+      { name := "rvvi_rdd_1", width := 32, wires := rvvi_rd_data_1 }
     ]
     keepHierarchy := true
   }

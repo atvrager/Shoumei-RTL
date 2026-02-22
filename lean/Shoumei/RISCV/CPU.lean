@@ -4646,12 +4646,63 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [Gate.mkMUX zero lsu_sb_deq_bits[64]! dmem_req_we dmem_req_size[0]!,
      Gate.mkMUX one lsu_sb_deq_bits[65]! dmem_req_we dmem_req_size[1]!]
 
-  -- === RVVI TRACE (simplified for W2 - dual outputs) ===
-  let rvvi_valid_0 := Wire.mk "rvvi_valid_0"
-  let rvvi_valid_1 := Wire.mk "rvvi_valid_1"
+  -- === RVVI TRACE (full dual-retire for W2) ===
+  let rvvi_valid_0 := Wire.mk "rvvi_validS0"
+  let rvvi_valid_1 := Wire.mk "rvvi_validS1"
+  let rvvi_trap_0  := Wire.mk "rvvi_trapS0"
+  let rvvi_trap_1  := Wire.mk "rvvi_trapS1"
+  let rvvi_rd_valid_0 := Wire.mk "rvvi_rd_validS0"
+  let rvvi_rd_valid_1 := Wire.mk "rvvi_rd_validS1"
+  let rvvi_pc_rdata_0 := CPU.makeIndexedWires "rvvi_pc_0" 32
+  let rvvi_pc_rdata_1 := CPU.makeIndexedWires "rvvi_pc_1" 32
+  let rvvi_insn_0     := CPU.makeIndexedWires "rvvi_insn_0" 32
+  let rvvi_insn_1     := CPU.makeIndexedWires "rvvi_insn_1" 32
+  let rvvi_rd_0       := CPU.makeIndexedWires "rvvi_rd_0" 5
+  let rvvi_rd_1       := CPU.makeIndexedWires "rvvi_rd_1" 5
+  let rvvi_rd_data_0  := CPU.makeIndexedWires "rvvi_rdd_0" 32
+  let rvvi_rd_data_1  := CPU.makeIndexedWires "rvvi_rdd_1" 32
+
+  -- PC Queue (dual-port: 2 writes at dispatch, 2 reads at commit)
+  let pc_queue_inst : CircuitInstance := {
+    moduleName := "Queue16x32_DualPort"
+    instName := "u_pc_queue"
+    portMap :=
+      [("clock", clock), ("reset", reset),
+       ("wr_en_0", rename_valid_0), ("wr_en_1", rename_valid_1)] ++
+      bundledPorts "wr_idx_0" rob_alloc_idx_0 ++ bundledPorts "wr_data_0" fetch_pc_0 ++
+      bundledPorts "wr_idx_1" rob_alloc_idx_1 ++ bundledPorts "wr_data_1" fetch_pc_1 ++
+      bundledPorts "rd_idx_0" rob_head_idx_0 ++ bundledPorts "rd_idx_1" rob_head_idx_1 ++
+      bundledPorts "rd_data_0" rvvi_pc_rdata_0 ++ bundledPorts "rd_data_1" rvvi_pc_rdata_1
+  }
+
+  -- Instruction Queue (dual-port: stores raw instruction words)
+  let insn_queue_inst : CircuitInstance := {
+    moduleName := "Queue16x32_DualPort"
+    instName := "u_insn_queue"
+    portMap :=
+      [("clock", clock), ("reset", reset),
+       ("wr_en_0", rename_valid_0), ("wr_en_1", rename_valid_1)] ++
+      bundledPorts "wr_idx_0" rob_alloc_idx_0 ++ bundledPorts "wr_data_0" imem_resp_data_0 ++
+      bundledPorts "wr_idx_1" rob_alloc_idx_1 ++ bundledPorts "wr_data_1" imem_resp_data_1 ++
+      bundledPorts "rd_idx_0" rob_head_idx_0 ++ bundledPorts "rd_idx_1" rob_head_idx_1 ++
+      bundledPorts "rd_data_0" rvvi_insn_0 ++ bundledPorts "rd_data_1" rvvi_insn_1
+  }
+
+  -- RVVI output gates
   let rvvi_gates :=
     [Gate.mkBUF retire_valid_0 rvvi_valid_0,
-     Gate.mkBUF retire_valid_1 rvvi_valid_1]
+     Gate.mkBUF retire_valid_1 rvvi_valid_1,
+     Gate.mkAND rob_head_exception_0 retire_valid_0 rvvi_trap_0,
+     Gate.mkAND rob_head_exception_1 retire_valid_1 rvvi_trap_1,
+     Gate.mkAND rob_head_hasPhysRd_0 retire_valid_0 rvvi_rd_valid_0,
+     Gate.mkAND rob_head_hasPhysRd_1 retire_valid_1 rvvi_rd_valid_1] ++
+    -- rvvi_rd = commit_archRd (arch destination register number)
+    (List.range 5).map (fun i => Gate.mkBUF commit_archRd_0[i]! rvvi_rd_0[i]!) ++
+    (List.range 5).map (fun i => Gate.mkBUF commit_archRd_1[i]! rvvi_rd_1[i]!) ++
+    -- rvvi_rd_data: zeros for now (PRF readback requires additional read ports)
+    -- TODO: add PRF 5th/6th read ports or CDB capture for commit-time rd_data
+    (List.range 32).map (fun i => Gate.mkBUF zero rvvi_rd_data_0[i]!) ++
+    (List.range 32).map (fun i => Gate.mkBUF zero rvvi_rd_data_1[i]!)
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
@@ -4665,7 +4716,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     outputs := fetch_pc_0 ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty] ++
-               [rvvi_valid_0, rvvi_valid_1]
+               [rvvi_valid_0, rvvi_valid_1,
+                rvvi_trap_0, rvvi_trap_1,
+                rvvi_rd_valid_0, rvvi_rd_valid_1] ++
+               rvvi_pc_rdata_0 ++ rvvi_pc_rdata_1 ++
+               rvvi_insn_0 ++ rvvi_insn_1 ++
+               rvvi_rd_0 ++ rvvi_rd_1 ++
+               rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := flush_gate ++ fetch_stall_gates ++ dispatch_gates ++
              dual_stall_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
@@ -4706,7 +4763,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  shadow_insts ++
                  [dmem_pending_inst] ++ dmem_tag_capture_insts ++
                  mem_pipe_insts ++
-                 ser_dff_insts ++ [ser_pc_adder_inst]
+                 ser_dff_insts ++ [ser_pc_adder_inst] ++
+                 [pc_queue_inst, insn_queue_inst]
   }
 
 end Shoumei.RISCV.CPU_W2
