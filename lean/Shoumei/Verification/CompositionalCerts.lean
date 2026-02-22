@@ -253,6 +253,13 @@ def bitmapFreelist_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
 }
 
+/-- BitmapFreeList_64_W2: Dual-dequeue bitmap free list for N=2 -/
+def bitmapFreelist_w2_cert : CompositionalCert := {
+  moduleName := "BitmapFreeList_64_W2"
+  dependencies := ["Decoder6", "PriorityArbiter64", "OneHotEncoder64"]
+  proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
+}
+
 /-! ## RISC-V Execution -/
 
 /-- ReservationStation4: 4-entry Tomasulo reservation station -/
@@ -311,6 +318,13 @@ def queue16x32_cert : CompositionalCert := {
 /-- ROB16: 16-entry reorder buffer for in-order commit -/
 def rob16_cert : CompositionalCert := {
   moduleName := "ROB16"
+  dependencies := ["Register24", "QueuePointer_4", "QueueCounterUpDown_5", "Decoder4", "Comparator6", "Mux16x6", "Mux16x5"]
+  proofReference := "Shoumei.RISCV.Retirement.ROBProofs"
+}
+
+/-- ROB16_W2: 16-entry reorder buffer for dual-issue in-order commit -/
+def rob16_w2_cert : CompositionalCert := {
+  moduleName := "ROB16_W2"
   dependencies := ["Register24", "QueuePointer_4", "QueueCounterUpDown_5", "Decoder4", "Comparator6", "Mux16x6", "Mux16x5"]
   proofReference := "Shoumei.RISCV.Retirement.ROBProofs"
 }
@@ -471,6 +485,13 @@ def renameStage_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
+/-- RenameStage_W2: Composite rename stage for dual issue -/
+def renameStage_w2_cert : CompositionalCert := {
+  moduleName := "RenameStage_W2"
+  dependencies := ["RAT_32x6", "BitmapFreeList_64_W2", "PhysRegFile_64x32"]
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
 /-- FetchStage: PC management and instruction fetch -/
 def fetchStage_cert : CompositionalCert := {
   moduleName := "FetchStage"
@@ -612,6 +633,7 @@ def allCerts : List CompositionalCert := [
   rat_cert,
   freelist_cert,
   bitmapFreelist_cert,
+  bitmapFreelist_w2_cert,
   -- Execution
   rs4_cert,
   memoryRS4_cert,
@@ -623,6 +645,7 @@ def allCerts : List CompositionalCert := [
   -- Retirement
   queue16x32_cert,
   rob16_cert,
+  rob16_w2_cert,
   -- Memory
   storeBuffer8_cert,
   lsu_cert,
@@ -647,6 +670,7 @@ def allCerts : List CompositionalCert := [
   cpu_rv32if_cert,
   -- Phase 8: Top-Level Integration
   renameStage_cert,
+  renameStage_w2_cert,
   fetchStage_cert,
   cpu_rv32i_cert,
   cpu_rv32im_cert,

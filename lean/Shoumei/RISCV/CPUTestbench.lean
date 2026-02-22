@@ -1,16 +1,40 @@
 /-
-RISCV/CPUTestbench.lean - (Deprecated: configs removed, see CachedCPUTestbench.lean)
+RISCV/CPUTestbench.lean - Testbench Configuration for CachedCPU
 
-The cached+microcoded CPU is now the single testbench target.
-This file is kept only so existing imports don't break.
+Maps the CachedCPU circuit's ports to the 256-bit cache-line memory interface
+for automatic testbench generation.
 -/
 
 import Shoumei.Codegen.Testbench
-import Shoumei.RISCV.CPU
+import Shoumei.RISCV.Config
+import Shoumei.RISCV.Memory.Cache.CachedCPU
 
 namespace Shoumei.RISCV.CPUTestbench
 
 open Shoumei.Codegen.Testbench
-open Shoumei.RISCV.CPU
+open Shoumei.RISCV.Memory.Cache
+
+/-- Testbench configuration for the CachedCPU (CPU + L1I/L1D/L2).
+    Uses 256-bit cache-line memory interface instead of separate IMEM/DMEM. -/
+def cpuTestbenchConfig : TestbenchConfig := {
+  circuit := mkCachedCPU defaultCPUConfig
+  imemPort := { addrSignal := "unused" }
+  dmemPort := { addrSignal := "unused" }
+  cacheLineMemPort := some {
+    reqValidSignal := "mem_req_valid"
+    reqAddrSignal := "mem_req_addr"
+    reqWeSignal := "mem_req_we"
+    reqDataSignal := "mem_req_data"
+    respValidSignal := "mem_resp_valid"
+    respDataSignal := "mem_resp_data"
+  }
+  constantPorts := [("zero", false), ("one", true)]
+  tbName := some "tb_cpu"
+  memSizeWords := defaultCPUConfig.memSizeWords
+  tohostAddr := 0x1000
+  putcharAddr := some 0x1004
+  timeoutCycles := defaultCPUConfig.timeoutCycles
+  spikeIsa := defaultCPUConfig.spikeIsa
+}
 
 end Shoumei.RISCV.CPUTestbench

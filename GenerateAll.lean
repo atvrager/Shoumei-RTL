@@ -40,6 +40,7 @@ import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.RISCV.Renaming.BitmapFreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
+import Shoumei.RISCV.Renaming.RenameStage
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
@@ -85,13 +86,11 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
-import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
-import Shoumei.RISCV.CachedCPUTestbench
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -105,7 +104,7 @@ open Shoumei.RISCV.Memory
 open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
-open Shoumei.RISCV.CachedCPUTestbench
+open Shoumei.RISCV.CPUTestbench
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -215,13 +214,17 @@ def allCircuits : List Circuit := [
   mkFreeList64,
   mkFreeList64Flushable,
   mkBitmapFreeList64,
+  mkBitmapFreeList64_W2,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
-  mkIntegerExecUnit,
+  mkIntegerExecUnit 1,
+  mkIntegerExecUnit 2,
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
+  mkReservationStationFromConfig defaultCPUConfig false,
+  mkReservationStationFromConfig defaultCPUConfig true,
   mkMemoryRS4,
 
   -- M-Extension (conditional on CPUConfig.enableM)
@@ -245,6 +248,7 @@ def allCircuits : List Circuit := [
   mkFPExecUnit,
 
   -- Phase 6: Retirement
+  mkROB16 1,
   mkROB16,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
 
@@ -276,13 +280,18 @@ def allCircuits : List Circuit := [
   -- Phase 8: Top-Level Integration
   cdbMux,
   cdbMuxF,
+  cdbMuxW2,
+  cdbMuxFW2,
+  mkFetchStage 1,
   mkFetchStage,
+  mkRenameStage 1,
   mkRenameStage,
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,
   mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded
+  mkCPU_RV32IMF_Microcoded,
+  CPU_W2.mkCPU_W2 defaultCPUConfig
 ]
 
 def main (args : List String) : IO Unit := do
@@ -329,7 +338,7 @@ def main (args : List String) : IO Unit := do
   -- Generate testbenches
   IO.println ""
   IO.println "Generating testbenches..."
-  writeTestbenches cachedCpuTestbenchConfig
+  writeTestbenches cpuTestbenchConfig
 
   -- Generate filelist.f for each output directory
   IO.println ""
