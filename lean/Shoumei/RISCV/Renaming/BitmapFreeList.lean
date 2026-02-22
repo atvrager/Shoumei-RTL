@@ -159,16 +159,16 @@ def mkBitmapFreeList64_W2 : Circuit :=
   let deq_data_0_gates := (List.range tagWidth).map (fun i =>
     Gate.mkBUF enc0_out[i]! deq_data_0[i]!)
 
-  -- deq_valid_1 = arb1_valid AND deq_ready_1
-  -- (slot 1 is only valid if requested AND there's a second free reg)
-  let deq_valid_1_gate := Gate.mkAND arb1_valid deq_ready_1 deq_valid_1
+  -- deq_valid_1 = arb1_valid (report availability without deq_ready gating
+  -- to break combinational cycle: alloc_avail → stall → rename_valid → deq_ready → deq_valid)
+  let deq_valid_1_gate := Gate.mkBUF arb1_valid deq_valid_1
   let deq_data_1_gates := (List.range tagWidth).map (fun i =>
     Gate.mkBUF enc1_out[i]! deq_data_1[i]!)
 
   let alloc_fire_0 := Wire.mk "alloc_fire_0"
   let alloc_fire_1 := Wire.mk "alloc_fire_1"
   let alloc_fire_0_gate := Gate.mkAND deq_ready_0 arb0_valid alloc_fire_0
-  let alloc_fire_1_gate := Gate.mkAND deq_valid_1 one alloc_fire_1  -- deq_valid_1 already gated
+  let alloc_fire_1_gate := Gate.mkAND deq_ready_1 arb1_valid alloc_fire_1
 
   -- === Per-bit DFF state (identical to W1 but clears on fire_0 OR fire_1) ===
   let perBitGates := (List.range n).foldl (fun acc i =>

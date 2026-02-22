@@ -3605,42 +3605,60 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Single-unit RS (branch, mem, muldiv): MUX between slot 0 and slot 1.
   -- If both slots have the same type, route slot 0 and stall (dual_stall).
 
+  -- Dual-stall detection: computed from pre-stall signals to avoid combinational cycle.
+  -- "Both slots want the same single-unit resource" is known from decode classification
+  -- before stall gating. Pre-stall valid = d{k}_no_ser AND rename_valid_{k}.
+  let pre_valid_0 := Wire.mk "pre_valid_0"
+  let pre_valid_1 := Wire.mk "pre_valid_1"
+  let br_dual_stall := Wire.mk "br_dual_stall"
+  let mem_dual_stall := Wire.mk "mem_dual_stall"
+  let muldiv_dual_stall := Wire.mk "muldiv_dual_stall"
+  let dual_stall_gates :=
+    [Gate.mkAND (Wire.mk "d0_no_ser") rename_valid_0 pre_valid_0,
+     Gate.mkAND (Wire.mk "d1_no_ser") rename_valid_1 pre_valid_1,
+     -- Branch dual stall: both slots are branch AND both pre-valid
+     Gate.mkAND pre_valid_0 d0_is_br (Wire.mk "pre_br_0"),
+     Gate.mkAND pre_valid_1 d1_is_br (Wire.mk "pre_br_1"),
+     Gate.mkAND (Wire.mk "pre_br_0") (Wire.mk "pre_br_1") br_dual_stall,
+     -- Memory dual stall
+     Gate.mkAND pre_valid_0 d0_is_mem (Wire.mk "pre_mem_0"),
+     Gate.mkAND pre_valid_1 d1_is_mem (Wire.mk "pre_mem_1"),
+     Gate.mkAND (Wire.mk "pre_mem_0") (Wire.mk "pre_mem_1") mem_dual_stall] ++
+    (if enableM then
+      [Gate.mkAND pre_valid_0 d0_is_muldiv (Wire.mk "pre_md_0"),
+       Gate.mkAND pre_valid_1 d1_is_muldiv (Wire.mk "pre_md_1"),
+       Gate.mkAND (Wire.mk "pre_md_0") (Wire.mk "pre_md_1") muldiv_dual_stall]
+    else [Gate.mkBUF zero muldiv_dual_stall])
+
   -- Branch routing MUX: slot 0 has priority
   let br_route_sel := Wire.mk "br_route_sel"  -- 1 = use slot 1
   let br_not_s0 := Wire.mk "br_not_s0"
   let br_dispatch_valid := Wire.mk "br_dispatch_valid"
-  let br_dual_stall := Wire.mk "br_dual_stall"
   let br_route_gates :=
     [Gate.mkNOT dispatch_br_0 br_not_s0,
      Gate.mkAND br_not_s0 dispatch_br_1 br_route_sel,
-     Gate.mkOR dispatch_br_0 dispatch_br_1 br_dispatch_valid,
-     Gate.mkAND dispatch_br_0 dispatch_br_1 br_dual_stall]
+     Gate.mkOR dispatch_br_0 dispatch_br_1 br_dispatch_valid]
 
   -- Memory routing MUX
   let mem_route_sel := Wire.mk "mem_route_sel"
   let mem_not_s0 := Wire.mk "mem_not_s0"
   let mem_dispatch_valid := Wire.mk "mem_dispatch_valid_pre"
-  let mem_dual_stall := Wire.mk "mem_dual_stall"
   let mem_route_gates :=
     [Gate.mkNOT dispatch_mem_0 mem_not_s0,
      Gate.mkAND mem_not_s0 dispatch_mem_1 mem_route_sel,
-     Gate.mkOR dispatch_mem_0 dispatch_mem_1 mem_dispatch_valid,
-     Gate.mkAND dispatch_mem_0 dispatch_mem_1 mem_dual_stall]
+     Gate.mkOR dispatch_mem_0 dispatch_mem_1 mem_dispatch_valid]
 
   -- MulDiv routing MUX
   let muldiv_route_sel := Wire.mk "muldiv_route_sel"
   let muldiv_not_s0 := Wire.mk "muldiv_not_s0"
   let muldiv_dispatch_valid := Wire.mk "muldiv_dispatch_valid_pre"
-  let muldiv_dual_stall := Wire.mk "muldiv_dual_stall"
   let muldiv_route_gates :=
     if enableM then
       [Gate.mkNOT dispatch_muldiv_0 muldiv_not_s0,
        Gate.mkAND muldiv_not_s0 dispatch_muldiv_1 muldiv_route_sel,
-       Gate.mkOR dispatch_muldiv_0 dispatch_muldiv_1 muldiv_dispatch_valid,
-       Gate.mkAND dispatch_muldiv_0 dispatch_muldiv_1 muldiv_dual_stall]
+       Gate.mkOR dispatch_muldiv_0 dispatch_muldiv_1 muldiv_dispatch_valid]
     else
-      [Gate.mkBUF zero muldiv_route_sel, Gate.mkBUF zero muldiv_dispatch_valid,
-       Gate.mkBUF zero muldiv_dual_stall]
+      [Gate.mkBUF zero muldiv_route_sel, Gate.mkBUF zero muldiv_dispatch_valid]
 
   -- === RENAME STAGE (W2) ===
   let rs1_phys_0 := CPU.makeIndexedWires "rs1_phys_0" 6
@@ -3775,7 +3793,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "rs1_phys_out_1" rs1_phys_1 ++ bundledPorts "rs2_phys_out_1" rs2_phys_1 ++ bundledPorts "rd_phys_out_1" rd_phys_1 ++
                bundledPorts "old_rd_phys_out_1" old_physRd_1 ++
                bundledPorts "rs1_data_1" rs1_data_1 ++ bundledPorts "rs2_data_1" rs2_data_1 ++
-               bundledPorts "retire_tag" old_physRd_0
+               bundledPorts "retire_tag" old_physRd_0 ++
+               -- FP rs3 addresses (tied to zero, no FP dispatch yet)
+               ((List.range 5).map fun i => (s!"rs3_addr_{i}", zero)) ++
+               ((List.range 5).map fun i => (s!"rs3_addr_1_{i}", zero)) ++
+               -- Commit hasPhysRd/hasAllocSlot for both slots
+               [("commit_hasPhysRd", rob_head_hasOldPhysRd_0),
+                ("commit_hasAllocSlot", rob_head_hasPhysRd_0),
+                ("commit_hasPhysRd_1", rob_head_hasOldPhysRd_1),
+                ("commit_hasAllocSlot_1", rob_head_hasPhysRd_1)] ++
+               -- RVVI readback tag (tied to zero for now)
+               ((List.range 6).map fun i => (s!"rd_tag4_{i}", zero))
   }
 
   -- === BUSY TABLE (W2) ===
@@ -3895,7 +3923,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_0" dispatch_opcode_0 ++ bundledPorts "dispatch_src1_data_0" dispatch_src1_data_0 ++
                bundledPorts "dispatch_src2_data_0" dispatch_src2_data_0 ++ bundledPorts "dispatch_dest_tag_0" dispatch_dest_tag_0 ++
                bundledPorts "dispatch_opcode_1" dispatch_opcode_1 ++ bundledPorts "dispatch_src1_data_1" dispatch_src1_data_1 ++
-               bundledPorts "dispatch_src2_data_1" dispatch_src2_data_1 ++ bundledPorts "dispatch_dest_tag_1" dispatch_dest_tag_1
+               bundledPorts "dispatch_src2_data_1" dispatch_src2_data_1 ++ bundledPorts "dispatch_dest_tag_1" dispatch_dest_tag_1 ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero)]
   }
 
   -- === BRANCH RS (single-unit, uses W=2 RS with slot 1 tied off) ===
@@ -3941,6 +3970,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_br_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_br_ds2_1" 32) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_br_ddt1" 6) ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
                bundledPorts "alloc_ptr" rs_br_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_br_grant
   }
@@ -4058,7 +4088,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_md_dop1" 6) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_md_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_md_ds2_1" 32) ++
-               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_md_ddt1" 6)
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_md_ddt1" 6) ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero)]
   }
 
   -- === EXECUTION UNITS ===
@@ -4636,7 +4667,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                [rob_empty] ++
                [rvvi_valid_0, rvvi_valid_1]
     gates := flush_gate ++ fetch_stall_gates ++ dispatch_gates ++
-             br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
+             dual_stall_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
              busy_gates ++ commit_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
