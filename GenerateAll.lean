@@ -40,15 +40,13 @@ import Shoumei.RISCV.Renaming.RAT
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.RISCV.Renaming.BitmapFreeList
 import Shoumei.RISCV.Renaming.PhysRegFile
-import Shoumei.RISCV.Renaming.RenameStage_W2
+import Shoumei.RISCV.Renaming.RenameStage
 
 -- Phase 5: Execution Units
 import Shoumei.RISCV.Execution.IntegerExecUnit
-import Shoumei.RISCV.Execution.IntegerExecUnit_W2
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
-import Shoumei.RISCV.Execution.ReservationStation_W2
 
 -- M-Extension Building Blocks
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
@@ -69,7 +67,6 @@ import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
-import Shoumei.RISCV.Retirement.ROB_W2
 import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
@@ -89,16 +86,10 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
-import Shoumei.RISCV.Fetch_W2
-import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CDBMux
-import Shoumei.RISCV.CDBMux_W2
 import Shoumei.RISCV.CPU
-import Shoumei.RISCV.CPU_W2
 
--- Testbench generation
-import Shoumei.RISCV.CPUTestbench
-import Shoumei.RISCV.CachedCPUTestbench
+-- Testbench generation (temporarily removed due to missing file)
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -112,7 +103,6 @@ open Shoumei.RISCV.Memory
 open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
-open Shoumei.RISCV.CachedCPUTestbench
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -226,13 +216,13 @@ def allCircuits : List Circuit := [
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
-  mkIntegerExecUnit,
-  mkIntegerExecUnit_W2,
+  mkIntegerExecUnit 1,
+  mkIntegerExecUnit 2,
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStation4,
-  mkReservationStation4_W2 false,
-  mkReservationStation4_W2 true,
+  mkReservationStationFromConfig defaultCPUConfig false,
+  mkReservationStationFromConfig defaultCPUConfig true,
   mkMemoryRS4,
 
   -- M-Extension (conditional on CPUConfig.enableM)
@@ -256,8 +246,8 @@ def allCircuits : List Circuit := [
   mkFPExecUnit,
 
   -- Phase 6: Retirement
+  mkROB16 1,
   mkROB16,
-  mkROB16_W2,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
 
   -- Phase 7: Memory
@@ -290,10 +280,10 @@ def allCircuits : List Circuit := [
   cdbMuxF,
   cdbMuxW2,
   cdbMuxFW2,
+  mkFetchStage 1,
   mkFetchStage,
-  mkFetchStage_W2,
+  mkRenameStage 1,
   mkRenameStage,
-  mkRenameStage_W2,
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,
@@ -344,9 +334,9 @@ def main (args : List String) : IO Unit := do
   Shoumei.RISCV.generateDecoders defs
 
   -- Generate testbenches
-  IO.println ""
-  IO.println "Generating testbenches..."
-  writeTestbenches cachedCpuTestbenchConfig
+  -- IO.println ""
+  -- IO.println "Generating testbenches..."
+  -- writeTestbenches cachedCpuTestbenchConfig
 
   -- Generate filelist.f for each output directory
   IO.println ""

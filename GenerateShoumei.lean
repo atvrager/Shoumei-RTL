@@ -66,7 +66,6 @@ import Shoumei.RISCV.Execution.FPExecUnit
 
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
-import Shoumei.RISCV.Retirement.ROB_W2
 import Shoumei.RISCV.Retirement.Queue16x32
 
 -- Phase 7: Memory
@@ -77,11 +76,9 @@ import Shoumei.RISCV.Memory.LSU
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
-import Shoumei.RISCV.Renaming.RenameStage_W2
 import Shoumei.RISCV.CPU
 
--- Testbench generation
-import Shoumei.RISCV.CPUTestbench
+-- Testbench generation (temporarily removed due to missing file)
 
 open Shoumei.Codegen.ShoumeiEmit
 open Shoumei.Codegen.ShoumeiParse
@@ -95,7 +92,6 @@ open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.CPU
-open Shoumei.RISCV.CPUTestbench
 
 -- Use the same allCircuits list from GenerateAll
 def allCircuits : List Circuit := [
@@ -233,8 +229,8 @@ def allCircuits : List Circuit := [
   mkFPExecUnit,
 
   -- Phase 6: Retirement
+  mkROB16 1,
   mkROB16,
-  mkROB16_W2,
   mkQueue16x32,
 
   -- Phase 7: Memory
@@ -242,9 +238,10 @@ def allCircuits : List Circuit := [
   mkLSU,
 
   -- Phase 8: Top-Level Integration
+  mkFetchStage 1,
   mkFetchStage,
+  mkRenameStage 1,
   mkRenameStage,
-  mkRenameStage_W2,
   mkCPU_RV32I,
   mkCPU_RV32IM,
   mkCPU_RV32IF,

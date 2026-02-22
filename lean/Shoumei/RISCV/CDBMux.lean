@@ -40,9 +40,10 @@ namespace Shoumei.RISCV
 
   `enableF`: when false, is_fp output is tied low and fp_deq/dmem_is_fp are unused.
 -/
-def mkCDBMux (enableF : Bool) : Circuit :=
+def mkCDBMux (enableF : Bool) (width : Nat := 2) : Circuit :=
   let mk := Wire.mk
   let mkIdx (pfx : String) (n : Nat) := (List.range n).map (fun i => mk s!"{pfx}_{i}")
+  if width == 1 then
 
   -- Inputs
   let ib_valid := mk "ib_valid"
@@ -224,11 +225,125 @@ def mkCDBMux (enableF : Bool) : Circuit :=
     instances := []
     signalGroups := portGroups
     keepHierarchy := false }
+  else
+  -- === W=2: Dual-CDB priority drain mux (from CDBMux_W2.lean) ===
+  -- CDB 0 priority: dmem > lsu > ib_0
+  -- CDB 1 priority: fp > muldiv > ib_1
+  let mk2 := Wire.mk
+  let mkIdx2 (pfx : String) (n : Nat) := (List.range n).map (fun i => mk2 s!"{pfx}_{i}")
 
-/-- CDB Mux with F extension support -/
-def cdbMuxF : Circuit := mkCDBMux true
+  let ib_valid_0  := mk2 "ib_valid_0";  let ib_deq_0  := mkIdx2 "ib_deq_0"  72
+  let ib_valid_1  := mk2 "ib_valid_1";  let ib_deq_1  := mkIdx2 "ib_deq_1"  72
+  let fp_valid    := mk2 "fp_valid";     let fp_deq    := mkIdx2 "fp_deq"     39
+  let muldiv_valid := mk2 "muldiv_valid"; let muldiv_deq := mkIdx2 "muldiv_deq" 39
+  let lsu_valid   := mk2 "lsu_valid";   let lsu_deq   := mkIdx2 "lsu_deq"    39
+  let dmem_valid  := mk2 "dmem_valid";  let dmem_fmt  := mkIdx2 "dmem_fmt"   32
+  let dmem_tag    := mkIdx2 "dmem_tag" 6; let dmem_is_fp := mk2 "dmem_is_fp"
+  let zero        := mk2 "zero"
 
-/-- CDB Mux without F extension -/
-def cdbMux : Circuit := mkCDBMux false
+  let pre_valid_0  := mk2 "pre_valid_0";  let pre_tag_0  := mkIdx2 "pre_tag_0"  6
+  let pre_data_0   := mkIdx2 "pre_data_0" 32; let pre_is_fp_0 := mk2 "pre_is_fp_0"
+  let redirect_0   := mkIdx2 "redirect_0" 32; let pre_mispred_0 := mk2 "pre_mispredicted_0"
+  let drain_lsu    := mk2 "drain_lsu";   let drain_ib_0 := mk2 "drain_ib_0"
+
+  let pre_valid_1  := mk2 "pre_valid_1";  let pre_tag_1  := mkIdx2 "pre_tag_1"  6
+  let pre_data_1   := mkIdx2 "pre_data_1" 32; let pre_is_fp_1 := mk2 "pre_is_fp_1"
+  let redirect_1   := mkIdx2 "redirect_1" 32; let pre_mispred_1 := mk2 "pre_mispredicted_1"
+  let drain_fp     := mk2 "drain_fp";  let drain_muldiv := mk2 "drain_muldiv"
+  let drain_ib_1   := mk2 "drain_ib_1"
+
+  -- CDB 0: dmem > lsu > ib_0
+  let dmem_wins := mk2 "dmem_wins";  let not_dmem := mk2 "not_dmem"
+  let lsu_wins  := mk2 "lsu_wins";   let not_lsu  := mk2 "not_lsu"
+  let ib0_wins_tmp := mk2 "ib0_wins_tmp"; let ib0_wins := mk2 "ib0_wins"
+  let arb0_gates := [
+    Gate.mkBUF dmem_valid dmem_wins,   Gate.mkNOT dmem_valid not_dmem,
+    Gate.mkAND lsu_valid not_dmem lsu_wins,  Gate.mkNOT lsu_wins not_lsu,
+    Gate.mkAND ib_valid_0 not_dmem ib0_wins_tmp,
+    Gate.mkAND ib0_wins_tmp not_lsu ib0_wins,
+    Gate.mkBUF lsu_wins drain_lsu,  Gate.mkBUF ib0_wins drain_ib_0
+  ]
+  let valid0_gates := [
+    Gate.mkOR dmem_wins lsu_wins (mk2 "v0_tmp"),
+    Gate.mkOR (mk2 "v0_tmp") ib0_wins pre_valid_0
+  ]
+  let tag0_gates := (List.range 6).map (fun i =>
+    let m1 := mk2 s!"t0_m1_{i}"
+    [Gate.mkMUX ib_deq_0[i]! lsu_deq[i]! lsu_wins m1,
+     Gate.mkMUX m1 dmem_tag[i]! dmem_wins pre_tag_0[i]!]) |>.flatten
+  let data0_gates := (List.range 32).map (fun i =>
+    let m1 := mk2 s!"d0_m1_{i}"
+    [Gate.mkMUX ib_deq_0[6+i]! lsu_deq[6+i]! lsu_wins m1,
+     Gate.mkMUX m1 dmem_fmt[i]! dmem_wins pre_data_0[i]!]) |>.flatten
+  let is_fp0_gates :=
+    if enableF then
+      let m1 := mk2 "f0_m1"
+      [Gate.mkMUX ib_deq_0[38]! lsu_deq[38]! lsu_wins m1,
+       Gate.mkMUX m1 dmem_is_fp dmem_wins pre_is_fp_0]
+    else [Gate.mkBUF zero pre_is_fp_0]
+  let redir0_gates :=
+    (List.range 32).map (fun i => Gate.mkAND ib_deq_0[39+i]! ib0_wins redirect_0[i]!) ++
+    [Gate.mkAND ib_deq_0[71]! ib0_wins pre_mispred_0]
+
+  -- CDB 1: fp > muldiv > ib_1
+  let fp_wins    := mk2 "fp_wins";  let not_fp     := mk2 "not_fp"
+  let muldiv_wins := mk2 "muldiv_wins"; let not_muldiv := mk2 "not_muldiv"
+  let ib1_wins_tmp := mk2 "ib1_wins_tmp"; let ib1_wins := mk2 "ib1_wins"
+  let arb1_gates := [
+    Gate.mkBUF fp_valid fp_wins,      Gate.mkNOT fp_valid not_fp,
+    Gate.mkAND muldiv_valid not_fp muldiv_wins, Gate.mkNOT muldiv_wins not_muldiv,
+    Gate.mkAND ib_valid_1 not_fp ib1_wins_tmp,
+    Gate.mkAND ib1_wins_tmp not_muldiv ib1_wins,
+    Gate.mkBUF fp_wins drain_fp,  Gate.mkBUF muldiv_wins drain_muldiv,
+    Gate.mkBUF ib1_wins drain_ib_1
+  ]
+  let valid1_gates := [
+    Gate.mkOR fp_wins muldiv_wins (mk2 "v1_tmp"),
+    Gate.mkOR (mk2 "v1_tmp") ib1_wins pre_valid_1
+  ]
+  let tag1_gates := (List.range 6).map (fun i =>
+    let m1 := mk2 s!"t1_m1_{i}"
+    [Gate.mkMUX ib_deq_1[i]! muldiv_deq[i]! muldiv_wins m1,
+     Gate.mkMUX m1 fp_deq[i]! fp_wins pre_tag_1[i]!]) |>.flatten
+  let data1_gates := (List.range 32).map (fun i =>
+    let m1 := mk2 s!"d1_m1_{i}"
+    [Gate.mkMUX ib_deq_1[6+i]! muldiv_deq[6+i]! muldiv_wins m1,
+     Gate.mkMUX m1 fp_deq[6+i]! fp_wins pre_data_1[i]!]) |>.flatten
+  let is_fp1_gates :=
+    if enableF then
+      let m1 := mk2 "f1_m1"
+      [Gate.mkMUX ib_deq_1[38]! muldiv_deq[38]! muldiv_wins m1,
+       Gate.mkMUX m1 fp_deq[38]! fp_wins pre_is_fp_1]
+    else [Gate.mkBUF zero pre_is_fp_1]
+  let redir1_gates :=
+    (List.range 32).map (fun i => Gate.mkAND ib_deq_1[39+i]! ib1_wins redirect_1[i]!) ++
+    [Gate.mkAND ib_deq_1[71]! ib1_wins pre_mispred_1]
+
+  { name := if enableF then "CDBMux_F_W2" else "CDBMux_W2"
+    inputs := [ib_valid_0, ib_valid_1, fp_valid, muldiv_valid, lsu_valid, dmem_valid] ++
+              ib_deq_0 ++ ib_deq_1 ++ fp_deq ++ muldiv_deq ++ lsu_deq ++
+              dmem_fmt ++ dmem_tag ++ [dmem_is_fp, zero]
+    outputs := [pre_valid_0, pre_valid_1] ++ pre_tag_0 ++ pre_tag_1 ++
+               pre_data_0 ++ pre_data_1 ++ [pre_is_fp_0, pre_is_fp_1] ++
+               [drain_lsu, drain_muldiv, drain_fp, drain_ib_0, drain_ib_1] ++
+               redirect_0 ++ redirect_1 ++ [pre_mispred_0, pre_mispred_1]
+    gates := arb0_gates ++ valid0_gates ++ tag0_gates ++ data0_gates ++
+             is_fp0_gates ++ redir0_gates ++
+             arb1_gates ++ valid1_gates ++ tag1_gates ++ data1_gates ++
+             is_fp1_gates ++ redir1_gates
+    instances := [] }
+
+/-- CDB Mux without F extension (W=1) -/
+def cdbMux : Circuit := mkCDBMux false 1
+
+/-- CDB Mux with F extension (W=1) -/
+def cdbMuxF : Circuit := mkCDBMux true 1
+
+/-- CDB Mux without F extension (W=2, dual CDB) -/
+def cdbMuxW2 : Circuit := mkCDBMux false 2
+
+/-- CDB Mux with F extension (W=2, dual CDB) -/
+def cdbMuxFW2 : Circuit := mkCDBMux true 2
 
 end Shoumei.RISCV
+
