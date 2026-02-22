@@ -97,9 +97,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let snoop_data_gates := (List.range 32).map fun i =>
     Gate.mkBUF dmem_req_data[i]! store_snoop_data[i]!
 
-  -- W=2 RVVI compat: expose rvvi_valid = rvvi_valid_0 OR rvvi_valid_1
-  let rvvi_valid := Wire.mk "rvvi_valid"
-  let rvvi_valid_gate := Gate.mkOR rvvi_valid_0 rvvi_valid_1 rvvi_valid
+  -- W=2 RVVI compat: expose rvvi_retire = rvvi_valid_0 OR rvvi_valid_1
+  let rvvi_retire := Wire.mk "rvvi_retire"
+  let rvvi_valid_gate := Gate.mkOR rvvi_valid_0 rvvi_valid_1 rvvi_retire
 
   -- CPU instance (W=2 interface)
   let cpu_inst := CircuitInstance.mk s!"CPU_{config.isaString}" "u_cpu"
@@ -156,7 +156,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
-               [rvvi_valid]
+               [rvvi_retire]
     gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate, rvvi_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]

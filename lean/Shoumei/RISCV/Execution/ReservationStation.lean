@@ -700,7 +700,9 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
       [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
       [dispatch_en_0, dispatch_en_1]
     outputs :=
-      [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1] ++
+      [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
+       alloc_ptr_0, alloc_ptr_1,
+       arb0_gr0, arb0_gr1, arb1_gr0, arb1_gr1] ++
       dispatch_opcode_0 ++ dispatch_src1_data_0 ++ dispatch_src2_data_0 ++ dispatch_dest_tag_0 ++
       dispatch_opcode_1 ++ dispatch_src1_data_1 ++ dispatch_src2_data_1 ++ dispatch_dest_tag_1
     gates :=

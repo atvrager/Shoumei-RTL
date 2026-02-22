@@ -666,6 +666,10 @@ def mkRenameStage : Circuit :=
     (List.range tagWidth).map (fun i => Gate.mkBUF rs3_phys_1_rat[i]! rs3_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF rd_phys_1[i]!  rd_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF old_rd_raw_1[i]! old_rd_phys_1[i]!)
+  -- PRF read data pass-through: rd_data3 = rs1_data_1, rd_data4 = rs2_data_1
+  let prf_data_out_gates :=
+    (List.range dataWidth).map (fun i => Gate.mkBUF rs1_data_1[i]! rd_data3_0[i]!) ++
+    (List.range dataWidth).map (fun i => Gate.mkBUF rs2_data_1[i]! rd_data4[i]!)
 
   -- === Assemble ===
   let all_inputs :=
@@ -693,7 +697,7 @@ def mkRenameStage : Circuit :=
     fire_gates ++ rat_we_gates ++ rd_phys_0_gates ++ rd_phys_1_gates ++
     bypass_rs1_gates ++ bypass_rs2_gates ++
     crat_we_gates_0 ++ crat_we_gates_1 ++ crat_alloc_gates ++
-    out_gates_0 ++ out_gates_1
+    out_gates_0 ++ out_gates_1 ++ prf_data_out_gates
 
   let all_instances :=
     [crat_0_inst, crat_1_inst, rat_inst_0, rat_inst_1, freelist_inst, physregfile_inst]
