@@ -1,5 +1,5 @@
 /-
-RISCV/CachedCPUTestbench.lean - Testbench Configuration for CachedCPU
+RISCV/CPUTestbench.lean - Testbench Configuration for CachedCPU
 
 Maps the CachedCPU circuit's ports to the 256-bit cache-line memory interface
 for automatic testbench generation.
@@ -9,14 +9,14 @@ import Shoumei.Codegen.Testbench
 import Shoumei.RISCV.Config
 import Shoumei.RISCV.Memory.Cache.CachedCPU
 
-namespace Shoumei.RISCV.CachedCPUTestbench
+namespace Shoumei.RISCV.CPUTestbench
 
 open Shoumei.Codegen.Testbench
 open Shoumei.RISCV.Memory.Cache
 
 /-- Testbench configuration for the CachedCPU (CPU + L1I/L1D/L2).
     Uses 256-bit cache-line memory interface instead of separate IMEM/DMEM. -/
-def cachedCpuTestbenchConfig : TestbenchConfig := {
+def cpuTestbenchConfig : TestbenchConfig := {
   circuit := mkCachedCPU defaultCPUConfig
   imemPort := { addrSignal := "unused" }
   dmemPort := { addrSignal := "unused" }
@@ -37,4 +37,4 @@ def cachedCpuTestbenchConfig : TestbenchConfig := {
   spikeIsa := defaultCPUConfig.spikeIsa
 }
 
-end Shoumei.RISCV.CachedCPUTestbench
+end Shoumei.RISCV.CPUTestbench
