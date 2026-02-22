@@ -13,11 +13,13 @@ import Shoumei.Codegen.ChiselV2
 import Shoumei.Circuits.Sequential.Queue
 import Shoumei.Circuits.Combinational.ALU
 import Shoumei.RISCV.Execution.ReservationStation
+import Shoumei.RISCV.Config
 
 open Shoumei.Codegen.ChiselV2
 open Shoumei.Circuits.Sequential
 open Shoumei.Circuits.Combinational
 open Shoumei.RISCV.Execution
+open Shoumei.RISCV
 
 def chiselV2OutputDir : String := "chisel/src/main/scala/generated_v2"
 
@@ -40,7 +42,7 @@ def main : IO Unit := do
   IO.println "Generating annotated circuits..."
   writeChiselV2 (mkQueue1StructuralComplete 32)
   writeChiselV2 mkALU32
-  writeChiselV2 mkReservationStation4
+  writeChiselV2 (mkReservationStationFromConfig defaultCPUConfig false)
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

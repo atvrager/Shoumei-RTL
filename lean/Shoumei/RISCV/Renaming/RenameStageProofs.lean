@@ -25,25 +25,19 @@ open Shoumei.RISCV.Renaming
 /-! ## Structural Proofs -/
 
 /-- RenameStage has the expected name -/
-theorem renamestage_name : mkRenameStage.name = "RenameStage_32x64" := by native_decide
+theorem renamestage_name : mkRenameStage.name = "RenameStage_W2" := by native_decide
 
-/-- RenameStage input count:
-    clock(1) + reset(1) + zero(1) + one(1) + instr_valid(1) + has_rd(1)
-    + rs1_addr(5) + rs2_addr(5) + rd_addr(5)
-    + cdb_valid(1) + cdb_tag(6) + cdb_data(32)
-    + retire_valid(1) + retire_tag(6)
-    + rd_tag3(6) + rd_tag4(6)
-    = 79 inputs -/
-theorem renamestage_input_count : mkRenameStage.inputs.length = 94 := by native_decide
+/-- RenameStage input count -/
+theorem renamestage_input_count : mkRenameStage.inputs.length = 170 := by native_decide
 
 /-- RenameStage output count -/
-theorem renamestage_output_count : mkRenameStage.outputs.length = 160 := by native_decide
+theorem renamestage_output_count : mkRenameStage.outputs.length = 256 := by native_decide
 
-/-- RenameStage uses 4 submodule instances -/
-theorem renamestage_instance_count : mkRenameStage.instances.length = 4 := by native_decide
+/-- RenameStage uses 6 submodule instances -/
+theorem renamestage_instance_count : mkRenameStage.instances.length = 6 := by native_decide
 
 /-- RenameStage gate count -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 68 := by native_decide
+theorem renamestage_gate_count : mkRenameStage.gates.length = 166 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 

@@ -46,6 +46,7 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
+import Shoumei.RISCV.Config
 
 -- M-Extension Building Blocks
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
@@ -198,15 +199,14 @@ def allCircuits : List Circuit := [
   mkRAT64,
   mkFreeList64,
   mkFreeList64Flushable,
-  mkBitmapFreeList64,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
-  mkReservationStation4,
-  mkMemoryRS4,
+  mkReservationStationFromConfig defaultCPUConfig false,
+  mkReservationStationFromConfig defaultCPUConfig true,
 
   -- M-Extension
   mkRippleCarryAdder64,
@@ -215,7 +215,7 @@ def allCircuits : List Circuit := [
   mkPipelinedMultiplier,
   mkDividerCircuit,
   mkMulDivExecUnit,
-  mkMulDivRS4,
+  -- TODO: mkMulDivRS removed in W=2 unification
 
   -- F-Extension
   fpUnpackCircuit,
@@ -229,7 +229,6 @@ def allCircuits : List Circuit := [
   mkFPExecUnit,
 
   -- Phase 6: Retirement
-  mkROB16 1,
   mkROB16,
   mkQueue16x32,
 
@@ -238,9 +237,7 @@ def allCircuits : List Circuit := [
   mkLSU,
 
   -- Phase 8: Top-Level Integration
-  mkFetchStage 1,
   mkFetchStage,
-  mkRenameStage 1,
   mkRenameStage,
   mkCPU_RV32I,
   mkCPU_RV32IM,

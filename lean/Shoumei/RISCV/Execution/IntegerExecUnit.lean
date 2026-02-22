@@ -268,56 +268,12 @@ open Shoumei.Circuits.Combinational
     - 0100=AND, 0101=OR, 0110=XOR
     - 1000=SLL, 1001=SRL, 1011=SRA
 -/
-def mkIntegerExecUnit (width : Nat := 2) : Circuit :=
+def mkIntegerExecUnit : Circuit :=
   let zero := Wire.mk "zero"
   let one  := Wire.mk "one"
-  if width == 1 then
-    -- Single-issue: one ALU32 instance
-    let a := makeIndexedWires "a" 32
-    let b := makeIndexedWires "b" 32
-    let opcode := makeIndexedWires "opcode" 4
-    let dest_tag := makeIndexedWires "dest_tag" 6
-
-    -- Output wires
-    let result := makeIndexedWires "result" 32
-    let tag_out := makeIndexedWires "tag_out" 6
-
-    -- Instance ALU32 (reuse verified module from Phase 1)
-    let alu_inst : CircuitInstance := {
-      moduleName := "ALU32"
-      instName := "u_alu"
-      portMap :=
-        (a.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
-        (b.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
-        (opcode.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
-        [("zero", zero), ("one", one)] ++
-        (result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
-    }
-
-    -- Tag pass-through (BUF gates to maintain structural clarity)
-    let tag_passthrough := List.zipWith (fun src dst =>
-      Gate.mkBUF src dst
-    ) dest_tag tag_out
-
-    { name := "IntegerExecUnit"
-      inputs := a ++ b ++ opcode ++ dest_tag ++ [zero, one]
-      outputs := result ++ tag_out
-      gates := tag_passthrough
-      instances := [alu_inst]
-      -- V2 codegen annotations
-      signalGroups := [
-        { name := "a", width := 32, wires := a },
-        { name := "b", width := 32, wires := b },
-        { name := "opcode", width := 4, wires := opcode },
-        { name := "dest_tag", width := 6, wires := dest_tag },
-        { name := "result", width := 32, wires := result },
-        { name := "tag_out", width := 6, wires := tag_out }
-      ]
-    }
-  else
-    -- Dual-issue: two independent ALU32 instances to execute two
-    -- arbitrary integer instructions per cycle (from IntegerExecUnit_W2)
-    let a0 := makeIndexedWires "a0" 32
+  -- Dual-issue: two independent ALU32 instances to execute two
+  -- arbitrary integer instructions per cycle
+  let a0 := makeIndexedWires "a0" 32
     let b0 := makeIndexedWires "b0" 32
     let opcode0 := makeIndexedWires "opcode0" 4
     let dest_tag0 := makeIndexedWires "dest_tag0" 6
@@ -369,8 +325,7 @@ def mkIntegerExecUnit (width : Nat := 2) : Circuit :=
       instances := [alu0_inst, alu1_inst]
     }
 
-/-- Convenience constructors for specific configurations -/
-def integerExecUnit : Circuit := mkIntegerExecUnit 1
-def integerExecUnitW2 : Circuit := mkIntegerExecUnit 2
+/-- Convenience alias for the dual-issue integer execution unit -/
+def integerExecUnitW2 : Circuit := mkIntegerExecUnit
 
 end Shoumei.RISCV.Execution

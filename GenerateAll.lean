@@ -213,19 +213,15 @@ def allCircuits : List Circuit := [
   mkRAT64,
   mkFreeList64,
   mkFreeList64Flushable,
-  mkBitmapFreeList64,
   mkBitmapFreeList64_W2,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
-  mkIntegerExecUnit 1,
-  mkIntegerExecUnit 2,
+  mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
-  mkReservationStation4,
   mkReservationStationFromConfig defaultCPUConfig false,
   mkReservationStationFromConfig defaultCPUConfig true,
-  mkMemoryRS4,
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkRippleCarryAdder64,
@@ -234,7 +230,6 @@ def allCircuits : List Circuit := [
   mkPipelinedMultiplier,
   mkDividerCircuit,
   mkMulDivExecUnit,
-  mkMulDivRS4,
 
   -- F-Extension: FPU building blocks
   fpUnpackCircuit,
@@ -248,7 +243,6 @@ def allCircuits : List Circuit := [
   mkFPExecUnit,
 
   -- Phase 6: Retirement
-  mkROB16 1,
   mkROB16,
   mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
 
@@ -271,27 +265,18 @@ def allCircuits : List Circuit := [
   mkL1DCache,
   mkL2Cache,
   mkMemoryHierarchy,
-  mkCachedCPU defaultCPUConfig,
 
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
 
   -- Phase 8: Top-Level Integration
-  cdbMux,
-  cdbMuxF,
   cdbMuxW2,
   cdbMuxFW2,
-  mkFetchStage 1,
   mkFetchStage,
-  mkRenameStage 1,
   mkRenameStage,
-  mkCPU_RV32I,
-  mkCPU_RV32IM,
-  mkCPU_RV32IF,
-  mkCPU_RV32IMF,
-  mkCPU_RV32IMF_Microcoded,
-  CPU_W2.mkCPU_W2 defaultCPUConfig
+  CPU_W2.mkCPU_W2 defaultCPUConfig,
+  Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]
 
 def main (args : List String) : IO Unit := do
