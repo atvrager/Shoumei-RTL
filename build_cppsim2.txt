@@ -1,0 +1,2097 @@
+==> Compiling C++ simulation modules...
+cd cpp_sim && mkdir -p build && cd build && cmake .. && make -j$(nproc)
+-- C++ simulation modules will be compiled as object library
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build
+make[1]: Entering directory '/home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build'
+[  1%] Built target elf_loader
+[  2%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp.o
+[  2%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp.o
+[  2%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp.o
+[  3%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp.o
+[  4%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp.o
+[  5%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator32.cpp.o
+[  5%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp.o
+[  6%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.cpp.o
+[  6%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.cpp.o
+[  7%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator8.cpp.o
+[  7%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+[  8%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h: In constructor ‘Comparator6::Comparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:92:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 |   Comparator6(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator32.cpp: In constructor ‘Comparator32::Comparator32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator32.cpp:92:40: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 | Comparator32::Comparator32(const char* name) {
+      |                            ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator8.h: In constructor ‘Comparator8::Comparator8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator8.h:110:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+  110 |   Comparator8(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.h: In constructor ‘Decoder1::Decoder1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.h:25:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   25 |   Decoder1(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp:9:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator4.h: In constructor ‘Comparator4::Comparator4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator4.h:74:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   74 |   Comparator4(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+[  9%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[  9%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder3.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp: In constructor ‘CPU_W2::CPU_W2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_W2.cpp:2358:28: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2358 | CPU_W2::CPU_W2(const char* name) {
+      |                ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:9:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:12:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h: In constructor ‘BranchExecUnit::BranchExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h:128:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+  128 |   BranchExecUnit(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:13:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h: In constructor ‘BranchExecUnit::BranchExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h:128:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+  128 |   BranchExecUnit(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+[ 10%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:19:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:18:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:20:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder3.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder3.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder3.h: In constructor ‘Decoder3::Decoder3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder3.h:52:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   52 |   Decoder3(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:19:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:12:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h: In constructor ‘BranchExecUnit::BranchExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h:128:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+  128 |   BranchExecUnit(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:12:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h: In constructor ‘BranchExecUnit::BranchExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h:128:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+  128 |   BranchExecUnit(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:17:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:16:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:22:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h: In constructor ‘CDBMux_F::CDBMux_F(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h:551:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  551 |   CDBMux_F(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:21:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h: In constructor ‘CDBMux_F::CDBMux_F(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h:551:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  551 |   CDBMux_F(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:18:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:17:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:23:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h: In constructor ‘Decoder4::Decoder4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h:105:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   Decoder4(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:22:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:24:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:23:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:20:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux.h: In constructor ‘CDBMux::CDBMux(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux.h:547:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  547 |   CDBMux(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:19:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux.h: In constructor ‘CDBMux::CDBMux(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux.h:547:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  547 |   CDBMux(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:21:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:20:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+[ 10%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:21:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:22:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+[ 11%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:12:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h: In constructor ‘BranchExecUnit::BranchExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/BranchExecUnit.h:128:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+  128 |   BranchExecUnit(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:17:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:18:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 12%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Divider32.cpp.o
+[ 12%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:20:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h: In constructor ‘CDBMux_F::CDBMux_F(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CDBMux_F.h:551:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  551 |   CDBMux_F(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.h: In constructor ‘Decoder5::Decoder5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.h:234:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  234 |   Decoder5(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:21:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:22:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Divider32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Divider32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+[ 13%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h: In constructor ‘EqualityComparator24::EqualityComparator24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h:118:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  118 |   EqualityComparator24(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 14%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.h: In constructor ‘EqualityComparator25::EqualityComparator25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.h:122:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  122 |   EqualityComparator25(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Divider32.cpp: In constructor ‘Divider32::Divider32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Divider32.cpp:1302:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1302 | Divider32::Divider32(const char* name) {
+      |                      ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator32.h: In constructor ‘EqualityComparator32::EqualityComparator32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator32.h:150:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  150 |   EqualityComparator32(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 14%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.cpp.o
+[ 15%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h: In constructor ‘EqualityComparator6::EqualityComparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator6.h:46:35: warning: unused parameter ‘name’ [-Wunused-parameter]
+   46 |   EqualityComparator6(const char* name = "") {
+      |                       ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+[ 16%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+[ 16%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp.o
+[ 17%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp.o
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h: In constructor ‘FPAdder::FPAdder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h:3493:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 3493 |   FPAdder(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.h: In constructor ‘FPDivider::FPDivider(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.h:1906:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1906 |   FPDivider(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.h: In constructor ‘FPMisc::FPMisc(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.h:5604:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 5604 |   FPMisc(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h: In constructor ‘FPAdder::FPAdder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h:3493:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 3493 |   FPAdder(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp: In constructor ‘CPU_RV32I::CPU_RV32I(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32I.cpp:10985:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+10985 | CPU_RV32I::CPU_RV32I(const char* name) {
+      |                      ~~~~~~~~~~~~^~~~
+[ 18%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.h: In constructor ‘FPMisc::FPMisc(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.h:5604:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 5604 |   FPMisc(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.cpp: In member function ‘void FPMisc::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.cpp:182:27: warning: self-comparison always evaluates to false [-Wtautological-compare]
+  182 |   fcvtsw_exp_p0_7 = *zero != *zero;
+      |                     ~~~~~ ^~ ~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMisc.cpp:195:28: warning: self-comparison always evaluates to false [-Wtautological-compare]
+  195 |   fcvtswu_exp_p0_7 = *zero != *zero;
+      |                      ~~~~~ ^~ ~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h: In constructor ‘FPMultiplier::FPMultiplier(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h:11698:28: warning: unused parameter ‘name’ [-Wunused-parameter]
+11698 |   FPMultiplier(const char* name = "") {
+      |                ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp: In constructor ‘CPU_RV32IM_Zicsr_Zifencei::CPU_RV32IM_Zicsr_Zifencei(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IM_Zicsr_Zifencei.cpp:13278:66: warning: unused parameter ‘name’ [-Wunused-parameter]
+13278 | CPU_RV32IM_Zicsr_Zifencei::CPU_RV32IM_Zicsr_Zifencei(const char* name) {
+      |                                                      ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.h: In constructor ‘FPDivider::FPDivider(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPDivider.h:1906:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1906 |   FPDivider(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.h: In constructor ‘FPSqrt::FPSqrt(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.h:2010:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2010 |   FPSqrt(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h: In constructor ‘DFlipFlop::DFlipFlop(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/DFlipFlop.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   DFlipFlop(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp: In constructor ‘FPExecUnit::FPExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPExecUnit.cpp:545:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  545 | FPExecUnit::FPExecUnit(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp: In constructor ‘CPU_RV32IMF_Zicsr_Zifencei::CPU_RV32IMF_Zicsr_Zifencei(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei.cpp:16025:68: warning: unused parameter ‘name’ [-Wunused-parameter]
+16025 | CPU_RV32IMF_Zicsr_Zifencei::CPU_RV32IMF_Zicsr_Zifencei(const char* name) {
+      |                                                        ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp: In constructor ‘CPU_RV32IF_Zicsr_Zifencei::CPU_RV32IF_Zicsr_Zifencei(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IF_Zicsr_Zifencei.cpp:15820:66: warning: unused parameter ‘name’ [-Wunused-parameter]
+15820 | CPU_RV32IF_Zicsr_Zifencei::CPU_RV32IF_Zicsr_Zifencei(const char* name) {
+      |                                                      ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h: In constructor ‘FPMultiplier::FPMultiplier(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h:11698:28: warning: unused parameter ‘name’ [-Wunused-parameter]
+11698 |   FPMultiplier(const char* name = "") {
+      |                ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h: In constructor ‘FPAdder::FPAdder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPAdder.h:3493:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 3493 |   FPAdder(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp: In constructor ‘FPFMA::FPFMA(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPFMA.cpp:242:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  242 | FPFMA::FPFMA(const char* name) {
+      |              ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp: In constructor ‘CPU_RV32IMF_Zicsr_Zifencei_Microcoded::CPU_RV32IMF_Zicsr_Zifencei_Microcoded(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CPU_RV32IMF_Zicsr_Zifencei_Microcoded.cpp:16735:90: warning: unused parameter ‘name’ [-Wunused-parameter]
+16735 | CPU_RV32IMF_Zicsr_Zifencei_Microcoded::CPU_RV32IMF_Zicsr_Zifencei_Microcoded(const char* name) {
+      |                                                                              ~~~~~~~~~~~~^~~~
+[ 18%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+[ 19%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPPack.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPPack.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPPack.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPPack.h: In constructor ‘FPPack::FPPack(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPPack.h:150:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  150 |   FPPack(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 19%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.h: In constructor ‘FPSqrt::FPSqrt(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPSqrt.h:2010:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2010 |   FPSqrt(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h: In constructor ‘FPMultiplier::FPMultiplier(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.h:11698:28: warning: unused parameter ‘name’ [-Wunused-parameter]
+11698 |   FPMultiplier(const char* name = "") {
+      |                ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.cpp: In member function ‘void FPMultiplier::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPMultiplier.cpp:23:26: warning: self-comparison always evaluates to false [-Wtautological-compare]
+   23 |   fp_expadd_p0_8 = *zero != *zero;
+      |                    ~~~~~ ^~ ~~~~~
+[ 20%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPUnpack.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPUnpack.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPUnpack.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPUnpack.h: In constructor ‘FPUnpack::FPUnpack(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FPUnpack.h:172:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  172 |   FPUnpack(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+[ 21%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp: In constructor ‘FetchStage::FetchStage(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage.cpp:358:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  358 | FetchStage::FetchStage(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 21%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp: In constructor ‘FetchStage_W2::FetchStage_W2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FetchStage_W2.cpp:582:42: warning: unused parameter ‘name’ [-Wunused-parameter]
+  582 | FetchStage_W2::FetchStage_W2(const char* name) {
+      |                              ~~~~~~~~~~~~^~~~
+[ 22%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h: In constructor ‘QueuePointer_6::QueuePointer_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h:77:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointer_6(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h: In constructor ‘QueueCounterUpDown_7::QueueCounterUpDown_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h:133:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  133 |   QueueCounterUpDown_7(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp: In constructor ‘FreeList_64::FreeList_64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64.cpp:71:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   71 | FreeList_64::FreeList_64(const char* name) {
+      |                          ~~~~~~~~~~~~^~~~
+[ 23%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h: In constructor ‘QueuePointerLoadable_6::QueuePointerLoadable_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h:90:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   90 |   QueuePointerLoadable_6(const char* name = "") {
+      |                          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h: In constructor ‘QueuePointerInit_6::QueuePointerInit_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h:77:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointerInit_6(const char* name = "") {
+      |                      ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h: In constructor ‘QueueCounterLoadableInit_7::QueueCounterLoadableInit_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h:148:42: warning: unused parameter ‘name’ [-Wunused-parameter]
+  148 |   QueueCounterLoadableInit_7(const char* name = "") {
+      |                              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp: In constructor ‘FreeList_64_Flushable::FreeList_64_Flushable(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FreeList_64_Flushable.cpp:72:58: warning: unused parameter ‘name’ [-Wunused-parameter]
+   72 | FreeList_64_Flushable::FreeList_64_Flushable(const char* name) {
+      |                                              ~~~~~~~~~~~~^~~~
+[ 23%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FullAdder.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FullAdder.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FullAdder.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FullAdder.h: In constructor ‘FullAdder::FullAdder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/FullAdder.h:29:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   29 |   FullAdder(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 24%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit.cpp: In constructor ‘IntegerExecUnit::IntegerExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit.cpp:13:46: warning: unused parameter ‘name’ [-Wunused-parameter]
+   13 | IntegerExecUnit::IntegerExecUnit(const char* name) {
+      |                                  ~~~~~~~~~~~~^~~~
+[ 25%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit_W2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit_W2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit_W2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit_W2.cpp: In constructor ‘IntegerExecUnit_W2::IntegerExecUnit_W2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/IntegerExecUnit_W2.cpp:15:52: warning: unused parameter ‘name’ [-Wunused-parameter]
+   15 | IntegerExecUnit_W2::IntegerExecUnit_W2(const char* name) {
+      |                                        ~~~~~~~~~~~~^~~~
+[ 25%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+[ 26%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.h: In constructor ‘KoggeStoneAdder64::KoggeStoneAdder64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.h:1433:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1433 |   KoggeStoneAdder64(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+[ 26%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.h: In constructor ‘Register25::Register25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.h:99:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   99 |   Register25(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.h: In constructor ‘Mux4x25::Mux4x25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.h:423:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  423 |   Mux4x25(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.h: In constructor ‘EqualityComparator25::EqualityComparator25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator25.h:122:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  122 |   EqualityComparator25(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp: In constructor ‘L1DCache::L1DCache(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1DCache.cpp:3133:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 3133 | L1DCache::L1DCache(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 27%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h: In constructor ‘Register24::Register24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:96:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Register24(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h: In constructor ‘Mux8x24::Mux8x24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h:888:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  888 |   Mux8x24(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h: In constructor ‘EqualityComparator24::EqualityComparator24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h:118:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  118 |   EqualityComparator24(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp: In constructor ‘L1ICache::L1ICache(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L1ICache.cpp:922:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+  922 | L1ICache::L1ICache(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 28%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h: In constructor ‘Register24::Register24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:96:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Register24(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h: In constructor ‘Mux8x24::Mux8x24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h:888:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  888 |   Mux8x24(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h: In constructor ‘EqualityComparator24::EqualityComparator24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/EqualityComparator24.h:118:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  118 |   EqualityComparator24(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp: In constructor ‘L2Cache::L2Cache(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/L2Cache.cpp:2993:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2993 | L2Cache::L2Cache(const char* name) {
+      |                  ~~~~~~~~~~~~^~~~
+[ 28%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LSU.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LSU.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LSU.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LSU.cpp: In constructor ‘LSU::LSU(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LSU.cpp:49:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+   49 | LSU::LSU(const char* name) {
+      |          ~~~~~~~~~~~~^~~~
+[ 29%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit32.h: In constructor ‘LogicUnit32::LogicUnit32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit32.h:247:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+  247 |   LogicUnit32(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+[ 30%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit8.cpp.o
+[ 30%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit8.h: In constructor ‘LogicUnit8::LogicUnit8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit8.h:79:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   79 |   LogicUnit8(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit4.h: In constructor ‘LogicUnit4::LogicUnit4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/LogicUnit4.h:51:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   51 |   LogicUnit4(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 31%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.cpp.o
+[ 32%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryHierarchy.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryHierarchy.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryHierarchy.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h: In constructor ‘KoggeStoneAdder32::KoggeStoneAdder32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder32.h:633:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+  633 |   KoggeStoneAdder32(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.cpp: In constructor ‘MemoryExecUnit::MemoryExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryExecUnit.cpp:110:44: warning: unused parameter ‘name’ [-Wunused-parameter]
+  110 | MemoryExecUnit::MemoryExecUnit(const char* name) {
+      |                                ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryHierarchy.cpp: In constructor ‘MemoryHierarchy::MemoryHierarchy(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryHierarchy.cpp:893:46: warning: unused parameter ‘name’ [-Wunused-parameter]
+  893 | MemoryHierarchy::MemoryHierarchy(const char* name) {
+      |                                  ~~~~~~~~~~~~^~~~
+[ 32%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h: In constructor ‘Register2::Register2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:30:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   30 |   Register2(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h: In constructor ‘PriorityArbiter4::PriorityArbiter4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h:39:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   39 |   PriorityArbiter4(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h: In constructor ‘Mux4x6::Mux4x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h:119:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  119 |   Mux4x6(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h: In constructor ‘Comparator6::Comparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:92:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 |   Comparator6(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp: In constructor ‘MemoryRS4::MemoryRS4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MemoryRS4.cpp:1255:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1255 | MemoryRS4::MemoryRS4(const char* name) {
+      |                      ~~~~~~~~~~~~^~~~
+[ 33%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.h: In constructor ‘MicrocodeDecoder::MicrocodeDecoder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.h:74:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   74 |   MicrocodeDecoder(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+[ 34%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.h: In constructor ‘MicrocodeDecoder::MicrocodeDecoder(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeDecoder.h:74:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   74 |   MicrocodeDecoder(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h: In constructor ‘Register6::Register6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h:42:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   42 |   Register6(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h: In constructor ‘Register16::Register16(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h:72:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   72 |   Register16(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp: In constructor ‘MicrocodeSequencer::MicrocodeSequencer(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MicrocodeSequencer.cpp:803:52: warning: unused parameter ‘name’ [-Wunused-parameter]
+  803 | MicrocodeSequencer::MicrocodeSequencer(const char* name) {
+      |                                        ~~~~~~~~~~~~^~~~
+[ 34%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivExecUnit.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivExecUnit.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivExecUnit.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivExecUnit.cpp: In constructor ‘MulDivExecUnit::MulDivExecUnit(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivExecUnit.cpp:99:44: warning: unused parameter ‘name’ [-Wunused-parameter]
+   99 | MulDivExecUnit::MulDivExecUnit(const char* name) {
+      |                                ~~~~~~~~~~~~^~~~
+[ 35%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h: In constructor ‘Register2::Register2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:30:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   30 |   Register2(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h: In constructor ‘PriorityArbiter4::PriorityArbiter4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h:39:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   39 |   PriorityArbiter4(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h: In constructor ‘Mux4x6::Mux4x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h:119:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  119 |   Mux4x6(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h: In constructor ‘Comparator6::Comparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:92:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 |   Comparator6(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp: In constructor ‘MulDivRS4::MulDivRS4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/MulDivRS4.cpp:1160:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1160 | MulDivRS4::MulDivRS4(const char* name) {
+      |                      ~~~~~~~~~~~~^~~~
+[ 35%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.h: In constructor ‘Mux16x32::Mux16x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.h:1911:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1911 |   Mux16x32(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+[ 36%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h: In constructor ‘Mux16x5::Mux16x5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h:405:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  405 |   Mux16x5(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 37%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h: In constructor ‘Mux16x6::Mux16x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h:481:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  481 |   Mux16x6(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 37%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.h: In constructor ‘Mux2x8::Mux2x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.h:70:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+   70 |   Mux2x8(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 38%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.h: In constructor ‘Mux32x6::Mux32x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.h:962:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  962 |   Mux32x6(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 39%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.h: In constructor ‘Mux4x25::Mux4x25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x25.h:423:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  423 |   Mux4x25(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 39%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 40%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h: In constructor ‘Mux4x6::Mux4x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x6.h:119:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  119 |   Mux4x6(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 41%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.h: In constructor ‘Mux4x8::Mux4x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.h:151:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  151 |   Mux4x8(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 42%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x32.cpp.o
+[ 42%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.h: In constructor ‘Mux8x6::Mux8x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.h:240:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  240 |   Mux8x6(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.cpp: In constructor ‘Mux64x6::Mux64x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x6.cpp:93:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   93 | Mux64x6::Mux64x6(const char* name) {
+      |                  ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x32.cpp: In constructor ‘Mux64x32::Mux64x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux64x32.cpp:301:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+  301 | Mux64x32::Mux64x32(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 43%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x2.h: In constructor ‘Mux8x2::Mux8x2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x2.h:96:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Mux8x2(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 43%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h: In constructor ‘Mux8x24::Mux8x24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x24.h:888:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  888 |   Mux8x24(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+[ 44%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h: In constructor ‘Mux4x32::Mux4x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x32.h:535:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  535 |   Mux4x32(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.cpp: In constructor ‘Mux8x32::Mux8x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x32.cpp:85:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   85 | Mux8x32::Mux8x32(const char* name) {
+      |                  ~~~~~~~~~~~~^~~~
+[ 44%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.h: In constructor ‘Mux8x6::Mux8x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux8x6.h:240:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  240 |   Mux8x6(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+[ 45%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/OneHotEncoder64.cpp.o
+[ 46%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/OneHotEncoder64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/OneHotEncoder64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/OneHotEncoder64.h: In constructor ‘OneHotEncoder64::OneHotEncoder64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/OneHotEncoder64.h:271:31: warning: unused parameter ‘name’ [-Wunused-parameter]
+  271 |   OneHotEncoder64(const char* name = "") {
+      |                   ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp: In constructor ‘PhysRegFile_64x32::PhysRegFile_64x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PhysRegFile_64x32.cpp:4456:50: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 4456 | PhysRegFile_64x32::PhysRegFile_64x32(const char* name) {
+      |                                      ~~~~~~~~~~~~^~~~
+[ 46%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CSACompressor64.h: In constructor ‘CSACompressor64::CSACompressor64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/CSACompressor64.h:726:31: warning: unused parameter ‘name’ [-Wunused-parameter]
+  726 |   CSACompressor64(const char* name = "") {
+      |                   ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.h: In constructor ‘Register3::Register3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.h:33:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   33 |   Register3(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h: In constructor ‘Register6::Register6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h:42:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   42 |   Register6(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.h: In constructor ‘KoggeStoneAdder64::KoggeStoneAdder64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/KoggeStoneAdder64.h:1433:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1433 |   KoggeStoneAdder64(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp: In constructor ‘PipelinedMultiplier::PipelinedMultiplier(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PipelinedMultiplier.cpp:6640:54: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 6640 | PipelinedMultiplier::PipelinedMultiplier(const char* name) {
+      |                                          ~~~~~~~~~~~~^~~~
+[ 47%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Popcount8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Popcount8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Popcount8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Popcount8.h: In constructor ‘Popcount8::Popcount8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Popcount8.h:63:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   63 |   Popcount8(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 48%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter2.h: In constructor ‘PriorityArbiter2::PriorityArbiter2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter2.h:28:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   28 |   PriorityArbiter2(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+[ 48%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h: In constructor ‘PriorityArbiter4::PriorityArbiter4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter4.h:39:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   39 |   PriorityArbiter4(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+[ 49%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter64.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter64.h: In constructor ‘PriorityArbiter64::PriorityArbiter64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter64.h:2229:33: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2229 |   PriorityArbiter64(const char* name = "") {
+      |                     ~~~~~~~~~~~~^~~~~~~~~
+[ 50%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter8.h: In constructor ‘PriorityArbiter8::PriorityArbiter8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/PriorityArbiter8.h:73:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   73 |   PriorityArbiter8(const char* name = "") {
+      |                    ~~~~~~~~~~~~^~~~~~~~~
+[ 50%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h: In constructor ‘Decoder4::Decoder4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h:105:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   Decoder4(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.h: In constructor ‘Mux16x32::Mux16x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x32.h:1911:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1911 |   Mux16x32(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp: In constructor ‘Queue16x32::Queue16x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue16x32.cpp:1106:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1106 | Queue16x32::Queue16x32(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 51%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h: In constructor ‘Queue1Flow_39::Queue1Flow_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_39.h:236:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  236 |   Queue1Flow_39(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+[ 51%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h: In constructor ‘Queue1Flow_72::Queue1Flow_72(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1Flow_72.h:401:29: warning: unused parameter ‘name’ [-Wunused-parameter]
+  401 |   Queue1Flow_72(const char* name = "") {
+      |                 ~~~~~~~~~~~~^~~~~~~~~
+[ 52%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_32.h: In constructor ‘Queue1_32::Queue1_32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_32.h:163:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+  163 |   Queue1_32(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 53%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_39.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_39.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_39.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_39.h: In constructor ‘Queue1_39::Queue1_39(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_39.h:191:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+  191 |   Queue1_39(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 53%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_8.h: In constructor ‘Queue1_8::Queue1_8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue1_8.h:67:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   67 |   Queue1_8(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+[ 54%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.h: In constructor ‘QueuePointer_1::QueuePointer_1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.h:37:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   37 |   QueuePointer_1(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.h: In constructor ‘QueueCounterUpDown_2::QueueCounterUpDown_2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.h:63:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   63 |   QueueCounterUpDown_2(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp: In constructor ‘Queue2_8::Queue2_8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue2_8.cpp:36:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   36 | Queue2_8::Queue2_8(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 55%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.h: In constructor ‘QueuePointer_2::QueuePointer_2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.h:45:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   45 |   QueuePointer_2(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.h: In constructor ‘QueueCounterUpDown_3::QueueCounterUpDown_3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.h:77:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueueCounterUpDown_3(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp: In constructor ‘Queue4_8::Queue4_8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue4_8.cpp:43:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+   43 | Queue4_8::Queue4_8(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 55%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h: In constructor ‘QueuePointer_6::QueuePointer_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h:77:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointer_6(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h: In constructor ‘QueueCounterUpDown_7::QueueCounterUpDown_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h:133:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  133 |   QueueCounterUpDown_7(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp: In constructor ‘Queue64_32::Queue64_32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_32.cpp:71:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   71 | Queue64_32::Queue64_32(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 56%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h: In constructor ‘QueuePointer_6::QueuePointer_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h:77:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointer_6(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h: In constructor ‘QueueCounterUpDown_7::QueueCounterUpDown_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h:133:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  133 |   QueueCounterUpDown_7(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp: In constructor ‘Queue64_6::Queue64_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6.cpp:71:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+   71 | Queue64_6::Queue64_6(const char* name) {
+      |                      ~~~~~~~~~~~~^~~~
+[ 57%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h: In constructor ‘QueuePointerLoadable_6::QueuePointerLoadable_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h:90:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   90 |   QueuePointerLoadable_6(const char* name = "") {
+      |                          ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h: In constructor ‘QueuePointerInit_6::QueuePointerInit_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h:77:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointerInit_6(const char* name = "") {
+      |                      ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h: In constructor ‘QueueCounterLoadableInit_7::QueueCounterLoadableInit_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h:148:42: warning: unused parameter ‘name’ [-Wunused-parameter]
+  148 |   QueueCounterLoadableInit_7(const char* name = "") {
+      |                              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp: In constructor ‘Queue64_6_Flushable::Queue64_6_Flushable(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Queue64_6_Flushable.cpp:72:54: warning: unused parameter ‘name’ [-Wunused-parameter]
+   72 | Queue64_6_Flushable::Queue64_6_Flushable(const char* name) {
+      |                                          ~~~~~~~~~~~~^~~~
+[ 57%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h: In constructor ‘QueueCounterLoadableInit_7::QueueCounterLoadableInit_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadableInit_7.h:148:42: warning: unused parameter ‘name’ [-Wunused-parameter]
+  148 |   QueueCounterLoadableInit_7(const char* name = "") {
+      |                              ~~~~~~~~~~~~^~~~~~~~~
+[ 58%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadable_4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadable_4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadable_4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadable_4.h: In constructor ‘QueueCounterLoadable_4::QueueCounterLoadable_4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterLoadable_4.h:100:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+  100 |   QueueCounterLoadable_4(const char* name = "") {
+      |                          ~~~~~~~~~~~~^~~~~~~~~
+[ 59%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.h: In constructor ‘QueueCounterUpDown_2::QueueCounterUpDown_2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_2.h:63:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   63 |   QueueCounterUpDown_2(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 59%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.h: In constructor ‘QueueCounterUpDown_3::QueueCounterUpDown_3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_3.h:77:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueueCounterUpDown_3(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 60%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_4.h: In constructor ‘QueueCounterUpDown_4::QueueCounterUpDown_4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_4.h:91:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   91 |   QueueCounterUpDown_4(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 60%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h: In constructor ‘QueueCounterUpDown_5::QueueCounterUpDown_5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h:105:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   QueueCounterUpDown_5(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 61%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h: In constructor ‘QueueCounterUpDown_7::QueueCounterUpDown_7(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_7.h:133:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  133 |   QueueCounterUpDown_7(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+[ 62%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h: In constructor ‘QueuePointerInit_6::QueuePointerInit_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerInit_6.h:77:34: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointerInit_6(const char* name = "") {
+      |                      ~~~~~~~~~~~~^~~~~~~~~
+[ 62%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_3.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_3.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_3.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_3.h: In constructor ‘QueuePointerLoadable_3::QueuePointerLoadable_3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_3.h:60:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   60 |   QueuePointerLoadable_3(const char* name = "") {
+      |                          ~~~~~~~~~~~~^~~~~~~~~
+[ 63%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.cpp.o
+[ 64%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h: In constructor ‘QueuePointerLoadable_6::QueuePointerLoadable_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointerLoadable_6.h:90:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   90 |   QueuePointerLoadable_6(const char* name = "") {
+      |                          ~~~~~~~~~~~~^~~~~~~~~
+[ 64%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.h: In constructor ‘QueuePointer_1::QueuePointer_1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_1.h:37:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   37 |   QueuePointer_1(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.h: In constructor ‘QueuePointer_2::QueuePointer_2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_2.h:45:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   45 |   QueuePointer_2(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+[ 65%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_3.cpp.o
+[ 65%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.cpp.o
+[ 66%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_3.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_3.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_3.h: In constructor ‘QueuePointer_3::QueuePointer_3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_3.h:53:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   53 |   QueuePointer_3(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h: In constructor ‘QueuePointer_6::QueuePointer_6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_6.h:77:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   77 |   QueuePointer_6(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h: In constructor ‘QueuePointer_4::QueuePointer_4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h:61:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   61 |   QueuePointer_4(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+[ 67%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.cpp.o
+[ 68%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp.o
+[ 68%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.h: In constructor ‘Decoder1::Decoder1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder1.h:25:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   25 |   Decoder1(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h: In constructor ‘Register8::Register8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h:48:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   48 |   Register8(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.h: In constructor ‘Mux2x8::Mux2x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux2x8.h:70:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+   70 |   Mux2x8(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp: In constructor ‘QueueRAM_2x8::QueueRAM_2x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_2x8.cpp:58:40: warning: unused parameter ‘name’ [-Wunused-parameter]
+   58 | QueueRAM_2x8::QueueRAM_2x8(const char* name) {
+      |                            ~~~~~~~~~~~~^~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h: In constructor ‘Decoder2::Decoder2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder2.h:31:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+   31 |   Decoder2(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h: In constructor ‘Register8::Register8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h:48:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   48 |   Register8(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.h: In constructor ‘Mux4x8::Mux4x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux4x8.h:151:22: warning: unused parameter ‘name’ [-Wunused-parameter]
+  151 |   Mux4x8(const char* name = "") {
+      |          ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp: In constructor ‘QueueRAM_4x8::QueueRAM_4x8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_4x8.cpp:98:40: warning: unused parameter ‘name’ [-Wunused-parameter]
+   98 | QueueRAM_4x8::QueueRAM_4x8(const char* name) {
+      |                            ~~~~~~~~~~~~^~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.cpp: In constructor ‘QueueRAMInit_64x6::QueueRAMInit_64x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAMInit_64x6.cpp:1297:50: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1297 | QueueRAMInit_64x6::QueueRAMInit_64x6(const char* name) {
+      |                                      ~~~~~~~~~~~~^~~~
+[ 69%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp: In constructor ‘QueueRAM_64x32::QueueRAM_64x32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x32.cpp:4370:44: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 4370 | QueueRAM_64x32::QueueRAM_64x32(const char* name) {
+      |                                ~~~~~~~~~~~~^~~~
+[ 69%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h: In constructor ‘Decoder6::Decoder6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder6.h:539:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  539 |   Decoder6(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h: In constructor ‘Register6::Register6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h:42:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   42 |   Register6(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp: In constructor ‘QueueRAM_64x6::QueueRAM_64x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueRAM_64x6.cpp:1042:42: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1042 | QueueRAM_64x6::QueueRAM_64x6(const char* name) {
+      |                              ~~~~~~~~~~~~^~~~
+[ 70%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.h: In constructor ‘Decoder5::Decoder5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder5.h:234:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  234 |   Decoder5(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.h: In constructor ‘Mux32x6::Mux32x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux32x6.h:962:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  962 |   Mux32x6(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp: In constructor ‘RAT_32x6::RAT_32x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RAT_32x6.cpp:875:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+  875 | RAT_32x6::RAT_32x6(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 71%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h: In constructor ‘QueuePointer_4::QueuePointer_4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h:61:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   61 |   QueuePointer_4(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h: In constructor ‘QueueCounterUpDown_5::QueueCounterUpDown_5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h:105:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   QueueCounterUpDown_5(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h: In constructor ‘Decoder4::Decoder4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h:105:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   Decoder4(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h: In constructor ‘Comparator6::Comparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:92:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 |   Comparator6(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h: In constructor ‘Register24::Register24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:96:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Register24(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h: In constructor ‘Mux16x6::Mux16x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h:481:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  481 |   Mux16x6(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h: In constructor ‘Mux16x5::Mux16x5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h:405:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  405 |   Mux16x5(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp: In constructor ‘ROB16::ROB16(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16.cpp:1562:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 1562 | ROB16::ROB16(const char* name) {
+      |              ~~~~~~~~~~~~^~~~
+[ 71%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h: In constructor ‘QueuePointer_4::QueuePointer_4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueuePointer_4.h:61:30: warning: unused parameter ‘name’ [-Wunused-parameter]
+   61 |   QueuePointer_4(const char* name = "") {
+      |                  ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h: In constructor ‘QueueCounterUpDown_5::QueueCounterUpDown_5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/QueueCounterUpDown_5.h:105:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   QueueCounterUpDown_5(const char* name = "") {
+      |                        ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h: In constructor ‘Decoder4::Decoder4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Decoder4.h:105:24: warning: unused parameter ‘name’ [-Wunused-parameter]
+  105 |   Decoder4(const char* name = "") {
+      |            ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h: In constructor ‘Comparator6::Comparator6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Comparator6.h:92:27: warning: unused parameter ‘name’ [-Wunused-parameter]
+   92 |   Comparator6(const char* name = "") {
+      |               ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h: In constructor ‘Register24::Register24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:96:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Register24(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:7:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h: In constructor ‘Mux16x6::Mux16x6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x6.h:481:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  481 |   Mux16x6(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:8:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h: In constructor ‘Mux16x5::Mux16x5(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Mux16x5.h:405:23: warning: unused parameter ‘name’ [-Wunused-parameter]
+  405 |   Mux16x5(const char* name = "") {
+      |           ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp: In constructor ‘ROB16_W2::ROB16_W2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/ROB16_W2.cpp:2387:32: warning: unused parameter ‘name’ [-Wunused-parameter]
+ 2387 | ROB16_W2::ROB16_W2(const char* name) {
+      |                    ~~~~~~~~~~~~^~~~
+[ 72%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IDecoder.cpp.o
+[ 73%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp.o
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp: In member function ‘void RV32IFDecoder::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp:462:24: warning: suggest parentheses around ‘&&’ within ‘||’ [-Wparentheses]
+  462 |   *io_is_store = valid && (opcode == 0x23) || (opcode == 0x27);
+      |                  ~~~~~~^~~~~~~~~~~~~~~~~~~
+[ 73%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMDecoder.cpp.o
+[ 74%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp.o
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp: In member function ‘void RV32IMFDecoder::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp:494:24: warning: suggest parentheses around ‘&&’ within ‘||’ [-Wparentheses]
+  494 |   *io_is_store = valid && (opcode == 0x23) || (opcode == 0x27);
+      |                  ~~~~~~^~~~~~~~~~~~~~~~~~~
+[ 75%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.h: In constructor ‘Register1::Register1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   Register1(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 75%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h: In constructor ‘Register16::Register16(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h:72:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   72 |   Register16(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 76%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h: In constructor ‘Register2::Register2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:30:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   30 |   Register2(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 76%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h: In constructor ‘Register24::Register24(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register24.h:96:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   96 |   Register24(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 77%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.h: In constructor ‘Register25::Register25(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register25.h:99:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   99 |   Register25(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 78%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.cpp: In constructor ‘Register256::Register256(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register256.cpp:19:38: warning: unused parameter ‘name’ [-Wunused-parameter]
+   19 | Register256::Register256(const char* name) {
+      |                          ~~~~~~~~~~~~^~~~
+[ 78%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.h: In constructor ‘Register3::Register3(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register3.h:33:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   33 |   Register3(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 79%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h: In constructor ‘Register32::Register32(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register32.h:120:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  120 |   Register32(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 80%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.h: In constructor ‘Register4::Register4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.h:36:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   36 |   Register4(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 80%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h: In constructor ‘Register6::Register6(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register6.h:42:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   42 |   Register6(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 81%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+[ 82%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h: In constructor ‘Register2::Register2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:30:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   30 |   Register2(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp: In constructor ‘Register66::Register66(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register66.cpp:16:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   16 | Register66::Register66(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 82%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.h: In constructor ‘Register4::Register4(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register4.h:36:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   36 |   Register4(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp: In constructor ‘Register68::Register68(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register68.cpp:16:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   16 | Register68::Register68(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 83%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h: In constructor ‘Register8::Register8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h:48:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   48 |   Register8(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+[ 84%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:2:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h: In constructor ‘Register64::Register64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register64.h:216:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+  216 |   Register64(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:3:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h: In constructor ‘Register16::Register16(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register16.h:72:26: warning: unused parameter ‘name’ [-Wunused-parameter]
+   72 |   Register16(const char* name = "") {
+      |              ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:4:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h: In constructor ‘Register8::Register8(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register8.h:48:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   48 |   Register8(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:5:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h: In constructor ‘Register2::Register2(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register2.h:30:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   30 |   Register2(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:6:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.h: In constructor ‘Register1::Register1(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register1.h:27:25: warning: unused parameter ‘name’ [-Wunused-parameter]
+   27 |   Register1(const char* name = "") {
+      |             ~~~~~~~~~~~~^~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp: In constructor ‘Register91::Register91(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/Register91.cpp:25:36: warning: unused parameter ‘name’ [-Wunused-parameter]
+   25 | Register91::Register91(const char* name) {
+      |                        ~~~~~~~~~~~~^~~~
+[ 84%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_32x64.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_32x64.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_32x64.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_32x64.cpp: In constructor ‘RenameStage_32x64::RenameStage_32x64(const char*)’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_32x64.cpp:498:50: warning: unused parameter ‘name’ [-Wunused-parameter]
+  498 | RenameStage_32x64::RenameStage_32x64(const char* name) {
+      |                                      ~~~~~~~~~~~~^~~~
+[ 85%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_W2.cpp.o
+In file included from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_W2.h:5,
+                 from /home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_W2.cpp:1:
+/usr/include/c++/15.2.1/cstdbool:50:6: warning: #warning "<cstdbool> is deprecated in C++17, remove the #include" [-Wcpp]
+   50 | #    warning "<cstdbool> is deprecated in C++17, remove the #include"
+      |      ^~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_W2.cpp:4:10: fatal error: PhysRegFile_64x32_W2.h: No such file or directory
+    4 | #include "PhysRegFile_64x32_W2.h"
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~
+compilation terminated.
+make[3]: *** [CMakeFiles/shoumei_cppsim_modules.dir/build.make:2053: CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RenameStage_W2.cpp.o] Error 1
+make[3]: *** Waiting for unfinished jobs....
+make[2]: *** [CMakeFiles/Makefile2:90: CMakeFiles/shoumei_cppsim_modules.dir/all] Error 2
+make[1]: *** [Makefile:91: all] Error 2
+make[1]: Leaving directory '/home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build'
+make: *** [Makefile:156: cppsim] Error 2

@@ -1326,14 +1326,14 @@ def mkReservationStationFromConfig (config : Shoumei.RISCV.CPUConfig)
   let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
   let arb0_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb0",
-    portMap := [("req_0", er0), ("req_1", er1),
+    portMap := [("request_0", er0), ("request_1", er1),
                 ("grant_0", arb0_gr0), ("grant_1", arb0_gr1),
                 ("valid", dispatch_valid_0)]
   }
   let arb1_gr0 := Wire.mk "dispatch_grant_2"; let arb1_gr1 := Wire.mk "dispatch_grant_3"
   let arb1_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb1",
-    portMap := [("req_0", er2), ("req_1", er3),
+    portMap := [("request_0", er2), ("request_1", er3),
                 ("grant_0", arb1_gr0), ("grant_1", arb1_gr1),
                 ("valid", dispatch_valid_1)]
   }

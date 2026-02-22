@@ -328,7 +328,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
                  out.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
     }
 
-    { name := s!"PhysRegFile_{numRegs}x{dataWidth}_W2"
+    { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
       inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1 ++
                 rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4
       outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4
@@ -340,11 +340,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
                     mkMux "u_mux_rd4" rd_tag4 rd_data4]
     }
 
-/-- Physical Register File with 64 registers × 32 bits, single write port -/
-def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32 1
-
-/-- Physical Register File with 64 registers × 32 bits, dual write ports (W=2) -/
-def mkPhysRegFile64W2 : Circuit := mkPhysRegFile 64 32 2
+/-- Physical Register File with 64 registers × 32 bits, superscalar (dual write ports) -/
+def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32 2
 
 /-- Small Physical Register File for proof testing (4 registers × 8 bits) -/
 def mkPhysRegFile4x8 : Circuit := mkPhysRegFile 4 8 1

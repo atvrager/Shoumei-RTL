@@ -959,7 +959,7 @@ def mkROB16 (width : Nat := 2) : Circuit :=
 
   -- === CDB Interface (W=2) ===
   let cdb_valid_0     := Wire.mk "cdb_valid"
-  let cdb_tag_0       := mkWires2 "cdb_tag" 6
+  let cdb_tag         := mkWires2 "cdb_tag" 6
   let cdb_exception_0 := Wire.mk "cdb_exception"
   let cdb_mispred_0   := Wire.mk "cdb_mispredicted"
   let cdb_is_fp_0     := Wire.mk "cdb_is_fp"
@@ -1144,7 +1144,7 @@ def mkROB16 (width : Nat := 2) : Circuit :=
     let cm0 := Wire.mk s!"e{i}_cm0"; let cm1 := Wire.mk s!"e{i}_cm1"
     let cmp0_inst : CircuitInstance := {
       moduleName := "Comparator6", instName := s!"u_cmp{i}_0",
-      portMap := (cdb_tag_0.enum.map fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2)) ++
+      portMap := (cdb_tag.enum.map fun (jw : Nat × Wire) => (s!"a_{jw.1}", jw.2)) ++
                  (cur_physRd.enum.map fun (jw : Nat × Wire) => (s!"b_{jw.1}", jw.2)) ++
                  [("one", one), ("eq", cm0)]
     }
@@ -1383,7 +1383,7 @@ def mkROB16 (width : Nat := 2) : Circuit :=
     alloc_oldPhysRd_0 ++ [alloc_hasOldPR_0] ++ alloc_archRd_0 ++ [alloc_isBranch_0] ++
     [alloc_en_1] ++ alloc_physRd_1 ++ [alloc_hasPhysRd_1] ++
     alloc_oldPhysRd_1 ++ [alloc_hasOldPR_1] ++ alloc_archRd_1 ++ [alloc_isBranch_1] ++
-    [cdb_valid_0] ++ cdb_tag_0 ++ [cdb_exception_0, cdb_mispred_0, cdb_is_fp_0] ++
+    [cdb_valid_0] ++ cdb_tag ++ [cdb_exception_0, cdb_mispred_0, cdb_is_fp_0] ++
     [cdb_valid_1] ++ cdb_tag_1 ++ [cdb_exception_1, cdb_mispred_1, cdb_is_fp_1] ++
     is_fp_shadow ++ [commit_en_0, commit_en_1, flush_en]
 
@@ -1416,7 +1416,7 @@ def mkROB16 (width : Nat := 2) : Circuit :=
       { name := "alloc_physRd_1",    width := 6, wires := alloc_physRd_1 },
       { name := "alloc_oldPhysRd_1", width := 6, wires := alloc_oldPhysRd_1 },
       { name := "alloc_archRd_1",    width := 5, wires := alloc_archRd_1 },
-      { name := "cdb_tag_0",         width := 6, wires := cdb_tag_0 },
+      { name := "cdb_tag",         width := 6, wires := cdb_tag },
       { name := "cdb_tag_1",         width := 6, wires := cdb_tag_1 },
       { name := "alloc_idx_0",       width := 4, wires := alloc_idx_0 },
       { name := "alloc_idx_1",       width := 4, wires := alloc_idx_1 },

@@ -3203,12 +3203,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
                 ("instr_valid", d0_valid), ("has_rd", d0_has_rd), ("force_alloc", d0_is_br),
                 ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd), ("force_alloc_1", d1_is_br),
-                ("flush_en", pipeline_flush), ("retire_valid", retire_valid_0), ("retire_valid_1", retire_valid_1)] ++
+                ("flush_en", pipeline_flush), ("retire_valid", retire_valid_0)] ++
+               [("commit_valid", retire_valid_0), ("commit_valid_1", retire_valid_1)] ++
                bundledPorts "rs1_addr" d0_rs1 ++ bundledPorts "rs2_addr" d0_rs2 ++ bundledPorts "rd_addr" d0_rd ++
                bundledPorts "rs1_addr_1" d1_rs1 ++ bundledPorts "rs2_addr_1" d1_rs2 ++ bundledPorts "rd_addr_1" d1_rd ++
                bundledPorts "commit_archRd" commit_archRd_0 ++ bundledPorts "commit_physRd" commit_physRd_0 ++
                bundledPorts "commit_archRd_1" commit_archRd_1 ++ bundledPorts "commit_physRd_1" commit_physRd_1 ++
-               [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
+               [("cdb_valid", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
                bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("rename_valid", Wire.mk "rename_valid_0"), ("stall", Wire.mk "rename_stall_0"),
@@ -3216,16 +3217,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "rs1_phys_out" rs1_phys_0 ++ bundledPorts "rs2_phys_out" rs2_phys_0 ++ bundledPorts "rd_phys_out" rd_phys_0 ++
                bundledPorts "old_rd_phys_out" old_physRd_0 ++
                bundledPorts "rs1_data" rs1_data_0 ++ bundledPorts "rs2_data" rs2_data_0 ++
-               bundledPorts "rs1_phys_out_1" rs1_phys_1 ++ bundledPorts "rs2_phys_out_1" rs2_phys_1 ++ bundledPorts "rd_phys_out" rd_phys_1 ++
+               bundledPorts "rs1_phys_out_1" rs1_phys_1 ++ bundledPorts "rs2_phys_out_1" rs2_phys_1 ++ bundledPorts "rd_phys_out_1" rd_phys_1 ++
                bundledPorts "old_rd_phys_out_1" old_physRd_1 ++
-               bundledPorts "rs1_data_1" rs1_data_1 ++ bundledPorts "rs2_data_1" rs2_data_1
+               bundledPorts "rs1_data_1" rs1_data_1 ++ bundledPorts "rs2_data_1" rs2_data_1 ++
+               bundledPorts "retire_tag" old_physRd_0
   }
 
   -- === BUSY TABLE (W2) ===
   let src1_ready_0 := Wire.mk "src1_ready_0"; let src2_ready_0 := Wire.mk "src2_ready_0"
   let src1_ready_1 := Wire.mk "src1_ready_1"; let src2_ready_1 := Wire.mk "src2_ready_1"
   let (busy_gates, busy_insts) := mkBusyBitTable2
-    clock reset [] zero one
+    clock reset ((List.range 8).map fun _ => zero) zero one
     rd_phys_0 rd_phys_1 (Wire.mk "rename_valid_0") (Wire.mk "rename_valid_1")
     cdb_tag_0 cdb_tag_1 cdb_valid_0 cdb_valid_1
     rs1_phys_0 rs2_phys_0 rs1_phys_1 rs2_phys_1
@@ -3262,14 +3264,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_int_inst : CircuitInstance := {
     moduleName := "ReservationStation4_W2"
     instName := "u_rs_int"
-    portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one), ("flush_en", pipeline_flush),
+    portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
                 ("issue_en_0", Wire.mk "rename_valid_0"), ("issue_en_1", Wire.mk "rename_valid_1"),
                 ("issue_src1_ready_0", src1_ready_0), ("issue_src2_ready_0", src2_ready_0),
                 ("issue_src1_ready_1", src1_ready_1), ("issue_src2_ready_1", src2_ready_1)] ++
-               bundledPorts "issue_opcode_0" d0_op ++ bundledPorts "issue_dest_tag_0" rd_phys_0 ++
+               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" rd_phys_0 ++
                bundledPorts "issue_src1_tag_0" rs1_phys_0 ++ bundledPorts "issue_src1_data_0" rs1_data_0 ++
                bundledPorts "issue_src2_tag_0" rs2_phys_0 ++ bundledPorts "issue_src2_data_0" rs2_data_0 ++
-               bundledPorts "issue_opcode_1" d1_op ++ bundledPorts "issue_dest_tag_1" rd_phys_1 ++
+               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" rd_phys_1 ++
                bundledPorts "issue_src1_tag_1" rs1_phys_1 ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
                bundledPorts "issue_src2_tag_1" rs2_phys_1 ++ bundledPorts "issue_src2_data_1" rs2_data_1 ++
                [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++

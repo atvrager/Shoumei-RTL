@@ -532,13 +532,16 @@ def mkRenameStage (width : Nat := 2) : Circuit :=
     instName := "u_prf"
     portMap :=
       [("clock", clock), ("reset", reset)] ++
-      [("wr_en", cdb_valid)] ++
+      [("wr_en_0", cdb_valid)] ++
+      [("wr_en_1", zero)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag1_{i}", w))) ++  -- Read port 1 uses renamed rs1
       (rs2_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag2_{i}", w))) ++  -- Read port 2 uses renamed rs2
       (rs3_phys.enum.map (fun ⟨i, w⟩ => (s!"rd_tag3_{i}", w))) ++  -- Read port 3: rs3 via RAT lookup
       (rd_tag4.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++   -- Read port 4: RVVI FP commit readback
-      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"wr_tag_{i}", w))) ++
-      (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"wr_data_{i}", w))) ++
+      (cdb_tag.enum.map (fun ⟨i, w⟩ => (s!"wr_tag_0_{i}", w))) ++
+      (cdb_data.enum.map (fun ⟨i, w⟩ => (s!"wr_data_0_{i}", w))) ++
+      (cdb_tag.enum.map (fun ⟨i, _⟩ => (s!"wr_tag_1_{i}", zero))) ++
+      (cdb_data.enum.map (fun ⟨i, _⟩ => (s!"wr_data_1_{i}", zero))) ++
       (rs1_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data1_{i}", w))) ++
       (rs2_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data2_{i}", w))) ++
       (rd_data3.enum.map (fun ⟨i, w⟩ => (s!"rd_data3_{i}", w))) ++
@@ -658,8 +661,8 @@ def mkRenameStage (width : Nat := 2) : Circuit :=
 
   -- === CDB / retire ===
   let cdb_valid_0  := Wire.mk "cdb_valid"
-  let cdb_tag_0    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_{i}"
-  let cdb_data_0   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_{i}"
+  let cdb_tag_0    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_0_{i}"
+  let cdb_data_0   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_0_{i}"
   let cdb_valid_1  := Wire.mk "cdb_valid_1"
   let cdb_tag_1    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_1_{i}"
   let cdb_data_1   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_1_{i}"
@@ -941,7 +944,7 @@ def mkRenameStage (width : Nat := 2) : Circuit :=
 
   -- PhysRegFile (shared, dual write port from CDB)
   let physregfile_inst : CircuitInstance := {
-    moduleName := "PhysRegFile_64x32_W2"
+    moduleName := "PhysRegFile_64x32"
     instName := "u_prf"
     portMap :=
       [("clock", clock), ("reset", reset),

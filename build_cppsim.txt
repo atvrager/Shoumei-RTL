@@ -1,0 +1,30 @@
+==> Compiling C++ simulation modules...
+cd cpp_sim && mkdir -p build && cd build && cmake .. && make -j$(nproc)
+-- The CXX compiler identification is GNU 15.2.1
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- C++ simulation modules will be compiled as object library
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build
+make[1]: Entering directory '/home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build'
+[ 83%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp.o
+[ 83%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMDecoder.cpp.o
+[ 83%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IDecoder.cpp.o
+[ 83%] Building CXX object CMakeFiles/shoumei_cppsim_modules.dir/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp.o
+[ 83%] Building CXX object CMakeFiles/elf_loader.dir/home/atv/src/Shoumei-RTL-dual-dispatch/testbench/lib/elf_loader.cpp.o
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp: In member function ‘void RV32IFDecoder::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IFDecoder.cpp:462:24: warning: suggest parentheses around ‘&&’ within ‘||’ [-Wparentheses]
+  462 |   *io_is_store = valid && (opcode == 0x23) || (opcode == 0x27);
+      |                  ~~~~~~^~~~~~~~~~~~~~~~~~~
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp: In member function ‘void RV32IMFDecoder::comb_logic()’:
+/home/atv/src/Shoumei-RTL-dual-dispatch/output/cpp_sim/RV32IMFDecoder.cpp:494:24: warning: suggest parentheses around ‘&&’ within ‘||’ [-Wparentheses]
+  494 |   *io_is_store = valid && (opcode == 0x23) || (opcode == 0x27);
+      |                  ~~~~~~^~~~~~~~~~~~~~~~~~~
+[100%] Linking CXX static library libelf_loader.a
+[100%] Built target elf_loader
+[100%] Built target shoumei_cppsim_modules
+make[1]: Leaving directory '/home/atv/src/Shoumei-RTL-dual-dispatch/cpp_sim/build'

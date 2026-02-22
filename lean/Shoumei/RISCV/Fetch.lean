@@ -397,7 +397,7 @@ def mkFetchStage (width : Nat := 2) : Circuit :=
   let pc_reg := makeW "pc_reg" 32
 
   -- PC + 4 (slot 0 sequential, and base for slot 1)
-  let const_4w := makeW "const_4" 32
+  let const_4w := makeW "const4" 32
   let pc_plus_4 := makeW "pc_plus_4" 32
   let const_4_gates :=
     [Gate.mkBUF const_0 const_4w[0]!, Gate.mkBUF const_0 const_4w[1]!,
@@ -414,7 +414,7 @@ def mkFetchStage (width : Nat := 2) : Circuit :=
   }
 
   -- PC + 8 (sequential next when both slots valid and not taken)
-  let const_8w := makeW "const_8" 32
+  let const_8w := makeW "const8" 32
   let pc_plus_8 := makeW "pc_plus_8" 32
   let const_8_gates :=
     [Gate.mkBUF const_0 const_8w[0]!, Gate.mkBUF const_0 const_8w[1]!,
