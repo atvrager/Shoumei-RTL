@@ -64,8 +64,8 @@ def mkBusyBitTable1
     [
       Gate.mkAND set_en set_decode[i]! set_i,
       Gate.mkAND clear_en clear_decode[i]! clr_i,
-      Gate.mkMUX busy_cur[i]! one set_i mux1,
-      Gate.mkMUX mux1 zero clr_i busy_next[i]!
+      Gate.mkMUX busy_cur[i]! zero clr_i mux1,
+      Gate.mkMUX mux1 one set_i busy_next[i]!
     ]
 
   let perBitInstances := (List.range 64).map fun i =>
@@ -183,8 +183,8 @@ def mkBusyBitTable2
      Gate.mkAND clear_en_0 (clr_dec0[i]!) c0,
      Gate.mkAND clear_en_1 (clr_dec1[i]!) c1,
      Gate.mkOR c0 c1 ca,
-     Gate.mkMUX (busy_cur[i]!) one sa m1,
-     Gate.mkMUX m1 zero ca (busy_next[i]!)]
+     Gate.mkMUX (busy_cur[i]!) zero ca m1,
+     Gate.mkMUX m1 one sa (busy_next[i]!)]
   ) |>.flatten
 
   let perBitInstances := (List.range 64).map fun i =>
