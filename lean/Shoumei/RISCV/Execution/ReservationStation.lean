@@ -476,8 +476,7 @@ private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
   (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
 /-- Config-driven Reservation Station (W=2 dual-issue, banked architecture) -/
-def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
-    (_enableStoreLoadOrdering : Bool := false) : Circuit :=
+def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
   -- === W=2: Dual-Issue Reservation Station, banked architecture ===
   -- 4 entries split into 2 banks (Bank 0: entries 0,1; Bank 1: entries 2,3).
   -- issue_0 → Bank 0, issue_1 → Bank 1.
@@ -701,18 +700,58 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
   let v23_mux := Wire.mk "v_23_mux"
   let alloc_avail_g_1 := [Gate.mkMUX ev2 ev3 alloc_ptr_1 v23_mux, Gate.mkNOT v23_mux alloc_avail_1]
 
-  -- Arbiters
+  -- Store-Load Ordering (SLO): track is_store per entry, prioritize stores over loads
+  -- When any valid store exists in a bank, only stores can dispatch from that bank.
+  -- This prevents loads from bypassing younger stores that haven't entered the store buffer yet.
+  -- For non-memory RS instances, issue_is_store is tied to zero, so SLO is a no-op.
+  let mkSloEntry (idx : Nat) (issue_we : Wire) (issue_is_store : Wire) : List Gate × CircuitInstance × Wire :=
+    let is_store_cur := Wire.mk s!"slo_st_{idx}"
+    let is_store_next := Wire.mk s!"slo_st_next_{idx}"
+    let gates := [Gate.mkMUX is_store_cur issue_is_store issue_we is_store_next]
+    let inst : CircuitInstance := {
+      moduleName := "Register1", instName := s!"u_slo_st_{idx}",
+      portMap := [("d_0", is_store_next), ("clock", clock), ("reset", reset), ("q_0", is_store_cur)]
+    }
+    (gates, inst, is_store_cur)
+  let (slo_g0, slo_i0, st0) := mkSloEntry 0 issue_we_0_0 issue_is_store_0
+  let (slo_g1, slo_i1, st1) := mkSloEntry 1 issue_we_0_1 issue_is_store_0
+  let (slo_g2, slo_i2, st2) := mkSloEntry 2 issue_we_1_0 issue_is_store_1
+  let (slo_g3, slo_i3, st3) := mkSloEntry 3 issue_we_1_1 issue_is_store_1
+  -- has_pending_store per bank: (valid AND is_store) for any entry in the bank
+  let vs0 := Wire.mk "slo_vs0"; let vs1 := Wire.mk "slo_vs1"
+  let has_store_b0 := Wire.mk "slo_has_store_b0"
+  let vs2 := Wire.mk "slo_vs2"; let vs3 := Wire.mk "slo_vs3"
+  let has_store_b1 := Wire.mk "slo_has_store_b1"
+  let slo_hs_gates := [
+    Gate.mkAND ev0 st0 vs0, Gate.mkAND ev1 st1 vs1, Gate.mkOR vs0 vs1 has_store_b0,
+    Gate.mkAND ev2 st2 vs2, Gate.mkAND ev3 st3 vs3, Gate.mkOR vs2 vs3 has_store_b1]
+  -- Gated arbiter requests: arb_req = er AND (is_store OR NOT has_store)
+  -- When has_store=1: only stores can dispatch. When has_store=0: normal behavior.
+  let not_hs_b0 := Wire.mk "slo_not_hs_b0"; let not_hs_b1 := Wire.mk "slo_not_hs_b1"
+  let ok0 := Wire.mk "slo_ok0"; let ok1 := Wire.mk "slo_ok1"
+  let ok2 := Wire.mk "slo_ok2"; let ok3 := Wire.mk "slo_ok3"
+  let ar0 := Wire.mk "slo_ar0"; let ar1 := Wire.mk "slo_ar1"
+  let ar2 := Wire.mk "slo_ar2"; let ar3 := Wire.mk "slo_ar3"
+  let slo_gate_gates := [
+    Gate.mkNOT has_store_b0 not_hs_b0,
+    Gate.mkOR st0 not_hs_b0 ok0, Gate.mkAND er0 ok0 ar0,
+    Gate.mkOR st1 not_hs_b0 ok1, Gate.mkAND er1 ok1 ar1,
+    Gate.mkNOT has_store_b1 not_hs_b1,
+    Gate.mkOR st2 not_hs_b1 ok2, Gate.mkAND er2 ok2 ar2,
+    Gate.mkOR st3 not_hs_b1 ok3, Gate.mkAND er3 ok3 ar3]
+
+  -- Arbiters (use SLO-gated request signals)
   let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
   let arb0_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb0",
-    portMap := [("request_0", er0), ("request_1", er1),
+    portMap := [("request_0", ar0), ("request_1", ar1),
                 ("grant_0", arb0_gr0), ("grant_1", arb0_gr1),
                 ("valid", dispatch_valid_0)]
   }
   let arb1_gr0 := Wire.mk "dispatch_grant_2"; let arb1_gr1 := Wire.mk "dispatch_grant_3"
   let arb1_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb1",
-    portMap := [("request_0", er2), ("request_1", er3),
+    portMap := [("request_0", ar2), ("request_1", ar3),
                 ("grant_0", arb1_gr0), ("grant_1", arb1_gr1),
                 ("valid", dispatch_valid_1)]
   }
@@ -763,15 +802,12 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
       ptr_gates ++ base_issue_gates_0 ++ base_issue_gates_1 ++
       eg0 ++ eg1 ++ eg2 ++ eg3 ++
       alloc_avail_g_0 ++ alloc_avail_g_1 ++
+      slo_g0 ++ slo_g1 ++ slo_g2 ++ slo_g3 ++ slo_hs_gates ++ slo_gate_gates ++
       b0_mux_op ++ b0_mux_dst ++ b0_mux_s1d ++ b0_mux_s2d ++
       b1_mux_op ++ b1_mux_dst ++ b1_mux_s1d ++ b1_mux_s2d
     instances :=
-      [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst] ++
+      [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst, slo_i0, slo_i1, slo_i2, slo_i3] ++
       ei0 ++ ei1 ++ ei2 ++ ei3 }
-
-/-- Config-driven Memory RS -/
-def mkMemoryRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
-  mkReservationStationFromConfig config (_enableStoreLoadOrdering := true)
 
 /-- Config-driven MulDiv RS -/
 def mkMulDivRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=

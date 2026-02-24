@@ -27,14 +27,14 @@ open Shoumei.Circuits.Combinational
 open Shoumei.Verification
 
 /-- The default W=2 reservation station -/
-def rs4W2 := mkReservationStationFromConfig defaultCPUConfig false
+def rs4W2 := mkReservationStationFromConfig defaultCPUConfig
 
 /-! ## Structural Proofs -/
 
-theorem rs4w2_input_count : rs4W2.inputs.length = 266 := by native_decide
-theorem rs4w2_output_count : rs4W2.outputs.length = 156 := by native_decide
-theorem rs4w2_instance_count : rs4W2.instances.length = 8 := by native_decide
-theorem rs4w2_gate_count : rs4W2.gates.length = 1364 := by native_decide
+theorem rs4w2_input_count : rs4W2.inputs.length = 268 := by native_decide
+theorem rs4w2_output_count : rs4W2.outputs.length = 162 := by native_decide
+theorem rs4w2_instance_count : rs4W2.instances.length = 12 := by native_decide
+theorem rs4w2_gate_count : rs4W2.gates.length = 2248 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 
