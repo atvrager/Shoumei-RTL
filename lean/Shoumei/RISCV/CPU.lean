@@ -5599,12 +5599,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
     mkCsrAddrDecode csr_addr_reg
 
-  -- fflags/frm stubs for CSR read mux (FP not yet wired in W2)
-  let fflags_reg := (List.range 5).map (fun i => Wire.mk s!"fflags_stub_e{i}")
-  let frm_reg := (List.range 3).map (fun i => Wire.mk s!"frm_stub_e{i}")
-  let fflags_frm_stub_gates :=
-    (List.range 5).map (fun i => Gate.mkBUF zero fflags_reg[i]!) ++
-    (List.range 3).map (fun i => Gate.mkBUF zero frm_reg[i]!)
+  -- fflags accumulator + frm register (proper DFFs, CSR write path)
+  -- FP compute exceptions not yet wired in W2 (fp_valid_out = zero)
+  let fflags_reg := CPU.makeIndexedWires "fflags_reg" 5
+  let fflags_new := CPU.makeIndexedWires "fflags_new" 5
+  let fflags_acc := CPU.makeIndexedWires "fflags_acc" 5
+  let fflags_masked := CPU.makeIndexedWires "fflags_masked" 5
+  let fflags_acc_val := CPU.makeIndexedWires "fflags_acc_val" 5
+  let frm_reg := CPU.makeIndexedWires "frm_reg" 3
+  let frm_new := CPU.makeIndexedWires "frm_new" 3
+  let fp_exceptions := CPU.makeIndexedWires "fp_exceptions_stub" 5
+  let fp_exceptions_stub_gates := (List.range 5).map (fun i => Gate.mkBUF zero fp_exceptions[i]!)
+  let (fflags_frm_gates, fflags_frm_dff_instances) := mkFPFlags
+    enableF zero one clock reset
+    zero fp_exceptions  -- fp_valid_out = zero (no FP compute in W2 yet)
+    fflags_reg fflags_new fflags_acc fflags_masked fflags_acc_val
+    frm_reg frm_new
 
   -- CSR read MUX (with forced mstatus read for trap entry)
   let is_mstatus_for_read := Wire.mk "is_mstatus_forced"
@@ -5765,7 +5775,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND pipeline_reset_misc not_csr_flush_suppress cdb_reset]
 
   -- Collect all CSR gates
-  let csr_all_gates := csr_drain_gate ++ fflags_frm_stub_gates ++
+  let csr_all_gates := csr_drain_gate ++ fp_exceptions_stub_gates ++ fflags_frm_gates ++
     csr_addr_decode_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
     csr_write_logic_gates ++ csr_next_value_gates ++
     csr_cdb_inject_gates ++ csr_commit_inject_gates ++
@@ -5969,7 +5979,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  ser_dff_insts ++ [ser_pc_adder_inst] ++
                  trap_seq_insts ++ cdb_fwd_rs1_insts ++
                  [pc_queue_inst, insn_queue_inst] ++
-                 csr_reg_instances ++ csr_counter_instances
+                 csr_reg_instances ++ csr_counter_instances ++
+                 fflags_frm_dff_instances
   }
 
 end Shoumei.RISCV.CPU_W2
