@@ -70,6 +70,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
 
   -- Cache stall signals
   let ifetch_stall := Wire.mk "cache_ifetch_stall"
+  let ifetch_last_word := Wire.mk "cache_ifetch_last_word"
   let dmem_stall := Wire.mk "cache_dmem_stall"
   let _fence_i_busy := Wire.mk "cache_fence_i_busy"
 
@@ -118,6 +119,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let cpu_inst := CircuitInstance.mk s!"CPU_{config.isaString}" "u_cpu"
     ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
       ("fetch_stall_ext", ifetch_stall),
+      ("ifetch_last_word", ifetch_last_word),
       ("dmem_stall_ext", dmem_stall)] ++
      -- Slot 0 gets the fetched instruction word; slot 1 is zero (invalid)
      -- until L1I is modified to provide two words per cycle.
@@ -168,6 +170,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"ifetch_data_{i}", imem_resp_data[i]!)) ++
      (List.range 32).map (fun i => (s!"ifetch_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("ifetch_stall", ifetch_stall),
+      ("ifetch_last_word", ifetch_last_word),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
      [("dmem_stall", dmem_stall),

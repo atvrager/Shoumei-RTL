@@ -138,6 +138,8 @@ def mkL1ICache : Circuit :=
   let miss_valid := Wire.mk "miss_valid"
   let miss_addr := (List.range 32).map fun i => Wire.mk s!"miss_addr_{i}"
   let stall := Wire.mk "stall"
+  -- last_word: high when word_sel == 7 (last word in cache line), slot 1 wraps
+  let last_word := Wire.mk "last_word"
 
   -- Extract index bits (addr[7:5]) for set selection
   let idx_bits := [req_addr[5]!, req_addr[6]!, req_addr[7]!]
@@ -301,7 +303,10 @@ def mkL1ICache : Circuit :=
     -- carry 1: word_sel[1] AND carry0
     Gate.mkAND word_sel[1]! ws1_c0 ws1_c1,
     -- bit 2: word_sel[2] XOR carry1
-    Gate.mkXOR word_sel[2]! ws1_c1 word_sel_1[2]!
+    Gate.mkXOR word_sel[2]! ws1_c1 word_sel_1[2]!,
+    -- last_word: word_sel == 7 → slot 1 wraps around (invalid)
+    Gate.mkAND word_sel[0]! word_sel[1]! (Wire.mk "lw_01"),
+    Gate.mkAND (Wire.mk "lw_01") word_sel[2]! last_word
   ]
 
   let word_mux_1_inst := CircuitInstance.mk "Mux8x32" "u_word_mux_1"
@@ -465,7 +470,7 @@ def mkL1ICache : Circuit :=
 
   { name := "L1ICache"
     inputs := [clock, reset, req_valid] ++ req_addr ++ [refill_valid] ++ refill_data ++ [fence_i]
-    outputs := [resp_valid] ++ resp_data ++ resp_data_1 ++ [miss_valid] ++ miss_addr ++ [stall]
+    outputs := [resp_valid] ++ resp_data ++ resp_data_1 ++ [miss_valid] ++ miss_addr ++ [stall, last_word]
     gates := allGates ++ ws1_gates
     instances := allInstances
     rams := [data_ram]
