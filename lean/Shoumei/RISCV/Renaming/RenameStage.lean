@@ -516,6 +516,8 @@ def mkRenameStage : Circuit :=
 
   let (bypass_rs1_gates, rs1_phys_1) := mkBypass "bp_rs1" rs1_addr_1 rs1_phys_1_rat
   let (bypass_rs2_gates, rs2_phys_1) := mkBypass "bp_rs2" rs2_addr_1 rs2_phys_1_rat
+  -- Bypass old_rd for slot 1: when slot 0 writes same rd, slot 1's old_physRd = slot 0's new physRd
+  let (bypass_old_rd_gates, old_rd_bypassed_1) := mkBypass "bp_ord" rd_addr_1 old_rd_raw_1
 
   -- === Committed RAT write-enable per channel ===
   let mkCratWe (pfx2 : String) (v : Wire) (arch : List Wire) (hasPR : Wire) : List Gate × Wire :=
@@ -843,7 +845,7 @@ def mkRenameStage : Circuit :=
     (List.range tagWidth).map (fun i => Gate.mkBUF rs2_phys_1[i]! rs2_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF rs3_phys_1_rat[i]! rs3_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF rd_phys_1[i]!  rd_phys_out_1[i]!) ++
-    (List.range tagWidth).map (fun i => Gate.mkBUF old_rd_raw_1[i]! old_rd_phys_1[i]!)
+    (List.range tagWidth).map (fun i => Gate.mkBUF old_rd_bypassed_1[i]! old_rd_phys_1[i]!)
   -- PRF read data pass-through: rd_data3 = rs1_data_1, rd_data4 = rs2_data_1
   let prf_data_out_gates :=
     (List.range dataWidth).map (fun i => Gate.mkBUF rs1_data_1[i]! rd_data3_0[i]!) ++
@@ -875,7 +877,7 @@ def mkRenameStage : Circuit :=
   let all_gates :=
     x0_gates_0 ++ x0_gates_1 ++ needs_alloc_gates ++ stall_gates ++ rvalid_gates ++
     fire_gates ++ rat_we_gates ++ rd_phys_0_gates ++ rd_phys_1_gates ++
-    bypass_rs1_gates ++ bypass_rs2_gates ++
+    bypass_rs1_gates ++ bypass_rs2_gates ++ bypass_old_rd_gates ++
     crat_we_gates_0 ++ crat_we_gates_1 ++ crat_alloc_gates ++
     crat_gates ++
     rat_restore_mux_gates ++ retire_gate ++ prf_wr_gate ++
