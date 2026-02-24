@@ -3883,9 +3883,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                ((List.range 5).map fun i => (s!"rs3_addr_{i}", zero)) ++
                ((List.range 5).map fun i => (s!"rs3_addr_1_{i}", zero)) ++
                -- Commit hasPhysRd/hasAllocSlot: slot 0 muxed with CSR inject
+               -- commit_hasPhysRd: controls CRAT write (branches excluded to prevent RAT corruption)
+               -- retire_hasPhysRd: controls free list enqueue (branches included for physRd reclaim)
                [("commit_hasPhysRd", Wire.mk "csr_commit_hasPhysRd_0"),
                 ("commit_hasAllocSlot", Wire.mk "csr_commit_hasAllocSlot_0"),
-                ("commit_hasPhysRd_1", retire_any_old_1),
+                ("commit_hasPhysRd_1", rob_head_hasOldPhysRd_1),
                 ("commit_hasAllocSlot_1", rob_head_hasPhysRd_1)] ++
                -- RVVI readback tags: read PRF at commit-time physRd for rd_data
                bundledPorts "rd_tag5" commit_physRd_0 ++
@@ -3894,7 +3896,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "rd_data5" prf_rvvi_data_0 ++
                bundledPorts "rd_data6" prf_rvvi_data_1 ++
                [("ext_stall", Wire.mk "rename_ext_stall"),
-                ("ext_stall_1", Wire.mk "any_dual_stall")]
+                ("ext_stall_1", Wire.mk "any_dual_stall"),
+                ("retire_hasPhysRd", Wire.mk "csr_retire_hasPhysRd_0"),
+                ("retire_hasPhysRd_1", retire_any_old_1)]
   }
 
   -- === BUSY TABLE (W2) ===
@@ -5240,11 +5244,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let retire_tag_muxed_0 := CPU.makeIndexedWires "cmt_retag_mux_0" 6
   let csr_commit_valid_0 := Wire.mk "csr_commit_valid_0"
   let csr_commit_hasPhysRd_0 := Wire.mk "csr_commit_hasPhysRd_0"
+  let csr_retire_hasPhysRd_0 := Wire.mk "csr_retire_hasPhysRd_0"
   let csr_commit_hasAllocSlot_0 := Wire.mk "csr_commit_hasAllocSlot_0"
   let csr_commit_inject_gates : List Gate :=
     if config.enableZicsr then
       [Gate.mkOR retire_valid_0 csr_cdb_inject csr_commit_valid_0,
-       Gate.mkMUX retire_any_old_0 one csr_cdb_inject csr_commit_hasPhysRd_0,
+       -- commit_hasPhysRd: for CRAT write only (branches excluded)
+       Gate.mkMUX rob_head_hasOldPhysRd_0 one csr_cdb_inject csr_commit_hasPhysRd_0,
+       -- retire_hasPhysRd: for free list enqueue (branches included via branch_tracking)
+       Gate.mkMUX retire_any_old_0 one csr_cdb_inject csr_retire_hasPhysRd_0,
        Gate.mkMUX rob_head_hasPhysRd_0 one csr_cdb_inject csr_commit_hasAllocSlot_0] ++
       (List.range 5).map (fun i =>
         Gate.mkMUX commit_archRd_0[i]! csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed_0[i]!) ++
@@ -5255,7 +5263,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX retire_tag_bt_0[i]! csr_old_phys_reg[i]! csr_cdb_inject retire_tag_muxed_0[i]!)
     else
       [Gate.mkBUF retire_valid_0 csr_commit_valid_0,
-       Gate.mkBUF retire_any_old_0 csr_commit_hasPhysRd_0,
+       -- commit_hasPhysRd: CRAT write only (branches excluded)
+       Gate.mkBUF rob_head_hasOldPhysRd_0 csr_commit_hasPhysRd_0,
+       -- retire_hasPhysRd: free list enqueue (branches included)
+       Gate.mkBUF retire_any_old_0 csr_retire_hasPhysRd_0,
        Gate.mkBUF rob_head_hasPhysRd_0 csr_commit_hasAllocSlot_0] ++
       (List.range 5).map (fun i =>
         Gate.mkBUF commit_archRd_0[i]! commit_archRd_muxed_0[i]!) ++

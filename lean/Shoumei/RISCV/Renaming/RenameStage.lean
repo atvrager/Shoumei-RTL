@@ -362,6 +362,10 @@ def mkRenameStage : Circuit :=
   let retire_tag_0   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_{i}"
   let retire_valid_1 := Wire.mk "retire_valid_1"
   let retire_tag_1   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_1_{i}"
+  -- Separate free list enqueue gate (includes branches via branch_tracking)
+  -- commit_hasPhysRd controls CRAT write only; retire_hasPhysRd controls free list enqueue
+  let retire_hasPhysRd_0 := Wire.mk "retire_hasPhysRd"
+  let retire_hasPhysRd_1 := Wire.mk "retire_hasPhysRd_1"
   let rd_data4     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data4_{i}"
   let rd_tag5      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag5_{i}"
   let rd_data5     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data5_{i}"
@@ -750,14 +754,14 @@ def mkRenameStage : Circuit :=
      Gate.mkOR  (Wire.mk "rtnz0_012") retire_tag_0[3]! (Wire.mk "rtnz0_0123"),
      Gate.mkOR  (Wire.mk "rtnz0_0123") retire_tag_0[4]! (Wire.mk "rtnz0_01234"),
      Gate.mkOR  (Wire.mk "rtnz0_01234") retire_tag_0[5]! ret_tag_nz_0,
-     Gate.mkAND retire_valid_0 commit_hasPhysRd_0 gated_retire_pre_0,
+     Gate.mkAND retire_valid_0 retire_hasPhysRd_0 gated_retire_pre_0,
      Gate.mkAND gated_retire_pre_0 ret_tag_nz_0 gated_retire_0,
      Gate.mkOR  retire_tag_1[0]! retire_tag_1[1]! (Wire.mk "rtnz1_01"),
      Gate.mkOR  (Wire.mk "rtnz1_01") retire_tag_1[2]! (Wire.mk "rtnz1_012"),
      Gate.mkOR  (Wire.mk "rtnz1_012") retire_tag_1[3]! (Wire.mk "rtnz1_0123"),
      Gate.mkOR  (Wire.mk "rtnz1_0123") retire_tag_1[4]! (Wire.mk "rtnz1_01234"),
      Gate.mkOR  (Wire.mk "rtnz1_01234") retire_tag_1[5]! ret_tag_nz_1,
-     Gate.mkAND retire_valid_1 commit_hasPhysRd_1 gated_retire_pre_1,
+     Gate.mkAND retire_valid_1 retire_hasPhysRd_1 gated_retire_pre_1,
      Gate.mkAND gated_retire_pre_1 ret_tag_nz_1 gated_retire_1]
 
   -- BitmapFreeList W2 instance (dual retire + dual commit_alloc)
@@ -859,7 +863,7 @@ def mkRenameStage : Circuit :=
      cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
     [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
     [retire_valid_0] ++ retire_tag_0 ++ [retire_valid_1] ++ retire_tag_1 ++ rd_tag5 ++ rd_tag6 ++
-    [ext_stall, ext_stall_1]
+    [ext_stall, ext_stall_1, retire_hasPhysRd_0, retire_hasPhysRd_1]
 
   let all_outputs :=
     [rename_valid_0, stall_0] ++ rs1_phys_out_0 ++ rs2_phys_out_0 ++ rs3_phys_out_0 ++
