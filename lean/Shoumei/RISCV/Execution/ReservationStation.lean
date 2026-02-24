@@ -477,7 +477,7 @@ private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
 
 /-- Config-driven Reservation Station (W=2 dual-issue, banked architecture) -/
 def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
-    (enableStoreLoadOrdering : Bool := false) : Circuit :=
+    (_enableStoreLoadOrdering : Bool := false) : Circuit :=
   -- === W=2: Dual-Issue Reservation Station, banked architecture ===
   -- 4 entries split into 2 banks (Bank 0: entries 0,1; Bank 1: entries 2,3).
   -- issue_0 → Bank 0, issue_1 → Bank 1.
@@ -539,7 +539,8 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
   -- 1-bit allocation pointers for each bank
   let alloc_ptr_0 := Wire.mk "alloc_ptr_0"; let alloc_ptr_next_0 := Wire.mk "alloc_ptr_next_0"
   let alloc_ptr_1 := Wire.mk "alloc_ptr_1"; let alloc_ptr_next_1 := Wire.mk "alloc_ptr_next_1"
-  let ptr_gates := [Gate.mkNOT alloc_ptr_0 alloc_ptr_next_0, Gate.mkNOT alloc_ptr_1 alloc_ptr_next_1]
+  let ptr_gates := [Gate.mkXOR alloc_ptr_0 issue_en_0 alloc_ptr_next_0,
+                     Gate.mkXOR alloc_ptr_1 issue_en_1 alloc_ptr_next_1]
   let ptr_inst_0 : CircuitInstance := {
     moduleName := "Register1", instName := "u_alloc_ptr_0",
     portMap := [("d_0", alloc_ptr_next_0), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr_0)]
@@ -599,26 +600,64 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
                    Gate.mkAND (Wire.mk s!"{pfx}_a4") (Wire.mk s!"{pfx}_a3") eq]
       let m := Wire.mk s!"{pfx}_m"; let mg := Gate.mkAND eq cdb_valid m
       (xs ++ xns, ands ++ [mg], m)
+    -- CDB matching against STORED tags (for existing entries)
     let (m1_0x, m1_0a, m1_0m) := mkMatch s!"e{idx}_m1_0" src1_tag cdb_tag_0 cdb_valid_0
     let (m1_1x, m1_1a, m1_1m) := mkMatch s!"e{idx}_m1_1" src1_tag cdb_tag_1 cdb_valid_1
     let (m2_0x, m2_0a, m2_0m) := mkMatch s!"e{idx}_m2_0" src2_tag cdb_tag_0 cdb_valid_0
     let (m2_1x, m2_1a, m2_1m) := mkMatch s!"e{idx}_m2_1" src2_tag cdb_tag_1 cdb_valid_1
+    -- CDB matching against INCOMING dispatch tags (for same-cycle alloc+CDB wakeup)
+    let (n1_0x, n1_0a, n1_0m) := mkMatch s!"e{idx}_n1_0" issue_s1t cdb_tag_0 cdb_valid_0
+    let (n1_1x, n1_1a, n1_1m) := mkMatch s!"e{idx}_n1_1" issue_s1t cdb_tag_1 cdb_valid_1
+    let (n2_0x, n2_0a, n2_0m) := mkMatch s!"e{idx}_n2_0" issue_s2t cdb_tag_0 cdb_valid_0
+    let (n2_1x, n2_1a, n2_1m) := mkMatch s!"e{idx}_n2_1" issue_s2t cdb_tag_1 cdb_valid_1
+    let n1_any := Wire.mk s!"e{idx}_n1_any"; let n2_any := Wire.mk s!"e{idx}_n2_any"
+    -- Alloc-time ready: dispatch ready OR same-cycle CDB match on incoming tag
+    let alloc_s1r := Wire.mk s!"e{idx}_alloc_s1r"; let alloc_s2r := Wire.mk s!"e{idx}_alloc_s2r"
+    let alloc_ready_gates := [
+      Gate.mkOR n1_0m n1_1m n1_any, Gate.mkOR issue_s1r n1_any alloc_s1r,
+      Gate.mkOR n2_0m n2_1m n2_any, Gate.mkOR issue_s2r n2_any alloc_s2r]
+    -- Alloc-time data: MUX between dispatch data and CDB data (CDB ch0 > CDB ch1 > dispatch)
+    -- Gate with NOT(issue_src_ready) to avoid overwriting already-valid data (e.g. immediates)
+    let not_is1r := Wire.mk s!"e{idx}_not_is1r"; let not_is2r := Wire.mk s!"e{idx}_not_is2r"
+    let n1_0d := Wire.mk s!"e{idx}_n1_0d"; let n1_1d := Wire.mk s!"e{idx}_n1_1d"
+    let n2_0d := Wire.mk s!"e{idx}_n2_0d"; let n2_1d := Wire.mk s!"e{idx}_n2_1d"
+    let alloc_data_gate := [
+      Gate.mkNOT issue_s1r not_is1r, Gate.mkNOT issue_s2r not_is2r,
+      Gate.mkAND n1_0m not_is1r n1_0d, Gate.mkAND n1_1m not_is1r n1_1d,
+      Gate.mkAND n2_0m not_is2r n2_0d, Gate.mkAND n2_1m not_is2r n2_1d]
+    let a1d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a1d_t_{i}"
+    let a1d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a1d_m_{i}"
+    let ad1 := (List.range dataWidth).map fun i => Gate.mkMUX issue_s1d[i]! cdb_data_1[i]! n1_1d a1d_t[i]!
+    let ad2 := (List.range dataWidth).map fun i => Gate.mkMUX a1d_t[i]! cdb_data_0[i]! n1_0d a1d_m[i]!
+    let a2d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a2d_t_{i}"
+    let a2d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a2d_m_{i}"
+    let ad3 := (List.range dataWidth).map fun i => Gate.mkMUX issue_s2d[i]! cdb_data_1[i]! n2_1d a2d_t[i]!
+    let ad4 := (List.range dataWidth).map fun i => Gate.mkMUX a2d_t[i]! cdb_data_0[i]! n2_0d a2d_m[i]!
     let s1_any := Wire.mk s!"e{idx}_m1_any"; let r1_m1 := Wire.mk s!"e{idx}_r1_m1"
+    -- Gate CDB data match with NOT(src_ready) to prevent overwriting valid data (e.g. immediates)
+    let not_s1r := Wire.mk s!"e{idx}_not_s1r"
+    let m1_0d := Wire.mk s!"e{idx}_m1_0d"; let m1_1d := Wire.mk s!"e{idx}_m1_1d"
     let wakeup1_gates := [Gate.mkOR m1_0m m1_1m s1_any, Gate.mkOR src1_ready s1_any r1_m1,
-                          Gate.mkMUX r1_m1 issue_s1r issue_we_this e_next[13]!]
+                          Gate.mkMUX r1_m1 alloc_s1r issue_we_this e_next[13]!,
+                          Gate.mkNOT src1_ready not_s1r,
+                          Gate.mkAND m1_0m not_s1r m1_0d, Gate.mkAND m1_1m not_s1r m1_1d]
     let w1d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_t_{i}"
     let w1d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_m_{i}"
-    let wd1 := (List.range dataWidth).map fun i => Gate.mkMUX src1_data[i]! cdb_data_1[i]! m1_1m w1d_t[i]!
-    let wd2 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_t[i]! cdb_data_0[i]! m1_0m w1d_m[i]!
-    let wd3 := (List.range 32).map fun i => Gate.mkMUX w1d_m[i]! issue_s1d[i]! issue_we_this e_next[20+i]!
+    let wd1 := (List.range dataWidth).map fun i => Gate.mkMUX src1_data[i]! cdb_data_1[i]! m1_1d w1d_t[i]!
+    let wd2 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_t[i]! cdb_data_0[i]! m1_0d w1d_m[i]!
+    let wd3 := (List.range 32).map fun i => Gate.mkMUX w1d_m[i]! a1d_m[i]! issue_we_this e_next[20+i]!
     let s2_any := Wire.mk s!"e{idx}_m2_any"; let r2_m2 := Wire.mk s!"e{idx}_r2_m2"
+    let not_s2r := Wire.mk s!"e{idx}_not_s2r"
+    let m2_0d := Wire.mk s!"e{idx}_m2_0d"; let m2_1d := Wire.mk s!"e{idx}_m2_1d"
     let wakeup2_gates := [Gate.mkOR m2_0m m2_1m s2_any, Gate.mkOR src2_ready s2_any r2_m2,
-                          Gate.mkMUX r2_m2 issue_s2r issue_we_this e_next[52]!]
+                          Gate.mkMUX r2_m2 alloc_s2r issue_we_this e_next[52]!,
+                          Gate.mkNOT src2_ready not_s2r,
+                          Gate.mkAND m2_0m not_s2r m2_0d, Gate.mkAND m2_1m not_s2r m2_1d]
     let w2d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_t_{i}"
     let w2d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_m_{i}"
-    let wd4 := (List.range dataWidth).map fun i => Gate.mkMUX src2_data[i]! cdb_data_1[i]! m2_1m w2d_t[i]!
-    let wd5 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_t[i]! cdb_data_0[i]! m2_0m w2d_m[i]!
-    let wd6 := (List.range 32).map fun i => Gate.mkMUX w2d_m[i]! issue_s2d[i]! issue_we_this e_next[59+i]!
+    let wd4 := (List.range dataWidth).map fun i => Gate.mkMUX src2_data[i]! cdb_data_1[i]! m2_1d w2d_t[i]!
+    let wd5 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_t[i]! cdb_data_0[i]! m2_0d w2d_m[i]!
+    let wd6 := (List.range 32).map fun i => Gate.mkMUX w2d_m[i]! a2d_m[i]! issue_we_this e_next[59+i]!
     let dispatch_en_this := if bank == 0 then dispatch_en_0 else dispatch_en_1
     let dispatch_grant := Wire.mk s!"dispatch_grant_{idx}"
     let dispatch := Wire.mk s!"e{idx}_dispatch"
@@ -640,6 +679,10 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
     let e_gates :=
       m1_0x ++ m1_0a ++ m1_1x ++ m1_1a ++
       m2_0x ++ m2_0a ++ m2_1x ++ m2_1a ++
+      n1_0x ++ n1_0a ++ n1_1x ++ n1_1a ++
+      n2_0x ++ n2_0a ++ n2_1x ++ n2_1a ++
+      alloc_ready_gates ++ alloc_data_gate ++
+      ad1 ++ ad2 ++ ad3 ++ ad4 ++
       wakeup1_gates ++ wd1 ++ wd2 ++ wd3 ++
       wakeup2_gates ++ wd4 ++ wd5 ++ wd6 ++
       [dispatch_gate] ++ valid_we ++ opcode_g ++ dest_g ++ src1t_g ++ src2t_g ++
@@ -674,24 +717,35 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
                 ("valid", dispatch_valid_1)]
   }
 
-  -- Output muxes
+  -- Output muxes (use CDB-bypassed data wires instead of raw DFF outputs)
+  -- The w1d_m/w2d_m wires already contain CDB-forwarded data when CDB matches
+  -- in the same cycle, falling back to DFF data when no CDB match.
   let mkMux2 (_name : String) (w : Nat) (in0 in1 out_wires : List Wire) (sel : Wire) : List Gate :=
     (List.range w).map fun i => Gate.mkMUX in0[i]! in1[i]! sel out_wires[i]!
   let e0 := mkWrsI "e0" entryWidth; let e1 := mkWrsI "e1" entryWidth
   let e2 := mkWrsI "e2" entryWidth; let e3 := mkWrsI "e3" entryWidth
+  -- CDB-bypassed src1/src2 data per entry
+  let e0_s1bp := (List.range dataWidth).map fun i => Wire.mk s!"e0_w1d_m_{i}"
+  let e1_s1bp := (List.range dataWidth).map fun i => Wire.mk s!"e1_w1d_m_{i}"
+  let e2_s1bp := (List.range dataWidth).map fun i => Wire.mk s!"e2_w1d_m_{i}"
+  let e3_s1bp := (List.range dataWidth).map fun i => Wire.mk s!"e3_w1d_m_{i}"
+  let e0_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e0_w2d_m_{i}"
+  let e1_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e1_w2d_m_{i}"
+  let e2_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e2_w2d_m_{i}"
+  let e3_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e3_w2d_m_{i}"
   let b0_mux_op  := mkMux2 "b0_m_op"  opcodeWidth (e0.drop 1)  (e1.drop 1)  dispatch_opcode_0  arb0_gr1
   let b0_mux_dst := mkMux2 "b0_m_dst" tagWidth    (e0.drop 7)  (e1.drop 7)  dispatch_dest_tag_0 arb0_gr1
-  let b0_mux_s1d := mkMux2 "b0_m_s1d" dataWidth   (e0.drop 20) (e1.drop 20) dispatch_src1_data_0 arb0_gr1
-  let b0_mux_s2d := mkMux2 "b0_m_s2d" dataWidth   (e0.drop 59) (e1.drop 59) dispatch_src2_data_0 arb0_gr1
+  let b0_mux_s1d := mkMux2 "b0_m_s1d" dataWidth   e0_s1bp      e1_s1bp      dispatch_src1_data_0 arb0_gr1
+  let b0_mux_s2d := mkMux2 "b0_m_s2d" dataWidth   e0_s2bp      e1_s2bp      dispatch_src2_data_0 arb0_gr1
   let b1_mux_op  := mkMux2 "b1_m_op"  opcodeWidth (e2.drop 1)  (e3.drop 1)  dispatch_opcode_1  arb1_gr1
   let b1_mux_dst := mkMux2 "b1_m_dst" tagWidth    (e2.drop 7)  (e3.drop 7)  dispatch_dest_tag_1 arb1_gr1
-  let b1_mux_s1d := mkMux2 "b1_m_s1d" dataWidth   (e2.drop 20) (e3.drop 20) dispatch_src1_data_1 arb1_gr1
-  let b1_mux_s2d := mkMux2 "b1_m_s2d" dataWidth   (e2.drop 59) (e3.drop 59) dispatch_src2_data_1 arb1_gr1
+  let b1_mux_s1d := mkMux2 "b1_m_s1d" dataWidth   e2_s1bp      e3_s1bp      dispatch_src1_data_1 arb1_gr1
+  let b1_mux_s2d := mkMux2 "b1_m_s2d" dataWidth   e2_s2bp      e3_s2bp      dispatch_src2_data_1 arb1_gr1
 
   { name := "ReservationStation4_W2"
     inputs :=
       [clock, reset, zero, one, issue_en_0, issue_en_1] ++
-      (if enableStoreLoadOrdering then [issue_is_store_0, issue_is_store_1] else []) ++
+      [issue_is_store_0, issue_is_store_1] ++
       issue_opcode_0 ++ issue_dest_tag_0 ++ [issue_src1_ready_0] ++ issue_src1_tag_0 ++ issue_src1_data_0 ++
       [issue_src2_ready_0] ++ issue_src2_tag_0 ++ issue_src2_data_0 ++
       issue_opcode_1 ++ issue_dest_tag_1 ++ [issue_src1_ready_1] ++ issue_src1_tag_1 ++ issue_src1_data_1 ++
@@ -717,7 +771,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig)
 
 /-- Config-driven Memory RS -/
 def mkMemoryRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
-  mkReservationStationFromConfig config (enableStoreLoadOrdering := true)
+  mkReservationStationFromConfig config (_enableStoreLoadOrdering := true)
 
 /-- Config-driven MulDiv RS -/
 def mkMulDivRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=

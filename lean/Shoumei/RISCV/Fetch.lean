@@ -216,8 +216,14 @@ def mkFetchStage : Circuit :=
   let predict_imm_0  := makeW "predict_imm_0" 32
   let predict_target_0 := makeW "predict_target_0" 32
   let pt_0 := Wire.mk "pt_0"
-  let btype_gates_0 := [Gate.mkNOT instr_0[6]! (Wire.mk "not0_op6"),
-                        Gate.mkAND instr_0[6]! (Wire.mk "not0_op6") is_btype_0]
+  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0
+  let btype_gates_0 := [Gate.mkNOT instr_0[4]! (Wire.mk "not0_op4"),
+                        Gate.mkNOT instr_0[3]! (Wire.mk "not0_op3"),
+                        Gate.mkNOT instr_0[2]! (Wire.mk "not0_op2"),
+                        Gate.mkAND instr_0[6]! instr_0[5]! (Wire.mk "bt0_65"),
+                        Gate.mkAND (Wire.mk "not0_op4") (Wire.mk "not0_op3") (Wire.mk "bt0_43"),
+                        Gate.mkAND (Wire.mk "bt0_65") (Wire.mk "bt0_43") (Wire.mk "bt0_6543"),
+                        Gate.mkAND (Wire.mk "bt0_6543") (Wire.mk "not0_op2") is_btype_0]
   let jal_gates_0   := [Gate.mkAND instr_0[6]! instr_0[3]! is_jal_0]
   let b_ext_0 : List Gate :=
     [Gate.mkBUF const_0 b_imm_0[0]!] ++
@@ -233,7 +239,9 @@ def mkFetchStage : Circuit :=
     (List.range 12).map (fun i => Gate.mkBUF instr_0[31]!   j_imm_0[20+i]!)
   let pred_imm_0_gates : List Gate :=
     (List.range 32).map (fun i => Gate.mkMUX b_imm_0[i]! j_imm_0[i]! is_jal_0 predict_imm_0[i]!)
-  let btfn_0_gate := Gate.mkOR is_jal_0 predict_imm_0[31]! pt_0
+  -- BTFN disabled for now: hardwire pt_0 = 0 (always predict not-taken for B-type)
+  -- TODO: re-enable once branch redirect pipeline is fully debugged
+  let btfn_0_gate := Gate.mkBUF const_0 pt_0
   let pred_gates_0 := btype_gates_0 ++ jal_gates_0 ++ b_ext_0 ++ j_ext_0 ++ pred_imm_0_gates ++ [btfn_0_gate]
   let predict_target_0_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -251,8 +259,14 @@ def mkFetchStage : Circuit :=
   let predict_imm_1  := makeW "predict_imm_1" 32
   let predict_target_1 := makeW "predict_target_1" 32
   let pt_1 := Wire.mk "pt_1"
-  let btype_gates_1 := [Gate.mkNOT instr_1[6]! (Wire.mk "not1_op6"),
-                        Gate.mkAND instr_1[6]! (Wire.mk "not1_op6") is_btype_1]
+  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0
+  let btype_gates_1 := [Gate.mkNOT instr_1[4]! (Wire.mk "not1_op4"),
+                        Gate.mkNOT instr_1[3]! (Wire.mk "not1_op3"),
+                        Gate.mkNOT instr_1[2]! (Wire.mk "not1_op2"),
+                        Gate.mkAND instr_1[6]! instr_1[5]! (Wire.mk "bt1_65"),
+                        Gate.mkAND (Wire.mk "not1_op4") (Wire.mk "not1_op3") (Wire.mk "bt1_43"),
+                        Gate.mkAND (Wire.mk "bt1_65") (Wire.mk "bt1_43") (Wire.mk "bt1_6543"),
+                        Gate.mkAND (Wire.mk "bt1_6543") (Wire.mk "not1_op2") is_btype_1]
   let jal_gates_1   := [Gate.mkAND instr_1[6]! instr_1[3]! is_jal_1]
   let b_ext_1 : List Gate :=
     [Gate.mkBUF const_0 b_imm_1[0]!] ++
@@ -268,7 +282,8 @@ def mkFetchStage : Circuit :=
     (List.range 12).map (fun i => Gate.mkBUF instr_1[31]!   j_imm_1[20+i]!)
   let pred_imm_1_gates : List Gate :=
     (List.range 32).map (fun i => Gate.mkMUX b_imm_1[i]! j_imm_1[i]! is_jal_1 predict_imm_1[i]!)
-  let btfn_1_gate := Gate.mkOR is_jal_1 predict_imm_1[31]! pt_1
+  -- BTFN disabled for now: hardwire pt_1 = 0
+  let btfn_1_gate := Gate.mkBUF const_0 pt_1
   let pred_gates_1 := btype_gates_1 ++ jal_gates_1 ++ b_ext_1 ++ j_ext_1 ++ pred_imm_1_gates ++ [btfn_1_gate]
   let predict_target_1_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -287,30 +302,41 @@ def mkFetchStage : Circuit :=
   let valid_1     := Wire.mk "valid_1"
   let not_s0taken := Wire.mk "not_s0taken"
   let one_slot1   := Wire.mk "one_slot1"
+  let half_step := Wire.mk "half_step"
+  let not_half_step := Wire.mk "not_half_step"
   let combined_mux_gates := [
     Gate.mkOR is_btype_0 is_jal_0 is_pred_0,
     Gate.mkAND pt_0 is_pred_0 slot0_taken,
     Gate.mkNOT slot0_taken not_s0taken,
     Gate.mkBUF const_1 one_slot1,
-    Gate.mkAND not_s0taken one_slot1 valid_1,
+    Gate.mkAND not_s0taken one_slot1 (Wire.mk "valid_1_pre"),
+    Gate.mkAND (Wire.mk "valid_1_pre") not_half_step valid_1,  -- mask slot 1 on half_step
     Gate.mkBUF const_1 valid_0   -- slot 0 always valid (stall handled externally)
   ]
 
-  -- Next-PC mux: branch > slot0_taken > slot1_taken > sequential (+8)
+  -- Next-PC mux: branch > slot0_taken > slot1_taken > sequential (+8 or +4)
   let is_pred_1   := Wire.mk "is_pred_1"
+  let slot1_taken_raw := Wire.mk "slot1_taken_raw"
   let slot1_taken := Wire.mk "slot1_taken"
+  let next_pc_default := makeW "next_pc_default" 32
   let mux_s1_out  := makeW "mux_s1_out" 32
   let mux_s0_out  := makeW "mux_s0_out" 32
   let mux_br_out  := makeW "mux_br_out" 32
   let mux_st_out  := makeW "mux_st_out" 32
+  -- half_step: use PC+4 as default, disable slot1 prediction
+  let half_step_gates :=
+    [Gate.mkNOT half_step not_half_step] ++
+    (List.range 32).map (fun i => Gate.mkMUX pc_plus_8[i]! pc_plus_4[i]! half_step next_pc_default[i]!)
   let slot_pred_gates := [
     Gate.mkOR is_btype_1 is_jal_1 is_pred_1,
-    Gate.mkAND pt_1 is_pred_1 slot1_taken
+    Gate.mkAND pt_1 is_pred_1 slot1_taken_raw,
+    Gate.mkAND slot1_taken_raw not_half_step slot1_taken  -- disable slot1 pred on half_step
   ]
-  let mux_s1_gates := (List.range 32).map (fun i => Gate.mkMUX pc_plus_8[i]! predict_target_1[i]! slot1_taken mux_s1_out[i]!)
+  let mux_s1_gates := (List.range 32).map (fun i => Gate.mkMUX next_pc_default[i]! predict_target_1[i]! slot1_taken mux_s1_out[i]!)
   let mux_s0_gates := (List.range 32).map (fun i => Gate.mkMUX mux_s1_out[i]! predict_target_0[i]! slot0_taken mux_s0_out[i]!)
-  let mux_br_gates := (List.range 32).map (fun i => Gate.mkMUX mux_s0_out[i]! branch_target[i]! branch_valid mux_br_out[i]!)
-  let stall_mux_gates := (List.range 32).map (fun i => Gate.mkMUX mux_br_out[i]! pc_reg[i]! stall mux_st_out[i]!)
+  -- Stall MUX first (hold PC), then branch redirect overrides (highest priority)
+  let stall_mux_gates := (List.range 32).map (fun i => Gate.mkMUX mux_s0_out[i]! pc_reg[i]! stall mux_br_out[i]!)
+  let mux_br_gates := (List.range 32).map (fun i => Gate.mkMUX mux_br_out[i]! branch_target[i]! branch_valid mux_st_out[i]!)
 
   -- PC register (d = stall_mux_out, q = pc_reg)
   let pc_reg_inst : CircuitInstance := {
@@ -339,11 +365,11 @@ def mkFetchStage : Circuit :=
   ]
 
   { name := "FetchStage_W2"
-    inputs := [clock, reset, stall, branch_valid, const_0, const_1] ++
+    inputs := [clock, reset, stall, half_step, branch_valid, const_0, const_1] ++
               branch_target ++ instr_0 ++ instr_1
     outputs := pc_0_out ++ pc_1_out ++ [valid_0, valid_1, pt_0, pt_1, stalled_reg]
     gates := const_4_gates ++ const_8_gates ++
-             pred_gates_0 ++ pred_gates_1 ++ combined_mux_gates ++
+             pred_gates_0 ++ pred_gates_1 ++ half_step_gates ++ combined_mux_gates ++
              slot_pred_gates ++
              mux_s1_gates ++ mux_s0_gates ++ mux_br_gates ++ stall_mux_gates ++
              pc_out_gates ++ pc_1_out_gates ++ stalled_cntrl_gates

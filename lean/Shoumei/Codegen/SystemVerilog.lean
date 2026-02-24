@@ -525,7 +525,12 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
           -- Standalone register
           let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
           let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
-            | some (_, inputGroup) => inputGroup.name
+            | some (_, inputGroup) =>
+              -- Single-bit DFF input from a bus: need bit index
+              let idx := inputGroup.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == d.name then some p.1 else none)
+              match idx with
+              | some i => s!"{inputGroup.name}[{i}]"
+              | none => inputGroup.name
             | none => d.name
           let decl := if isCircuitOutput then none else some s!"  logic {regName};"
           let resetVal := if g.gateType == GateType.DFF_SET then "1'b1" else "1'b0"

@@ -357,10 +357,16 @@ def mkRenameStage : Circuit :=
   let cdb_tag_1    := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_1_{i}"
   let cdb_data_1   := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_1_{i}"
 
-  let retire_valid := Wire.mk "retire_valid"
-  let retire_tag   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_{i}"
-  let rd_tag4      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag4_{i}"
+  let ext_stall      := Wire.mk "ext_stall"
+  let retire_valid_0 := Wire.mk "retire_valid"
+  let retire_tag_0   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_{i}"
+  let retire_valid_1 := Wire.mk "retire_valid_1"
+  let retire_tag_1   := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_1_{i}"
   let rd_data4     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data4_{i}"
+  let rd_tag5      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag5_{i}"
+  let rd_data5     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data5_{i}"
+  let rd_tag6      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag6_{i}"
+  let rd_data6     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data6_{i}"
 
   -- === Slot 0 outputs ===
   let rs1_phys_out_0  := (List.range tagWidth).map fun i => Wire.mk s!"rs1_phys_out_{i}"
@@ -444,17 +450,25 @@ def mkRenameStage : Circuit :=
      Gate.mkBUF stall_any stall_0,
      Gate.mkBUF stall_any stall_1]
 
-  -- rename_valid_{k} = instr_valid_{k} AND NOT stall_any
+  -- rename_valid_{k} = instr_valid_{k} AND NOT stall_any AND NOT ext_stall [AND NOT ext_stall_1 for slot 1]
+  let ext_stall_1 := Wire.mk "ext_stall_1"
+  let stall_combined := Wire.mk "stall_combined"
   let not_stall := Wire.mk "not_stall_w2"
+  let stall_combined_1 := Wire.mk "stall_combined_1"
+  let not_stall_1 := Wire.mk "not_stall_1_w2"
   let rvalid_gates :=
-    [Gate.mkNOT stall_any not_stall,
+    [Gate.mkOR  stall_any ext_stall stall_combined,
+     Gate.mkNOT stall_combined not_stall,
      Gate.mkAND instr_valid_0 not_stall rename_valid_0,
-     Gate.mkAND instr_valid_1 not_stall rename_valid_1]
+     -- Slot 1 also gated by ext_stall_1 (any_dual_stall)
+     Gate.mkOR  stall_combined ext_stall_1 stall_combined_1,
+     Gate.mkNOT stall_combined_1 not_stall_1,
+     Gate.mkAND instr_valid_1 not_stall_1 rename_valid_1]
 
   -- allocate_fire_{k} = needs_alloc_{k} AND rename_valid_{k}
   let alloc_fire_0 := Wire.mk "alloc_fire_0"; let alloc_fire_1 := Wire.mk "alloc_fire_1"
   let ff0 := Wire.mk "ff_fire_0";  let ff1 := Wire.mk "ff_fire_1"
-  let cnt0 := Wire.mk "counter_advance_0"; let cnt1 := Wire.mk "counter_advance_1"
+  let cnt0 := Wire.mk "cnt_adv_s0"; let cnt1 := Wire.mk "cnt_adv_s1"
   let fire_gates :=
     [Gate.mkAND needs_alloc_0 rename_valid_0 alloc_fire_0,
      Gate.mkAND force_alloc_0 rename_valid_0 ff0,
@@ -524,16 +538,75 @@ def mkRenameStage : Circuit :=
 
   -- === Sub-instances ===
 
-  -- Dual committed RAT (daisy-chained): crat_0 (commit_0) → crat_1 (commit_1)
-  let crat_mid_dump := (List.range 32).map fun i =>
-    (List.range tagWidth).map fun j => Wire.mk s!"crat_mid_{i}_{j}"
+  -- Single committed RAT with merged-restore approach.
+  -- Each cycle, combinationally merge both commit slots' writes onto the CRAT dump,
+  -- then restore the merged result back into the CRAT. This ensures the CRAT state
+  -- always reflects ALL committed writes from both slots.
+  let crat_raw_dump := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"crat_raw_{i}_{j}"
+
+  -- 5-to-32 decoder for commit slot 0 arch rd
+  let cdec0_an := (List.range archWidth).map fun k => Wire.mk s!"cd0_an{k}"
+  let cdec0_not := (List.range archWidth).map fun k =>
+    Gate.mkNOT commit_archRd_0[k]! cdec0_an[k]!
+  let cdec0_outs := (List.range 32).map fun i => Wire.mk s!"cd0_{i}"
+  let cdec0_and := (List.range 32).flatMap fun i =>
+    let bits := (List.range archWidth).map fun k =>
+      if (i >>> k) &&& 1 == 1 then commit_archRd_0[k]! else cdec0_an[k]!
+    let t1 := Wire.mk s!"cd0_{i}_t1"
+    let t2 := Wire.mk s!"cd0_{i}_t2"
+    let t3 := Wire.mk s!"cd0_{i}_t3"
+    [Gate.mkAND bits[0]! bits[1]! t1,
+     Gate.mkAND bits[2]! bits[3]! t2,
+     Gate.mkAND t1 t2 t3,
+     Gate.mkAND t3 bits[4]! cdec0_outs[i]!]
+
+  -- 5-to-32 decoder for commit slot 1 arch rd
+  let cdec1_an := (List.range archWidth).map fun k => Wire.mk s!"cd1_an{k}"
+  let cdec1_not := (List.range archWidth).map fun k =>
+    Gate.mkNOT commit_archRd_1[k]! cdec1_an[k]!
+  let cdec1_outs := (List.range 32).map fun i => Wire.mk s!"cd1_{i}"
+  let cdec1_and := (List.range 32).flatMap fun i =>
+    let bits := (List.range archWidth).map fun k =>
+      if (i >>> k) &&& 1 == 1 then commit_archRd_1[k]! else cdec1_an[k]!
+    let t1 := Wire.mk s!"cd1_{i}_t1"
+    let t2 := Wire.mk s!"cd1_{i}_t2"
+    let t3 := Wire.mk s!"cd1_{i}_t3"
+    [Gate.mkAND bits[0]! bits[1]! t1,
+     Gate.mkAND bits[2]! bits[3]! t2,
+     Gate.mkAND t1 t2 t3,
+     Gate.mkAND t3 bits[4]! cdec1_outs[i]!]
+
+  -- Per-entry commit write-enable: cd0_we[i] = cdec0[i] AND crat_we_0
+  --                                 cd1_we[i] = cdec1[i] AND crat_we_1
+  let cd0_we := (List.range 32).map fun i => Wire.mk s!"cd0_we_{i}"
+  let cd1_we := (List.range 32).map fun i => Wire.mk s!"cd1_we_{i}"
+  let cd_we_gates :=
+    ((List.range 32).map fun i => Gate.mkAND cdec0_outs[i]! crat_we_0 cd0_we[i]!) ++
+    ((List.range 32).map fun i => Gate.mkAND cdec1_outs[i]! crat_we_1 cd1_we[i]!)
+
+  -- Merged CRAT: crat_dump[i] = cd1_we[i] ? physrd_1 : (cd0_we[i] ? physrd_0 : crat_raw[i])
+  -- Slot 1 has higher priority (later in program order)
+  let crat_mid := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"crat_m_{i}_{j}"
+  let crat_merge_gates :=
+    (List.range 32).flatMap fun i =>
+      (List.range tagWidth).flatMap fun j =>
+        [Gate.mkMUX crat_raw_dump[i]![j]! commit_physRd_0[j]! cd0_we[i]! crat_mid[i]![j]!,
+         Gate.mkMUX crat_mid[i]![j]! commit_physRd_1[j]! cd1_we[i]! crat_dump[i]![j]!]
+
+  let crat_gates := cdec0_not ++ cdec0_and ++ cdec1_not ++ cdec1_and ++
+    cd_we_gates ++ crat_merge_gates
+
+  -- CRAT instance: always restores from merged dump, write_en=0
+  -- (writes are folded into the restore path)
   let crat_0_inst : CircuitInstance := {
     moduleName := "RAT_32x6"
     instName := "u_crat_0"
     portMap :=
-      [("clock", clock), ("reset", reset), ("write_en", crat_we_0)] ++
-      (commit_archRd_0.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
-      (commit_physRd_0.enum.map fun ⟨i,w⟩ => (s!"write_data_{i}", w)) ++
+      [("clock", clock), ("reset", reset), ("write_en", zero)] ++
+      ((List.range archWidth).map fun i => (s!"write_addr_{i}", zero)) ++
+      ((List.range tagWidth).map fun i => (s!"write_data_{i}", zero)) ++
       ((List.range archWidth).map fun i => (s!"rs1_addr_{i}", zero)) ++
       ((List.range archWidth).map fun i => (s!"rs2_addr_{i}", zero)) ++
       ((List.range archWidth).map fun i => (s!"rs3_addr_{i}", zero)) ++
@@ -541,36 +614,84 @@ def mkRenameStage : Circuit :=
       ((List.range tagWidth).map fun i => (s!"rs2_data_{i}", Wire.mk s!"c0_rs2u_{i}")) ++
       ((List.range tagWidth).map fun i => (s!"rs3_data_{i}", Wire.mk s!"c0_rs3u_{i}")) ++
       ((List.range tagWidth).map fun i => (s!"old_rd_data_{i}", Wire.mk s!"c0_oldu_{i}")) ++
-      [("restore_en", zero)] ++
+      [("restore_en", one)] ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"restore_data_{i}_{j}", zero)).flatten ++
+        (s!"restore_data_{i}_{j}", crat_dump[i]![j]!)).flatten ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"dump_data_{i}_{j}", crat_mid_dump[i]![j]!)).flatten
-  }
-  let crat_1_inst : CircuitInstance := {
-    moduleName := "RAT_32x6"
-    instName := "u_crat_1"
-    portMap :=
-      [("clock", clock), ("reset", reset), ("write_en", crat_we_1)] ++
-      (commit_archRd_1.enum.map fun ⟨i,w⟩ => (s!"write_addr_{i}", w)) ++
-      (commit_physRd_1.enum.map fun ⟨i,w⟩ => (s!"write_data_{i}", w)) ++
-      ((List.range archWidth).map fun i => (s!"rs1_addr_{i}", zero)) ++
-      ((List.range archWidth).map fun i => (s!"rs2_addr_{i}", zero)) ++
-      ((List.range archWidth).map fun i => (s!"rs3_addr_{i}", zero)) ++
-      ((List.range tagWidth).map fun i => (s!"rs1_data_{i}", Wire.mk s!"c1_rs1u_{i}")) ++
-      ((List.range tagWidth).map fun i => (s!"rs2_data_{i}", Wire.mk s!"c1_rs2u_{i}")) ++
-      ((List.range tagWidth).map fun i => (s!"rs3_data_{i}", Wire.mk s!"c1_rs3u_{i}")) ++
-      ((List.range tagWidth).map fun i => (s!"old_rd_data_{i}", Wire.mk s!"c1_oldu_{i}")) ++
-      [("restore_en", zero)] ++
-      ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"restore_data_{i}_{j}", zero)).flatten ++
-      ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"dump_data_{i}_{j}", crat_dump[i]![j]!)).flatten
+        (s!"dump_data_{i}_{j}", crat_raw_dump[i]![j]!)).flatten
   }
 
-  -- Speculative RAT: daisy-chained to support two write ports (slot 0 → slot 1)
+  -- Speculative RAT: merged-dump approach.
+  -- Both RATs always restore from a merged dump that includes BOTH slots' writes.
+  -- This keeps both RATs in perfect sync every cycle.
+  -- On flush: restore from committed RAT instead.
   let srat_0_dump := (List.range 32).map fun i =>
     (List.range tagWidth).map fun j => Wire.mk s!"srat0_dump_{i}_{j}"
+  let srat_1_dump := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"srat1_dump_{i}_{j}"
+
+  -- 5-to-32 decoder for rd_addr_0
+  let dec0_an := (List.range archWidth).map fun k => Wire.mk s!"s0dec_an{k}"
+  let dec0_not := (List.range archWidth).map fun k =>
+    Gate.mkNOT rd_addr_0[k]! dec0_an[k]!
+  let dec0_outs := (List.range 32).map fun i => Wire.mk s!"s0dec_{i}"
+  let dec0_and := (List.range 32).flatMap fun i =>
+    let bits := (List.range archWidth).map fun k =>
+      if (i >>> k) &&& 1 == 1 then rd_addr_0[k]! else dec0_an[k]!
+    let t1 := Wire.mk s!"s0dec_{i}_t1"
+    let t2 := Wire.mk s!"s0dec_{i}_t2"
+    let t3 := Wire.mk s!"s0dec_{i}_t3"
+    [Gate.mkAND bits[0]! bits[1]! t1,
+     Gate.mkAND bits[2]! bits[3]! t2,
+     Gate.mkAND t1 t2 t3,
+     Gate.mkAND t3 bits[4]! dec0_outs[i]!]
+  let dec0_gates := dec0_not ++ dec0_and
+
+  -- 5-to-32 decoder for rd_addr_1
+  let dec1_an := (List.range archWidth).map fun k => Wire.mk s!"s1dec_an{k}"
+  let dec1_not := (List.range archWidth).map fun k =>
+    Gate.mkNOT rd_addr_1[k]! dec1_an[k]!
+  let dec1_outs := (List.range 32).map fun i => Wire.mk s!"s1dec_{i}"
+  let dec1_and := (List.range 32).flatMap fun i =>
+    let bits := (List.range archWidth).map fun k =>
+      if (i >>> k) &&& 1 == 1 then rd_addr_1[k]! else dec1_an[k]!
+    let t1 := Wire.mk s!"s1dec_{i}_t1"
+    let t2 := Wire.mk s!"s1dec_{i}_t2"
+    let t3 := Wire.mk s!"s1dec_{i}_t3"
+    [Gate.mkAND bits[0]! bits[1]! t1,
+     Gate.mkAND bits[2]! bits[3]! t2,
+     Gate.mkAND t1 t2 t3,
+     Gate.mkAND t3 bits[4]! dec1_outs[i]!]
+  let dec1_gates := dec1_not ++ dec1_and
+
+  -- slot_we[i] = dec[i] AND rat_we
+  let slot0_we := (List.range 32).map fun i => Wire.mk s!"s0we_{i}"
+  let slot1_we := (List.range 32).map fun i => Wire.mk s!"s1we_{i}"
+  let slot_we_gates :=
+    ((List.range 32).map fun i => Gate.mkAND dec0_outs[i]! rat_we_0 slot0_we[i]!) ++
+    ((List.range 32).map fun i => Gate.mkAND dec1_outs[i]! rat_we_1 slot1_we[i]!)
+
+  -- merged[i] = mux(slot1_we[i], rd_phys_1, mux(slot0_we[i], rd_phys_0, srat_0_dump[i]))
+  -- Slot 1 has higher priority (later in program order)
+  let merged_mid := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"mrg_m_{i}_{j}"
+  let merged := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"mrg_{i}_{j}"
+  let merged_gates :=
+    (List.range 32).flatMap fun i =>
+      (List.range tagWidth).flatMap fun j =>
+        [Gate.mkMUX srat_0_dump[i]![j]! rd_phys_0[j]! slot0_we[i]! merged_mid[i]![j]!,
+         Gate.mkMUX merged_mid[i]![j]! rd_phys_1[j]! slot1_we[i]! merged[i]![j]!]
+
+  -- final_restore = flush ? crat_dump : merged
+  let final_restore := (List.range 32).map fun i =>
+    (List.range tagWidth).map fun j => Wire.mk s!"rst_{i}_{j}"
+  let restore_mux_gates :=
+    (List.range 32).flatMap fun i =>
+      (List.range tagWidth).map fun j =>
+        Gate.mkMUX merged[i]![j]! crat_dump[i]![j]! flush_en final_restore[i]![j]!
+  let rat_restore_mux_gates :=
+    dec0_gates ++ dec1_gates ++ slot_we_gates ++ merged_gates ++ restore_mux_gates
   let rat_inst_0 : CircuitInstance := {
     moduleName := "RAT_32x6"
     instName := "u_rat_0"
@@ -585,9 +706,9 @@ def mkRenameStage : Circuit :=
       (rs2_phys_0.enum.map fun ⟨i,w⟩ => (s!"rs2_data_{i}", w)) ++
       (rs3_phys_0.enum.map fun ⟨i,w⟩ => (s!"rs3_data_{i}", w)) ++
       (old_rd_raw_0.enum.map fun ⟨i,w⟩ => (s!"old_rd_data_{i}", w)) ++
-      [("restore_en", flush_en)] ++
+      [("restore_en", one)] ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"restore_data_{i}_{j}", crat_dump[i]![j]!)).flatten ++
+        (s!"restore_data_{i}_{j}", final_restore[i]![j]!)).flatten ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
         (s!"dump_data_{i}_{j}", srat_0_dump[i]![j]!)).flatten
   }
@@ -605,22 +726,50 @@ def mkRenameStage : Circuit :=
       (rs2_phys_1_rat.enum.map fun ⟨i,w⟩ => (s!"rs2_data_{i}", w)) ++
       (rs3_phys_1_rat.enum.map fun ⟨i,w⟩ => (s!"rs3_data_{i}", w)) ++
       (old_rd_raw_1.enum.map fun ⟨i,w⟩ => (s!"old_rd_data_{i}", w)) ++
-      [("restore_en", flush_en)] ++
-      -- Slot 1 RAT restores from slot 0's dump (post-slot0-write state)
+      [("restore_en", one)] ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"restore_data_{i}_{j}", srat_0_dump[i]![j]!)).flatten ++
+        (s!"restore_data_{i}_{j}", final_restore[i]![j]!)).flatten ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"dump_data_{i}_{j}", Wire.mk s!"srat1_dump_{i}_{j}")).flatten
+        (s!"dump_data_{i}_{j}", srat_1_dump[i]![j]!)).flatten
   }
 
-  -- BitmapFreeList W2 instance
+  -- Gate freelist enqueue: only return old phys reg if instruction actually had one
+  -- (prevents x0 instructions from returning p0 to the free list)
+  -- Also gate by retire_tag != 0 to prevent p0 from entering the free list.
+  -- (Branches force-alloc a tag and commit with hasOldPhysRd=1, freeing the old
+  -- CRAT[x0] mapping. The first branch would free p0, which must stay in-use.)
+  let gated_retire_0 := Wire.mk "gated_retire_0"
+  let gated_retire_1 := Wire.mk "gated_retire_1"
+  let ret_tag_nz_0 := Wire.mk "ret_tag_nz_0"
+  let ret_tag_nz_1 := Wire.mk "ret_tag_nz_1"
+  let gated_retire_pre_0 := Wire.mk "gated_retire_pre_0"
+  let gated_retire_pre_1 := Wire.mk "gated_retire_pre_1"
+  let retire_gate :=
+    [Gate.mkOR  retire_tag_0[0]! retire_tag_0[1]! (Wire.mk "rtnz0_01"),
+     Gate.mkOR  (Wire.mk "rtnz0_01") retire_tag_0[2]! (Wire.mk "rtnz0_012"),
+     Gate.mkOR  (Wire.mk "rtnz0_012") retire_tag_0[3]! (Wire.mk "rtnz0_0123"),
+     Gate.mkOR  (Wire.mk "rtnz0_0123") retire_tag_0[4]! (Wire.mk "rtnz0_01234"),
+     Gate.mkOR  (Wire.mk "rtnz0_01234") retire_tag_0[5]! ret_tag_nz_0,
+     Gate.mkAND retire_valid_0 commit_hasPhysRd_0 gated_retire_pre_0,
+     Gate.mkAND gated_retire_pre_0 ret_tag_nz_0 gated_retire_0,
+     Gate.mkOR  retire_tag_1[0]! retire_tag_1[1]! (Wire.mk "rtnz1_01"),
+     Gate.mkOR  (Wire.mk "rtnz1_01") retire_tag_1[2]! (Wire.mk "rtnz1_012"),
+     Gate.mkOR  (Wire.mk "rtnz1_012") retire_tag_1[3]! (Wire.mk "rtnz1_0123"),
+     Gate.mkOR  (Wire.mk "rtnz1_0123") retire_tag_1[4]! (Wire.mk "rtnz1_01234"),
+     Gate.mkOR  (Wire.mk "rtnz1_01234") retire_tag_1[5]! ret_tag_nz_1,
+     Gate.mkAND retire_valid_1 commit_hasPhysRd_1 gated_retire_pre_1,
+     Gate.mkAND gated_retire_pre_1 ret_tag_nz_1 gated_retire_1]
+
+  -- BitmapFreeList W2 instance (dual retire + dual commit_alloc)
   let freelist_inst : CircuitInstance := {
     moduleName := "BitmapFreeList_64_W2"
     instName := "u_freelist"
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
-      (retire_tag.enum.map fun ⟨i,w⟩ => (s!"enq_data_{i}", w)) ++
-      [("enq_valid", retire_valid),
+      (retire_tag_0.enum.map fun ⟨i,w⟩ => (s!"enq_data_0_{i}", w)) ++
+      [("enq_valid_0", gated_retire_0)] ++
+      (retire_tag_1.enum.map fun ⟨i,w⟩ => (s!"enq_data_1_{i}", w)) ++
+      [("enq_valid_1", gated_retire_1),
        ("deq_ready_0", fl_deq_ready_0), ("deq_ready_1", fl_deq_ready_1)] ++
       (fl_deq_data_0.enum.map fun ⟨i,w⟩ => (s!"deq_data_0_{i}", w)) ++
       [("deq_valid_0", alloc_avail_0)] ++
@@ -628,9 +777,30 @@ def mkRenameStage : Circuit :=
       [("deq_valid_1", alloc_avail_1),
        ("enq_ready", freelist_enq_ready),
        ("flush_en", flush_en),
-       ("commit_alloc_en", crat_alloc_0)] ++
-      (commit_physRd_0.enum.map fun ⟨i,w⟩ => (s!"commit_alloc_tag_{i}", w))
+       ("commit_alloc_en_0", crat_alloc_0)] ++
+      (commit_physRd_0.enum.map fun ⟨i,w⟩ => (s!"commit_alloc_tag_0_{i}", w)) ++
+      [("commit_alloc_en_1", crat_alloc_1)] ++
+      (commit_physRd_1.enum.map fun ⟨i,w⟩ => (s!"commit_alloc_tag_1_{i}", w))
   }
+
+  -- Gate PRF writes for CDB tag=0 (p0 is x0's permanent mapping, must never be overwritten)
+  let prf_wr_en_0 := Wire.mk "prf_wr_en_0"
+  let prf_wr_en_1 := Wire.mk "prf_wr_en_1"
+  let cdb_tag_nz_0 := Wire.mk "cdb_tag_nz_0"
+  let cdb_tag_nz_1 := Wire.mk "cdb_tag_nz_1"
+  let prf_wr_gate :=
+    [Gate.mkOR  cdb_tag_0[0]! cdb_tag_0[1]! (Wire.mk "ctnz0_01"),
+     Gate.mkOR  (Wire.mk "ctnz0_01") cdb_tag_0[2]! (Wire.mk "ctnz0_012"),
+     Gate.mkOR  (Wire.mk "ctnz0_012") cdb_tag_0[3]! (Wire.mk "ctnz0_0123"),
+     Gate.mkOR  (Wire.mk "ctnz0_0123") cdb_tag_0[4]! (Wire.mk "ctnz0_01234"),
+     Gate.mkOR  (Wire.mk "ctnz0_01234") cdb_tag_0[5]! cdb_tag_nz_0,
+     Gate.mkAND cdb_valid_0 cdb_tag_nz_0 prf_wr_en_0,
+     Gate.mkOR  cdb_tag_1[0]! cdb_tag_1[1]! (Wire.mk "ctnz1_01"),
+     Gate.mkOR  (Wire.mk "ctnz1_01") cdb_tag_1[2]! (Wire.mk "ctnz1_012"),
+     Gate.mkOR  (Wire.mk "ctnz1_012") cdb_tag_1[3]! (Wire.mk "ctnz1_0123"),
+     Gate.mkOR  (Wire.mk "ctnz1_0123") cdb_tag_1[4]! (Wire.mk "ctnz1_01234"),
+     Gate.mkOR  (Wire.mk "ctnz1_01234") cdb_tag_1[5]! cdb_tag_nz_1,
+     Gate.mkAND cdb_valid_1 cdb_tag_nz_1 prf_wr_en_1]
 
   -- PhysRegFile (shared, dual write port from CDB)
   let physregfile_inst : CircuitInstance := {
@@ -638,11 +808,13 @@ def mkRenameStage : Circuit :=
     instName := "u_prf"
     portMap :=
       [("clock", clock), ("reset", reset),
-       ("wr_en_0", cdb_valid_0), ("wr_en_1", cdb_valid_1)] ++
+       ("wr_en_0", prf_wr_en_0), ("wr_en_1", prf_wr_en_1)] ++
       (rs1_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag1_{i}", w)) ++
       (rs2_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag2_{i}", w)) ++
       (rs1_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++
       (rs2_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag4_{i}", w)) ++
+      (rd_tag5.enum.map fun ⟨i,w⟩ => (s!"rd_tag5_{i}", w)) ++
+      (rd_tag6.enum.map fun ⟨i,w⟩ => (s!"rd_tag6_{i}", w)) ++
       (cdb_tag_0.enum.map fun ⟨i,w⟩ => (s!"wr_tag_0_{i}", w)) ++
       (cdb_data_0.enum.map fun ⟨i,w⟩ => (s!"wr_data_0_{i}", w)) ++
       (cdb_tag_1.enum.map fun ⟨i,w⟩ => (s!"wr_tag_1_{i}", w)) ++
@@ -650,7 +822,9 @@ def mkRenameStage : Circuit :=
       (rs1_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data1_{i}", w)) ++
       (rs2_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data2_{i}", w)) ++
       (rs1_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
-      (rs2_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w))
+      (rs2_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w)) ++
+      (rd_data5.enum.map fun ⟨i,w⟩ => (s!"rd_data5_{i}", w)) ++
+      (rd_data6.enum.map fun ⟨i,w⟩ => (s!"rd_data6_{i}", w))
   }
 
   -- Output buffer gates
@@ -684,23 +858,27 @@ def mkRenameStage : Circuit :=
     [commit_hasPhysRd_1, commit_hasAllocSlot_1,
      cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
     [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
-    [retire_valid] ++ retire_tag ++ rd_tag4
+    [retire_valid_0] ++ retire_tag_0 ++ [retire_valid_1] ++ retire_tag_1 ++ rd_tag5 ++ rd_tag6 ++
+    [ext_stall, ext_stall_1]
 
   let all_outputs :=
     [rename_valid_0, stall_0] ++ rs1_phys_out_0 ++ rs2_phys_out_0 ++ rs3_phys_out_0 ++
     rd_phys_out_0 ++ old_rd_phys_0 ++ rs1_data_0 ++ rs2_data_0 ++ rd_data3_0 ++ rd_data4 ++
     [rename_valid_1, stall_1] ++ rs1_phys_out_1 ++ rs2_phys_out_1 ++ rs3_phys_out_1 ++
-    rd_phys_out_1 ++ old_rd_phys_1 ++ rs1_data_1 ++ rs2_data_1
+    rd_phys_out_1 ++ old_rd_phys_1 ++ rs1_data_1 ++ rs2_data_1 ++
+    rd_data5 ++ rd_data6
 
   let all_gates :=
     x0_gates_0 ++ x0_gates_1 ++ needs_alloc_gates ++ stall_gates ++ rvalid_gates ++
     fire_gates ++ rat_we_gates ++ rd_phys_0_gates ++ rd_phys_1_gates ++
     bypass_rs1_gates ++ bypass_rs2_gates ++
     crat_we_gates_0 ++ crat_we_gates_1 ++ crat_alloc_gates ++
+    crat_gates ++
+    rat_restore_mux_gates ++ retire_gate ++ prf_wr_gate ++
     out_gates_0 ++ out_gates_1 ++ prf_data_out_gates
 
   let all_instances :=
-    [crat_0_inst, crat_1_inst, rat_inst_0, rat_inst_1, freelist_inst, physregfile_inst]
+    [crat_0_inst, rat_inst_0, rat_inst_1, freelist_inst, physregfile_inst]
 
   { name := "RenameStage_W2"
     inputs := all_inputs
@@ -724,7 +902,8 @@ def mkRenameStage : Circuit :=
       { name := "cdb_data_0",  width := dataWidth, wires := cdb_data_0 },
       { name := "cdb_tag_1",   width := tagWidth,  wires := cdb_tag_1 },
       { name := "cdb_data_1",  width := dataWidth, wires := cdb_data_1 },
-      { name := "retire_tag",       width := tagWidth, wires := retire_tag },
+      { name := "retire_tag",       width := tagWidth, wires := retire_tag_0 },
+      { name := "retire_tag_1",    width := tagWidth, wires := retire_tag_1 },
       { name := "rs1_phys_out",     width := tagWidth, wires := rs1_phys_out_0 },
       { name := "rs2_phys_out",     width := tagWidth, wires := rs2_phys_out_0 },
       { name := "rs3_phys_out",     width := tagWidth, wires := rs3_phys_out_0 },

@@ -58,6 +58,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let fetch_stalled := Wire.mk "cpu_fetch_stalled"
   let global_stall_out := Wire.mk "cpu_global_stall_out"
   let imem_resp_data := makeIndexedWires "cpu_imem_resp_data" 32
+  let imem_resp_data_1 := makeIndexedWires "cpu_imem_resp_data_1" 32
 
   let dmem_req_valid := Wire.mk "cpu_dmem_req_valid"
   let dmem_req_we := Wire.mk "cpu_dmem_req_we"
@@ -118,9 +119,10 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
     ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
       ("fetch_stall_ext", ifetch_stall),
       ("dmem_stall_ext", dmem_stall)] ++
-     -- Both fetch slots get the same instruction word (single-fetch L1I for now)
+     -- Slot 0 gets the fetched instruction word; slot 1 is zero (invalid)
+     -- until L1I is modified to provide two words per cycle.
      (List.range 32).map (fun i => (s!"imem_resp_data_0_{i}", imem_resp_data[i]!)) ++
-     (List.range 32).map (fun i => (s!"imem_resp_data_1_{i}", imem_resp_data[i]!)) ++
+     (List.range 32).map (fun i => (s!"imem_resp_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("dmem_req_ready", dmem_req_ready),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
@@ -164,6 +166,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("fence_i", zero)] ++  -- FENCE.I not yet implemented in W=2
      -- MemHierarchy outputs
      (List.range 32).map (fun i => (s!"ifetch_data_{i}", imem_resp_data[i]!)) ++
+     (List.range 32).map (fun i => (s!"ifetch_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("ifetch_stall", ifetch_stall),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++

@@ -577,8 +577,12 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let commit_en_0_safe := Wire.mk "commit_en_0_safe"
   let commit_en_1_tmp  := Wire.mk "commit_en_1_tmp"
   let commit_en_1_safe := Wire.mk "commit_en_1_safe"
+  let ne_t1 := Wire.mk "ne_t1"; let ne_t2 := Wire.mk "ne_t2"; let ne_t3 := Wire.mk "ne_t3"
   let count_safe_gates := [
-    Gate.mkOR count[0]! count[1]! not_empty_w,
+    Gate.mkOR count[0]! count[1]! ne_t1,
+    Gate.mkOR ne_t1 count[2]! ne_t2,
+    Gate.mkOR ne_t2 count[3]! ne_t3,
+    Gate.mkOR ne_t3 count[4]! not_empty_w,
     Gate.mkAND commit_en_0 not_empty_w commit_en_0_safe,
     Gate.mkAND commit_en_1 commit_en_0_safe commit_en_1_tmp,
     Gate.mkAND commit_en_1_tmp count_ge2 commit_en_1_safe
@@ -883,51 +887,100 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     mkBitReadout2 "s1" "isBr"     commit_dec_1 22 hibr1 ++
     mkBitReadout2 "s1" "misp"     commit_dec_1 23 hmisp1
 
-  -- === Head/Tail Pointer + Counter Instances ===
+  -- === Head/Tail Pointer + Counter: DFF-based dual-increment ===
+  -- Helper: 4-bit ripple-carry adder (a + b, cin=0), returns (sum_wires, gates)
+  -- b is padded to 4 bits with zero for bits >= b.length
+  let mkAdd4 (pfx : String) (a b : List Wire) : List Wire × List Gate :=
+    let carry := (List.range 5).map (fun i => Wire.mk s!"{pfx}_c_{i}")
+    let xor_w := (List.range 4).map (fun i => Wire.mk s!"{pfx}_x_{i}")
+    let sum_w := (List.range 4).map (fun i => Wire.mk s!"{pfx}_s_{i}")
+    let and1  := (List.range 4).map (fun i => Wire.mk s!"{pfx}_a1_{i}")
+    let and2  := (List.range 4).map (fun i => Wire.mk s!"{pfx}_a2_{i}")
+    let b_ext := (List.range 4).map (fun i => if i < b.length then b[i]! else zero)
+    let gates := [Gate.mkBUF zero carry[0]!] ++
+      (List.range 4).flatMap (fun i => [
+        Gate.mkXOR a[i]! b_ext[i]! xor_w[i]!,
+        Gate.mkXOR xor_w[i]! carry[i]! sum_w[i]!,
+        Gate.mkAND a[i]! b_ext[i]! and1[i]!,
+        Gate.mkAND xor_w[i]! carry[i]! and2[i]!,
+        Gate.mkOR and1[i]! and2[i]! carry[i+1]!
+      ])
+    (sum_w, gates)
+
+  -- Tail pointer: 4-bit DFF register, increments by alloc_en_0 + alloc_en_1
+  let tail_inc_lo := Wire.mk "tail_inc_lo"
+  let tail_inc_hi := Wire.mk "tail_inc_hi"
+  let tail_inc_gates := [
+    Gate.mkXOR alloc_en_0 alloc_en_1 tail_inc_lo,
+    Gate.mkAND alloc_en_0 alloc_en_1 tail_inc_hi
+  ]
+  let (tail_next, tail_add_gates) := mkAdd4 "ta" tail_ptr [tail_inc_lo, tail_inc_hi]
+  let tail_dff_gates := (List.range 4).map (fun i =>
+    Gate.mk .DFF [tail_next[i]!, clock, reset] tail_ptr[i]!)
+
+  -- Head pointer: 4-bit DFF register, increments by commit_en_0_safe + commit_en_1_safe
+  let head_inc_lo := Wire.mk "head_inc_lo"
+  let head_inc_hi := Wire.mk "head_inc_hi"
+  let head_inc_gates := [
+    Gate.mkXOR commit_en_0_safe commit_en_1_safe head_inc_lo,
+    Gate.mkAND commit_en_0_safe commit_en_1_safe head_inc_hi
+  ]
+  let (head_next, head_add_gates) := mkAdd4 "ha" head_ptr [head_inc_lo, head_inc_hi]
+  let head_dff_gates := (List.range 4).map (fun i =>
+    Gate.mk .DFF [head_next[i]!, clock, reset] head_ptr[i]!)
+
+  -- Count: 5-bit DFF register, count_next = count + alloc_sum - commit_sum
+  -- alloc_sum = {alloc_inc_hi, alloc_inc_lo} = alloc_en_0 + alloc_en_1
+  -- commit_sum = {commit_inc_hi, commit_inc_lo} = commit_en_0_safe + commit_en_1_safe
+  -- Use: count + alloc_sum + NOT(commit_sum) + 1 = count + alloc_sum - commit_sum
+  -- Step 1: temp = count + {0,0,0,alloc_inc_hi,alloc_inc_lo} with cin=0
+  let cnt_carry1 := (List.range 6).map (fun i => Wire.mk s!"cc1_{i}")
+  let cnt_xor1   := (List.range 5).map (fun i => Wire.mk s!"cx1_{i}")
+  let cnt_sum1   := (List.range 5).map (fun i => Wire.mk s!"cs1_{i}")
+  let cnt_and1a  := (List.range 5).map (fun i => Wire.mk s!"ca1a_{i}")
+  let cnt_and1b  := (List.range 5).map (fun i => Wire.mk s!"ca1b_{i}")
+  let alloc_b    := [tail_inc_lo, tail_inc_hi, zero, zero, zero]
+  let cnt_add1_gates := [Gate.mkBUF zero cnt_carry1[0]!] ++
+    (List.range 5).flatMap (fun i => [
+      Gate.mkXOR count[i]! alloc_b[i]! cnt_xor1[i]!,
+      Gate.mkXOR cnt_xor1[i]! cnt_carry1[i]! cnt_sum1[i]!,
+      Gate.mkAND count[i]! alloc_b[i]! cnt_and1a[i]!,
+      Gate.mkAND cnt_xor1[i]! cnt_carry1[i]! cnt_and1b[i]!,
+      Gate.mkOR cnt_and1a[i]! cnt_and1b[i]! cnt_carry1[i+1]!
+    ])
+  -- Step 2: count_next = temp + NOT({1,1,1,commit_inc_hi,commit_inc_lo}) + 1
+  -- = temp - {0,0,0,commit_inc_hi,commit_inc_lo}
+  -- NOT of commit_sum 5-bit: {NOT(1),NOT(1),NOT(1),NOT(chi),NOT(clo)} but commit_sum is
+  -- {0,0,0,chi,clo} so NOT = {1,1,1,NOT(chi),NOT(clo)}
+  let not_clo := Wire.mk "not_clo"
+  let not_chi := Wire.mk "not_chi"
+  let cnt_inv_gates := [
+    Gate.mkNOT head_inc_lo not_clo,
+    Gate.mkNOT head_inc_hi not_chi
+  ]
+  let commit_neg := [not_clo, not_chi, one, one, one]  -- NOT(commit_sum_5bit)
+  let cnt_carry2 := (List.range 6).map (fun i => Wire.mk s!"cc2_{i}")
+  let cnt_xor2   := (List.range 5).map (fun i => Wire.mk s!"cx2_{i}")
+  let count_next := (List.range 5).map (fun i => Wire.mk s!"count_next_{i}")
+  let cnt_and2a  := (List.range 5).map (fun i => Wire.mk s!"ca2a_{i}")
+  let cnt_and2b  := (List.range 5).map (fun i => Wire.mk s!"ca2b_{i}")
+  let cnt_add2_gates := [Gate.mkBUF one cnt_carry2[0]!] ++  -- cin=1 for two's complement
+    (List.range 5).flatMap (fun i => [
+      Gate.mkXOR cnt_sum1[i]! commit_neg[i]! cnt_xor2[i]!,
+      Gate.mkXOR cnt_xor2[i]! cnt_carry2[i]! count_next[i]!,
+      Gate.mkAND cnt_sum1[i]! commit_neg[i]! cnt_and2a[i]!,
+      Gate.mkAND cnt_xor2[i]! cnt_carry2[i]! cnt_and2b[i]!,
+      Gate.mkOR cnt_and2a[i]! cnt_and2b[i]! cnt_carry2[i+1]!
+    ])
+  let count_dff_gates := (List.range 5).map (fun i =>
+    Gate.mk .DFF [count_next[i]!, clock, reset] count[i]!)
+
+  -- Head/Tail index outputs
   let head_idx_0 := mkWires2 "head_idx_0" 4
   let head_idx_1 := mkWires2 "head_idx_1" 4
   let head_idx_gates :=
     List.zipWith Gate.mkBUF head_ptr  head_idx_0 ++
     List.zipWith Gate.mkBUF head1_ptr head_idx_1
-
-  let head_inst2 : CircuitInstance := {
-    moduleName := "QueuePointer_4"
-    instName := "u_head"
-    portMap := [("clock", clock), ("reset", reset), ("en", commit_en_0_safe),
-                ("one", one), ("zero", zero)] ++
-               (head_ptr.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
-  }
-  let tail_inst_0 : CircuitInstance := {
-    moduleName := "QueuePointer_4"
-    instName := "u_tail_s0"
-    portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_0),
-                ("one", one), ("zero", zero)] ++
-               (mkWires2 "tail_mid" 4).enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2))
-  }
-  let tail_inst_1 : CircuitInstance := {
-    moduleName := "QueuePointer_4"
-    instName := "u_tail_s1"
-    portMap := [("clock", clock), ("reset", reset), ("en", alloc_en_1),
-                ("one", one), ("zero", zero)] ++
-               (tail_ptr.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
-  }
-  -- head slot-1 pointer: we derive head+1 combinationally via head1_ptr
-  let count_inst_0 : CircuitInstance := {
-    moduleName := "QueueCounterUpDown_5"
-    instName := "u_count_s0"
-    portMap := [("clock", clock), ("reset", reset),
-                ("inc", alloc_en_0), ("dec", commit_en_0_safe),
-                ("one", one), ("zero", zero)] ++
-               (mkWires2 "count_mid" 5).enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2))
-  }
-  let count_inst_1 : CircuitInstance := {
-    moduleName := "QueueCounterUpDown_5"
-    instName := "u_count_s1"
-    portMap := [("clock", clock), ("reset", reset),
-                ("inc", alloc_en_1), ("dec", commit_en_1_safe),
-                ("one", one), ("zero", zero)] ++
-               (count.enum.map (fun (jw : Nat × Wire) => (s!"count_{jw.1}", jw.2)))
-  }
 
   -- === Assemble ===
   let all_inputs2 :=
@@ -949,11 +1002,13 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let all_gates2 :=
     tail1_gates ++ head1_gates ++ count_ge2_gates ++ count_safe_gates ++
     alloc_idx_0_gates ++ alloc_idx_1_gates ++ empty_gates ++ reset_buf_gates2 ++
-    all_entry_gates2 ++ ro0 ++ ro1 ++ head_idx_gates
+    all_entry_gates2 ++ ro0 ++ ro1 ++ head_idx_gates ++
+    tail_inc_gates ++ tail_add_gates ++ tail_dff_gates ++
+    head_inc_gates ++ head_add_gates ++ head_dff_gates ++
+    cnt_add1_gates ++ cnt_inv_gates ++ cnt_add2_gates ++ count_dff_gates
 
   let all_instances2 :=
-    [head_inst2, tail_inst_0, tail_inst_1, count_inst_0, count_inst_1,
-     alloc_dec_0_inst, alloc_dec_1_inst, commit_dec_0_inst, commit_dec_1_inst] ++
+    [alloc_dec_0_inst, alloc_dec_1_inst, commit_dec_0_inst, commit_dec_1_inst] ++
     all_entry_instances2 ++
     [pr_mux_0, opr_mux_0, ar_mux_0, pr_mux_1, opr_mux_1, ar_mux_1]
 

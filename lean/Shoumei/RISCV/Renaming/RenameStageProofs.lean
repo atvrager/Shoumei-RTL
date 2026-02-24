@@ -28,7 +28,7 @@ open Shoumei.RISCV.Renaming
 theorem renamestage_name : mkRenameStage.name = "RenameStage_W2" := by native_decide
 
 /-- RenameStage input count -/
-theorem renamestage_input_count : mkRenameStage.inputs.length = 170 := by native_decide
+theorem renamestage_input_count : mkRenameStage.inputs.length = 177 := by native_decide
 
 /-- RenameStage output count -/
 theorem renamestage_output_count : mkRenameStage.outputs.length = 256 := by native_decide

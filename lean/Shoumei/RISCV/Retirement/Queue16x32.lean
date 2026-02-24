@@ -85,16 +85,16 @@ def mkQueue16x32 : Circuit :=
       instName := s!"u_reg_{i}"
       portMap :=
         (List.range dataWidth).map (fun j =>
-          (s!"d[{j}]", getNext i j)) ++
+          (s!"d_{j}", getNext i j)) ++
         [("clock", clock), ("reset", reset)] ++
         (List.range dataWidth).map (fun j =>
-          (s!"q[{j}]", getReg i j))
+          (s!"q_{j}", getReg i j))
     })
 
   -- Read mux: Mux16x32
   let mux_in_map := (List.range numEntries).map (fun i =>
     (List.range dataWidth).map (fun j =>
-      (s!"in{i}[{j}]", getReg i j)
+      (s!"in{i}_{j}", getReg i j)
     )
   ) |>.flatten
 
@@ -102,8 +102,8 @@ def mkQueue16x32 : Circuit :=
     moduleName := "Mux16x32"
     instName := "u_mux_rd"
     portMap := mux_in_map ++
-      (rd_idx.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (rd_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
+      (rd_idx.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
+      (rd_data.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- Signal groups for next and reg internal wires
@@ -218,16 +218,16 @@ def mkQueue16x32_DualPort : Circuit :=
       instName := s!"u_reg_{i}"
       portMap :=
         (List.range dataWidth).map (fun j =>
-          (s!"d[{j}]", getNext i j)) ++
+          (s!"d_{j}", getNext i j)) ++
         [("clock", clock), ("reset", reset)] ++
         (List.range dataWidth).map (fun j =>
-          (s!"q[{j}]", getReg i j))
+          (s!"q_{j}", getReg i j))
     })
 
   -- Read mux 0
   let mux_in_map := (List.range numEntries).map (fun i =>
     (List.range dataWidth).map (fun j =>
-      (s!"in{i}[{j}]", getReg i j)
+      (s!"in{i}_{j}", getReg i j)
     )
   ) |>.flatten
 
@@ -235,8 +235,8 @@ def mkQueue16x32_DualPort : Circuit :=
     moduleName := "Mux16x32"
     instName := "u_mux_rd0"
     portMap := mux_in_map ++
-      (rd_idx_0.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (rd_data_0.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
+      (rd_idx_0.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
+      (rd_data_0.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- Read mux 1
@@ -244,8 +244,8 @@ def mkQueue16x32_DualPort : Circuit :=
     moduleName := "Mux16x32"
     instName := "u_mux_rd1"
     portMap := mux_in_map ++
-      (rd_idx_1.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
-      (rd_data_1.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
+      (rd_idx_1.enum.map (fun ⟨i, w⟩ => (s!"sel_{i}", w))) ++
+      (rd_data_1.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- Signal groups

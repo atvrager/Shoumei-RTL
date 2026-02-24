@@ -224,18 +224,49 @@ def mkBusyBitTable2
 
   let not_b_s2_0 := mkW s!"not_{pfx}_rs2_0"
   let not_b_s2_1 := mkW s!"not_{pfx}_rs2_1"
+  -- Intra-group RAW hazard: if slot 0 sets the same tag slot 1 reads,
+  -- slot 1 must see "not ready" (busy_cur hasn't updated yet)
+  let tagWidth := 6
+  let s0_eq_r1_1 := mkW s!"{pfx}_s0_eq_r1_1"  -- set_tag_0 == read1_tag_1
+  let s0_eq_r2_1 := mkW s!"{pfx}_s0_eq_r2_1"  -- set_tag_0 == read2_tag_1
+  let mkTagEq (pfx2 : String) (a b : List Wire) (out : Wire) : List Gate :=
+    let xns := (List.range tagWidth).map fun i =>
+      let x := mkW s!"{pfx2}_x{i}"; let xn := mkW s!"{pfx2}_xn{i}"
+      [Gate.mkXOR a[i]! b[i]! x, Gate.mkNOT x xn]
+    let ands := [
+      Gate.mkAND (mkW s!"{pfx2}_xn0") (mkW s!"{pfx2}_xn1") (mkW s!"{pfx2}_a01"),
+      Gate.mkAND (mkW s!"{pfx2}_xn2") (mkW s!"{pfx2}_xn3") (mkW s!"{pfx2}_a23"),
+      Gate.mkAND (mkW s!"{pfx2}_xn4") (mkW s!"{pfx2}_xn5") (mkW s!"{pfx2}_a45"),
+      Gate.mkAND (mkW s!"{pfx2}_a01") (mkW s!"{pfx2}_a23") (mkW s!"{pfx2}_a0123"),
+      Gate.mkAND (mkW s!"{pfx2}_a0123") (mkW s!"{pfx2}_a45") out]
+    xns.flatten ++ ands
+  let s0_eq_r1_1_gates := mkTagEq s!"{pfx}_raw_s1" set_tag_0 read1_tag_1 s0_eq_r1_1
+  let s0_eq_r2_1_gates := mkTagEq s!"{pfx}_raw_s2" set_tag_0 read2_tag_1 s0_eq_r2_1
+  -- slot 1 hazard: set_en_0 AND tag match → force not-ready
+  let raw_s1_hit := mkW s!"{pfx}_raw_s1_hit"; let raw_s2_hit := mkW s!"{pfx}_raw_s2_hit"
+  let not_raw_s1 := mkW s!"{pfx}_not_raw_s1"; let not_raw_s2 := mkW s!"{pfx}_not_raw_s2"
+  let raw_gates := [
+    Gate.mkAND set_en_0 s0_eq_r1_1 raw_s1_hit,
+    Gate.mkAND set_en_0 s0_eq_r2_1 raw_s2_hit,
+    Gate.mkNOT raw_s1_hit not_raw_s1,
+    Gate.mkNOT raw_s2_hit not_raw_s2]
+  let s1_ready_1_pre := mkW s!"{pfx}_s1_1_pre"
+  let s2_ready_1_pre := mkW s!"{pfx}_s2_1_pre"
   let readyGates := [
     Gate.mkNOT b_s1_0 src1_ready_0,
     Gate.mkNOT b_s2_0 not_b_s2_0,
     Gate.mkOR use_imm_0 not_b_s2_0 src2_ready_0,
     Gate.mkBUF not_b_s2_0 src2_ready0_reg,
-    Gate.mkNOT b_s1_1 src1_ready_1,
+    -- Slot 1: AND with NOT(intra-group hazard)
+    Gate.mkNOT b_s1_1 s1_ready_1_pre,
+    Gate.mkAND s1_ready_1_pre not_raw_s1 src1_ready_1,
     Gate.mkNOT b_s2_1 not_b_s2_1,
-    Gate.mkOR use_imm_1 not_b_s2_1 src2_ready_1,
-    Gate.mkBUF not_b_s2_1 src2_ready1_reg
+    Gate.mkAND not_b_s2_1 not_raw_s2 s2_ready_1_pre,
+    Gate.mkOR use_imm_1 s2_ready_1_pre src2_ready_1,
+    Gate.mkBUF s2_ready_1_pre src2_ready1_reg
   ]
 
-  (resetGroupGates ++ perBitGates ++ muxGates ++ readyGates,
+  (resetGroupGates ++ perBitGates ++ muxGates ++ s0_eq_r1_1_gates ++ s0_eq_r2_1_gates ++ raw_gates ++ readyGates,
    [set_dec0_inst, set_dec1_inst, clr_dec0_inst, clr_dec1_inst] ++ perBitInstances)
 
 end Shoumei.RISCV.CPU

@@ -1173,6 +1173,72 @@ def mkSidecarRegFile4x32
   }
   (we_gates ++ rf_gates ++ sel_gates, entries, decoder_inst, mux_inst)
 
+/-- 4-entry × 32-bit sidecar register file with 2 write ports and 2 read ports (for W=2).
+    Port 0 writes to entries 0,1 (bank 0), port 1 writes to entries 2,3 (bank 1).
+    Read port 0 selects between entries 0,1 via grant[1] (bank 0 arbiter).
+    Read port 1 selects between entries 2,3 via grant[3] (bank 1 arbiter).
+    Returns (gates, entries, dec0_inst, dec1_inst, out_lane0, out_lane1). -/
+def mkSidecarRegFile4x32_W2
+    (pfx : String)
+    (clock reset : Wire)
+    (alloc_ptr_0 : List Wire) (we_en_0 : Wire) (write_data_0 : List Wire)
+    (alloc_ptr_1 : List Wire) (we_en_1 : Wire) (write_data_1 : List Wire)
+    (grant : List Wire)
+    (captured_out_0 captured_out_1 : List Wire)
+    : (List Gate × List (List Wire) × CircuitInstance × CircuitInstance) :=
+  -- Decoder for write port 0
+  let decoded_0 := makeIndexedWires s!"{pfx}_dec0" 4
+  let dec0_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := s!"u_{pfx}_dec0"
+    portMap := [
+      ("in_0", alloc_ptr_0[0]!), ("in_1", alloc_ptr_0[1]!),
+      ("out_0", decoded_0[0]!), ("out_1", decoded_0[1]!),
+      ("out_2", decoded_0[2]!), ("out_3", decoded_0[3]!)
+    ]
+  }
+  -- Decoder for write port 1
+  let decoded_1 := makeIndexedWires s!"{pfx}_dec1" 4
+  let dec1_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := s!"u_{pfx}_dec1"
+    portMap := [
+      ("in_0", alloc_ptr_1[0]!), ("in_1", alloc_ptr_1[1]!),
+      ("out_0", decoded_1[0]!), ("out_1", decoded_1[1]!),
+      ("out_2", decoded_1[2]!), ("out_3", decoded_1[3]!)
+    ]
+  }
+  -- Write enables: OR the two ports (non-overlapping banks, so OR is fine)
+  let we_0 := makeIndexedWires s!"{pfx}_we0" 4
+  let we_1 := makeIndexedWires s!"{pfx}_we1" 4
+  let we := makeIndexedWires s!"{pfx}_we" 4
+  let we_gates := (List.range 4).map (fun e =>
+    [Gate.mkAND decoded_0[e]! we_en_0 we_0[e]!,
+     Gate.mkAND decoded_1[e]! we_en_1 we_1[e]!,
+     Gate.mkOR we_0[e]! we_1[e]! we[e]!]) |>.flatten
+  -- Write data mux: if port 1 writes this entry, use its data; else port 0's
+  let entries := (List.range 4).map (fun e =>
+    makeIndexedWires s!"{pfx}_e{e}" 32)
+  let rf_gates := (List.range 4).map (fun e =>
+    let entry := entries[e]!
+    (List.range 32).map (fun b =>
+      let wd_muxed := Wire.mk s!"{pfx}_wd_e{e}_{b}"
+      let next := Wire.mk s!"{pfx}_next_e{e}_{b}"
+      [ Gate.mkMUX write_data_0[b]! write_data_1[b]! we_1[e]! wd_muxed,
+        Gate.mkMUX entry[b]! wd_muxed we[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+  -- Read port 0: 2:1 mux between entries 0,1, selected by grant[1]
+  -- (bank 0: grant[0]=entry 0, grant[1]=entry 1)
+  let read0_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX entries[0]![b]! entries[1]![b]! grant[1]! captured_out_0[b]!)
+  -- Read port 1: 2:1 mux between entries 2,3, selected by grant[3]
+  -- (bank 1: grant[2]=entry 2, grant[3]=entry 3)
+  let read1_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX entries[2]![b]! entries[3]![b]! grant[3]! captured_out_1[b]!)
+  (we_gates ++ rf_gates ++ read0_gates ++ read1_gates, entries, dec0_inst, dec1_inst)
+
 end
 
 end Shoumei.RISCV.CPU
