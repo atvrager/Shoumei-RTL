@@ -3102,6 +3102,7 @@ open Shoumei.RISCV.CPU
 
 set_option maxRecDepth 8192 in
 set_option maxHeartbeats 1600000 in
+set_option linter.unusedVariables false in
 /-- Dual-Issue Top-Level CPU Integration (W=2).
 Extends mkCPU to 2 instructions per cycle throughout the pipeline. -/
 def mkCPU_W2 (config : CPUConfig) : Circuit :=
@@ -3164,9 +3165,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap := [("d", pipeline_flush_comb), ("q", pipeline_flush),
                 ("clock", clock), ("reset", reset)]
   }
+  let flush_rs_fp := Wire.mk "flush_rs_fp"
+  let pipeline_reset_rs_fp := Wire.mk "pipeline_reset_rs_fp"
+  let fp_flush_reset_gates :=
+    if enableF then [Gate.mkOR reset flush_rs_fp pipeline_reset_rs_fp] else []
+
   let flush_tags :=
     ["rs_int", "rs_mem", "rs_br"] ++
     (if enableM then ["rs_muldiv"] else []) ++
+    (if enableF then ["rs_fp"] else []) ++
     ["rob", "misc"]
   let flush_dff_insts : List CircuitInstance := flush_tags.map (fun tag => {
     moduleName := "DFlipFlop"
@@ -3781,6 +3788,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     let is_st := Wire.mk s!"{pfx}_is_st"
     let use_imm := Wire.mk s!"{pfx}_use_imm"
     let is_muldiv := Wire.mk s!"{pfx}_is_muldiv"
+    -- FP decoder outputs
+    let is_fp := Wire.mk s!"{pfx}_is_fp"
+    let has_fp_rd := Wire.mk s!"{pfx}_has_fp_rd"
+    let fp_rs1_read := Wire.mk s!"{pfx}_fp_rs1_read"
+    let fp_rs2_read := Wire.mk s!"{pfx}_fp_rs2_read"
+    let fp_rs3_used := Wire.mk s!"{pfx}_fp_rs3_used"
+    let is_fp_load := Wire.mk s!"{pfx}_is_fp_load"
+    let is_fp_store := Wire.mk s!"{pfx}_is_fp_store"
+    let rs3 := CPU.makeIndexedWires s!"{pfx}_rs3" 5
+    let rm := CPU.makeIndexedWires s!"{pfx}_rm" 3
     let inst : CircuitInstance := {
       moduleName := decoderModuleName, instName := s!"u_decoder_{idx}",
       portMap := bundledPorts "io_instr" instr ++ bundledPorts "io_optype" optype ++
@@ -3789,12 +3806,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                   ("io_is_integer", is_int), ("io_is_memory", is_mem),
                   ("io_is_branch", is_br), ("io_is_store", is_st),
                   ("io_use_imm", use_imm)] ++
-                 (if enableM then [("io_is_muldiv", is_muldiv)] else [])
+                 (if enableM then [("io_is_muldiv", is_muldiv)] else []) ++
+                 (if enableF then
+                   [("io_is_fp", is_fp), ("io_has_fp_rd", has_fp_rd),
+                    ("io_fp_rs1_read", fp_rs1_read), ("io_fp_rs2_read", fp_rs2_read),
+                    ("io_fp_rs3_used", fp_rs3_used),
+                    ("io_is_fp_load", is_fp_load), ("io_is_fp_store", is_fp_store)] ++
+                   bundledPorts "io_rs3" rs3 ++ bundledPorts "io_rm" rm
+                  else [])
     }
-    (inst, optype, rd, rs1, rs2, imm, valid, has_rd, is_int, is_mem, is_br, is_st, use_imm, is_muldiv)
+    (inst, optype, rd, rs1, rs2, imm, valid, has_rd, is_int, is_mem, is_br, is_st, use_imm, is_muldiv,
+     is_fp, has_fp_rd, fp_rs1_read, fp_rs2_read, fp_rs3_used, is_fp_load, is_fp_store, rs3, rm)
 
-  let (dec0_inst, d0_op, d0_rd, d0_rs1, d0_rs2, d0_imm, d0_valid_raw, d0_has_rd, d0_is_int, d0_is_mem, d0_is_br, d0_is_st, d0_use_imm, d0_is_muldiv) := mkDecoder 0 imem_resp_data_0
-  let (dec1_inst, d1_op, d1_rd, d1_rs1, d1_rs2, d1_imm, d1_valid_raw, d1_has_rd, d1_is_int, d1_is_mem, d1_is_br, d1_is_st, d1_use_imm, d1_is_muldiv) := mkDecoder 1 imem_resp_data_1
+  let (dec0_inst, d0_op, d0_rd, d0_rs1, d0_rs2, d0_imm, d0_valid_raw, d0_has_rd, d0_is_int, d0_is_mem, d0_is_br, d0_is_st, d0_use_imm, d0_is_muldiv,
+       d0_is_fp, d0_has_fp_rd, d0_fp_rs1_read, d0_fp_rs2_read, d0_fp_rs3_used, d0_is_fp_load, d0_is_fp_store, d0_rs3, d0_rm) := mkDecoder 0 imem_resp_data_0
+  let (dec1_inst, d1_op, d1_rd, d1_rs1, d1_rs2, d1_imm, d1_valid_raw, d1_has_rd, d1_is_int, d1_is_mem, d1_is_br, d1_is_st, d1_use_imm, d1_is_muldiv,
+       d1_is_fp, d1_has_fp_rd, d1_fp_rs1_read, d1_fp_rs2_read, d1_fp_rs3_used, d1_is_fp_load, d1_is_fp_store, d1_rs3, d1_rm) := mkDecoder 1 imem_resp_data_1
 
   -- Gate decoder valid by fetch valid (e.g. fetch invalidates slot 1 when slot 0 is taken)
   let fetch_valid_0 := Wire.mk "fetch_valid_0"
@@ -3864,6 +3891,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let dispatch_br_1 := Wire.mk "dispatch_br_1"
   let dispatch_muldiv_0 := Wire.mk "dispatch_muldiv_0"
   let dispatch_muldiv_1 := Wire.mk "dispatch_muldiv_1"
+  let dispatch_fp_0 := Wire.mk "dispatch_fp_0"
+  let dispatch_fp_1 := Wire.mk "dispatch_fp_1"
   let rename_valid_0 := Wire.mk "rename_valid_0"
   let rename_valid_1 := Wire.mk "rename_valid_1"
 
@@ -3907,7 +3936,26 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkAND dispatch_base_valid_0 d0_is_muldiv dispatch_muldiv_0,
        Gate.mkAND dispatch_base_valid_1 d1_is_muldiv dispatch_muldiv_1]
     else
-      [Gate.mkBUF zero dispatch_muldiv_0, Gate.mkBUF zero dispatch_muldiv_1])
+      [Gate.mkBUF zero dispatch_muldiv_0, Gate.mkBUF zero dispatch_muldiv_1]) ++
+    -- FP dispatch qualification
+    (if enableF then
+      [Gate.mkAND dispatch_base_valid_0 d0_is_fp dispatch_fp_0,
+       Gate.mkAND dispatch_base_valid_1 d1_is_fp dispatch_fp_1]
+    else
+      [Gate.mkBUF zero dispatch_fp_0, Gate.mkBUF zero dispatch_fp_1])
+
+  -- === has_rd_int: filter out FP-dest instructions from INT rename ===
+  let d0_has_rd_int := Wire.mk "d0_has_rd_int"
+  let d1_has_rd_int := Wire.mk "d1_has_rd_int"
+  let has_rd_int_gates :=
+    if enableF then
+      [Gate.mkNOT d0_has_fp_rd (Wire.mk "d0_not_has_fp_rd"),
+       Gate.mkAND d0_has_rd (Wire.mk "d0_not_has_fp_rd") d0_has_rd_int,
+       Gate.mkNOT d1_has_fp_rd (Wire.mk "d1_not_has_fp_rd"),
+       Gate.mkAND d1_has_rd (Wire.mk "d1_not_has_fp_rd") d1_has_rd_int]
+    else
+      [Gate.mkBUF d0_has_rd d0_has_rd_int,
+       Gate.mkBUF d1_has_rd d1_has_rd_int]
 
   -- === has_rd_nox0 for busy-table guard (don't set busy[p0]) ===
   let d0_rd_nonzero := Wire.mk "d0_rd_nonzero"
@@ -3921,13 +3969,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkOR (Wire.mk "d0_rd_or01") d0_rd[2]! (Wire.mk "d0_rd_or012"),
      Gate.mkOR (Wire.mk "d0_rd_or012") d0_rd[3]! (Wire.mk "d0_rd_or0123"),
      Gate.mkOR (Wire.mk "d0_rd_or0123") d0_rd[4]! d0_rd_nonzero,
-     Gate.mkAND d0_has_rd d0_rd_nonzero d0_has_rd_nox0,
+     Gate.mkAND d0_has_rd_int d0_rd_nonzero d0_has_rd_nox0,
      Gate.mkAND dispatch_base_valid_0 d0_has_rd_nox0 busy_set_en_0,
      Gate.mkOR d1_rd[0]! d1_rd[1]! (Wire.mk "d1_rd_or01"),
      Gate.mkOR (Wire.mk "d1_rd_or01") d1_rd[2]! (Wire.mk "d1_rd_or012"),
      Gate.mkOR (Wire.mk "d1_rd_or012") d1_rd[3]! (Wire.mk "d1_rd_or0123"),
      Gate.mkOR (Wire.mk "d1_rd_or0123") d1_rd[4]! d1_rd_nonzero,
-     Gate.mkAND d1_has_rd d1_rd_nonzero d1_has_rd_nox0,
+     Gate.mkAND d1_has_rd_int d1_rd_nonzero d1_has_rd_nox0,
      Gate.mkAND dispatch_base_valid_1 d1_has_rd_nox0 busy_set_en_1]
 
   -- Masked dest tags: zero out physRd when rd=x0 (prevent CDB from writing garbage to PRF)
@@ -3938,11 +3986,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 6).map (fun i => Gate.mkAND rd_phys_1[i]! d1_has_rd_nox0 int_dest_tag_masked_1[i]!)
 
   -- ROB alloc_hasPhysRd must include branches (force_alloc allocates a tag for them)
+  -- Also includes FP rd (FLW etc.) — these need hasPhysRd for ROB commit to free the old tag
   let rob_alloc_hasPhysRd_0 := Wire.mk "rob_alloc_hasPhysRd_0"
   let rob_alloc_hasPhysRd_1 := Wire.mk "rob_alloc_hasPhysRd_1"
   let rob_hasPhysRd_gates :=
-    [Gate.mkOR d0_is_br d0_has_rd_nox0 rob_alloc_hasPhysRd_0,
-     Gate.mkOR d1_is_br d1_has_rd_nox0 rob_alloc_hasPhysRd_1]
+    if enableF then
+      [Gate.mkOR d0_has_rd_nox0 d0_has_fp_rd (Wire.mk "d0_has_any_rd_nox0"),
+       Gate.mkOR d0_is_br (Wire.mk "d0_has_any_rd_nox0") rob_alloc_hasPhysRd_0,
+       Gate.mkOR d1_has_rd_nox0 d1_has_fp_rd (Wire.mk "d1_has_any_rd_nox0"),
+       Gate.mkOR d1_is_br (Wire.mk "d1_has_any_rd_nox0") rob_alloc_hasPhysRd_1]
+    else
+      [Gate.mkOR d0_is_br d0_has_rd_nox0 rob_alloc_hasPhysRd_0,
+       Gate.mkOR d1_is_br d1_has_rd_nox0 rob_alloc_hasPhysRd_1]
 
   -- === DISPATCH ROUTING ===
   -- Integer RS gets both slots directly (W=2 RS has dual issue ports).
@@ -3957,6 +4012,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let br_dual_stall := Wire.mk "br_dual_stall"
   let mem_dual_stall := Wire.mk "mem_dual_stall"
   let muldiv_dual_stall := Wire.mk "muldiv_dual_stall"
+  let fp_dual_stall := Wire.mk "fp_dual_stall"
   let dual_stall_gates :=
     [Gate.mkAND (Wire.mk "d0_no_ser") rename_valid_0 pre_valid_0,
      Gate.mkAND (Wire.mk "d1_no_ser") rename_valid_1 pre_valid_1,
@@ -3973,7 +4029,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkAND d0_valid_raw d0_is_muldiv (Wire.mk "pre_md_0"),
        Gate.mkAND d1_valid_raw d1_is_muldiv (Wire.mk "pre_md_1"),
        Gate.mkAND (Wire.mk "pre_md_0") (Wire.mk "pre_md_1") muldiv_dual_stall]
-    else [Gate.mkBUF zero muldiv_dual_stall])
+    else [Gate.mkBUF zero muldiv_dual_stall]) ++
+    (if enableF then
+      [-- Stall when both slots need FP rename (is_fp OR has_fp_rd covers FP exec + FLW)
+       Gate.mkOR d0_is_fp d0_has_fp_rd (Wire.mk "d0_needs_fp_ren_pre"),
+       Gate.mkAND d0_valid_raw (Wire.mk "d0_needs_fp_ren_pre") (Wire.mk "pre_fp_0"),
+       Gate.mkOR d1_is_fp d1_has_fp_rd (Wire.mk "d1_needs_fp_ren_pre"),
+       Gate.mkAND d1_valid_raw (Wire.mk "d1_needs_fp_ren_pre") (Wire.mk "pre_fp_1"),
+       Gate.mkAND (Wire.mk "pre_fp_0") (Wire.mk "pre_fp_1") fp_dual_stall]
+    else [Gate.mkBUF zero fp_dual_stall])
 
   -- Branch routing MUX: slot 0 has priority
   let br_route_sel := Wire.mk "br_route_sel"  -- 1 = use slot 1
@@ -3983,6 +4047,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [Gate.mkNOT dispatch_br_0 br_not_s0,
      Gate.mkAND br_not_s0 dispatch_br_1 br_route_sel,
      Gate.mkOR dispatch_br_0 dispatch_br_1 br_dispatch_valid]
+
+  -- Forward-declare FP wires needed by memory and ROB sections
+  let fp_issue_dest_tag := CPU.makeIndexedWires "fp_issue_dest_tag" 6
+  let rob_head_is_fp_0 := Wire.mk "rob_head_is_fp_0"
+  let rob_head_is_fp_1 := Wire.mk "rob_head_is_fp_1"
 
   -- Memory routing MUX
   let mem_route_sel := Wire.mk "mem_route_sel"
@@ -4004,6 +4073,37 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR dispatch_muldiv_0 dispatch_muldiv_1 muldiv_dispatch_valid]
     else
       [Gate.mkBUF zero muldiv_route_sel, Gate.mkBUF zero muldiv_dispatch_valid]
+
+  -- FP routing MUX (for FP RS dispatch: only is_fp instructions)
+  let fp_route_sel := Wire.mk "fp_route_sel"
+  let fp_not_s0 := Wire.mk "fp_not_s0"
+  let fp_dispatch_valid := Wire.mk "fp_dispatch_valid_pre"
+  -- FP rename routing: broader signal including FP loads (has_fp_rd but not is_fp)
+  let fp_rename_route_sel := Wire.mk "fp_rename_route_sel"
+  let fp_rs2_route_sel := Wire.mk "fp_rs2_route_sel"
+  let fp_rename_dispatch_valid := Wire.mk "fp_rename_dispatch_valid"
+  let dispatch_fp_rename_0 := Wire.mk "dispatch_fp_rename_0"
+  let dispatch_fp_rename_1 := Wire.mk "dispatch_fp_rename_1"
+  let fp_route_gates :=
+    if enableF then
+      [Gate.mkNOT dispatch_fp_0 fp_not_s0,
+       Gate.mkAND fp_not_s0 dispatch_fp_1 fp_route_sel,
+       Gate.mkOR dispatch_fp_0 dispatch_fp_1 fp_dispatch_valid,
+       -- FP rename valid includes is_fp OR has_fp_rd (for FLW dest tag)
+       Gate.mkOR d0_is_fp d0_has_fp_rd (Wire.mk "d0_needs_fp_rename"),
+       Gate.mkAND dispatch_base_valid_0 (Wire.mk "d0_needs_fp_rename") dispatch_fp_rename_0,
+       Gate.mkOR d1_is_fp d1_has_fp_rd (Wire.mk "d1_needs_fp_rename"),
+       Gate.mkAND dispatch_base_valid_1 (Wire.mk "d1_needs_fp_rename") dispatch_fp_rename_1,
+       Gate.mkNOT dispatch_fp_rename_0 (Wire.mk "fp_ren_not_s0"),
+       Gate.mkAND (Wire.mk "fp_ren_not_s0") dispatch_fp_rename_1 fp_rename_route_sel,
+       Gate.mkOR dispatch_fp_rename_0 dispatch_fp_rename_1 fp_rename_dispatch_valid,
+       -- FP rs2 route select: FP RS gets priority for rs2 port; else FSW uses mem_route_sel
+       Gate.mkMUX mem_route_sel fp_route_sel fp_dispatch_valid fp_rs2_route_sel]
+    else
+      [Gate.mkBUF zero fp_route_sel, Gate.mkBUF zero fp_dispatch_valid,
+       Gate.mkBUF zero fp_rename_route_sel, Gate.mkBUF zero fp_rename_dispatch_valid,
+       Gate.mkBUF zero dispatch_fp_rename_0, Gate.mkBUF zero dispatch_fp_rename_1,
+       Gate.mkBUF zero fp_rs2_route_sel]
 
   -- === RENAME STAGE (W2) ===
   let rs1_phys_0 := CPU.makeIndexedWires "rs1_phys_0" 6
@@ -4120,6 +4220,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_mux_rs1_data := CPU.makeIndexedWires "mem_mux_rs1_data" 32
   let mem_mux_rs2_data := CPU.makeIndexedWires "mem_mux_rs2_data" 32
   let mem_mux_rd_phys := CPU.makeIndexedWires "mem_mux_rd_phys" 6
+  -- Forward-declare FP rename wires needed for FSW src2 override in mem RS
+  let mem_fp_rs2_phys := CPU.makeIndexedWires "fp_rs2_phys" 6
+  let mem_fp_rs2_data := CPU.makeIndexedWires "fp_rs2_data" 32
+  let mem_fp_issue_src2_ready := Wire.mk "fp_issue_src2_ready"
   let mem_mux_src1_ready := Wire.mk "mem_mux_src1_ready"
   let mem_mux_src2_ready := Wire.mk "mem_mux_src2_ready"
   let mem_mux_imm := CPU.makeIndexedWires "mem_mux_imm" 32
@@ -4129,17 +4233,52 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       Gate.mkMUX (d0_op.take 6)[i]! (d1_op.take 6)[i]! mem_route_sel mem_mux_opcode[i]!) ++
     (List.range 6).map (fun i =>
       Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! mem_route_sel mem_mux_rs1_phys[i]!) ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! mem_route_sel mem_mux_rs2_phys[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! mem_route_sel mem_mux_rs1_data[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! mem_route_sel mem_mux_rs2_data[i]!) ++
-    (List.range 6).map (fun i =>
-      Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! mem_route_sel mem_mux_rd_phys[i]!) ++
-    [Gate.mkMUX src1_ready_0 src1_ready_1 mem_route_sel mem_mux_src1_ready,
-     Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_src2_ready,
-     Gate.mkMUX d0_is_st d1_is_st mem_route_sel mem_mux_is_store] ++
+    -- FSW: src2 tag/data from FP rename instead of INT rename
+    (if enableF then
+      let mem_mux_int_rs2_phys := CPU.makeIndexedWires "mem_mux_int_rs2_phys" 6
+      let mem_mux_is_fp_store := Wire.mk "mem_mux_is_fp_store"
+      let mem_mux_int_rs2_data := CPU.makeIndexedWires "mem_mux_int_rs2_data" 32
+      let mem_mux_int_src2_ready := Wire.mk "mem_mux_int_src2_ready"
+      [Gate.mkMUX d0_is_fp_store d1_is_fp_store mem_route_sel mem_mux_is_fp_store] ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! mem_route_sel mem_mux_int_rs2_phys[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX mem_mux_int_rs2_phys[i]! mem_fp_rs2_phys[i]! mem_mux_is_fp_store mem_mux_rs2_phys[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! mem_route_sel mem_mux_rs1_data[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! mem_route_sel mem_mux_int_rs2_data[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX mem_mux_int_rs2_data[i]! mem_fp_rs2_data[i]! mem_mux_is_fp_store mem_mux_rs2_data[i]!) ++
+      -- src2_ready override: FSW uses FP busy table ready
+      [Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_int_src2_ready] ++
+      []
+    else
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! mem_route_sel mem_mux_rs2_phys[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! mem_route_sel mem_mux_rs1_data[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! mem_route_sel mem_mux_rs2_data[i]!) ++
+      []) ++
+    -- For FP loads: use FP rename dest tag instead of INT rename dest tag
+    (if enableF then
+      let mem_mux_int_rd := CPU.makeIndexedWires "mem_mux_int_rd" 6
+      let mem_mux_is_fp_load := Wire.mk "mem_mux_is_fp_load"
+      (List.range 6).map (fun i =>
+        Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! mem_route_sel mem_mux_int_rd[i]!) ++
+      [Gate.mkMUX d0_is_fp_load d1_is_fp_load mem_route_sel mem_mux_is_fp_load] ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX mem_mux_int_rd[i]! fp_issue_dest_tag[i]! mem_mux_is_fp_load mem_mux_rd_phys[i]!)
+    else
+      (List.range 6).map (fun i =>
+        Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! mem_route_sel mem_mux_rd_phys[i]!)) ++
+    [Gate.mkMUX src1_ready_0 src1_ready_1 mem_route_sel mem_mux_src1_ready] ++
+    (if enableF then
+      [Gate.mkMUX (Wire.mk "mem_mux_int_src2_ready") mem_fp_issue_src2_ready (Wire.mk "mem_mux_is_fp_store") mem_mux_src2_ready]
+    else
+      [Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_src2_ready]) ++
+    [Gate.mkMUX d0_is_st d1_is_st mem_route_sel mem_mux_is_store] ++
     (List.range 32).map (fun i =>
       Gate.mkMUX d0_imm[i]! d1_imm[i]! mem_route_sel mem_mux_imm[i]!)
 
@@ -4170,13 +4309,50 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkMUX src2_ready_0 src2_ready_1 muldiv_route_sel md_mux_src2_ready]
     else []
 
+  -- FP MUX data: route slot 0 or slot 1 operands to single-issue FP port
+  -- FP uses FP rename outputs for tags/data (cross-domain), so we MUX *after* cross-domain routing
+  -- The fp_mux wires here are for the INT-side decode signals (opcode, imm, has_fp_rd, etc.)
+  let fp_mux_has_fp_rd := Wire.mk "fp_mux_has_fp_rd"
+  let fp_mux_fp_rs1_read := Wire.mk "fp_mux_fp_rs1_read"
+  let fp_mux_fp_rs2_read := Wire.mk "fp_mux_fp_rs2_read"
+  let fp_mux_fp_rs3_used := Wire.mk "fp_mux_fp_rs3_used"
+  let fp_mux_rd := CPU.makeIndexedWires "fp_mux_rd" 5
+  let fp_mux_rs1 := CPU.makeIndexedWires "fp_mux_rs1" 5
+  let fp_mux_rs2 := CPU.makeIndexedWires "fp_mux_rs2" 5
+  let fp_mux_rs3 := CPU.makeIndexedWires "fp_mux_rs3" 5
+  let fp_mux_imm := CPU.makeIndexedWires "fp_mux_imm" 32
+  let fp_mux_opcode := CPU.makeIndexedWires "fp_mux_opcode" opcodeWidth
+  let fp_mux_decode_rm := CPU.makeIndexedWires "fp_mux_decode_rm" 3
+  let fp_mux_data_gates :=
+    if enableF then
+      -- Use fp_rename_route_sel for has_fp_rd and rd_addr (needed for FLW FP rename)
+      [Gate.mkMUX d0_has_fp_rd d1_has_fp_rd fp_rename_route_sel fp_mux_has_fp_rd,
+       Gate.mkMUX d0_fp_rs1_read d1_fp_rs1_read fp_route_sel fp_mux_fp_rs1_read,
+       Gate.mkMUX d0_fp_rs2_read d1_fp_rs2_read fp_rs2_route_sel fp_mux_fp_rs2_read,
+       Gate.mkMUX d0_fp_rs3_used d1_fp_rs3_used fp_route_sel fp_mux_fp_rs3_used] ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX d0_rd[i]! d1_rd[i]! fp_rename_route_sel fp_mux_rd[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX d0_rs1[i]! d1_rs1[i]! fp_route_sel fp_mux_rs1[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX d0_rs2[i]! d1_rs2[i]! fp_rs2_route_sel fp_mux_rs2[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX (d0_rs3.getD i zero) (d1_rs3.getD i zero) fp_route_sel fp_mux_rs3[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX d0_imm[i]! d1_imm[i]! fp_route_sel fp_mux_imm[i]!) ++
+      (List.range opcodeWidth).map (fun i =>
+        Gate.mkMUX d0_op[i]! d1_op[i]! fp_route_sel fp_mux_opcode[i]!) ++
+      (List.range 3).map (fun i =>
+        Gate.mkMUX (d0_rm.getD i zero) (d1_rm.getD i zero) fp_route_sel fp_mux_decode_rm[i]!)
+    else []
+
   -- === RENAME INSTANCE ===
   let rename_inst : CircuitInstance := {
     moduleName := "RenameStage_W2"
     instName := "u_rename"
     portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
-                ("instr_valid", d0_valid), ("has_rd", d0_has_rd), ("force_alloc", d0_is_br),
-                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd), ("force_alloc_1", d1_is_br),
+                ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_is_br),
+                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_is_br),
                 ("flush_en", pipeline_flush), ("retire_valid", Wire.mk "csr_commit_valid_0")] ++
                -- commit_valid for slot 0 is muxed with CSR inject (defined in CSR block below)
                [("commit_valid", Wire.mk "csr_commit_valid_0"), ("commit_valid_1", retire_valid_1)] ++
@@ -4232,26 +4408,64 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     src1_ready_1 src2_ready_1 (Wire.mk "src2_ready1_reg")
 
   -- === REORDER BUFFER (W2) ===
+  -- Forward-declare FP wires (defined later in FP pipeline block)
+  let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+
+  -- FP dest tag MUX for ROB: when an FP instruction dispatches, the ROB must store
+  -- the FP issue dest tag (from FP rename) instead of the INT rename tag, so CDB
+  -- completion matching works correctly across domains.
+  let rob_alloc_physRd_0 := CPU.makeIndexedWires "rob_alloc_physRd_0" 6
+  let rob_alloc_physRd_1 := CPU.makeIndexedWires "rob_alloc_physRd_1" 6
+  let rob_physRd_mux_gates :=
+    if enableF then
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rd_phys_0[i]! fp_issue_dest_tag[i]! dispatch_fp_rename_0 rob_alloc_physRd_0[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rd_phys_1[i]! fp_issue_dest_tag[i]! dispatch_fp_rename_1 rob_alloc_physRd_1[i]!)
+    else
+      (List.range 6).map (fun i =>
+        Gate.mkBUF rd_phys_0[i]! rob_alloc_physRd_0[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkBUF rd_phys_1[i]! rob_alloc_physRd_1[i]!)
+
+  -- ROB old_rd_phys MUX: at dispatch, select FP or INT old_rd_phys for ROB storage
+  -- For W=2, FP rename is single-issue: dispatch_fp_rename_0/1 selects which slot
+  -- Forward-declare fp_old_rd_phys wires (connected later to FP rename output)
+  let fp_old_rd_phys := CPU.makeIndexedWires "fp_old_rd_phys" 6
+  let rob_old_phys_muxed_0 := CPU.makeIndexedWires "rob_old_phys_muxed_0" 6
+  let rob_old_phys_muxed_1 := CPU.makeIndexedWires "rob_old_phys_muxed_1" 6
+  let rob_old_phys_mux_gates :=
+    if enableF then
+      (List.range 6).map (fun i =>
+        Gate.mkMUX old_physRd_0[i]! fp_old_rd_phys[i]! dispatch_fp_rename_0 rob_old_phys_muxed_0[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX old_physRd_1[i]! fp_old_rd_phys[i]! dispatch_fp_rename_1 rob_old_phys_muxed_1[i]!)
+    else
+      (List.range 6).map (fun i => Gate.mkBUF old_physRd_0[i]! rob_old_phys_muxed_0[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF old_physRd_1[i]! rob_old_phys_muxed_1[i]!)
+
   let rob_inst : CircuitInstance := {
     moduleName := "ROB16_W2"
     instName := "u_rob"
     portMap := [("clock", clock), ("reset", pipeline_reset_rob), ("zero", zero), ("one", one),
                 ("alloc_en_0", dispatch_base_valid_0), ("alloc_en_1", dispatch_base_valid_1),
                 ("alloc_hasPhysRd_0", rob_alloc_hasPhysRd_0), ("alloc_hasPhysRd_1", rob_alloc_hasPhysRd_1),
-                ("alloc_hasOldPhysRd_0", d0_has_rd_nox0), ("alloc_hasOldPhysRd_1", d1_has_rd_nox0),
-                ("alloc_isBranch_0", d0_is_br), ("alloc_isBranch_1", d1_is_br),
+                ("alloc_hasOldPhysRd_0", if enableF then Wire.mk "d0_has_any_rd_nox0" else d0_has_rd_nox0),
+                ("alloc_hasOldPhysRd_1", if enableF then Wire.mk "d1_has_any_rd_nox0" else d1_has_rd_nox0),
+                ("alloc_isBranch_0", d0_is_br), ("alloc_is_fp_0", if enableF then d0_has_fp_rd else zero),
+                ("alloc_isBranch_1", d1_is_br), ("alloc_is_fp_1", if enableF then d1_has_fp_rd else zero),
                 ("cdb_valid", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("cdb_exception", zero), ("cdb_exception_1", zero),
                 ("cdb_mispredicted", cdb_mispredicted_reg_0),
                 ("cdb_mispredicted_1", cdb_mispredicted_reg_1),
-                ("cdb_is_fp", zero), ("cdb_is_fp_1", zero),
+                ("cdb_is_fp", if enableF then cdb_is_fp_0 else zero),
+                ("cdb_is_fp_1", if enableF then cdb_is_fp_1 else zero),
                 ("flush_en", branch_redirect_valid_reg),
                 ("commit_en_0", retire_valid_0), ("commit_en_1", retire_valid_1)] ++
-               bundledPorts "alloc_physRd_0" rd_phys_0 ++ bundledPorts "alloc_oldPhysRd_0" old_physRd_0 ++ bundledPorts "alloc_archRd_0" d0_rd ++
-               bundledPorts "alloc_physRd_1" rd_phys_1 ++ bundledPorts "alloc_oldPhysRd_1" old_physRd_1 ++ bundledPorts "alloc_archRd_1" d1_rd ++
+               bundledPorts "alloc_physRd_0" rob_alloc_physRd_0 ++ bundledPorts "alloc_oldPhysRd_0" rob_old_phys_muxed_0 ++ bundledPorts "alloc_archRd_0" d0_rd ++
+               bundledPorts "alloc_physRd_1" rob_alloc_physRd_1 ++ bundledPorts "alloc_oldPhysRd_1" rob_old_phys_muxed_1 ++ bundledPorts "alloc_archRd_1" d1_rd ++
                bundledPorts "cdb_tag" cdb_tag_0 ++ bundledPorts "cdb_tag_1" cdb_tag_1 ++
-               -- is_fp_shadow: tied low (no FP in W2 for now)
-               ((List.range 16).map (fun i => (s!"is_fp_shadow_{i}", zero))) ++
                -- Outputs
                [("full", rob_full), ("empty", rob_empty)] ++
                bundledPorts "alloc_idx_0" rob_alloc_idx_0 ++ bundledPorts "alloc_idx_1" rob_alloc_idx_1 ++
@@ -4267,7 +4481,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "head_oldPhysRd_1" rob_head_oldPhysRd_1 ++ [("head_hasOldPhysRd_1", rob_head_hasOldPhysRd_1)] ++
                bundledPorts "head_archRd_1" commit_archRd_1 ++
                [("head_exception_1", rob_head_exception_1), ("head_isBranch_1", rob_head_isBranch_1),
-                ("head_mispredicted_1", rob_head_mispredicted_1)]
+                ("head_mispredicted_1", rob_head_mispredicted_1),
+                ("head_is_fp_0", rob_head_is_fp_0), ("head_is_fp_1", rob_head_is_fp_1)]
   }
 
   -- === COMMIT CONTROL (W2) ===
@@ -4552,6 +4767,447 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "alloc_ptr" (CPU.makeIndexedWires "rs_muldiv_alloc_ptr" 2) ++
                bundledPorts "dispatch_grant" (CPU.makeIndexedWires "rs_muldiv_grant" 4)
   }
+
+  -- === FP PIPELINE (conditional) ===
+  -- FP Rename (single-issue, W=1 RenameStage_32x64)
+  let fp_rs1_phys := CPU.makeIndexedWires "fp_rs1_phys" 6
+  let fp_rs2_phys := CPU.makeIndexedWires "fp_rs2_phys" 6
+  let fp_rd_phys := CPU.makeIndexedWires "fp_rd_phys" 6
+  let fp_old_rd_phys := CPU.makeIndexedWires "fp_old_rd_phys" 6
+  let fp_rs1_data := CPU.makeIndexedWires "fp_rs1_data" 32
+  let fp_rs2_data := CPU.makeIndexedWires "fp_rs2_data" 32
+  let fp_rename_valid := Wire.mk "fp_rename_valid"
+  let fp_rename_stall := Wire.mk "fp_rename_stall"
+  let fp_rs3_data := CPU.makeIndexedWires "fp_rs3_data" 32
+  let fp_rs3_phys := CPU.makeIndexedWires "fp_rs3_phys" 6
+  let fp_rvvi_rd_data := CPU.makeIndexedWires "fp_rvvi_rd_data" 32
+
+  -- CDB routing: split CDB writes between INT and FP PRFs (2-channel CDB)
+  -- We register is_fp per CDB channel and use it to gate PRF writes
+  let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  -- FP PRF: write if CDB valid AND is_fp on either channel
+  -- For FP rename CDB wakeup: use channel 0 valid for simplicity (FP ops only go through one CDB)
+  -- Actually: both channels can carry FP results, so we need to handle both.
+  -- The FP rename (W=1) has a single CDB input. We merge the two channels:
+  -- cdb_valid_fp = (cdb_valid_0 AND cdb_is_fp_0) OR (cdb_valid_1 AND cdb_is_fp_1)
+  -- Since at most one FP result per cycle (single FP exec unit), only one channel will have is_fp=1.
+  let cdb_valid_fp_ch0 := Wire.mk "cdb_valid_fp_ch0"
+  let cdb_valid_fp_ch1 := Wire.mk "cdb_valid_fp_ch1"
+  let cdb_valid_fp_prf := Wire.mk "cdb_valid_fp_prf"
+  -- Merged FP CDB tag/data: MUX between ch0 and ch1 (ch0 priority)
+  let cdb_tag_fp := CPU.makeIndexedWires "cdb_tag_fp" 6
+  let cdb_data_fp := CPU.makeIndexedWires "cdb_data_fp" 32
+  let fp_cdb_merge_gates :=
+    if enableF then
+      [Gate.mkAND cdb_valid_0 cdb_is_fp_0 cdb_valid_fp_ch0,
+       Gate.mkAND cdb_valid_1 cdb_is_fp_1 cdb_valid_fp_ch1,
+       Gate.mkOR cdb_valid_fp_ch0 cdb_valid_fp_ch1 cdb_valid_fp_prf] ++
+      -- MUX tag/data: if ch0 has FP, use ch0; else use ch1
+      (List.range 6).map (fun i =>
+        Gate.mkMUX cdb_tag_1[i]! cdb_tag_0[i]! cdb_valid_fp_ch0 cdb_tag_fp[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! cdb_valid_fp_ch0 cdb_data_fp[i]!)
+    else
+      (List.range 6).map (fun i => Gate.mkBUF zero cdb_tag_fp[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF zero cdb_data_fp[i]!) ++
+      [Gate.mkBUF zero cdb_valid_fp_prf]
+
+  -- INT PRF: gate by NOT is_fp on each channel
+  let cdb_valid_int_0 := Wire.mk "cdb_valid_int_0"
+  let cdb_valid_int_1 := Wire.mk "cdb_valid_int_1"
+  let fp_int_prf_gate :=
+    if enableF then
+      [Gate.mkNOT cdb_is_fp_0 (Wire.mk "not_cdb_is_fp_0"),
+       Gate.mkNOT cdb_is_fp_1 (Wire.mk "not_cdb_is_fp_1"),
+       Gate.mkAND cdb_valid_0 (Wire.mk "not_cdb_is_fp_0") cdb_valid_int_0,
+       Gate.mkAND cdb_valid_1 (Wire.mk "not_cdb_is_fp_1") cdb_valid_int_1]
+    else
+      [Gate.mkBUF cdb_valid_0 cdb_valid_int_0,
+       Gate.mkBUF cdb_valid_1 cdb_valid_int_1]
+
+  -- FP rename commit signals: commit_valid when ROB head has is_fp flag (from ROB output)
+  let fp_commit_valid_0 := Wire.mk "fp_commit_valid_0"
+  let fp_commit_valid_1 := Wire.mk "fp_commit_valid_1"
+  let fp_commit_gates :=
+    if enableF then
+      [Gate.mkAND retire_valid_0 rob_head_is_fp_0 fp_commit_valid_0,
+       Gate.mkAND retire_valid_1 rob_head_is_fp_1 fp_commit_valid_1]
+    else
+      [Gate.mkBUF zero fp_commit_valid_0, Gate.mkBUF zero fp_commit_valid_1]
+
+  -- FP redirect: use same pipeline_flush for FP rename recovery
+  let redirect_valid_fp := Wire.mk "redirect_valid_fp"
+  let fp_redirect_gate :=
+    if enableF then [Gate.mkBUF branch_redirect_valid_reg redirect_valid_fp]
+    else [Gate.mkBUF zero redirect_valid_fp]
+
+  -- Merge FP commits from both ROB slots for single-port FP rename
+  -- Slot 0 has priority; if only slot 1 has FP, use slot 1's data
+  let fp_commit_merged := Wire.mk "fp_commit_merged"
+  let fp_commit_sel := Wire.mk "fp_commit_sel"  -- 1 = use slot 1
+  let fp_commit_archRd := CPU.makeIndexedWires "fp_commit_archRd" 5
+  let fp_commit_physRd := CPU.makeIndexedWires "fp_commit_physRd" 6
+  let fp_commit_oldPhysRd := CPU.makeIndexedWires "fp_commit_oldPhysRd" 6
+  let fp_commit_hasPhysRd := Wire.mk "fp_commit_hasPhysRd"
+  let fp_commit_merge_gates :=
+    if enableF then
+      [Gate.mkOR fp_commit_valid_0 fp_commit_valid_1 fp_commit_merged,
+       Gate.mkNOT fp_commit_valid_0 (Wire.mk "not_fp_commit_0"),
+       Gate.mkAND (Wire.mk "not_fp_commit_0") fp_commit_valid_1 fp_commit_sel,
+       -- hasPhysRd: either slot's is_fp flag
+       Gate.mkMUX rob_head_is_fp_0 rob_head_is_fp_1 fp_commit_sel fp_commit_hasPhysRd] ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX commit_archRd_0[i]! commit_archRd_1[i]! fp_commit_sel fp_commit_archRd[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX commit_physRd_0[i]! commit_physRd_1[i]! fp_commit_sel fp_commit_physRd[i]!) ++
+      -- Old phys rd for free list: the tag being replaced (freed)
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rob_head_oldPhysRd_0[i]! rob_head_oldPhysRd_1[i]! fp_commit_sel fp_commit_oldPhysRd[i]!)
+    else
+      [Gate.mkBUF zero fp_commit_merged, Gate.mkBUF zero fp_commit_sel,
+       Gate.mkBUF zero fp_commit_hasPhysRd] ++
+      (List.range 5).map (fun i => Gate.mkBUF zero fp_commit_archRd[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_physRd[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_oldPhysRd[i]!)
+
+  let fp_rename_inst : CircuitInstance := {
+    moduleName := "RenameStage_32x64"
+    instName := "u_fp_rename"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
+       ("instr_valid", fp_rename_dispatch_valid),
+       ("has_rd", fp_mux_has_fp_rd)] ++
+      bundledPorts "rs1_addr" fp_mux_rs1 ++ bundledPorts "rs2_addr" fp_mux_rs2 ++
+      bundledPorts "rs3_addr" fp_mux_rs3 ++
+      bundledPorts "rd_addr" fp_mux_rd ++
+      [("cdb_valid", cdb_valid_fp_prf)] ++
+      bundledPorts "cdb_tag" cdb_tag_fp ++ bundledPorts "cdb_data" cdb_data_fp ++
+      [("retire_valid", fp_commit_merged)] ++
+      bundledPorts "retire_tag" fp_commit_oldPhysRd ++
+      -- 4th read port for RVVI
+      bundledPorts "rd_tag4" commit_physRd_0 ++
+      [("rename_valid", fp_rename_valid), ("stall", fp_rename_stall)] ++
+      bundledPorts "rs1_phys_out" fp_rs1_phys ++ bundledPorts "rs2_phys_out" fp_rs2_phys ++
+      bundledPorts "rd_phys_out" fp_rd_phys ++
+      bundledPorts "rs1_data" fp_rs1_data ++ bundledPorts "rs2_data" fp_rs2_data ++
+      bundledPorts "old_rd_phys_out" fp_old_rd_phys ++
+      bundledPorts "rd_data3" fp_rs3_data ++ bundledPorts "rs3_phys_out" fp_rs3_phys ++
+      bundledPorts "rd_data4" fp_rvvi_rd_data ++
+      [("flush_en", redirect_valid_fp),
+       ("commit_valid", fp_commit_merged),
+       ("commit_hasPhysRd", fp_commit_hasPhysRd),
+       ("force_alloc", zero),
+       ("commit_hasAllocSlot", fp_commit_hasPhysRd)] ++
+      bundledPorts "commit_archRd" fp_commit_archRd ++
+      bundledPorts "commit_physRd" fp_commit_physRd
+  }
+
+  -- FP dest tag: use FP rd_phys when has_fp_rd, else use INT dest_tag (for mixed ops like FMV.X.W)
+  let fp_dest_tag_gates :=
+    if enableF then
+      -- Select INT or FP rename dest based on which domain the result goes to
+      let fp_mux_int_dest := CPU.makeIndexedWires "fp_mux_int_dest" 6
+      -- MUX the INT dest from the correct slot (use fp_rename_route_sel for FLW compatibility)
+      (List.range 6).map (fun i =>
+        Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! fp_rename_route_sel fp_mux_int_dest[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX fp_mux_int_dest[i]! fp_rd_phys[i]! fp_mux_has_fp_rd fp_issue_dest_tag[i]!)
+    else []
+
+  -- Cross-domain source routing: FP instructions may read from INT or FP PRF
+  let fp_issue_src1_tag := CPU.makeIndexedWires "fp_issue_src1_tag" 6
+  let fp_issue_src2_tag := CPU.makeIndexedWires "fp_issue_src2_tag" 6
+  let fp_issue_src1_data := CPU.makeIndexedWires "fp_issue_src1_data" 32
+  let fp_issue_src2_data := CPU.makeIndexedWires "fp_issue_src2_data" 32
+  -- MUX INT rename data from the correct slot first
+  let fp_int_rs1_phys := CPU.makeIndexedWires "fp_int_rs1_phys" 6
+  let fp_int_rs2_phys := CPU.makeIndexedWires "fp_int_rs2_phys" 6
+  let fp_int_rs1_data := CPU.makeIndexedWires "fp_int_rs1_data" 32
+  let fp_int_rs2_data := CPU.makeIndexedWires "fp_int_rs2_data" 32
+  let fp_crossdomain_gates :=
+    if enableF then
+      -- INT side: MUX between slot 0 and slot 1 rename outputs
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! fp_route_sel fp_int_rs1_phys[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! fp_route_sel fp_int_rs2_phys[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! fp_route_sel fp_int_rs1_data[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! fp_route_sel fp_int_rs2_data[i]!) ++
+      -- Cross-domain MUX: fp_rs1_read → FP PRF, else INT PRF
+      (List.range 6).map (fun i =>
+        Gate.mkMUX fp_int_rs1_phys[i]! fp_rs1_phys[i]! fp_mux_fp_rs1_read fp_issue_src1_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX fp_int_rs1_data[i]! fp_rs1_data[i]! fp_mux_fp_rs1_read fp_issue_src1_data[i]!) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX fp_int_rs2_phys[i]! fp_rs2_phys[i]! fp_mux_fp_rs2_read fp_issue_src2_tag[i]!) ++
+      (List.range 32).map (fun i =>
+        Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data[i]!)
+    else []
+
+  -- FP Busy-Bit Table (single-set, W=1)
+  let fp_busy_src1_ready := Wire.mk "fp_busy_src1_ready"
+  let fp_busy_src2_ready := Wire.mk "fp_busy_src2_ready"
+  let fp_busy_src2_ready_reg := Wire.mk "fp_busy_src2_ready_reg"
+  let fp_busy_set_en := Wire.mk "fp_busy_set_en"
+  let fp_busy_set_gate :=
+    if enableF then Gate.mkAND fp_rename_dispatch_valid fp_mux_has_fp_rd fp_busy_set_en
+    else Gate.mkBUF zero fp_busy_set_en
+  let (fp_busy_gates, fp_busy_instances) :=
+    if enableF then mkBusyBitTable1
+      clock reset flush_busy_groups zero one
+      fp_rd_phys fp_busy_set_en
+      cdb_tag_fp cdb_valid_fp_prf
+      fp_rs1_phys fp_rs2_phys
+      zero  -- no immediate bypass for FP
+      fp_busy_src1_ready fp_busy_src2_ready fp_busy_src2_ready_reg
+      "fp_busy"
+    else ([], [])
+
+  -- FP source readiness: merge busy table + CDB forwarding
+  -- Simplified: just use busy table results (no CDB forwarding for FP domain yet)
+  let fp_issue_src1_ready := Wire.mk "fp_issue_src1_ready"
+  let fp_issue_src2_ready := Wire.mk "fp_issue_src2_ready"
+  let fp_ready_gates :=
+    if enableF then
+      -- When reading from INT domain, use INT busy table result (src1_ready from that slot)
+      let fp_int_src1_ready := Wire.mk "fp_int_src1_ready"
+      let fp_int_src2_ready := Wire.mk "fp_int_src2_ready"
+      [Gate.mkMUX src1_ready_0 src1_ready_1 fp_route_sel fp_int_src1_ready,
+       Gate.mkMUX src2_ready_0 src2_ready_1 fp_route_sel fp_int_src2_ready,
+       -- Cross-domain: if reading FP → FP busy, if reading INT → INT busy
+       Gate.mkMUX fp_int_src1_ready fp_busy_src1_ready fp_mux_fp_rs1_read fp_issue_src1_ready,
+       Gate.mkMUX fp_int_src2_ready fp_busy_src2_ready fp_mux_fp_rs2_read fp_issue_src2_ready]
+    else
+      [Gate.mkBUF one fp_issue_src1_ready, Gate.mkBUF one fp_issue_src2_ready]
+
+  -- FP Opcode LUT: 7-bit optype → 5-bit FPU opcode
+  let fpu_opcode := CPU.makeIndexedWires "fpu_opcode" 5
+  let fpu_opcode_padded := fpu_opcode ++ [zero]  -- zero-pad to 6 bits for RS
+  let fpu_lut_gates :=
+    if enableF then mkOpTypeLUT "fpulut" fp_mux_opcode fpu_opcode
+      (OpType.resolveMapping config.decoderInstrNames fpuMappingByName)
+    else []
+
+  -- FP RS (single-issue, W=2 RS with only bank 0 used, like branch/muldiv)
+  let rs_fp_alloc_ptr := CPU.makeIndexedWires "rs_fp_alloc_ptr" 2
+  let rs_fp_grant := CPU.makeIndexedWires "rs_fp_grant" 4
+  let rs_fp_issue_full := Wire.mk "rs_fp_issue_full"
+  let rs_fp_dispatch_valid := Wire.mk "rs_fp_dispatch_valid"
+  let rs_fp_dispatch_opcode := CPU.makeIndexedWires "rs_fp_dispatch_opcode" 6
+  let rs_fp_dispatch_src1 := CPU.makeIndexedWires "rs_fp_dispatch_src1" 32
+  let rs_fp_dispatch_src2 := CPU.makeIndexedWires "rs_fp_dispatch_src2" 32
+  let rs_fp_dispatch_tag := CPU.makeIndexedWires "rs_fp_dispatch_tag" 6
+
+  -- Gate FP RS dispatch: don't dispatch when FP EU is busy
+  let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
+  let fp_rs_dispatch_en := Wire.mk "fp_rs_dispatch_en"
+  let fp_rs_dispatch_gate :=
+    if enableF then
+      let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
+      [Gate.mkNOT (Wire.mk "fp_busy_eu") not_fp_eu_busy,
+       Gate.mkBUF not_fp_eu_busy fp_rs_dispatch_en]
+    else [Gate.mkBUF one fp_rs_dispatch_en]
+
+  -- CDB valid for FP RS wakeup: merge both channels (INT domain tags on CDB)
+  -- FP RS stores INT+FP tags, so it needs to snoop BOTH channels
+  let cdb_valid_fp_domain := Wire.mk "cdb_valid_fp_domain"
+  let cdb_tag_fp_rs := CPU.makeIndexedWires "cdb_tag_fp_rs" 6
+  let cdb_data_fp_rs := CPU.makeIndexedWires "cdb_data_fp_rs" 32
+  -- For FP RS wakeup, we only use channel 0 CDB (simplified; FP RS is small)
+  let fp_rs_cdb_gates :=
+    (List.range 6).map (fun i => Gate.mkBUF cdb_tag_0[i]! cdb_tag_fp_rs[i]!) ++
+    (List.range 32).map (fun i => Gate.mkBUF cdb_data_0[i]! cdb_data_fp_rs[i]!) ++
+    [Gate.mkBUF cdb_valid_0 cdb_valid_fp_domain]
+
+  let rs_fp_inst : CircuitInstance := {
+    moduleName := "ReservationStation4_W2"
+    instName := "u_rs_fp"
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_fp),
+                ("zero", zero), ("one", one),
+                ("issue_en_0", fp_dispatch_valid), ("issue_en_1", zero),
+                ("issue_src1_ready_0", fp_issue_src1_ready), ("issue_src2_ready_0", fp_issue_src2_ready),
+                ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
+                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
+                ("dispatch_en_0", fp_rs_dispatch_en), ("dispatch_en_1", one),
+                ("alloc_avail_0", Wire.mk "rs_fp_avail_0"), ("alloc_avail_1", Wire.mk "rs_fp_avail_1"),
+                ("dispatch_valid_0", rs_fp_dispatch_valid),
+                ("dispatch_valid_1", Wire.mk "rs_fp_dispatch_valid_1")] ++
+               -- Use FPU LUT output (5-bit FPU opcode, zero-padded to 6 bits)
+               bundledPorts "issue_opcode_0" fpu_opcode_padded ++
+               bundledPorts "issue_dest_tag_0" fp_issue_dest_tag ++
+               bundledPorts "issue_src1_tag_0" fp_issue_src1_tag ++ bundledPorts "issue_src1_data_0" fp_issue_src1_data ++
+               bundledPorts "issue_src2_tag_0" fp_issue_src2_tag ++ bundledPorts "issue_src2_data_0" fp_issue_src2_data ++
+               -- Slot 1 unused
+               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_fp_dummy_op1" 6) ++
+               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_dt1" 6) ++
+               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s1t1" 6) ++
+               bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s1d1" 32) ++
+               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s2t1" 6) ++
+               bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s2d1" 32) ++
+               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "dispatch_opcode_0" rs_fp_dispatch_opcode ++
+               bundledPorts "dispatch_src1_data_0" rs_fp_dispatch_src1 ++
+               bundledPorts "dispatch_src2_data_0" rs_fp_dispatch_src2 ++
+               bundledPorts "dispatch_dest_tag_0" rs_fp_dispatch_tag ++
+               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_fp_dop1" 6) ++
+               bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_fp_ds1_1" 32) ++
+               bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_fp_ds2_1" 32) ++
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_fp_ddt1" 6) ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
+               bundledPorts "alloc_ptr" rs_fp_alloc_ptr ++
+               bundledPorts "dispatch_grant" rs_fp_grant
+  }
+
+  -- FP SRC3 SIDECAR: 4-entry × 32-bit storage for FMA rs3 data
+  let fp_src3_dispatch := CPU.makeIndexedWires "fp_src3_dispatch" 32
+  let fp_src3_we := (List.range 4).map (fun slot => Wire.mk s!"fp_src3_we_{slot}")
+  let fp_src3_alloc_decode :=
+    if enableF then
+      let ap0 := rs_fp_alloc_ptr[0]!; let ap1 := rs_fp_alloc_ptr[1]!
+      let not_ap0 := Wire.mk "fp_src3_not_ap0"; let not_ap1 := Wire.mk "fp_src3_not_ap1"
+      [Gate.mkNOT ap0 not_ap0, Gate.mkNOT ap1 not_ap1,
+       Gate.mkAND not_ap1 not_ap0 (Wire.mk "fp_src3_sel0"),
+       Gate.mkAND (Wire.mk "fp_src3_sel0") fp_dispatch_valid fp_src3_we[0]!,
+       Gate.mkAND not_ap1 ap0 (Wire.mk "fp_src3_sel1"),
+       Gate.mkAND (Wire.mk "fp_src3_sel1") fp_dispatch_valid fp_src3_we[1]!,
+       Gate.mkAND ap1 not_ap0 (Wire.mk "fp_src3_sel2"),
+       Gate.mkAND (Wire.mk "fp_src3_sel2") fp_dispatch_valid fp_src3_we[2]!,
+       Gate.mkAND ap1 ap0 (Wire.mk "fp_src3_sel3"),
+       Gate.mkAND (Wire.mk "fp_src3_sel3") fp_dispatch_valid fp_src3_we[3]!]
+    else []
+  let fp_src3_slots := (List.range 4).map (fun slot =>
+    CPU.makeIndexedWires s!"fp_src3_slot{slot}" 32)
+  let fp_src3_dff_gates :=
+    if enableF then
+      (List.range 4).flatMap (fun slot =>
+        (List.range 32).flatMap (fun bit =>
+          let d_mux := Wire.mk s!"fp_src3_slot{slot}_d_{bit}"
+          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! d_mux,
+           Gate.mkDFF d_mux clock reset fp_src3_slots[slot]![bit]!]))
+    else []
+  let fp_src3_read_gates :=
+    if enableF then
+      (List.range 32).flatMap (fun bit =>
+        let and0 := Wire.mk s!"fp_src3_rd0_{bit}"; let and1 := Wire.mk s!"fp_src3_rd1_{bit}"
+        let and2 := Wire.mk s!"fp_src3_rd2_{bit}"; let and3 := Wire.mk s!"fp_src3_rd3_{bit}"
+        let or01 := Wire.mk s!"fp_src3_or01_{bit}"; let or23 := Wire.mk s!"fp_src3_or23_{bit}"
+        [Gate.mkAND fp_src3_slots[0]![bit]! rs_fp_grant[0]! and0,
+         Gate.mkAND fp_src3_slots[1]![bit]! rs_fp_grant[1]! and1,
+         Gate.mkAND fp_src3_slots[2]![bit]! rs_fp_grant[2]! and2,
+         Gate.mkAND fp_src3_slots[3]![bit]! rs_fp_grant[3]! and3,
+         Gate.mkOR and0 and1 or01, Gate.mkOR and2 and3 or23,
+         Gate.mkOR or01 or23 fp_src3_dispatch[bit]!])
+    else []
+
+  -- FP RM SIDECAR: 4-entry × 3-bit storage for resolved rounding mode
+  -- Forward-declare frm_reg (DFFs defined later with fflags)
+  let frm_reg := CPU.makeIndexedWires "frm_reg" 3
+  let frm_new := CPU.makeIndexedWires "frm_new" 3
+  let fp_rm_dispatch := CPU.makeIndexedWires "fp_rm_dispatch" 3
+  let rm_is_dynamic := Wire.mk "rm_is_dynamic"
+  let rm_resolved := CPU.makeIndexedWires "rm_resolved" 3
+  let rm_resolve_gates :=
+    if enableF then
+      let rm_and01 := Wire.mk "rm_and01"
+      [Gate.mkAND fp_mux_decode_rm[0]! fp_mux_decode_rm[1]! rm_and01,
+       Gate.mkAND rm_and01 fp_mux_decode_rm[2]! rm_is_dynamic] ++
+      (List.range 3).map (fun i =>
+        Gate.mkMUX fp_mux_decode_rm[i]! frm_reg[i]! rm_is_dynamic rm_resolved[i]!)
+    else []
+  let fp_rm_we := (List.range 4).map (fun slot => Wire.mk s!"fp_rm_we_{slot}")
+  let fp_rm_alloc_decode :=
+    if enableF then
+      let ap0 := rs_fp_alloc_ptr[0]!; let ap1 := rs_fp_alloc_ptr[1]!
+      let not_ap0 := Wire.mk "fp_rm_not_ap0"; let not_ap1 := Wire.mk "fp_rm_not_ap1"
+      [Gate.mkNOT ap0 not_ap0, Gate.mkNOT ap1 not_ap1,
+       Gate.mkAND not_ap1 not_ap0 (Wire.mk "fp_rm_sel0"),
+       Gate.mkAND (Wire.mk "fp_rm_sel0") fp_dispatch_valid fp_rm_we[0]!,
+       Gate.mkAND not_ap1 ap0 (Wire.mk "fp_rm_sel1"),
+       Gate.mkAND (Wire.mk "fp_rm_sel1") fp_dispatch_valid fp_rm_we[1]!,
+       Gate.mkAND ap1 not_ap0 (Wire.mk "fp_rm_sel2"),
+       Gate.mkAND (Wire.mk "fp_rm_sel2") fp_dispatch_valid fp_rm_we[2]!,
+       Gate.mkAND ap1 ap0 (Wire.mk "fp_rm_sel3"),
+       Gate.mkAND (Wire.mk "fp_rm_sel3") fp_dispatch_valid fp_rm_we[3]!]
+    else []
+  let fp_rm_slots := (List.range 4).map (fun slot =>
+    CPU.makeIndexedWires s!"fp_rm_slot{slot}" 3)
+  let fp_rm_dff_gates :=
+    if enableF then
+      (List.range 4).flatMap (fun slot =>
+        (List.range 3).flatMap (fun bit =>
+          let d_mux := Wire.mk s!"fp_rm_slot{slot}_d_{bit}"
+          [Gate.mkMUX fp_rm_slots[slot]![bit]! rm_resolved[bit]! fp_rm_we[slot]! d_mux,
+           Gate.mkDFF d_mux clock reset fp_rm_slots[slot]![bit]!]))
+    else []
+  let fp_rm_read_gates :=
+    if enableF then
+      (List.range 3).flatMap (fun bit =>
+        let and0 := Wire.mk s!"fp_rm_rd0_{bit}"; let and1 := Wire.mk s!"fp_rm_rd1_{bit}"
+        let and2 := Wire.mk s!"fp_rm_rd2_{bit}"; let and3 := Wire.mk s!"fp_rm_rd3_{bit}"
+        let or01 := Wire.mk s!"fp_rm_or01_{bit}"; let or23 := Wire.mk s!"fp_rm_or23_{bit}"
+        [Gate.mkAND fp_rm_slots[0]![bit]! rs_fp_grant[0]! and0,
+         Gate.mkAND fp_rm_slots[1]![bit]! rs_fp_grant[1]! and1,
+         Gate.mkAND fp_rm_slots[2]![bit]! rs_fp_grant[2]! and2,
+         Gate.mkAND fp_rm_slots[3]![bit]! rs_fp_grant[3]! and3,
+         Gate.mkOR and0 and1 or01, Gate.mkOR and2 and3 or23,
+         Gate.mkOR or01 or23 fp_rm_dispatch[bit]!])
+    else []
+
+  -- FP Execution Unit
+  let fp_result := CPU.makeIndexedWires "fp_result" 32
+  let fp_tag_out := CPU.makeIndexedWires "fp_tag_out" 6
+  let fp_exceptions := CPU.makeIndexedWires "fp_exceptions" 5
+  let fp_valid_out := Wire.mk "fp_valid_out"
+  let fp_busy_eu := Wire.mk "fp_busy_eu"
+  let fp_result_is_int := Wire.mk "fp_result_is_int"
+  let fp_op := CPU.makeIndexedWires "fp_op" 5
+  let fp_rm_out := CPU.makeIndexedWires "fp_rm_eu" 3
+  let fp_op_gates :=
+    if enableF then
+      [Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en (Wire.mk "fp_eu_valid_in")] ++
+      (List.range 5).map (fun i =>
+        Gate.mkBUF rs_fp_dispatch_opcode[i]! fp_op[i]!) ++
+      (List.range 3).map (fun i =>
+        Gate.mkBUF fp_rm_dispatch[i]! fp_rm_out[i]!)
+    else []
+  let fp_exec_inst : CircuitInstance := {
+    moduleName := "FPExecUnit"
+    instName := "u_exec_fp"
+    portMap :=
+      bundledPorts "src1" rs_fp_dispatch_src1 ++
+      bundledPorts "src2" rs_fp_dispatch_src2 ++
+      bundledPorts "src3" fp_src3_dispatch ++
+      bundledPorts "op" fp_op ++ bundledPorts "rm" fp_rm_out ++
+      bundledPorts "dest_tag" rs_fp_dispatch_tag ++
+      [("valid_in", Wire.mk "fp_eu_valid_in"),
+       ("clock", clock), ("reset", reset),
+       ("zero", zero), ("one", one)] ++
+      bundledPorts "result" fp_result ++
+      bundledPorts "tag_out" fp_tag_out ++
+      bundledPorts "exceptions" fp_exceptions ++
+      [("valid_out", fp_valid_out), ("busy", fp_busy_eu),
+       ("result_is_int", fp_result_is_int)]
+  }
+
+  -- FP result FIFO data assembly
+  let fp_enq_is_fp := Wire.mk "fp_enq_is_fp"
+  let fp_fifo_enq_data := CPU.makeIndexedWires "fp_fifo_enq_data" 39
+  let fp_enq_is_fp_gate :=
+    if enableF then [Gate.mkNOT fp_result_is_int fp_enq_is_fp]
+    else [Gate.mkBUF zero fp_enq_is_fp]
+  let fp_fifo_enq_assemble :=
+    if enableF then
+      (List.range 6).map (fun i => Gate.mkBUF fp_tag_out[i]! fp_fifo_enq_data[i]!) ++
+      (List.range 32).map (fun i => Gate.mkBUF fp_result[i]! fp_fifo_enq_data[6+i]!) ++
+      [Gate.mkBUF fp_enq_is_fp fp_fifo_enq_data[38]!]
+    else
+      (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_enq_data[i]!)
+
+  -- is_fp_shadow: now managed internally by ROB (head_is_fp_0/1 outputs)
 
   -- === SIDECAR REGISTER FILES ===
   -- Integer RS: captured PC and IMM for AUIPC/LUI post-processing
@@ -4888,11 +5544,21 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let lhu_match_gates := mkOpcodeMatch6 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
   let lb_match_gates := mkOpcodeMatch6 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
   let lbu_match_gates := mkOpcodeMatch6 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
+  -- FLW/FSW detection (conditional on F extension)
+  let is_flw := Wire.mk "is_flw"
+  let is_fsw := Wire.mk "is_fsw"
+  let flw_match_gates :=
+    if enableF then mkOpcodeMatch6 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
+    else [Gate.mkBUF zero is_flw]
+  let fsw_match_gates :=
+    if enableF then mkOpcodeMatch6 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
+    else [Gate.mkBUF zero is_fsw]
   let is_load_gates := [
     Gate.mkOR is_lw is_lh (Wire.mk "is_load_tmp1"),
     Gate.mkOR (Wire.mk "is_load_tmp1") is_lhu (Wire.mk "is_load_tmp2"),
     Gate.mkOR (Wire.mk "is_load_tmp2") is_lb (Wire.mk "is_load_tmp3"),
-    Gate.mkOR (Wire.mk "is_load_tmp3") is_lbu is_load
+    Gate.mkOR (Wire.mk "is_load_tmp3") is_lbu (Wire.mk "is_load_int"),
+    Gate.mkOR (Wire.mk "is_load_int") is_flw is_load
   ]
 
   -- Store type detection
@@ -4909,7 +5575,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_size_gates := [
     Gate.mkOR is_lh is_lhu (Wire.mk "ms0_t1"),
     Gate.mkOR (Wire.mk "ms0_t1") is_sh mem_size[0]!,
-    Gate.mkOR is_lw is_sw mem_size[1]!,
+    Gate.mkOR is_lw is_sw (Wire.mk "ms1_t1"),
+    Gate.mkOR (Wire.mk "ms1_t1") is_flw (Wire.mk "ms1_t2"),
+    Gate.mkOR (Wire.mk "ms1_t2") is_fsw mem_size[1]!,
     Gate.mkOR is_lb is_lh sign_extend
   ]
 
@@ -4917,10 +5585,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let (mem_pipe_gates, mem_pipe_insts) := mkMemPipeline clock reset
     rs_mem_dispatch_valid mem_dispatch_en
     mem_address rs_mem_dispatch_tag
-    is_load (Wire.mk "is_flw_stub") mem_size sign_extend
+    is_load is_flw mem_size sign_extend
     mem_addr_r mem_tag_r is_load_r mem_size_r sign_extend_r is_flw_r mem_valid_r
-  -- Tie is_flw_stub to zero (no FP loads in W2 for now)
-  let flw_stub_gate := [Gate.mkBUF zero (Wire.mk "is_flw_stub")]
 
   -- sb_enq_size
   let lsu_sb_enq_size := CPU.makeIndexedWires "lsu_sb_enq_size" 2
@@ -5020,6 +5686,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     ({ moduleName := "DFlipFlop", instName := s!"u_dmem_tag_{i}",
        portMap := [("d", Wire.mk s!"dmem_load_tag_next_{i}"), ("q", dmem_load_tag_reg[i]!),
                    ("clock", clock), ("reset", reset)] } : CircuitInstance))
+
+  -- dmem_is_fp: track whether pending DMEM load is FP
+  let dmem_is_fp_reg := Wire.mk "dmem_is_fp_reg"
+  let dmem_is_fp_next := Wire.mk "dmem_is_fp_next"
+  let dmem_is_fp_gates :=
+    if enableF then
+      [Gate.mkMUX dmem_is_fp_reg is_flw_r load_no_fwd dmem_is_fp_next]
+    else []
+  let dmem_is_fp_insts :=
+    if enableF then
+      [({ moduleName := "DFlipFlop", instName := "u_dmem_is_fp",
+          portMap := [("d", dmem_is_fp_next), ("q", dmem_is_fp_reg),
+                      ("clock", clock), ("reset", pipeline_reset_misc)] } : CircuitInstance)]
+    else []
 
   -- SB forwarding formatting (sign/zero extend for byte/half loads)
   let lsu_sb_fwd_formatted := CPU.makeIndexedWires "lsu_sb_fwd_fmt" 32
@@ -5270,10 +5950,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let lsu_fifo_deq_valid := Wire.mk "lsu_fifo_deq_valid"
   let lsu_fifo_drain := Wire.mk "lsu_fifo_drain"
 
+  -- lsu_is_fp: track whether in-flight load is FP (from is_flw pipeline register)
+  let lsu_is_fp := Wire.mk "lsu_is_fp"
+  let lsu_is_fp_gates :=
+    if enableF then
+      [Gate.mkBUF is_flw_r lsu_is_fp]
+    else [Gate.mkBUF zero lsu_is_fp]
+
   let lsu_fifo_enq_assemble :=
     (List.range 6).map (fun i => Gate.mkBUF lsu_tag[i]! lsu_fifo_enq_data[i]!) ++
     (List.range 32).map (fun i => Gate.mkBUF lsu_data[i]! lsu_fifo_enq_data[6+i]!) ++
-    [Gate.mkBUF zero lsu_fifo_enq_data[38]!]
+    [Gate.mkBUF lsu_is_fp lsu_fifo_enq_data[38]!]
 
   let lsu_fifo_inst : CircuitInstance := {
     moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_lsu",
@@ -5311,11 +5998,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 39).map (fun i => (s!"deq_data_{i}", muldiv_fifo_deq[i]!))
   }
 
-  -- FP FIFO (placeholder - tied off)
+  -- FP Result FIFO
   let fp_fifo_deq := CPU.makeIndexedWires "fp_fifo_deq" 39
   let fp_fifo_deq_valid := Wire.mk "fp_fifo_deq_valid"
   let fp_fifo_drain := Wire.mk "fp_fifo_drain"
+  let fp_fifo_inst : CircuitInstance := {
+    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_fp",
+    portMap := [("clock", clock), ("reset", pipeline_reset_rs_fp),
+                ("enq_valid", fp_valid_out),
+                ("deq_ready", fp_fifo_drain),
+                ("enq_ready", fp_fifo_enq_ready),
+                ("deq_valid", fp_fifo_deq_valid)] ++
+      (List.range 39).map (fun i => (s!"enq_data_{i}", fp_fifo_enq_data[i]!)) ++
+      (List.range 39).map (fun i => (s!"deq_data_{i}", fp_fifo_deq[i]!))
+  }
   let fp_fifo_dummy_gates :=
+    if enableF then [] else
     [Gate.mkBUF zero fp_fifo_deq_valid] ++
     (List.range 39).map (fun i => Gate.mkBUF zero fp_fifo_deq[i]!)
 
@@ -5350,7 +6048,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         (List.range 39).map (fun i => (s!"lsu_deq_{i}", lsu_fifo_deq[i]!)) ++
         (List.range 32).map (fun i => (s!"dmem_fmt_{i}", dmem_resp_formatted[i]!)) ++
         (List.range 6).map (fun i => (s!"dmem_tag_{i}", dmem_load_tag_reg[i]!)) ++
-        [("dmem_is_fp", zero), ("zero", zero)] ++
+        [("dmem_is_fp", if enableF then dmem_is_fp_reg else zero), ("zero", zero)] ++
         -- Outputs (raw, before CSR injection)
         [("pre_valid_0", Wire.mk "cdb_pre_valid_0_raw")] ++
         (List.range 6).map (fun i => (s!"pre_tag_0_{i}", Wire.mk s!"cdb_pre_tag_0_raw_{i}")) ++
@@ -5400,7 +6098,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_1_{i}",
        portMap := [("d", cdb_pre_data_1[i]!), ("q", cdb_data_1[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] })
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
+    -- CDB is_fp pipeline registers
+    [{ moduleName := "DFlipFlop", instName := "u_cdb_is_fp_reg_0",
+       portMap := [("d", Wire.mk "cdb_pre_is_fp_0"), ("q", cdb_is_fp_0),
+                   ("clock", clock), ("reset", cdb_reset_w)] },
+     { moduleName := "DFlipFlop", instName := "u_cdb_is_fp_reg_1",
+       portMap := [("d", Wire.mk "cdb_pre_is_fp_1"), ("q", cdb_is_fp_1),
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }]
 
   -- CDB redirect target + mispredicted pipeline registers (for shadow register writes)
   let cdb_redirect_reg_0 := CPU.makeIndexedWires "cdb_redirect_reg_0" 32
@@ -5455,7 +6160,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkNOT (Wire.mk "rs_int_both_avail") rs_int_issue_full,
      Gate.mkNOT (Wire.mk "rs_br_avail_0") rs_br_issue_full,
      Gate.mkNOT (Wire.mk "rs_mem_avail_0") rs_mem_issue_full,
-     Gate.mkNOT (Wire.mk "rs_md_avail_0") rs_muldiv_issue_full]
+     Gate.mkNOT (Wire.mk "rs_md_avail_0") rs_muldiv_issue_full] ++
+    (if enableF then [Gate.mkNOT (Wire.mk "rs_fp_avail_0") rs_fp_issue_full]
+     else [Gate.mkBUF zero rs_fp_issue_full])
 
   -- === STALL GENERATION ===
   -- Cache line boundary: when fetch_pc word offset = 7 (bits [4:2] = 111),
@@ -5473,13 +6180,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     if enableM then
       [Gate.mkOR br_dual_stall mem_dual_stall (Wire.mk "dual_stall_bm"),
        Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall (Wire.mk "dual_stall_bmm"),
-       Gate.mkOR (Wire.mk "dual_stall_bmm") cache_line_boundary any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall (Wire.mk "dual_stall_bmmf"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
        Gate.mkOR rs_br_issue_full rs_muldiv_issue_full (Wire.mk "stall_L0_c"),
        Gate.mkOR (Wire.mk "stall_L0_a") (Wire.mk "stall_L0_b") (Wire.mk "stall_L1_a"),
-       Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "stall_L1_b"),
+       Gate.mkOR (Wire.mk "stall_L1_b") rs_fp_issue_full (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       [Gate.mkOR br_dual_stall cache_line_boundary any_dual_stall,
@@ -5608,11 +6317,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fflags_acc_val := CPU.makeIndexedWires "fflags_acc_val" 5
   let frm_reg := CPU.makeIndexedWires "frm_reg" 3
   let frm_new := CPU.makeIndexedWires "frm_new" 3
-  let fp_exceptions := CPU.makeIndexedWires "fp_exceptions_stub" 5
-  let fp_exceptions_stub_gates := (List.range 5).map (fun i => Gate.mkBUF zero fp_exceptions[i]!)
+  let fp_exceptions_ffl := if enableF then fp_exceptions else
+    CPU.makeIndexedWires "fp_exceptions_stub" 5
+  let fp_exceptions_stub_gates :=
+    if enableF then [] else (List.range 5).map (fun i => Gate.mkBUF zero fp_exceptions_ffl[i]!)
   let (fflags_frm_gates, fflags_frm_dff_instances) := mkFPFlags
     enableF zero one clock reset
-    zero fp_exceptions  -- fp_valid_out = zero (no FP compute in W2 yet)
+    (if enableF then fp_valid_out else zero) fp_exceptions_ffl
     fflags_reg fflags_new fflags_acc fflags_masked fflags_acc_val
     frm_reg frm_new
 
@@ -5914,9 +6625,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                rvvi_insn_0 ++ rvvi_insn_1 ++
                rvvi_rd_0 ++ rvvi_rd_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
-    gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
+    gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ has_rd_int_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
              dual_stall_gates ++ int_de1_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              src2_imm_mux_gates ++
+             rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
              busy_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
@@ -5932,17 +6644,28 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              branch_cond_gates ++ misprediction_gates ++ mispredict_redirect_gates ++
              muldiv_lut_gates ++ muldiv_dispatch_gate ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
+             flw_match_gates ++ fsw_match_gates ++
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++ lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
              sw_match_gates ++ sh_match_gates ++ sb_match_gates ++ mem_size_gates ++
-             mem_pipe_gates ++ flw_stub_gate ++ sb_enq_size_gates ++ store_mask_gates ++
+             mem_pipe_gates ++ sb_enq_size_gates ++ store_mask_gates ++
              sb_enq_gate_gates ++ mem_dispatch_en_gates ++ cross_size_pending_gates ++
              fwd_size_check_gates ++ load_no_fwd_gates ++ dmem_pending_gates ++ dmem_tag_capture_gates ++
+             dmem_is_fp_gates ++
              lsu_sb_fwd_format_all ++ load_fwd_gates ++ lsu_tag_data_gates ++
+             lsu_is_fp_gates ++
              dmem_meta_capture_gates ++ dmem_resp_format_all ++ dmem_valid_gate_gates ++
              ib0_fifo_enq_assemble ++ ib1_merge_gates ++ ib1_fifo_enq_assemble ++
              ib_br_fifo_enq_assemble ++ ib1_br_merge_gates ++ ib1_br_drain_gates ++
              lsu_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++
+             fp_fifo_enq_assemble ++ fp_enq_is_fp_gate ++
              fp_fifo_dummy_gates ++ muldiv_fifo_dummy_gates ++
+             fp_cdb_merge_gates ++ fp_int_prf_gate ++ fp_commit_gates ++ fp_commit_merge_gates ++ fp_redirect_gate ++
+             fp_dest_tag_gates ++ fp_crossdomain_gates ++
+             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_ready_gates ++
+             fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++
+             fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
+             rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
+             fp_op_gates ++ fp_flush_reset_gates ++
              rs_full_gates ++ clb_gates ++ stall_gates ++ dmem_gates ++ rvvi_gates ++ rvvi_pc_insn_gates ++ output_gates ++
              fi_match_0 ++ fi_match_1 ++
              ecall_m0 ++ ecall_m1 ++
@@ -5956,6 +6679,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     instances := [fetch_inst, dec0_inst, dec1_inst, rename_inst,
                   rs_int_inst, rs_br_inst, rs_mem_inst] ++
                  (if enableM then [rs_muldiv_inst] else []) ++
+                 (if enableF then [rs_fp_inst, fp_rename_inst, fp_exec_inst] else []) ++
                  [int_pc_rf_dec0_inst, int_pc_rf_dec1_inst,
                   int_imm_rf_dec0_inst, int_imm_rf_dec1_inst,
                   br_pc_rf_dec_inst, br_pc_rf_mux_inst,
@@ -5969,12 +6693,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  [redirect_valid_dff_inst, flush_dff_dispatch] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++
-                 busy_insts ++
+                 busy_insts ++ fp_busy_instances ++
                  [ib0_fifo_inst, ib1_fifo_inst, ib_br_fifo_inst, lsu_fifo_inst] ++
                  (if enableM then [muldiv_fifo_inst] else []) ++
+                 (if enableF then [fp_fifo_inst] else []) ++
                  [cdb_mux_inst] ++ cdb_reg_insts ++ cdb_redirect_reg_insts ++
                  shadow_insts ++
-                 [dmem_pending_inst, cross_size_pending_inst] ++ dmem_tag_capture_insts ++ dmem_meta_capture_insts ++
+                 [dmem_pending_inst, cross_size_pending_inst] ++ dmem_tag_capture_insts ++ dmem_is_fp_insts ++ dmem_meta_capture_insts ++
                  mem_pipe_insts ++
                  ser_dff_insts ++ [ser_pc_adder_inst] ++
                  trap_seq_insts ++ cdb_fwd_rs1_insts ++
