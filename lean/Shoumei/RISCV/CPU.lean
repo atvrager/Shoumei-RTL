@@ -3660,6 +3660,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND d1_has_rd d1_rd_nonzero d1_has_rd_nox0,
      Gate.mkAND dispatch_base_valid_1 d1_has_rd_nox0 busy_set_en_1]
 
+  -- Masked dest tags: zero out physRd when rd=x0 (prevent CDB from writing garbage to PRF)
+  let int_dest_tag_masked_0 := CPU.makeIndexedWires "int_dtm_0" 6
+  let int_dest_tag_masked_1 := CPU.makeIndexedWires "int_dtm_1" 6
+  let dest_tag_mask_gates :=
+    (List.range 6).map (fun i => Gate.mkAND rd_phys_0[i]! d0_has_rd_nox0 int_dest_tag_masked_0[i]!) ++
+    (List.range 6).map (fun i => Gate.mkAND rd_phys_1[i]! d1_has_rd_nox0 int_dest_tag_masked_1[i]!)
+
   -- ROB alloc_hasPhysRd must include branches (force_alloc allocates a tag for them)
   let rob_alloc_hasPhysRd_0 := Wire.mk "rob_alloc_hasPhysRd_0"
   let rob_alloc_hasPhysRd_1 := Wire.mk "rob_alloc_hasPhysRd_1"
@@ -3809,7 +3816,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! mem_route_sel mem_mux_rs2_data[i]!) ++
     (List.range 6).map (fun i =>
-      Gate.mkMUX rd_phys_0[i]! rd_phys_1[i]! mem_route_sel mem_mux_rd_phys[i]!) ++
+      Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! mem_route_sel mem_mux_rd_phys[i]!) ++
     [Gate.mkMUX src1_ready_0 src1_ready_1 mem_route_sel mem_mux_src1_ready,
      Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_src2_ready,
      Gate.mkMUX d0_is_st d1_is_st mem_route_sel mem_mux_is_store] ++
@@ -3838,7 +3845,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 32).map (fun i =>
         Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! muldiv_route_sel md_mux_rs2_data[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX rd_phys_0[i]! rd_phys_1[i]! muldiv_route_sel md_mux_rd_phys[i]!) ++
+        Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! muldiv_route_sel md_mux_rd_phys[i]!) ++
       [Gate.mkMUX src1_ready_0 src1_ready_1 muldiv_route_sel md_mux_src1_ready,
        Gate.mkMUX src2_ready_0 src2_ready_1 muldiv_route_sel md_mux_src2_ready]
     else []
@@ -4032,10 +4039,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", dispatch_int_0), ("issue_en_1", dispatch_int_1),
                 ("issue_src1_ready_0", src1_ready_0), ("issue_src2_ready_0", src2_ready_0),
                 ("issue_src1_ready_1", src1_ready_1), ("issue_src2_ready_1", src2_ready_1)] ++
-               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" rd_phys_0 ++
+               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" int_dest_tag_masked_0 ++
                bundledPorts "issue_src1_tag_0" rs1_phys_0 ++ bundledPorts "issue_src1_data_0" rs1_data_0 ++
                bundledPorts "issue_src2_tag_0" rs2_phys_0 ++ bundledPorts "issue_src2_data_0" src2_muxed_0 ++
-               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" rd_phys_1 ++
+               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" int_dest_tag_masked_1 ++
                bundledPorts "issue_src1_tag_1" rs1_phys_1 ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
                bundledPorts "issue_src2_tag_1" rs2_phys_1 ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
                [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
@@ -4919,6 +4926,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         [("pre_mispredicted_0", Wire.mk "cdb_mispredicted_0"),
          ("pre_mispredicted_1", Wire.mk "cdb_mispredicted_1")] }
 
+  let cdb_tag_nz_gates : List Gate := []
+
   -- CDB pipeline registers (2 channels)
   -- Channel 0 uses cdb_reset (= pipeline_reset_misc AND NOT csr_flush_suppress)
   -- to preserve CSR CDB injection through the flush cycle.
@@ -5365,7 +5374,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              dual_stall_gates ++ int_de1_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              src2_imm_mux_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
-             busy_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
+             busy_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
              int_pc_rf_gates ++ int_imm_rf_gates ++
              br_pc_rf_gates ++ br_imm_rf_gates ++
@@ -5394,6 +5403,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fi_match_0 ++ fi_match_1 ++
              csrrw_m0 ++ csrrs_m0 ++ csrrc_m0 ++ csrrwi_m0 ++ csrrsi_m0 ++ csrrci_m0 ++
              csrrw_m1 ++ csrrs_m1 ++ csrrc_m1 ++ csrrwi_m1 ++ csrrsi_m1 ++ csrrci_m1 ++
+             cdb_tag_nz_gates ++
              csr_detect_gates ++ ser_detect_gates ++ ser_fsm_gates ++
              ser_pc_mux_gates ++ ser_capture_gates ++
              csr_all_gates
