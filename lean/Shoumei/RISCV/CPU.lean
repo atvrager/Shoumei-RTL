@@ -4361,7 +4361,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "commit_archRd" (CPU.makeIndexedWires "cmt_archRd_mux_0" 5) ++
                bundledPorts "commit_physRd" (CPU.makeIndexedWires "cmt_physRd_mux_0" 6) ++
                bundledPorts "commit_archRd_1" commit_archRd_1 ++ bundledPorts "commit_physRd_1" commit_physRd_1 ++
-               [("cdb_valid", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
+               [("cdb_valid", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1")] ++
                bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("rename_valid", rename_valid_0), ("stall", Wire.mk "rename_stall_0"),
@@ -4584,7 +4584,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" int_dest_tag_masked_1 ++
                bundledPorts "issue_src1_tag_1" rs1_phys_1 ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
                bundledPorts "issue_src2_tag_1" rs2_phys_1 ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
-               [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
+               [("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1")] ++
                bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("dispatch_en_0", one), ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
@@ -4617,7 +4617,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", br_dispatch_valid), ("issue_en_1", zero),
                 ("issue_src1_ready_0", br_mux_src1_ready), ("issue_src2_ready_0", br_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
+                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
                 ("dispatch_en_0", Wire.mk "ib_br_fifo_enq_ready"), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_br_avail_0"), ("alloc_avail_1", Wire.mk "rs_br_avail_1"),
                 ("dispatch_valid_0", rs_br_dispatch_valid),
@@ -4673,10 +4673,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one),
                 ("issue_en_0", mem_dispatch_valid), ("issue_en_1", zero),
-                ("issue_is_store_0", mem_mux_is_store), ("issue_is_store_1", zero),
+                ("issue_is_store_0", zero), ("issue_is_store_1", zero),
                 ("issue_src1_ready_0", mem_mux_src1_ready), ("issue_src2_ready_0", mem_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
+                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
                 ("dispatch_en_0", mem_dispatch_en), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_mem_avail_0"), ("alloc_avail_1", Wire.mk "rs_mem_avail_1"),
                 ("dispatch_valid_0", rs_mem_dispatch_valid),
@@ -4739,7 +4739,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", muldiv_dispatch_valid), ("issue_en_1", zero),
                 ("issue_src1_ready_0", md_mux_src1_ready), ("issue_src2_ready_0", md_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
+                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
                 ("dispatch_en_0", muldiv_dispatch_en), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_md_avail_0"), ("alloc_avail_1", Wire.mk "rs_md_avail_1"),
                 ("dispatch_valid_0", rs_muldiv_dispatch_valid),
@@ -4842,34 +4842,77 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     if enableF then [Gate.mkBUF branch_redirect_valid_reg redirect_valid_fp]
     else [Gate.mkBUF zero redirect_valid_fp]
 
-  -- Merge FP commits from both ROB slots for single-port FP rename
-  -- Slot 0 has priority; if only slot 1 has FP, use slot 1's data
+  -- Merge FP commits from both ROB slots for single-port FP rename.
+  -- When both slots retire FP instructions, slot 0 commits immediately and
+  -- slot 1 is buffered in a 1-entry DFF and replayed next cycle.
   let fp_commit_merged := Wire.mk "fp_commit_merged"
-  let fp_commit_sel := Wire.mk "fp_commit_sel"  -- 1 = use slot 1
+  let fp_commit_sel := Wire.mk "fp_commit_sel"  -- 1 = use slot 1 (when only slot 1 is FP)
   let fp_commit_archRd := CPU.makeIndexedWires "fp_commit_archRd" 5
   let fp_commit_physRd := CPU.makeIndexedWires "fp_commit_physRd" 6
   let fp_commit_oldPhysRd := CPU.makeIndexedWires "fp_commit_oldPhysRd" 6
   let fp_commit_hasPhysRd := Wire.mk "fp_commit_hasPhysRd"
+  -- Buffered (deferred) FP commit for dual-FP-retire case
+  let fp_commit_buf_valid := Wire.mk "fp_commit_buf_valid"
+  let fp_commit_buf_valid_reg := Wire.mk "fp_commit_buf_valid_reg"
+  let fp_commit_buf_archRd := CPU.makeIndexedWires "fp_commit_buf_archRd" 5
+  let fp_commit_buf_physRd := CPU.makeIndexedWires "fp_commit_buf_physRd" 6
+  let fp_commit_buf_oldPhysRd := CPU.makeIndexedWires "fp_commit_buf_oldPhysRd" 6
+  let both_fp_commit := Wire.mk "both_fp_commit"
   let fp_commit_merge_gates :=
     if enableF then
-      [Gate.mkOR fp_commit_valid_0 fp_commit_valid_1 fp_commit_merged,
-       Gate.mkNOT fp_commit_valid_0 (Wire.mk "not_fp_commit_0"),
-       Gate.mkAND (Wire.mk "not_fp_commit_0") fp_commit_valid_1 fp_commit_sel,
-       -- hasPhysRd: either slot's is_fp flag
-       Gate.mkMUX rob_head_is_fp_0 rob_head_is_fp_1 fp_commit_sel fp_commit_hasPhysRd] ++
+      -- Detect dual-FP-commit
+      [Gate.mkAND fp_commit_valid_0 fp_commit_valid_1 both_fp_commit] ++
+      -- Buffer valid DFF: set when both_fp_commit, clear after one drain cycle
+      -- Input: both_fp_commit AND NOT flush (naturally clears next cycle since both_fp_commit is transient)
+      [Gate.mkNOT redirect_valid_fp (Wire.mk "not_fp_buf_flush"),
+       Gate.mkAND both_fp_commit (Wire.mk "not_fp_buf_flush") fp_commit_buf_valid,
+       Gate.mkDFF fp_commit_buf_valid clock reset fp_commit_buf_valid_reg] ++
+      -- Buffer slot 1's data in DFFs (always latch slot 1; data only used when buf_valid_reg=1)
       (List.range 5).map (fun i =>
-        Gate.mkMUX commit_archRd_0[i]! commit_archRd_1[i]! fp_commit_sel fp_commit_archRd[i]!) ++
+        Gate.mkDFF commit_archRd_1[i]! clock reset fp_commit_buf_archRd[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX commit_physRd_0[i]! commit_physRd_1[i]! fp_commit_sel fp_commit_physRd[i]!) ++
-      -- Old phys rd for free list: the tag being replaced (freed)
+        Gate.mkDFF commit_physRd_1[i]! clock reset fp_commit_buf_physRd[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX rob_head_oldPhysRd_0[i]! rob_head_oldPhysRd_1[i]! fp_commit_sel fp_commit_oldPhysRd[i]!)
+        Gate.mkDFF rob_head_oldPhysRd_1[i]! clock reset fp_commit_buf_oldPhysRd[i]!) ++
+      -- Merged output: buffered replay has priority over new commits
+      -- When buf_valid_reg: drain buffer. When !buf_valid_reg: normal commit logic.
+      [Gate.mkNOT fp_commit_valid_0 (Wire.mk "not_fp_commit_0"),
+       Gate.mkAND (Wire.mk "not_fp_commit_0") fp_commit_valid_1 (Wire.mk "fp_only_slot1"),
+       -- Normal merged valid (at least one FP commit this cycle)
+       Gate.mkOR fp_commit_valid_0 fp_commit_valid_1 (Wire.mk "fp_commit_any"),
+       -- Final merged: either buffer drain or new commit
+       Gate.mkOR (Wire.mk "fp_commit_any") fp_commit_buf_valid_reg fp_commit_merged,
+       -- Selection: buf_valid_reg=1 → use buffer; buf_valid_reg=0 → fp_commit_sel as before
+       Gate.mkAND (Wire.mk "not_fp_commit_0") fp_commit_valid_1 fp_commit_sel] ++
+      -- hasPhysRd MUX: buffer > slot0 > slot1
+      [Gate.mkMUX rob_head_is_fp_0 rob_head_is_fp_1 fp_commit_sel (Wire.mk "fp_commit_hasPhysRd_new"),
+       Gate.mkMUX (Wire.mk "fp_commit_hasPhysRd_new") one fp_commit_buf_valid_reg fp_commit_hasPhysRd] ++
+      -- archRd MUX: buffer > slot0/slot1
+      (List.range 5).map (fun i =>
+        Gate.mkMUX commit_archRd_0[i]! commit_archRd_1[i]! fp_commit_sel (Wire.mk s!"fp_commit_archRd_new_{i}")) ++
+      (List.range 5).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"fp_commit_archRd_new_{i}") fp_commit_buf_archRd[i]! fp_commit_buf_valid_reg fp_commit_archRd[i]!) ++
+      -- physRd MUX: buffer > slot0/slot1
+      (List.range 6).map (fun i =>
+        Gate.mkMUX commit_physRd_0[i]! commit_physRd_1[i]! fp_commit_sel (Wire.mk s!"fp_commit_physRd_new_{i}")) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"fp_commit_physRd_new_{i}") fp_commit_buf_physRd[i]! fp_commit_buf_valid_reg fp_commit_physRd[i]!) ++
+      -- Old phys rd for free list: buffer > slot0/slot1
+      (List.range 6).map (fun i =>
+        Gate.mkMUX rob_head_oldPhysRd_0[i]! rob_head_oldPhysRd_1[i]! fp_commit_sel (Wire.mk s!"fp_commit_oldPhysRd_new_{i}")) ++
+      (List.range 6).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"fp_commit_oldPhysRd_new_{i}") fp_commit_buf_oldPhysRd[i]! fp_commit_buf_valid_reg fp_commit_oldPhysRd[i]!)
     else
       [Gate.mkBUF zero fp_commit_merged, Gate.mkBUF zero fp_commit_sel,
-       Gate.mkBUF zero fp_commit_hasPhysRd] ++
+       Gate.mkBUF zero fp_commit_hasPhysRd, Gate.mkBUF zero both_fp_commit,
+       Gate.mkDFF zero clock reset fp_commit_buf_valid_reg,
+       Gate.mkBUF zero fp_commit_buf_valid] ++
       (List.range 5).map (fun i => Gate.mkBUF zero fp_commit_archRd[i]!) ++
       (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_physRd[i]!) ++
-      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_oldPhysRd[i]!)
+      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_oldPhysRd[i]!) ++
+      (List.range 5).map (fun i => Gate.mkBUF zero fp_commit_buf_archRd[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_buf_physRd[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_buf_oldPhysRd[i]!)
 
   let fp_rename_inst : CircuitInstance := {
     moduleName := "RenameStage_32x64"
