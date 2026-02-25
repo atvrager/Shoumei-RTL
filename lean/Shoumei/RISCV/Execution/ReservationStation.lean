@@ -534,6 +534,15 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   -- The domain bit in the tag prevents cross-domain false wakeup.
   let cdb_fp_combine_gates : List Gate := []
 
+  -- Suppress CDB alloc-time bypass (intra-group RAW hazard protection)
+  -- When slot 0 allocates a fresh phys tag that slot 1 reads, the CDB may still be
+  -- broadcasting the old result for that tag. These signals suppress that stale bypass.
+  -- Per-bank: single-unit RSes route slot 1 ops to bank 0, so bank 0 also needs suppress.
+  let suppress_cdb_s1_0 := Wire.mk "suppress_cdb_s1_0"
+  let suppress_cdb_s2_0 := Wire.mk "suppress_cdb_s2_0"
+  let suppress_cdb_s1_1 := Wire.mk "suppress_cdb_s1_1"
+  let suppress_cdb_s2_1 := Wire.mk "suppress_cdb_s2_1"
+
   -- Dispatch interface (W=2)
   let dispatch_en_0 := Wire.mk "dispatch_en_0"; let dispatch_valid_0 := Wire.mk "dispatch_valid_0"
   let dispatch_opcode_0   := mkWrsI "dispatch_opcode_0" opcodeWidth
@@ -624,9 +633,24 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     let n1_any := Wire.mk s!"e{idx}_n1_any"; let n2_any := Wire.mk s!"e{idx}_n2_any"
     -- Alloc-time ready: dispatch ready OR same-cycle CDB match on incoming tag
     let alloc_s1r := Wire.mk s!"e{idx}_alloc_s1r"; let alloc_s2r := Wire.mk s!"e{idx}_alloc_s2r"
-    let alloc_ready_gates := [
-      Gate.mkOR n1_0m n1_1m n1_any, Gate.mkOR issue_s1r n1_any alloc_s1r,
-      Gate.mkOR n2_0m n2_1m n2_any, Gate.mkOR issue_s2r n2_any alloc_s2r]
+    -- Suppress CDB alloc-time bypass when intra-group RAW detected
+    -- (slot 0 just allocated the tag that slot 1 reads — CDB broadcast is stale)
+    let (supp_s1, supp_s2) := if bank == 0
+      then (suppress_cdb_s1_0, suppress_cdb_s2_0)
+      else (suppress_cdb_s1_1, suppress_cdb_s2_1)
+    let n1_any_raw := Wire.mk s!"e{idx}_n1_any_raw"
+    let n2_any_raw := Wire.mk s!"e{idx}_n2_any_raw"
+    let not_supp_s1 := Wire.mk s!"e{idx}_not_supp_s1"
+    let not_supp_s2 := Wire.mk s!"e{idx}_not_supp_s2"
+    let alloc_ready_gates :=
+      [Gate.mkOR n1_0m n1_1m n1_any_raw,
+       Gate.mkNOT supp_s1 not_supp_s1,
+       Gate.mkAND n1_any_raw not_supp_s1 n1_any,
+       Gate.mkOR issue_s1r n1_any alloc_s1r,
+       Gate.mkOR n2_0m n2_1m n2_any_raw,
+       Gate.mkNOT supp_s2 not_supp_s2,
+       Gate.mkAND n2_any_raw not_supp_s2 n2_any,
+       Gate.mkOR issue_s2r n2_any alloc_s2r]
     -- Alloc-time data: MUX between dispatch data and CDB data (CDB ch0 > CDB ch1 > dispatch)
     -- Gate with NOT(issue_src_ready) to avoid overwriting already-valid data (e.g. immediates)
     let not_is1r := Wire.mk s!"e{idx}_not_is1r"; let not_is2r := Wire.mk s!"e{idx}_not_is2r"
@@ -813,7 +837,9 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
       [issue_src2_ready_1] ++ issue_src2_tag_1 ++ issue_src2_data_1 ++
       [cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
       [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
-      [dispatch_en_0, dispatch_en_1]
+      [dispatch_en_0, dispatch_en_1,
+       suppress_cdb_s1_0, suppress_cdb_s2_0,
+       suppress_cdb_s1_1, suppress_cdb_s2_1]
     outputs :=
       [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
        alloc_ptr_0, alloc_ptr_1,

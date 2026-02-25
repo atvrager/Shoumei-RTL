@@ -1480,7 +1480,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rm.enum.map (fun ⟨i, w⟩ => (s!"rm_{i}", w))) ++
       (rs_fp_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
-       ("clock", clock), ("reset", reset),
+       ("clock", clock), ("reset", pipeline_reset_rs_fp),
        ("zero", zero), ("one", one)] ++
       (fp_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
       (fp_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
@@ -4592,6 +4592,27 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let dispatch_opcode_1 := CPU.makeIndexedWires "dispatch_opcode_1" 6
   let dispatch_src1_data_1 := CPU.makeIndexedWires "dispatch_src1_1" 32; let dispatch_src2_data_1 := CPU.makeIndexedWires "dispatch_src2_1" 32
   let dispatch_dest_tag_1 := CPU.makeIndexedWires "dispatch_dest_1" 7  -- 7-bit: [5:0]=tag, [6]=domain
+  -- RS CDB BYPASS SUPPRESS SIGNALS
+  -- When slot 0 allocates a fresh phys tag that slot 1 reads (intra-group RAW),
+  -- suppress alloc-time CDB bypass to prevent capturing stale data.
+  -- busy_raw_s1_hit / busy_raw_s2_hit come from BusyBitTable2's internal wires.
+  let busy_raw_s1_hit := Wire.mk "busy_raw_s1_hit"
+  let busy_raw_s2_hit := Wire.mk "busy_raw_s2_hit"
+  -- For single-unit RSes that route slot 1 to bank 0, gate with route_sel
+  let br_suppress_s1 := Wire.mk "br_suppress_s1"
+  let br_suppress_s2 := Wire.mk "br_suppress_s2"
+  let mem_suppress_s1 := Wire.mk "mem_suppress_s1"
+  let mem_suppress_s2 := Wire.mk "mem_suppress_s2"
+  let muldiv_suppress_s1 := Wire.mk "muldiv_suppress_s1"
+  let muldiv_suppress_s2 := Wire.mk "muldiv_suppress_s2"
+  let suppress_gates :=
+    [Gate.mkAND br_route_sel busy_raw_s1_hit br_suppress_s1,
+     Gate.mkAND br_route_sel busy_raw_s2_hit br_suppress_s2,
+     Gate.mkAND mem_route_sel busy_raw_s1_hit mem_suppress_s1,
+     Gate.mkAND mem_route_sel busy_raw_s2_hit mem_suppress_s2,
+     Gate.mkAND muldiv_route_sel busy_raw_s1_hit muldiv_suppress_s1,
+     Gate.mkAND muldiv_route_sel busy_raw_s2_hit muldiv_suppress_s2]
+
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_alloc_ptr := CPU.makeIndexedWires "rs_int_alloc_ptr" 2
   let rs_int_grant := CPU.makeIndexedWires "rs_int_grant" 4
@@ -4613,6 +4634,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
                bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("dispatch_en_0", one), ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
+                ("suppress_cdb_s1_0", zero), ("suppress_cdb_s2_0", zero),
+                ("suppress_cdb_s1_1", Wire.mk "busy_raw_s1_hit"),
+                ("suppress_cdb_s2_1", Wire.mk "busy_raw_s2_hit"),
                 ("dispatch_valid_0", issue0_valid), ("dispatch_valid_1", issue1_valid),
                 ("alloc_avail_0", Wire.mk "rs_int_avail_0"), ("alloc_avail_1", Wire.mk "rs_int_avail_1")] ++
                bundledPorts "dispatch_opcode_0" dispatch_opcode_0 ++ bundledPorts "dispatch_src1_data_0" dispatch_src1_data_0 ++
@@ -4644,6 +4668,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
                 ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", Wire.mk "ib_br_fifo_enq_ready"), ("dispatch_en_1", one),
+                ("suppress_cdb_s1_0", br_suppress_s1), ("suppress_cdb_s2_0", br_suppress_s2),
+                ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
                 ("alloc_avail_0", Wire.mk "rs_br_avail_0"), ("alloc_avail_1", Wire.mk "rs_br_avail_1"),
                 ("dispatch_valid_0", rs_br_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_br_dispatch_valid_1")] ++
@@ -4703,6 +4729,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
                 ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", mem_dispatch_en), ("dispatch_en_1", one),
+                ("suppress_cdb_s1_0", mem_suppress_s1), ("suppress_cdb_s2_0", mem_suppress_s2),
+                ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
                 ("alloc_avail_0", Wire.mk "rs_mem_avail_0"), ("alloc_avail_1", Wire.mk "rs_mem_avail_1"),
                 ("dispatch_valid_0", rs_mem_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_mem_dispatch_valid_1")] ++
@@ -4766,6 +4794,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
                 ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", muldiv_dispatch_en), ("dispatch_en_1", one),
+                ("suppress_cdb_s1_0", muldiv_suppress_s1), ("suppress_cdb_s2_0", muldiv_suppress_s2),
+                ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
                 ("alloc_avail_0", Wire.mk "rs_md_avail_0"), ("alloc_avail_1", Wire.mk "rs_md_avail_1"),
                 ("dispatch_valid_0", rs_muldiv_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_md_dispatch_valid_1")] ++
@@ -5154,6 +5184,25 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i => Gate.mkBUF cdb_data_0[i]! cdb_data_fp_rs[i]!) ++
     [Gate.mkBUF cdb_valid_0 cdb_valid_fp_domain]
 
+  -- FP RS suppress: only suppress INT-domain source reads from slot 1 with RAW hazard
+  -- FP-domain sources (from FP register file) are not affected by INT busy table RAW
+  let fp_supp_s1_0 := Wire.mk "fp_supp_s1_0"
+  let fp_supp_s2_0 := Wire.mk "fp_supp_s2_0"
+  let fp_supp_gates :=
+    if enableF then
+      let not_fp_rs1 := Wire.mk "fp_supp_not_fp_rs1"
+      let not_fp_rs2 := Wire.mk "fp_supp_not_fp_rs2"
+      let int_raw_s1 := Wire.mk "fp_supp_int_raw_s1"
+      let int_raw_s2 := Wire.mk "fp_supp_int_raw_s2"
+      [Gate.mkNOT fp_mux_fp_rs1_read not_fp_rs1,
+       Gate.mkAND not_fp_rs1 busy_raw_s1_hit int_raw_s1,
+       Gate.mkAND fp_route_sel int_raw_s1 fp_supp_s1_0,
+       Gate.mkNOT fp_mux_fp_rs2_read not_fp_rs2,
+       Gate.mkAND not_fp_rs2 busy_raw_s2_hit int_raw_s2,
+       Gate.mkAND fp_route_sel int_raw_s2 fp_supp_s2_0]
+    else
+      [Gate.mkBUF zero fp_supp_s1_0, Gate.mkBUF zero fp_supp_s2_0]
+
   let rs_fp_inst : CircuitInstance := {
     moduleName := "ReservationStation4_W2"
     instName := "u_rs_fp"
@@ -5164,6 +5213,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
                 ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", fp_rs_dispatch_en), ("dispatch_en_1", one),
+                ("suppress_cdb_s1_0", fp_supp_s1_0), ("suppress_cdb_s2_0", fp_supp_s2_0),
+                ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
                 ("alloc_avail_0", Wire.mk "rs_fp_avail_0"), ("alloc_avail_1", Wire.mk "rs_fp_avail_1"),
                 ("dispatch_valid_0", rs_fp_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_fp_dispatch_valid_1")] ++
@@ -5337,7 +5388,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "op" fp_op ++ bundledPorts "rm" fp_rm_out ++
       bundledPorts "dest_tag" (rs_fp_dispatch_tag.take 6) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
-       ("clock", clock), ("reset", reset),
+       ("clock", clock), ("reset", pipeline_reset_rs_fp),
        ("zero", zero), ("one", one)] ++
       bundledPorts "result" fp_result ++
       bundledPorts "tag_out" fp_tag_out ++
@@ -6784,7 +6835,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
-             busy_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
+             busy_gates ++ suppress_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
              int_pc_rf_gates ++ int_imm_rf_gates ++
              br_pc_rf_gates ++ br_imm_rf_gates ++
@@ -6816,7 +6867,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fp_cdb_merge_gates ++ fp_int_prf_gate ++ fp_commit_gates ++ fp_commit_merge_gates ++ fp_redirect_gate ++
              fp_dest_tag_gates ++ fp_crossdomain_gates ++
              [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_ready_gates ++ crossdomain_stall_gates ++
-             fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++
+             fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++ fp_supp_gates ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
              fp_op_gates ++ fp_flush_reset_gates ++
