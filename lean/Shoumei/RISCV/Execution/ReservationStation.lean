@@ -543,6 +543,14 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let suppress_cdb_s1_1 := Wire.mk "suppress_cdb_s1_1"
   let suppress_cdb_s2_1 := Wire.mk "suppress_cdb_s2_1"
 
+  -- External per-entry ready mask: gates the arbiter request for each entry.
+  -- Used by FP src3 sidecar to prevent issue before 3rd operand is ready.
+  -- Tie to 'one' for RS instances that don't need src3 gating.
+  let ext_ready_mask_0 := Wire.mk "ext_ready_mask_0"
+  let ext_ready_mask_1 := Wire.mk "ext_ready_mask_1"
+  let ext_ready_mask_2 := Wire.mk "ext_ready_mask_2"
+  let ext_ready_mask_3 := Wire.mk "ext_ready_mask_3"
+
   -- Dispatch interface (W=2)
   let dispatch_en_0 := Wire.mk "dispatch_en_0"; let dispatch_valid_0 := Wire.mk "dispatch_valid_0"
   let dispatch_opcode_0   := mkWrsI "dispatch_opcode_0" opcodeWidth
@@ -778,13 +786,17 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     -- Bank 0: age-aware per-entry older-store check
     Gate.mkAND vs1 alloc_ptr_0 hos0,   -- sub1 is older store → blocks sub0
     Gate.mkAND vs0 not_ptr_0 hos1,     -- sub0 is older store → blocks sub1
-    Gate.mkNOT hos0 not_hos0, Gate.mkOR st0 not_hos0 ok0, Gate.mkAND er0 ok0 ar0,
-    Gate.mkNOT hos1 not_hos1, Gate.mkOR st1 not_hos1 ok1, Gate.mkAND er1 ok1 ar1,
+    Gate.mkNOT hos0 not_hos0, Gate.mkOR st0 not_hos0 ok0,
+    Gate.mkAND er0 ok0 (Wire.mk "slo_ar0_pre"), Gate.mkAND (Wire.mk "slo_ar0_pre") ext_ready_mask_0 ar0,
+    Gate.mkNOT hos1 not_hos1, Gate.mkOR st1 not_hos1 ok1,
+    Gate.mkAND er1 ok1 (Wire.mk "slo_ar1_pre"), Gate.mkAND (Wire.mk "slo_ar1_pre") ext_ready_mask_1 ar1,
     -- Bank 1: age-aware per-entry older-store check
     Gate.mkAND vs3 alloc_ptr_1 hos2,   -- sub1 is older store → blocks sub0
     Gate.mkAND vs2 not_ptr_1 hos3,     -- sub0 is older store → blocks sub1
-    Gate.mkNOT hos2 not_hos2, Gate.mkOR st2 not_hos2 ok2, Gate.mkAND er2 ok2 ar2,
-    Gate.mkNOT hos3 not_hos3, Gate.mkOR st3 not_hos3 ok3, Gate.mkAND er3 ok3 ar3]
+    Gate.mkNOT hos2 not_hos2, Gate.mkOR st2 not_hos2 ok2,
+    Gate.mkAND er2 ok2 (Wire.mk "slo_ar2_pre"), Gate.mkAND (Wire.mk "slo_ar2_pre") ext_ready_mask_2 ar2,
+    Gate.mkNOT hos3 not_hos3, Gate.mkOR st3 not_hos3 ok3,
+    Gate.mkAND er3 ok3 (Wire.mk "slo_ar3_pre"), Gate.mkAND (Wire.mk "slo_ar3_pre") ext_ready_mask_3 ar3]
 
   -- Arbiters (use SLO-gated request signals)
   let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
@@ -839,7 +851,8 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
       [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
       [dispatch_en_0, dispatch_en_1,
        suppress_cdb_s1_0, suppress_cdb_s2_0,
-       suppress_cdb_s1_1, suppress_cdb_s2_1]
+       suppress_cdb_s1_1, suppress_cdb_s2_1,
+       ext_ready_mask_0, ext_ready_mask_1, ext_ready_mask_2, ext_ready_mask_3]
     outputs :=
       [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
        alloc_ptr_0, alloc_ptr_1,

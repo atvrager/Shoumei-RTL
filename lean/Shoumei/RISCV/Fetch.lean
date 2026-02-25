@@ -240,7 +240,6 @@ def mkFetchStage : Circuit :=
   let pred_imm_0_gates : List Gate :=
     (List.range 32).map (fun i => Gate.mkMUX b_imm_0[i]! j_imm_0[i]! is_jal_0 predict_imm_0[i]!)
   -- BTFN disabled for now: hardwire pt_0 = 0 (always predict not-taken for B-type)
-  -- TODO: re-enable once branch redirect pipeline is fully debugged
   let btfn_0_gate := Gate.mkBUF const_0 pt_0
   let pred_gates_0 := btype_gates_0 ++ jal_gates_0 ++ b_ext_0 ++ j_ext_0 ++ pred_imm_0_gates ++ [btfn_0_gate]
   let predict_target_0_inst : CircuitInstance := {
@@ -304,9 +303,12 @@ def mkFetchStage : Circuit :=
   let one_slot1   := Wire.mk "one_slot1"
   let half_step := Wire.mk "half_step"
   let not_half_step := Wire.mk "not_half_step"
+  let btype_pt_0 := Wire.mk "btype_pt_0"
   let combined_mux_gates := [
     Gate.mkOR is_btype_0 is_jal_0 is_pred_0,
-    Gate.mkAND pt_0 is_pred_0 slot0_taken,
+    -- JAL is unconditionally taken; B-type uses BTFN prediction
+    Gate.mkAND pt_0 is_btype_0 btype_pt_0,
+    Gate.mkOR is_jal_0 btype_pt_0 slot0_taken,
     Gate.mkNOT slot0_taken not_s0taken,
     Gate.mkBUF const_1 one_slot1,
     Gate.mkAND not_s0taken one_slot1 (Wire.mk "valid_1_pre"),
@@ -327,9 +329,12 @@ def mkFetchStage : Circuit :=
   let half_step_gates :=
     [Gate.mkNOT half_step not_half_step] ++
     (List.range 32).map (fun i => Gate.mkMUX pc_plus_8[i]! pc_plus_4[i]! half_step next_pc_default[i]!)
+  let btype_pt_1 := Wire.mk "btype_pt_1"
   let slot_pred_gates := [
     Gate.mkOR is_btype_1 is_jal_1 is_pred_1,
-    Gate.mkAND pt_1 is_pred_1 slot1_taken_raw,
+    -- JAL is unconditionally taken; B-type uses BTFN prediction
+    Gate.mkAND pt_1 is_btype_1 btype_pt_1,
+    Gate.mkOR is_jal_1 btype_pt_1 slot1_taken_raw,
     Gate.mkAND slot1_taken_raw not_half_step slot1_taken  -- disable slot1 pred on half_step
   ]
   let mux_s1_gates := (List.range 32).map (fun i => Gate.mkMUX next_pc_default[i]! predict_target_1[i]! slot1_taken mux_s1_out[i]!)

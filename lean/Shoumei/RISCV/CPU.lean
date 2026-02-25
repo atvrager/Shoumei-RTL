@@ -1480,7 +1480,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rm.enum.map (fun ⟨i, w⟩ => (s!"rm_{i}", w))) ++
       (rs_fp_dispatch_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
-       ("clock", clock), ("reset", pipeline_reset_rs_fp),
+       ("clock", clock), ("reset", reset),
        ("zero", zero), ("one", one)] ++
       (fp_result.enum.map (fun ⟨i, w⟩ => (s!"result_{i}", w))) ++
       (fp_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w))) ++
@@ -1835,11 +1835,49 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (List.range 39).map (fun i => (s!"deq_data_{i}", muldiv_fifo_deq[i]!))
   }
 
+  -- FP stale result suppression (W=1): same logic as W=2
+  let fp_flush_sr := makeIndexedWires "fp_flush_sr" 5
+  let fp_flush_suppress := Wire.mk "fp_flush_suppress"
+  let fp_drain_mode := Wire.mk "fp_drain_mode"
+  let fp_drain_mode_d := Wire.mk "fp_drain_mode_d"
+  let fp_drain_hold := Wire.mk "fp_drain_hold"
+  let fp_stale_suppress := Wire.mk "fp_stale_suppress"
+  let fp_enq_valid_gated := Wire.mk "fp_enq_valid_gated"
+  let not_fp_stale_suppress := Wire.mk "not_fp_stale_suppress"
+  let fp_stale_gates :=
+    if enableF then
+      [Gate.mkDFF pipeline_flush_comb clock reset fp_flush_sr[0]!,
+       Gate.mkDFF fp_flush_sr[0]! clock reset fp_flush_sr[1]!,
+       Gate.mkDFF fp_flush_sr[1]! clock reset fp_flush_sr[2]!,
+       Gate.mkDFF fp_flush_sr[2]! clock reset fp_flush_sr[3]!,
+       Gate.mkDFF fp_flush_sr[3]! clock reset fp_flush_sr[4]!] ++
+      let or01 := Wire.mk "fp_fsr_or01"
+      let or23 := Wire.mk "fp_fsr_or23"
+      let or0123 := Wire.mk "fp_fsr_or0123"
+      [Gate.mkOR fp_flush_sr[0]! fp_flush_sr[1]! or01,
+       Gate.mkOR fp_flush_sr[2]! fp_flush_sr[3]! or23,
+       Gate.mkOR or01 or23 or0123,
+       Gate.mkOR or0123 fp_flush_sr[4]! fp_flush_suppress,
+       Gate.mkAND fp_drain_mode fp_busy fp_drain_hold,
+       Gate.mkOR pipeline_flush_comb fp_drain_hold fp_drain_mode_d,
+       Gate.mkDFF fp_drain_mode_d clock reset fp_drain_mode,
+       Gate.mkOR fp_flush_suppress fp_drain_mode fp_stale_suppress,
+       Gate.mkNOT fp_stale_suppress not_fp_stale_suppress,
+       Gate.mkAND fp_valid_out not_fp_stale_suppress fp_enq_valid_gated]
+    else
+      [Gate.mkBUF zero fp_flush_suppress,
+       Gate.mkBUF zero fp_drain_mode,
+       Gate.mkBUF zero fp_stale_suppress,
+       Gate.mkBUF zero fp_enq_valid_gated] ++
+      (List.range 5).map (fun i => Gate.mkBUF zero fp_flush_sr[i]!) ++
+      [Gate.mkBUF zero fp_drain_mode_d, Gate.mkBUF zero fp_drain_hold,
+       Gate.mkBUF zero not_fp_stale_suppress]
+
   -- FP FIFO instance (conditional on F-extension)
   let fp_fifo_inst : CircuitInstance := {
     moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_fp",
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_fp),
-                ("enq_valid", fp_valid_out),
+                ("enq_valid", fp_enq_valid_gated),
                 ("deq_ready", fp_fifo_drain),
                 ("enq_ready", fp_fifo_enq_ready),
                 ("deq_valid", fp_fifo_deq_valid)] ++
@@ -2370,7 +2408,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkAND cdb_pre_valid cdb_pre_is_fp (Wire.mk "cdb_pre_valid_for_fp")]
     else []
 
-  let cdb_arb_gates := arb_level0_gates ++ fp_enq_is_fp_gate ++
+  let cdb_arb_gates := arb_level0_gates ++ fp_enq_is_fp_gate ++ fp_stale_gates ++
     ib_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++ fp_fifo_enq_assemble ++
     lsu_fifo_enq_assemble ++
     muldiv_fifo_dummy_gates ++ fp_fifo_dummy_gates ++
@@ -3377,12 +3415,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      -- are stale (fetched before the redirect) and must not trigger serialize.
      Gate.mkNOT pipeline_flush (Wire.mk "ser_not_pflush"),
      Gate.mkAND (Wire.mk "ser_not_redir") (Wire.mk "ser_not_pflush") (Wire.mk "ser_not_redir_flush"),
+     -- Gate by NOT(global_stall): if pipeline is stalled, slot 0 cannot dispatch.
+     -- Starting serialize while stalled would cause slot 0's instruction to be permanently
+     -- lost (fence_i_draining suppresses all future dispatch before it ever fires).
+     Gate.mkNOT global_stall (Wire.mk "ser_not_stall"),
      -- Use gated decode-valid (after fetch_valid masking) to avoid triggering
      -- serialize on invalid slot 1 instructions (e.g. cache line boundary)
      Gate.mkAND (Wire.mk "d0_valid_gated") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_dv0_nr"),
-     Gate.mkAND (Wire.mk "ser_dv0_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_dv0"),
+     Gate.mkAND (Wire.mk "ser_dv0_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_dv0_pre"),
+     Gate.mkAND (Wire.mk "ser_dv0_pre") (Wire.mk "ser_not_stall") (Wire.mk "ser_dv0"),
      Gate.mkAND (Wire.mk "d1_valid_gated") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_dv1_nr"),
-     Gate.mkAND (Wire.mk "ser_dv1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_dv1")] ++
+     Gate.mkAND (Wire.mk "ser_dv1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_dv1_pre"),
+     Gate.mkAND (Wire.mk "ser_dv1_pre") (Wire.mk "ser_not_stall") (Wire.mk "ser_dv1")] ++
     (if config.enableZifencei then
       [Gate.mkAND (Wire.mk "ser_dv0") fence_i_detected_0 (Wire.mk "fi_det_0_gated"),
        Gate.mkAND (Wire.mk "ser_dv1") fence_i_detected_1 (Wire.mk "fi_det_1_gated"),
@@ -4360,6 +4404,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX (d0_rm.getD i zero) (d1_rm.getD i zero) fp_route_sel fp_mux_decode_rm[i]!)
     else []
 
+  -- Forward-declare INT-domain commit gating wires (gates defined after branch_tracking)
+  let int_hasOldPhysRd_0 := Wire.mk "int_hasOldPhysRd_0"
+  let int_hasOldPhysRd_1 := Wire.mk "int_hasOldPhysRd_1"
+  let int_hasPhysRd_0 := Wire.mk "int_hasPhysRd_0"
+  let int_hasPhysRd_1 := Wire.mk "int_hasPhysRd_1"
+  let int_retire_any_old_0 := Wire.mk "int_retire_any_old_0"
+  let int_retire_any_old_1 := Wire.mk "int_retire_any_old_1"
+
   -- === RENAME INSTANCE ===
   let rename_inst : CircuitInstance := {
     moduleName := "RenameStage_W2"
@@ -4399,8 +4451,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                [("commit_hasPhysRd", Wire.mk "csr_commit_hasPhysRd_0"),
                 ("commit_hasAllocSlot", Wire.mk "csr_commit_hasAllocSlot_0"),
                 ("commit_force_alloc", zero),
-                ("commit_hasPhysRd_1", rob_head_hasOldPhysRd_1),
-                ("commit_hasAllocSlot_1", rob_head_hasPhysRd_1),
+                ("commit_hasPhysRd_1", int_hasOldPhysRd_1),
+                ("commit_hasAllocSlot_1", int_hasPhysRd_1),
                 ("commit_force_alloc_1", zero)] ++
                -- RVVI readback tags: read PRF at commit-time physRd for rd_data
                bundledPorts "rd_tag5" commit_physRd_0 ++
@@ -4411,7 +4463,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                [("ext_stall", Wire.mk "rename_ext_stall"),
                 ("ext_stall_1", Wire.mk "any_dual_stall"),
                 ("retire_hasPhysRd", Wire.mk "csr_retire_hasPhysRd_0"),
-                ("retire_hasPhysRd_1", retire_any_old_1)]
+                ("retire_hasPhysRd_1", int_retire_any_old_1)]
   }
 
   -- === BUSY TABLE (W2) ===
@@ -4439,9 +4491,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rob_physRd_mux_gates :=
     if enableF then
       (List.range 6).map (fun i =>
-        Gate.mkMUX rd_phys_0[i]! fp_issue_dest_tag[i]! dispatch_fp_rename_0 rob_alloc_physRd_0[i]!) ++
+        Gate.mkMUX rd_phys_0[i]! fp_issue_dest_tag[i]! d0_has_fp_rd rob_alloc_physRd_0[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX rd_phys_1[i]! fp_issue_dest_tag[i]! dispatch_fp_rename_1 rob_alloc_physRd_1[i]!)
+        Gate.mkMUX rd_phys_1[i]! fp_issue_dest_tag[i]! d1_has_fp_rd rob_alloc_physRd_1[i]!)
     else
       (List.range 6).map (fun i =>
         Gate.mkBUF rd_phys_0[i]! rob_alloc_physRd_0[i]!) ++
@@ -4457,9 +4509,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rob_old_phys_mux_gates :=
     if enableF then
       (List.range 6).map (fun i =>
-        Gate.mkMUX old_physRd_0[i]! fp_old_rd_phys[i]! dispatch_fp_rename_0 rob_old_phys_muxed_0[i]!) ++
+        Gate.mkMUX old_physRd_0[i]! fp_old_rd_phys[i]! d0_has_fp_rd rob_old_phys_muxed_0[i]!) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX old_physRd_1[i]! fp_old_rd_phys[i]! dispatch_fp_rename_1 rob_old_phys_muxed_1[i]!)
+        Gate.mkMUX old_physRd_1[i]! fp_old_rd_phys[i]! d1_has_fp_rd rob_old_phys_muxed_1[i]!)
     else
       (List.range 6).map (fun i => Gate.mkBUF old_physRd_0[i]! rob_old_phys_muxed_0[i]!) ++
       (List.range 6).map (fun i => Gate.mkBUF old_physRd_1[i]! rob_old_phys_muxed_1[i]!)
@@ -4540,6 +4592,29 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     -- MUX retire_tag for slot 1: branch_tracking ? physRd : oldPhysRd
     (List.range 6).map (fun i =>
       Gate.mkMUX rob_head_oldPhysRd_1[i]! commit_physRd_1[i]! branch_tracking_1 retire_tag_bt_1[i]!)
+
+  -- INT-domain commit gating: when F extension enabled, prevent FP instruction commits
+  -- from updating the INT CRAT or INT free list
+  let int_commit_fp_gate :=
+    if enableF then
+      [Gate.mkNOT rob_head_is_fp_0 (Wire.mk "not_rob_head_is_fp_0"),
+       Gate.mkNOT rob_head_is_fp_1 (Wire.mk "not_rob_head_is_fp_1"),
+       -- hasOldPhysRd gated by NOT(is_fp) for CRAT write
+       Gate.mkAND rob_head_hasOldPhysRd_0 (Wire.mk "not_rob_head_is_fp_0") int_hasOldPhysRd_0,
+       Gate.mkAND rob_head_hasOldPhysRd_1 (Wire.mk "not_rob_head_is_fp_1") int_hasOldPhysRd_1,
+       -- hasPhysRd gated by NOT(is_fp) for alloc slot
+       Gate.mkAND rob_head_hasPhysRd_0 (Wire.mk "not_rob_head_is_fp_0") int_hasPhysRd_0,
+       Gate.mkAND rob_head_hasPhysRd_1 (Wire.mk "not_rob_head_is_fp_1") int_hasPhysRd_1,
+       -- retire_any_old gated: use int_hasOldPhysRd instead of raw
+       Gate.mkOR int_hasOldPhysRd_0 branch_tracking_0 int_retire_any_old_0,
+       Gate.mkOR int_hasOldPhysRd_1 branch_tracking_1 int_retire_any_old_1]
+    else
+      [Gate.mkBUF rob_head_hasOldPhysRd_0 int_hasOldPhysRd_0,
+       Gate.mkBUF rob_head_hasOldPhysRd_1 int_hasOldPhysRd_1,
+       Gate.mkBUF rob_head_hasPhysRd_0 int_hasPhysRd_0,
+       Gate.mkBUF rob_head_hasPhysRd_1 int_hasPhysRd_1,
+       Gate.mkBUF retire_any_old_0 int_retire_any_old_0,
+       Gate.mkBUF retire_any_old_1 int_retire_any_old_1]
 
   -- === BRANCH RESOLVE (W2) ===
   -- Check both commit slots for mispredicted branch. Slot 0 has priority.
@@ -4637,6 +4712,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("suppress_cdb_s1_0", zero), ("suppress_cdb_s2_0", zero),
                 ("suppress_cdb_s1_1", Wire.mk "busy_raw_s1_hit"),
                 ("suppress_cdb_s2_1", Wire.mk "busy_raw_s2_hit"),
+                ("ext_ready_mask_0", one), ("ext_ready_mask_1", one),
+                ("ext_ready_mask_2", one), ("ext_ready_mask_3", one),
                 ("dispatch_valid_0", issue0_valid), ("dispatch_valid_1", issue1_valid),
                 ("alloc_avail_0", Wire.mk "rs_int_avail_0"), ("alloc_avail_1", Wire.mk "rs_int_avail_1")] ++
                bundledPorts "dispatch_opcode_0" dispatch_opcode_0 ++ bundledPorts "dispatch_src1_data_0" dispatch_src1_data_0 ++
@@ -4670,6 +4747,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_en_0", Wire.mk "ib_br_fifo_enq_ready"), ("dispatch_en_1", one),
                 ("suppress_cdb_s1_0", br_suppress_s1), ("suppress_cdb_s2_0", br_suppress_s2),
                 ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
+                ("ext_ready_mask_0", one), ("ext_ready_mask_1", one),
+                ("ext_ready_mask_2", one), ("ext_ready_mask_3", one),
                 ("alloc_avail_0", Wire.mk "rs_br_avail_0"), ("alloc_avail_1", Wire.mk "rs_br_avail_1"),
                 ("dispatch_valid_0", rs_br_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_br_dispatch_valid_1")] ++
@@ -4731,6 +4810,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_en_0", mem_dispatch_en), ("dispatch_en_1", one),
                 ("suppress_cdb_s1_0", mem_suppress_s1), ("suppress_cdb_s2_0", mem_suppress_s2),
                 ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
+                ("ext_ready_mask_0", one), ("ext_ready_mask_1", one),
+                ("ext_ready_mask_2", one), ("ext_ready_mask_3", one),
                 ("alloc_avail_0", Wire.mk "rs_mem_avail_0"), ("alloc_avail_1", Wire.mk "rs_mem_avail_1"),
                 ("dispatch_valid_0", rs_mem_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_mem_dispatch_valid_1")] ++
@@ -4796,6 +4877,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_en_0", muldiv_dispatch_en), ("dispatch_en_1", one),
                 ("suppress_cdb_s1_0", muldiv_suppress_s1), ("suppress_cdb_s2_0", muldiv_suppress_s2),
                 ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
+                ("ext_ready_mask_0", one), ("ext_ready_mask_1", one),
+                ("ext_ready_mask_2", one), ("ext_ready_mask_3", one),
                 ("alloc_avail_0", Wire.mk "rs_md_avail_0"), ("alloc_avail_1", Wire.mk "rs_md_avail_1"),
                 ("dispatch_valid_0", rs_muldiv_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_md_dispatch_valid_1")] ++
@@ -5073,6 +5156,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Cross-domain source routing: FP instructions may read from INT or FP PRF
   let fp_issue_src1_tag := CPU.makeIndexedWires "fp_issue_src1_tag" 6
   let fp_issue_src2_tag := CPU.makeIndexedWires "fp_issue_src2_tag" 6
+  let fp_issue_src1_data_pre := CPU.makeIndexedWires "fp_issue_src1_data_pre" 32
+  let fp_issue_src2_data_pre := CPU.makeIndexedWires "fp_issue_src2_data_pre" 32
   let fp_issue_src1_data := CPU.makeIndexedWires "fp_issue_src1_data" 32
   let fp_issue_src2_data := CPU.makeIndexedWires "fp_issue_src2_data" 32
   -- MUX INT rename data from the correct slot first
@@ -5095,11 +5180,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i =>
         Gate.mkMUX fp_int_rs1_phys[i]! fp_rs1_phys[i]! fp_mux_fp_rs1_read fp_issue_src1_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX fp_int_rs1_data[i]! fp_rs1_data[i]! fp_mux_fp_rs1_read fp_issue_src1_data[i]!) ++
+        Gate.mkMUX fp_int_rs1_data[i]! fp_rs1_data[i]! fp_mux_fp_rs1_read fp_issue_src1_data_pre[i]!) ++
       (List.range 6).map (fun i =>
         Gate.mkMUX fp_int_rs2_phys[i]! fp_rs2_phys[i]! fp_mux_fp_rs2_read fp_issue_src2_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data[i]!)
+        Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[i]!)
     else []
 
   -- FP Busy-Bit Table (single-set, W=1)
@@ -5121,11 +5206,99 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       "fp_busy"
     else ([], [])
 
-  -- FP src3: no stall needed; CDB snoop in sidecar handles wakeup
-  let fp_src3_busy_gates : List Gate := []
+  -- FP src3 ready tracking: per RS-slot DFF tracks if src3 data is valid.
+  -- At alloc: ready if NOT(busy[rs3_phys]) OR NOT(fp_rs3_used).
+  -- On CDB match: becomes ready.
+  -- Prevents RS from issuing FMADD before src3 operand arrives.
+  let fp_src3_rdy := (List.range 4).map fun slot => Wire.mk s!"fp_src3_rdy_{slot}"
+  let fp_src3_busy_raw := Wire.mk "fp_src3_busy_raw"
+  let fp_src3_busy_gates : List Gate :=
+    if enableF then
+      -- Read fp_busy table for rs3 tag: 64:1 MUX tree
+      let busy_bits := (List.range 64).map fun i => Wire.mk s!"fp_busy_q_{i}"
+      -- Level 0: 32 MUX2 (sel = fp_rs3_phys[0])
+      let l0 := (List.range 32).flatMap fun i =>
+        [Gate.mkMUX busy_bits[2*i]! busy_bits[2*i+1]! fp_rs3_phys[0]! (Wire.mk s!"fp_s3b_l0_{i}")]
+      -- Level 1: 16 MUX2 (sel = fp_rs3_phys[1])
+      let l1 := (List.range 16).flatMap fun i =>
+        [Gate.mkMUX (Wire.mk s!"fp_s3b_l0_{2*i}") (Wire.mk s!"fp_s3b_l0_{2*i+1}") fp_rs3_phys[1]! (Wire.mk s!"fp_s3b_l1_{i}")]
+      -- Level 2: 8 MUX2 (sel = fp_rs3_phys[2])
+      let l2 := (List.range 8).flatMap fun i =>
+        [Gate.mkMUX (Wire.mk s!"fp_s3b_l1_{2*i}") (Wire.mk s!"fp_s3b_l1_{2*i+1}") fp_rs3_phys[2]! (Wire.mk s!"fp_s3b_l2_{i}")]
+      -- Level 3: 4 MUX2 (sel = fp_rs3_phys[3])
+      let l3 := (List.range 4).flatMap fun i =>
+        [Gate.mkMUX (Wire.mk s!"fp_s3b_l2_{2*i}") (Wire.mk s!"fp_s3b_l2_{2*i+1}") fp_rs3_phys[3]! (Wire.mk s!"fp_s3b_l3_{i}")]
+      -- Level 4: 2 MUX2 (sel = fp_rs3_phys[4])
+      let l4 := (List.range 2).flatMap fun i =>
+        [Gate.mkMUX (Wire.mk s!"fp_s3b_l3_{2*i}") (Wire.mk s!"fp_s3b_l3_{2*i+1}") fp_rs3_phys[4]! (Wire.mk s!"fp_s3b_l4_{i}")]
+      -- Level 5: final MUX2 (sel = fp_rs3_phys[5])
+      let l5 := [Gate.mkMUX (Wire.mk s!"fp_s3b_l4_0") (Wire.mk s!"fp_s3b_l4_1") fp_rs3_phys[5]! fp_src3_busy_raw]
+      -- busy=1 means NOT ready. Invert, then OR with NOT(fp_rs3_used) for non-FMA ops.
+      let fp_src3_not_busy := Wire.mk "fp_src3_not_busy"
+      let fp_src3_alloc_ready := Wire.mk "fp_src3_alloc_ready"
+      let not_rs3_used := Wire.mk "fp_not_rs3_used"
+      let alloc_ready_gates := [
+        Gate.mkNOT fp_src3_busy_raw fp_src3_not_busy,
+        Gate.mkNOT fp_mux_fp_rs3_used not_rs3_used,
+        Gate.mkOR fp_src3_not_busy not_rs3_used fp_src3_alloc_ready]
+      -- Per-slot src3 NOT-ready DFF (reset=0 means ready, since we store inverted):
+      -- not_rdy_d = MUX(hold, NOT(alloc_ready), alloc_we) then MUX(that, 0, cdb_match)
+      -- ext_ready_mask = NOT(not_rdy_dff)
+      let fp_src3_not_rdy := (List.range 4).map fun slot => Wire.mk s!"fp_src3_nrdy_{slot}"
+      let fp_src3_alloc_not_ready := Wire.mk "fp_src3_alloc_nrdy"
+      let per_slot_gates := [Gate.mkNOT fp_src3_alloc_ready fp_src3_alloc_not_ready] ++
+        (List.range 4).flatMap fun slot =>
+        let d_alloc := Wire.mk s!"fp_src3_nrdy_{slot}_da"
+        let d_cdb := Wire.mk s!"fp_src3_nrdy_{slot}_dc"
+        [Gate.mkMUX fp_src3_not_rdy[slot]! fp_src3_alloc_not_ready (Wire.mk s!"fp_src3_we_{slot}") d_alloc,
+         Gate.mkMUX d_alloc zero (Wire.mk s!"fp_src3_cdb_we_{slot}") d_cdb,
+         Gate.mkDFF d_cdb clock reset fp_src3_not_rdy[slot]!,
+         Gate.mkNOT fp_src3_not_rdy[slot]! fp_src3_rdy[slot]!]
+      l0 ++ l1 ++ l2 ++ l3 ++ l4 ++ l5 ++ alloc_ready_gates ++ per_slot_gates
+    else
+      -- If FP is disabled, all slots always ready
+      (List.range 4).map fun slot => Gate.mkBUF one fp_src3_rdy[slot]!
 
-  -- FP source readiness: merge busy table + CDB forwarding
-  -- Simplified: just use busy table results (no CDB forwarding for FP domain yet)
+  -- FP busy table intra-group RAW bypass:
+  -- When set_en fires (FLW/FP instruction allocates FP tag X) and the consumer instruction
+  -- reads the same tag X, force "not ready" since the busy table DFF hasn't updated yet.
+  let fp_raw_s1_hit := Wire.mk "fp_raw_s1_hit"
+  let fp_raw_s2_hit := Wire.mk "fp_raw_s2_hit"
+  let fp_busy_src1_ready_bypassed := Wire.mk "fp_busy_src1_ready_byp"
+  let fp_busy_src2_ready_bypassed := Wire.mk "fp_busy_src2_ready_byp"
+  let fp_raw_bypass_gates :=
+    if enableF then
+      let tagWidth := 6
+      let mkTagEq (pfx2 : String) (a b : List Wire) (out : Wire) : List Gate :=
+        let xns := (List.range tagWidth).map fun i =>
+          let x := Wire.mk s!"{pfx2}_x{i}"; let xn := Wire.mk s!"{pfx2}_xn{i}"
+          [Gate.mkXOR a[i]! b[i]! x, Gate.mkNOT x xn]
+        let ands := [
+          Gate.mkAND (Wire.mk s!"{pfx2}_xn0") (Wire.mk s!"{pfx2}_xn1") (Wire.mk s!"{pfx2}_a01"),
+          Gate.mkAND (Wire.mk s!"{pfx2}_xn2") (Wire.mk s!"{pfx2}_xn3") (Wire.mk s!"{pfx2}_a23"),
+          Gate.mkAND (Wire.mk s!"{pfx2}_xn4") (Wire.mk s!"{pfx2}_xn5") (Wire.mk s!"{pfx2}_a45"),
+          Gate.mkAND (Wire.mk s!"{pfx2}_a01") (Wire.mk s!"{pfx2}_a23") (Wire.mk s!"{pfx2}_a0123"),
+          Gate.mkAND (Wire.mk s!"{pfx2}_a0123") (Wire.mk s!"{pfx2}_a45") out]
+        xns.flatten ++ ands
+      let fp_set_eq_r1 := Wire.mk "fp_raw_set_eq_r1"
+      let fp_set_eq_r2 := Wire.mk "fp_raw_set_eq_r2"
+      let not_raw_s1 := Wire.mk "fp_raw_not_s1"
+      let not_raw_s2 := Wire.mk "fp_raw_not_s2"
+      mkTagEq "fp_raw_s1" fp_rd_phys fp_rs1_phys fp_set_eq_r1 ++
+      mkTagEq "fp_raw_s2" fp_rd_phys fp_rs2_phys fp_set_eq_r2 ++
+      [Gate.mkAND fp_busy_set_en fp_set_eq_r1 fp_raw_s1_hit,
+       Gate.mkAND fp_busy_set_en fp_set_eq_r2 fp_raw_s2_hit,
+       Gate.mkNOT fp_raw_s1_hit not_raw_s1,
+       Gate.mkNOT fp_raw_s2_hit not_raw_s2,
+       Gate.mkAND fp_busy_src1_ready not_raw_s1 fp_busy_src1_ready_bypassed,
+       Gate.mkAND fp_busy_src2_ready not_raw_s2 fp_busy_src2_ready_bypassed]
+    else
+      [Gate.mkBUF one fp_busy_src1_ready_bypassed, Gate.mkBUF one fp_busy_src2_ready_bypassed,
+       Gate.mkBUF zero fp_raw_s1_hit, Gate.mkBUF zero fp_raw_s2_hit]
+
+  -- FP source readiness: merge busy table (pre-CDB-forwarding)
+  let fp_issue_src1_ready_pre := Wire.mk "fp_issue_src1_ready_pre"
+  let fp_issue_src2_ready_pre := Wire.mk "fp_issue_src2_ready_pre"
   let fp_issue_src1_ready := Wire.mk "fp_issue_src1_ready"
   let fp_issue_src2_ready := Wire.mk "fp_issue_src2_ready"
   let fp_ready_gates :=
@@ -5135,11 +5308,58 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let fp_int_src2_ready := Wire.mk "fp_int_src2_ready"
       [Gate.mkMUX src1_ready_0 src1_ready_1 fp_route_sel fp_int_src1_ready,
        Gate.mkMUX src2_ready_0 src2_ready_1 fp_route_sel fp_int_src2_ready,
-       -- Cross-domain: if reading FP → FP busy, if reading INT → INT busy
-       Gate.mkMUX fp_int_src1_ready fp_busy_src1_ready fp_mux_fp_rs1_read fp_issue_src1_ready,
-       Gate.mkMUX fp_int_src2_ready fp_busy_src2_ready fp_mux_fp_rs2_read fp_issue_src2_ready]
+       -- Cross-domain: if reading FP → FP busy (with RAW bypass), if reading INT → INT busy
+       Gate.mkMUX fp_int_src1_ready fp_busy_src1_ready_bypassed fp_mux_fp_rs1_read fp_issue_src1_ready_pre,
+       Gate.mkMUX fp_int_src2_ready fp_busy_src2_ready_bypassed fp_mux_fp_rs2_read fp_issue_src2_ready_pre]
     else
-      [Gate.mkBUF one fp_issue_src1_ready, Gate.mkBUF one fp_issue_src2_ready]
+      [Gate.mkBUF one fp_issue_src1_ready_pre, Gate.mkBUF one fp_issue_src2_ready_pre]
+
+  -- FP CDB forwarding: when CDB broadcasts FP result in the same cycle as FP RS dispatch,
+  -- forward CDB data instead of stale PRF data (PRF write takes effect next clock edge).
+  let fp_cdb_fwd_match_s1 := Wire.mk "fp_cdb_fwd_match_s1"
+  let fp_cdb_fwd_match_s2 := Wire.mk "fp_cdb_fwd_match_s2"
+  let fp_cdb_fwd_s1 := Wire.mk "fp_cdb_fwd_s1"
+  let fp_cdb_fwd_s2 := Wire.mk "fp_cdb_fwd_s2"
+  let fp_cdb_fwd_cmp_s1_inst : CircuitInstance := {
+    moduleName := "EqualityComparator6"
+    instName := "u_fp_cdb_fwd_cmp_s1"
+    portMap := [("eq", fp_cdb_fwd_match_s1)] ++
+               (cdb_tag_fp.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (fp_issue_src1_tag.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  let fp_cdb_fwd_cmp_s2_inst : CircuitInstance := {
+    moduleName := "EqualityComparator6"
+    instName := "u_fp_cdb_fwd_cmp_s2"
+    portMap := [("eq", fp_cdb_fwd_match_s2)] ++
+               (cdb_tag_fp.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (fp_issue_src2_tag.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  let (fp_cdb_fwd_gates, fp_cdb_fwd_instances) :=
+    if enableF then
+      -- fwd_sX = cdb_valid_fp_prf AND tag_match AND fp_mux_fp_rsX_read
+      let fp_cdb_fwd_s1_tmp := Wire.mk "fp_cdb_fwd_s1_tmp"
+      let fp_cdb_fwd_s2_tmp := Wire.mk "fp_cdb_fwd_s2_tmp"
+      let gates :=
+        [Gate.mkAND cdb_valid_fp_prf fp_cdb_fwd_match_s1 fp_cdb_fwd_s1_tmp,
+         Gate.mkAND fp_cdb_fwd_s1_tmp fp_mux_fp_rs1_read fp_cdb_fwd_s1,
+         Gate.mkAND cdb_valid_fp_prf fp_cdb_fwd_match_s2 fp_cdb_fwd_s2_tmp,
+         Gate.mkAND fp_cdb_fwd_s2_tmp fp_mux_fp_rs2_read fp_cdb_fwd_s2,
+         -- Ready = busy_ready OR cdb_fwd
+         Gate.mkOR fp_issue_src1_ready_pre fp_cdb_fwd_s1 fp_issue_src1_ready,
+         Gate.mkOR fp_issue_src2_ready_pre fp_cdb_fwd_s2 fp_issue_src2_ready] ++
+        -- Data MUX: if fwd, use cdb_data_fp; else use pre-fwd data
+        (List.range 32).map (fun i =>
+          Gate.mkMUX fp_issue_src1_data_pre[i]! cdb_data_fp[i]! fp_cdb_fwd_s1 fp_issue_src1_data[i]!) ++
+        (List.range 32).map (fun i =>
+          Gate.mkMUX fp_issue_src2_data_pre[i]! cdb_data_fp[i]! fp_cdb_fwd_s2 fp_issue_src2_data[i]!)
+      (gates, [fp_cdb_fwd_cmp_s1_inst, fp_cdb_fwd_cmp_s2_inst])
+    else
+      ([Gate.mkBUF fp_issue_src1_ready_pre fp_issue_src1_ready,
+        Gate.mkBUF fp_issue_src2_ready_pre fp_issue_src2_ready] ++
+       (List.range 32).map (fun i =>
+         Gate.mkBUF fp_issue_src1_data_pre[i]! fp_issue_src1_data[i]!) ++
+       (List.range 32).map (fun i =>
+         Gate.mkBUF fp_issue_src2_data_pre[i]! fp_issue_src2_data[i]!), [])
 
   -- Note: cross-domain stall not needed in W=2 because FP RS uses raw CDB
   -- (both INT and FP CDB channels) to avoid the need for domain filtering.
@@ -5184,8 +5404,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i => Gate.mkBUF cdb_data_0[i]! cdb_data_fp_rs[i]!) ++
     [Gate.mkBUF cdb_valid_0 cdb_valid_fp_domain]
 
-  -- FP RS suppress: only suppress INT-domain source reads from slot 1 with RAW hazard
-  -- FP-domain sources (from FP register file) are not affected by INT busy table RAW
+  -- FP RS suppress: combine INT-domain and FP-domain RAW hazards
+  -- INT-domain: slot 1 reads INT reg via INT busy table → use busy_raw hit
+  -- FP-domain: slot 1 reads FP reg via FP busy table → use fp_raw hit
   let fp_supp_s1_0 := Wire.mk "fp_supp_s1_0"
   let fp_supp_s2_0 := Wire.mk "fp_supp_s2_0"
   let fp_supp_gates :=
@@ -5194,12 +5415,24 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let not_fp_rs2 := Wire.mk "fp_supp_not_fp_rs2"
       let int_raw_s1 := Wire.mk "fp_supp_int_raw_s1"
       let int_raw_s2 := Wire.mk "fp_supp_int_raw_s2"
-      [Gate.mkNOT fp_mux_fp_rs1_read not_fp_rs1,
+      let fp_dom_raw_s1 := Wire.mk "fp_supp_fp_dom_raw_s1"
+      let fp_dom_raw_s2 := Wire.mk "fp_supp_fp_dom_raw_s2"
+      let any_raw_s1 := Wire.mk "fp_supp_any_raw_s1"
+      let any_raw_s2 := Wire.mk "fp_supp_any_raw_s2"
+      [-- INT domain: NOT(fp_read) AND int_busy_raw
+       Gate.mkNOT fp_mux_fp_rs1_read not_fp_rs1,
        Gate.mkAND not_fp_rs1 busy_raw_s1_hit int_raw_s1,
-       Gate.mkAND fp_route_sel int_raw_s1 fp_supp_s1_0,
+       -- FP domain: fp_read AND fp_raw_hit
+       Gate.mkAND fp_mux_fp_rs1_read fp_raw_s1_hit fp_dom_raw_s1,
+       -- Combined: OR(int_raw, fp_dom_raw) AND route_sel
+       Gate.mkOR int_raw_s1 fp_dom_raw_s1 any_raw_s1,
+       Gate.mkAND fp_route_sel any_raw_s1 fp_supp_s1_0,
+       -- Same for src2
        Gate.mkNOT fp_mux_fp_rs2_read not_fp_rs2,
        Gate.mkAND not_fp_rs2 busy_raw_s2_hit int_raw_s2,
-       Gate.mkAND fp_route_sel int_raw_s2 fp_supp_s2_0]
+       Gate.mkAND fp_mux_fp_rs2_read fp_raw_s2_hit fp_dom_raw_s2,
+       Gate.mkOR int_raw_s2 fp_dom_raw_s2 any_raw_s2,
+       Gate.mkAND fp_route_sel any_raw_s2 fp_supp_s2_0]
     else
       [Gate.mkBUF zero fp_supp_s1_0, Gate.mkBUF zero fp_supp_s2_0]
 
@@ -5215,6 +5448,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_en_0", fp_rs_dispatch_en), ("dispatch_en_1", one),
                 ("suppress_cdb_s1_0", fp_supp_s1_0), ("suppress_cdb_s2_0", fp_supp_s2_0),
                 ("suppress_cdb_s1_1", zero), ("suppress_cdb_s2_1", zero),
+                ("ext_ready_mask_0", Wire.mk "fp_src3_rdy_0"),
+                ("ext_ready_mask_1", Wire.mk "fp_src3_rdy_1"),
+                ("ext_ready_mask_2", Wire.mk "fp_src3_rdy_2"),
+                ("ext_ready_mask_3", Wire.mk "fp_src3_rdy_3"),
                 ("alloc_avail_0", Wire.mk "rs_fp_avail_0"), ("alloc_avail_1", Wire.mk "rs_fp_avail_1"),
                 ("dispatch_valid_0", rs_fp_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_fp_dispatch_valid_1")] ++
@@ -5388,7 +5625,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "op" fp_op ++ bundledPorts "rm" fp_rm_out ++
       bundledPorts "dest_tag" (rs_fp_dispatch_tag.take 6) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
-       ("clock", clock), ("reset", pipeline_reset_rs_fp),
+       ("clock", clock), ("reset", reset),
        ("zero", zero), ("one", one)] ++
       bundledPorts "result" fp_result ++
       bundledPorts "tag_out" fp_tag_out ++
@@ -6202,6 +6439,50 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 39).map (fun i => (s!"deq_data_{i}", muldiv_fifo_deq[i]!))
   }
 
+  -- FP stale result suppression: after pipeline flush, suppress FP FIFO enqueue
+  -- for enough cycles to drain any in-flight pipelined FP results (max 5 cycles for FMA)
+  -- plus a drain mode that stays set while FP EU is busy (covers iterative div/sqrt).
+  let fp_flush_sr := CPU.makeIndexedWires "fp_flush_sr" 5  -- shift register
+  let fp_flush_suppress := Wire.mk "fp_flush_suppress"     -- OR of shift register
+  let fp_drain_mode := Wire.mk "fp_drain_mode"             -- set on flush, cleared when EU idle
+  let fp_drain_mode_d := Wire.mk "fp_drain_mode_d"
+  let fp_drain_hold := Wire.mk "fp_drain_hold"
+  let fp_stale_suppress := Wire.mk "fp_stale_suppress"     -- suppress FP FIFO enqueue
+  let fp_enq_valid_gated := Wire.mk "fp_enq_valid_gated"   -- gated enqueue valid
+  let not_fp_stale_suppress := Wire.mk "not_fp_stale_suppress"
+  let fp_stale_gates :=
+    if enableF then
+      -- 5-stage shift register: shift in pipeline_flush_comb
+      [Gate.mkDFF pipeline_flush_comb clock reset fp_flush_sr[0]!,
+       Gate.mkDFF fp_flush_sr[0]! clock reset fp_flush_sr[1]!,
+       Gate.mkDFF fp_flush_sr[1]! clock reset fp_flush_sr[2]!,
+       Gate.mkDFF fp_flush_sr[2]! clock reset fp_flush_sr[3]!,
+       Gate.mkDFF fp_flush_sr[3]! clock reset fp_flush_sr[4]!] ++
+      -- OR tree for shift register
+      let or01 := Wire.mk "fp_fsr_or01"
+      let or23 := Wire.mk "fp_fsr_or23"
+      let or0123 := Wire.mk "fp_fsr_or0123"
+      [Gate.mkOR fp_flush_sr[0]! fp_flush_sr[1]! or01,
+       Gate.mkOR fp_flush_sr[2]! fp_flush_sr[3]! or23,
+       Gate.mkOR or01 or23 or0123,
+       Gate.mkOR or0123 fp_flush_sr[4]! fp_flush_suppress] ++
+      -- Drain mode: set on flush, held while FP EU busy
+      [Gate.mkAND fp_drain_mode fp_busy_eu fp_drain_hold,
+       Gate.mkOR pipeline_flush_comb fp_drain_hold fp_drain_mode_d,
+       Gate.mkDFF fp_drain_mode_d clock reset fp_drain_mode] ++
+      -- Suppress = shift register OR drain mode
+      [Gate.mkOR fp_flush_suppress fp_drain_mode fp_stale_suppress,
+       Gate.mkNOT fp_stale_suppress not_fp_stale_suppress,
+       Gate.mkAND fp_valid_out not_fp_stale_suppress fp_enq_valid_gated]
+    else
+      [Gate.mkBUF zero fp_flush_suppress,
+       Gate.mkBUF zero fp_drain_mode,
+       Gate.mkBUF zero fp_stale_suppress,
+       Gate.mkBUF zero fp_enq_valid_gated] ++
+      (List.range 5).map (fun i => Gate.mkBUF zero fp_flush_sr[i]!) ++
+      [Gate.mkBUF zero fp_drain_mode_d, Gate.mkBUF zero fp_drain_hold,
+       Gate.mkBUF zero not_fp_stale_suppress]
+
   -- FP Result FIFO
   let fp_fifo_deq := CPU.makeIndexedWires "fp_fifo_deq" 39
   let fp_fifo_deq_valid := Wire.mk "fp_fifo_deq_valid"
@@ -6209,7 +6490,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_fifo_inst : CircuitInstance := {
     moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_fp",
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_fp),
-                ("enq_valid", fp_valid_out),
+                ("enq_valid", fp_enq_valid_gated),
                 ("deq_ready", fp_fifo_drain),
                 ("enq_ready", fp_fifo_enq_ready),
                 ("deq_valid", fp_fifo_deq_valid)] ++
@@ -6646,11 +6927,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let csr_commit_inject_gates : List Gate :=
     if config.enableZicsr then
       [Gate.mkOR retire_valid_0 csr_cdb_inject csr_commit_valid_0,
-       -- commit_hasPhysRd: for CRAT write only (branches excluded)
-       Gate.mkMUX rob_head_hasOldPhysRd_0 one csr_cdb_inject csr_commit_hasPhysRd_0,
-       -- retire_hasPhysRd: for free list enqueue (branches included via branch_tracking)
-       Gate.mkMUX retire_any_old_0 one csr_cdb_inject csr_retire_hasPhysRd_0,
-       Gate.mkMUX rob_head_hasPhysRd_0 one csr_cdb_inject csr_commit_hasAllocSlot_0] ++
+       -- commit_hasPhysRd: for CRAT write only (branches excluded, FP excluded)
+       Gate.mkMUX int_hasOldPhysRd_0 one csr_cdb_inject csr_commit_hasPhysRd_0,
+       -- retire_hasPhysRd: for free list enqueue (branches included via branch_tracking, FP excluded)
+       Gate.mkMUX int_retire_any_old_0 one csr_cdb_inject csr_retire_hasPhysRd_0,
+       Gate.mkMUX int_hasPhysRd_0 one csr_cdb_inject csr_commit_hasAllocSlot_0] ++
       (List.range 5).map (fun i =>
         Gate.mkMUX commit_archRd_0[i]! csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed_0[i]!) ++
       (List.range 6).map (fun i =>
@@ -6660,11 +6941,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX retire_tag_bt_0[i]! csr_old_phys_reg[i]! csr_cdb_inject retire_tag_muxed_0[i]!)
     else
       [Gate.mkBUF retire_valid_0 csr_commit_valid_0,
-       -- commit_hasPhysRd: CRAT write only (branches excluded)
-       Gate.mkBUF rob_head_hasOldPhysRd_0 csr_commit_hasPhysRd_0,
-       -- retire_hasPhysRd: free list enqueue (branches included)
-       Gate.mkBUF retire_any_old_0 csr_retire_hasPhysRd_0,
-       Gate.mkBUF rob_head_hasPhysRd_0 csr_commit_hasAllocSlot_0] ++
+       -- commit_hasPhysRd: CRAT write only (branches excluded, FP excluded)
+       Gate.mkBUF int_hasOldPhysRd_0 csr_commit_hasPhysRd_0,
+       -- retire_hasPhysRd: free list enqueue (branches included, FP excluded)
+       Gate.mkBUF int_retire_any_old_0 csr_retire_hasPhysRd_0,
+       Gate.mkBUF int_hasPhysRd_0 csr_commit_hasAllocSlot_0] ++
       (List.range 5).map (fun i =>
         Gate.mkBUF commit_archRd_0[i]! commit_archRd_muxed_0[i]!) ++
       (List.range 6).map (fun i =>
@@ -6835,7 +7116,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
-             busy_gates ++ suppress_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
+             busy_gates ++ suppress_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ int_commit_fp_gate ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
              int_pc_rf_gates ++ int_imm_rf_gates ++
              br_pc_rf_gates ++ br_imm_rf_gates ++
@@ -6862,11 +7143,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              ib0_fifo_enq_assemble ++ ib1_merge_gates ++ ib1_fifo_enq_assemble ++
              ib_br_fifo_enq_assemble ++ ib1_br_merge_gates ++ ib1_br_drain_gates ++
              lsu_fifo_enq_assemble ++ muldiv_fifo_enq_assemble ++
-             fp_fifo_enq_assemble ++ fp_enq_is_fp_gate ++
+             fp_fifo_enq_assemble ++ fp_enq_is_fp_gate ++ fp_stale_gates ++
              fp_fifo_dummy_gates ++ muldiv_fifo_dummy_gates ++
              fp_cdb_merge_gates ++ fp_int_prf_gate ++ fp_commit_gates ++ fp_commit_merge_gates ++ fp_redirect_gate ++
              fp_dest_tag_gates ++ fp_crossdomain_gates ++
-             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_ready_gates ++ crossdomain_stall_gates ++
+             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_raw_bypass_gates ++ fp_ready_gates ++ fp_cdb_fwd_gates ++ crossdomain_stall_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++ fp_supp_gates ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
@@ -6898,7 +7179,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  [redirect_valid_dff_inst, flush_dff_dispatch] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++
-                 busy_insts ++ fp_busy_instances ++
+                 busy_insts ++ fp_busy_instances ++ fp_cdb_fwd_instances ++
                  [ib0_fifo_inst, ib1_fifo_inst, ib_br_fifo_inst, lsu_fifo_inst] ++
                  (if enableM then [muldiv_fifo_inst] else []) ++
                  (if enableF then [fp_fifo_inst] else []) ++

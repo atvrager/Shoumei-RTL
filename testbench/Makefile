@@ -41,12 +41,13 @@ LLVM_LLC      := $(CIRCT_PREFIX)/bin/llc
 # Verilator flags (X-prop always on to catch reset bugs)
 # --------------------------------------------------------------------------
 VERILATOR  := verilator
-VFLAGS     := --cc --exe --build -j 0 \
-              --Mdir $(BUILD_DIR)/verilator \
-              -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-              --top-module tb_cpu \
-              --x-assign unique --x-initial unique \
-              -CFLAGS "-std=c++17 -O2"
+VWARN      := -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT
+
+# Helper: disable precompiled headers then build (PCH can OOM on large designs)
+define verilator_build
+	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(1)/Vtb_cpu.mk
+	$(MAKE) -C $(1) -f Vtb_cpu.mk -j $(shell nproc)
+endef
 
 # Source files: all SV from Lean + generated testbench
 SV_SOURCES := $(wildcard $(SV_DIR)/*.sv)
@@ -212,36 +213,41 @@ sim: $(SIM_BIN)
 $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
-	$(VERILATOR) $(VFLAGS) \
+	$(VERILATOR) --cc --exe \
+		--Mdir $(BUILD_DIR)/verilator \
+		$(VWARN) --top-module tb_cpu \
+		--x-assign unique --x-initial unique \
+		-CFLAGS "-std=c++17 -O2" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+	$(call verilator_build,$(BUILD_DIR)/verilator)
 	@echo "Built: $@"
 
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_trace
 	@mkdir -p $(BUILD_DIR)/verilator_trace
-	$(VERILATOR) --cc --exe --build -j 0 \
+	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_trace \
-		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-		--top-module tb_cpu --trace-fst \
+		$(VWARN) --top-module tb_cpu --trace-fst \
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -O2 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+	$(call verilator_build,$(BUILD_DIR)/verilator_trace)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
 sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_dbg
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
-	$(VERILATOR) --cc --exe --build -j 0 \
+	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_dbg \
-		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-		--top-module tb_cpu \
+		$(VWARN) --top-module tb_cpu \
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -O2" \
 		-DTRACE_PIPELINE \
 		-o $(BUILD_DIR)/sim_shoumei_dbg \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+	$(call verilator_build,$(BUILD_DIR)/verilator_dbg)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_dbg (with pipeline trace)"
 
 run-elf: $(SIM_BIN)
@@ -315,15 +321,16 @@ cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
-	$(VERILATOR) --cc --exe --build -j 1 \
+	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
-		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
-		+define+COSIM_DEBUG \
+		$(VWARN) +define+COSIM_DEBUG \
 		--top-module tb_cpu \
 		-CFLAGS "-std=c++20 -O0 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
+	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(BUILD_DIR)/verilator_cosim/Vtb_cpu.mk
+	$(MAKE) -C $(BUILD_DIR)/verilator_cosim -f Vtb_cpu.mk -j $(shell nproc)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
 run-cosim: $(COSIM_BIN) tests riscv-tests

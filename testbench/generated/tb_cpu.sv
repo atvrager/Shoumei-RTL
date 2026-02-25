@@ -225,23 +225,6 @@ module tb_cpu #(
     end
   end
 
-  // Debug: trace key memory dispatch signals
-  `ifdef COSIM_DEBUG
-  always_ff @(posedge clk) begin
-    if (!reset && cycle_count < 50) begin
-      $display("CY%0d: global_stall=%b mem_dispatch_valid=%b rs_mem_dispatch_valid=%b load_no_fwd=%b dmem_load_pending=%b dmem_resp_valid=%b lsu_valid=%b",
-        cycle_count,
-        u_cpu.u_cpu.global_stall,
-        u_cpu.u_cpu.mem_dispatch_valid,
-        u_cpu.u_cpu.u_rs_memory.dispatch_valid_0,
-        u_cpu.u_cpu.load_no_fwd,
-        u_cpu.u_cpu.dmem_load_pending,
-        u_cpu.u_cpu.dmem_resp_valid,
-        u_cpu.u_cpu.lsu_valid);
-    end
-  end
-  `endif
-
   // =========================================================================
   // Output assignments
   // =========================================================================
