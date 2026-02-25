@@ -1497,8 +1497,15 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           | none => false
         let srcRef := if sourceIsVec then s!"{sgRef}.asUInt" else sgRef
         -- For partial connections, slice the parent signal group to match entries
+        -- Compute actual bit range from wire indices (not always starting at 0)
         let slicedRef := if isPartial then
-                           s!"{srcRef}({entries.length - 1}, 0)"
+                           let wireIndices := entries.filterMap (fun (_, wire) =>
+                             ctx.wireToIndex.find? (fun (w, _) => w.name == wire.name) |>.map (·.2))
+                           let minIdx := wireIndices.foldl (fun acc i => if i < acc then i else acc)
+                             (wireIndices.head?.getD 0)
+                           let maxIdx := wireIndices.foldl (fun acc i => if i > acc then i else acc)
+                             (wireIndices.head?.getD 0)
+                           s!"{srcRef}({maxIdx}, {minIdx})"
                          else srcRef
         -- If sub-module port is wider than what we're providing, pad with zeros
         let paddedRef := if subPortWidth > 0 && entries.length < subPortWidth then

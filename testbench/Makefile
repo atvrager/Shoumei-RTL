@@ -41,7 +41,7 @@ LLVM_LLC      := $(CIRCT_PREFIX)/bin/llc
 # Verilator flags (X-prop always on to catch reset bugs)
 # --------------------------------------------------------------------------
 VERILATOR  := verilator
-VWARN      := -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT
+VWARN      := -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT -Wno-MULTIDRIVEN -Wno-MULTIDRIVEN
 
 # Helper: disable precompiled headers then build (PCH can OOM on large designs)
 define verilator_build

@@ -5251,7 +5251,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         let d_alloc := Wire.mk s!"fp_src3_nrdy_{slot}_da"
         let d_cdb := Wire.mk s!"fp_src3_nrdy_{slot}_dc"
         [Gate.mkMUX fp_src3_not_rdy[slot]! fp_src3_alloc_not_ready (Wire.mk s!"fp_src3_we_{slot}") d_alloc,
-         Gate.mkMUX d_alloc zero (Wire.mk s!"fp_src3_cdb_we_{slot}") d_cdb,
+         Gate.mkMUX d_alloc zero (Wire.mk s!"fp_src3_eff_cdb_we_{slot}") d_cdb,
          Gate.mkDFF d_cdb clock reset fp_src3_not_rdy[slot]!,
          Gate.mkNOT fp_src3_not_rdy[slot]! fp_src3_rdy[slot]!]
       l0 ++ l1 ++ l2 ++ l3 ++ l4 ++ l5 ++ alloc_ready_gates ++ per_slot_gates
@@ -5504,6 +5504,41 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Tag storage for CDB snoop matching
   let fp_src3_tags := (List.range 4).map (fun slot =>
     CPU.makeIndexedWires s!"fp_src3_tag{slot}" 6)
+  -- Alloc-time CDB bypass: compare NEW tag (fp_rs3_phys) vs cdb_tag_fp.
+  -- Alloc-time bypass: compare alloc tag vs BOTH CDB channels (not just merged)
+  -- This handles the race where sidecar alloc and CDB broadcast happen on the same cycle.
+  let fp_src3_alloc_cdb_match := Wire.mk "fp_src3_alloc_cdb_match"
+  let fp_src3_alloc_cdb_gates :=
+    if enableF then
+      -- Compare alloc tag vs ch0
+      (List.range 6).flatMap (fun bit =>
+        [Gate.mkXOR fp_rs3_phys[bit]! cdb_tag_0[bit]! (Wire.mk s!"fp_src3_acdb0_xor_{bit}"),
+         Gate.mkNOT (Wire.mk s!"fp_src3_acdb0_xor_{bit}") (Wire.mk s!"fp_src3_acdb0_eq_{bit}")]) ++
+      [Gate.mkAND (Wire.mk "fp_src3_acdb0_eq_0") (Wire.mk "fp_src3_acdb0_eq_1") (Wire.mk "fp_src3_acdb0_and01"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb0_eq_2") (Wire.mk "fp_src3_acdb0_eq_3") (Wire.mk "fp_src3_acdb0_and23"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb0_eq_4") (Wire.mk "fp_src3_acdb0_eq_5") (Wire.mk "fp_src3_acdb0_and45"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb0_and01") (Wire.mk "fp_src3_acdb0_and23") (Wire.mk "fp_src3_acdb0_and0123"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb0_and0123") (Wire.mk "fp_src3_acdb0_and45") (Wire.mk "fp_src3_acdb0_tag_match"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb0_tag_match") cdb_valid_fp_ch0 (Wire.mk "fp_src3_acdb0_hit")] ++
+      -- Compare alloc tag vs ch1
+      (List.range 6).flatMap (fun bit =>
+        [Gate.mkXOR fp_rs3_phys[bit]! cdb_tag_1[bit]! (Wire.mk s!"fp_src3_acdb1_xor_{bit}"),
+         Gate.mkNOT (Wire.mk s!"fp_src3_acdb1_xor_{bit}") (Wire.mk s!"fp_src3_acdb1_eq_{bit}")]) ++
+      [Gate.mkAND (Wire.mk "fp_src3_acdb1_eq_0") (Wire.mk "fp_src3_acdb1_eq_1") (Wire.mk "fp_src3_acdb1_and01"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb1_eq_2") (Wire.mk "fp_src3_acdb1_eq_3") (Wire.mk "fp_src3_acdb1_and23"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb1_eq_4") (Wire.mk "fp_src3_acdb1_eq_5") (Wire.mk "fp_src3_acdb1_and45"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb1_and01") (Wire.mk "fp_src3_acdb1_and23") (Wire.mk "fp_src3_acdb1_and0123"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb1_and0123") (Wire.mk "fp_src3_acdb1_and45") (Wire.mk "fp_src3_acdb1_tag_match"),
+       Gate.mkAND (Wire.mk "fp_src3_acdb1_tag_match") cdb_valid_fp_ch1 (Wire.mk "fp_src3_acdb1_hit"),
+       Gate.mkOR (Wire.mk "fp_src3_acdb0_hit") (Wire.mk "fp_src3_acdb1_hit") fp_src3_alloc_cdb_match]
+    else []
+  -- Merged CDB data for src3: ch0 priority when both channels have FP result
+  let fp_src3_cdb_data := CPU.makeIndexedWires "fp_src3_cdb_data" 32
+  let fp_src3_cdb_data_mux :=
+    if enableF then
+      (List.range 32).map (fun bit =>
+        Gate.mkMUX cdb_data_1[bit]! cdb_data_0[bit]! cdb_valid_fp_ch0 fp_src3_cdb_data[bit]!)
+    else []
   let fp_src3_dff_gates :=
     if enableF then
       (List.range 4).flatMap (fun slot =>
@@ -5512,34 +5547,62 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
           let d := Wire.mk s!"fp_src3_tag{slot}_d_{bit}"
           [Gate.mkMUX fp_src3_tags[slot]![bit]! fp_rs3_phys[bit]! fp_src3_we[slot]! d,
            Gate.mkDFF d clock reset fp_src3_tags[slot]![bit]!]) ++
-        -- CDB snoop: compare stored tag vs cdb_tag_fp, write cdb_data_fp on match
+        -- Dual-channel CDB snoop: compare stored tag vs BOTH cdb_tag_0 and cdb_tag_1
+        -- Channel 0 comparison
         (List.range 6).flatMap (fun bit =>
-          [Gate.mkXOR fp_src3_tags[slot]![bit]! cdb_tag_fp[bit]! (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}"),
-           Gate.mkNOT (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}") (Wire.mk s!"fp_src3_cdb_eq{slot}_{bit}")]) ++
-        [Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_0") (Wire.mk s!"fp_src3_cdb_eq{slot}_1") (Wire.mk s!"fp_src3_cdb_and01_{slot}"),
-         Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_2") (Wire.mk s!"fp_src3_cdb_eq{slot}_3") (Wire.mk s!"fp_src3_cdb_and23_{slot}"),
-         Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_4") (Wire.mk s!"fp_src3_cdb_eq{slot}_5") (Wire.mk s!"fp_src3_cdb_and45_{slot}"),
-         Gate.mkAND (Wire.mk s!"fp_src3_cdb_and01_{slot}") (Wire.mk s!"fp_src3_cdb_and23_{slot}") (Wire.mk s!"fp_src3_cdb_and0123_{slot}"),
-         Gate.mkAND (Wire.mk s!"fp_src3_cdb_and0123_{slot}") (Wire.mk s!"fp_src3_cdb_and45_{slot}") (Wire.mk s!"fp_src3_cdb_tag_match_{slot}"),
-         Gate.mkAND (Wire.mk s!"fp_src3_cdb_tag_match_{slot}") cdb_valid_fp_prf (Wire.mk s!"fp_src3_cdb_we_{slot}")] ++
-        -- Data DFFs: alloc writes fp_rs3_data, CDB snoop writes cdb_data_fp, hold otherwise
+          [Gate.mkXOR fp_src3_tags[slot]![bit]! cdb_tag_0[bit]! (Wire.mk s!"fp_src3_cdb0_xor{slot}_{bit}"),
+           Gate.mkNOT (Wire.mk s!"fp_src3_cdb0_xor{slot}_{bit}") (Wire.mk s!"fp_src3_cdb0_eq{slot}_{bit}")]) ++
+        [Gate.mkAND (Wire.mk s!"fp_src3_cdb0_eq{slot}_0") (Wire.mk s!"fp_src3_cdb0_eq{slot}_1") (Wire.mk s!"fp_src3_cdb0_and01_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb0_eq{slot}_2") (Wire.mk s!"fp_src3_cdb0_eq{slot}_3") (Wire.mk s!"fp_src3_cdb0_and23_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb0_eq{slot}_4") (Wire.mk s!"fp_src3_cdb0_eq{slot}_5") (Wire.mk s!"fp_src3_cdb0_and45_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb0_and01_{slot}") (Wire.mk s!"fp_src3_cdb0_and23_{slot}") (Wire.mk s!"fp_src3_cdb0_and0123_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb0_and0123_{slot}") (Wire.mk s!"fp_src3_cdb0_and45_{slot}") (Wire.mk s!"fp_src3_cdb0_tag_match_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb0_tag_match_{slot}") cdb_valid_fp_ch0 (Wire.mk s!"fp_src3_cdb0_we_{slot}")] ++
+        -- Channel 1 comparison
+        (List.range 6).flatMap (fun bit =>
+          [Gate.mkXOR fp_src3_tags[slot]![bit]! cdb_tag_1[bit]! (Wire.mk s!"fp_src3_cdb1_xor{slot}_{bit}"),
+           Gate.mkNOT (Wire.mk s!"fp_src3_cdb1_xor{slot}_{bit}") (Wire.mk s!"fp_src3_cdb1_eq{slot}_{bit}")]) ++
+        [Gate.mkAND (Wire.mk s!"fp_src3_cdb1_eq{slot}_0") (Wire.mk s!"fp_src3_cdb1_eq{slot}_1") (Wire.mk s!"fp_src3_cdb1_and01_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb1_eq{slot}_2") (Wire.mk s!"fp_src3_cdb1_eq{slot}_3") (Wire.mk s!"fp_src3_cdb1_and23_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb1_eq{slot}_4") (Wire.mk s!"fp_src3_cdb1_eq{slot}_5") (Wire.mk s!"fp_src3_cdb1_and45_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb1_and01_{slot}") (Wire.mk s!"fp_src3_cdb1_and23_{slot}") (Wire.mk s!"fp_src3_cdb1_and0123_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb1_and0123_{slot}") (Wire.mk s!"fp_src3_cdb1_and45_{slot}") (Wire.mk s!"fp_src3_cdb1_tag_match_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb1_tag_match_{slot}") cdb_valid_fp_ch1 (Wire.mk s!"fp_src3_cdb1_we_{slot}"),
+         -- Combined: either channel matches
+         Gate.mkOR (Wire.mk s!"fp_src3_cdb0_we_{slot}") (Wire.mk s!"fp_src3_cdb1_we_{slot}") (Wire.mk s!"fp_src3_cdb_we_{slot}"),
+         -- Alloc-time bypass: OR regular CDB match with alloc+CDB coincidence
+         Gate.mkAND fp_src3_we[slot]! fp_src3_alloc_cdb_match (Wire.mk s!"fp_src3_alloc_byp_{slot}"),
+         Gate.mkOR (Wire.mk s!"fp_src3_cdb_we_{slot}") (Wire.mk s!"fp_src3_alloc_byp_{slot}") (Wire.mk s!"fp_src3_eff_cdb_we_{slot}")] ++
+        -- Data DFFs: alloc writes fp_rs3_data, CDB snoop writes merged cdb data, hold otherwise
+        -- Use eff_cdb_we to handle simultaneous alloc+CDB race
         (List.range 32).flatMap (fun bit =>
           let alloc_mux := Wire.mk s!"fp_src3_slot{slot}_am_{bit}"
           let d_mux := Wire.mk s!"fp_src3_slot{slot}_d_{bit}"
           [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! alloc_mux,
-           Gate.mkMUX alloc_mux cdb_data_fp[bit]! (Wire.mk s!"fp_src3_cdb_we_{slot}") d_mux,
+           Gate.mkMUX alloc_mux fp_src3_cdb_data[bit]! (Wire.mk s!"fp_src3_eff_cdb_we_{slot}") d_mux,
            Gate.mkDFF d_mux clock reset fp_src3_slots[slot]![bit]!]))
     else []
+  -- CDB bypass: when CDB wakes up an entry in the same cycle it dispatches,
+  -- the DFF still holds stale data. Bypass with cdb_data_fp for that entry.
   let fp_src3_read_gates :=
     if enableF then
       (List.range 32).flatMap (fun bit =>
+        -- Per-entry: MUX between DFF output and CDB data based on cdb_we
+        let byp0 := Wire.mk s!"fp_src3_byp0_{bit}"
+        let byp1 := Wire.mk s!"fp_src3_byp1_{bit}"
+        let byp2 := Wire.mk s!"fp_src3_byp2_{bit}"
+        let byp3 := Wire.mk s!"fp_src3_byp3_{bit}"
         let and0 := Wire.mk s!"fp_src3_rd0_{bit}"; let and1 := Wire.mk s!"fp_src3_rd1_{bit}"
         let and2 := Wire.mk s!"fp_src3_rd2_{bit}"; let and3 := Wire.mk s!"fp_src3_rd3_{bit}"
         let or01 := Wire.mk s!"fp_src3_or01_{bit}"; let or23 := Wire.mk s!"fp_src3_or23_{bit}"
-        [Gate.mkAND fp_src3_slots[0]![bit]! rs_fp_grant[0]! and0,
-         Gate.mkAND fp_src3_slots[1]![bit]! rs_fp_grant[1]! and1,
-         Gate.mkAND fp_src3_slots[2]![bit]! rs_fp_grant[2]! and2,
-         Gate.mkAND fp_src3_slots[3]![bit]! rs_fp_grant[3]! and3,
+        [Gate.mkMUX fp_src3_slots[0]![bit]! fp_src3_cdb_data[bit]! (Wire.mk "fp_src3_eff_cdb_we_0") byp0,
+         Gate.mkMUX fp_src3_slots[1]![bit]! fp_src3_cdb_data[bit]! (Wire.mk "fp_src3_eff_cdb_we_1") byp1,
+         Gate.mkMUX fp_src3_slots[2]![bit]! fp_src3_cdb_data[bit]! (Wire.mk "fp_src3_eff_cdb_we_2") byp2,
+         Gate.mkMUX fp_src3_slots[3]![bit]! fp_src3_cdb_data[bit]! (Wire.mk "fp_src3_eff_cdb_we_3") byp3,
+         Gate.mkAND byp0 rs_fp_grant[0]! and0,
+         Gate.mkAND byp1 rs_fp_grant[1]! and1,
+         Gate.mkAND byp2 rs_fp_grant[2]! and2,
+         Gate.mkAND byp3 rs_fp_grant[3]! and3,
          Gate.mkOR and0 and1 or01, Gate.mkOR and2 and3 or23,
          Gate.mkOR or01 or23 fp_src3_dispatch[bit]!])
     else []
@@ -6470,8 +6533,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkAND fp_drain_mode fp_busy_eu fp_drain_hold,
        Gate.mkOR pipeline_flush_comb fp_drain_hold fp_drain_mode_d,
        Gate.mkDFF fp_drain_mode_d clock reset fp_drain_mode] ++
-      -- Suppress = shift register OR drain mode
-      [Gate.mkOR fp_flush_suppress fp_drain_mode fp_stale_suppress,
+      -- Suppress = drain mode only (shift register is too aggressive for single-cycle FP ops)
+      [Gate.mkBUF fp_drain_mode fp_stale_suppress,
        Gate.mkNOT fp_stale_suppress not_fp_stale_suppress,
        Gate.mkAND fp_valid_out not_fp_stale_suppress fp_enq_valid_gated]
     else
@@ -6628,14 +6691,30 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       rob_head_idx_0 rob_head_idx_1
 
   -- commit_store_en: fires when either commit slot retires a store
-  -- For now, single commit_store_en (OR of both slots). Store buffer advances commit_ptr by 1.
-  -- Two stores in same cycle: second store commits next cycle (slot 1 re-signals).
+  -- Store buffer advances commit_ptr by 1 per pulse.
+  -- When both slots retire stores in the same cycle, a pending DFF replays
+  -- the second commit on the following cycle.
   let commit_store_0 := Wire.mk "commit_store_s0"
   let commit_store_1 := Wire.mk "commit_store_s1"
+  let commit_store_both := Wire.mk "commit_store_both"
+  let commit_store_pending := Wire.mk "commit_store_pending"
+  let commit_store_pending_next := Wire.mk "commit_store_pending_next"
   let commit_store_gate :=
     [Gate.mkAND retire_valid_0 rob_head_isStore_0 commit_store_0,
      Gate.mkAND retire_valid_1 rob_head_isStore_1 commit_store_1,
-     Gate.mkOR commit_store_0 commit_store_1 commit_store_en]
+     -- commit_store_en = OR(s0, s1, pending) — at most 1 SB commit per cycle
+     Gate.mkOR commit_store_0 commit_store_1 (Wire.mk "commit_store_new"),
+     Gate.mkOR (Wire.mk "commit_store_new") commit_store_pending commit_store_en,
+     -- pending_next = (total >= 2): (both new) OR (one new AND pending)
+     Gate.mkAND commit_store_0 commit_store_1 commit_store_both,
+     Gate.mkAND (Wire.mk "commit_store_new") commit_store_pending (Wire.mk "commit_store_new_and_pend"),
+     Gate.mkOR commit_store_both (Wire.mk "commit_store_new_and_pend") (Wire.mk "commit_store_pend_raw"),
+     -- Clear on flush
+     Gate.mkAND (Wire.mk "commit_store_pend_raw") (Wire.mk "not_flush_comb") commit_store_pending_next]
+  let commit_store_pending_dff : CircuitInstance :=
+    { moduleName := "DFlipFlop", instName := "u_commit_store_pending",
+      portMap := [("d", commit_store_pending_next), ("q", commit_store_pending),
+                  ("clock", clock), ("reset", reset)] }
 
   -- RS issue_full:
   -- INT RS dispatches to BOTH banks each cycle, so full = NOT(avail_0 AND avail_1)
@@ -7149,7 +7228,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fp_dest_tag_gates ++ fp_crossdomain_gates ++
              [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_raw_bypass_gates ++ fp_ready_gates ++ fp_cdb_fwd_gates ++ crossdomain_stall_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++ fp_supp_gates ++
-             fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
+             fp_src3_alloc_decode ++ fp_src3_alloc_cdb_gates ++ fp_src3_cdb_data_mux ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
              fp_op_gates ++ fp_flush_reset_gates ++
              rs_full_gates ++ clb_gates ++ stall_gates ++ dmem_gates ++ rvvi_gates ++ rvvi_pc_insn_gates ++ output_gates ++
@@ -7191,7 +7270,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  trap_seq_insts ++ cdb_fwd_rs1_insts ++
                  [pc_queue_inst, insn_queue_inst] ++
                  csr_reg_instances ++ csr_counter_instances ++
-                 fflags_frm_dff_instances
+                 fflags_frm_dff_instances ++
+                 [commit_store_pending_dff]
   }
 
 end Shoumei.RISCV.CPU_W2

@@ -224,7 +224,11 @@ def mkFetchStage : Circuit :=
                         Gate.mkAND (Wire.mk "not0_op4") (Wire.mk "not0_op3") (Wire.mk "bt0_43"),
                         Gate.mkAND (Wire.mk "bt0_65") (Wire.mk "bt0_43") (Wire.mk "bt0_6543"),
                         Gate.mkAND (Wire.mk "bt0_6543") (Wire.mk "not0_op2") is_btype_0]
-  let jal_gates_0   := [Gate.mkAND instr_0[6]! instr_0[3]! is_jal_0]
+  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1
+  -- (must check bit[5] to distinguish from R4-type FP: FMADD=1000011, FNMADD=1001111 etc.)
+  let jal_gates_0   := [Gate.mkAND instr_0[6]! instr_0[5]! (Wire.mk "jal0_65"),
+                         Gate.mkAND instr_0[3]! instr_0[2]! (Wire.mk "jal0_32"),
+                         Gate.mkAND (Wire.mk "jal0_65") (Wire.mk "jal0_32") is_jal_0]
   let b_ext_0 : List Gate :=
     [Gate.mkBUF const_0 b_imm_0[0]!] ++
     (List.range 4).map  (fun i => Gate.mkBUF instr_0[8+i]!  b_imm_0[1+i]!) ++
@@ -266,7 +270,10 @@ def mkFetchStage : Circuit :=
                         Gate.mkAND (Wire.mk "not1_op4") (Wire.mk "not1_op3") (Wire.mk "bt1_43"),
                         Gate.mkAND (Wire.mk "bt1_65") (Wire.mk "bt1_43") (Wire.mk "bt1_6543"),
                         Gate.mkAND (Wire.mk "bt1_6543") (Wire.mk "not1_op2") is_btype_1]
-  let jal_gates_1   := [Gate.mkAND instr_1[6]! instr_1[3]! is_jal_1]
+  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1
+  let jal_gates_1   := [Gate.mkAND instr_1[6]! instr_1[5]! (Wire.mk "jal1_65"),
+                         Gate.mkAND instr_1[3]! instr_1[2]! (Wire.mk "jal1_32"),
+                         Gate.mkAND (Wire.mk "jal1_65") (Wire.mk "jal1_32") is_jal_1]
   let b_ext_1 : List Gate :=
     [Gate.mkBUF const_0 b_imm_1[0]!] ++
     (List.range 4).map  (fun i => Gate.mkBUF instr_1[8+i]!  b_imm_1[1+i]!) ++
