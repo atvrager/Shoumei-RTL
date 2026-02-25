@@ -815,17 +815,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
     else ([], [])
 
   -- === FP SRC3 BUSY CHECK ===
-  -- Read the FP busy table at fp_rs3_phys to check if src3 is still pending.
-  -- If busy AND rs3 is used (FMA instruction), stall FP dispatch.
-  let fp_src3_busy := Wire.mk "fp_src3_busy"
-  let fp_src3_stall := Wire.mk "fp_src3_stall"
-  let fp_src3_busy_gates :=
-    if enableF then
-      let busy_cur := (List.range 64).map fun i => Wire.mk s!"fp_busy_q_{i}"
-      mkMux64to1 busy_cur fp_rs3_phys "fp_src3_bm" fp_src3_busy ++
-      [Gate.mkAND fp_src3_busy decode_fp_rs3_used fp_src3_stall]
-    else
-      [Gate.mkBUF zero fp_src3_busy, Gate.mkBUF zero fp_src3_stall]
+  -- FP src3 stall removed; CDB snoop on src3 sidecar handles the wakeup instead
+  let fp_src3_busy_gates : List Gate := []
 
   -- === FP CDB FORWARDING ===
   let fp_issue_src1_ready := Wire.mk "fp_issue_src1_ready"
@@ -1322,16 +1313,43 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkAND (Wire.mk "fp_src3_sel3") dispatch_fp_valid fp_src3_we[3]!]
     else []
 
-  -- 4 slots × 32 DFFs each, with write-enable MUX
+  -- 4 slots × 32 DFFs each, with write-enable MUX + CDB snoop
+  -- Also store 6-bit src3 tag per entry for CDB matching
   let fp_src3_slots := (List.range 4).map (fun slot =>
     makeIndexedWires s!"fp_src3_slot{slot}" 32)
+  let fp_src3_tags := (List.range 4).map (fun slot =>
+    makeIndexedWires s!"fp_src3_tag{slot}" 6)
   let fp_src3_dff_gates :=
     if enableF then
-      (List.range 4).flatMap (fun slot =>
+      -- Tag DFFs: store fp_rs3_phys when alloc, hold otherwise
+      let tag_dffs := (List.range 4).flatMap (fun slot =>
+        (List.range 6).flatMap (fun bit =>
+          let d := Wire.mk s!"fp_src3_tag{slot}_d_{bit}"
+          [Gate.mkMUX fp_src3_tags[slot]![bit]! fp_rs3_phys[bit]! fp_src3_we[slot]! d,
+           Gate.mkDFF d clock reset fp_src3_tags[slot]![bit]!]))
+      -- CDB snoop: compare stored tag vs cdb_tag_fp, write cdb_data_fp on match
+      let cdb_snoop := (List.range 4).flatMap (fun slot =>
+        -- 6-bit equality: XNOR + AND tree
+        let eq_bits := (List.range 6).flatMap (fun bit =>
+          [Gate.mkXOR fp_src3_tags[slot]![bit]! cdb_tag_fp[bit]! (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}"),
+           Gate.mkNOT (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}") (Wire.mk s!"fp_src3_cdb_eq{slot}_{bit}")])
+        let and_tree :=
+          [Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_0") (Wire.mk s!"fp_src3_cdb_eq{slot}_1") (Wire.mk s!"fp_src3_cdb_and01_{slot}"),
+           Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_2") (Wire.mk s!"fp_src3_cdb_eq{slot}_3") (Wire.mk s!"fp_src3_cdb_and23_{slot}"),
+           Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_4") (Wire.mk s!"fp_src3_cdb_eq{slot}_5") (Wire.mk s!"fp_src3_cdb_and45_{slot}"),
+           Gate.mkAND (Wire.mk s!"fp_src3_cdb_and01_{slot}") (Wire.mk s!"fp_src3_cdb_and23_{slot}") (Wire.mk s!"fp_src3_cdb_and0123_{slot}"),
+           Gate.mkAND (Wire.mk s!"fp_src3_cdb_and0123_{slot}") (Wire.mk s!"fp_src3_cdb_and45_{slot}") (Wire.mk s!"fp_src3_cdb_tag_match_{slot}"),
+           Gate.mkAND (Wire.mk s!"fp_src3_cdb_tag_match_{slot}") cdb_valid_fp_prf (Wire.mk s!"fp_src3_cdb_we_{slot}")]
+        eq_bits ++ and_tree)
+      -- Data DFFs: alloc writes fp_rs3_data, CDB snoop writes cdb_data_fp, hold otherwise
+      let data_dffs := (List.range 4).flatMap (fun slot =>
         (List.range 32).flatMap (fun bit =>
+          let alloc_mux := Wire.mk s!"fp_src3_slot{slot}_am_{bit}"
           let d_mux := Wire.mk s!"fp_src3_slot{slot}_d_{bit}"
-          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! d_mux,
+          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! alloc_mux,
+           Gate.mkMUX alloc_mux cdb_data_fp[bit]! (Wire.mk s!"fp_src3_cdb_we_{slot}") d_mux,
            Gate.mkDFF d_mux clock reset fp_src3_slots[slot]![bit]!]))
+      tag_dffs ++ cdb_snoop ++ data_dffs
     else []
 
   -- Read mux: one-hot grant selects which slot's data to output
@@ -2444,15 +2462,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkOR rs_branch_issue_full rs_muldiv_issue_full stall_L0_c,
        Gate.mkOR rs_fp_issue_full fp_rename_stall stall_L0_d,
        Gate.mkOR fp_crossdomain_stall mem_fp_src_stall stall_L0_e,
-       -- L1: pair up 5+2 (fp_src3_stall, lsu_sb_full) → 4
+       -- L1: pair up sources
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c stall_L0_d stall_L1_b,
-       Gate.mkOR stall_L0_e fp_src3_stall stall_L1_c,
-       -- L2: 3+1 → 2
+       Gate.mkOR stall_L0_e lsu_sb_full stall_L1_c,
+       -- L2: final
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
-       Gate.mkOR stall_L1_c lsu_sb_full (Wire.mk "stall_L2b"),
-       -- L3: final + external DMEM stall
-       Gate.mkOR stall_L2 (Wire.mk "stall_L2b") (Wire.mk "global_stall_int"),
+       Gate.mkOR stall_L2 stall_L1_c (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else if enableM then
       -- 6 sources → balanced tree depth 3
@@ -2469,12 +2485,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
        Gate.mkOR rs_int_issue_full rs_mem_issue_full stall_L0_b,
        Gate.mkOR rs_branch_issue_full rs_fp_issue_full stall_L0_c,
        Gate.mkOR fp_rename_stall fp_crossdomain_stall stall_L0_d,
-       Gate.mkOR mem_fp_src_stall fp_src3_stall stall_L0_e,
+       Gate.mkOR mem_fp_src_stall lsu_sb_full stall_L0_e,
        Gate.mkOR stall_L0_a stall_L0_b stall_L1_a,
        Gate.mkOR stall_L0_c stall_L0_d stall_L1_b,
-       Gate.mkOR stall_L0_e lsu_sb_full stall_L1_c,
        Gate.mkOR stall_L1_a stall_L1_b stall_L2,
-       Gate.mkOR stall_L2 stall_L1_c (Wire.mk "global_stall_int"),
+       Gate.mkOR stall_L2 stall_L0_e (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       -- 5 sources → balanced tree depth 3
@@ -4375,7 +4390,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "retire_tag" (CPU.makeIndexedWires "cmt_retag_mux_0" 6) ++
                [("retire_valid_1", retire_valid_1)] ++
                bundledPorts "retire_tag_1" retire_tag_bt_1 ++
-               -- FP rs3 addresses (tied to zero, no FP dispatch yet)
+               -- rs3_addr: tied to zero (INT has no FMA rs3)
                ((List.range 5).map fun i => (s!"rs3_addr_{i}", zero)) ++
                ((List.range 5).map fun i => (s!"rs3_addr_1_{i}", zero)) ++
                -- Commit hasPhysRd/hasAllocSlot: slot 0 muxed with CSR inject
@@ -4403,7 +4418,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let (busy_gates, busy_insts) := mkBusyBitTable2
     clock reset flush_busy_groups zero one
     rd_phys_0 rd_phys_1 busy_set_en_0 busy_set_en_1
-    cdb_tag_0 cdb_tag_1 cdb_valid_0 cdb_valid_1
+    cdb_tag_0 cdb_tag_1
+    (if enableF then Wire.mk "cdb_valid_int_0" else cdb_valid_0)
+    (if enableF then Wire.mk "cdb_valid_int_1" else cdb_valid_1)
     rs1_phys_0 rs2_phys_0 rs1_phys_1 rs2_phys_1
     d0_use_imm d1_use_imm
     src1_ready_0 src2_ready_0 (Wire.mk "src2_ready0_reg")
@@ -5074,23 +5091,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       "fp_busy"
     else ([], [])
 
-  -- FP src3 busy stall: read busy table at rs3 phys tag, stall if busy AND rs3 used (FMA)
-  -- Uses a DFF to register the stall signal, breaking the combinational loop:
-  -- global_stall → dispatch_valid → fp_route_sel → fp_mux_rs3 → rename → fp_rs3_phys → busy → stall
-  let fp_src3_busy := Wire.mk "fp_src3_busy"
-  let fp_src3_stall := Wire.mk "fp_src3_stall"
-  let fp_src3_stall_reg := Wire.mk "fp_src3_stall_reg"
-  let fp_src3_busy_gates :=
-    if enableF then
-      let busy_cur := (List.range 64).map fun i => Wire.mk s!"fp_busy_q_{i}"
-      let any_rs3_used := Wire.mk "fp_any_rs3_used"
-      mkMux64to1 busy_cur fp_rs3_phys "fp_src3_bm" fp_src3_busy ++
-      [Gate.mkOR d0_fp_rs3_used d1_fp_rs3_used any_rs3_used,
-       Gate.mkAND fp_src3_busy any_rs3_used fp_src3_stall,
-       Gate.mkDFF fp_src3_stall clock reset fp_src3_stall_reg]
-    else
-      [Gate.mkBUF zero fp_src3_busy, Gate.mkBUF zero fp_src3_stall,
-       Gate.mkBUF zero fp_src3_stall_reg]
+  -- FP src3: no stall needed; CDB snoop in sidecar handles wakeup
+  let fp_src3_busy_gates : List Gate := []
 
   -- FP source readiness: merge busy table + CDB forwarding
   -- Simplified: just use busy table results (no CDB forwarding for FP domain yet)
@@ -5211,12 +5213,33 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else []
   let fp_src3_slots := (List.range 4).map (fun slot =>
     CPU.makeIndexedWires s!"fp_src3_slot{slot}" 32)
+  -- Tag storage for CDB snoop matching
+  let fp_src3_tags := (List.range 4).map (fun slot =>
+    CPU.makeIndexedWires s!"fp_src3_tag{slot}" 6)
   let fp_src3_dff_gates :=
     if enableF then
       (List.range 4).flatMap (fun slot =>
+        -- Tag DFFs: store fp_rs3_phys when alloc, hold otherwise
+        (List.range 6).flatMap (fun bit =>
+          let d := Wire.mk s!"fp_src3_tag{slot}_d_{bit}"
+          [Gate.mkMUX fp_src3_tags[slot]![bit]! fp_rs3_phys[bit]! fp_src3_we[slot]! d,
+           Gate.mkDFF d clock reset fp_src3_tags[slot]![bit]!]) ++
+        -- CDB snoop: compare stored tag vs cdb_tag_fp, write cdb_data_fp on match
+        (List.range 6).flatMap (fun bit =>
+          [Gate.mkXOR fp_src3_tags[slot]![bit]! cdb_tag_fp[bit]! (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}"),
+           Gate.mkNOT (Wire.mk s!"fp_src3_cdb_xor{slot}_{bit}") (Wire.mk s!"fp_src3_cdb_eq{slot}_{bit}")]) ++
+        [Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_0") (Wire.mk s!"fp_src3_cdb_eq{slot}_1") (Wire.mk s!"fp_src3_cdb_and01_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_2") (Wire.mk s!"fp_src3_cdb_eq{slot}_3") (Wire.mk s!"fp_src3_cdb_and23_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb_eq{slot}_4") (Wire.mk s!"fp_src3_cdb_eq{slot}_5") (Wire.mk s!"fp_src3_cdb_and45_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb_and01_{slot}") (Wire.mk s!"fp_src3_cdb_and23_{slot}") (Wire.mk s!"fp_src3_cdb_and0123_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb_and0123_{slot}") (Wire.mk s!"fp_src3_cdb_and45_{slot}") (Wire.mk s!"fp_src3_cdb_tag_match_{slot}"),
+         Gate.mkAND (Wire.mk s!"fp_src3_cdb_tag_match_{slot}") cdb_valid_fp_prf (Wire.mk s!"fp_src3_cdb_we_{slot}")] ++
+        -- Data DFFs: alloc writes fp_rs3_data, CDB snoop writes cdb_data_fp, hold otherwise
         (List.range 32).flatMap (fun bit =>
+          let alloc_mux := Wire.mk s!"fp_src3_slot{slot}_am_{bit}"
           let d_mux := Wire.mk s!"fp_src3_slot{slot}_d_{bit}"
-          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! d_mux,
+          [Gate.mkMUX fp_src3_slots[slot]![bit]! fp_rs3_data[bit]! fp_src3_we[slot]! alloc_mux,
+           Gate.mkMUX alloc_mux cdb_data_fp[bit]! (Wire.mk s!"fp_src3_cdb_we_{slot}") d_mux,
            Gate.mkDFF d_mux clock reset fp_src3_slots[slot]![bit]!]))
     else []
   let fp_src3_read_gates :=
@@ -6319,7 +6342,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR (Wire.mk "stall_L0_a") (Wire.mk "stall_L0_b") (Wire.mk "stall_L1_a"),
        Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "stall_L1_b"),
        Gate.mkOR (Wire.mk "stall_L1_b") rs_fp_issue_full (Wire.mk "stall_L1_c"),
-       Gate.mkOR (Wire.mk "stall_L1_c") fp_src3_stall_reg (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "stall_L1_c") lsu_sb_full (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       [Gate.mkOR br_dual_stall cache_line_boundary any_dual_stall,
