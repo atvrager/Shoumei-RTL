@@ -136,7 +136,7 @@ static uint32_t find_tohost_addr(const char* path) {
     return 0x1000;
 }
 
-// Extract RVVI signals from the RTL DUT
+// Extract RVVI signals from the RTL DUT (per-slot)
 struct RVVIState {
     bool     valid;
     bool     trap;
@@ -145,25 +145,29 @@ struct RVVIState {
     uint32_t rd;        // architectural destination register
     bool     rd_valid;
     uint32_t rd_data;
-    uint32_t frd;       // FP architectural destination register
-    bool     frd_valid;
-    uint32_t frd_data;
-    uint32_t fflags;    // Accumulated FP exception flags
 };
 
-static RVVIState read_rvvi(const Vtb_cpu* dut) {
+static RVVIState read_rvvi_slot0(const Vtb_cpu* dut) {
     RVVIState s = {};
-    s.valid    = dut->o_rvvi_valid;
-    s.trap     = dut->o_rvvi_trap;
-    s.pc       = dut->o_rvvi_pc_rdata;
-    s.insn     = dut->o_rvvi_insn;
-    s.rd       = dut->o_rvvi_rd;
-    s.rd_valid = dut->o_rvvi_rd_valid;
-    s.rd_data  = dut->o_rvvi_rd_data;
-    s.frd      = dut->o_rvvi_frd;
-    s.frd_valid = dut->o_rvvi_frd_valid;
-    s.frd_data = dut->o_rvvi_frd_data;
-    s.fflags   = dut->o_fflags_acc;
+    s.valid    = dut->o_rvvi_valid_0;
+    s.trap     = dut->o_rvvi_trap_0;
+    s.pc       = dut->o_rvvi_pc_rdata_0;
+    s.insn     = dut->o_rvvi_insn_0;
+    s.rd       = dut->o_rvvi_rd_0;
+    s.rd_valid = dut->o_rvvi_rd_valid_0;
+    s.rd_data  = dut->o_rvvi_rd_data_0;
+    return s;
+}
+
+static RVVIState read_rvvi_slot1(const Vtb_cpu* dut) {
+    RVVIState s = {};
+    s.valid    = dut->o_rvvi_valid_1;
+    s.trap     = dut->o_rvvi_trap_1;
+    s.pc       = dut->o_rvvi_pc_rdata_1;
+    s.insn     = dut->o_rvvi_insn_1;
+    s.rd       = dut->o_rvvi_rd_1;
+    s.rd_valid = dut->o_rvvi_rd_valid_1;
+    s.rd_data  = dut->o_rvvi_rd_data_1;
     return s;
 }
 
@@ -213,144 +217,116 @@ int main(int argc, char** argv) {
     uint64_t mismatches = 0;
     bool done = false;
 
+    // Lambda to compare one RVVI slot against Spike + LeanSim
+    auto compare_slot = [&](const RVVIState& rvvi, int slot) {
+        // Step Spike, advancing past instructions the RTL doesn't
+        // report (e.g. branches/jumps resolved in the fetch stage)
+        SpikeStepResult spike_r = spike->step();
+        int skip = 0;
+        while (spike_r.pc != rvvi.pc && skip < 32) {
+            if (is_unsyncable_csr_read(spike_r.insn) && spike_r.rd != 0) {
+                uint32_t csr_addr = (spike_r.insn >> 20) & 0xfff;
+                if (csr_addr == 0xB02 || csr_addr == 0xC02) {
+                    spike->set_xreg(spike_r.rd, spike_r.rd_value - 1);
+                }
+            }
+            spike_r = spike->step();
+            skip++;
+        }
+
+        // Sync perf counter CSR reads visible via RVVI
+        bool skip_rd_cmp = false;
+        if (is_unsyncable_csr_read(rvvi.insn)) {
+            if (rvvi.rd_valid && spike_r.rd != 0) {
+                spike->set_xreg(spike_r.rd, rvvi.rd_data);
+            }
+            skip_rd_cmp = true;
+        }
+
+        // Compare PC
+        if (rvvi.pc != spike_r.pc) {
+            fprintf(stderr,
+                "MISMATCH ret#%lu cy%lu slot%d: "
+                "PC RTL=0x%08x Spike=0x%08x (skip %d)\n",
+                retired, cycle, slot, rvvi.pc, spike_r.pc, skip);
+            mismatches++;
+        }
+
+        // Compare instruction word
+        if (rvvi.insn != spike_r.insn) {
+            fprintf(stderr,
+                "MISMATCH ret#%lu cy%lu slot%d: "
+                "insn RTL=0x%08x Spike=0x%08x\n",
+                retired, cycle, slot, rvvi.insn, spike_r.insn);
+            mismatches++;
+        }
+
+        // Compare integer register writeback
+        if (rvvi.rd_valid && spike_r.rd != 0 && !skip_rd_cmp) {
+            if (rvvi.rd_data != spike_r.rd_value) {
+                fprintf(stderr,
+                    "MISMATCH ret#%lu cy%lu slot%d: "
+                    "PC=0x%08x insn=0x%08x x%u RTL=0x%08x Spike=0x%08x\n",
+                    retired, cycle, slot, rvvi.pc, rvvi.insn,
+                    spike_r.rd, rvvi.rd_data, spike_r.rd_value);
+                mismatches++;
+            }
+        }
+
+        // FP register comparison: not available in W=2 RVVI yet
+        // TODO: add FP RVVI outputs to CPU and compare here
+
+        // 3-way: compare C++ sim
+        LeanSimStepResult cs_r = lean_sim->step();
+        if (!cs_r.done) {
+            if (rvvi.pc != cs_r.pc) {
+                fprintf(stderr,
+                    "MISMATCH ret#%lu cy%lu slot%d: "
+                    "PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\n",
+                    retired, cycle, slot, rvvi.pc, cs_r.pc, spike_r.pc);
+                if (cs_r.pc == spike_r.pc)
+                    fprintf(stderr, "  -> SV codegen bug (RTL wrong, LeanSim+Spike agree)\n");
+                else if (rvvi.pc == cs_r.pc)
+                    fprintf(stderr, "  -> Spike disagree (RTL+LeanSim agree)\n");
+                else
+                    fprintf(stderr, "  -> Lean circuit bug (RTL+LeanSim both wrong)\n");
+                mismatches++;
+            }
+            if (cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid) {
+                if (cs_r.rd_data != rvvi.rd_data) {
+                    fprintf(stderr,
+                        "MISMATCH ret#%lu cy%lu slot%d: "
+                        "x%u RTL=0x%08x LeanSim=0x%08x\n",
+                        retired, cycle, slot, cs_r.rd, rvvi.rd_data, cs_r.rd_data);
+                    mismatches++;
+                }
+            }
+        }
+
+        retired++;
+    };
+
     while (!done && cycle < timeout) {
         // Posedge
         dut->clk = 1;
         dut->eval();
 
-        // Check RVVI
-        RVVIState rvvi = read_rvvi(dut.get());
-        if (rvvi.valid) {
-            // Step Spike, advancing past instructions the RTL doesn't
-            // report (e.g. branches/jumps resolved in the fetch stage)
-            SpikeStepResult spike_r = spike->step();
-            int skip = 0;
-            while (spike_r.pc != rvvi.pc && skip < 32) {
-                // Spike stepped through an instruction RTL doesn't report via RVVI.
-                // If it was a perf counter CSR read, Spike's register value may
-                // differ from RTL's (mcycle differs entirely; minstret off-by-one).
-                // We can't know RTL's exact value, but for minstret the spec says
-                // the read returns the pre-increment count, so subtract 1 from
-                // Spike's post-increment value. For mcycle, we just zero the reg
-                // since RTL and Spike cycle counts are fundamentally different.
-                if (is_unsyncable_csr_read(spike_r.insn) && spike_r.rd != 0) {
-                    uint32_t csr_addr = (spike_r.insn >> 20) & 0xfff;
-                    if (csr_addr == 0xB02 || csr_addr == 0xC02) {
-                        // minstret: Spike returns post-increment, RTL returns pre-increment
-                        spike->set_xreg(spike_r.rd, spike_r.rd_value - 1);
-                    }
-                    // mcycle/mcycleh: leave Spike's value as-is (nonzero, close enough)
-                }
-                spike_r = spike->step();
-                skip++;
-            }
+        // Check RVVI — dual-slot retirement
+        RVVIState rvvi0 = read_rvvi_slot0(dut.get());
+        RVVIState rvvi1 = read_rvvi_slot1(dut.get());
 
-            // Sync perf counter CSR reads visible via RVVI
-            bool skip_rd_cmp = false;
-            if (is_unsyncable_csr_read(rvvi.insn)) {
-                if (rvvi.rd_valid && spike_r.rd != 0) {
-                    spike->set_xreg(spike_r.rd, rvvi.rd_data);
-                }
-                skip_rd_cmp = true;
-            }
+        // Slot 0 retires first (in program order)
+        if (rvvi0.valid) {
+            compare_slot(rvvi0, 0);
+        }
+        // Slot 1 retires second
+        if (rvvi1.valid) {
+            compare_slot(rvvi1, 1);
+        }
 
-            // Compare PC
-            if (rvvi.pc != spike_r.pc) {
-                fprintf(stderr,
-                    "MISMATCH at retirement #%lu (cycle %lu): "
-                    "PC RTL=0x%08x Spike=0x%08x (skipped %d)\n",
-                    retired, cycle, rvvi.pc, spike_r.pc, skip);
-                mismatches++;
-            }
-
-            // Compare instruction word
-            if (rvvi.insn != spike_r.insn) {
-                fprintf(stderr,
-                    "MISMATCH at retirement #%lu (cycle %lu): "
-                    "insn RTL=0x%08x Spike=0x%08x\n",
-                    retired, cycle, rvvi.insn, spike_r.insn);
-                mismatches++;
-            }
-
-            // Compare integer register writeback
-            if (rvvi.rd_valid && spike_r.rd != 0 && !skip_rd_cmp) {
-                if (rvvi.rd_data != spike_r.rd_value) {
-                    fprintf(stderr,
-                        "MISMATCH at retirement #%lu (cycle %lu): "
-                        "x%u RTL=0x%08x Spike=0x%08x (rd_data)\n",
-                        retired, cycle, spike_r.rd, rvvi.rd_data, spike_r.rd_value);
-                    mismatches++;
-                }
-            }
-
-            // Compare FP register writeback
-            // Note: Spike detects FP writes by register diff, so if the value
-            // doesn't change Spike won't report frd_valid.  RTL always reports
-            // frd_valid for FP-write instructions.  Only flag a real mismatch
-            // when both sides report a write but the data differs.
-            if (spike_r.frd_valid && rvvi.frd_valid) {
-                if (rvvi.frd_data != spike_r.frd_value) {
-                    fprintf(stderr,
-                        "MISMATCH at retirement #%lu (cycle %lu): "
-                        "f%u RTL=0x%08x Spike=0x%08x (frd_data)\n",
-                        retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);
-                    mismatches++;
-                }
-            } else if (spike_r.frd_valid && !rvvi.frd_valid) {
-                // Spike saw an FP write but RTL didn't — real bug
-                fprintf(stderr,
-                    "MISMATCH at retirement #%lu (cycle %lu): "
-                    "frd_valid RTL=%d Spike=%d\n",
-                    retired, cycle, rvvi.frd_valid, spike_r.frd_valid);
-                mismatches++;
-            }
-
-            // Note: fflags comparison is skipped here.  The RTL accumulates
-            // fflags at FP *execution* time (CDB broadcast), not at *retirement*
-            // time, so the architectural fflags can appear to update early relative
-            // to instruction retirement order.  Correctness of fflags is verified
-            // indirectly: when the test program reads fflags via CSRRS/CSRRW, the
-            // value flows into a GPR which IS compared via rd_data above.
-            // TODO: buffer FP exceptions in the ROB and accumulate at commit time
-            // for architecturally precise fflags tracking.
-
-            // 3-way: compare C++ sim
-            LeanSimStepResult cs_r = lean_sim->step();
-            if (!cs_r.done) {
-                if (rvvi.pc != cs_r.pc) {
-                    fprintf(stderr,
-                        "MISMATCH at retirement #%lu (cycle %lu): "
-                        "PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\n",
-                        retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);
-                    // Fault isolation
-                    if (cs_r.pc == spike_r.pc)
-                        fprintf(stderr, "  -> SV codegen bug (RTL wrong, LeanSim+Spike agree)\n");
-                    else if (rvvi.pc == cs_r.pc)
-                        fprintf(stderr, "  -> Spike disagree (RTL+LeanSim agree)\n");
-                    else
-                        fprintf(stderr, "  -> Lean circuit bug (RTL+LeanSim both wrong)\n");
-                    mismatches++;
-                }
-                if (cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid) {
-                    if (cs_r.rd_data != rvvi.rd_data) {
-                        fprintf(stderr,
-                            "MISMATCH at retirement #%lu (cycle %lu): "
-                            "x%u RTL=0x%08x LeanSim=0x%08x\n",
-                            retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);
-                        mismatches++;
-                    }
-                }
-            }
-
-            retired++;
-
-            // Check for tohost write (test completion)
-            // tohost is at address 0x1000 in our test programs
-            // The testbench SV checks this internally, but we also monitor
-            if (mismatches > 10) {
-                fprintf(stderr, "Too many mismatches, aborting.\n");
-                done = true;
-            }
+        if (mismatches > 10) {
+            fprintf(stderr, "Too many mismatches\n");
+            done = true;
         }
 
         // Check for test completion (tohost write)

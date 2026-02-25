@@ -31,17 +31,17 @@ def rs4W2 := mkReservationStationFromConfig defaultCPUConfig
 
 /-! ## Structural Proofs -/
 
-theorem rs4w2_input_count : rs4W2.inputs.length = 268 := by native_decide
+theorem rs4w2_input_count : rs4W2.inputs.length = 278 := by native_decide
 theorem rs4w2_output_count : rs4W2.outputs.length = 162 := by native_decide
 theorem rs4w2_instance_count : rs4W2.instances.length = 12 := by native_decide
-theorem rs4w2_gate_count : rs4W2.gates.length = 2248 := by native_decide
+theorem rs4w2_gate_count : rs4W2.gates.length = 2328 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 
 /-- ReservationStation W=2 Building Block Dependencies -/
 def rs4w2_dependencies : List String := [
   "Register1",          -- Allocation pointer bits
-  "Register91",         -- Entry storage (91-bit register x 4)
+  "Register94",         -- Entry storage (94-bit register x 4, 7-bit domain-tagged RS tags)
   "PriorityArbiter2"   -- Ready selection (2-input priority arbiter)
 ]
 

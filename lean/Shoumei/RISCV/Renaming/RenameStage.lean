@@ -324,6 +324,8 @@ def mkRenameStage : Circuit :=
   let rs3_addr_0     := (List.range archWidth).map fun i => Wire.mk s!"rs3_addr_{i}"
   let rd_addr_0      := (List.range archWidth).map fun i => Wire.mk s!"rd_addr_{i}"
   let force_alloc_0  := Wire.mk "force_alloc"
+  -- When skip_x0_detect is high, rd_addr=0 is treated as a normal register (for FP domain)
+  let skip_x0_detect := Wire.mk "skip_x0_detect"
 
   -- === Slot 1 instruction inputs ===
   let instr_valid_1  := Wire.mk "instr_valid_1"
@@ -348,6 +350,9 @@ def mkRenameStage : Circuit :=
   let commit_physRd_1     := (List.range tagWidth).map  fun i => Wire.mk s!"commit_physRd_1_{i}"
   let commit_hasPhysRd_1  := Wire.mk "commit_hasPhysRd_1"
   let commit_hasAllocSlot_1 := Wire.mk "commit_hasAllocSlot_1"
+  -- force_commit bypasses x0 detection in CRAT (for FP domain where f0 is a normal register)
+  let commit_force_alloc_0 := Wire.mk "commit_force_alloc"
+  let commit_force_alloc_1 := Wire.mk "commit_force_alloc_1"
 
   -- === CDB / retire ===
   let cdb_valid_0  := Wire.mk "cdb_valid"
@@ -423,14 +428,18 @@ def mkRenameStage : Circuit :=
     (List.range 3).map (fun i => Gate.mkOR rd_or_1[i]! rd_addr_1[i+2]! rd_or_1[i+1]!) ++
     [Gate.mkNOT rd_or_1[3]! x0_1]
 
-  -- needs_alloc_{k} = has_rd_{k} AND NOT(x0_{k})
+  -- needs_alloc_{k} = has_rd_{k} AND (NOT(x0_{k}) OR skip_x0_detect)
   let not_x0_0      := Wire.mk "not_x0_0"
   let not_x0_1      := Wire.mk "not_x0_1"
+  let not_x0_or_skip_0 := Wire.mk "not_x0_or_skip_0"
+  let not_x0_or_skip_1 := Wire.mk "not_x0_or_skip_1"
   let needs_alloc_0 := Wire.mk "needs_alloc_0"
   let needs_alloc_1 := Wire.mk "needs_alloc_1"
   let needs_alloc_gates :=
-    [Gate.mkNOT x0_0 not_x0_0, Gate.mkAND has_rd_0 not_x0_0 needs_alloc_0,
-     Gate.mkNOT x0_1 not_x0_1, Gate.mkAND has_rd_1 not_x0_1 needs_alloc_1]
+    [Gate.mkNOT x0_0 not_x0_0, Gate.mkOR not_x0_0 skip_x0_detect not_x0_or_skip_0,
+     Gate.mkAND has_rd_0 not_x0_or_skip_0 needs_alloc_0,
+     Gate.mkNOT x0_1 not_x0_1, Gate.mkOR not_x0_1 skip_x0_detect not_x0_or_skip_1,
+     Gate.mkAND has_rd_1 not_x0_or_skip_1 needs_alloc_1]
 
   -- === FreeList W2 port wires ===
   let freelist_enq_ready := Wire.mk "fl_enq_ready"
@@ -520,18 +529,22 @@ def mkRenameStage : Circuit :=
   let (bypass_old_rd_gates, old_rd_bypassed_1) := mkBypass "bp_ord" rd_addr_1 old_rd_raw_1
 
   -- === Committed RAT write-enable per channel ===
-  let mkCratWe (pfx2 : String) (v : Wire) (arch : List Wire) (hasPR : Wire) : List Gate × Wire :=
+  -- force bypasses x0 detection (for FP domain where f0 is a normal register)
+  let mkCratWe (pfx2 : String) (v : Wire) (arch : List Wire) (hasPR : Wire)
+      (force : Wire) : List Gate × Wire :=
     let or1 := Wire.mk s!"{pfx2}_cor1"; let or2 := Wire.mk s!"{pfx2}_cor2"
     let or3 := Wire.mk s!"{pfx2}_cor3"; let or4 := Wire.mk s!"{pfx2}_cor4"
     let is_x0 := Wire.mk s!"{pfx2}_is_x0"; let not_x0w := Wire.mk s!"{pfx2}_nx0"
+    let not_x0_or_force := Wire.mk s!"{pfx2}_nx0f"
     let vh := Wire.mk s!"{pfx2}_vh";  let we := Wire.mk s!"{pfx2}_we"
     ([Gate.mkOR arch[0]! arch[1]! or1, Gate.mkOR or1 arch[2]! or2,
       Gate.mkOR or2 arch[3]! or3, Gate.mkOR or3 arch[4]! or4,
       Gate.mkNOT or4 is_x0, Gate.mkNOT is_x0 not_x0w,
-      Gate.mkAND v hasPR vh, Gate.mkAND vh not_x0w we], we)
+      Gate.mkOR not_x0w force not_x0_or_force,
+      Gate.mkAND v hasPR vh, Gate.mkAND vh not_x0_or_force we], we)
 
-  let (crat_we_gates_0, crat_we_0) := mkCratWe "c0" commit_valid_0 commit_archRd_0 commit_hasPhysRd_0
-  let (crat_we_gates_1, crat_we_1) := mkCratWe "c1" commit_valid_1 commit_archRd_1 commit_hasPhysRd_1
+  let (crat_we_gates_0, crat_we_0) := mkCratWe "c0" commit_valid_0 commit_archRd_0 commit_hasPhysRd_0 commit_force_alloc_0
+  let (crat_we_gates_1, crat_we_1) := mkCratWe "c1" commit_valid_1 commit_archRd_1 commit_hasPhysRd_1 commit_force_alloc_1
 
   let crat_alloc_0 := Wire.mk "commit_alloc_adv_0"
   let crat_alloc_1 := Wire.mk "commit_alloc_adv_1"
@@ -854,14 +867,14 @@ def mkRenameStage : Circuit :=
   -- === Assemble ===
   let all_inputs :=
     [clock, reset, zero, one,
-     instr_valid_0, has_rd_0, force_alloc_0] ++
+     instr_valid_0, has_rd_0, force_alloc_0, skip_x0_detect] ++
     rs1_addr_0 ++ rs2_addr_0 ++ rs3_addr_0 ++ rd_addr_0 ++
     [instr_valid_1, has_rd_1, force_alloc_1] ++
     rs1_addr_1 ++ rs2_addr_1 ++ rs3_addr_1 ++ rd_addr_1 ++
     [flush_en, commit_valid_0] ++ commit_archRd_0 ++ commit_physRd_0 ++
-    [commit_hasPhysRd_0, commit_hasAllocSlot_0,
+    [commit_hasPhysRd_0, commit_hasAllocSlot_0, commit_force_alloc_0,
      commit_valid_1] ++ commit_archRd_1 ++ commit_physRd_1 ++
-    [commit_hasPhysRd_1, commit_hasAllocSlot_1,
+    [commit_hasPhysRd_1, commit_hasAllocSlot_1, commit_force_alloc_1,
      cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
     [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
     [retire_valid_0] ++ retire_tag_0 ++ [retire_valid_1] ++ retire_tag_1 ++ rd_tag5 ++ rd_tag6 ++

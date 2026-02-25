@@ -202,6 +202,7 @@ def allCircuits : List Circuit := [
   mkRegisterNHierarchical 66,  -- Phase 7: Store buffer entry payload (32+32+2)
   mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
   mkRegister91Hierarchical,
+  mkRegisterNHierarchical 94,  -- RS entry with 7-bit tags (1+6+7+1+7+32+1+7+32)
 
   -- Phase 3b: Flushable Queue Components
   mkQueueRAMInit 64 6 (fun i => i + 32),

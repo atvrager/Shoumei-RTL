@@ -315,12 +315,12 @@ cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
-	$(VERILATOR) --cc --exe --build -j 0 \
+	$(VERILATOR) --cc --exe --build -j 1 \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
 		-Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT \
 		+define+COSIM_DEBUG \
 		--top-module tb_cpu \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
+		-CFLAGS "-std=c++20 -O0 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)

@@ -488,8 +488,16 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let zero  := Wire.mk "zero"
   let one   := Wire.mk "one"
 
-  let opcodeWidth := 6; let tagWidth := 6; let dataWidth := 32
+  let opcodeWidth := 6; let tagWidth := 7; let dataWidth := 32
   let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
+  -- Computed offsets into entry bitfield
+  let off_dest := 1 + opcodeWidth
+  let off_src1_ready := off_dest + tagWidth
+  let off_src1_tag := off_src1_ready + 1
+  let off_src1_data := off_src1_tag + tagWidth
+  let off_src2_ready := off_src1_data + dataWidth
+  let off_src2_tag := off_src2_ready + 1
+  let off_src2_data := off_src2_tag + tagWidth
 
   let mkWrsI (name : String) (n : Nat) : List Wire :=
     (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
@@ -522,6 +530,9 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let cdb_data_0  := mkWrsI "cdb_data_0" dataWidth
   let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_tag_1  := mkWrsI "cdb_tag_1" tagWidth
   let cdb_data_1  := mkWrsI "cdb_data_1" dataWidth
+  -- With 7-bit domain-tagged RS tags, CDB valid is used uniformly for all sources.
+  -- The domain bit in the tag prevents cross-domain false wakeup.
+  let cdb_fp_combine_gates : List Gate := []
 
   -- Dispatch interface (W=2)
   let dispatch_en_0 := Wire.mk "dispatch_en_0"; let dispatch_valid_0 := Wire.mk "dispatch_valid_0"
@@ -570,12 +581,12 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     let bank := idx / 2; let subIdx := idx % 2
     let e_cur  := mkWrsI s!"e{idx}" entryWidth
     let e_next := mkWrsI s!"e{idx}_next" entryWidth
-    let valid     := e_cur[0]!; let src1_ready := e_cur[13]!
-    let src1_tag  := e_cur.drop 14 |>.take tagWidth
-    let src1_data := e_cur.drop 20 |>.take dataWidth
-    let src2_ready := e_cur[52]!
-    let src2_tag  := e_cur.drop 53 |>.take tagWidth
-    let src2_data := e_cur.drop 59 |>.take dataWidth
+    let valid     := e_cur[0]!; let src1_ready := e_cur[off_src1_ready]!
+    let src1_tag  := e_cur.drop off_src1_tag |>.take tagWidth
+    let src1_data := e_cur.drop off_src1_data |>.take dataWidth
+    let src2_ready := e_cur[off_src2_ready]!
+    let src2_tag  := e_cur.drop off_src2_tag |>.take tagWidth
+    let src2_data := e_cur.drop off_src2_data |>.take dataWidth
     let issue_we_this :=
       if bank == 0 then (if subIdx == 0 then issue_we_0_0 else issue_we_0_1)
       else (if subIdx == 0 then issue_we_1_0 else issue_we_1_1)
@@ -596,7 +607,8 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
                    Gate.mkAND (Wire.mk s!"{pfx}_xn2") (Wire.mk s!"{pfx}_xn3") (Wire.mk s!"{pfx}_a2"),
                    Gate.mkAND (Wire.mk s!"{pfx}_xn4") (Wire.mk s!"{pfx}_xn5") (Wire.mk s!"{pfx}_a3"),
                    Gate.mkAND (Wire.mk s!"{pfx}_a1") (Wire.mk s!"{pfx}_a2") (Wire.mk s!"{pfx}_a4"),
-                   Gate.mkAND (Wire.mk s!"{pfx}_a4") (Wire.mk s!"{pfx}_a3") eq]
+                   Gate.mkAND (Wire.mk s!"{pfx}_a4") (Wire.mk s!"{pfx}_a3") (Wire.mk s!"{pfx}_a5"),
+                   Gate.mkAND (Wire.mk s!"{pfx}_a5") (Wire.mk s!"{pfx}_xn6") eq]
       let m := Wire.mk s!"{pfx}_m"; let mg := Gate.mkAND eq cdb_valid m
       (xs ++ xns, ands ++ [mg], m)
     -- CDB matching against STORED tags (for existing entries)
@@ -637,26 +649,26 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     let not_s1r := Wire.mk s!"e{idx}_not_s1r"
     let m1_0d := Wire.mk s!"e{idx}_m1_0d"; let m1_1d := Wire.mk s!"e{idx}_m1_1d"
     let wakeup1_gates := [Gate.mkOR m1_0m m1_1m s1_any, Gate.mkOR src1_ready s1_any r1_m1,
-                          Gate.mkMUX r1_m1 alloc_s1r issue_we_this e_next[13]!,
+                          Gate.mkMUX r1_m1 alloc_s1r issue_we_this e_next[off_src1_ready]!,
                           Gate.mkNOT src1_ready not_s1r,
                           Gate.mkAND m1_0m not_s1r m1_0d, Gate.mkAND m1_1m not_s1r m1_1d]
     let w1d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_t_{i}"
     let w1d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_m_{i}"
     let wd1 := (List.range dataWidth).map fun i => Gate.mkMUX src1_data[i]! cdb_data_1[i]! m1_1d w1d_t[i]!
     let wd2 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_t[i]! cdb_data_0[i]! m1_0d w1d_m[i]!
-    let wd3 := (List.range 32).map fun i => Gate.mkMUX w1d_m[i]! a1d_m[i]! issue_we_this e_next[20+i]!
+    let wd3 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_m[i]! a1d_m[i]! issue_we_this e_next[off_src1_data+i]!
     let s2_any := Wire.mk s!"e{idx}_m2_any"; let r2_m2 := Wire.mk s!"e{idx}_r2_m2"
     let not_s2r := Wire.mk s!"e{idx}_not_s2r"
     let m2_0d := Wire.mk s!"e{idx}_m2_0d"; let m2_1d := Wire.mk s!"e{idx}_m2_1d"
     let wakeup2_gates := [Gate.mkOR m2_0m m2_1m s2_any, Gate.mkOR src2_ready s2_any r2_m2,
-                          Gate.mkMUX r2_m2 alloc_s2r issue_we_this e_next[52]!,
+                          Gate.mkMUX r2_m2 alloc_s2r issue_we_this e_next[off_src2_ready]!,
                           Gate.mkNOT src2_ready not_s2r,
                           Gate.mkAND m2_0m not_s2r m2_0d, Gate.mkAND m2_1m not_s2r m2_1d]
     let w2d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_t_{i}"
     let w2d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_m_{i}"
     let wd4 := (List.range dataWidth).map fun i => Gate.mkMUX src2_data[i]! cdb_data_1[i]! m2_1d w2d_t[i]!
     let wd5 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_t[i]! cdb_data_0[i]! m2_0d w2d_m[i]!
-    let wd6 := (List.range 32).map fun i => Gate.mkMUX w2d_m[i]! a2d_m[i]! issue_we_this e_next[59+i]!
+    let wd6 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_m[i]! a2d_m[i]! issue_we_this e_next[off_src2_data+i]!
     let dispatch_en_this := if bank == 0 then dispatch_en_0 else dispatch_en_1
     let dispatch_grant := Wire.mk s!"dispatch_grant_{idx}"
     let dispatch := Wire.mk s!"e{idx}_dispatch"
@@ -665,11 +677,11 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     let valid_we := [Gate.mkNOT dispatch not_dispatch, Gate.mkAND valid not_dispatch v_keep,
                      Gate.mkOR v_keep issue_we_this e_next[0]!]
     let opcode_g  := (List.range opcodeWidth).map fun i => Gate.mkMUX e_cur[1+i]! issue_opcode[i]! issue_we_this e_next[1+i]!
-    let dest_g    := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[7+i]! issue_dest[i]! issue_we_this e_next[7+i]!
-    let src1t_g   := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[14+i]! issue_s1t[i]! issue_we_this e_next[14+i]!
-    let src2t_g   := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[53+i]! issue_s2t[i]! issue_we_this e_next[53+i]!
+    let dest_g    := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[off_dest+i]! issue_dest[i]! issue_we_this e_next[off_dest+i]!
+    let src1t_g   := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[off_src1_tag+i]! issue_s1t[i]! issue_we_this e_next[off_src1_tag+i]!
+    let src2t_g   := (List.range tagWidth).map fun i => Gate.mkMUX e_cur[off_src2_tag+i]! issue_s2t[i]! issue_we_this e_next[off_src2_tag+i]!
     let e_inst : CircuitInstance := {
-      moduleName := "Register91", instName := s!"u_e{idx}",
+      moduleName := s!"Register{entryWidth}", instName := s!"u_e{idx}",
       portMap := (e_next.enum.map fun ⟨i,w⟩ => (s!"d_{i}", w)) ++
                  [("clock", clock), ("reset", reset)] ++
                  (e_cur.enum.map fun ⟨i,w⟩ => (s!"q_{i}", w))
@@ -773,11 +785,11 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let e2_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e2_w2d_m_{i}"
   let e3_s2bp := (List.range dataWidth).map fun i => Wire.mk s!"e3_w2d_m_{i}"
   let b0_mux_op  := mkMux2 "b0_m_op"  opcodeWidth (e0.drop 1)  (e1.drop 1)  dispatch_opcode_0  arb0_gr1
-  let b0_mux_dst := mkMux2 "b0_m_dst" tagWidth    (e0.drop 7)  (e1.drop 7)  dispatch_dest_tag_0 arb0_gr1
+  let b0_mux_dst := mkMux2 "b0_m_dst" tagWidth    (e0.drop off_dest)  (e1.drop off_dest)  dispatch_dest_tag_0 arb0_gr1
   let b0_mux_s1d := mkMux2 "b0_m_s1d" dataWidth   e0_s1bp      e1_s1bp      dispatch_src1_data_0 arb0_gr1
   let b0_mux_s2d := mkMux2 "b0_m_s2d" dataWidth   e0_s2bp      e1_s2bp      dispatch_src2_data_0 arb0_gr1
   let b1_mux_op  := mkMux2 "b1_m_op"  opcodeWidth (e2.drop 1)  (e3.drop 1)  dispatch_opcode_1  arb1_gr1
-  let b1_mux_dst := mkMux2 "b1_m_dst" tagWidth    (e2.drop 7)  (e3.drop 7)  dispatch_dest_tag_1 arb1_gr1
+  let b1_mux_dst := mkMux2 "b1_m_dst" tagWidth    (e2.drop off_dest)  (e3.drop off_dest)  dispatch_dest_tag_1 arb1_gr1
   let b1_mux_s1d := mkMux2 "b1_m_s1d" dataWidth   e2_s1bp      e3_s1bp      dispatch_src1_data_1 arb1_gr1
   let b1_mux_s2d := mkMux2 "b1_m_s2d" dataWidth   e2_s2bp      e3_s2bp      dispatch_src2_data_1 arb1_gr1
 
@@ -799,6 +811,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
       dispatch_opcode_0 ++ dispatch_src1_data_0 ++ dispatch_src2_data_0 ++ dispatch_dest_tag_0 ++
       dispatch_opcode_1 ++ dispatch_src1_data_1 ++ dispatch_src2_data_1 ++ dispatch_dest_tag_1
     gates :=
+      cdb_fp_combine_gates ++
       ptr_gates ++ base_issue_gates_0 ++ base_issue_gates_1 ++
       eg0 ++ eg1 ++ eg2 ++ eg3 ++
       alloc_avail_g_0 ++ alloc_avail_g_1 ++

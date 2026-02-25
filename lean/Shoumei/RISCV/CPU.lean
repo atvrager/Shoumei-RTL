@@ -691,7 +691,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
         [Gate.mkAND cdb_valid_fp_nofilt (Wire.mk "not_flushing_prf") cdb_valid_fp_prf])
     else []
 
-  let fp_rename_inst : CircuitInstance := {
+  let _fp_rename_inst_old : CircuitInstance := {
     moduleName := "RenameStage_32x64"
     instName := "u_fp_rename"
     portMap :=
@@ -2922,7 +2922,6 @@ def mkCPU (config : CPUConfig) : Circuit :=
                   [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
                   csr_reg_instances ++ csr_counter_instances ++
                   [fetch_inst, decoder_inst, rename_inst] ++
-                  (if enableF then [fp_rename_inst] else []) ++
                   [redirect_valid_dff_inst, redirect_valid_fp_dff, redirect_valid_int_dff,
                    flush_dff_dispatch] ++ flush_dff_insts ++ flush_busy_dff_insts ++
                   redirect_target_dff_insts ++
@@ -4056,7 +4055,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Memory routing MUX
   let mem_route_sel := Wire.mk "mem_route_sel"
   let mem_not_s0 := Wire.mk "mem_not_s0"
-  let mem_dispatch_valid := Wire.mk "mem_dispatch_valid_pre"
+  let mem_dispatch_valid := Wire.mk "mem_dispatch_valid"
   let mem_route_gates :=
     [Gate.mkNOT dispatch_mem_0 mem_not_s0,
      Gate.mkAND mem_not_s0 dispatch_mem_1 mem_route_sel,
@@ -4352,6 +4351,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     instName := "u_rename"
     portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
                 ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_is_br),
+                ("skip_x0_detect", zero),
                 ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_is_br),
                 ("flush_en", pipeline_flush), ("retire_valid", Wire.mk "csr_commit_valid_0")] ++
                -- commit_valid for slot 0 is muxed with CSR inject (defined in CSR block below)
@@ -4383,8 +4383,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                -- retire_hasPhysRd: controls free list enqueue (branches included for physRd reclaim)
                [("commit_hasPhysRd", Wire.mk "csr_commit_hasPhysRd_0"),
                 ("commit_hasAllocSlot", Wire.mk "csr_commit_hasAllocSlot_0"),
+                ("commit_force_alloc", zero),
                 ("commit_hasPhysRd_1", rob_head_hasOldPhysRd_1),
-                ("commit_hasAllocSlot_1", rob_head_hasPhysRd_1)] ++
+                ("commit_hasAllocSlot_1", rob_head_hasPhysRd_1),
+                ("commit_force_alloc_1", zero)] ++
                -- RVVI readback tags: read PRF at commit-time physRd for rd_data
                bundledPorts "rd_tag5" commit_physRd_0 ++
                bundledPorts "rd_tag6" commit_physRd_1 ++
@@ -4557,16 +4559,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX rs2_data_1[i]! d1_imm[i]! d1_use_imm src2_muxed_1[i]!)
 
+  -- === 7-bit CDB tags for RS domain matching ===
+  -- RS now uses 7-bit tags: bits [5:0] = phys reg tag, bit [6] = is_fp domain.
+  -- This prevents INT CDB broadcasts from falsely waking up FP operands (and vice versa).
+  let cdb_tag7_0 := cdb_tag_0 ++ [cdb_is_fp_0]  -- 7-bit: tag[5:0] ++ is_fp
+  let cdb_tag7_1 := cdb_tag_1 ++ [cdb_is_fp_1]
+
   -- === RESERVATION STATION (Integer, W2) ===
   -- INT lane 1 has its own IB1 FIFO. Backpressure: only dispatch when FIFO can accept.
   let int_de1_gates : List Gate := []
   let issue0_valid := Wire.mk "issue0_valid"; let issue1_valid := Wire.mk "issue1_valid"
   let dispatch_opcode_0 := CPU.makeIndexedWires "dispatch_opcode_0" 6
   let dispatch_src1_data_0 := CPU.makeIndexedWires "dispatch_src1_0" 32; let dispatch_src2_data_0 := CPU.makeIndexedWires "dispatch_src2_0" 32
-  let dispatch_dest_tag_0 := CPU.makeIndexedWires "dispatch_dest_0" 6
+  let dispatch_dest_tag_0 := CPU.makeIndexedWires "dispatch_dest_0" 7  -- 7-bit: [5:0]=tag, [6]=domain
   let dispatch_opcode_1 := CPU.makeIndexedWires "dispatch_opcode_1" 6
   let dispatch_src1_data_1 := CPU.makeIndexedWires "dispatch_src1_1" 32; let dispatch_src2_data_1 := CPU.makeIndexedWires "dispatch_src2_1" 32
-  let dispatch_dest_tag_1 := CPU.makeIndexedWires "dispatch_dest_1" 6
+  let dispatch_dest_tag_1 := CPU.makeIndexedWires "dispatch_dest_1" 7  -- 7-bit: [5:0]=tag, [6]=domain
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_alloc_ptr := CPU.makeIndexedWires "rs_int_alloc_ptr" 2
   let rs_int_grant := CPU.makeIndexedWires "rs_int_grant" 4
@@ -4578,15 +4586,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", dispatch_int_0), ("issue_en_1", dispatch_int_1),
                 ("issue_src1_ready_0", src1_ready_0), ("issue_src2_ready_0", src2_ready_0),
                 ("issue_src1_ready_1", src1_ready_1), ("issue_src2_ready_1", src2_ready_1)] ++
-               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" int_dest_tag_masked_0 ++
-               bundledPorts "issue_src1_tag_0" rs1_phys_0 ++ bundledPorts "issue_src1_data_0" rs1_data_0 ++
-               bundledPorts "issue_src2_tag_0" rs2_phys_0 ++ bundledPorts "issue_src2_data_0" src2_muxed_0 ++
-               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" int_dest_tag_masked_1 ++
-               bundledPorts "issue_src1_tag_1" rs1_phys_1 ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
-               bundledPorts "issue_src2_tag_1" rs2_phys_1 ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
-               [("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1")] ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" (int_dest_tag_masked_0 ++ [zero]) ++
+               bundledPorts "issue_src1_tag_0" (rs1_phys_0 ++ [zero]) ++ bundledPorts "issue_src1_data_0" rs1_data_0 ++
+               bundledPorts "issue_src2_tag_0" (rs2_phys_0 ++ [zero]) ++ bundledPorts "issue_src2_data_0" src2_muxed_0 ++
+               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" (int_dest_tag_masked_1 ++ [zero]) ++
+               bundledPorts "issue_src1_tag_1" (rs1_phys_1 ++ [zero]) ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
+               bundledPorts "issue_src2_tag_1" (rs2_phys_1 ++ [zero]) ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
+               [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("dispatch_en_0", one), ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
                 ("dispatch_valid_0", issue0_valid), ("dispatch_valid_1", issue1_valid),
                 ("alloc_avail_0", Wire.mk "rs_int_avail_0"), ("alloc_avail_1", Wire.mk "rs_int_avail_1")] ++
@@ -4605,7 +4613,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_br_dispatch_opcode := CPU.makeIndexedWires "rs_br_dispatch_opcode" 6
   let rs_br_dispatch_src1 := CPU.makeIndexedWires "rs_br_dispatch_src1" 32
   let rs_br_dispatch_src2 := CPU.makeIndexedWires "rs_br_dispatch_src2" 32
-  let rs_br_dispatch_tag := CPU.makeIndexedWires "rs_br_dispatch_tag" 6
+  let rs_br_dispatch_tag := CPU.makeIndexedWires "rs_br_dispatch_tag" 7
   let rs_br_alloc_ptr := CPU.makeIndexedWires "rs_br_alloc_ptr" 2
   let rs_br_grant := CPU.makeIndexedWires "rs_br_grant" 4
 
@@ -4617,23 +4625,23 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", br_dispatch_valid), ("issue_en_1", zero),
                 ("issue_src1_ready_0", br_mux_src1_ready), ("issue_src2_ready_0", br_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
+                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", Wire.mk "ib_br_fifo_enq_ready"), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_br_avail_0"), ("alloc_avail_1", Wire.mk "rs_br_avail_1"),
                 ("dispatch_valid_0", rs_br_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_br_dispatch_valid_1")] ++
-               bundledPorts "issue_opcode_0" br_mux_opcode ++ bundledPorts "issue_dest_tag_0" br_mux_rd_phys ++
-               bundledPorts "issue_src1_tag_0" br_mux_rs1_phys ++ bundledPorts "issue_src1_data_0" br_mux_rs1_data ++
-               bundledPorts "issue_src2_tag_0" br_mux_rs2_phys ++ bundledPorts "issue_src2_data_0" br_mux_rs2_data ++
+               bundledPorts "issue_opcode_0" br_mux_opcode ++ bundledPorts "issue_dest_tag_0" (br_mux_rd_phys ++ [zero]) ++
+               bundledPorts "issue_src1_tag_0" (br_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" br_mux_rs1_data ++
+               bundledPorts "issue_src2_tag_0" (br_mux_rs2_phys ++ [zero]) ++ bundledPorts "issue_src2_data_0" br_mux_rs2_data ++
                -- Slot 1 issue: tied to zero
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_br_dummy_op1" 6) ++
-               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_br_dummy_dt1" 6) ++
-               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s1t1" 6) ++
+               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_br_dummy_dt1" 7) ++
+               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_br_dummy_s1d1" 32) ++
-               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s2t1" 6) ++
+               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_br_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_br_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_br_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_br_dispatch_src2 ++
@@ -4641,7 +4649,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_br_dop1" 6) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_br_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_br_ds2_1" 32) ++
-               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_br_ddt1" 6) ++
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_br_ddt1" 7) ++
                [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
                bundledPorts "alloc_ptr" rs_br_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_br_grant
@@ -4653,7 +4661,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_mem_dispatch_opcode := CPU.makeIndexedWires "rs_mem_dispatch_opcode" 6
   let rs_mem_dispatch_src1 := CPU.makeIndexedWires "rs_mem_dispatch_src1" 32
   let rs_mem_dispatch_src2 := CPU.makeIndexedWires "rs_mem_dispatch_src2" 32
-  let rs_mem_dispatch_tag := CPU.makeIndexedWires "rs_mem_dispatch_tag" 6
+  let rs_mem_dispatch_tag := CPU.makeIndexedWires "rs_mem_dispatch_tag" 7
   let rs_mem_alloc_ptr := CPU.makeIndexedWires "rs_mem_alloc_ptr" 2
   let rs_mem_grant := CPU.makeIndexedWires "rs_mem_grant" 4
 
@@ -4673,26 +4681,26 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one),
                 ("issue_en_0", mem_dispatch_valid), ("issue_en_1", zero),
-                ("issue_is_store_0", zero), ("issue_is_store_1", zero),
+                ("issue_is_store_0", mem_mux_is_store), ("issue_is_store_1", zero),
                 ("issue_src1_ready_0", mem_mux_src1_ready), ("issue_src2_ready_0", mem_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
+                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", mem_dispatch_en), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_mem_avail_0"), ("alloc_avail_1", Wire.mk "rs_mem_avail_1"),
                 ("dispatch_valid_0", rs_mem_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_mem_dispatch_valid_1")] ++
-               bundledPorts "issue_opcode_0" mem_mux_opcode ++ bundledPorts "issue_dest_tag_0" mem_mux_rd_phys ++
-               bundledPorts "issue_src1_tag_0" mem_mux_rs1_phys ++ bundledPorts "issue_src1_data_0" mem_mux_rs1_data ++
-               bundledPorts "issue_src2_tag_0" mem_mux_rs2_phys ++ bundledPorts "issue_src2_data_0" mem_mux_rs2_data ++
+               bundledPorts "issue_opcode_0" mem_mux_opcode ++ bundledPorts "issue_dest_tag_0" (mem_mux_rd_phys ++ [zero]) ++
+               bundledPorts "issue_src1_tag_0" (mem_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" mem_mux_rs1_data ++
+               bundledPorts "issue_src2_tag_0" (mem_mux_rs2_phys ++ [if enableF then Wire.mk "mem_mux_is_fp_store" else zero]) ++ bundledPorts "issue_src2_data_0" mem_mux_rs2_data ++
                -- Slot 1 issue: tied to zero
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_mem_dummy_op1" 6) ++
-               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_dt1" 6) ++
-               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s1t1" 6) ++
+               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_dt1" 7) ++
+               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s1d1" 32) ++
-               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s2t1" 6) ++
+               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_mem_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_mem_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_mem_dispatch_src2 ++
@@ -4700,7 +4708,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_mem_dop1" 6) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_mem_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_mem_ds2_1" 32) ++
-               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_mem_ddt1" 6) ++
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_mem_ddt1" 7) ++
                bundledPorts "alloc_ptr" rs_mem_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_mem_grant
   }
@@ -4721,7 +4729,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_muldiv_dispatch_opcode := CPU.makeIndexedWires "rs_muldiv_dispatch_opcode" 6
   let rs_muldiv_dispatch_src1 := CPU.makeIndexedWires "rs_muldiv_dispatch_src1" 32
   let rs_muldiv_dispatch_src2 := CPU.makeIndexedWires "rs_muldiv_dispatch_src2" 32
-  let rs_muldiv_dispatch_tag := CPU.makeIndexedWires "rs_muldiv_dispatch_tag" 6
+  let rs_muldiv_dispatch_tag := CPU.makeIndexedWires "rs_muldiv_dispatch_tag" 7
   let muldiv_busy := Wire.mk "muldiv_busy"
   let muldiv_dispatch_en := Wire.mk "muldiv_dispatch_en"
   let not_muldiv_busy := Wire.mk "not_muldiv_busy"
@@ -4739,22 +4747,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", muldiv_dispatch_valid), ("issue_en_1", zero),
                 ("issue_src1_ready_0", md_mux_src1_ready), ("issue_src2_ready_0", md_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
-                ("cdb_valid_0", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1"),
+                ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("dispatch_en_0", muldiv_dispatch_en), ("dispatch_en_1", one),
                 ("alloc_avail_0", Wire.mk "rs_md_avail_0"), ("alloc_avail_1", Wire.mk "rs_md_avail_1"),
                 ("dispatch_valid_0", rs_muldiv_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_md_dispatch_valid_1")] ++
-               bundledPorts "issue_opcode_0" md_mux_opcode ++ bundledPorts "issue_dest_tag_0" md_mux_rd_phys ++
-               bundledPorts "issue_src1_tag_0" md_mux_rs1_phys ++ bundledPorts "issue_src1_data_0" md_mux_rs1_data ++
-               bundledPorts "issue_src2_tag_0" md_mux_rs2_phys ++ bundledPorts "issue_src2_data_0" md_mux_rs2_data ++
+               bundledPorts "issue_opcode_0" md_mux_opcode ++ bundledPorts "issue_dest_tag_0" (md_mux_rd_phys ++ [zero]) ++
+               bundledPorts "issue_src1_tag_0" (md_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" md_mux_rs1_data ++
+               bundledPorts "issue_src2_tag_0" (md_mux_rs2_phys ++ [zero]) ++ bundledPorts "issue_src2_data_0" md_mux_rs2_data ++
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_md_dummy_op1" 6) ++
-               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_md_dummy_dt1" 6) ++
-               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s1t1" 6) ++
+               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_md_dummy_dt1" 7) ++
+               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_md_dummy_s1d1" 32) ++
-               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s2t1" 6) ++
+               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_md_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_muldiv_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_muldiv_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_muldiv_dispatch_src2 ++
@@ -4762,7 +4770,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_md_dop1" 6) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_md_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_md_ds2_1" 32) ++
-               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_md_ddt1" 6) ++
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_md_ddt1" 7) ++
                [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
                bundledPorts "alloc_ptr" (CPU.makeIndexedWires "rs_muldiv_alloc_ptr" 2) ++
                bundledPorts "dispatch_grant" (CPU.makeIndexedWires "rs_muldiv_grant" 4)
@@ -4914,36 +4922,93 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_buf_physRd[i]!) ++
       (List.range 6).map (fun i => Gate.mkBUF zero fp_commit_buf_oldPhysRd[i]!)
 
+  -- FP rename: use RenameStage_W2 with skip_x0_detect=1 (f0 is a normal register)
+  -- Slot 1 is tied off (single FP dispatch per cycle)
+  let fp_rename_unused_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused1_{i}"
+  let fp_rename_unused_old1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_old1_{i}"
+  let fp_rename_unused_rs1_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rs1_1_{i}"
+  let fp_rename_unused_rs2_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rs2_1_{i}"
+  let fp_rename_unused_rs3_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rs3_1_{i}"
+  let fp_rename_unused_rd1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rd1_{i}"
+  let fp_rename_unused_d1 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d1_{i}"
+  let fp_rename_unused_d2 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d2_{i}"
+  let fp_rename_unused_d5 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d5_{i}"
+  let fp_rename_unused_d6 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d6_{i}"
   let fp_rename_inst : CircuitInstance := {
-    moduleName := "RenameStage_32x64"
+    moduleName := "RenameStage_W2"
     instName := "u_fp_rename"
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
+       -- Slot 0: FP dispatch
        ("instr_valid", fp_rename_dispatch_valid),
-       ("has_rd", fp_mux_has_fp_rd)] ++
+       ("has_rd", fp_mux_has_fp_rd),
+       ("force_alloc", zero),
+       ("skip_x0_detect", one)] ++
       bundledPorts "rs1_addr" fp_mux_rs1 ++ bundledPorts "rs2_addr" fp_mux_rs2 ++
       bundledPorts "rs3_addr" fp_mux_rs3 ++
       bundledPorts "rd_addr" fp_mux_rd ++
+      -- Slot 1: disabled
+      [("instr_valid_1", zero), ("has_rd_1", zero), ("force_alloc_1", zero)] ++
+      ((List.range 5).map fun i => (s!"rs1_addr_1_{i}", zero)) ++
+      ((List.range 5).map fun i => (s!"rs2_addr_1_{i}", zero)) ++
+      ((List.range 5).map fun i => (s!"rs3_addr_1_{i}", zero)) ++
+      ((List.range 5).map fun i => (s!"rd_addr_1_{i}", zero)) ++
+      -- Flush
+      [("flush_en", redirect_valid_fp)] ++
+      -- Commit channel 0: merged FP commit
+      [("commit_valid", fp_commit_merged),
+       ("commit_hasPhysRd", fp_commit_hasPhysRd),
+       ("commit_hasAllocSlot", fp_commit_hasPhysRd),
+       ("commit_force_alloc", one)] ++
+      bundledPorts "commit_archRd" fp_commit_archRd ++
+      bundledPorts "commit_physRd" fp_commit_physRd ++
+      -- Commit channel 1: disabled
+      [("commit_valid_1", zero),
+       ("commit_hasPhysRd_1", zero),
+       ("commit_hasAllocSlot_1", zero),
+       ("commit_force_alloc_1", one)] ++
+      ((List.range 5).map fun i => (s!"commit_archRd_1_{i}", zero)) ++
+      ((List.range 6).map fun i => (s!"commit_physRd_1_{i}", zero)) ++
+      -- CDB: FP domain
       [("cdb_valid", cdb_valid_fp_prf)] ++
-      bundledPorts "cdb_tag" cdb_tag_fp ++ bundledPorts "cdb_data" cdb_data_fp ++
+      bundledPorts "cdb_tag_0" cdb_tag_fp ++ bundledPorts "cdb_data_0" cdb_data_fp ++
+      [("cdb_valid_1", zero)] ++
+      ((List.range 6).map fun i => (s!"cdb_tag_1_{i}", zero)) ++
+      ((List.range 32).map fun i => (s!"cdb_data_1_{i}", zero)) ++
+      -- Retire (free list enqueue)
       [("retire_valid", fp_commit_merged)] ++
       bundledPorts "retire_tag" fp_commit_oldPhysRd ++
-      -- 4th read port for RVVI
-      bundledPorts "rd_tag4" commit_physRd_0 ++
+      [("retire_valid_1", zero)] ++
+      ((List.range 6).map fun i => (s!"retire_tag_1_{i}", zero)) ++
+      -- RVVI read ports
+      bundledPorts "rd_tag5" commit_physRd_0 ++
+      ((List.range 6).map fun i => (s!"rd_tag6_{i}", zero)) ++
+      -- Stall
+      [("ext_stall", redirect_or_flush),
+       ("ext_stall_1", zero),
+       ("retire_hasPhysRd", fp_commit_hasPhysRd),
+       ("retire_hasPhysRd_1", zero)] ++
+      -- Outputs: slot 0
       [("rename_valid", fp_rename_valid), ("stall", fp_rename_stall)] ++
       bundledPorts "rs1_phys_out" fp_rs1_phys ++ bundledPorts "rs2_phys_out" fp_rs2_phys ++
+      bundledPorts "rs3_phys_out" fp_rs3_phys ++
       bundledPorts "rd_phys_out" fp_rd_phys ++
-      bundledPorts "rs1_data" fp_rs1_data ++ bundledPorts "rs2_data" fp_rs2_data ++
       bundledPorts "old_rd_phys_out" fp_old_rd_phys ++
-      bundledPorts "rd_data3" fp_rs3_data ++ bundledPorts "rs3_phys_out" fp_rs3_phys ++
+      bundledPorts "rs1_data" fp_rs1_data ++ bundledPorts "rs2_data" fp_rs2_data ++
+      bundledPorts "rd_data3" fp_rs3_data ++
       bundledPorts "rd_data4" fp_rvvi_rd_data ++
-      [("flush_en", redirect_valid_fp),
-       ("commit_valid", fp_commit_merged),
-       ("commit_hasPhysRd", fp_commit_hasPhysRd),
-       ("force_alloc", zero),
-       ("commit_hasAllocSlot", fp_commit_hasPhysRd)] ++
-      bundledPorts "commit_archRd" fp_commit_archRd ++
-      bundledPorts "commit_physRd" fp_commit_physRd
+      -- Outputs: slot 1 (unused)
+      [("rename_valid_1", Wire.mk "fp_ren_valid_1_unused"),
+       ("stall_1", Wire.mk "fp_ren_stall_1_unused")] ++
+      bundledPorts "rs1_phys_out_1" fp_rename_unused_rs1_1 ++
+      bundledPorts "rs2_phys_out_1" fp_rename_unused_rs2_1 ++
+      bundledPorts "rs3_phys_out_1" fp_rename_unused_rs3_1 ++
+      bundledPorts "rd_phys_out_1" fp_rename_unused_rd1 ++
+      bundledPorts "old_rd_phys_out_1" fp_rename_unused_old1 ++
+      bundledPorts "rs1_data_1" fp_rename_unused_d1 ++
+      bundledPorts "rs2_data_1" fp_rename_unused_d2 ++
+      bundledPorts "rd_data5" fp_rename_unused_d5 ++
+      bundledPorts "rd_data6" fp_rename_unused_d6
   }
 
   -- FP dest tag: use FP rd_phys when has_fp_rd, else use INT dest_tag (for mixed ops like FMV.X.W)
@@ -5009,6 +5074,24 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       "fp_busy"
     else ([], [])
 
+  -- FP src3 busy stall: read busy table at rs3 phys tag, stall if busy AND rs3 used (FMA)
+  -- Uses a DFF to register the stall signal, breaking the combinational loop:
+  -- global_stall → dispatch_valid → fp_route_sel → fp_mux_rs3 → rename → fp_rs3_phys → busy → stall
+  let fp_src3_busy := Wire.mk "fp_src3_busy"
+  let fp_src3_stall := Wire.mk "fp_src3_stall"
+  let fp_src3_stall_reg := Wire.mk "fp_src3_stall_reg"
+  let fp_src3_busy_gates :=
+    if enableF then
+      let busy_cur := (List.range 64).map fun i => Wire.mk s!"fp_busy_q_{i}"
+      let any_rs3_used := Wire.mk "fp_any_rs3_used"
+      mkMux64to1 busy_cur fp_rs3_phys "fp_src3_bm" fp_src3_busy ++
+      [Gate.mkOR d0_fp_rs3_used d1_fp_rs3_used any_rs3_used,
+       Gate.mkAND fp_src3_busy any_rs3_used fp_src3_stall,
+       Gate.mkDFF fp_src3_stall clock reset fp_src3_stall_reg]
+    else
+      [Gate.mkBUF zero fp_src3_busy, Gate.mkBUF zero fp_src3_stall,
+       Gate.mkBUF zero fp_src3_stall_reg]
+
   -- FP source readiness: merge busy table + CDB forwarding
   -- Simplified: just use busy table results (no CDB forwarding for FP domain yet)
   let fp_issue_src1_ready := Wire.mk "fp_issue_src1_ready"
@@ -5026,6 +5109,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else
       [Gate.mkBUF one fp_issue_src1_ready, Gate.mkBUF one fp_issue_src2_ready]
 
+  -- Note: cross-domain stall not needed in W=2 because FP RS uses raw CDB
+  -- (both INT and FP CDB channels) to avoid the need for domain filtering.
+  let crossdomain_stall_gates : List Gate := []
+
   -- FP Opcode LUT: 7-bit optype → 5-bit FPU opcode
   let fpu_opcode := CPU.makeIndexedWires "fpu_opcode" 5
   let fpu_opcode_padded := fpu_opcode ++ [zero]  -- zero-pad to 6 bits for RS
@@ -5042,7 +5129,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_fp_dispatch_opcode := CPU.makeIndexedWires "rs_fp_dispatch_opcode" 6
   let rs_fp_dispatch_src1 := CPU.makeIndexedWires "rs_fp_dispatch_src1" 32
   let rs_fp_dispatch_src2 := CPU.makeIndexedWires "rs_fp_dispatch_src2" 32
-  let rs_fp_dispatch_tag := CPU.makeIndexedWires "rs_fp_dispatch_tag" 6
+  let rs_fp_dispatch_tag := CPU.makeIndexedWires "rs_fp_dispatch_tag" 7
 
   -- Gate FP RS dispatch: don't dispatch when FP EU is busy
   let fp_fifo_enq_ready := Wire.mk "fp_fifo_enq_ready"
@@ -5080,18 +5167,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_valid_1", Wire.mk "rs_fp_dispatch_valid_1")] ++
                -- Use FPU LUT output (5-bit FPU opcode, zero-padded to 6 bits)
                bundledPorts "issue_opcode_0" fpu_opcode_padded ++
-               bundledPorts "issue_dest_tag_0" fp_issue_dest_tag ++
-               bundledPorts "issue_src1_tag_0" fp_issue_src1_tag ++ bundledPorts "issue_src1_data_0" fp_issue_src1_data ++
-               bundledPorts "issue_src2_tag_0" fp_issue_src2_tag ++ bundledPorts "issue_src2_data_0" fp_issue_src2_data ++
+               bundledPorts "issue_dest_tag_0" (fp_issue_dest_tag ++ [fp_mux_has_fp_rd]) ++
+               bundledPorts "issue_src1_tag_0" (fp_issue_src1_tag ++ [fp_mux_fp_rs1_read]) ++ bundledPorts "issue_src1_data_0" fp_issue_src1_data ++
+               bundledPorts "issue_src2_tag_0" (fp_issue_src2_tag ++ [fp_mux_fp_rs2_read]) ++ bundledPorts "issue_src2_data_0" fp_issue_src2_data ++
                -- Slot 1 unused
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_fp_dummy_op1" 6) ++
-               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_dt1" 6) ++
-               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s1t1" 6) ++
+               bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_dt1" 7) ++
+               bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s1d1" 32) ++
-               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s2t1" 6) ++
+               bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_fp_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_fp_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_fp_dispatch_src2 ++
@@ -5099,7 +5186,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_fp_dop1" 6) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_fp_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_fp_ds2_1" 32) ++
-               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_fp_ddt1" 6) ++
+               bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_fp_ddt1" 7) ++
                [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
                bundledPorts "alloc_ptr" rs_fp_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_fp_grant
@@ -5225,7 +5312,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "src2" rs_fp_dispatch_src2 ++
       bundledPorts "src3" fp_src3_dispatch ++
       bundledPorts "op" fp_op ++ bundledPorts "rm" fp_rm_out ++
-      bundledPorts "dest_tag" rs_fp_dispatch_tag ++
+      bundledPorts "dest_tag" (rs_fp_dispatch_tag.take 6) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
        ("clock", clock), ("reset", reset),
        ("zero", zero), ("one", one)] ++
@@ -5332,10 +5419,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     moduleName := "IntegerExecUnit_W2"
     instName := "u_exec"
     portMap := bundledPorts "a0" dispatch_src1_data_0 ++ bundledPorts "b0" dispatch_src2_data_0 ++
-               bundledPorts "opcode0" alu_op0 ++ bundledPorts "dest_tag0" dispatch_dest_tag_0 ++
+               bundledPorts "opcode0" alu_op0 ++ bundledPorts "dest_tag0" (dispatch_dest_tag_0.take 6) ++
                bundledPorts "result0" result0_raw ++ bundledPorts "tag_out0" tag0 ++
                bundledPorts "a1" dispatch_src1_data_1 ++ bundledPorts "b1" dispatch_src2_data_1 ++
-               bundledPorts "opcode1" alu_op1 ++ bundledPorts "dest_tag1" dispatch_dest_tag_1 ++
+               bundledPorts "opcode1" alu_op1 ++ bundledPorts "dest_tag1" (dispatch_dest_tag_1.take 6) ++
                bundledPorts "result1" result1_raw ++ bundledPorts "tag_out1" tag1 ++
                [("zero", zero), ("one", one)]
   }
@@ -5384,7 +5471,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap :=
       bundledPorts "src1" rs_br_dispatch_src1 ++
       bundledPorts "src2" rs_br_dispatch_src2 ++
-      bundledPorts "dest_tag" rs_br_dispatch_tag ++
+      bundledPorts "dest_tag" (rs_br_dispatch_tag.take 6) ++
       [("zero", zero)] ++
       bundledPorts "result" branch_result ++
       bundledPorts "tag_out" branch_tag_out
@@ -5500,7 +5587,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap :=
       bundledPorts "base" rs_mem_dispatch_src1 ++
       bundledPorts "offset" captured_imm ++
-      bundledPorts "dest_tag" rs_mem_dispatch_tag ++
+      bundledPorts "dest_tag" (rs_mem_dispatch_tag.take 6) ++
       [("zero", zero)] ++
       bundledPorts "address" mem_address ++
       bundledPorts "tag_out" mem_tag_out
@@ -5523,7 +5610,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "a" rs_muldiv_dispatch_src1 ++
       bundledPorts "b" rs_muldiv_dispatch_src2 ++
       bundledPorts "op" muldiv_op ++
-      bundledPorts "dest_tag" rs_muldiv_dispatch_tag ++
+      bundledPorts "dest_tag" (rs_muldiv_dispatch_tag.take 6) ++
       [("valid_in", rs_muldiv_dispatch_valid),
        ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
        ("zero", zero), ("one", one)] ++
@@ -5563,7 +5650,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
                bundledPorts "dispatch_base" rs_mem_dispatch_src1 ++
                bundledPorts "dispatch_offset" captured_imm ++
-               bundledPorts "dispatch_dest_tag" rs_mem_dispatch_tag ++
+               bundledPorts "dispatch_dest_tag" (rs_mem_dispatch_tag.take 6) ++
                bundledPorts "store_data" (CPU.makeIndexedWires "store_data_masked" 32) ++
                bundledPorts "fwd_address" mem_addr_r ++
                bundledPorts "sb_enq_size" (CPU.makeIndexedWires "lsu_sb_enq_size" 2) ++
@@ -5624,10 +5711,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkOR is_lb is_lh sign_extend
   ]
 
-  -- Memory pipeline register
+  -- Memory pipeline register (use 6-bit tag, domain bit not needed downstream)
   let (mem_pipe_gates, mem_pipe_insts) := mkMemPipeline clock reset
     rs_mem_dispatch_valid mem_dispatch_en
-    mem_address rs_mem_dispatch_tag
+    mem_address (rs_mem_dispatch_tag.take 6)
     is_load is_flw mem_size sign_extend
     mem_addr_r mem_tag_r is_load_r mem_size_r sign_extend_r is_flw_r mem_valid_r
 
@@ -6231,7 +6318,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR rs_br_issue_full rs_muldiv_issue_full (Wire.mk "stall_L0_c"),
        Gate.mkOR (Wire.mk "stall_L0_a") (Wire.mk "stall_L0_b") (Wire.mk "stall_L1_a"),
        Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "stall_L1_b"),
-       Gate.mkOR (Wire.mk "stall_L1_b") rs_fp_issue_full (Wire.mk "global_stall_int"),
+       Gate.mkOR (Wire.mk "stall_L1_b") rs_fp_issue_full (Wire.mk "stall_L1_c"),
+       Gate.mkOR (Wire.mk "stall_L1_c") fp_src3_stall_reg (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       [Gate.mkOR br_dual_stall cache_line_boundary any_dual_stall,
@@ -6704,7 +6792,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fp_fifo_dummy_gates ++ muldiv_fifo_dummy_gates ++
              fp_cdb_merge_gates ++ fp_int_prf_gate ++ fp_commit_gates ++ fp_commit_merge_gates ++ fp_redirect_gate ++
              fp_dest_tag_gates ++ fp_crossdomain_gates ++
-             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_ready_gates ++
+             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_ready_gates ++ crossdomain_stall_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++
              fp_src3_alloc_decode ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
