@@ -737,20 +737,30 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let slo_hs_gates := [
     Gate.mkAND ev0 st0 vs0, Gate.mkAND ev1 st1 vs1, Gate.mkOR vs0 vs1 has_store_b0,
     Gate.mkAND ev2 st2 vs2, Gate.mkAND ev3 st3 vs3, Gate.mkOR vs2 vs3 has_store_b1]
-  -- Gated arbiter requests: arb_req = er AND (is_store OR NOT has_store)
-  -- When has_store=1: only stores can dispatch. When has_store=0: normal behavior.
-  let not_hs_b0 := Wire.mk "slo_not_hs_b0"; let not_hs_b1 := Wire.mk "slo_not_hs_b1"
+  -- Age-aware SLO: only block a load if there's an OLDER store in the same bank.
+  -- In bank B with 2 entries (sub0, sub1): when both valid, alloc_ptr_B == sub-index
+  -- of the older entry. So:
+  --   Entry sub0: has older store iff vs1 AND alloc_ptr=1 (sub1 is older)
+  --   Entry sub1: has older store iff vs0 AND NOT(alloc_ptr) (sub0 is older, ptr=0)
+  let hos0 := Wire.mk "slo_hos_0"; let hos1 := Wire.mk "slo_hos_1"
+  let hos2 := Wire.mk "slo_hos_2"; let hos3 := Wire.mk "slo_hos_3"
+  let not_hos0 := Wire.mk "slo_not_hos_0"; let not_hos1 := Wire.mk "slo_not_hos_1"
+  let not_hos2 := Wire.mk "slo_not_hos_2"; let not_hos3 := Wire.mk "slo_not_hos_3"
   let ok0 := Wire.mk "slo_ok0"; let ok1 := Wire.mk "slo_ok1"
   let ok2 := Wire.mk "slo_ok2"; let ok3 := Wire.mk "slo_ok3"
   let ar0 := Wire.mk "slo_ar0"; let ar1 := Wire.mk "slo_ar1"
   let ar2 := Wire.mk "slo_ar2"; let ar3 := Wire.mk "slo_ar3"
   let slo_gate_gates := [
-    Gate.mkNOT has_store_b0 not_hs_b0,
-    Gate.mkOR st0 not_hs_b0 ok0, Gate.mkAND er0 ok0 ar0,
-    Gate.mkOR st1 not_hs_b0 ok1, Gate.mkAND er1 ok1 ar1,
-    Gate.mkNOT has_store_b1 not_hs_b1,
-    Gate.mkOR st2 not_hs_b1 ok2, Gate.mkAND er2 ok2 ar2,
-    Gate.mkOR st3 not_hs_b1 ok3, Gate.mkAND er3 ok3 ar3]
+    -- Bank 0: age-aware per-entry older-store check
+    Gate.mkAND vs1 alloc_ptr_0 hos0,   -- sub1 is older store → blocks sub0
+    Gate.mkAND vs0 not_ptr_0 hos1,     -- sub0 is older store → blocks sub1
+    Gate.mkNOT hos0 not_hos0, Gate.mkOR st0 not_hos0 ok0, Gate.mkAND er0 ok0 ar0,
+    Gate.mkNOT hos1 not_hos1, Gate.mkOR st1 not_hos1 ok1, Gate.mkAND er1 ok1 ar1,
+    -- Bank 1: age-aware per-entry older-store check
+    Gate.mkAND vs3 alloc_ptr_1 hos2,   -- sub1 is older store → blocks sub0
+    Gate.mkAND vs2 not_ptr_1 hos3,     -- sub0 is older store → blocks sub1
+    Gate.mkNOT hos2 not_hos2, Gate.mkOR st2 not_hos2 ok2, Gate.mkAND er2 ok2 ar2,
+    Gate.mkNOT hos3 not_hos3, Gate.mkOR st3 not_hos3 ok3, Gate.mkAND er3 ok3 ar3]
 
   -- Arbiters (use SLO-gated request signals)
   let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
