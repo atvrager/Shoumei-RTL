@@ -254,6 +254,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
     let rd_tag4 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag4_{i}")
     let rd_tag5 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag5_{i}")
     let rd_tag6 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag6_{i}")
+    let rd_tag7 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag7_{i}")
 
     -- Outputs
     let rd_data1 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data1_{i}")
@@ -262,6 +263,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
     let rd_data4 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data4_{i}")
     let rd_data5 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data5_{i}")
     let rd_data6 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data6_{i}")
+    let rd_data7 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data7_{i}")
 
     -- Decoders: one per write port
     let write_sel_0 := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_0_{i}")
@@ -334,8 +336,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
 
     { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
       inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1 ++
-                rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ rd_tag5 ++ rd_tag6
-      outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4 ++ rd_data5 ++ rd_data6
+                rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ rd_tag5 ++ rd_tag6 ++ rd_tag7
+      outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4 ++ rd_data5 ++ rd_data6 ++ rd_data7
       gates := we_gates ++ write_mux_gates ++ rr_gates ++ rl_gates
       instances := [decoder0_inst, decoder1_inst] ++ storage_instances ++
                    [mkMux "u_mux_rd1" rd_tag1 rd_data1,
@@ -343,7 +345,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
                     mkMux "u_mux_rd3" rd_tag3 rd_data3,
                     mkMux "u_mux_rd4" rd_tag4 rd_data4,
                     mkMux "u_mux_rd5" rd_tag5 rd_data5,
-                    mkMux "u_mux_rd6" rd_tag6 rd_data6]
+                    mkMux "u_mux_rd6" rd_tag6 rd_data6,
+                    mkMux "u_mux_rd7" rd_tag7 rd_data7]
     }
 
 /-- Physical Register File with 64 registers × 32 bits, superscalar (dual write ports) -/

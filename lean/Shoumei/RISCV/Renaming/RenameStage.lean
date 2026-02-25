@@ -388,6 +388,7 @@ def mkRenameStage : Circuit :=
   let rs1_data_0      := (List.range dataWidth).map fun i => Wire.mk s!"rs1_data_{i}"
   let rs2_data_0      := (List.range dataWidth).map fun i => Wire.mk s!"rs2_data_{i}"
   let rd_data3_0      := (List.range dataWidth).map fun i => Wire.mk s!"rd_data3_{i}"
+  let rs3_data_0      := (List.range dataWidth).map fun i => Wire.mk s!"rs3_data_{i}"
 
   -- === Slot 1 outputs ===
   let rs1_phys_out_1  := (List.range tagWidth).map fun i => Wire.mk s!"rs1_phys_out_1_{i}"
@@ -830,7 +831,7 @@ def mkRenameStage : Circuit :=
        ("wr_en_0", prf_wr_en_0), ("wr_en_1", prf_wr_en_1)] ++
       (rs1_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag1_{i}", w)) ++
       (rs2_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag2_{i}", w)) ++
-      (rs1_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++
+      (rs3_phys_0.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++
       (rs2_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag4_{i}", w)) ++
       (rd_tag5.enum.map fun ⟨i,w⟩ => (s!"rd_tag5_{i}", w)) ++
       (rd_tag6.enum.map fun ⟨i,w⟩ => (s!"rd_tag6_{i}", w)) ++
@@ -838,12 +839,14 @@ def mkRenameStage : Circuit :=
       (cdb_data_0.enum.map fun ⟨i,w⟩ => (s!"wr_data_0_{i}", w)) ++
       (cdb_tag_1.enum.map fun ⟨i,w⟩ => (s!"wr_tag_1_{i}", w)) ++
       (cdb_data_1.enum.map fun ⟨i,w⟩ => (s!"wr_data_1_{i}", w)) ++
+      (rs1_phys_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag7_{i}", w)) ++
       (rs1_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data1_{i}", w)) ++
       (rs2_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data2_{i}", w)) ++
-      (rs1_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
+      (rs3_data_0.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
       (rs2_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w)) ++
       (rd_data5.enum.map fun ⟨i,w⟩ => (s!"rd_data5_{i}", w)) ++
-      (rd_data6.enum.map fun ⟨i,w⟩ => (s!"rd_data6_{i}", w))
+      (rd_data6.enum.map fun ⟨i,w⟩ => (s!"rd_data6_{i}", w)) ++
+      (rs1_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data7_{i}", w))
   }
 
   -- Output buffer gates
@@ -859,9 +862,9 @@ def mkRenameStage : Circuit :=
     (List.range tagWidth).map (fun i => Gate.mkBUF rs3_phys_1_rat[i]! rs3_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF rd_phys_1[i]!  rd_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF old_rd_bypassed_1[i]! old_rd_phys_1[i]!)
-  -- PRF read data pass-through: rd_data3 = rs1_data_1, rd_data4 = rs2_data_1
+  -- PRF read data pass-through: rd_data3 = rs3_data_0, rd_data4 = rs2_data_1
   let prf_data_out_gates :=
-    (List.range dataWidth).map (fun i => Gate.mkBUF rs1_data_1[i]! rd_data3_0[i]!) ++
+    (List.range dataWidth).map (fun i => Gate.mkBUF rs3_data_0[i]! rd_data3_0[i]!) ++
     (List.range dataWidth).map (fun i => Gate.mkBUF rs2_data_1[i]! rd_data4[i]!)
 
   -- === Assemble ===
