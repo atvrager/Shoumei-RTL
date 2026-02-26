@@ -205,8 +205,7 @@ def allCircuits : List Circuit := [
   mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
-  mkReservationStationFromConfig defaultCPUConfig false,
-  mkReservationStationFromConfig defaultCPUConfig true,
+  mkReservationStationFromConfig defaultCPUConfig,
 
   -- M-Extension
   mkRippleCarryAdder64,

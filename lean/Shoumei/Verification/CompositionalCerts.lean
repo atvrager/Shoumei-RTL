@@ -315,6 +315,13 @@ def queue16x32_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Retirement.Queue16x32"
 }
 
+/-- Queue16x32_DualPort: Dual-port 16×32 queue (2 read + 2 write) -/
+def queue16x32_dualport_cert : CompositionalCert := {
+  moduleName := "Queue16x32_DualPort"
+  dependencies := ["Register32", "Decoder4", "Mux16x32"]
+  proofReference := "Shoumei.RISCV.Retirement.Queue16x32"
+}
+
 /-- ROB16: 16-entry reorder buffer for in-order commit -/
 def rob16_cert : CompositionalCert := {
   moduleName := "ROB16"
@@ -643,6 +650,7 @@ def allCerts : List CompositionalCert := [
   muldivExecUnit_cert,
   muldivRS4_cert,
   -- Retirement
+  queue16x32_dualport_cert,
   queue16x32_cert,
   rob16_cert,
   rob16_w2_cert,

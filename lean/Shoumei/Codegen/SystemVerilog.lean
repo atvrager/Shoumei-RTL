@@ -515,21 +515,26 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
           | some i =>
             let svType := signalGroupToSV sg
             let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
+            let isScalar := sg.width == 1
             let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
               | some (_, inputGroup) =>
-                let dIdx := inputGroup.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == d.name then some p.1 else none)
-                match dIdx with
-                | some j => s!"{inputGroup.name}[{j}]"
-                | none => inputGroup.name
+                if inputGroup.width == 1 then inputGroup.name
+                else
+                  let dIdx := inputGroup.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == d.name then some p.1 else none)
+                  match dIdx with
+                  | some j => s!"{inputGroup.name}[{j}]"
+                  | none => inputGroup.name
               | none => d.name
             -- Only emit declaration and reset for the first wire in the group
             if sg.wires.head? == some g.output then
               let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
               let resetVal := computeGroupResetVal c sg
-              some (decl, s!"      {regName}[{i}] <= {dRef};", s!"      {regName} <= {resetVal};", regName)
+              let assignStr := if isScalar then s!"      {regName} <= {dRef};" else s!"      {regName}[{i}] <= {dRef};"
+              some (decl, assignStr, s!"      {regName} <= {resetVal};", regName)
             else
               -- Non-first wire: just the per-bit assignment, no decl/reset
-              some (none, s!"      {regName}[{i}] <= {dRef};", "", regName)
+              let assignStr := if isScalar then s!"      {regName} <= {dRef};" else s!"      {regName}[{i}] <= {dRef};"
+              some (none, assignStr, "", regName)
           | none => none
       | none =>
           -- Standalone register

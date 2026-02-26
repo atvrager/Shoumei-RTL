@@ -1534,10 +1534,13 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
       ) |>.toList
       if isInstanceInput then
         -- Decompose parent bus into individual instance port connections
-        sortedEntries.map (fun (portName, _wire) =>
-          let idx := match extractPortIndex portName with
-            | some i => i
-            | none => 0
+        sortedEntries.map (fun (portName, wire) =>
+          -- Use source wire's index within its signal group, not destination port index
+          let idx := match ctx.wireToIndex.find? (fun (w, _) => w.name == wire.name) with
+            | some (_, bitIdx) => bitIdx
+            | none => match extractPortIndex portName with
+              | some i => i
+              | none => 0
           s!"  {inst.instName}.{portName} := {sgRef}({idx})"
         )
       else
@@ -1667,13 +1670,68 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           s!"  {inst.instName}.{w.name} := DontCare"
         )
 
+  -- 8b. Generate DontCare for bus-grouped sub-module input ports missing from portMap
+  let busDontCareConnections := match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | none => []
+    | some subMod =>
+        -- Find all input port base names that are bus-grouped
+        let inputBusBaseNames := subMod.inputs.filterMap (fun w =>
+          let base := extractBaseName w.name
+          if base != w.name then some base else none  -- Has _N suffix → part of a bus
+        ) |>.eraseDups
+        -- Filter to those not connected in portMap
+        -- Normalize base names by stripping trailing underscores for comparison
+        let normalize := fun (s : String) => s.dropEndWhile (· == '_')
+        let connectedBasesNorm := inst.portMap.map (fun (pname, _) => normalize (extractPortBaseName pname)) |>.eraseDups
+        let unconnectedBuses := inputBusBaseNames.filter (fun base =>
+          !connectedBasesNorm.contains (normalize base) &&
+          base != "clock" && base != "reset"
+        )
+        unconnectedBuses.map (fun base =>
+          s!"  {inst.instName}.{base} := DontCare"
+        )
+
   -- 9. Return instantiation + all connections
-  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections
+  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections ++ busDontCareConnections
+
+/-- Post-process instance connections to fix multi-writer output buses.
+    When multiple instances write to the same output bus (e.g., `q := reg_0.q.asUInt`
+    repeated for each sub-register), replace with a single Cat assignment.
+    Uses assignment order as Cat order (first assigned = LSB, reversed for Cat MSB-first). -/
+private def postProcessMultiWriterOutputs (lines : List String) : List String :=
+  -- Find lines matching pattern "  {target} := {source}" and detect duplicates
+  let assignPattern := lines.filterMap (fun s =>
+    let trimmed := s.trimAsciiStart.toString
+    match trimmed.splitOn " := " with
+    | [target, source] =>
+      if target.length > 0 && !target.contains '.' then  -- Only top-level assignments (not inst.port)
+        some (s, target.trimAscii.toString, source.trimAscii.toString)
+      else none
+    | _ => none)
+  -- Group by target
+  let targetGroups := assignPattern.foldl (fun acc (line, tgt, src) =>
+    let existing := acc.find? (fun (t, _) => t == tgt) |>.map (·.2) |>.getD []
+    let without := acc.filter (fun (t, _) => t != tgt)
+    without ++ [(tgt, existing ++ [(line, src)])]) ([] : List (String × List (String × String)))
+  -- Find targets with multiple writers
+  let multiWriters := targetGroups.filter (fun (_, entries) => entries.length > 1)
+  if multiWriters.isEmpty then lines
+  else
+    -- Collect lines to remove
+    let linesToRemove := multiWriters.flatMap (fun (_, entries) => entries.map (·.1))
+    -- Generate Cat replacements (reverse for MSB-first Cat ordering)
+    let catAssigns := multiWriters.map (fun (tgt, entries) =>
+      let catArgs := ", ".intercalate (entries.reverse.map (·.2))
+      s!"  {tgt} := Cat({catArgs})")
+    -- Replace: keep non-removed lines, append Cat assignments
+    let filtered := lines.filter (fun s => !linesToRemove.contains s)
+    filtered ++ catAssigns
 
 /-- Generate all module instantiations -/
 def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit) : String :=
   let instances := c.instances.flatMap (generateInstance ctx c allCircuits)
-  joinLines instances
+  let processed := postProcessMultiWriterOutputs instances
+  joinLines processed
 
 /-! ## Register Generation (ShoumeiReg) -/
 
