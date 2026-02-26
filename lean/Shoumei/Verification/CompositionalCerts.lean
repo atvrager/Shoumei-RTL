@@ -590,13 +590,20 @@ def cpu_rv32imf_zicsr_zifencei_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
-/-- CPU_RV32IMF_Zicsr_Zifencei_Microcoded: Microcoded variant with ROM-driven µop sequencer -/
+/-- CPU_RV32IMF_Zicsr_Zifencei_Microcoded: W=2 dual-issue microcoded CPU -/
 def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
   moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Microcoded"
   dependencies := [
+    -- FP execution pipeline
     "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
-    "MulDivRS4", "MulDivExecUnit", "PipelinedMultiplier", "Divider32",
-    "MicrocodeSequencer"
+    -- MulDiv pipeline
+    "MulDivExecUnit", "PipelinedMultiplier", "Divider32",
+    -- Microcode
+    "MicrocodeSequencer",
+    -- W=2 sub-modules (compositionally verified)
+    "RenameStage_W2", "ROB16_W2", "Queue16x32_DualPort",
+    -- Shared sub-modules
+    "LSU", "StoreBuffer8", "ReservationStation4_W2"
   ]
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
