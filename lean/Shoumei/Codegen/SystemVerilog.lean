@@ -509,23 +509,43 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
       -- Check if this register is part of a signal group
       match ctx.wireToGroup.find? (fun (w', _) => w'.name == g.output.name) with
       | some (_, sg) =>
-          -- Part of a bus - only emit for first register in group
-          if sg.wires.head? == some g.output then
+          -- Part of a bus - emit per-bit assignment for each DFF
+          let idx := sg.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == g.output.name then some p.1 else none)
+          match idx with
+          | some i =>
             let svType := signalGroupToSV sg
             let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
+            let isScalar := sg.width == 1
             let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
-              | some (_, inputGroup) => inputGroup.name
+              | some (_, inputGroup) =>
+                if inputGroup.width == 1 then inputGroup.name
+                else
+                  let dIdx := inputGroup.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == d.name then some p.1 else none)
+                  match dIdx with
+                  | some j => s!"{inputGroup.name}[{j}]"
+                  | none => inputGroup.name
               | none => d.name
-            let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
-            let resetVal := computeGroupResetVal c sg
-            some (decl, s!"      {regName} <= {dRef};", s!"      {regName} <= {resetVal};", regName)
-          else
-            none
+            -- Only emit declaration and reset for the first wire in the group
+            if sg.wires.head? == some g.output then
+              let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
+              let resetVal := computeGroupResetVal c sg
+              let assignStr := if isScalar then s!"      {regName} <= {dRef};" else s!"      {regName}[{i}] <= {dRef};"
+              some (decl, assignStr, s!"      {regName} <= {resetVal};", regName)
+            else
+              -- Non-first wire: just the per-bit assignment, no decl/reset
+              let assignStr := if isScalar then s!"      {regName} <= {dRef};" else s!"      {regName}[{i}] <= {dRef};"
+              some (none, assignStr, "", regName)
+          | none => none
       | none =>
           -- Standalone register
           let regName := if isCircuitOutput then g.output.name else s!"{g.output.name}_reg"
           let dRef := match ctx.wireToGroup.find? (fun (w', _) => w'.name == d.name) with
-            | some (_, inputGroup) => inputGroup.name
+            | some (_, inputGroup) =>
+              -- Single-bit DFF input from a bus: need bit index
+              let idx := inputGroup.wires.enum.findSome? (fun (p : Nat × Wire) => if p.2.name == d.name then some p.1 else none)
+              match idx with
+              | some i => s!"{inputGroup.name}[{i}]"
+              | none => inputGroup.name
             | none => d.name
           let decl := if isCircuitOutput then none else some s!"  logic {regName};"
           let resetVal := if g.gateType == GateType.DFF_SET then "1'b1" else "1'b0"
@@ -538,7 +558,7 @@ def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire
   let results := dffs.filterMap (generateDFFDecl ctx c)
   let decls := results.filterMap (fun (decl, _, _, _) => decl)
   let assigns := results.map (fun (_, assign, _, _) => assign)
-  let resetAssigns := results.map (fun (_, _, resetAssign, _) => resetAssign)
+  let resetAssigns := results.map (fun (_, _, resetAssign, _) => resetAssign) |>.filter (· != "")
 
   if assigns.isEmpty then
     ""
@@ -571,7 +591,7 @@ def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire
         if regIsCircuitOutput then none
         else some s!"  assign {busName} = {regName};"
       else
-        none)
+        none) |>.foldl (fun acc s => if acc.contains s then acc else acc ++ [s]) []
     let feedbackStr := joinLines feedbackAssigns
 
     let base := if declsStr.isEmpty then

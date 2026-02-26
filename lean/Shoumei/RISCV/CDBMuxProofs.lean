@@ -2,17 +2,17 @@ import Shoumei.RISCV.CDBMux
 
 namespace Shoumei.RISCV.CDBMuxProofs
 
--- Structural proofs for CDBMux (no F extension)
-theorem cdbmux_name : cdbMux.name = "CDBMux" := by native_decide
-theorem cdbmux_input_count : cdbMux.inputs.length = 273 := by native_decide
-theorem cdbmux_output_count : cdbMux.outputs.length = 77 := by native_decide
-theorem cdbmux_gate_count : cdbMux.gates.length = 253 := by native_decide
-theorem cdbmux_no_instances : cdbMux.instances.length = 0 := by native_decide
+-- Structural proofs for CDBMuxW2 (W=2, no F extension)
+theorem cdbmuxw2_name : cdbMuxW2.name = "CDBMux_W2" := by native_decide
+theorem cdbmuxw2_input_count : cdbMuxW2.inputs.length = 307 := by native_decide
+theorem cdbmuxw2_output_count : cdbMuxW2.outputs.length = 151 := by native_decide
+theorem cdbmuxw2_gate_count : cdbMuxW2.gates.length = 241 := by native_decide
+theorem cdbmuxw2_no_instances : cdbMuxW2.instances.length = 0 := by native_decide
 
--- Structural proofs for CDBMux_F (with F extension)
-theorem cdbmuxf_name : cdbMuxF.name = "CDBMux_F" := by native_decide
-theorem cdbmuxf_input_count : cdbMuxF.inputs.length = 273 := by native_decide
-theorem cdbmuxf_output_count : cdbMuxF.outputs.length = 77 := by native_decide
-theorem cdbmuxf_gate_count : cdbMuxF.gates.length = 257 := by native_decide
+-- Structural proofs for CDBMuxFW2 (W=2, with F extension)
+theorem cdbmuxfw2_name : cdbMuxFW2.name = "CDBMux_F_W2" := by native_decide
+theorem cdbmuxfw2_input_count : cdbMuxFW2.inputs.length = 307 := by native_decide
+theorem cdbmuxfw2_output_count : cdbMuxFW2.outputs.length = 151 := by native_decide
+theorem cdbmuxfw2_gate_count : cdbMuxFW2.gates.length = 243 := by native_decide
 
 end Shoumei.RISCV.CDBMuxProofs

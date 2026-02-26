@@ -40,6 +40,8 @@ structure CPUConfig where
   enableZifencei : Bool := false
   /-- Register width (32 for RV32, 64 for RV64) -/
   xlen : Nat := 32
+  /-- Number of instructions fetched, decoded, renamed, and dispatched per cycle -/
+  dispatchWidth : Nat := 1
   /-- ROB commit width (number of instructions retired per cycle) -/
   commitWidth : Nat := 1
   /-- Number of harts (hardware threads / cores) - FUTURE -/
@@ -151,7 +153,7 @@ def CPUConfig.microcodesFenceI (c : CPUConfig) : Bool := c.enabledMicrocode.cont
 def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.contains .trapEntry
 
 /-- THE default config. Edit this single definition to change what gets built.
-    RV32IMF + Zicsr + Zifencei + Cache, with standard microarch parameters. -/
+    RV32IMF + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
 def defaultCPUConfig : CPUConfig := {
   enableM := true
   enableF := true
@@ -159,6 +161,8 @@ def defaultCPUConfig : CPUConfig := {
   enableZifencei := true
   enableCache := true
   enabledMicrocode := [.trapEntry]
+  dispatchWidth := 2
+  commitWidth := 2
 }
 
 /-- Default RV32I configuration (no extensions) -/

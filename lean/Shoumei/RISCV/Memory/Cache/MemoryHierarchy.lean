@@ -96,7 +96,9 @@ def mkMemoryHierarchy : Circuit :=
   let ifetch_valid := Wire.mk "ifetch_valid"
   let ifetch_addr := (List.range 32).map fun i => Wire.mk s!"ifetch_addr_{i}"
   let ifetch_data := (List.range 32).map fun i => Wire.mk s!"ifetch_data_{i}"
+  let ifetch_data_1 := (List.range 32).map fun i => Wire.mk s!"ifetch_data_1_{i}"
   let ifetch_stall := Wire.mk "ifetch_stall"
+  let ifetch_last_word := Wire.mk "ifetch_last_word"
 
   -- Data interface
   let dmem_req_valid := Wire.mk "dmem_req_valid"
@@ -144,9 +146,10 @@ def mkMemoryHierarchy : Circuit :=
      [("fence_i", fence_i),
       ("resp_valid", Wire.mk "l1i_resp_valid")] ++
      (List.range 32).map (fun i => (s!"resp_data_{i}", ifetch_data[i]!)) ++
+     (List.range 32).map (fun i => (s!"resp_data_1_{i}", ifetch_data_1[i]!)) ++
      [("miss_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"miss_addr_{i}", l1i_miss_addr[i]!)) ++
-     [("stall", ifetch_stall)])
+     [("stall", ifetch_stall), ("last_word", ifetch_last_word)])
 
   -- L1D Cache instance
   let l1d_inst := CircuitInstance.mk "L1DCache" "u_l1d"
@@ -193,7 +196,7 @@ def mkMemoryHierarchy : Circuit :=
     inputs := [clock, reset, ifetch_valid] ++ ifetch_addr ++
               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_wdata ++ dmem_req_size ++
               [mem_resp_valid] ++ mem_resp_data ++ [fence_i]
-    outputs := ifetch_data ++ [ifetch_stall,
+    outputs := ifetch_data ++ ifetch_data_1 ++ [ifetch_stall, ifetch_last_word,
                dmem_resp_valid] ++ dmem_resp_data ++ [dmem_stall] ++
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [fence_i_busy]
@@ -202,6 +205,7 @@ def mkMemoryHierarchy : Circuit :=
     signalGroups := [
       { name := "ifetch_addr", width := 32, wires := ifetch_addr },
       { name := "ifetch_data", width := 32, wires := ifetch_data },
+      { name := "ifetch_data_1", width := 32, wires := ifetch_data_1 },
       { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
       { name := "dmem_req_wdata", width := 32, wires := dmem_req_wdata },
       { name := "dmem_req_size", width := 2, wires := dmem_req_size },

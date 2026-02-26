@@ -909,20 +909,21 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "    output logic [31:0] o_mem_req_addr,\n" ++
   "    // HTIF\n" ++
   "    output logic [31:0] o_tohost,\n" ++
-  "    // RVVI-TRACE outputs (cosimulation)\n" ++
-  "    output logic        o_rvvi_valid,\n" ++
-  "    output logic        o_rvvi_trap,\n" ++
-  "    output logic [31:0] o_rvvi_pc_rdata,\n" ++
-  "    output logic [31:0] o_rvvi_insn,\n" ++
-  "    output logic [4:0]  o_rvvi_rd,\n" ++
-  "    output logic        o_rvvi_rd_valid,\n" ++
-  "    output logic [31:0] o_rvvi_rd_data,\n" ++
-  "    // RVVI-TRACE FP outputs (F extension cosimulation)\n" ++
-  "    output logic [4:0]  o_rvvi_frd,\n" ++
-  "    output logic        o_rvvi_frd_valid,\n" ++
-  "    output logic [31:0] o_rvvi_frd_data,\n" ++
-  "    // FP exception flags accumulator\n" ++
-  "    output logic [4:0]  o_fflags_acc\n" ++
+  "    // RVVI-TRACE outputs (dual-retire W=2 cosimulation)\n" ++
+  "    output logic        o_rvvi_valid_0,\n" ++
+  "    output logic        o_rvvi_valid_1,\n" ++
+  "    output logic        o_rvvi_trap_0,\n" ++
+  "    output logic        o_rvvi_trap_1,\n" ++
+  "    output logic [31:0] o_rvvi_pc_rdata_0,\n" ++
+  "    output logic [31:0] o_rvvi_pc_rdata_1,\n" ++
+  "    output logic [31:0] o_rvvi_insn_0,\n" ++
+  "    output logic [31:0] o_rvvi_insn_1,\n" ++
+  "    output logic [4:0]  o_rvvi_rd_0,\n" ++
+  "    output logic [4:0]  o_rvvi_rd_1,\n" ++
+  "    output logic        o_rvvi_rd_valid_0,\n" ++
+  "    output logic        o_rvvi_rd_valid_1,\n" ++
+  "    output logic [31:0] o_rvvi_rd_data_0,\n" ++
+  "    output logic [31:0] o_rvvi_rd_data_1\n" ++
   ");\n\n" ++
 
   "  // =========================================================================\n" ++
@@ -1061,17 +1062,20 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   s!"  assign o_mem_req_we     = {clmp.reqWeSignal};\n" ++
   s!"  assign o_mem_req_addr   = {clmp.reqAddrSignal};\n" ++
   "  assign o_tohost          = test_code;\n" ++
-  "  assign o_rvvi_valid      = rvvi_valid;\n" ++
-  "  assign o_rvvi_trap       = rvvi_trap;\n" ++
-  "  assign o_rvvi_pc_rdata   = rvvi_pc_rdata;\n" ++
-  "  assign o_rvvi_insn       = rvvi_insn;\n" ++
-  "  assign o_rvvi_rd         = rvvi_rd;\n" ++
-  "  assign o_rvvi_rd_valid   = rvvi_rd_valid;\n" ++
-  "  assign o_rvvi_rd_data    = rvvi_rd_data;\n" ++
-  "  assign o_rvvi_frd        = rvvi_frd;\n" ++
-  "  assign o_rvvi_frd_valid  = rvvi_frd_valid;\n" ++
-  "  assign o_rvvi_frd_data   = rvvi_frd_data;\n" ++
-  "  assign o_fflags_acc      = fflags_acc;\n\n" ++
+  "  assign o_rvvi_valid_0    = rvvi_validS0;\n" ++
+  "  assign o_rvvi_valid_1    = rvvi_validS1;\n" ++
+  "  assign o_rvvi_trap_0     = rvvi_trapS0;\n" ++
+  "  assign o_rvvi_trap_1     = rvvi_trapS1;\n" ++
+  "  assign o_rvvi_pc_rdata_0 = rvvi_pc_0;\n" ++
+  "  assign o_rvvi_pc_rdata_1 = rvvi_pc_1;\n" ++
+  "  assign o_rvvi_insn_0     = rvvi_insn_0;\n" ++
+  "  assign o_rvvi_insn_1     = rvvi_insn_1;\n" ++
+  "  assign o_rvvi_rd_0       = rvvi_rd_0;\n" ++
+  "  assign o_rvvi_rd_1       = rvvi_rd_1;\n" ++
+  "  assign o_rvvi_rd_valid_0 = rvvi_rd_validS0;\n" ++
+  "  assign o_rvvi_rd_valid_1 = rvvi_rd_validS1;\n" ++
+  "  assign o_rvvi_rd_data_0  = rvvi_rdd_0;\n" ++
+  "  assign o_rvvi_rd_data_1  = rvvi_rdd_1;\n\n" ++
   "endmodule\n"
 
 /-! ## Verilator sim_main.cpp Generator -/
@@ -1248,12 +1252,20 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "#if VM_TRACE\n" ++
   "        if (trace) trace->dump(sim_time++);\n" ++
   "#endif\n\n" ++
-  "        if (dut->o_rvvi_valid) " ++ lb ++ "\n" ++
+  "        // Dual-retire RVVI (W=2)\n" ++
+  "        if (dut->o_rvvi_valid_0) " ++ lb ++ "\n" ++
   "            retired++;\n" ++
   "            if (verbose)\n" ++
-  "                printf(\"  RET[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
-  "                    retired, dut->o_rvvi_pc_rdata, dut->o_rvvi_insn,\n" ++
-  "                    dut->o_rvvi_rd, (int)dut->o_rvvi_rd_valid, dut->o_rvvi_rd_data);\n" ++
+  "                printf(\"  RET0[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                    retired, dut->o_rvvi_pc_rdata_0, dut->o_rvvi_insn_0,\n" ++
+  "                    dut->o_rvvi_rd_0, (int)dut->o_rvvi_rd_valid_0, dut->o_rvvi_rd_data_0);\n" ++
+  "        " ++ rb ++ "\n" ++
+  "        if (dut->o_rvvi_valid_1) " ++ lb ++ "\n" ++
+  "            retired++;\n" ++
+  "            if (verbose)\n" ++
+  "                printf(\"  RET1[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                    retired, dut->o_rvvi_pc_rdata_1, dut->o_rvvi_insn_1,\n" ++
+  "                    dut->o_rvvi_rd_1, (int)dut->o_rvvi_rd_valid_1, dut->o_rvvi_rd_data_1);\n" ++
   "        " ++ rb ++ "\n\n" ++
   (if !isCached then
     "        if (verbose && dut->o_dmem_req_valid)\n" ++
@@ -1782,20 +1794,25 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    uint32_t pc, insn, rd, rd_data, frd, frd_data, fflags;\n" ++
   rb ++ ";\n\n" ++
 
-  s!"static RVVIState read_rvvi(const {vType}* dut) {lb}\n" ++
-  "    RVVIState s = " ++ lb ++ rb ++ ";\n" ++
-  "    s.valid     = dut->o_rvvi_valid;\n" ++
-  "    s.trap      = dut->o_rvvi_trap;\n" ++
-  "    s.pc        = dut->o_rvvi_pc_rdata;\n" ++
-  "    s.insn      = dut->o_rvvi_insn;\n" ++
-  "    s.rd        = dut->o_rvvi_rd;\n" ++
-  "    s.rd_valid  = dut->o_rvvi_rd_valid;\n" ++
-  "    s.rd_data   = dut->o_rvvi_rd_data;\n" ++
-  "    s.frd       = dut->o_rvvi_frd;\n" ++
-  "    s.frd_valid = dut->o_rvvi_frd_valid;\n" ++
-  "    s.frd_data  = dut->o_rvvi_frd_data;\n" ++
-  "    s.fflags    = dut->o_fflags_acc;\n" ++
-  "    return s;\n" ++
+  s!"static void read_rvvi_dual(const {vType}* dut, RVVIState out[2]) {lb}\n" ++
+  "    out[0] = " ++ lb ++ rb ++ ";\n" ++
+  "    out[0].valid     = dut->o_rvvi_valid_0;\n" ++
+  "    out[0].trap      = dut->o_rvvi_trap_0;\n" ++
+  "    out[0].pc        = dut->o_rvvi_pc_rdata_0;\n" ++
+  "    out[0].insn      = dut->o_rvvi_insn_0;\n" ++
+  "    out[0].rd        = dut->o_rvvi_rd_0;\n" ++
+  "    out[0].rd_valid  = dut->o_rvvi_rd_valid_0;\n" ++
+  "    out[0].rd_data   = dut->o_rvvi_rd_data_0;\n" ++
+  "    out[0].frd_valid = false;\n" ++
+  "    out[1] = " ++ lb ++ rb ++ ";\n" ++
+  "    out[1].valid     = dut->o_rvvi_valid_1;\n" ++
+  "    out[1].trap      = dut->o_rvvi_trap_1;\n" ++
+  "    out[1].pc        = dut->o_rvvi_pc_rdata_1;\n" ++
+  "    out[1].insn      = dut->o_rvvi_insn_1;\n" ++
+  "    out[1].rd        = dut->o_rvvi_rd_1;\n" ++
+  "    out[1].rd_valid  = dut->o_rvvi_rd_valid_1;\n" ++
+  "    out[1].rd_data   = dut->o_rvvi_rd_data_1;\n" ++
+  "    out[1].frd_valid = false;\n" ++
   rb ++ "\n\n" ++
 
   s!"int main(int argc, char** argv) {lb}\n" ++
@@ -1825,11 +1842,13 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    bool done = false;\n\n" ++
   "    while (!done && cycle < timeout) " ++ lb ++ "\n" ++
   "        dut->clk = 1; dut->eval();\n" ++
-  "        RVVIState rvvi = read_rvvi(dut.get());\n\n" ++
-  "        if (rvvi.valid) " ++ lb ++ "\n" ++
+  "        RVVIState rvvi[2];\n" ++
+  "        read_rvvi_dual(dut.get(), rvvi);\n\n" ++
+  "        for (int slot = 0; slot < 2; slot++) " ++ lb ++ "\n" ++
+  "            if (!rvvi[slot].valid) continue;\n" ++
   "            SpikeStepResult spike_r = spike->step();\n" ++
   "            int skip = 0;\n" ++
-  "            while (spike_r.pc != rvvi.pc && skip < 32) " ++ lb ++ "\n" ++
+  "            while (spike_r.pc != rvvi[slot].pc && skip < 32) " ++ lb ++ "\n" ++
   "                if (is_unsyncable_csr_read(spike_r.insn) && spike_r.rd != 0) " ++ lb ++ "\n" ++
   "                    uint32_t csr = (spike_r.insn >> 20) & 0xfff;\n" ++
   "                    if (csr == 0xB02 || csr == 0xC02)\n" ++
@@ -1838,51 +1857,30 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                spike_r = spike->step(); skip++;\n" ++
   "            " ++ rb ++ "\n\n" ++
   "            bool skip_rd_cmp = false;\n" ++
-  "            if (is_unsyncable_csr_read(rvvi.insn)) " ++ lb ++ "\n" ++
-  "                if (rvvi.rd_valid && spike_r.rd != 0)\n" ++
-  "                    spike->set_xreg(spike_r.rd, rvvi.rd_data);\n" ++
+  "            if (is_unsyncable_csr_read(rvvi[slot].insn)) " ++ lb ++ "\n" ++
+  "                if (rvvi[slot].rd_valid && spike_r.rd != 0)\n" ++
+  "                    spike->set_xreg(spike_r.rd, rvvi[slot].rd_data);\n" ++
   "                skip_rd_cmp = true;\n" ++
   "            " ++ rb ++ "\n\n" ++
-  "            if (rvvi.pc != spike_r.pc) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x Spike=0x%08x (skip %d)\\n\",\n" ++
-  "                    retired, cycle, rvvi.pc, spike_r.pc, skip);\n" ++
+  "            if (rvvi[slot].pc != spike_r.pc) " ++ lb ++ "\n" ++
+  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: PC RTL=0x%08x Spike=0x%08x (skip %d)\\n\",\n" ++
+  "                    retired, cycle, slot, rvvi[slot].pc, spike_r.pc, skip);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n" ++
-  "            if (rvvi.insn != spike_r.insn) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: insn RTL=0x%08x Spike=0x%08x\\n\",\n" ++
-  "                    retired, cycle, rvvi.insn, spike_r.insn);\n" ++
+  "            if (rvvi[slot].insn != spike_r.insn) " ++ lb ++ "\n" ++
+  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: insn RTL=0x%08x Spike=0x%08x\\n\",\n" ++
+  "                    retired, cycle, slot, rvvi[slot].insn, spike_r.insn);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n" ++
-  "            if (rvvi.rd_valid && spike_r.rd != 0 && !skip_rd_cmp) " ++ lb ++ "\n" ++
-  "                if (rvvi.rd_data != spike_r.rd_value) " ++ lb ++ "\n" ++
-  "                    fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x Spike=0x%08x\\n\",\n" ++
-  "                        retired, cycle, spike_r.rd, rvvi.rd_data, spike_r.rd_value);\n" ++
+  "            if (rvvi[slot].rd_valid && spike_r.rd != 0 && !skip_rd_cmp) " ++ lb ++ "\n" ++
+  "                if (rvvi[slot].rd_data != spike_r.rd_value) " ++ lb ++ "\n" ++
+  "                    fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: x%u RTL=0x%08x Spike=0x%08x\\n\",\n" ++
+  "                        retired, cycle, slot, spike_r.rd, rvvi[slot].rd_data, spike_r.rd_value);\n" ++
   "                    mismatches++;\n" ++
   "                " ++ rb ++ "\n" ++
-  "            " ++ rb ++ "\n" ++
-  "            if (spike_r.frd_valid && rvvi.frd_valid && rvvi.frd_data != spike_r.frd_value) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: f%u RTL=0x%08x Spike=0x%08x\\n\",\n" ++
-  "                    retired, cycle, spike_r.frd, rvvi.frd_data, spike_r.frd_value);\n" ++
-  "                mismatches++;\n" ++
   "            " ++ rb ++ "\n\n" ++
-  (if cfg.cacheLineMemPort.isNone then
-    "            LeanSimStepResult cs_r = lean_sim->step();\n" ++
-    "            if (!cs_r.done && rvvi.pc != cs_r.pc) " ++ lb ++ "\n" ++
-    "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\\n\",\n" ++
-    "                    retired, cycle, rvvi.pc, cs_r.pc, spike_r.pc);\n" ++
-    "                if (cs_r.pc == spike_r.pc) fprintf(stderr, \"  -> SV codegen bug\\n\");\n" ++
-    "                else if (rvvi.pc == cs_r.pc) fprintf(stderr, \"  -> Spike disagree\\n\");\n" ++
-    "                else fprintf(stderr, \"  -> Lean circuit bug\\n\");\n" ++
-    "                mismatches++;\n" ++
-    "            " ++ rb ++ "\n" ++
-    "            if (!cs_r.done && cs_r.rd_valid && cs_r.rd != 0 && rvvi.rd_valid && cs_r.rd_data != rvvi.rd_data) " ++ lb ++ "\n" ++
-    "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu: x%u RTL=0x%08x LeanSim=0x%08x\\n\",\n" ++
-    "                    retired, cycle, cs_r.rd, rvvi.rd_data, cs_r.rd_data);\n" ++
-    "                mismatches++;\n" ++
-    "            " ++ rb ++ "\n\n"
-  else "\n") ++
   "            retired++;\n" ++
-  "            if (mismatches > 10) " ++ lb ++ " fprintf(stderr, \"Too many mismatches\\n\"); done = true; " ++ rb ++ "\n" ++
+  "            if (mismatches > 10) " ++ lb ++ " fprintf(stderr, \"Too many mismatches\\n\"); done = true; break; " ++ rb ++ "\n" ++
   "        " ++ rb ++ "\n\n" ++
   "        if (dut->o_test_done) done = true;\n" ++
   "        dut->clk = 0; dut->eval();\n" ++

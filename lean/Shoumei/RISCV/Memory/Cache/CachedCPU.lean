@@ -6,16 +6,18 @@ The external interface changes from raw IMEM/DMEM buses to L2-miss memory bus.
 
 CPU-facing connections (internal):
 - CPU fetch_pc → MemHierarchy ifetch_addr
-- MemHierarchy ifetch_data → CPU imem_resp_data
+- MemHierarchy ifetch_data → CPU imem_resp_data_0 (and imem_resp_data_1, same word for now)
 - CPU dmem_req_* → MemHierarchy dmem_req_*
 - MemHierarchy dmem_resp_* → CPU dmem_resp_*
-- CPU fence_i → MemHierarchy fence_i
 - MemHierarchy ifetch_stall → CPU fetch_stall (OR'd into existing stall chain)
 
 External interface:
 - mem_req_valid/addr/we/data → main memory request
 - mem_resp_valid/data → main memory response
 - RVVI trace outputs (passed through from CPU)
+
+Note: Currently provides the same instruction word to both fetch slots (imem_resp_data_0/1).
+W=2 dual fetch will be enabled when L1ICache is modified to provide two words per cycle.
 -/
 
 import Shoumei.DSL
@@ -35,7 +37,7 @@ private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
     External ports:
     - Inputs: clock, reset, zero, one, mem_resp_valid, mem_resp_data[255:0]
     - Outputs: mem_req_valid, mem_req_addr[31:0], mem_req_we, mem_req_data[255:0],
-               rob_empty, RVVI trace signals, fflags_acc[4:0]
+               rob_empty, RVVI trace signals
 -/
 def mkCachedCPU (config : CPUConfig) : Circuit :=
   let clock := Wire.mk "clock"
@@ -56,6 +58,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let fetch_stalled := Wire.mk "cpu_fetch_stalled"
   let global_stall_out := Wire.mk "cpu_global_stall_out"
   let imem_resp_data := makeIndexedWires "cpu_imem_resp_data" 32
+  let imem_resp_data_1 := makeIndexedWires "cpu_imem_resp_data_1" 32
 
   let dmem_req_valid := Wire.mk "cpu_dmem_req_valid"
   let dmem_req_we := Wire.mk "cpu_dmem_req_we"
@@ -67,8 +70,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
 
   -- Cache stall signals
   let ifetch_stall := Wire.mk "cache_ifetch_stall"
+  let ifetch_last_word := Wire.mk "cache_ifetch_last_word"
   let dmem_stall := Wire.mk "cache_dmem_stall"
-  let fence_i_busy := Wire.mk "cache_fence_i_busy"
+  let _fence_i_busy := Wire.mk "cache_fence_i_busy"
 
   -- dmem_req_ready: driven by NOT dmem_stall
   let dmem_req_ready := Wire.mk "cpu_dmem_req_ready"
@@ -76,26 +80,25 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
 
   -- CPU pass-through outputs
   let rob_empty := Wire.mk "rob_empty"
-  let rvvi_valid := Wire.mk "rvvi_valid"
-  let rvvi_trap := Wire.mk "rvvi_trap"
-  let rvvi_pc_rdata := makeIndexedWires "rvvi_pc_rdata" 32
-  let rvvi_insn := makeIndexedWires "rvvi_insn" 32
-  let rvvi_rd := makeIndexedWires "rvvi_rd" 5
-  let rvvi_rd_valid := Wire.mk "rvvi_rd_valid"
-  let rvvi_rd_data := makeIndexedWires "rvvi_rd_data" 32
-  let rvvi_frd := makeIndexedWires "rvvi_frd" 5
-  let rvvi_frd_valid := Wire.mk "rvvi_frd_valid"
-  let rvvi_frd_data := makeIndexedWires "rvvi_frd_data" 32
-  let fflags_acc := makeIndexedWires "fflags_acc" 5
+  let rvvi_valid_0 := Wire.mk "rvvi_validS0"
+  let rvvi_valid_1 := Wire.mk "rvvi_validS1"
+  let rvvi_trap_0 := Wire.mk "rvvi_trapS0"
+  let rvvi_trap_1 := Wire.mk "rvvi_trapS1"
+  let rvvi_rd_valid_0 := Wire.mk "rvvi_rd_validS0"
+  let rvvi_rd_valid_1 := Wire.mk "rvvi_rd_validS1"
+  let rvvi_pc_0 := makeIndexedWires "rvvi_pc_0" 32
+  let rvvi_pc_1 := makeIndexedWires "rvvi_pc_1" 32
+  let rvvi_insn_0 := makeIndexedWires "rvvi_insn_0" 32
+  let rvvi_insn_1 := makeIndexedWires "rvvi_insn_1" 32
+  let rvvi_rd_0 := makeIndexedWires "rvvi_rd_0" 5
+  let rvvi_rd_1 := makeIndexedWires "rvvi_rd_1" 5
+  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" 32
+  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" 32
 
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
   let store_snoop_addr := makeIndexedWires "store_snoop_addr" 32
   let store_snoop_data := makeIndexedWires "store_snoop_data" 32
-
-  -- FENCE.I signal from CPU to cache hierarchy
-  -- CPU exports fence_i_drain_complete: pulses when FENCE.I pipeline drain completes
-  let fence_i := Wire.mk "fence_i_signal"
 
   -- Gate: dmem_req_ready = NOT dmem_stall
   let stall_gate := Gate.mkNOT dmem_stall not_dmem_stall
@@ -108,17 +111,25 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let snoop_data_gates := (List.range 32).map fun i =>
     Gate.mkBUF dmem_req_data[i]! store_snoop_data[i]!
 
-  -- CPU instance
+  -- W=2 RVVI compat: expose rvvi_retire = rvvi_valid_0 OR rvvi_valid_1
+  let rvvi_retire := Wire.mk "rvvi_retire"
+  let rvvi_valid_gate := Gate.mkOR rvvi_valid_0 rvvi_valid_1 rvvi_retire
+
+  -- CPU instance (W=2 interface)
   let cpu_inst := CircuitInstance.mk s!"CPU_{config.isaString}" "u_cpu"
     ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
       ("fetch_stall_ext", ifetch_stall),
+      ("ifetch_last_word", ifetch_last_word),
       ("dmem_stall_ext", dmem_stall)] ++
-     (List.range 32).map (fun i => (s!"imem_resp_data_{i}", imem_resp_data[i]!)) ++
+     -- Slot 0 gets the fetched instruction word; slot 1 is zero (invalid)
+     -- until L1I is modified to provide two words per cycle.
+     (List.range 32).map (fun i => (s!"imem_resp_data_0_{i}", imem_resp_data[i]!)) ++
+     (List.range 32).map (fun i => (s!"imem_resp_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("dmem_req_ready", dmem_req_ready),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
      -- CPU outputs
-     (List.range 32).map (fun i => (s!"fetch_pc_{i}", fetch_pc[i]!)) ++
+     (List.range 32).map (fun i => (s!"fetch_pc_0_{i}", fetch_pc[i]!)) ++
      [("fetch_stalled", fetch_stalled),
       ("global_stall_out", global_stall_out),
       ("dmem_req_valid", dmem_req_valid),
@@ -126,23 +137,20 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"dmem_req_addr_{i}", dmem_req_addr[i]!)) ++
      (List.range 32).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
-     [("rob_empty", rob_empty), ("fence_i_drain_complete", fence_i)] ++
-     -- RVVI
-     [("rvvi_valid", rvvi_valid), ("rvvi_trap", rvvi_trap)] ++
-     (List.range 32).map (fun i => (s!"rvvi_pc_rdata_{i}", rvvi_pc_rdata[i]!)) ++
-     (List.range 32).map (fun i => (s!"rvvi_insn_{i}", rvvi_insn[i]!)) ++
-     (List.range 5).map (fun i => (s!"rvvi_rd_{i}", rvvi_rd[i]!)) ++
-     [("rvvi_rd_valid", rvvi_rd_valid)] ++
-     (List.range 32).map (fun i => (s!"rvvi_rd_data_{i}", rvvi_rd_data[i]!)) ++
-     (List.range 5).map (fun i => (s!"rvvi_frd_{i}", rvvi_frd[i]!)) ++
-     [("rvvi_frd_valid", rvvi_frd_valid)] ++
-     (List.range 32).map (fun i => (s!"rvvi_frd_data_{i}", rvvi_frd_data[i]!)) ++
-     (List.range 5).map (fun i => (s!"fflags_acc_{i}", fflags_acc[i]!)))
+     [("rob_empty", rob_empty),
+      ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
+      ("rvvi_trapS0", rvvi_trap_0), ("rvvi_trapS1", rvvi_trap_1),
+      ("rvvi_rd_validS0", rvvi_rd_valid_0), ("rvvi_rd_validS1", rvvi_rd_valid_1)] ++
+     (rvvi_pc_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_pc_0_{i}", w)) ++
+     (rvvi_pc_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_pc_1_{i}", w)) ++
+     (rvvi_insn_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_insn_0_{i}", w)) ++
+     (rvvi_insn_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_insn_1_{i}", w)) ++
+     (rvvi_rd_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_0_{i}", w)) ++
+     (rvvi_rd_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_1_{i}", w)) ++
+     (rvvi_rd_data_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_0_{i}", w)) ++
+     (rvvi_rd_data_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_1_{i}", w)))
 
   -- MemoryHierarchy instance
-  -- ifetch_valid: always 1 — CPU always presents fetch_pc, L1I always checks.
-  -- This breaks the stall→ifetch_valid→req_valid feedback loop that caused
-  -- the CPU to advance past un-fetched instructions.
   let ifetch_valid := Wire.mk "ifetch_valid"
   let ifetch_valid_gate := Gate.mkBUF one ifetch_valid
 
@@ -157,10 +165,12 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
      (List.range 256).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
-     [("fence_i", fence_i)] ++
+     [("fence_i", zero)] ++  -- FENCE.I not yet implemented in W=2
      -- MemHierarchy outputs
      (List.range 32).map (fun i => (s!"ifetch_data_{i}", imem_resp_data[i]!)) ++
+     (List.range 32).map (fun i => (s!"ifetch_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("ifetch_stall", ifetch_stall),
+      ("ifetch_last_word", ifetch_last_word),
       ("dmem_resp_valid", dmem_resp_valid)] ++
      (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
      [("dmem_stall", dmem_stall),
@@ -168,32 +178,38 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"mem_req_addr_{i}", mem_req_addr[i]!)) ++
      [("mem_req_we", mem_req_we)] ++
      (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
-     [("fence_i_busy", fence_i_busy)])
+     [("fence_i_busy", Wire.mk "cache_fence_i_busy")])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
     inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
-               [rvvi_valid, rvvi_trap] ++ rvvi_pc_rdata ++ rvvi_insn ++
-               rvvi_rd ++ [rvvi_rd_valid] ++ rvvi_rd_data ++
-               rvvi_frd ++ [rvvi_frd_valid] ++ rvvi_frd_data ++
-               fflags_acc
-    gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate] ++
+               [rvvi_retire,
+                rvvi_valid_0, rvvi_valid_1,
+                rvvi_trap_0, rvvi_trap_1,
+                rvvi_rd_valid_0, rvvi_rd_valid_1] ++
+               rvvi_pc_0 ++ rvvi_pc_1 ++
+               rvvi_insn_0 ++ rvvi_insn_1 ++
+               rvvi_rd_0 ++ rvvi_rd_1 ++
+               rvvi_rd_data_0 ++ rvvi_rd_data_1
+    gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate, rvvi_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
     signalGroups := [
       { name := "mem_resp_data", width := 256, wires := mem_resp_data },
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
       { name := "mem_req_data", width := 256, wires := mem_req_data },
-      { name := "rvvi_pc_rdata", width := 32, wires := rvvi_pc_rdata },
-      { name := "rvvi_insn", width := 32, wires := rvvi_insn },
-      { name := "rvvi_rd", width := 5, wires := rvvi_rd },
-      { name := "rvvi_rd_data", width := 32, wires := rvvi_rd_data },
-      { name := "rvvi_frd", width := 5, wires := rvvi_frd },
-      { name := "rvvi_frd_data", width := 32, wires := rvvi_frd_data },
-      { name := "fflags_acc", width := 5, wires := fflags_acc },
       { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
-      { name := "store_snoop_data", width := 32, wires := store_snoop_data }
+      { name := "store_snoop_data", width := 32, wires := store_snoop_data },
+      -- RVVI trace buses
+      { name := "rvvi_pc_0", width := 32, wires := rvvi_pc_0 },
+      { name := "rvvi_pc_1", width := 32, wires := rvvi_pc_1 },
+      { name := "rvvi_insn_0", width := 32, wires := rvvi_insn_0 },
+      { name := "rvvi_insn_1", width := 32, wires := rvvi_insn_1 },
+      { name := "rvvi_rd_0", width := 5, wires := rvvi_rd_0 },
+      { name := "rvvi_rd_1", width := 5, wires := rvvi_rd_1 },
+      { name := "rvvi_rdd_0", width := 32, wires := rvvi_rd_data_0 },
+      { name := "rvvi_rdd_1", width := 32, wires := rvvi_rd_data_1 }
     ]
     keepHierarchy := true
   }

@@ -26,6 +26,86 @@ def makeIndexedWires (name : String) (n : Nat) : List Wire :=
 def bundledPorts (portName : String) (wires : List Wire) : List (String × Wire) :=
   wires.enum.map (fun ⟨i, w⟩ => (s!"{portName}_{i}", w))
 
+/-! ## Width-generic helpers for W-wide superscalar pipelines -/
+
+/-- Generate W copies of a wire bus: prefix_0[bits-1:0], prefix_1[bits-1:0], ... -/
+def mkSlotBus (pfxName : String) (bits : Nat) (W : Nat) : List (List Wire) :=
+  (List.range W).map (fun slot => makeIndexedWires s!"{pfxName}_{slot}" bits)
+
+/-- Generate W single wires: name_0, name_1, ... -/
+def mkSlotWires (name : String) (W : Nat) : List Wire :=
+  (List.range W).map fun s => Wire.mk s!"{name}_{s}"
+
+/-- Port mappings for slot s of a multi-slot bus -/
+def slotBundledPorts (portPrefix : String) (s : Nat) (wires : List Wire) : List (String × Wire) :=
+  bundledPorts s!"{portPrefix}_{s}" wires
+
+/-- Build an OR-tree over a list of wires. Returns (gates, output_wire).
+    Empty list → BUF zero to output. Single wire → BUF to output. -/
+def mkOrTree (pfx : String) (wires : List Wire) (output : Wire) (zero : Wire := Wire.mk "zero") : List Gate :=
+  match wires with
+  | [] => [Gate.mkBUF zero output]
+  | [w] => [Gate.mkBUF w output]
+  | w0 :: w1 :: rest =>
+    let first := Wire.mk s!"{pfx}_or0"
+    let firstGate := Gate.mkOR w0 w1 first
+    let (gates, _) := rest.enum.foldl (fun (acc, prev) ⟨idx, w⟩ =>
+      let isLast := idx == rest.length - 1
+      let next := if isLast then output else Wire.mk s!"{pfx}_or{idx+1}"
+      (acc ++ [Gate.mkOR prev w next], next)
+    ) ([firstGate], first)
+    gates
+
+/-- Build an AND-chain over a list of wires. Returns (gates, output_wire). -/
+def mkAndChain (pfx : String) (wires : List Wire) (output : Wire) (one : Wire := Wire.mk "one") : List Gate :=
+  match wires with
+  | [] => [Gate.mkBUF one output]
+  | [w] => [Gate.mkBUF w output]
+  | w0 :: w1 :: rest =>
+    let first := Wire.mk s!"{pfx}_and0"
+    let firstGate := Gate.mkAND w0 w1 first
+    let (gates, _) := rest.enum.foldl (fun (acc, prev) ⟨idx, w⟩ =>
+      let isLast := idx == rest.length - 1
+      let next := if isLast then output else Wire.mk s!"{pfx}_and{idx+1}"
+      (acc ++ [Gate.mkAND prev w next], next)
+    ) ([firstGate], first)
+    gates
+
+/-- For entry i with W alloc/commit decoders, generate OR of (enable_s AND decoder_s[i]).
+    Returns (gates, output_wire) where output is true if any slot targets entry i. -/
+def mkMultiSlotMatch (pfx : String) (W : Nat) (enables : List Wire)
+    (decodedBits : List Wire) (output : Wire) (zero : Wire := Wire.mk "zero") : List Gate :=
+  let terms := (List.range W).map fun s =>
+    let t := Wire.mk s!"{pfx}_s{s}"
+    (Gate.mkAND enables[s]! decodedBits[s]! t, t)
+  let termGates := terms.map Prod.fst
+  let termWires := terms.map Prod.snd
+  termGates ++ mkOrTree s!"{pfx}" termWires output zero
+
+/-- Priority MUX cascade: for W data sources with W enables, select highest-priority matching.
+    Slot 0 has lowest priority, slot W-1 has highest (last writer wins).
+    Returns (gates) that drive output wires. -/
+def mkPriorityMuxCascade (pfx : String) (W : Nat) (enables : List Wire)
+    (dataSources : List (List Wire)) (output : List Wire) : List Gate :=
+  if W == 0 then []
+  else if W == 1 then
+    (List.range output.length).map fun b =>
+      Gate.mkBUF dataSources[0]![b]! output[b]!
+  else
+    -- Start from slot 0 data, then MUX in each higher slot if its enable is set
+    let width := output.length
+    let initWires := dataSources[0]!
+    let (allGates, _) := (List.range (W - 1)).foldl (fun (accGates, prevWires) idx =>
+      let s := idx + 1
+      let isLast := s == W - 1
+      let nextWires := if isLast then output
+                       else makeIndexedWires s!"{pfx}_pmux_s{s}" width
+      let muxGates := (List.range width).map fun b =>
+        Gate.mkMUX prevWires[b]! dataSources[s]![b]! enables[s]! nextWires[b]!
+      (accGates ++ muxGates, nextWires)
+    ) ([], initWires)
+    allGates
+
 /-- Generate gates for 6-bit OpType dispatch code → 4-bit ALU opcode translation.
 
     Takes the RS dispatch opcode (6-bit OpType encoding from decoder) and produces
@@ -207,142 +287,6 @@ def mkMux64to1 (inputs : List Wire) (sel : List Wire) (pfx : String) (output : W
   (l0.map Prod.fst) ++ (l1.map Prod.fst) ++ (l2.map Prod.fst) ++
     (l3.map Prod.fst) ++ (l4.map Prod.fst) ++
     [Gate.mkMUX l4_outs[0]! l4_outs[1]! sel[5]! output]
-
-/-- Build a 64-bit busy-bit table for operand readiness tracking.
-
-    The busy table tracks which physical registers have pending writes.
-    - Set busy[rd_phys] when a new instruction is renamed (allocates rd_phys)
-    - Clear busy[tag] when CDB broadcasts a result for that tag
-    - Read busy[rs_phys] to determine if an operand is ready
-
-    Returns: (gates, instances, src1_ready wire, src2_ready wire)
-
-    Inputs:
-    - clock, reset, zero, one: global signals
-    - set_tag[5:0]: physical register to mark busy (rd_phys from rename)
-    - set_en: enable set (rename_valid AND decode_has_rd)
-    - clear_tag[5:0]: physical register to mark ready (cdb_tag)
-    - clear_en: enable clear (cdb_valid)
-    - read1_tag[5:0]: first read port (rs1_phys)
-    - read2_tag[5:0]: second read port (rs2_phys)
-    - use_imm: if true, src2 is always ready (I-type instruction)
-
-    Hardware: 64 DFFs + 2 Decoder6 instances + 64 next-state MUXes + 2 64:1 read muxes
--/
-def mkBusyBitTable
-    (clock global_reset : Wire) (flush_groups : List Wire) (zero one : Wire)
-    (set_tag : List Wire) (set_en : Wire)
-    (clear_tag : List Wire) (clear_en : Wire)
-    (read1_tag : List Wire) (read2_tag : List Wire)
-    (use_imm : Wire)
-    (src1_ready src2_ready src2_ready_reg : Wire)
-    (pfx : String := "busy")
-    : (List Gate × List CircuitInstance) :=
-  let mkW := fun (s : String) => Wire.mk s
-  -- Decoder instances for set and clear paths
-  let set_decode := (List.range 64).map fun i => mkW s!"{pfx}_set_dec_{i}"
-  let clear_decode := (List.range 64).map fun i => mkW s!"{pfx}_clr_dec_{i}"
-
-  let set_dec_inst : CircuitInstance := {
-    moduleName := "Decoder6"
-    instName := s!"u_{pfx}_set_dec"
-    portMap :=
-      (set_tag.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
-      (set_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
-  }
-  let clear_dec_inst : CircuitInstance := {
-    moduleName := "Decoder6"
-    instName := s!"u_{pfx}_clr_dec"
-    portMap :=
-      (clear_tag.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
-      (clear_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
-  }
-
-  -- 64 busy bits: DFF + next-state logic
-  let busy_cur := (List.range 64).map fun i => mkW s!"{pfx}_q_{i}"
-  let busy_next := (List.range 64).map fun i => mkW s!"{pfx}_d_{i}"
-
-  -- Replicated reset OR gates: 8 groups × 8 DFFs each.
-  -- Each group uses its own flush DFF output (unique wire), so Yosys cannot merge them.
-  let numGroups := 8
-  let groupSize := 8  -- 64 / 8
-  let resetGroupWires := (List.range numGroups).map fun g => mkW s!"{pfx}_reset_g{g}"
-  let resetGroupGates := (List.range numGroups).map fun g =>
-    Gate.mkOR global_reset flush_groups[g]! resetGroupWires[g]!
-
-  -- Per-bit logic:
-  --   set_i = set_en AND set_decode[i]
-  --   clr_i = clear_en AND clear_decode[i]
-  --   next[i] = clr_i ? 0 : (set_i ? 1 : cur[i])
-  let perBitGates := (List.range 64).map fun i =>
-    let set_i := mkW s!"{pfx}_set_{i}"
-    let clr_i := mkW s!"{pfx}_clr_{i}"
-    let mux1 := mkW s!"{pfx}_mux1_{i}"
-    [
-      Gate.mkAND set_en set_decode[i]! set_i,
-      Gate.mkAND clear_en clear_decode[i]! clr_i,
-      Gate.mkMUX busy_cur[i]! one set_i mux1,     -- set: cur → 1
-      Gate.mkMUX mux1 zero clr_i busy_next[i]!    -- clear: → 0 (priority over set)
-    ]
-
-  -- CircuitInstance DFlipFlop for each busy bit, reset driven by per-group wire
-  let perBitInstances := (List.range 64).map fun i =>
-    let g := i / groupSize
-    ({ moduleName := "DFlipFlop", instName := s!"u_{pfx}_bit_{i}",
-       portMap := [("d", busy_next[i]!), ("q", busy_cur[i]!),
-                   ("clock", clock), ("reset", resetGroupWires[g]!)] } : CircuitInstance)
-
-  -- Read port 1: 64:1 mux tree selecting busy_cur[read1_tag]
-  -- Build 6-level binary mux tree: level 0 has 32 muxes, level 5 has 1 mux
-  let mkMux64to1 (inputs : List Wire) (sel : List Wire) (portName : String) (output : Wire) : List Gate :=
-    -- Level 0: sel[0] selects between pairs → 32 outputs
-    let l0 := (List.range 32).map fun i =>
-      let o := mkW s!"{portName}_l0_{i}"
-      (Gate.mkMUX inputs[2*i]! inputs[2*i+1]! sel[0]! o, o)
-    -- Level 1: sel[1] selects between pairs → 16 outputs
-    let l0_outs := l0.map Prod.snd
-    let l1 := (List.range 16).map fun i =>
-      let o := mkW s!"{portName}_l1_{i}"
-      (Gate.mkMUX l0_outs[2*i]! l0_outs[2*i+1]! sel[1]! o, o)
-    let l1_outs := l1.map Prod.snd
-    -- Level 2: → 8 outputs
-    let l2 := (List.range 8).map fun i =>
-      let o := mkW s!"{portName}_l2_{i}"
-      (Gate.mkMUX l1_outs[2*i]! l1_outs[2*i+1]! sel[2]! o, o)
-    let l2_outs := l2.map Prod.snd
-    -- Level 3: → 4 outputs
-    let l3 := (List.range 4).map fun i =>
-      let o := mkW s!"{portName}_l3_{i}"
-      (Gate.mkMUX l2_outs[2*i]! l2_outs[2*i+1]! sel[3]! o, o)
-    let l3_outs := l3.map Prod.snd
-    -- Level 4: → 2 outputs
-    let l4 := (List.range 2).map fun i =>
-      let o := mkW s!"{portName}_l4_{i}"
-      (Gate.mkMUX l3_outs[2*i]! l3_outs[2*i+1]! sel[4]! o, o)
-    let l4_outs := l4.map Prod.snd
-    -- Level 5: → 1 output
-    let l5 := Gate.mkMUX l4_outs[0]! l4_outs[1]! sel[5]! output
-    (l0.map Prod.fst) ++ (l1.map Prod.fst) ++ (l2.map Prod.fst) ++
-      (l3.map Prod.fst) ++ (l4.map Prod.fst) ++ [l5]
-
-  let busy_rs1 := mkW s!"{pfx}_rs1_raw"
-  let busy_rs2 := mkW s!"{pfx}_rs2_raw"
-  let mux1_gates := mkMux64to1 busy_cur read1_tag s!"{pfx}mux1" busy_rs1
-  let mux2_gates := mkMux64to1 busy_cur read2_tag s!"{pfx}mux2" busy_rs2
-
-  -- src1_ready = NOT busy[rs1_phys]
-  -- src2_ready = use_imm OR NOT busy[rs2_phys]
-  let not_busy_rs2 := mkW s!"not_{pfx}_rs2"
-  let readyGates := [
-    Gate.mkNOT busy_rs1 src1_ready,
-    Gate.mkNOT busy_rs2 not_busy_rs2,
-    Gate.mkOR use_imm not_busy_rs2 src2_ready,
-    Gate.mkBUF not_busy_rs2 src2_ready_reg  -- src2 ready without use_imm masking (for stores)
-  ]
-
-  let allGates := resetGroupGates ++ perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ readyGates
-  let allInstances := [set_dec_inst, clear_dec_inst] ++ perBitInstances
-  (allGates, allInstances)
 
 section
 set_option maxRecDepth 4096
@@ -739,6 +683,160 @@ def mkShadowRegisters
   let all_insts := rob_isStore_shadow_insts ++ redir_tag_cmp_insts ++ redir_target_shadow_insts
   (all_gates, all_insts, rob_head_is_fp, not_rob_head_is_fp, rob_head_isStore, rob_head_redirect_target)
 
+/-- W=2 shadow registers: isStore + redirect target with dual alloc and dual CDB ports.
+    Returns (gates, instances, rob_head_isStore, rob_head_redirect_target). -/
+def mkShadowRegisters2
+    (_zero _one clock reset : Wire)
+    (rob_alloc_idx_0 rob_alloc_idx_1 : List Wire) -- 4-bit each
+    (rename_valid_0 rename_valid_1 : Wire)
+    (dispatch_is_store_0 dispatch_is_store_1 : Wire)
+    (alloc_physRd_0 alloc_physRd_1 : List Wire) -- 6-bit each
+    (cdb_tag_0 cdb_tag_1 : List Wire) -- 6-bit each
+    (cdb_valid_0 cdb_valid_1 : Wire)
+    (cdb_mispredicted_0 cdb_mispredicted_1 : Wire)
+    (cdb_redirect_target_0 cdb_redirect_target_1 : List Wire) -- 32-bit each
+    (rob_head_idx_0 rob_head_idx_1 : List Wire) -- 4-bit each
+    : (List Gate × List CircuitInstance × Wire × Wire × List Wire × List Wire) :=
+  let rob_head_isStore := Wire.mk "rob_head_isStore_0"
+  let rob_head_isStore_1 := Wire.mk "rob_head_isStore_1"
+  let rob_head_redirect_target_0 := makeIndexedWires "rob_head_redirect_target_0" 32
+  let rob_head_redirect_target_1 := makeIndexedWires "rob_head_redirect_target_1" 32
+
+  -- Helper: decode alloc_idx to per-entry write-enable for given slot
+  let mkAllocDecode (pfx : String) (alloc_idx : List Wire) (rename_valid : Wire) (entries : Nat) :=
+    (List.range entries).map (fun e =>
+      let match_bits := (List.range 4).map (fun b =>
+        if (e / (2 ^ b)) % 2 != 0 then alloc_idx[b]!
+        else Wire.mk s!"{pfx}_n{e}_{b}")
+      let not_gates := (List.range 4).filterMap (fun b =>
+        if (e / (2 ^ b)) % 2 == 0 then
+          some (Gate.mkNOT alloc_idx[b]! (Wire.mk s!"{pfx}_n{e}_{b}"))
+        else none)
+      let t01 := Wire.mk s!"{pfx}_t01_{e}"
+      let t012 := Wire.mk s!"{pfx}_t012_{e}"
+      let decoded := Wire.mk s!"{pfx}_dec_{e}"
+      let we := Wire.mk s!"{pfx}_we_{e}"
+      (not_gates ++ [
+        Gate.mkAND match_bits[0]! match_bits[1]! t01,
+        Gate.mkAND t01 match_bits[2]! t012,
+        Gate.mkAND t012 match_bits[3]! decoded,
+        Gate.mkAND decoded rename_valid we
+      ], we))
+
+  -- Helper: 16:1 mux tree reading shadow register by head index
+  let mkMux16to1 (pfx : String) (values : List Wire) (sel : List Wire) (out : Wire) :=
+    let mux_l0 := (List.range 8).map (fun i => Wire.mk s!"{pfx}_m0_{i}")
+    let mux_l0_g := (List.range 8).map (fun i =>
+      Gate.mkMUX values[2*i]! values[2*i+1]! sel[0]! mux_l0[i]!)
+    let mux_l1 := (List.range 4).map (fun i => Wire.mk s!"{pfx}_m1_{i}")
+    let mux_l1_g := (List.range 4).map (fun i =>
+      Gate.mkMUX mux_l0[2*i]! mux_l0[2*i+1]! sel[1]! mux_l1[i]!)
+    let mux_l2 := (List.range 2).map (fun i => Wire.mk s!"{pfx}_m2_{i}")
+    let mux_l2_g := (List.range 2).map (fun i =>
+      Gate.mkMUX mux_l1[2*i]! mux_l1[2*i+1]! sel[2]! mux_l2[i]!)
+    mux_l0_g ++ mux_l1_g ++ mux_l2_g ++ [Gate.mkMUX mux_l2[0]! mux_l2[1]! sel[3]! out]
+
+  -- === isStore shadow (16 entries, dual write) ===
+  let rob_isStore_shadow := (List.range 16).map (fun e => Wire.mk s!"rob_isStore_e{e}")
+  let s0_dec := mkAllocDecode "st_s0" rob_alloc_idx_0 rename_valid_0 16
+  let s1_dec := mkAllocDecode "st_s1" rob_alloc_idx_1 rename_valid_1 16
+  let isStore_results := (List.range 16).map (fun e =>
+    let we0 := (s0_dec[e]!).2
+    let we1 := (s1_dec[e]!).2
+    -- Dual-write MUX: slot 1 wins if both (shouldn't happen with sequential alloc)
+    let mid := Wire.mk s!"rob_st_mid_{e}"
+    let next := Wire.mk s!"rob_st_next_{e}"
+    let gates := [
+      Gate.mkMUX rob_isStore_shadow[e]! dispatch_is_store_0 we0 mid,
+      Gate.mkMUX mid dispatch_is_store_1 we1 next]
+    let inst : CircuitInstance := {
+      moduleName := "DFlipFlop", instName := s!"u_rob_isStore_dff_{e}",
+      portMap := [("d", next), ("q", rob_isStore_shadow[e]!),
+                  ("clock", clock), ("reset", reset)] }
+    (gates, inst))
+  let isStore_alloc_gates := (s0_dec.map Prod.fst).flatten ++ (s1_dec.map Prod.fst).flatten
+  let isStore_write_gates := (isStore_results.map Prod.fst).flatten
+  let isStore_insts := isStore_results.map Prod.snd
+  let isStore_read_0 := mkMux16to1 "st_rd0" rob_isStore_shadow rob_head_idx_0 rob_head_isStore
+  let isStore_read_1 := mkMux16to1 "st_rd1" rob_isStore_shadow rob_head_idx_1 rob_head_isStore_1
+  let isStore_gates := isStore_alloc_gates ++ isStore_write_gates ++ isStore_read_0 ++ isStore_read_1
+
+  -- === Redirect tag shadow (6-bit physRd per entry, dual write) ===
+  let redir_tag_shadow := (List.range 16).map (fun e => makeIndexedWires s!"redir_tag_e{e}" 6)
+  let rt0_dec := mkAllocDecode "rt_s0" rob_alloc_idx_0 rename_valid_0 16
+  let rt1_dec := mkAllocDecode "rt_s1" rob_alloc_idx_1 rename_valid_1 16
+  let redir_tag_results := (List.range 16).map (fun e =>
+    let we0 := (rt0_dec[e]!).2
+    let we1 := (rt1_dec[e]!).2
+    let bit_gates := (List.range 6).map (fun b =>
+      let mid := Wire.mk s!"redir_ts_mid{e}_{b}"
+      let next := Wire.mk s!"redir_ts_next{e}_{b}"
+      [Gate.mkMUX redir_tag_shadow[e]![b]! alloc_physRd_0[b]! we0 mid,
+       Gate.mkMUX mid alloc_physRd_1[b]! we1 next,
+       Gate.mkDFF next clock reset redir_tag_shadow[e]![b]!]) |>.flatten
+    bit_gates)
+  let redir_tag_alloc_gates := (rt0_dec.map Prod.fst).flatten ++ (rt1_dec.map Prod.fst).flatten
+  let redir_tag_write_gates := redir_tag_results.flatten
+
+  -- === Redirect tag comparison (dual CDB) ===
+  -- For each entry, check both CDB tags for match
+  let redir_tag_match_0 := (List.range 16).map (fun e => Wire.mk s!"redir_tm0_{e}")
+  let redir_tag_match_1 := (List.range 16).map (fun e => Wire.mk s!"redir_tm1_{e}")
+  let redir_tag_cmp_insts : List CircuitInstance :=
+    (List.range 16).map (fun e => {
+      moduleName := "EqualityComparator6"
+      instName := s!"u_redir_tag_cmp0_{e}"
+      portMap := [("eq", redir_tag_match_0[e]!)] ++
+                 (cdb_tag_0.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (redir_tag_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+    }) ++
+    (List.range 16).map (fun e => {
+      moduleName := "EqualityComparator6"
+      instName := s!"u_redir_tag_cmp1_{e}"
+      portMap := [("eq", redir_tag_match_1[e]!)] ++
+                 (cdb_tag_1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (redir_tag_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+    })
+
+  -- === Redirect target shadow (32-bit per entry, dual CDB write) ===
+  let redir_target_shadow := (List.range 16).map (fun e => makeIndexedWires s!"redir_tgt_e{e}" 32)
+  let redir_target_results := (List.range 16).map (fun e =>
+    let we0_tmp := Wire.mk s!"redir_tgt_we0_tmp{e}"
+    let we0 := Wire.mk s!"redir_tgt_we0_{e}"
+    let we1_tmp := Wire.mk s!"redir_tgt_we1_tmp{e}"
+    let we1 := Wire.mk s!"redir_tgt_we1_{e}"
+    let we_gates := [
+      Gate.mkAND cdb_valid_0 redir_tag_match_0[e]! we0_tmp,
+      Gate.mkAND we0_tmp cdb_mispredicted_0 we0,
+      Gate.mkAND cdb_valid_1 redir_tag_match_1[e]! we1_tmp,
+      Gate.mkAND we1_tmp cdb_mispredicted_1 we1]
+    let insts := (List.range 32).map (fun b =>
+      let mid := Wire.mk s!"redir_tgt_mid{e}_{b}"
+      let next := Wire.mk s!"redir_tgt_next{e}_{b}"
+      ([Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target_0[b]! we0 mid,
+        Gate.mkMUX mid cdb_redirect_target_1[b]! we1 next],
+       { moduleName := "DFlipFlop"
+         instName := s!"u_redir_tgt_dff_{e}_{b}"
+         portMap := [("d", next), ("q", redir_target_shadow[e]![b]!),
+                     ("clock", clock), ("reset", reset)] : CircuitInstance }))
+    (we_gates ++ (insts.map Prod.fst).flatten, insts.map Prod.snd))
+  let redir_target_gates := (redir_target_results.map Prod.fst).flatten
+  let redir_target_insts := (redir_target_results.map Prod.snd).flatten
+
+  -- Read redirect target at head (dual head)
+  let redir_target_read_0 := (List.range 32).map (fun b =>
+    mkMux16to1 s!"redir_rd0_{b}" ((List.range 16).map (fun e => redir_target_shadow[e]![b]!)) rob_head_idx_0 rob_head_redirect_target_0[b]!
+  ) |>.flatten
+  let redir_target_read_1 := (List.range 32).map (fun b =>
+    mkMux16to1 s!"redir_rd1_{b}" ((List.range 16).map (fun e => redir_target_shadow[e]![b]!)) rob_head_idx_1 rob_head_redirect_target_1[b]!
+  ) |>.flatten
+
+  let all_gates := isStore_gates ++
+    redir_tag_alloc_gates ++ redir_tag_write_gates ++
+    redir_target_gates ++ redir_target_read_0 ++ redir_target_read_1
+  let all_insts := isStore_insts ++ redir_tag_cmp_insts ++ redir_target_insts
+  (all_gates, all_insts, rob_head_isStore, rob_head_isStore_1, rob_head_redirect_target_0, rob_head_redirect_target_1)
+
 /-- Generate fflags accumulation and frm register update logic.
     Returns (gates, dff_instances). -/
 def mkFPFlags
@@ -1074,6 +1172,72 @@ def mkSidecarRegFile4x32
       (captured_out.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
   }
   (we_gates ++ rf_gates ++ sel_gates, entries, decoder_inst, mux_inst)
+
+/-- 4-entry × 32-bit sidecar register file with 2 write ports and 2 read ports (for W=2).
+    Port 0 writes to entries 0,1 (bank 0), port 1 writes to entries 2,3 (bank 1).
+    Read port 0 selects between entries 0,1 via grant[1] (bank 0 arbiter).
+    Read port 1 selects between entries 2,3 via grant[3] (bank 1 arbiter).
+    Returns (gates, entries, dec0_inst, dec1_inst, out_lane0, out_lane1). -/
+def mkSidecarRegFile4x32_W2
+    (pfx : String)
+    (clock reset : Wire)
+    (alloc_ptr_0 : List Wire) (we_en_0 : Wire) (write_data_0 : List Wire)
+    (alloc_ptr_1 : List Wire) (we_en_1 : Wire) (write_data_1 : List Wire)
+    (grant : List Wire)
+    (captured_out_0 captured_out_1 : List Wire)
+    : (List Gate × List (List Wire) × CircuitInstance × CircuitInstance) :=
+  -- Decoder for write port 0
+  let decoded_0 := makeIndexedWires s!"{pfx}_dec0" 4
+  let dec0_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := s!"u_{pfx}_dec0"
+    portMap := [
+      ("in_0", alloc_ptr_0[0]!), ("in_1", alloc_ptr_0[1]!),
+      ("out_0", decoded_0[0]!), ("out_1", decoded_0[1]!),
+      ("out_2", decoded_0[2]!), ("out_3", decoded_0[3]!)
+    ]
+  }
+  -- Decoder for write port 1
+  let decoded_1 := makeIndexedWires s!"{pfx}_dec1" 4
+  let dec1_inst : CircuitInstance := {
+    moduleName := "Decoder2"
+    instName := s!"u_{pfx}_dec1"
+    portMap := [
+      ("in_0", alloc_ptr_1[0]!), ("in_1", alloc_ptr_1[1]!),
+      ("out_0", decoded_1[0]!), ("out_1", decoded_1[1]!),
+      ("out_2", decoded_1[2]!), ("out_3", decoded_1[3]!)
+    ]
+  }
+  -- Write enables: OR the two ports (non-overlapping banks, so OR is fine)
+  let we_0 := makeIndexedWires s!"{pfx}_we0" 4
+  let we_1 := makeIndexedWires s!"{pfx}_we1" 4
+  let we := makeIndexedWires s!"{pfx}_we" 4
+  let we_gates := (List.range 4).map (fun e =>
+    [Gate.mkAND decoded_0[e]! we_en_0 we_0[e]!,
+     Gate.mkAND decoded_1[e]! we_en_1 we_1[e]!,
+     Gate.mkOR we_0[e]! we_1[e]! we[e]!]) |>.flatten
+  -- Write data mux: if port 1 writes this entry, use its data; else port 0's
+  let entries := (List.range 4).map (fun e =>
+    makeIndexedWires s!"{pfx}_e{e}" 32)
+  let rf_gates := (List.range 4).map (fun e =>
+    let entry := entries[e]!
+    (List.range 32).map (fun b =>
+      let wd_muxed := Wire.mk s!"{pfx}_wd_e{e}_{b}"
+      let next := Wire.mk s!"{pfx}_next_e{e}_{b}"
+      [ Gate.mkMUX write_data_0[b]! write_data_1[b]! we_1[e]! wd_muxed,
+        Gate.mkMUX entry[b]! wd_muxed we[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+  -- Read port 0: 2:1 mux between entries 0,1, selected by grant[1]
+  -- (bank 0: grant[0]=entry 0, grant[1]=entry 1)
+  let read0_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX entries[0]![b]! entries[1]![b]! grant[1]! captured_out_0[b]!)
+  -- Read port 1: 2:1 mux between entries 2,3, selected by grant[3]
+  -- (bank 1: grant[2]=entry 2, grant[3]=entry 3)
+  let read1_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX entries[2]![b]! entries[3]![b]! grant[3]! captured_out_1[b]!)
+  (we_gates ++ rf_gates ++ read0_gates ++ read1_gates, entries, dec0_inst, dec1_inst)
 
 end
 

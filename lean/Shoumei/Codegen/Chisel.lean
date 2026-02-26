@@ -1497,8 +1497,15 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           | none => false
         let srcRef := if sourceIsVec then s!"{sgRef}.asUInt" else sgRef
         -- For partial connections, slice the parent signal group to match entries
+        -- Compute actual bit range from wire indices (not always starting at 0)
         let slicedRef := if isPartial then
-                           s!"{srcRef}({entries.length - 1}, 0)"
+                           let wireIndices := entries.filterMap (fun (_, wire) =>
+                             ctx.wireToIndex.find? (fun (w, _) => w.name == wire.name) |>.map (·.2))
+                           let minIdx := wireIndices.foldl (fun acc i => if i < acc then i else acc)
+                             (wireIndices.head?.getD 0)
+                           let maxIdx := wireIndices.foldl (fun acc i => if i > acc then i else acc)
+                             (wireIndices.head?.getD 0)
+                           s!"{srcRef}({maxIdx}, {minIdx})"
                          else srcRef
         -- If sub-module port is wider than what we're providing, pad with zeros
         let paddedRef := if subPortWidth > 0 && entries.length < subPortWidth then
@@ -1527,31 +1534,58 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
       ) |>.toList
       if isInstanceInput then
         -- Decompose parent bus into individual instance port connections
-        sortedEntries.map (fun (portName, _wire) =>
-          let idx := match extractPortIndex portName with
-            | some i => i
-            | none => 0
+        sortedEntries.map (fun (portName, wire) =>
+          -- Use source wire's index within its signal group, not destination port index
+          let idx := match ctx.wireToIndex.find? (fun (w, _) => w.name == wire.name) with
+            | some (_, bitIdx) => bitIdx
+            | none => match extractPortIndex portName with
+              | some i => i
+              | none => 0
           s!"  {inst.instName}.{portName} := {sgRef}({idx})"
         )
       else
-        -- Cat individual instance outputs into parent bus
-        let catParts := sortedEntries.reverse.map (fun (portName, _) =>
-          s!"{inst.instName}.{portName}"
-        )
-        let catExpr := "Cat(" ++ String.intercalate ", " catParts ++ ")"
-        [s!"  {sgRef} := {catExpr}"]
+        -- Instance outputs into parent bus
+        let parentSgWidth := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName) with
+          | some (_, sg) => sg.width
+          | none => sortedEntries.length
+        let isVecDecl := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName) with
+          | some (_, sg) => needsVecDeclarationHelper ctx sg c
+          | none => false
+        if sortedEntries.length < parentSgWidth && isVecDecl then
+          -- Partial coverage of a Vec: assign to specific bits
+          sortedEntries.map (fun (portName, wire) =>
+            let wireRefStr := wireRef ctx c wire
+            s!"  {wireRefStr} := {inst.instName}.{portName}"
+          )
+        else
+          -- Full bus or UInt: Cat individual instance outputs
+          let catParts := sortedEntries.reverse.map (fun (portName, _) =>
+            s!"{inst.instName}.{portName}"
+          )
+          let catExpr := "Cat(" ++ String.intercalate ", " catParts ++ ")"
+          [s!"  {sgRef} := {catExpr}"]
   )
 
-  -- 5b. Collect port bases already handled by bus connections (to skip redundant standalone entries)
-  let busHandledPortBases := busGroups.map (fun (_, portBase, _) => portBase)
+  -- 5b. Collect port bases handled by bus INPUT connections (to skip redundant standalone entries)
+  --    Only track input-direction bus connections (where padding covers all port bits).
+  --    Output-direction bus connections may be partial (only some bits from signal group).
+  let busHandledInputPortBases := busGroups.filterMap (fun (_sgName, portBase, entries) =>
+    let firstWire := entries.head?.map (·.2) |>.getD (Wire.mk "")
+    let isInput := determinePortDirection ctx c allCircuits inst portBase firstWire
+    -- Only mark as "handled" if the sub-module has a bus port (padding covers all bits).
+    -- When sub-module has individual ports, extra bits may appear as standalone entries.
+    let hasBusPort := subModuleHasBusPort allCircuits inst.moduleName portBase
+    if isInput && hasBusPort then some portBase else none
+  )
 
   -- 6. Group standalone entries by port base name (for bundled ports like alloc_oldPhysRd[0..5])
   --    Groups bracket notation (q[0], q[1]) and underscore notation (q_0, q_1) when
   --    the sub-module has a corresponding bus port with that base name.
-  --    Skip entries whose port base was already handled by a padded bus connection.
+  --    Skip entries whose port base was already handled by a bus INPUT connection
+  --    (since padded input connections cover all bits of the port).
   let standaloneFiltered := standaloneEntries.filter (fun (portName, _) =>
     let portBase := extractPortBaseName portName
-    !busHandledPortBases.contains portBase
+    !busHandledInputPortBases.contains portBase
   )
   let standaloneGrouped : List (String × List (String × Wire)) :=
     standaloneFiltered.foldl (fun acc (portName, wire) =>
@@ -1660,13 +1694,89 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           s!"  {inst.instName}.{w.name} := DontCare"
         )
 
+  -- 8b. Generate DontCare for bus-grouped sub-module input ports missing from portMap
+  let busDontCareConnections := match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | none => []
+    | some subMod =>
+        -- Find all input port base names that are bus-grouped
+        let inputBusBaseNames := subMod.inputs.filterMap (fun w =>
+          let base := extractBaseName w.name
+          if base != w.name then some base else none  -- Has _N suffix → part of a bus
+        ) |>.eraseDups
+        -- Filter to those not connected in portMap
+        -- Normalize base names by stripping trailing underscores for comparison
+        let normalize := fun (s : String) => s.dropEndWhile (· == '_')
+        let connectedBasesNorm := inst.portMap.map (fun (pname, _) => normalize (extractPortBaseName pname)) |>.eraseDups
+        let unconnectedBuses := inputBusBaseNames.filter (fun base =>
+          !connectedBasesNorm.contains (normalize base) &&
+          base != "clock" && base != "reset"
+        )
+        unconnectedBuses.map (fun base =>
+          s!"  {inst.instName}.{base} := DontCare"
+        )
+
+  -- 8c. Generate DontCare for individual unconnected sub-module input ports
+  --     Handles partially connected buses where the sub-module does NOT have a bus port
+  --     (i.e., individual ports like tag_0, tag_1, ..., tag_6 where tag_6 is unconnected)
+  let individualDontCareConnections := match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | none => []
+    | some subMod =>
+        let connectedPortNames := inst.portMap.map (fun (pname, _) => pname)
+        subMod.inputs.filter (fun w =>
+          w.name != "clock" && w.name != "reset" &&
+          !connectedPortNames.contains w.name &&
+          let base := extractBaseName w.name
+          base != w.name &&  -- Has _N suffix
+          -- Only if the sub-module does NOT have a bus port for this base
+          -- (if it does, the bus connection or busDontCare handles it)
+          !subModuleHasBusPort allCircuits inst.moduleName base &&
+          -- Only if some other ports with this base ARE connected (partial connection)
+          inst.portMap.any (fun (pname, _) => extractPortBaseName pname == base)
+        ) |>.map (fun w =>
+          s!"  {inst.instName}.{w.name} := DontCare"
+        )
+
   -- 9. Return instantiation + all connections
-  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections
+  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections ++ busDontCareConnections ++ individualDontCareConnections
+
+/-- Post-process instance connections to fix multi-writer output buses.
+    When multiple instances write to the same output bus (e.g., `q := reg_0.q.asUInt`
+    repeated for each sub-register), replace with a single Cat assignment.
+    Uses assignment order as Cat order (first assigned = LSB, reversed for Cat MSB-first). -/
+private def postProcessMultiWriterOutputs (lines : List String) : List String :=
+  -- Find lines matching pattern "  {target} := {source}" and detect duplicates
+  let assignPattern := lines.filterMap (fun s =>
+    let trimmed := s.trimAsciiStart.toString
+    match trimmed.splitOn " := " with
+    | [target, source] =>
+      if target.length > 0 && !target.contains '.' then  -- Only top-level assignments (not inst.port)
+        some (s, target.trimAscii.toString, source.trimAscii.toString)
+      else none
+    | _ => none)
+  -- Group by target
+  let targetGroups := assignPattern.foldl (fun acc (line, tgt, src) =>
+    let existing := acc.find? (fun (t, _) => t == tgt) |>.map (·.2) |>.getD []
+    let without := acc.filter (fun (t, _) => t != tgt)
+    without ++ [(tgt, existing ++ [(line, src)])]) ([] : List (String × List (String × String)))
+  -- Find targets with multiple writers
+  let multiWriters := targetGroups.filter (fun (_, entries) => entries.length > 1)
+  if multiWriters.isEmpty then lines
+  else
+    -- Collect lines to remove
+    let linesToRemove := multiWriters.flatMap (fun (_, entries) => entries.map (·.1))
+    -- Generate Cat replacements (reverse for MSB-first Cat ordering)
+    let catAssigns := multiWriters.map (fun (tgt, entries) =>
+      let catArgs := ", ".intercalate (entries.reverse.map (·.2))
+      s!"  {tgt} := Cat({catArgs})")
+    -- Replace: keep non-removed lines, append Cat assignments
+    let filtered := lines.filter (fun s => !linesToRemove.contains s)
+    filtered ++ catAssigns
 
 /-- Generate all module instantiations -/
 def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit) : String :=
   let instances := c.instances.flatMap (generateInstance ctx c allCircuits)
-  joinLines instances
+  let processed := postProcessMultiWriterOutputs instances
+  joinLines processed
 
 /-! ## Register Generation (ShoumeiReg) -/
 
@@ -1817,19 +1927,23 @@ def generateRegisters (ctx : Context) (c : Circuit) (excludedWires : List String
 
 /-- Split code into statements respecting multi-line expressions (paren depth tracking) -/
 private def groupIntoStatements (lines : List String) : List String :=
-  let result := lines.foldl (init := (([] : List (List String)), (0 : Int)))
+  let result := lines.foldl (init := (([] : List (List String)), (0 : Int), (0 : Int)))
     (fun acc line =>
       let stmts := acc.1
-      let depth := acc.2
-      let openCount : Int := (line.toList.filter (· == '(')).length
-      let closeCount : Int := (line.toList.filter (· == ')')).length
-      let newDepth := depth + openCount - closeCount
-      if depth == 0 then
-        (stmts ++ [[line]], newDepth)
+      let parenDepth := acc.2.1
+      let braceDepth := acc.2.2
+      let parenOpen : Int := (line.toList.filter (· == '(')).length
+      let parenClose : Int := (line.toList.filter (· == ')')).length
+      let braceOpen : Int := (line.toList.filter (· == '{')).length
+      let braceClose : Int := (line.toList.filter (· == '}')).length
+      let newParenDepth := parenDepth + parenOpen - parenClose
+      let newBraceDepth := braceDepth + braceOpen - braceClose
+      if parenDepth == 0 && braceDepth == 0 then
+        (stmts ++ [[line]], newParenDepth, newBraceDepth)
       else
         match stmts.reverse with
-        | cur :: rest => (((cur ++ [line]) :: rest).reverse, newDepth)
-        | [] => ([[line]], newDepth)
+        | cur :: rest => (((cur ++ [line]) :: rest).reverse, newParenDepth, newBraceDepth)
+        | [] => ([[line]], newParenDepth, newBraceDepth)
     )
   result.1.map (String.intercalate "\n")
 
@@ -2015,7 +2129,13 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     if chars.isEmpty then s else String.ofList chars
   let instanceOutputNames := c.instances.flatMap (fun inst =>
     match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
-    | none => []  -- Can't determine sub-module ports, skip
+    | none =>
+        -- Sub-module not found (e.g., dynamically generated decoders).
+        -- Conservatively treat all portmap wires as potentially driven by instance outputs,
+        -- excluding wires that are circuit inputs (those are instance inputs).
+        inst.portMap.filter (fun (_, wire) =>
+          !c.inputs.any (fun w => w.name == wire.name)
+        ) |>.map (fun (_, wire) => wire.name)
     | some subMod =>
         -- Only include wires connected to OUTPUT ports of the sub-module
         inst.portMap.filter (fun (pname, _) =>

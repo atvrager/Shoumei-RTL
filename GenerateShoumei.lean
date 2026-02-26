@@ -46,6 +46,7 @@ import Shoumei.RISCV.Execution.IntegerExecUnit
 import Shoumei.RISCV.Execution.BranchExecUnit
 import Shoumei.RISCV.Execution.MemoryExecUnit
 import Shoumei.RISCV.Execution.ReservationStation
+import Shoumei.RISCV.Config
 
 -- M-Extension Building Blocks
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
@@ -78,8 +79,7 @@ import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.Renaming.RenameStage
 import Shoumei.RISCV.CPU
 
--- Testbench generation
-import Shoumei.RISCV.CPUTestbench
+-- Testbench generation (temporarily removed due to missing file)
 
 open Shoumei.Codegen.ShoumeiEmit
 open Shoumei.Codegen.ShoumeiParse
@@ -93,7 +93,6 @@ open Shoumei.RISCV.Execution
 open Shoumei.RISCV.Retirement
 open Shoumei.RISCV.Memory
 open Shoumei.RISCV.CPU
-open Shoumei.RISCV.CPUTestbench
 
 -- Use the same allCircuits list from GenerateAll
 def allCircuits : List Circuit := [
@@ -200,15 +199,13 @@ def allCircuits : List Circuit := [
   mkRAT64,
   mkFreeList64,
   mkFreeList64Flushable,
-  mkBitmapFreeList64,
   mkPhysRegFile64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
-  mkReservationStation4,
-  mkMemoryRS4,
+  mkReservationStationFromConfig defaultCPUConfig,
 
   -- M-Extension
   mkRippleCarryAdder64,
@@ -217,7 +214,7 @@ def allCircuits : List Circuit := [
   mkPipelinedMultiplier,
   mkDividerCircuit,
   mkMulDivExecUnit,
-  mkMulDivRS4,
+  -- TODO: mkMulDivRS removed in W=2 unification
 
   -- F-Extension
   fpUnpackCircuit,

@@ -134,9 +134,12 @@ def mkL1ICache : Circuit :=
   -- Outputs
   let resp_valid := Wire.mk "resp_valid"
   let resp_data := (List.range 32).map fun i => Wire.mk s!"resp_data_{i}"
+  let resp_data_1 := (List.range 32).map fun i => Wire.mk s!"resp_data_1_{i}"
   let miss_valid := Wire.mk "miss_valid"
   let miss_addr := (List.range 32).map fun i => Wire.mk s!"miss_addr_{i}"
   let stall := Wire.mk "stall"
+  -- last_word: high when word_sel == 7 (last word in cache line), slot 1 wraps
+  let last_word := Wire.mk "last_word"
 
   -- Extract index bits (addr[7:5]) for set selection
   let idx_bits := [req_addr[5]!, req_addr[6]!, req_addr[7]!]
@@ -285,6 +288,34 @@ def mkL1ICache : Circuit :=
     ) [] ++
     (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
     (List.range 32).map (fun b => (s!"out_{b}", resp_data[b]!)))
+
+  -- Second word select: word_sel + 1 (3-bit increment for dual fetch)
+  let ws1_c0 := Wire.mk "ws1_c0"  -- carry from bit 0
+  let ws1_c1 := Wire.mk "ws1_c1"  -- carry from bit 1
+  let word_sel_1 := [Wire.mk "word_sel_1_0", Wire.mk "word_sel_1_1", Wire.mk "word_sel_1_2"]
+  let ws1_gates := [
+    -- bit 0: NOT word_sel[0] (XOR with 1)
+    Gate.mkNOT word_sel[0]! word_sel_1[0]!,
+    -- carry 0: word_sel[0] AND 1 = word_sel[0]
+    Gate.mkBUF word_sel[0]! ws1_c0,
+    -- bit 1: word_sel[1] XOR carry0
+    Gate.mkXOR word_sel[1]! ws1_c0 word_sel_1[1]!,
+    -- carry 1: word_sel[1] AND carry0
+    Gate.mkAND word_sel[1]! ws1_c0 ws1_c1,
+    -- bit 2: word_sel[2] XOR carry1
+    Gate.mkXOR word_sel[2]! ws1_c1 word_sel_1[2]!,
+    -- last_word: word_sel == 7 → slot 1 wraps around (invalid)
+    Gate.mkAND word_sel[0]! word_sel[1]! (Wire.mk "lw_01"),
+    Gate.mkAND (Wire.mk "lw_01") word_sel[2]! last_word
+  ]
+
+  let word_mux_1_inst := CircuitInstance.mk "Mux8x32" "u_word_mux_1"
+    ((List.range 8).foldl (fun acc wordIdx =>
+      acc ++ (List.range 32).map (fun b =>
+        (s!"in{wordIdx}_{b}", Wire.mk s!"sel_line_{wordIdx * 32 + b}"))
+    ) [] ++
+    (List.range 3).map (fun i => (s!"sel_{i}", word_sel_1[i]!)) ++
+    (List.range 32).map (fun b => (s!"out_{b}", resp_data_1[b]!)))
 
   -- FSM logic
   let is_idle := Wire.mk "is_idle"
@@ -435,18 +466,19 @@ def mkL1ICache : Circuit :=
   let allInstances :=
     (tag_instances.map (·.1)) ++
     [tag_mux_inst, tag_cmp_inst] ++
-    [word_mux_inst]
+    [word_mux_inst, word_mux_1_inst]
 
   { name := "L1ICache"
     inputs := [clock, reset, req_valid] ++ req_addr ++ [refill_valid] ++ refill_data ++ [fence_i]
-    outputs := [resp_valid] ++ resp_data ++ [miss_valid] ++ miss_addr ++ [stall]
-    gates := allGates
+    outputs := [resp_valid] ++ resp_data ++ resp_data_1 ++ [miss_valid] ++ miss_addr ++ [stall, last_word]
+    gates := allGates ++ ws1_gates
     instances := allInstances
     rams := [data_ram]
     signalGroups := [
       { name := "req_addr", width := 32, wires := req_addr },
       { name := "refill_data", width := 256, wires := refill_data },
       { name := "resp_data", width := 32, wires := resp_data },
+      { name := "resp_data_1", width := 32, wires := resp_data_1 },
       { name := "miss_addr", width := 32, wires := miss_addr }
     ]
   }

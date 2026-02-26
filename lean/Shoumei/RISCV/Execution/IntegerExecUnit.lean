@@ -269,51 +269,63 @@ open Shoumei.Circuits.Combinational
     - 1000=SLL, 1001=SRL, 1011=SRA
 -/
 def mkIntegerExecUnit : Circuit :=
-  let a := makeIndexedWires "a" 32
-  let b := makeIndexedWires "b" 32
-  let opcode := makeIndexedWires "opcode" 4
-  let dest_tag := makeIndexedWires "dest_tag" 6
   let zero := Wire.mk "zero"
-  let one := Wire.mk "one"
+  let one  := Wire.mk "one"
+  -- Dual-issue: two independent ALU32 instances to execute two
+  -- arbitrary integer instructions per cycle
+  let a0 := makeIndexedWires "a0" 32
+    let b0 := makeIndexedWires "b0" 32
+    let opcode0 := makeIndexedWires "opcode0" 4
+    let dest_tag0 := makeIndexedWires "dest_tag0" 6
+    let result0 := makeIndexedWires "result0" 32
+    let tag_out0 := makeIndexedWires "tag_out0" 6
 
-  -- Output wires
-  let result := makeIndexedWires "result" 32
-  let tag_out := makeIndexedWires "tag_out" 6
+    -- Issue 1
+    let a1 := makeIndexedWires "a1" 32
+    let b1 := makeIndexedWires "b1" 32
+    let opcode1 := makeIndexedWires "opcode1" 4
+    let dest_tag1 := makeIndexedWires "dest_tag1" 6
+    let result1 := makeIndexedWires "result1" 32
+    let tag_out1 := makeIndexedWires "tag_out1" 6
 
-  -- Instance ALU32 (reuse verified module from Phase 1)
-  let alu_inst : CircuitInstance := {
-    moduleName := "ALU32"
-    instName := "u_alu"
-    portMap :=
-      (a.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
-      (b.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
-      (opcode.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
-      [("zero", zero), ("one", one)] ++
-      (result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
-  }
+    -- Instance ALU0
+    let alu0_inst : CircuitInstance := {
+      moduleName := "ALU32"
+      instName := "u_alu0"
+      portMap :=
+        (a0.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
+        (b0.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
+        (opcode0.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
+        [("zero", zero), ("one", one)] ++
+        (result0.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
+    }
 
-  -- Tag pass-through (BUF gates to maintain structural clarity)
-  let tag_passthrough := List.zipWith (fun src dst =>
-    Gate.mkBUF src dst
-  ) dest_tag tag_out
+    -- Instance ALU1
+    let alu1_inst : CircuitInstance := {
+      moduleName := "ALU32"
+      instName := "u_alu1"
+      portMap :=
+        (a1.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
+        (b1.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
+        (opcode1.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
+        [("zero", zero), ("one", one)] ++
+        (result1.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
+    }
 
-  { name := "IntegerExecUnit"
-    inputs := a ++ b ++ opcode ++ dest_tag ++ [zero, one]
-    outputs := result ++ tag_out
-    gates := tag_passthrough
-    instances := [alu_inst]
-    -- V2 codegen annotations
-    signalGroups := [
-      { name := "a", width := 32, wires := a },
-      { name := "b", width := 32, wires := b },
-      { name := "opcode", width := 4, wires := opcode },
-      { name := "dest_tag", width := 6, wires := dest_tag },
-      { name := "result", width := 32, wires := result },
-      { name := "tag_out", width := 6, wires := tag_out }
-    ]
-  }
+    -- Tag pass-through
+    let tag0_passthrough := List.zipWith Gate.mkBUF dest_tag0 tag_out0
+    let tag1_passthrough := List.zipWith Gate.mkBUF dest_tag1 tag_out1
 
-/-- Convenience constructors for specific configurations -/
-def integerExecUnit : Circuit := mkIntegerExecUnit
+    { name := "IntegerExecUnit_W2"
+      inputs := a0 ++ b0 ++ opcode0 ++ dest_tag0 ++
+                a1 ++ b1 ++ opcode1 ++ dest_tag1 ++
+                [zero, one]
+      outputs := result0 ++ tag_out0 ++ result1 ++ tag_out1
+      gates := tag0_passthrough ++ tag1_passthrough
+      instances := [alu0_inst, alu1_inst]
+    }
+
+/-- Convenience alias for the dual-issue integer execution unit -/
+def integerExecUnitW2 : Circuit := mkIntegerExecUnit
 
 end Shoumei.RISCV.Execution
