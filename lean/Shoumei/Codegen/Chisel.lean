@@ -1544,24 +1544,48 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           s!"  {inst.instName}.{portName} := {sgRef}({idx})"
         )
       else
-        -- Cat individual instance outputs into parent bus
-        let catParts := sortedEntries.reverse.map (fun (portName, _) =>
-          s!"{inst.instName}.{portName}"
-        )
-        let catExpr := "Cat(" ++ String.intercalate ", " catParts ++ ")"
-        [s!"  {sgRef} := {catExpr}"]
+        -- Instance outputs into parent bus
+        let parentSgWidth := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName) with
+          | some (_, sg) => sg.width
+          | none => sortedEntries.length
+        let isVecDecl := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == sgName) with
+          | some (_, sg) => needsVecDeclarationHelper ctx sg c
+          | none => false
+        if sortedEntries.length < parentSgWidth && isVecDecl then
+          -- Partial coverage of a Vec: assign to specific bits
+          sortedEntries.map (fun (portName, wire) =>
+            let wireRefStr := wireRef ctx c wire
+            s!"  {wireRefStr} := {inst.instName}.{portName}"
+          )
+        else
+          -- Full bus or UInt: Cat individual instance outputs
+          let catParts := sortedEntries.reverse.map (fun (portName, _) =>
+            s!"{inst.instName}.{portName}"
+          )
+          let catExpr := "Cat(" ++ String.intercalate ", " catParts ++ ")"
+          [s!"  {sgRef} := {catExpr}"]
   )
 
-  -- 5b. Collect port bases already handled by bus connections (to skip redundant standalone entries)
-  let busHandledPortBases := busGroups.map (fun (_, portBase, _) => portBase)
+  -- 5b. Collect port bases handled by bus INPUT connections (to skip redundant standalone entries)
+  --    Only track input-direction bus connections (where padding covers all port bits).
+  --    Output-direction bus connections may be partial (only some bits from signal group).
+  let busHandledInputPortBases := busGroups.filterMap (fun (_sgName, portBase, entries) =>
+    let firstWire := entries.head?.map (·.2) |>.getD (Wire.mk "")
+    let isInput := determinePortDirection ctx c allCircuits inst portBase firstWire
+    -- Only mark as "handled" if the sub-module has a bus port (padding covers all bits).
+    -- When sub-module has individual ports, extra bits may appear as standalone entries.
+    let hasBusPort := subModuleHasBusPort allCircuits inst.moduleName portBase
+    if isInput && hasBusPort then some portBase else none
+  )
 
   -- 6. Group standalone entries by port base name (for bundled ports like alloc_oldPhysRd[0..5])
   --    Groups bracket notation (q[0], q[1]) and underscore notation (q_0, q_1) when
   --    the sub-module has a corresponding bus port with that base name.
-  --    Skip entries whose port base was already handled by a padded bus connection.
+  --    Skip entries whose port base was already handled by a bus INPUT connection
+  --    (since padded input connections cover all bits of the port).
   let standaloneFiltered := standaloneEntries.filter (fun (portName, _) =>
     let portBase := extractPortBaseName portName
-    !busHandledPortBases.contains portBase
+    !busHandledInputPortBases.contains portBase
   )
   let standaloneGrouped : List (String × List (String × Wire)) :=
     standaloneFiltered.foldl (fun acc (portName, wire) =>
@@ -1691,8 +1715,29 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit) 
           s!"  {inst.instName}.{base} := DontCare"
         )
 
+  -- 8c. Generate DontCare for individual unconnected sub-module input ports
+  --     Handles partially connected buses where the sub-module does NOT have a bus port
+  --     (i.e., individual ports like tag_0, tag_1, ..., tag_6 where tag_6 is unconnected)
+  let individualDontCareConnections := match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | none => []
+    | some subMod =>
+        let connectedPortNames := inst.portMap.map (fun (pname, _) => pname)
+        subMod.inputs.filter (fun w =>
+          w.name != "clock" && w.name != "reset" &&
+          !connectedPortNames.contains w.name &&
+          let base := extractBaseName w.name
+          base != w.name &&  -- Has _N suffix
+          -- Only if the sub-module does NOT have a bus port for this base
+          -- (if it does, the bus connection or busDontCare handles it)
+          !subModuleHasBusPort allCircuits inst.moduleName base &&
+          -- Only if some other ports with this base ARE connected (partial connection)
+          inst.portMap.any (fun (pname, _) => extractPortBaseName pname == base)
+        ) |>.map (fun w =>
+          s!"  {inst.instName}.{w.name} := DontCare"
+        )
+
   -- 9. Return instantiation + all connections
-  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections ++ busDontCareConnections
+  [instantiation] ++ busConnections ++ standaloneConnections ++ renamedClockResetConnections ++ dontCareConnections ++ busDontCareConnections ++ individualDontCareConnections
 
 /-- Post-process instance connections to fix multi-writer output buses.
     When multiple instances write to the same output bus (e.g., `q := reg_0.q.asUInt`
@@ -2084,7 +2129,13 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     if chars.isEmpty then s else String.ofList chars
   let instanceOutputNames := c.instances.flatMap (fun inst =>
     match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
-    | none => []  -- Can't determine sub-module ports, skip
+    | none =>
+        -- Sub-module not found (e.g., dynamically generated decoders).
+        -- Conservatively treat all portmap wires as potentially driven by instance outputs,
+        -- excluding wires that are circuit inputs (those are instance inputs).
+        inst.portMap.filter (fun (_, wire) =>
+          !c.inputs.any (fun w => w.name == wire.name)
+        ) |>.map (fun (_, wire) => wire.name)
     | some subMod =>
         -- Only include wires connected to OUTPUT ports of the sub-module
         inst.portMap.filter (fun (pname, _) =>

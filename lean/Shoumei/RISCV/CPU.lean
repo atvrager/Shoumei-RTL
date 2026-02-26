@@ -3118,6 +3118,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "rs_fp_dispatch_src1", width := 32, wires := rs_fp_dispatch_src1 },
        { name := "rs_fp_dispatch_src2", width := 32, wires := rs_fp_dispatch_src2 },
        { name := "rs_fp_dispatch_tag", width := 6, wires := rs_fp_dispatch_tag },
+       { name := "fp_rs1_data", width := 32, wires := fp_rs1_data },
+       { name := "fp_rs2_data", width := 32, wires := fp_rs2_data },
+       { name := "fp_rs3_data", width := 32, wires := fp_rs3_data },
+       { name := "fp_rs3_phys", width := 6, wires := fp_rs3_phys },
        { name := "fp_rvvi_rd_data", width := 32, wires := fp_rvvi_rd_data }] else [])
   }
 
