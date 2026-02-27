@@ -1,9 +1,9 @@
-// Synthesis wrapper for CachedCPU_RV32IM_Zicsr_Zifencei
-// CPU + L1I (8 sets) + L1D (4 sets, 2-way) + L2 (8 sets, 2-way)
+// Synthesis wrapper for CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
+// W=2 superscalar CPU + L1I (256B) + L1D (256B) + L2 (512B) with microcode trap support
 // Ties off constant zero/one ports and exposes only the main memory interface.
-// RVVI/store_snoop/fflags debug ports are left unconnected (optimized away).
+// RVVI/store_snoop debug ports are left unconnected (optimized away).
 
-module CachedCPU_RV32IM_Zicsr_Zifencei_synth (
+module CachedCPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth (
   input  logic          clock,
   input  logic          reset,
   // Main memory interface (to DRAM/AXI)
@@ -17,7 +17,7 @@ module CachedCPU_RV32IM_Zicsr_Zifencei_synth (
   output logic          rob_empty
 );
 
-  CachedCPU_RV32IM_Zicsr_Zifencei u_cpu (
+  CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B u_cpu (
     .clock(clock),
     .reset(reset),
     .zero(1'b0),
@@ -33,17 +33,21 @@ module CachedCPU_RV32IM_Zicsr_Zifencei_synth (
     .store_snoop_valid(),
     .store_snoop_addr(),
     .store_snoop_data(),
-    .rvvi_valid(),
-    .rvvi_trap(),
-    .rvvi_pc_rdata(),
-    .rvvi_insn(),
-    .rvvi_rd(),
-    .rvvi_rd_valid(),
-    .rvvi_rd_data(),
-    .rvvi_frd(),
-    .rvvi_frd_valid(),
-    .rvvi_frd_data(),
-    .fflags_acc()
+    .rvvi_retire(),
+    .rvvi_validS0(),
+    .rvvi_validS1(),
+    .rvvi_trapS0(),
+    .rvvi_trapS1(),
+    .rvvi_rd_validS0(),
+    .rvvi_rd_validS1(),
+    .rvvi_pc_0(),
+    .rvvi_pc_1(),
+    .rvvi_insn_0(),
+    .rvvi_insn_1(),
+    .rvvi_rd_0(),
+    .rvvi_rd_1(),
+    .rvvi_rdd_0(),
+    .rvvi_rdd_1()
   );
 
 endmodule
