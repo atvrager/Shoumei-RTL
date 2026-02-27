@@ -336,6 +336,18 @@ def main (args : List String) : IO Unit := do
   writeFilelist asap7OutputDir ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
 
+  -- Generate physical synthesis filelists (ASAP7-priority merge)
+  IO.println ""
+  IO.println "Generating physical synthesis filelists..."
+  let physEntries ← System.FilePath.readDir physicalOutputDir
+  let synthWrappers := physEntries.filter (fun e =>
+    e.fileName.endsWith "_synth.sv")
+  for wrapper in synthWrappers do
+    let name := (wrapper.fileName.take (wrapper.fileName.length - 3)).toString  -- strip ".sv"
+    writePhysicalFilelist name
+    IO.println s!"  ✓ {name}.f"
+  IO.println s!"✓ Generated {synthWrappers.size} physical filelists"
+
   -- Generate config.mk for testbench Makefile
   IO.println ""
   IO.println "Generating config.mk..."

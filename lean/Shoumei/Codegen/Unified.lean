@@ -153,6 +153,27 @@ def writeFilelist (dir : String) (ext : String) : IO Unit := do
   let content := String.intercalate "\n" sorted ++ "\n"
   IO.FS.writeFile s!"{dir}/filelist.f" content
 
+def physicalOutputDir : String := "physical"
+
+/-- Write a physical synthesis filelist (.f) for a given synth wrapper.
+    Prioritizes ASAP7 tech-mapped modules over generic sv-from-lean modules. -/
+def writePhysicalFilelist (wrapperName : String) : IO Unit := do
+  -- Collect ASAP7 tech-mapped SV files
+  let asap7Entries ← System.FilePath.readDir asap7OutputDir
+  let asap7Files := asap7Entries.filter (fun e => e.fileName.endsWith ".sv")
+  let asap7Names := asap7Files.toList.map (fun e => e.fileName) |>.toArray
+  -- Collect generic SV files, excluding those overridden by ASAP7
+  let leanEntries ← System.FilePath.readDir svOutputDir
+  let leanFiles := leanEntries.filter (fun e =>
+    e.fileName.endsWith ".sv" && !asap7Names.contains e.fileName)
+  -- Build sorted filelist: ASAP7 first, then generic, then wrapper
+  let asap7Paths := asap7Files.toList.map (fun e => s!"{asap7OutputDir}/{e.fileName}")
+  let leanPaths := leanFiles.toList.map (fun e => s!"{svOutputDir}/{e.fileName}")
+  let allPaths := (asap7Paths ++ leanPaths).mergeSort (· < ·)
+    |>.append [s!"{physicalOutputDir}/{wrapperName}.sv"]
+  let content := String.intercalate "\n" allPaths ++ "\n"
+  IO.FS.writeFile s!"{physicalOutputDir}/{wrapperName}.f" content
+
 -- Initialize output directories
 def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir

@@ -77,7 +77,7 @@ echo -e "${GREEN}✓ ORFS submodule initialized${NC}"
 if [ -n "${1:-}" ]; then
     DESIGN_NAME="$1"
 else
-    DESIGN_NAME="${DESIGN_NAME:-CPU_RV32IMF_Zicsr_Zifencei_synth}"
+    DESIGN_NAME="${DESIGN_NAME:-CachedCPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth}"
 fi
 
 if [ -n "${2:-}" ]; then

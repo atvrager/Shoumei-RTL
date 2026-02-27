@@ -37,7 +37,7 @@ from scipy.ndimage import gaussian_filter
 
 parser = argparse.ArgumentParser(description='Export GDS layout as die shot poster')
 parser.add_argument('gds', nargs='?',
-                    default='third_party/orfs/flow/results/asap7/CPU_RV32IMF_Zicsr_Zifencei_synth/base/6_final.gds',
+                    default='third_party/orfs/flow/results/asap7/CachedCPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth/base/6_final.gds',
                     help='Input GDS file')
 parser.add_argument('output', nargs='?', default=None, help='Output PNG file')
 parser.add_argument('--mode', choices=['layers', 'modules'], default='layers',
@@ -187,22 +187,30 @@ def format_violations(m: dict) -> str:
 
 # Category → (color_rgb, list_of_prefix_patterns)
 # Prefixes matched against the submodule name extracted from u_cpu.u_<name>
+# Updated for W=2 superscalar with caches and microcode trap support
 MODULE_CATEGORIES = [
-    ('Fetch',      (0.2, 0.4, 1.0),   ['fetch', 'auipc_adder', 'branch_target', 'jalr_target',
-                                         'br_pc_plus_4', 'br_pc_rf_dec', 'fencei_pc_plus_4']),
-    ('Rename',     (0.2, 0.9, 0.3),   ['rename', 'fp_rename', 'busy_bit', 'fp_busy_bit']),
-    ('Issue',      (0.2, 0.9, 0.9),   ['rs_integer', 'rs_memory', 'rs_branch', 'rs_muldiv', 'rs_fp']),
-    ('Exec Int',   (1.0, 0.2, 0.2),   ['exec_integer', 'br_cmp']),
+    ('Fetch',      (0.2, 0.4, 1.0),   ['fetch', 'auipc_adder', 'jalr_target',
+                                         'br_pc_plus', 'ser_pc_plus',
+                                         'insn_queue', 'pc_queue']),
+    ('Rename',     (0.2, 0.9, 0.3),   ['rename', 'fp_rename', 'busy_bit', 'fp_busy_bit',
+                                         'flush_dff_busy']),
+    ('Issue',      (0.2, 0.9, 0.9),   ['rs_int', 'rs_memory', 'rs_branch', 'rs_muldiv', 'rs_fp']),
     ('Exec MulDiv',(1.0, 0.5, 0.1),   ['exec_muldiv']),
-    ('Exec FP',    (0.9, 0.2, 0.9),   ['exec_fp']),
+    ('Exec FP',    (0.9, 0.2, 0.9),   ['exec_fp', 'fflags_dff', 'frm_dff']),
     ('Memory',     (1.0, 0.8, 0.1),   ['exec_memory', 'lsu', 'dmem_', 'mem_addr_r', 'mem_size_r',
                                          'mem_tag_r', 'mem_valid_r', 'sign_extend_r',
-                                         'is_load_r', 'is_flw_r']),
+                                         'is_load_r', 'is_flw_r', 'commit_store_pending',
+                                         'cross_size_pending', 'dmem_load_pending',
+                                         'dmem_is_fp', 'dmem_sign_ext', 'dmem_tag',
+                                         'dmem_addr_lo', 'dmem_mem_size']),
+    ('Exec Int',   (1.0, 0.2, 0.2),   ['exec', 'br_cmp', 'br_target']),
     ('ROB',        (1.0, 0.3, 0.7),   ['rob', 'redir_tgt_dff', 'redirect_target_dff',
-                                         'redirect_valid_dff']),
+                                         'redirect_valid_dff', 'rob_isStore_dff']),
     ('CDB',        (0.0, 0.8, 0.7),   ['cdb_']),
-    ('CSR/Misc',   (0.5, 0.5, 0.5),   ['csr_', 'mcycle', 'minstret', 'mscratch', 'fence_',
-                                         'fencei_redir_dff', 'fence_i_draining']),
+    ('CSR/Trap',   (0.5, 0.5, 0.5),   ['csr_', 'mcycle', 'minstret', 'mscratch', 'mcause',
+                                         'mepc_dff', 'mie_dff', 'mstatus_dff', 'mtval_dff',
+                                         'mtvec_dff', 'trap_seq', 'useq_dc_dff',
+                                         'fence_', 'fencei_redir_dff', 'fence_i_draining']),
 ]
 DISPATCH_COLOR = (0.85, 0.85, 0.85)  # White-ish for top-level u_cpu.* signals
 
@@ -559,7 +567,7 @@ stats_text = [
     ('UTILIZATION', f'{util*100:.0f}%'),
     ('POWER',       f'{power:.1f} mW'),
     ('DIE AREA',    f'{chip_w:.0f} \u00d7 {chip_h:.0f} \u00b5m\u00b2'),
-    ('ISA',         f'{isa} (Tomasulo OoO)'),
+    ('ISA',         f'{isa} (W=2 Tomasulo OoO)'),
     ('PROOF',       'Lean 4 \u2014 verified RTL'),
 ]
 
