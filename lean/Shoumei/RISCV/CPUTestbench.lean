@@ -35,6 +35,7 @@ def cpuTestbenchConfig : TestbenchConfig := {
   putcharAddr := some 0x1004
   timeoutCycles := defaultCPUConfig.timeoutCycles
   spikeIsa := defaultCPUConfig.spikeIsa
+  enableCLINT := true
 }
 
 end Shoumei.RISCV.CPUTestbench

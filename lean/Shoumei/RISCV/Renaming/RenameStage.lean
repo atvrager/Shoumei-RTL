@@ -338,6 +338,7 @@ def mkRenameStage : Circuit :=
 
   -- === Commit channel 0 ===
   let flush_en            := Wire.mk "flush_en"
+  let freelist_flush_en   := Wire.mk "freelist_flush_en"
   let commit_valid_0      := Wire.mk "commit_valid"
   let commit_archRd_0     := (List.range archWidth).map fun i => Wire.mk s!"commit_archRd_{i}"
   let commit_physRd_0     := (List.range tagWidth).map  fun i => Wire.mk s!"commit_physRd_{i}"
@@ -796,7 +797,7 @@ def mkRenameStage : Circuit :=
       (fl_deq_data_1.enum.map fun ⟨i,w⟩ => (s!"deq_data_1_{i}", w)) ++
       [("deq_valid_1", alloc_avail_1),
        ("enq_ready", freelist_enq_ready),
-       ("flush_en", flush_en),
+       ("flush_en", freelist_flush_en),
        ("commit_alloc_en_0", crat_alloc_0)] ++
       (commit_physRd_0.enum.map fun ⟨i,w⟩ => (s!"commit_alloc_tag_0_{i}", w)) ++
       [("commit_alloc_en_1", crat_alloc_1)] ++
@@ -874,7 +875,7 @@ def mkRenameStage : Circuit :=
     rs1_addr_0 ++ rs2_addr_0 ++ rs3_addr_0 ++ rd_addr_0 ++
     [instr_valid_1, has_rd_1, force_alloc_1] ++
     rs1_addr_1 ++ rs2_addr_1 ++ rs3_addr_1 ++ rd_addr_1 ++
-    [flush_en, commit_valid_0] ++ commit_archRd_0 ++ commit_physRd_0 ++
+    [flush_en, freelist_flush_en, commit_valid_0] ++ commit_archRd_0 ++ commit_physRd_0 ++
     [commit_hasPhysRd_0, commit_hasAllocSlot_0, commit_force_alloc_0,
      commit_valid_1] ++ commit_archRd_1 ++ commit_physRd_1 ++
     [commit_hasPhysRd_1, commit_hasAllocSlot_1, commit_force_alloc_1,

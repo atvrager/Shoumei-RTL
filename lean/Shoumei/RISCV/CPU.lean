@@ -61,6 +61,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := makeIndexedWires "dmem_resp_data" 32
+  let mtip_in := Wire.mk "mtip_in"
 
   -- === DECODER OUTPUTS (internal, driven by decoder instance) ===
   let decode_optype := makeIndexedWires "decode_optype" opcodeWidth
@@ -159,10 +160,19 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_phnxt_e{i}")
   -- CSR rs1 data capture (32 bits, captured at serialize_start for CSR write source)
   let csr_rs1cap_reg := (List.range 32).map (fun i => Wire.mk s!"csr_r1c_e{i}")
+  -- Pre-CDB-snoop rs1 capture (written by serialize path, then overridden by CDB snoop below)
+  let csr_rs1cap_next_pre := (List.range 32).map (fun i => Wire.mk s!"csr_r1np_e{i}")
+  -- Final rs1 capture (after CDB snoop MUX)
   let csr_rs1cap_next := (List.range 32).map (fun i => Wire.mk s!"csr_r1n_e{i}")
+  -- CSR rs1 phys tag capture (6 bits, for CDB snooping during drain)
+  let csr_rs1phys_reg := (List.range 6).map (fun i => Wire.mk s!"csr_r1p_e{i}")
+  let csr_rs1phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_r1pn_e{i}")
   -- CSR zimm capture (5 bits, rs1 field used as immediate for CSRRWI/CSRRSI/CSRRCI)
   let csr_zimm_reg := (List.range 5).map (fun i => Wire.mk s!"csr_zmc_e{i}")
   let csr_zimm_next := (List.range 5).map (fun i => Wire.mk s!"csr_zmn_e{i}")
+  -- CSR old_rd_phys capture (6 bits, old mapping to return to free list on CSR inject)
+  let csr_old_phys_reg := (List.range 6).map (fun i => Wire.mk s!"csr_opc_e{i}")
+  let csr_old_phys_next := (List.range 6).map (fun i => Wire.mk s!"csr_opn_e{i}")
   -- CSR rename gating wires
   let csr_rename_en := Wire.mk "csr_rename_en"
   let not_csr_rename_en := Wire.mk "not_csr_rename_en"
@@ -278,10 +288,22 @@ def mkCPU (config : CPUConfig) : Circuit :=
     portMap := [("d", csr_rs1cap_next[i]!), ("q", csr_rs1cap_reg[i]!),
                 ("clock", clock), ("reset", reset)]
   })
+  let csr_rs1phys_dffs : List CircuitInstance := (List.range 6).map (fun i => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_csr_rs1phys_dff_{i}"
+    portMap := [("d", csr_rs1phys_next[i]!), ("q", csr_rs1phys_reg[i]!),
+                ("clock", clock), ("reset", reset)]
+  })
   let csr_zimm_dffs : List CircuitInstance := (List.range 5).map (fun i => {
     moduleName := "DFlipFlop"
     instName := s!"u_csr_zimm_dff_{i}"
     portMap := [("d", csr_zimm_next[i]!), ("q", csr_zimm_reg[i]!),
+                ("clock", clock), ("reset", reset)]
+  })
+  let csr_old_phys_dffs : List CircuitInstance := (List.range 6).map (fun i => {
+    moduleName := "DFlipFlop"
+    instName := s!"u_csr_old_phys_dff_{i}"
+    portMap := [("d", csr_old_phys_next[i]!), ("q", csr_old_phys_reg[i]!),
                 ("clock", clock), ("reset", reset)]
   })
   -- CSR flush suppress DFF: captures csr_cdb_inject, so it's high 1 cycle later
@@ -467,8 +489,13 @@ def mkCPU (config : CPUConfig) : Circuit :=
       [("cdb_valid", if enableF then cdb_valid_int_prf else cdb_valid_prf)] ++
       (cdb_tag_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_tag_{i}", w))) ++
       (cdb_data_int.enum.map (fun ⟨i, w⟩ => (s!"cdb_data_{i}", w))) ++
-      [("retire_valid", if enableF then int_retire_valid else retire_recycle_valid_filtered)] ++
-      (retire_tag_muxed.enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
+      [("retire_valid", if config.enableZicsr then
+                          Wire.mk "retire_valid_with_csr"
+                        else if enableF then int_retire_valid
+                        else retire_recycle_valid_filtered)] ++
+      ((if config.enableZicsr
+        then (List.range 6).map (fun i => Wire.mk s!"retire_tag_with_csr_{i}")
+        else retire_tag_muxed).enum.map (fun ⟨i, w⟩ => (s!"retire_tag_{i}", w))) ++
       (rob_head_physRd.enum.map (fun ⟨i, w⟩ => (s!"rd_tag4_{i}", w))) ++  -- 4th read port: RVVI commit readback
       [("rename_valid", rename_valid), ("stall", rename_stall)] ++
       (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"rs1_phys_out_{i}", w))) ++
@@ -482,6 +509,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
       -- Committed RAT recovery (CSR: suppress flush to keep speculative rd mapping)
       [("flush_en", rename_flush_en),
+       ("freelist_flush_en", redirect_valid_int),
        ("commit_valid", commit_valid_muxed),
        ("commit_hasPhysRd", commit_hasPhysRd_muxed),
        ("force_alloc", dispatch_is_branch),
@@ -514,6 +542,10 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Config-gated: hardwired uses mkSerializeDetect, microcoded uses MicrocodeSequencer
   -- Forward-declare csr_read_data for microcode path (driven by CSR read MUX below)
   let csr_read_data_fwd := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  -- Forward-declare CSR registers for interrupt detection (driven by DFFs below)
+  let mip_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mip_e{i}")
+  let mie_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mie_e{i}")
+  let mstatus_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mstatus_e{i}")
   -- Forward-declare csr_cdb wires for microcode path
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
@@ -530,11 +562,12 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_detected csr_detected serialize_detected
         fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
         csr_rename_en not_csr_rename_en
-        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next_pre csr_zimm_next
         fence_i_redir_next
         csr_read_data_fwd
         csr_cdb_inject csr_cdb_tag csr_cdb_data
         fetch_pc
+        mip_reg_fwd mie_reg_fwd mstatus_reg_fwd
     else
       mkSerializeDetect config oi opcodeWidth zero one clock reset
         decode_optype decode_valid decode_imm decode_rd decode_rs1
@@ -547,10 +580,45 @@ def mkCPU (config : CPUConfig) : Circuit :=
         fence_i_detected csr_detected serialize_detected
         fence_i_start fence_i_drain_complete fence_i_draining_next fence_i_suppress
         csr_rename_en not_csr_rename_en
-        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next csr_zimm_next
+        csr_flag_next csr_addr_next csr_optype_next csr_rd_next csr_phys_next csr_rs1cap_next_pre csr_zimm_next
         fence_i_redir_next
         csr_read_data_fwd
         fetch_pc
+        mip_reg_fwd mie_reg_fwd mstatus_reg_fwd
+
+  -- === CDB snoop for CSR rs1 source capture ===
+  -- The serialize path captures fwd_src1_data at fence_i_start, but if the source
+  -- instruction (e.g. a load) hasn't retired yet, the captured value may be wrong.
+  -- Solution: save rs1_phys at fence_i_start, then snoop the CDB during drain.
+  -- When CDB broadcasts a value with a matching tag, override csr_rs1cap_next.
+  let rs1_phys_fwd := (List.range 6).map (fun i => Wire.mk s!"rs1_phys_{i}")
+  let csr_rs1phys_capture_gates :=
+    (List.range 6).map (fun i =>
+      Gate.mkMUX csr_rs1phys_reg[i]! rs1_phys_fwd[i]! fence_i_start csr_rs1phys_next[i]!)
+  -- Capture old_rd_phys at fence_i_start for CSR retire (return old mapping to free list)
+  let csr_old_phys_capture_gates :=
+    (List.range 6).map (fun i =>
+      Gate.mkMUX csr_old_phys_reg[i]! old_rd_phys[i]! fence_i_start csr_old_phys_next[i]!)
+  -- CDB snoop: compare cdb_tag against saved rs1_phys tag
+  let csr_cdb_snoop_match := Wire.mk "csr_cdb_snoop_match"
+  let csr_cdb_snoop_update := Wire.mk "csr_cdb_snoop_update"
+  let cdb_valid_fwd := Wire.mk "cdb_valid"
+  let cdb_tag_int_fwd := (List.range 6).map (fun i => Wire.mk s!"cdb_tag_int_{i}")
+  let cdb_data_fwd := (List.range 32).map (fun i => Wire.mk s!"cdb_data_{i}")
+  let csr_cdb_snoop_inst : CircuitInstance := {
+    moduleName := "EqualityComparator6"
+    instName := "u_csr_cdb_snoop_cmp"
+    portMap := [("eq", csr_cdb_snoop_match)] ++
+               (cdb_tag_int_fwd.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+               (csr_rs1phys_reg.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
+  }
+  -- Only update when CDB is valid AND match AND CSR is draining (csr_flag_reg=1)
+  let csr_cdb_snoop_gates :=
+    [Gate.mkAND cdb_valid_fwd csr_cdb_snoop_match (Wire.mk "csr_cdb_match_valid"),
+     Gate.mkAND (Wire.mk "csr_cdb_match_valid") csr_flag_reg csr_cdb_snoop_update] ++
+    -- MUX: if CDB snoop hit, use CDB data; else use serialize path's pre-capture value
+    (List.range 32).map (fun i =>
+      Gate.mkMUX csr_rs1cap_next_pre[i]! cdb_data_fwd[i]! csr_cdb_snoop_update csr_rs1cap_next[i]!)
 
   -- fetch_stall = global_stall OR pipeline_flush OR fence_i_draining_next
   let fetch_stall_tmp := Wire.mk "fetch_stall_tmp"
@@ -721,6 +789,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
       (fp_rvvi_rd_data.enum.map (fun ⟨i, w⟩ => (s!"rd_data4_{i}", w))) ++
       -- Committed RAT recovery (FP uses same commit signals, filtered by is_fp)
       [("flush_en", redirect_valid_fp),  -- Committed RAT restore on misprediction (dedicated DFF)
+       ("freelist_flush_en", redirect_valid_fp),  -- FP free list flush (same as RAT flush)
        ("commit_valid", rob_commit_en),
        ("commit_hasPhysRd", Wire.mk "rob_head_is_fp"),
        ("force_alloc", zero),  -- FP rename doesn't need branch tracking
@@ -2668,15 +2737,35 @@ def mkCPU (config : CPUConfig) : Circuit :=
        is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
     mkCsrAddrDecode csr_addr_reg
 
-  -- Force is_mstatus high during MSTATUS_TRAP so the CSR read mux outputs
-  -- the current mstatus value (needed for MPIE = old MIE transform).
-  -- useq_mstatus_trap is declared later but the wire name is stable.
-  let (is_mstatus_for_read, mstatus_force_gates) :=
-    if config.microcodesTraps && !config.microcodesCSR then
+  -- Force is_mstatus high during MSTATUS_TRAP or MSTATUS_MRET so the CSR read mux outputs
+  -- the current mstatus value (needed for MPIE/MIE transform).
+  -- useq_mstatus_trap / useq_mstatus_mret are declared later but wire names are stable.
+  let (is_mstatus_for_read, mstatus_force_gates,
+       is_mie_gated, is_mtvec_gated, is_mepc_gated, is_mcause_gated, is_mtval_gated, is_mip_gated) :=
+    if (config.microcodesTraps || config.microcodesMRET) && !config.microcodesCSR then
       let forced := Wire.mk "is_mstatus_forced"
-      (forced, [Gate.mkOR is_mstatus (Wire.mk "useq_mstatus_trap") forced])
+      let any_mstatus_op := Wire.mk "any_mstatus_op"
+      let not_mstatus_op := Wire.mk "not_any_mstatus_op"
+      -- Gate downstream CSR selects to prevent them from overriding mstatus in the read MUX
+      let is_mie_g := Wire.mk "is_mie_gated"
+      let is_mtvec_g := Wire.mk "is_mtvec_gated"
+      let is_mepc_g := Wire.mk "is_mepc_gated"
+      let is_mcause_g := Wire.mk "is_mcause_gated"
+      let is_mtval_g := Wire.mk "is_mtval_gated"
+      let is_mip_g := Wire.mk "is_mip_gated"
+      (forced,
+       [Gate.mkOR (Wire.mk "useq_mstatus_trap") (Wire.mk "useq_mstatus_mret") any_mstatus_op,
+        Gate.mkOR is_mstatus any_mstatus_op forced,
+        Gate.mkNOT any_mstatus_op not_mstatus_op,
+        Gate.mkAND is_mie not_mstatus_op is_mie_g,
+        Gate.mkAND is_mtvec not_mstatus_op is_mtvec_g,
+        Gate.mkAND is_mepc not_mstatus_op is_mepc_g,
+        Gate.mkAND is_mcause not_mstatus_op is_mcause_g,
+        Gate.mkAND is_mtval not_mstatus_op is_mtval_g,
+        Gate.mkAND is_mip not_mstatus_op is_mip_g],
+       is_mie_g, is_mtvec_g, is_mepc_g, is_mcause_g, is_mtval_g, is_mip_g)
     else
-      (is_mstatus, [])
+      (is_mstatus, [], is_mie, is_mtvec, is_mepc, is_mcause, is_mtval, is_mip)
 
   -- CSR read MUX
   let misa_val : Nat := 0x40000100 +
@@ -2686,7 +2775,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
     mkCsrReadMux config enableF zero one misa_val
       is_misa is_mscratch is_mcycle is_mcycleh is_minstret is_minstreth
       is_fflags is_frm is_fcsr
-      is_mstatus_for_read is_mie is_mtvec is_mepc is_mcause is_mtval is_mip
+      is_mstatus_for_read is_mie_gated is_mtvec_gated is_mepc_gated is_mcause_gated is_mtval_gated is_mip_gated
       mscratch_reg mcycle_reg mcycleh_reg minstret_reg minstreth_reg
       mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg
       fflags_reg frm_reg
@@ -2792,18 +2881,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
        we_mstat, we_mie, we_mtvec, we_mepc, we_mcause, we_mtval,
        cdbGates)
 
-  -- Merge trap sequencer writes into hardwired CSR write path
-  -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
+  -- Merge trap/MRET sequencer writes into hardwired CSR write path
+  -- When microcodesTraps or microcodesMRET is true (but not microcodesCSR), the sequencer
   -- also needs to write mepc, mcause, mstatus via useq_write_en.
-  -- OR the sequencer write-enables with hardwired write-enables, and MUX write data.
-  -- Merge trap sequencer writes into hardwired CSR write path
-  -- When microcodesTraps is true (but not microcodesCSR), the trap sequencer
-  -- also needs to write mepc, mcause, mstatus via useq_write_en.
-  -- MSTATUS_TRAP uses mstatus_trap_active (addr is forced combinationally, not registered).
+  -- MSTATUS_TRAP/MSTATUS_MRET use dedicated signals (addr forced combinationally).
   -- WRITE_CSR for mepc/mcause uses useq_write_en AND is_<csr> (addr is pre-registered via SET_CSR_ADDR).
   let useq_mstatus_trap := Wire.mk "useq_mstatus_trap"
+  let useq_mstatus_mret := Wire.mk "useq_mstatus_mret"
   let (csr_write_val, csr_we_mstatus, csr_we_mepc, csr_we_mcause, trap_we_merge_gates) :=
-    if config.microcodesTraps && !config.microcodesCSR && config.enableZicsr then
+    if (config.microcodesTraps || config.microcodesMRET) && !config.microcodesCSR && config.enableZicsr then
       -- Per-CSR sequencer write enables
       let useq_we_mepc := Wire.mk "useq_we_mepc"
       let useq_we_mcause := Wire.mk "useq_we_mcause"
@@ -2813,12 +2899,21 @@ def mkCPU (config : CPUConfig) : Circuit :=
       let merged_we_mcause := Wire.mk "merged_we_mcause"
       -- Merged write data (MUX: useq_write_en selects useq_write_data, else hardwired)
       let merged_wr := (List.range 32).map (fun i => Wire.mk s!"csr_mwv_e{i}")
+      let useq_any_mstatus := Wire.mk "useq_any_mstatus"
+      let not_useq_mstatus := Wire.mk "not_useq_any_mstatus"
+      let useq_write_csr_only := Wire.mk "useq_write_csr_only"
       let weGates :=
-        [-- MSTATUS_TRAP: use dedicated signal (addr forced combinationally, not in csr_addr_reg)
-         Gate.mkOR csr_we_mstatus useq_mstatus_trap merged_we_mstat,
-         -- WRITE_CSR for mepc/mcause: addr was set by SET_CSR_ADDR and registered
-         Gate.mkAND useq_write_en is_mepc useq_we_mepc,
-         Gate.mkAND useq_write_en is_mcause useq_we_mcause,
+        [-- MSTATUS_TRAP or MSTATUS_MRET: use dedicated signals (addr forced combinationally)
+         Gate.mkOR useq_mstatus_trap useq_mstatus_mret useq_any_mstatus,
+         Gate.mkOR csr_we_mstatus useq_any_mstatus merged_we_mstat,
+         -- WRITE_CSR for mepc/mcause: exclude MSTATUS_TRAP/MSTATUS_MRET which also
+         -- assert useq_write_en but target mstatus (0x300), not the addr in csr_addr_reg.
+         -- Without this gate, stale is_mepc from a prior READ_CSR step causes
+         -- MSTATUS_MRET to corrupt mepc with mstatus transform data.
+         Gate.mkNOT useq_any_mstatus not_useq_mstatus,
+         Gate.mkAND useq_write_en not_useq_mstatus useq_write_csr_only,
+         Gate.mkAND useq_write_csr_only is_mepc useq_we_mepc,
+         Gate.mkAND useq_write_csr_only is_mcause useq_we_mcause,
          Gate.mkOR csr_we_mepc useq_we_mepc merged_we_mepc,
          Gate.mkOR csr_we_mcause useq_we_mcause merged_we_mcause] ++
         (List.range 32).map (fun i =>
@@ -2834,10 +2929,30 @@ def mkCPU (config : CPUConfig) : Circuit :=
     csr_we_mstatus csr_we_mie csr_we_mtvec csr_we_mepc csr_we_mcause csr_we_mtval
     mscratch_reg mscratch_next mstatus_reg mstatus_next
     mie_reg mie_next mtvec_reg mtvec_next mepc_reg mepc_next
-    mcause_reg mcause_next mtval_reg mtval_next mip_next
+    mcause_reg mcause_next mtval_reg mtval_next mip_next mtip_in
     mcycle_reg mcycle_next mcycleh_reg mcycleh_next
     minstret_reg minstret_next minstreth_reg minstreth_next
     commit_valid_muxed
+
+  -- CSR retire injection: return old_rd_phys to free list during csr_cdb_inject
+  -- Normal retire doesn't fire during CSR inject because rob_commit_en=0.
+  -- We OR csr_cdb_inject into retire_valid and MUX retire_tag.
+  let csr_retire_inject_gates : List Gate :=
+    if config.enableZicsr then
+      let csr_retire_valid := Wire.mk "csr_retire_valid"
+      let retire_base_valid := if enableF then int_retire_valid else retire_recycle_valid_filtered
+      -- csr_retire_valid = csr_cdb_inject AND csr_rd_nonzero
+      [Gate.mkAND csr_cdb_inject (Wire.mk "csr_rd_nonzero") csr_retire_valid,
+       -- OR into retire valid (rename stage retire_valid).
+       -- During CSR inject, rob_commit_en=0 so retire base is 0,
+       -- making the OR effectively a MUX.
+       Gate.mkOR retire_base_valid csr_retire_valid
+         (Wire.mk "retire_valid_with_csr")] ++
+      -- MUX retire_tag: when csr_cdb_inject, use csr_old_phys_reg; else keep normal
+      (List.range 6).map (fun i =>
+        Gate.mkMUX retire_tag_muxed[i]! csr_old_phys_reg[i]! csr_cdb_inject
+          (Wire.mk s!"retire_tag_with_csr_{i}"))
+    else []
 
   -- Commit injection: MUX rob_commit vs CSR fake commit
   -- At drain_complete, rob_commit_en is 0 (ROB empty), so OR works as MUX
@@ -2867,7 +2982,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let csr_all_gates := csr_drain_gate ++ csr_addr_decode_gates ++
     mstatus_force_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
     csr_write_logic_gates ++ trap_we_merge_gates ++ csr_next_value_gates ++
-    csr_cdb_inject_gates ++ csr_commit_inject_gates
+    csr_cdb_inject_gates ++ csr_commit_inject_gates ++ csr_retire_inject_gates
 
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
@@ -2919,7 +3034,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, dmem_stall_ext] ++
               imem_resp_data ++
-              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
+              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++ [mtip_in]
     outputs := fetch_pc ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty, fence_i_drain_complete] ++
@@ -2938,7 +3053,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                [trace_dispatch_branch] ++ trace_dispatch_branch_tag ++
                [trace_dispatch_muldiv] ++ trace_dispatch_muldiv_tag ++
                [trace_dispatch_fp] ++ trace_dispatch_fp_tag
-    gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
+    gates := fence_i_const_4_gates ++ fence_i_detect_gates ++ csr_rs1phys_capture_gates ++ csr_old_phys_capture_gates ++ csr_cdb_snoop_gates ++ flush_gate ++ dispatch_gates ++ rd_nonzero_gates ++ int_dest_tag_mask_gates ++ branch_alloc_physRd_gates ++ src2_mux_gates ++ [busy_set_gate] ++ busy_gates ++
              cdb_tag_buf_gates ++ cdb_data_buf_gates ++ cdb_prf_route_gates ++
              (if enableF then [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates else []) ++
              fp_crossdomain_gates ++ fp_cdb_fwd_gates ++ fp_fwd_data_gates ++
@@ -2970,9 +3085,9 @@ def mkCPU (config : CPUConfig) : Circuit :=
              rvvi_fp_gates ++
              fflags_gates ++
              csr_all_gates
-    instances := microcode_instances ++
+    instances := microcode_instances ++ [csr_cdb_snoop_inst] ++
                   [fence_i_draining_dff, fence_i_adder_inst] ++ fence_i_redir_dffs ++
-                  [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_zimm_dffs ++
+                  [csr_flag_dff, csr_flush_suppress_dff] ++ csr_addr_dffs ++ csr_optype_dffs ++ csr_rd_dffs ++ csr_phys_dffs ++ csr_rs1cap_dffs ++ csr_rs1phys_dffs ++ csr_zimm_dffs ++ csr_old_phys_dffs ++
                   csr_reg_instances ++ csr_counter_instances ++
                   [fetch_inst, decoder_inst, rename_inst] ++
                   [redirect_valid_dff_inst, redirect_valid_fp_dff, redirect_valid_int_dff,
@@ -3182,6 +3297,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
   let dmem_resp_data := CPU.makeIndexedWires "dmem_resp_data" 32
+  let mtip_in := Wire.mk "mtip_in"
 
   -- === PIPELINE FLUSH ===
   let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
@@ -3347,6 +3463,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   -- CSR read data (driven by CSR read MUX below)
   let _csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  -- Forward-declare CSR registers for interrupt detection (driven by DFFs below)
+  let mip_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mip_e{i}")
+  let mie_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mie_e{i}")
+  let mstatus_reg_fwd := (List.range 32).map (fun i => Wire.mk s!"mstatus_e{i}")
 
   -- ECALL detection wires (for trap entry via microcode sequencer)
   let ecall_detected_0 := Wire.mk "ecall_det_s0"
@@ -3372,27 +3492,43 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let useq_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"useq_cdb_tg_{i}")
   let useq_cdb_data := (List.range 32).map (fun i => Wire.mk s!"useq_cdb_dt_{i}")
   let useq_mstatus_trap := Wire.mk "useq_mstatus_trap"
+  let useq_mstatus_mret := Wire.mk "useq_mstatus_mret"
+  let is_interrupt := Wire.mk "is_interrupt"
 
   -- Detection: match FENCE.I and CSR opcodes in both slots
-  let fi_match_0 := mkOpcodeMatch6 "fi_m0" (oi .FENCE_I) (d0_op.take 6) fence_i_detected_0
-  let fi_match_1 := mkOpcodeMatch6 "fi_m1" (oi .FENCE_I) (d1_op.take 6) fence_i_detected_1
+  let fi_match_0 := mkOpcodeMatchN "fi_m0" (oi .FENCE_I) d0_op opcodeWidth fence_i_detected_0
+  let fi_match_1 := mkOpcodeMatchN "fi_m1" (oi .FENCE_I) d1_op opcodeWidth fence_i_detected_1
   -- CSR opcode matches (CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI)
-  let csrrw_m0 := mkOpcodeMatch6 "csrrw_m0" (oi .CSRRW) (d0_op.take 6) (Wire.mk "csrrw_0")
-  let csrrs_m0 := mkOpcodeMatch6 "csrrs_m0" (oi .CSRRS) (d0_op.take 6) (Wire.mk "csrrs_0")
-  let csrrc_m0 := mkOpcodeMatch6 "csrrc_m0" (oi .CSRRC) (d0_op.take 6) (Wire.mk "csrrc_0")
-  let csrrwi_m0 := mkOpcodeMatch6 "csrrwi_m0" (oi .CSRRWI) (d0_op.take 6) (Wire.mk "csrrwi_0")
-  let csrrsi_m0 := mkOpcodeMatch6 "csrrsi_m0" (oi .CSRRSI) (d0_op.take 6) (Wire.mk "csrrsi_0")
-  let csrrci_m0 := mkOpcodeMatch6 "csrrci_m0" (oi .CSRRCI) (d0_op.take 6) (Wire.mk "csrrci_0")
-  let csrrw_m1 := mkOpcodeMatch6 "csrrw_m1" (oi .CSRRW) (d1_op.take 6) (Wire.mk "csrrw_1")
-  let csrrs_m1 := mkOpcodeMatch6 "csrrs_m1" (oi .CSRRS) (d1_op.take 6) (Wire.mk "csrrs_1")
-  let csrrc_m1 := mkOpcodeMatch6 "csrrc_m1" (oi .CSRRC) (d1_op.take 6) (Wire.mk "csrrc_1")
-  let csrrwi_m1 := mkOpcodeMatch6 "csrrwi_m1" (oi .CSRRWI) (d1_op.take 6) (Wire.mk "csrrwi_1")
-  let csrrsi_m1 := mkOpcodeMatch6 "csrrsi_m1" (oi .CSRRSI) (d1_op.take 6) (Wire.mk "csrrsi_1")
-  let csrrci_m1 := mkOpcodeMatch6 "csrrci_m1" (oi .CSRRCI) (d1_op.take 6) (Wire.mk "csrrci_1")
+  let csrrw_m0 := mkOpcodeMatchN "csrrw_m0" (oi .CSRRW) d0_op opcodeWidth (Wire.mk "csrrw_0")
+  let csrrs_m0 := mkOpcodeMatchN "csrrs_m0" (oi .CSRRS) d0_op opcodeWidth (Wire.mk "csrrs_0")
+  let csrrc_m0 := mkOpcodeMatchN "csrrc_m0" (oi .CSRRC) d0_op opcodeWidth (Wire.mk "csrrc_0")
+  let csrrwi_m0 := mkOpcodeMatchN "csrrwi_m0" (oi .CSRRWI) d0_op opcodeWidth (Wire.mk "csrrwi_0")
+  let csrrsi_m0 := mkOpcodeMatchN "csrrsi_m0" (oi .CSRRSI) d0_op opcodeWidth (Wire.mk "csrrsi_0")
+  let csrrci_m0 := mkOpcodeMatchN "csrrci_m0" (oi .CSRRCI) d0_op opcodeWidth (Wire.mk "csrrci_0")
+  let csrrw_m1 := mkOpcodeMatchN "csrrw_m1" (oi .CSRRW) d1_op opcodeWidth (Wire.mk "csrrw_1")
+  let csrrs_m1 := mkOpcodeMatchN "csrrs_m1" (oi .CSRRS) d1_op opcodeWidth (Wire.mk "csrrs_1")
+  let csrrc_m1 := mkOpcodeMatchN "csrrc_m1" (oi .CSRRC) d1_op opcodeWidth (Wire.mk "csrrc_1")
+  let csrrwi_m1 := mkOpcodeMatchN "csrrwi_m1" (oi .CSRRWI) d1_op opcodeWidth (Wire.mk "csrrwi_1")
+  let csrrsi_m1 := mkOpcodeMatchN "csrrsi_m1" (oi .CSRRSI) d1_op opcodeWidth (Wire.mk "csrrsi_1")
+  let csrrci_m1 := mkOpcodeMatchN "csrrci_m1" (oi .CSRRCI) d1_op opcodeWidth (Wire.mk "csrrci_1")
 
   -- ECALL opcode match in both slots
-  let ecall_m0 := mkOpcodeMatch6 "ecall_m0" (oi .ECALL) (d0_op.take 6) (Wire.mk "ecall_match_0")
-  let ecall_m1 := mkOpcodeMatch6 "ecall_m1" (oi .ECALL) (d1_op.take 6) (Wire.mk "ecall_match_1")
+  let ecall_m0 := mkOpcodeMatchN "ecall_m0" (oi .ECALL) d0_op opcodeWidth (Wire.mk "ecall_match_0")
+  let ecall_m1 := mkOpcodeMatchN "ecall_m1" (oi .ECALL) d1_op opcodeWidth (Wire.mk "ecall_match_1")
+
+  -- MRET opcode match in both slots
+  let mret_m0 := if config.microcodesMRET then mkOpcodeMatchN "mret_m0" (oi .MRET) d0_op opcodeWidth (Wire.mk "mret_match_0") else [Gate.mkBUF zero (Wire.mk "mret_match_0")]
+  let mret_m1 := if config.microcodesMRET then mkOpcodeMatchN "mret_m1" (oi .MRET) d1_op opcodeWidth (Wire.mk "mret_match_1") else [Gate.mkBUF zero (Wire.mk "mret_match_1")]
+  let mret_detected_0 := Wire.mk "mret_det_s0"
+  let mret_detected_1 := Wire.mk "mret_det_s1"
+  let mret_detected := Wire.mk "mret_detected"
+
+  -- WFI opcode match in both slots (treat as NOP via hw drain FSM)
+  let wfi_m0 := if config.microcodesMRET || config.microcodesTraps then mkOpcodeMatchN "wfi_m0" (oi .WFI) d0_op opcodeWidth (Wire.mk "wfi_match_0") else [Gate.mkBUF zero (Wire.mk "wfi_match_0")]
+  let wfi_m1 := if config.microcodesMRET || config.microcodesTraps then mkOpcodeMatchN "wfi_m1" (oi .WFI) d1_op opcodeWidth (Wire.mk "wfi_match_1") else [Gate.mkBUF zero (Wire.mk "wfi_match_1")]
+  let wfi_detected_0 := Wire.mk "wfi_det_s0"
+  let wfi_detected_1 := Wire.mk "wfi_det_s1"
+  let wfi_detected := Wire.mk "wfi_detected"
 
   let csr_detect_gates :=
     if config.enableZicsr then
@@ -3431,40 +3567,72 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND (Wire.mk "d1_valid_gated") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_dv1_nr"),
      Gate.mkAND (Wire.mk "ser_dv1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_dv1_pre"),
      Gate.mkAND (Wire.mk "ser_dv1_pre") (Wire.mk "ser_not_stall") (Wire.mk "ser_dv1")] ++
+    -- Slot 0 priority: compute whether slot 0 has ANY serialize op (early, for masking slot 1)
+    -- ser_s0_any_raw = slot 0 has fence.i OR csr OR ecall OR mret OR wfi (raw opcode matches)
+    [Gate.mkOR fence_i_detected_0 (Wire.mk "csr_match_0") (Wire.mk "ser_s0_raw_csrfi"),
+     Gate.mkOR (Wire.mk "ser_s0_raw_csrfi") (Wire.mk "ecall_match_0") (Wire.mk "ser_s0_raw_ecall"),
+     Gate.mkOR (Wire.mk "ser_s0_raw_ecall") (Wire.mk "mret_match_0") (Wire.mk "ser_s0_raw_mret"),
+     Gate.mkOR (Wire.mk "ser_s0_raw_mret") (Wire.mk "wfi_match_0") (Wire.mk "ser_s0_raw_any"),
+     Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "ser_s0_raw_any") (Wire.mk "ser_s0_has_ser"),
+     Gate.mkNOT (Wire.mk "ser_s0_has_ser") (Wire.mk "ser_s0_no_ser"),
+     -- Gate slot 1 decode valid by NOT(slot 0 has serialize) to enforce slot 0 priority
+     Gate.mkAND (Wire.mk "ser_dv1") (Wire.mk "ser_s0_no_ser") (Wire.mk "ser_dv1_pri")] ++
     (if config.enableZifencei then
       [Gate.mkAND (Wire.mk "ser_dv0") fence_i_detected_0 (Wire.mk "fi_det_0_gated"),
-       Gate.mkAND (Wire.mk "ser_dv1") fence_i_detected_1 (Wire.mk "fi_det_1_gated"),
+       Gate.mkAND (Wire.mk "ser_dv1_pri") fence_i_detected_1 (Wire.mk "fi_det_1_gated"),
        Gate.mkOR (Wire.mk "fi_det_0_gated") (Wire.mk "fi_det_1_gated") fence_i_detected]
     else [Gate.mkBUF zero fence_i_detected]) ++
     (if config.enableZicsr then
       [Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "csr_match_0") csr_detected_0,
-       Gate.mkAND (Wire.mk "ser_dv1") (Wire.mk "csr_match_1") csr_detected_1,
+       Gate.mkAND (Wire.mk "ser_dv1_pri") (Wire.mk "csr_match_1") csr_detected_1,
        Gate.mkOR csr_detected_0 csr_detected_1 csr_detected]
     else [Gate.mkBUF zero csr_detected_0, Gate.mkBUF zero csr_detected_1,
           Gate.mkBUF zero csr_detected]) ++
-    -- ECALL detection (gated by decode_valid)
+    -- ECALL detection (gated by decode_valid, slot 1 masked by slot 0 priority)
     (if enableTraps then
       [Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "ecall_match_0") ecall_detected_0,
-       Gate.mkAND (Wire.mk "ser_dv1") (Wire.mk "ecall_match_1") ecall_detected_1,
+       Gate.mkAND (Wire.mk "ser_dv1_pri") (Wire.mk "ecall_match_1") ecall_detected_1,
        Gate.mkOR ecall_detected_0 ecall_detected_1 ecall_detected]
     else
       [Gate.mkBUF zero ecall_detected_0, Gate.mkBUF zero ecall_detected_1,
        Gate.mkBUF zero ecall_detected]) ++
-    -- serialize_detected includes ECALL when traps enabled
-    (if enableTraps then
+    -- MRET detection (gated by decode_valid, slot 1 masked by slot 0 priority)
+    (if config.microcodesMRET then
+      [Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "mret_match_0") mret_detected_0,
+       Gate.mkAND (Wire.mk "ser_dv1_pri") (Wire.mk "mret_match_1") mret_detected_1,
+       Gate.mkOR mret_detected_0 mret_detected_1 mret_detected]
+    else
+      [Gate.mkBUF zero mret_detected_0, Gate.mkBUF zero mret_detected_1,
+       Gate.mkBUF zero mret_detected]) ++
+    -- WFI detection (gated by decode_valid, slot 1 masked by slot 0 priority)
+    (if config.microcodesMRET || enableTraps then
+      [Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "wfi_match_0") wfi_detected_0,
+       Gate.mkAND (Wire.mk "ser_dv1_pri") (Wire.mk "wfi_match_1") wfi_detected_1,
+       Gate.mkOR wfi_detected_0 wfi_detected_1 wfi_detected]
+    else
+      [Gate.mkBUF zero wfi_detected_0, Gate.mkBUF zero wfi_detected_1,
+       Gate.mkBUF zero wfi_detected]) ++
+    -- serialize_detected includes ECALL, MRET, WFI when enabled
+    (if enableTraps || config.microcodesMRET then
       [Gate.mkOR fence_i_detected csr_detected (Wire.mk "hw_ser_pre"),
-       Gate.mkOR (Wire.mk "hw_ser_pre") ecall_detected serialize_detected]
+       Gate.mkOR (Wire.mk "hw_ser_pre") ecall_detected (Wire.mk "hw_ser_pre2"),
+       Gate.mkOR (Wire.mk "hw_ser_pre2") mret_detected (Wire.mk "hw_ser_pre3"),
+       Gate.mkOR (Wire.mk "hw_ser_pre3") wfi_detected serialize_detected]
     else
       [Gate.mkOR fence_i_detected csr_detected serialize_detected]) ++
     [-- Slot selection: slot 0 priority. sel=0 when slot 0 has the serialize op.
      -- ser_slot_sel = NOT(slot 0 detected) AND (slot 1 detected)
      Gate.mkNOT (Wire.mk "ser_dv0_det") (Wire.mk "ser_not_s0"),
-     -- Include ECALL in slot any-match
+     -- Include ECALL/MRET/WFI in slot any-match
      Gate.mkOR fence_i_detected_0 (Wire.mk "csr_match_0") (Wire.mk "ser_s0_csrfi"),
-     Gate.mkOR (Wire.mk "ser_s0_csrfi") (Wire.mk "ecall_match_0") (Wire.mk "ser_s0_any"),
+     Gate.mkOR (Wire.mk "ser_s0_csrfi") (Wire.mk "ecall_match_0") (Wire.mk "ser_s0_ecall"),
+     Gate.mkOR (Wire.mk "ser_s0_ecall") (Wire.mk "mret_match_0") (Wire.mk "ser_s0_mret"),
+     Gate.mkOR (Wire.mk "ser_s0_mret") (Wire.mk "wfi_match_0") (Wire.mk "ser_s0_any"),
      Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "ser_s0_any") (Wire.mk "ser_dv0_det"),
      Gate.mkOR fence_i_detected_1 (Wire.mk "csr_match_1") (Wire.mk "ser_s1_csrfi"),
-     Gate.mkOR (Wire.mk "ser_s1_csrfi") (Wire.mk "ecall_match_1") (Wire.mk "ser_s1_any"),
+     Gate.mkOR (Wire.mk "ser_s1_csrfi") (Wire.mk "ecall_match_1") (Wire.mk "ser_s1_ecall"),
+     Gate.mkOR (Wire.mk "ser_s1_ecall") (Wire.mk "mret_match_1") (Wire.mk "ser_s1_mret"),
+     Gate.mkOR (Wire.mk "ser_s1_mret") (Wire.mk "wfi_match_1") (Wire.mk "ser_s1_any"),
      Gate.mkAND (Wire.mk "ser_dv1") (Wire.mk "ser_s1_any") (Wire.mk "ser_dv1_det"),
      Gate.mkAND (Wire.mk "ser_not_s0") (Wire.mk "ser_dv1_det") ser_slot_sel]
 
@@ -3472,19 +3640,39 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let ser_fsm_gates :=
     [Gate.mkNOT fence_i_draining fence_i_not_draining,
      Gate.mkNOT pipeline_flush_comb (Wire.mk "ser_not_flush")] ++
-    if enableTraps then
-      -- Split start: ECALL → trap_seq_start, CSR/FENCE.I → hw_csr_fence_start
-      [Gate.mkOR fence_i_draining useq_active (Wire.mk "any_active"),
+    if enableTraps || config.microcodesMRET then
+      -- Interrupt detection: mip[7] AND mie[7] AND mstatus[3] (MTIP & MTIE & MIE)
+      let irq_pending := Wire.mk "irq_pending"
+      let irq_inject := Wire.mk "irq_inject"
+      -- Split start: ECALL/MRET/IRQ → trap_seq_start, CSR/FENCE.I → hw_csr_fence_start
+      [Gate.mkAND mip_reg_fwd[7]! mie_reg_fwd[7]! (Wire.mk "mtip_and_mtie"),
+       Gate.mkAND (Wire.mk "mtip_and_mtie") mstatus_reg_fwd[3]! irq_pending,
+       Gate.mkOR fence_i_draining useq_active (Wire.mk "any_active"),
        Gate.mkNOT (Wire.mk "any_active") (Wire.mk "not_any_active"),
-       -- ECALL starts trap sequencer
-       Gate.mkAND ecall_detected (Wire.mk "not_any_active") trap_seq_start,
-       -- CSR/FENCE.I starts hardwired FSM
+       -- irq_inject = irq_pending AND NOT(any_active)
+       Gate.mkAND irq_pending (Wire.mk "not_any_active") irq_inject,
+       -- W=2 slot deferral: when serialize is ONLY in slot 1 (ser_slot_sel=1),
+       -- defer the serialize — don't start FSM/trap. Let slot 0 dispatch normally,
+       -- stall fetch so the serialize re-appears in slot 0 next cycle.
+       Gate.mkNOT ser_slot_sel (Wire.mk "ser_in_s0_or_none"),
+       -- ECALL/MRET/IRQ starts trap sequencer (gated by NOT ser_slot_sel)
+       Gate.mkOR ecall_detected mret_detected (Wire.mk "ecall_or_mret"),
+       Gate.mkOR (Wire.mk "ecall_or_mret") irq_inject (Wire.mk "trap_trigger"),
+       Gate.mkAND (Wire.mk "trap_trigger") (Wire.mk "not_any_active") (Wire.mk "trap_start_pre"),
+       Gate.mkAND (Wire.mk "trap_start_pre") (Wire.mk "ser_in_s0_or_none") trap_seq_start,
+       -- is_interrupt for LOAD_CONST override (latched by sequencer)
+       Gate.mkBUF irq_inject is_interrupt,
+       -- CSR/FENCE.I/WFI starts hardwired FSM (gated by NOT ser_slot_sel)
        Gate.mkOR fence_i_detected csr_detected (Wire.mk "csrfi_det"),
-       Gate.mkAND (Wire.mk "csrfi_det") (Wire.mk "not_any_active") hw_csr_fence_start,
+       Gate.mkOR (Wire.mk "csrfi_det") wfi_detected (Wire.mk "csrfi_wfi_det"),
+       Gate.mkAND (Wire.mk "csrfi_wfi_det") (Wire.mk "not_any_active") (Wire.mk "hw_start_pre"),
+       Gate.mkAND (Wire.mk "hw_start_pre") (Wire.mk "ser_in_s0_or_none") hw_csr_fence_start,
        -- any_serialize_start = either start type
        Gate.mkOR trap_seq_start hw_csr_fence_start (Wire.mk "any_ser_start"),
+       -- Also trigger on bare irq_inject (no instruction decode)
+       Gate.mkOR (Wire.mk "any_ser_start") irq_inject (Wire.mk "any_ser_or_irq"),
        -- fence_i_start = any_serialize_start (drives capture latches)
-       Gate.mkBUF (Wire.mk "any_ser_start") fence_i_start,
+       Gate.mkBUF (Wire.mk "any_ser_or_irq") fence_i_start,
        -- Hardwired drain FSM (only active for CSR/FENCE.I, not ECALL)
        Gate.mkAND fence_i_draining rob_empty (Wire.mk "ser_dc_tmp"),
        Gate.mkAND (Wire.mk "ser_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "ser_dc_tmp2"),
@@ -3504,17 +3692,31 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR (Wire.mk "hw_drain_complete") (Wire.mk "useq_dc_delayed") fence_i_drain_complete,
        -- NOT(drain_complete) for csr_flag hold logic
        Gate.mkNOT fence_i_drain_complete (Wire.mk "ser_not_dc"),
-       -- Suppress: CSR start allows rename; FENCE.I/ECALL/drain suppress
+       -- Suppress: CSR start allows rename; FENCE.I/ECALL/MRET/WFI/drain suppress
        Gate.mkAND hw_csr_fence_start csr_detected csr_rename_en,
        Gate.mkNOT csr_rename_en not_csr_rename_en,
        Gate.mkAND hw_csr_fence_start not_csr_rename_en (Wire.mk "fi_start_nocsr"),
        Gate.mkOR (Wire.mk "fi_start_nocsr") fence_i_draining (Wire.mk "hw_suppress"),
        Gate.mkOR (Wire.mk "hw_suppress") useq_suppress (Wire.mk "suppress_pre"),
-       -- ECALL detected also suppresses
-       Gate.mkOR (Wire.mk "suppress_pre") ecall_detected fence_i_suppress]
+       -- ECALL/MRET/WFI detected also suppress (only when NOT deferred to slot 0)
+       Gate.mkOR ecall_detected mret_detected (Wire.mk "suppress_ecall_mret"),
+       Gate.mkOR (Wire.mk "suppress_ecall_mret") wfi_detected (Wire.mk "suppress_trap_all"),
+       Gate.mkAND (Wire.mk "suppress_trap_all") (Wire.mk "ser_in_s0_or_none") (Wire.mk "suppress_trap_gated"),
+       Gate.mkOR (Wire.mk "suppress_pre") (Wire.mk "suppress_trap_gated") fence_i_suppress,
+       -- Slot 1 deferred serialize: suppress slot 1 via half_step (fetch advances by 4).
+       -- Use raw decode valids (dec0_valid/dec1_valid) to avoid combinational loop
+       -- through fetch valid → half_step → fetch.
+       Gate.mkAND (Wire.mk "dec1_valid") (Wire.mk "ser_s1_any") (Wire.mk "s1_raw_ser"),
+       Gate.mkAND (Wire.mk "dec0_valid") (Wire.mk "ser_s0_raw_any") (Wire.mk "s0_raw_ser"),
+       Gate.mkNOT (Wire.mk "s0_raw_ser") (Wire.mk "s0_no_raw_ser"),
+       Gate.mkAND (Wire.mk "s1_raw_ser") (Wire.mk "s0_no_raw_ser") (Wire.mk "ser_s1_only_raw"),
+       Gate.mkAND (Wire.mk "ser_s1_only_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_s1_defer_pre"),
+       Gate.mkAND (Wire.mk "ser_s1_defer_pre") (Wire.mk "not_any_active") (Wire.mk "ser_slot1_defer")]
     else
       -- Original hardwired-only path (no traps)
-      [Gate.mkAND serialize_detected fence_i_not_draining fence_i_start,
+      [Gate.mkNOT ser_slot_sel (Wire.mk "ser_in_s0_or_none"),
+       Gate.mkAND serialize_detected (Wire.mk "ser_in_s0_or_none") (Wire.mk "ser_det_s0"),
+       Gate.mkAND (Wire.mk "ser_det_s0") fence_i_not_draining fence_i_start,
        -- Drain complete: draining AND rob_empty AND sb_empty AND NOT flushing
        Gate.mkAND fence_i_draining rob_empty (Wire.mk "ser_dc_tmp"),
        Gate.mkAND (Wire.mk "ser_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "ser_dc_tmp2"),
@@ -3536,7 +3738,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkBUF zero useq_suppress,
        Gate.mkBUF zero useq_drain_complete,
        Gate.mkBUF zero useq_write_en,
-       Gate.mkBUF zero useq_mstatus_trap]
+       Gate.mkBUF zero useq_mstatus_trap,
+       Gate.mkBUF zero useq_mstatus_mret,
+       Gate.mkBUF zero is_interrupt,
+       -- Slot 1 deferred serialize (use raw decode valids to avoid combinational loop)
+       Gate.mkAND (Wire.mk "dec1_valid") (Wire.mk "ser_s1_any") (Wire.mk "s1_raw_ser"),
+       Gate.mkAND (Wire.mk "dec0_valid") (Wire.mk "ser_s0_raw_any") (Wire.mk "s0_raw_ser"),
+       Gate.mkNOT (Wire.mk "s0_raw_ser") (Wire.mk "s0_no_raw_ser"),
+       Gate.mkAND (Wire.mk "s1_raw_ser") (Wire.mk "s0_no_raw_ser") (Wire.mk "ser_s1_only_raw"),
+       Gate.mkAND (Wire.mk "ser_s1_only_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_slot1_defer")]
 
   -- PC+4 of serializing instruction (MUX between slot 0 PC and slot 1 PC, then add 4)
   let ser_pc_muxed := CPU.makeIndexedWires "ser_pc_muxed" 32
@@ -3744,11 +3954,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
             let rhs := addr_match[activeAddrs[i + 1]!]!
             Gate.mkOR lhs rhs orWires[i]!)
           orGates) |>.flatten
-      -- seq_id = 4 (binary 100) for TRAP_ENTRY
+      -- seq_id encoding: ECALL/IRQ=4 (100), MRET=6 (110)
+      -- bit0 = 0, bit1 = mret_detected (MRET=6=110), bit2 = always 1 (all trap/mret codes >= 4)
       let seq_id := (List.range 3).map (fun i => Wire.mk s!"trap_seq_id_{i}")
       let seq_id_gates :=
         [Gate.mkBUF zero seq_id[0]!,
-         Gate.mkBUF zero seq_id[1]!,
+         Gate.mkBUF mret_detected seq_id[1]!,
          Gate.mkBUF one seq_id[2]!]
       -- PC from selected slot (for trap sequencer's pc_in)
       let ser_pc_for_trap := CPU.makeIndexedWires "ser_pc_trap" 32
@@ -3773,7 +3984,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
           (List.range 32).map (fun i => (s!"csr_read_data_{i}", (Wire.mk s!"csr_rd_e{i}"))) ++
           (List.range 24).map (fun i => (s!"rom_data_{i}", useq_rom_data[i]!)) ++
           (List.range 32).map (fun i => (s!"redir_pc4_{i}", ser_pc_plus_4[i]!)) ++
-          [("pipeline_flush", pipeline_flush_comb)] ++
+          [("pipeline_flush", pipeline_flush_comb),
+           ("is_interrupt_in", is_interrupt)] ++
           (List.range 32).map (fun i => (s!"pc_in_{i}", ser_pc_for_trap[i]!)) ++
           [(s!"active_q", useq_active),
            ("fence_i_suppress", useq_suppress),
@@ -3785,6 +3997,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
            ("csr_rename_en", Wire.mk "useq_rename_en_unused"),
            (s!"csrflag_q", useq_csr_flag),
            ("mstatus_trap_active", useq_mstatus_trap),
+           ("mstatus_mret_active", useq_mstatus_mret),
            ("trap_taken", Wire.mk "useq_trap_taken")] ++
           (List.range 6).map (fun i => (s!"csr_cdb_tag_{i}", useq_cdb_tag[i]!)) ++
           (List.range 32).map (fun i => (s!"csr_cdb_data_{i}", useq_cdb_data[i]!)) ++
@@ -3968,7 +4181,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkOR (Wire.mk "dispatch_stall") redirect_or_flush (Wire.mk "rename_ext_stall"),
      Gate.mkNOT redirect_or_flush not_redirecting,
      Gate.mkNOT fence_i_suppress not_fence_i_suppress,
-     -- Slot 0 base valid (gated by fence_i_suppress)
+     -- Slot 0 base valid
      Gate.mkAND d0_valid not_redirecting (Wire.mk "d0_no_redir"),
      Gate.mkAND (Wire.mk "d0_no_redir") not_fence_i_suppress (Wire.mk "d0_no_ser"),
      Gate.mkAND (Wire.mk "d0_no_ser") not_stall (Wire.mk "d0_base_tmp"),
@@ -3980,7 +4193,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND csr_rename_en (Wire.mk "not_ser_slot_sel") (Wire.mk "d0_csr_suppress"),
      Gate.mkNOT (Wire.mk "d0_csr_suppress") (Wire.mk "d0_not_csr_sup"),
      Gate.mkAND (Wire.mk "d0_base_pre") (Wire.mk "d0_not_csr_sup") dispatch_base_valid_0,
-     -- Slot 1 base valid
+     -- Slot 1 base valid (ser_slot1_defer suppresses via any_dual_stall → not_dual_stall)
      Gate.mkAND d1_valid not_redirecting (Wire.mk "d1_no_redir"),
      Gate.mkAND (Wire.mk "d1_no_redir") not_fence_i_suppress (Wire.mk "d1_no_ser"),
      Gate.mkAND (Wire.mk "d1_no_ser") not_stall (Wire.mk "d1_base_tmp"),
@@ -4424,7 +4637,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_is_br),
                 ("skip_x0_detect", zero),
                 ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_is_br),
-                ("flush_en", pipeline_flush), ("retire_valid", Wire.mk "csr_commit_valid_0")] ++
+                ("flush_en", pipeline_flush), ("freelist_flush_en", pipeline_flush),
+                ("retire_valid", Wire.mk "csr_commit_valid_0")] ++
                -- commit_valid for slot 0 is muxed with CSR inject (defined in CSR block below)
                [("commit_valid", Wire.mk "csr_commit_valid_0"), ("commit_valid_1", retire_valid_1)] ++
                bundledPorts "rs1_addr" d0_rs1 ++ bundledPorts "rs2_addr" d0_rs2 ++ bundledPorts "rd_addr" d0_rd ++
@@ -5088,7 +5302,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       ((List.range 5).map fun i => (s!"rs3_addr_1_{i}", zero)) ++
       ((List.range 5).map fun i => (s!"rd_addr_1_{i}", zero)) ++
       -- Flush
-      [("flush_en", redirect_valid_fp)] ++
+      [("flush_en", redirect_valid_fp),
+       ("freelist_flush_en", redirect_valid_fp)] ++
       -- Commit channel 0: merged FP commit
       [("commit_valid", fp_commit_merged),
        ("commit_hasPhysRd", fp_commit_hasPhysRd),
@@ -6694,31 +6909,61 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       cdb_redirect_reg_0 cdb_redirect_reg_1
       rob_head_idx_0 rob_head_idx_1
 
-  -- commit_store_en: fires when either commit slot retires a store
+  -- commit_store_en: fires when either commit slot retires a store.
   -- Store buffer advances commit_ptr by 1 per pulse.
-  -- When both slots retire stores in the same cycle, a pending DFF replays
-  -- the second commit on the following cycle.
+  -- A 3-bit pending counter tracks outstanding commits when W=2 retires
+  -- more stores per cycle than the single-port SB can consume.
+  -- The counter increments on dual-store retirement (both=1) and
+  -- decrements when draining a pending commit with no new stores.
   let commit_store_0 := Wire.mk "commit_store_s0"
   let commit_store_1 := Wire.mk "commit_store_s1"
   let commit_store_both := Wire.mk "commit_store_both"
-  let commit_store_pending := Wire.mk "commit_store_pending"
-  let commit_store_pending_next := Wire.mk "commit_store_pending_next"
+  let csp := (List.range 3).map (fun i => Wire.mk s!"csp_{i}")
+  let csp_next := (List.range 3).map (fun i => Wire.mk s!"csp_next_{i}")
+  let csp_nz := Wire.mk "csp_nz"
+  let csp_inc := Wire.mk "csp_inc"   -- both new stores
+  let csp_dec := Wire.mk "csp_dec"   -- drain pending, no new
   let commit_store_gate :=
     [Gate.mkAND retire_valid_0 rob_head_isStore_0 commit_store_0,
      Gate.mkAND retire_valid_1 rob_head_isStore_1 commit_store_1,
-     -- commit_store_en = OR(s0, s1, pending) — at most 1 SB commit per cycle
+     -- commit_store_en = OR(any_new, pending_nz) — at most 1 SB commit per cycle
      Gate.mkOR commit_store_0 commit_store_1 (Wire.mk "commit_store_new"),
-     Gate.mkOR (Wire.mk "commit_store_new") commit_store_pending commit_store_en,
-     -- pending_next = (total >= 2): (both new) OR (one new AND pending)
+     Gate.mkOR csp[0]! csp[1]! (Wire.mk "csp_nz_t"),
+     Gate.mkOR (Wire.mk "csp_nz_t") csp[2]! csp_nz,
+     Gate.mkOR (Wire.mk "commit_store_new") csp_nz commit_store_en,
+     -- inc = both (2 new stores, only 1 committed → counter grows by 1)
      Gate.mkAND commit_store_0 commit_store_1 commit_store_both,
-     Gate.mkAND (Wire.mk "commit_store_new") commit_store_pending (Wire.mk "commit_store_new_and_pend"),
-     Gate.mkOR commit_store_both (Wire.mk "commit_store_new_and_pend") (Wire.mk "commit_store_pend_raw"),
-     -- Clear on flush
-     Gate.mkAND (Wire.mk "commit_store_pend_raw") (Wire.mk "not_flush_comb") commit_store_pending_next]
-  let commit_store_pending_dff : CircuitInstance :=
-    { moduleName := "DFlipFlop", instName := "u_commit_store_pending",
-      portMap := [("d", commit_store_pending_next), ("q", commit_store_pending),
-                  ("clock", clock), ("reset", reset)] }
+     Gate.mkBUF commit_store_both csp_inc,
+     -- dec = NOT(any_new) AND pending_nz (drain pending, 0 new, 1 committed → counter shrinks by 1)
+     Gate.mkNOT (Wire.mk "commit_store_new") (Wire.mk "csp_not_new"),
+     Gate.mkAND (Wire.mk "csp_not_new") csp_nz csp_dec] ++
+    -- 3-bit counter: inc/dec/hold, clear on flush
+    -- csp + 1
+    (let inc_val := (List.range 3).map (fun i => Wire.mk s!"csp_inc_v{i}")
+     [Gate.mkNOT csp[0]! inc_val[0]!,
+      Gate.mkXOR csp[1]! csp[0]! inc_val[1]!,
+      Gate.mkAND csp[1]! csp[0]! (Wire.mk "csp_carry1"),
+      Gate.mkXOR csp[2]! (Wire.mk "csp_carry1") inc_val[2]!] ++
+    -- csp - 1
+    (let dec_val := (List.range 3).map (fun i => Wire.mk s!"csp_dec_v{i}")
+     [Gate.mkNOT csp[0]! dec_val[0]!,
+      Gate.mkNOT csp[0]! (Wire.mk "csp_borrow0"),
+      Gate.mkXOR csp[1]! (Wire.mk "csp_borrow0") dec_val[1]!,
+      Gate.mkNOT csp[1]! (Wire.mk "csp_not1"),
+      Gate.mkAND (Wire.mk "csp_not1") (Wire.mk "csp_borrow0") (Wire.mk "csp_borrow1"),
+      Gate.mkXOR csp[2]! (Wire.mk "csp_borrow1") dec_val[2]!] ++
+    -- MUX: csp_next = inc ? csp+1 : (dec ? csp-1 : csp), then AND with NOT flush
+    (List.range 3).map (fun i =>
+      Gate.mkMUX csp[i]! dec_val[i]! csp_dec (Wire.mk s!"csp_mux1_{i}")) ++
+    (List.range 3).map (fun i =>
+      Gate.mkMUX (Wire.mk s!"csp_mux1_{i}") inc_val[i]! csp_inc (Wire.mk s!"csp_mux2_{i}")) ++
+    (List.range 3).map (fun i =>
+      Gate.mkAND (Wire.mk s!"csp_mux2_{i}") (Wire.mk "not_flush_comb") csp_next[i]!)))
+  let commit_store_pending_dffs : List CircuitInstance :=
+    (List.range 3).map (fun i =>
+      { moduleName := "DFlipFlop", instName := s!"u_csp_{i}",
+        portMap := [("d", csp_next[i]!), ("q", csp[i]!),
+                    ("clock", clock), ("reset", reset)] })
 
   -- RS issue_full:
   -- INT RS dispatches to BOTH banks each cycle, so full = NOT(avail_0 AND avail_1)
@@ -6749,7 +6994,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkOR br_dual_stall mem_dual_stall (Wire.mk "dual_stall_bm"),
        Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall (Wire.mk "dual_stall_bmm"),
        Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall (Wire.mk "dual_stall_bmmf"),
-       Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfc") (Wire.mk "ser_slot1_defer") any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
@@ -6760,7 +7006,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR (Wire.mk "stall_L1_c") lsu_sb_full (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
-      [Gate.mkOR br_dual_stall cache_line_boundary any_dual_stall,
+      [Gate.mkOR br_dual_stall cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfc") (Wire.mk "ser_slot1_defer") any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
@@ -6899,10 +7146,28 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- CSR read MUX (with forced mstatus read for trap entry)
   let is_mstatus_for_read := Wire.mk "is_mstatus_forced"
   let mstatus_force_gates : List Gate :=
-    if enableTraps then
-      [Gate.mkOR is_mstatus useq_mstatus_trap is_mstatus_for_read]
+    if enableTraps || config.microcodesMRET then
+      let any_mstatus_op := Wire.mk "any_mstatus_op"
+      let not_mstatus_op := Wire.mk "not_any_mstatus_op"
+      [Gate.mkOR useq_mstatus_trap useq_mstatus_mret any_mstatus_op,
+       Gate.mkOR is_mstatus any_mstatus_op is_mstatus_for_read,
+       -- Suppress downstream CSR selects during MSTATUS_TRAP/MSTATUS_MRET
+       -- to prevent them from overriding mstatus in the priority MUX chain.
+       Gate.mkNOT any_mstatus_op not_mstatus_op,
+       Gate.mkAND is_mie not_mstatus_op (Wire.mk "is_mie_gated"),
+       Gate.mkAND is_mtvec not_mstatus_op (Wire.mk "is_mtvec_gated"),
+       Gate.mkAND is_mepc not_mstatus_op (Wire.mk "is_mepc_gated"),
+       Gate.mkAND is_mcause not_mstatus_op (Wire.mk "is_mcause_gated"),
+       Gate.mkAND is_mtval not_mstatus_op (Wire.mk "is_mtval_gated"),
+       Gate.mkAND is_mip not_mstatus_op (Wire.mk "is_mip_gated")]
     else
       [Gate.mkBUF is_mstatus is_mstatus_for_read]
+  let is_mie_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mie_gated" else is_mie
+  let is_mtvec_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mtvec_gated" else is_mtvec
+  let is_mepc_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mepc_gated" else is_mepc
+  let is_mcause_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mcause_gated" else is_mcause
+  let is_mtval_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mtval_gated" else is_mtval
+  let is_mip_r := if enableTraps || config.microcodesMRET then Wire.mk "is_mip_gated" else is_mip
   let misa_val : Nat := 0x40000100 +
     (if config.enableM then 0x00001000 else 0) +
     (if config.enableF then 0x00000020 else 0)
@@ -6910,7 +7175,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     mkCsrReadMux config enableF zero one misa_val
       is_misa is_mscratch is_mcycle is_mcycleh is_minstret is_minstreth
       is_fflags is_frm is_fcsr
-      is_mstatus_for_read is_mie is_mtvec is_mepc is_mcause is_mtval is_mip
+      is_mstatus_for_read is_mie_r is_mtvec_r is_mepc_r is_mcause_r is_mtval_r is_mip_r
       mscratch_reg mcycle_reg mcycleh_reg minstret_reg minstreth_reg
       mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg
       fflags_reg frm_reg
@@ -6957,22 +7222,28 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
        cdbGates)
 
-  -- Merge trap sequencer writes into CSR write path
-  -- When microcodesTraps, the trap sequencer writes mepc, mcause, mstatus via useq_write_en.
+  -- Merge trap/MRET sequencer writes into CSR write path
+  -- When microcodesTraps or microcodesMRET, the sequencer writes mepc, mcause, mstatus.
   let (merged_csr_write_val, merged_csr_we_mstatus, merged_csr_we_mepc, merged_csr_we_mcause, trap_we_merge_gates) :=
-    if enableTraps && config.enableZicsr then
+    if (enableTraps || config.microcodesMRET) && config.enableZicsr then
       let merged_wr := CPU.makeIndexedWires "merged_csr_wr" 32
       let merged_we_mstat := Wire.mk "merged_we_mstatus"
       let useq_we_mepc := Wire.mk "useq_we_mepc"
       let useq_we_mcause := Wire.mk "useq_we_mcause"
       let merged_we_mepc := Wire.mk "merged_we_mepc"
       let merged_we_mcause := Wire.mk "merged_we_mcause"
+      let useq_any_mstatus := Wire.mk "useq_any_mstatus"
+      let not_useq_mstatus := Wire.mk "not_useq_any_mstatus"
+      let useq_write_csr_only := Wire.mk "useq_write_csr_only"
       let gates :=
-        [-- MSTATUS_TRAP: use dedicated signal (addr forced combinationally, not in csr_addr_reg)
-         Gate.mkOR csr_we_mstatus useq_mstatus_trap merged_we_mstat,
-         -- mepc/mcause: useq_write_en AND is_<csr>
-         Gate.mkAND useq_write_en is_mepc useq_we_mepc,
-         Gate.mkAND useq_write_en is_mcause useq_we_mcause,
+        [-- MSTATUS_TRAP or MSTATUS_MRET: use dedicated signals (addr forced combinationally)
+         Gate.mkOR useq_mstatus_trap useq_mstatus_mret useq_any_mstatus,
+         Gate.mkOR csr_we_mstatus useq_any_mstatus merged_we_mstat,
+         -- WRITE_CSR for mepc/mcause: exclude MSTATUS_TRAP/MSTATUS_MRET
+         Gate.mkNOT useq_any_mstatus not_useq_mstatus,
+         Gate.mkAND useq_write_en not_useq_mstatus useq_write_csr_only,
+         Gate.mkAND useq_write_csr_only is_mepc useq_we_mepc,
+         Gate.mkAND useq_write_csr_only is_mcause useq_we_mcause,
          Gate.mkOR csr_we_mepc useq_we_mepc merged_we_mepc,
          Gate.mkOR csr_we_mcause useq_we_mcause merged_we_mcause] ++
         -- Merged write data (MUX: useq_write_en selects useq_write_data, else hardwired)
@@ -6991,7 +7262,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     merged_csr_we_mstatus csr_we_mie csr_we_mtvec merged_csr_we_mepc merged_csr_we_mcause csr_we_mtval
     mscratch_reg mscratch_next mstatus_reg mstatus_next
     mie_reg mie_next mtvec_reg mtvec_next mepc_reg mepc_next
-    mcause_reg mcause_next mtval_reg mtval_next mip_next
+    mcause_reg mcause_next mtval_reg mtval_next mip_next mtip_in
     mcycle_reg mcycle_next mcycleh_reg mcycleh_next
     minstret_reg minstret_next minstreth_reg minstreth_next
     commit_valid_for_minstret
@@ -7183,7 +7454,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   { name := s!"CPU_{config.isaString}"
     inputs := [clock, reset, zero, one, fetch_stall_ext, ifetch_last_word, dmem_stall_ext] ++
               imem_resp_data_0 ++ imem_resp_data_1 ++
-              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data
+              [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++ [mtip_in]
     outputs := fetch_pc_0 ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty] ++
@@ -7238,6 +7509,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              rs_full_gates ++ clb_gates ++ stall_gates ++ dmem_gates ++ rvvi_gates ++ rvvi_pc_insn_gates ++ output_gates ++
              fi_match_0 ++ fi_match_1 ++
              ecall_m0 ++ ecall_m1 ++
+             mret_m0 ++ mret_m1 ++ wfi_m0 ++ wfi_m1 ++
              csrrw_m0 ++ csrrs_m0 ++ csrrc_m0 ++ csrrwi_m0 ++ csrrsi_m0 ++ csrrci_m0 ++
              csrrw_m1 ++ csrrs_m1 ++ csrrc_m1 ++ csrrwi_m1 ++ csrrsi_m1 ++ csrrci_m1 ++
              cdb_tag_nz_gates ++
@@ -7275,7 +7547,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  [pc_queue_inst, insn_queue_inst] ++
                  csr_reg_instances ++ csr_counter_instances ++
                  fflags_frm_dff_instances ++
-                 [commit_store_pending_dff]
+                 commit_store_pending_dffs
   }
 
 end Shoumei.RISCV.CPU_W2

@@ -95,6 +95,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" 32
   let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" 32
 
+  -- External interrupt input
+  let mtip_in := Wire.mk "mtip_in"
+
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
   let store_snoop_addr := makeIndexedWires "store_snoop_addr" 32
@@ -104,7 +107,10 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let stall_gate := Gate.mkNOT dmem_stall not_dmem_stall
   let ready_gate := Gate.mkBUF not_dmem_stall dmem_req_ready
 
-  -- Store snoop gates
+  -- Store snoop gates: fire whenever CPU issues a store request
+  -- Note: fires on every cycle the store request is active (including stall replays).
+  -- The testbench deduplicates repeated snoops for putchar via edge detection.
+  -- CLINT/tohost writes are idempotent so duplicates are harmless.
   let snoop_valid_gate := Gate.mkAND dmem_req_valid dmem_req_we store_snoop_valid
   let snoop_addr_gates := (List.range 32).map fun i =>
     Gate.mkBUF dmem_req_addr[i]! store_snoop_addr[i]!
@@ -137,7 +143,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"dmem_req_addr_{i}", dmem_req_addr[i]!)) ++
      (List.range 32).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
-     [("rob_empty", rob_empty),
+     [("mtip_in", mtip_in),
+      ("rob_empty", rob_empty),
       ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
       ("rvvi_trapS0", rvvi_trap_0), ("rvvi_trapS1", rvvi_trap_1),
       ("rvvi_rd_validS0", rvvi_rd_valid_0), ("rvvi_rd_validS1", rvvi_rd_valid_1)] ++
@@ -181,7 +188,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("fence_i_busy", Wire.mk "cache_fence_i_busy")])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
-    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
+    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data ++ [mtip_in]
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
                [rvvi_retire,

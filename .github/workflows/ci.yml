@@ -332,8 +332,10 @@ jobs:
           ./scripts/setup-riscv-toolchain.sh
           echo "$HOME/.local/riscv32-elf/bin" >> $GITHUB_PATH
 
-      - name: Fetch riscv-tests submodule
-        run: git submodule update --init third_party/riscv-tests
+      - name: Fetch submodules
+        run: |
+          git submodule update --init third_party/riscv-tests
+          git submodule update --init third_party/FreeRTOS-Kernel
 
       - name: Build test ELFs
         run: make -C testbench/tests
@@ -459,7 +461,6 @@ jobs:
           name: cosim-results
           path: output/cosim-results.csv
           retention-days: 90
-
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest
@@ -506,4 +507,4 @@ jobs:
               exit 1
             fi
           done
-          echo "All 9 leaf jobs passed"
+          echo "All 8 leaf jobs passed"

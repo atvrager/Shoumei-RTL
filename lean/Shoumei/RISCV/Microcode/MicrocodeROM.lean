@@ -71,7 +71,15 @@ def romContents : Fin 64 → ROMEntry
   | ⟨45, _⟩ => re DONE           0 0
   | ⟨46, _⟩ => re DONE           0 0
   | ⟨47, _⟩ => re DONE           0 0
-  -- Sequence 5: MRET (reserved) — all DONE
+  -- Sequence 5: MRET (addr 48-55)
+  | ⟨48, _⟩ => re DRAIN          0 0         -- wait for ROB empty
+  | ⟨49, _⟩ => re DRAIN_SB       0 0         -- wait for store buffer empty
+  | ⟨50, _⟩ => re SET_CSR_ADDR   0 0 0x341   -- csrAddr := mepc
+  | ⟨51, _⟩ => re DRAIN_SB       0 0         -- wait 1 cycle for addr to register
+  | ⟨52, _⟩ => re READ_CSR       1 0         -- temp1 := mepc
+  | ⟨53, _⟩ => re MSTATUS_MRET   0 0         -- mstatus: MIE=MPIE, MPIE=1, MPP=0
+  | ⟨54, _⟩ => re SET_PC         0 1         -- redirect fetch to temp1 (mepc)
+  | ⟨55, _⟩ => re DONE           0 0
   | ⟨_, _⟩  => re DONE           0 0
 
 /-- Number of active (non-DONE) steps in each sequence -/
@@ -81,7 +89,7 @@ def sequenceLength : SequenceID → Nat
   | .CSRRC     => 6
   | .FENCE_I   => 4
   | .TRAP_ENTRY => 13
-  | .MRET       => 0
+  | .MRET       => 8
 
 /-- Look up a ROM entry by sequence ID and step offset -/
 def lookupROM (seq : SequenceID) (step : Fin 8) : ROMEntry :=
@@ -155,6 +163,9 @@ def stepMicrocode (s : MicrocodeState) (csrReadVal : UInt32) (robEmpty sbEmpty :
     | .MSTATUS_TRAP =>
       -- Read mstatus, set MPIE=MIE, clear MIE, set MPP=M, write back
       -- Handled externally via CSR read/write ports; sequencer signals the operation
+      ({ s with upc := nextUpc }, true, true, false, false, false)
+    | .MSTATUS_MRET =>
+      -- Read mstatus, set MIE=MPIE, set MPIE=1, clear MPP, write back
       ({ s with upc := nextUpc }, true, true, false, false, false)
     | .SET_CSR_ADDR =>
       let newAddr : Fin 4096 := ⟨entry.imm.val % 4096, by omega⟩

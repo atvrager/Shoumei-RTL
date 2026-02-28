@@ -255,6 +255,7 @@ def mkSerializeDetect
     (fence_i_redir_next : List Wire)
     (csr_read_data : List Wire)
     (fetch_pc : List Wire)
+    (_mip_reg _mie_reg _mstatus_reg : List Wire)
     : List Gate × List CircuitInstance :=
   -- Helper: generate gates to match decode_optype against an encoding value
   let mkOpcodeMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
@@ -869,6 +870,7 @@ def mkCsrNextValue
     (mcause_reg mcause_next : List Wire)
     (mtval_reg mtval_next : List Wire)
     (mip_next : List Wire)
+    (mtip_in : Wire)
     (mcycle_reg mcycle_next mcycleh_reg mcycleh_next : List Wire)
     (minstret_reg minstret_next minstreth_reg minstreth_next : List Wire)
     (commit_valid_muxed : Wire)
@@ -955,9 +957,11 @@ def mkCsrNextValue
         Gate.mkMUX mtval_reg[i]! csr_write_val[i]! csr_we_mtval mtval_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mtval_next[i]!)
-  -- mip: WARL to 0
+  -- mip: read-only, bit 7 (MTIP) driven by external mtip_in, rest zero
   let mip_next_gates :=
-    (List.range 32).map (fun i => Gate.mkBUF zero mip_next[i]!)
+    (List.range 32).map (fun i =>
+      if i == 7 then Gate.mkBUF mtip_in mip_next[i]!
+      else Gate.mkBUF zero mip_next[i]!)
   -- Counter auto-increment
   let mcycle_plus_1 := makeIndexedWires "mcycle_p1" 32
   let mcycle_adder_inst : CircuitInstance := {
@@ -1078,6 +1082,7 @@ def mkMicrocodeSerializePath
     (csr_read_data : List Wire)
     (csr_cdb_inject : Wire) (csr_cdb_tag csr_cdb_data : List Wire)
     (fetch_pc : List Wire)
+    (mip_reg mie_reg mstatus_reg : List Wire)
     : List Gate × List CircuitInstance :=
   -- Helper: generate gates to match decode_optype against an encoding value
   let mkOpcodeMatch (encVal : Nat) (pfx : String) (matchOut : Wire) : List Gate :=
@@ -1143,6 +1148,20 @@ def mkMicrocodeSerializePath
     mkOpcodeMatch (oi .ECALL) "ecall" ecall_match
   let ecall_detected := Wire.mk "ecall_detected"
 
+  -- MRET detection
+  let mret_match := Wire.mk "mret_match"
+  let mret_match_gates : List Gate :=
+    if config.microcodesMRET then mkOpcodeMatch (oi .MRET) "mret" mret_match
+    else [Gate.mkBUF zero mret_match]
+  let mret_detected := Wire.mk "mret_detected"
+
+  -- WFI detection (treat as NOP)
+  let wfi_match := Wire.mk "wfi_match"
+  let wfi_match_gates : List Gate :=
+    if config.microcodesMRET || config.microcodesTraps then mkOpcodeMatch (oi .WFI) "wfi" wfi_match
+    else [Gate.mkBUF zero wfi_match]
+  let wfi_detected := Wire.mk "wfi_detected"
+
   let enableSerialize := config.enableZifencei || config.enableZicsr
   if !enableSerialize then
     -- No serialize extensions: tie everything low (same as hardwired disabled path)
@@ -1164,6 +1183,11 @@ def mkMicrocodeSerializePath
       (List.range 6).map (fun i => Gate.mkBUF zero csr_phys_next[i]!)
     (tieGates, [])
   else
+    -- Forward-declare interrupt wires (needed for seq_id encoding)
+    let irq_pending := Wire.mk "irq_pending"
+    let irq_inject := Wire.mk "irq_inject"
+    let is_interrupt := Wire.mk "is_interrupt"
+
     -- Compute sequence ID from CSR opcode match wires
     -- seq_id[2:0]: 0=CSRRW, 1=CSRRS, 2=CSRRC, 3=FENCE.I
     -- Encoding: bit0 = CSRRS|CSRRSI|CSRRC|CSRRCI, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = FENCE.I
@@ -1173,8 +1197,8 @@ def mkMicrocodeSerializePath
     let _seq_id_tmp2 := Wire.mk "useq_id_tmp2"
     let _seq_id_tmp3 := Wire.mk "useq_id_tmp3"
 
-    -- seq_id encoding: CSRRW=0, CSRRS=1, CSRRC=2, FENCE.I=3, ECALL=4
-    -- bit0 = CSRRS|CSRRSI|FENCE.I, bit1 = CSRRC|CSRRCI|FENCE.I, bit2 = ECALL
+    -- seq_id encoding: CSRRW=0, CSRRS=1, CSRRC=2, FENCE.I=3, ECALL=4, IRQ=4, MRET=6
+    -- bit0 = CSRRS|CSRRSI|FENCE.I, bit1 = CSRRC|CSRRCI|FENCE.I|MRET, bit2 = ECALL|IRQ|MRET
     let seq_id_gates :=
       [-- tmp0 = CSRRS | CSRRSI
        Gate.mkOR csr_match_wires[1]! csr_match_wires[4]! seq_id_tmp0,
@@ -1182,10 +1206,12 @@ def mkMicrocodeSerializePath
        Gate.mkOR csr_match_wires[2]! csr_match_wires[5]! seq_id_tmp1,
        -- bit0 = tmp0 | fence_i_match
        Gate.mkOR seq_id_tmp0 fence_i_match seq_id[0]!,
-       -- bit1 = tmp1 | fence_i_match
-       Gate.mkOR seq_id_tmp1 fence_i_match seq_id[1]!,
-       -- bit2 = ecall_detected
-       Gate.mkBUF ecall_detected seq_id[2]!]
+       -- bit1 = tmp1 | fence_i_match | mret_detected (MRET=6=110)
+       Gate.mkOR seq_id_tmp1 fence_i_match (Wire.mk "useq_id1_pre"),
+       Gate.mkOR (Wire.mk "useq_id1_pre") mret_detected seq_id[1]!,
+       -- bit2 = ecall_detected | irq_inject | mret_detected
+       Gate.mkOR ecall_detected irq_inject (Wire.mk "useq_id2_pre"),
+       Gate.mkOR (Wire.mk "useq_id2_pre") mret_detected seq_id[2]!]
 
     -- skipWrite: for CSRRS/CSRRC, skip write when rs1=x0
     -- rs1 is decode_rs1[0..4], OR-tree to detect nonzero
@@ -1228,6 +1254,7 @@ def mkMicrocodeSerializePath
 
     let detect_gates :=
       fence_i_match_gates ++ csr_match_gates ++ ecall_match_gates ++
+      mret_match_gates ++ wfi_match_gates ++
       [Gate.mkNOT branch_redirect_valid_reg not_redir_reg,
        Gate.mkAND decode_valid not_redir_reg decode_valid_noredir_tmp,
        Gate.mkNOT fetch_stall_ext not_fetch_stall_ext,
@@ -1235,9 +1262,13 @@ def mkMicrocodeSerializePath
        Gate.mkAND decode_valid_noredir fence_i_match fence_i_detected,
        Gate.mkAND decode_valid_noredir csr_match csr_detected,
        Gate.mkAND decode_valid_noredir ecall_match ecall_detected,
-       -- serialize_detected = fence_i_detected OR csr_detected OR ecall_detected
+       Gate.mkAND decode_valid_noredir mret_match mret_detected,
+       Gate.mkAND decode_valid_noredir wfi_match wfi_detected,
+       -- serialize_detected = fence_i | csr | ecall | mret | wfi
        Gate.mkOR fence_i_detected csr_detected (Wire.mk "ser_pre_ecall"),
-       Gate.mkOR (Wire.mk "ser_pre_ecall") ecall_detected serialize_detected]
+       Gate.mkOR (Wire.mk "ser_pre_ecall") ecall_detected (Wire.mk "ser_pre_mret"),
+       Gate.mkOR (Wire.mk "ser_pre_mret") mret_detected (Wire.mk "ser_pre_wfi"),
+       Gate.mkOR (Wire.mk "ser_pre_wfi") wfi_detected serialize_detected]
 
     -- Sequencer ROM data wires (from MicrocodeSequencer's upc output → ROM → rom_data)
     -- The ROM is a combinational lookup. We need a MuxTree64x24 or equivalent.
@@ -1263,19 +1294,30 @@ def mkMicrocodeSerializePath
     let useq_addr_out := (List.range 12).map (fun i => Wire.mk s!"useq_addr_{i}")
     let useq_redir_next := (List.range 32).map (fun i => Wire.mk s!"useq_redir_{i}")
 
+    -- Interrupt detection: mip[7] AND mie[7] AND mstatus[3] (MTIP & MTIE & MIE)
+    let irq_detect_gates :=
+      [Gate.mkAND mip_reg[7]! mie_reg[7]! (Wire.mk "mtip_and_mtie"),
+       Gate.mkAND (Wire.mk "mtip_and_mtie") mstatus_reg[3]! irq_pending]
+
     -- Wire sequencer outputs to CPU's expected wire names
     let bridge_gates :=
       [-- fence_i_suppress = useq_suppress (active while sequencer runs)
        Gate.mkBUF useq_suppress fence_i_suppress,
        -- fence_i_drain_complete = useq_drain_complete
        Gate.mkBUF useq_drain_complete fence_i_drain_complete,
-       -- fence_i_draining_next = (serialize_detected OR useq_active) AND NOT(flush)
-       Gate.mkOR serialize_detected useq_active (Wire.mk "useq_drain_next_pre"),
+       -- NOT(useq_active)
+       Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
+       -- irq_inject = irq_pending AND NOT(useq_active)
+       Gate.mkAND irq_pending (Wire.mk "useq_not_active") irq_inject,
+       -- fence_i_draining_next = (serialize_detected OR irq_inject OR useq_active) AND NOT(flush)
+       Gate.mkOR serialize_detected irq_inject (Wire.mk "ser_or_irq"),
+       Gate.mkOR (Wire.mk "ser_or_irq") useq_active (Wire.mk "useq_drain_next_pre"),
        Gate.mkNOT pipeline_flush_comb (Wire.mk "useq_not_flushing"),
        Gate.mkAND (Wire.mk "useq_drain_next_pre") (Wire.mk "useq_not_flushing") fence_i_draining_next,
-       -- fence_i_start = serialize_detected AND NOT(useq_active)
-       Gate.mkNOT useq_active (Wire.mk "useq_not_active"),
-       Gate.mkAND serialize_detected (Wire.mk "useq_not_active") fence_i_start,
+       -- fence_i_start = (serialize_detected OR irq_inject) AND NOT(useq_active)
+       Gate.mkAND (Wire.mk "ser_or_irq") (Wire.mk "useq_not_active") fence_i_start,
+       -- is_interrupt for LOAD_CONST override
+       Gate.mkBUF irq_inject is_interrupt,
        -- csr_rename_en = useq_rename_en
        Gate.mkBUF useq_rename_en csr_rename_en,
        Gate.mkNOT useq_rename_en not_csr_rename_en,
@@ -1324,7 +1366,8 @@ def mkMicrocodeSerializePath
         (List.range 24).map (fun i => (s!"rom_data_{i}", useq_rom_data[i]!)) ++
         -- redir_pc4: PC+4 for FENCE.I redirect
         (List.range 32).map (fun i => (s!"redir_pc4_{i}", fence_i_pc_plus_4[i]!)) ++
-        [("pipeline_flush", pipeline_flush_comb)] ++
+        [("pipeline_flush", pipeline_flush_comb),
+         ("is_interrupt_in", is_interrupt)] ++
         -- pc_in: fetch PC for LOAD_PC µop
         (List.range 32).map (fun i => (s!"pc_in_{i}", fetch_pc[i]!)) ++
         -- Outputs
@@ -1338,6 +1381,7 @@ def mkMicrocodeSerializePath
          ("csr_rename_en", useq_rename_en),
          (s!"csrflag_q", useq_csr_flag)] ++
         [("mstatus_trap_active", Wire.mk "useq_mstatus_trap"),
+         ("mstatus_mret_active", Wire.mk "useq_mstatus_mret"),
          ("trap_taken", Wire.mk "useq_trap_taken")] ++
         (List.range 6).map (fun i => (s!"csr_cdb_tag_{i}", useq_cdb_tag[i]!)) ++
         (List.range 32).map (fun i => (s!"csr_cdb_data_{i}", useq_cdb_data[i]!)) ++
@@ -1396,7 +1440,7 @@ def mkMicrocodeSerializePath
           Gate.mkOR lhs rhs orWires[i]!)
         orGates) |>.flatten
 
-    let allGates := detect_gates ++ seq_id_gates ++ skip_write_gates ++
+    let allGates := detect_gates ++ irq_detect_gates ++ seq_id_gates ++ skip_write_gates ++
                     csr_imm_mux_gates ++
                     romInvGates ++ romAddrGates ++ romOutputGates ++
                     bridge_gates

@@ -170,13 +170,17 @@ def mkMemoryHierarchy : Circuit :=
      (List.range 256).map (fun i => (s!"wb_data_{i}", l1d_wb_data[i]!)) ++
      [("stall", dmem_stall), ("fence_i_busy", fence_i_busy)])
 
+  -- L1D request address to L2: MUX(miss_addr, wb_addr, wb_valid)
+  -- When L1D writes back (wb_valid=1), use wb_addr; else use miss_addr
+  let l1d_l2_req_addr := (List.range 32).map fun i => Wire.mk s!"l1d_l2_req_addr_{i}"
+
   -- L2 Cache instance
   let l2_inst := CircuitInstance.mk "L2Cache" "u_l2"
     ([("clock", clock), ("reset", reset),
       ("l1i_req_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"l1i_req_addr_{i}", l1i_miss_addr[i]!)) ++
-     [("l1d_req_valid", l1d_miss_valid)] ++
-     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_miss_addr[i]!)) ++
+     [("l1d_req_valid", Wire.mk "l1d_l2_req_valid")] ++
+     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_l2_req_addr[i]!)) ++
      [("l1d_req_we", l1d_wb_valid)] ++
      (List.range 256).map (fun i => (s!"l1d_req_data_{i}", l1d_wb_data[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
@@ -200,7 +204,16 @@ def mkMemoryHierarchy : Circuit :=
                dmem_resp_valid] ++ dmem_resp_data ++ [dmem_stall] ++
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [fence_i_busy]
-    gates := []  -- Pure hierarchical composition
+    gates :=
+      -- wb_ack is unused by L1D but needs to be driven; tie to 0
+      [Gate.mkAND reset (Wire.mk "mh_not_reset") (Wire.mk "mh_const_zero"),
+       Gate.mkNOT reset (Wire.mk "mh_not_reset"),
+       Gate.mkBUF (Wire.mk "l2_stall_d") l1d_wb_ack,
+       -- L1D→L2 request valid: miss OR write-through
+       Gate.mkOR l1d_miss_valid l1d_wb_valid (Wire.mk "l1d_l2_req_valid")] ++
+      -- L1D→L2 address MUX: wb_valid selects wb_addr, else miss_addr
+      (List.range 32).map (fun i =>
+        Gate.mkMUX l1d_miss_addr[i]! l1d_wb_addr[i]! l1d_wb_valid l1d_l2_req_addr[i]!)
     instances := [l1i_inst, l1d_inst, l2_inst]
     signalGroups := [
       { name := "ifetch_addr", width := 32, wires := ifetch_addr },

@@ -269,6 +269,7 @@ Key signals for memory path debugging:
 
 ## Important Notes
 
+- **origin/main has no pre-existing test failures.** GitHub branch protection requires CI to pass before merging. If tests fail on your branch, you introduced the regression -- do not assume failures are pre-existing.
 - Always read existing Lean files before modifying
 - LEC failures indicate bugs in code generators, not the DSL
 - Clock and reset are implicit in Chisel (Clock/AsyncReset types) -- the codegen handles filtering them from explicit inputs
