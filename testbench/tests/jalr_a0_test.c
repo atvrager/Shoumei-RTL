@@ -12,9 +12,8 @@ __attribute__((noinline)) int check_a0(int val) {
 
 /* Run the pattern many times with various call depths */
 __attribute__((noinline)) int pattern_test(void) {
-    int result;
     for (int i = 0; i < 100; i++) {
-        result = check_a0(1);
+        int result = check_a0(1);
         if (result != 1) return i;  /* return iteration that failed */
     }
     return -2;  /* all passed */
