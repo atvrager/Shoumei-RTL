@@ -48,8 +48,7 @@ def mkMicrocodeDecoder : Circuit :=
     (MicroOp.LOAD_PC.toNat, "is_load_pc"),
     (MicroOp.LOAD_CONST.toNat, "is_load_const"),
     (MicroOp.MSTATUS_TRAP.toNat, "is_mstatus_trap"),
-    (MicroOp.SET_CSR_ADDR.toNat, "is_set_csr_addr"),
-    (MicroOp.MSTATUS_MRET.toNat, "is_mstatus_mret")
+    (MicroOp.SET_CSR_ADDR.toNat, "is_set_csr_addr")
   ]
 
   let matchResults := ops.map (fun (enc, name) => mkMatch enc name)

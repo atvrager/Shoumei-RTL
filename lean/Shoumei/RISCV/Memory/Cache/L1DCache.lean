@@ -407,33 +407,20 @@ def mkL1DCache : Circuit :=
     else
       Gate.mkMUX req_addr[i]! pend_q[i]! (Wire.mk "is_refill_wait") miss_addr[i]!
 
-  -- stall: unconditional when not idle, on miss_detect, or on wb_ack-blocked write-hit
+  -- stall: unconditional when not idle or on miss_detect (no req_valid gating)
   let not_idle := Wire.mk "not_idle"
-  -- wb_stall: L2 busy AND we have a write that would hit (wh_t2 computed in write_hit_gates)
-  let wb_stall := Wire.mk "wb_stall"
   let stall_gates := [
     Gate.mkNOT is_idle not_idle,
-    Gate.mkAND wb_ack (Wire.mk "wh_t2") (Wire.mk "wbs_t1"),
-    Gate.mkAND (Wire.mk "wbs_t1") is_idle wb_stall,
-    Gate.mkOR not_idle miss_detect (Wire.mk "stall_t1"),
-    Gate.mkOR (Wire.mk "stall_t1") wb_stall stall
+    Gate.mkOR not_idle miss_detect stall
   ]
 
-  -- Write-through: on write_hit, send the merged line to L2 via wb_valid
-  -- wb_valid = write_hit (write_hit is computed later, use forward ref)
-  let wb_valid_gate := Gate.mkBUF (Wire.mk "write_hit") wb_valid
-  -- wb_addr = line-aligned req_addr (bits [4:0] = 0)
+  -- Placeholder connections for wb_valid, wb_addr, wb_data, fence_i_busy
+  -- In full implementation these would be FSM-driven
+  let wb_valid_gate := Gate.mkBUF (Wire.mk "const_zero_l1d") wb_valid
   let wb_addr_gates := (List.range 32).map fun i =>
-    if i < 5 then
-      Gate.mkBUF (Wire.mk "const_zero_l1d") wb_addr[i]!
-    else
-      Gate.mkBUF req_addr[i]! wb_addr[i]!
-  -- wb_data = MUX(data_ram_wr_data[0], data_ram_wr_data[1], way1_hit)
-  -- data_ram_wr_data contains the merged line (old data + new word)
-  -- Note: data_ram_wr_data is computed later but wires are forward-referenced
+    Gate.mkBUF (Wire.mk "const_zero_l1d") wb_addr[i]!
   let wb_data_gates := (List.range 256).map fun i =>
-    Gate.mkMUX (data_ram_wr_data[0]!)[i]! (data_ram_wr_data[1]!)[i]!
-      way_hit[1]! wb_data[i]!
+    Gate.mkBUF (Wire.mk "const_zero_l1d") wb_data[i]!
   let fence_busy_gate := Gate.mkBUF (Wire.mk "const_zero_l1d") fence_i_busy
 
   -- Const zero
@@ -475,16 +462,11 @@ def mkL1DCache : Circuit :=
   let pend_victim_not_gate := Gate.mkNOT pend_victim_q not_pend_victim
 
   -- === Write-hit detection ===
-  -- Suppress write-hit when wb_ack (L2 pending buffer full / L2 busy)
-  -- to prevent write-through overflow
   let write_hit := Wire.mk "write_hit"
-  let not_wb_ack := Wire.mk "not_wb_ack"
   let write_hit_gates := [
-    Gate.mkNOT wb_ack not_wb_ack,
     Gate.mkAND req_valid req_we (Wire.mk "wh_t1"),
     Gate.mkAND (Wire.mk "wh_t1") hit (Wire.mk "wh_t2"),
-    Gate.mkAND (Wire.mk "wh_t2") is_idle (Wire.mk "wh_t3"),
-    Gate.mkAND (Wire.mk "wh_t3") not_wb_ack write_hit
+    Gate.mkAND (Wire.mk "wh_t2") is_idle write_hit
   ]
 
   -- === Word decoder (3-to-8) for write-hit ===

@@ -138,7 +138,5 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   -- Zicsr
   | .CSRRW => "csrrw" | .CSRRS => "csrrs" | .CSRRC => "csrrc"
   | .CSRRWI => "csrrwi" | .CSRRSI => "csrrsi" | .CSRRCI => "csrrci"
-  -- System
-  | .MRET => "mret" | .WFI => "wfi"
 
 end Shoumei.TestGen

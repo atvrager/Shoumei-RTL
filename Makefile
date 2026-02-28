@@ -225,6 +225,8 @@ endif
 	@find output/sv-from-chisel -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/cpp_sim -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find chisel/src/main/scala/generated -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@# Clean codegen hash cache
+	@rm -rf .codegen-cache 2>/dev/null || true
 	@# Clean C++ simulation build artifacts
 	@rm -rf cpp_sim/build 2>/dev/null || true
 	@# Clean riscv-opcodes generated files

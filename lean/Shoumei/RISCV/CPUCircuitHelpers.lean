@@ -311,20 +311,6 @@ def mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wir
     Gate.mkAND t01234 bitWires[5]! result
   ]
 
-/-- Match an opcode encoding against N-bit opcode wires (variable width).
-    Used for serialize detection in W=2 CPU where opcodeWidth may be 7. -/
-def mkOpcodeMatchN (pfx : String) (enc : Nat) (opcode : List Wire) (width : Nat) (result : Wire) : List Gate :=
-  let bitWires := (List.range width).map fun b =>
-    if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
-  let notGates := (List.range width).filterMap fun b =>
-    if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
-  -- Build AND chain: bit0 & bit1 -> t01, t01 & bit2 -> t012, ...
-  let andGates : List Gate := (List.range (width - 1)).map fun i =>
-    let lhs := if i == 0 then bitWires[0]! else Wire.mk s!"{pfx}_t0_{i}"
-    let out := if i + 2 == width then result else Wire.mk s!"{pfx}_t0_{i + 1}"
-    Gate.mkAND lhs bitWires[i + 1]! out
-  notGates ++ andGates
-
 /-- Branch resolution logic: PC+4 link, target computation, condition evaluation,
     misprediction detection, ROB redirect, and redirect target muxes. -/
 def mkBranchResolve

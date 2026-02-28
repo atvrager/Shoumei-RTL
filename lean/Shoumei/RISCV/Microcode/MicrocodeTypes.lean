@@ -26,7 +26,6 @@ inductive MicroOp where
   | LOAD_CONST  -- 0xC: temp[dst] := zext(ROM[15:0]) (immediate from ROM entry)
   | MSTATUS_TRAP -- 0xD: mstatus: set MPIE=MIE, clear MIE, set MPP=M
   | SET_CSR_ADDR -- 0xE: csrAddr := ROM[11:0] (override CSR address mid-sequence)
-  | MSTATUS_MRET -- 0xF: mstatus: set MIE=MPIE, set MPIE=1, clear MPP
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- Encode MicroOp to 4-bit natural number -/
@@ -46,7 +45,6 @@ def MicroOp.toNat : MicroOp → Nat
   | .LOAD_CONST    => 12
   | .MSTATUS_TRAP  => 13
   | .SET_CSR_ADDR  => 14
-  | .MSTATUS_MRET  => 15
 
 /-- Decode 4-bit natural to MicroOp -/
 def MicroOp.fromNat : Nat → MicroOp
@@ -65,7 +63,6 @@ def MicroOp.fromNat : Nat → MicroOp
   | 12 => .LOAD_CONST
   | 13 => .MSTATUS_TRAP
   | 14 => .SET_CSR_ADDR
-  | 15 => .MSTATUS_MRET
   | _  => .DONE
 
 theorem MicroOp.roundtrip (op : MicroOp) : MicroOp.fromNat op.toNat = op := by

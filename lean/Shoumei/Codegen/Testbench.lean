@@ -65,13 +65,6 @@ structure TestbenchConfig where
   debugOutputs : List String := []
   /-- Spike ISA string for cosimulation (e.g. "rv32imf", "rv32im_zicsr_zifencei") -/
   spikeIsa : String := "rv32imf"
-  /-- Enable CLINT timer peripheral (mtime/mtimecmp/mtip) in the testbench.
-      Adds MMIO registers at clintBaseAddr and an mtip output. -/
-  enableCLINT : Bool := false
-  /-- CLINT base address (standard: 0x0200_0000). Registers:
-      +0x4000: mtimecmp_lo, +0x4004: mtimecmp_hi,
-      +0xBFF8: mtime_lo,    +0xBFFC: mtime_hi -/
-  clintBaseAddr : Nat := 0x02000000
   deriving Repr
 
 /-! ## Helpers -/
@@ -995,27 +988,11 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   s!"            mem[addr_to_idx({clmp.reqAddrSignal}) + w] <= {clmp.reqDataSignal}[w*32 +: 32];\n" ++
   "          end\n" ++
   "        end else begin\n" ++
-  (if cfg.enableCLINT then
-    let clintBaseHex := natToHexDigits cfg.clintBaseAddr
-    s!"          if ({clmp.reqAddrSignal} >= 32'h{clintBaseHex} && {clmp.reqAddrSignal} < 32'h{clintBaseHex} + 32'h10000) begin\n" ++
-    "            // CLINT MMIO read: return register values\n" ++
-    "            for (int w = 0; w < 8; w++) begin\n" ++
-    s!"              mem_read_line[w*32 +: 32] <= clint_read_word({clmp.reqAddrSignal} + w*4);\n" ++
-    "            end\n" ++
-    "            mem_pending <= 1'b1;\n" ++
-    "          end else begin\n" ++
-    "            // Normal memory read\n" ++
-    "            for (int w = 0; w < 8; w++) begin\n" ++
-    s!"              mem_read_line[w*32 +: 32] <= mem[addr_to_idx({clmp.reqAddrSignal}) + w];\n" ++
-    "            end\n" ++
-    "            mem_pending <= 1'b1;\n" ++
-    "          end\n"
-   else
-    "          // Read 8-word cache line (line-aligned address)\n" ++
-    "          for (int w = 0; w < 8; w++) begin\n" ++
-    s!"            mem_read_line[w*32 +: 32] <= mem[addr_to_idx({clmp.reqAddrSignal}) + w];\n" ++
-    "          end\n" ++
-    "          mem_pending <= 1'b1;\n") ++
+  "          // Read 8-word cache line (line-aligned address)\n" ++
+  s!"          for (int w = 0; w < 8; w++) begin\n" ++
+  s!"            mem_read_line[w*32 +: 32] <= mem[addr_to_idx({clmp.reqAddrSignal}) + w];\n" ++
+  "          end\n" ++
+  "          mem_pending <= 1'b1;\n" ++
   "        end\n" ++
   "      end\n\n" ++
   "      if (mem_pending) begin\n" ++
@@ -1053,16 +1030,10 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
      "  // =========================================================================\n" ++
      "  // MMIO putchar: monitor CPU store snoop for putchar address\n" ++
      "  // =========================================================================\n" ++
-     "  wire putchar_store = store_snoop_valid && (store_snoop_addr == putchar_addr_r);\n" ++
-     "  // Deduplicate: store_snoop may fire multiple cycles for one store (stall replays)\n" ++
-     "  logic putchar_prev;\n\n" ++
+     "  wire putchar_store = store_snoop_valid && (store_snoop_addr == putchar_addr_r);\n\n" ++
      s!"  always_ff @(posedge clk) begin\n" ++
-     s!"    if ({resetName}) begin\n" ++
-     "      putchar_prev <= 1'b0;\n" ++
-     "    end else begin\n" ++
-     "      if (putchar_store && !putchar_prev)\n" ++
-     "        $write(\"%c\", store_snoop_data[7:0]);\n" ++
-     "      putchar_prev <= putchar_store;\n" ++
+     s!"    if (!{resetName} && putchar_store) begin\n" ++
+     "      $write(\"%c\", store_snoop_data[7:0]);\n" ++
      "    end\n" ++
      "  end\n\n"
    | none => "") ++
@@ -1078,53 +1049,6 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "      cycle_count <= cycle_count + 1;\n" ++
   "    end\n" ++
   "  end\n\n" ++
-
-  (if cfg.enableCLINT then
-    let clintBase := cfg.clintBaseAddr
-    let clintBaseHex := natToHexDigits clintBase
-    "  // =========================================================================\n" ++
-    "  // CLINT Timer Peripheral (mtime + mtimecmp + mtip)\n" ++
-    "  // Standard RISC-V CLINT at CLINT_BASE:\n" ++
-    "  //   +0x4000: mtimecmp_lo  +0x4004: mtimecmp_hi\n" ++
-    "  //   +0xBFF8: mtime_lo     +0xBFFC: mtime_hi\n" ++
-    "  // =========================================================================\n" ++
-    s!"  localparam logic [31:0] CLINT_BASE = 32'h{clintBaseHex};\n" ++
-    "  logic [63:0] mtime;\n" ++
-    "  logic [63:0] mtimecmp;\n" ++
-    "  logic        mtip;\n\n" ++
-    "  assign mtip = (mtime >= mtimecmp);\n" ++
-    "  assign mtip_in = mtip;\n\n" ++
-    s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
-    s!"    if ({resetName}) begin\n" ++
-    "      mtime    <= 64'b0;\n" ++
-    "      mtimecmp <= 64'hFFFFFFFF_FFFFFFFF;\n" ++
-    "    end else begin\n" ++
-    "      mtime <= mtime + 64'd1;\n" ++
-    "      // Store-snoop writes to CLINT registers\n" ++
-    "      if (store_snoop_valid) begin\n" ++
-    "        case (store_snoop_addr)\n" ++
-    "          CLINT_BASE + 32'h4000: mtimecmp[31:0]  <= store_snoop_data;\n" ++
-    "          CLINT_BASE + 32'h4004: mtimecmp[63:32] <= store_snoop_data;\n" ++
-    "          // mtime writes (optional, some impls allow SW reset)\n" ++
-    "          CLINT_BASE + 32'hBFF8: mtime[31:0]     <= store_snoop_data;\n" ++
-    "          CLINT_BASE + 32'hBFFC: mtime[63:32]    <= store_snoop_data;\n" ++
-    "          default: ;\n" ++
-    "        endcase\n" ++
-    "      end\n" ++
-    "    end\n" ++
-    "  end\n\n" ++
-    "  // CLINT cache-line read: return register values when address is in CLINT range\n" ++
-    "  function automatic logic [31:0] clint_read_word(input logic [31:0] addr);\n" ++
-    "    case (addr)\n" ++
-    "      CLINT_BASE + 32'h4000: return mtimecmp[31:0];\n" ++
-    "      CLINT_BASE + 32'h4004: return mtimecmp[63:32];\n" ++
-    "      CLINT_BASE + 32'hBFF8: return mtime[31:0];\n" ++
-    "      CLINT_BASE + 32'hBFFC: return mtime[63:32];\n" ++
-    "      default:               return 32'b0;\n" ++
-    "    endcase\n" ++
-    "  endfunction\n\n"
-   else
-    "  assign mtip_in = 1'b0;  // No CLINT, tie interrupt low\n\n") ++
 
   "  // =========================================================================\n" ++
   "  // Output assignments\n" ++
@@ -1294,16 +1218,6 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "    " ++ rb ++ "\n\n" ++
   s!"    svSetScope(svGetScopeFromName(\"TOP.{tbName}\"));\n" ++
   "    if (load_elf(elf_path) < 0) return 1;\n\n" ++
-  "    // Reset (must happen before DPI overrides — initial blocks run during eval)\n" ++
-  "    dut->rst_n = 0; dut->clk = 0;\n" ++
-  "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
-  "        dut->clk = !dut->clk; dut->eval();\n" ++
-  "#if VM_TRACE\n" ++
-  "        if (trace) trace->dump(i);\n" ++
-  "#endif\n" ++
-  "    " ++ rb ++ "\n" ++
-  "    dut->rst_n = 1;\n\n" ++
-  "    // Override HTIF addresses from ELF symbols (after reset so initial blocks don't overwrite)\n" ++
   "    int64_t tohost_sym = elf_lookup_symbol(elf_path, \"tohost\");\n" ++
   "    if (tohost_sym >= 0) " ++ lb ++ "\n" ++
   "        printf(\"ELF symbol: tohost = 0x%08x\\n\", (uint32_t)tohost_sym);\n" ++
@@ -1317,6 +1231,15 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
     "    " ++ rb ++ "\n"
    else "") ++
   "\n" ++
+  "    // Reset\n" ++
+  "    dut->rst_n = 0; dut->clk = 0;\n" ++
+  "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
+  "        dut->clk = !dut->clk; dut->eval();\n" ++
+  "#if VM_TRACE\n" ++
+  "        if (trace) trace->dump(i);\n" ++
+  "#endif\n" ++
+  "    " ++ rb ++ "\n" ++
+  "    dut->rst_n = 1;\n\n" ++
   "#if VM_TRACE\n" ++
   "    uint64_t sim_time = 10;\n" ++
   "#endif\n" ++

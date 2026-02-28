@@ -219,19 +219,6 @@ def mkL2Cache : Circuit :=
   let l2_data_ram_wr_data := (List.range 2).map fun way =>
     (List.range 256).map fun b => Wire.mk s!"l2_dwr_data_w{way}_{b}"
 
-  -- === Pending Write-Through Buffer ===
-  -- Captures L1D write-throughs that arrive when L2 is busy (not IDLE).
-  -- Drained to main memory when L2 returns to IDLE.
-  let wbp_v_d := Wire.mk "wbp_v_d"
-  let wbp_v_q := Wire.mk "wbp_v_q"
-  let wbp_v_dff := Gate.mkDFF wbp_v_d clock reset wbp_v_q
-  let wbp_addr_d := (List.range 32).map fun i => Wire.mk s!"wbp_ad_{i}"
-  let wbp_addr_q := (List.range 32).map fun i => Wire.mk s!"wbp_aq_{i}"
-  let wbp_addr_dffs := (List.range 32).map fun i => Gate.mkDFF wbp_addr_d[i]! clock reset wbp_addr_q[i]!
-  let wbp_data_d := (List.range 256).map fun i => Wire.mk s!"wbp_dd_{i}"
-  let wbp_data_q := (List.range 256).map fun i => Wire.mk s!"wbp_dq_{i}"
-  let wbp_data_dffs := (List.range 256).map fun i => Gate.mkDFF wbp_data_d[i]! clock reset wbp_data_q[i]!
-
   -- === Constants ===
   let const_zero_gates := [
     Gate.mkNOT reset (Wire.mk "l2_not_reset"),
@@ -255,16 +242,10 @@ def mkL2Cache : Circuit :=
   let arb_addr_mux := (List.range 32).map fun i =>
     Gate.mkMUX l1i_req_addr[i]! l1d_req_addr[i]! arb_sel_d arb_addr[i]!
 
-  -- === Lookup Address: MUX(arb_addr, wbp_addr_q, wb_drain) ===
-  -- During wb_drain, use the buffered WT address for tag comparison/invalidation
-  let lookup_addr := (List.range 32).map fun i => Wire.mk s!"lkup_addr_{i}"
-  let lookup_addr_mux := (List.range 32).map fun i =>
-    Gate.mkMUX arb_addr[i]! wbp_addr_q[i]! (Wire.mk "l2_wbd") lookup_addr[i]!
-
   -- === Address Decomposition ===
-  -- Current request: idx = lookup_addr[7:5], tag = lookup_addr[31:8]
-  let cur_idx := [lookup_addr[5]!, lookup_addr[6]!, lookup_addr[7]!]
-  let cur_tag := (List.range 24).map fun i => lookup_addr[i + 8]!
+  -- Current request: idx = arb_addr[7:5], tag = arb_addr[31:8]
+  let cur_idx := [arb_addr[5]!, arb_addr[6]!, arb_addr[7]!]
+  let cur_tag := (List.range 24).map fun i => arb_addr[i + 8]!
   -- Refill/pending: idx = pend_q[7:5], tag = pend_q[31:8]
   let ref_idx := [pend_q[5]!, pend_q[6]!, pend_q[7]!]
   let ref_tag := (List.range 24).map fun i => pend_q[i + 8]!
@@ -377,50 +358,16 @@ def mkL2Cache : Circuit :=
   let miss_detect := Wire.mk "l2_md"
   let wb_detect := Wire.mk "l2_wd"
   let refill_done := Wire.mk "l2_rd"
-  -- Pending WB buffer: capture when L2 busy, drain when idle
-  let not_idle_we := Wire.mk "l2_niwe"         -- l1d_req_we AND NOT idle
-  let wb_drain := Wire.mk "l2_wbd"             -- idle AND pending valid
-  let not_wbp_v := Wire.mk "l2_nwbpv"
-  let idle_no_drain := Wire.mk "l2_ind"        -- idle AND NOT pending (accept normal requests)
-  let wb_imm := Wire.mk "l2_wbi"               -- immediate WT: idle AND no pending AND l1d_req_we
-  -- wb_drain_capture: new write-through arrives while draining pending buffer
-  let wb_drain_capture := Wire.mk "l2_wbdc"
-  -- wbp_capture: unified capture condition (busy OR drain-concurrent)
-  let wbp_capture := Wire.mk "l2_wbpc"
   let detect_gates := [
     Gate.mkNOT hit not_hit,
     Gate.mkNOT arb_is_write not_write,
     Gate.mkAND arb_valid not_write read_req,
-    -- Pending WB logic
-    Gate.mkAND not_idle l1d_req_we not_idle_we,           -- capture when L2 busy
-    Gate.mkAND is_idle wbp_v_q wb_drain,                  -- drain condition
-    Gate.mkAND wb_drain l1d_req_we wb_drain_capture,      -- re-capture during drain
-    Gate.mkOR not_idle_we wb_drain_capture wbp_capture,    -- unified capture
-    Gate.mkNOT wbp_v_q not_wbp_v,
-    Gate.mkAND is_idle not_wbp_v idle_no_drain,           -- idle with no pending
-    Gate.mkAND idle_no_drain l1d_req_we wb_imm,           -- immediate write-through
-    Gate.mkOR wb_imm wb_drain wb_detect,                  -- unified wb signal
-    -- Normal request detection: only when idle AND no pending drain
-    Gate.mkAND idle_no_drain read_req (Wire.mk "l2_ir"),
+    Gate.mkAND is_idle read_req (Wire.mk "l2_ir"),
     Gate.mkAND (Wire.mk "l2_ir") hit hit_detect,
     Gate.mkAND (Wire.mk "l2_ir") not_hit miss_detect,
+    Gate.mkAND is_idle l1d_req_we wb_detect,
     Gate.mkAND is_mem_wait mem_resp_valid refill_done
   ]
-  -- Pending WB buffer next-state
-  -- v_d: capture OR (hold AND NOT drain)
-  let not_drain := Wire.mk "l2_nd"
-  let wbp_hold := Wire.mk "l2_wbph"
-  let wbp_next_gates := [
-    Gate.mkNOT wb_drain not_drain,
-    Gate.mkAND wbp_v_q not_drain wbp_hold,
-    Gate.mkOR wbp_capture wbp_hold wbp_v_d
-  ] ++
-  -- addr: MUX(hold, l1d_req_addr, wbp_capture)
-  (List.range 32).map (fun i =>
-    Gate.mkMUX wbp_addr_q[i]! l1d_req_addr[i]! wbp_capture wbp_addr_d[i]!) ++
-  -- data: MUX(hold, l1d_req_data, wbp_capture)
-  (List.range 256).map (fun i =>
-    Gate.mkMUX wbp_data_q[i]! l1d_req_data[i]! wbp_capture wbp_data_d[i]!)
 
   -- === Response Logic ===
   -- resp_valid = (is_hit_resp OR refill_done) AND source_match
@@ -440,29 +387,14 @@ def mkL2Cache : Circuit :=
     Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! refill_done l1d_resp_data[b]!
 
   -- === Memory Request ===
-  -- mem_req_valid = is_mem_req OR wb_detect (write-through on L1D writeback)
-  -- On wb_detect: send store data to main memory (write-through)
-  -- On is_mem_req: send refill read request (from pend_q)
-  -- wb_detect = wb_imm OR wb_drain. For drain, use buffered addr/data.
-  -- wb_addr_sel: MUX(arb_addr, wbp_addr_q, wb_drain) — live or buffered
-  -- wb_data_sel: MUX(l1d_req_data, wbp_data_q, wb_drain) — live or buffered
-  let wb_addr_sel := (List.range 32).map fun i => Wire.mk s!"wba_{i}"
-  let wb_data_sel := (List.range 256).map fun i => Wire.mk s!"wbds_{i}"
-  let wb_sel_gates :=
-    (List.range 32).map (fun i =>
-      Gate.mkMUX arb_addr[i]! wbp_addr_q[i]! wb_drain wb_addr_sel[i]!) ++
-    (List.range 256).map (fun i =>
-      Gate.mkMUX l1d_req_data[i]! wbp_data_q[i]! wb_drain wb_data_sel[i]!)
+  -- mem_req_valid = is_mem_req; addr = pend_q (line-aligned); we = 0; data = 0
   let mem_req_gates :=
-    [Gate.mkOR is_mem_req wb_detect mem_req_valid,
-     Gate.mkBUF wb_detect mem_req_we] ++
-    -- addr: MUX(pend_q, wb_addr_sel, wb_detect) — use selected wb addr for writebacks
+    [Gate.mkBUF is_mem_req mem_req_valid,
+     Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_we] ++
     (List.range 32).map (fun i =>
       if i < 5 then Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_addr[i]!
-      else Gate.mkMUX pend_q[i]! wb_addr_sel[i]! wb_detect mem_req_addr[i]!) ++
-    -- data: MUX(0, wb_data_sel, wb_detect) — send selected wb data for writebacks
-    (List.range 256).map (fun i =>
-      Gate.mkMUX (Wire.mk "l2_const_zero") wb_data_sel[i]! wb_detect mem_req_data[i]!)
+      else Gate.mkBUF pend_q[i]! mem_req_addr[i]!) ++
+    (List.range 256).map (fun i => Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_data[i]!)
 
   -- === FSM Next State ===
   -- fsm_d[0] = hit_detect OR miss_detect
@@ -531,14 +463,12 @@ def mkL2Cache : Circuit :=
 
   -- === Write Enables ===
   -- Per way/set: wb_we OR refill_we
-  -- Note: wb_imm (not wb_detect) is used here because only immediate write-throughs
-  -- have correct cur_dec/cur_tag. Drained write-throughs bypass L2 update.
   let write_en_gates := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 8).foldl (fun acc2 set =>
       let wm := if way == 0 then not_wb_w1 else wb_use_way1
       let rm := if way == 0 then not_ref_lru else ref_lru
       acc2 ++ [
-        Gate.mkAND wb_imm cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
+        Gate.mkAND wb_detect cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
         Gate.mkAND (Wire.mk s!"wbs_{way}_{set}") wm (Wire.mk s!"wbw_{way}_{set}"),
         Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"rfs_{way}_{set}"),
         Gate.mkAND (Wire.mk s!"rfs_{way}_{set}") rm (Wire.mk s!"rfw_{way}_{set}"),
@@ -604,26 +534,10 @@ def mkL2Cache : Circuit :=
       [{ addr := read_idx
          data := l2_data_ram_rd[way]! }]
       false clock
-  -- Valid: OR(hold, write_en), but clear on write-through hit (wb_detect AND way_hit AND set_match)
-  -- This ensures L2 doesn't serve stale data after L1D write-through
-  -- Now uses wb_detect (not wb_imm) because lookup_addr MUXes in wbp_addr_q during drain
-  let wb_inv_gates := (List.range 2).foldl (fun acc way =>
-    acc ++
-    [Gate.mkAND wb_detect way_hit[way]! (Wire.mk s!"wbi_w{way}")] ++
-    (List.range 8).foldl (fun acc2 set =>
-      acc2 ++ [
-        Gate.mkAND (Wire.mk s!"wbi_w{way}") cur_dec[set]! (Wire.mk s!"wbi_{way}_{set}"),
-        Gate.mkNOT (Wire.mk s!"wbi_{way}_{set}") (Wire.mk s!"nwbi_{way}_{set}")]
-    ) []
-  ) []
+  -- Valid: OR(hold, write_en)
   let valid_next := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 8).map (fun set =>
-      let idx := way * 8 + set
-      Gate.mkOR valid_q[idx]! (Wire.mk s!"wen_{way}_{set}") (Wire.mk s!"vn_or_{way}_{set}"))
-  ) [] ++ (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
-      let idx := way * 8 + set
-      Gate.mkAND (Wire.mk s!"vn_or_{way}_{set}") (Wire.mk s!"nwbi_{way}_{set}") valid_d[idx]!)
+      Gate.mkOR valid_q[way * 8 + set]! (Wire.mk s!"wen_{way}_{set}") valid_d[way * 8 + set]!)
   ) []
   -- Dirty: MUX(hold, write_dirty, write_en)
   let dirty_next := (List.range 2).foldl (fun acc way =>
@@ -634,7 +548,7 @@ def mkL2Cache : Circuit :=
   -- LRU: update on hit, wb, or refill
   let lru_next := (List.range 8).foldl (fun acc set =>
     acc ++ [
-      Gate.mkOR hit_detect wb_imm (Wire.mk s!"lca_{set}"),
+      Gate.mkOR hit_detect wb_detect (Wire.mk s!"lca_{set}"),
       Gate.mkAND (Wire.mk s!"lca_{set}") cur_dec[set]! (Wire.mk s!"lcu_{set}"),
       Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"lru_{set}"),
       Gate.mkOR (Wire.mk s!"lcu_{set}") (Wire.mk s!"lru_{set}") (Wire.mk s!"lua_{set}"),
@@ -645,19 +559,12 @@ def mkL2Cache : Circuit :=
   ) []
 
   -- === Stall Signals ===
-  -- L2 is busy when: not idle OR draining pending write-through
-  let l2_busy := Wire.mk "l2_busy"
-  -- stall_d: tell L1D to hold write-throughs when pending buffer is full
-  -- Full = wbp_v_q AND not_idle (can't drain this cycle)
-  let wb_buf_full := Wire.mk "l2_wbf"
   let stall_gates := [
-    Gate.mkOR not_idle wb_drain l2_busy,
-    Gate.mkAND wbp_v_q not_idle wb_buf_full,
-    -- stall_i = busy OR (idle AND D-side priority AND I-side requesting)
+    -- stall_i = NOT idle OR (idle AND D-side priority AND I-side requesting)
     Gate.mkAND is_idle arb_sel_d (Wire.mk "l2_dp"),
     Gate.mkAND (Wire.mk "l2_dp") l1i_req_valid (Wire.mk "l2_ib"),
-    Gate.mkOR l2_busy (Wire.mk "l2_ib") stall_i,
-    Gate.mkBUF wb_buf_full stall_d
+    Gate.mkOR not_idle (Wire.mk "l2_ib") stall_i,
+    Gate.mkBUF not_idle stall_d
   ]
 
   -- === Assemble ===
@@ -670,18 +577,17 @@ def mkL2Cache : Circuit :=
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [stall_i, stall_d]
     gates := fsm_dffs ++ [src_dff] ++ pend_dffs ++ lat_idx_dffs ++ [lat_way_dff] ++
-             [wbp_v_dff] ++ wbp_addr_dffs ++ wbp_data_dffs ++
              valid_dffs ++ dirty_dffs ++ lru_dffs ++
-             const_zero_gates ++ arb_gates ++ arb_addr_mux ++ lookup_addr_mux ++
+             const_zero_gates ++ arb_gates ++ arb_addr_mux ++
              not_cur_idx_gates ++ cur_dec_gates ++ not_ref_idx_gates ++ ref_dec_gates ++
              read_idx_mux ++ valid_mux_gates ++ hit_gates ++ way_data_mux ++
              fsm_decode_gates ++ [read_way1_mux] ++
-             detect_gates ++ wbp_next_gates ++ resp_valid_gates ++ resp_mux_i ++ resp_mux_d ++
-             wb_sel_gates ++ mem_req_gates ++ fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
+             detect_gates ++ resp_valid_gates ++ resp_mux_i ++ resp_mux_d ++
+             mem_req_gates ++ fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
              cur_lru_gates ++ ref_lru_gates ++ way_sel_gates ++ write_en_gates ++
              write_tag_mux ++ write_data_mux ++ write_dirty_gates ++
              tag_next ++ data_ram_wen_gates ++ data_ram_waddr_gates ++ data_ram_wdata_gates ++
-             wb_inv_gates ++ valid_next ++ dirty_next ++ lru_next ++ stall_gates
+             valid_next ++ dirty_next ++ lru_next ++ stall_gates
     instances := tag_instances ++
                  tag_mux_instances ++ tag_cmp_instances
     rams := data_rams
