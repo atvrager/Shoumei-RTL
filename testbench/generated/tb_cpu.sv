@@ -6,7 +6,7 @@
 //==============================================================================
 
 module tb_cpu #(
-    parameter MEM_SIZE_WORDS = 16384,
+    parameter MEM_SIZE_WORDS = 65536,
     parameter TIMEOUT_CYCLES = 100000,
     parameter TOHOST_ADDR    = 32'h1000
 ,
@@ -47,6 +47,7 @@ module tb_cpu #(
   // DUT I/O signals
   // =========================================================================
   logic        mem_resp_valid;
+  logic        mtip_in;
   logic [255:0] mem_resp_data;
   logic        mem_req_valid;
   logic        mem_req_we;
@@ -83,6 +84,7 @@ module tb_cpu #(
       .zero(1'b0),
       .one(1'b1),
       .mem_resp_valid(mem_resp_valid),
+      .mtip_in(mtip_in),
       .mem_resp_data(mem_resp_data),
       .mem_req_valid(mem_req_valid),
       .mem_req_we(mem_req_we),
@@ -175,7 +177,80 @@ module tb_cpu #(
     end
   end
 
-  assign mem_resp_data = mem_read_line;
+  // =========================================================================
+  // CLINT: Machine Timer (mtime, mtimecmp, mtip)
+  // =========================================================================
+  logic [63:0] mtime;
+  logic [63:0] mtimecmp;
+  wire         mtip = (mtime >= mtimecmp);
+  assign       mtip_in = mtip;
+
+  // CLINT MMIO addresses
+  localparam logic [31:0] CLINT_MTIMECMP_LO = 32'h02004000;
+  localparam logic [31:0] CLINT_MTIMECMP_HI = 32'h02004004;
+  localparam logic [31:0] CLINT_MTIME_LO    = 32'h0200BFF8;
+  localparam logic [31:0] CLINT_MTIME_HI    = 32'h0200BFFC;
+
+  wire clint_mtimecmp_lo_wr = store_snoop_valid && (store_snoop_addr == CLINT_MTIMECMP_LO);
+  wire clint_mtimecmp_hi_wr = store_snoop_valid && (store_snoop_addr == CLINT_MTIMECMP_HI);
+  wire clint_mtime_lo_wr    = store_snoop_valid && (store_snoop_addr == CLINT_MTIME_LO);
+  wire clint_mtime_hi_wr    = store_snoop_valid && (store_snoop_addr == CLINT_MTIME_HI);
+
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset) begin
+      mtime    <= 64'b0;
+      mtimecmp <= 64'hFFFFFFFFFFFFFFFF;
+    end else begin
+      mtime <= mtime + 1;
+      if (clint_mtimecmp_lo_wr) mtimecmp[31:0]  <= store_snoop_data;
+      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data;
+      if (clint_mtime_lo_wr)    mtime[31:0]     <= store_snoop_data;
+      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data;
+    end
+  end
+
+  // CLINT read intercept: override cache-line response for CLINT addresses
+  // When a cache-line read hits the CLINT region (0x02000000-0x0200FFFF),
+  // inject CLINT register values into the response data.
+  wire clint_region = (mem_req_addr_r[31:16] == 16'h0200);
+  logic [31:0] mem_req_addr_r;
+  logic        clint_pending_q1;
+  logic        clint_pending;
+
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset) begin
+      mem_req_addr_r  <= 32'b0;
+      clint_pending_q1 <= 1'b0;
+      clint_pending    <= 1'b0;
+    end else begin
+      // Pipeline stage 2: align clint_pending with mem_resp_valid (2-cycle latency)
+      clint_pending <= clint_pending_q1;
+      clint_pending_q1 <= 1'b0;
+      if (mem_req_valid && !mem_req_we) begin
+        mem_req_addr_r   <= mem_req_addr;
+        clint_pending_q1 <= (mem_req_addr[31:16] == 16'h0200);
+      end
+    end
+  end
+
+  // Build CLINT cache line response (8 words aligned to cache line)
+  logic [255:0] clint_line;
+  always_comb begin
+    clint_line = 256'b0;
+    case (mem_req_addr_r[15:5])  // cache-line aligned offset within CLINT
+      11'h200: begin  // 0x02004000 (mtimecmp)
+        clint_line[31:0]   = mtimecmp[31:0];
+        clint_line[63:32]  = mtimecmp[63:32];
+      end
+      11'h5FF: begin  // 0x0200BFE0 (mtime at offset 0x18/0x1C within line)
+        clint_line[223:192] = mtime[31:0];
+        clint_line[255:224] = mtime[63:32];
+      end
+      default: ;
+    endcase
+  end
+
+  assign mem_resp_data = clint_pending ? clint_line : mem_read_line;
 
   // =========================================================================
   // HTIF: tohost termination (detected from CPU store snoop)

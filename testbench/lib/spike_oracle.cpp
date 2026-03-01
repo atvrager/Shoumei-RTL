@@ -15,7 +15,7 @@
 // Avoids sim_t's debug module / boot ROM conflicts
 class flat_simif_t : public simif_t {
 public:
-    static constexpr size_t MEM_SIZE = 0x10000; // 64KB
+    static constexpr size_t MEM_SIZE = 0x40000; // 256KB (matches RTL memSizeWords=65536)
 
     explicit flat_simif_t(cfg_t* cfg) : cfg_(cfg), mem_(MEM_SIZE, 0) {}
 
@@ -25,8 +25,42 @@ public:
         return nullptr;
     }
 
-    bool mmio_load(reg_t, size_t, uint8_t*) override { return false; }
-    bool mmio_store(reg_t, size_t, const uint8_t*) override { return false; }
+    // CLINT region (0x02000000-0x0200FFFF): accept loads/stores silently
+    bool mmio_load(reg_t addr, size_t len, uint8_t* bytes) override {
+        if (addr >= 0x02000000 && addr < 0x02010000) {
+            // Return CLINT register values
+            uint64_t val = 0;
+            if (addr == 0x0200BFF8) val = mtime_ & 0xFFFFFFFF;       // mtime lo
+            else if (addr == 0x0200BFFC) val = (mtime_ >> 32);        // mtime hi
+            else if (addr == 0x02004000) val = mtimecmp_ & 0xFFFFFFFF; // mtimecmp lo
+            else if (addr == 0x02004004) val = (mtimecmp_ >> 32);      // mtimecmp hi
+            memcpy(bytes, &val, len);
+            return true;
+        }
+        return false;
+    }
+    bool mmio_store(reg_t addr, size_t len, const uint8_t* bytes) override {
+        if (addr >= 0x02000000 && addr < 0x02010000) {
+            uint32_t val = 0;
+            memcpy(&val, bytes, std::min(len, sizeof(val)));
+            if (addr == 0x02004000) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF00000000ULL) | val;
+            else if (addr == 0x02004004) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
+            else if (addr == 0x0200BFF8) mtime_ = (mtime_ & 0xFFFFFFFF00000000ULL) | val;
+            else if (addr == 0x0200BFFC) mtime_ = (mtime_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
+            return true;
+        }
+        return false;
+    }
+
+    // Tick mtime and return whether mtip changed
+    bool tick_timer() {
+        mtime_++;
+        bool new_mtip = (mtime_ >= mtimecmp_);
+        bool changed = (new_mtip != mtip_);
+        mtip_ = new_mtip;
+        return changed;
+    }
+    bool get_mtip() const { return mtip_; }
     void proc_reset(unsigned) override {}
     const cfg_t& get_cfg() const override { return *cfg_; }
     const std::map<size_t, processor_t*>& get_harts() const override { return harts_; }
@@ -64,6 +98,9 @@ private:
     cfg_t* cfg_;
     std::map<size_t, processor_t*> harts_;
     std::vector<char> mem_;
+    uint64_t mtime_ = 0;
+    uint64_t mtimecmp_ = 0xFFFFFFFFFFFFFFFFULL;
+    bool mtip_ = false;
 };
 
 SpikeOracle::SpikeOracle(const std::string& elf_path, const std::string& isa)
@@ -165,4 +202,26 @@ uint32_t SpikeOracle::get_freg(int i) const {
 
 uint32_t SpikeOracle::get_pc() const {
     return static_cast<uint32_t>(proc_->get_state()->pc);
+}
+
+void SpikeOracle::tick_timer() {
+    auto* flat = static_cast<flat_simif_t*>(simif_.get());
+    flat->tick_timer();
+    bool mtip = flat->get_mtip();
+    // MIP.MTIP = bit 7
+    reg_t mip = proc_->get_csr(/*CSR_MIP*/ 0x344);
+    if (mtip)
+        mip |= (1 << 7);
+    else
+        mip &= ~(1 << 7);
+    proc_->put_csr(/*CSR_MIP*/ 0x344, mip);
+}
+
+void SpikeOracle::set_mip_mtip(bool val) {
+    reg_t mip = proc_->get_csr(/*CSR_MIP*/ 0x344);
+    if (val)
+        mip |= (1 << 7);
+    else
+        mip &= ~(1 << 7);
+    proc_->put_csr(/*CSR_MIP*/ 0x344, mip);
 }

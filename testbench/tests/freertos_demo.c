@@ -6,6 +6,10 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+/* Heap in .noinit section — no need to zero 4KB during BSS clear */
+__attribute__((section(".noinit")))
+uint8_t ucHeap[configTOTAL_HEAP_SIZE];
+
 /* Shoumei testbench I/O - symbols from linker script */
 extern volatile unsigned int tohost;
 extern volatile unsigned int putchar_addr;

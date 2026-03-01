@@ -255,6 +255,7 @@ def mkStoreBuffer8 : Circuit :=
 
   -- === Enqueue Interface ===
   let enq_en := Wire.mk "enq_en"
+  let enq_idx_in := mkWires "enq_idx_in_" 3  -- externally-provided entry index for enqueue
   let enq_address := mkWires "enq_address_" 32
   let enq_data := mkWires "enq_data_" 32
   let enq_size := mkWires "enq_size_" 2
@@ -278,6 +279,7 @@ def mkStoreBuffer8 : Circuit :=
   let full := Wire.mk "full"
   let empty := Wire.mk "empty"
   let enq_idx := mkWires "enq_idx_" 3
+  let flush_tail := mkWires "flush_tail_" 3  -- combinational flush-recovered tail for CPU
 
   -- === Internal Wires ===
   let head_ptr := mkWires "head_ptr_" 3
@@ -362,11 +364,13 @@ def mkStoreBuffer8 : Circuit :=
       (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
 
+  -- Enqueue decode uses externally-provided index (pre-allocated at rename time)
+  -- This ensures entries are allocated in program order even when dispatched out of order.
   let enq_dec_inst : CircuitInstance := {
     moduleName := "Decoder3"
     instName := "u_enq_dec"
     portMap :=
-      (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (enq_idx_in.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
       (enq_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
@@ -498,6 +502,10 @@ def mkStoreBuffer8 : Circuit :=
      Gate.mkAND ft_xor[i]! ft_carry[i]! ft_and2[i]!,
      Gate.mkOR ft_and1[i]! ft_and2[i]! ft_carry[i+1]!]
   )).flatten
+
+  -- Expose combinational flush tail for CPU's sb_alloc_ctr reload
+  let flush_tail_out_gates := (List.range 3).map (fun i =>
+    Gate.mkBUF flush_tail_load[i]! flush_tail[i]!)
 
   -- === Per-Entry Valid/Committed Bitmap Logic ===
 
@@ -921,14 +929,14 @@ def mkStoreBuffer8 : Circuit :=
 
   let all_inputs :=
     [clock, reset, zero, one] ++
-    [enq_en] ++ enq_address ++ enq_data ++ enq_size ++
+    [enq_en] ++ enq_idx_in ++ enq_address ++ enq_data ++ enq_size ++
     [commit_en] ++
     [deq_ready] ++
     fwd_address ++
     [flush_en]
 
   let all_outputs :=
-    [full, empty] ++ enq_idx ++
+    [full, empty] ++ enq_idx ++ flush_tail ++
     [deq_valid] ++ deq_bits ++
     [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size
 
@@ -938,7 +946,7 @@ def mkStoreBuffer8 : Circuit :=
     [deq_fire_gate, deq_valid_gate] ++
     commit_gate_gates ++ [pc_reset_gate] ++
     bitmap_gates ++ surviving_gates ++
-    flush_count_gates ++ flush_tail_gates ++
+    flush_count_gates ++ flush_tail_gates ++ flush_tail_out_gates ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
     arb_request_gates ++ [fwd_hit_gate] ++ fwd_word_hit_gates ++ fwd_word_only_hit_gates ++ fwd_committed_hit_gates ++
@@ -960,6 +968,7 @@ def mkStoreBuffer8 : Circuit :=
     instances := all_instances
     -- V2 codegen annotations
     signalGroups := [
+      { name := "enq_idx_in_", width := 3, wires := enq_idx_in },
       { name := "enq_address_", width := 32, wires := enq_address },
       { name := "enq_data_", width := 32, wires := enq_data },
       { name := "enq_size_", width := 2, wires := enq_size },
@@ -969,6 +978,7 @@ def mkStoreBuffer8 : Circuit :=
       { name := "fwd_data_", width := 32, wires := fwd_data },
       { name := "fwd_size_", width := 2, wires := fwd_size },
       { name := "enq_idx_", width := 3, wires := enq_idx },
+      { name := "flush_tail_", width := 3, wires := flush_tail },
       { name := "head_ptr_", width := 3, wires := head_ptr },
       { name := "tail_ptr_", width := 3, wires := tail_ptr },
       { name := "count_", width := 4, wires := count },

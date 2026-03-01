@@ -15,11 +15,11 @@ inductive MicrocodeSequence where
   | csr       -- CSRRW/S/C and immediate variants (ROM sequences 0–2)
   | fenceI    -- FENCE.I (ROM sequence 3)
   | trapEntry -- ECALL trap entry (ROM sequence 4)
-  -- future: | mret
+  | mret      -- MRET return from trap (ROM sequence 5)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- All sequences the ROM currently implements. -/
-def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry]
+def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry, .mret]
 
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
@@ -84,7 +84,7 @@ structure CPUConfig where
 
   -- ═══ Simulation ═══
   /-- Memory size in words for testbench -/
-  memSizeWords : Nat := 16384
+  memSizeWords : Nat := 65536
   /-- Simulation timeout in clock cycles -/
   timeoutCycles : Nat := 100000
   deriving Repr, BEq, DecidableEq
@@ -134,7 +134,8 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableF then ["rv_f"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
-  (if config.enableZifencei then ["rv_zifencei"] else [])
+  (if config.enableZifencei then ["rv_zifencei"] else []) ++
+  (if config.enabledMicrocode.contains .mret then ["rv_system"] else [])
 
 /-- Check if M extension operations should be accepted by the decoder -/
 def CPUConfig.supportsMulDiv (config : CPUConfig) : Bool :=
@@ -152,6 +153,9 @@ def CPUConfig.microcodesFenceI (c : CPUConfig) : Bool := c.enabledMicrocode.cont
 /-- Whether the trap entry microcode sequence is enabled -/
 def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.contains .trapEntry
 
+/-- Whether the MRET microcode sequence is enabled -/
+def CPUConfig.microcodesMRET (c : CPUConfig) : Bool := c.enabledMicrocode.contains .mret
+
 /-- THE default config. Edit this single definition to change what gets built.
     RV32IMF + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
 def defaultCPUConfig : CPUConfig := {
@@ -160,7 +164,7 @@ def defaultCPUConfig : CPUConfig := {
   enableZicsr := true
   enableZifencei := true
   enableCache := true
-  enabledMicrocode := [.trapEntry]
+  enabledMicrocode := [.trapEntry, .mret]
   dispatchWidth := 2
   commitWidth := 2
 }

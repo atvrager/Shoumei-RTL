@@ -43,6 +43,12 @@ public:
     // Get current PC
     uint32_t get_pc() const;
 
+    // Timer: tick mtime, inject MIP.MTIP into Spike
+    void tick_timer();
+
+    // Set MIP.MTIP directly
+    void set_mip_mtip(bool val);
+
 private:
     std::string isa_storage_;  // keeps ISA string alive for cfg_->isa pointer
     std::unique_ptr<cfg_t> cfg_;

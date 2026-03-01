@@ -17,6 +17,9 @@ SECTIONS {
         *(.bss* .sbss* COMMON)
         __bss_end = .;
     } > RAM
+    .noinit (NOLOAD) : {
+        *(.noinit*)
+    } > RAM
     .tohost 0x3F000 (NOLOAD) : { tohost = .; . += 4; putchar_addr = .; . += 4; } > RAM
     _stack_top = 0x40000;
     __freertos_irq_stack_top = _stack_top;

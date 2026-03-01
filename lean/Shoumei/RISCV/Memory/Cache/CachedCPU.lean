@@ -115,12 +115,16 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_retire := Wire.mk "rvvi_retire"
   let rvvi_valid_gate := Gate.mkOR rvvi_valid_0 rvvi_valid_1 rvvi_retire
 
+  -- mtip_in: machine timer interrupt pending (from CLINT, external)
+  let mtip_in := Wire.mk "mtip_in"
+
   -- CPU instance (W=2 interface)
   let cpu_inst := CircuitInstance.mk s!"CPU_{config.isaString}" "u_cpu"
     ([("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
       ("fetch_stall_ext", ifetch_stall),
       ("ifetch_last_word", ifetch_last_word),
-      ("dmem_stall_ext", dmem_stall)] ++
+      ("dmem_stall_ext", dmem_stall),
+      ("mtip_in", mtip_in)] ++
      -- Slot 0 gets the fetched instruction word; slot 1 is zero (invalid)
      -- until L1I is modified to provide two words per cycle.
      (List.range 32).map (fun i => (s!"imem_resp_data_0_{i}", imem_resp_data[i]!)) ++
@@ -181,7 +185,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("fence_i_busy", Wire.mk "cache_fence_i_busy")])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
-    inputs := [clock, reset, zero, one, mem_resp_valid] ++ mem_resp_data
+    inputs := [clock, reset, zero, one, mem_resp_valid, mtip_in] ++ mem_resp_data
     outputs := [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [rob_empty, store_snoop_valid] ++ store_snoop_addr ++ store_snoop_data ++
                [rvvi_retire,

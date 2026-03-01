@@ -1000,7 +1000,73 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "      end\n" ++
   "    end\n" ++
   "  end\n\n" ++
-  s!"  assign {clmp.respDataSignal} = mem_read_line;\n\n" ++
+  "  // =========================================================================\n" ++
+  "  // CLINT: Machine Timer (mtime, mtimecmp, mtip)\n" ++
+  "  // =========================================================================\n" ++
+  "  logic [63:0] mtime;\n" ++
+  "  logic [63:0] mtimecmp;\n" ++
+  "  wire         mtip = (mtime >= mtimecmp);\n" ++
+  "  assign       mtip_in = mtip;\n\n" ++
+  "  // CLINT MMIO addresses\n" ++
+  "  localparam logic [31:0] CLINT_MTIMECMP_LO = 32'h02004000;\n" ++
+  "  localparam logic [31:0] CLINT_MTIMECMP_HI = 32'h02004004;\n" ++
+  "  localparam logic [31:0] CLINT_MTIME_LO    = 32'h0200BFF8;\n" ++
+  "  localparam logic [31:0] CLINT_MTIME_HI    = 32'h0200BFFC;\n\n" ++
+  "  wire clint_mtimecmp_lo_wr = store_snoop_valid && (store_snoop_addr == CLINT_MTIMECMP_LO);\n" ++
+  "  wire clint_mtimecmp_hi_wr = store_snoop_valid && (store_snoop_addr == CLINT_MTIMECMP_HI);\n" ++
+  "  wire clint_mtime_lo_wr    = store_snoop_valid && (store_snoop_addr == CLINT_MTIME_LO);\n" ++
+  "  wire clint_mtime_hi_wr    = store_snoop_valid && (store_snoop_addr == CLINT_MTIME_HI);\n\n" ++
+  s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
+  s!"    if ({resetName}) begin\n" ++
+  "      mtime    <= 64'b0;\n" ++
+  "      mtimecmp <= 64'hFFFFFFFFFFFFFFFF;\n" ++
+  "    end else begin\n" ++
+  "      mtime <= mtime + 1;\n" ++
+  "      if (clint_mtimecmp_lo_wr) mtimecmp[31:0]  <= store_snoop_data;\n" ++
+  "      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data;\n" ++
+  "      if (clint_mtime_lo_wr)    mtime[31:0]     <= store_snoop_data;\n" ++
+  "      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data;\n" ++
+  "    end\n" ++
+  "  end\n\n" ++
+  "  // CLINT read intercept: override cache-line response for CLINT addresses\n" ++
+  "  // When a cache-line read hits the CLINT region (0x02000000-0x0200FFFF),\n" ++
+  "  // inject CLINT register values into the response data.\n" ++
+  "  wire clint_region = (mem_req_addr_r[31:16] == 16'h0200);\n" ++
+  "  logic [31:0] mem_req_addr_r;\n" ++
+  "  logic        clint_pending_q1;\n" ++
+  "  logic        clint_pending;\n\n" ++
+  s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
+  s!"    if ({resetName}) begin\n" ++
+  "      mem_req_addr_r  <= 32'b0;\n" ++
+  "      clint_pending_q1 <= 1'b0;\n" ++
+  "      clint_pending    <= 1'b0;\n" ++
+  "    end else begin\n" ++
+  "      // Pipeline stage 2: align clint_pending with mem_resp_valid (2-cycle latency)\n" ++
+  "      clint_pending <= clint_pending_q1;\n" ++
+  "      clint_pending_q1 <= 1'b0;\n" ++
+  s!"      if ({clmp.reqValidSignal} && !{clmp.reqWeSignal}) begin\n" ++
+  s!"        mem_req_addr_r   <= {clmp.reqAddrSignal};\n" ++
+  s!"        clint_pending_q1 <= ({clmp.reqAddrSignal}[31:16] == 16'h0200);\n" ++
+  "      end\n" ++
+  "    end\n" ++
+  "  end\n\n" ++
+  "  // Build CLINT cache line response (8 words aligned to cache line)\n" ++
+  "  logic [255:0] clint_line;\n" ++
+  "  always_comb begin\n" ++
+  "    clint_line = 256'b0;\n" ++
+  "    case (mem_req_addr_r[15:5])  // cache-line aligned offset within CLINT\n" ++
+  "      11'h200: begin  // 0x02004000 (mtimecmp)\n" ++
+  "        clint_line[31:0]   = mtimecmp[31:0];\n" ++
+  "        clint_line[63:32]  = mtimecmp[63:32];\n" ++
+  "      end\n" ++
+  "      11'h5FF: begin  // 0x0200BFE0 (mtime at offset 0x18/0x1C within line)\n" ++
+  "        clint_line[223:192] = mtime[31:0];\n" ++
+  "        clint_line[255:224] = mtime[63:32];\n" ++
+  "      end\n" ++
+  "      default: ;\n" ++
+  "    endcase\n" ++
+  "  end\n\n" ++
+  s!"  assign {clmp.respDataSignal} = clint_pending ? clint_line : mem_read_line;\n\n" ++
 
   "  // =========================================================================\n" ++
   "  // HTIF: tohost termination (detected from CPU store snoop)\n" ++
@@ -1218,6 +1284,18 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "    " ++ rb ++ "\n\n" ++
   s!"    svSetScope(svGetScopeFromName(\"TOP.{tbName}\"));\n" ++
   "    if (load_elf(elf_path) < 0) return 1;\n\n" ++
+  "    // Reset — must happen BEFORE DPI addr overrides so that initial blocks\n" ++
+  "    // (which set default TOHOST_ADDR/PUTCHAR_ADDR) run first during eval().\n" ++
+  "    dut->rst_n = 0; dut->clk = 0;\n" ++
+  "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
+  "        dut->clk = !dut->clk; dut->eval();\n" ++
+  "#if VM_TRACE\n" ++
+  "        if (trace) trace->dump(i);\n" ++
+  "#endif\n" ++
+  "    " ++ rb ++ "\n" ++
+  "    dut->rst_n = 1;\n\n" ++
+  "    // Override HTIF/putchar addresses from ELF symbols AFTER reset,\n" ++
+  "    // so initial blocks don't overwrite our values.\n" ++
   "    int64_t tohost_sym = elf_lookup_symbol(elf_path, \"tohost\");\n" ++
   "    if (tohost_sym >= 0) " ++ lb ++ "\n" ++
   "        printf(\"ELF symbol: tohost = 0x%08x\\n\", (uint32_t)tohost_sym);\n" ++
@@ -1231,15 +1309,6 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
     "    " ++ rb ++ "\n"
    else "") ++
   "\n" ++
-  "    // Reset\n" ++
-  "    dut->rst_n = 0; dut->clk = 0;\n" ++
-  "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
-  "        dut->clk = !dut->clk; dut->eval();\n" ++
-  "#if VM_TRACE\n" ++
-  "        if (trace) trace->dump(i);\n" ++
-  "#endif\n" ++
-  "    " ++ rb ++ "\n" ++
-  "    dut->rst_n = 1;\n\n" ++
   "#if VM_TRACE\n" ++
   "    uint64_t sim_time = 10;\n" ++
   "#endif\n" ++
@@ -1885,6 +1954,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "        if (dut->o_test_done) done = true;\n" ++
   "        dut->clk = 0; dut->eval();\n" ++
   "        cycle++;\n" ++
+  "        spike->tick_timer();\n" ++
   "    " ++ rb ++ "\n\n" ++
   "    printf(\"Cosimulation complete:\\n\");\n" ++
   "    printf(\"  Cycles:      %lu\\n\", cycle);\n" ++

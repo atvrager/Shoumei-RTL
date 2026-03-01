@@ -35,7 +35,8 @@ structure ExtGroup where
 def extGroups : List ExtGroup :=
   [ { comment := "RV32I Base Integer Instructions", exts := ["rv_i", "rv32_i"] },
     { comment := "M Extension: Integer Multiply/Divide", exts := ["rv_m"] },
-    { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f"] } ]
+    { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f"] },
+    { comment := "Privileged: Machine-Mode Instructions", exts := ["rv_system"] } ]
 
 def parseHex (s : String) : Option UInt32 :=
   if s.startsWith "0x" || s.startsWith "0X" then
@@ -188,6 +189,56 @@ def main : IO Unit := do
   out := out ++ "    match decoderNames.findIdx? (· == name) with\n"
   out := out ++ "    | some idx => some (idx, code)\n"
   out := out ++ "    | none => none\n\n"
+
+  -- extensionGroup: map OpType → extension list
+  out := out ++ "/-- Extension group(s) for each OpType -/\n"
+  out := out ++ "def OpType.extensionGroup : OpType → List String\n"
+  -- Build a map from name → extension keys
+  let mut nameToExts : List (String × List String) := []
+  for ⟨name, instrJson⟩ in obj.toList do
+    if skipInstructions.contains name then continue
+    let normName := normalizeName name
+    if !allNames.contains normName then continue
+    let exts ← match instrJson.getObj? with
+      | .ok o => match o.get? "extension" with
+        | some extJson => match extJson.getArr? with
+          | .ok arr => pure (arr.toList.filterMap fun j => j.getStr?.toOption)
+          | .error _ => pure ([] : List String)
+        | none => pure ([] : List String)
+      | .error _ => pure ([] : List String)
+    nameToExts := nameToExts ++ [(normName, exts)]
+  -- Extra instructions (not from JSON) — skip if already found in JSON
+  for name in extraInstructions do
+    if nameToExts.any (fun (n, _) => n == name) then continue
+    let ext := if name == "FENCE_I" then "rv_zifencei"
+               else if name.startsWith "CSR" then "rv_zicsr"
+               else "rv_i"
+    nameToExts := nameToExts ++ [(name, [ext])]
+  -- Group by extension
+  let mut extToNames : List (String × List String) := []
+  for (name, exts) in nameToExts do
+    let extKey := match exts.head? with | some e => e | none => "rv_i"
+    match extToNames.findIdx? (fun (k, _) => k == extKey) with
+    | some extIdx =>
+      let (k, ns) := extToNames[extIdx]!
+      extToNames := extToNames.set extIdx (k, ns ++ [name])
+    | none => extToNames := extToNames ++ [(extKey, [name])]
+  for (extKey, names) in extToNames do
+    let namesList := names.toArray.qsort (· < ·) |>.toList
+    let joined := " | .".intercalate namesList
+    out := out ++ s!"  | .{joined} => [\"{extKey}\"]\n"
+  out := out ++ "\n"
+
+  -- isFpGroup: true for F extension opcodes
+  out := out ++ "/-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/\n"
+  out := out ++ "def OpType.isFpGroup : OpType → Bool\n"
+  match extToNames.find? (fun (k, _) => k == "rv_f") with
+  | some (_, fpNames) =>
+    let sorted := fpNames.toArray.qsort (· < ·) |>.toList
+    let joined := " | .".intercalate sorted
+    out := out ++ s!"  | .{joined} => true\n"
+  | none => pure ()
+  out := out ++ "  | _ => false\n\n"
 
   out := out ++ "end Shoumei.RISCV\n"
 

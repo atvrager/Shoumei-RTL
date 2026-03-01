@@ -15,8 +15,8 @@
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Memory */
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 32 * 1024 ) )
-#define configAPPLICATION_ALLOCATED_HEAP        0
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 4 * 1024 ) )
+#define configAPPLICATION_ALLOCATED_HEAP        1
 
 /* No mutexes/semaphores/timers needed for basic demo */
 #define configUSE_MUTEXES                       0

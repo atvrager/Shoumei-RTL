@@ -170,13 +170,22 @@ def mkMemoryHierarchy : Circuit :=
      (List.range 256).map (fun i => (s!"wb_data_{i}", l1d_wb_data[i]!)) ++
      [("stall", dmem_stall), ("fence_i_busy", fence_i_busy)])
 
+  -- MUX: L2 D-side address = wb_addr when wb_valid, else miss_addr
+  let l1d_l2_addr := (List.range 32).map fun i => Wire.mk s!"l1d_l2_addr_{i}"
+  let l1d_l2_addr_mux := (List.range 32).map fun i =>
+    Gate.mkMUX l1d_miss_addr[i]! l1d_wb_addr[i]! l1d_wb_valid l1d_l2_addr[i]!
+
+  -- L2 D-side req_valid = miss_valid OR wb_valid
+  let l1d_l2_req_valid := Wire.mk "l1d_l2_req_valid"
+  let l1d_l2_req_valid_gate := Gate.mkOR l1d_miss_valid l1d_wb_valid l1d_l2_req_valid
+
   -- L2 Cache instance
   let l2_inst := CircuitInstance.mk "L2Cache" "u_l2"
     ([("clock", clock), ("reset", reset),
       ("l1i_req_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"l1i_req_addr_{i}", l1i_miss_addr[i]!)) ++
-     [("l1d_req_valid", l1d_miss_valid)] ++
-     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_miss_addr[i]!)) ++
+     [("l1d_req_valid", l1d_l2_req_valid)] ++
+     (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_l2_addr[i]!)) ++
      [("l1d_req_we", l1d_wb_valid)] ++
      (List.range 256).map (fun i => (s!"l1d_req_data_{i}", l1d_wb_data[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
@@ -189,7 +198,8 @@ def mkMemoryHierarchy : Circuit :=
      (List.range 32).map (fun i => (s!"mem_req_addr_{i}", mem_req_addr[i]!)) ++
      [("mem_req_we", mem_req_we)] ++
      (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
-     [("stall_i", Wire.mk "l2_stall_i"),
+     [("l1d_wb_ack", l1d_wb_ack),
+      ("stall_i", Wire.mk "l2_stall_i"),
       ("stall_d", Wire.mk "l2_stall_d")])
 
   { name := "MemoryHierarchy"
@@ -200,7 +210,7 @@ def mkMemoryHierarchy : Circuit :=
                dmem_resp_valid] ++ dmem_resp_data ++ [dmem_stall] ++
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [fence_i_busy]
-    gates := []  -- Pure hierarchical composition
+    gates := l1d_l2_addr_mux ++ [l1d_l2_req_valid_gate]
     instances := [l1i_inst, l1d_inst, l2_inst]
     signalGroups := [
       { name := "ifetch_addr", width := 32, wires := ifetch_addr },
