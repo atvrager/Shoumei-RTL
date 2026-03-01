@@ -4,6 +4,7 @@
 #include <riscv/mmu.h>
 #include <riscv/simif.h>
 #include <riscv/cfg.h>
+#include <riscv/csrs.h>
 
 #include <vector>
 #include <map>
@@ -153,6 +154,10 @@ SpikeStepResult SpikeOracle::step() {
         r.insn = 0;
     }
 
+    // Save rs1 value before step (for CLINT load detection)
+    uint32_t rs1_idx = (r.insn >> 15) & 0x1f;
+    r.rs1_value = regs_before[rs1_idx];
+
     try {
         proc_->step(1);
         r.trap = false;
@@ -204,24 +209,45 @@ uint32_t SpikeOracle::get_pc() const {
     return static_cast<uint32_t>(proc_->get_state()->pc);
 }
 
+void SpikeOracle::set_pc(uint32_t pc) {
+    proc_->get_state()->pc = pc;
+}
+
+uint32_t SpikeOracle::get_insn_at(uint32_t addr) const {
+    return static_cast<uint32_t>(proc_->get_mmu()->load<uint32_t>(addr));
+}
+
+void SpikeOracle::unhalt() {
+    proc_->clear_waiting_for_interrupt();
+}
+
+SpikeOracle::ArchState SpikeOracle::save_state() const {
+    ArchState s;
+    s.pc = static_cast<uint32_t>(proc_->get_state()->pc);
+    for (int i = 0; i < 32; i++)
+        s.xregs[i] = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+    for (int i = 0; i < 32; i++)
+        s.fregs[i] = proc_->get_state()->FPR[i].v[0];
+    return s;
+}
+
+void SpikeOracle::restore_state(const ArchState& s) {
+    proc_->get_state()->pc = s.pc;
+    for (int i = 1; i < 32; i++)
+        proc_->get_state()->XPR.write(i, s.xregs[i]);
+    for (int i = 0; i < 32; i++) {
+        freg_t f; f.v[0] = s.fregs[i]; f.v[1] = 0;
+        proc_->get_state()->FPR.write(i, f);
+    }
+}
+
 void SpikeOracle::tick_timer() {
     auto* flat = static_cast<flat_simif_t*>(simif_.get());
     flat->tick_timer();
-    bool mtip = flat->get_mtip();
-    // MIP.MTIP = bit 7
-    reg_t mip = proc_->get_csr(/*CSR_MIP*/ 0x344);
-    if (mtip)
-        mip |= (1 << 7);
-    else
-        mip &= ~(1 << 7);
-    proc_->put_csr(/*CSR_MIP*/ 0x344, mip);
+    set_mip_mtip(flat->get_mtip());
 }
 
 void SpikeOracle::set_mip_mtip(bool val) {
-    reg_t mip = proc_->get_csr(/*CSR_MIP*/ 0x344);
-    if (val)
-        mip |= (1 << 7);
-    else
-        mip &= ~(1 << 7);
-    proc_->put_csr(/*CSR_MIP*/ 0x344, mip);
+    // MIP.MTIP (bit 7) is read-only via CSR writes; use backdoor
+    proc_->get_state()->mip->backdoor_write_with_mask(1ULL << 7, val ? (1ULL << 7) : 0);
 }
