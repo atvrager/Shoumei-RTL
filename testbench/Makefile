@@ -186,7 +186,9 @@ run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(ARC_COSIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
+		timeout=3000; \
+		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
+		result=$$($(ARC_COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
 		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
 		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
@@ -297,7 +299,9 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(SIM_BIN) +elf=$$elf +timeout=5000 2>&1); \
+		tout=5000; \
+		case $$name in freertos_demo.elf) tout=200000;; timer_irq_test.elf) tout=10000;; jalr_a0_irq_test.elf) tout=10000;; esac; \
+		result=$$($(SIM_BIN) +elf=$$elf +timeout=$$tout 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
@@ -340,7 +344,9 @@ run-cosim: $(COSIM_BIN) tests riscv-tests
 	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
-		result=$$($(COSIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
+		timeout=3000; \
+		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
+		result=$$($(COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
 		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
 		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \

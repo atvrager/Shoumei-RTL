@@ -3,7 +3,7 @@
 
   Contains structural circuit helper functions used by mkCPU:
   mkOpTypeToALU4, aluMappingByName, mulDivMappingByName, mkOpTypeLUT,
-  fpuMappingByName, mkMux64to1, mkBusyBitTable, mkOpcodeMatch6,
+  fpuMappingByName, mkMux64to1, mkBusyBitTable, mkOpcodeMatch6, mkOpcodeMatch7,
   mkBranchResolve, mkShadowRegisters, mkFPFlags, mkCommitControl,
   mkCDBForwardInt, mkCDBForwardFP, mkSidecarRegFile4x32.
 -/
@@ -309,6 +309,26 @@ def mkOpcodeMatch6 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wir
     Gate.mkAND t012 bitWires[3]! t0123,
     Gate.mkAND t0123 bitWires[4]! t01234,
     Gate.mkAND t01234 bitWires[5]! result
+  ]
+
+/-- Match a 7-bit opcode. Used when F extension makes opcodes exceed 6 bits. -/
+def mkOpcodeMatch7 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
+  let bitWires := (List.range 7).map fun b =>
+    if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
+  let notGates := (List.range 7).filterMap fun b =>
+    if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
+  let t01 := Wire.mk s!"{pfx}_t01"
+  let t23 := Wire.mk s!"{pfx}_t23"
+  let t45 := Wire.mk s!"{pfx}_t45"
+  let t0123 := Wire.mk s!"{pfx}_t0123"
+  let t456 := Wire.mk s!"{pfx}_t456"
+  notGates ++ [
+    Gate.mkAND bitWires[0]! bitWires[1]! t01,
+    Gate.mkAND bitWires[2]! bitWires[3]! t23,
+    Gate.mkAND bitWires[4]! bitWires[5]! t45,
+    Gate.mkAND t01 t23 t0123,
+    Gate.mkAND t45 bitWires[6]! t456,
+    Gate.mkAND t0123 t456 result
   ]
 
 /-- Branch resolution logic: PC+4 link, target computation, condition evaluation,

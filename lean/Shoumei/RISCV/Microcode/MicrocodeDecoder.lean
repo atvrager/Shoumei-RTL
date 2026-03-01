@@ -12,7 +12,7 @@ namespace Shoumei.RISCV.Microcode
 
 open Shoumei
 
-/-- Build the microcode decoder circuit: 4-bit input → 15 one-hot outputs.
+/-- Build the microcode decoder circuit: 4-bit input → 16 one-hot outputs.
     Each output is high when the input matches that µop's encoding. -/
 def mkMicrocodeDecoder : Circuit :=
   let opcode := (List.range 4).map (fun i => Wire.mk s!"opcode_{i}")
@@ -48,7 +48,8 @@ def mkMicrocodeDecoder : Circuit :=
     (MicroOp.LOAD_PC.toNat, "is_load_pc"),
     (MicroOp.LOAD_CONST.toNat, "is_load_const"),
     (MicroOp.MSTATUS_TRAP.toNat, "is_mstatus_trap"),
-    (MicroOp.SET_CSR_ADDR.toNat, "is_set_csr_addr")
+    (MicroOp.SET_CSR_ADDR.toNat, "is_set_csr_addr"),
+    (MicroOp.MSTATUS_MRET.toNat, "is_mstatus_mret")
   ]
 
   let matchResults := ops.map (fun (enc, name) => mkMatch enc name)

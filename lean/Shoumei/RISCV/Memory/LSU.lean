@@ -365,9 +365,11 @@ def mkLSU : Circuit :=
   let sb_deq_valid := Wire.mk "sb_deq_valid"
   let sb_deq_bits := mkWires "sb_deq_bits_" 66
   let sb_enq_idx := mkWires "sb_enq_idx_" 3
+  let sb_flush_tail := mkWires "sb_flush_tail_" 3
 
   -- === Placeholder wires for StoreBuffer8 required inputs ===
   let sb_enq_en := Wire.mk "sb_enq_en"  -- Placeholder: would be driven by dispatch_is_store control logic
+  let sb_enq_idx_in := mkWires "sb_enq_idx_in_" 3  -- Pre-allocated SB entry index from CPU
   let sb_enq_address := mkWires "sb_enq_address_" 32  -- Connected to agu_address
   let sb_enq_data := store_data  -- Direct connection from dispatch
   let sb_enq_size := mkWires "sb_enq_size_" 2  -- Placeholder: would be decoded from opcode
@@ -398,7 +400,9 @@ def mkLSU : Circuit :=
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
-       ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
+       ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty)] ++
+      (sb_enq_idx_in.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_in_[{i}]", w))) ++
+      [
        ("fwd_hit", sb_fwd_hit), ("fwd_committed_hit", sb_fwd_committed_hit),
        ("fwd_word_hit", sb_fwd_word_hit),
        ("fwd_word_only_hit", sb_fwd_word_only_hit),
@@ -410,7 +414,8 @@ def mkLSU : Circuit :=
       (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_[{i}]", w))) ++
       (sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"fwd_size_[{i}]", w))) ++
       (sb_deq_bits.enum.map (fun ⟨i, w⟩ => (s!"deq_bits_[{i}]", w))) ++
-      (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_[{i}]", w)))
+      (sb_enq_idx.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_[{i}]", w))) ++
+      (sb_flush_tail.enum.map (fun ⟨i, w⟩ => (s!"flush_tail_[{i}]", w)))
   }
 
   -- === Assemble Circuit ===
@@ -424,7 +429,8 @@ def mkLSU : Circuit :=
     fwd_address ++
     [flush_en] ++
     sb_enq_size ++  -- Placeholder input (would be decoded from opcode)
-    [sb_enq_en]     -- Placeholder input (would be driven by control logic)
+    [sb_enq_en] ++  -- Placeholder input (would be driven by control logic)
+    sb_enq_idx_in   -- Pre-allocated SB entry index
 
   let all_outputs :=
     agu_address ++ agu_tag_out ++
@@ -432,7 +438,8 @@ def mkLSU : Circuit :=
     sb_fwd_data ++ sb_fwd_size ++
     [sb_deq_valid] ++
     sb_deq_bits ++
-    sb_enq_idx
+    sb_enq_idx ++
+    sb_flush_tail
 
   let all_gates := agu_to_sb_gates
 
@@ -457,7 +464,9 @@ def mkLSU : Circuit :=
       { name := "sb_deq_bits", width := 66, wires := sb_deq_bits },
       { name := "sb_enq_idx", width := 3, wires := sb_enq_idx },
       { name := "sb_enq_address", width := 32, wires := sb_enq_address },
-      { name := "sb_enq_size", width := 2, wires := sb_enq_size }
+      { name := "sb_enq_size", width := 2, wires := sb_enq_size },
+      { name := "sb_enq_idx_in", width := 3, wires := sb_enq_idx_in },
+      { name := "sb_flush_tail", width := 3, wires := sb_flush_tail }
     ]
   }
 

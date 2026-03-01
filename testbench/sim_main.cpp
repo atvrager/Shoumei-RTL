@@ -245,21 +245,13 @@ int main(int argc, char** argv) {
     }
 
     // Set DPI scope to the testbench top so dpi_mem_write resolves correctly
-    svSetScope(svGetScopeFromName(TOP_SCOPE));
+    const svScope scope = svGetScopeFromName(TOP_SCOPE);
+    if (!scope) {
+        fprintf(stderr, "WARNING: svGetScopeFromName(\"%s\") returned NULL\n", TOP_SCOPE);
+    }
+    svSetScope(scope);
     if (load_elf(elf_path) < 0) {
         return 1;
-    }
-
-    // Override HTIF addresses from ELF symbols
-    int64_t tohost_sym = elf_lookup_symbol(elf_path, "tohost");
-    if (tohost_sym >= 0) {
-        printf("ELF symbol: tohost = 0x%08x\n", (uint32_t)tohost_sym);
-        dpi_set_tohost_addr((uint32_t)tohost_sym);
-    }
-    int64_t putchar_sym = elf_lookup_symbol(elf_path, "putchar_addr");
-    if (putchar_sym >= 0) {
-        printf("ELF symbol: putchar_addr = 0x%08x\n", (uint32_t)putchar_sym);
-        dpi_set_putchar_addr((uint32_t)putchar_sym);
     }
 
     // =====================================================================
@@ -275,6 +267,21 @@ int main(int argc, char** argv) {
 #endif
     }
     dut->rst_n = 1;
+
+    // Override HTIF addresses from ELF symbols
+    // Use direct Verilator model access instead of DPI to avoid initial block conflicts
+    int64_t tohost_sym = elf_lookup_symbol(elf_path, "tohost");
+    if (tohost_sym >= 0) {
+        printf("ELF symbol: tohost = 0x%08x\n", (uint32_t)tohost_sym);
+        dut->rootp->tb_cpu__DOT__tohost_addr_r = (uint32_t)tohost_sym;
+    }
+    int64_t putchar_sym = elf_lookup_symbol(elf_path, "putchar_addr");
+    if (putchar_sym >= 0) {
+        printf("ELF symbol: putchar_addr = 0x%08x\n", (uint32_t)putchar_sym);
+        dut->rootp->tb_cpu__DOT__putchar_addr_r = (uint32_t)putchar_sym;
+        printf("  Set putchar_addr_r = 0x%08x, readback = 0x%08x\n",
+               (uint32_t)putchar_sym, dut->rootp->tb_cpu__DOT__putchar_addr_r);
+    }
 
     // =====================================================================
     // Main simulation loop

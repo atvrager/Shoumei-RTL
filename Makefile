@@ -88,7 +88,7 @@ endif
 
 # Generate RISC-V instruction definitions from riscv-opcodes
 # Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f rv_zifencei)
-RISCV_EXTS ?= rv_i rv32_i rv_m rv_f rv_zicsr rv_zifencei
+RISCV_EXTS ?= rv_i rv32_i rv_m rv_f rv_zicsr rv_zifencei rv_system
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
@@ -225,6 +225,8 @@ endif
 	@find output/sv-from-chisel -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/cpp_sim -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find chisel/src/main/scala/generated -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@# Clean codegen hash cache
+	@rm -rf .codegen-cache 2>/dev/null || true
 	@# Clean C++ simulation build artifacts
 	@rm -rf cpp_sim/build 2>/dev/null || true
 	@# Clean riscv-opcodes generated files

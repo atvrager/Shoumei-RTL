@@ -14,6 +14,7 @@ struct SpikeStepResult {
     uint32_t insn;      // Instruction word
     uint32_t rd;        // Destination register (0 if none)
     uint32_t rd_value;  // Written value (0 if rd==0)
+    uint32_t rs1_value; // Pre-step rs1 value (for load address detection)
     bool     trap;      // Exception occurred
     // F extension
     uint32_t frd;       // FP destination register (0 if none)
@@ -40,8 +41,30 @@ public:
     // Read FP register (as raw bits)
     uint32_t get_freg(int i) const;
 
-    // Get current PC
+    // Get/set current PC
     uint32_t get_pc() const;
+    void set_pc(uint32_t pc);
+
+    // Read instruction word at a given address
+    uint32_t get_insn_at(uint32_t addr) const;
+
+    // Force-unhalt after WFI (clears halted flag)
+    void unhalt();
+
+    // Save/restore full architectural state (PC + x0-x31 + f0-f31)
+    struct ArchState {
+        uint32_t pc;
+        uint32_t xregs[32];
+        uint64_t fregs[32];
+    };
+    ArchState save_state() const;
+    void restore_state(const ArchState& s);
+
+    // Timer: tick mtime, inject MIP.MTIP into Spike
+    void tick_timer();
+
+    // Set MIP.MTIP directly
+    void set_mip_mtip(bool val);
 
 private:
     std::string isa_storage_;  // keeps ISA string alive for cfg_->isa pointer
