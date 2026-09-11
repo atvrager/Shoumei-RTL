@@ -973,6 +973,7 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "  // --- Cache-line memory: 1-cycle read latency, combinational write ---\n" ++
   "  logic        mem_pending;\n" ++
   "  logic [255:0] mem_read_line;\n\n" ++
+  s!"  wire [31:0] mem_line_idx = addr_to_idx({clmp.reqAddrSignal});\n\n" ++
   s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
   s!"    if ({resetName}) begin\n" ++
   s!"      {clmp.respValidSignal} <= 1'b0;\n" ++
@@ -984,14 +985,26 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   s!"      if ({clmp.reqValidSignal}) begin\n" ++
   s!"        if ({clmp.reqWeSignal}) begin\n" ++
   "          // Write 8-word cache line (line-aligned address)\n" ++
-  s!"          for (int w = 0; w < 8; w++) begin\n" ++
-  s!"            mem[addr_to_idx({clmp.reqAddrSignal}) + w] <= {clmp.reqDataSignal}[w*32 +: 32];\n" ++
-  "          end\n" ++
+  s!"          mem[mem_line_idx + 0] <= {clmp.reqDataSignal}[31:0];\n" ++
+  s!"          mem[mem_line_idx + 1] <= {clmp.reqDataSignal}[63:32];\n" ++
+  s!"          mem[mem_line_idx + 2] <= {clmp.reqDataSignal}[95:64];\n" ++
+  s!"          mem[mem_line_idx + 3] <= {clmp.reqDataSignal}[127:96];\n" ++
+  s!"          mem[mem_line_idx + 4] <= {clmp.reqDataSignal}[159:128];\n" ++
+  s!"          mem[mem_line_idx + 5] <= {clmp.reqDataSignal}[191:160];\n" ++
+  s!"          mem[mem_line_idx + 6] <= {clmp.reqDataSignal}[223:192];\n" ++
+  s!"          mem[mem_line_idx + 7] <= {clmp.reqDataSignal}[255:224];\n" ++
   "        end else begin\n" ++
   "          // Read 8-word cache line (line-aligned address)\n" ++
-  s!"          for (int w = 0; w < 8; w++) begin\n" ++
-  s!"            mem_read_line[w*32 +: 32] <= mem[addr_to_idx({clmp.reqAddrSignal}) + w];\n" ++
-  "          end\n" ++
+  "          mem_read_line <= {\n" ++
+  "            mem[mem_line_idx + 7],\n" ++
+  "            mem[mem_line_idx + 6],\n" ++
+  "            mem[mem_line_idx + 5],\n" ++
+  "            mem[mem_line_idx + 4],\n" ++
+  "            mem[mem_line_idx + 3],\n" ++
+  "            mem[mem_line_idx + 2],\n" ++
+  "            mem[mem_line_idx + 1],\n" ++
+  "            mem[mem_line_idx + 0]\n" ++
+  "          };\n" ++
   "          mem_pending <= 1'b1;\n" ++
   "        end\n" ++
   "      end\n\n" ++
@@ -1325,15 +1338,15 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "        if (dut->o_rvvi_valid_0) " ++ lb ++ "\n" ++
   "            retired++;\n" ++
   "            if (verbose)\n" ++
-  "                printf(\"  RET0[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
-  "                    retired, dut->o_rvvi_pc_rdata_0, dut->o_rvvi_insn_0,\n" ++
+  "                printf(\"  RET0[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                    cycle, retired, dut->o_rvvi_pc_rdata_0, dut->o_rvvi_insn_0,\n" ++
   "                    dut->o_rvvi_rd_0, (int)dut->o_rvvi_rd_valid_0, dut->o_rvvi_rd_data_0);\n" ++
   "        " ++ rb ++ "\n" ++
   "        if (dut->o_rvvi_valid_1) " ++ lb ++ "\n" ++
   "            retired++;\n" ++
   "            if (verbose)\n" ++
-  "                printf(\"  RET1[%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
-  "                    retired, dut->o_rvvi_pc_rdata_1, dut->o_rvvi_insn_1,\n" ++
+  "                printf(\"  RET1[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                    cycle, retired, dut->o_rvvi_pc_rdata_1, dut->o_rvvi_insn_1,\n" ++
   "                    dut->o_rvvi_rd_1, (int)dut->o_rvvi_rd_valid_1, dut->o_rvvi_rd_data_1);\n" ++
   "        " ++ rb ++ "\n\n" ++
   (if !isCached then

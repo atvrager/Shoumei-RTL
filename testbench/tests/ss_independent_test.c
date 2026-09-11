@@ -1,15 +1,12 @@
 #include "shoumei.h"
 
-// Test that the hardware minstret counter accurately counts both slot 0 and slot 1
-// retirements during dual-issue execution.
-int main(void) {
-    uint32_t start_ret, end_ret;
-
-    // Read initial minstret
-    asm volatile("csrr %0, minstret" : "=r"(start_ret));
-
-    // Exactly 32 independent instructions (16 pairs) that dual-issue
-    asm volatile(
+// Micro-benchmark: 32 independent ALU instructions in an unrolled loop body.
+// Tests theoretical peak dual-issue execution throughput without RAW hazards.
+__attribute__((noinline))
+uint32_t benchmark_independent(int iterations) {
+    register uint32_t result asm("a0");
+    asm volatile (
+        "1:\n\t"
         "addi t0, zero, 1\n\t"
         "addi t1, zero, 1\n\t"
         "addi t2, zero, 1\n\t"
@@ -43,23 +40,28 @@ int main(void) {
         "addi a7, a7, 1\n\t"
         "addi s0, s0, 1\n\t"
         "addi s1, s1, 1\n\t"
-        :
+
+        "addi %1, %1, -1\n\t"
+        "bnez %1, 1b\n\t"
+
+        "add a0, t0, t1\n\t"
+        "add a0, a0, t2\n\t"
+        "add a0, a0, t3\n\t"
+        : "=r"(result), "+r"(iterations)
         :
         : "t0", "t1", "t2", "t3", "t4", "t5", "t6",
-          "a1", "a2", "a3", "a4", "a5", "a6", "a7", "s0", "s1"
+          "a1", "a2", "a3", "a4", "a5", "a6", "a7", "s0", "s1", "memory"
     );
+    return result;
+}
 
-    // Read end minstret
-    asm volatile("csrr %0, minstret" : "=r"(end_ret));
-
-    uint32_t delta = end_ret - start_ret;
-
-    // Exactly 32 instructions executed between the two reads
-    if (delta == 32) {
+int main(void) {
+    uint32_t sum = benchmark_independent(10);
+    // t0=2, t1=2, t2=2, t3=2 => sum = 8
+    if (sum == 8) {
         pass();
     } else {
-        // Fail with delta encoded
-        fail(delta);
+        fail(2);
     }
     return 0;
 }

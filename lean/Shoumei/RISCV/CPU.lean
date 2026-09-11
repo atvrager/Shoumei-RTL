@@ -7212,8 +7212,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (csr_write_val, csr_we_mstatus, csr_we_mepc, csr_we_mcause, [])
 
   -- CSR next-value logic (WARL masking, counter auto-increment)
-  -- commit_valid for minstret: count retires from slot 0 (TODO: count both slots)
-  let commit_valid_for_minstret := retire_valid_0
+  -- commit_valid for minstret: count retires from both slots (retire_valid_0 and retire_valid_1)
   let (csr_next_value_gates, csr_counter_instances) := mkCsrNextValue config enableF zero one
     merged_csr_write_val
     csr_we_mscratch csr_we_mcycle csr_we_mcycleh csr_we_minstret csr_we_minstreth
@@ -7223,7 +7222,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     mcause_reg mcause_next mtval_reg mtval_next mip_next
     mcycle_reg mcycle_next mcycleh_reg mcycleh_next
     minstret_reg minstret_next minstreth_reg minstreth_next
-    commit_valid_for_minstret
+    retire_valid_0 retire_valid_1
 
   -- CSR commit injection: since CSR is NOT in ROB (gated by not_csr_rename_en),
   -- we need to fake a commit to free the old phys reg and update freelist.

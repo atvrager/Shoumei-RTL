@@ -911,7 +911,7 @@ def mkCsrNextValue
     (mip_next : List Wire)
     (mcycle_reg mcycle_next mcycleh_reg mcycleh_next : List Wire)
     (minstret_reg minstret_next minstreth_reg minstreth_next : List Wire)
-    (commit_valid_muxed : Wire)
+    (commit_valid_0 : Wire) (commit_valid_1 : Wire := zero)
     : List Gate × List CircuitInstance :=
   let mscratch_next_gates :=
     if config.enableZicsr then
@@ -1023,15 +1023,23 @@ def mkCsrNextValue
       [("cin", mcycle_carry)] ++
       (mcycleh_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
-  let minstret_plus_1 := makeIndexedWires "minstret_p1" 32
+  let mins_inc_0 := Wire.mk "mins_inc_0"
+  let mins_inc_1 := Wire.mk "mins_inc_1"
+  let mins_inc_gates :=
+    if config.enableZicsr then
+      [Gate.mkXOR commit_valid_0 commit_valid_1 mins_inc_0,
+       Gate.mkAND commit_valid_0 commit_valid_1 mins_inc_1]
+    else []
+  let minstret_plus_c := makeIndexedWires "minstret_pc" 32
   let minstret_adder_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
     instName := "u_minstret_adder"
     portMap :=
       (minstret_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      ((List.range 32).map (fun i => (s!"b_{i}", zero))) ++
-      [("cin", commit_valid_muxed)] ++
-      (minstret_plus_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      ((List.range 32).map (fun i =>
+        (s!"b_{i}", if i == 0 then mins_inc_0 else if i == 1 then mins_inc_1 else zero))) ++
+      [("cin", zero)] ++
+      (minstret_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
   let minstret_carry := Wire.mk "minstret_carry"
   let minstreth_plus_c := makeIndexedWires "minstreth_pc" 32
@@ -1058,22 +1066,31 @@ def mkCsrNextValue
     else [Gate.mkBUF zero mcycle_carry]
   let minstret_carry_tmp := (List.range 31).map (fun i => Wire.mk s!"mins_ct_e{i}")
   let minstret_carry_pre := Wire.mk "minstret_carry_pre"
+  let minstret_carry_tmp2 := (List.range 30).map (fun i => Wire.mk s!"mins_ct2_e{i}")
+  let minstret_carry_pre2 := Wire.mk "minstret_carry_pre2"
   let minstret_carry_gates :=
     if config.enableZicsr then
+      -- bits 0..31 all 1 (0xFFFFFFFF)
       [Gate.mkAND minstret_reg[0]! minstret_reg[1]! minstret_carry_tmp[0]!] ++
       (List.range 30).map (fun i =>
         Gate.mkAND minstret_carry_tmp[i]! minstret_reg[i+2]! (if i < 29 then minstret_carry_tmp[i+1]! else minstret_carry_pre)) ++
-      [Gate.mkAND minstret_carry_pre commit_valid_muxed minstret_carry]
+      -- bits 1..31 all 1 (0xFFFFFFFE)
+      [Gate.mkAND minstret_reg[1]! minstret_reg[2]! minstret_carry_tmp2[0]!] ++
+      (List.range 29).map (fun i =>
+        Gate.mkAND minstret_carry_tmp2[i]! minstret_reg[i+3]! (if i < 28 then minstret_carry_tmp2[i+1]! else minstret_carry_pre2)) ++
+      [Gate.mkAND minstret_carry_pre commit_valid_0 (Wire.mk "mins_c1"),
+       Gate.mkAND minstret_carry_pre2 mins_inc_1 (Wire.mk "mins_c2"),
+       Gate.mkOR (Wire.mk "mins_c1") (Wire.mk "mins_c2") minstret_carry]
     else [Gate.mkBUF zero minstret_carry]
   let counter_next_gates :=
     if config.enableZicsr then
-      mcycle_carry_gates ++ minstret_carry_gates ++
+      mins_inc_gates ++ mcycle_carry_gates ++ minstret_carry_gates ++
       (List.range 32).map (fun i =>
         Gate.mkMUX mcycle_plus_1[i]! csr_write_val[i]! csr_we_mcycle mcycle_next[i]!) ++
       (List.range 32).map (fun i =>
         Gate.mkMUX mcycleh_plus_c[i]! csr_write_val[i]! csr_we_mcycleh mcycleh_next[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX minstret_plus_1[i]! csr_write_val[i]! csr_we_minstret minstret_next[i]!) ++
+        Gate.mkMUX minstret_plus_c[i]! csr_write_val[i]! csr_we_minstret minstret_next[i]!) ++
       (List.range 32).map (fun i =>
         Gate.mkMUX minstreth_plus_c[i]! csr_write_val[i]! csr_we_minstreth minstreth_next[i]!)
     else
