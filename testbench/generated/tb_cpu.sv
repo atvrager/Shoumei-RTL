@@ -147,6 +147,8 @@ module tb_cpu #(
   logic        mem_pending;
   logic [255:0] mem_read_line;
 
+  wire [31:0] mem_line_idx = addr_to_idx(mem_req_addr);
+
   always_ff @(posedge clk or posedge reset) begin
     if (reset) begin
       mem_resp_valid <= 1'b0;
@@ -159,14 +161,26 @@ module tb_cpu #(
       if (mem_req_valid) begin
         if (mem_req_we) begin
           // Write 8-word cache line (line-aligned address)
-          for (int w = 0; w < 8; w++) begin
-            mem[addr_to_idx(mem_req_addr) + w] <= mem_req_data[w*32 +: 32];
-          end
+          mem[mem_line_idx + 0] <= mem_req_data[31:0];
+          mem[mem_line_idx + 1] <= mem_req_data[63:32];
+          mem[mem_line_idx + 2] <= mem_req_data[95:64];
+          mem[mem_line_idx + 3] <= mem_req_data[127:96];
+          mem[mem_line_idx + 4] <= mem_req_data[159:128];
+          mem[mem_line_idx + 5] <= mem_req_data[191:160];
+          mem[mem_line_idx + 6] <= mem_req_data[223:192];
+          mem[mem_line_idx + 7] <= mem_req_data[255:224];
         end else begin
           // Read 8-word cache line (line-aligned address)
-          for (int w = 0; w < 8; w++) begin
-            mem_read_line[w*32 +: 32] <= mem[addr_to_idx(mem_req_addr) + w];
-          end
+          mem_read_line <= {
+            mem[mem_line_idx + 7],
+            mem[mem_line_idx + 6],
+            mem[mem_line_idx + 5],
+            mem[mem_line_idx + 4],
+            mem[mem_line_idx + 3],
+            mem[mem_line_idx + 2],
+            mem[mem_line_idx + 1],
+            mem[mem_line_idx + 0]
+          };
           mem_pending <= 1'b1;
         end
       end

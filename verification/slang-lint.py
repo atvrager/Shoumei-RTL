@@ -28,9 +28,13 @@ if not sv_files:
 print(f"slang lint: {len(sv_files)} files in {sv_dir}")
 
 # Parse all files together (so cross-module references resolve)
-tree = pyslang.SyntaxTree.fromFiles(sv_files)
+# Support both older (pyslang <11) and newer (pyslang >=11) module layouts
+SyntaxTree = getattr(pyslang, "SyntaxTree", getattr(getattr(pyslang, "syntax", None), "SyntaxTree", None))
+Compilation = getattr(pyslang, "Compilation", getattr(getattr(pyslang, "ast", None), "Compilation", None))
 
-compilation = pyslang.Compilation()
+tree = SyntaxTree.fromFiles(sv_files)
+
+compilation = Compilation()
 compilation.addSyntaxTree(tree)
 
 # Force full elaboration
