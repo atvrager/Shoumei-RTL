@@ -39,7 +39,10 @@ A complete pipeline from formal specification to verified, simulated RTL:
 
 ## Current Status
 
-**89 modules** -- 100% LEC coverage. Complete RV32IM out-of-order Tomasulo CPU.
+**Complete `RV32IMAF_Zicsr_Zifencei` out-of-order Tomasulo CPU.**
+- 100% LEC coverage on all verified modules.
+- Supported extensions: I, M (multiply/divide), A (LR/SC/AMO), F (single-precision floating point), Zicsr, Zifencei.
+- **Known Issue (Phase 0):** `FSW` intermittently enqueues `src2 = 0` into the store buffer due to a race in the FP rename / busy-table path (masked in previous test runs). Fixing this in an isolated PR is the first priority of Phase 0 before starting the D-extension work.
 
 | Category | Modules | Examples |
 |----------|---------|---------|
@@ -62,16 +65,16 @@ A complete pipeline from formal specification to verified, simulated RTL:
 |-------|-------------|--------|
 | 0 | Sequential DSL (DFF, Queue, Register) | Complete |
 | 1 | Arithmetic (Adder, Subtractor, Comparator, ALU32) | Complete |
-| 2 | RV32IM Decoder (48 instructions, all formats) | Complete |
+| 2 | RV32I Decoder (all formats) | Complete |
 | 3 | Register Renaming (RAT, FreeList, PhysRegFile) | Complete |
 | 4 | Reservation Stations (RS4, Decoupled interfaces) | Complete |
-| 5 | Execution Units (ALU, Multiplier, Divider, Memory) | Complete |
+| 5 | Execution Units (ALU, Multiplier, Divider, Memory, FPU) | Complete |
 | 6 | ROB & Retirement (16-entry, in-order commit) | Complete |
 | 7 | Memory System (LSU, StoreBuffer, TSO ordering) | Complete |
-| 8 | CPU Integration (behavioral + structural, 89 modules) | Complete |
-| 9 | Compliance Testing | Planned |
+| 8 | CPU Integration (RV32IMAF_Zicsr_Zifencei Tomasulo CPU) | Complete |
+| 9 | RV32G / RV64G Roadmap (D-extension, XLEN parameterization) | In Progress |
 
-See [docs/FEATURES.md](docs/FEATURES.md) for details on what's built, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.
+See [docs/roadmap-rv32g-rv64g.md](docs/roadmap-rv32g-rv64g.md) and [docs/rv32g-d-extension-plan.md](docs/rv32g-d-extension-plan.md) for roadmap and D-extension details.
 
 ## Quick Start
 
