@@ -15,7 +15,9 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, dual code generators produce SystemVerilog + Chisel, Yosys LEC verifies equivalence.
 
-**Current state:** 89 modules, 100% LEC coverage, complete RV32IM Tomasulo CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
+**Current state:** 89 modules, 100% LEC coverage, complete `RV32IMAF_Zicsr_Zifencei`
+Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
+[RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
 
 ## Key Toolchain Versions
 
@@ -54,6 +56,9 @@ make -C testbench run-cosim-arc     # RTL vs Spike lock-step cosim (Arcilator)
 ## Procedure: Adding a New Module
 
 This is the core workflow. Every module follows the same pattern. See [docs/adding-a-module.md](docs/adding-a-module.md) for the full walkthrough.
+
+For adding an **ISA extension** (new opcodes: decode -> classify -> execute -> verify),
+see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 
 ### Summary
 

@@ -28,6 +28,195 @@ Combinational      Sequential   Check deps       Lean proof
   SAT solve        equiv_induct   verification
 ```
 
+## Work at the netlist level
+
+When a verification problem looks hard, ask **what yosys would do**, and do that.
+yosys does not reason about RTL.  It elaborates every module down to a netlist of
+cells and wires, then reasons *structurally*: `equiv_make` matches wires and
+instances, `equiv_simple` propagates known-equal values through the structure,
+and only the leftover cones are handed to SAT or induction.
+
+The same bias belongs in this project:
+
+- **Prefer structural checks to semantic ones.** "Same instance tree, same cell
+  types, same connectivity" is O(size) and exact; SAT is exponential and
+  approximate.  Reach for the solver only where structure genuinely differs.
+- **Compare hierarchies as trees, not as flattened blobs.** Flattening converts a
+  linear structure into a quadratic one.  Inlining the full hierarchy produced an
+  **8.7 MB** netlist for `PhysRegFile_64x32` (from ~260 KB) and would produce
+  hundreds of megabytes for the CPU; keep module boundaries, because they *are*
+  the composition boundaries.
+- **Emit machine-checkable netlists**, not more RTL, when a second artifact is
+  wanted: JSON via `write_json`, btor2, aiger.  Netlists are the common language
+  of the tools, and text-level RTL differences are noise that must be normalised
+  away before anything can be compared.
+- **Treat routine escalation as a structural smell.** If a check needs induction
+  or SAT to pass every time, the structure has drifted.  Fix the structure, not
+  the solver budget.
+
+Corollary for the Chisel question: the replacement for a second *RTL* artifact is
+not another RTL emitter.  It is a **netlist-level comparison** -- either between
+the emitted design and the `Circuit` it came from, or between two emitted
+netlists.
+
+## The proof ladder
+
+**Every proof must be small and finish fast; bigger results come from composing
+them.** A single long-running proof is a liability: it hides regressions behind
+a timeout, cannot be parallelised, and sits on the critical path of every
+commit. Treat sub-modules as already-proven theorems and prove only the few new
+facts each level adds.
+
+| Level | What is proven | Cost | Mechanism |
+| :--- | :--- | :--- | :--- |
+| Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
+| Leaf translation | Lean SV == Chisel SV | seconds, cached | LEC, reads scoped to the leaf + transitive deps |
+| Composition | parent correct given children | seconds | Lean `CompositionalCert`, or LEC congruence |
+| Smoke | integration sanity | < 2 s | parallel sim / Spike cosim sweep |
+
+Rules that keep the ladder intact:
+
+1. **Prove against the spec, not against another implementation.** A leaf proof
+   that inspects emitted RTL is a translation check masquerading as a theorem;
+   it will be re-run forever and never composes.
+2. **Compose, do not re-flatten.** A composite module is discharged in one of
+   two ways, in order of preference:
+   - a **Lean composition proof** — the parent's spec follows from the
+     children's theorems plus glue reasoning (`CompositionalCert`;
+     see [Compositional Verification](#compositional-verification)); this is the
+     axiom/theorem ladder, and the leaf theorems are the axioms;
+   - **LEC congruence** — both netlists are emitted from the same `Circuit`, so
+     they are structurally identical modulo leaves. `equiv_simple` then
+     discharges the miter by structural hashing, with no induction and no SAT,
+     *because* the leaves are already proven. This is the two-tier pass in
+     `run-lec.sh`.
+3. **Escalation is the exception, not the default.** `equiv_induct` / `sat` run
+   only on points the structural pass leaves unproven. If they fire often, the
+   composition is drifting from the children's interfaces — fix that instead of
+   widening the timeout.
+4. **Tier the work.** Commit and PR gates run leaves + congruence + a
+   simulation/cosim smoke. A heavyweight sweep belongs in a nightly job, never
+   on the commit path.
+5. **Budget every proof.** If one module's check dominates the run, decompose
+   it. A check that cannot finish in seconds is a decomposition bug.
+
+### Shredding further: what atoms are still missing
+
+The ladder is only as granular as its atoms.  Today a module contributes a
+behavioural model, a structural `Circuit`, a handful of `native_decide`
+structural facts, and one LEC translation check -- and the *join* between
+behaviour and structure is asserted in prose.  `CompositionalCert.proofReference`
+is a `String`; `run-lec.sh` checks only that the dependencies were verified, so a
+cert can name a proof that does not exist or no longer holds.
+
+In order of leverage, the missing atoms are:
+
+1. **`Circuit` satisfies `Behavior` (per module).** There is no circuit
+   semantics in Lean, so nothing connects the structural `Circuit` to the
+   behavioural model (`CPUBehavioral.cpuStep` and friends).  LEC relates Lean SV
+   to Chisel SV; the theorems talk about the model; the two never meet.  Add an
+   evaluator (`eval : Circuit -> Wire -> Value`, gate by gate) and one
+   refinement theorem per leaf.  This is the atom that closes the gap.
+2. **One generic composition lemma.** Given `eval child = childBehavior` for
+   every child, a parent built from `CircuitInstance`s satisfies
+   `eval parent = parentBehavior`.  Prove this *once* over the hierarchical
+   evaluator; afterwards every parent's atom is a one-line instantiation of its
+   children's atoms.  This is what replaces flattened SAT/induction.
+3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`,
+   `mkMuxTree k w`, `mkRegisterN n`, `mkComparatorN n` should each carry a
+   semantic lemma (`eval (rca n) a b = a + b`).  Then adder -> ALU -> datapath is
+   a chain of one-liners instead of a per-instance decision procedure.
+4. **Machine-checked certificates.** Generate `CompositionalCert` entries *from*
+   the composition-lemma instantiations, so a certificate exists only if its
+   theorem type-checks.  `export_verification_certs` then cannot emit a dangling
+   reference.
+5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap;
+   add one semantic atom per opcode (`decode w = .X -> exec X s = spec X s`).
+   An extension then arrives as N small atoms -- exactly the shape wanted for
+   reviewing a new extension quickly.
+
+Antipatterns:
+
+- **A cert with no proof.** A `CompositionalCert` is a *reference to* a Lean
+  proof. Adding one to silence a slow module, without that proof existing,
+  converts a slow check into an unchecked assumption.
+- **Deepening the induction.** Raising `equiv_induct -seq N` until a
+  hierarchical module passes usually means the parent no longer matches the
+  proven child interfaces.
+- **A mtime-based cache.** Fresh checkouts and CI artifact downloads give every
+  file a new timestamp, so mtime stamps (and mtime "staleness" checks) silently
+  disable caching. Key on content.
+- **Reading the whole tree per module.** Every module re-parsing every file is
+  quadratic in the design size; scope reads to the module and its dependencies.
+
+Measured on this repository (6-core workstation): scoping LEC reads removed
+seconds of parsing per leaf module; the cache is content-addressed so unchanged
+modules are skipped across CI runs; and the 111-test simulation suite dropped
+from ~50 s to ~2 s under the parallel driver.
+
+## Replacing the Chisel cross-check
+
+Chisel is not how the design is verified.  It is the **second artifact** in a
+translation check: `LEC(Lean SV, Chisel SV)` catches bugs in the *emitters*.
+Design correctness comes from the Lean proofs, and it always did.  So Chisel can
+be removed iff two properties survive:
+
+1. an **independent second lowering** of every `Circuit`, and
+2. an independent check that the DSL's meaning is what we think it is.
+
+### Step 1 -- second lowering: use the Lean flat netlist
+
+`output/sv-netlist/` is already a second emitter of the same `Circuit`
+(`SystemVerilogNetlist.lean`), written in a completely different style: it inlines
+every instance down to gates instead of emitting a hierarchy.  It costs nothing
+extra to emit and needs no JVM.
+
+Feasibility is established: `LEC(ALU32 hierarchical, ALU32 netlist)` reports
+`SAT proof finished - no model found: SUCCESS` in ~3 s.
+
+Required work before it can replace Chisel for **all** modules:
+
+- **State completeness.** The netlist emitter is currently combinational-only:
+  `output/sv-netlist/RenameStage_W2.sv` contains zero `always` blocks and no
+  `clock`/`reset` ports -- DFF gates are dropped.  It must emit sequential state
+  (`always_ff`, or instances of a `DFlipFlop` module) and keep clock/reset in the
+  port list.
+- **Port identity.** The two emitters must agree on the port set, including bus
+  grouping (`rd_data3` vs `rd_data3_0..31`), so `equiv_make` can match ports by
+  name.
+
+Once those hold, `LEC(Lean SV, Lean netlist)` replaces `LEC(Lean SV, Chisel SV)`
+in every target.
+
+### Step 2 -- recover front-end independence
+
+Two Lean emitters share the Lean front-end, so a bug in `Circuit` construction is
+invisible to both.  Chisel's unique contribution was a *whole different
+toolchain's* reading of the DSL.  Recover that independence from:
+
+- **`Circuit` satisfies `Behavior` refinement atoms** (see *Shredding further*
+  above).  This is the check that the DSL's meaning is what we believe; LEC never
+  provided it.
+- **Differential simulation across independent engines**: Verilator (Lean SV),
+  Arcilator (a CIRCT lowering of the same Lean SV), and the generated C++ model,
+  all driven by the same ELF and compared on the retired trace and `tohost`.
+- **Independent parsers**: `read_slang` and `read_verilog -sv` on the same Lean
+  SV -- cheap, and it catches SV that is legal under only one reading.
+
+### Step 3 -- delete the pipeline
+
+Drop `make chisel`, the `scala-build` CI job, the `scalafmt` gate, the Chisel
+branch of `run-lec.sh`, and the `.scala` outputs.  Keep the Chisel generator
+reachable behind a flag for one release so any disagreement can be arbitrated
+before it goes away for good.
+
+### Interim
+
+`lake exe generate_all --no-chisel` skips the backend for day-to-day iteration
+(the RTL simulation, cosim and LEC paths all read the Lean SV).  The incremental
+cache is salted by the emitted format set, so a `--no-chisel` run can never be
+mistaken for a full one.
+
 ## Direct LEC
 
 ### How it works

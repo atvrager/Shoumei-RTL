@@ -35,6 +35,7 @@ structure ExtGroup where
 def extGroups : List ExtGroup :=
   [ { comment := "RV32I Base Integer Instructions", exts := ["rv_i", "rv32_i"] },
     { comment := "M Extension: Integer Multiply/Divide", exts := ["rv_m"] },
+    { comment := "A Extension: Atomic Memory Operations", exts := ["rv_a"] },
     { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f"] },
     { comment := "Privileged: Machine-Mode Instructions", exts := ["rv_system"] } ]
 

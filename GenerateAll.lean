@@ -202,7 +202,7 @@ def allCircuits : List Circuit := [
   mkRegisterNHierarchical 66,  -- Phase 7: Store buffer entry payload (32+32+2)
   mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
   mkRegister91Hierarchical,
-  mkRegisterNHierarchical 94,  -- RS entry with 7-bit tags (1+6+7+1+7+32+1+7+32)
+  mkRegisterNHierarchical 95,  -- RS entry: 7-bit opcode + 7-bit tags (1+7+7+1+7+32+1+7+32)
 
   -- Phase 3b: Flushable Queue Components
   mkQueueRAMInit 64 6 (fun i => i + 32),
@@ -282,11 +282,17 @@ def allCircuits : List Circuit := [
 
 def main (args : List String) : IO Unit := do
   let force := args.contains "--force"
+  -- --no-chisel skips the Chisel backend (JVM + Scala elaboration): the RTL
+  -- simulation, cosim and LEC paths all read the Lean SV, so day-to-day
+  -- iteration does not need it.
+  let emitChisel := !args.contains "--no-chisel"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if force then
     IO.println "  (--force: regenerating all circuits)"
+  if !emitChisel then
+    IO.println "  (--no-chisel: skipping Chisel backend)"
   IO.println ""
 
   -- Initialize output directories
@@ -304,7 +310,7 @@ def main (args : List String) : IO Unit := do
         isUpToDate c.name h
       else pure false
     else pure false
-    writeCircuit c allCircuits force hashMap
+    writeCircuit c allCircuits force hashMap emitChisel
     if wasCached then skipped := skipped + 1
     count := count + 1
 
@@ -320,6 +326,13 @@ def main (args : List String) : IO Unit := do
       IO.println result
   let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
   Shoumei.RISCV.generateDecoders defs
+
+  -- Prune stale generated files (removed/renamed modules) so they don't
+  -- linger in the build filelists.
+  IO.println ""
+  IO.println "Pruning stale generated outputs..."
+  pruneStaleOutputs (allCircuits.map (·.name) ++
+    ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"])
 
   -- Generate testbenches
   IO.println ""
@@ -366,10 +379,11 @@ def main (args : List String) : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  let fmtTag := if emitChisel then "all formats" else "all formats except Chisel (--no-chisel)"
   if skipped > 0 then
     IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
   else
-    IO.println s!"✓ Generated {count} circuits (all formats)"
+    IO.println s!"✓ Generated {count} circuits ({fmtTag})"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  C++ Sim: output/cpp_sim/"

@@ -66,7 +66,8 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
                    $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf)
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32ua-p-*.elf)
 
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself
@@ -95,7 +96,7 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
 # Arcilator compiles only the CPU design modules (not the SV testbench).
 # The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
-ARC_TOP_MODULE := CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
+ARC_TOP_MODULE := CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
 
 # Step 0: Preprocess design SV to convert async resets to sync resets
 # circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks
@@ -153,59 +154,18 @@ $(ARC_COSIM_BIN): $(BUILD_DIR)/arc/cpu.o $(BUILD_DIR)/arc/cpu_arc.h $(TB_DIR)/co
 # Run all tests with arcilator
 run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results-arc.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(ARC_SIM_BIN) +elf=$$elf +timeout=200000 2>&1); \
-		rc=$$?; \
-		cycles=$$(echo "$$result" | grep -oP 'Cycle:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
-		if [ "$$rc" = "0" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-arc.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results-arc.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (arcilator)"; \
-	echo "CSV: $(PROJ_ROOT)/output/test-results-arc.csv"; \
-	[ $$fail -eq 0 ]
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(ARC_SIM_BIN) --jobs $(shell nproc) --default-timeout 200000 \
+	    --csv $(PROJ_ROOT)/output/test-results-arc.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 # Run cosim with arcilator
 run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results-arc.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		timeout=3000; \
-		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
-		result=$$($(ARC_COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
-		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
-		if echo "$$result" | grep -q "COSIM PASS"; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results-arc.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results-arc.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (cosim-arc)"; \
-	echo "CSV: $(PROJ_ROOT)/output/cosim-results-arc.csv"; \
-	[ $$fail -eq 0 ]
+	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(ARC_COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --csv $(PROJ_ROOT)/output/cosim-results-arc.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 # ==========================================================================
 # Verilator targets
@@ -271,55 +231,18 @@ riscv-tests:
 	$(MAKE) -C $(TB_DIR)/riscv-tests
 
 run-riscv-tests: $(SIM_BIN) riscv-tests
-	@pass=0; fail=0; total=0; \
-	for elf in $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		result=$$($(SIM_BIN) +elf=$$elf +timeout=3000 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "riscv-tests: $$pass/$$total passed, $$fail failed"; \
-	[ $$fail -eq 0 ]
+	@mkdir -p $(PROJ_ROOT)/output
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
+	    --csv $(PROJ_ROOT)/output/test-results.csv \
+	    $(RISCV_TEST_GLOBS)
 
 run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/test-results.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		tout=5000; \
-		case $$name in freertos_demo.elf) tout=200000;; timer_irq_test.elf) tout=10000;; jalr_a0_irq_test.elf) tout=10000;; esac; \
-		result=$$($(SIM_BIN) +elf=$$elf +timeout=$$tout 2>&1); \
-		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
-		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP '^Total retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP '^IPC:\s+\K[0-9.]+'); \
-		if [ "$$tohost" = "0x00000001" ]; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (tohost=$$tohost, cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/test-results.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed"; \
-	echo "CSV: $(PROJ_ROOT)/output/test-results.csv"; \
-	[ $$fail -eq 0 ]
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
+	    --timeout 'freertos_demo.elf=200000' --timeout 'timer_irq_test.elf=10000' \
+	    --timeout 'jalr_a0_irq_test.elf=10000' --timeout 'rv32ua-p-lrsc.elf=60000' \
+	    --csv $(PROJ_ROOT)/output/test-results.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
@@ -339,31 +262,11 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 
 run-cosim: $(COSIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@echo "test,status,cycles,retired,ipc" > $(PROJ_ROOT)/output/cosim-results.csv; \
-	pass=0; fail=0; total=0; \
-	for elf in $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS); do \
-		total=$$((total+1)); \
-		name=$$(basename $$elf); \
-		timeout=3000; \
-		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
-		result=$$($(COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
-		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
-		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
-		ipc=$$(echo "$$result" | grep -oP 'IPC:\s+\K[0-9.]+'); \
-		if echo "$$result" | grep -q "COSIM PASS"; then \
-			echo "PASS  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,PASS,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results.csv; \
-			pass=$$((pass+1)); \
-		else \
-			echo "FAIL  $$name  (cycles $$cycles, retired $$ret, IPC $$ipc)"; \
-			echo "$$name,FAIL,$$cycles,$$ret,$$ipc" >> $(PROJ_ROOT)/output/cosim-results.csv; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ""; \
-	echo "$$pass/$$total passed, $$fail failed (cosim)"; \
-	echo "CSV: $(PROJ_ROOT)/output/cosim-results.csv"; \
-	[ $$fail -eq 0 ]
+	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark

@@ -10,6 +10,7 @@ LDFLAGS := -T shoumei.ld
 # Per-ISA arch flags (Zifencei needed for fence.i instruction)
 CFLAGS_IM  := $(CFLAGS_BASE) -march=rv32im_zifencei
 CFLAGS_IMF := $(CFLAGS_BASE) -march=rv32imf_zifencei
+CFLAGS_IMA := $(CFLAGS_BASE) -march=rv32ima_zifencei
 
 # All pure RV32I user-mode integer tests (no ma_data)
 # fence_i excluded: test uses self-modifying code which requires unified I/D memory;
@@ -29,9 +30,13 @@ RV32UM_TESTS := mul mulh mulhsu mulhu div divu rem remu
 # RV32F single-precision floating-point tests
 RV32UF_TESTS := fadd fdiv fclass fcmp fcvt fcvt_w fmadd fmin ldst move recoding
 
+# RV32A atomic tests
+RV32UA_TESTS := amoadd_w amoand_w amomax_w amomaxu_w amomin_w amominu_w amoor_w amoswap_w amoxor_w lrsc
+
 ELFS := $(addprefix rv32ui-p-,$(addsuffix .elf,$(RV32UI_TESTS))) \
         $(addprefix rv32um-p-,$(addsuffix .elf,$(RV32UM_TESTS))) \
-        $(addprefix rv32uf-p-,$(addsuffix .elf,$(RV32UF_TESTS)))
+        $(addprefix rv32uf-p-,$(addsuffix .elf,$(RV32UF_TESTS))) \
+        $(addprefix rv32ua-p-,$(addsuffix .elf,$(RV32UA_TESTS)))
 
 all: $(ELFS)
 
@@ -43,6 +48,9 @@ rv32um-p-%.elf: $(RISCV_TESTS)/isa/rv32um/%.S shoumei.ld riscv_test.h
 
 rv32uf-p-%.elf: $(RISCV_TESTS)/isa/rv32uf/%.S shoumei.ld riscv_test.h
 	$(CC) $(CFLAGS_IMF) $(LDFLAGS) $< -o $@
+
+rv32ua-p-%.elf: $(RISCV_TESTS)/isa/rv32ua/%.S shoumei.ld riscv_test.h
+	$(CC) $(CFLAGS_IMA) $(LDFLAGS) $< -o $@
 
 clean:
 	rm -f *.elf
