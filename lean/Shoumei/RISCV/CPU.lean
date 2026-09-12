@@ -44,10 +44,11 @@ set_option maxHeartbeats 800000
 def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableD := config.enableD
   let sbFwdPipelined := config.sbFwdPipelineStages > 0
   let oi := config.opcodeIndex
-  -- Opcode width: 7 bits when F extension (>64 instructions), 6 bits otherwise
-  let opcodeWidth := if enableF then 7 else 6
+  -- Opcode width: 7 bits when F/D extension (>64 instructions), 6 bits otherwise
+  let opcodeWidth := if enableF || enableD then 7 else 6
   -- Global signals
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -337,7 +338,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- === DECODER ===
   let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
+    if enableD && enableM then "RV32GDecoder"
+    else if enableF && enableM then "RV32IMFDecoder"
     else if enableF then "RV32IFDecoder"
     else if enableM then "RV32IMDecoder"
     else "RV32IDecoder"
@@ -3164,9 +3166,10 @@ Extends mkCPU to 2 instructions per cycle throughout the pipeline. -/
 def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableD := config.enableD
   let enableA := config.enableA
   let oi := config.opcodeIndex
-  let opcodeWidth := if enableF then 7 else 6
+  let opcodeWidth := if enableF || enableD then 7 else 6
 
   -- Global signals
   let clock := Wire.mk "clock"
@@ -3924,7 +3927,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   -- === DECODE STAGE (W2) ===
   let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
+    if enableD && enableM then "RV32GDecoder"
+    else if enableF && enableM then "RV32IMFDecoder"
     else if enableF then "RV32IFDecoder"
     else if enableM then "RV32IMDecoder"
     else "RV32IDecoder"
@@ -5102,13 +5106,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_rs2_phys := CPU.makeIndexedWires "fp_rs2_phys" 6
   let fp_rd_phys := CPU.makeIndexedWires "fp_rd_phys" 6
   let fp_old_rd_phys := CPU.makeIndexedWires "fp_old_rd_phys" 6
-  let fp_rs1_data := CPU.makeIndexedWires "fp_rs1_data" 32
-  let fp_rs2_data := CPU.makeIndexedWires "fp_rs2_data" 32
+  let fp_rs1_data := CPU.makeIndexedWires "fp_rs1_data" config.flen
+  let fp_rs2_data := CPU.makeIndexedWires "fp_rs2_data" config.flen
   let fp_rename_valid := Wire.mk "fp_rename_valid"
   let fp_rename_stall := Wire.mk "fp_rename_stall"
-  let fp_rs3_data := CPU.makeIndexedWires "fp_rs3_data" 32
+  let fp_rs3_data := CPU.makeIndexedWires "fp_rs3_data" config.flen
   let fp_rs3_phys := CPU.makeIndexedWires "fp_rs3_phys" 6
-  let fp_rvvi_rd_data := CPU.makeIndexedWires "fp_rvvi_rd_data" 32
+  let fp_rvvi_rd_data := CPU.makeIndexedWires "fp_rvvi_rd_data" config.flen
 
   -- CDB routing: split CDB writes between INT and FP PRFs (2-channel CDB)
   -- We register is_fp per CDB channel and use it to gate PRF writes
@@ -5125,7 +5129,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let cdb_valid_fp_prf := Wire.mk "cdb_valid_fp_prf"
   -- Merged FP CDB tag/data: MUX between ch0 and ch1 (ch0 priority)
   let cdb_tag_fp := CPU.makeIndexedWires "cdb_tag_fp" 6
-  let cdb_data_fp := CPU.makeIndexedWires "cdb_data_fp" 32
+  let cdb_data_fp := CPU.makeIndexedWires "cdb_data_fp" config.flen
   let fp_cdb_merge_gates :=
     if enableF then
       [Gate.mkAND cdb_valid_0 cdb_is_fp_0 cdb_valid_fp_ch0,
@@ -5135,10 +5139,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i =>
         Gate.mkMUX cdb_tag_1[i]! cdb_tag_0[i]! cdb_valid_fp_ch0 cdb_tag_fp[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! cdb_valid_fp_ch0 cdb_data_fp[i]!)
+        Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! cdb_valid_fp_ch0 cdb_data_fp[i]!) ++
+      (List.range (config.flen - 32)).map (fun i =>
+        -- NaN-boxing: single-precision values written to 64-bit FP register have upper 32 bits set to 1
+        Gate.mkBUF one cdb_data_fp[32 + i]!)
     else
       (List.range 6).map (fun i => Gate.mkBUF zero cdb_tag_fp[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF zero cdb_data_fp[i]!) ++
+      (List.range config.flen).map (fun i => Gate.mkBUF zero cdb_data_fp[i]!) ++
       [Gate.mkBUF zero cdb_valid_fp_prf]
 
   -- INT PRF: gate by NOT is_fp on each channel
@@ -5250,12 +5257,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_rename_unused_rs2_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rs2_1_{i}"
   let fp_rename_unused_rs3_1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rs3_1_{i}"
   let fp_rename_unused_rd1 := (List.range 6).map fun i => Wire.mk s!"fp_ren_unused_rd1_{i}"
-  let fp_rename_unused_d1 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d1_{i}"
-  let fp_rename_unused_d2 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d2_{i}"
-  let fp_rename_unused_d5 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d5_{i}"
-  let fp_rename_unused_d6 := (List.range 32).map fun i => Wire.mk s!"fp_ren_unused_d6_{i}"
+  let fp_rename_unused_d1 := (List.range config.flen).map fun i => Wire.mk s!"fp_ren_unused_d1_{i}"
+  let fp_rename_unused_d2 := (List.range config.flen).map fun i => Wire.mk s!"fp_ren_unused_d2_{i}"
+  let fp_rename_unused_d5 := (List.range config.flen).map fun i => Wire.mk s!"fp_ren_unused_d5_{i}"
+  let fp_rename_unused_d6 := (List.range config.flen).map fun i => Wire.mk s!"fp_ren_unused_d6_{i}"
   let fp_rename_inst : CircuitInstance := {
-    moduleName := "RenameStage_W2"
+    moduleName := if config.flen == 32 then "RenameStage_W2" else s!"RenameStage_W2_{config.flen}"
     instName := "u_fp_rename"
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
@@ -5294,7 +5301,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "cdb_tag_0" cdb_tag_fp ++ bundledPorts "cdb_data_0" cdb_data_fp ++
       [("cdb_valid_1", zero)] ++
       ((List.range 6).map fun i => (s!"cdb_tag_1_{i}", zero)) ++
-      ((List.range 32).map fun i => (s!"cdb_data_1_{i}", zero)) ++
+      ((List.range config.flen).map fun i => (s!"cdb_data_1_{i}", zero)) ++
       -- Retire (free list enqueue)
       [("retire_valid", fp_commit_merged)] ++
       bundledPorts "retire_tag" fp_commit_oldPhysRd ++

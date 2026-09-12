@@ -61,9 +61,9 @@ def genCppSimDecoderCase (instrDef : InstructionDef) (isFirst : Bool) : String :
 private def hasMCpp (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
-/-- Check if decoder includes F-extension instructions (C++ simulation) -/
+/-- Check if decoder includes F or D extension instructions (C++ simulation) -/
 private def hasFCpp (defs : List InstructionDef) : Bool :=
-  defs.any (fun d => d.extension.any (· == "rv_f"))
+  defs.any (fun d => d.extension.any (fun ext => ext == "rv_f" || ext == "rv_d"))
 
 /-- Generate individual bool* port declarations for a multi-bit signal -/
 private def genBoolPtrPorts (baseName : String) (width : Nat) : String :=

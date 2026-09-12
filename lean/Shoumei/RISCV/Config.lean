@@ -34,6 +34,8 @@ structure CPUConfig where
   enableA : Bool := false
   /-- F extension: single-precision floating-point (IEEE 754) -/
   enableF : Bool := false
+  /-- D extension: double-precision floating-point (IEEE 754) -/
+  enableD : Bool := false
   /-- C extension: compressed instructions (future) -/
   enableC : Bool := false
   /-- Zicsr extension: CSR instructions (CSRRW/S/C, CSRRWI/SI/CI, mcycle, minstret, mscratch) -/
@@ -127,6 +129,11 @@ def CPUConfig.cacheString (c : CPUConfig) : String :=
   let l2Bytes := c.l2Sets * c.l2Ways * lineBytes
   s!"L1I{l1iBytes}B_L1D{l1dBytes}B_L2{l2Bytes}B"
 
+/-- Floating-point register width in bits (FLEN): 64 if D enabled or RV64, else 32.
+    FLEN is a computed projection of the configuration, not a stored field. -/
+def CPUConfig.flen (c : CPUConfig) : Nat :=
+  if c.enableD || c.xlen == 64 then 64 else 32
+
 /-- Map config flags to riscv-opcodes extension strings.
     This bridges CPUConfig and the JSON-based instruction definitions
     from third_party/riscv-opcodes/instr_dict.json. -/
@@ -135,6 +142,7 @@ def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
   (if config.enableM then ["rv_m"] else []) ++
   (if config.enableA then ["rv_a"] else []) ++
   (if config.enableF then ["rv_f"] else []) ++
+  (if config.enableD then ["rv_d"] else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
   (if config.enableZifencei then ["rv_zifencei"] else []) ++
@@ -188,8 +196,8 @@ def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr
 /-- RV32IMA configuration (M + A + Zicsr + Zifencei) -/
 def rv32imaConfig : CPUConfig := { enableM := true, enableA := true, enableZicsr := true, enableZifencei := true }
 
-/-- RV32G configuration (RV32IMAFD in the spec; D not yet implemented → IMAF) -/
-def rv32gConfig : CPUConfig := { enableM := true, enableA := true, enableF := true, enableZicsr := true, enableZifencei := true }
+/-- RV32G configuration (RV32IMAFD + Zicsr + Zifencei) -/
+def rv32gConfig : CPUConfig := { enableM := true, enableA := true, enableF := true, enableD := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMF with microcoded trap entry sequencer -/
 def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
@@ -231,11 +239,12 @@ def CPUConfig.isaString (cfg : CPUConfig) : String :=
   let mExt := if cfg.enableM then "M" else ""
   let aExt := if cfg.enableA then "A" else ""
   let fExt := if cfg.enableF then "F" else ""
+  let dExt := if cfg.enableD then "D" else ""
   let cExt := if cfg.enableC then "C" else ""
   let zicsr := if cfg.enableZicsr then "_Zicsr" else ""
   let zifencei := if cfg.enableZifencei then "_Zifencei" else ""
   let ucode := if cfg.useMicrocode then "_Microcoded" else ""
-  base ++ mExt ++ aExt ++ fExt ++ cExt ++ zicsr ++ zifencei ++ ucode
+  base ++ mExt ++ aExt ++ fExt ++ dExt ++ cExt ++ zicsr ++ zifencei ++ ucode
 
 /-- Full CPU module name including ISA string and optional cache suffix -/
 def CPUConfig.fullName (c : CPUConfig) : String :=
@@ -248,10 +257,11 @@ def CPUConfig.spikeIsa (c : CPUConfig) : String :=
   let m := if c.enableM then "m" else ""
   let a := if c.enableA then "a" else ""
   let f := if c.enableF then "f" else ""
+  let d := if c.enableD then "d" else ""
   let c_ := if c.enableC then "c" else ""
   let zicsr := if c.enableZicsr then "_zicsr" else ""
   let zifencei := if c.enableZifencei then "_zifencei" else ""
-  base ++ m ++ a ++ f ++ c_ ++ zicsr ++ zifencei
+  base ++ m ++ a ++ f ++ d ++ c_ ++ zicsr ++ zifencei
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.

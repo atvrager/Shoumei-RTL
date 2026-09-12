@@ -19,34 +19,42 @@ def hasMExtension (defs : List InstructionDef) : Bool :=
 def hasFExtension (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
-/-- Filter to only base I extension instructions (no M, no F) -/
+/-- Check if any instruction belongs to the D extension -/
+def hasDExtension (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_d"))
+
+/-- Filter to only base I extension instructions (no M, no F, no D) -/
 def filterBaseI (defs : List InstructionDef) : List InstructionDef :=
-  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m" && ext != "rv_f"))
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m" && ext != "rv_f" && ext != "rv_d"))
 
-/-- Filter to I + M (no F) -/
+/-- Filter to I + M (no F, no D) -/
 def filterIM (defs : List InstructionDef) : List InstructionDef :=
-  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_f"))
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_f" && ext != "rv_d"))
 
-/-- Filter to I + F (no M) -/
+/-- Filter to I + F (no M, no D) -/
 def filterIF (defs : List InstructionDef) : List InstructionDef :=
-  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m"))
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_m" && ext != "rv_d"))
 
-/-- Check if instruction is an F-extension instruction -/
-private def isFExtInstruction (d : InstructionDef) : Bool :=
-  d.extension.any (· == "rv_f")
+/-- Filter to I + M + F (no D) -/
+def filterIMF (defs : List InstructionDef) : List InstructionDef :=
+  defs.filter (fun d => d.extension.all (fun ext => ext != "rv_d"))
 
-/-- Sort instructions: I+M first (preserving order), then F.
+/-- Check if instruction is an FP-extension instruction (F or D) -/
+private def isFpExtInstruction (d : InstructionDef) : Bool :=
+  d.extension.any (fun ext => ext == "rv_f" || ext == "rv_d")
+
+/-- Sort instructions: Integer first (preserving order), then FP (F and D).
     This ensures integer opcodes get low enum positions (< 64)
     so the existing 6-bit integer RS can handle them. -/
 def sortIMFirst (defs : List InstructionDef) : List InstructionDef :=
-  let im := defs.filter (fun d => !isFExtInstruction d)
-  let f := defs.filter isFExtInstruction
+  let im := defs.filter (fun d => !isFpExtInstruction d)
+  let f := defs.filter isFpExtInstruction
   im ++ f
 
-/-- Sort IF instructions: I first (preserving order), then F. -/
+/-- Sort IF instructions: I first (preserving order), then FP. -/
 def sortIFirst (defs : List InstructionDef) : List InstructionDef :=
-  let i := defs.filter (fun d => !isFExtInstruction d)
-  let f := defs.filter isFExtInstruction
+  let i := defs.filter (fun d => !isFpExtInstruction d)
+  let f := defs.filter isFpExtInstruction
   i ++ f
 
 private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit := do
@@ -76,6 +84,7 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
 
   let hasM := hasMExtension defs
   let hasF := hasFExtension defs
+  let hasD := hasDExtension defs
 
   -- Generate RV32IM decoder if M extension instructions are present
   if hasM then
@@ -91,12 +100,19 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
     writeDecoder ifDefs "RV32IFDecoder"
     IO.println "✓ RV32IFDecoder complete"
 
-  -- Generate RV32IMF decoder if both M+F present (all instructions, sorted I+M first)
+  -- Generate RV32IMF decoder if both M+F present (all instructions except D, sorted I+M first)
   if hasM && hasF then
-    let imfDefs := sortIMFirst defs
+    let imfDefs := sortIMFirst (filterIMF defs)
     IO.println s!"\n── RV32IMFDecoder ({imfDefs.length} instructions) ──"
     writeDecoder imfDefs "RV32IMFDecoder"
     IO.println "✓ RV32IMFDecoder complete"
+
+  -- Generate RV32G decoder if M+F+D present (all instructions, sorted I+M first)
+  if hasM && hasF && hasD then
+    let gDefs := sortIMFirst defs
+    IO.println s!"\n── RV32GDecoder ({gDefs.length} instructions) ──"
+    writeDecoder gDefs "RV32GDecoder"
+    IO.println "✓ RV32GDecoder complete"
 
   IO.println "\n==================================================\n"
   IO.println "Code generation summary:"
@@ -106,7 +122,9 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
   if hasF then
     IO.println s!"  - RV32IFDecoder: {(filterIF defs).length} instructions (SV + C++)"
   if hasM && hasF then
-    IO.println s!"  - RV32IMFDecoder: {defs.length} instructions (SV + C++)"
+    IO.println s!"  - RV32IMFDecoder: {(filterIMF defs).length} instructions (SV + C++)"
+  if hasM && hasF && hasD then
+    IO.println s!"  - RV32GDecoder:   {defs.length} instructions (SV + C++)"
   IO.println "\n✓ Code generation complete!"
 
 end Shoumei.RISCV

@@ -56,6 +56,7 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   | .SB | .SH | .SW => .Memory
   -- Memory (FP loads/stores go to Memory unit like integer loads/stores)
   | .FLW | .FSW => if config.enableF then .Memory else .Illegal
+  | .FLD | .FSD => if config.enableD then .Memory else .Illegal
   -- A extension: atomics route to the Memory unit (LSU handles LR/SC/AMO)
   | .LR_W | .SC_W
   | .AMOADD_W | .AMOSWAP_W | .AMOXOR_W | .AMOAND_W | .AMOOR_W
@@ -73,6 +74,18 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   -- F extension (integer → FP conversions, FP move)
   | .FCVT_S_W | .FCVT_S_WU | .FMV_W_X =>
       if config.enableF then .FPExec else .Illegal
+  -- D extension (floating-point arithmetic)
+  | .FADD_D | .FSUB_D | .FMUL_D | .FDIV_D | .FSQRT_D
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
+  | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D =>
+      if config.enableD then .FPExec else .Illegal
+  -- D extension (FP compare/classify/convert → integer or SP result)
+  | .FEQ_D | .FLT_D | .FLE_D | .FCLASS_D
+  | .FCVT_W_D | .FCVT_WU_D | .FCVT_S_D =>
+      if config.enableD then .FPExec else .Illegal
+  -- D extension (integer / SP → DP conversions)
+  | .FCVT_D_W | .FCVT_D_WU | .FCVT_D_S =>
+      if config.enableD then .FPExec else .Illegal
   -- M extension (multiply/divide)
   | .MUL | .MULH | .MULHSU | .MULHU
   | .DIV | .DIVU | .REM | .REMU =>

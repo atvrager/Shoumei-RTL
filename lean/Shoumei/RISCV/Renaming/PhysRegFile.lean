@@ -352,6 +352,9 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
 /-- Physical Register File with 64 registers × 32 bits, superscalar (dual write ports) -/
 def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32 2
 
+/-- Physical Register File with 64 registers × 64 bits, superscalar (dual write ports) -/
+def mkPhysRegFile64x64 : Circuit := mkPhysRegFile 64 64 2
+
 /-- Small Physical Register File for proof testing (4 registers × 8 bits) -/
 def mkPhysRegFile4x8 : Circuit := mkPhysRegFile 4 8 1
 

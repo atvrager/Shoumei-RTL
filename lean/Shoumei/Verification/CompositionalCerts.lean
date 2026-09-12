@@ -40,6 +40,18 @@ def mux8x32_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
 }
 
+/-- Mux8x64: 8:1 mux, 64-bit, hierarchical (2× Mux4x64 + select buffers) -/
+def mux8x64_cert : CompositionalCert := {
+  moduleName := "Mux8x64"
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
+/-- Mux64x64: 64:1 mux, 64-bit, hierarchical (9× Mux8x64 + select buffers) -/
+def mux64x64_cert : CompositionalCert := {
+  moduleName := "Mux64x64"
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
 /-! ## Sequential Circuits -/
 
 /-- Register91 = Register64 + Register16 + Register8 + Register2 + Register1 -/
@@ -206,6 +218,12 @@ def physregfile_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
 }
 
+/-- PhysRegFile_64x64: Physical register file (64 registers × 64 bits) -/
+def physregfile_64x64_cert : CompositionalCert := {
+  moduleName := "PhysRegFile_64x64"
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
 /-- RAT_32x6: Register alias table (32 architectural → 64 physical) -/
 def rat_cert : CompositionalCert := {
   moduleName := "RAT_32x6"
@@ -327,6 +345,11 @@ def rv32imfDecoder_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.DecoderProofs"
 }
 
+def rv32gDecoder_cert : CompositionalCert := {
+  moduleName := "RV32GDecoder"
+  proofReference := "Shoumei.RISCV.DecoderProofs"
+}
+
 /-! ## F-Extension -/
 
 /-- FPAdder: IEEE 754 SP adder (sequential, pipeline DFFs cause induction failure) -/
@@ -377,6 +400,11 @@ def renameStage_w2_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
+/-- RenameStage_W2_64: Composite rename stage for dual issue (64-bit FP domain) -/
+def renameStage_w2_64_cert : CompositionalCert := {
+  moduleName := "RenameStage_W2_64"
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
 /-- MicrocodeSequencer: ROM-driven µop sequencer for CSR/FENCE.I -/
 def microcodeSequencer_cert : CompositionalCert := {
   moduleName := "MicrocodeSequencer"
@@ -395,8 +423,10 @@ def cpu_microcoded_cert : CompositionalCert := {
 def allCerts : List CompositionalCert := [
   -- Combinational (hierarchical muxes)
   mux64x32_cert,
+  mux64x64_cert,
   mux64x6_cert,
   mux8x32_cert,
+  mux8x64_cert,
   -- Sequential
   register24_cert,
   register66_cert,
@@ -426,6 +456,7 @@ def allCerts : List CompositionalCert := [
   queuePointer_6_cert,
   -- Renaming
   physregfile_cert,
+  physregfile_64x64_cert,
   rat_cert,
   freelist_cert,
   bitmapFreelist_w2_cert,
@@ -449,6 +480,7 @@ def allCerts : List CompositionalCert := [
   -- Decoders
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,
+  rv32gDecoder_cert,
   -- F-Extension
   fpMisc_cert,
   fpAdder_cert,
@@ -459,6 +491,7 @@ def allCerts : List CompositionalCert := [
   fpExecUnit_cert,
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
+  renameStage_w2_64_cert,
   -- Zifencei variants
   -- Microcode
   microcodeSequencer_cert,

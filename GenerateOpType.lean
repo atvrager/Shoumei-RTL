@@ -37,6 +37,7 @@ def extGroups : List ExtGroup :=
     { comment := "M Extension: Integer Multiply/Divide", exts := ["rv_m"] },
     { comment := "A Extension: Atomic Memory Operations", exts := ["rv_a"] },
     { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f"] },
+    { comment := "D Extension: Double-Precision Floating-Point", exts := ["rv_d"] },
     { comment := "Privileged: Machine-Mode Instructions", exts := ["rv_system"] } ]
 
 def parseHex (s : String) : Option UInt32 :=
@@ -157,8 +158,11 @@ def main : IO Unit := do
   out := out ++ "  ["
   let mut idx := 0
   for n in allNames do
-    if idx > 0 then out := out ++ ", "
-    if idx % 8 == 0 && idx > 0 then out := out ++ "\n   "
+    if idx > 0 then
+      if idx % 8 == 0 then
+        out := out ++ ",\n   "
+      else
+        out := out ++ ", "
     out := out ++ s!".{n}"
     idx := idx + 1
   out := out ++ "]\n\n"
@@ -230,15 +234,15 @@ def main : IO Unit := do
     out := out ++ s!"  | .{joined} => [\"{extKey}\"]\n"
   out := out ++ "\n"
 
-  -- isFpGroup: true for F extension opcodes
+  -- isFpGroup: true for F and D extension opcodes
   out := out ++ "/-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/\n"
   out := out ++ "def OpType.isFpGroup : OpType → Bool\n"
-  match extToNames.find? (fun (k, _) => k == "rv_f") with
-  | some (_, fpNames) =>
-    let sorted := fpNames.toArray.qsort (· < ·) |>.toList
-    let joined := " | .".intercalate sorted
+  let fpNames := extToNames.filterMap fun (k, ns) =>
+    if k == "rv_f" || k == "rv_d" then some ns else none
+  let allFp := fpNames.flatten.toArray.qsort (· < ·) |>.toList
+  if !allFp.isEmpty then
+    let joined := " | .".intercalate allFp
     out := out ++ s!"  | .{joined} => true\n"
-  | none => pure ()
   out := out ++ "  | _ => false\n\n"
 
   out := out ++ "end Shoumei.RISCV\n"
