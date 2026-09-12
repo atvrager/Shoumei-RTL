@@ -8,6 +8,30 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Change Detection
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Decide whether this change touches anything the heavy jobs care about.
+      # Deliberately NOT `paths-ignore` on the workflow trigger: that skips the
+      # whole run, so required checks never report and the PR can never merge.
+      # Gating inside the graph keeps every check reporting (as skipped).
+      - name: Detect code changes
+        id: detect
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          if git diff --name-only "$base"...HEAD | grep -qE '^(lean/|testbench/|verification/|chisel/|physical/|\.github/|Makefile|Generate.*\.lean|lakefile\.lean|lean-toolchain)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changed files:"; git diff --name-only "$base"...HEAD | head -20
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -70,6 +94,8 @@ jobs:
           test -f LICENSE
 
   proof-coverage:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Proof Coverage
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +117,8 @@ jobs:
           retention-days: 90
 
   lean-build:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Lean Build
     runs-on: ubuntu-latest
     steps:
@@ -146,6 +174,8 @@ jobs:
         run: lake exe generate_shoumei
 
   scala-build:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Scala Build
     runs-on: ubuntu-latest
     steps:
@@ -502,9 +532,12 @@ jobs:
             "${{ needs.smoke-test.result }}" \
           )
           for r in "${results[@]}"; do
-            if [ "$r" != "success" ]; then
-              echo "One or more jobs failed or were cancelled"
-              exit 1
-            fi
+            case "$r" in
+              success|skipped) ;;  # skipped = gated out by Change Detection
+              *)
+                echo "One or more jobs failed or were cancelled: $r"
+                exit 1
+                ;;
+            esac
           done
-          echo "All 8 leaf jobs passed"
+          echo "All required leaf jobs passed (or were skipped for a docs-only change)"
