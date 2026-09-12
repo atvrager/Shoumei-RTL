@@ -111,39 +111,24 @@ open Shoumei.RISCV.CPUTestbench
     the circuit registry above.  Named once because the stale-output pruner and
     the certificate registry must both agree with what is actually emitted. -/
 def riscvDecoderModules : List String :=
-  ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder", "RV32GDecoder"]
+  ["RV32IMFDecoder"]
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
   -- Phase 0: Foundation
-  fullAdderCircuit,
   dff,
-  mkQueue1StructuralComplete 8,
-  mkQueue1StructuralComplete 32,
-  mkQueue1StructuralComplete 39,  -- CDB result FIFOs (6 tag + 32 data + 1 is_fp_rd)
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
   mkQueue1FlowStructural 72,     -- INT/Branch CDB FIFO (39 + 32 redirect_target + 1 mispredicted)
 
   -- Phase 1: Arithmetic
-  mkRippleCarryAdder4,
-  mkRippleCarryAdder8,
-  mkRippleCarryAdder32,
   mkKoggeStoneAdder32,
-  mkSubtractor4,
-  mkSubtractor8,
   mkSubtractor32,
-  mkComparator4,
-  mkComparator8,
   mkComparator32,
-  mkLogicUnit4,
-  mkLogicUnit8,
   mkLogicUnit32,
-  mkShifter4,
   mkShifter32,
   mkALU32,
 
   -- Phase 2: Decoders and Muxes
-  mkDecoder 1,
   mkDecoder 2,
   mkDecoder 3,
   mkDecoder 4,   -- Phase 6: ROB allocation decode (4→16 one-hot)
@@ -152,51 +137,24 @@ def allCircuits : List Circuit := [
   mkComparatorN 6,
   mkEqualityComparatorN 6,
   mkEqualityComparator32,  -- Phase 7: Store buffer address matching (XOR + OR-tree)
-  mkMux2x8,
-  mkMux4x8,
-  mkMuxTree 4 6,
   mkMuxTree 4 32,
-  mkMuxTree 4 64,  -- Building block for Mux8x64
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
-  mkMux8x6,       -- Building block for hierarchical 64:1 muxes
   mkMux8x32Hierarchical, -- Hierarchical 8:1 (2× Mux4x32 + sel buffers)
-  mkMux8x64Hierarchical, -- Hierarchical 8:1 (2× Mux4x64 + sel buffers)
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
-  mkMux64x64Hierarchical,  -- Hierarchical version (9 instances of Mux8x64)
-  mkMux64x6Hierarchical,   -- Hierarchical version (9 instances instead of 1512 gates)
   mkPriorityArbiter2,
-  mkPriorityArbiter4,
   mkPriorityArbiter8,
   mkPriorityArbiter64,  -- Bitmap free list allocation
   mkOneHotEncoder64,    -- Bitmap free list one-hot to binary
   mkPopcount8,  -- Phase 7: Store buffer flush recovery
 
   -- Phase 3: Queues and Registers
-  mkQueueNStructural 2 8,
-  mkQueueNStructural 4 8,
-  mkQueueNStructural 64 6,
-  mkQueueNStructural 64 32,
-  mkQueueRAM 2 8,
-  mkQueueRAM 4 8,
-  mkQueueRAM 64 6,
-  mkQueueRAM 64 32,
-  mkQueuePointer 1,
-  mkQueuePointer 2,
   mkQueuePointer 3,  -- Phase 7: Store buffer head pointer
   mkQueuePointerLoadable 3,  -- Phase 7: Store buffer tail pointer (loadable for flush)
-  mkQueuePointerLoadable 6,  -- Free list head pointer (loadable for flush)
-  mkQueuePointer 4,  -- Phase 6: ROB head/tail pointers
-  mkQueuePointer 6,
-  mkQueueCounterUpDown 2,
-  mkQueueCounterUpDown 3,
-  mkQueueCounterUpDown 4,  -- Phase 7: Store buffer entry count (0..8)
   mkQueueCounterLoadable 4,  -- Phase 7: Store buffer loadable count (flush recovery)
-  mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
-  mkQueueCounterUpDown 7,
   -- Power-of-2 register building blocks
   mkRegisterN 1,
   mkRegisterN 2,
@@ -208,25 +166,13 @@ def allCircuits : List Circuit := [
   mkRegisterN 32,
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
-  mkRegisterNHierarchical 24,  -- Phase 6: ROB entry storage (16+8)
   mkRegisterNHierarchical 66,  -- Phase 7: Store buffer entry payload (32+32+2)
-  mkRegisterNHierarchical 68,  -- Phase 7: Store buffer entry storage (64+4)
-  mkRegister91Hierarchical,
   mkRegisterNHierarchical 95,  -- RS entry: 7-bit opcode + 7-bit tags (1+7+7+1+7+32+1+7+32)
-
-  -- Phase 3b: Flushable Queue Components
-  mkQueueRAMInit 64 6 (fun i => i + 32),
-  mkQueuePointerInit 6 32,
-  mkQueueCounterLoadableInit 7 32,
-  mkQueueNFlushable 64 6 32 (fun i => i + 32),
 
   -- Phase 4: RISC-V Components
   mkRAT64,
-  mkFreeList64,
-  mkFreeList64Flushable,
   mkBitmapFreeList64_W2,
   mkPhysRegFile64,
-  mkPhysRegFile64x64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
@@ -235,7 +181,6 @@ def allCircuits : List Circuit := [
   mkReservationStationFromConfig defaultCPUConfig,
 
   -- M-Extension (conditional on CPUConfig.enableM)
-  mkRippleCarryAdder64,
   mkKoggeStoneAdder64,
   csaCompressor64,
   mkPipelinedMultiplier,
@@ -243,8 +188,6 @@ def allCircuits : List Circuit := [
   mkMulDivExecUnit,
 
   -- F-Extension: FPU building blocks
-  fpUnpackCircuit,
-  fpPackCircuit,
   fpMiscCircuit,
   fpAdderCircuit,
   fpMultiplierCircuit,
@@ -255,7 +198,6 @@ def allCircuits : List Circuit := [
 
   -- Phase 6: Retirement
   mkROB16,
-  mkQueue16x32,  -- Phase 8: RVVI PC/instruction queues
   mkQueue16x32_DualPort,  -- W=2 dual-port RVVI PC/instruction queues
 
   -- Phase 7: Memory
@@ -265,12 +207,10 @@ def allCircuits : List Circuit := [
   -- Phase 7b: Cache Hierarchy Building Blocks
   mkRegisterN 24,   -- L1I/L2 tag storage (24-bit tags)
   mkRegisterN 25,   -- L1D tag storage (25-bit tags)
-  mkRegisterNHierarchical 256,  -- Cache line data storage (8 words)
   mkEqualityComparatorN 24,     -- L1I/L2 tag comparison
   mkEqualityComparatorN 25,     -- L1D tag comparison
   mkMuxTree 4 25,    -- L1D tag set mux (4 sets × 25-bit tags)
   mkMuxTree 8 24,    -- L1I/L2 tag set mux (8 sets × 24-bit tags)
-  mkMuxTree 4 32,    -- L1D data set mux (4 sets × 32-bit words)
 
   -- Phase 7b: Cache Hierarchy Modules
   mkL1ICache,
@@ -283,11 +223,9 @@ def allCircuits : List Circuit := [
   microcodeSequencerCircuit,
 
   -- Phase 8: Top-Level Integration
-  cdbMuxW2,
   cdbMuxFW2,
   mkFetchStage,
   mkRenameStage,
-  mkRenameStage 64,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]
@@ -342,7 +280,7 @@ def main (args : List String) : IO Unit := do
     unless result.isEmpty do
       IO.println result
   let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
-  Shoumei.RISCV.generateDecoders defs
+  Shoumei.RISCV.generateDecoders defs riscvDecoderModules
 
   -- Prune stale generated files (removed/renamed modules) so they don't
   -- linger in the build filelists.

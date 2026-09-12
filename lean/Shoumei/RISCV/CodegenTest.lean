@@ -62,8 +62,8 @@ private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit 
   writeCppSimDecoderHeader defs s!"output/cpp_sim/{name}.h" name
   writeCppSimDecoderImpl defs s!"output/cpp_sim/{name}.cpp" name
 
-/-- Generate all decoder variants from instruction definitions -/
-def generateDecoders (defs : List InstructionDef) : IO Unit := do
+/-- Generate decoder variants from instruction definitions -/
+def generateDecoders (defs : List InstructionDef) (targetNames : List String := ["RV32IMFDecoder"]) : IO Unit := do
   IO.println "==================================================\n"
   IO.println "Generating RISC-V Decoder Code\n"
   IO.println "==================================================\n"
@@ -77,54 +77,40 @@ def generateDecoders (defs : List InstructionDef) : IO Unit := do
 
   let baseDefs := filterBaseI defs
 
-  -- Always generate RV32I (base) decoder
-  IO.println s!"\n── RV32IDecoder ({baseDefs.length} instructions) ──"
-  writeDecoder baseDefs "RV32IDecoder"
-  IO.println "✓ RV32IDecoder complete"
+  if targetNames.contains "RV32IDecoder" then
+    IO.println s!"\n── RV32IDecoder ({baseDefs.length} instructions) ──"
+    writeDecoder baseDefs "RV32IDecoder"
+    IO.println "✓ RV32IDecoder complete"
 
   let hasM := hasMExtension defs
   let hasF := hasFExtension defs
   let hasD := hasDExtension defs
 
-  -- Generate RV32IM decoder if M extension instructions are present
-  if hasM then
+  if targetNames.contains "RV32IMDecoder" && hasM then
     let imDefs := filterIM defs
     IO.println s!"\n── RV32IMDecoder ({imDefs.length} instructions) ──"
     writeDecoder imDefs "RV32IMDecoder"
     IO.println "✓ RV32IMDecoder complete"
 
-  -- Generate RV32IFDecoder if F extension instructions are present
-  if hasF then
+  if targetNames.contains "RV32IFDecoder" && hasF then
     let ifDefs := sortIFirst (filterIF defs)
     IO.println s!"\n── RV32IFDecoder ({ifDefs.length} instructions) ──"
     writeDecoder ifDefs "RV32IFDecoder"
     IO.println "✓ RV32IFDecoder complete"
 
-  -- Generate RV32IMF decoder if both M+F present (all instructions except D, sorted I+M first)
-  if hasM && hasF then
+  if targetNames.contains "RV32IMFDecoder" && hasM && hasF then
     let imfDefs := sortIMFirst (filterIMF defs)
     IO.println s!"\n── RV32IMFDecoder ({imfDefs.length} instructions) ──"
     writeDecoder imfDefs "RV32IMFDecoder"
     IO.println "✓ RV32IMFDecoder complete"
 
-  -- Generate RV32G decoder if M+F+D present (all instructions, sorted I+M first)
-  if hasM && hasF && hasD then
+  if targetNames.contains "RV32GDecoder" && hasM && hasF && hasD then
     let gDefs := sortIMFirst defs
     IO.println s!"\n── RV32GDecoder ({gDefs.length} instructions) ──"
     writeDecoder gDefs "RV32GDecoder"
     IO.println "✓ RV32GDecoder complete"
 
   IO.println "\n==================================================\n"
-  IO.println "Code generation summary:"
-  IO.println s!"  - RV32IDecoder:  {baseDefs.length} instructions (SV + C++)"
-  if hasM then
-    IO.println s!"  - RV32IMDecoder: {(filterIM defs).length} instructions (SV + C++)"
-  if hasF then
-    IO.println s!"  - RV32IFDecoder: {(filterIF defs).length} instructions (SV + C++)"
-  if hasM && hasF then
-    IO.println s!"  - RV32IMFDecoder: {(filterIMF defs).length} instructions (SV + C++)"
-  if hasM && hasF && hasD then
-    IO.println s!"  - RV32GDecoder:   {defs.length} instructions (SV + C++)"
-  IO.println "\n✓ Code generation complete!"
+  IO.println "✓ Code generation complete!"
 
 end Shoumei.RISCV

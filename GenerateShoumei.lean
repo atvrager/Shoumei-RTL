@@ -238,10 +238,7 @@ def allCircuits : List Circuit := [
   -- Phase 8: Top-Level Integration
   mkFetchStage,
   mkRenameStage,
-  mkCPU_RV32I,
-  mkCPU_RV32IM,
-  mkCPU_RV32IF,
-  mkCPU_RV32IMF
+  CPU_W2.mkCPU_W2 defaultCPUConfig
 ]
 
 def main : IO Unit := do
