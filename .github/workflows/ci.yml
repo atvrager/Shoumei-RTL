@@ -93,6 +93,13 @@ jobs:
           test -f COMMANDS.md
           test -f LICENSE
 
+      # The project map is generated from `lean/` and is part of the review
+      # surface, so it must not drift from the source it describes.
+      - name: Project map is current
+        run: |
+          python3 scripts/gen-project-map.py
+          git diff --exit-code -- docs/project-map.md
+
   proof-coverage:
     needs: [changes]
     if: needs.changes.outputs.code == 'true'
