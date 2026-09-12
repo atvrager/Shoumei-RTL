@@ -41,7 +41,7 @@ def genOpTypeEnum (defs : List InstructionDef) (moduleName : String := "RV32IDec
   let pfx := moduleName.toLower ++ "_"
   let opcodes := defs.map (fun instrDef => pfx ++ sanitizeSVIdentifier instrDef.name)
   let enumItems := String.intercalate (",\n    ") opcodes
-  let width := if defs.length > 64 then 7 else 6
+  let width := InstructionDef.optypeBits defs
   s!"typedef enum logic [{width - 1}:0] \{\n    " ++ enumItems ++ "\n} " ++ moduleName.toLower ++ "_optype_t;"
 
 /-- Generate immediate extraction logic for one type -/
@@ -126,7 +126,7 @@ s!"//===========================================================================
 s!"
 module {moduleName} (
     input  logic [31:0] io_instr,      // 32-bit instruction word
-    output logic [{if hasF then "6" else "5"}:0]  io_optype,     // Decoded operation type
+    output logic [{InstructionDef.optypeBits defs - 1}:0]  io_optype,     // Decoded operation type
     output logic [4:0]  io_rd,         // Destination register
     output logic [4:0]  io_rs1,        // Source register 1
     output logic [4:0]  io_rs2,        // Source register 2
