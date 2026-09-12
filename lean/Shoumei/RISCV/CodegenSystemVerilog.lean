@@ -74,6 +74,10 @@ private def hasM (defs : List InstructionDef) : Bool :=
 private def hasF (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_f"))
 
+/-- Check if decoder includes A-extension instructions -/
+private def hasA (defs : List InstructionDef) : Bool :=
+  defs.any (fun d => d.extension.any (· == "rv_a"))
+
 /-- Generate complete SystemVerilog decoder module -/
 def genSystemVerilogDecoder (defs : List InstructionDef) (moduleName : String := "RV32IDecoder") : String :=
   let header :=
@@ -96,6 +100,7 @@ s!"//===========================================================================
 
   let hasM := hasM defs
   let hasF := hasF defs
+  let hasA := hasA defs
   let hasTrailingPorts := hasM || hasF
 
   let muldivComma := if hasF then "," else ""
@@ -132,6 +137,7 @@ module {moduleName} (
     output logic        io_is_memory,  // Dispatch to load/store unit
     output logic        io_is_branch,  // Dispatch to branch unit
     output logic        io_is_store,   // Instruction is a store (SB/SH/SW/FSW)
+    output logic        io_is_atomic,  // Instruction is an atomic (LR/SC/AMO)
     output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ "
 );
 
@@ -190,6 +196,16 @@ always_comb begin
   -- Store classification: include FSW
   let fpStore := if hasF then
     " || (io_instr[6:0] == 7'b0100111)" else ""
+
+  -- Atomic classification (A extension): AMO major opcode 0101111 (LR.W/SC.W/AMO*.W)
+  let atomicMemory := if hasA then
+    "\n    || (io_instr[6:0] == 7'b0101111)   // AMO (LR.W/SC.W/AMO*.W)" else ""
+  let atomicClassify := if hasA then
+    "\n\n// Atomic (A extension): AMO major opcode 0101111" ++
+    "\nassign io_is_atomic = io_valid && (io_instr[6:0] == 7'b0101111);"
+  else
+    "\n\n// Atomic (A extension disabled)" ++
+    "\nassign io_is_atomic = 1'b0;"
 
   -- has_rd: FSW doesn't write rd; FP ops that write FP rd still have has_rd=1 (for ROB tracking)
   -- Add FSW to exclusion list
@@ -298,10 +314,10 @@ assign io_is_integer = io_valid && (
     (io_instr[6:0] == 7'b0010111)     // AUIPC
 );
 
-// Memory: LOAD (0000011) and STORE (0100011)" ++ (if hasF then " + FLW (0000111) + FSW (0100111)" else "") ++ "
+// Memory: LOAD (0000011) and STORE (0100011)" ++ (if hasF then " + FLW (0000111) + FSW (0100111)" else "") ++ (if hasA then " + AMO (0101111)" else "") ++ "
 assign io_is_memory = io_valid && (
     (io_instr[6:0] == 7'b0000011) ||  // LOAD (LB, LH, LW, LBU, LHU)
-    (io_instr[6:0] == 7'b0100011)" ++ fpMemory ++ "     // STORE (SB, SH, SW)
+    (io_instr[6:0] == 7'b0100011)" ++ fpMemory ++ atomicMemory ++ "     // STORE (SB, SH, SW)
 );
 
 // Branch: BRANCH (1100011), JAL (1101111), JALR (1100111)
@@ -316,7 +332,7 @@ assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011" ++ fpStore ++ ");
 
 // Use immediate: all instructions except R-type (OP = 0110011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
 assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
-muldivClassify ++ fpClassify ++ "
+muldivClassify ++ fpClassify ++ atomicClassify ++ "
 
 endmodule
 "

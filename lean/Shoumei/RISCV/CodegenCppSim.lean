@@ -127,6 +127,7 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "  bool* io_is_memory;",
     "  bool* io_is_branch;",
     "  bool* io_is_store;",
+    "  bool* io_is_atomic;",
     "  bool* io_use_imm;" ++ muldivPort ++ fpPorts,
     "",
     "  void comb_logic();",
@@ -195,6 +196,14 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
 
   -- FP memory opcodes
   let fpMemoryCheck := if hasF then " || (opcode == 0x07) || (opcode == 0x27)" else ""
+
+  -- A extension: atomic memory opcodes (opcode 0x2F = 0101111)
+  let hasA := defs.any (fun d => d.extension.any (· == "rv_a"))
+  let atomicMemoryCheck := if hasA then " || (opcode == 0x2f)" else ""
+  let atomicClassify := if hasA then
+    "  *io_is_atomic = valid && (opcode == 0x2f);"
+  else
+    "  *io_is_atomic = false;"
 
   -- FP opcodes excluded from use_imm
   let fpUseImmExclude := if hasF then
@@ -320,9 +329,10 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     else
     "    is_rtype ||",
     "    (opcode == 0x13) || (opcode == 0x37) || (opcode == 0x17));",
-    "  *io_is_memory = valid && ((opcode == 0x03) || (opcode == 0x23)" ++ fpMemoryCheck ++ ");",
+    "  *io_is_memory = valid && ((opcode == 0x03) || (opcode == 0x23)" ++ fpMemoryCheck ++ atomicMemoryCheck ++ ");",
     "  *io_is_branch = valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67));",
     "  *io_is_store = valid && (opcode == 0x23)" ++ fpStoreCheck ++ ";",
+    atomicClassify,
     "  *io_use_imm = valid && (opcode != 0x33) && (opcode != 0x63)" ++ fpUseImmExclude ++ ";",
     if hasMCpp defs then
     "  *io_is_muldiv = valid && is_mext;"
