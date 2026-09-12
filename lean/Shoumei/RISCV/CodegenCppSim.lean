@@ -82,7 +82,7 @@ def genCppSimDecoderHeader (defs : List InstructionDef) (moduleName : String := 
     "\n  bool* io_is_muldiv;" else ""
 
   let hasF := hasFCpp defs
-  let optypeWidth := if hasF then 7 else 6
+  let optypeWidth := InstructionDef.optypeBits defs
 
   let fpPorts := if hasF then
     "\n" ++
@@ -168,7 +168,7 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     String.intercalate "\n" ((List.range width).map fun i =>
       s!"  *{name}_{i} = ({varName} >> {i}) & 1;")
 
-  let optypeWidth := if hasF then 7 else 6
+  let optypeWidth := InstructionDef.optypeBits defs
 
   let rs3RmExtract := if hasF then
     "  uint32_t rs3 = (instr >> 27) & 0x1f;\n" ++
