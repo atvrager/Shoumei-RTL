@@ -11,10 +11,12 @@ All certificates are exported via ExportVerificationCerts.lean.
 -/
 
 import Shoumei.Verification.Compositional
+import Shoumei.RISCV.Config
 
 namespace Shoumei.Verification.CompositionalCerts
 
 open Shoumei.Verification
+open Shoumei.RISCV
 
 /-! ## Combinational Circuits (Large Hierarchical Muxes) -/
 
@@ -389,10 +391,12 @@ def cachedCPU_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
-/-- CachedCPU (Microcoded): Microcoded CPU + MemoryHierarchy composition -/
+/-- CachedCPU (Microcoded): Microcoded CPU + MemoryHierarchy composition.
+    Both the name and its dependency come from the config, so the rename that
+    turns on the A extension moves this certificate with them. -/
 def cachedCPU_microcoded_cert : CompositionalCert := {
-  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B"
-  dependencies := ["CPU_RV32IMF_Zicsr_Zifencei_Microcoded", "MemoryHierarchy"]
+  moduleName := Shoumei.RISCV.defaultCPUConfig.fullName
+  dependencies := [s!"CPU_{Shoumei.RISCV.defaultCPUConfig.isaString}", "MemoryHierarchy"]
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
@@ -590,9 +594,10 @@ def cpu_rv32imf_zicsr_zifencei_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CPUProofs"
 }
 
-/-- CPU_RV32IMF_Zicsr_Zifencei_Microcoded: W=2 dual-issue microcoded CPU -/
-def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
-  moduleName := "CPU_RV32IMF_Zicsr_Zifencei_Microcoded"
+/-- W=2 dual-issue microcoded CPU.  The module name is the config's, so enabling
+    or renaming an extension renames the certificate with the circuit. -/
+def cpu_microcoded_cert : CompositionalCert := {
+  moduleName := s!"CPU_{Shoumei.RISCV.defaultCPUConfig.isaString}"
   dependencies := [
     -- FP execution pipeline
     "FPExecUnit", "FPMisc", "FPAdder", "FPMultiplier", "FPFMA", "FPDivider", "FPSqrt",
@@ -699,7 +704,7 @@ def allCerts : List CompositionalCert := [
   cpu_rv32if_zicsr_zifencei_cert,
   cpu_rv32imf_zicsr_zifencei_cert,
   -- Microcoded variant
-  cpu_rv32imf_zicsr_zifencei_microcoded_cert,
+  cpu_microcoded_cert,
   -- Microcoded cached variant
   cachedCPU_microcoded_cert
 ]
