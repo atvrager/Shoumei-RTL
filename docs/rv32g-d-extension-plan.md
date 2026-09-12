@@ -67,9 +67,11 @@ XLEN is a parameter, not a fork (see
 [roadmap-rv32g-rv64g.md](roadmap-rv32g-rv64g.md)).  The D work is therefore done
 in a width-parameterised style so RV64G inherits it unchanged:
 
-- Introduce the FP register width as a parameter (FLEN = 64) rather than writing
-  literal 64s, exactly as the circuit library already parameterises
-  `mkSubtractorN`, `mkRegisterN`, `mkMuxTree`, `mkComparatorN`.
+- Introduce the FP register width as a parameter rather than writing literal
+  64s, exactly as the circuit library already parameterises `mkSubtractorN`,
+  `mkRegisterN`, `mkMuxTree`, `mkComparatorN`.  The parameter defaults from the
+  configuration -- `flen = if enableD || xlen == 64 then 64 else 32` -- so the
+  F-only 32-bit register file stays expressible while both G targets get 64.
 - Add **no new hard-coded data widths** to the RTL composition.  The 91 existing
   hard-wired 32-bit data buses are the RV64G workstream; do not add to them.
 - Keep the widening of the FP result path, the store-buffer payload and the

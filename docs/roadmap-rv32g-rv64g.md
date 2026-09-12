@@ -55,8 +55,23 @@ Three widths describe the machine. All are parameters; none is a fork.
 | Parameter | Value | Rationale |
 | :--- | :--- | :--- |
 | **XLEN** | 32 or 64 | the two configurations differ by this and nothing else |
-| **FLEN** | 64 | D requires 64-bit FP registers; with D in both targets, FLEN is fixed at 64 (the F-only 32-bit register file disappears) |
+| **FLEN** | 32 or 64 | the FP register width. Both G targets use 64 (D present); 32 is the F-only case. A parameter, not a constant — derivation below |
 | **VLEN** | 128 | matches the existing `Zve32x` work on the `vector` branch (`vlenb = 0x10`); ELEN = 32 |
+
+**FLEN is derived, not fixed.** The specification ties the FP register width to
+the rest of the configuration, so the parameter carries a default that callers
+may override:
+
+```
+flen = if enableD || xlen == 64 then 64 else 32
+```
+
+- RV32 + F only -> 32
+- RV32 + D, or any RV64 FP configuration -> 64 (on RV64 even F-only requires
+  64-bit FP registers, because single-precision values are NaN-boxed)
+
+Both G targets therefore use 64, while an F-only configuration stays expressible
+instead of being deleted.
 
 Vector is **not part of G** and is off for both target configurations. It is a
 separate axis of the same `CPUConfig`, so the parameterisation below is what
