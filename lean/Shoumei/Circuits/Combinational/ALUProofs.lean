@@ -18,10 +18,11 @@ theorem alu32_structure :
   native_decide
 
 -- Verify total gate count is reasonable
--- Expected: ~1500-2000 gates (RCA + Sub + Cmp + Logic + Shift + MUX overhead)
+-- mkALU32 is hierarchical: the arithmetic/logic/shift units are CircuitInstances,
+-- so `.gates` holds only the glue logic (comparison zero-extension + MUX trees).
+-- 256 = 2 × 32 zero-extension BUFs + 6 × 32 selection MUXes.
 theorem alu32_gate_count_reasonable :
-  mkALU32.gates.length > 1000 ∧
-  mkALU32.gates.length < 3000 := by
+  mkALU32.gates.length = 256 := by
   native_decide
 
 end Shoumei.Circuits.Combinational

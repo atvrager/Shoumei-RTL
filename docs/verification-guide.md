@@ -1,289 +1,156 @@
 # Verification Guide
 
-How equivalence checking works in Shoumei RTL, including direct LEC, compositional verification, and troubleshooting.
+How Shoumei RTL convinces itself the design is correct: Lean proofs, the compositional
+certificate registry, and the elaboration and simulation checks that run on the emitted
+SystemVerilog.
 
 ## Verification Architecture
 
-The verification pipeline has two complementary methods:
+Design correctness comes from the Lean proofs. The emitted SystemVerilog is one
+translation of the proven `Circuit`, so there is no second RTL design to compare
+against; what is checked is that the translation elaborates and runs.
 
-1. **Direct LEC** -- Yosys compares Lean SV vs Chisel SV at the gate level
-2. **Compositional Verification** -- Lean proofs + verified building blocks
-
-Both feed into the same script (`verification/run-lec.sh`) which reports unified coverage.
+| Layer | What it establishes | Mechanism |
+| :--- | :--- | :--- |
+| Leaf behaviour | module meets its spec | Lean theorem (`native_decide`, `simp`) |
+| Composition | parent correct given children | Lean `CompositionalCert` |
+| Registry | every certificate matches an emitted circuit | `lake exe generate_all --export-certs` |
+| Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `python3 verification/slang-lint.py`, `make systemverilog` (Yosys read/hierarchy) |
+| Integration | the design runs correctly | Verilator simulation, Spike cosimulation |
 
 ```
-                         run-lec.sh
-                             |
-              +--------------+--------------+
-              |                             |
-        Direct LEC                   Compositional
-    (Yosys SAT/induction)         (Lean certificates)
-              |                             |
-    +---------+---------+          +--------+--------+
-    |                   |          |                 |
-Combinational      Sequential   Check deps       Lean proof
-  (CEC)              (SEC)      all verified     reference
-    |                   |          |
-  miter +          equiv_make +   dependency
-  SAT solve        equiv_induct   verification
+                        Lean proofs
+                   (leaf + composition)
+                            |
+                  certificate registry
+              (validated by generate_all)
+                            |
+                 emitted SystemVerilog
+                            |
+              +-------------+-------------+
+              |                           |
+      slang / Yosys                 Verilator / Spike
+       elaboration                sim + lock-step cosim
 ```
 
 ## Work at the netlist level
 
-When a verification problem looks hard, ask **what yosys would do**, and do that.
-yosys does not reason about RTL.  It elaborates every module down to a netlist of
-cells and wires, then reasons *structurally*: `equiv_make` matches wires and
-instances, `equiv_simple` propagates known-equal values through the structure,
-and only the leftover cones are handed to SAT or induction.
+When an elaboration or simulation problem looks hard, ask **what the tool sees**, and
+work at that level. Slang and Yosys do not reason about intent: they parse the emitted
+text, build a netlist of cells and wires, and report on *that* structure.
 
-The same bias belongs in this project:
-
-- **Prefer structural checks to semantic ones.** "Same instance tree, same cell
-  types, same connectivity" is O(size) and exact; SAT is exponential and
-  approximate.  Reach for the solver only where structure genuinely differs.
+- **Prefer structural checks to semantic ones.** "Same instance tree, same cell types,
+  same connectivity" is O(size) and exact; a simulation that only sometimes catches a
+  mismatch is weaker evidence than a structural check that always does.
 - **Compare hierarchies as trees, not as flattened blobs.** Flattening converts a
-  linear structure into a quadratic one.  Inlining the full hierarchy produced an
-  **8.7 MB** netlist for `PhysRegFile_64x32` (from ~260 KB) and would produce
-  hundreds of megabytes for the CPU; keep module boundaries, because they *are*
+  linear structure into a quadratic one; keep module boundaries, because they *are*
   the composition boundaries.
-- **Emit machine-checkable netlists**, not more RTL, when a second artifact is
-  wanted: JSON via `write_json`, btor2, aiger.  Netlists are the common language
-  of the tools, and text-level RTL differences are noise that must be normalised
-  away before anything can be compared.
-- **Treat routine escalation as a structural smell.** If a check needs induction
-  or SAT to pass every time, the structure has drifted.  Fix the structure, not
-  the solver budget.
-
-Corollary for the Chisel question: the replacement for a second *RTL* artifact is
-not another RTL emitter.  It is a **netlist-level comparison** -- either between
-the emitted design and the `Circuit` it came from, or between two emitted
-netlists.
+- **Treat routine escalation as a structural smell.** If an elaboration or a simulation
+  needs special handling for one module, its structure has drifted; fix the structure,
+  not the tool invocation.
 
 ## The proof ladder
 
 **Every proof must be small and finish fast; bigger results come from composing
-them.** A single long-running proof is a liability: it hides regressions behind
-a timeout, cannot be parallelised, and sits on the critical path of every
-commit. Treat sub-modules as already-proven theorems and prove only the few new
-facts each level adds.
+them.** A single long-running proof is a liability: it hides regressions behind a
+timeout, cannot be parallelised, and sits on the critical path of every commit. Treat
+sub-modules as already-proven theorems and prove only the few new facts each level
+adds.
 
 | Level | What is proven | Cost | Mechanism |
 | :--- | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
-| Leaf translation | Lean SV == Chisel SV | seconds, cached | LEC, reads scoped to the leaf + transitive deps |
-| Composition | parent correct given children | seconds | Lean `CompositionalCert`, or LEC congruence |
+| Composition | parent correct given children | seconds | Lean `CompositionalCert` |
+| Registry | certificates match the emitted circuits | instant | `lake exe generate_all --export-certs` |
 | Smoke | integration sanity | < 2 s | parallel sim / Spike cosim sweep |
 
 Rules that keep the ladder intact:
 
-1. **Prove against the spec, not against another implementation.** A leaf proof
-   that inspects emitted RTL is a translation check masquerading as a theorem;
-   it will be re-run forever and never composes.
-2. **Compose, do not re-flatten.** A composite module is discharged in one of
-   two ways, in order of preference:
-   - a **Lean composition proof** — the parent's spec follows from the
-     children's theorems plus glue reasoning (`CompositionalCert`;
-     see [Compositional Verification](#compositional-verification)); this is the
-     axiom/theorem ladder, and the leaf theorems are the axioms;
-   - **LEC congruence** — both netlists are emitted from the same `Circuit`, so
-     they are structurally identical modulo leaves. `equiv_simple` then
-     discharges the miter by structural hashing, with no induction and no SAT,
-     *because* the leaves are already proven. This is the two-tier pass in
-     `run-lec.sh`.
-3. **Escalation is the exception, not the default.** `equiv_induct` / `sat` run
-   only on points the structural pass leaves unproven. If they fire often, the
-   composition is drifting from the children's interfaces — fix that instead of
-   widening the timeout.
-4. **Tier the work.** Commit and PR gates run leaves + congruence + a
-   simulation/cosim smoke. A heavyweight sweep belongs in a nightly job, never
-   on the commit path.
-5. **Budget every proof.** If one module's check dominates the run, decompose
-   it. A check that cannot finish in seconds is a decomposition bug.
+1. **Prove against the spec, not against another implementation.** A proof that
+   inspects emitted RTL is a translation check masquerading as a theorem; it will be
+   re-run forever and never composes.
+2. **Compose, do not re-flatten.** A composite module is discharged by a **Lean
+   composition proof**: the parent's spec follows from the children's theorems plus
+   glue reasoning (`CompositionalCert`; see
+   [Compositional Verification](#compositional-verification)). This is the
+   axiom/theorem ladder, and the leaf theorems are the axioms.
+3. **Keep the registry honest.** A `CompositionalCert` is only meaningful for a
+   circuit that is actually emitted; `lake exe generate_all --export-certs` derives the
+   dependencies from the circuit's instances and rejects a certificate that names a
+   module the generator does not emit.
+4. **Tier the work.** Commit and PR gates run the proofs, the registry check and a
+   simulation/cosim smoke. A heavyweight sweep belongs in a nightly job, never on the
+   commit path.
+5. **Budget every proof.** If one module's proof dominates the build, decompose it. A
+   proof that cannot finish in seconds is a decomposition bug.
 
 ### Shredding further: what atoms are still missing
 
-The ladder is only as granular as its atoms.  Today a module contributes a
-behavioural model, a structural `Circuit`, a handful of `native_decide`
-structural facts, and one LEC translation check -- and the *join* between
-behaviour and structure is asserted in prose.  `CompositionalCert.proofReference`
-is a `String`; `run-lec.sh` checks only that the dependencies were verified, so a
-cert can name a proof that does not exist or no longer holds.
+The ladder is only as granular as its atoms. Today a module contributes a behavioural
+model, a structural `Circuit`, and a handful of `native_decide` structural facts --
+and the *join* between behaviour and structure is asserted in prose.
+`CompositionalCert.proofReference` is a `String`, and the registry export checks only
+that the named module is emitted, so a certificate can name a proof that does not exist
+or no longer holds.
 
 In order of leverage, the missing atoms are:
 
-1. **`Circuit` satisfies `Behavior` (per module).** There is no circuit
-   semantics in Lean, so nothing connects the structural `Circuit` to the
-   behavioural model (`CPUBehavioral.cpuStep` and friends).  LEC relates Lean SV
-   to Chisel SV; the theorems talk about the model; the two never meet.  Add an
-   evaluator (`eval : Circuit -> Wire -> Value`, gate by gate) and one
-   refinement theorem per leaf.  This is the atom that closes the gap.
-2. **One generic composition lemma.** Given `eval child = childBehavior` for
-   every child, a parent built from `CircuitInstance`s satisfies
-   `eval parent = parentBehavior`.  Prove this *once* over the hierarchical
-   evaluator; afterwards every parent's atom is a one-line instantiation of its
-   children's atoms.  This is what replaces flattened SAT/induction.
-3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`,
-   `mkMuxTree k w`, `mkRegisterN n`, `mkComparatorN n` should each carry a
-   semantic lemma (`eval (rca n) a b = a + b`).  Then adder -> ALU -> datapath is
-   a chain of one-liners instead of a per-instance decision procedure.
-4. **Machine-checked certificates.** Generate `CompositionalCert` entries *from*
-   the composition-lemma instantiations, so a certificate exists only if its
-   theorem type-checks.  `export_verification_certs` then cannot emit a dangling
-   reference.
-5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap;
-   add one semantic atom per opcode (`decode w = .X -> exec X s = spec X s`).
-   An extension then arrives as N small atoms -- exactly the shape wanted for
-   reviewing a new extension quickly.
+1. **`Circuit` satisfies `Behavior` (per module).** There is no circuit semantics in
+   Lean, so nothing connects the structural `Circuit` to the behavioural model
+   (`CPUBehavioral.cpuStep` and friends); the theorems talk about the model and the
+   emitted RTL about the structure, and the two never meet. Add an evaluator
+   (`eval : Circuit -> Wire -> Value`, gate by gate) and one refinement theorem per
+   leaf. This is the atom that closes the gap.
+2. **One generic composition lemma.** Given `eval child = childBehavior` for every
+   child, a parent built from `CircuitInstance`s satisfies
+   `eval parent = parentBehavior`. Prove this *once* over the hierarchical evaluator;
+   afterwards every parent's atom is a one-line instantiation of its children's atoms.
+   This is what makes an external equivalence check unnecessary.
+3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`, `mkMuxTree k w`,
+   `mkRegisterN n`, `mkComparatorN n` should each carry a semantic lemma
+   (`eval (rca n) a b = a + b`). Then adder -> ALU -> datapath is a chain of one-liners
+   instead of a per-instance decision procedure.
+4. **Machine-checked certificates.** Generate `CompositionalCert` entries *from* the
+   composition-lemma instantiations, so a certificate exists only if its theorem
+   type-checks and the registry cannot emit a dangling reference.
+5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap; add
+   one semantic atom per opcode (`decode w = .X -> exec X s = spec X s`). An extension
+   then arrives as N small atoms -- exactly the shape wanted for reviewing a new
+   extension quickly.
 
-Antipatterns:
+Antipattern:
 
-- **A cert with no proof.** A `CompositionalCert` is a *reference to* a Lean
-  proof. Adding one to silence a slow module, without that proof existing,
-  converts a slow check into an unchecked assumption.
-- **Deepening the induction.** Raising `equiv_induct -seq N` until a
-  hierarchical module passes usually means the parent no longer matches the
-  proven child interfaces.
-- **A mtime-based cache.** Fresh checkouts and CI artifact downloads give every
-  file a new timestamp, so mtime stamps (and mtime "staleness" checks) silently
-  disable caching. Key on content.
-- **Reading the whole tree per module.** Every module re-parsing every file is
-  quadratic in the design size; scope reads to the module and its dependencies.
+- **A cert with no proof.** A `CompositionalCert` is a *reference to* a Lean proof.
+  Adding one to silence a hard module, without that proof existing, converts work into
+  an unchecked assumption.
 
-Measured on this repository (6-core workstation): scoping LEC reads removed
-seconds of parsing per leaf module; the cache is content-addressed so unchanged
-modules are skipped across CI runs; and the 111-test simulation suite dropped
-from ~50 s to ~2 s under the parallel driver.
+## The Chisel cross-check: removed
 
-## Replacing the Chisel cross-check
-
-Chisel is not how the design is verified.  It is the **second artifact** in a
-translation check: `LEC(Lean SV, Chisel SV)` catches bugs in the *emitters*.
-Design correctness comes from the Lean proofs, and it always did.  So Chisel can
-be removed iff two properties survive:
-
-1. an **independent second lowering** of every `Circuit`, and
-2. an independent check that the DSL's meaning is what we think it is.
-
-### Step 1 -- second lowering: use the Lean flat netlist
-
-`output/sv-netlist/` is already a second emitter of the same `Circuit`
-(`SystemVerilogNetlist.lean`), written in a completely different style: it inlines
-every instance down to gates instead of emitting a hierarchy.  It costs nothing
-extra to emit and needs no JVM.
-
-Feasibility is established: `LEC(ALU32 hierarchical, ALU32 netlist)` reports
-`SAT proof finished - no model found: SUCCESS` in ~3 s.
-
-Required work before it can replace Chisel for **all** modules:
-
-- **State completeness.** The netlist emitter is currently combinational-only:
-  `output/sv-netlist/RenameStage_W2.sv` contains zero `always` blocks and no
-  `clock`/`reset` ports -- DFF gates are dropped.  It must emit sequential state
-  (`always_ff`, or instances of a `DFlipFlop` module) and keep clock/reset in the
-  port list.
-- **Port identity.** The two emitters must agree on the port set, including bus
-  grouping (`rd_data3` vs `rd_data3_0..31`), so `equiv_make` can match ports by
-  name.
-
-Once those hold, `LEC(Lean SV, Lean netlist)` replaces `LEC(Lean SV, Chisel SV)`
-in every target.
-
-### Step 2 -- recover front-end independence
-
-Two Lean emitters share the Lean front-end, so a bug in `Circuit` construction is
-invisible to both.  Chisel's unique contribution was a *whole different
-toolchain's* reading of the DSL.  Recover that independence from:
-
-- **`Circuit` satisfies `Behavior` refinement atoms** (see *Shredding further*
-  above).  This is the check that the DSL's meaning is what we believe; LEC never
-  provided it.
-- **Differential simulation across independent engines**: Verilator (Lean SV),
-  Arcilator (a CIRCT lowering of the same Lean SV), and the generated C++ model,
-  all driven by the same ELF and compared on the retired trace and `tohost`.
-- **Independent parsers**: `read_slang` and `read_verilog -sv` on the same Lean
-  SV -- cheap, and it catches SV that is legal under only one reading.
-
-### Step 3 -- delete the pipeline
-
-Drop `make chisel`, the `scala-build` CI job, the `scalafmt` gate, the Chisel
-branch of `run-lec.sh`, and the `.scala` outputs.  Keep the Chisel generator
-reachable behind a flag for one release so any disagreement can be arbitrated
-before it goes away for good.
-
-### Interim
-
-`lake exe generate_all --no-chisel` skips the backend for day-to-day iteration
-(the RTL simulation, cosim and LEC paths all read the Lean SV).  The incremental
-cache is salted by the emitted format set, so a `--no-chisel` run can never be
-mistaken for a full one.
-
-## Direct LEC
-
-### How it works
-
-The LEC script reads both SV files, builds an equivalence circuit, and uses a SAT solver to prove they produce identical outputs for all inputs.
-
-### Combinational Equivalence Checking (CEC)
-
-For circuits without registers (no `always @` blocks):
-
-```
-read_verilog -sv <lean SV>          # Read gold (Lean) design
-hierarchy -check -top <module>
-proc; opt; memory; opt; flatten
-rename <module> gold
-
-read_verilog -sv <chisel SV>        # Read gate (Chisel) design
-hierarchy -check -top <module>
-proc; opt; memory; opt; flatten
-rename <module> gate
-
-miter -equiv -flatten gold gate miter   # Build miter circuit
-sat -verify -prove-asserts miter        # SAT solve
-```
-
-**Success:** `SAT proof finished - no model found: SUCCESS`
-**Failure:** SAT finds a counterexample (input values where outputs differ)
-
-### Sequential Equivalence Checking (SEC)
-
-For circuits with registers (`always @` blocks detected):
-
-```
-# Same read + flatten steps, then:
-equiv_make gold gate equiv      # Build equivalence circuit
-prep -top equiv
-async2sync
-
-equiv_simple -undef             # Structural optimization
-equiv_induct -undef             # Induction proof
-equiv_status -assert            # Assert all equivalences hold
-```
-
-For hierarchical sequential circuits, a bounded induction depth is used:
-```
-equiv_induct -undef -seq 3      # 3-step induction
-```
-
-**Success:** `Equivalence successfully proven`
-**Failure:** Unproven equivalence points remain
+There is no cross-check any more. The Chisel backend and the Lean-vs-Chisel logical
+equivalence check were removed, so there is no second RTL artifact to compare against.
+What compensates is the Lean proofs (leaf behaviour and composition, per the ladder
+above) plus the checks that run on the one emitted design: slang and Yosys elaboration,
+Verilator simulation, and lock-step cosimulation against Spike.
 
 ## Compositional Verification
 
 ### When to use
 
-Use compositional verification when direct LEC fails or is impractical:
+Use a certificate when a module's correctness is easier to establish from its
+sub-modules than in one step:
 
-- **Structural mismatch:** Lean generates register arrays differently from Chisel
-- **Large state space:** Too many registers for induction to converge
-- **Hierarchical modules:** Built from verified submodules with known behavior
+- **Large modules:** too much state to prove in a single theorem
+- **Parametric construction:** the instances already carry their own proofs
+- **Thin glue:** the parent is wiring and control around proven leaves
 
 ### How it works
 
-1. All leaf submodules are verified by direct LEC (CEC or SEC)
-2. A Lean proof establishes that the composition of verified submodules implements the specified behavior
-3. A `CompositionalCert` in Lean declares the module, its dependencies, and the proof reference
-4. The LEC script loads certificates, verifies all dependencies are already proven, and accepts the compositional result
+1. Leaves carry their own Lean theorems.
+2. The parent's spec is proven from the children's theorems plus glue reasoning, and
+   the Lean namespace holding that proof is recorded in the certificate.
+3. `lake exe generate_all --export-certs` derives the certificate's dependencies from
+   the circuit's `instances` and rejects the registry if it is inconsistent with the
+   emitted circuits.
 
 ### Certificate structure
 
@@ -292,7 +159,6 @@ Defined in `lean/Shoumei/Verification/Compositional.lean`:
 ```lean
 structure CompositionalCert where
   moduleName : String              -- Module being verified
-  dependencies : List String       -- Submodules that must be LEC-verified first
   proofReference : String          -- Lean namespace containing the composition proof
 ```
 
@@ -301,14 +167,13 @@ structure CompositionalCert where
 All certificates live in `lean/Shoumei/Verification/CompositionalCerts.lean`:
 
 ```lean
-def register91_cert : CompositionalCert := {
-  moduleName := "Register91"
-  dependencies := ["Register64", "Register16", "Register8", "Register2", "Register1"]
+def register24_cert : CompositionalCert := {
+  moduleName := "Register24"
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
 def allCerts : List CompositionalCert := [
-  register91_cert,
+  register24_cert,
   queue64_32_cert,
   ...
 ]
@@ -316,149 +181,80 @@ def allCerts : List CompositionalCert := [
 
 ### Export mechanism
 
-`ExportVerificationCerts.lean` exports certificates in `module|dep1,dep2,...|proof_ref` format:
+`ExportCerts.lean` prints one `module|deps|proofReference` line per certificate.
+The dependency list is derived from the circuit's instances, not written by hand:
 
 ```bash
-$ lake exe export_verification_certs
-Register91|Register64,Register16,Register8,Register2,Register1|Shoumei.Circuits.Sequential.RegisterProofs
-Queue64_32|QueueRAM_64x32,QueuePointer_6,QueueCounterUpDown_7|Shoumei.Circuits.Sequential.QueueProofs
-...
+$ lake exe generate_all --export-certs
+Mux64x32|Mux8x32|Shoumei.Circuits.Combinational.MuxTreeProofs
+Register24|Register16,Register8|Shoumei.Circuits.Sequential.RegisterProofs
 ```
 
-The LEC script calls this and parses the output into a bash associative array.
+`make codegen` runs this after generating, so an inconsistent registry fails the run
+instead of degrading verification quietly. The lines are also written to
+`verification/compositional-certs.txt`.
 
-### Current compositional modules
+## Module Ordering
 
-| Module | Dependencies | Proof |
-|--------|-------------|-------|
-| Register91 | Register64, Register16, Register8, Register2, Register1 | RegisterProofs |
-| Queue64_32 | QueueRAM_64x32, QueuePointer_6, QueueCounterUpDown_7 | QueueProofs |
-| Queue64_6 | QueueRAM_64x6, QueuePointer_6, QueueCounterUpDown_7 | QueueProofs |
-| QueueRAM_64x32 | Register32, Decoder6, Mux64x32 | QueueProofs |
-| QueueRAM_64x6 | Register6, Decoder6, Mux64x6 | QueueProofs |
-| PhysRegFile_64x32 | Decoder6, Mux64x32 | PhysRegFileProofs |
-| RAT_32x6 | Decoder5, Mux32x6 | RATProofs |
-| FreeList_64 | QueueRAM_64x6, QueuePointer_6, QueueCounterUpDown_7, Decoder6, Mux64x6 | FreeListProofs |
-| ReservationStation4 | Register2, Register91, Comparator6, Mux4x6, Mux4x32, Decoder2, PriorityArbiter4 | ReservationStationProofs |
-
-## Topological Sorting
-
-The LEC script processes modules in dependency order. This is critical because compositional certificates require all dependencies to be verified first.
-
-### How it works
-
-1. Build a dependency graph from compositional certificates
-2. Pipe through `awk` to generate `tsort`-compatible pairs
-3. `tsort` produces a topological ordering
-4. Modules without dependencies come first, then dependent modules
-
-Example ordering:
-```
-Register1          # No dependencies, verified first
-Register2
-Register8
-Register16
-Register64
-Register91         # Depends on Register{1,2,8,16,64}
-Decoder6
-Mux64x32
-QueuePointer_6
-QueueCounterUpDown_7
-QueueRAM_64x32     # Depends on Register32, Decoder6, Mux64x32
-Queue64_32         # Depends on QueueRAM_64x32, QueuePointer_6, QueueCounterUpDown_7
-```
-
-## Chisel Cleaning
-
-Before LEC, Chisel output is cleaned for Yosys compatibility:
-
-1. **Remove CIRCT verification blocks:** Everything after `// ----- 8< -----`
-2. **Convert automatic variables:** `automatic logic x = y;` -> `logic x; x = y;`
-3. **Remove `automatic` keyword:** Yosys doesn't support it
-
-This happens automatically in `run-lec.sh` and writes to a temp directory.
+`allCircuits` in `GenerateAll.lean` is in topological order (leaves first), so
+dependency-aware hashes can be computed in a single pass and every sub-module is
+emitted before the module that instantiates it.
 
 ## Troubleshooting
 
-### LEC says "VERIFICATION INCOMPLETE"
+### slang reports errors on the emitted SV
 
-**Possible causes:**
-- Yosys couldn't read one of the SV files (syntax error)
-- Induction didn't converge (increase depth or use compositional)
-- Port name mismatch between Lean and Chisel output
+The emitted text is not legal SystemVerilog. Fix the generator
+(`lean/Shoumei/Codegen/`), not the emitted file -- `output/` is regenerated on every
+run.
 
-**Debug steps:**
-1. Check the Yosys output (last 20 lines are printed)
-2. Try reading each SV file individually:
-   ```bash
-   yosys -p "read_verilog -sv output/sv-from-lean/MyModule.sv"
-   yosys -p "read_verilog -sv output/sv-from-chisel/MyModule.sv"
-   ```
-3. Compare port lists:
-   ```bash
-   grep "input\|output" output/sv-from-lean/MyModule.sv
-   grep "input\|output" output/sv-from-chisel/MyModule.sv
-   ```
+### Yosys `make systemverilog` fails
 
-### LEC says "NOT EQUIVALENT"
+- A module is instantiated but absent from `allCircuits` in `GenerateAll.lean`
+- Instance port names do not match the target module's ports exactly
+- Clock/reset are not detected: check `findClockWires`/`findResetWires` in
+  `Common.lean`, which look at DFF gates and instance connections
 
-**This means the two generators produce different logic.** This is a real bug.
+### The certificate registry fails to validate
 
-**Debug steps:**
-1. The SAT solver found a counterexample -- check the failing assertions
-2. Diff the two SV files to find structural differences
-3. Common causes:
-   - Off-by-one in wire indexing
-   - Different reset behavior
-   - Missing or extra gates in one generator
-   - Clock/reset handling differences (check `findClockWires`/`findResetWires`)
+The message names the module. Either delete the stale certificate or point it at the
+circuit's current name; a certificate must name an emitted circuit, and every module
+that circuit instantiates must be emitted too.
 
-### Compositional verification says "INCOMPLETE"
+### Simulation diverges from Spike
 
-**Means one or more dependencies aren't verified yet.**
-
-**Debug steps:**
-1. Check which dependencies are missing (printed in output)
-2. Ensure the dependency modules exist in both `output/sv-from-lean/` and `output/sv-from-chisel/`
-3. Verify the dependency modules pass LEC individually
-4. Check topological ordering -- the dependency should come before the dependent module
-
-### Chisel compilation fails before LEC
-
-See the "Common Chisel compilation issues" table in [docs/adding-a-module.md](adding-a-module.md).
-
-The most common issue is `IndexOutOfBoundsException` from incorrect input indexing, caused by clock/reset not being filtered. Fix: ensure `findClockWires` and `findResetWires` in `Common.lean` detect your module's clock/reset wires (from both DFF gates and instance connections).
+Start with the cosimulation trace (see *Debugging RTL* in [CLAUDE.md](../CLAUDE.md)):
+`MISMATCH` lines give the first diverging instruction, and `make -C testbench sim-trace`
+plus `./scripts/fst_inspect` show the signal path that produced the wrong value.
 
 ## Running Verification
 
-### Full LEC (all modules)
-
 ```bash
-./verification/run-lec.sh
+lake build                                                # Lean proofs
+./verification/proof-coverage.sh                          # Proof coverage report
+lake exe generate_all --export-certs                      # Validate + print the certificate registry
+python3 verification/slang-lint.py output/sv-from-lean    # slang elaboration
+make systemverilog                                        # Yosys read/hierarchy check
+make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
+make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
+./verification/smoke-test.sh                              # CI smoke tests
 ```
-
-### Smoke test (CI pipeline)
-
-```bash
-./verification/smoke-test.sh
-```
-
-Tests: Lean build, formal proofs, code generation, Chisel compilation, port validation, LEC.
 
 ### Via Make
 
 ```bash
-make lec              # Just LEC
-make verify           # LEC + EQY
-make smoke-test       # Full CI pipeline
-make all              # Build + codegen + chisel + LEC
+make lean             # Lean build
+make codegen          # generate_all + certificate registry export
+make systemverilog    # Yosys read/hierarchy check
+make cppsim           # compile the C++ simulation
+make smoke-test       # codegen + smoke tests
+make all              # the whole pipeline
 ```
 
 ## Adding a New Compositional Certificate
 
-1. Verify all building blocks pass direct LEC
-2. Write the composition proof in Lean (or reference existing proofs)
-3. Add `CompositionalCert` to `CompositionalCerts.lean`
-4. Add to `allCerts` list
-5. Run `lake build` to ensure it compiles
-6. Run `./verification/run-lec.sh` to see the module verified compositionally
+1. Write the composition proof in Lean (or point at existing proofs)
+2. Add the `CompositionalCert` to `CompositionalCerts.lean`
+3. Add it to `allCerts`
+4. Run `lake build` to ensure it compiles
+5. Run `lake exe generate_all --export-certs` to see it validate and print

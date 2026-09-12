@@ -11,11 +11,17 @@ package «Shoumei» where
   ]
 
 lean_lib «Shoumei» where
-  -- Main library containing DSL, semantics, theorems, and code generators
+  -- Main library containing DSL, semantics, theorems, and code generators.
+  --
+  -- `Shoumei.All` imports every module in the tree (see
+  -- `scripts/gen-lean-root.py`), so a plain `lake build` compiles all of it.
+  -- Without that root, a module nothing else imports is never compiled and rots
+  -- unnoticed: nineteen had, before this existed.
   srcDir := "lean"
+  roots := #[`Shoumei, `Shoumei.All]
 
 -- Executable target for CENTRALIZED code generation
--- Generates ALL circuits in one command (SV + Chisel + C++ Sim)
+-- Generates ALL circuits in one command (SV + flat netlist + C++ Sim + testbenches)
 -- This is the recommended way to generate code
 @[default_target]
 lean_exe generate_all where
@@ -23,17 +29,12 @@ lean_exe generate_all where
   supportInterpreter := true
 
 -- Executable target for legacy code generation
--- (Use generate_all instead - it's simpler and does all 3 formats)
+-- (Use generate_all instead - it is simpler and emits every output format)
 lean_exe codegen where
   root := `Main
   supportInterpreter := true
 
--- Executable target for testing RISC-V parser
-lean_exe test_riscv where
-  root := `TestRISCVParser
-  supportInterpreter := true
-
--- Executable target for generating RV32I decoder (SystemVerilog + Chisel)
+-- Executable target for generating RV32I decoder (SystemVerilog + C++ sim)
 lean_exe generate_riscv_decoder where
   root := `GenerateRISCVDecoder
   supportInterpreter := true
@@ -86,22 +87,6 @@ lean_exe generate_integer_exec where
 -- Executable target for generating BranchExecUnit (Branch Execution Unit)
 lean_exe generate_branch_exec where
   root := `GenerateBranchExecUnit
-  supportInterpreter := true
-
--- Executable target for exporting verification certificates
--- Generates compositional-certs.txt from Lean verification certificates
-lean_exe export_verification_certs where
-  root := `ExportVerificationCerts
-  supportInterpreter := true
-
--- Executable target for testing Chisel V2 code generation
-lean_exe test_chisel_v2 where
-  root := `TestChiselV2
-  supportInterpreter := true
-
--- Executable target for testing SystemVerilog V2 code generation
-lean_exe test_svv2 where
-  root := `TestSVV2
   supportInterpreter := true
 
 -- Executable target for generating OpType enum from riscv-opcodes JSON

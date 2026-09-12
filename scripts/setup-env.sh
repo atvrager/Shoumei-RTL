@@ -32,7 +32,7 @@ if [ "${1:-}" = "--background" ]; then
     exec > "$SETUP_LOG" 2>&1
     echo "=== Shoumei background setup started at $(date) ==="
 
-    export PATH="$HOME/.elan/bin:$HOME/.local/share/coursier/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:/usr/local/sbt/bin:$PATH"
+    export PATH="$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:$PATH"
 
     # ── 1. elan + Lean 4 ─────────────────────────────────────────────
     if ! command -v lake &>/dev/null; then
@@ -43,22 +43,7 @@ if [ "${1:-}" = "--background" ]; then
     fi
     echo "✓ lake ready"
 
-    # ── 2. sbt ───────────────────────────────────────────────────────
-    if ! command -v sbt &>/dev/null; then
-        echo "==> Installing sbt"
-        SBT_VER="1.10.11"
-        curl -fSL "https://github.com/sbt/sbt/releases/download/v${SBT_VER}/sbt-${SBT_VER}.tgz" \
-            -o /tmp/sbt.tgz
-        tar xzf /tmp/sbt.tgz -C /usr/local 2>/dev/null || tar xzf /tmp/sbt.tgz -C "$HOME/.local"
-        rm -f /tmp/sbt.tgz
-        if [ -d /usr/local/sbt/bin ]; then
-            ln -sf /usr/local/sbt/bin/sbt /usr/local/bin/sbt 2>/dev/null || true
-        fi
-        export PATH="/usr/local/sbt/bin:$HOME/.local/sbt/bin:$PATH"
-    fi
-    echo "✓ sbt ready"
-
-    # ── 3. System packages ───────────────────────────────────────────
+    # ── 2. System packages ───────────────────────────────────────────
     if [ "$(id -u)" = "0" ]; then
         missing=()
         for pkg in yosys verilator shellcheck; do
@@ -73,7 +58,7 @@ if [ "${1:-}" = "--background" ]; then
     fi
     echo "✓ system packages ready"
 
-    # ── 4. RISC-V GCC ───────────────────────────────────────────────
+    # ── 3. RISC-V GCC ───────────────────────────────────────────────
     if ! command -v riscv32-unknown-elf-gcc &>/dev/null && \
        [ ! -x "$HOME/.local/riscv32-elf/bin/riscv32-unknown-elf-gcc" ]; then
         echo "==> Installing RISC-V GCC"
@@ -81,7 +66,7 @@ if [ "${1:-}" = "--background" ]; then
     fi
     echo "✓ RISC-V GCC ready"
 
-    # ── 5. GitHub CLI ────────────────────────────────────────────────
+    # ── 4. GitHub CLI ────────────────────────────────────────────────
     if ! command -v gh &>/dev/null; then
         echo "==> Installing GitHub CLI"
         GH_VER="2.67.0"
@@ -98,7 +83,7 @@ if [ "${1:-}" = "--background" ]; then
     fi
     echo "✓ gh ready"
 
-    # ── 6. Git submodules ────────────────────────────────────────────
+    # ── 5. Git submodules ────────────────────────────────────────────
     echo "==> Initialising git submodules"
     git -C "$PROJECT_DIR" submodule update --init \
         third_party/riscv-opcodes \
@@ -111,26 +96,7 @@ if [ "${1:-}" = "--background" ]; then
     fi
     echo "✓ submodules ready"
 
-    # ── 7. Java proxy bridge ─────────────────────────────────────────
-    proxy_url="${https_proxy:-${HTTPS_PROXY:-}}"
-    if [ -n "$proxy_url" ] && echo "$proxy_url" | grep -q '@'; then
-        BRIDGE_PORT="${BRIDGE_PORT:-18080}"
-        if ! curl -s -o /dev/null -x "http://127.0.0.1:$BRIDGE_PORT" --max-time 2 https://repo1.maven.org/ 2>/dev/null; then
-            echo "==> Starting Java proxy bridge on :$BRIDGE_PORT"
-            python3 "$PROJECT_DIR/scripts/java-proxy-bridge.py" &
-            sleep 1
-        fi
-        # Persist proxy env
-        if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-            {
-                echo "export JAVA_OPTS=\"-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=$BRIDGE_PORT -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=$BRIDGE_PORT\""
-                echo "export SBT_OPTS=\"\$JAVA_OPTS\""
-            } >> "$CLAUDE_ENV_FILE"
-        fi
-        echo "✓ proxy bridge ready"
-    fi
-
-    # ── 8. Build Lean ────────────────────────────────────────────────
+    # ── 6. Build Lean ────────────────────────────────────────────────
     if [ ! -f "$PROJECT_DIR/.lake/build/bin/generate_all" ]; then
         echo "==> Running lake build (this takes a while...)"
         cd "$PROJECT_DIR" && lake build 2>&1
@@ -149,12 +115,12 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 
 # Set up PATH immediately so tools already installed are available
-export PATH="$HOME/.elan/bin:$HOME/.local/share/coursier/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:/usr/local/sbt/bin:$PATH"
+export PATH="$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:$PATH"
 
 # Persist env vars so every Bash tool call in the session inherits them
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
     {
-        echo "export PATH=\"$HOME/.elan/bin:$HOME/.local/share/coursier/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:/usr/local/sbt/bin:\$PATH\""
+        echo "export PATH=\"$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:\$PATH\""
     } >> "$CLAUDE_ENV_FILE"
 fi
 

@@ -7,10 +7,9 @@ This guide will help you set up and start using the Shoumei RTL framework.
 A **complete build infrastructure scaffold** for formally verified hardware design:
 
 ✅ **LEAN 4 Project** - DSL, semantics, theorems, and code generators (stubbed)
-✅ **Chisel 7.x Project** - Scala build configuration with modern Chisel
 ✅ **Bootstrap Script** - Automatic installation of elan, LEAN, and dependencies
 ✅ **Build Orchestration** - Makefile for end-to-end pipeline
-✅ **Verification Infrastructure** - LEC script (stubbed, waiting for ABC)
+✅ **Simulation and Elaboration Checks** - Verilator testbench build, Spike cosimulation, slang/Yosys elaboration of the emitted SV
 ✅ **Example Circuit** - Full adder defined in DSL
 
 ## Quick Start
@@ -31,8 +30,6 @@ This will (all without requiring sudo/system packages):
 - Install `uv` (Python package manager) to `~/.local/bin`
 - Install `elan` (LEAN toolchain manager) to `~/.elan/bin`
 - Install LEAN 4.15.0 via elan
-- Install `coursier` (Scala toolchain manager) to `~/.local/bin`
-- Install `sbt` and Scala toolchain to `~/.local/share/coursier/bin`
 
 ### 2. Build the LEAN Code
 
@@ -61,24 +58,19 @@ provable-rtl/
 │   ├── Codegen/
 │   │   ├── Common.lean       # Shared utilities
 │   │   ├── SystemVerilog.lean # SV generator (stubbed)
-│   │   └── Chisel.lean       # Chisel generator (stubbed)
+│   │   └── CppSim.lean       # C++ simulation generator
 │   └── Examples/
 │       └── Adder.lean        # Full adder circuit
 │
-├── chisel/                   # Chisel/Scala project
-│   ├── build.sbt             # sbt configuration (Chisel 7.0.0)
-│   ├── project/
-│   │   └── build.properties  # sbt version (1.10.5)
-│   └── src/main/scala/
-│       ├── Main.scala        # Entry point for compilation
-│       └── generated/        # Generated Chisel code goes here
-│
 ├── output/                   # Generated artifacts
-│   ├── sv-from-lean/         # SystemVerilog from LEAN
-│   └── sv-from-chisel/       # SystemVerilog from Chisel
+│   ├── sv-from-lean/         # SystemVerilog from LEAN (hierarchical)
+│   ├── sv-netlist/           # SystemVerilog from LEAN (flat netlist)
+│   ├── sv-asap7/             # ASAP7 tech-mapped gates
+│   └── cpp_sim/              # C++ simulation model
 │
 ├── verification/
-│   └── run-lec.sh            # Equivalence checking script
+│   ├── slang-lint.py         # slang elaboration of the emitted SV
+│   └── smoke-test.sh         # CI smoke tests
 │
 └── examples/
     └── adder/
@@ -91,14 +83,14 @@ provable-rtl/
 # Build LEAN code
 make lean
 
-# Generate code (TODO: not yet implemented)
+# Run all code generators + export the compositional certificate registry
 make codegen
 
-# Compile Chisel to SystemVerilog
-make chisel
+# Elaborate the generated SystemVerilog with Yosys
+make systemverilog
 
-# Run logical equivalence checking
-make lec
+# Compile the C++ simulation
+make cppsim
 
 # Run entire pipeline
 make all
@@ -118,7 +110,7 @@ make help
 2. **Bootstrap script** - Automates environment setup
 3. **Project structure** - Complete directory layout
 4. **Build orchestration** - Makefile coordinates all steps
-5. **Verification scaffold** - LEC script ready (waiting for ABC)
+5. **Simulation and elaboration checks** - Verilator simulation, Spike cosimulation, slang/Yosys elaboration of the emitted SV
 
 ### 🚧 What's Stubbed (Ready to Implement)
 
@@ -127,7 +119,7 @@ make help
    - `evalCircuit` - Evaluate complete circuits
    - Currently use `sorry` placeholders
 
-2. **Code Generators** (`Codegen/SystemVerilog.lean`, `Codegen/Chisel.lean`)
+2. **Code Generators** (`Codegen/SystemVerilog.lean`)
    - Generate from circuit structure (currently hardcoded templates)
    - Need to traverse gates and produce actual code
 
@@ -139,11 +131,7 @@ make help
 4. **Code Generation Executable**
    - Need to add Lake executable target
    - Wire up code generators to file I/O
-   - Generate actual .sv and .scala files
-
-5. **Logical Equivalence Checking**
-   - Install ABC: `yay -S abc-git` (Arch) or build from source
-   - Implement actual miter and SAT checking
+   - Generate actual .sv files
 
 ## Next Steps (Bottom-Up Development)
 
@@ -177,13 +165,7 @@ File: `lean/Shoumei/Codegen/SystemVerilog.lean`
 
 Generate actual Verilog from circuit structure instead of hardcoded template.
 
-### Step 4: Implement Chisel Generator (1-2 hours)
-
-File: `lean/Shoumei/Codegen/Chisel.lean`
-
-Generate actual Chisel from circuit structure.
-
-### Step 5: Add Code Generation Executable (30 min)
+### Step 4: Add Code Generation Executable (30 min)
 
 File: `lakefile.lean`
 
@@ -196,28 +178,7 @@ lean_exe codegen where
 
 Then create IO functions to write generated code to files.
 
-### Step 6: Install sbt and Test Chisel (30 min)
-
-```bash
-# Arch Linux
-sudo pacman -S sbt
-
-# Then test
-cd chisel && sbt compile
-cd chisel && sbt run
-```
-
-### Step 7: Install ABC and Test LEC (30 min)
-
-```bash
-# Arch Linux
-yay -S abc-git
-
-# Then test
-./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
-```
-
-### Step 8: Prove Theorems (Ongoing)
+### Step 5: Prove Theorems (Ongoing)
 
 File: `lean/Shoumei/Theorems.lean`
 
@@ -254,10 +215,10 @@ See `examples/adder/README.md` for full documentation.
 
 ### Optional (for full pipeline)
 
-- **sbt 1.10+** - For Chisel compilation
-- **Scala 3.3.4** - Installed automatically by sbt
-- **ABC** - For logical equivalence checking
-- **Chisel 7.0.0** - Installed automatically by sbt
+- **Yosys** - SystemVerilog read/hierarchy check (`make systemverilog`)
+- **slang (`pyslang`)** - SystemVerilog elaboration (`pip install pyslang`)
+- **Verilator** - RTL simulation of the emitted SV
+- **RISC-V GCC** - Test compilation for the simulation suite
 
 ## Troubleshooting
 
@@ -270,12 +231,6 @@ export PATH="$HOME/.elan/bin:$PATH"
 # Or restart your shell after running bootstrap.py
 ```
 
-### "sbt: command not found"
-
-Install sbt manually:
-- Arch: `sudo pacman -S sbt`
-- Ubuntu: https://www.scala-sbt.org/download.html
-
 ### Build warnings about 'sorry'
 
 Expected! These are stubbed proofs. Replace with actual implementations.
@@ -287,9 +242,8 @@ Expected! These are in stubbed code generators that will use variables later.
 ## Resources
 
 - [LEAN 4 Documentation](https://lean-lang.org/)
-- [Chisel Documentation](https://www.chisel-lang.org/)
 - [Lake Build System](https://github.com/leanprover/lean4/blob/master/src/lake/README.md)
-- [ABC Verification Tool](https://github.com/berkeley-abc/abc)
+- [Verilator Documentation](https://verilator.org/guide/latest/)
 
 ## Contributing
 

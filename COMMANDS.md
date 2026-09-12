@@ -6,7 +6,6 @@ Quick reference for working with Shoumei RTL. This guide assumes you're in the p
 
 - [Quick Start](#quick-start)
 - [Lake (LEAN Build System)](#lake-lean-build-system)
-- [sbt (Scala Build Tool)](#sbt-scala-build-tool)
 - [Make Targets](#make-targets)
 - [Git Workflows](#git-workflows)
 - [Verification](#verification)
@@ -18,16 +17,16 @@ Quick reference for working with Shoumei RTL. This guide assumes you're in the p
 
 ```bash
 # Initial setup (run once)
-make setup         # Runs bootstrap.py to install elan, lake, and check for sbt
+make setup         # Runs bootstrap.py to install elan, lake, and the build dependencies
 
 # Build everything
 make all           # Automatically checks for required tools
 
 # Or step by step:
 make lean          # Build LEAN code
-make codegen       # Run code generators (TODO: not yet implemented)
-make chisel        # Compile Chisel to SystemVerilog
-make lec           # Run logical equivalence checking
+make codegen       # Run code generators + export the compositional certificate registry
+make systemverilog # Yosys read/hierarchy check of the generated SystemVerilog
+make cppsim        # Compile the C++ simulation
 
 # If make setup fails, you can run bootstrap directly:
 python3 bootstrap.py
@@ -112,99 +111,6 @@ open Shoumei
 
 ---
 
-## sbt (Scala Build Tool)
-
-sbt builds the Chisel/Scala code. It's configured in `chisel/build.sbt`.
-
-### Basic Commands
-
-```bash
-# Always run sbt from the chisel/ directory
-cd chisel
-
-# Enter interactive sbt shell (recommended)
-sbt
-
-# One-off commands (starts JVM each time, slower)
-sbt compile
-sbt run
-sbt test
-```
-
-### Interactive sbt Shell
-
-```bash
-# Start the shell
-cd chisel
-sbt
-
-# Inside the shell:
-compile          # Compile Scala/Chisel code
-run              # Run Main.scala (generates SystemVerilog)
-test             # Run all tests
-clean            # Remove compiled artifacts
-reload           # Reload build.sbt after changes
-exit             # Exit the shell
-```
-
-### Common sbt Workflows
-
-```bash
-# Generate SystemVerilog from Chisel
-cd chisel
-sbt run
-
-# Run in continuous mode (rebuilds on file changes)
-sbt
-~compile         # Prefix with ~ for continuous mode
-~test
-
-# Clean and rebuild from scratch
-sbt clean compile
-
-# Run with verbose output
-sbt -v run
-
-# Check dependencies
-sbt dependencyTree
-
-# Update dependencies
-sbt update
-```
-
-### Chisel-Specific Commands
-
-```bash
-# Generate SystemVerilog (what sbt run does)
-sbt "runMain Main"
-
-# Generate FIRRTL (intermediate representation)
-sbt "runMain circt.stage.ChiselStage --target firrtl ..."
-
-# Run with firtool directly (advanced)
-sbt "runMain circt.stage.ChiselStage --target systemverilog ..."
-```
-
-### Troubleshooting sbt
-
-```bash
-# If sbt won't start or acts weird
-rm -rf chisel/target chisel/project/target
-sbt clean
-sbt update
-
-# Check Java version (needs Java 11+)
-java -version
-
-# Use specific Java version with sbt
-JAVA_HOME=/path/to/java11 sbt run
-
-# Increase sbt memory (if needed)
-sbt -J-Xmx4G run
-```
-
----
-
 ## Make Targets
 
 The Makefile orchestrates the entire build pipeline and includes automatic tool checking.
@@ -213,20 +119,23 @@ The Makefile orchestrates the entire build pipeline and includes automatic tool 
 # Show all available targets with descriptions
 make help
 
-# First-time setup (installs elan/lake, checks for sbt)
+# First-time setup (installs elan/lake and the Python dependencies)
 make setup
 
 # Build LEAN code (checks for lake first)
 make lean
 
-# Run code generators (generates SV and Chisel from LEAN)
-make codegen       # TODO: Not yet implemented
+# Run code generators + export the compositional certificate registry
+make codegen
 
-# Compile Chisel to SystemVerilog (checks for sbt first)
-make chisel
+# Elaborate the generated SystemVerilog with Yosys
+make systemverilog
 
-# Run logical equivalence checking
-make lec
+# Compile the C++ simulation
+make cppsim
+
+# Run the CI smoke tests
+make smoke-test
 
 # Run entire pipeline (checks all tools first)
 make all
@@ -240,29 +149,25 @@ make clean all
 
 ### Make Target Details
 
-| Target | What it does | Tool Check | Time |
-|--------|--------------|------------|------|
-| `make setup` | Runs `bootstrap.py` to install dependencies | Python only | ~5-10min |
-| `make lean` | Runs `lake build`, checks for lake first | Required | ~10s |
-| `make codegen` | Generates SystemVerilog and Chisel from LEAN DSL | Required | TODO |
-| `make chisel` | Runs `sbt run` to compile Chisel → SystemVerilog | Required | ~30s |
-| `make lec` | Runs LEC script to compare both SystemVerilog outputs | None | ~5s |
-| `make all` | Runs entire pipeline with tool checks | All | ~50s |
-| `make clean` | Removes generated files (graceful if tools missing) | None | ~1s |
+| Target | What it does |
+|--------|--------------|
+| `make setup` | Runs `bootstrap.py` to install dependencies |
+| `make lean` | Runs `lake build`, checks for lake first |
+| `make codegen` | Runs `lake exe generate_all`, then exports the certificate registry |
+| `make systemverilog` | Runs `verification/validate-sv.sh` on `output/sv-from-lean/` |
+| `make cppsim` | Compiles the generated C++ simulation with CMake |
+| `make smoke-test` | `make codegen` followed by `verification/smoke-test.sh` |
+| `make all` | Runs `check-tools lean codegen systemverilog cppsim` |
+| `make clean` | Removes generated files (graceful if tools missing) |
 
 ### Error Handling
 
-The Makefile now checks for required tools and provides helpful error messages:
+The Makefile checks for required tools and provides helpful error messages:
 
 ```bash
 # If lake is not installed:
 $ make lean
 Error: lake not found. Run 'make setup' to install dependencies.
-
-# If sbt is not installed:
-$ make chisel
-Error: sbt not found. Cannot build Chisel code.
-Install sbt: https://www.scala-sbt.org/download.html
 ```
 
 ---
@@ -324,34 +229,24 @@ git log --oneline --graph --all
 
 ## Verification
 
-### Logical Equivalence Checking
+There is no longer a cross-check between two RTL designs: correctness comes from the
+Lean proofs, and the emitted SystemVerilog is checked by elaborating and running it.
 
 ```bash
-# Run LEC on generated SystemVerilog
-./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+# Lean proofs + coverage report
+lake build
+./verification/proof-coverage.sh
 
-# Install ABC (Berkeley Logic Synthesis Tool)
-# On macOS:
-brew install berkeley-abc
+# Validate and print the compositional certificate registry
+lake exe generate_all --export-certs
 
-# On Ubuntu/Debian:
-sudo apt-get install abc
+# Elaborate the emitted SystemVerilog
+python3 verification/slang-lint.py output/sv-from-lean
+make systemverilog
 
-# On Arch:
-yay -S berkeley-abc
-```
-
-### ABC Commands (Once Implemented)
-
-```bash
-# Start ABC
-abc
-
-# In ABC shell:
-read_verilog output/sv-from-lean/FullAdder.sv
-read_verilog output/sv-from-chisel/FullAdder.sv
-miter -c -C 10000        # Create miter circuit
-sat -C 10000             # Check satisfiability
+# Run it
+make -C testbench sim && make -C testbench run-all-tests
+make -C testbench cosim && make -C testbench run-cosim
 ```
 
 ---
@@ -383,55 +278,22 @@ lake update
 lake build
 ```
 
-### sbt/Chisel Issues
-
-```bash
-# Problem: "sbt: command not found"
-# Solution: Install sbt
-# macOS:
-brew install sbt
-# Ubuntu/Debian:
-echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
-curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x99E82A75642AC823" | sudo apt-key add
-sudo apt-get update
-sudo apt-get install sbt
-
-# Problem: Out of memory errors
-# Solution: Increase heap size
-export SBT_OPTS="-Xmx4G -Xss2M"
-sbt run
-
-# Problem: Compilation errors in generated Chisel
-# Solution: Check that code generator produces valid Scala
-cd chisel/src/main/scala/generated
-ls -la
-cat YourGeneratedModule.scala
-
-# Problem: firtool not found
-# Solution: Chisel 7.0+ should auto-download, but if not:
-# macOS:
-brew install llvm
-# Ubuntu:
-# Download from https://github.com/llvm/circt/releases
-```
-
 ### Build System Issues
 
 ```bash
-# Problem: make can't find lake or sbt
-# Solution: Ensure they're in PATH
+# Problem: make can't find lake
+# Solution: Ensure it's in PATH
 which lake
-which sbt
 echo $PATH
 
 # Problem: Permission denied on scripts
 # Solution: Make scripts executable
-chmod +x verification/run-lec.sh
+chmod +x verification/smoke-test.sh
 chmod +x bootstrap.py
 
 # Problem: Clean doesn't work
 # Solution: Manual cleanup
-rm -rf .lake build lake-packages chisel/target chisel/project/target output/**/*.{sv,v,fir}
+rm -rf .lake build lake-packages output
 ```
 
 ### General Debugging
@@ -440,19 +302,18 @@ rm -rf .lake build lake-packages chisel/target chisel/project/target output/**/*
 # Check all tool versions
 lean --version
 lake --version
-scala --version
-sbt --version
-java -version
 python3 --version
+yosys -V
+verilator --version
 
 # Check environment
-env | grep -E 'LEAN|SCALA|JAVA|SBT'
+env | grep -E 'LEAN|PATH'
 
 # Verify project structure
 tree -L 2 -a
 
 # Check file permissions
-ls -la verification/run-lec.sh
+ls -la verification/smoke-test.sh
 ls -la bootstrap.py
 ```
 
@@ -464,18 +325,8 @@ ls -la bootstrap.py
 
 ```bash
 lake build              # Rebuild LEAN code
-make codegen           # Regenerate SystemVerilog and Chisel (TODO)
-make chisel            # Compile new Chisel
-make lec               # Verify equivalence
-```
-
-### After Modifying Chisel Build Config
-
-```bash
-cd chisel
-sbt reload             # Reload build.sbt
-sbt clean compile      # Clean rebuild
-sbt run                # Generate SystemVerilog
+make codegen            # Regenerate SystemVerilog, netlist, ASAP7, C++ Sim, testbenches
+make systemverilog      # Yosys read/hierarchy check on the regenerated SV
 ```
 
 ### Fresh Start (Nuclear Option)
@@ -484,8 +335,7 @@ sbt run                # Generate SystemVerilog
 # Clean absolutely everything
 make clean
 lake clean
-rm -rf .lake build lake-packages chisel/target chisel/project/target
-cd chisel && sbt clean && cd ..
+rm -rf .lake build lake-packages
 
 # Rebuild from scratch
 make all
@@ -498,11 +348,11 @@ make all
 # 2. Test immediately
 lake build
 
-# 3. If tests pass, generate code
+# 3. If the build passes, generate code
 make codegen
 
-# 4. Verify output
-make lec
+# 4. Check the emitted SV
+make systemverilog
 ```
 
 ---
@@ -545,15 +395,6 @@ lake update
 - [Lean 4 Manual](https://lean-lang.org/lean4/doc/)
 - [Lake Build System](https://github.com/leanprover/lean4/blob/master/src/lake/README.md)
 
-### Scala/sbt
-- [sbt Tutorial](https://www.scala-sbt.org/1.x/docs/sbt-by-example.html)
-- [sbt Command Reference](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html)
-
-### Chisel
-- [Chisel Bootcamp](https://github.com/freechipsproject/chisel-bootcamp)
-- [Chisel Documentation](https://www.chisel-lang.org/docs)
-- [Chisel API Docs](https://www.chisel-lang.org/api/latest/)
-
 ---
 
 ## Cheat Sheet
@@ -564,14 +405,14 @@ lake update
 # Build LEAN
 lake build
 
-# Run code generators (once implemented)
-lake exe codegen
+# Generate code + export the certificate registry
+make codegen
 
-# Compile Chisel (from project root)
-make chisel
+# Elaborate the generated SystemVerilog
+python3 verification/slang-lint.py output/sv-from-lean
 
-# Or from chisel directory
-cd chisel && sbt run
+# Simulate
+make -C testbench sim && make -C testbench run-all-tests
 
 # Run full pipeline
 make all
@@ -582,19 +423,17 @@ make clean
 # Check status
 git status
 lake build -v
-sbt compile
 ```
 
 ---
 
 **Pro Tips:**
 
-1. **Use sbt interactive shell** - Much faster than one-off commands
-2. **Keep lake building in a terminal** - Quick feedback on LEAN changes
-3. **Use `make help`** - When you forget what targets exist
-4. **Check tool versions first** - When troubleshooting weird errors
-5. **Read the error messages** - LEAN and Scala both give helpful diagnostics
-6. **Start simple** - Get one module working before adding complexity
+1. **Keep lake building in a terminal** - Quick feedback on LEAN changes
+2. **Use `make help`** - When you forget what targets exist
+3. **Check tool versions first** - When troubleshooting weird errors
+4. **Read the error messages** - Lean, slang, Yosys and Verilator all give helpful diagnostics
+5. **Start simple** - Get one module working before adding complexity
 
 ---
 

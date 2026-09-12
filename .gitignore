@@ -6,10 +6,7 @@
 *.trace
 *.hash
 
-# Scala / sbt / Chisel
-chisel/target/
-chisel/project/target/
-chisel/project/project/
+# JVM artifacts
 *.class
 *.log
 *.jar
@@ -19,10 +16,6 @@ chisel/project/project/
 *.zip
 *.tar.gz
 *.rar
-.bsp/
-.metals/
-.bloop/
-metals.sbt
 
 # Generated outputs (but keep directory structure)
 output/**/*
@@ -34,10 +27,6 @@ output/**/*
 !physical/**/*.sv
 *.fir
 *.anno.json
-chisel/src/main/scala/generated/*.scala
-!chisel/src/main/scala/generated/.gitkeep
-chisel/src/main/scala/generated_v2/*.scala
-!chisel/src/main/scala/generated_v2/.gitkeep
 
 # Build artifacts
 *.o
@@ -49,16 +38,12 @@ chisel/src/main/scala/generated_v2/*.scala
 # Verilator simulation build
 build-sim/
 
-# LEC cache
-.lec-cache/
-
 # Codegen incremental cache
 .codegen-cache/
 
 # Generated filelists
 physical/*.f
 output/*/filelist.f
-chisel/src/main/scala/generated/filelist.f
 
 # C++ sim build directory
 cpp_sim/build/
@@ -78,13 +63,6 @@ cpp_sim/build/
 verification/results/
 verification/logs/
 verification/compositional-certs.txt
-
-# Generated EQY/SBY working directories (one per module)
-# Pattern: verification/<ModuleName>/ contains all EQY/SBY intermediate files
-verification/*/
-
-# Cleaned Chisel outputs for EQY (generated from *_clean.sv pattern)
-verification/*_clean.sv
 
 # Generated testbenches (produced by lake exe generate_all)
 testbench/generated/

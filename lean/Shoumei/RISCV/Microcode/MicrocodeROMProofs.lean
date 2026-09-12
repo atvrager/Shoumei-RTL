@@ -13,8 +13,10 @@ open MicroOp
 
 /-! ## ROM structure proofs -/
 
-/-- All ROM entries have valid opcodes (encoding < 11) -/
-theorem all_opcodes_valid : ∀ i : Fin 64, (romContents i).opcode.toNat < 11 := by
+/-- All ROM entries encode opcodes that fit the 4-bit opcode field
+    (values 0..15).  The highest opcode the ROM actually uses is
+    `MSTATUS_MRET` (15) at `romContents ⟨53, _⟩`. -/
+theorem all_opcodes_valid : ∀ i : Fin 64, (romContents i).opcode.toNat < 16 := by
   decide
 
 /-! ## Sequence structure: each sequence reaches DONE -/

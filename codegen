@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate SystemVerilog and Chisel code from LEAN
+# Generate SystemVerilog, netlist and C++ simulation code from LEAN
 
 set -e
 

@@ -28,16 +28,16 @@ open Shoumei.RISCV.Renaming
 theorem renamestage_name : mkRenameStage.name = "RenameStage_W2" := by native_decide
 
 /-- RenameStage input count -/
-theorem renamestage_input_count : mkRenameStage.inputs.length = 177 := by native_decide
+theorem renamestage_input_count : mkRenameStage.inputs.length = 190 := by native_decide
 
 /-- RenameStage output count -/
-theorem renamestage_output_count : mkRenameStage.outputs.length = 256 := by native_decide
+theorem renamestage_output_count : mkRenameStage.outputs.length = 320 := by native_decide
 
-/-- RenameStage uses 6 submodule instances -/
-theorem renamestage_instance_count : mkRenameStage.instances.length = 6 := by native_decide
+/-- RenameStage uses 5 submodule instances (CRAT + 2 RATs + FreeList + PhysRegFile) -/
+theorem renamestage_instance_count : mkRenameStage.instances.length = 5 := by native_decide
 
 /-- RenameStage gate count -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 166 := by native_decide
+theorem renamestage_gate_count : mkRenameStage.gates.length = 1904 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 

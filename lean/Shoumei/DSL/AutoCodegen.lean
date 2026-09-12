@@ -33,7 +33,7 @@ private def circuitRegistry : IO (List Circuit) := do
   pure []
 
 -- Helper: define and auto-register a circuit for codegen
-def defineCircuit (name : String) (c : Circuit) : IO Circuit := do
+def defineCircuit (_name : String) (c : Circuit) : IO Circuit := do
   -- Could register in a global list here
   pure c
 
@@ -53,7 +53,6 @@ def generateAll : IO Unit := do
   IO.println ""
   IO.println s!"✓ Generated {circuits.length} circuits"
   IO.println "  SV:      output/sv-from-lean/"
-  IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  C++ Sim: output/cpp_sim/"
 
 end Shoumei.DSL.AutoCodegen

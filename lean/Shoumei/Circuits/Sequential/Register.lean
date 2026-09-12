@@ -23,7 +23,7 @@ def makeIndexedWires (name : String) (n : Nat) : List Wire :=
 /-! ## Flat Register Construction (for small power-of-2 sizes) -/
 
 -- Build an N-bit register from N parallel DFFs
--- Used for power-of-2 building blocks that will be verified via LEC
+-- Used for power-of-2 building blocks (the flat DFF registers)
 def mkRegisterN (n : Nat) : Circuit :=
   let d_wires := makeIndexedWires "d" n
   let q_wires := makeIndexedWires "q" n
@@ -59,7 +59,7 @@ partial def decomposeToPowersOf2 (n : Nat) : List Nat :=
   else [1]
 
 -- Build RegisterN hierarchically from power-of-2 building blocks
--- This allows LEC verification of small blocks + compositional proof for large N
+-- This keeps the small blocks separate, so a large N is a composition of them
 def mkRegisterNHierarchical (n : Nat) : Circuit :=
   let d_wires := makeIndexedWires "d" n
   let q_wires := makeIndexedWires "q" n
@@ -107,7 +107,7 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
 
 /-! ## Convenience Definitions -/
 
--- Power-of-2 registers (for LEC verification)
+-- Power-of-2 registers (the building blocks of the hierarchical registers)
 def mkRegister1 : Circuit := mkRegisterN 1
 def mkRegister2 : Circuit := mkRegisterN 2
 def mkRegister4 : Circuit := mkRegisterN 4

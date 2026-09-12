@@ -44,8 +44,9 @@ Remaining axioms in the project:
 | `ReservationStation.lean` | 9 axioms | Behavioral RS properties |
 | `Arbiter.lean` | 5 axioms | Priority encoder properties |
 
-None of these axioms are proven. The actual verification comes from Yosys LEC (external SAT-based
-equivalence checking between Lean-generated and Chisel-generated SystemVerilog).
+None of these axioms are proven by this workstream. The project's correctness claims come from
+Lean theorems checked by `lake build`; the emitted RTL is validated by running it (slang
+elaboration, Verilator simulation, and Spike cosimulation).
 
 **Goal of this workstream:** Eliminate axioms by building infrastructure that lets Lean prove
 `evalCircuit c inputs = spec inputs` for circuits with hundreds to thousands of gates.
@@ -576,14 +577,14 @@ instead of manually setting up the compilation pipeline). But it requires Lean
 metaprogramming expertise and is harder to debug. Build the non-meta version first,
 then consider wrapping it in a tactic.
 
-### C. External oracle (trust Yosys LEC results)
+### C. External oracle (trust external equivalence-checking results — no longer available)
 
-Import Yosys LEC results as Lean axioms via a verified log parser. The LEC already
-runs and passes for all modules.
+Import the results of an external equivalence check as Lean axioms via a verified
+log parser. The project's Yosys-based equivalence flow has since been removed, so
+this option is no longer available.
 
 **Rejected because:** This just moves the axioms to a different place. The point is
-to prove things in Lean, not to trust external tools. (Though LEC remains valuable
-as an independent cross-check.)
+to prove things in Lean, not to trust external tools.
 
 ### D. Certified code extraction
 
@@ -633,7 +634,7 @@ See `docs/proof-strategies.md` Approach 3 for full technique descriptions.
 | `not_involution` | `Theorems.lean` | `simp [Gate.mkNOT, evalGate, wire_beq_self, Bool.not_not]` |
 | `wire_beq_eq` | `RegisterLemmas.lean` | String BEq roundtrip via `BEq.eq_of_beq` |
 
-**Bug found: ALU opcode encoding.** The `ALUBitVecBridge.lean` opcode table had SLL=0x7, SRL=0x8, SRA=0x9, but the ALU MUX tree uses `op[3:2]` for category selection (00=arith, 01=logic, 10=shift). SLL at 0x7 (op[3:2]=01) was routed to the logic category. Fixed to SLL=0x8, SRL=0x9, SRA=0xB to match the RISCV execution unit encoding (which was already correct). LEC and cosim confirm the generated hardware was unaffected.
+**Bug found: ALU opcode encoding.** The `ALUBitVecBridge.lean` opcode table had SLL=0x7, SRL=0x8, SRA=0x9, but the ALU MUX tree uses `op[3:2]` for category selection (00=arith, 01=logic, 10=shift). SLL at 0x7 (op[3:2]=01) was routed to the logic category. Fixed to SLL=0x8, SRL=0x9, SRA=0xB to match the RISCV execution unit encoding (which was already correct). Cosimulation subsequently confirmed the generated hardware was unaffected.
 
 ### Axiom scorecard
 
