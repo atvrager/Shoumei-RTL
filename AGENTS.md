@@ -5,8 +5,8 @@
 > composition graph, per-circuit coverage (certificate / proofs / doc comment),
 > and the mechanical gaps.  Re-run the generator after adding a module.
 >
-> This file is the single source of truth for agent guidance.  `CLAUDE.md` and
-> `GEMINI.md` are symlinks to it, so there is one copy to keep current.
+> This file is the single source of truth for agent guidance.  `CLAUDE.md`,
+> `GEMINI.md`, and `agent.md` are symlinks to it, so there is one copy to keep current.
 
 
 Instructions and procedures for working on the Shoumei RTL project.
@@ -15,7 +15,9 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, dual code generators produce SystemVerilog + Chisel, Yosys LEC verifies equivalence.
 
-**Current state:** 89 modules, 100% LEC coverage, complete RV32IM Tomasulo CPU. See [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
+**Current state:** 89 modules, 100% LEC coverage, complete `RV32IMAF_Zicsr_Zifencei`
+Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
+[RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
 
 ## Key Toolchain Versions
 
@@ -54,6 +56,9 @@ make -C testbench run-cosim-arc     # RTL vs Spike lock-step cosim (Arcilator)
 ## Procedure: Adding a New Module
 
 This is the core workflow. Every module follows the same pattern. See [docs/adding-a-module.md](docs/adding-a-module.md) for the full walkthrough.
+
+For adding an **ISA extension** (new opcodes: decode -> classify -> execute -> verify),
+see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 
 ### Summary
 
@@ -212,6 +217,40 @@ Large sequential modules (Register91, Queue64, PhysRegFile) have structural diff
 ### Topological sorting in LEC
 
 The LEC script processes modules in dependency order (using `tsort`). This ensures building blocks are verified before the modules that depend on them, so compositional certificates can check their dependency requirements.
+
+## Agent Guidance & Code Quality Rules
+
+Adapted from [Fabien Sanglard's agent.md](https://fabiensanglard.net/agent.md/):
+
+### Interaction & Communication
+- **Brevity:** When writing something intended for human consumption (comments, commit messages, replies to prompts), use as few words as possible. Pick every word meticulously to reduce the volume to a strict minimum. Be down to the point. Less is more.
+- **Directness:** Avoid superlatives and praise. Give the cold, hard truth without sugarcoating.
+
+### Code Style & Architecture
+- **No magic numbers or strings:** Extract recurring or meaningful values into descriptive constants (`const`/`def`) or enums/inductives. Keep self-explanatory, one-off values inline to avoid clutter. If a value comes from a spec (e.g. RISC-V opcodes, funct fields), use a constant regardless.
+- **Flatten control flow:** Reduce code indentation. Avoid the Arrow Anti-Pattern. Leverage early returns and pattern matching.
+- **Function naming:** Keep function names short (< 30 characters).
+- **Type safety:** Use enums/inductives instead of booleans for function parameters.
+- **Readability:** Let the reader of the code breathe. Add empty lines between logical blocks of code.
+- **Intentional comments:** Add small, to-the-point comments explaining *what* the block does and *why*. Use examples when possible. Propose ASCII drawings to explain complex systems.
+- **Encapsulation:** Treat member visibility changes as a breaking design shift. Keep all fields and functions private unless external access is strictly required by the design. Prompt the user for explicit approval before changing any access modifier from private to internal or public.
+- **Levels of abstraction:** Lower-level mechanics (e.g., raw hardware I/O, sector parsing, direct socket streams) must be encapsulated in a dedicated driver/abstraction layer. Expose clean, high-level APIs to the rest of the application so calling code works with domain concepts, not raw implementation details.
+- **Layered boundaries:** Strictly adhere to the layered boundary hierarchy: each layer may only communicate with its immediate neighbor directly below it. Never "punch holes" through layers (e.g., controllers or UI components must never directly call database queries, raw hardware drivers, or low-level network clients; always route through the intermediate service/abstraction layer).
+- **Minimal diffs:** Don't touch blocks of code unrelated to the feature you implement. Minimize changed lines.
+- **Explicit blocks:** Always use explicit block delimiters (e.g. `{}` in C/C++/Scala), even on a one-line `if` statement.
+
+### Bug Fixing Workflow
+- If fixing a bug, do NOT write the fix right away. First write the test. Observe it failing. Then write the fix, and observe the test passing.
+
+### Commit Messages
+When writing a commit message, follow these 7 rules:
+- **Rule 1:** Separate the subject line from the body with a single blank line.
+- **Rule 2:** Limit the subject line to 50 characters (72 is the absolute hard limit).
+- **Rule 3:** Capitalize the first letter of the subject line.
+- **Rule 4:** Do not end the subject line with a period.
+- **Rule 5:** Use the imperative mood in the subject line (e.g., "Fix bug," "Add feature," not "Fixed" or "Adds"). Test formula: It must complete the sentence: "If applied, this commit will [your subject line here]".
+- **Rule 6:** Wrap the body text manually at 72 characters to prevent Git formatting issues.
+- **Rule 7:** Use the body to explain what and why vs. how. Assume the code explains the how; the message must explain the context and reasoning.
 
 ## Code Style and Quality
 
