@@ -288,16 +288,15 @@ _verify_module_inner() {
 
     local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
 
-    # Cache check: skip if sources haven't changed since last successful LEC
+    # Cache check: skip if the exact sources have already passed LEC.
+    # Content-addressed (not mtime) so the cache survives fresh checkouts and
+    # CI artifact downloads, where every file looks newly written.
     local CACHE_STAMP="$LEC_CACHE_DIR/$MODULE_NAME.ok"
     local CERT_FILE="verification/compositional-certs.txt"
+    local SRC_HASH=""
+    SRC_HASH=$( { cat "$LEAN_FILE" "$CHISEL_FILE" 2>/dev/null;                   [ -f "$CERT_FILE" ] && cat "$CERT_FILE"; } | cksum | cut -d' ' -f1)
     if [ "$FORCE_RERUN" -eq 0 ] && [ -f "$CACHE_STAMP" ]; then
-        local stale=0
-        # Re-run if Lean SV, Chisel SV, or certs file changed
-        if [ "$LEAN_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ -f "$CHISEL_FILE" ] && [ "$CHISEL_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ -f "$CERT_FILE" ] && [ "$CERT_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ "$stale" -eq 0 ]; then
+        if [ "$(cat "$CACHE_STAMP" 2>/dev/null)" = "$SRC_HASH" ]; then
             echo -e "  ${GREEN}✓ $MODULE_NAME${NC} (cached)"
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
             # Also record compositional if applicable
@@ -337,7 +336,7 @@ _verify_module_inner() {
             # Record as compositionally verified
             echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
-            touch "$CACHE_STAMP"
+            echo "$SRC_HASH" > "$CACHE_STAMP"
             return 0
         else
             echo -e "${YELLOW}⚠ COMPOSITIONAL VERIFICATION INCOMPLETE${NC}"
@@ -436,13 +435,16 @@ _verify_module_inner() {
         local module_name="$1"
         local dir="$2"
 
-        if [ "$READ_CMD" = "read_slang" ]; then
-            # For slang, collect module + transitive dependencies
-            local files
-            files=$(collect_transitive_deps "$dir" "$module_name")
+        # Read only the module and its transitive dependencies.  Reading the
+        # entire directory (160+ files, including the multi-megabyte CPU top)
+        # for every module dominated LEC wall time; the parser cost alone was
+        # tens of seconds per small leaf module.
+        local files
+        files=$(collect_transitive_deps "$dir" "$module_name")
+        if [ -n "$files" ]; then
             echo "$READ_CMD $files"
         else
-            # Built-in parser can handle wildcards
+            # Fallback: unknown/self-contained module — read the whole directory.
             echo "$READ_CMD $dir/*.sv"
         fi
     }
@@ -625,7 +627,7 @@ YOSYS_EOF
             echo ""
             # Record this module as verified for hierarchical checking
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
-            touch "$CACHE_STAMP"
+            echo "$SRC_HASH" > "$CACHE_STAMP"
             return 0
         fi
     else

@@ -1,8 +1,8 @@
-// Synthesis wrapper for CPU_RV32IMF_Zicsr_Zifencei_Microcoded (W=2 superscalar)
+// Synthesis wrapper for CPU_RV32IMAF_Zicsr_Zifencei_Microcoded (W=2 superscalar)
 // Ties off constant zero/one and external stall ports.
 // RVVI/trace/fflags debug ports are left unconnected (optimized away).
 
-module CPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth (
+module CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_synth (
   input  logic          clock,
   input  logic          reset,
   // Instruction memory
@@ -24,7 +24,7 @@ module CPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth (
   output logic          fence_i_drain_complete
 );
 
-  CPU_RV32IMF_Zicsr_Zifencei_Microcoded u_cpu (
+  CPU_RV32IMAF_Zicsr_Zifencei_Microcoded u_cpu (
     .clock(clock),
     .reset(reset),
     .zero(1'b0),

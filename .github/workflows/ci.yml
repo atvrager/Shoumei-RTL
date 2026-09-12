@@ -240,9 +240,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-sbt-
 
-      - name: Clean stale build artifacts
-        run: lake clean
-
+      # NOTE: no `lake clean` here.  The restored .lake cache is keyed on a hash
+      # of the Lean sources, toolchain and manifests, so a cache hit is already
+      # exactly the right artifacts; wiping it forces a 3-4 minute recompile.
       - name: Generate code
         run: make codegen
 
@@ -288,6 +288,7 @@ jobs:
     name: LEC Verification
     runs-on: ubuntu-latest
     needs: [codegen]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -296,13 +297,23 @@ jobs:
         with:
           name: codegen-output
 
+      # Content-addressed LEC result cache: unchanged modules are skipped, so
+      # only modules whose emitted RTL actually changed are re-proved.
+      - name: Cache LEC results
+        uses: actions/cache@v4
+        with:
+          path: .lec-cache
+          key: lec-${{ hashFiles('lean/**/*.lean', 'GenerateAll.lean', 'verification/run-lec.sh') }}
+          restore-keys: |
+            lec-
+
       - name: Install Yosys
         run: |
           sudo apt-get update
           sudo apt-get install -y yosys
 
       - name: Run LEC
-        run: ./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+        run: ./verification/run-lec.sh -j "$(nproc)" output/sv-from-lean output/sv-from-chisel
 
   verilator-sim:
     name: Verilator Simulation
