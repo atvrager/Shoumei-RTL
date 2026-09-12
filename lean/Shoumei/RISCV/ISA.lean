@@ -9,6 +9,20 @@ import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
+/-- Bit width of the operation-type encoding for a decoder built from `defs`.
+
+    The generated decoder carries one enum value per instruction definition and
+    exposes the selected value on `io_optype`, so the enum declaration and the
+    port declaration are two spellings of a single encoding: they must be sized
+    by the same expression.  Sizing the port by "which extensions are enabled"
+    and the enum by "how many definitions there are" let the two disagree --
+    `RV32IMDecoder` has 68 definitions and no F extension, so its module
+    declared a 7-bit enum driving a 6-bit port, truncating the opcode it had
+    just decoded, and the two emitted netlists could not be matched. -/
+def InstructionDef.optypeBits (defs : List InstructionDef) : Nat :=
+  let n := defs.length
+  if n ≤ 1 then 1 else Nat.log2 (n - 1) + 1
+
 /-- Instruction field types (register specifiers and immediates) -/
 inductive FieldType where
   | rd       : FieldType  -- Destination register
