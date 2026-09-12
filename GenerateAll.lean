@@ -332,7 +332,7 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Pruning stale generated outputs..."
   pruneStaleOutputs (allCircuits.map (·.name) ++
-    ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"])
+    ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder", "RV32GDecoder"])
 
   -- Generate testbenches
   IO.println ""

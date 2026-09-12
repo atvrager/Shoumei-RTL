@@ -70,9 +70,9 @@ def genDecoderCase (instrDef : InstructionDef) (pfx : String := "") : String :=
 private def hasM (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
-/-- Check if decoder includes F-extension instructions -/
+/-- Check if decoder includes F or D extension instructions -/
 private def hasF (defs : List InstructionDef) : Bool :=
-  defs.any (fun d => d.extension.any (· == "rv_f"))
+  defs.any (fun d => d.extension.any (fun ext => ext == "rv_f" || ext == "rv_d"))
 
 /-- Check if decoder includes A-extension instructions -/
 private def hasA (defs : List InstructionDef) : Bool :=

@@ -413,6 +413,12 @@ def rv32imfDecoder_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.DecoderProofs"
 }
 
+def rv32gDecoder_cert : CompositionalCert := {
+  moduleName := "RV32GDecoder"
+  dependencies := []
+  proofReference := "Shoumei.RISCV.DecoderProofs"
+}
+
 /-! ## F-Extension -/
 
 /-- FPAdder: IEEE 754 SP adder (sequential, pipeline DFFs cause induction failure) -/
@@ -673,6 +679,7 @@ def allCerts : List CompositionalCert := [
   -- Decoders
   rv32ifDecoder_cert,
   rv32imfDecoder_cert,
+  rv32gDecoder_cert,
   -- F-Extension
   fpMisc_cert,
   fpAdder_cert,

@@ -69,7 +69,7 @@ private def hasMChisel (defs : List InstructionDef) : Bool :=
   defs.any (fun d => d.extension.any (· == "rv_m"))
 
 private def hasFChisel (defs : List InstructionDef) : Bool :=
-  defs.any (fun d => d.extension.any (· == "rv_f"))
+  defs.any (fun d => d.extension.any (fun ext => ext == "rv_f" || ext == "rv_d"))
 
 /-- Generate complete Chisel decoder module -/
 private def ceilLog2 (n : Nat) : Nat :=

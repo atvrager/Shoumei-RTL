@@ -44,10 +44,11 @@ set_option maxHeartbeats 800000
 def mkCPU (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableD := config.enableD
   let sbFwdPipelined := config.sbFwdPipelineStages > 0
   let oi := config.opcodeIndex
-  -- Opcode width: 7 bits when F extension (>64 instructions), 6 bits otherwise
-  let opcodeWidth := if enableF then 7 else 6
+  -- Opcode width: 7 bits when F/D extension (>64 instructions), 6 bits otherwise
+  let opcodeWidth := if enableF || enableD then 7 else 6
   -- Global signals
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -337,7 +338,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- === DECODER ===
   let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
+    if enableD && enableM then "RV32GDecoder"
+    else if enableF && enableM then "RV32IMFDecoder"
     else if enableF then "RV32IFDecoder"
     else if enableM then "RV32IMDecoder"
     else "RV32IDecoder"
@@ -3164,9 +3166,10 @@ Extends mkCPU to 2 instructions per cycle throughout the pipeline. -/
 def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableD := config.enableD
   let enableA := config.enableA
   let oi := config.opcodeIndex
-  let opcodeWidth := if enableF then 7 else 6
+  let opcodeWidth := if enableF || enableD then 7 else 6
 
   -- Global signals
   let clock := Wire.mk "clock"
@@ -3924,7 +3927,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   -- === DECODE STAGE (W2) ===
   let decoderModuleName :=
-    if enableF && enableM then "RV32IMFDecoder"
+    if enableD && enableM then "RV32GDecoder"
+    else if enableF && enableM then "RV32IMFDecoder"
     else if enableF then "RV32IFDecoder"
     else if enableM then "RV32IMDecoder"
     else "RV32IDecoder"
