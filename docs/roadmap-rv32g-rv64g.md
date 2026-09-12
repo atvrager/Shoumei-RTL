@@ -48,6 +48,21 @@ width lives. Forking is rejected: it means every future feature is implemented
 twice and two cores drift apart, and the D work would be duplicated almost
 immediately.
 
+### Width parameters
+
+Three widths describe the machine. All are parameters; none is a fork.
+
+| Parameter | Value | Rationale |
+| :--- | :--- | :--- |
+| **XLEN** | 32 or 64 | the two configurations differ by this and nothing else |
+| **FLEN** | 64 | D requires 64-bit FP registers; with D in both targets, FLEN is fixed at 64 (the F-only 32-bit register file disappears) |
+| **VLEN** | 128 | matches the existing `Zve32x` work on the `vector` branch (`vlenb = 0x10`); ELEN = 32 |
+
+Vector is **not part of G** and is off for both target configurations. It is a
+separate axis of the same `CPUConfig`, so the parameterisation below is what
+lets the existing vector work rebase onto the two G configurations rather than
+be re-done per XLEN.
+
 ### What "XLEN is a parameter" means concretely
 
 The design already has the right shape in most layers; the job is to remove the
