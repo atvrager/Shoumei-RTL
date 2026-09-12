@@ -259,24 +259,10 @@ trap 'rm -rf "$TMPDIR" "$VERIFIED_MODULES_FILE" "$COMPOSITIONAL_MODULES_FILE"' E
 CLEAN_CHISEL_DIR="$TMPDIR/chisel_clean"
 mkdir -p "$CLEAN_CHISEL_DIR"
 echo "Cleaning Chisel output files for Yosys compatibility..."
-# One sed pipeline per file, run in parallel: this is pure text munging over
-# 160+ files and cost ~10 s of every invocation, including cached smoke runs.
-# shellcheck disable=SC2329  # invoked indirectly via xargs below
-clean_one() {
-    local f="$1" out_dir="$2"
-    local bn; bn=$(basename "$f")
-    # 1. Remove CIRCT verification blocks
-    # 2. Convert 'automatic logic x = y;' to 'logic x; x = y;'
-    # 3. Remove remaining 'automatic' keywords
-    sed '/^\/\/ ----- 8< -----/,$d' "$f" | \
-        sed -E 's/([[:space:]])automatic logic\s+([a-zA-Z0-9_]+)\s*=\s*(.+);/\1logic \2;\n\1\2 = \3;/g' | \
-        sed 's/[[:space:]]*automatic[[:space:]]+/ /g' > "$out_dir/$bn"
-}
-export -f clean_one
-export CLEAN_OUT_DIR="$CLEAN_CHISEL_DIR"
-# shellcheck disable=SC2016  # $1/$CLEAN_OUT_DIR expand in the child shell
+# One process per file, run in parallel: pure text munging over 160+ files that
+# cost ~10 s of every invocation, including fully cached smoke runs.
 find "$CHISEL_DIR" -maxdepth 1 -name '*.sv' -print0 2>/dev/null | \
-    xargs -0 -r -P "$PARALLEL_JOBS" -n 1 bash -c 'clean_one "$1" "$CLEAN_OUT_DIR"' _
+    xargs -0 -r -P "$PARALLEL_JOBS" -n 1 "$SCRIPT_DIR/clean-chisel-sv.sh" "$CLEAN_CHISEL_DIR"
 echo "Cleaning complete."
 echo ""
 
