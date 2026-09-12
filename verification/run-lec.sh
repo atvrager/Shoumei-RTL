@@ -17,7 +17,9 @@ LEAN_DIR="output/sv-from-lean"
 CHISEL_DIR="output/sv-from-chisel"
 declare -a TARGET_MODULES=()
 USE_SLANG="auto"  # auto, yes, no
-PARALLEL_JOBS=$(( $(nproc) - 1 ))  # -j N for parallel LEC within dependency levels
+# -j N for parallel LEC within dependency levels.  Default to all cores: nproc-1
+# resolves to 1 on a 2-vCPU CI runner, silently disabling parallel verification.
+PARALLEL_JOBS=$(nproc)
 [ "$PARALLEL_JOBS" -lt 1 ] && PARALLEL_JOBS=1
 FORCE_RERUN=0      # --force to ignore cache
 LEC_CACHE_DIR=".lec-cache"
@@ -182,15 +184,20 @@ TOPO_SORTED_MODULES=$(
     }' | tsort 2>/dev/null
 )
 
-# Map sorted module names back to file paths
+# Map sorted module names back to file paths.  Built as a hash map in one pass:
+# the previous nested loop called `basename` O(n^2) times (~20k forks for 141
+# modules), which alone cost ~10 s of every invocation.
+declare -A MODULE_FILE
+for file in $ALL_LEAN_MODULES; do
+    _m=$(basename "$file" .sv)
+    _m=$(basename "$_m" .v)
+    MODULE_FILE["$_m"]="$file"
+done
 LEAN_MODULES=""
 for module in $TOPO_SORTED_MODULES; do
-    for file in $ALL_LEAN_MODULES; do
-        if [[ $(basename "$file" .sv) == "$module" ]] || [[ $(basename "$file" .v) == "$module" ]]; then
-            LEAN_MODULES="$LEAN_MODULES"$'\n'"$file"
-            break
-        fi
-    done
+    if [ -n "${MODULE_FILE[$module]+x}" ]; then
+        LEAN_MODULES="$LEAN_MODULES"$'\n'"${MODULE_FILE[$module]}"
+    fi
 done
 LEAN_MODULES=$(echo "$LEAN_MODULES" | sed '/^$/d')  # Remove empty lines
 
@@ -252,15 +259,10 @@ trap 'rm -rf "$TMPDIR" "$VERIFIED_MODULES_FILE" "$COMPOSITIONAL_MODULES_FILE"' E
 CLEAN_CHISEL_DIR="$TMPDIR/chisel_clean"
 mkdir -p "$CLEAN_CHISEL_DIR"
 echo "Cleaning Chisel output files for Yosys compatibility..."
-for f in "$CHISEL_DIR"/*.sv; do
-    bn=$(basename "$f")
-    # 1. Remove CIRCT verification blocks
-    # 2. Convert 'automatic logic x = y;' to 'logic x; x = y;'
-    # 3. Remove remaining 'automatic' keywords
-    sed '/^\/\/ ----- 8< -----/,$d' "$f" | \
-        sed -E 's/([[:space:]])automatic logic\s+([a-zA-Z0-9_]+)\s*=\s*(.+);/\1logic \2;\n\1\2 = \3;/g' | \
-        sed 's/[[:space:]]*automatic[[:space:]]\+/ /g' > "$CLEAN_CHISEL_DIR/$bn"
-done
+# One process per file, run in parallel: pure text munging over 160+ files that
+# cost ~10 s of every invocation, including fully cached smoke runs.
+find "$CHISEL_DIR" -maxdepth 1 -name '*.sv' -print0 2>/dev/null | \
+    xargs -0 -r -P "$PARALLEL_JOBS" -n 1 "$SCRIPT_DIR/clean-chisel-sv.sh" "$CLEAN_CHISEL_DIR"
 echo "Cleaning complete."
 echo ""
 
@@ -288,16 +290,15 @@ _verify_module_inner() {
 
     local CHISEL_FILE="$CHISEL_DIR/${MODULE_NAME}.sv"
 
-    # Cache check: skip if sources haven't changed since last successful LEC
+    # Cache check: skip if the exact sources have already passed LEC.
+    # Content-addressed (not mtime) so the cache survives fresh checkouts and
+    # CI artifact downloads, where every file looks newly written.
     local CACHE_STAMP="$LEC_CACHE_DIR/$MODULE_NAME.ok"
     local CERT_FILE="verification/compositional-certs.txt"
+    local SRC_HASH=""
+    SRC_HASH=$( { cat "$LEAN_FILE" "$CHISEL_FILE" 2>/dev/null;                   [ -f "$CERT_FILE" ] && cat "$CERT_FILE"; } | cksum | cut -d' ' -f1)
     if [ "$FORCE_RERUN" -eq 0 ] && [ -f "$CACHE_STAMP" ]; then
-        local stale=0
-        # Re-run if Lean SV, Chisel SV, or certs file changed
-        if [ "$LEAN_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ -f "$CHISEL_FILE" ] && [ "$CHISEL_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ -f "$CERT_FILE" ] && [ "$CERT_FILE" -nt "$CACHE_STAMP" ]; then stale=1; fi
-        if [ "$stale" -eq 0 ]; then
+        if [ "$(cat "$CACHE_STAMP" 2>/dev/null)" = "$SRC_HASH" ]; then
             echo -e "  ${GREEN}✓ $MODULE_NAME${NC} (cached)"
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
             # Also record compositional if applicable
@@ -337,7 +338,7 @@ _verify_module_inner() {
             # Record as compositionally verified
             echo "$MODULE_NAME" >> "$COMPOSITIONAL_MODULES_FILE"
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
-            touch "$CACHE_STAMP"
+            echo "$SRC_HASH" > "$CACHE_STAMP"
             return 0
         else
             echo -e "${YELLOW}⚠ COMPOSITIONAL VERIFICATION INCOMPLETE${NC}"
@@ -436,13 +437,16 @@ _verify_module_inner() {
         local module_name="$1"
         local dir="$2"
 
-        if [ "$READ_CMD" = "read_slang" ]; then
-            # For slang, collect module + transitive dependencies
-            local files
-            files=$(collect_transitive_deps "$dir" "$module_name")
+        # Read only the module and its transitive dependencies.  Reading the
+        # entire directory (160+ files, including the multi-megabyte CPU top)
+        # for every module dominated LEC wall time; the parser cost alone was
+        # tens of seconds per small leaf module.
+        local files
+        files=$(collect_transitive_deps "$dir" "$module_name")
+        if [ -n "$files" ]; then
             echo "$READ_CMD $files"
         else
-            # Built-in parser can handle wildcards
+            # Fallback: unknown/self-contained module — read the whole directory.
             echo "$READ_CMD $dir/*.sv"
         fi
     }
@@ -451,14 +455,19 @@ _verify_module_inner() {
     LEAN_READ_CMDS=$(generate_read_commands_for_module "$MODULE_NAME" "$LEAN_DIR")
     CHISEL_READ_CMDS=$(generate_read_commands_for_module "$MODULE_NAME" "$CLEAN_CHISEL_DIR")
 
-    # Create Yosys script for equivalence checking
-    if [ $IS_SEQUENTIAL -eq 1 ]; then
-        if [ $HAS_HIERARCHY -eq 1 ]; then
-            # Hierarchical Sequential Equivalence Checking
-            # Strategy: Flatten and use standard induction depth
-            local INDUCT_DEPTH=3
+    # Create the equivalence scripts.
+    #
+    # Two-tier strategy for sequential modules: first try a *structural* proof
+    # (`equiv_simple` + `equiv_status`).  Both netlists are emitted from the same
+    # Circuit, so they are almost always structurally equivalent and this
+    # discharges the miter in seconds.  Only when that leaves unproven points do
+    # we pay for induction / SAT.  This keeps the hierarchical composition of
+    # already-proven leaves cheap instead of re-proving the flattened cone.
+    local HAS_FAST_PASS=0
+    local LEC_COMMON="$TMPDIR/lec_${MODULE_NAME}_common.ys"
 
-            cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+    if [ $IS_SEQUENTIAL -eq 1 ]; then
+        cat > "$LEC_COMMON" <<YOSYS_EOF
 # Load slang plugin if needed
 $PLUGIN_CMD
 
@@ -494,57 +503,50 @@ async2sync
 
 # Show statistics
 stat
-
-# For hierarchical designs, use limited induction depth
-equiv_simple -undef
-equiv_induct -undef -seq $INDUCT_DEPTH
-equiv_status -assert
 YOSYS_EOF
-        else
-            # Flat Sequential Equivalence Checking (for leaf modules)
-            cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
+
+        # Fast pass: structural equivalence only, and crucially WITHOUT
+        # flattening.  Sub-module instances stay as cells, so equiv_make matches
+        # them by type and connection and only the glue logic is checked.  Every
+        # instantiated sub-module is already proven on its own, so this is the
+        # composition step of the proof ladder rather than a re-proof.
+        cat > "$TMPDIR/lec_${MODULE_NAME}_fast.ys" <<YOSYS_EOF
 # Load slang plugin if needed
 $PLUGIN_CMD
 
-# Read and prepare LEAN design (gold reference)
+# LEAN design (gold), hierarchy preserved
 $LEAN_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
+proc; opt
 rename $MODULE_NAME gold
-
-# Stash gold design
 design -stash gold
-
-# Full reset (needed for slang - reset-vlog not sufficient)
 design -reset
 
-# Read and prepare Chisel design (gate implementation)
+# Chisel design (gate), hierarchy preserved
 $CHISEL_READ_CMDS
 hierarchy -check -top $MODULE_NAME
-proc; memory; opt; setattr -mod -unset keep_hierarchy; flatten
+proc; opt
 rename $MODULE_NAME gate
-
-# Stash gate design
 design -stash gate
 
-# Copy both into main design for comparison
 design -copy-from gold -as gold gold
 design -copy-from gate -as gate gate
 
-# Build equivalence circuit (preserve state elements)
 equiv_make gold gate equiv
-prep -top equiv
-async2sync
-
-# Show statistics
-stat
-
-# Perform sequential equivalence check with induction
+hierarchy -top equiv
 equiv_simple -undef
-equiv_induct -undef
-equiv_status -assert
+equiv_status
 YOSYS_EOF
+
+        # Slow pass: induction (bounded for hierarchical designs).
+        if [ $HAS_HIERARCHY -eq 1 ]; then
+            { cat "$LEC_COMMON"; printf 'equiv_simple -undef\nequiv_induct -undef -seq 3\nequiv_status -assert\n'; } \
+                > "$TMPDIR/lec_${MODULE_NAME}.ys"
+        else
+            { cat "$LEC_COMMON"; printf 'equiv_simple -undef\nequiv_induct -undef\nequiv_status -assert\n'; } \
+                > "$TMPDIR/lec_${MODULE_NAME}.ys"
         fi
+        HAS_FAST_PASS=1
     else
         # Combinational Equivalence Checking (CEC)
         cat > "$TMPDIR/lec_${MODULE_NAME}.ys" <<YOSYS_EOF
@@ -591,8 +593,21 @@ YOSYS_EOF
     # Run Yosys and capture output
     local YOSYS_OUTPUT="$TMPDIR/yosys_output_${MODULE_NAME}.txt"
     local YOSYS_SUCCESS=0
-    if yosys -s "$TMPDIR/lec_${MODULE_NAME}.ys" > "$YOSYS_OUTPUT" 2>&1; then
-        YOSYS_SUCCESS=1
+    local PROVEN_FAST=0
+
+    if [ "$HAS_FAST_PASS" -eq 1 ]; then
+        # Structural pass: no induction, no SAT.
+        yosys -s "$TMPDIR/lec_${MODULE_NAME}_fast.ys" > "$YOSYS_OUTPUT" 2>&1 || true
+        if grep -q "Equivalence successfully proven" "$YOSYS_OUTPUT"; then
+            PROVEN_FAST=1
+            YOSYS_SUCCESS=1
+        fi
+    fi
+
+    if [ "$PROVEN_FAST" -eq 0 ]; then
+        if yosys -s "$TMPDIR/lec_${MODULE_NAME}.ys" > "$YOSYS_OUTPUT" 2>&1; then
+            YOSYS_SUCCESS=1
+        fi
     fi
 
     # Analyze results
@@ -625,7 +640,7 @@ YOSYS_EOF
             echo ""
             # Record this module as verified for hierarchical checking
             echo "$MODULE_NAME" >> "$VERIFIED_MODULES_FILE"
-            touch "$CACHE_STAMP"
+            echo "$SRC_HASH" > "$CACHE_STAMP"
             return 0
         fi
     else

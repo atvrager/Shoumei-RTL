@@ -88,7 +88,7 @@ endif
 
 # Generate RISC-V instruction definitions from riscv-opcodes
 # Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f rv_zifencei)
-RISCV_EXTS ?= rv_i rv32_i rv_m rv_f rv_zicsr rv_zifencei rv_system
+RISCV_EXTS ?= rv_i rv32_i rv_m rv_a rv_f rv_zicsr rv_zifencei rv_system
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
@@ -106,14 +106,10 @@ opcodes-rv32im: opcodes
 codegen: lean opcodes
 	@echo "==> Running code generators..."
 	@echo "    Phase 1: All circuits (SV + Chisel + C++ Sim)..."
-	lake exe generate_all
-	@echo "    Phase 2: RISC-V decoders (RV32I + RV32IM + RV32IF + RV32IMF)..."
-	lake exe generate_riscv_decoder
-	@echo "    Phase 3: Exporting compositional verification certificates..."
+	lake exe generate_all     # circuits + decoders + filelists in one pass
+	@echo "    Phase 2: Exporting compositional verification certificates..."
 	@mkdir -p verification
 	lake exe export_verification_certs > verification/compositional-certs.txt
-	@echo "    Phase 4: Generating synthesis filelists..."
-	@$(MAKE) --no-print-directory filelists
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # Each lists the synth wrapper + ASAP7 overrides + generic SV modules

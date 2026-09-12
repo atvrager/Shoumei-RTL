@@ -8,6 +8,30 @@ on:
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: Change Detection
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Decide whether this change touches anything the heavy jobs care about.
+      # Deliberately NOT `paths-ignore` on the workflow trigger: that skips the
+      # whole run, so required checks never report and the PR can never merge.
+      # Gating inside the graph keeps every check reporting (as skipped).
+      - name: Detect code changes
+        id: detect
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          if git diff --name-only "$base"...HEAD | grep -qE '^(lean/|testbench/|verification/|chisel/|physical/|\.github/|Makefile|Generate.*\.lean|lakefile\.lean|lean-toolchain)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changed files:"; git diff --name-only "$base"...HEAD | head -20
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -69,7 +93,16 @@ jobs:
           test -f COMMANDS.md
           test -f LICENSE
 
+      # The project map is generated from `lean/` and is part of the review
+      # surface, so it must not drift from the source it describes.
+      - name: Project map is current
+        run: |
+          python3 scripts/gen-project-map.py
+          git diff --exit-code -- docs/project-map.md
+
   proof-coverage:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Proof Coverage
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +124,8 @@ jobs:
           retention-days: 90
 
   lean-build:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Lean Build
     runs-on: ubuntu-latest
     steps:
@@ -146,6 +181,8 @@ jobs:
         run: lake exe generate_shoumei
 
   scala-build:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Scala Build
     runs-on: ubuntu-latest
     steps:
@@ -240,9 +277,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-sbt-
 
-      - name: Clean stale build artifacts
-        run: lake clean
-
+      # NOTE: no `lake clean` here.  The restored .lake cache is keyed on a hash
+      # of the Lean sources, toolchain and manifests, so a cache hit is already
+      # exactly the right artifacts; wiping it forces a 3-4 minute recompile.
       - name: Generate code
         run: make codegen
 
@@ -288,6 +325,7 @@ jobs:
     name: LEC Verification
     runs-on: ubuntu-latest
     needs: [codegen]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -296,13 +334,23 @@ jobs:
         with:
           name: codegen-output
 
+      # Content-addressed LEC result cache: unchanged modules are skipped, so
+      # only modules whose emitted RTL actually changed are re-proved.
+      - name: Cache LEC results
+        uses: actions/cache@v4
+        with:
+          path: .lec-cache
+          key: lec-${{ hashFiles('lean/**/*.lean', 'GenerateAll.lean', 'verification/run-lec.sh') }}
+          restore-keys: |
+            lec-
+
       - name: Install Yosys
         run: |
           sudo apt-get update
           sudo apt-get install -y yosys
 
       - name: Run LEC
-        run: ./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
+        run: ./verification/run-lec.sh -j "$(nproc)" output/sv-from-lean output/sv-from-chisel
 
   verilator-sim:
     name: Verilator Simulation
@@ -502,9 +550,12 @@ jobs:
             "${{ needs.smoke-test.result }}" \
           )
           for r in "${results[@]}"; do
-            if [ "$r" != "success" ]; then
-              echo "One or more jobs failed or were cancelled"
-              exit 1
-            fi
+            case "$r" in
+              success|skipped) ;;  # skipped = gated out by Change Detection
+              *)
+                echo "One or more jobs failed or were cancelled: $r"
+                exit 1
+                ;;
+            esac
           done
-          echo "All 8 leaf jobs passed"
+          echo "All required leaf jobs passed (or were skipped for a docs-only change)"

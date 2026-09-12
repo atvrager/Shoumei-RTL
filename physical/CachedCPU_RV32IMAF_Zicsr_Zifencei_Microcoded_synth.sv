@@ -1,9 +1,9 @@
-// Synthesis wrapper for CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
+// Synthesis wrapper for CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
 // W=2 superscalar CPU + L1I (256B) + L1D (256B) + L2 (512B) with microcode trap support
 // Ties off constant zero/one ports and exposes only the main memory interface.
 // RVVI/store_snoop debug ports are left unconnected (optimized away).
 
-module CachedCPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth (
+module CachedCPU_RV32IMAF_Zicsr_Zifencei_Microcoded_synth (
   input  logic          clock,
   input  logic          reset,
   // Main memory interface (to DRAM/AXI)
@@ -17,7 +17,7 @@ module CachedCPU_RV32IMF_Zicsr_Zifencei_Microcoded_synth (
   output logic          rob_empty
 );
 
-  CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B u_cpu (
+  CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B u_cpu (
     .clock(clock),
     .reset(reset),
     .zero(1'b0),
