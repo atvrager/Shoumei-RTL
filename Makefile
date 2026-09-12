@@ -101,21 +101,8 @@ codegen: lean opcodes
 	lake exe generate_all --export-certs > verification/compositional-certs.txt
 
 # Generate per-synth-target filelists (physical/<design>.f)
-# Each lists the synth wrapper + ASAP7 overrides + generic SV modules
-SYNTH_DESIGNS := CPU_RV32I_synth CPU_RV32IF_synth CPU_RV32IM_synth CPU_RV32IMF_synth
-filelists:
-	@ASAP7_SV=$$(ls output/sv-asap7/*.sv 2>/dev/null || true); \
-	ASAP7_NAMES=$$(basename -a $$ASAP7_SV 2>/dev/null || true); \
-	for design in $(SYNTH_DESIGNS); do \
-		{ echo "physical/$$design.sv"; \
-		  for f in $$ASAP7_SV; do echo "$$f"; done; \
-		  for f in output/sv-from-lean/*.sv; do \
-			b=$$(basename "$$f"); \
-			case " $$ASAP7_NAMES " in *" $$b "*) ;; *) echo "$$f" ;; esac; \
-		  done; \
-		} | sort > "physical/$$design.f"; \
-	done
-	@echo "✓ Generated filelists: $(addsuffix .f,$(SYNTH_DESIGNS))"
+# generate_all dynamically generates filelists for all physical/*_synth.sv wrappers
+filelists: codegen
 
 # Validate generated SystemVerilog modules with Yosys
 # Checks syntax and hierarchy of all generated SV files
