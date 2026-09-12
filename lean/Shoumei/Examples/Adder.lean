@@ -24,7 +24,6 @@ Logic:
 import Shoumei.DSL
 import Shoumei.Semantics
 import Shoumei.Codegen.SystemVerilog
-import Shoumei.Codegen.Chisel
 import Shoumei.Circuits.Sequential.DFF
 
 namespace Shoumei.Examples
@@ -62,10 +61,6 @@ def fullAdderCircuit : Circuit :=
 def generateSystemVerilog : String :=
   Codegen.SystemVerilog.toSystemVerilog fullAdderCircuit
 
--- Generate Chisel for the full adder
-def generateChisel : String :=
-  Codegen.Chisel.toChisel fullAdderCircuit
-
 -- Write SystemVerilog to file
 def writeSystemVerilog : IO Unit := do
   let sv := generateSystemVerilog
@@ -73,33 +68,15 @@ def writeSystemVerilog : IO Unit := do
   IO.FS.writeFile path sv
   IO.println s!"✓ Generated: {path}"
 
--- Write Chisel to file
-def writeChisel : IO Unit := do
-  let chisel := generateChisel
-  let path := "chisel/src/main/scala/generated/FullAdder.scala"
-  IO.FS.writeFile path chisel
-  IO.println s!"✓ Generated: {path}"
-
 -- Generate SystemVerilog for DFlipFlop
 def generateDFFSystemVerilog : String :=
   Codegen.SystemVerilog.toSystemVerilog Circuits.Sequential.dff
-
--- Generate Chisel for DFlipFlop
-def generateDFFChisel : String :=
-  Codegen.Chisel.toChisel Circuits.Sequential.dff
 
 -- Write DFF SystemVerilog to file
 def writeDFFSystemVerilog : IO Unit := do
   let sv := generateDFFSystemVerilog
   let path := "output/sv-from-lean/DFlipFlop.sv"
   IO.FS.writeFile path sv
-  IO.println s!"✓ Generated: {path}"
-
--- Write DFF Chisel to file
-def writeDFFChisel : IO Unit := do
-  let chisel := generateDFFChisel
-  let path := "chisel/src/main/scala/generated/DFlipFlop.scala"
-  IO.FS.writeFile path chisel
   IO.println s!"✓ Generated: {path}"
 
 -- Main entry point for code generation
@@ -112,11 +89,9 @@ def main : IO Unit := do
   IO.println ""
   IO.println "==> FullAdder (combinational)"
   writeSystemVerilog
-  writeChisel
   IO.println ""
   IO.println "==> DFlipFlop (sequential)"
   writeDFFSystemVerilog
-  writeDFFChisel
   IO.println ""
   IO.println "✓ Code generation complete"
 

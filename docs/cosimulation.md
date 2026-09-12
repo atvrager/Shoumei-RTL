@@ -35,13 +35,14 @@ When the RTL retires an instruction (RVVI `valid` asserted), the testbench:
 
 Both are linked into the same Verilator testbench process. No trace files, no offline comparison -- mismatches are caught at the exact cycle they occur.
 
-### Relationship to LEC
+### Relationship to the verification stack
 
-LEC proves that Lean SV and Chisel SV are equivalent for all inputs. Two-way cosimulation with Spike validates that the RTL behaves correctly on actual programs.
-
-- **LEC** catches structural divergence between code generators (verifies both generators produce equivalent circuits)
-- **Cosimulation** catches behavioral bugs in the Lean model itself (validates against the ISA reference on actual test programs)
-- Together they form a closed verification loop: Lean proofs establish correctness, LEC verifies code generators, cosim validates against the ISA reference
+There is no second RTL artifact any more: the Lean definition is the single
+source for the emitted SystemVerilog, so correctness rests on the Lean proofs
+(checked by `lake build`) and the RTL is validated by running it — slang
+elaboration, Verilator simulation, and this lock-step cosimulation against
+Spike. Cosimulation catches behavioural bugs in the Lean model by comparing
+every retirement against the ISA reference on actual test programs.
 
 ## RVVI-TRACE Interface
 
@@ -458,7 +459,7 @@ jobs:
       - name: Build Lean + generate test ELFs
         run: |
           lake build
-          lake exe generate_tests --suite all --output tests/generated/
+          lake exe gen_tests
 
       - name: Build Verilator cosim testbench
         run: |
@@ -531,7 +532,7 @@ Register file at mismatch (instruction #17):
 |---|---|---|---|
 | Comparison mode | Offline trace diff | Lock-step (2-way) | Lock-step (2-way) |
 | Microarch-aware generation | No | No | Yes (Lean models) |
-| Fault isolation | No (1 DUT) | Limited | Via LEC + Spike validation |
+| Fault isolation | No (1 DUT) | Limited | Via Spike validation |
 | Detection latency | Post-mortem | Immediate (cycle) | Immediate (cycle) |
 | Async event handling | Manual | Built-in | Via RVVI `intr` signal |
 | License | Open source | Commercial | Open source |

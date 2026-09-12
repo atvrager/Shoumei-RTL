@@ -7,8 +7,7 @@ Sets up the complete Shoumei RTL development environment:
 - Installs uv (fast Python package manager)
 - Installs elan (LEAN toolchain manager)
 - Installs LEAN 4 v4.27.0 (via lean-toolchain file)
-- Installs Coursier + sbt (for Chisel 7.7.0 / Scala 2.13.18)
-- Installs Yosys (LEC verification)
+- Installs Yosys (SystemVerilog validation)
 - Installs Verilator (RTL simulation)
 - Installs RISC-V GCC cross-compiler (test ELF compilation)
 - Verifies installation with `lake build`
@@ -165,107 +164,8 @@ def setup_lean():
             print_error("LEAN installation failed")
             sys.exit(1)
 
-def install_coursier():
-    """Install Coursier (Scala dependency manager) if not present"""
-    print_step("Installing Coursier (Scala toolchain manager)")
-
-    if command_exists("cs"):
-        print_success("Coursier already installed")
-        return
-
-    print("Installing Coursier...")
-
-    # Detect platform
-    import platform
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-
-    # Determine the correct launcher
-    if system == "linux":
-        if "x86_64" in machine or "amd64" in machine:
-            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz"
-        elif "aarch64" in machine or "arm64" in machine:
-            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-aarch64-pc-linux.gz"
-        else:
-            print_error(f"Unsupported architecture: {machine}")
-            sys.exit(1)
-    elif system == "darwin":
-        if "x86_64" in machine:
-            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-apple-darwin.gz"
-        elif "arm64" in machine:
-            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-aarch64-apple-darwin.gz"
-        else:
-            launcher_url = "https://github.com/coursier/launchers/raw/master/cs-x86_64-apple-darwin.gz"
-    else:
-        print_error(f"Unsupported OS: {system}")
-        sys.exit(1)
-
-    # Download and install Coursier
-    home = Path.home()
-    local_bin = home / ".local" / "bin"
-    local_bin.mkdir(parents=True, exist_ok=True)
-    cs_path = local_bin / "cs"
-
-    try:
-        print(f"Downloading from {launcher_url}")
-        run_command(f'curl -fL "{launcher_url}" | gzip -d > {cs_path}')
-        run_command(f"chmod +x {cs_path}")
-
-        # Update PATH
-        os.environ["PATH"] = f"{local_bin}:{os.environ['PATH']}"
-
-        if command_exists("cs"):
-            print_success("Coursier installed successfully")
-        else:
-            print_error("Coursier installation failed")
-            sys.exit(1)
-    except Exception as e:
-        print_error(f"Failed to install Coursier: {e}")
-        sys.exit(1)
-
-def install_sbt():
-    """Install sbt via Coursier (no system packages required)"""
-    print_step("Installing sbt via Coursier")
-
-    # First ensure Coursier is installed
-    if not command_exists("cs"):
-        install_coursier()
-
-    if command_exists("sbt"):
-        version = run_command("sbt --version 2>&1 | grep 'sbt version' | head -1 || sbt --version", capture=True)
-        print_success(f"sbt already installed: {version.strip()}")
-        return
-
-    print("Installing sbt and Scala toolchain via Coursier...")
-
-    try:
-        # Use Coursier to install sbt, scala, and scalac
-        # --yes flag auto-accepts all prompts
-        run_command("cs setup --yes --jvm 11")
-
-        # Update PATH to include Coursier bin directory
-        home = Path.home()
-        cs_bin = home / ".local" / "share" / "coursier" / "bin"
-        os.environ["PATH"] = f"{cs_bin}:{os.environ['PATH']}"
-
-        # Also update for Linux systems
-        if cs_bin.exists():
-            os.environ["PATH"] = f"{cs_bin}:{os.environ['PATH']}"
-
-        if command_exists("sbt"):
-            version = run_command("sbt --version 2>&1 | grep 'sbt version' | head -1", capture=True)
-            print_success(f"sbt installed successfully: {version.strip()}")
-        else:
-            print_warning("sbt installation completed but not found in PATH")
-            print(f"You may need to add {cs_bin} to your PATH")
-            print("Add this to your ~/.bashrc or ~/.zshrc:")
-            print(f'  export PATH="{cs_bin}:$PATH"')
-    except Exception as e:
-        print_error(f"Failed to install sbt: {e}")
-        print("You can install sbt manually from: https://www.scala-sbt.org/download.html")
-
 def install_yosys():
-    """Install Yosys (used for LEC verification)"""
+    """Install Yosys (used for SystemVerilog validation)"""
     print_step("Checking Yosys installation")
 
     if command_exists("yosys"):
@@ -317,59 +217,6 @@ def install_riscv_gcc():
         print_error("scripts/setup-riscv-toolchain.sh not found")
         print("Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases")
 
-def start_java_proxy_bridge():
-    """Start the Java proxy bridge if an authenticated proxy is detected.
-
-    Java's built-in HTTP client can't handle proxy auth via env vars.
-    The bridge listens on localhost:18080 (no auth) and forwards to the
-    upstream proxy with credentials, letting sbt/Coursier work normally.
-    """
-    print_step("Checking Java proxy bridge")
-
-    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY", "")
-    if not proxy_url or "@" not in proxy_url:
-        print_success("No authenticated proxy detected — bridge not needed")
-        return
-
-    bridge_port = int(os.environ.get("BRIDGE_PORT", "18080"))
-    bridge_script = Path("scripts/java-proxy-bridge.py")
-
-    if not bridge_script.exists():
-        print_warning("scripts/java-proxy-bridge.py not found — skipping")
-        return
-
-    # Check if already running
-    try:
-        result = run_command(
-            f'curl -s -o /dev/null -x "http://127.0.0.1:{bridge_port}" --max-time 2 https://repo1.maven.org/',
-            check=True, capture=True
-        )
-        print_success(f"Java proxy bridge already running on :{bridge_port}")
-    except (subprocess.CalledProcessError, Exception):
-        print_warning("Starting Java proxy bridge...")
-        proc = subprocess.Popen(
-            [sys.executable, str(bridge_script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        import time
-        time.sleep(1)
-        if proc.poll() is None:
-            print_success(f"Java proxy bridge started (PID {proc.pid}) on :{bridge_port}")
-        else:
-            print_warning("Java proxy bridge failed to start — sbt may not work through proxy")
-            return
-
-    # Set Java proxy env vars
-    java_opts = (
-        f"-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort={bridge_port} "
-        f"-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort={bridge_port}"
-    )
-    os.environ["JAVA_OPTS"] = java_opts
-    os.environ["SBT_OPTS"] = java_opts
-    print_success("JAVA_OPTS/SBT_OPTS configured for proxy bridge")
-
-
 def verify_build():
     """Verify the installation by running lake build"""
     print_step("Verifying installation with 'lake build'")
@@ -390,8 +237,7 @@ def check_all_tools():
     tools = [
         ("python3",                  "Python 3.11+"),
         ("lake",                     "Lean 4 / Lake"),
-        ("sbt",                      "sbt (Scala build tool)"),
-        ("yosys",                    "Yosys (LEC)"),
+        ("yosys",                    "Yosys (SystemVerilog validation)"),
         ("verilator",                "Verilator (RTL sim)"),
         ("riscv32-unknown-elf-gcc",  "RISC-V GCC"),
         ("cmake",                    "CMake"),
@@ -429,17 +275,11 @@ def main():
     parser = argparse.ArgumentParser(description="Shoumei RTL development environment setup")
     parser.add_argument("--check-only", action="store_true",
                         help="Only verify tools are present; do not install anything")
-    parser.add_argument("--start-proxy-bridge", action="store_true",
-                        help="Start the Java proxy bridge for sandbox environments")
     args = parser.parse_args()
 
     if args.check_only:
         ok = check_all_tools()
         sys.exit(0 if ok else 1)
-
-    if args.start_proxy_bridge:
-        start_java_proxy_bridge()
-        sys.exit(0)
 
     print(f"{Color.BOLD}Shoumei RTL - Development Environment Bootstrap{Color.RESET}")
     print("=" * 50)
@@ -456,20 +296,13 @@ def main():
     # Step 4: Set up LEAN
     setup_lean()
 
-    # Step 5: Install Coursier and sbt
-    install_coursier()
-    install_sbt()
-
-    # Step 6: HDL / simulation tools
+    # Step 5: HDL / simulation tools
     install_yosys()
     install_verilator()
-    # Step 7: RISC-V cross-compiler
+    # Step 6: RISC-V cross-compiler
     install_riscv_gcc()
 
-    # Step 8: Java proxy bridge (for sandbox environments)
-    start_java_proxy_bridge()
-
-    # Step 9: Verify with lake build
+    # Step 7: Verify with lake build
     verify_build()
 
     # Final message

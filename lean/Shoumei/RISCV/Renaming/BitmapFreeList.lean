@@ -303,10 +303,10 @@ theorem bfl_w2_has_deq_valid_1 :
 theorem bfl_w2_has_enq_ready :
     mkBitmapFreeList64_W2.outputs.any (fun w => w.name == "enq_ready") = true := by native_decide
 
-/-! ## Compositional LEC Certificate
+/- ## Compositional Verification
 
 BitmapFreeList_64_W2 is verified by COMPOSITION:
-1. All submodule types are LEC-verified (same IDs as BitmapFreeList_64 W1 certs):
+1. All submodule types are verified (same certificates as BitmapFreeList_64 W1):
    - Decoder6           ✓
    - PriorityArbiter64  ✓
    - OneHotEncoder64    ✓
@@ -314,12 +314,10 @@ BitmapFreeList_64_W2 is verified by COMPOSITION:
    These implement: arb1_req[i] = spec[i] AND NOT(arb0_grant[i])
    This is trivially correct (3-input Boolean identity).
 3. The slot-1 arbiter+encoder path is structurally isomorphic to slot-0,
-   so its LEC follows by structural symmetry from the slot-0 LEC cert.
--/
-axiom bfl_w2_lec_by_composition :
-    ∀ (sv_rtl : String),
-    sv_rtl = "BitmapFreeList_64_W2 Chisel-generated SV" →
-    True  -- placeholder: Yosys equivalence pending Chisel codegen
+   so its correctness follows by structural symmetry from the slot-0 path.
+
+The certificate for this module is exported from
+`Shoumei.Verification.CompositionalCerts`. -/
 
 end Shoumei.RISCV.Renaming.BitmapFreeList_W2Proofs
 

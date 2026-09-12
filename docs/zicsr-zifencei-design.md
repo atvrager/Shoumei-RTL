@@ -333,9 +333,12 @@ Because the pipeline is empty when the CSR executes, there is no interaction wit
 
 The WARL proofs are per-CSR: `mstatus` WARL mask zeroes reserved bits, `mepc` clears bit 0, `misa` ignores all writes, etc. Each is a small `native_decide` or `bv_decide` proof on the 32-bit mask.
 
-### Verification (LEC)
+### Verification
 
-The CSR register file and FSM are small enough for direct SEC. The `CSRAddrDecoder` and `CSRExecute` are combinational and use SAT-based miter. Total: 4 new modules, all direct LEC — no compositional certs needed.
+These modules are justified the same way as the rest of the design: Lean proofs
+(structural `native_decide` facts plus the behavioural theorems above, checked by
+`lake build`), and simulation of the emitted SystemVerilog — `make -C testbench sim`
+/ `run-all-tests`, with Spike cosimulation via `make -C testbench cosim` / `run-cosim`.
 
 ### Implementation Steps
 
@@ -346,7 +349,7 @@ The CSR register file and FSM are small enough for direct SEC. The `CSRAddrDecod
 5. Modify `cpuStep`: detect CSR/FENCE.I in decode, manage FSM transitions, execute when drained
 6. Replace standalone `fflags`/`frm` fields with CSR file reads
 7. Build structural circuits (`CSRFile16x32`, `CSRSerializeFSM`, `CSRExecute`, `CSRAddrDecoder`)
-8. Add to `GenerateAll.lean`, run codegen + LEC
+8. Add to `GenerateAll.lean`, run codegen
 9. Write proofs (CSR RMW, WARL, drain invariant)
 10. Add cosim test patterns (CSR read-after-write, FENCE.I self-modifying code)
 
@@ -613,7 +616,7 @@ The crossover point is around 15-20 microcoded instructions. At that point, the 
 
 Implement the full serialize approach for Zicsr + FENCE.I. It's minimal, correct by construction, and slots cleanly into the existing `globalStall` + `fullFlush` infrastructure.
 
-Estimated effort: 4 new modules, ~600 lines of Lean, straightforward SEC verification.
+Estimated effort: 4 new modules, ~600 lines of Lean, straightforward Lean verification and simulation.
 
 ### Long-term: Option C (when adding privileged mode)
 

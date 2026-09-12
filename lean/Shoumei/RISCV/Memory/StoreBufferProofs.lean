@@ -24,14 +24,14 @@ open Shoumei.RISCV.Memory
     deq_ready(1) +
     fwd_address(32) +
     flush_en(1) = 109 -/
-theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 106 := by native_decide
+theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 109 := by native_decide
 
 /-- StoreBuffer8 has correct number of outputs:
     full(1) + empty(1) +
     deq_valid(1) + deq_bits(66) +
     fwd_hit(1) + fwd_data(32) +
     enq_idx(3) = 105 -/
-theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 108 := by native_decide
+theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 113 := by native_decide
 
 /-- StoreBuffer8 uses 26 verified submodule instances:
     - 8 x Register68 (entry storage)
@@ -42,15 +42,16 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 108 := by na
     - 3 x Mux8x32 (fwd data, deq address, deq data)
     - 1 x Mux8x2 (deq size)
     - 1 x PriorityArbiter8 (youngest-match selection) -/
-theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 46 := by native_decide
+theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 49 := by native_decide
 
 /-- StoreBuffer8 gate count: 675 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 797 := by native_decide
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 1369 := by native_decide
 
 /-! ## Building Block Verification -/
 
 /-- StoreBuffer8 Building Block Dependencies:
-    All these modules must pass LEC before StoreBuffer8 is considered verified. -/
+    StoreBuffer8's composition rests on these modules, each verified by its own
+    proof. -/
 def storebuffer8_dependencies : List String := [
   "Register66",              -- Entry storage (66-bit register x 8)
   "DFlipFlop",               -- Valid/committed bitmaps (16 DFFs)

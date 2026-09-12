@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Verification.ExportCerts
 
 -- Phase 0: Foundation
 import Shoumei.Examples.Adder
@@ -106,6 +107,12 @@ open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
 
+/-- Decoder modules generated from riscv-opcodes instruction definitions, outside
+    the circuit registry above.  Named once because the stale-output pruner and
+    the certificate registry must both agree with what is actually emitted. -/
+def riscvDecoderModules : List String :=
+  ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"]
+
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
   -- Phase 0: Foundation
@@ -187,7 +194,7 @@ def allCircuits : List Circuit := [
   mkQueueCounterLoadable 4,  -- Phase 7: Store buffer loadable count (flush recovery)
   mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
   mkQueueCounterUpDown 7,
-  -- Power-of-2 register building blocks (verified via LEC)
+  -- Power-of-2 register building blocks
   mkRegisterN 1,
   mkRegisterN 2,
   mkRegisterN 3,  -- Used in PipelinedMultiplier pipeline
@@ -280,19 +287,24 @@ def allCircuits : List Circuit := [
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]
 
+/-- Everything this generator emits, by module name. -/
+def emittedModuleNames : List String :=
+  allCircuits.map (·.name) ++ riscvDecoderModules
+
 def main (args : List String) : IO Unit := do
+  -- The circuit registry below is also the certificate registry: a
+  -- compositional certificate is only meaningful for a circuit that is actually
+  -- emitted.  `--export-certs` prints that registry, validating as it goes, and
+  -- exits without generating anything.
+  if args.contains "--export-certs" then
+    Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
+    return
   let force := args.contains "--force"
-  -- --no-chisel skips the Chisel backend (JVM + Scala elaboration): the RTL
-  -- simulation, cosim and LEC paths all read the Lean SV, so day-to-day
-  -- iteration does not need it.
-  let emitChisel := !args.contains "--no-chisel"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if force then
     IO.println "  (--force: regenerating all circuits)"
-  if !emitChisel then
-    IO.println "  (--no-chisel: skipping Chisel backend)"
   IO.println ""
 
   -- Initialize output directories
@@ -310,7 +322,7 @@ def main (args : List String) : IO Unit := do
         isUpToDate c.name h
       else pure false
     else pure false
-    writeCircuit c allCircuits force hashMap emitChisel
+    writeCircuit c allCircuits force hashMap
     if wasCached then skipped := skipped + 1
     count := count + 1
 
@@ -331,8 +343,7 @@ def main (args : List String) : IO Unit := do
   -- linger in the build filelists.
   IO.println ""
   IO.println "Pruning stale generated outputs..."
-  pruneStaleOutputs (allCircuits.map (·.name) ++
-    ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"])
+  pruneStaleOutputs emittedModuleNames
 
   -- Generate testbenches
   IO.println ""
@@ -344,7 +355,6 @@ def main (args : List String) : IO Unit := do
   IO.println "Generating filelists..."
   writeFilelist svOutputDir ".sv"
   writeFilelist svNetlistOutputDir ".sv"
-  writeFilelist chiselOutputDir ".scala"
   writeFilelist cppSimOutputDir ".h"
   writeFilelist asap7OutputDir ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
@@ -379,13 +389,12 @@ def main (args : List String) : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  let fmtTag := if emitChisel then "all formats" else "all formats except Chisel (--no-chisel)"
   if skipped > 0 then
     IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
   else
-    IO.println s!"✓ Generated {count} circuits ({fmtTag})"
+    IO.println s!"✓ Generated {count} circuits"
   IO.println "  SV:      output/sv-from-lean/"
-  IO.println "  Chisel:  chisel/src/main/scala/generated/"
+  IO.println "  Netlist: output/sv-netlist/"
   IO.println "  C++ Sim: output/cpp_sim/"
   IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

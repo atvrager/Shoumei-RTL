@@ -43,14 +43,6 @@ def wireListToString (wires : List Wire) : String :=
 def makeInternalWireName (pre : String) (idx : Nat) : String :=
   pre ++ "_" ++ toString idx
 
--- Comment generation (different for different languages)
-def makeComment (lang : String) (comment : String) : String :=
-  match lang with
-  | "verilog" => s!"// {comment}"
-  | "scala" => s!"// {comment}"
-  | "chisel" => s!"// {comment}"
-  | _ => s!"# {comment}"
-
 -- Helper: find all clock wires (from DFF gates and instance connections)
 -- Only returns wires that are actual circuit inputs (not internal derived wires)
 def findClockWires (c : Circuit) : List Wire :=

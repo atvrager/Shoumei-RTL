@@ -32,6 +32,7 @@ def mkTestInstr (op : OpType) (rd rs1 rs2 : Nat) : RenamedInstruction :=
     physRs2 := some ⟨rs2 % 64, by omega⟩
     imm := none
     oldPhysRd := none
+    pc := 0
   }
 
 /-- Create a simple PhysRegFile for testing (all zeros) -/

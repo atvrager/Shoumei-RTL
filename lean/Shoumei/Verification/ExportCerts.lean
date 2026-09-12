@@ -1,56 +1,86 @@
--- Export Verification Certificates
--- Generates the compositional verification registry from Lean certificates
+/-
+Verification/ExportCerts.lean - Derive the compositional certificate registry
 
-import Shoumei.Verification.Compositional
+A certificate says "this module is correct because its sub-modules are".  The
+sub-modules of a circuit are its instances, which the DSL already records, so
+the registry derives them from the circuits instead of restating them by hand.
+Two failure modes disappear with the hand-written list:
+
+1. A certificate could rest on fewer modules than the circuit instantiates
+   (`PipelinedMultiplier` claimed 4; the circuit instantiated 8), so the
+   composition was accepted against an incomplete premise.
+2. A certificate could name a module that is no longer emitted.  After a rename
+   the old certificate matched nothing and the new module matched no
+   certificate, so the composition proof went unchecked.
+
+An inconsistent registry is a hard error here: `lake exe generate_all
+--export-certs` prints the registry and exits non-zero on it (the codegen
+target and CI invoke that command), rather than degrading verification quietly.
+
+Output format (pipe-separated):
+ModuleName|Dependency1,Dependency2,...|ProofReference
+-/
+
+import Shoumei.DSL
+import Shoumei.Verification.CompositionalCerts
 
 namespace Shoumei.Verification.ExportCerts
 
 open Shoumei.Verification
+open Shoumei.Verification.CompositionalCerts
 
-def formatDependencies (deps : List String) : String :=
-  String.intercalate "," deps
+/-- The sub-modules a circuit's correctness rests on: the modules it
+    instantiates, deduplicated, excluding itself. -/
+def certDeps (c : Circuit) : List String :=
+  ((c.instances.map (·.moduleName)).filter (fun m => m != c.name)).eraseDups
 
-def exportCertificate (cert : VerificationCertificate) : Option String :=
-  match cert.method with
-  | .Compositional =>
-    let deps := formatDependencies cert.dependencies
-    let proof := cert.leanProof.getD "unknown"
-    some s!"{cert.moduleName}|{deps}|{proof}"
-  | _ => none  -- Only export compositional certs, LEC handles the rest
+/-- One export line for one certificate, or the reason it cannot be exported.
 
-def exportAllCertificates : String :=
-  let header := "# Compositional Verification Certificates\n" ++
-                "# Auto-generated from lean/Shoumei/Verification/Compositional.lean\n" ++
-                "# Format: MODULE_NAME | DEPENDENCIES | LEAN_PROOF\n" ++
-                "#\n" ++
-                "# DO NOT EDIT - Regenerate with: lake exe export_verification_certs\n\n"
+    `extraEmitted` names modules that are emitted without a `Circuit` of their
+    own (the RISC-V decoders are LUTs generated from riscv-opcodes).  Such a
+    module has no instances, so its dependency list is empty. -/
+def certLine (emitted : List Circuit) (extraEmitted : List String)
+    (cert : CompositionalCert) : Except String String :=
+  let emittedNames := emitted.map (·.name) ++ extraEmitted
+  match emitted.find? (·.name == cert.moduleName) with
+  | none =>
+    if extraEmitted.contains cert.moduleName then
+      .ok s!"{cert.moduleName}||{cert.proofReference}"
+    else
+      .error s!"{cert.moduleName}: certificate names a module that is not emitted"
+  | some c =>
+    let deps := certDeps c
+    let unknown := deps.filter (fun d => !(emittedNames.contains d))
+    if unknown.isEmpty then
+      .ok s!"{cert.moduleName}|{String.intercalate "," deps}|{cert.proofReference}"
+    else
+      .error s!"{cert.moduleName}: instantiates {String.intercalate ", " unknown}, \
+                which the code generator does not emit"
 
-  let compositionalCerts := allCertificates.filterMap exportCertificate
+/-- The certificate registry for a given circuit registry, or every
+    inconsistency found in it. -/
+def exportCertificates (circuits : List Circuit) (extraEmitted : List String) :
+    Except String (List String) :=
+  let results := allCerts.map (certLine circuits extraEmitted)
+  let errors := results.filterMap fun r => match r with | .error e => some e | .ok _ => none
+  if errors.isEmpty then
+    .ok (results.filterMap fun r => match r with | .ok l => some l | .error _ => none)
+  else
+    .error ("certificate registry is inconsistent with the circuits:\n  "
+            ++ String.intercalate "\n  " errors)
 
-  header ++ String.intercalate "\n" compositionalCerts ++ "\n"
-
--- Output format: one certificate per line, pipe-separated
-def mainStdout : IO Unit := do
-  for cert in allCertificates do
-    match cert.method with
-    | .Compositional =>
-      let deps := formatDependencies cert.dependencies
-      let proof := cert.leanProof.getD "unknown"
-      IO.println s!"{cert.moduleName}|{deps}|{proof}"
-    | _ => pure ()  -- Skip LEC certs
-
--- Legacy mode: write to file (for debugging)
-def mainFile : IO Unit := do
-  let content := exportAllCertificates
-  IO.FS.writeFile "verification/compositional-certs.txt" content
-  IO.println s!"✓ Exported {allCertificates.length} verification certificates"
-  IO.println s!"  Compositional: {countByMethod .Compositional}"
-  IO.println s!"  LEC: {countByMethod .LEC}"
-  IO.println "✓ Written to: verification/compositional-certs.txt"
-
-def main (args : List String) : IO Unit :=
-  match args with
-  | ["--stdout"] => mainStdout
-  | _ => mainFile  -- Default: write file for compatibility
+/-- Print the registry, or explain what is wrong and exit non-zero. -/
+def printCertificates (circuits : List Circuit) (extraEmitted : List String) : IO Unit := do
+  match exportCertificates circuits extraEmitted with
+  | .error msg =>
+    IO.eprintln s!"✗ {msg}"
+    IO.eprintln ""
+    IO.eprintln "  A certificate must name an emitted circuit, and every module that"
+    IO.eprintln "  circuit instantiates must be emitted too.  Delete the entry, or point"
+    IO.eprintln "  it at the circuit's current name."
+    IO.Process.exit 1
+  | .ok lines =>
+    for line in lines do
+      IO.println line
 
 end Shoumei.Verification.ExportCerts

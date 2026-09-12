@@ -145,7 +145,6 @@ theorem freelist64_alloc_decrements_count :
 
 /-- Second allocation returns register 33 -/
 theorem freelist64_second_alloc :
-    let (fl1, _) := mkFreeList64Init.allocate
-    fl1.allocate.2 = some ⟨33, by omega⟩ := by native_decide
+    (mkFreeList64Init.allocate.1).allocate.2 = some ⟨33, by omega⟩ := by native_decide
 
 end Shoumei.RISCV.Renaming.FreeListProofs

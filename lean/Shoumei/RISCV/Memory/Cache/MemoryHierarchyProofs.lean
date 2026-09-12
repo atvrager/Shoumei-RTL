@@ -23,8 +23,9 @@ theorem fence_i_clears_l1d_dirty (s : MemHierarchyState) (w : Fin 2) (set : Fin 
   simp [MemHierarchyState.executeFenceI]
   exact l1d_clear_dirty_no_dirty _ w set
 
-/-- Structural: MemoryHierarchy is a pure hierarchical composition (no gates). -/
-theorem memory_hierarchy_no_gates : mkMemoryHierarchy.gates.length = 0 := by native_decide
+/-- Structural: MemoryHierarchy is a pure hierarchical composition; `.gates` holds
+    only glue logic: 32 L1D→L2 address MUXes + 1 L1D L2-request-valid OR. -/
+theorem memory_hierarchy_glue_gate_count : mkMemoryHierarchy.gates.length = 33 := by native_decide
 
 /-- Structural: MemoryHierarchy has exactly 3 instances (L1I, L1D, L2). -/
 theorem memory_hierarchy_instance_count : mkMemoryHierarchy.instances.length = 3 := by native_decide
