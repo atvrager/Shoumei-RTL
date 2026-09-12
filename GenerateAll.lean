@@ -379,10 +379,11 @@ def main (args : List String) : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  let fmtTag := if emitChisel then "all formats" else "all formats except Chisel (--no-chisel)"
   if skipped > 0 then
     IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
   else
-    IO.println s!"✓ Generated {count} circuits (all formats)"
+    IO.println s!"✓ Generated {count} circuits ({fmtTag})"
   IO.println "  SV:      output/sv-from-lean/"
   IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  C++ Sim: output/cpp_sim/"
