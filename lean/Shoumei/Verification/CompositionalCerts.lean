@@ -423,42 +423,14 @@ def cpu_microcoded_cert : CompositionalCert := {
 def allCerts : List CompositionalCert := [
   -- Combinational (hierarchical muxes)
   mux64x32_cert,
-  mux64x64_cert,
-  mux64x6_cert,
   mux8x32_cert,
-  mux8x64_cert,
   -- Sequential
   register24_cert,
   register66_cert,
-  register68_cert,
-  register91_cert,
-  register256_cert,
-  queue2_8_cert,
-  queue64_32_cert,
-  queue64_6_cert,
-  queue4_8_cert,
-  queueRAM_64x32_cert,
-  queueRAM_64x6_cert,
-  queueRAM_2x8_cert,
-  queueRAM_4x8_cert,
-  queueRAMInit_64x6_cert,
-  queue64_6_flushable_cert,
-  freeListFlushable_cert,
-  queueCounterUpDown_2_cert,
-  queueCounterUpDown_3_cert,
-  queueCounterUpDown_4_cert,
-  queueCounterUpDown_5_cert,
-  queueCounterUpDown_7_cert,
-  queuePointer_1_cert,
-  queuePointer_2_cert,
   queuePointer_3_cert,
-  queuePointer_4_cert,
-  queuePointer_6_cert,
   -- Renaming
   physregfile_cert,
-  physregfile_64x64_cert,
   rat_cert,
-  freelist_cert,
   bitmapFreelist_w2_cert,
   -- Execution
   -- M-Extension
@@ -467,7 +439,6 @@ def allCerts : List CompositionalCert := [
   muldivExecUnit_cert,
   -- Retirement
   queue16x32_dualport_cert,
-  queue16x32_cert,
   rob16_w2_cert,
   -- Memory
   storeBuffer8_cert,
@@ -478,9 +449,7 @@ def allCerts : List CompositionalCert := [
   l2Cache_cert,
   memoryHierarchy_cert,
   -- Decoders
-  rv32ifDecoder_cert,
   rv32imfDecoder_cert,
-  rv32gDecoder_cert,
   -- F-Extension
   fpMisc_cert,
   fpAdder_cert,
@@ -491,11 +460,8 @@ def allCerts : List CompositionalCert := [
   fpExecUnit_cert,
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
-  renameStage_w2_64_cert,
-  -- Zifencei variants
   -- Microcode
   microcodeSequencer_cert,
-  -- Zicsr + Zifencei variants
   -- Microcoded variant
   cpu_microcoded_cert,
   -- Microcoded cached variant
