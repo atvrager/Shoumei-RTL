@@ -28,6 +28,37 @@ Combinational      Sequential   Check deps       Lean proof
   SAT solve        equiv_induct   verification
 ```
 
+## Work at the netlist level
+
+When a verification problem looks hard, ask **what yosys would do**, and do that.
+yosys does not reason about RTL.  It elaborates every module down to a netlist of
+cells and wires, then reasons *structurally*: `equiv_make` matches wires and
+instances, `equiv_simple` propagates known-equal values through the structure,
+and only the leftover cones are handed to SAT or induction.
+
+The same bias belongs in this project:
+
+- **Prefer structural checks to semantic ones.** "Same instance tree, same cell
+  types, same connectivity" is O(size) and exact; SAT is exponential and
+  approximate.  Reach for the solver only where structure genuinely differs.
+- **Compare hierarchies as trees, not as flattened blobs.** Flattening converts a
+  linear structure into a quadratic one.  Inlining the full hierarchy produced an
+  **8.7 MB** netlist for `PhysRegFile_64x32` (from ~260 KB) and would produce
+  hundreds of megabytes for the CPU; keep module boundaries, because they *are*
+  the composition boundaries.
+- **Emit machine-checkable netlists**, not more RTL, when a second artifact is
+  wanted: JSON via `write_json`, btor2, aiger.  Netlists are the common language
+  of the tools, and text-level RTL differences are noise that must be normalised
+  away before anything can be compared.
+- **Treat routine escalation as a structural smell.** If a check needs induction
+  or SAT to pass every time, the structure has drifted.  Fix the structure, not
+  the solver budget.
+
+Corollary for the Chisel question: the replacement for a second *RTL* artifact is
+not another RTL emitter.  It is a **netlist-level comparison** -- either between
+the emitted design and the `Circuit` it came from, or between two emitted
+netlists.
+
 ## The proof ladder
 
 **Every proof must be small and finish fast; bigger results come from composing
