@@ -61,7 +61,27 @@ FP work, while turning the F path into a NaN-boxed rewrite rather than an
 extension.  D-first is incremental, keeps what is green meaningful, and
 front-loads the memory widening both need.
 
+## Width discipline (binding on this phase)
+
+XLEN is a parameter, not a fork (see
+[roadmap-rv32g-rv64g.md](roadmap-rv32g-rv64g.md)).  The D work is therefore done
+in a width-parameterised style so RV64G inherits it unchanged:
+
+- Introduce the FP register width as a parameter (FLEN = 64) rather than writing
+  literal 64s, exactly as the circuit library already parameterises
+  `mkSubtractorN`, `mkRegisterN`, `mkMuxTree`, `mkComparatorN`.
+- Add **no new hard-coded data widths** to the RTL composition.  The 91 existing
+  hard-wired 32-bit data buses are the RV64G workstream; do not add to them.
+- Keep the widening of the FP result path, the store-buffer payload and the
+  load/store data independent of XLEN, so the same change serves both
+  configurations.
+
+Rationale: this phase creates the first 64-bit data paths in the design.  If they
+are written parameterised, RV64G is propagation; if they are written with
+literals, RV64G is a second implementation of everything this phase touches.
+
 ## Decisions still open
+
 
 1. **FP result bus.**  `cdb_data_fp` is a buffered copy of the shared 32-bit
    `cdb_data`, so "widen FP" touches INT unless FP gets a genuinely separate
