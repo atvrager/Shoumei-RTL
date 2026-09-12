@@ -31,8 +31,8 @@ Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
 ## Build Commands
 
 ```bash
-lake build                          # Build Lean proofs + code generators
-lake exe generate_all               # Generate SV + Chisel + C++ Sim for all modules
+lake --no-ansi build                # Build Lean proofs + code generators
+lake --no-ansi exe generate_all     # Generate SV + Chisel + C++ Sim for all modules
 cd chisel && sbt run && cd ..       # Compile Chisel -> SV via CIRCT
 ./verification/run-lec.sh           # Verify Lean SV == Chisel SV
 make all                            # Run entire pipeline
@@ -225,6 +225,7 @@ Adapted from [Fabien Sanglard's agent.md](https://fabiensanglard.net/agent.md/):
 ### Interaction & Communication
 - **Brevity:** When writing something intended for human consumption (comments, commit messages, replies to prompts), use as few words as possible. Pick every word meticulously to reduce the volume to a strict minimum. Be down to the point. Less is more.
 - **Directness:** Avoid superlatives and praise. Give the cold, hard truth without sugarcoating.
+- **No ANSI formatting:** Always run tools without ANSI escape codes (e.g., `lake --no-ansi`, `NO_COLOR=1`) to prevent terminal log pollution and keep transcripts machine- and human-readable.
 
 ### Code Style & Architecture
 - **No magic numbers or strings:** Extract recurring or meaningful values into descriptive constants (`const`/`def`) or enums/inductives. Keep self-explanatory, one-off values inline to avoid clutter. If a value comes from a spec (e.g. RISC-V opcodes, funct fields), use a constant regardless.
