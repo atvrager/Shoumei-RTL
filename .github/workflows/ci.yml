@@ -178,11 +178,10 @@ jobs:
 
 
   shoumei-roundtrip:
-    needs: [changes]
+    needs: [changes, lean-build]
     if: needs.changes.outputs.code == 'true'
     name: Shoumei Round-trip
     runs-on: ubuntu-latest
-    needs: [lean-build]
     steps:
       - uses: actions/checkout@v4
 
