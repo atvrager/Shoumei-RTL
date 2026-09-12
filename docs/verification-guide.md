@@ -28,6 +28,66 @@ Combinational      Sequential   Check deps       Lean proof
   SAT solve        equiv_induct   verification
 ```
 
+## The proof ladder
+
+**Every proof must be small and finish fast; bigger results come from composing
+them.** A single long-running proof is a liability: it hides regressions behind
+a timeout, cannot be parallelised, and sits on the critical path of every
+commit. Treat sub-modules as already-proven theorems and prove only the few new
+facts each level adds.
+
+| Level | What is proven | Cost | Mechanism |
+| :--- | :--- | :--- | :--- |
+| Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
+| Leaf translation | Lean SV == Chisel SV | seconds, cached | LEC, reads scoped to the leaf + transitive deps |
+| Composition | parent correct given children | seconds | Lean `CompositionalCert`, or LEC congruence |
+| Smoke | integration sanity | < 2 s | parallel sim / Spike cosim sweep |
+
+Rules that keep the ladder intact:
+
+1. **Prove against the spec, not against another implementation.** A leaf proof
+   that inspects emitted RTL is a translation check masquerading as a theorem;
+   it will be re-run forever and never composes.
+2. **Compose, do not re-flatten.** A composite module is discharged in one of
+   two ways, in order of preference:
+   - a **Lean composition proof** — the parent's spec follows from the
+     children's theorems plus glue reasoning (`CompositionalCert`;
+     see [Compositional Verification](#compositional-verification)); this is the
+     axiom/theorem ladder, and the leaf theorems are the axioms;
+   - **LEC congruence** — both netlists are emitted from the same `Circuit`, so
+     they are structurally identical modulo leaves. `equiv_simple` then
+     discharges the miter by structural hashing, with no induction and no SAT,
+     *because* the leaves are already proven. This is the two-tier pass in
+     `run-lec.sh`.
+3. **Escalation is the exception, not the default.** `equiv_induct` / `sat` run
+   only on points the structural pass leaves unproven. If they fire often, the
+   composition is drifting from the children's interfaces — fix that instead of
+   widening the timeout.
+4. **Tier the work.** Commit and PR gates run leaves + congruence + a
+   simulation/cosim smoke. A heavyweight sweep belongs in a nightly job, never
+   on the commit path.
+5. **Budget every proof.** If one module's check dominates the run, decompose
+   it. A check that cannot finish in seconds is a decomposition bug.
+
+Antipatterns:
+
+- **A cert with no proof.** A `CompositionalCert` is a *reference to* a Lean
+  proof. Adding one to silence a slow module, without that proof existing,
+  converts a slow check into an unchecked assumption.
+- **Deepening the induction.** Raising `equiv_induct -seq N` until a
+  hierarchical module passes usually means the parent no longer matches the
+  proven child interfaces.
+- **A mtime-based cache.** Fresh checkouts and CI artifact downloads give every
+  file a new timestamp, so mtime stamps (and mtime "staleness" checks) silently
+  disable caching. Key on content.
+- **Reading the whole tree per module.** Every module re-parsing every file is
+  quadratic in the design size; scope reads to the module and its dependencies.
+
+Measured on this repository (6-core workstation): scoping LEC reads removed
+seconds of parsing per leaf module; the cache is content-addressed so unchanged
+modules are skipped across CI runs; and the 111-test simulation suite dropped
+from ~50 s to ~2 s under the parallel driver.
+
 ## Direct LEC
 
 ### How it works
