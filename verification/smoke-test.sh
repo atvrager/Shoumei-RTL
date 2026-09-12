@@ -35,7 +35,7 @@ fi
 # --- Test 1: Generated file existence ---
 echo "==> Test 1: Generated Files"
 
-for mod in FullAdder DFlipFlop Queue1_8 Queue1_32; do
+for mod in DFlipFlop Queue1Flow_39 Queue1Flow_72 ALU32; do
     if [ -f "output/sv-from-lean/${mod}.sv" ]; then
         pass "Lean SV: ${mod}.sv"
     else
@@ -43,12 +43,10 @@ for mod in FullAdder DFlipFlop Queue1_8 Queue1_32; do
     fi
 done
 
-# RV32I/RV32IM decoders (optional, depends on third_party/riscv-opcodes submodule)
-for mod in RV32IDecoder RV32IMDecoder; do
-    if [ -f "output/sv-from-lean/${mod}.sv" ]; then
-        pass "${mod} generated"
-    fi
-done
+# RV32 decoders (optional, depends on third_party/riscv-opcodes submodule)
+if [ -f "output/sv-from-lean/RV32IMFDecoder.sv" ]; then
+    pass "RV32IMFDecoder generated"
+fi
 echo ""
 
 # --- Test 2: C++ simulation output ---
@@ -61,7 +59,7 @@ fi
 
 if [ "$SC_H_COUNT" -gt 0 ]; then
     pass "C++ simulation headers generated (${SC_H_COUNT} files)"
-    for mod in FullAdder DFlipFlop; do
+    for mod in DFlipFlop ALU32; do
         if [ -f "output/cpp_sim/${mod}.h" ] && [ -f "output/cpp_sim/${mod}.cpp" ]; then
             pass "C++ sim: ${mod}.h + ${mod}.cpp"
         else
@@ -76,12 +74,12 @@ echo ""
 # --- Test 3: Port validation ---
 echo "==> Test 3: Port Validation"
 
-# FullAdder
-for port in a b cin sum cout; do
-    if grep -q "$port" output/sv-from-lean/FullAdder.sv 2>/dev/null; then
-        pass "FullAdder port '${port}'"
+# ALU32
+for port in a b op zero one result; do
+    if grep -q "$port" output/sv-from-lean/ALU32.sv 2>/dev/null; then
+        pass "ALU32 port '${port}'"
     else
-        fail "FullAdder port '${port}' missing"
+        fail "ALU32 port '${port}' missing"
     fi
 done
 
@@ -94,22 +92,22 @@ for port in d clock reset q; do
     fi
 done
 
-# Queue (enq_data is bus-grouped: input logic [7:0] enq_data)
-for port in enq_data enq_valid enq_ready; do
-    if grep -q "$port" output/sv-from-lean/Queue1_8.sv 2>/dev/null; then
-        pass "Queue1_8 port '${port}'"
+# Queue1Flow_39
+for port in enq_data enq_valid enq_ready deq_data deq_valid deq_ready; do
+    if grep -q "$port" output/sv-from-lean/Queue1Flow_39.sv 2>/dev/null; then
+        pass "Queue1Flow_39 port '${port}'"
     else
-        fail "Queue1_8 port '${port}' missing"
+        fail "Queue1Flow_39 port '${port}' missing"
     fi
 done
 
-# RV32IDecoder (conditional - requires third_party/riscv-opcodes submodule)
-if [ -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
+# RV32IMFDecoder (conditional - requires third_party/riscv-opcodes submodule)
+if [ -f "output/sv-from-lean/RV32IMFDecoder.sv" ]; then
     for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
-        if grep -q "$port" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null; then
-            pass "RV32IDecoder port '${port}'"
+        if grep -q "$port" output/sv-from-lean/RV32IMFDecoder.sv 2>/dev/null; then
+            pass "RV32IMFDecoder port '${port}'"
         else
-            fail "RV32IDecoder port '${port}' missing"
+            fail "RV32IMFDecoder port '${port}' missing"
         fi
     done
 fi
@@ -118,14 +116,12 @@ echo ""
 # --- Test 4: Logic validation ---
 echo "==> Test 4: Logic Validation"
 
-# FullAdder gate expressions
-for expr in "a ^ b" "ab_xor ^ cin" "a & b"; do
-    if grep -q "$expr" output/sv-from-lean/FullAdder.sv 2>/dev/null; then
-        pass "FullAdder expr '${expr}'"
-    else
-        fail "FullAdder expr '${expr}' missing"
-    fi
-done
+# ALU32 logic
+if grep -q "add_out" output/sv-from-lean/ALU32.sv 2>/dev/null; then
+    pass "ALU32 adder logic"
+else
+    fail "ALU32 missing adder logic"
+fi
 
 # DFF sequential logic (always_ff is IEEE 1800-2005+ syntax)
 if grep -qE "always(_ff)? @\(posedge" output/sv-from-lean/DFlipFlop.sv 2>/dev/null; then
@@ -141,18 +137,18 @@ else
 fi
 
 # Queue sequential logic
-if grep -qE "always(_ff)? @\(posedge" output/sv-from-lean/Queue1_8.sv 2>/dev/null; then
-    pass "Queue1_8 sequential block"
+if grep -qE "always(_ff)? @\(posedge" output/sv-from-lean/Queue1Flow_39.sv 2>/dev/null; then
+    pass "Queue1Flow_39 sequential block"
 else
-    fail "Queue1_8 missing always @(posedge block"
+    fail "Queue1Flow_39 missing always @(posedge block"
 fi
 
 # Decoder immediate extraction (conditional)
-if [ -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
-    if grep -qE "imm_i|imm_s|imm_b" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null; then
-        pass "RV32IDecoder immediate extraction"
+if [ -f "output/sv-from-lean/RV32IMFDecoder.sv" ]; then
+    if grep -qE "imm_i|imm_s|imm_b" output/sv-from-lean/RV32IMFDecoder.sv 2>/dev/null; then
+        pass "RV32IMFDecoder immediate extraction"
     else
-        fail "RV32IDecoder missing immediate extraction"
+        fail "RV32IMFDecoder missing immediate extraction"
     fi
 fi
 echo ""
