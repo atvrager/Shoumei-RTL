@@ -113,4 +113,67 @@ theorem rv32i_instructions_unique :
   We defer these to the behavioral proof phase.
 -/
 
+/-! ## A Extension (Atomics)
+
+    Canonical encodings from `third_party/riscv-opcodes/extensions/rv_a`.
+    `lr.w` fixes rs2 = 0; the AMOs differ in funct5 (bits 31:27); all share the
+    AMO major opcode (0101111) and funct3 = 010 (per riscv-opcodes, not the
+    prose manual's `000` shorthand). -/
+
+/-- A-extension instruction definitions (word-width variants). -/
+def rv32a_instructions : List InstructionDef := [
+  { name := "lr.w",      opType := .LR_W,      encoding := "00010--00000-----010-----0101111",
+    variableFields := [.rd, .rs1, .aq, .rl],                 extension := ["rv_a"],
+    matchBits := 0x1000202f, maskBits := 0xf9f0707f },
+  { name := "sc.w",      opType := .SC_W,      encoding := "00011------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x1800202f, maskBits := 0xf800707f },
+  { name := "amoswap.w", opType := .AMOSWAP_W, encoding := "00001------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x0800202f, maskBits := 0xf800707f },
+  { name := "amoadd.w",  opType := .AMOADD_W,  encoding := "00000------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x0000202f, maskBits := 0xf800707f },
+  { name := "amoxor.w",  opType := .AMOXOR_W,  encoding := "00100------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x2000202f, maskBits := 0xf800707f },
+  { name := "amoand.w",  opType := .AMOAND_W,  encoding := "01100------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x6000202f, maskBits := 0xf800707f },
+  { name := "amoor.w",   opType := .AMOOR_W,   encoding := "01000------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x4000202f, maskBits := 0xf800707f },
+  { name := "amomin.w",  opType := .AMOMIN_W,  encoding := "10000------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0x8000202f, maskBits := 0xf800707f },
+  { name := "amomax.w",  opType := .AMOMAX_W,  encoding := "10100------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0xa000202f, maskBits := 0xf800707f },
+  { name := "amominu.w", opType := .AMOMINU_W, encoding := "11000------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0xc000202f, maskBits := 0xf800707f },
+  { name := "amomaxu.w", opType := .AMOMAXU_W, encoding := "11100------------010-----0101111",
+    variableFields := [.rd, .rs1, .rs2, .aq, .rl],           extension := ["rv_a"],
+    matchBits := 0xe000202f, maskBits := 0xf800707f } ]
+
+/-- All eleven A-extension patterns are present. -/
+theorem rv32a_defs_count : rv32a_instructions.length = 11 := by native_decide
+
+/-- No two A-extension mask/match patterns overlap: decode is unambiguous. -/
+theorem rv32a_no_overlaps : hasOverlaps rv32a_instructions = false := by native_decide
+
+/-- Decode coverage: each opcode decodes to its operation type.
+    Words are `riscv32-unknown-elf-as` output for `op rd, rs2, (a0)` forms. -/
+theorem decode_lr_w      : (decodeInstruction rv32a_instructions 0x100522af 0).map (·.opType) = some .LR_W      := by native_decide
+theorem decode_sc_w      : (decodeInstruction rv32a_instructions 0x1875232f 0).map (·.opType) = some .SC_W      := by native_decide
+theorem decode_amoswap_w : (decodeInstruction rv32a_instructions 0x09d52e2f 0).map (·.opType) = some .AMOSWAP_W := by native_decide
+theorem decode_amoadd_w  : (decodeInstruction rv32a_instructions 0x01f52f2f 0).map (·.opType) = some .AMOADD_W  := by native_decide
+theorem decode_amoxor_w  : (decodeInstruction rv32a_instructions 0x206522af 0).map (·.opType) = some .AMOXOR_W  := by native_decide
+theorem decode_amoand_w  : (decodeInstruction rv32a_instructions 0x61c523af 0).map (·.opType) = some .AMOAND_W  := by native_decide
+theorem decode_amoor_w   : (decodeInstruction rv32a_instructions 0x41e52eaf 0).map (·.opType) = some .AMOOR_W   := by native_decide
+theorem decode_amomin_w  : (decodeInstruction rv32a_instructions 0x80552faf 0).map (·.opType) = some .AMOMIN_W  := by native_decide
+theorem decode_amomax_w  : (decodeInstruction rv32a_instructions 0xa075232f 0).map (·.opType) = some .AMOMAX_W  := by native_decide
+theorem decode_amominu_w : (decodeInstruction rv32a_instructions 0xc1d52e2f 0).map (·.opType) = some .AMOMINU_W := by native_decide
+theorem decode_amomaxu_w : (decodeInstruction rv32a_instructions 0xe1f52f2f 0).map (·.opType) = some .AMOMAXU_W := by native_decide
+
 end Shoumei.RISCV

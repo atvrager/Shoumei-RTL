@@ -41,7 +41,7 @@ theorem rs4w2_gate_count : rs4W2.gates.length = 2328 := by native_decide
 /-- ReservationStation W=2 Building Block Dependencies -/
 def rs4w2_dependencies : List String := [
   "Register1",          -- Allocation pointer bits
-  "Register94",         -- Entry storage (94-bit register x 4, 7-bit domain-tagged RS tags)
+  "Register95",         -- Entry storage (95-bit register x 4, 7-bit opcode + 7-bit tags)
   "PriorityArbiter2"   -- Ready selection (2-input priority arbiter)
 ]
 

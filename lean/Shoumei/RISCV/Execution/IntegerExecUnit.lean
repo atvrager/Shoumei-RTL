@@ -69,6 +69,10 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .JAL | .JALR => 0  -- Jumps (handled by JumpUnit)
   | .LB | .LH | .LW | .LBU | .LHU => 0  -- Loads (handled by MemoryUnit)
   | .SB | .SH | .SW => 0  -- Stores (handled by MemoryUnit)
+  -- A extension: atomics (handled by the LSU/atomic ALU)
+  | .LR_W | .SC_W
+  | .AMOADD_W | .AMOSWAP_W | .AMOXOR_W | .AMOAND_W | .AMOOR_W
+  | .AMOMIN_W | .AMOMAX_W | .AMOMINU_W | .AMOMAXU_W => 0
   | .LUI | .AUIPC => 0  -- Upper immediates (special handling)
   | .FENCE | .FENCE_I | .ECALL | .EBREAK | .MRET | .WFI => 0  -- System ops (special handling)
   -- M extension operations (handled by MulDivExecUnit)

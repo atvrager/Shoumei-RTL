@@ -9,6 +9,20 @@ import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
 
+/-- Bit width of the operation-type encoding for a decoder built from `defs`.
+
+    The generated decoder carries one enum value per instruction definition and
+    exposes the selected value on `io_optype`, so the enum declaration and the
+    port declaration are two spellings of a single encoding: they must be sized
+    by the same expression.  Sizing the port by "which extensions are enabled"
+    and the enum by "how many definitions there are" let the two disagree --
+    `RV32IMDecoder` has 68 definitions and no F extension, so its module
+    declared a 7-bit enum driving a 6-bit port, truncating the opcode it had
+    just decoded, and the two emitted netlists could not be matched. -/
+def InstructionDef.optypeBits (defs : List InstructionDef) : Nat :=
+  let n := defs.length
+  if n ≤ 1 then 1 else Nat.log2 (n - 1) + 1
+
 /-- Instruction field types (register specifiers and immediates) -/
 inductive FieldType where
   | rd       : FieldType  -- Destination register
@@ -29,6 +43,8 @@ inductive FieldType where
   | rm       : FieldType  -- Rounding mode (bits 14:12, F extension)
   | csr      : FieldType  -- CSR address (bits 31:20, Zicsr)
   | zimm5    : FieldType  -- Zero-extended 5-bit immediate (bits 19:15, Zicsr)
+  | aq       : FieldType  -- Acquire bit (bit 26, A extension; hint, not extracted)
+  | rl       : FieldType  -- Release bit (bit 25, A extension; hint, not extracted)
   deriving Repr, BEq, DecidableEq
 
 instance : ToString FieldType where
@@ -51,6 +67,8 @@ instance : ToString FieldType where
     | .rm => "rm"
     | .csr => "csr"
     | .zimm5 => "zimm5"
+    | .aq => "aq"
+    | .rl => "rl"
 
 /-- Parse field type from string (as appears in JSON) -/
 def FieldType.fromString (s : String) : Option FieldType :=
@@ -71,8 +89,10 @@ def FieldType.fromString (s : String) : Option FieldType :=
   | "succ"     => some .succ
   | "rs3"      => some .rs3
   | "rm"       => some .rm
-  | "csr"      => some .csr
-  | "zimm5"    => some .zimm5
+  | "csr" => some .csr
+  | "zimm5" => some .zimm5
+  | "aq"       => some .aq
+  | "rl"       => some .rl
   | _          => none
 
 -- OpType, ToString OpType, OpType.fromString are auto-generated in OpTypeGenerated.lean

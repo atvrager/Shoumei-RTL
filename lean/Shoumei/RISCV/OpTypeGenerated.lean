@@ -57,6 +57,18 @@ inductive OpType where
   | MULHU : OpType
   | REM : OpType
   | REMU : OpType
+  -- A Extension: Atomic Memory Operations
+  | AMOADD_W : OpType
+  | AMOAND_W : OpType
+  | AMOMAXU_W : OpType
+  | AMOMAX_W : OpType
+  | AMOMINU_W : OpType
+  | AMOMIN_W : OpType
+  | AMOOR_W : OpType
+  | AMOSWAP_W : OpType
+  | AMOXOR_W : OpType
+  | LR_W : OpType
+  | SC_W : OpType
   -- F Extension: Single-Precision Floating-Point
   | FADD_S : OpType
   | FCLASS_S : OpType
@@ -109,14 +121,16 @@ instance : ToString OpType where
     | .SLTIU => "SLTIU" | .SLTU => "SLTU" | .SRA => "SRA" | .SRAI => "SRAI" | .SRL => "SRL"
     | .SRLI => "SRLI" | .SUB => "SUB" | .SW => "SW" | .XOR => "XOR" | .XORI => "XORI"
     | .DIV => "DIV" | .DIVU => "DIVU" | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU"
-    | .MULHU => "MULHU" | .REM => "REM" | .REMU => "REMU" | .FADD_S => "FADD_S" | .FCLASS_S => "FCLASS_S"
-    | .FCVT_S_W => "FCVT_S_W" | .FCVT_S_WU => "FCVT_S_WU" | .FCVT_WU_S => "FCVT_WU_S" | .FCVT_W_S => "FCVT_W_S" | .FDIV_S => "FDIV_S"
-    | .FEQ_S => "FEQ_S" | .FLE_S => "FLE_S" | .FLT_S => "FLT_S" | .FLW => "FLW" | .FMADD_S => "FMADD_S"
-    | .FMAX_S => "FMAX_S" | .FMIN_S => "FMIN_S" | .FMSUB_S => "FMSUB_S" | .FMUL_S => "FMUL_S" | .FMV_W_X => "FMV_W_X"
-    | .FMV_X_W => "FMV_X_W" | .FNMADD_S => "FNMADD_S" | .FNMSUB_S => "FNMSUB_S" | .FSGNJN_S => "FSGNJN_S" | .FSGNJX_S => "FSGNJX_S"
-    | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .MRET => "MRET"
-    | .WFI => "WFI" | .FENCE_I => "FENCE_I" | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC"
-    | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
+    | .MULHU => "MULHU" | .REM => "REM" | .REMU => "REMU" | .AMOADD_W => "AMOADD_W" | .AMOAND_W => "AMOAND_W"
+    | .AMOMAXU_W => "AMOMAXU_W" | .AMOMAX_W => "AMOMAX_W" | .AMOMINU_W => "AMOMINU_W" | .AMOMIN_W => "AMOMIN_W" | .AMOOR_W => "AMOOR_W"
+    | .AMOSWAP_W => "AMOSWAP_W" | .AMOXOR_W => "AMOXOR_W" | .LR_W => "LR_W" | .SC_W => "SC_W" | .FADD_S => "FADD_S"
+    | .FCLASS_S => "FCLASS_S" | .FCVT_S_W => "FCVT_S_W" | .FCVT_S_WU => "FCVT_S_WU" | .FCVT_WU_S => "FCVT_WU_S" | .FCVT_W_S => "FCVT_W_S"
+    | .FDIV_S => "FDIV_S" | .FEQ_S => "FEQ_S" | .FLE_S => "FLE_S" | .FLT_S => "FLT_S" | .FLW => "FLW"
+    | .FMADD_S => "FMADD_S" | .FMAX_S => "FMAX_S" | .FMIN_S => "FMIN_S" | .FMSUB_S => "FMSUB_S" | .FMUL_S => "FMUL_S"
+    | .FMV_W_X => "FMV_W_X" | .FMV_X_W => "FMV_X_W" | .FNMADD_S => "FNMADD_S" | .FNMSUB_S => "FNMSUB_S" | .FSGNJN_S => "FSGNJN_S"
+    | .FSGNJX_S => "FSGNJX_S" | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW"
+    | .MRET => "MRET" | .WFI => "WFI" | .FENCE_I => "FENCE_I" | .CSRRW => "CSRRW" | .CSRRS => "CSRRS"
+    | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
 
 /-- Parse OpType from instruction name (case-insensitive) -/
 def OpType.fromString (s : String) : Option OpType :=
@@ -169,6 +183,17 @@ def OpType.fromString (s : String) : Option OpType :=
   | "MULHU" => some .MULHU
   | "REM" => some .REM
   | "REMU" => some .REMU
+  | "AMOADD_W" | "AMOADD.W" => some .AMOADD_W
+  | "AMOAND_W" | "AMOAND.W" => some .AMOAND_W
+  | "AMOMAXU_W" | "AMOMAXU.W" => some .AMOMAXU_W
+  | "AMOMAX_W" | "AMOMAX.W" => some .AMOMAX_W
+  | "AMOMINU_W" | "AMOMINU.W" => some .AMOMINU_W
+  | "AMOMIN_W" | "AMOMIN.W" => some .AMOMIN_W
+  | "AMOOR_W" | "AMOOR.W" => some .AMOOR_W
+  | "AMOSWAP_W" | "AMOSWAP.W" => some .AMOSWAP_W
+  | "AMOXOR_W" | "AMOXOR.W" => some .AMOXOR_W
+  | "LR_W" | "LR.W" => some .LR_W
+  | "SC_W" | "SC.W" => some .SC_W
   | "FADD_S" | "FADD.S" => some .FADD_S
   | "FCLASS_S" | "FCLASS.S" => some .FCLASS_S
   | "FCVT_S_W" | "FCVT.S.W" => some .FCVT_S_W
@@ -214,11 +239,12 @@ def OpType.all : List OpType :=
    .SB, .SH, .SLL, .SLLI, .SLT, .SLTI, .SLTIU, .SLTU, 
    .SRA, .SRAI, .SRL, .SRLI, .SUB, .SW, .XOR, .XORI, 
    .DIV, .DIVU, .MUL, .MULH, .MULHSU, .MULHU, .REM, .REMU, 
-   .FADD_S, .FCLASS_S, .FCVT_S_W, .FCVT_S_WU, .FCVT_WU_S, .FCVT_W_S, .FDIV_S, .FEQ_S, 
-   .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S, .FMIN_S, .FMSUB_S, .FMUL_S, 
-   .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S, .FSGNJX_S, .FSGNJ_S, .FSQRT_S, 
-   .FSUB_S, .FSW, .MRET, .WFI, .FENCE_I, .CSRRW, .CSRRS, .CSRRC, 
-   .CSRRWI, .CSRRSI, .CSRRCI]
+   .AMOADD_W, .AMOAND_W, .AMOMAXU_W, .AMOMAX_W, .AMOMINU_W, .AMOMIN_W, .AMOOR_W, .AMOSWAP_W, 
+   .AMOXOR_W, .LR_W, .SC_W, .FADD_S, .FCLASS_S, .FCVT_S_W, .FCVT_S_WU, .FCVT_WU_S, 
+   .FCVT_W_S, .FDIV_S, .FEQ_S, .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S, 
+   .FMIN_S, .FMSUB_S, .FMUL_S, .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S, 
+   .FSGNJX_S, .FSGNJ_S, .FSQRT_S, .FSUB_S, .FSW, .MRET, .WFI, .FENCE_I, 
+   .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, .CSRRCI]
 
 /-- Get the index of an OpType in the canonical ordering -/
 def OpType.toIndex : OpType → Nat
@@ -270,41 +296,52 @@ def OpType.toIndex : OpType → Nat
   | .MULHU => 45
   | .REM => 46
   | .REMU => 47
-  | .FADD_S => 48
-  | .FCLASS_S => 49
-  | .FCVT_S_W => 50
-  | .FCVT_S_WU => 51
-  | .FCVT_WU_S => 52
-  | .FCVT_W_S => 53
-  | .FDIV_S => 54
-  | .FEQ_S => 55
-  | .FLE_S => 56
-  | .FLT_S => 57
-  | .FLW => 58
-  | .FMADD_S => 59
-  | .FMAX_S => 60
-  | .FMIN_S => 61
-  | .FMSUB_S => 62
-  | .FMUL_S => 63
-  | .FMV_W_X => 64
-  | .FMV_X_W => 65
-  | .FNMADD_S => 66
-  | .FNMSUB_S => 67
-  | .FSGNJN_S => 68
-  | .FSGNJX_S => 69
-  | .FSGNJ_S => 70
-  | .FSQRT_S => 71
-  | .FSUB_S => 72
-  | .FSW => 73
-  | .MRET => 74
-  | .WFI => 75
-  | .FENCE_I => 76
-  | .CSRRW => 77
-  | .CSRRS => 78
-  | .CSRRC => 79
-  | .CSRRWI => 80
-  | .CSRRSI => 81
-  | .CSRRCI => 82
+  | .AMOADD_W => 48
+  | .AMOAND_W => 49
+  | .AMOMAXU_W => 50
+  | .AMOMAX_W => 51
+  | .AMOMINU_W => 52
+  | .AMOMIN_W => 53
+  | .AMOOR_W => 54
+  | .AMOSWAP_W => 55
+  | .AMOXOR_W => 56
+  | .LR_W => 57
+  | .SC_W => 58
+  | .FADD_S => 59
+  | .FCLASS_S => 60
+  | .FCVT_S_W => 61
+  | .FCVT_S_WU => 62
+  | .FCVT_WU_S => 63
+  | .FCVT_W_S => 64
+  | .FDIV_S => 65
+  | .FEQ_S => 66
+  | .FLE_S => 67
+  | .FLT_S => 68
+  | .FLW => 69
+  | .FMADD_S => 70
+  | .FMAX_S => 71
+  | .FMIN_S => 72
+  | .FMSUB_S => 73
+  | .FMUL_S => 74
+  | .FMV_W_X => 75
+  | .FMV_X_W => 76
+  | .FNMADD_S => 77
+  | .FNMSUB_S => 78
+  | .FSGNJN_S => 79
+  | .FSGNJX_S => 80
+  | .FSGNJ_S => 81
+  | .FSQRT_S => 82
+  | .FSUB_S => 83
+  | .FSW => 84
+  | .MRET => 85
+  | .WFI => 86
+  | .FENCE_I => 87
+  | .CSRRW => 88
+  | .CSRRS => 89
+  | .CSRRC => 90
+  | .CSRRWI => 91
+  | .CSRRSI => 92
+  | .CSRRCI => 93
 
 /-- Get OpType from canonical index -/
 def OpType.ofIndex : Nat → Option OpType
@@ -356,41 +393,52 @@ def OpType.ofIndex : Nat → Option OpType
   | 45 => some .MULHU
   | 46 => some .REM
   | 47 => some .REMU
-  | 48 => some .FADD_S
-  | 49 => some .FCLASS_S
-  | 50 => some .FCVT_S_W
-  | 51 => some .FCVT_S_WU
-  | 52 => some .FCVT_WU_S
-  | 53 => some .FCVT_W_S
-  | 54 => some .FDIV_S
-  | 55 => some .FEQ_S
-  | 56 => some .FLE_S
-  | 57 => some .FLT_S
-  | 58 => some .FLW
-  | 59 => some .FMADD_S
-  | 60 => some .FMAX_S
-  | 61 => some .FMIN_S
-  | 62 => some .FMSUB_S
-  | 63 => some .FMUL_S
-  | 64 => some .FMV_W_X
-  | 65 => some .FMV_X_W
-  | 66 => some .FNMADD_S
-  | 67 => some .FNMSUB_S
-  | 68 => some .FSGNJN_S
-  | 69 => some .FSGNJX_S
-  | 70 => some .FSGNJ_S
-  | 71 => some .FSQRT_S
-  | 72 => some .FSUB_S
-  | 73 => some .FSW
-  | 74 => some .MRET
-  | 75 => some .WFI
-  | 76 => some .FENCE_I
-  | 77 => some .CSRRW
-  | 78 => some .CSRRS
-  | 79 => some .CSRRC
-  | 80 => some .CSRRWI
-  | 81 => some .CSRRSI
-  | 82 => some .CSRRCI
+  | 48 => some .AMOADD_W
+  | 49 => some .AMOAND_W
+  | 50 => some .AMOMAXU_W
+  | 51 => some .AMOMAX_W
+  | 52 => some .AMOMINU_W
+  | 53 => some .AMOMIN_W
+  | 54 => some .AMOOR_W
+  | 55 => some .AMOSWAP_W
+  | 56 => some .AMOXOR_W
+  | 57 => some .LR_W
+  | 58 => some .SC_W
+  | 59 => some .FADD_S
+  | 60 => some .FCLASS_S
+  | 61 => some .FCVT_S_W
+  | 62 => some .FCVT_S_WU
+  | 63 => some .FCVT_WU_S
+  | 64 => some .FCVT_W_S
+  | 65 => some .FDIV_S
+  | 66 => some .FEQ_S
+  | 67 => some .FLE_S
+  | 68 => some .FLT_S
+  | 69 => some .FLW
+  | 70 => some .FMADD_S
+  | 71 => some .FMAX_S
+  | 72 => some .FMIN_S
+  | 73 => some .FMSUB_S
+  | 74 => some .FMUL_S
+  | 75 => some .FMV_W_X
+  | 76 => some .FMV_X_W
+  | 77 => some .FNMADD_S
+  | 78 => some .FNMSUB_S
+  | 79 => some .FSGNJN_S
+  | 80 => some .FSGNJX_S
+  | 81 => some .FSGNJ_S
+  | 82 => some .FSQRT_S
+  | 83 => some .FSUB_S
+  | 84 => some .FSW
+  | 85 => some .MRET
+  | 86 => some .WFI
+  | 87 => some .FENCE_I
+  | 88 => some .CSRRW
+  | 89 => some .CSRRS
+  | 90 => some .CSRRC
+  | 91 => some .CSRRWI
+  | 92 => some .CSRRSI
+  | 93 => some .CSRRCI
   | _ => none
 
 /-- Resolve a name-based mapping to index-based mapping given a decoder's instruction list.
@@ -405,6 +453,7 @@ def OpType.resolveMapping (decoderNames : List String) (mapping : List (OpType �
 /-- Extension group(s) for each OpType -/
 def OpType.extensionGroup : OpType → List String
   | .ADD | .ADDI | .AND | .ANDI | .AUIPC | .BEQ | .BGE | .BGEU | .BLT | .BLTU | .BNE | .EBREAK | .ECALL | .FENCE | .JAL | .JALR | .LB | .LBU | .LH | .LHU | .LUI | .LW | .OR | .ORI | .SB | .SH | .SLL | .SLT | .SLTI | .SLTIU | .SLTU | .SRA | .SRL | .SUB | .SW | .XOR | .XORI => ["rv_i"]
+  | .AMOADD_W | .AMOAND_W | .AMOMAXU_W | .AMOMAX_W | .AMOMINU_W | .AMOMIN_W | .AMOOR_W | .AMOSWAP_W | .AMOXOR_W | .LR_W | .SC_W => ["rv_a"]
   | .CSRRC | .CSRRCI | .CSRRS | .CSRRSI | .CSRRW | .CSRRWI => ["rv_zicsr"]
   | .DIV | .DIVU | .MUL | .MULH | .MULHSU | .MULHU | .REM | .REMU => ["rv_m"]
   | .FADD_S | .FCLASS_S | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_S | .FCVT_W_S | .FDIV_S | .FEQ_S | .FLE_S | .FLT_S | .FLW | .FMADD_S | .FMAX_S | .FMIN_S | .FMSUB_S | .FMUL_S | .FMV_W_X | .FMV_X_W | .FNMADD_S | .FNMSUB_S | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => ["rv_f"]

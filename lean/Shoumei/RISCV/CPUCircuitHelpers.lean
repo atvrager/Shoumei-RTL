@@ -1261,4 +1261,28 @@ def mkSidecarRegFile4x32_W2
 
 end
 
+/-- Semantic AMO mapping: A-extension OpType → 4-bit AMO function select.
+    ADD=0, SWAP=1, XOR=2, AND=3, OR=4, MIN=5, MAX=6, MINU=7, MAXU=8.
+    Stable across decoder configurations (indices resolved at build time). -/
+def amoMappingByName : List (OpType × Nat) :=
+  [ (.AMOADD_W, 0), (.AMOSWAP_W, 1), (.AMOXOR_W, 2), (.AMOAND_W, 3), (.AMOOR_W, 4),
+    (.AMOMIN_W, 5), (.AMOMAX_W, 6), (.AMOMINU_W, 7), (.AMOMAXU_W, 8) ]
+
+/-- Match a 7-bit opcode against any of a list of encodings; result = OR of matches. -/
+def mkOpcodeMatchAny7 (pfx : String) (encs : List Nat) (opcode : List Wire) (result : Wire) : List Gate :=
+  match encs with
+  | [] => [Gate.mkBUF (Wire.mk s!"{pfx}_gnd") result]
+  | [e] => mkOpcodeMatch7 s!"{pfx}_0" e opcode result
+  | _ =>
+    let ms := encs.enum.map (fun ⟨i, _⟩ => Wire.mk s!"{pfx}_m{i}")
+    let matchGates := (encs.enum.map (fun ⟨i, e⟩ => mkOpcodeMatch7 s!"{pfx}_{i}" e opcode ms[i]!)).flatten
+    -- OR chain over ms
+    let n := ms.length
+    let orWires := (List.range (n - 1)).map (fun i =>
+      if i + 1 == n - 1 then result else Wire.mk s!"{pfx}_or{i}")
+    let orGates := (List.range (n - 1)).map (fun i =>
+      let lhs := if i == 0 then ms[0]! else orWires[i - 1]!
+      Gate.mkOR lhs ms[i + 1]! orWires[i]!)
+    matchGates ++ orGates
+
 end Shoumei.RISCV.CPU

@@ -848,7 +848,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let ib_fifo_enq_ready := Wire.mk "ib_fifo_enq_ready"
   let rs_int_issue_full := Wire.mk "rs_int_issue_full"
   let rs_int_dispatch_valid := Wire.mk "rs_int_dispatch_valid"
-  let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 6
+  let rs_int_dispatch_opcode := makeIndexedWires "rs_int_dispatch_opcode" 7
   let rs_int_dispatch_src1 := makeIndexedWires "rs_int_dispatch_src1" 32
   let rs_int_dispatch_src2 := makeIndexedWires "rs_int_dispatch_src2" 32
   let rs_int_dispatch_tag := makeIndexedWires "rs_int_dispatch_tag" 6
@@ -862,7 +862,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", ib_fifo_enq_ready),
                 ("issue_full", rs_int_issue_full), ("dispatch_valid", rs_int_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by integer RS
-               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -881,7 +881,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- RS Memory
   let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
   let rs_mem_dispatch_valid := Wire.mk "rs_mem_dispatch_valid"
-  let rs_mem_dispatch_opcode := makeIndexedWires "rs_mem_dispatch_opcode" 6
+  let rs_mem_dispatch_opcode := makeIndexedWires "rs_mem_dispatch_opcode" 7
   let rs_mem_dispatch_src1 := makeIndexedWires "rs_mem_dispatch_src1" 32
   let rs_mem_dispatch_src2 := makeIndexedWires "rs_mem_dispatch_src2" 32
   let rs_mem_dispatch_tag := makeIndexedWires "rs_mem_dispatch_tag" 6
@@ -933,7 +933,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", mem_dispatch_en),
                 ("issue_full", rs_mem_issue_full), ("dispatch_valid", rs_mem_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by memory RS
-               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (mem_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -1015,7 +1015,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", branch_dispatch_en),
                 ("issue_full", rs_branch_issue_full), ("dispatch_valid", rs_branch_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by branch RS
-               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                -- Branch RS uses unmasked physRd (rd_phys) for unique CDB tag matching
                (rd_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
@@ -1105,7 +1105,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_muldiv_grant_unused := makeIndexedWires "rs_muldiv_grant_unused" 4
   let rs_muldiv_issue_full := Wire.mk "rs_muldiv_issue_full"
   let rs_muldiv_dispatch_valid := Wire.mk "rs_muldiv_dispatch_valid"
-  let rs_muldiv_dispatch_opcode := makeIndexedWires "rs_muldiv_dispatch_opcode" 6
+  let rs_muldiv_dispatch_opcode := makeIndexedWires "rs_muldiv_dispatch_opcode" 7
   let rs_muldiv_dispatch_src1 := makeIndexedWires "rs_muldiv_dispatch_src1" 32
   let rs_muldiv_dispatch_src2 := makeIndexedWires "rs_muldiv_dispatch_src2" 32
   let rs_muldiv_dispatch_tag := makeIndexedWires "rs_muldiv_dispatch_tag" 6
@@ -1130,7 +1130,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
                 ("cdb_valid", cdb_valid_int_domain), ("dispatch_en", muldiv_dispatch_en),
                 ("issue_full", rs_muldiv_issue_full), ("dispatch_valid", rs_muldiv_dispatch_valid)] ++
                -- Only connect lower 6 bits of optype; bit 6 is FP flag, unused by muldiv RS
-               ((decode_optype.take 6).enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
+               (decode_optype.enum.map (fun ⟨i, w⟩ => (s!"issue_opcode_{i}", w))) ++
                (int_dest_tag_masked.enum.map (fun ⟨i, w⟩ => (s!"issue_dest_tag_{i}", w))) ++
                (rs1_phys.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_tag_{i}", w))) ++
                (fwd_src1_data.enum.map (fun ⟨i, w⟩ => (s!"issue_src1_data_{i}", w))) ++
@@ -1152,7 +1152,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- ALU opcode LUT: translate 6-bit dispatch optype → 4-bit ALU op
   let alu_op := makeIndexedWires "alu_op" 4
-  let alu_lut_gates := mkOpTypeToALU4 "alulut" rs_int_dispatch_opcode alu_op
+  let alu_lut_gates := mkOpTypeLUT "alulut" rs_int_dispatch_opcode alu_op
     (OpType.resolveMapping config.decoderInstrNames aluMappingByName)
 
   let int_exec_inst : CircuitInstance := {
@@ -1242,7 +1242,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let rs_fp_grant := makeIndexedWires "rs_fp_grant" 4
   let rs_fp_issue_full := Wire.mk "rs_fp_issue_full"
   let rs_fp_dispatch_valid := Wire.mk "rs_fp_dispatch_valid"
-  let rs_fp_dispatch_opcode := makeIndexedWires "rs_fp_dispatch_opcode" 6
+  let rs_fp_dispatch_opcode := makeIndexedWires "rs_fp_dispatch_opcode" 7
   let rs_fp_dispatch_src1 := makeIndexedWires "rs_fp_dispatch_src1" 32
   let rs_fp_dispatch_src2 := makeIndexedWires "rs_fp_dispatch_src2" 32
   let rs_fp_dispatch_tag := makeIndexedWires "rs_fp_dispatch_tag" 6
@@ -1505,8 +1505,8 @@ def mkCPU (config : CPUConfig) : Circuit :=
   -- Opcode match: LUI and AUIPC encodings from config
   let is_lui := Wire.mk "is_lui"
   let is_auipc := Wire.mk "is_auipc"
-  let lui_match_gates := mkOpcodeMatch6 "lui_match" (oi .LUI) rs_int_dispatch_opcode is_lui
-  let auipc_match_gates := mkOpcodeMatch6 "auipc_match" (oi .AUIPC) rs_int_dispatch_opcode is_auipc
+  let lui_match_gates := mkOpcodeMatch7 "lui_match" (oi .LUI) rs_int_dispatch_opcode is_lui
+  let auipc_match_gates := mkOpcodeMatch7 "auipc_match" (oi .AUIPC) rs_int_dispatch_opcode is_auipc
 
   -- Post-ALU MUX: int_result_final = MUX(MUX(int_result, auipc_result, is_auipc), int_captured_imm, is_lui)
   let int_result_final := makeIndexedWires "int_result_final" 32
@@ -1909,15 +1909,15 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_load_tmp2 := Wire.mk "is_load_tmp2"
   let is_load_tmp3 := Wire.mk "is_load_tmp3"
 
-  let lw_match_gates := mkOpcodeMatch6 "lw_match" (oi .LW) rs_mem_dispatch_opcode is_lw
-  let lh_match_gates := mkOpcodeMatch6 "lh_match" (oi .LH) rs_mem_dispatch_opcode is_lh
-  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
-  let lb_match_gates := mkOpcodeMatch6 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
-  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
+  let lw_match_gates := mkOpcodeMatch7 "lw_match" (oi .LW) rs_mem_dispatch_opcode is_lw
+  let lh_match_gates := mkOpcodeMatch7 "lh_match" (oi .LH) rs_mem_dispatch_opcode is_lh
+  let lhu_match_gates := mkOpcodeMatch7 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
+  let lb_match_gates := mkOpcodeMatch7 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
+  let lbu_match_gates := mkOpcodeMatch7 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
   -- FLW detection (conditional on F extension)
   let is_flw := Wire.mk "is_flw"
   let flw_match_gates :=
-    if enableF then mkOpcodeMatch6 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
+    if enableF then mkOpcodeMatch7 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
     else [Gate.mkBUF zero is_flw]
 
   let is_load_gates := [
@@ -1933,11 +1933,11 @@ def mkCPU (config : CPUConfig) : Circuit :=
   let is_sh := Wire.mk "is_sh"
   let is_sb := Wire.mk "is_sb"
   let is_fsw := Wire.mk "is_fsw"
-  let sw_match_gates := mkOpcodeMatch6 "sw_match" (oi .SW) rs_mem_dispatch_opcode is_sw
-  let sh_match_gates := mkOpcodeMatch6 "sh_match" (oi .SH) rs_mem_dispatch_opcode is_sh
-  let sb_match_gates := mkOpcodeMatch6 "sb_match" (oi .SB) rs_mem_dispatch_opcode is_sb
+  let sw_match_gates := mkOpcodeMatch7 "sw_match" (oi .SW) rs_mem_dispatch_opcode is_sw
+  let sh_match_gates := mkOpcodeMatch7 "sh_match" (oi .SH) rs_mem_dispatch_opcode is_sh
+  let sb_match_gates := mkOpcodeMatch7 "sb_match" (oi .SB) rs_mem_dispatch_opcode is_sb
   let fsw_match_gates :=
-    if enableF then mkOpcodeMatch6 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
+    if enableF then mkOpcodeMatch7 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
     else [Gate.mkBUF zero is_fsw]
 
   -- Derive mem_size[1:0]: 00=byte, 01=half, 10=word
@@ -3071,20 +3071,20 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
        { name := "dmem_req_data", width := 32, wires := dmem_req_data },
        { name := "dmem_req_size", width := 2, wires := dmem_req_size },
-       { name := "rs_int_dispatch_opcode", width := 6, wires := rs_int_dispatch_opcode },
+       { name := "rs_int_dispatch_opcode", width := 7, wires := rs_int_dispatch_opcode },
        { name := "rs_int_dispatch_src1", width := 32, wires := rs_int_dispatch_src1 },
        { name := "rs_int_dispatch_src2", width := 32, wires := rs_int_dispatch_src2 },
        { name := "rs_int_dispatch_tag", width := 6, wires := rs_int_dispatch_tag },
-       { name := "rs_mem_dispatch_opcode", width := 6, wires := rs_mem_dispatch_opcode },
+       { name := "rs_mem_dispatch_opcode", width := 7, wires := rs_mem_dispatch_opcode },
        { name := "rs_mem_dispatch_src1", width := 32, wires := rs_mem_dispatch_src1 },
        { name := "rs_mem_dispatch_src2", width := 32, wires := rs_mem_dispatch_src2 },
        { name := "rs_mem_dispatch_tag", width := 6, wires := rs_mem_dispatch_tag },
-       { name := "rs_branch_dispatch_opcode", width := 6, wires := rs_branch_dispatch_opcode },
+       { name := "rs_branch_dispatch_opcode", width := 7, wires := rs_branch_dispatch_opcode },
        { name := "rs_branch_dispatch_src1", width := 32, wires := rs_branch_dispatch_src1 },
        { name := "rs_branch_dispatch_src2", width := 32, wires := rs_branch_dispatch_src2 },
        { name := "rs_branch_dispatch_tag", width := 6, wires := rs_branch_dispatch_tag }] ++
       (if enableM then [
-       { name := "rs_muldiv_dispatch_opcode", width := 6, wires := rs_muldiv_dispatch_opcode },
+       { name := "rs_muldiv_dispatch_opcode", width := 7, wires := rs_muldiv_dispatch_opcode },
        { name := "rs_muldiv_dispatch_src1", width := 32, wires := rs_muldiv_dispatch_src1 },
        { name := "rs_muldiv_dispatch_src2", width := 32, wires := rs_muldiv_dispatch_src2 },
        { name := "rs_muldiv_dispatch_tag", width := 6, wires := rs_muldiv_dispatch_tag },
@@ -3114,7 +3114,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
        { name := "fp_rd_phys", width := 6, wires := fp_rd_phys },
        { name := "fp_result", width := 32, wires := fp_result },
        { name := "fp_tag_out", width := 6, wires := fp_tag_out },
-       { name := "rs_fp_dispatch_opcode", width := 6, wires := rs_fp_dispatch_opcode },
+       { name := "rs_fp_dispatch_opcode", width := 7, wires := rs_fp_dispatch_opcode },
        { name := "rs_fp_dispatch_src1", width := 32, wires := rs_fp_dispatch_src1 },
        { name := "rs_fp_dispatch_src2", width := 32, wires := rs_fp_dispatch_src2 },
        { name := "rs_fp_dispatch_tag", width := 6, wires := rs_fp_dispatch_tag },
@@ -3164,6 +3164,7 @@ Extends mkCPU to 2 instructions per cycle throughout the pipeline. -/
 def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let enableM := config.enableM
   let enableF := config.enableF
+  let enableA := config.enableA
   let oi := config.opcodeIndex
   let opcodeWidth := if enableF then 7 else 6
 
@@ -3942,6 +3943,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     let is_mem := Wire.mk s!"{pfx}_is_mem"
     let is_br := Wire.mk s!"{pfx}_is_br"
     let is_st := Wire.mk s!"{pfx}_is_st"
+    let is_atomic := Wire.mk s!"{pfx}_is_atomic"
     let use_imm := Wire.mk s!"{pfx}_use_imm"
     let is_muldiv := Wire.mk s!"{pfx}_is_muldiv"
     -- FP decoder outputs
@@ -3961,6 +3963,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  [("io_valid", valid), ("io_has_rd", has_rd),
                   ("io_is_integer", is_int), ("io_is_memory", is_mem),
                   ("io_is_branch", is_br), ("io_is_store", is_st),
+                  ("io_is_atomic", is_atomic),
                   ("io_use_imm", use_imm)] ++
                  (if enableM then [("io_is_muldiv", is_muldiv)] else []) ++
                  (if enableF then
@@ -3971,12 +3974,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                    bundledPorts "io_rs3" rs3 ++ bundledPorts "io_rm" rm
                   else [])
     }
-    (inst, optype, rd, rs1, rs2, imm, valid, has_rd, is_int, is_mem, is_br, is_st, use_imm, is_muldiv,
+    (inst, optype, rd, rs1, rs2, imm, valid, has_rd, is_int, is_mem, is_br, is_st, is_atomic, use_imm, is_muldiv,
      is_fp, has_fp_rd, fp_rs1_read, fp_rs2_read, fp_rs3_used, is_fp_load, is_fp_store, rs3, rm)
 
-  let (dec0_inst, d0_op, d0_rd, d0_rs1, d0_rs2, d0_imm, d0_valid_raw, d0_has_rd, d0_is_int, d0_is_mem, d0_is_br, d0_is_st, d0_use_imm, d0_is_muldiv,
+  let (dec0_inst, d0_op, d0_rd, d0_rs1, d0_rs2, d0_imm, d0_valid_raw, d0_has_rd, d0_is_int, d0_is_mem, d0_is_br, d0_is_st, d0_is_atomic, d0_use_imm, d0_is_muldiv,
        d0_is_fp, d0_has_fp_rd, d0_fp_rs1_read, d0_fp_rs2_read, d0_fp_rs3_used, d0_is_fp_load, d0_is_fp_store, d0_rs3, d0_rm) := mkDecoder 0 imem_resp_data_0
-  let (dec1_inst, d1_op, d1_rd, d1_rs1, d1_rs2, d1_imm, d1_valid_raw, d1_has_rd, d1_is_int, d1_is_mem, d1_is_br, d1_is_st, d1_use_imm, d1_is_muldiv,
+  let (dec1_inst, d1_op, d1_rd, d1_rs1, d1_rs2, d1_imm, d1_valid_raw, d1_has_rd, d1_is_int, d1_is_mem, d1_is_br, d1_is_st, d1_is_atomic, d1_use_imm, d1_is_muldiv,
        d1_is_fp, d1_has_fp_rd, d1_fp_rs1_read, d1_fp_rs2_read, d1_fp_rs3_used, d1_is_fp_load, d1_is_fp_store, d1_rs3, d1_rm) := mkDecoder 1 imem_resp_data_1
 
   -- Gate decoder valid by fetch valid (e.g. fetch invalidates slot 1 when slot 0 is taken)
@@ -4339,7 +4342,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let src1_ready_1 := Wire.mk "src1_ready_1"; let src2_ready_1 := Wire.mk "src2_ready_1"
 
   -- MUX data for single-unit RS (branch): select between slot 0 and slot 1 data
-  let br_mux_opcode := CPU.makeIndexedWires "br_mux_opcode" 6
+  let br_mux_opcode := CPU.makeIndexedWires "br_mux_opcode" 7
   let br_mux_rs1_phys := CPU.makeIndexedWires "br_mux_rs1_phys" 6
   let br_mux_rs2_phys := CPU.makeIndexedWires "br_mux_rs2_phys" 6
   let br_mux_rs1_data := CPU.makeIndexedWires "br_mux_rs1_data" 32
@@ -4350,8 +4353,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let br_mux_imm := CPU.makeIndexedWires "br_mux_imm" 32
   let br_mux_pc := CPU.makeIndexedWires "br_mux_pc" 32
   let br_mux_data_gates :=
-    (List.range 6).map (fun i =>
-      Gate.mkMUX (d0_op.take 6)[i]! (d1_op.take 6)[i]! br_route_sel br_mux_opcode[i]!) ++
+    (List.range 7).map (fun i =>
+      Gate.mkMUX (d0_op.take 7)[i]! (d1_op.take 7)[i]! br_route_sel br_mux_opcode[i]!) ++
     (List.range 6).map (fun i =>
       Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! br_route_sel br_mux_rs1_phys[i]!) ++
     (List.range 6).map (fun i =>
@@ -4370,7 +4373,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       Gate.mkMUX fetch_pc_0[i]! fetch_pc_1[i]! br_route_sel br_mux_pc[i]!)
 
   -- MUX data for memory RS
-  let mem_mux_opcode := CPU.makeIndexedWires "mem_mux_opcode" 6
+  let mem_mux_opcode := CPU.makeIndexedWires "mem_mux_opcode" 7
   let mem_mux_rs1_phys := CPU.makeIndexedWires "mem_mux_rs1_phys" 6
   let mem_mux_rs2_phys := CPU.makeIndexedWires "mem_mux_rs2_phys" 6
   let mem_mux_rs1_data := CPU.makeIndexedWires "mem_mux_rs1_data" 32
@@ -4385,8 +4388,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_mux_imm := CPU.makeIndexedWires "mem_mux_imm" 32
   let mem_mux_is_store := Wire.mk "mem_mux_is_store"
   let mem_mux_data_gates :=
-    (List.range 6).map (fun i =>
-      Gate.mkMUX (d0_op.take 6)[i]! (d1_op.take 6)[i]! mem_route_sel mem_mux_opcode[i]!) ++
+    (List.range 7).map (fun i =>
+      Gate.mkMUX (d0_op.take 7)[i]! (d1_op.take 7)[i]! mem_route_sel mem_mux_opcode[i]!) ++
     (List.range 6).map (fun i =>
       Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! mem_route_sel mem_mux_rs1_phys[i]!) ++
     -- FSW: src2 tag/data from FP rename instead of INT rename
@@ -4434,12 +4437,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkMUX (Wire.mk "mem_mux_int_src2_ready") mem_fp_issue_src2_ready (Wire.mk "mem_mux_is_fp_store") mem_mux_src2_ready]
     else
       [Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_src2_ready]) ++
-    [Gate.mkMUX d0_is_st d1_is_st mem_route_sel mem_mux_is_store] ++
+    [Gate.mkMUX d0_is_st d1_is_st mem_route_sel mem_mux_is_store,
+   Gate.mkMUX d0_is_atomic d1_is_atomic mem_route_sel (Wire.mk "mem_mux_is_atomic"),
+   Gate.mkOR mem_mux_is_store (Wire.mk "mem_mux_is_atomic") (Wire.mk "mem_mux_is_store_or_atomic")] ++
     (List.range 32).map (fun i =>
       Gate.mkMUX d0_imm[i]! d1_imm[i]! mem_route_sel mem_mux_imm[i]!)
 
   -- MUX data for muldiv RS
-  let md_mux_opcode := CPU.makeIndexedWires "md_mux_opcode" 6
+  let md_mux_opcode := CPU.makeIndexedWires "md_mux_opcode" 7
   let md_mux_rs1_phys := CPU.makeIndexedWires "md_mux_rs1_phys" 6
   let md_mux_rs2_phys := CPU.makeIndexedWires "md_mux_rs2_phys" 6
   let md_mux_rs1_data := CPU.makeIndexedWires "md_mux_rs1_data" 32
@@ -4449,8 +4454,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let md_mux_src2_ready := Wire.mk "md_mux_src2_ready"
   let md_mux_data_gates :=
     if enableM then
-      (List.range 6).map (fun i =>
-        Gate.mkMUX (d0_op.take 6)[i]! (d1_op.take 6)[i]! muldiv_route_sel md_mux_opcode[i]!) ++
+      (List.range 7).map (fun i =>
+        Gate.mkMUX (d0_op.take 7)[i]! (d1_op.take 7)[i]! muldiv_route_sel md_mux_opcode[i]!) ++
       (List.range 6).map (fun i =>
         Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! muldiv_route_sel md_mux_rs1_phys[i]!) ++
       (List.range 6).map (fun i =>
@@ -4759,10 +4764,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- INT lane 1 has its own IB1 FIFO. Backpressure: only dispatch when FIFO can accept.
   let int_de1_gates : List Gate := []
   let issue0_valid := Wire.mk "issue0_valid"; let issue1_valid := Wire.mk "issue1_valid"
-  let dispatch_opcode_0 := CPU.makeIndexedWires "dispatch_opcode_0" 6
+  let dispatch_opcode_0 := CPU.makeIndexedWires "dispatch_opcode_0" 7
   let dispatch_src1_data_0 := CPU.makeIndexedWires "dispatch_src1_0" 32; let dispatch_src2_data_0 := CPU.makeIndexedWires "dispatch_src2_0" 32
   let dispatch_dest_tag_0 := CPU.makeIndexedWires "dispatch_dest_0" 7  -- 7-bit: [5:0]=tag, [6]=domain
-  let dispatch_opcode_1 := CPU.makeIndexedWires "dispatch_opcode_1" 6
+  let dispatch_opcode_1 := CPU.makeIndexedWires "dispatch_opcode_1" 7
   let dispatch_src1_data_1 := CPU.makeIndexedWires "dispatch_src1_1" 32; let dispatch_src2_data_1 := CPU.makeIndexedWires "dispatch_src2_1" 32
   let dispatch_dest_tag_1 := CPU.makeIndexedWires "dispatch_dest_1" 7  -- 7-bit: [5:0]=tag, [6]=domain
   -- RS CDB BYPASS SUPPRESS SIGNALS
@@ -4797,10 +4802,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("issue_en_0", dispatch_int_0), ("issue_en_1", dispatch_int_1),
                 ("issue_src1_ready_0", src1_ready_0), ("issue_src2_ready_0", src2_ready_0),
                 ("issue_src1_ready_1", src1_ready_1), ("issue_src2_ready_1", src2_ready_1)] ++
-               bundledPorts "issue_opcode_0" (d0_op.take 6) ++ bundledPorts "issue_dest_tag_0" (int_dest_tag_masked_0 ++ [zero]) ++
+               bundledPorts "issue_opcode_0" (d0_op.take 7) ++ bundledPorts "issue_dest_tag_0" (int_dest_tag_masked_0 ++ [zero]) ++
                bundledPorts "issue_src1_tag_0" (rs1_phys_0 ++ [zero]) ++ bundledPorts "issue_src1_data_0" rs1_data_0 ++
                bundledPorts "issue_src2_tag_0" (rs2_phys_0 ++ [zero]) ++ bundledPorts "issue_src2_data_0" src2_muxed_0 ++
-               bundledPorts "issue_opcode_1" (d1_op.take 6) ++ bundledPorts "issue_dest_tag_1" (int_dest_tag_masked_1 ++ [zero]) ++
+               bundledPorts "issue_opcode_1" (d1_op.take 7) ++ bundledPorts "issue_dest_tag_1" (int_dest_tag_masked_1 ++ [zero]) ++
                bundledPorts "issue_src1_tag_1" (rs1_phys_1 ++ [zero]) ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
                bundledPorts "issue_src2_tag_1" (rs2_phys_1 ++ [zero]) ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
                [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
@@ -4818,7 +4823,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src2_data_0" dispatch_src2_data_0 ++ bundledPorts "dispatch_dest_tag_0" dispatch_dest_tag_0 ++
                bundledPorts "dispatch_opcode_1" dispatch_opcode_1 ++ bundledPorts "dispatch_src1_data_1" dispatch_src1_data_1 ++
                bundledPorts "dispatch_src2_data_1" dispatch_src2_data_1 ++ bundledPorts "dispatch_dest_tag_1" dispatch_dest_tag_1 ++
-               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero),
+                ("issue_is_atomic_0", zero), ("issue_is_atomic_1", zero)] ++
                bundledPorts "alloc_ptr" rs_int_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_int_grant
   }
@@ -4826,7 +4832,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- === BRANCH RS (single-unit, uses W=2 RS with slot 1 tied off) ===
   let rs_br_issue_full := Wire.mk "rs_br_issue_full"
   let rs_br_dispatch_valid := Wire.mk "rs_br_dispatch_valid"
-  let rs_br_dispatch_opcode := CPU.makeIndexedWires "rs_br_dispatch_opcode" 6
+  let rs_br_dispatch_opcode := CPU.makeIndexedWires "rs_br_dispatch_opcode" 7
   let rs_br_dispatch_src1 := CPU.makeIndexedWires "rs_br_dispatch_src1" 32
   let rs_br_dispatch_src2 := CPU.makeIndexedWires "rs_br_dispatch_src2" 32
   let rs_br_dispatch_tag := CPU.makeIndexedWires "rs_br_dispatch_tag" 7
@@ -4854,7 +4860,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_tag_0" (br_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" br_mux_rs1_data ++
                bundledPorts "issue_src2_tag_0" (br_mux_rs2_phys ++ [zero]) ++ bundledPorts "issue_src2_data_0" br_mux_rs2_data ++
                -- Slot 1 issue: tied to zero
-               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_br_dummy_op1" 6) ++
+               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_br_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_br_dummy_dt1" 7) ++
                bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_br_dummy_s1d1" 32) ++
@@ -4866,11 +4872,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src1_data_0" rs_br_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_br_dispatch_src2 ++
                bundledPorts "dispatch_dest_tag_0" rs_br_dispatch_tag ++
-               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_br_dop1" 6) ++
+               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_br_dop1" 7) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_br_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_br_ds2_1" 32) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_br_ddt1" 7) ++
-               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero),
+                ("issue_is_atomic_0", zero), ("issue_is_atomic_1", zero)] ++
                bundledPorts "alloc_ptr" rs_br_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_br_grant
   }
@@ -4878,7 +4885,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- === MEMORY RS (single-unit, uses MemoryRS4) ===
   let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
   let rs_mem_dispatch_valid := Wire.mk "rs_mem_dispatch_valid"
-  let rs_mem_dispatch_opcode := CPU.makeIndexedWires "rs_mem_dispatch_opcode" 6
+  let rs_mem_dispatch_opcode := CPU.makeIndexedWires "rs_mem_dispatch_opcode" 7
   let rs_mem_dispatch_src1 := CPU.makeIndexedWires "rs_mem_dispatch_src1" 32
   let rs_mem_dispatch_src2 := CPU.makeIndexedWires "rs_mem_dispatch_src2" 32
   let rs_mem_dispatch_tag := CPU.makeIndexedWires "rs_mem_dispatch_tag" 7
@@ -4901,7 +4908,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one),
                 ("issue_en_0", mem_dispatch_valid), ("issue_en_1", zero),
-                ("issue_is_store_0", mem_mux_is_store), ("issue_is_store_1", zero),
+                ("issue_is_store_0", Wire.mk "mem_mux_is_store_or_atomic"), ("issue_is_store_1", zero),
+                ("issue_is_atomic_0", Wire.mk "mem_mux_is_atomic"), ("issue_is_atomic_1", zero),
+                ("pending_store", Wire.mk "rs_mem_pending_store"),
                 ("issue_src1_ready_0", mem_mux_src1_ready), ("issue_src2_ready_0", mem_mux_src2_ready),
                 ("issue_src1_ready_1", zero), ("issue_src2_ready_1", zero),
                 ("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
@@ -4917,7 +4926,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_tag_0" (mem_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" mem_mux_rs1_data ++
                bundledPorts "issue_src2_tag_0" (mem_mux_rs2_phys ++ [if enableF then Wire.mk "mem_mux_is_fp_store" else zero]) ++ bundledPorts "issue_src2_data_0" mem_mux_rs2_data ++
                -- Slot 1 issue: tied to zero
-               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_mem_dummy_op1" 6) ++
+               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_mem_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_dt1" 7) ++
                bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s1d1" 32) ++
@@ -4929,7 +4938,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src1_data_0" rs_mem_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_mem_dispatch_src2 ++
                bundledPorts "dispatch_dest_tag_0" rs_mem_dispatch_tag ++
-               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_mem_dop1" 6) ++
+               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_mem_dop1" 7) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_mem_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_mem_ds2_1" 32) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_mem_ddt1" 7) ++
@@ -5026,7 +5035,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- === MULDIV RS (conditional, single-unit) ===
   let rs_muldiv_issue_full := Wire.mk "rs_muldiv_issue_full"
   let rs_muldiv_dispatch_valid := Wire.mk "rs_muldiv_dispatch_valid"
-  let rs_muldiv_dispatch_opcode := CPU.makeIndexedWires "rs_muldiv_dispatch_opcode" 6
+  let rs_muldiv_dispatch_opcode := CPU.makeIndexedWires "rs_muldiv_dispatch_opcode" 7
   let rs_muldiv_dispatch_src1 := CPU.makeIndexedWires "rs_muldiv_dispatch_src1" 32
   let rs_muldiv_dispatch_src2 := CPU.makeIndexedWires "rs_muldiv_dispatch_src2" 32
   let rs_muldiv_dispatch_tag := CPU.makeIndexedWires "rs_muldiv_dispatch_tag" 7
@@ -5059,7 +5068,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_opcode_0" md_mux_opcode ++ bundledPorts "issue_dest_tag_0" (md_mux_rd_phys ++ [zero]) ++
                bundledPorts "issue_src1_tag_0" (md_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" md_mux_rs1_data ++
                bundledPorts "issue_src2_tag_0" (md_mux_rs2_phys ++ [zero]) ++ bundledPorts "issue_src2_data_0" md_mux_rs2_data ++
-               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_md_dummy_op1" 6) ++
+               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_md_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_md_dummy_dt1" 7) ++
                bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_md_dummy_s1d1" 32) ++
@@ -5071,11 +5080,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src1_data_0" rs_muldiv_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_muldiv_dispatch_src2 ++
                bundledPorts "dispatch_dest_tag_0" rs_muldiv_dispatch_tag ++
-               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_md_dop1" 6) ++
+               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_md_dop1" 7) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_md_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_md_ds2_1" 32) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_md_ddt1" 7) ++
-               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero),
+                ("issue_is_atomic_0", zero), ("issue_is_atomic_1", zero)] ++
                bundledPorts "alloc_ptr" (CPU.makeIndexedWires "rs_muldiv_alloc_ptr" 2) ++
                bundledPorts "dispatch_grant" (CPU.makeIndexedWires "rs_muldiv_grant" 4)
   }
@@ -5552,7 +5562,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_fp_grant := CPU.makeIndexedWires "rs_fp_grant" 4
   let rs_fp_issue_full := Wire.mk "rs_fp_issue_full"
   let rs_fp_dispatch_valid := Wire.mk "rs_fp_dispatch_valid"
-  let rs_fp_dispatch_opcode := CPU.makeIndexedWires "rs_fp_dispatch_opcode" 6
+  let rs_fp_dispatch_opcode := CPU.makeIndexedWires "rs_fp_dispatch_opcode" 7
   let rs_fp_dispatch_src1 := CPU.makeIndexedWires "rs_fp_dispatch_src1" 32
   let rs_fp_dispatch_src2 := CPU.makeIndexedWires "rs_fp_dispatch_src2" 32
   let rs_fp_dispatch_tag := CPU.makeIndexedWires "rs_fp_dispatch_tag" 7
@@ -5635,7 +5645,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_tag_0" (fp_issue_src1_tag ++ [fp_mux_fp_rs1_read]) ++ bundledPorts "issue_src1_data_0" fp_issue_src1_data ++
                bundledPorts "issue_src2_tag_0" (fp_issue_src2_tag ++ [fp_mux_fp_rs2_read]) ++ bundledPorts "issue_src2_data_0" fp_issue_src2_data ++
                -- Slot 1 unused
-               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_fp_dummy_op1" 6) ++
+               bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_fp_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_dt1" 7) ++
                bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s1t1" 7) ++
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s1d1" 32) ++
@@ -5647,11 +5657,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "dispatch_src1_data_0" rs_fp_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_fp_dispatch_src2 ++
                bundledPorts "dispatch_dest_tag_0" rs_fp_dispatch_tag ++
-               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_fp_dop1" 6) ++
+               bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_fp_dop1" 7) ++
                bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_fp_ds1_1" 32) ++
                bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_fp_ds2_1" 32) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_fp_ddt1" 7) ++
-               [("issue_is_store_0", zero), ("issue_is_store_1", zero)] ++
+               [("issue_is_store_0", zero), ("issue_is_store_1", zero),
+                ("issue_is_atomic_0", zero), ("issue_is_atomic_1", zero)] ++
                bundledPorts "alloc_ptr" rs_fp_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_fp_grant
   }
@@ -5957,8 +5968,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let alu_op0 := CPU.makeIndexedWires "alu_op0" 4
   let alu_op1 := CPU.makeIndexedWires "alu_op1" 4
   let optype_mapping := OpType.resolveMapping config.decoderInstrNames aluMappingByName
-  let alu_lut_gates0 := mkOpTypeToALU4 "lut0" dispatch_opcode_0 alu_op0 optype_mapping
-  let alu_lut_gates1 := mkOpTypeToALU4 "lut1" dispatch_opcode_1 alu_op1 optype_mapping
+  let alu_lut_gates0 := mkOpTypeLUT "lut0" dispatch_opcode_0 alu_op0 optype_mapping
+  let alu_lut_gates1 := mkOpTypeLUT "lut1" dispatch_opcode_1 alu_op1 optype_mapping
 
   let result0_raw := CPU.makeIndexedWires "exec_result0_raw" 32; let tag0 := CPU.makeIndexedWires "exec_tag0" 6
   let result1_raw := CPU.makeIndexedWires "exec_result1_raw" 32; let tag1 := CPU.makeIndexedWires "exec_tag1" 6
@@ -5977,8 +5988,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   -- AUIPC/LUI post-processing for INT lane 0
   let is_lui_0 := Wire.mk "is_lui_0"; let is_auipc_0 := Wire.mk "is_auipc_0"
-  let lui_match_gates_0 := mkOpcodeMatch6 "lui_m0" (oi .LUI) dispatch_opcode_0 is_lui_0
-  let auipc_match_gates_0 := mkOpcodeMatch6 "auipc_m0" (oi .AUIPC) dispatch_opcode_0 is_auipc_0
+  let lui_match_gates_0 := mkOpcodeMatch7 "lui_m0" (oi .LUI) dispatch_opcode_0 is_lui_0
+  let auipc_match_gates_0 := mkOpcodeMatch7 "auipc_m0" (oi .AUIPC) dispatch_opcode_0 is_auipc_0
   let auipc_result_0 := CPU.makeIndexedWires "auipc_result_0" 32
   let auipc_adder_0_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32", instName := "u_auipc_adder_0",
@@ -5994,8 +6005,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkMUX int_auipc_muxed_0[i]! int_captured_imm_0[i]! is_lui_0 result0[i]!]) |>.flatten
   -- AUIPC/LUI post-processing for INT lane 1
   let is_lui_1 := Wire.mk "is_lui_1"; let is_auipc_1 := Wire.mk "is_auipc_1"
-  let lui_match_gates_1 := mkOpcodeMatch6 "lui_m1" (oi .LUI) dispatch_opcode_1 is_lui_1
-  let auipc_match_gates_1 := mkOpcodeMatch6 "auipc_m1" (oi .AUIPC) dispatch_opcode_1 is_auipc_1
+  let lui_match_gates_1 := mkOpcodeMatch7 "lui_m1" (oi .LUI) dispatch_opcode_1 is_lui_1
+  let auipc_match_gates_1 := mkOpcodeMatch7 "auipc_m1" (oi .AUIPC) dispatch_opcode_1 is_auipc_1
   let auipc_result_1 := CPU.makeIndexedWires "auipc_result_1" 32
   let auipc_adder_1_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32", instName := "u_auipc_adder_1",
@@ -6030,8 +6041,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- JAL/JALR detection
   let is_jal := Wire.mk "is_jal_br"; let is_jalr := Wire.mk "is_jalr_br"
   let is_jal_or_jalr := Wire.mk "is_jal_or_jalr_br"
-  let jal_match_gates := mkOpcodeMatch6 "jal_m" (oi .JAL) rs_br_dispatch_opcode is_jal
-  let jalr_match_gates := mkOpcodeMatch6 "jalr_m" (oi .JALR) rs_br_dispatch_opcode is_jalr
+  let jal_match_gates := mkOpcodeMatch7 "jal_m" (oi .JAL) rs_br_dispatch_opcode is_jal
+  let jalr_match_gates := mkOpcodeMatch7 "jalr_m" (oi .JALR) rs_br_dispatch_opcode is_jalr
   let jal_jalr_gates := [Gate.mkOR is_jal is_jalr is_jal_or_jalr]
   -- PC+4 for link register (JAL/JALR result)
   let br_pc_plus_4 := CPU.makeIndexedWires "br_pc_plus_4" 32
@@ -6087,12 +6098,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let is_beq := Wire.mk "is_beq"; let is_bne := Wire.mk "is_bne"
   let is_blt := Wire.mk "is_blt"; let is_bge := Wire.mk "is_bge"
   let is_bltu := Wire.mk "is_bltu"; let is_bgeu := Wire.mk "is_bgeu"
-  let beq_match := mkOpcodeMatch6 "beq_m" (oi .BEQ) rs_br_dispatch_opcode is_beq
-  let bne_match := mkOpcodeMatch6 "bne_m" (oi .BNE) rs_br_dispatch_opcode is_bne
-  let blt_match := mkOpcodeMatch6 "blt_m" (oi .BLT) rs_br_dispatch_opcode is_blt
-  let bge_match := mkOpcodeMatch6 "bge_m" (oi .BGE) rs_br_dispatch_opcode is_bge
-  let bltu_match := mkOpcodeMatch6 "bltu_m" (oi .BLTU) rs_br_dispatch_opcode is_bltu
-  let bgeu_match := mkOpcodeMatch6 "bgeu_m" (oi .BGEU) rs_br_dispatch_opcode is_bgeu
+  let beq_match := mkOpcodeMatch7 "beq_m" (oi .BEQ) rs_br_dispatch_opcode is_beq
+  let bne_match := mkOpcodeMatch7 "bne_m" (oi .BNE) rs_br_dispatch_opcode is_bne
+  let blt_match := mkOpcodeMatch7 "blt_m" (oi .BLT) rs_br_dispatch_opcode is_blt
+  let bge_match := mkOpcodeMatch7 "bge_m" (oi .BGE) rs_br_dispatch_opcode is_bge
+  let bltu_match := mkOpcodeMatch7 "bltu_m" (oi .BLTU) rs_br_dispatch_opcode is_bltu
+  let bgeu_match := mkOpcodeMatch7 "bgeu_m" (oi .BGEU) rs_br_dispatch_opcode is_bgeu
   let branch_taken := Wire.mk "branch_taken"
   let branch_cond_gates := [
     Gate.mkNOT br_eq (Wire.mk "br_not_eq"),
@@ -6218,35 +6229,56 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let is_lb := Wire.mk "is_lb"
   let is_lbu := Wire.mk "is_lbu"
   let is_load := Wire.mk "is_load"
-  let lw_match_gates := mkOpcodeMatch6 "lw_match" (oi .LW) rs_mem_dispatch_opcode is_lw
-  let lh_match_gates := mkOpcodeMatch6 "lh_match" (oi .LH) rs_mem_dispatch_opcode is_lh
-  let lhu_match_gates := mkOpcodeMatch6 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
-  let lb_match_gates := mkOpcodeMatch6 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
-  let lbu_match_gates := mkOpcodeMatch6 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
+  let lw_match_gates := mkOpcodeMatch7 "lw_match" (oi .LW) rs_mem_dispatch_opcode is_lw
+  let lh_match_gates := mkOpcodeMatch7 "lh_match" (oi .LH) rs_mem_dispatch_opcode is_lh
+  let lhu_match_gates := mkOpcodeMatch7 "lhu_match" (oi .LHU) rs_mem_dispatch_opcode is_lhu
+  let lb_match_gates := mkOpcodeMatch7 "lb_match" (oi .LB) rs_mem_dispatch_opcode is_lb
+  let lbu_match_gates := mkOpcodeMatch7 "lbu_match" (oi .LBU) rs_mem_dispatch_opcode is_lbu
   -- FLW/FSW detection (conditional on F extension)
   let is_flw := Wire.mk "is_flw"
   let is_fsw := Wire.mk "is_fsw"
   let flw_match_gates :=
-    if enableF then mkOpcodeMatch6 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
+    if enableF then mkOpcodeMatch7 "flw_match" (oi .FLW) rs_mem_dispatch_opcode is_flw
     else [Gate.mkBUF zero is_flw]
   let fsw_match_gates :=
-    if enableF then mkOpcodeMatch6 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
+    if enableF then mkOpcodeMatch7 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
     else [Gate.mkBUF zero is_fsw]
+  -- === A EXTENSION: ATOMIC OPCODE DETECTION ===
+  let is_lr := Wire.mk "is_lr"
+  let is_sc := Wire.mk "is_sc"
+  let is_amo := Wire.mk "is_amo"
+  let is_atomic_read := Wire.mk "is_atomic_read"   -- LR or AMO (read via DMEM)
+  let amo_funct := CPU.makeIndexedWires "amo_funct" 4
+  let lr_match_gates := if enableA then mkOpcodeMatch7 "lr_match" (oi .LR_W) rs_mem_dispatch_opcode is_lr else [Gate.mkBUF zero is_lr]
+  let sc_match_gates := if enableA then mkOpcodeMatch7 "sc_match" (oi .SC_W) rs_mem_dispatch_opcode is_sc else [Gate.mkBUF zero is_sc]
+  let amo_match_gates := if enableA then
+      mkOpcodeMatchAny7 "amo_match" [
+        (oi .AMOADD_W), (oi .AMOSWAP_W), (oi .AMOXOR_W), (oi .AMOAND_W), (oi .AMOOR_W),
+        (oi .AMOMIN_W), (oi .AMOMAX_W), (oi .AMOMINU_W), (oi .AMOMAXU_W)
+      ] rs_mem_dispatch_opcode is_amo
+    else [Gate.mkBUF zero is_amo]
+  let amo_funct_gates := if enableA then
+      mkOpTypeLUT "amoflut" rs_mem_dispatch_opcode amo_funct
+        (OpType.resolveMapping config.decoderInstrNames amoMappingByName)
+    else (List.range 4).map (fun i => Gate.mkBUF zero amo_funct[i]!)
+  let atomic_read_gates := [Gate.mkOR is_lr is_amo is_atomic_read]
+
   let is_load_gates := [
     Gate.mkOR is_lw is_lh (Wire.mk "is_load_tmp1"),
     Gate.mkOR (Wire.mk "is_load_tmp1") is_lhu (Wire.mk "is_load_tmp2"),
     Gate.mkOR (Wire.mk "is_load_tmp2") is_lb (Wire.mk "is_load_tmp3"),
     Gate.mkOR (Wire.mk "is_load_tmp3") is_lbu (Wire.mk "is_load_int"),
-    Gate.mkOR (Wire.mk "is_load_int") is_flw is_load
+    Gate.mkOR (Wire.mk "is_load_int") is_flw (Wire.mk "is_load_pre"),
+    Gate.mkOR (Wire.mk "is_load_pre") is_atomic_read is_load
   ]
 
   -- Store type detection
   let is_sw := Wire.mk "is_sw"
   let is_sh := Wire.mk "is_sh"
   let is_sb_w := Wire.mk "is_sb"
-  let sw_match_gates := mkOpcodeMatch6 "sw_match" (oi .SW) rs_mem_dispatch_opcode is_sw
-  let sh_match_gates := mkOpcodeMatch6 "sh_match" (oi .SH) rs_mem_dispatch_opcode is_sh
-  let sb_match_gates := mkOpcodeMatch6 "sb_match" (oi .SB) rs_mem_dispatch_opcode is_sb_w
+  let sw_match_gates := mkOpcodeMatch7 "sw_match" (oi .SW) rs_mem_dispatch_opcode is_sw
+  let sh_match_gates := mkOpcodeMatch7 "sh_match" (oi .SH) rs_mem_dispatch_opcode is_sh
+  let sb_match_gates := mkOpcodeMatch7 "sb_match" (oi .SB) rs_mem_dispatch_opcode is_sb_w
 
   -- mem_size[1:0] and sign_extend
   let mem_size := CPU.makeIndexedWires "mem_size" 2
@@ -6256,7 +6288,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkOR (Wire.mk "ms0_t1") is_sh mem_size[0]!,
     Gate.mkOR is_lw is_sw (Wire.mk "ms1_t1"),
     Gate.mkOR (Wire.mk "ms1_t1") is_flw (Wire.mk "ms1_t2"),
-    Gate.mkOR (Wire.mk "ms1_t2") is_fsw mem_size[1]!,
+    Gate.mkOR (Wire.mk "ms1_t2") is_fsw (Wire.mk "ms1_t3"),
+    Gate.mkOR (Wire.mk "ms1_t3") is_atomic_read mem_size[1]!,
     Gate.mkOR is_lb is_lh sign_extend
   ]
 
@@ -6287,9 +6320,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Stores use mem_store_dispatch_en (no sb_deq_valid gate) since SB enqueue
   -- doesn't need the DMEM port. Loads use mem_dispatch_en (with sb_deq_valid gate).
   let not_is_load := Wire.mk "not_is_load"
+  let not_is_sc := Wire.mk "not_is_sc"
   let sb_enq_gate_gates := [
     Gate.mkNOT is_load not_is_load,
-    Gate.mkAND rs_mem_dispatch_valid not_is_load (Wire.mk "sb_enq_ungated"),
+    Gate.mkNOT is_sc not_is_sc,
+    Gate.mkAND rs_mem_dispatch_valid not_is_load (Wire.mk "sb_enq_ungated0"),
+    Gate.mkAND (Wire.mk "sb_enq_ungated0") not_is_sc (Wire.mk "sb_enq_ungated"),
     Gate.mkAND (Wire.mk "sb_enq_ungated") (Wire.mk "mem_store_dispatch_en") (Wire.mk "sb_enq_dispatched"),
     Gate.mkNOT pipeline_flush_comb (Wire.mk "not_flush_comb"),
     Gate.mkAND (Wire.mk "sb_enq_dispatched") (Wire.mk "not_flush_comb") sb_enq_en
@@ -6321,7 +6357,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     -- Combined: stores use mem_store_dispatch_en, loads use mem_dispatch_en
     Gate.mkAND is_load mem_dispatch_en (Wire.mk "load_dispatch_ok"),
     Gate.mkAND not_is_load (Wire.mk "mem_store_dispatch_en") (Wire.mk "store_dispatch_ok"),
-    Gate.mkOR (Wire.mk "load_dispatch_ok") (Wire.mk "store_dispatch_ok") (Wire.mk "mem_dispatch_en_any")
+    Gate.mkOR (Wire.mk "load_dispatch_ok") (Wire.mk "store_dispatch_ok") (Wire.mk "mem_dispatch_en_raw"),
+    Gate.mkAND (Wire.mk "mem_dispatch_en_raw") (Wire.mk "atom_disp_ok") (Wire.mk "mem_dispatch_en_any")
   ]
 
   -- Cross-size pending latch: prevents new mem dispatches until cross-size load
@@ -6452,11 +6489,27 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     -- LSU valid = load fwd OR store complete
     Gate.mkOR load_fwd_valid store_complete_valid lsu_valid
   ]
+  -- SC broadcasts its result (0=success, 1=failure) instead of store data 0
+  let sc_lsu_data := CPU.makeIndexedWires "sc_lsu_data" 32
+  let sc_lsu_data_gates :=
+    [Gate.mkAND (Wire.mk "atom_sc_sel") (Wire.mk "atom_sc_result") sc_lsu_data[0]!] ++
+    (List.range 31).map (fun i => Gate.mkBUF zero sc_lsu_data[i+1]!)
   let lsu_tag_data_gates :=
     (List.range 6).map (fun i => Gate.mkBUF mem_tag_r[i]! lsu_tag[i]!) ++
-    -- For stores, data is irrelevant (zero); for loads, SB fwd data
+    -- Loads broadcast SB-forwarded data; SC broadcasts its result; stores broadcast 0
     (List.range 32).map (fun i =>
-      Gate.mkAND lsu_sb_fwd_formatted[i]! is_load_r lsu_data[i]!)
+      Gate.mkMUX sc_lsu_data[i]! lsu_sb_fwd_formatted[i]! is_load_r lsu_data[i]!)
+
+  -- === A EXTENSION: ATOMIC UNIT ===
+  let atomic_unit := mkAtomicUnit clock reset zero one
+    rs_mem_dispatch_valid (Wire.mk "mem_dispatch_en_any")
+    is_lr is_sc is_amo amo_funct rs_mem_dispatch_src2
+    pipeline_flush_comb mem_valid_r mem_addr_r
+    dmem_resp_valid (Wire.mk "dmem_load_pending") dmem_resp_data
+    dmem_req_ready lsu_sb_empty lsu_sb_deq_valid lsu_sb_deq_bits
+    (Wire.mk "rs_mem_pending_store")
+  let atomic_gates := atomic_unit.gates
+  let atomic_insts := atomic_unit.instances
 
   -- === DMEM LOAD METADATA CAPTURE (for sub-word load formatting) ===
   let dmem_addr_lo_reg := CPU.makeIndexedWires "dmem_addr_lo_reg" 2
@@ -6999,15 +7052,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let dmem_req_size := CPU.makeIndexedWires "dmem_req_size" 2
 
   let dmem_gates :=
-    [Gate.mkOR load_no_fwd lsu_sb_deq_valid (Wire.mk "dmem_valid_tmp"),
-     Gate.mkBUF (Wire.mk "dmem_valid_tmp") dmem_req_valid,
-     Gate.mkBUF lsu_sb_deq_valid dmem_req_we] ++
+    -- Request sources: DMEM load, store-buffer dequeue, atomic direct write
+    [Gate.mkOR load_no_fwd lsu_sb_deq_valid (Wire.mk "dmem_v0"),
+     Gate.mkOR (Wire.mk "dmem_v0") (Wire.mk "atom_aw_pending") dmem_req_valid,
+     Gate.mkOR lsu_sb_deq_valid (Wire.mk "atom_aw_pending") dmem_req_we] ++
     (List.range 32).map (fun i =>
-      Gate.mkMUX mem_addr_r[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid dmem_req_addr[i]!) ++
+      Gate.mkMUX mem_addr_r[i]! lsu_sb_deq_bits[i]! lsu_sb_deq_valid (Wire.mk s!"dmem_addr_p{i}")) ++
     (List.range 32).map (fun i =>
-      Gate.mkBUF lsu_sb_deq_bits[32+i]! dmem_req_data[i]!) ++
-    [Gate.mkMUX zero lsu_sb_deq_bits[64]! dmem_req_we dmem_req_size[0]!,
-     Gate.mkMUX one lsu_sb_deq_bits[65]! dmem_req_we dmem_req_size[1]!]
+      Gate.mkMUX (Wire.mk s!"dmem_addr_p{i}") (Wire.mk s!"atom_aw_addr_{i}") (Wire.mk "atom_aw_pending") dmem_req_addr[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX lsu_sb_deq_bits[32+i]! (Wire.mk s!"atom_aw_data_{i}") (Wire.mk "atom_aw_pending") dmem_req_data[i]!) ++
+    [Gate.mkMUX zero lsu_sb_deq_bits[64]! dmem_req_we (Wire.mk "dmem_msize0"),
+     Gate.mkMUX one lsu_sb_deq_bits[65]! dmem_req_we (Wire.mk "dmem_msize1"),
+     Gate.mkMUX (Wire.mk "dmem_msize0") zero (Wire.mk "atom_aw_pending") dmem_req_size[0]!,
+     Gate.mkMUX (Wire.mk "dmem_msize1") one (Wire.mk "atom_aw_pending") dmem_req_size[1]!]
 
   -- === CSR REGISTER FILE + EXECUTE LOGIC (W2) ===
   -- CSR drain_complete: fires when pipeline fully drained AND the serialized op was a CSR
@@ -7449,7 +7507,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              sb_enq_gate_gates ++ mem_store_dispatch_en_gates ++ mem_dispatch_en_gates ++ cross_size_pending_gates ++
              fwd_size_check_gates ++ load_no_fwd_gates ++ dmem_pending_gates ++ dmem_tag_capture_gates ++
              dmem_is_fp_gates ++
-             lsu_sb_fwd_format_all ++ load_fwd_gates ++ lsu_tag_data_gates ++
+             lsu_sb_fwd_format_all ++ load_fwd_gates ++ lsu_tag_data_gates ++ sc_lsu_data_gates ++
+             lr_match_gates ++ sc_match_gates ++ amo_match_gates ++ amo_funct_gates ++ atomic_read_gates ++ atomic_gates ++
              lsu_is_fp_gates ++
              dmem_meta_capture_gates ++ dmem_resp_format_all ++ dmem_valid_gate_gates ++
              ib0_fifo_enq_assemble ++ ib1_merge_gates ++ ib1_fifo_enq_assemble ++
@@ -7492,6 +7551,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  (if enableM then [muldiv_exec_inst] else []) ++
                  [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst] ++
+                 atomic_insts ++
                  [redirect_valid_dff_inst, flush_dff_dispatch] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++

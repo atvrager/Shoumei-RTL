@@ -56,6 +56,11 @@ def classifyToUnit (op : OpType) (config : CPUConfig) : ExecUnit :=
   | .SB | .SH | .SW => .Memory
   -- Memory (FP loads/stores go to Memory unit like integer loads/stores)
   | .FLW | .FSW => if config.enableF then .Memory else .Illegal
+  -- A extension: atomics route to the Memory unit (LSU handles LR/SC/AMO)
+  | .LR_W | .SC_W
+  | .AMOADD_W | .AMOSWAP_W | .AMOXOR_W | .AMOAND_W | .AMOOR_W
+  | .AMOMIN_W | .AMOMAX_W | .AMOMINU_W | .AMOMAXU_W =>
+      if config.enableA then .Memory else .Illegal
   -- F extension (floating-point arithmetic)
   | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
   | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S

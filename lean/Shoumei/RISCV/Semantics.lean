@@ -18,6 +18,9 @@ structure ArchState where
   regs : Fin 32 → UInt32
   /-- Memory (simplified: address → value) -/
   memory : UInt32 → UInt32
+  /-- Single-hart reservation set for the A extension: address held by `lr.w`
+      (none when no reservation is active). -/
+  reservation : Option UInt32 := none
   deriving Inhabited
 
 instance : Repr ArchState where
@@ -49,6 +52,14 @@ def ArchState.readMem32 (state : ArchState) (addr : UInt32) : UInt32 :=
 /-- Write memory word (32-bit aligned) -/
 def ArchState.writeMem32 (state : ArchState) (addr : UInt32) (value : UInt32) : ArchState :=
   { state with memory := fun a => if a = addr then value else state.memory a }
+
+/-- Set the reservation to an address (`lr.w`). -/
+def ArchState.setReservation (state : ArchState) (addr : UInt32) : ArchState :=
+  { state with reservation := some addr }
+
+/-- Clear the reservation (`sc.w`, an intervening store, or a trap). -/
+def ArchState.clearReservation (state : ArchState) : ArchState :=
+  { state with reservation := none }
 
 /-- Read memory halfword (16-bit aligned, sign-extended) -/
 def ArchState.readMem16 (state : ArchState) (addr : UInt32) (unsigned : Bool) : UInt32 :=
@@ -191,6 +202,34 @@ def executeMulDiv (op : OpType) (a b : UInt32) : UInt32 :=
       else
         UInt32.ofNat (a.toNat % b.toNat)
   | _ => 0  -- Not a MulDiv op
+
+/-! ## A Extension: Atomic Operations -/
+
+/-- Compute the new memory value for an AMO from the old value and rs2.
+    Word-width semantics; signed comparisons use `toInt32`. -/
+def executeAmo (op : OpType) (old rs2 : UInt32) : UInt32 :=
+  match op with
+  | .AMOADD_W  => old + rs2
+  | .AMOSWAP_W => rs2
+  | .AMOXOR_W  => old ^^^ rs2
+  | .AMOAND_W  => old &&& rs2
+  | .AMOOR_W   => old ||| rs2
+  | .AMOMIN_W  => if toInt32 old < toInt32 rs2 then old else rs2
+  | .AMOMAX_W  => if toInt32 old > toInt32 rs2 then old else rs2
+  | .AMOMINU_W => if old < rs2 then old else rs2
+  | .AMOMAXU_W => if old > rs2 then old else rs2
+  | _          => old
+
+/-- Execute `sc.w`: succeeds (rd = 0, memory written) iff a reservation is held
+    for the target word.  The reservation is cleared either way. -/
+def executeSc (state : ArchState) (addr data : UInt32) : Bool × ArchState :=
+  match state.reservation with
+  | some r =>
+      if r == addr then
+        (true, (state.writeMem32 addr data).clearReservation)
+      else
+        (false, state.clearReservation)
+  | none => (false, state.clearReservation)
 
 /-! ## Instruction Execution -/
 
@@ -420,9 +459,47 @@ def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : Exec
     -- Environment call - return special result
     .ecall
 
+  | .WFI =>
+    -- WFI is a hint; the structural model stalls until an interrupt arrives.
+    .ok state.nextPC
+
+  | .MRET =>
+    -- MRET returns to mepc. The trap/CSR machinery is structural; in this
+    -- simplified architectural model it is a no-op beyond advancing the PC.
+    .ok state.nextPC
+
   | .EBREAK =>
     -- Breakpoint - return special result
     .ebreak
+
+  -- A extension: load-reserved
+  | .LR_W =>
+    match decoded.rd, decoded.rs1 with
+    | some rd, some rs1 =>
+      let addr := state.readReg rs1 + UInt32.ofNat (decoded.imm.getD 0).toNat
+      let value := state.readMem32 addr
+      .ok ((state.writeReg rd value).setReservation addr |>.nextPC)
+    | _, _ => .illegalInstruction
+
+  -- A extension: store-conditional
+  | .SC_W =>
+    match decoded.rd, decoded.rs1, decoded.rs2 with
+    | some rd, some rs1, some rs2 =>
+      let addr := state.readReg rs1 + UInt32.ofNat (decoded.imm.getD 0).toNat
+      let (ok, st) := executeSc state addr (state.readReg rs2)
+      .ok (st.writeReg rd (if ok then 0 else 1) |>.nextPC)
+    | _, _, _ => .illegalInstruction
+
+  -- A extension: atomic read-modify-write (returns the old value in rd)
+  | .AMOADD_W | .AMOSWAP_W | .AMOXOR_W | .AMOAND_W | .AMOOR_W
+  | .AMOMIN_W | .AMOMAX_W | .AMOMINU_W | .AMOMAXU_W =>
+    match decoded.rd, decoded.rs1, decoded.rs2 with
+    | some rd, some rs1, some rs2 =>
+      let addr := state.readReg rs1 + UInt32.ofNat (decoded.imm.getD 0).toNat
+      let old := state.readMem32 addr
+      let newValue := executeAmo decoded.opType old (state.readReg rs2)
+      .ok (state.writeMem32 addr newValue |>.writeReg rd old |>.nextPC)
+    | _, _, _ => .illegalInstruction
 
   -- F extension: not yet implemented in behavioral semantics
   | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
@@ -444,7 +521,7 @@ def executeStep (state : ArchState) (instrDefs : List InstructionDef) : ExecResu
   let instrWord := state.readMem32 state.pc
 
   -- Decode instruction
-  match decodeInstruction instrDefs instrWord with
+  match decodeInstruction instrDefs instrWord state.pc with
   | some decoded => executeInstruction state decoded
   | none => .illegalInstruction
 

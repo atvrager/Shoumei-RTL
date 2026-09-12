@@ -124,6 +124,11 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   | .MRET => "mret" | .WFI => "wfi"
   | .MUL => "mul" | .MULH => "mulh" | .MULHSU => "mulhsu" | .MULHU => "mulhu"
   | .DIV => "div" | .DIVU => "divu" | .REM => "rem" | .REMU => "remu"
+  -- A extension (atomics)
+  | .LR_W => "lr.w" | .SC_W => "sc.w"
+  | .AMOADD_W => "amoadd.w" | .AMOSWAP_W => "amoswap.w" | .AMOXOR_W => "amoxor.w"
+  | .AMOAND_W => "amoand.w" | .AMOOR_W => "amoor.w" | .AMOMIN_W => "amomin.w"
+  | .AMOMAX_W => "amomax.w" | .AMOMINU_W => "amominu.w" | .AMOMAXU_W => "amomaxu.w"
   -- F extension
   | .FADD_S => "fadd.s" | .FSUB_S => "fsub.s" | .FMUL_S => "fmul.s"
   | .FDIV_S => "fdiv.s" | .FSQRT_S => "fsqrt.s"
