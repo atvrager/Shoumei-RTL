@@ -20,8 +20,6 @@
         "*.github.com",
         "*.githubusercontent.com",
         "registry.npmjs.org",
-        "repo1.maven.org",
-        "*.coursier.io",
         "raw.githubusercontent.com",
         "pypi.org",
         "files.pythonhosted.org",
@@ -29,9 +27,6 @@
         "static.lean-lang.org",
         "reservoir.lean-lang.org",
         "leanprover-community.github.io",
-        "*.scala-sbt.org",
-        "*.typesafe.com",
-        "*.scala-lang.org",
         "releases.lean-lang.org"
       ]
     }

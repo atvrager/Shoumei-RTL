@@ -11,13 +11,13 @@ Two failure modes disappear with the hand-written list:
    composition was accepted against an incomplete premise.
 2. A certificate could name a module that is no longer emitted.  After a rename
    the old certificate matched nothing and the new module matched no
-   certificate, so it silently fell through to direct LEC -- for the CPU that
-   means flattening the whole core.
+   certificate, so the composition proof went unchecked.
 
-An inconsistent registry is a hard error here, which fails `make codegen` and
-the LEC job rather than degrading verification quietly.
+An inconsistent registry is a hard error here: `lake exe generate_all
+--export-certs` prints the registry and exits non-zero on it (the codegen
+target and CI invoke that command), rather than degrading verification quietly.
 
-Output format (pipe-separated), consumed by verification/run-lec.sh:
+Output format (pipe-separated):
 ModuleName|Dependency1,Dependency2,...|ProofReference
 -/
 

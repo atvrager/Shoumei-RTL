@@ -2,12 +2,14 @@
 Verification/CompositionalCerts.lean - Export CompositionalCert instances
 
 This file defines CompositionalCert instances for modules that are too large
-for direct LEC verification. These modules are verified compositionally:
-1. LEC verification of power-of-2 building blocks
-2. Hierarchical composition with correct port wiring  
+for direct equivalence checking. These modules are verified compositionally:
+1. Their building blocks are verified (structural proofs in Lean, plus the
+   certificates of the sub-modules they themselves instantiate)
+2. Hierarchical composition with correct port wiring
 3. Structural proofs in Lean
 
-All certificates are exported via ExportVerificationCerts.lean.
+All certificates are collected in `allCerts` and validated against the emitted
+circuit registry by `lake exe generate_all --export-certs`.
 -/
 
 import Shoumei.Verification.Compositional
@@ -88,25 +90,25 @@ def freeListFlushable_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.FreeListProofs"
 }
 
-/-- QueueRAM_2x8: 2-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
+/-- QueueRAM_2x8: 2-entry RAM with 8-bit data (verified compositionally from its building blocks) -/
 def queueRAM_2x8_cert : CompositionalCert := {
   moduleName := "QueueRAM_2x8"
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
-/-- QueueRAM_4x8: 4-entry RAM with 8-bit data (structural differences prevent direct LEC) -/
+/-- QueueRAM_4x8: 4-entry RAM with 8-bit data (verified compositionally from its building blocks) -/
 def queueRAM_4x8_cert : CompositionalCert := {
   moduleName := "QueueRAM_4x8"
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
-/-- Queue2_8: 2-entry queue with 8-bit data (structural differences prevent direct LEC) -/
+/-- Queue2_8: 2-entry queue with 8-bit data (verified compositionally from its building blocks) -/
 def queue2_8_cert : CompositionalCert := {
   moduleName := "Queue2_8"
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
 }
 
-/-- Queue4_8: 4-entry queue with 8-bit data (structural differences prevent direct LEC) -/
+/-- Queue4_8: 4-entry queue with 8-bit data (verified compositionally from its building blocks) -/
 def queue4_8_cert : CompositionalCert := {
   moduleName := "Queue4_8"
   proofReference := "Shoumei.Circuits.Sequential.QueueProofs"
@@ -310,9 +312,9 @@ def cachedCPU_microcoded_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
-/-! ## Decoders (LUT-based, no Chisel equivalent) -/
+/-! ## Decoders (LUT-based) -/
 
-/-- RV32IMFDecoder: Pure LUT decoder — no Chisel equivalent exists.
+/-- RV32IMFDecoder: Pure LUT decoder.
     Verified by construction: the Lean DSL generates the truth table directly
     from the ISA spec, and the decoder proof shows it matches. -/
 def rv32ifDecoder_cert : CompositionalCert := {

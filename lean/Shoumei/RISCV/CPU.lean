@@ -1760,7 +1760,7 @@ def mkCPU (config : CPUConfig) : Circuit :=
 
   -- FIFO enqueue data buses
   -- IB FIFO: 72 bits: tag[5:0] ++ data[37:6] ++ is_fp_rd[38] ++ redirect_target[70:39] ++ mispredicted[71]
-  -- Assembled via BUF gates so Chisel codegen sees them as coherent signal groups.
+  -- Assembled via BUF gates so the SV emitter sees them as coherent signal groups.
   let ib_fifo_enq_data := makeIndexedWires "ib_fifo_enq_data" 72
   let muldiv_fifo_enq_data := makeIndexedWires "muldiv_fifo_enq_data" 39
   let fp_fifo_enq_data := makeIndexedWires "fp_fifo_enq_data" 39

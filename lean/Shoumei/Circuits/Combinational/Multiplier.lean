@@ -12,8 +12,7 @@ Architecture:
   Stage 3: Final 64-bit Kogge-Stone addition + result selection
 
 The CSA tree uses CSACompressor64 sub-modules (each compresses 3 rows to 2)
-arranged hierarchically. This keeps each module within JVM class file limits
-for Chisel code generation.
+arranged hierarchically, so no single module grows unmanageably large.
 
 Interface:
   Inputs:  a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero, one
@@ -243,7 +242,7 @@ private partial def mkCSATreeHierarchical
 /-- Build the 3-stage pipelined 32x32 unsigned multiplier (hierarchical).
 
     Uses CSACompressor64 instances for the reduction tree, keeping each
-    module within Chisel/JVM class file size limits.
+    module small.
 
     Inputs (78): a[31:0], b[31:0], op[2:0], dest_tag[5:0], valid_in, clock, reset, zero, one
     Outputs (39): result[31:0], tag_out[5:0], valid_out

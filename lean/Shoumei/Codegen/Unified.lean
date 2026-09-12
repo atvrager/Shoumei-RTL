@@ -4,21 +4,18 @@ Codegen/Unified.lean - Unified Code Generation Infrastructure
 Provides a single, consistent interface for generating all output formats:
 - SystemVerilog (hierarchical, output/sv-from-lean/)
 - SystemVerilog Netlist (flat, output/sv-netlist/)
-- Chisel (hierarchical, chisel/src/main/scala/generated/)
 - C++ Simulation (output/cpp_sim/)
 
 Usage:
-  writeCircuit myCircuit  -- Generates all 4 outputs
+  writeCircuit myCircuit  -- Generates all outputs
   writeCircuitSV myCircuit  -- Just SystemVerilog
   writeCircuitNetlist myCircuit  -- Just SystemVerilog netlist
-  writeCircuitChisel myCircuit  -- Just Chisel
   writeCircuitCppSim myCircuit  -- Just C++ Simulation
 -/
 
 import Shoumei.DSL
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
-import Shoumei.Codegen.Chisel
 import Shoumei.Codegen.CppSim
 import Shoumei.Codegen.Testbench
 import Shoumei.Codegen.ASAP7
@@ -52,28 +49,27 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
   ) []
 
 /-- Bump whenever a code generator changes in a way that alters emitted text
-    without altering circuit structure.  The cache key includes this salt, so a
-    bump invalidates every cached output and forces a full regeneration. -/
-def codegenVersion : String := "rv32a-2026-09-11"
+    without altering circuit structure, or when the set of emitted formats
+    changes.  The cache key includes this version, so a bump invalidates every
+    cached output and forces a full regeneration. -/
+def codegenVersion : String := "rv32a-2026-09-12"
 
 /-- Check if circuit hash matches cached value (and the codegen version). -/
-def isUpToDate (name : String) (h : UInt64) (salt : String := "") : IO Bool := do
+def isUpToDate (name : String) (h : UInt64) : IO Bool := do
   let path := s!"{cacheDir}/{name}.hash"
   if ← System.FilePath.pathExists path then
     let stored ← IO.FS.readFile path
-    return stored.trimAscii.toString == s!"{codegenVersion}:{salt}:{h}"
+    return stored.trimAscii.toString == s!"{codegenVersion}:{h}"
   return false
 
-/-- Write circuit hash to cache (salted with the codegen version and the emitted
-    format set, so a `--no-chisel` run cannot masquerade as a full run). -/
-def updateCache (name : String) (h : UInt64) (salt : String := "") : IO Unit := do
+/-- Write circuit hash to cache (tagged with the codegen version). -/
+def updateCache (name : String) (h : UInt64) : IO Unit := do
   IO.FS.createDirAll cacheDir
-  IO.FS.writeFile s!"{cacheDir}/{name}.hash" s!"{codegenVersion}:{salt}:{h}"
+  IO.FS.writeFile s!"{cacheDir}/{name}.hash" s!"{codegenVersion}:{h}"
 
 -- Output paths (centralized configuration)
 def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
-def chiselOutputDir : String := "chisel/src/main/scala/generated"
 def cppSimOutputDir : String := "output/cpp_sim"
 def asap7OutputDir : String := "output/sv-asap7"
 
@@ -89,13 +85,6 @@ def writeCircuitNetlist (c : Circuit) : IO Unit := do
   let sv := SystemVerilogNetlist.toSystemVerilogNetlist c
   let path := s!"{svNetlistOutputDir}/{c.name}.sv"
   IO.FS.writeFile path sv
-
--- Write Chisel (hierarchical) for a circuit
--- Pass allCircuits for sub-module port direction lookup in hierarchical modules
-def writeCircuitChisel (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
-  let chisel := Chisel.toChisel c allCircuits
-  let path := s!"{chiselOutputDir}/{c.name}.scala"
-  IO.FS.writeFile path chisel
 
 -- Write C++ Simulation for a circuit (.h and .cpp)
 def writeCircuitCppSim (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
@@ -117,25 +106,20 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- When force=false, skip generation if the circuit hash matches the cached value.
 -- hashMap provides pre-computed dependency-aware hashes.
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
-    (force : Bool := true) (hashMap : List (String × UInt64) := {})
-    (emitChisel : Bool := true) : IO Unit := do
-  -- The Chisel backend is opt-out: it is the slowest format by far (Scala
-  -- elaboration + a JVM), and it is not needed for simulation, cosim or LEC.
-  let salt := if emitChisel then "full" else "nochisel"
+    (force : Bool := true) (hashMap : List (String × UInt64) := {}) : IO Unit := do
   -- Check cache (skip if unchanged)
   if !force then
     if let some h := lookupHash hashMap c.name then
-      if ← isUpToDate c.name h salt then
+      if ← isUpToDate c.name h then
         IO.println s!"— {c.name} (unchanged, skipping)"
         return
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
-  if emitChisel then writeCircuitChisel c allCircuits
   writeCircuitCppSim c allCircuits
   writeCircuitASAP7 c allCircuits
   -- Update cache after successful generation
   if let some h := lookupHash hashMap c.name then
-    updateCache c.name h salt
+    updateCache c.name h
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
 
@@ -146,9 +130,6 @@ def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Un
 
   writeCircuitNetlist c
   IO.println s!"  ✓ {c.name}.sv (netlist)"
-
-  writeCircuitChisel c allCircuits
-  IO.println s!"  ✓ {c.name}.scala"
 
   writeCircuitCppSim c allCircuits
   IO.println s!"  ✓ {c.name}.h / {c.name}.cpp"
@@ -195,7 +176,7 @@ def pruneStaleOutputs (keepNames : List String) : IO Unit := do
   -- Match case-insensitively: generators emit "Generated by", "Auto-generated", etc.
   let markers := ["generated by", "auto-generated", "do not edit", "generated from",
                   "generated systemverilog", "generated risc-v"]
-  let dirs := [svOutputDir, svNetlistOutputDir, chiselOutputDir, cppSimOutputDir, asap7OutputDir]
+  let dirs := [svOutputDir, svNetlistOutputDir, cppSimOutputDir, asap7OutputDir]
   for dir in dirs do
     let entries ← System.FilePath.readDir dir
     for e in entries do
@@ -219,7 +200,6 @@ def pruneStaleOutputs (keepNames : List String) : IO Unit := do
 def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir
   IO.FS.createDirAll svNetlistOutputDir
-  IO.FS.createDirAll chiselOutputDir
   IO.FS.createDirAll cppSimOutputDir
   IO.FS.createDirAll asap7OutputDir
 

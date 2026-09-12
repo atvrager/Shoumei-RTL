@@ -1,13 +1,12 @@
 /-
 RISCV/Renaming/FreeListCodegen.lean - Code generation for Free List
 
-Generates SystemVerilog and Chisel output for the Free List circuit and its
+Generates SystemVerilog output for the Free List circuit and its
 submodules (QueueRAM, QueuePointer, QueueCounterUpDown, Decoder, MuxTree).
 -/
 
 import Shoumei.DSL
 import Shoumei.Codegen.SystemVerilog
-import Shoumei.Codegen.Chisel
 import Shoumei.RISCV.Renaming.FreeList
 import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.Circuits.Combinational.Decoder
@@ -23,13 +22,10 @@ open Shoumei.RISCV.Renaming
 
 def writeCircuit (c : Circuit) : IO Unit := do
   let sv := SystemVerilog.toSystemVerilog c
-  let chisel := Chisel.toChisel c
 
   let svPath := s!"output/sv-from-lean/{c.name}.sv"
-  let chiselPath := s!"chisel/src/main/scala/generated/{c.name}.scala"
 
   IO.FS.writeFile svPath sv
-  IO.FS.writeFile chiselPath chisel
 
   IO.println s!"  Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances"
 

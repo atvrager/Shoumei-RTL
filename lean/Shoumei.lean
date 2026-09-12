@@ -17,8 +17,6 @@ import Shoumei.Theorems
 -- Code generators
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.SystemVerilog
-import Shoumei.Codegen.Chisel
-import Shoumei.Codegen.ChiselV2
 import Shoumei.Codegen.CppSim
 
 -- Examples

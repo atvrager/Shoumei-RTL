@@ -53,7 +53,6 @@ def generateAll : IO Unit := do
   IO.println ""
   IO.println s!"✓ Generated {circuits.length} circuits"
   IO.println "  SV:      output/sv-from-lean/"
-  IO.println "  Chisel:  chisel/src/main/scala/generated/"
   IO.println "  C++ Sim: output/cpp_sim/"
 
 end Shoumei.DSL.AutoCodegen
