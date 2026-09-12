@@ -57,17 +57,18 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
 def codegenVersion : String := "rv32a-2026-09-11"
 
 /-- Check if circuit hash matches cached value (and the codegen version). -/
-def isUpToDate (name : String) (h : UInt64) : IO Bool := do
+def isUpToDate (name : String) (h : UInt64) (salt : String := "") : IO Bool := do
   let path := s!"{cacheDir}/{name}.hash"
   if ← System.FilePath.pathExists path then
     let stored ← IO.FS.readFile path
-    return stored.trimAscii.toString == s!"{codegenVersion}:{h}"
+    return stored.trimAscii.toString == s!"{codegenVersion}:{salt}:{h}"
   return false
 
-/-- Write circuit hash to cache (salted with the codegen version). -/
-def updateCache (name : String) (h : UInt64) : IO Unit := do
+/-- Write circuit hash to cache (salted with the codegen version and the emitted
+    format set, so a `--no-chisel` run cannot masquerade as a full run). -/
+def updateCache (name : String) (h : UInt64) (salt : String := "") : IO Unit := do
   IO.FS.createDirAll cacheDir
-  IO.FS.writeFile s!"{cacheDir}/{name}.hash" s!"{codegenVersion}:{h}"
+  IO.FS.writeFile s!"{cacheDir}/{name}.hash" s!"{codegenVersion}:{salt}:{h}"
 
 -- Output paths (centralized configuration)
 def svOutputDir : String := "output/sv-from-lean"
@@ -116,21 +117,25 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- When force=false, skip generation if the circuit hash matches the cached value.
 -- hashMap provides pre-computed dependency-aware hashes.
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
-    (force : Bool := true) (hashMap : List (String × UInt64) := {}) : IO Unit := do
+    (force : Bool := true) (hashMap : List (String × UInt64) := {})
+    (emitChisel : Bool := true) : IO Unit := do
+  -- The Chisel backend is opt-out: it is the slowest format by far (Scala
+  -- elaboration + a JVM), and it is not needed for simulation, cosim or LEC.
+  let salt := if emitChisel then "full" else "nochisel"
   -- Check cache (skip if unchanged)
   if !force then
     if let some h := lookupHash hashMap c.name then
-      if ← isUpToDate c.name h then
+      if ← isUpToDate c.name h salt then
         IO.println s!"— {c.name} (unchanged, skipping)"
         return
   writeCircuitSV c allCircuits
   writeCircuitNetlist c
-  writeCircuitChisel c allCircuits
+  if emitChisel then writeCircuitChisel c allCircuits
   writeCircuitCppSim c allCircuits
   writeCircuitASAP7 c allCircuits
   -- Update cache after successful generation
   if let some h := lookupHash hashMap c.name then
-    updateCache c.name h
+    updateCache c.name h salt
   let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
   IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
 

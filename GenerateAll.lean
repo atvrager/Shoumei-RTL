@@ -282,11 +282,17 @@ def allCircuits : List Circuit := [
 
 def main (args : List String) : IO Unit := do
   let force := args.contains "--force"
+  -- --no-chisel skips the Chisel backend (JVM + Scala elaboration): the RTL
+  -- simulation, cosim and LEC paths all read the Lean SV, so day-to-day
+  -- iteration does not need it.
+  let emitChisel := !args.contains "--no-chisel"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if force then
     IO.println "  (--force: regenerating all circuits)"
+  if !emitChisel then
+    IO.println "  (--no-chisel: skipping Chisel backend)"
   IO.println ""
 
   -- Initialize output directories
@@ -304,7 +310,7 @@ def main (args : List String) : IO Unit := do
         isUpToDate c.name h
       else pure false
     else pure false
-    writeCircuit c allCircuits force hashMap
+    writeCircuit c allCircuits force hashMap emitChisel
     if wasCached then skipped := skipped + 1
     count := count + 1
 
