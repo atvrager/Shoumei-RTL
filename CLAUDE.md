@@ -4,18 +4,17 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 ## Project Summary
 
-Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, dual code generators produce SystemVerilog + Chisel, Yosys LEC verifies equivalence.
+Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, and code generators that emit SystemVerilog, a flat netlist, ASAP7 tech-mapped gates and a cycle-accurate C++ model from the same proven source.
 
-**Current state:** 89 modules, 100% LEC coverage, complete `RV32IMAF_Zicsr_Zifencei`
+**Current state:** 89 modules, complete `RV32IMAF_Zicsr_Zifencei`
 Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
 [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
 
 ## Key Toolchain Versions
 
 - **Lean 4:** v4.27.0 (controlled by `lean-toolchain`)
-- **Chisel:** 7.7.0 (in `chisel/build.sbt`)
-- **Scala:** 2.13.18 (required for Chisel 7.x)
-- **Yosys:** system package (for LEC)
+- **Yosys:** system package (reads and elaborates the emitted SV in `verification/validate-sv.sh`)
+- **slang:** `verification/slang-lint.py` elaborates every emitted SV file (IEEE 1800-2017)
 - **CIRCT/firtool:** 1.140.0 (for arcilator simulation backend; install via `scripts/install-circt.sh`)
 - **RISC-V GCC:** `riscv32-unknown-elf-gcc` at `~/.local/riscv32-elf/bin/` (add to PATH for test compilation)
 
@@ -23,10 +22,9 @@ Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
 
 ```bash
 lake build                          # Build Lean proofs + code generators
-lake exe generate_all               # Generate SV + Chisel + C++ Sim for all modules
-cd chisel && sbt run && cd ..       # Compile Chisel -> SV via CIRCT
-./verification/run-lec.sh           # Verify Lean SV == Chisel SV
-make all                            # Run entire pipeline
+lake exe generate_all               # Generate SV + netlist + ASAP7 + C++ Sim + testbenches
+make codegen                        # generate_all + export the compositional certificate registry
+make all                            # Run entire pipeline (lean -> codegen -> SV check -> cppsim)
 
 # RISC-V test compilation and simulation
 export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
@@ -56,10 +54,9 @@ see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 1. **Behavioral model** -- Define state type + operations in Lean
 2. **Structural circuit** -- Build `Circuit` from gates and/or `CircuitInstance` submodules
 3. **Proofs** -- Structural (`native_decide`) and behavioral (`simp`, manual tactics)
-4. **Code generation** -- Add to `GenerateAll.lean` circuit list
-5. **Chisel compilation** -- `cd chisel && sbt run` (auto-discovers new modules)
-6. **LEC verification** -- `./verification/run-lec.sh`
-7. **Compositional cert** (if needed) -- Add to `CompositionalCerts.lean` + `ExportVerificationCerts.lean`
+4. **Code generation** -- Add to `GenerateAll.lean` circuit list, then `lake exe generate_all`
+5. **Compositional cert** (if needed) -- Add to `CompositionalCerts.lean`; `lake exe generate_all --export-certs` checks the registry
+6. **Simulation** -- `make -C testbench sim` + `run-all-tests`, or cosim for CPU-level changes
 
 ### Where files go
 
@@ -76,30 +73,49 @@ see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 
 See [docs/verification-guide.md](docs/verification-guide.md) for full details.
 
-### Direct LEC (most modules)
+Correctness is established in Lean. The emitted SystemVerilog is a translation of
+the proven `Circuit`, so the checks below confirm that the translation elaborates
+and runs; there is no second RTL design to compare against.
 
-Yosys compares Lean-generated SV against Chisel-generated SV:
-- **Combinational:** SAT-based miter circuit
-- **Sequential:** Induction-based equivalence (`equiv_make` / `equiv_induct`)
-- Auto-detected by checking for `always @` blocks
+- **Lean proofs** -- structural and behavioral theorems live next to each circuit and
+  are checked by `lake build`; `verification/proof-coverage.sh` reports coverage.
+- **Compositional certificate registry** -- a `CompositionalCert` names a module, its
+  dependencies and its composition proof. `lake exe generate_all --export-certs`
+  derives each certificate's dependencies from the circuit's instances and fails if a
+  certificate names a module the generator does not emit (run by `make codegen`).
+- **slang elaboration** -- `python3 verification/slang-lint.py output/sv-from-lean`
+  parses and elaborates every emitted SV file (IEEE 1800-2017). `make systemverilog`
+  runs the equivalent Yosys read/hierarchy check via `verification/validate-sv.sh`.
+- **Verilator simulation** -- `make -C testbench sim` builds the emitted SV and
+  `make -C testbench run-all-tests` runs the ELF test suite against it.
+- **RISC-V cosimulation** -- `make -C testbench cosim` + `run-cosim` compare the RTL
+  against Spike lock-step on the retired RVVI trace.
 
-### Compositional Verification (large sequential modules)
+### Compositional certificates (large sequential modules)
 
-For modules too large or structurally different for direct SEC:
-1. LEC-verify all building block submodules
-2. Define a `CompositionalCert` in Lean with module name, dependencies, proof reference
-3. Export via `lake exe export_verification_certs`
-4. LEC script loads certs, checks all deps are verified, accepts compositional proof
+A module too large to discharge in one step is justified from its building blocks:
 
-Currently 9 modules use compositional verification:
-Register91, Queue64_32, Queue64_6, QueueRAM_64x32, QueueRAM_64x6,
-PhysRegFile_64x32, RAT_32x6, FreeList_64, ReservationStation4
+1. Define a `CompositionalCert` in `lean/Shoumei/Verification/CompositionalCerts.lean`
+2. Add it to `allCerts`
+3. `lake exe generate_all --export-certs` validates the registry against the emitted
+   circuits and prints one `Module|deps|proofReference` line per certificate
+
+The dependencies are not written by hand -- they are the modules the circuit
+instantiates, so a certificate cannot rest on an incomplete premise or name a
+module that is no longer emitted.
+
+Modules that cannot be discharged in one step carry a certificate in `allCerts`;
+the registry is validated at codegen time.
 
 ### Running verification
 
 ```bash
-./verification/run-lec.sh                              # All modules
-./verification/smoke-test.sh                           # Full CI pipeline
+./verification/proof-coverage.sh                       # Lean proof coverage
+python3 verification/slang-lint.py output/sv-from-lean # slang elaboration
+make systemverilog                                     # Yosys read/hierarchy check
+make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
+make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
+./verification/smoke-test.sh                           # CI smoke tests
 ```
 
 ## DSL Core Types
@@ -121,14 +137,15 @@ structure Circuit where name : String; inputs : List Wire; outputs : List Wire;
 
 ## Code Generation Architecture
 
-Four code generators in `lean/Shoumei/Codegen/`:
+The generators in `lean/Shoumei/Codegen/`, driven by `Unified.lean`:
 
 | Generator | File | Output |
 |-----------|------|--------|
 | SystemVerilog | `SystemVerilog.lean` | `output/sv-from-lean/*.sv` (hierarchical) |
 | SystemVerilog Netlist | `SystemVerilogNetlist.lean` | `output/sv-netlist/*.sv` (flat) |
-| Chisel | `Chisel.lean` | `chisel/src/main/scala/generated/*.scala` |
+| ASAP7 tech mapping | `ASAP7.lean` | `output/sv-asap7/*.sv` |
 | C++ Simulation | `CppSim.lean` | `output/cpp_sim/*.{h,cpp}` |
+| Testbench | `Testbench.lean` | `testbench/generated/` |
 
 Shared utilities in `Common.lean`:
 - `findClockWires` / `findResetWires` -- detect clock/reset from DFF gates AND instance connections
@@ -147,11 +164,12 @@ def allCircuits : List Circuit := [
 ]
 ```
 
-The centralized codegen generates all 4 outputs for everything in the list:
+The centralized codegen emits everything in the list:
 - SystemVerilog (hierarchical)
 - SystemVerilog netlist (flat)
-- Chisel → SystemVerilog via CIRCT
+- ASAP7 tech-mapped SV
 - C++ Simulation (.h + .cpp)
+- Testbenches
 
 ## Proof Patterns
 
@@ -191,23 +209,22 @@ See [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) for comprehensive guide to 
 
 ## Architecture Decisions
 
-### Why dual generation (SV + Chisel)?
+### Why generate the RTL from Lean?
 
-- **SystemVerilog from Lean:** Direct translation, proves semantics are correct
-- **Chisel from Lean:** Leverages mature FIRRTL/CIRCT toolchain, more optimized output
-- **LEC between them:** Validates both generators produce equivalent circuits
-- LEC is a sanity check; the real proof is in Lean
+- **SystemVerilog from Lean:** one direct translation of the proven `Circuit`, so there is no second design to keep in sync
+- **The Lean theorems are the correctness argument:** structural proofs pin the circuit, behavioural proofs pin the model
+- **The emitted RTL is checked by running it:** slang elaboration, Verilator simulation, and lock-step cosimulation against Spike
 
 ### Why hierarchical circuits with instances?
 
-Large sequential modules (Register91, Queue64, PhysRegFile) have structural differences between Lean SV and Chisel SV that make direct SEC fail. Hierarchical composition with `CircuitInstance` solves this:
-- LEC verifies leaf modules directly
-- Lean proves the composition is correct
-- Compositional certificates connect the two
+Large sequential modules (Register91, Queue64, PhysRegFile) are built from verified leaves with `CircuitInstance` instead of one flat gate list:
+- each module stays small enough to prove and to read
+- module boundaries survive into the emitted SV and drive the ASAP7 tech mapping
+- a composition that cannot be discharged in one step gets a `CompositionalCert` whose dependencies are the circuit's instances
 
-### Topological sorting in LEC
+### Module ordering
 
-The LEC script processes modules in dependency order (using `tsort`). This ensures building blocks are verified before the modules that depend on them, so compositional certificates can check their dependency requirements.
+`allCircuits` in `GenerateAll.lean` is in topological order (leaves first), so dependency-aware hashes can be computed in a single pass.
 
 ## Code Style and Quality
 
@@ -218,19 +235,11 @@ The LEC script processes modules in dependency order (using `tsort`). This ensur
 - Use `native_decide` for concrete proofs, `simp` + tactics for generic proofs
 - Keep circuits and proofs in separate files (`Foo.lean` + `FooProofs.lean`)
 
-### Scala/Chisel
-
-All generated Scala code must be formatted before committing:
-```bash
-cd chisel && sbt scalafmt
-```
-Config: `.scalafmt.conf` (Scala 2.13 dialect, 100 column max)
-
 ### Shell scripts
 
 All shell scripts must pass shellcheck:
 ```bash
-shellcheck verification/run-lec.sh
+shellcheck verification/smoke-test.sh
 ```
 
 ### SystemVerilog
@@ -274,11 +283,8 @@ Key signals for memory path debugging:
 
 ## Important Notes
 
-- **NEVER edit files in `output/`, `testbench/generated/`, or `chisel/src/main/scala/generated/`.** These are generated by `lake exe generate_all` and will be overwritten on every regeneration. All changes must go in the Lean source files under `lean/`. If the generated output is wrong, fix the code generator (`lean/Shoumei/Codegen/`), not the generated file.
+- **NEVER edit files in `output/` or `testbench/generated/`.** These are generated by `lake exe generate_all` and will be overwritten on every regeneration. All changes must go in the Lean source files under `lean/`. If the generated output is wrong, fix the code generator (`lean/Shoumei/Codegen/`), not the generated file.
 - **origin/main has no pre-existing test failures.** GitHub branch protection requires CI to pass before merging. If tests fail on your branch, you introduced the regression -- do not assume failures are pre-existing.
 - Always read existing Lean files before modifying
-- LEC failures indicate bugs in code generators, not the DSL
-- Clock and reset are implicit in Chisel (Clock/AsyncReset types) -- the codegen handles filtering them from explicit inputs
 - `hasSequentialElements` checks DFF gates only, NOT instances -- use `findClockWires`/`findResetWires` which check both
-- The `generate_all` executable is the recommended codegen entry point (does SV + Chisel + C++ Sim)
-- Chisel `Main.scala` auto-discovers all modules in `generated/` directory
+- The `generate_all` executable is the recommended codegen entry point (does SV + netlist + ASAP7 + C++ Sim + testbenches)

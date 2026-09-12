@@ -40,24 +40,21 @@ Each row is universally quantified over all 2^64 possible input combinations.
 
 ### The verified chain
 
-There are now **three independent layers of verification** for ALU correctness:
+There are now **two independent layers of verification** for ALU correctness:
 
 1. **Lean formal proof** (this milestone): The gate-level circuit definition
    (`mkALU32`, ~2800 gates after flattening) implements the RV32I ALU
    specification for all inputs. Checked by Lean's kernel — no external
    tools trusted.
 
-2. **Yosys LEC**: The SystemVerilog generated from the Lean circuit definition
-   is functionally equivalent to the SystemVerilog generated from the Chisel
-   implementation (via CIRCT/FIRRTL). SAT-based combinational equivalence
-   checking.
+2. **Elaboration, simulation, and cosimulation**: The emitted SystemVerilog is
+   parsed and elaborated by slang, exercised in Verilator simulation, and the
+   CPU that instantiates this ALU executes RISC-V test programs in lock-step
+   with the Spike reference simulator. Any divergence in register writes is
+   flagged immediately.
 
-3. **Cosimulation**: The synthesized RTL executes RISC-V test programs in
-   lock-step with the Spike reference simulator. Any divergence in register
-   writes is flagged immediately.
-
-Layer 1 proves the *design* is correct. Layer 2 proves the *code generators*
-agree. Layer 3 validates the *synthesized hardware* against a reference model.
+Layer 1 proves the *design* is correct. Layer 2 validates the *emitted RTL*
+and the hardware built from it against a reference model.
 
 ### What circuits use this
 

@@ -30,9 +30,7 @@ What's planned but not yet built.
 ### Codegen V2: Structured Signals
 - Vec-based bundled I/O for all large modules (currently >500-port modules use flat vectors)
 - SystemVerilog `struct packed` types for semantic port grouping
-- Chisel `Bundle` types with bulk connect
 - RAM as DSL primitive (async/sync read modes)
-- Two-pair LEC: netlist-to-hierarchical + hierarchical-to-Chisel
 
 ### Wire Naming Cleanup
 - Bracket notation in DSL: `mkWire "foo[3]"` instead of `foo3`

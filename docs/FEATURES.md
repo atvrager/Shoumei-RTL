@@ -4,7 +4,7 @@ What Shoumei RTL can do today.
 
 ## Formally Verified RV32IM Out-of-Order CPU
 
-Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 89 modules, 100% LEC coverage.
+Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 89 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, and Spike cosimulation.
 
 ### Pipeline Stages
 
@@ -25,28 +25,30 @@ Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent
 
 Formal ready/valid handshaking abstraction (`DecoupledSource`/`DecoupledSink`) used throughout the pipeline for clean inter-stage communication.
 
-## Dual Code Generation
+## Code Generation
 
-Every circuit generates four outputs from a single Lean definition:
+Every circuit generates its outputs from a single Lean definition:
 
 | Output | Purpose |
 |--------|---------|
 | SystemVerilog (hierarchical) | Primary RTL for synthesis and simulation |
 | SystemVerilog (flat netlist) | Gate-level for analysis |
-| Chisel/FIRRTL | Leverages CIRCT optimizer, second SV output for LEC |
+| SystemVerilog (ASAP7) | Tech-mapped gates for the physical-design flow |
 | C++ Sim | Cycle-accurate C++ simulation model |
+| Testbenches | Generated testbench scaffolding |
 
 Bus reconstruction groups indexed wires into arrays (`wire [31:0] data` instead of 32 individual wires), giving 60-75% fewer wire declarations.
 
-## 100% LEC Verification
+## Verification
 
-Yosys-based logical equivalence checking between Lean-generated SV and Chisel-generated SV:
+Correctness rests on Lean proofs checked by `lake build`, on the compositional certificate registry, and on running the emitted RTL:
 
-- **Combinational modules**: SAT-based miter circuit
-- **Sequential modules**: Induction-based equivalence
-- **Large hierarchical modules**: Compositional verification (LEC submodules, prove composition in Lean)
-- Topologically sorted dependency processing
-- 89/89 modules verified (49 direct LEC + 9 compositional + 31 inherited)
+- **Lean proofs**: modules carry structural facts (port, gate, and instance counts) and behavioural properties stated as Lean theorems checked by the kernel; `verification/proof-coverage.sh` reports coverage
+- **Compositional certificates**: a `CompositionalCert` names a module and its proof reference; `lake exe generate_all --export-certs` (run by `make codegen`) derives each certificate's dependencies from the circuit's instances and validates the registry against the emitted circuits, exiting non-zero on any inconsistency
+- **slang elaboration**: `python3 verification/slang-lint.py output/sv-from-lean` parses and elaborates every emitted SystemVerilog file
+- **Yosys read/hierarchy check**: `make systemverilog` runs `verification/validate-sv.sh output/sv-from-lean`
+- **Verilator simulation**: `make -C testbench sim` + `make -C testbench run-all-tests`
+- **Spike cosimulation**: `make -C testbench cosim` + `make -C testbench run-cosim`
 
 ## Lean Proofs
 
@@ -84,13 +86,12 @@ OpenROAD Flow Scripts integration with ASAP7 7nm PDK for synthesis exploration.
 
 ## CI Pipeline
 
-11 automated checks on every PR:
+CI runs the following checks on every PR:
 - Lint (shellcheck, cppcheck, Python syntax, trailing whitespace)
-- Lean build + sorry check
 - Proof coverage analysis
-- Scala build + format check
-- Code generation (SV + Chisel + C++ Sim)
-- LEC verification
+- Lean build + sorry check
+- Shoumei round-trip
+- Code generation (hierarchical SV + flat netlist + ASAP7 + C++ Sim + testbenches)
 - Slang IEEE 1800-2017 lint
 - Verilator simulation (standard + X-prop)
 - C++ simulation

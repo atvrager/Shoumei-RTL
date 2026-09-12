@@ -4,7 +4,7 @@
 
 **Formally verified hardware design with Lean 4 theorem proving.**
 
-> Shoumei (証明, Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and multiple code generators produce equivalent RTL verified by LEC.
+> Shoumei (証明, Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and code generators emit SystemVerilog, a flat netlist, ASAP7 gates and a cycle-accurate C++ model from the same proven source.
 
 ## What This Is
 
@@ -12,34 +12,35 @@ A complete pipeline from formal specification to verified, simulated RTL:
 
 1. **Define** circuits in a Lean 4 embedded DSL (gates, wires, instances)
 2. **Prove** properties using Lean's type system (`native_decide`, structural induction)
-3. **Generate** SystemVerilog, Chisel/Scala, and C++ simulation from the same proven source
-4. **Verify** Lean SV and Chisel SV are logically equivalent (Yosys LEC)
+3. **Generate** SystemVerilog, a flat netlist, ASAP7-mapped gates and C++ simulation from the same proven source
+4. **Check** the emitted SystemVerilog elaborates (slang, plus a Yosys read/hierarchy pass)
 5. **Simulate** with Verilator and C++ sim, validated against Spike ISA reference
 
 ```
                     Lean 4 DSL
               (theorems + proofs)
                        |
-              +--------+--------+--------+
-              |        |        |        |
-              v        v        v        v
-         SystemVerilog  Chisel  C++ Sim  SV Netlist
-          (hierarchical)  |    (cycle-   (flat)
-              |           v    accurate)
-              |     FIRRTL/CIRCT
-              |        |
-              v        v
-         SV (Lean)  SV (Chisel)
-              |        |
-              +---+----+         Spike (libriscv)
-                  |                    |
-                  v                    v
-           LEC (Yosys)     Cosimulation (RVVI lock-step)
+        +--------------+--------------+
+        |              |              |
+        v              v              v
+   SystemVerilog    SV Netlist     C++ Sim
+   (hierarchical)     (flat)     (cycle-accurate)
+        |              |              |
+        +------+-------+              |
+               |                      |
+               v                      v
+      slang elaboration      Spike (libriscv)
+      Verilator simulation            |
+               |                      |
+               +----------+-----------+
+                          |
+                          v
+              Cosimulation (RVVI lock-step)
 ```
 
 ## Current Status
 
-**89 modules** -- 100% LEC coverage. Complete RV32IM out-of-order Tomasulo CPU.
+**89 modules** -- complete RV32IM out-of-order Tomasulo CPU.
 
 | Category | Modules | Examples |
 |----------|---------|---------|
@@ -52,9 +53,9 @@ A complete pipeline from formal specification to verified, simulated RTL:
 | RISC-V Pipeline | 31 | Decoder, RAT, FreeList, PhysRegFile, RS4, ROB, LSU, CPU top |
 
 **Verification:**
-- 49 modules via direct LEC (Yosys SAT / sequential induction)
-- 9 modules via compositional proofs (Lean theorems + dependency verification)
-- 31 modules verified through hierarchy
+- Lean proofs (structural + behavioural) checked by `lake build`; coverage reported by `verification/proof-coverage.sh`
+- Modules that cannot be discharged in one step are justified compositionally from their sub-modules (`CompositionalCert`; dependencies derived from the circuit's instances)
+- Emitted SV elaborated by slang, simulated under Verilator, cosimulated lock-step against Spike
 
 ### Implementation Progress
 
@@ -79,10 +80,10 @@ See [docs/FEATURES.md](docs/FEATURES.md) for details on what's built, and [docs/
 # Clone and setup
 git clone --recurse-submodules https://github.com/atvrager/Shoumei-RTL.git
 cd Shoumei-RTL
-make setup          # installs elan, lean, coursier, sbt
+make setup          # installs elan, lean, and the build dependencies
 
-# Build and verify
-make all            # lean -> codegen -> chisel -> lec
+# Build
+make all            # lean -> codegen -> SV check -> cppsim
 
 # Simulate
 export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
@@ -97,17 +98,16 @@ Or step by step:
 
 ```bash
 lake build                              # build Lean proofs + code generators
-lake exe generate_all                   # generate SV + Chisel + C++ Sim for all modules
-cd chisel && sbt run && cd ..           # compile Chisel -> SV via CIRCT
-./verification/run-lec.sh              # verify Lean SV == Chisel SV (Yosys)
+lake exe generate_all                   # generate SV + netlist + ASAP7 + C++ Sim + testbenches
+make systemverilog                      # Yosys read/hierarchy check of the emitted SV
+python3 verification/slang-lint.py output/sv-from-lean   # slang elaboration
 ```
 
 ### Prerequisites
 
 - **Lean 4** (v4.27.0) -- installed via elan by `make setup`
-- **sbt** + **Scala 2.13** -- installed via coursier by `make setup`
-- **Chisel 7.7.0** -- pulled by sbt, auto-manages firtool binary
-- **Yosys** -- for LEC verification (`apt install yosys`)
+- **Yosys** -- SystemVerilog read/hierarchy checks (`apt install yosys`)
+- **slang** (`pyslang`) -- IEEE 1800-2017 elaboration of the emitted SV (`pip install pyslang`)
 - **Verilator** -- for RTL simulation (`apt install verilator`)
 - **RISC-V GCC** -- for test compilation (`./scripts/setup-riscv-toolchain.sh`)
 
@@ -161,18 +161,21 @@ theorem physregfile_read_after_write (prf : PhysRegFileState n) (tag : Fin n) (v
 
 ### Verification
 
-```
-$ ./verification/run-lec.sh
-Loading compositional verification certificates from Lean...
-Sorting modules in topological order...
+Correctness is established in Lean; the emitted RTL is then checked by elaborating
+and running it.
 
-  Verifying: FullAdder         -> EQUIVALENT (SAT)
-  Verifying: DFlipFlop         -> EQUIVALENT (induction)
-  Verifying: Register91        -> COMPOSITIONALLY VERIFIED (Lean proof)
-  ...
-Total modules: 89
-  Total verified: 89 (100% coverage)
+```bash
+./verification/proof-coverage.sh                          # Lean proof coverage
+python3 verification/slang-lint.py output/sv-from-lean    # slang elaboration
+make systemverilog                                        # Yosys read/hierarchy check
+make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
+make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
 ```
+
+Large sequential modules are justified compositionally: a `CompositionalCert`
+names the module and its composition proof, and `lake exe generate_all --export-certs`
+(run by `make codegen`) derives its dependencies from the circuit's instances and
+fails if the certificate names a module the generator does not emit.
 
 ## Documentation
 
@@ -184,7 +187,7 @@ Total modules: 89
 | [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Detailed implementation roadmap |
 | [RISCV_TOMASULO_DESIGN.md](RISCV_TOMASULO_DESIGN.md) | Microarchitecture specification |
 | [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |
-| [docs/verification-guide.md](docs/verification-guide.md) | LEC and compositional proofs |
+| [docs/verification-guide.md](docs/verification-guide.md) | Proofs, certificates, elaboration, sim and cosim |
 | [docs/proof-strategies.md](docs/proof-strategies.md) | Parameterized circuit proof techniques |
 | [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) | Interactive proof development |
 
@@ -192,14 +195,12 @@ Total modules: 89
 
 | Component | Tool | Version |
 |-----------|------|---------|
-| Theorem prover | Lean 4 | v4.27.0 |
-| Hardware DSL | Chisel | 7.7.0 |
-| Scala | Scala | 2.13.18 |
-| RTL compiler | CIRCT/firtool | (managed by Chisel) |
-| Equivalence checking | Yosys | system package |
+| Theorem prover + DSL | Lean 4 | v4.27.0 |
+| SV elaboration | Yosys + slang | system package / pip |
 | RTL simulation | Verilator | system package |
 | ISA reference | Spike (riscv-isa-sim) | built from source |
-| CI | GitHub Actions | 11 checks |
+| Arcilator backend | CIRCT/firtool | 1.140.0 |
+| CI | GitHub Actions | -- |
 
 ## License
 

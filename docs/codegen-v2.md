@@ -1,5 +1,10 @@
 # Codegen V2: Signal Naming & Output Modes
 
+> **Status note (2026-09):** the Chisel output mode (Mode 3) and the Lean-vs-Chisel LEC
+> pairing described below are abandoned -- the Chisel backend and the LEC were removed
+> from the repository. The signal naming, SystemVerilog and netlist parts of this
+> design remain in force.
+
 Design specification for the three code generation targets.
 All design questions resolved. Ready for implementation.
 
@@ -416,7 +421,7 @@ endmodule
 
 ---
 
-## Mode 3: Chisel Hierarchical
+## Mode 3: Chisel Hierarchical -- abandoned (2026-09)
 
 Proper Chisel idioms: `Bundle`, `Decoupled`, `Vec`, `UInt`.
 
@@ -1320,7 +1325,8 @@ struct arrays are still broken in the built-in parser.
 
 The LEC migration would be small -- change `read_verilog -sv` to `read_slang`
 in `run-lec.sh`. The equivalence checking commands (`equiv_make`, `equiv_induct`,
-SAT) are Yosys-native and don't change.
+SAT) are Yosys-native and don't change. *(Historical: `run-lec.sh` and the LEC were
+removed in 2026-09.)*
 
 #### Comparison for our use case
 
@@ -1419,6 +1425,8 @@ Strategy 1 is cleaner. If both `read_slang` invocations see the same
 structs -- everything we need. Skip `interface`/`modport` for now (structs
 handle our use cases and are simpler). The migration cost is low: one line
 change in `run-lec.sh` + adding yosys-slang as a dependency.
+*(Historical: `run-lec.sh` was removed in 2026-09; yosys-slang remains an optional
+Yosys frontend.)*
 
 ---
 
@@ -1732,7 +1740,8 @@ This is arguably the single biggest win from the codegen v2 work.
 ## Implementation Plan
 
 Chisel hierarchical first. No external tool dependencies, fast feedback
-(`sbt run` fails immediately on bad output), and it forces us to get the
+(`sbt run` fails immediately on bad output -- historical; the Chisel backend and its
+`sbt` build were removed in 2026-09), and it forces us to get the
 DSL annotations right before touching the SV generators.
 
 ### Phase 0: DSL Annotations (foundation for everything)
@@ -1902,7 +1911,7 @@ Write a small test that reads annotations back (`#eval`).
 
 ---
 
-### Phase 2: Chisel Hierarchical Codegen
+### Phase 2: Chisel Hierarchical Codegen -- abandoned (2026-09)
 
 **Goal:** New `toChiselV2` that produces proper Chisel with Bundles, UInt,
 Decoupled. Runs alongside existing `toChisel` (no breaking changes).
@@ -2094,10 +2103,13 @@ val valid_reg = ShoumeiReg.bool(clock, reset)    // Bool() variant
 
 **Validation at each step:**
 - `lake build` passes (Lean compiles)
-- `lake exe generate_all` produces new Chisel files in a v2 output dir
-- `cd chisel && sbt compile` passes (Chisel code is syntactically valid)
-- `cd chisel && sbt run` passes (CIRCT generates SV)
+- ~~`lake exe generate_all` produces new Chisel files in a v2 output dir~~
+- ~~`cd chisel && sbt compile` passes (Chisel code is syntactically valid)~~
+- ~~`cd chisel && sbt run` passes (CIRCT generates SV)~~
 - Manually inspect output for Queue1_32, ALU32, RS4
+
+> **Abandoned (2026-09):** the Chisel validation steps above are historical; the
+> Chisel backend and its `sbt` build were removed.
 
 **Deliverable:** Chisel output that looks like a human wrote it. Three
 annotated modules generate correct, readable Chisel. All other modules
@@ -2133,7 +2145,8 @@ Order:
 6. ROB, StoreBuffer, LSU
 7. CPU top-level
 
-**Validation:** After each group, `sbt run` passes for all modules.
+**Validation:** ~~After each group, `sbt run` passes for all modules.~~ Abandoned
+with the Chisel backend (2026-09).
 
 ---
 
@@ -2185,21 +2198,15 @@ Register32 u_data_reg(
 
 ---
 
-### Phase 5: yosys-slang Integration + LEC Update
+### Phase 5: yosys-slang Integration + LEC Update -- abandoned
 
-**Goal:** Switch LEC from `read_verilog -sv` to `read_slang`.
+> **Abandoned (2026-09):** the Lean-vs-Chisel LEC and `verification/run-lec.sh` were
+> removed, so there is no LEC phase left to migrate. yosys-slang remains available as
+> an optional Yosys frontend for reading the emitted SV; see
+> [yosys-slang-setup.md](yosys-slang-setup.md).
 
-**Files to change:**
-- `verification/run-lec.sh` -- replace `read_verilog -sv` with `read_slang`
-- `Makefile` or CI -- add yosys-slang install step
-
-**Migration:**
-1. Install yosys-slang plugin
-2. Change 6 lines in `run-lec.sh` (`read_verilog -sv` → `read_slang`)
-3. Run full LEC suite -- all 63 modules should pass
-4. If any fail, debug port name mismatches (struct flattening convention)
-
-**Validation:** `./verification/run-lec.sh` passes for all modules.
+**Historical plan:** switch the LEC reads from `read_verilog -sv` to `read_slang` and
+add a yosys-slang install step. Superseded by the removal above.
 
 ---
 
@@ -2272,5 +2279,5 @@ Phase 7 waits for everything.
 | CIRCT port naming doesn't match Lean SV naming | Test one module end-to-end in Phase 2 before annotating everything |
 | yosys-slang struct flattening convention differs between Lean SV and Chisel SV | Both import same `shoumei_types` package → flattened identically |
 | `native_decide` proofs break with new Circuit fields | Default values (`[]`) ensure backward compat. Proofs only see gates/inputs/outputs. |
-| sbt compile hits JVM limits with new codegen | Typed signals are inherently smaller than Bool() arrays. If still big, keep chunking as fallback. |
+| ~~sbt compile hits JVM limits with new codegen~~ (Chisel backend removed) | Typed signals are inherently smaller than Bool() arrays. If still big, keep chunking as fallback. |
 
