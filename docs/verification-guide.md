@@ -123,6 +123,69 @@ seconds of parsing per leaf module; the cache is content-addressed so unchanged
 modules are skipped across CI runs; and the 111-test simulation suite dropped
 from ~50 s to ~2 s under the parallel driver.
 
+## Replacing the Chisel cross-check
+
+Chisel is not how the design is verified.  It is the **second artifact** in a
+translation check: `LEC(Lean SV, Chisel SV)` catches bugs in the *emitters*.
+Design correctness comes from the Lean proofs, and it always did.  So Chisel can
+be removed iff two properties survive:
+
+1. an **independent second lowering** of every `Circuit`, and
+2. an independent check that the DSL's meaning is what we think it is.
+
+### Step 1 -- second lowering: use the Lean flat netlist
+
+`output/sv-netlist/` is already a second emitter of the same `Circuit`
+(`SystemVerilogNetlist.lean`), written in a completely different style: it inlines
+every instance down to gates instead of emitting a hierarchy.  It costs nothing
+extra to emit and needs no JVM.
+
+Feasibility is established: `LEC(ALU32 hierarchical, ALU32 netlist)` reports
+`SAT proof finished - no model found: SUCCESS` in ~3 s.
+
+Required work before it can replace Chisel for **all** modules:
+
+- **State completeness.** The netlist emitter is currently combinational-only:
+  `output/sv-netlist/RenameStage_W2.sv` contains zero `always` blocks and no
+  `clock`/`reset` ports -- DFF gates are dropped.  It must emit sequential state
+  (`always_ff`, or instances of a `DFlipFlop` module) and keep clock/reset in the
+  port list.
+- **Port identity.** The two emitters must agree on the port set, including bus
+  grouping (`rd_data3` vs `rd_data3_0..31`), so `equiv_make` can match ports by
+  name.
+
+Once those hold, `LEC(Lean SV, Lean netlist)` replaces `LEC(Lean SV, Chisel SV)`
+in every target.
+
+### Step 2 -- recover front-end independence
+
+Two Lean emitters share the Lean front-end, so a bug in `Circuit` construction is
+invisible to both.  Chisel's unique contribution was a *whole different
+toolchain's* reading of the DSL.  Recover that independence from:
+
+- **`Circuit` satisfies `Behavior` refinement atoms** (see *Shredding further*
+  above).  This is the check that the DSL's meaning is what we believe; LEC never
+  provided it.
+- **Differential simulation across independent engines**: Verilator (Lean SV),
+  Arcilator (a CIRCT lowering of the same Lean SV), and the generated C++ model,
+  all driven by the same ELF and compared on the retired trace and `tohost`.
+- **Independent parsers**: `read_slang` and `read_verilog -sv` on the same Lean
+  SV -- cheap, and it catches SV that is legal under only one reading.
+
+### Step 3 -- delete the pipeline
+
+Drop `make chisel`, the `scala-build` CI job, the `scalafmt` gate, the Chisel
+branch of `run-lec.sh`, and the `.scala` outputs.  Keep the Chisel generator
+reachable behind a flag for one release so any disagreement can be arbitrated
+before it goes away for good.
+
+### Interim
+
+`lake exe generate_all --no-chisel` skips the backend for day-to-day iteration
+(the RTL simulation, cosim and LEC paths all read the Lean SV).  The incremental
+cache is salted by the emitted format set, so a `--no-chisel` run can never be
+mistaken for a full one.
+
 ## Direct LEC
 
 ### How it works
