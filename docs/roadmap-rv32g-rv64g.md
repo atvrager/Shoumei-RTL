@@ -58,17 +58,26 @@ Three widths describe the machine. All are parameters; none is a fork.
 | **FLEN** | 32 or 64 | the FP register width. Both G targets use 64 (D present); 32 is the F-only case. A parameter, not a constant — derivation below |
 | **VLEN** | 128 | matches the existing `Zve32x` work on the `vector` branch (`vlenb = 0x10`); ELEN = 32 |
 
-**FLEN is derived, not fixed.** The specification ties the FP register width to
-the rest of the configuration, so the parameter carries a default that callers
-may override:
+**FLEN is computed, not stored.** It is a derived projection of the
+configuration rather than a field that can disagree with it:
 
-```
-flen = if enableD || xlen == 64 then 64 else 32
+```lean
+def CPUConfig.flen (c : CPUConfig) : Nat :=
+  if c.enableD || c.xlen == 64 then 64 else 32
 ```
 
 - RV32 + F only -> 32
 - RV32 + D, or any RV64 FP configuration -> 64 (on RV64 even F-only requires
   64-bit FP registers, because single-precision values are NaN-boxed)
+
+Two consequences, both wanted:
+
+- **The illegal combination is unrepresentable.** `enableD` with a 32-bit FP
+  register file cannot be constructed, so nothing downstream has to validate it.
+- **No override.** An experiment that wants a different width changes the
+  derivation, not a call site. The same pattern already applies to
+  `physTagWidth`, `robIdxWidth`, `sbIdxWidth` and the cache tag widths in
+  `Config.lean`, all of which are computed `def`s.
 
 Both G targets therefore use 64, while an F-only configuration stays expressible
 instead of being deleted.
