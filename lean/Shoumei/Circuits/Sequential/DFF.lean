@@ -16,7 +16,7 @@ namespace Shoumei.Circuits.Sequential
 open Shoumei
 
 -- Build a simple D Flip-Flop circuit
--- Note: Use "clock" as wire name to match Chisel Module conventions
+-- Note: "clock" is the wire name the codegen recognises as the clock port
 def mkDFlipFlop : Circuit :=
   let d := Wire.mk "d"
   let clock := Wire.mk "clock"

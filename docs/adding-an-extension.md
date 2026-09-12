@@ -13,13 +13,13 @@ the A (atomics) extension (`LR.W`/`SC.W`/`AMO*.W`) to reach `RV32IMA`.
 | 2 | New encoding fields (if any) | `lean/Shoumei/RISCV/ISA.lean` (`FieldType`) |
 | 3 | Extension group | `GenerateOpType.lean` (`extGroups`) → `lake exe generate_optype` |
 | 4 | Config flag | `lean/Shoumei/RISCV/Config.lean` |
-| 5 | Decoder classification | `lean/Shoumei/RISCV/Codegen{SystemVerilog,Chisel,CppSim}.lean` |
+| 5 | Decoder classification | `lean/Shoumei/RISCV/Codegen{SystemVerilog,CppSim}.lean` |
 | 6 | Dispatch routing | `lean/Shoumei/RISCV/Execution/Dispatch.lean` |
 | 7 | Execution / pipeline | `lean/Shoumei/RISCV/CPU.lean` (+ `CPUHelpers.lean`) |
 | 8 | Spec semantics | `lean/Shoumei/RISCV/Semantics.lean` |
 | 9 | Decode proofs | `lean/Shoumei/RISCV/DecoderProofs.lean` |
 | 10 | Codegen + testbench | `GenerateAll.lean`, `testbench/Makefile` |
-| 11 | Verify | sim + Spike cosim + LEC |
+| 11 | Verify | sim + Spike cosim + slang |
 
 ## 1. Encodings
 
@@ -80,8 +80,8 @@ In `Config.lean` add `enable<X>` to `CPUConfig`, extend `enabledExtensions`,
 
 The generated decoder emits `io_is_integer/memory/branch/store`, `io_use_imm`,
 `io_has_rd`, and (for FP) the FP signals, all keyed on **opcode bits**. Add your
-major opcode to the right class in all three generators
-(`CodegenSystemVerilog.lean`, `CodegenChisel.lean`, `CodegenCppSim.lean`) behind
+major opcode to the right class in the generators
+(`CodegenSystemVerilog.lean`, `CodegenCppSim.lean`) behind
 a `has<X> defs` guard. Add a dedicated signal when the class is not enough (the
 A extension added `io_is_atomic` so the RS can order atomics).
 
@@ -172,10 +172,10 @@ glob, timeout for long-running atomic loops).
 ## 11. Verify
 
 ```sh
-lake exe generate_all
+make codegen
 make -C testbench sim && make -C testbench run-all-tests
 make -C testbench cosim && make -C testbench run-cosim   # RTL vs Spike
-make chisel && ./verification/run-lec.sh                 # Yosys LEC
+python3 verification/slang-lint.py output/sv-from-lean
 ```
 
 The cosim is the north star: retired PC/insn/rd-data must match Spike
@@ -189,5 +189,3 @@ instruction-for-instruction, including the new extension's tests.
 * **Stale outputs linger.** Renamed/removed modules leave files behind that
   break elaboration. `pruneStaleOutputs` removes them (and their cache entry) at
   the end of `generate_all`.
-* `sbt`/`yosys` are only needed for the Chisel and LEC gates; the Verilator
-  simulation and Spike cosim need neither.

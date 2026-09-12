@@ -1,12 +1,11 @@
 /-
 Circuits/Combinational/ComparatorCodegen.lean - Code generation for Comparators
 
-Generates SystemVerilog and Chisel for all Comparator variants.
+Generates SystemVerilog for all Comparator variants.
 -/
 
 import Shoumei.Circuits.Combinational.Comparator
 import Shoumei.Codegen.SystemVerilog
-import Shoumei.Codegen.Chisel
 
 namespace Shoumei.Circuits.Combinational
 
@@ -28,33 +27,10 @@ def generateComparators : IO Unit := do
   IO.FS.writeFile "output/sv-from-lean/Comparator32.sv" sv32
   IO.println "  ✓ Comparator32.sv"
 
-  -- Chisel generation
-  IO.println "Generating Chisel for Comparators..."
-
-  let chisel4 := Codegen.Chisel.toChisel mkComparator4
-  IO.FS.writeFile "output/chisel-src/Comparator4.scala" chisel4
-  IO.FS.writeFile "chisel/src/main/scala/generated/Comparator4.scala" chisel4
-  IO.println "  ✓ Comparator4.scala"
-
-  let chisel8 := Codegen.Chisel.toChisel mkComparator8
-  IO.FS.writeFile "output/chisel-src/Comparator8.scala" chisel8
-  IO.FS.writeFile "chisel/src/main/scala/generated/Comparator8.scala" chisel8
-  IO.println "  ✓ Comparator8.scala"
-
-  let chisel32 := Codegen.Chisel.toChisel mkComparator32
-  IO.FS.writeFile "output/chisel-src/Comparator32.scala" chisel32
-  IO.FS.writeFile "chisel/src/main/scala/generated/Comparator32.scala" chisel32
-  IO.println "  ✓ Comparator32.scala"
-
   -- EqualityComparator32 (XOR + OR-tree, no subtraction)
   let sv_eq32 := Codegen.SystemVerilog.toSystemVerilog mkEqualityComparator32
   IO.FS.writeFile "output/sv-from-lean/EqualityComparator32.sv" sv_eq32
   IO.println "  ✓ EqualityComparator32.sv"
-
-  let chisel_eq32 := Codegen.Chisel.toChisel mkEqualityComparator32
-  IO.FS.writeFile "output/chisel-src/EqualityComparator32.scala" chisel_eq32
-  IO.FS.writeFile "chisel/src/main/scala/generated/EqualityComparator32.scala" chisel_eq32
-  IO.println "  ✓ EqualityComparator32.scala"
 
   IO.println "Comparator code generation complete!"
 

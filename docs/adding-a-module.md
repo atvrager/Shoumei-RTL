@@ -1,13 +1,13 @@
 # Adding a New Module
 
-Step-by-step guide for building a new verified circuit in Shoumei RTL. This covers the full lifecycle from behavioral model to LEC verification.
+Step-by-step guide for building a new verified circuit in Shoumei RTL. This covers the full lifecycle from behavioral model to code generation, elaboration and simulation.
 
 ## Overview
 
 Every module follows this pipeline:
 
 ```
-Behavioral Model -> Structural Circuit -> Proofs -> Codegen -> Chisel Compile -> LEC
+Behavioral Model -> Structural Circuit -> Proofs -> Codegen -> Sim / Cosim
 ```
 
 The behavioral model is optional for simple combinational circuits, but required for anything with state (sequential circuits, RISC-V components).
@@ -102,13 +102,13 @@ def mkMyModule : Circuit :=
 
 ### Port mapping conventions
 
-- Clock and reset wires: named `"clock"` and `"reset"` -- codegen filters these for Chisel (implicit ports)
+- Clock and reset wires: named `"clock"` and `"reset"` -- `findClockWires`/`findResetWires` detect them from DFF gates and instance connections, so keep the names consistent
 - Instance port names must match the target module's port names exactly
 - Use consistent naming: `u_` prefix for instance names, numbered suffixes for arrays
 
 ### Available building blocks
 
-All of these are LEC-verified and ready to use as instances:
+All of these are emitted as modules and ready to use as instances:
 
 | Module | Purpose | Key ports |
 |--------|---------|-----------|
@@ -124,8 +124,8 @@ All of these are LEC-verified and ready to use as instances:
 
 ### When to use hierarchical vs flat
 
-- **Flat (gates only):** Combinational circuits under ~500 gates. Direct LEC works.
-- **Hierarchical (instances):** Sequential circuits, anything with registers, anything over ~1000 gates, or anything where Lean SV and Chisel SV would differ structurally.
+- **Flat (gates only):** Combinational circuits under ~500 gates.
+- **Hierarchical (instances):** Sequential circuits, anything with registers, anything over ~1000 gates, or anything whose composition you want to justify with a `CompositionalCert`.
 
 ## Step 3: Proofs
 
@@ -199,11 +199,12 @@ Then run:
 lake exe generate_all
 ```
 
-This generates all 4 outputs in one command:
+This emits all outputs in one command:
 - SystemVerilog (hierarchical): `output/sv-from-lean/`
 - SystemVerilog netlist (flat): `output/sv-netlist/`
-- Chisel → SV via CIRCT: `chisel/src/main/scala/generated/`
+- ASAP7 tech-mapped SV: `output/sv-asap7/`
 - C++ Sim: `output/cpp_sim/`
+- Testbenches: `testbench/generated/`
 
 ### Option B: Dedicated codegen file
 
@@ -212,12 +213,12 @@ For circuits that need special codegen handling (e.g., RISC-V decoder with custo
 ```lean
 import Shoumei.Circuits.Sequential.MyModule
 import Shoumei.Codegen.SystemVerilog
-import Shoumei.Codegen.Chisel
+
+open Shoumei.Codegen
 
 def main : IO Unit := do
   let c := mkMyModule
-  IO.FS.writeFile "output/sv-from-lean/MyModule.sv" (generateSystemVerilog c)
-  IO.FS.writeFile "chisel/src/main/scala/generated/MyModule.scala" (generateChisel c)
+  IO.FS.writeFile "output/sv-from-lean/MyModule.sv" (SystemVerilog.toSystemVerilog c)
 ```
 
 Add a Lake target in `lakefile.lean`:
@@ -227,55 +228,32 @@ lean_exe generate_mymodule where
   supportInterpreter := true
 ```
 
-## Step 5: Chisel Compilation
+## Step 5: Check the Emitted RTL
 
 ```bash
-cd chisel && sbt run
+python3 verification/slang-lint.py output/sv-from-lean   # parse + elaborate every emitted SV file
+make systemverilog                                       # Yosys read/hierarchy check
 ```
 
-`Main.scala` auto-discovers all `.scala` files in `src/main/scala/generated/` and compiles them to SystemVerilog via CIRCT. Output goes to `output/sv-from-chisel/`.
-
-### Common Chisel compilation issues
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `IndexOutOfBoundsException` | Clock/reset not filtered from inputs | Ensure `findClockWires`/`findResetWires` detect your module's clock/reset |
-| `not fully initialized` | Missing gate type in codegen | Add case to `generateCombGateIndexed` in `Chisel.lean` |
-| JVM bytecode limit | Module too large (>64KB method) | Use wire arrays (`Vec`) and chunked initialization |
-
-## Step 6: LEC Verification
+Both read the emitted files only; there is no second RTL design to compare against.
+The emitted SV then gets exercised by the simulation tests:
 
 ```bash
-./verification/run-lec.sh
+make -C testbench sim && make -C testbench run-all-tests
 ```
 
-The script:
-1. Loads compositional certificates from Lean
-2. Sorts modules in topological (dependency) order
-3. For each module:
-   - If it has a compositional cert and all deps are verified: accepts compositional proof
-   - If sequential: uses `equiv_make` + `equiv_induct` (SEC)
-   - If combinational: uses `miter` + `sat` (CEC)
+If a module's clock or reset is mis-detected, check `findClockWires`/`findResetWires`
+in `Common.lean` -- they look for DFF gates and instance connections.
 
-### If LEC fails
+## Step 6: Compositional Certificate (if needed)
 
-1. Check Yosys output in the temp directory (script prints last 20 lines)
-2. Common causes:
-   - Port name mismatch between Lean SV and Chisel SV
-   - Structural differences in sequential logic (consider compositional verification)
-   - Missing module in Chisel output (check `sbt run` succeeded)
-3. Compare the two SV files manually: `diff output/sv-from-lean/MyModule.sv output/sv-from-chisel/MyModule.sv`
+If a hierarchical module is too large to discharge in one step:
 
-## Step 7: Compositional Certificate (if needed)
-
-If direct LEC fails for a hierarchical module (common for large sequential circuits):
-
-### 1. Add certificate to `lean/Shoumei/Verification/CompositionalCerts.lean`
+### 1. Add the certificate to `lean/Shoumei/Verification/CompositionalCerts.lean`
 
 ```lean
 def myModule_cert : CompositionalCert := {
   moduleName := "MyModule"
-  dependencies := ["Register32", "Decoder5", "Mux4x8"]
   proofReference := "Shoumei.Circuits.Sequential.MyModuleProofs"
 }
 ```
@@ -288,18 +266,18 @@ def allCerts : List CompositionalCert := [
 ]
 ```
 
-### 2. Update the export executable
+The dependencies are not written by hand: the export derives them from the modules
+the circuit instantiates.
 
-In `ExportVerificationCerts.lean`, ensure `allCerts` is imported (usually automatic since it references the same list).
-
-### 3. Verify
+### 2. Verify
 
 ```bash
 lake build
-./verification/run-lec.sh
+lake exe generate_all --export-certs
 ```
 
-The module should now show as "COMPOSITIONALLY VERIFIED" instead of running direct LEC.
+A certificate fails the export if it names a module the generator does not emit, or
+if the circuit instantiates a module that is not emitted.
 
 ## Complete Example: Adding a 4-bit Counter
 
@@ -314,6 +292,6 @@ lean/Shoumei/Circuits/Sequential/CounterProofs.lean # Proofs
 4. Prove behavioral properties (reset sets to 0, increment wraps correctly)
 5. Add to `GenerateAll.lean` circuit list
 6. Run `lake exe generate_all`
-7. Run `cd chisel && sbt run`
-8. Run `./verification/run-lec.sh`
-9. If LEC fails: add compositional certificate
+7. Check the emitted SV (`python3 verification/slang-lint.py output/sv-from-lean`)
+8. Simulate (`make -C testbench sim` + `run-all-tests`)
+9. If the composition is too large to discharge in one step: add a `CompositionalCert` and run `lake exe generate_all --export-certs`

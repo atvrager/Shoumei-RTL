@@ -17,7 +17,6 @@ Use cases:
 - Gate-level simulation
 
 Target: IEEE 1800-2017 SystemVerilog
-Validation: Yosys equiv_make vs hierarchical SV
 -/
 
 import Shoumei.DSL

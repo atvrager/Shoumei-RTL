@@ -194,7 +194,7 @@ def allCircuits : List Circuit := [
   mkQueueCounterLoadable 4,  -- Phase 7: Store buffer loadable count (flush recovery)
   mkQueueCounterUpDown 5,  -- Phase 6: ROB entry count (0..16)
   mkQueueCounterUpDown 7,
-  -- Power-of-2 register building blocks (verified via LEC)
+  -- Power-of-2 register building blocks
   mkRegisterN 1,
   mkRegisterN 2,
   mkRegisterN 3,  -- Used in PipelinedMultiplier pipeline
@@ -300,17 +300,11 @@ def main (args : List String) : IO Unit := do
     Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
     return
   let force := args.contains "--force"
-  -- --no-chisel skips the Chisel backend (JVM + Scala elaboration): the RTL
-  -- simulation, cosim and LEC paths all read the Lean SV, so day-to-day
-  -- iteration does not need it.
-  let emitChisel := !args.contains "--no-chisel"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if force then
     IO.println "  (--force: regenerating all circuits)"
-  if !emitChisel then
-    IO.println "  (--no-chisel: skipping Chisel backend)"
   IO.println ""
 
   -- Initialize output directories
@@ -328,7 +322,7 @@ def main (args : List String) : IO Unit := do
         isUpToDate c.name h
       else pure false
     else pure false
-    writeCircuit c allCircuits force hashMap emitChisel
+    writeCircuit c allCircuits force hashMap
     if wasCached then skipped := skipped + 1
     count := count + 1
 
@@ -361,7 +355,6 @@ def main (args : List String) : IO Unit := do
   IO.println "Generating filelists..."
   writeFilelist svOutputDir ".sv"
   writeFilelist svNetlistOutputDir ".sv"
-  writeFilelist chiselOutputDir ".scala"
   writeFilelist cppSimOutputDir ".h"
   writeFilelist asap7OutputDir ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
@@ -396,13 +389,12 @@ def main (args : List String) : IO Unit := do
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  let fmtTag := if emitChisel then "all formats" else "all formats except Chisel (--no-chisel)"
   if skipped > 0 then
     IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
   else
-    IO.println s!"✓ Generated {count} circuits ({fmtTag})"
+    IO.println s!"✓ Generated {count} circuits"
   IO.println "  SV:      output/sv-from-lean/"
-  IO.println "  Chisel:  chisel/src/main/scala/generated/"
+  IO.println "  Netlist: output/sv-netlist/"
   IO.println "  C++ Sim: output/cpp_sim/"
   IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

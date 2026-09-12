@@ -2,7 +2,6 @@ import Shoumei.RISCV.ISA
 import Shoumei.RISCV.OpcodeParser
 import Shoumei.RISCV.InstructionList
 import Shoumei.RISCV.CodegenSystemVerilog
-import Shoumei.RISCV.CodegenChisel
 import Shoumei.RISCV.CodegenTest
 
 open Shoumei.RISCV

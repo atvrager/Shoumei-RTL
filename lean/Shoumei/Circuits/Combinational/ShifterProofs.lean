@@ -14,8 +14,7 @@ open Shoumei
 theorem shifter4_structure :
   mkShifter4.gates.length = 32 ∧  -- 3 shifters × 2 stages × 4 bits + 2 MUX levels × 4 bits
                                    -- = 3 × 2 × 4 + 2 × 4 = 24 + 8 = 32
-  mkShifter4.inputs.length = 7 ∧   -- 4 input + 2 shamt + 2 op + 1 zero = 9 (wait, let me recalculate)
-                                   -- Actually: 4 in + 2 shamt + 2 op (op0, op1) + 1 zero = 9
+  mkShifter4.inputs.length = 9 ∧   -- 4 in + 2 shamt + 2 op (op0, op1) + 1 zero = 9
   mkShifter4.outputs.length = 4 := by native_decide
 
 -- Shifter32 structural properties

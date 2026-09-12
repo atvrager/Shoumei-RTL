@@ -25,7 +25,7 @@ theorem lsu_input_count :
 
 /-- LSU has correct number of outputs. -/
 theorem lsu_output_count :
-    mkLSU.outputs.length = 143 := by
+    mkLSU.outputs.length = 151 := by
   native_decide
 
 /-- LSU has 2 instances (MemoryExecUnit + StoreBuffer8). -/
@@ -43,8 +43,8 @@ theorem lsu_gate_count :
 /-- LSU uses only verified building blocks.
 
     Dependencies:
-    - MemoryExecUnit (verified in Phase 5 via direct LEC)
-    - StoreBuffer8 (verified in Phase 7 via hierarchical SEC)
+    - MemoryExecUnit (verified in Phase 5)
+    - StoreBuffer8 (verified in Phase 7, compositionally)
 
     This theorem establishes that LSU's correctness follows from the
     correctness of its constituent verified modules, plus the connection

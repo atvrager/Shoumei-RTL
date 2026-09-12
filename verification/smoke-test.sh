@@ -28,7 +28,7 @@ echo ""
 
 # Pre-flight: verify codegen has been run
 if ! ls output/sv-from-lean/*.sv >/dev/null 2>&1; then
-    printf '%bNo generated SV files found. Run make codegen chisel first.%b\n' "$RED" "$NC"
+    printf '%bNo generated SV files found. Run make codegen first.%b\n' "$RED" "$NC"
     exit 1
 fi
 
@@ -41,28 +41,12 @@ for mod in FullAdder DFlipFlop Queue1_8 Queue1_32; do
     else
         fail "Lean SV: ${mod}.sv missing"
     fi
-    if [ -f "chisel/src/main/scala/generated/${mod}.scala" ]; then
-        pass "Chisel src: ${mod}.scala"
-    else
-        fail "Chisel src: ${mod}.scala missing"
-    fi
-    if [ -f "output/sv-from-chisel/${mod}.sv" ]; then
-        pass "Chisel SV: ${mod}.sv"
-    else
-        fail "Chisel SV: ${mod}.sv missing"
-    fi
 done
 
 # RV32I/RV32IM decoders (optional, depends on third_party/riscv-opcodes submodule)
 for mod in RV32IDecoder RV32IMDecoder; do
     if [ -f "output/sv-from-lean/${mod}.sv" ]; then
         pass "${mod} generated"
-        if [ -f "chisel/src/main/scala/generated/${mod}.scala" ]; then
-            pass "Chisel src: ${mod}.scala"
-        fi
-        if [ -f "output/sv-from-chisel/${mod}.sv" ]; then
-            pass "Chisel SV: ${mod}.sv"
-        fi
     fi
 done
 echo ""
@@ -94,21 +78,19 @@ echo "==> Test 3: Port Validation"
 
 # FullAdder
 for port in a b cin sum cout; do
-    if grep -q "$port" output/sv-from-lean/FullAdder.sv 2>/dev/null && \
-       grep -q "$port" output/sv-from-chisel/FullAdder.sv 2>/dev/null; then
+    if grep -q "$port" output/sv-from-lean/FullAdder.sv 2>/dev/null; then
         pass "FullAdder port '${port}'"
     else
-        fail "FullAdder port '${port}' mismatch"
+        fail "FullAdder port '${port}' missing"
     fi
 done
 
 # DFlipFlop
 for port in d clock reset q; do
-    if grep -q "$port" output/sv-from-lean/DFlipFlop.sv 2>/dev/null && \
-       grep -q "$port" output/sv-from-chisel/DFlipFlop.sv 2>/dev/null; then
+    if grep -q "$port" output/sv-from-lean/DFlipFlop.sv 2>/dev/null; then
         pass "DFlipFlop port '${port}'"
     else
-        fail "DFlipFlop port '${port}' mismatch"
+        fail "DFlipFlop port '${port}' missing"
     fi
 done
 
@@ -124,11 +106,10 @@ done
 # RV32IDecoder (conditional - requires third_party/riscv-opcodes submodule)
 if [ -f "output/sv-from-lean/RV32IDecoder.sv" ]; then
     for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
-        if grep -q "$port" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null && \
-           grep -q "$port" output/sv-from-chisel/RV32IDecoder.sv 2>/dev/null; then
+        if grep -q "$port" output/sv-from-lean/RV32IDecoder.sv 2>/dev/null; then
             pass "RV32IDecoder port '${port}'"
         else
-            fail "RV32IDecoder port '${port}' mismatch"
+            fail "RV32IDecoder port '${port}' missing"
         fi
     done
 fi

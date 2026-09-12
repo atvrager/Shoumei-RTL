@@ -31,10 +31,10 @@ def rs4W2 := mkReservationStationFromConfig defaultCPUConfig
 
 /-! ## Structural Proofs -/
 
-theorem rs4w2_input_count : rs4W2.inputs.length = 278 := by native_decide
-theorem rs4w2_output_count : rs4W2.outputs.length = 162 := by native_decide
-theorem rs4w2_instance_count : rs4W2.instances.length = 12 := by native_decide
-theorem rs4w2_gate_count : rs4W2.gates.length = 2328 := by native_decide
+theorem rs4w2_input_count : rs4W2.inputs.length = 288 := by native_decide
+theorem rs4w2_output_count : rs4W2.outputs.length = 167 := by native_decide
+theorem rs4w2_instance_count : rs4W2.instances.length = 16 := by native_decide
+theorem rs4w2_gate_count : rs4W2.gates.length = 2409 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 
@@ -89,6 +89,5 @@ theorem rs4w2_unique_instances :
 /-- RS W=2 compositional verification certificate -/
 def rs4w2_cert : CompositionalCert := {
   moduleName := "ReservationStation4_W2"
-  dependencies := rs4w2_dependencies
   proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }

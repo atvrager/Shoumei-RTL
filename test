@@ -16,9 +16,8 @@ echo ""
 # Test 1: Shellcheck
 echo "==> Test 1: Shell Script Quality (shellcheck)"
 if command -v shellcheck > /dev/null 2>&1; then
-    # Check main scripts and verification scripts (exclude old auto-generated ones)
+    # Check main scripts and verification scripts
     SHELL_SCRIPTS=$(find . -name "*.sh" -type f \
-        -not -path "./verification/FullAdder/*" \
         -not -path "./.git/*" \
         -not -path "./third_party/*")
     if [ -n "$SHELL_SCRIPTS" ]; then
@@ -52,21 +51,8 @@ else
 fi
 echo ""
 
-# Test 3: Scala Format Check
-echo "==> Test 3: Scala Code Formatting (scalafmt)"
-cd chisel
-if sbt scalafmtCheck > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ All Scala code is properly formatted${NC}"
-else
-    echo -e "${RED}✗ Scala formatting check failed${NC}"
-    echo "  Run: cd chisel && sbt scalafmt"
-    exit 1
-fi
-cd ..
-echo ""
-
-# Test 4: Main Smoke Test
-echo "==> Test 4: Smoke Test (build, proofs, codegen, LEC)"
+# Test 3: Main Smoke Test
+echo "==> Test 3: Smoke Test (build, proofs, codegen)"
 ./verification/smoke-test.sh
 
 echo ""

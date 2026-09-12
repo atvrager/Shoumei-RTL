@@ -1,6 +1,6 @@
 # yosys-slang Setup Guide
 
-This document explains how to install and configure yosys-slang for enhanced SystemVerilog support in LEC verification.
+This document explains how to install and configure yosys-slang for enhanced SystemVerilog support when reading and elaborating Shoumei's emitted RTL with Yosys.
 
 ## What is yosys-slang?
 
@@ -13,14 +13,14 @@ yosys-slang is a Yosys plugin that integrates the `slang` SystemVerilog compiler
 
 ## When is it needed?
 
-The Shoumei verification pipeline works with both parsers:
+Yosys can read the emitted SystemVerilog with either frontend:
 
 - **read_verilog -sv** (default): Works for all current Shoumei modules
   - Handles basic SystemVerilog features
   - Sufficient for flat wire-based designs
   - No additional installation required
 
-- **read_slang** (optional, auto-enabled if available): Enhanced support
+- **read_slang** (optional): Enhanced support
   - Required for struct-based interface bundles (future Phase 4 enhancement)
   - Better error messages and diagnostics
   - Full SystemVerilog 2017 compliance
@@ -94,35 +94,21 @@ ERROR: Can't load module `./slang': ... cannot open shared object file
 
 Then slang is not installed or not in the plugin search path.
 
-## Using with Shoumei Verification
+## Using Yosys on Shoumei's RTL
 
-The `verification/run-lec.sh` script auto-detects yosys-slang:
+`make systemverilog` runs `verification/validate-sv.sh output/sv-from-lean`, which
+reads every emitted SystemVerilog file with Yosys and checks the design hierarchy
+(`hierarchy -auto-top`). That script uses the built-in `read_verilog -sv` frontend,
+which handles all current Shoumei modules.
 
-### Automatic (Recommended)
-
-```bash
-./verification/run-lec.sh
-```
-
-- If slang is available, it will be used automatically
-- If not available, falls back to `read_verilog -sv`
-- No configuration needed
-
-### Force slang (Error if not available)
+To read the same files with yosys-slang instead, load the plugin and use `read_slang`:
 
 ```bash
-./verification/run-lec.sh --use-slang
+yosys -m slang -p "read_slang output/sv-from-lean/RV32IDecoder.sv; hierarchy -auto-top"
 ```
 
-Useful for CI/CD to ensure slang is being used.
-
-### Disable slang
-
-```bash
-./verification/run-lec.sh --no-slang
-```
-
-Force use of built-in Verilog parser even if slang is available.
+In your own Yosys scripts, swap the `read_verilog -sv "<file>"` line for
+`read_slang "<file>"`; everything after the read step is unchanged.
 
 ## Troubleshooting
 
@@ -163,29 +149,26 @@ make clean && make -j$(nproc)
 sudo make install
 ```
 
-## Verification Status
+## Checking the Parser
 
-Run the verification script with status output:
+Confirm which frontend Yosys loads:
 
 ```bash
-./verification/run-lec.sh
+yosys -m slang -p "help read_slang"   # yosys-slang plugin available
+yosys -p "help read_verilog"          # built-in SystemVerilog frontend
 ```
-
-At the start, you'll see:
-- ✓ `Using yosys-slang for SystemVerilog parsing` (if available and enabled)
-- OR `Using read_verilog -sv for SystemVerilog parsing` (if using built-in parser)
 
 ## Migration Plan
 
-**Phase 5 (Current)**: Script infrastructure supports both parsers
-- Auto-detection working
-- Both parsers verified to handle current modules
+**Phase 5 (Current)**: Both frontends work for the emitted SV
+- `read_verilog -sv` handles all current modules
+- `read_slang` is a drop-in replacement for the read step
 - No breaking changes
 
 **Phase 4 Enhancement (Future)**: Add struct-based interface bundles
 - Generate `shoumei_types.sv` package with struct definitions
 - Use structs for complex interfaces (e.g., CDB entries, Decoupled bundles)
-- **Requires yosys-slang** for struct flattening in LEC
+- **Requires yosys-slang** for struct flattening when Yosys reads the emitted SV
 
 **Phase 6 (Planned)**: Netlist codegen
 - Flat netlist output for formal tools

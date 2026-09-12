@@ -9,9 +9,9 @@ This document describes how to run the physical design flow for Shoumei RTL usin
     ```bash
     git submodule update --init --recursive
     ```
-3.  **Generated Verilog**: The Chisel compiler must have generated the SystemVerilog output.
+3.  **Generated Verilog**: Run `lake exe generate_all` (or `make codegen`) to emit the SystemVerilog under `output/sv-from-lean/`.
     ```bash
-    make chisel
+    lake exe generate_all
     ```
 
 ## Configuration

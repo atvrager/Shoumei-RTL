@@ -1,7 +1,7 @@
 /-
 RISCV/Execution/MemoryExecUnitCodegen.lean - Code generation for MemoryExecUnit
 
-Generates SystemVerilog, Chisel, and C++ Sim output for the Memory Execution Unit
+Generates SystemVerilog and C++ Sim output for the Memory Execution Unit
 (Address Generation Unit).
 
 Note: MemoryExecUnit instances RippleCarryAdder32, which was already generated in Phase 1.
@@ -22,7 +22,7 @@ def generateMemoryExecUnit : IO Unit := do
   -- Initialize output directories
   initOutputDirs
 
-  -- Generate the MemoryExecUnit wrapper (all 3 formats: SV, Chisel, C++ Sim)
+  -- Generate the MemoryExecUnit wrapper (SV + C++ Sim)
   let memExecUnit := mkMemoryExecUnit
   writeCircuit memExecUnit
 
