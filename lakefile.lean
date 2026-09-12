@@ -88,12 +88,6 @@ lean_exe generate_branch_exec where
   root := `GenerateBranchExecUnit
   supportInterpreter := true
 
--- Executable target for exporting verification certificates
--- Generates compositional-certs.txt from Lean verification certificates
-lean_exe export_verification_certs where
-  root := `ExportVerificationCerts
-  supportInterpreter := true
-
 -- Executable target for testing Chisel V2 code generation
 lean_exe test_chisel_v2 where
   root := `TestChiselV2

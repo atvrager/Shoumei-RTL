@@ -43,14 +43,16 @@ structure VerificationCertificate where
   dependencies : List String
   leanProof : Option String  -- Reference to Lean theorem
 
-/-- Simplified compositional certificate for export.
+/-- A compositional certificate: the circuit whose correctness rests on its
+    sub-modules, and the Lean proof that justifies the composition.
 
-    Used by proof modules to declare their dependencies and verification strategy.
-    Exported via ExportVerificationCerts.lean for consumption by LEC scripts.
+    `dependencies` is deliberately NOT a field.  The dependencies of a circuit
+    are its instances, which the DSL already knows; recording them by hand let
+    them drift from the circuit and silently under-specify the composition.
+    `ExportVerificationCerts.lean` reads them off the circuit registry.
 -/
 structure CompositionalCert where
   moduleName : String
-  dependencies : List String
   proofReference : String
 
 -- Key insight: Our circuit construction is deterministic

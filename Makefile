@@ -109,7 +109,7 @@ codegen: lean opcodes
 	lake exe generate_all     # circuits + decoders + filelists in one pass
 	@echo "    Phase 2: Exporting compositional verification certificates..."
 	@mkdir -p verification
-	lake exe export_verification_certs > verification/compositional-certs.txt
+	lake exe generate_all --export-certs > verification/compositional-certs.txt
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # Each lists the synth wrapper + ASAP7 overrides + generic SV modules
@@ -155,7 +155,7 @@ cppsim:
 lec: lean
 	@echo "==> Exporting compositional verification certificates..."
 	@mkdir -p verification
-	lake exe export_verification_certs > verification/compositional-certs.txt
+	lake exe generate_all --export-certs > verification/compositional-certs.txt
 	@echo "==> Running logical equivalence checking (Yosys)..."
 	./verification/run-lec.sh output/sv-from-lean output/sv-from-chisel
 

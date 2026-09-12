@@ -127,11 +127,24 @@ CERTS_FILE="$PROJECT_ROOT/verification/compositional-certs.txt"
 
 # Try live export first (always up-to-date), fall back to pre-generated file
 CERT_OUTPUT=""
-if CERT_OUTPUT=$(.lake/build/bin/export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
-    echo "  Exported live from .lake/build/bin/export_verification_certs"
-elif CERT_OUTPUT=$(lake exe export_verification_certs 2>/dev/null) && [ -n "$CERT_OUTPUT" ]; then
-    echo "  Exported live from lake exe export_verification_certs"
-elif [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
+CERT_ERR=$(mktemp)
+for EXPORTER in "$PROJECT_ROOT/.lake/build/bin/generate_all" "lake exe generate_all"; do
+    if [ -x "$PROJECT_ROOT/.lake/build/bin/generate_all" ] || [ "$EXPORTER" != "$PROJECT_ROOT/.lake/build/bin/generate_all" ]; then
+        if CERT_OUTPUT=$($EXPORTER --export-certs 2>"$CERT_ERR"); then
+            echo "  Exported live via $EXPORTER"
+            break
+        fi
+        # Ran but refused: the registry disagrees with the circuits.  Falling
+        # back to a stale file would silently downgrade coverage.
+        if grep -q "certificate registry" "$CERT_ERR" 2>/dev/null; then
+            cat "$CERT_ERR" >&2
+            rm -f "$CERT_ERR"
+            exit 1
+        fi
+    fi
+done
+rm -f "$CERT_ERR"
+if [ -z "$CERT_OUTPUT" ] && [ -f "$CERTS_FILE" ] && [ -s "$CERTS_FILE" ]; then
     CERT_OUTPUT=$(cat "$CERTS_FILE")
     echo "  Reading from $CERTS_FILE (pre-generated)"
 fi
@@ -294,9 +307,13 @@ _verify_module_inner() {
     # Content-addressed (not mtime) so the cache survives fresh checkouts and
     # CI artifact downloads, where every file looks newly written.
     local CACHE_STAMP="$LEC_CACHE_DIR/$MODULE_NAME.ok"
-    local CERT_FILE="verification/compositional-certs.txt"
+    # Hash this module's own evidence: the two emitted netlists, plus its own
+    # certificate if it has one.  Including the whole certificate file instead
+    # would re-verify all 80-odd modules whenever any single entry changed.
     local SRC_HASH=""
-    SRC_HASH=$( { cat "$LEAN_FILE" "$CHISEL_FILE" 2>/dev/null;                   [ -f "$CERT_FILE" ] && cat "$CERT_FILE"; } | cksum | cut -d' ' -f1)
+    SRC_HASH=$( { cat "$LEAN_FILE" "$CHISEL_FILE" 2>/dev/null
+                  printf '%s' "cert:${COMPOSITIONAL_CERTS[$MODULE_NAME]:-}"
+                } | cksum | cut -d' ' -f1)
     if [ "$FORCE_RERUN" -eq 0 ] && [ -f "$CACHE_STAMP" ]; then
         if [ "$(cat "$CACHE_STAMP" 2>/dev/null)" = "$SRC_HASH" ]; then
             echo -e "  ${GREEN}✓ $MODULE_NAME${NC} (cached)"

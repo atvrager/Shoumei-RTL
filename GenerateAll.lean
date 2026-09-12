@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Verification.ExportCerts
 
 -- Phase 0: Foundation
 import Shoumei.Examples.Adder
@@ -105,6 +106,12 @@ open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
+
+/-- Decoder modules generated from riscv-opcodes instruction definitions, outside
+    the circuit registry above.  Named once because the stale-output pruner and
+    the certificate registry must both agree with what is actually emitted. -/
+def riscvDecoderModules : List String :=
+  ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"]
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -280,7 +287,18 @@ def allCircuits : List Circuit := [
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]
 
+/-- Everything this generator emits, by module name. -/
+def emittedModuleNames : List String :=
+  allCircuits.map (·.name) ++ riscvDecoderModules
+
 def main (args : List String) : IO Unit := do
+  -- The circuit registry below is also the certificate registry: a
+  -- compositional certificate is only meaningful for a circuit that is actually
+  -- emitted.  `--export-certs` prints that registry, validating as it goes, and
+  -- exits without generating anything.
+  if args.contains "--export-certs" then
+    Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
+    return
   let force := args.contains "--force"
   -- --no-chisel skips the Chisel backend (JVM + Scala elaboration): the RTL
   -- simulation, cosim and LEC paths all read the Lean SV, so day-to-day
@@ -331,8 +349,7 @@ def main (args : List String) : IO Unit := do
   -- linger in the build filelists.
   IO.println ""
   IO.println "Pruning stale generated outputs..."
-  pruneStaleOutputs (allCircuits.map (·.name) ++
-    ["RV32IDecoder", "RV32IMDecoder", "RV32IFDecoder", "RV32IMFDecoder"])
+  pruneStaleOutputs emittedModuleNames
 
   -- Generate testbenches
   IO.println ""
