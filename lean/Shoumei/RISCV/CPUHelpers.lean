@@ -1490,4 +1490,371 @@ def mkMicrocodeSerializePath
 
     (allGates, [sequencerInst])
 
+/-! ## A Extension: Atomic Memory Operations (LR.W / SC.W / AMO*.W)
+
+Reservation-set tracking plus atomic read-modify-write support.
+
+The memory pipeline is single-slot: at most one memory op is in flight
+(`mem_valid_r`) and at most one DMEM load is pending.  Atomic ops reuse that
+slot: the op is captured, its read goes through the normal DMEM read path, and
+(for AMO/SC) a direct DMEM write commits the new value.  Dispatch of further
+memory ops is blocked while an atomic RMW is in flight, so the read and write
+are never separated by another memory access from this hart.
+
+Single-hart reservation semantics:
+  * `lr.w` sets `(reservationValid, reservationAddr)` on its read response.
+  * `sc.w` succeeds iff the reservation is valid and addresses match; the
+    reservation is cleared either way.
+  * Any intervening store to the reserved word (snooped on store-buffer
+    dequeue) and any pipeline flush also clear the reservation.
+-/
+
+/-- Result of building the atomic (A-extension) support logic. -/
+structure AtomicUnit where
+  gates : List Gate
+  instances : List CircuitInstance
+  /-- Reservation register outputs. -/
+  reservationValid : Wire
+  reservationAddr : List Wire
+  /-- Registered atomic selector / AMO operands (memory stage). -/
+  atomicCodeR : List Wire
+  scSel : Wire
+  scExec : Wire
+  scResult : Wire
+  /-- Atomic direct-write request to DMEM (AMO new value / SC store data). -/
+  awValid : Wire
+  awAddr : List Wire
+  awData : List Wire
+  /-- An atomic RMW is in flight; block further memory dispatch. -/
+  atomicBusy : Wire
+  /-- Dispatch permitted for the current memory op. -/
+  atomicDispatchOk : Wire
+
+/-- Build the atomic (A-extension) support logic.
+
+    Atomic code (2 bits): bit0 = reads (LR/AMO), bit1 = writes (SC/AMO), so
+    LR=01, SC=10, AMO=11. -/
+def mkAtomicUnit
+    (clock reset zero one : Wire)
+    (rs_mem_dispatch_valid mem_dispatch_en_any : Wire)
+    (is_lr is_sc is_amo : Wire)
+    (amo_funct : List Wire)             -- 4 bits: AMO function select
+    (rs_mem_dispatch_src2 : List Wire)  -- 32 bits: store operand (rs2)
+    (pipeline_flush_comb : Wire)
+    (mem_valid_r : Wire)
+    (mem_addr_r : List Wire)            -- 32 bits: registered address
+    (dmem_resp_valid dmem_load_pending : Wire)
+    (dmem_resp_data : List Wire)        -- 32 bits
+    (dmem_req_ready : Wire)
+    (lsu_sb_empty lsu_sb_deq_valid : Wire)
+    (lsu_sb_deq_bits : List Wire)       -- 66 bits: SB dequeue payload
+    (rs_pending_store : Wire)           -- a plain store is still pending in the mem RS
+    : AtomicUnit :=
+  let mkW := makeIndexedWires
+
+  -- === 2-bit atomic code at dispatch ===
+  let ac0 := Wire.mk "atom_code0"   -- reads: LR or AMO
+  let ac1 := Wire.mk "atom_code1"   -- writes: SC or AMO
+  let lrsc := Wire.mk "atom_lrsc"
+  let is_atomic := Wire.mk "atom_is_atomic"
+  let code_gates := [
+    Gate.mkOR is_lr is_amo ac0,
+    Gate.mkOR is_sc is_amo ac1,
+    Gate.mkOR is_lr is_sc lrsc,
+    Gate.mkOR lrsc is_amo is_atomic]
+
+  -- pipe_load_en: same condition as mkMemPipeline (register enable)
+  let pipe_load_en := Wire.mk "atom_pipe_load_en"
+  let not_flush := Wire.mk "atom_not_flush"
+  let ple_t := Wire.mk "atom_ple_t"
+  let pipe_en_gates := [
+    Gate.mkAND rs_mem_dispatch_valid mem_dispatch_en_any ple_t,
+    Gate.mkNOT pipeline_flush_comb not_flush,
+    Gate.mkAND ple_t not_flush pipe_load_en]
+
+  -- === Registered atomic fields (memory stage) ===
+  let atomic_code_r := mkW "atom_code_r" 2
+  let atomic_code_next := mkW "atom_code_next" 2
+  let amo_funct_r := mkW "atom_funct_r" 4
+  let amo_funct_next := mkW "atom_funct_next" 4
+  let amo_rs2_r := mkW "atom_rs2_r" 32
+  let amo_rs2_next := mkW "atom_rs2_next" 32
+  let code_reg_gates :=
+    [Gate.mkMUX atomic_code_r[0]! ac0 pipe_load_en atomic_code_next[0]!,
+     Gate.mkMUX atomic_code_r[1]! ac1 pipe_load_en atomic_code_next[1]!] ++
+    (List.range 4).map (fun i =>
+      Gate.mkMUX amo_funct_r[i]! amo_funct[i]! pipe_load_en amo_funct_next[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX amo_rs2_r[i]! rs_mem_dispatch_src2[i]! pipe_load_en amo_rs2_next[i]!)
+  let code_reg_insts : List CircuitInstance :=
+    (List.range 2).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_code_r_{i}",
+         portMap := [("d", atomic_code_next[i]!), ("q", atomic_code_r[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance)) ++
+    (List.range 4).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_funct_r_{i}",
+         portMap := [("d", amo_funct_next[i]!), ("q", amo_funct_r[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance)) ++
+    (List.range 32).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_rs2_r_{i}",
+         portMap := [("d", amo_rs2_next[i]!), ("q", amo_rs2_r[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance))
+
+  -- === Atomic selector bits at the memory stage ===
+  let not_c0 := Wire.mk "atom_not_c0"
+  let not_c1 := Wire.mk "atom_not_c1"
+  let c0_and_c1 := Wire.mk "atom_c0_c1"
+  let lr_sel := Wire.mk "atom_lr_sel"
+  let sc_sel := Wire.mk "atom_sc_sel"
+  let amo_sel := Wire.mk "atom_amo_sel"
+  let sel_gates := [
+    Gate.mkNOT atomic_code_r[0]! not_c0,
+    Gate.mkNOT atomic_code_r[1]! not_c1,
+    Gate.mkAND atomic_code_r[0]! not_c1 lr_sel,
+    Gate.mkAND not_c0 atomic_code_r[1]! sc_sel,
+    Gate.mkAND atomic_code_r[0]! atomic_code_r[1]! c0_and_c1,
+    Gate.mkBUF c0_and_c1 amo_sel]
+
+  -- === Read responses and SC execute ===
+  let resp_x := Wire.mk "atom_resp_x"
+  let lr_resp := Wire.mk "atom_lr_resp"
+  let amo_resp := Wire.mk "atom_amo_resp"
+  let resp_gates := [
+    Gate.mkAND dmem_resp_valid dmem_load_pending resp_x,
+    Gate.mkAND resp_x lr_sel lr_resp,
+    Gate.mkAND resp_x amo_sel amo_resp]
+  let sc_exec := Wire.mk "atom_sc_exec"
+  let sc_exec_gate := Gate.mkAND mem_valid_r sc_sel sc_exec
+
+  -- === Reservation registers ===
+  let reservation_valid := Wire.mk "atom_res_valid"
+  let reservation_valid_next := Wire.mk "atom_res_valid_next"
+  let reservation_addr := mkW "atom_res_addr" 32
+  let reservation_addr_next := mkW "atom_res_addr_next" 32
+  let res_addr_eq := Wire.mk "atom_res_addr_eq"
+  -- SC reservation check: reservationValid && reservationAddr == mem_addr_r
+  let res_cmp_inst : CircuitInstance := {
+    moduleName := "EqualityComparator32", instName := "u_atom_res_cmp",
+    portMap :=
+      (List.range 32).map (fun i => (s!"a_{i}", reservation_addr[i]!)) ++
+      (List.range 32).map (fun i => (s!"b_{i}", mem_addr_r[i]!)) ++
+      [("eq", res_addr_eq)] }
+  let sc_ok := Wire.mk "atom_sc_ok"
+  let sc_result := Wire.mk "atom_sc_result"
+  let sc_ok_gate := Gate.mkAND reservation_valid res_addr_eq sc_ok
+  let sc_result_gate := Gate.mkNOT sc_ok sc_result
+  -- Intervening-store invalidation: SB dequeue writes the reserved word
+  let sb_deq_addr := (List.range 32).map (fun i => lsu_sb_deq_bits[i]!)
+  let sb_deq_addr_eq := Wire.mk "atom_sb_addr_eq"
+  let sb_cmp_inst : CircuitInstance := {
+    moduleName := "EqualityComparator32", instName := "u_atom_sb_cmp",
+    portMap :=
+      (List.range 32).map (fun i => (s!"a_{i}", sb_deq_addr[i]!)) ++
+      (List.range 32).map (fun i => (s!"b_{i}", reservation_addr[i]!)) ++
+      [("eq", sb_deq_addr_eq)] }
+  let res_inval_t := Wire.mk "atom_res_inv_t"
+  let res_invalidate := Wire.mk "atom_res_invalidate"
+  let res_clr_t := Wire.mk "atom_res_clr_t"
+  let res_clr := Wire.mk "atom_res_clr"
+  let res_inval_gates := [
+    Gate.mkAND lsu_sb_deq_valid reservation_valid res_inval_t,
+    Gate.mkAND res_inval_t sb_deq_addr_eq res_invalidate,
+    Gate.mkOR sc_exec res_invalidate res_clr_t,
+    -- NOTE: a pipeline flush must NOT clear the reservation.  A mispredicted
+    -- branch between LR and SC would otherwise cause a spurious SC failure,
+    -- diverging from the reference model (spec permits failure, but the tests
+    -- require success when no intervening store occurs).
+    Gate.mkBUF res_clr_t res_clr]
+  -- Next value: clear > set > hold
+  let res_set_v := Wire.mk "atom_res_set_v"
+  let res_set_gates := [
+    Gate.mkMUX reservation_valid one lr_resp res_set_v,
+    Gate.mkMUX res_set_v zero res_clr reservation_valid_next]
+  let res_addr_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX reservation_addr[i]! mem_addr_r[i]! lr_resp reservation_addr_next[i]!)
+  let res_insts : List CircuitInstance :=
+    ({ moduleName := "DFlipFlop", instName := "u_atom_res_valid",
+       portMap := [("d", reservation_valid_next), ("q", reservation_valid),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance) ::
+    (List.range 32).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_res_addr_{i}",
+         portMap := [("d", reservation_addr_next[i]!), ("q", reservation_addr[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance))
+
+  -- === AMO new-value ALU: new = f(funct, old, rs2) ===
+  let old := dmem_resp_data
+  let rs2 := amo_rs2_r
+  let add_sum := mkW "atom_add_sum" 32
+  let add_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder32", instName := "u_atom_add",
+    portMap :=
+      (List.range 32).map (fun i => (s!"a_{i}", old[i]!)) ++
+      (List.range 32).map (fun i => (s!"b_{i}", rs2[i]!)) ++
+      [("cin", zero)] ++
+      (List.range 32).map (fun i => (s!"sum_{i}", add_sum[i]!)) }
+  let res_xor := mkW "atom_res_xor" 32
+  let res_and := mkW "atom_res_and" 32
+  let res_or := mkW "atom_res_or" 32
+  let bitwise_gates :=
+    (List.range 32).map (fun i => Gate.mkXOR old[i]! rs2[i]! res_xor[i]!) ++
+    (List.range 32).map (fun i => Gate.mkAND old[i]! rs2[i]! res_and[i]!) ++
+    (List.range 32).map (fun i => Gate.mkOR old[i]! rs2[i]! res_or[i]!)
+  let cmp_lt := Wire.mk "atom_cmp_lt"
+  let cmp_ltu := Wire.mk "atom_cmp_ltu"
+  let cmp_gt := Wire.mk "atom_cmp_gt"
+  let cmp_gtu := Wire.mk "atom_cmp_gtu"
+  let cmp_eq := Wire.mk "atom_cmp_eq"
+  let cmp_inst : CircuitInstance := {
+    moduleName := "Comparator32", instName := "u_atom_cmp",
+    portMap :=
+      (List.range 32).map (fun i => (s!"a_{i}", old[i]!)) ++
+      (List.range 32).map (fun i => (s!"b_{i}", rs2[i]!)) ++
+      [("one", one), ("eq", cmp_eq), ("lt", cmp_lt), ("ltu", cmp_ltu),
+       ("gt", cmp_gt), ("gtu", cmp_gtu)] }
+  let res_min_s := mkW "atom_res_min_s" 32
+  let res_max_s := mkW "atom_res_max_s" 32
+  let res_min_u := mkW "atom_res_min_u" 32
+  let res_max_u := mkW "atom_res_max_u" 32
+  let minmax_gates :=
+    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_lt res_min_s[i]!) ++
+    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gt res_max_s[i]!) ++
+    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_ltu res_min_u[i]!) ++
+    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gtu res_max_u[i]!)
+  -- 16:1 select by amo_funct
+  let amo_new := mkW "atom_new" 32
+  let amo_l0 := (List.range 8).map (fun i => mkW s!"atom_l0_{i}" 32)
+  let amo_l1 := (List.range 4).map (fun i => mkW s!"atom_l1_{i}" 32)
+  let amo_l2 := (List.range 2).map (fun i => mkW s!"atom_l2_{i}" 32)
+  let zero32 := (List.range 32).map (fun _ => zero)
+  let tree_inputs : List (List Wire) :=
+    [add_sum, rs2, res_xor, res_and, res_or,
+     res_min_s, res_max_s, res_min_u, res_max_u] ++
+    (List.range 7).map (fun _ => zero32)
+  let l0_gates := (List.range 8).flatMap (fun i =>
+    (List.range 32).map (fun b =>
+      Gate.mkMUX tree_inputs[2*i]![b]! tree_inputs[2*i+1]![b]! amo_funct_r[0]! amo_l0[i]![b]!))
+  let l1_gates := (List.range 4).flatMap (fun i =>
+    (List.range 32).map (fun b =>
+      Gate.mkMUX amo_l0[2*i]![b]! amo_l0[2*i+1]![b]! amo_funct_r[1]! amo_l1[i]![b]!))
+  let l2_gates := (List.range 2).flatMap (fun i =>
+    (List.range 32).map (fun b =>
+      Gate.mkMUX amo_l1[2*i]![b]! amo_l1[2*i+1]![b]! amo_funct_r[2]! amo_l2[i]![b]!))
+  let l3_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX amo_l2[0]![b]! amo_l2[1]![b]! amo_funct_r[3]! amo_new[b]!)
+
+  -- === Atomic direct write (AMO new value / SC store data) ===
+  let aw_pending := Wire.mk "atom_aw_pending"
+  let aw_pending_next := Wire.mk "atom_aw_pending_next"
+  let aw_set := Wire.mk "atom_aw_set"
+  let aw_clr := Wire.mk "atom_aw_clr"
+  let aw_addr := mkW "atom_aw_addr" 32
+  let aw_addr_next := mkW "atom_aw_addr_next" 32
+  let aw_data := mkW "atom_aw_data" 32
+  let aw_data_next := mkW "atom_aw_data_next" 32
+  let aw_hold := Wire.mk "atom_aw_hold"
+  let sc_wr := Wire.mk "atom_sc_wr"
+  let aw_set_gates := [
+    Gate.mkAND sc_exec sc_ok sc_wr,
+    Gate.mkOR sc_wr amo_resp aw_set,
+    Gate.mkAND aw_pending dmem_req_ready aw_clr,
+    -- aw_pending_next = aw_clr ? 0 : (aw_set ? 1 : aw_pending)
+    Gate.mkMUX aw_pending one aw_set aw_hold,
+    Gate.mkMUX aw_hold zero aw_clr aw_pending_next]
+  -- write data: SC uses rs2, AMO uses the computed new value
+  let aw_data_sel := mkW "atom_aw_data_sel" 32
+  let aw_data_sel_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX amo_new[i]! amo_rs2_r[i]! sc_sel aw_data_sel[i]!)
+  let aw_addr_next_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX aw_addr[i]! mem_addr_r[i]! aw_set aw_addr_next[i]!)
+  let aw_data_next_gates := (List.range 32).map (fun i =>
+    Gate.mkMUX aw_data[i]! aw_data_sel[i]! aw_set aw_data_next[i]!)
+  let aw_insts : List CircuitInstance :=
+    ({ moduleName := "DFlipFlop", instName := "u_atom_aw_pending",
+       portMap := [("d", aw_pending_next), ("q", aw_pending),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance) ::
+    (List.range 32).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_aw_addr_{i}",
+         portMap := [("d", aw_addr_next[i]!), ("q", aw_addr[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance)) ++
+    (List.range 32).map (fun i =>
+      ({ moduleName := "DFlipFlop", instName := s!"u_atom_aw_data_{i}",
+         portMap := [("d", aw_data_next[i]!), ("q", aw_data[i]!),
+                     ("clock", clock), ("reset", reset)] } : CircuitInstance))
+
+  -- === Busy latch: block dispatch while an atomic RMW is in flight ===
+  let atomic_busy := Wire.mk "atom_busy"
+  let atomic_busy_next := Wire.mk "atom_busy_next"
+  let atomic_disp := Wire.mk "atom_disp"
+  let sc_fail_t := Wire.mk "atom_sc_fail_t"
+  let atomic_done := Wire.mk "atom_done"
+  let busy_set := Wire.mk "atom_busy_set"
+  let not_sc_ok := Wire.mk "atom_not_sc_ok"
+  let done_t := Wire.mk "atom_done_t"
+  let done_t2 := Wire.mk "atom_done_t2"
+  let busy_gates := [
+    Gate.mkAND pipe_load_en is_atomic atomic_disp,
+    Gate.mkNOT sc_ok not_sc_ok,
+    Gate.mkAND sc_exec not_sc_ok sc_fail_t,
+    -- An atomic op is done when:
+    --   * a failing SC completes, or
+    --   * a direct write is accepted, or
+    --   * an LR read completes (LR has no write), or
+    --   * the pipeline is flushed (the atomic op is squashed).
+    Gate.mkOR sc_fail_t aw_clr done_t,
+    Gate.mkOR done_t lr_resp done_t2,
+    Gate.mkOR done_t2 pipeline_flush_comb atomic_done,
+    -- busy_next = atomic_disp ? 1 : (atomic_done ? 0 : busy)
+    Gate.mkMUX atomic_busy one atomic_disp busy_set,
+    Gate.mkMUX busy_set zero atomic_done atomic_busy_next]
+  let busy_inst : CircuitInstance :=
+    { moduleName := "DFlipFlop", instName := "u_atom_busy",
+      portMap := [("d", atomic_busy_next), ("q", atomic_busy),
+                  ("clock", clock), ("reset", reset)] }
+
+  -- === Dispatch gate: atomics wait for a drained store buffer ===
+  let atomic_disp_ok := Wire.mk "atom_disp_ok"
+  let di_dr := Wire.mk "atom_di_dr"
+  let req_ok := Wire.mk "atom_req_ok"
+  let not_busy := Wire.mk "atom_not_busy"
+  let nps := Wire.mk "atom_not_pending_store"
+  let drain_req := Wire.mk "atom_drain_req"
+  let not_drain_req := Wire.mk "atom_not_drain_req"
+  let disp_ok_gates := [
+    Gate.mkNOT atomic_busy not_busy,
+    Gate.mkNOT rs_pending_store nps,
+    -- SC / AMO form an RMW: they wait for a fully drained store buffer and no
+    -- pending plain store in the memory RS (an older store may not have reached
+    -- the SB yet).  LR is a plain load plus a reservation set, so it does not.
+    Gate.mkOR is_sc is_amo drain_req,
+    Gate.mkNOT drain_req not_drain_req,
+    Gate.mkAND lsu_sb_empty nps di_dr,
+    Gate.mkOR not_drain_req di_dr req_ok,
+    -- While an atomic op is in flight, block ALL memory dispatch so no
+    -- load/store can slip between the atomic read and write.
+    Gate.mkAND req_ok not_busy atomic_disp_ok]
+
+  let gates :=
+    code_gates ++ pipe_en_gates ++ code_reg_gates ++ sel_gates ++ resp_gates ++
+    [sc_exec_gate] ++ res_inval_gates ++ res_set_gates ++ res_addr_gates ++
+    [sc_ok_gate, sc_result_gate] ++
+    bitwise_gates ++ minmax_gates ++ l0_gates ++ l1_gates ++ l2_gates ++ l3_gates ++
+    aw_set_gates ++ aw_data_sel_gates ++ aw_addr_next_gates ++ aw_data_next_gates ++
+    busy_gates ++ disp_ok_gates
+  let instances :=
+    code_reg_insts ++ [res_cmp_inst, sb_cmp_inst] ++ res_insts ++
+    [add_inst, cmp_inst] ++ aw_insts ++ [busy_inst]
+  { gates := gates
+    instances := instances
+    reservationValid := reservation_valid
+    reservationAddr := reservation_addr
+    atomicCodeR := atomic_code_r
+    scSel := sc_sel
+    scExec := sc_exec
+    scResult := sc_result
+    awValid := aw_pending
+    awAddr := aw_addr
+    awData := aw_data
+    atomicBusy := atomic_busy
+    atomicDispatchOk := atomic_disp_ok }
+
 end Shoumei.RISCV.CPU

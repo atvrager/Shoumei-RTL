@@ -66,7 +66,8 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
                    $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf)
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32ua-p-*.elf)
 
 # NOTE: fp_memory excluded from cosim — RVVI reports stale rd_data for fmv.x.w
 # when fadd.s completes out-of-order before the fmv.x.w retires.  The RTL itself
@@ -95,7 +96,7 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
 # Arcilator compiles only the CPU design modules (not the SV testbench).
 # The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
-ARC_TOP_MODULE := CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
+ARC_TOP_MODULE := CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
 
 # Step 0: Preprocess design SV to convert async resets to sync resets
 # circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks
@@ -187,7 +188,7 @@ run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		timeout=3000; \
-		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
+		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; *lrsc*) timeout=60000;; esac; \
 		result=$$($(ARC_COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
 		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \
@@ -300,7 +301,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		tout=5000; \
-		case $$name in freertos_demo.elf) tout=200000;; timer_irq_test.elf) tout=10000;; jalr_a0_irq_test.elf) tout=10000;; esac; \
+		case $$name in freertos_demo.elf) tout=200000;; timer_irq_test.elf) tout=10000;; jalr_a0_irq_test.elf) tout=10000;; rv32ua-p-lrsc.elf) tout=60000;; esac; \
 		result=$$($(SIM_BIN) +elf=$$elf +timeout=$$tout 2>&1); \
 		tohost=$$(echo "$$result" | grep -oP 'tohost:\s+\K0x[0-9a-fA-F]+'); \
 		cycles=$$(echo "$$result" | grep -oP 'Total cycles:\s+\K[0-9]+'); \
@@ -345,7 +346,7 @@ run-cosim: $(COSIM_BIN) tests riscv-tests
 		total=$$((total+1)); \
 		name=$$(basename $$elf); \
 		timeout=3000; \
-		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; esac; \
+		case "$$name" in *freertos*|*irq*|*timer*|*wfi*) timeout=200000;; *lrsc*) timeout=60000;; esac; \
 		result=$$($(COSIM_BIN) +elf=$$elf +timeout=$$timeout 2>&1); \
 		cycles=$$(echo "$$result" | grep -oP 'Cycles:\s+\K[0-9]+'); \
 		ret=$$(echo "$$result" | grep -oP 'Retired:\s+\K[0-9]+'); \

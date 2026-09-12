@@ -136,6 +136,7 @@ import chisel3.util._
     "  val io_is_memory  = IO(Output(Bool()))       // Dispatch to load/store unit\n" ++
     "  val io_is_branch  = IO(Output(Bool()))       // Dispatch to branch unit\n" ++
     "  val io_is_store   = IO(Output(Bool()))       // Instruction is a store\n" ++
+    "  val io_is_atomic  = IO(Output(Bool()))       // Instruction is an atomic (LR/SC/AMO)\n" ++
     "  val io_use_imm    = IO(Output(Bool()))       // Uses immediate (not R-type)\n" ++
     muldivPort ++
     fpPorts ++
@@ -227,6 +228,13 @@ import chisel3.util._
     " || (opcode === \"b0100111\".U)"
   else ""
 
+  let hasAChisel := defs.any (fun d => d.extension.any (· == "rv_a"))
+  let atomicMemExtra := if hasAChisel then
+    "\n    || (opcode === \"b0101111\".U)   // AMO (LR.W/SC.W/AMO*.W)" else ""
+  let atomicClassify := if hasAChisel then
+    "\n  io_is_atomic := io_valid && (opcode === \"b0101111\".U)"
+  else "\n  io_is_atomic := false.B"
+
   let fpNotStoreExtra := if hasFChisel defs then
     " &&\n    (opcode =/= \"b0100111\".U)     // not FSW"
   else ""
@@ -258,7 +266,7 @@ import chisel3.util._
 
   io_is_memory := io_valid && (
     (opcode === \"b0000011\".U) ||  // LOAD
-    (opcode === \"b0100011\".U)" ++ fpMemExtra ++ "
+    (opcode === \"b0100011\".U)" ++ fpMemExtra ++ atomicMemExtra ++ "
   )
 
   io_is_branch := io_valid && (
@@ -267,7 +275,7 @@ import chisel3.util._
     (opcode === \"b1100111\".U)     // JALR
   )
 
-  io_is_store := io_valid && ((opcode === \"b0100011\".U)" ++ fpStoreExtra ++ ")
+  io_is_store := io_valid && ((opcode === \"b0100011\".U)" ++ fpStoreExtra ++ ")" ++ atomicClassify ++ "
   io_use_imm  := io_valid && (opcode =/= \"b0110011\".U) && (opcode =/= \"b1100011\".U)  // All except R-type and branches
 " ++ muldivClassify ++ fpClassify ++ "
 }

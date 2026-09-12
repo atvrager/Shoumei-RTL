@@ -488,7 +488,10 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let zero  := Wire.mk "zero"
   let one   := Wire.mk "one"
 
-  let opcodeWidth := 6; let tagWidth := 7; let dataWidth := 32
+  -- Opcode field is 7 bits: the integer-with-extensions opcode space exceeds
+  -- 64 entries (I+M+A+F+Zicsr+Zifencei+system), so a 6-bit field would alias
+  -- distinct ops in the same dispatch domain (e.g. ADD vs XORI, SC vs FLW).
+  let opcodeWidth := 7; let tagWidth := 7; let dataWidth := 32
   let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
   -- Computed offsets into entry bitfield
   let off_dest := 1 + opcodeWidth
@@ -506,6 +509,8 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let issue_en_0 := Wire.mk "issue_en_0"; let issue_en_1 := Wire.mk "issue_en_1"
   let issue_is_store_0 := Wire.mk "issue_is_store_0"
   let issue_is_store_1 := Wire.mk "issue_is_store_1"
+  let issue_is_atomic_0 := Wire.mk "issue_is_atomic_0"
+  let issue_is_atomic_1 := Wire.mk "issue_is_atomic_1"
   let issue_opcode_0 := mkWrsI "issue_opcode_0" opcodeWidth
   let issue_dest_tag_0 := mkWrsI "issue_dest_tag_0" tagWidth
   let issue_src1_ready_0 := Wire.mk "issue_src1_ready_0"
@@ -748,19 +753,43 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   -- When any valid store exists in a bank, only stores can dispatch from that bank.
   -- This prevents loads from bypassing younger stores that haven't entered the store buffer yet.
   -- For non-memory RS instances, issue_is_store is tied to zero, so SLO is a no-op.
-  let mkSloEntry (idx : Nat) (issue_we : Wire) (issue_is_store : Wire) : List Gate × CircuitInstance × Wire :=
+  -- Also tracks whether the entry is an atomic (LR/SC/AMO): atomics count as stores
+  -- for SLO ordering, but not as "pending plain stores" (used to serialize atomics
+  -- behind older stores).
+  let mkSloEntry (idx : Nat) (issue_we : Wire) (issue_is_store : Wire) (issue_is_atomic : Wire)
+      : List Gate × List CircuitInstance × Wire × Wire :=
     let is_store_cur := Wire.mk s!"slo_st_{idx}"
     let is_store_next := Wire.mk s!"slo_st_next_{idx}"
-    let gates := [Gate.mkMUX is_store_cur issue_is_store issue_we is_store_next]
-    let inst : CircuitInstance := {
-      moduleName := "Register1", instName := s!"u_slo_st_{idx}",
-      portMap := [("d_0", is_store_next), ("clock", clock), ("reset", reset), ("q_0", is_store_cur)]
-    }
-    (gates, inst, is_store_cur)
-  let (slo_g0, slo_i0, st0) := mkSloEntry 0 issue_we_0_0 issue_is_store_0
-  let (slo_g1, slo_i1, st1) := mkSloEntry 1 issue_we_0_1 issue_is_store_0
-  let (slo_g2, slo_i2, st2) := mkSloEntry 2 issue_we_1_0 issue_is_store_1
-  let (slo_g3, slo_i3, st3) := mkSloEntry 3 issue_we_1_1 issue_is_store_1
+    let is_atomic_cur := Wire.mk s!"slo_at_{idx}"
+    let is_atomic_next := Wire.mk s!"slo_at_next_{idx}"
+    let gates := [
+      Gate.mkMUX is_store_cur issue_is_store issue_we is_store_next,
+      Gate.mkMUX is_atomic_cur issue_is_atomic issue_we is_atomic_next]
+    let insts : List CircuitInstance := [
+      { moduleName := "Register1", instName := s!"u_slo_st_{idx}",
+        portMap := [("d_0", is_store_next), ("clock", clock), ("reset", reset), ("q_0", is_store_cur)] },
+      { moduleName := "Register1", instName := s!"u_slo_at_{idx}",
+        portMap := [("d_0", is_atomic_next), ("clock", clock), ("reset", reset), ("q_0", is_atomic_cur)] }]
+    (gates, insts, is_store_cur, is_atomic_cur)
+  let (slo_g0, slo_i0, st0, at0) := mkSloEntry 0 issue_we_0_0 issue_is_store_0 issue_is_atomic_0
+  let (slo_g1, slo_i1, st1, at1) := mkSloEntry 1 issue_we_0_1 issue_is_store_0 issue_is_atomic_0
+  let (slo_g2, slo_i2, st2, at2) := mkSloEntry 2 issue_we_1_0 issue_is_store_1 issue_is_atomic_1
+  let (slo_g3, slo_i3, st3, at3) := mkSloEntry 3 issue_we_1_1 issue_is_store_1 issue_is_atomic_1
+  -- Pending plain store: a valid store entry that is not an atomic.
+  let ps0 := Wire.mk "slo_ps0"; let ps1 := Wire.mk "slo_ps1"
+  let ps2 := Wire.mk "slo_ps2"; let ps3 := Wire.mk "slo_ps3"
+  let nat0 := Wire.mk "slo_nat0"; let nat1 := Wire.mk "slo_nat1"
+  let nat2 := Wire.mk "slo_nat2"; let nat3 := Wire.mk "slo_nat3"
+  let pending_store := Wire.mk "pending_store"
+  let pending_store_gates := [
+    Gate.mkNOT at0 nat0, Gate.mkNOT at1 nat1, Gate.mkNOT at2 nat2, Gate.mkNOT at3 nat3,
+    Gate.mkAND st0 nat0 ps0, Gate.mkAND st1 nat1 ps1,
+    Gate.mkAND st2 nat2 ps2, Gate.mkAND st3 nat3 ps3,
+    Gate.mkAND ev0 ps0 (Wire.mk "slo_pst0"), Gate.mkAND ev1 ps1 (Wire.mk "slo_pst1"),
+    Gate.mkAND ev2 ps2 (Wire.mk "slo_pst2"), Gate.mkAND ev3 ps3 (Wire.mk "slo_pst3"),
+    Gate.mkOR (Wire.mk "slo_pst0") (Wire.mk "slo_pst1") (Wire.mk "slo_pst01"),
+    Gate.mkOR (Wire.mk "slo_pst2") (Wire.mk "slo_pst3") (Wire.mk "slo_pst23"),
+    Gate.mkOR (Wire.mk "slo_pst01") (Wire.mk "slo_pst23") pending_store]
   -- has_pending_store per bank: (valid AND is_store) for any entry in the bank
   let vs0 := Wire.mk "slo_vs0"; let vs1 := Wire.mk "slo_vs1"
   let has_store_b0 := Wire.mk "slo_has_store_b0"
@@ -769,7 +798,10 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let slo_hs_gates := [
     Gate.mkAND ev0 st0 vs0, Gate.mkAND ev1 st1 vs1, Gate.mkOR vs0 vs1 has_store_b0,
     Gate.mkAND ev2 st2 vs2, Gate.mkAND ev3 st3 vs3, Gate.mkOR vs2 vs3 has_store_b1]
-  -- Age-aware SLO: only block a load if there's an OLDER store in the same bank.
+  -- Age-aware SLO: only block a load/staging op if there's an OLDER store in the
+  -- same bank.  Plain stores dispatch freely; atomics (which are stores for SLO
+  -- but carry `ps=0`) additionally wait for any older store/atomic, so an LR
+  -- and its paired SC dispatch in program order.
   -- In bank B with 2 entries (sub0, sub1): when both valid, alloc_ptr_B == sub-index
   -- of the older entry. So:
   --   Entry sub0: has older store iff vs1 AND alloc_ptr=1 (sub1 is older)
@@ -786,16 +818,16 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     -- Bank 0: age-aware per-entry older-store check
     Gate.mkAND vs1 alloc_ptr_0 hos0,   -- sub1 is older store → blocks sub0
     Gate.mkAND vs0 not_ptr_0 hos1,     -- sub0 is older store → blocks sub1
-    Gate.mkNOT hos0 not_hos0, Gate.mkOR st0 not_hos0 ok0,
+    Gate.mkNOT hos0 not_hos0, Gate.mkOR ps0 not_hos0 ok0,
     Gate.mkAND er0 ok0 (Wire.mk "slo_ar0_pre"), Gate.mkAND (Wire.mk "slo_ar0_pre") ext_ready_mask_0 ar0,
-    Gate.mkNOT hos1 not_hos1, Gate.mkOR st1 not_hos1 ok1,
+    Gate.mkNOT hos1 not_hos1, Gate.mkOR ps1 not_hos1 ok1,
     Gate.mkAND er1 ok1 (Wire.mk "slo_ar1_pre"), Gate.mkAND (Wire.mk "slo_ar1_pre") ext_ready_mask_1 ar1,
     -- Bank 1: age-aware per-entry older-store check
     Gate.mkAND vs3 alloc_ptr_1 hos2,   -- sub1 is older store → blocks sub0
     Gate.mkAND vs2 not_ptr_1 hos3,     -- sub0 is older store → blocks sub1
-    Gate.mkNOT hos2 not_hos2, Gate.mkOR st2 not_hos2 ok2,
+    Gate.mkNOT hos2 not_hos2, Gate.mkOR ps2 not_hos2 ok2,
     Gate.mkAND er2 ok2 (Wire.mk "slo_ar2_pre"), Gate.mkAND (Wire.mk "slo_ar2_pre") ext_ready_mask_2 ar2,
-    Gate.mkNOT hos3 not_hos3, Gate.mkOR st3 not_hos3 ok3,
+    Gate.mkNOT hos3 not_hos3, Gate.mkOR ps3 not_hos3 ok3,
     Gate.mkAND er3 ok3 (Wire.mk "slo_ar3_pre"), Gate.mkAND (Wire.mk "slo_ar3_pre") ext_ready_mask_3 ar3]
 
   -- Arbiters (use SLO-gated request signals)
@@ -842,7 +874,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   { name := "ReservationStation4_W2"
     inputs :=
       [clock, reset, zero, one, issue_en_0, issue_en_1] ++
-      [issue_is_store_0, issue_is_store_1] ++
+      [issue_is_store_0, issue_is_store_1, issue_is_atomic_0, issue_is_atomic_1] ++
       issue_opcode_0 ++ issue_dest_tag_0 ++ [issue_src1_ready_0] ++ issue_src1_tag_0 ++ issue_src1_data_0 ++
       [issue_src2_ready_0] ++ issue_src2_tag_0 ++ issue_src2_data_0 ++
       issue_opcode_1 ++ issue_dest_tag_1 ++ [issue_src1_ready_1] ++ issue_src1_tag_1 ++ issue_src1_data_1 ++
@@ -855,7 +887,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
        ext_ready_mask_0, ext_ready_mask_1, ext_ready_mask_2, ext_ready_mask_3]
     outputs :=
       [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
-       alloc_ptr_0, alloc_ptr_1,
+       alloc_ptr_0, alloc_ptr_1, pending_store,
        arb0_gr0, arb0_gr1, arb1_gr0, arb1_gr1] ++
       dispatch_opcode_0 ++ dispatch_src1_data_0 ++ dispatch_src2_data_0 ++ dispatch_dest_tag_0 ++
       dispatch_opcode_1 ++ dispatch_src1_data_1 ++ dispatch_src2_data_1 ++ dispatch_dest_tag_1
@@ -865,10 +897,11 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
       eg0 ++ eg1 ++ eg2 ++ eg3 ++
       alloc_avail_g_0 ++ alloc_avail_g_1 ++
       slo_g0 ++ slo_g1 ++ slo_g2 ++ slo_g3 ++ slo_hs_gates ++ slo_gate_gates ++
+      pending_store_gates ++
       b0_mux_op ++ b0_mux_dst ++ b0_mux_s1d ++ b0_mux_s2d ++
       b1_mux_op ++ b1_mux_dst ++ b1_mux_s1d ++ b1_mux_s2d
     instances :=
-      [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst, slo_i0, slo_i1, slo_i2, slo_i3] ++
+      [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst] ++ slo_i0 ++ slo_i1 ++ slo_i2 ++ slo_i3 ++
       ei0 ++ ei1 ++ ei2 ++ ei3 }
 
 /-- Config-driven MulDiv RS -/
