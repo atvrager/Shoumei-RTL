@@ -69,6 +69,41 @@ Rules that keep the ladder intact:
 5. **Budget every proof.** If one module's check dominates the run, decompose
    it. A check that cannot finish in seconds is a decomposition bug.
 
+### Shredding further: what atoms are still missing
+
+The ladder is only as granular as its atoms.  Today a module contributes a
+behavioural model, a structural `Circuit`, a handful of `native_decide`
+structural facts, and one LEC translation check -- and the *join* between
+behaviour and structure is asserted in prose.  `CompositionalCert.proofReference`
+is a `String`; `run-lec.sh` checks only that the dependencies were verified, so a
+cert can name a proof that does not exist or no longer holds.
+
+In order of leverage, the missing atoms are:
+
+1. **`Circuit` satisfies `Behavior` (per module).** There is no circuit
+   semantics in Lean, so nothing connects the structural `Circuit` to the
+   behavioural model (`CPUBehavioral.cpuStep` and friends).  LEC relates Lean SV
+   to Chisel SV; the theorems talk about the model; the two never meet.  Add an
+   evaluator (`eval : Circuit -> Wire -> Value`, gate by gate) and one
+   refinement theorem per leaf.  This is the atom that closes the gap.
+2. **One generic composition lemma.** Given `eval child = childBehavior` for
+   every child, a parent built from `CircuitInstance`s satisfies
+   `eval parent = parentBehavior`.  Prove this *once* over the hierarchical
+   evaluator; afterwards every parent's atom is a one-line instantiation of its
+   children's atoms.  This is what replaces flattened SAT/induction.
+3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`,
+   `mkMuxTree k w`, `mkRegisterN n`, `mkComparatorN n` should each carry a
+   semantic lemma (`eval (rca n) a b = a + b`).  Then adder -> ALU -> datapath is
+   a chain of one-liners instead of a per-instance decision procedure.
+4. **Machine-checked certificates.** Generate `CompositionalCert` entries *from*
+   the composition-lemma instantiations, so a certificate exists only if its
+   theorem type-checks.  `export_verification_certs` then cannot emit a dangling
+   reference.
+5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap;
+   add one semantic atom per opcode (`decode w = .X -> exec X s = spec X s`).
+   An extension then arrives as N small atoms -- exactly the shape wanted for
+   reviewing a new extension quickly.
+
 Antipatterns:
 
 - **A cert with no proof.** A `CompositionalCert` is a *reference to* a Lean
