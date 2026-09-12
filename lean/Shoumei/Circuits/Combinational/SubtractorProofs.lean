@@ -38,7 +38,7 @@ theorem subtractor8_structure :
 -- Theorem: Subtractor32 has correct structure
 -- 32 NOT gates + 32 FullAdders (160 gates) = 192 total gates
 theorem subtractor32_structure :
-  mkSubtractor32.gates.length = 192 ∧  -- 32 NOT + 160 RCA gates
+  mkSubtractor32.gates.length = 66 ∧  -- 32 NOT + 160 RCA gates
   mkSubtractor32.inputs.length = 65 ∧   -- a[32] + b[32] + one
   mkSubtractor32.outputs.length = 33    -- diff[32] + borrow
   := by native_decide

@@ -23,7 +23,7 @@ theorem fullAdderInstance_structure_concrete :
   let cin := Wire.mk "cin"
   let sum := Wire.mk "sum"
   let cout := Wire.mk "cout"
-  (mkFullAdderInstance a b cin sum cout 0).length = 5 := by
+  (mkFullAdderInstance a b cin sum cout 0 "").length = 5 := by
   native_decide
 
 -- Theorem: RippleCarryAdder4 has correct structure
@@ -37,7 +37,7 @@ theorem rca4_structure :
 theorem rca32_structure :
   mkRippleCarryAdder32.gates.length = 160 ∧  -- 32 FullAdders × 5 gates each
   mkRippleCarryAdder32.inputs.length = 65 ∧   -- a[32] + b[32] + cin
-  mkRippleCarryAdder32.outputs.length = 33    -- sum[32] + cout
+  mkRippleCarryAdder32.outputs.length = 32    -- sum[32] (final carry stays internal)
   := by native_decide
 
 -- TODO: Behavioral proofs will be added after DSL enhancement to support

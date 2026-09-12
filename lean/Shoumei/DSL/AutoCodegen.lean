@@ -33,7 +33,7 @@ private def circuitRegistry : IO (List Circuit) := do
   pure []
 
 -- Helper: define and auto-register a circuit for codegen
-def defineCircuit (name : String) (c : Circuit) : IO Circuit := do
+def defineCircuit (_name : String) (c : Circuit) : IO Circuit := do
   -- Could register in a global list here
   pure c
 
