@@ -25,7 +25,7 @@ jobs:
         id: detect
         run: |
           base="origin/${{ github.base_ref || 'main' }}"
-          if git diff --name-only "$base"...HEAD | grep -qE '^(lean/|testbench/|verification/|chisel/|physical/|\.github/|Makefile|Generate.*\.lean|lakefile\.lean|lean-toolchain)'; then
+          if git diff --name-only "$base"...HEAD | grep -qE '^(lean/|testbench/|verification/|physical/|\.github/|Makefile|Generate.*\.lean|lakefile\.lean|lean-toolchain)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -41,7 +41,6 @@ jobs:
       - name: Shellcheck
         run: |
           SHELL_SCRIPTS=$(find . -name "*.sh" -type f \
-            -not -path "./verification/FullAdder/*" \
             -not -path "./.git/*" \
             -not -path "./third_party/*")
           if [ -n "$SHELL_SCRIPTS" ]; then
@@ -78,12 +77,12 @@ jobs:
 
       - name: Trailing whitespace
         run: |
-          if git grep -I --line-number '\s$' -- '*.lean' '*.scala' '*.md' '*.sh' '*.py' '*.c' '*.cpp' '*.h' '*.S' '*.ld'; then
+          if git grep -I --line-number '\s$' -- '*.lean' '*.md' '*.sh' '*.py' '*.c' '*.cpp' '*.h' '*.S' '*.ld'; then
             echo "Warning: trailing whitespace found (non-blocking)"
           fi
 
       - name: TODO scan
-        run: git grep -n -E 'TODO|FIXME|XXX|HACK' -- '*.lean' '*.scala' '*.c' '*.cpp' '*.h' '*.S' || true
+        run: git grep -n -E 'TODO|FIXME|XXX|HACK' -- '*.lean' '*.c' '*.cpp' '*.h' '*.S' || true
 
       - name: Documentation exists
         run: |
@@ -141,6 +140,65 @@ jobs:
       - name: Build
         run: lake build
 
+      # `lake build` reaches only what the library root and the executables
+      # import, so a module with no importers is never compiled and can rot
+      # unnoticed.  That is not hypothetical: the first run of this step found
+      # 19 modules -- a fifth of the tree, mostly proof files -- that had been
+      # failing to elaborate for some time, referencing circuits that were
+      # renamed or removed.
+      #
+      # The list below is a ratchet, not an exemption: it records what was
+      # already broken so that NEW rot cannot land, and every entry deleted from
+      # it is progress.  Delete an entry by fixing that module, or by deleting
+      # the module if the circuit it describes no longer exists.
+      - name: Every module elaborates
+        run: |
+          modules=$(git ls-files 'lean/**/*.lean' | sed -e 's|^lean/||' -e 's|\.lean$||' -e 's|/|.|g')
+          # shellcheck disable=SC2086
+          lake build $modules > /tmp/build.log 2>&1 || true
+          grep -oE 'Building [A-Za-z0-9_.]+' /tmp/build.log | sed 's/^Building //' | sort -u > /tmp/failed.txt
+
+          cat > /tmp/known_unbuilt.txt <<'LIST'
+          Shoumei.Circuits.Combinational.ALUProofs
+          Shoumei.Circuits.Combinational.RippleCarryAdderProofs
+          Shoumei.Circuits.Combinational.ShifterProofs
+          Shoumei.DSL.AutoCodegen
+          Shoumei.RISCV.CPUProofs
+          Shoumei.RISCV.DecoderProofsTest
+          Shoumei.RISCV.DecoderTest
+          Shoumei.RISCV.Execution.MulDivExecUnitProofs
+          Shoumei.RISCV.Execution.ReservationStationTest
+          Shoumei.RISCV.FetchProofs
+          Shoumei.RISCV.Memory.Cache.CachedCPUProofs
+          Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs
+          Shoumei.RISCV.Microcode.MicrocodeROMProofs
+          Shoumei.RISCV.Renaming.FreeListProofs
+          Shoumei.RISCV.Renaming.RATProofs
+          Shoumei.RISCV.Renaming.RenameStageProofs
+          Shoumei.RISCV.Retirement.ROBTest
+          Shoumei.RISCV.SemanticsTest
+          Shoumei.RISCV.SemanticsTestSimple
+          LIST
+          sed -i 's/^ *//' /tmp/known_unbuilt.txt
+          sort -u -o /tmp/known_unbuilt.txt /tmp/known_unbuilt.txt
+
+          echo "modules that failed: $(wc -l < /tmp/failed.txt)"
+          echo "already known broken: $(wc -l < /tmp/known_unbuilt.txt)"
+
+          new_failures=$(comm -23 /tmp/failed.txt /tmp/known_unbuilt.txt)
+          if [ -n "$new_failures" ]; then
+            echo "::error::these modules do not elaborate and are not known to be broken:"
+            echo "$new_failures"
+            grep -B2 -A6 "$(echo "$new_failures" | head -1)" /tmp/build.log | head -30
+            exit 1
+          fi
+
+          fixed=$(comm -13 /tmp/failed.txt /tmp/known_unbuilt.txt)
+          if [ -n "$fixed" ]; then
+            echo "::notice::these now elaborate and can be removed from the known-broken list:"
+            echo "$fixed"
+          fi
+
       - name: Check for sorry
         run: |
           if grep -r "sorry" lean/ --include="*.lean"; then
@@ -151,6 +209,8 @@ jobs:
 
 
   shoumei-roundtrip:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: Shoumei Round-trip
     runs-on: ubuntu-latest
     needs: [lean-build]
@@ -173,52 +233,10 @@ jobs:
       - name: Shoumei round-trip
         run: lake exe generate_shoumei
 
-  scala-build:
-    needs: [changes]
-    if: needs.changes.outputs.code == 'true'
-    name: Scala Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-
-      - name: Setup Coursier
-        run: |
-          curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" | gzip -d > cs
-          chmod +x cs
-          ./cs setup --yes --jvm 11
-          echo "$HOME/.local/share/coursier/bin" >> $GITHUB_PATH
-
-      - name: Cache sbt
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/.sbt
-            ~/.ivy2/cache
-            chisel/target
-            chisel/project/target
-          key: ${{ runner.os }}-sbt-${{ hashFiles('chisel/build.sbt', 'chisel/project/**') }}
-          restore-keys: |
-            ${{ runner.os }}-sbt-
-
-      - name: Compile
-        working-directory: ./chisel
-        run: sbt compile
-
-      - name: Check formatting
-        working-directory: ./chisel
-        run: sbt scalafmtCheckAll
-
   codegen:
     name: Code Generation
     runs-on: ubuntu-latest
-    needs: [lean-build, scala-build]
+    needs: [lean-build]
     steps:
       - uses: actions/checkout@v4
 
@@ -244,32 +262,6 @@ jobs:
           key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
           # No restore-keys fallback: stale oleans cause codegen bugs
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-
-      - name: Setup Coursier
-        run: |
-          curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" | gzip -d > cs
-          chmod +x cs
-          ./cs setup --yes --jvm 11
-          echo "$HOME/.local/share/coursier/bin" >> $GITHUB_PATH
-
-      - name: Cache sbt
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/.sbt
-            ~/.ivy2/cache
-            chisel/target
-            chisel/project/target
-          key: ${{ runner.os }}-sbt-${{ hashFiles('chisel/build.sbt', 'chisel/project/**') }}
-          restore-keys: |
-            ${{ runner.os }}-sbt-
-
       # NOTE: no `lake clean` here.  The restored .lake cache is keyed on a hash
       # of the Lean sources, toolchain and manifests, so a cache hit is already
       # exactly the right artifacts; wiping it forces a 3-4 minute recompile.
@@ -278,9 +270,6 @@ jobs:
 
       - name: Generate test assembly
         run: lake exe gen_tests
-
-      - name: Compile Chisel
-        run: make chisel
 
       - name: Generate synthesis filelists
         run: make filelists
@@ -292,10 +281,8 @@ jobs:
           path: |
             output/sv-asap7/
             output/sv-from-lean/
-            output/sv-from-chisel/
             output/sv-netlist/
             output/cpp_sim/
-            chisel/src/main/scala/generated/
             testbench/generated/
             testbench/tests/generated/
             verification/compositional-certs.txt
@@ -313,37 +300,6 @@ jobs:
             physical/constraints.sdc
             physical/config.mk
           retention-days: 30
-
-  lec:
-    name: LEC Verification
-    runs-on: ubuntu-latest
-    needs: [codegen]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download codegen artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: codegen-output
-
-      # Content-addressed LEC result cache: unchanged modules are skipped, so
-      # only modules whose emitted RTL actually changed are re-proved.
-      - name: Cache LEC results
-        uses: actions/cache@v4
-        with:
-          path: .lec-cache
-          key: lec-${{ hashFiles('lean/**/*.lean', 'GenerateAll.lean', 'verification/run-lec.sh') }}
-          restore-keys: |
-            lec-
-
-      - name: Install Yosys
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y yosys
-
-      - name: Run LEC
-        run: ./verification/run-lec.sh -j "$(nproc)" output/sv-from-lean output/sv-from-chisel
 
   verilator-sim:
     name: Verilator Simulation
@@ -528,14 +484,13 @@ jobs:
     name: CI Pass
     if: always()
     runs-on: ubuntu-latest
-    needs: [lint, proof-coverage, lec, verilator-sim, cppsim, slang-lint, cosim, smoke-test]
+    needs: [lint, proof-coverage, verilator-sim, cppsim, slang-lint, cosim, smoke-test]
     steps:
       - name: Check all jobs passed
         run: |
           results=( \
             "${{ needs.lint.result }}" \
             "${{ needs.proof-coverage.result }}" \
-            "${{ needs.lec.result }}" \
             "${{ needs.verilator-sim.result }}" \
             "${{ needs.cppsim.result }}" \
             "${{ needs.slang-lint.result }}" \
