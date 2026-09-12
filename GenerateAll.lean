@@ -149,14 +149,17 @@ def allCircuits : List Circuit := [
   mkMux4x8,
   mkMuxTree 4 6,
   mkMuxTree 4 32,
+  mkMuxTree 4 64,  -- Building block for Mux8x64
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
   mkMux8x6,       -- Building block for hierarchical 64:1 muxes
   mkMux8x32Hierarchical, -- Hierarchical 8:1 (2× Mux4x32 + sel buffers)
+  mkMux8x64Hierarchical, -- Hierarchical 8:1 (2× Mux4x64 + sel buffers)
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
+  mkMux64x64Hierarchical,  -- Hierarchical version (9 instances of Mux8x64)
   mkMux64x6Hierarchical,   -- Hierarchical version (9 instances instead of 1512 gates)
   mkPriorityArbiter2,
   mkPriorityArbiter4,
@@ -216,6 +219,7 @@ def allCircuits : List Circuit := [
   mkFreeList64Flushable,
   mkBitmapFreeList64_W2,
   mkPhysRegFile64,
+  mkPhysRegFile64x64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
@@ -276,6 +280,7 @@ def allCircuits : List Circuit := [
   cdbMuxFW2,
   mkFetchStage,
   mkRenameStage,
+  mkRenameStage 64,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]

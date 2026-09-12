@@ -299,7 +299,7 @@ Architecture:
 - PhysRegFile_64x32 instance for operand value storage
 - Control logic: x0 detection, stall generation, handshaking
 -/
-def mkRenameStage : Circuit :=
+def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
   -- === W=2: Dual-issue RenameStage ===
   --
   -- Slot 0 keeps original port names (backwards compatible with W=1 test benches).
@@ -308,7 +308,6 @@ def mkRenameStage : Circuit :=
   -- Intra-group forwarding: slot 1's rs1/rs2 bypass slot 0's rd if addresses match.
   let tagWidth  := 6
   let archWidth := 5
-  let dataWidth := 32
 
   -- === Global signals ===
   let clock := Wire.mk "clock"
@@ -824,7 +823,7 @@ def mkRenameStage : Circuit :=
 
   -- PhysRegFile (shared, dual write port from CDB)
   let physregfile_inst : CircuitInstance := {
-    moduleName := "PhysRegFile_64x32"
+    moduleName := s!"PhysRegFile_64x{dataWidth}"
     instName := "u_prf"
     portMap :=
       [("clock", clock), ("reset", reset),
@@ -902,7 +901,7 @@ def mkRenameStage : Circuit :=
   let all_instances :=
     [crat_0_inst, rat_inst_0, rat_inst_1, freelist_inst, physregfile_inst]
 
-  { name := "RenameStage_W2"
+  { name := if dataWidth == 32 then "RenameStage_W2" else s!"RenameStage_W2_{dataWidth}"
     inputs := all_inputs
     outputs := all_outputs
     gates := all_gates

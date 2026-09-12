@@ -39,6 +39,20 @@ def mux8x32_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
 }
 
+/-- Mux8x64: 8:1 mux, 64-bit, hierarchical (2× Mux4x64 + select buffers) -/
+def mux8x64_cert : CompositionalCert := {
+  moduleName := "Mux8x64"
+  dependencies := ["Mux4x64"]
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
+/-- Mux64x64: 64:1 mux, 64-bit, hierarchical (9× Mux8x64 + select buffers) -/
+def mux64x64_cert : CompositionalCert := {
+  moduleName := "Mux64x64"
+  dependencies := ["Mux8x64"]
+  proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
+}
+
 /-! ## Sequential Circuits -/
 
 /-- Register91 = Register64 + Register16 + Register8 + Register2 + Register1 -/
@@ -229,6 +243,13 @@ def register68_cert : CompositionalCert := {
 def physregfile_cert : CompositionalCert := {
   moduleName := "PhysRegFile_64x32"
   dependencies := ["Decoder6", "Mux64x32"]
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
+/-- PhysRegFile_64x64: Physical register file (64 registers × 64 bits) -/
+def physregfile_64x64_cert : CompositionalCert := {
+  moduleName := "PhysRegFile_64x64"
+  dependencies := ["Decoder6", "Mux64x64"]
   proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
 }
 
@@ -505,6 +526,13 @@ def renameStage_w2_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
+/-- RenameStage_W2_64: Composite rename stage for dual issue (64-bit FP domain) -/
+def renameStage_w2_64_cert : CompositionalCert := {
+  moduleName := "RenameStage_W2_64"
+  dependencies := ["RAT_32x6", "BitmapFreeList_64_W2", "PhysRegFile_64x64"]
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
 /-- FetchStage: PC management and instruction fetch -/
 def fetchStage_cert : CompositionalCert := {
   moduleName := "FetchStage"
@@ -619,8 +647,10 @@ def cpu_rv32imf_zicsr_zifencei_microcoded_cert : CompositionalCert := {
 def allCerts : List CompositionalCert := [
   -- Combinational (hierarchical muxes)
   mux64x32_cert,
+  mux64x64_cert,
   mux64x6_cert,
   mux8x32_cert,
+  mux8x64_cert,
   -- Sequential
   register24_cert,
   register66_cert,
@@ -650,6 +680,7 @@ def allCerts : List CompositionalCert := [
   queuePointer_6_cert,
   -- Renaming
   physregfile_cert,
+  physregfile_64x64_cert,
   rat_cert,
   freelist_cert,
   bitmapFreelist_cert,
@@ -693,6 +724,7 @@ def allCerts : List CompositionalCert := [
   -- Phase 8: Top-Level Integration
   renameStage_cert,
   renameStage_w2_cert,
+  renameStage_w2_64_cert,
   fetchStage_cert,
   cpu_rv32i_cert,
   cpu_rv32im_cert,
