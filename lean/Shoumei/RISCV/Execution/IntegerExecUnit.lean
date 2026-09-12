@@ -86,6 +86,15 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .FMV_X_W | .FMV_W_X | .FCLASS_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
   | .FLW | .FSW => 0
+  -- D extension operations (handled by FPExecUnit or MemoryUnit)
+  | .FADD_D | .FSUB_D | .FMUL_D | .FDIV_D | .FSQRT_D
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
+  | .FEQ_D | .FLT_D | .FLE_D
+  | .FCVT_W_D | .FCVT_WU_D | .FCVT_D_W | .FCVT_D_WU
+  | .FCVT_S_D | .FCVT_D_S
+  | .FCLASS_D
+  | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
+  | .FLD | .FSD => 0
   -- Zicsr (CSR ops routed to Integer, but handled specially)
   | .CSRRW | .CSRRS | .CSRRC | .CSRRWI | .CSRRSI | .CSRRCI => 0
 
