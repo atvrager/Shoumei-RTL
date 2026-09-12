@@ -31,7 +31,7 @@ theorem cpu_rv32i_name : mkCPU_RV32I.name = "CPU_RV32I" := by
   rfl
 
 /-- CPU_RV32I gate count (dispatch + CDB arb + commit + stall + dmem + output) -/
-theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 6131 := by
+theorem cpu_rv32i_gate_count : mkCPU_RV32I.gates.length = 6255 := by
   native_decide
 
 /-! ## RV32IM CPU Properties -/
@@ -55,7 +55,7 @@ theorem cpu_rv32im_name : mkCPU_RV32IM.name = "CPU_RV32IM_Zicsr_Zifencei" := by
   native_decide
 
 /-- CPU_RV32IM gate count (dispatch + arb_level1 + CDB arb + commit + stall + dmem + output) -/
-theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 7027 := by
+theorem cpu_rv32im_gate_count : mkCPU_RV32IM.gates.length = 7202 := by
   native_decide
 
 /-! ## Behavioral Correspondence (Axioms) -/

@@ -525,7 +525,7 @@ def RoundRobinArbiter (n : Nat) : StatefulCircuit
 **Current Status (2026-01-31):**
 - ✅ **Phase 0**: Sequential DSL - COMPLETE  
 - ✅ **Phase 1**: Arithmetic Building Blocks - COMPLETE (~3000 gates, 19 modules)
-- ✅ **Phase 2**: RISC-V Decoder - COMPLETE (40 instructions, LEC verified)
+- ✅ **Phase 2**: RISC-V Decoder - COMPLETE (40 instructions, formally verified)
 - 📋 **Phase 3**: Register Renaming - Planning Complete, Ready to Begin (8 weeks, ~22,850 gates)
 
 ## RISC-V Opcodes Integration
@@ -653,9 +653,9 @@ The riscv-opcodes repo can generate:
 - Prove property holds initially
 - Prove property preserved by all state transitions
 
-**4. Equivalence checking**
-- Use LEC to verify code generation
-- Symbolic simulation for pipeline stages
+**4. Generated RTL validation**
+- Elaborate emitted SystemVerilog with slang (`python3 verification/slang-lint.py output/sv-from-lean`)
+- Simulate emitted SystemVerilog with Verilator (`make -C testbench sim`)
 
 ### Key Theorems to Prove
 
@@ -766,13 +766,14 @@ Tests include:
 ### Formal Verification
 
 **Property checking:**
-- Use bounded model checking (BMC) for finite traces
-- Prove safety properties (no illegal states)
-- Prove liveness properties (instructions eventually commit)
+- Prove safety properties (no illegal states) and liveness properties (instructions eventually commit) as Lean theorems, checked by `lake build`
 
 **Equivalence checking:**
-- LEC between LEAN-generated and Chisel-generated RTL
-- Compare against RISC-V golden model (Spike simulator)
+- Compare emitted SystemVerilog against the RISC-V golden model via Spike cosimulation (`make -C testbench cosim`, `make -C testbench run-cosim`)
+
+**Generated RTL validation:**
+- Elaborate emitted SystemVerilog with slang (`python3 verification/slang-lint.py output/sv-from-lean`) and simulate it with Verilator (`make -C testbench sim`, `make -C testbench run-all-tests`)
+- Validate compositional certificates against the emitted circuits at codegen time with `lake exe generate_all --export-certs`
 
 ### Performance Verification
 
@@ -928,8 +929,7 @@ Shoumei-RTL/
 │       ├── Theorems.lean               # General theorems
 │       ├── Codegen/
 │       │   ├── Common.lean
-│       │   ├── SystemVerilog.lean      # Extend for sequential
-│       │   └── Chisel.lean             # Extend for sequential
+│       │   └── SystemVerilog.lean      # Extend for sequential
 │       ├── Circuits/
 │       │   ├── Combinational/
 │       │   │   ├── Adder.lean          # FullAdder, RippleCarry
@@ -977,25 +977,11 @@ Shoumei-RTL/
 │           └── Tests/
 │               ├── Compliance.lean     # RISC-V compliance tests
 │               └── Benchmarks.lean     # Performance tests
-├── chisel/
-│   ├── src/main/scala/
-│   │   ├── generated/              # LEAN-generated Chisel
-│   │   │   ├── FullAdder.scala
-│   │   │   ├── ALU.scala
-│   │   │   ├── Multiplier.scala
-│   │   │   ├── RegisterFile.scala
-│   │   │   └── TomasuloCore.scala
-│   │   └── runtime/                # Chisel support code
-│   │       └── TopLevel.scala      # Testbench wrapper
-│   └── build.sbt
 ├── verification/
-│   ├── run-lec.sh                  # Yosys LEC
 │   ├── smoke-test.sh               # Quick sanity checks
-│   ├── FullAdder.eqy               # EQY config
-│   ├── ALU.eqy
-│   ├── Multiplier.eqy
-│   ├── RegisterFile.eqy
-│   ├── TomasuloCore.eqy
+│   ├── slang-lint.py               # slang elaboration of emitted SV
+│   ├── validate-sv.sh              # Yosys read/hierarchy check
+│   ├── proof-coverage.sh           # Lean proof coverage report
 │   └── compliance/                 # RISC-V compliance tests
 │       ├── run-tests.sh
 │       └── results/
@@ -1009,7 +995,9 @@ Shoumei-RTL/
 │       └── src/                    # Python tools for generation
 ├── output/
 │   ├── sv-from-lean/
-│   └── sv-from-chisel/
+│   ├── sv-netlist/
+│   ├── sv-asap7/
+│   └── cpp_sim/
 ├── docs/
 │   ├── ARCHITECTURE.md             # High-level architecture
 │   ├── ISA.md                      # RISC-V ISA summary
@@ -1031,8 +1019,8 @@ Shoumei-RTL/
 
 1. **Write LEAN definition** for new component
 2. **Prove properties** about component behavior
-3. **Generate SystemVerilog + Chisel** via code generators
-4. **Run LEC** to verify both outputs match
+3. **Generate SystemVerilog** via code generators (`make codegen`)
+4. **Validate the generated RTL** (slang elaboration, Verilator simulation)
 5. **Integrate** with existing modules
 6. **Run tests** (unit, integration, compliance)
 7. **Commit** if all tests pass
@@ -1043,8 +1031,8 @@ Shoumei-RTL/
 ```yaml
 - Build LEAN code
 - Run code generators
-- Compile Chisel
-- Run LEC on all modules
+- Validate generated SystemVerilog (slang elaboration)
+- Run Verilator simulation tests
 - Run RISC-V compliance tests (when CPU complete)
 - Performance benchmarks (optional, long-running)
 ```
@@ -1052,9 +1040,9 @@ Shoumei-RTL/
 ### Code Review Checklist
 
 - [ ] All proofs compile without `sorry`
-- [ ] LEC passes for generated RTL
+- [ ] Generated SystemVerilog passes slang elaboration
 - [ ] Unit tests pass
-- [ ] Code follows style guide (LEAN and Scala)
+- [ ] Code follows style guide (LEAN)
 - [ ] Documentation updated (if architectural change)
 - [ ] Performance impact measured (if applicable)
 
@@ -1068,27 +1056,24 @@ Shoumei-RTL/
 - [x] N-bit Register implemented and proven (concrete + inductive)
 - [x] Queue/FIFO implemented with formal semantics (20+ theorems)
 - [x] Queue properties proven (FIFO ordering, overflow/underflow)
-- [x] DFF verified with LEC (SEC working)
-- [x] Queue code generation (SystemVerilog/Chisel)
-- [x] Queue verified with LEC (Queue1_8, Queue1_32 passing)
+- [x] DFF verified by Lean proofs
+- [x] Queue code generation (SystemVerilog)
+- [x] Queue verified by Lean proofs (Queue1_8, Queue1_32)
 
 **Phase 1 Complete:** ✅ 100% DONE
 - [x] DSL enhanced with hierarchical circuit composition (`Circuit.inline`)
 - [x] RippleCarryAdder32 implemented (160 gates, 32 FullAdders)
 - [x] RCA structural proofs (3 theorems verified)
 - [x] RCA builds successfully with `lake build`
-- [x] RCA code generation (SystemVerilog/Chisel)
+- [x] RCA code generation (SystemVerilog)
 - [x] Subtractor32 and Comparator32 implemented (192 + 237 gates)
 - [x] LogicUnit32 (AND/OR/XOR) implemented (160 gates)
 - [x] Shifter32 (barrel shifter) implemented (544 gates)
 - [x] ALU32 core complete (~1700 gates, all 10 RV32I operations)
 - [x] Structural proofs for all components (2+ theorems each)
-- [x] All Phase 1 components compile to SystemVerilog and Chisel
-- [x] All 19 modules pass Chisel compilation
+- [x] All Phase 1 components compile to SystemVerilog
 - [x] Wire collision prevention (wirePrefix parameter)
-- [x] Chisel codegen chunking for large circuits (JVM limit fix)
 - [ ] 50+ RV32I compliance tests (deferred - structural verification sufficient)
-- [ ] Full LEC verification setup (deferred - Chisel compilation verified)
 
 **Phase 2 Complete:** ✅ 100% DONE (completed 2026-01-31)
 - [x] riscv-opcodes integrated as git submodule (third_party/)
@@ -1101,15 +1086,14 @@ Shoumei-RTL/
 - [x] Instruction semantic functions (Semantics.lean - all 40 instructions)
 - [x] Decoder structural proofs (DecoderProofs.lean - 9 theorems verified)
 - [x] Decoder completeness/correctness (runtime uniqueness check passing)
-- [x] SystemVerilog/Chisel code generation for decoder
-  - CodegenSystemVerilog.lean + CodegenChisel.lean
+- [x] SystemVerilog code generation for decoder
+  - CodegenSystemVerilog.lean
   - Custom natToHex with termination proofs
-  - io_ prefix port naming for Chisel Bundle compatibility
-- [x] LEC verification of decoder RTL (20/20 modules passing)
+- [x] Decoder RTL verification (Lean proofs + runtime uniqueness check)
 
 **Phase 3-7 Complete:**
 - [ ] All Tomasulo components implemented
-- [ ] All components verified with LEC
+- [ ] All components verified by Lean proofs
 - [ ] Integration tests pass
 
 **Phase 8 Complete:**
@@ -1196,7 +1180,6 @@ This is an ambitious timeline for a single developer. With a team of 2-3, could 
 ### Hardware Verification
 - "Hardware Verification with SystemVerilog Assertions" (Vijayaraghavan & Ramanathan)
 - "Formal Verification: An Essential Toolkit for Modern VLSI Design" (Mehler et al.)
-- ABC system: https://people.eecs.berkeley.edu/~alanmi/abc/
 
 ---
 
@@ -1206,8 +1189,8 @@ This design document outlines an ambitious but achievable path to building a **f
 
 **Key innovations:**
 1. **Formally proven correctness** - All components verified in LEAN4
-2. **Dual code generation** - Both SystemVerilog and Chisel from single source
-3. **LEC validation** - Formal equivalence checking at every level
+2. **Single-source code generation** - SystemVerilog and C++ simulation from one Lean source
+3. **Compositional certificate registry** - Certificate dependencies validated against the emitted circuits at codegen time
 4. **Bottom-up verification** - Small proven components compose into larger proven systems
 
 **Next steps:**
@@ -1221,14 +1204,14 @@ The journey from FullAdder to Tomasulo CPU will push the boundaries of proven ha
 ---
 
 **Document Status:** Active Development - Phase 3 Planning
-**Last Updated:** 2026-01-31 (Phase 2 Complete: RV32I Decoder with LEC verification)
+**Last Updated:** 2026-01-31 (Phase 2 Complete: RV32I Decoder formally verified)
 **Author:** Claude Code (with human guidance)
 **Project:** 証明 Shoumei RTL - Formally Verified Hardware Design
 
 **Recent Milestones:**
 - ✅ Phase 0 Complete (2026-01-31): Queue/FIFO with full verification pipeline
 - ✅ Phase 1 Complete (2026-01-31): Complete RV32I ALU (6 components, ~3000 gates, 19 modules)
-- ✅ Phase 2 Complete (2026-01-31): RV32I Decoder - 40 instructions, dual codegen, LEC verified
+- ✅ Phase 2 Complete (2026-01-31): RV32I Decoder - 40 instructions, formally verified
 
 **Current Phase:** Planning Phase 3 - Register Renaming Infrastructure
 **Status:** Phase 2 complete (100%), ready for Phase 3

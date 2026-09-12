@@ -9,9 +9,11 @@ namespace Shoumei.RISCV.Memory.Cache
 
 open Shoumei.RISCV
 
-/-- CachedCPU is a pure hierarchical composition with minimal glue. -/
+/-- CachedCPU is a pure hierarchical composition; `.gates` holds only glue logic:
+    5 single gates (stall/ready, ifetch valid, snoop valid, RVVI retire OR)
+    + 32 store-snoop address BUFs + 32 store-snoop data BUFs = 69. -/
 theorem cached_cpu_gate_count :
-    (mkCachedCPU rv32imConfig).gates.length = 4 := by native_decide
+    (mkCachedCPU rv32imConfig).gates.length = 69 := by native_decide
 
 /-- CachedCPU has exactly 2 instances (CPU + MemoryHierarchy). -/
 theorem cached_cpu_instance_count :

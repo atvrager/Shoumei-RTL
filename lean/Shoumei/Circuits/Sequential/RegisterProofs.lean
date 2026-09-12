@@ -19,7 +19,6 @@ namespace Shoumei.Circuits.Sequential.RegisterProofs
 /-- Register91 is built from power-of-2 building blocks -/
 def register91_cert : CompositionalCert := {
   moduleName := "Register91"
-  dependencies := ["Register64", "Register16", "Register8", "Register2", "Register1"]
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 

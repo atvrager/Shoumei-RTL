@@ -1,6 +1,0 @@
-#!/bin/bash
-# Run Logical Equivalence Checking
-
-set -e
-
-./verification/run-lec.sh

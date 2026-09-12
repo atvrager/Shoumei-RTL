@@ -69,27 +69,24 @@ The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the fo
 
 ## Generated Outputs
 
-When code generation is implemented, this example will generate:
+`lake exe generate_all` emits, among others, for this circuit:
 
-- **SystemVerilog**: `output/sv-from-lean/FullAdder.sv`
-- **Chisel**: `chisel/src/main/scala/generated/FullAdder.scala`
-- **Compiled SV**: `output/sv-from-chisel/FullAdder.sv` (from Chisel via firtool)
+- **SystemVerilog**: `output/sv-from-lean/FullAdder.sv` (hierarchical)
+- **Netlist SystemVerilog**: `output/sv-netlist/FullAdder.sv` (flat)
+- **C++ simulation**: `output/cpp_sim/` (`.h` + `.cpp`)
 
 ## Verification
 
-The logical equivalence checker (LEC) will verify that both SystemVerilog outputs are functionally identical.
+`lean/Shoumei/Examples/AdderProofs.lean` proves the full adder's truth table,
+commutativity and arithmetic correctness in Lean. The emitted SystemVerilog is
+elaborated by slang, and its ports and gate expressions are checked by
+`verification/smoke-test.sh`.
 
 ## Building
 
 ```bash
-# Generate code (TODO: not yet implemented)
-make codegen
-
-# Compile Chisel to SystemVerilog
-make chisel
-
-# Run equivalence checking
-make lec
+# Generate code for all circuits
+lake exe generate_all
 
 # Or run the entire pipeline
 make all
@@ -97,7 +94,4 @@ make all
 
 ## Next Steps
 
-1. Implement code generation executable in LEAN
-2. Fill in stubbed semantic evaluation functions
-3. Prove correctness theorems about the full adder
-4. Add more complex examples (ripple carry adder, etc.)
+1. Add more complex examples (ripple carry adder, etc.)

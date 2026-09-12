@@ -9,9 +9,6 @@ FROM ubuntu:24.04
 # ── Version pins (update these when bumping toolchains) ──────────────
 ARG LEAN_VERSION=v4.27.0
 ARG RISCV_TAG=2026.01.23
-ARG CHISEL_VERSION=7.7.0
-ARG SCALA_VERSION=2.13.18
-ARG JAVA_VERSION=11
 
 # ── System packages ─────────────────────────────────────────────────
 # Matches what CI installs across its jobs: build tools, linters,
@@ -23,11 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc g++ python3 python3-pip xz-utils gzip unzip zlib1g-dev \
         # Linters (lint CI job)
         shellcheck cppcheck ripgrep \
-        # HDL tools (lec, verilator-sim, smoke-test CI jobs)
+        # HDL tools (verilator-sim, smoke-test CI jobs)
         yosys verilator zlib1g-dev liblz4-dev \
         device-tree-compiler \
-        # JDK for Scala/Chisel (scala-build CI job)
-        openjdk-${JAVA_VERSION}-jdk-headless \
         # GitHub CLI for PR workflows
         gpg \
     && rm -rf /var/lib/apt/lists/*
@@ -51,14 +46,6 @@ WORKDIR /home/dev
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
         | sh -s -- -y --default-toolchain leanprover/lean4:${LEAN_VERSION}
 
-# ── Coursier + sbt ──────────────────────────────────────────────────
-# Same install command as CI's scala-build job.
-RUN mkdir -p /home/dev/.local/bin \
-    && curl -fL "https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz" \
-        | gzip -d > /home/dev/.local/bin/cs \
-    && chmod +x /home/dev/.local/bin/cs \
-    && /home/dev/.local/bin/cs setup --yes --jvm ${JAVA_VERSION}
-
 # ── RISC-V GCC cross-compiler ──────────────────────────────────────
 # Same archive as CI's verilator-sim job + setup-riscv-toolchain.sh
 RUN mkdir -p /home/dev/.local/riscv32-elf \
@@ -76,7 +63,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # ── PATH ────────────────────────────────────────────────────────────
 # Matches the Makefile's PATH and bootstrap.py's layout.
-ENV PATH="/home/dev/.elan/bin:/home/dev/.local/share/coursier/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/spike/bin:/home/dev/.local/bin:${PATH}"
+ENV PATH="/home/dev/.elan/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/spike/bin:/home/dev/.local/bin:${PATH}"
 
 # ── Spike RISC-V ISA simulator (cosimulation oracle) ─────────────
 # LAST because it COPYs from build context (submodule), busting cache

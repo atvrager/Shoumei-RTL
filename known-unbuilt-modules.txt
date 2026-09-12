@@ -1,0 +1,10 @@
+# Modules that do not elaborate.
+#
+# `scripts/gen-lean-root.py` leaves these out of lean/Shoumei/All.lean, because
+# importing one would fail the whole build.  It is empty, and that is the point:
+# every module in the tree now elaborates as part of the default build.
+#
+# It stays as a file so that the escape hatch is visible and awkward rather than
+# absent.  An entry here is a promise to fix the module; the list may only
+# shrink.  If the circuit a module describes no longer exists, delete the module
+# instead.

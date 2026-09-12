@@ -21,8 +21,9 @@ netlist or a structural Verilog file.
 1. A human-readable text format that maps 1:1 to `Circuit` values
 2. A pretty printer (`Circuit → String`) that emits `.shoumei` files
 3. A parser (`String → Except String Circuit`) that reads them back
-4. Round-trip validation: parse a `.shoumei` file, generate SystemVerilog, LEC against
-   the original Lean-generated SV — if it passes, the text format is semantically faithful
+4. Round-trip validation (planned): parse a `.shoumei` file, generate SystemVerilog, and
+   check the result with the surviving tooling — slang elaboration of
+   `output/sv-roundtrip/` and simulation of the round-tripped SV
 5. Eventually, large modules (including the CPU) can be authored and maintained as
    `.shoumei` files while proofs remain in Lean
 
@@ -229,7 +230,7 @@ inst KoggeStoneAdder32 u_ksa(
 
 Optional `@`-prefixed directives placed between the module header and the opening
 brace. These map to codegen-only fields on `Circuit` and have no effect on circuit
-semantics or LEC.
+semantics or on the emitted RTL.
 
 **`@keepHierarchy`** — sets `Circuit.keepHierarchy := true`:
 
@@ -528,8 +529,10 @@ For each circuit in `allCircuits`:
 3. Generate SystemVerilog from the parsed `Circuit`
 4. Write to `output/sv-roundtrip/<Name>.sv`
 
-Then the existing LEC infrastructure compares `sv-from-lean/<Name>.sv` against
-`sv-roundtrip/<Name>.sv`. If LEC passes, the round-trip is semantically faithful.
+The planned validation harness uses the surviving tooling rather than an
+equivalence checker: elaborate every file in `output/sv-roundtrip/` with
+`python3 verification/slang-lint.py`, and (planned) simulate the round-tripped SV
+under Verilator to confirm it behaves identically to the Lean-generated RTL.
 
 **What this validates:**
 - The pretty printer doesn't lose information
@@ -569,18 +572,17 @@ lean_exe generate_all_shoumei where
   root := `GenerateAllShoumei
 ```
 
-### 6.6 LEC integration
+### 6.6 Round-trip check integration
 
-Add a mode to `verification/run-lec.sh` that compares `sv-from-lean/` against
-`sv-roundtrip/`:
+Add a `--roundtrip` mode that points the surviving SV checks at `output/sv-roundtrip/`
+instead of `output/sv-from-lean/`:
 
 ```bash
-./verification/run-lec.sh --roundtrip   # LEC sv-from-lean vs sv-roundtrip
+python3 verification/slang-lint.py output/sv-roundtrip   # elaborate round-tripped SV
 ```
 
-This reuses the existing LEC infrastructure (SAT miter for combinational,
-induction for sequential, compositional certs for large modules). No new
-verification logic needed.
+This reuses the existing elaboration and simulation tooling; no new verification
+logic is needed.
 
 ---
 
@@ -588,11 +590,11 @@ verification logic needed.
 
 | Phase | Scope | Modules covered | Validates |
 |-------|-------|-----------------|-----------|
-| 1 | Flat combinational: gate emit/parse, scalars + buses, `for` loops | FullAdder, RippleCarryAdder32, LogicUnit32, XorArray, etc. | Basic round-trip, LEC on ~20 modules |
+| 1 | Flat combinational: gate emit/parse, scalars + buses, `for` loops | FullAdder, RippleCarryAdder32, LogicUnit32, XorArray, etc. | Basic round-trip, slang elaboration of the round-tripped SV |
 | 2 | Hierarchical combinational: `inst` emit/parse, bus port compression | Subtractor32, Comparator32, ALU32, MuxTree, etc. | Instance port maps survive round-trip |
-| 3 | Sequential circuits: DFF/DFF_SET, clock/reset handling | Register32, Queue1_32, Counter, ShiftRegister, etc. | Sequential LEC (induction) |
+| 3 | Sequential circuits: DFF/DFF_SET, clock/reset handling | Register32, Queue1_32, Counter, ShiftRegister, etc. | Sequential round-trip (DFF state survives) |
 | 4 | Annotations: `@keepHierarchy`, `@ram`, `@bundle` | PhysRegFile, QueueRAM, FreeList, etc. | Codegen metadata round-trips |
-| 5 | Full coverage: all 89 modules | Everything including CPU_RV32IM | 100% LEC on round-trip SV |
+| 5 | Full coverage: all 89 modules | Everything including CPU_RV32IM | Round-trip coverage for all 89 modules |
 
 Phase 1 is the critical path — it forces all syntax decisions to become concrete and
 proves the pipeline works end-to-end. Phases 2–4 are incremental extensions. Phase 5
@@ -610,8 +612,8 @@ primary authoring format:
 ```
 hardware engineer writes .shoumei
   → parser produces Circuit
-    → codegen produces SV + Chisel
-      → LEC validates equivalence
+    → codegen produces SV
+      → slang elaboration + simulation validate it
   → Lean proofs attach to the Circuit value
 ```
 

@@ -3,8 +3,6 @@ DSL/Interfaces.lean - Canonical Interface Bundle Definitions
 
 Shared interface types for Shoumei codegen v2. These define the standard
 bundles (Decoupled, operand, CDB, register port) used across RISC-V modules.
-
-Codegen reads these to emit proper Chisel Bundles and SV structs.
 -/
 
 import Shoumei.DSL
@@ -17,7 +15,7 @@ open Shoumei
 
 /-- Decoupled (ready/valid) interface bundle.
     Fields: bits (UInt width), valid (Bool), ready (Bool).
-    Protocol tag enables codegen to emit Chisel `Decoupled` wrappers. -/
+    The protocol tag records the handshake convention (`decoupled`). -/
 def decoupledBundle (width : Nat) : InterfaceBundle := {
   name := "decoupled"
   signals := [("bits", .UInt width), ("valid", .Bool), ("ready", .Bool)]

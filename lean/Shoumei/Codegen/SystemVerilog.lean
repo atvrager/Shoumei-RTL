@@ -13,7 +13,7 @@ Design principles:
 - Hierarchical module instantiation with named ports
 
 Target: IEEE 1800-2017 SystemVerilog
-Requires: yosys-slang for struct type support in LEC
+Requires: a SystemVerilog frontend that understands struct types (e.g. yosys-slang)
 -/
 
 import Shoumei.DSL
@@ -41,7 +41,7 @@ structure Context where
   isSequential : Bool
   deriving Repr
 
-/-! ## Bus Reconstruction Helpers (reused from ChiselV2) -/
+/-! ## Bus Reconstruction Helpers -/
 
 /-- Parse a wire name to extract base name and optional index.
     Examples: "data_31" → some ("data", 31), "valid" → none -/
@@ -148,8 +148,8 @@ private def extractBaseName (wireName : String) : String :=
   else
     wireName
 
-/-- Check if an output signal group needs individual port declarations
-    (matching Chisel Vec behavior) vs vectorized (matching Chisel UInt behavior).
+/-- Check if an output signal group needs individual bit-level port declarations
+    rather than a single vectorized port.
     Returns true if the signal group needs individual ports. -/
 def outputNeedsIndividualPorts (wireToGroup : List (Wire × SignalGroup))
     (wireToIndex : List (Wire × Nat)) (c : Circuit) (sg : SignalGroup) : Bool :=
@@ -356,7 +356,7 @@ def generateWirePorts (ctx : Context) (_c : Circuit) (w : Wire) (direction : Str
         -- Only emit port for the first wire in the group
         if sg.wires.head? == some w then
           if direction == "output" && outputNeedsIndividualPorts ctx.wireToGroup ctx.wireToIndex _c sg then
-            -- Output signal groups with individual bit assignments: emit individual ports to match Chisel/CIRCT
+            -- Output signal groups with individual bit assignments: emit one port per bit
             sg.wires.enum.map (fun (_, wire) => s!"  {direction} logic {wire.name}")
           else
             -- Input signal groups and bus-wide output groups: keep vectorized

@@ -3,7 +3,7 @@ DSL/Decoupled.lean - Decoupled Interface Abstraction
 
 Provides types and helper functions for ready/valid handshaking interfaces.
 A decoupled interface bundles data, valid, and ready signals following
-industry-standard protocols (Chisel DecoupledIO, AXI-Stream, TileLink).
+industry-standard protocols (AXI-Stream, TileLink, and their kin).
 
 Key concepts:
 - DecoupledSource: Producer side (asserts valid, observes ready)
@@ -360,7 +360,7 @@ The Decoupled abstraction follows these naming patterns:
 - **Ready signal**: `{name}_ready`
 - **Fire signal**: `{name}_fire` (derived from valid signal name)
 
-These conventions match industry standards (Chisel DecoupledIO, AXI-Stream).
+These conventions match industry standards (AXI-Stream, TileLink).
 
 ### Composition Guarantees
 

@@ -23,23 +23,23 @@ open Shoumei.RISCV.Retirement
 
 /-- Test: Allocate to empty ROB succeeds -/
 theorem test_allocate_to_empty :
-  let (rob', idx) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob', idx) := ROBState.empty.allocate 10 true 5 true 1 false false
   rob'.count == 1 ∧ idx == some 0 := by native_decide
 
 /-- Test: Allocated entry returns tail index -/
 theorem test_allocate_returns_tail :
-  let (rob1, _) := ROBState.empty.allocate 10 true 5 true 1 false
-  let (_, idx2) := rob1.allocate 20 true 8 true 2 false
+  let (rob1, _) := ROBState.empty.allocate 10 true 5 true 1 false false
+  let (_, idx2) := rob1.allocate 20 true 8 true 2 false false
   idx2 == some 1 := by native_decide
 
 /-- Test: Allocation advances tail pointer -/
 theorem test_allocate_advances_tail :
-  let (rob', _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob', _) := ROBState.empty.allocate 10 true 5 true 1 false false
   rob'.tail == 1 ∧ rob'.head == 0 := by native_decide
 
 /-- Test: Allocated entry has correct fields -/
 theorem test_allocate_stores_fields :
-  let (rob', _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob', _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let e := rob'.entries 0
   e.valid == true ∧ e.complete == false ∧
   e.physRd == 10 ∧ e.hasPhysRd == true ∧
@@ -49,22 +49,22 @@ theorem test_allocate_stores_fields :
 /-- Helper: fill all 16 ROB entries. -/
 private def filledROB16 : ROBState :=
   let rob := ROBState.empty
-  let (rob, _) := rob.allocate 0 true 0 false 0 false
-  let (rob, _) := rob.allocate 1 true 0 false 1 false
-  let (rob, _) := rob.allocate 2 true 0 false 2 false
-  let (rob, _) := rob.allocate 3 true 0 false 3 false
-  let (rob, _) := rob.allocate 4 true 0 false 4 false
-  let (rob, _) := rob.allocate 5 true 0 false 5 false
-  let (rob, _) := rob.allocate 6 true 0 false 6 false
-  let (rob, _) := rob.allocate 7 true 0 false 7 false
-  let (rob, _) := rob.allocate 8 true 0 false 8 false
-  let (rob, _) := rob.allocate 9 true 0 false 9 false
-  let (rob, _) := rob.allocate 10 true 0 false 10 false
-  let (rob, _) := rob.allocate 11 true 0 false 11 false
-  let (rob, _) := rob.allocate 12 true 0 false 12 false
-  let (rob, _) := rob.allocate 13 true 0 false 13 false
-  let (rob, _) := rob.allocate 14 true 0 false 14 false
-  let (rob, _) := rob.allocate 15 true 0 false 15 false
+  let (rob, _) := rob.allocate 0 true 0 false 0 false false
+  let (rob, _) := rob.allocate 1 true 0 false 1 false false
+  let (rob, _) := rob.allocate 2 true 0 false 2 false false
+  let (rob, _) := rob.allocate 3 true 0 false 3 false false
+  let (rob, _) := rob.allocate 4 true 0 false 4 false false
+  let (rob, _) := rob.allocate 5 true 0 false 5 false false
+  let (rob, _) := rob.allocate 6 true 0 false 6 false false
+  let (rob, _) := rob.allocate 7 true 0 false 7 false false
+  let (rob, _) := rob.allocate 8 true 0 false 8 false false
+  let (rob, _) := rob.allocate 9 true 0 false 9 false false
+  let (rob, _) := rob.allocate 10 true 0 false 10 false false
+  let (rob, _) := rob.allocate 11 true 0 false 11 false false
+  let (rob, _) := rob.allocate 12 true 0 false 12 false false
+  let (rob, _) := rob.allocate 13 true 0 false 13 false false
+  let (rob, _) := rob.allocate 14 true 0 false 14 false false
+  let (rob, _) := rob.allocate 15 true 0 false 15 false false
   rob
 
 /-- Test: Full ROB reports isFull -/
@@ -73,19 +73,19 @@ theorem test_allocate_full_isFull :
 
 /-- Test: Full ROB stalls further allocation -/
 theorem test_allocate_full_stalls :
-  (filledROB16.allocate 16 true 0 false 16 false).2 == none := by native_decide
+  (filledROB16.allocate 16 true 0 false 16 false false).2 == none := by native_decide
 
 /-! ## CDB Broadcast Tests -/
 
 /-- Test: CDB broadcast marks matching entry complete -/
 theorem test_cdb_marks_complete :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob' := rob.cdbBroadcast 10
   (rob'.entries 0).complete == true := by native_decide
 
 /-- Test: CDB broadcast with no match leaves entries unchanged -/
 theorem test_cdb_no_match_unchanged :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob' := rob.cdbBroadcast 99
   (rob'.entries 0).complete == false := by native_decide
 
@@ -97,20 +97,20 @@ theorem test_cdb_ignores_invalid :
 
 /-- Test: CDB broadcast ignores already-complete entries -/
 theorem test_cdb_ignores_already_complete :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   let rob' := rob.cdbBroadcast 10 (cdb_exception := true)
   (rob'.entries 0).exception == false := by native_decide
 
 /-- Test: CDB broadcast sets exception flag -/
 theorem test_cdb_sets_exception :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob' := rob.cdbBroadcast 10 (cdb_exception := true)
   (rob'.entries 0).complete == true ∧ (rob'.entries 0).exception == true := by native_decide
 
 /-- Test: CDB broadcast sets misprediction flag -/
 theorem test_cdb_sets_mispredicted :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 true
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false true
   let rob' := rob.cdbBroadcast 10 (cdb_mispredicted := true)
   (rob'.entries 0).branchMispredicted == true := by native_decide
 
@@ -118,7 +118,7 @@ theorem test_cdb_sets_mispredicted :
 
 /-- Test: Commit head entry when valid and complete -/
 theorem test_commit_head :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   let (_, entry) := rob.commit
   entry.isSome == true ∧ entry.get!.physRd == 10 ∧ entry.get!.archRd == 1 := by
@@ -126,14 +126,14 @@ theorem test_commit_head :
 
 /-- Test: Commit advances head pointer -/
 theorem test_commit_advances_head :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   let (rob', _) := rob.commit
   rob'.head == 1 := by native_decide
 
 /-- Test: Commit decrements count -/
 theorem test_commit_decrements_count :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   let (rob', _) := rob.commit
   rob'.count == 0 := by native_decide
@@ -145,13 +145,13 @@ theorem test_commit_empty_returns_none :
 
 /-- Test: Commit blocks on incomplete head entry -/
 theorem test_commit_incomplete_blocks :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let (_, entry) := rob.commit
   entry.isNone == true := by native_decide
 
 /-- Test: Commit clears head entry valid flag -/
 theorem test_commit_clears_entry :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   let (rob', _) := rob.commit
   (rob'.entries 0).valid == false := by native_decide
@@ -160,9 +160,9 @@ theorem test_commit_clears_entry :
 
 /-- Test: Three allocations commit in order (A, B, C -> commit A first) -/
 theorem test_fifo_in_order_commit :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 1 false
-  let (rob, _) := rob.allocate 20 true 0 false 2 false
-  let (rob, _) := rob.allocate 30 true 0 false 3 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 1 false false
+  let (rob, _) := rob.allocate 20 true 0 false 2 false false
+  let (rob, _) := rob.allocate 30 true 0 false 3 false false
   let rob := rob.cdbBroadcast 10
   let rob := rob.cdbBroadcast 20
   let rob := rob.cdbBroadcast 30
@@ -175,7 +175,7 @@ theorem test_fifo_in_order_commit :
 
 /-- Test: Roundtrip preserves physRd and oldPhysRd -/
 theorem test_roundtrip_preserves_fields :
-  let (rob, _) := ROBState.empty.allocate 42 true 17 true 5 false
+  let (rob, _) := ROBState.empty.allocate 42 true 17 true 5 false false
   let rob := rob.cdbBroadcast 42
   let (_, entry) := rob.commit
   entry.isSome == true ∧
@@ -186,15 +186,15 @@ theorem test_roundtrip_preserves_fields :
 theorem test_pointer_wraparound_small :
   let rob := ROBState.empty
   -- Cycle 1: allocate at 0, complete, commit
-  let (rob, _) := rob.allocate 0 true 0 false 0 false
+  let (rob, _) := rob.allocate 0 true 0 false 0 false false
   let rob := rob.cdbBroadcast 0
   let (rob, _) := rob.commit
   -- Cycle 2: allocate at 1, complete, commit
-  let (rob, _) := rob.allocate 1 true 0 false 0 false
+  let (rob, _) := rob.allocate 1 true 0 false 0 false false
   let rob := rob.cdbBroadcast 1
   let (rob, _) := rob.commit
   -- Cycle 3: allocate at 2, complete, commit
-  let (rob, _) := rob.allocate 2 true 0 false 0 false
+  let (rob, _) := rob.allocate 2 true 0 false 0 false false
   let rob := rob.cdbBroadcast 2
   let (rob, _) := rob.commit
   -- After 3 cycles: head=3, tail=3, count=0
@@ -202,8 +202,8 @@ theorem test_pointer_wraparound_small :
 
 /-- Test: Out-of-order completion, in-order commit -/
 theorem test_ooo_complete_inorder_commit :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 1 false  -- A at idx 0
-  let (rob, _) := rob.allocate 20 true 0 false 2 false              -- B at idx 1
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 1 false false  -- A at idx 0
+  let (rob, _) := rob.allocate 20 true 0 false 2 false false              -- B at idx 1
   -- Complete B first (out-of-order)
   let rob := rob.cdbBroadcast 20
   -- Try commit -> should block (A not complete)
@@ -226,15 +226,15 @@ theorem test_isEmpty_true :
 
 /-- Test: Non-empty ROB reports not isEmpty -/
 theorem test_isEmpty_false :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
   rob.isEmpty == false := by native_decide
 
 /-- Helper: ROB with 4 entries allocated. -/
 private def rob4 : ROBState :=
-  let (rob, _) := ROBState.empty.allocate 0 true 0 false 0 false
-  let (rob, _) := rob.allocate 1 true 0 false 1 false
-  let (rob, _) := rob.allocate 2 true 0 false 2 false
-  let (rob, _) := rob.allocate 3 true 0 false 3 false
+  let (rob, _) := ROBState.empty.allocate 0 true 0 false 0 false false
+  let (rob, _) := rob.allocate 1 true 0 false 1 false false
+  let (rob, _) := rob.allocate 2 true 0 false 2 false false
+  let (rob, _) := rob.allocate 3 true 0 false 3 false false
   rob
 
 /-- Test: isFull after 4 allocations is false -/
@@ -243,9 +243,9 @@ theorem test_isFull_false :
 
 /-- Test: Count tracks allocation and commit -/
 theorem test_count_accurate :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
-  let (rob, _) := rob.allocate 30 true 0 false 2 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
+  let (rob, _) := rob.allocate 30 true 0 false 2 false false
   let c3 := rob.count == 3
   let rob := rob.cdbBroadcast 10
   let (rob, _) := rob.commit
@@ -253,13 +253,13 @@ theorem test_count_accurate :
 
 /-- Test: headReady when head is valid and complete -/
 theorem test_headReady_true :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let rob := rob.cdbBroadcast 10
   rob.headReady == true := by native_decide
 
 /-- Test: headReady false when incomplete -/
 theorem test_headReady_false_incomplete :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   rob.headReady == false := by native_decide
 
 /-- Test: headReady false when empty -/
@@ -270,21 +270,21 @@ theorem test_headReady_false_empty :
 
 /-- Test: isBranch flag stored correctly -/
 theorem test_isBranch_stored :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 true
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false true
   (rob.entries 0).isBranch == true := by native_decide
 
 /-- Test: Misprediction flag set via CDB -/
 theorem test_misprediction_via_cdb :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 true
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false true
   let rob' := rob.cdbBroadcast 10 (cdb_mispredicted := true)
   (rob'.entries 0).branchMispredicted == true ∧
   (rob'.entries 0).complete == true := by native_decide
 
 /-- Test: Flush clears younger entries -/
 theorem test_flush_clears_younger :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
-  let (rob, _) := rob.allocate 30 true 0 false 2 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
+  let (rob, _) := rob.allocate 30 true 0 false 2 false false
   let (rob', freed) := rob.flush 0
   (rob'.entries 1).valid == false ∧
   (rob'.entries 2).valid == false ∧
@@ -293,9 +293,9 @@ theorem test_flush_clears_younger :
 
 /-- Test: Flush preserves older entries -/
 theorem test_flush_preserves_older :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
-  let (rob, _) := rob.allocate 30 true 0 false 2 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
+  let (rob, _) := rob.allocate 30 true 0 false 2 false false
   let (rob', _) := rob.flush 1
   (rob'.entries 0).valid == true ∧
   (rob'.entries 1).valid == true ∧
@@ -303,24 +303,24 @@ theorem test_flush_preserves_older :
 
 /-- Test: Flush resets tail pointer -/
 theorem test_flush_resets_tail :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
-  let (rob, _) := rob.allocate 30 true 0 false 2 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
+  let (rob, _) := rob.allocate 30 true 0 false 2 false false
   let (rob', _) := rob.flush 0
   rob'.tail == 1 := by native_decide
 
 /-- Test: Full flush clears everything -/
 theorem test_full_flush :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
   let (rob', freed) := rob.fullFlush
   rob'.count == 0 ∧ rob'.isEmpty == true ∧ freed.length == 2 := by native_decide
 
 /-- Test: Flush returns freed physRd tags -/
 theorem test_flush_returns_freed_tags :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
-  let (rob, _) := rob.allocate 30 true 0 false 2 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
+  let (rob, _) := rob.allocate 30 true 0 false 2 false false
   -- Flush at 0: entries 1 (physRd=20) and 2 (physRd=30) are freed
   let (_, freed) := rob.flush 0
   freed.length == 2 := by native_decide
@@ -362,7 +362,7 @@ theorem test_crat_update_isolated :
 theorem test_commitStep_integration :
   let rob := ROBState.empty
   let crat := CommittedRATState.init
-  let (rob, _) := rob.allocate 42 true 5 true 5 false
+  let (rob, _) := rob.allocate 42 true 5 true 5 false false
   let rob := rob.cdbBroadcast 42
   let result := commitStep rob crat
   result.rob.count == 0 ∧
@@ -374,7 +374,7 @@ theorem test_commitStep_integration :
 theorem test_commitStep_misprediction :
   let rob := ROBState.empty
   let crat := CommittedRATState.init
-  let (rob, _) := rob.allocate 42 true 5 true 5 true
+  let (rob, _) := rob.allocate 42 true 5 true 5 false true
   let rob := rob.cdbBroadcast 42 (cdb_mispredicted := true)
   let result := commitStep rob crat
   result.misprediction == true := by native_decide
@@ -383,7 +383,7 @@ theorem test_commitStep_misprediction :
 theorem test_commitStep_exception :
   let rob := ROBState.empty
   let crat := CommittedRATState.init
-  let (rob, _) := rob.allocate 42 true 5 true 5 false
+  let (rob, _) := rob.allocate 42 true 5 true 5 false false
   let rob := rob.cdbBroadcast 42 (cdb_exception := true)
   let result := commitStep rob crat
   result.exceptionDetected == true := by native_decide
@@ -397,7 +397,7 @@ theorem test_commitStep_empty :
 theorem test_commitStep_no_dealloc :
   let rob := ROBState.empty
   let crat := CommittedRATState.init
-  let (rob, _) := rob.allocate 42 true 5 false 5 false  -- hasOldPhysRd=false
+  let (rob, _) := rob.allocate 42 true 5 false 5 false false  -- hasOldPhysRd=false
   let rob := rob.cdbBroadcast 42
   let result := commitStep rob crat
   result.deallocTag == none := by native_decide
@@ -406,26 +406,29 @@ theorem test_commitStep_no_dealloc :
 
 /-- Test: Allocate with no physRd (e.g. store instruction) -/
 theorem test_allocate_no_physrd :
-  let (rob, _) := ROBState.empty.allocate 0 false 0 false 0 false
+  let (rob, _) := ROBState.empty.allocate 0 false 0 false 0 false false
   let e := rob.entries 0
   e.hasPhysRd == false ∧ e.hasOldPhysRd == false := by native_decide
 
-/-- Test: CDB ignores entries without hasPhysRd -/
+/-- Test: an entry with no physRd and no branch flag is auto-completed at
+    allocation (`complete := !(hasPhysRd || isBranch)`), so a CDB broadcast
+    matching its tag does not touch it: it is already complete and its
+    exception flag stays clear. -/
 theorem test_cdb_ignores_no_physrd :
-  let (rob, _) := ROBState.empty.allocate 10 false 0 false 0 false
+  let (rob, _) := ROBState.empty.allocate 10 false 0 false 0 false false
   let rob' := rob.cdbBroadcast 10
-  (rob'.entries 0).complete == false := by native_decide
+  (rob'.entries 0).complete == true ∧ (rob'.entries 0).exception == false := by native_decide
 
 /-- Test: headEntry reads the correct entry -/
 theorem test_headEntry :
-  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 5 true 1 false false
   let e := rob.headEntry
   e.physRd == 10 ∧ e.valid == true := by native_decide
 
 /-- Test: Multiple CDB broadcasts to different entries -/
 theorem test_cdb_multiple_entries :
-  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false
-  let (rob, _) := rob.allocate 20 true 0 false 1 false
+  let (rob, _) := ROBState.empty.allocate 10 true 0 false 0 false false
+  let (rob, _) := rob.allocate 20 true 0 false 1 false false
   let rob := rob.cdbBroadcast 10
   (rob.entries 0).complete == true ∧ (rob.entries 1).complete == false := by native_decide
 

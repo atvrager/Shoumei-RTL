@@ -27,18 +27,22 @@ theorem rat64_name : mkRAT64.name = "RAT_32x6" := by native_decide
 
 /-- RAT64 has correct number of inputs:
     clock(1) + reset(1) + write_en(1) + write_addr(5) + write_data(6)
-    + rs1_addr(5) + rs2_addr(5) = 24 -/
-theorem rat64_input_count : mkRAT64.inputs.length = 24 := by native_decide
+    + rs1_addr(5) + rs2_addr(5) + rs3_addr(5) + restore_en(1) + restore_data(192)
+    = 3 + 5 + 6 + 15 + 1 + 192 = 222 -/
+theorem rat64_input_count : mkRAT64.inputs.length = 222 := by native_decide
 
 /-- RAT64 has correct number of outputs:
-    rs1_data(6) + rs2_data(6) = 12 -/
-theorem rat64_output_count : mkRAT64.outputs.length = 12 := by native_decide
+    rs1_data(6) + rs2_data(6) + rs3_data(6) + old_rd_data(6) + dump_data(192)
+    = 24 + 192 = 216 -/
+theorem rat64_output_count : mkRAT64.outputs.length = 216 := by native_decide
 
-/-- RAT64 uses 3 submodule instances (1 decoder + 2 muxes) -/
-theorem rat64_instance_count : mkRAT64.instances.length = 3 := by native_decide
+/-- RAT64 uses 5 submodule instances (1 write decoder + 4 read muxes) -/
+theorem rat64_instance_count : mkRAT64.instances.length = 5 := by native_decide
 
-/-- RAT64 gate count: 32 write-enable ANDs + 32*6*2 storage gates (MUX + DFF) = 32 + 384 = 416 -/
-theorem rat64_gate_count : mkRAT64.gates.length = 416 := by native_decide
+/-- RAT64 gate count: 32 write-enable ANDs + 20 reset buffers (4 root + 16 leaf)
+    + 32*6*4 storage gates (write MUX, restore MUX, DFF, dump BUF)
+    = 32 + 20 + 768 = 820 -/
+theorem rat64_gate_count : mkRAT64.gates.length = 820 := by native_decide
 
 /-! ## Behavioral Proofs -/
 

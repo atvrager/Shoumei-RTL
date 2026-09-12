@@ -206,7 +206,7 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 32) (writeWidth : Na
       portMap := mux_in_map ++ mkMuxSelMap rd_tag4 ++ mkMuxOutMap rd_data4
     }
 
-    -- Signal groups for next and reg internal wires (for Vec grouping in Chisel)
+    -- Signal groups for next and reg internal wires (for bus grouping in the emitted SV)
     let next_groups := (List.range numRegs).map (fun i =>
       { name := s!"next_{i}",
         width := dataWidth,
