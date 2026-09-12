@@ -4190,11 +4190,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkAND (Wire.mk "pre_md_0") (Wire.mk "pre_md_1") muldiv_dual_stall]
     else [Gate.mkBUF zero muldiv_dual_stall]) ++
     (if enableF then
-      [-- Stall when both slots need FP rename (is_fp OR has_fp_rd covers FP exec + FLW)
-       Gate.mkOR d0_is_fp d0_has_fp_rd (Wire.mk "d0_needs_fp_ren_pre"),
-       Gate.mkAND d0_valid_raw (Wire.mk "d0_needs_fp_ren_pre") (Wire.mk "pre_fp_0"),
-       Gate.mkOR d1_is_fp d1_has_fp_rd (Wire.mk "d1_needs_fp_ren_pre"),
-       Gate.mkAND d1_valid_raw (Wire.mk "d1_needs_fp_ren_pre") (Wire.mk "pre_fp_1"),
+      let d0_fp_res := Wire.mk "d0_fp_res"
+      let d1_fp_res := Wire.mk "d1_fp_res"
+      let d0_needs_fp := Wire.mk "d0_needs_fp_ren_pre"
+      let d1_needs_fp := Wire.mk "d1_needs_fp_ren_pre"
+      [-- Stall when both slots need FP resources (is_fp OR has_fp_rd OR is_fp_store covers FP exec + FLW + FSW)
+       Gate.mkOR d0_is_fp d0_has_fp_rd d0_fp_res,
+       Gate.mkOR d0_fp_res d0_is_fp_store d0_needs_fp,
+       Gate.mkAND d0_valid_raw d0_needs_fp (Wire.mk "pre_fp_0"),
+       Gate.mkOR d1_is_fp d1_has_fp_rd d1_fp_res,
+       Gate.mkOR d1_fp_res d1_is_fp_store d1_needs_fp,
+       Gate.mkAND d1_valid_raw d1_needs_fp (Wire.mk "pre_fp_1"),
        Gate.mkAND (Wire.mk "pre_fp_0") (Wire.mk "pre_fp_1") fp_dual_stall]
     else [Gate.mkBUF zero fp_dual_stall])
 
@@ -4381,7 +4387,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_mux_rd_phys := CPU.makeIndexedWires "mem_mux_rd_phys" 6
   -- Forward-declare FP rename wires needed for FSW src2 override in mem RS
   let mem_fp_rs2_phys := CPU.makeIndexedWires "fp_rs2_phys" 6
-  let mem_fp_rs2_data := CPU.makeIndexedWires "fp_rs2_data" 32
+  let mem_fp_rs2_data := CPU.makeIndexedWires "fp_issue_src2_data" 32
   let mem_fp_issue_src2_ready := Wire.mk "fp_issue_src2_ready"
   let mem_mux_src1_ready := Wire.mk "mem_mux_src1_ready"
   let mem_mux_src2_ready := Wire.mk "mem_mux_src2_ready"
