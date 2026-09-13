@@ -20,6 +20,8 @@ import Shoumei.Circuits.Combinational.ComparatorCodegen
 import Shoumei.Circuits.Combinational.ComparatorProofs
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Combinational.DecoderProofs
+import Shoumei.Circuits.Combinational.FPDoubleConverter
+import Shoumei.Circuits.Combinational.FPDoubleConverterProofs
 import Shoumei.Circuits.Combinational.FPDoubleMisc
 import Shoumei.Circuits.Combinational.FPDoubleMiscProofs
 import Shoumei.Circuits.Combinational.FPMisc
