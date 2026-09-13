@@ -37,6 +37,14 @@ import Shoumei.Circuits.Sequential.FPMultiplier
 import Shoumei.Circuits.Sequential.FPFMA
 import Shoumei.Circuits.Sequential.FPDivider
 import Shoumei.Circuits.Sequential.FPSqrt
+import Shoumei.Circuits.Combinational.FPUDouble
+import Shoumei.Circuits.Combinational.FPDoubleMisc
+import Shoumei.Circuits.Combinational.FPDoubleConverter
+import Shoumei.Circuits.Sequential.FPAdderD
+import Shoumei.Circuits.Sequential.FPMultiplierD
+import Shoumei.Circuits.Sequential.FPFMAD
+import Shoumei.Circuits.Sequential.FPDividerD
+import Shoumei.Circuits.Sequential.FPSqrtD
 
 namespace Shoumei.RISCV.Execution
 
@@ -47,7 +55,7 @@ open Shoumei.Circuits.Combinational.FPU
 
 /-! ## Operation Encoding -/
 
-/-- Map RISC-V FP OpType to internal FPU opcode (5 bits).
+/-- Map RISC-V FP OpType to internal FPU opcode (6 bits).
     Used by the structural circuit to select the operation. -/
 def opTypeToFPUOpcode (op : OpType) : Nat :=
   match op with
@@ -75,6 +83,30 @@ def opTypeToFPUOpcode (op : OpType) : Nat :=
   | .FSGNJ_S  => 21
   | .FSGNJN_S => 22
   | .FSGNJX_S => 23
+  | .FADD_D   => 32
+  | .FSUB_D   => 33
+  | .FMUL_D   => 34
+  | .FDIV_D   => 35
+  | .FSQRT_D  => 36
+  | .FMADD_D  => 37
+  | .FMSUB_D  => 38
+  | .FNMADD_D => 39
+  | .FNMSUB_D => 40
+  | .FEQ_D    => 41
+  | .FLT_D    => 42
+  | .FLE_D    => 43
+  | .FCVT_W_D  => 44
+  | .FCVT_WU_D => 45
+  | .FCVT_D_W  => 46
+  | .FCVT_D_WU => 47
+  | .FCVT_S_D  => 48
+  | .FCVT_D_S  => 49
+  | .FCLASS_D => 50
+  | .FMIN_D   => 51
+  | .FMAX_D   => 52
+  | .FSGNJ_D  => 53
+  | .FSGNJN_D => 54
+  | .FSGNJX_D => 55
   | _ => 0  -- Non-FP op (shouldn't reach FPExecUnit)
 
 /-- Check if an FP operation is single-cycle (combinational) -/
@@ -84,19 +116,26 @@ def isSingleCycleFPOp (op : OpType) : Bool :=
   | .FCVT_W_S | .FCVT_WU_S | .FCVT_S_W | .FCVT_S_WU
   | .FMV_X_W | .FMV_W_X | .FCLASS_S
   | .FMIN_S | .FMAX_S
-  | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S => true
+  | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FEQ_D | .FLT_D | .FLE_D
+  | .FCVT_W_D | .FCVT_WU_D | .FCVT_D_W | .FCVT_D_WU
+  | .FCVT_S_D | .FCVT_D_S | .FCLASS_D
+  | .FMIN_D | .FMAX_D
+  | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D => true
   | _ => false
 
 /-- Estimated cycle latency for pipelined FP operations -/
 def fpOpLatency (op : OpType) : Nat :=
   match op with
-  | .FADD_S | .FSUB_S => 4      -- FP adder pipeline
-  | .FMUL_S => 3                 -- FP multiplier pipeline
-  | .FMADD_S | .FMSUB_S
-  | .FNMADD_S | .FNMSUB_S => 5  -- Fused: mul + add
-  | .FDIV_S => 20                -- Iterative divider
-  | .FSQRT_S => 20               -- Iterative square root
-  | _ => 1                       -- Single-cycle ops
+  | .FADD_S | .FSUB_S | .FADD_D | .FSUB_D => 4      -- FP adder pipeline
+  | .FMUL_S | .FMUL_D => 3                           -- FP multiplier pipeline
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D => 5 -- Fused: mul + add
+  | .FDIV_S => 20                                    -- Iterative divider SP
+  | .FSQRT_S => 20                                   -- Iterative square root SP
+  | .FDIV_D => 54                                    -- Iterative divider DP
+  | .FSQRT_D => 54                                   -- Iterative square root DP
+  | _ => 1                                           -- Single-cycle ops
 
 /-! ## Behavioral Model -/
 
@@ -727,7 +766,725 @@ def mkFPExecUnit : Circuit :=
     keepHierarchy := true
   }
 
+/-- Build Combined Single+Double FP Execution Unit structural circuit for RV32D.
+
+    Instantiates both SP (F-extension) and DP (D-extension) sub-units:
+    - SP units: FPMisc, FPAdder, FPMultiplier, FPFMA, FPDivider, FPSqrt
+    - DP units: FPDoubleMisc, FPDoubleConverter, FPAdderD, FPMultiplierD, FPFMAD, FPDividerD, FPSqrtD
+    - Input NaN-unboxing for SP operands
+    - Output NaN-boxing for SP results (bits 63:32 = 0xFFFFFFFF)
+    - 5-stage priority multiplexing for writeback
+-/
+def mkFPExecUnitD : Circuit :=
+  -- Inputs (64-bit operands, 6-bit opcode)
+  let src1 := makeIndexedWires "src1" 64
+  let src2 := makeIndexedWires "src2" 64
+  let src3 := makeIndexedWires "src3" 64
+  let op := makeIndexedWires "op" 6
+  let rm := makeIndexedWires "rm" 3
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let valid_in := Wire.mk "valid_in"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+
+  -- Outputs
+  let result := makeIndexedWires "result" 64
+  let tag_out := makeIndexedWires "tag_out" 6
+  let exceptions := makeIndexedWires "exceptions" 5
+  let valid_out := Wire.mk "valid_out"
+  let busy := Wire.mk "busy"
+  let result_is_int := Wire.mk "result_is_int"
+
+  -- Reset fanout tree
+  let reset_add_sp := Wire.mk "rst_add_sp"
+  let reset_mul_sp := Wire.mk "rst_mul_sp"
+  let reset_fma_sp := Wire.mk "rst_fma_sp"
+  let reset_div_sp := Wire.mk "rst_div_sp"
+  let reset_sqrt_sp := Wire.mk "rst_sqrt_sp"
+  let reset_misc_sp := Wire.mk "rst_misc_sp"
+  let reset_add_dp := Wire.mk "rst_add_dp"
+  let reset_mul_dp := Wire.mk "rst_mul_dp"
+  let reset_fma_dp := Wire.mk "rst_fma_dp"
+  let reset_div_dp := Wire.mk "rst_div_dp"
+  let reset_sqrt_dp := Wire.mk "rst_sqrt_dp"
+  let reset_misc_dp := Wire.mk "rst_misc_dp"
+  let reset_gates := [
+    Gate.mkBUF reset reset_add_sp, Gate.mkBUF reset reset_mul_sp,
+    Gate.mkBUF reset reset_fma_sp, Gate.mkBUF reset reset_div_sp,
+    Gate.mkBUF reset reset_sqrt_sp, Gate.mkBUF reset reset_misc_sp,
+    Gate.mkBUF reset reset_add_dp, Gate.mkBUF reset reset_mul_dp,
+    Gate.mkBUF reset reset_fma_dp, Gate.mkBUF reset reset_div_dp,
+    Gate.mkBUF reset reset_sqrt_dp, Gate.mkBUF reset reset_misc_dp
+  ]
+
+  -- Inverted op bits
+  let not_op0 := Wire.mk "nop0"
+  let not_op1 := Wire.mk "nop1"
+  let not_op2 := Wire.mk "nop2"
+  let not_op3 := Wire.mk "nop3"
+  let not_op4 := Wire.mk "nop4"
+  let not_op5 := Wire.mk "nop5"
+  let op_inv_gates := [
+    Gate.mkNOT (op[0]!) not_op0, Gate.mkNOT (op[1]!) not_op1,
+    Gate.mkNOT (op[2]!) not_op2, Gate.mkNOT (op[3]!) not_op3,
+    Gate.mkNOT (op[4]!) not_op4, Gate.mkNOT (op[5]!) not_op5
+  ]
+
+  let is_dp := op[5]!
+  let is_sp := not_op5
+
+  -- Opcode category decoding (shared by SP and DP via op[4:0])
+  let op_is_add_sub := Wire.mk "op_is_add_sub"
+  let op_is_mul := Wire.mk "op_is_mul"
+  let op_is_div := Wire.mk "op_is_div"
+  let op_is_sqrt := Wire.mk "op_is_sqrt"
+  let op_is_fma := Wire.mk "op_is_fma"
+  let op_is_misc := Wire.mk "op_is_misc"
+
+  let op_hi_zero_01 := Wire.mk "op_hz01"
+  let op_hi_zero_23 := Wire.mk "op_hz23"
+  let op1_only := Wire.mk "op1_only"
+  let op01_both := Wire.mk "op01_both"
+  let op2_only := Wire.mk "op2_only"
+  let op2_and_not3 := Wire.mk "op2_n3"
+  let op2_and_not34 := Wire.mk "op2_n34"
+  let op3_and_not24 := Wire.mk "op3_n24"
+
+  let cat_decode_gates := [
+    Gate.mkAND not_op1 not_op2 op_hi_zero_01,
+    Gate.mkAND not_op3 not_op4 op_hi_zero_23,
+    Gate.mkAND op_hi_zero_01 op_hi_zero_23 op_is_add_sub,
+
+    Gate.mkAND (op[1]!) not_op0 op1_only,
+    Gate.mkAND op1_only not_op2 (Wire.mk "mul_t0"),
+    Gate.mkAND (Wire.mk "mul_t0") op_hi_zero_23 op_is_mul,
+
+    Gate.mkAND (op[0]!) (op[1]!) op01_both,
+    Gate.mkAND op01_both not_op2 (Wire.mk "div_t0"),
+    Gate.mkAND (Wire.mk "div_t0") op_hi_zero_23 op_is_div,
+
+    Gate.mkAND (op[2]!) not_op0 op2_only,
+    Gate.mkAND op2_only not_op1 (Wire.mk "sqrt_t0"),
+    Gate.mkAND (Wire.mk "sqrt_t0") op_hi_zero_23 op_is_sqrt,
+
+    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "op01_any"),
+    Gate.mkAND (op[2]!) (Wire.mk "op01_any") op2_and_not3,
+    Gate.mkAND op2_and_not3 not_op3 (Wire.mk "op2_n3_real"),
+    Gate.mkAND (Wire.mk "op2_n3_real") not_op4 op2_and_not34,
+    Gate.mkAND (op[3]!) not_op2 (Wire.mk "fma8_t0"),
+    Gate.mkAND (Wire.mk "fma8_t0") not_op1 (Wire.mk "fma8_t1"),
+    Gate.mkAND (Wire.mk "fma8_t1") not_op0 (Wire.mk "fma8_t2"),
+    Gate.mkAND (Wire.mk "fma8_t2") not_op4 op3_and_not24,
+    Gate.mkOR op2_and_not34 op3_and_not24 op_is_fma,
+
+    Gate.mkOR op_is_add_sub op_is_mul (Wire.mk "misc_t0"),
+    Gate.mkOR op_is_div op_is_sqrt (Wire.mk "misc_t1"),
+    Gate.mkOR (Wire.mk "misc_t0") (Wire.mk "misc_t1") (Wire.mk "misc_t2"),
+    Gate.mkOR (Wire.mk "misc_t2") op_is_fma (Wire.mk "misc_t3"),
+    Gate.mkNOT (Wire.mk "misc_t3") op_is_misc
+  ]
+
+  -- FMA sub/neg decoding
+  let fma_subtract_addend := Wire.mk "fma_sub_addend"
+  let fma_negate_product := Wire.mk "fma_neg_product"
+  let fma_ctrl_gates := [
+    Gate.mkAND op2_and_not34 (op[1]!) fma_subtract_addend,
+    Gate.mkAND (op[1]!) (op[0]!) (Wire.mk "fma_neg_57"),
+    Gate.mkAND op2_and_not34 (Wire.mk "fma_neg_57") (Wire.mk "fma_neg_a"),
+    Gate.mkOR (Wire.mk "fma_neg_a") op3_and_not24 fma_negate_product
+  ]
+
+  -- Gated valids to sub-units
+  let add_valid_sp := Wire.mk "add_v_sp"
+  let add_valid_dp := Wire.mk "add_v_dp"
+  let mul_valid_sp := Wire.mk "mul_v_sp"
+  let mul_valid_dp := Wire.mk "mul_v_dp"
+  let fma_valid_sp := Wire.mk "fma_v_sp"
+  let fma_valid_dp := Wire.mk "fma_v_dp"
+  let div_start_sp := Wire.mk "div_st_sp"
+  let div_start_dp := Wire.mk "div_st_dp"
+  let sqrt_start_sp := Wire.mk "sqrt_st_sp"
+  let sqrt_start_dp := Wire.mk "sqrt_st_dp"
+  let misc_valid_sp := Wire.mk "misc_v_sp"
+  let misc_valid_dp := Wire.mk "misc_v_dp"
+
+  let valid_gates := [
+    Gate.mkAND valid_in op_is_add_sub (Wire.mk "v_add"),
+    Gate.mkAND (Wire.mk "v_add") is_sp add_valid_sp,
+    Gate.mkAND (Wire.mk "v_add") is_dp add_valid_dp,
+
+    Gate.mkAND valid_in op_is_mul (Wire.mk "v_mul"),
+    Gate.mkAND (Wire.mk "v_mul") is_sp mul_valid_sp,
+    Gate.mkAND (Wire.mk "v_mul") is_dp mul_valid_dp,
+
+    Gate.mkAND valid_in op_is_fma (Wire.mk "v_fma"),
+    Gate.mkAND (Wire.mk "v_fma") is_sp fma_valid_sp,
+    Gate.mkAND (Wire.mk "v_fma") is_dp fma_valid_dp,
+
+    Gate.mkAND valid_in op_is_div (Wire.mk "v_div"),
+    Gate.mkAND (Wire.mk "v_div") is_sp div_start_sp,
+    Gate.mkAND (Wire.mk "v_div") is_dp div_start_dp,
+
+    Gate.mkAND valid_in op_is_sqrt (Wire.mk "v_sqrt"),
+    Gate.mkAND (Wire.mk "v_sqrt") is_sp sqrt_start_sp,
+    Gate.mkAND (Wire.mk "v_sqrt") is_dp sqrt_start_dp,
+
+    Gate.mkAND valid_in op_is_misc (Wire.mk "v_misc"),
+    Gate.mkAND (Wire.mk "v_misc") is_sp misc_valid_sp,
+    Gate.mkAND (Wire.mk "v_misc") is_dp misc_valid_dp
+  ]
+
+  -- ══════════════════════════════════════════════
+  -- SP Operand Unboxing
+  -- Check if upper 32 bits are all 1s. If not, unbox as canonical SP NaN (0x7FC00000).
+  -- Exception: int-reading ops (FCVT.S.W=14, FCVT.S.WU=15, FMV.W.X=17) read raw src1[31:0].
+  -- ══════════════════════════════════════════════
+  let (s1_hi_ones, s1_hi_ones_gates) := (List.range 32).foldl
+    (fun (acc : Wire × List Gate) i =>
+      if i == 0 then (src1[32]!, [])
+      else
+        let out := Wire.mk s!"s1_hi_and_{i}"
+        (out, acc.2 ++ [Gate.mkAND acc.1 (src1[32 + i]!) out])
+    ) (zero, [])
+
+  let (s2_hi_ones, s2_hi_ones_gates) := (List.range 32).foldl
+    (fun (acc : Wire × List Gate) i =>
+      if i == 0 then (src2[32]!, [])
+      else
+        let out := Wire.mk s!"s2_hi_and_{i}"
+        (out, acc.2 ++ [Gate.mkAND acc.1 (src2[32 + i]!) out])
+    ) (zero, [])
+
+  let (s3_hi_ones, s3_hi_ones_gates) := (List.range 32).foldl
+    (fun (acc : Wire × List Gate) i =>
+      if i == 0 then (src3[32]!, [])
+      else
+        let out := Wire.mk s!"s3_hi_and_{i}"
+        (out, acc.2 ++ [Gate.mkAND acc.1 (src3[32 + i]!) out])
+    ) (zero, [])
+
+  -- Detect SP ops where src1 is integer: FCVT.S.W(14), FCVT.S.WU(15), FMV.W.X(17)
+  -- 14=01110, 15=01111, 17=10001. All have is_sp.
+  let op_s1_is_int := Wire.mk "op_s1_is_int"
+  let s1_int_gates := [
+    Gate.mkAND (op[3]!) (op[2]!) (Wire.mk "s1_int_32"),
+    Gate.mkAND (Wire.mk "s1_int_32") (op[1]!) (Wire.mk "s1_int_1415"),
+    Gate.mkAND not_op4 (Wire.mk "s1_int_1415") (Wire.mk "s1_int_grp1415"),
+    Gate.mkAND (op[4]!) not_op3 (Wire.mk "s1_int_17_t0"),
+    Gate.mkAND not_op2 not_op1 (Wire.mk "s1_int_17_t1"),
+    Gate.mkAND (Wire.mk "s1_int_17_t0") (Wire.mk "s1_int_17_t1") (Wire.mk "s1_int_17_t2"),
+    Gate.mkAND (Wire.mk "s1_int_17_t2") (op[0]!) (Wire.mk "s1_int_17"),
+    Gate.mkOR (Wire.mk "s1_int_grp1415") (Wire.mk "s1_int_17") op_s1_is_int
+  ]
+
+  let s1_bypass_box := Wire.mk "s1_byp_box"
+  let s1_byp_gate := Gate.mkOR s1_hi_ones op_s1_is_int s1_bypass_box
+
+  let src1_sp := makeIndexedWires "src1_sp" 32
+  let src2_sp := makeIndexedWires "src2_sp" 32
+  let src3_sp := makeIndexedWires "src3_sp" 32
+  let unbox_gates := (List.range 32).flatMap fun i =>
+    let canon_bit := if i >= 22 && i <= 30 then one else zero
+    [Gate.mkMUX canon_bit (src1[i]!) s1_bypass_box (src1_sp[i]!),
+     Gate.mkMUX canon_bit (src2[i]!) s2_hi_ones (src2_sp[i]!),
+     Gate.mkMUX canon_bit (src3[i]!) s3_hi_ones (src3_sp[i]!)]
+
+  -- ══════════════════════════════════════════════
+  -- SP Sub-Units
+  -- ══════════════════════════════════════════════
+  let misc_sp_res := makeIndexedWires "misc_sp_res" 32
+  let misc_sp_exc := makeIndexedWires "misc_sp_exc" 5
+  let misc_sp_inst : CircuitInstance := {
+    moduleName := "FPMisc", instName := "u_misc_sp",
+    portMap :=
+      (List.range 32 |>.flatMap fun i => [ (s!"src1_{i}", src1_sp[i]!), (s!"src2_{i}", src2_sp[i]!) ]) ++
+      (List.range 5 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      [ ("zero", zero), ("one", one) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", misc_sp_res[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", misc_sp_exc[i]!))
+  }
+
+  let add_sp_res := makeIndexedWires "add_sp_res" 32
+  let add_sp_tag := makeIndexedWires "add_sp_tag" 6
+  let add_sp_exc := makeIndexedWires "add_sp_exc" 5
+  let add_sp_valid := Wire.mk "add_sp_valid"
+  let adder_sp_inst : CircuitInstance := {
+    moduleName := "FPAdder", instName := "u_adder_sp",
+    portMap :=
+      (List.range 32 |>.flatMap fun i => [ (s!"src1_{i}", src1_sp[i]!), (s!"src2_{i}", src2_sp[i]!) ]) ++
+      [ ("op_sub", op[0]!) ] ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("valid_in", add_valid_sp), ("clock", clock), ("reset", reset_add_sp), ("zero", zero) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", add_sp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", add_sp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", add_sp_exc[i]!)) ++
+      [ ("valid_out", add_sp_valid) ]
+  }
+
+  let mul_sp_res := makeIndexedWires "mul_sp_res" 32
+  let mul_sp_tag := makeIndexedWires "mul_sp_tag" 6
+  let mul_sp_exc := makeIndexedWires "mul_sp_exc" 5
+  let mul_sp_valid := Wire.mk "mul_sp_valid"
+  let mul_sp_inst : CircuitInstance := {
+    moduleName := "FPMultiplier", instName := "u_mul_sp",
+    portMap :=
+      (List.range 32 |>.flatMap fun i => [ (s!"src1_{i}", src1_sp[i]!), (s!"src2_{i}", src2_sp[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("valid_in", mul_valid_sp), ("clock", clock), ("reset", reset_mul_sp), ("zero", zero) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", mul_sp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", mul_sp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", mul_sp_exc[i]!)) ++
+      [ ("valid_out", mul_sp_valid) ]
+  }
+
+  let fma_sp_res := makeIndexedWires "fma_sp_res" 32
+  let fma_sp_tag := makeIndexedWires "fma_sp_tag" 6
+  let fma_sp_exc := makeIndexedWires "fma_sp_exc" 5
+  let fma_sp_valid := Wire.mk "fma_sp_valid"
+  let fma_sp_inst : CircuitInstance := {
+    moduleName := "FPFMA", instName := "u_fma_sp",
+    portMap :=
+      (List.range 32 |>.flatMap fun i => [ (s!"src1_{i}", src1_sp[i]!), (s!"src2_{i}", src2_sp[i]!), (s!"src3_{i}", src3_sp[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("negate_product", fma_negate_product), ("subtract_addend", fma_subtract_addend),
+        ("valid_in", fma_valid_sp), ("clock", clock), ("reset", reset_fma_sp), ("zero", zero) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", fma_sp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", fma_sp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", fma_sp_exc[i]!)) ++
+      [ ("valid_out", fma_sp_valid) ]
+  }
+
+  let div_sp_res := makeIndexedWires "div_sp_res" 32
+  let div_sp_tag := makeIndexedWires "div_sp_tag" 6
+  let div_sp_exc := makeIndexedWires "div_sp_exc" 5
+  let div_sp_valid := Wire.mk "div_sp_valid"
+  let div_sp_busy := Wire.mk "div_sp_busy"
+  let div_sp_inst : CircuitInstance := {
+    moduleName := "FPDivider", instName := "u_div_sp",
+    portMap :=
+      (List.range 32 |>.flatMap fun i => [ (s!"src1_{i}", src1_sp[i]!), (s!"src2_{i}", src2_sp[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("start", div_start_sp), ("clock", clock), ("reset", reset_div_sp), ("zero", zero), ("one", one) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", div_sp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", div_sp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", div_sp_exc[i]!)) ++
+      [ ("valid_out", div_sp_valid), ("busy", div_sp_busy) ]
+  }
+
+  let sqrt_sp_res := makeIndexedWires "sqrt_sp_res" 32
+  let sqrt_sp_tag := makeIndexedWires "sqrt_sp_tag" 6
+  let sqrt_sp_exc := makeIndexedWires "sqrt_sp_exc" 5
+  let sqrt_sp_valid := Wire.mk "sqrt_sp_valid"
+  let sqrt_sp_busy := Wire.mk "sqrt_sp_busy"
+  let sqrt_sp_inst : CircuitInstance := {
+    moduleName := "FPSqrt", instName := "u_sqrt_sp",
+    portMap :=
+      (List.range 32 |>.map fun i => (s!"src1_{i}", src1_sp[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("start", sqrt_start_sp), ("clock", clock), ("reset", reset_sqrt_sp), ("zero", zero), ("one", one) ] ++
+      (List.range 32 |>.map fun i => (s!"result_{i}", sqrt_sp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", sqrt_sp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", sqrt_sp_exc[i]!)) ++
+      [ ("valid_out", sqrt_sp_valid), ("busy", sqrt_sp_busy) ]
+  }
+
+  -- ══════════════════════════════════════════════
+  -- DP Sub-Units
+  -- ══════════════════════════════════════════════
+  let misc_dp_res := makeIndexedWires "misc_dp_res" 64
+  let misc_dp_exc := makeIndexedWires "misc_dp_exc" 5
+  let misc_dp_rint := Wire.mk "misc_dp_rint"
+  let misc_dp_inst : CircuitInstance := {
+    moduleName := "FPDoubleMisc", instName := "u_misc_dp",
+    portMap :=
+      (List.range 64 |>.flatMap fun i => [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+      (List.range 6 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      [ ("zero", zero), ("one", one) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", misc_dp_res[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", misc_dp_exc[i]!)) ++
+      [ ("result_is_int", misc_dp_rint) ]
+  }
+
+  let conv_dp_res := makeIndexedWires "conv_dp_res" 64
+  let conv_dp_exc := makeIndexedWires "conv_dp_exc" 5
+  let conv_dp_rint := Wire.mk "conv_dp_rint"
+  let conv_dp_inst : CircuitInstance := {
+    moduleName := "FPDoubleConverter", instName := "u_conv_dp",
+    portMap :=
+      (List.range 64 |>.map fun i => (s!"src1_{i}", src1[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"op_{i}", op[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      [ ("zero", zero), ("one", one) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", conv_dp_res[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", conv_dp_exc[i]!)) ++
+      [ ("result_is_int", conv_dp_rint) ]
+  }
+
+  let add_dp_res := makeIndexedWires "add_dp_res" 64
+  let add_dp_tag := makeIndexedWires "add_dp_tag" 6
+  let add_dp_exc := makeIndexedWires "add_dp_exc" 5
+  let add_dp_valid := Wire.mk "add_dp_valid"
+  let adder_dp_inst : CircuitInstance := {
+    moduleName := "FPAdderD", instName := "u_adder_dp",
+    portMap :=
+      (List.range 64 |>.flatMap fun i => [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+      [ ("op_sub", op[0]!) ] ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("valid_in", add_valid_dp), ("clock", clock), ("reset", reset_add_dp), ("zero", zero) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", add_dp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", add_dp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", add_dp_exc[i]!)) ++
+      [ ("valid_out", add_dp_valid) ]
+  }
+
+  let mul_dp_res := makeIndexedWires "mul_dp_res" 64
+  let mul_dp_tag := makeIndexedWires "mul_dp_tag" 6
+  let mul_dp_exc := makeIndexedWires "mul_dp_exc" 5
+  let mul_dp_valid := Wire.mk "mul_dp_valid"
+  let mul_dp_inst : CircuitInstance := {
+    moduleName := "FPMultiplierD", instName := "u_mul_dp",
+    portMap :=
+      (List.range 64 |>.flatMap fun i => [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("valid_in", mul_valid_dp), ("clock", clock), ("reset", reset_mul_dp), ("zero", zero) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", mul_dp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", mul_dp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", mul_dp_exc[i]!)) ++
+      [ ("valid_out", mul_dp_valid) ]
+  }
+
+  let fma_dp_res := makeIndexedWires "fma_dp_res" 64
+  let fma_dp_tag := makeIndexedWires "fma_dp_tag" 6
+  let fma_dp_exc := makeIndexedWires "fma_dp_exc" 5
+  let fma_dp_valid := Wire.mk "fma_dp_valid"
+  let fma_dp_inst : CircuitInstance := {
+    moduleName := "FPFMAD", instName := "u_fma_dp",
+    portMap :=
+      (List.range 64 |>.flatMap fun i => [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!), (s!"src3_{i}", src3[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("negate_product", fma_negate_product), ("subtract_addend", fma_subtract_addend),
+        ("valid_in", fma_valid_dp), ("clock", clock), ("reset", reset_fma_dp), ("zero", zero) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", fma_dp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", fma_dp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", fma_dp_exc[i]!)) ++
+      [ ("valid_out", fma_dp_valid) ]
+  }
+
+  let div_dp_res := makeIndexedWires "div_dp_res" 64
+  let div_dp_tag := makeIndexedWires "div_dp_tag" 6
+  let div_dp_exc := makeIndexedWires "div_dp_exc" 5
+  let div_dp_valid := Wire.mk "div_dp_valid"
+  let div_dp_busy := Wire.mk "div_dp_busy"
+  let div_dp_inst : CircuitInstance := {
+    moduleName := "FPDividerD", instName := "u_div_dp",
+    portMap :=
+      (List.range 64 |>.flatMap fun i => [ (s!"src1_{i}", src1[i]!), (s!"src2_{i}", src2[i]!) ]) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("start", div_start_dp), ("clock", clock), ("reset", reset_div_dp), ("zero", zero), ("one", one) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", div_dp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", div_dp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", div_dp_exc[i]!)) ++
+      [ ("valid_out", div_dp_valid), ("busy", div_dp_busy) ]
+  }
+
+  let sqrt_dp_res := makeIndexedWires "sqrt_dp_res" 64
+  let sqrt_dp_tag := makeIndexedWires "sqrt_dp_tag" 6
+  let sqrt_dp_exc := makeIndexedWires "sqrt_dp_exc" 5
+  let sqrt_dp_valid := Wire.mk "sqrt_dp_valid"
+  let sqrt_dp_busy := Wire.mk "sqrt_dp_busy"
+  let sqrt_dp_inst : CircuitInstance := {
+    moduleName := "FPSqrtD", instName := "u_sqrt_dp",
+    portMap :=
+      (List.range 64 |>.map fun i => (s!"src1_{i}", src1[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"dest_tag_{i}", dest_tag[i]!)) ++
+      [ ("start", sqrt_start_dp), ("clock", clock), ("reset", reset_sqrt_dp), ("zero", zero), ("one", one) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", sqrt_dp_res[i]!)) ++
+      (List.range 6 |>.map fun i => (s!"tag_out_{i}", sqrt_dp_tag[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", sqrt_dp_exc[i]!)) ++
+      [ ("valid_out", sqrt_dp_valid), ("busy", sqrt_dp_busy) ]
+  }
+
+  -- ══════════════════════════════════════════════
+  -- Merged Outputs (SP NaN-boxed with DP results)
+  -- ══════════════════════════════════════════════
+  -- 1. Adder
+  let add_result := makeIndexedWires "add_res" 64
+  let add_tag := makeIndexedWires "add_tag" 6
+  let add_exc := makeIndexedWires "add_exc" 5
+  let add_valid := Wire.mk "add_valid"
+  let add_merge_gates :=
+    (List.range 64 |>.map fun i =>
+      let sp_boxed := if i >= 32 then one else add_sp_res[i]!
+      Gate.mkMUX sp_boxed (add_dp_res[i]!) add_dp_valid (add_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (add_sp_tag[i]!) (add_dp_tag[i]!) add_dp_valid (add_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (add_sp_exc[i]!) (add_dp_exc[i]!) add_dp_valid (add_exc[i]!)) ++
+    [Gate.mkOR add_sp_valid add_dp_valid add_valid]
+
+  -- 2. Multiplier
+  let mul_result := makeIndexedWires "mul_res" 64
+  let mul_tag := makeIndexedWires "mul_tag" 6
+  let mul_exc := makeIndexedWires "mul_exc" 5
+  let mul_valid := Wire.mk "mul_valid"
+  let mul_merge_gates :=
+    (List.range 64 |>.map fun i =>
+      let sp_boxed := if i >= 32 then one else mul_sp_res[i]!
+      Gate.mkMUX sp_boxed (mul_dp_res[i]!) mul_dp_valid (mul_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (mul_sp_tag[i]!) (mul_dp_tag[i]!) mul_dp_valid (mul_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (mul_sp_exc[i]!) (mul_dp_exc[i]!) mul_dp_valid (mul_exc[i]!)) ++
+    [Gate.mkOR mul_sp_valid mul_dp_valid mul_valid]
+
+  -- 3. FMA
+  let fma_result := makeIndexedWires "fma_res" 64
+  let fma_tag := makeIndexedWires "fma_tag" 6
+  let fma_exc := makeIndexedWires "fma_exc" 5
+  let fma_valid := Wire.mk "fma_valid"
+  let fma_merge_gates :=
+    (List.range 64 |>.map fun i =>
+      let sp_boxed := if i >= 32 then one else fma_sp_res[i]!
+      Gate.mkMUX sp_boxed (fma_dp_res[i]!) fma_dp_valid (fma_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (fma_sp_tag[i]!) (fma_dp_tag[i]!) fma_dp_valid (fma_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (fma_sp_exc[i]!) (fma_dp_exc[i]!) fma_dp_valid (fma_exc[i]!)) ++
+    [Gate.mkOR fma_sp_valid fma_dp_valid fma_valid]
+
+  -- 4. Divider
+  let div_result := makeIndexedWires "div_res" 64
+  let div_tag := makeIndexedWires "div_tag" 6
+  let div_exc := makeIndexedWires "div_exc" 5
+  let div_valid := Wire.mk "div_valid"
+  let div_merge_gates :=
+    (List.range 64 |>.map fun i =>
+      let sp_boxed := if i >= 32 then one else div_sp_res[i]!
+      Gate.mkMUX sp_boxed (div_dp_res[i]!) div_dp_valid (div_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (div_sp_tag[i]!) (div_dp_tag[i]!) div_dp_valid (div_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (div_sp_exc[i]!) (div_dp_exc[i]!) div_dp_valid (div_exc[i]!)) ++
+    [Gate.mkOR div_sp_valid div_dp_valid div_valid]
+
+  -- 5. Sqrt
+  let sqrt_result := makeIndexedWires "sqrt_res" 64
+  let sqrt_tag := makeIndexedWires "sqrt_tag" 6
+  let sqrt_exc := makeIndexedWires "sqrt_exc" 5
+  let sqrt_valid := Wire.mk "sqrt_valid"
+  let sqrt_merge_gates :=
+    (List.range 64 |>.map fun i =>
+      let sp_boxed := if i >= 32 then one else sqrt_sp_res[i]!
+      Gate.mkMUX sp_boxed (sqrt_dp_res[i]!) sqrt_dp_valid (sqrt_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (sqrt_sp_tag[i]!) (sqrt_dp_tag[i]!) sqrt_dp_valid (sqrt_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (sqrt_sp_exc[i]!) (sqrt_dp_exc[i]!) sqrt_dp_valid (sqrt_exc[i]!)) ++
+    [Gate.mkOR sqrt_sp_valid sqrt_dp_valid sqrt_valid]
+
+  -- 6. Misc & Converter
+  -- Detect if op is DP conv (44..49)
+  let is_dp_conv := Wire.mk "is_dp_conv"
+  let is_dp_conv_gates := [
+    Gate.mkAND (op[3]!) (op[2]!) (Wire.mk "dpc_4447"),
+    Gate.mkAND not_op4 (Wire.mk "dpc_4447") (Wire.mk "dpc_g4447"),
+    Gate.mkAND (op[4]!) not_op3 (Wire.mk "dpc_4849_t0"),
+    Gate.mkAND not_op2 not_op1 (Wire.mk "dpc_4849_t1"),
+    Gate.mkAND (Wire.mk "dpc_4849_t0") (Wire.mk "dpc_4849_t1") (Wire.mk "dpc_g4849"),
+    Gate.mkOR (Wire.mk "dpc_g4447") (Wire.mk "dpc_g4849") (Wire.mk "dpc_any"),
+    Gate.mkAND is_dp (Wire.mk "dpc_any") is_dp_conv
+  ]
+
+  let misc_result := makeIndexedWires "misc_res" 64
+  let misc_exc := makeIndexedWires "misc_exc" 5
+  let misc_valid := Wire.mk "misc_valid"
+  let misc_merge_gates :=
+    (List.range 64 |>.flatMap fun i =>
+      let sp_boxed := if i >= 32 then one else misc_sp_res[i]!
+      let dp_sub := Wire.mk s!"m_dpsub_{i}"
+      [Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
+       Gate.mkMUX sp_boxed dp_sub is_dp (misc_result[i]!)]) ++
+    (List.range 5 |>.flatMap fun i =>
+      let dp_sub_exc := Wire.mk s!"m_dpexc_{i}"
+      [Gate.mkMUX (misc_dp_exc[i]!) (conv_dp_exc[i]!) is_dp_conv dp_sub_exc,
+       Gate.mkMUX (misc_sp_exc[i]!) dp_sub_exc is_dp (misc_exc[i]!)]) ++
+    [Gate.mkOR misc_valid_sp misc_valid_dp misc_valid]
+
+  -- ══════════════════════════════════════════════
+  -- 5-Level Priority Writeback MUX Tree
+  -- Level 1: MUX(misc, adder, adder_valid) -> t1
+  -- Level 2: MUX(t1, mul, mul_valid) -> t2
+  -- Level 3: MUX(t2, fma, fma_valid) -> t3
+  -- Level 4: MUX(t3, div, div_valid) -> t4
+  -- Level 5: MUX(t4, sqrt, sqrt_valid) -> output
+  -- ══════════════════════════════════════════════
+  let t1_result := makeIndexedWires "t1_res" 64
+  let t1_tag := makeIndexedWires "t1_tag" 6
+  let t1_exc := makeIndexedWires "t1_exc" 5
+  let t1_valid := Wire.mk "t1_valid"
+  let mux1_gates :=
+    (List.range 64 |>.map fun i => Gate.mkMUX (misc_result[i]!) (add_result[i]!) add_valid (t1_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (dest_tag[i]!) (add_tag[i]!) add_valid (t1_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (misc_exc[i]!) (add_exc[i]!) add_valid (t1_exc[i]!)) ++
+    [Gate.mkOR misc_valid add_valid t1_valid]
+
+  let t2_result := makeIndexedWires "t2_res" 64
+  let t2_tag := makeIndexedWires "t2_tag" 6
+  let t2_exc := makeIndexedWires "t2_exc" 5
+  let t2_valid := Wire.mk "t2_valid"
+  let mux2_gates :=
+    (List.range 64 |>.map fun i => Gate.mkMUX (t1_result[i]!) (mul_result[i]!) mul_valid (t2_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (t1_tag[i]!) (mul_tag[i]!) mul_valid (t2_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (t1_exc[i]!) (mul_exc[i]!) mul_valid (t2_exc[i]!)) ++
+    [Gate.mkOR t1_valid mul_valid t2_valid]
+
+  let t3_result := makeIndexedWires "t3_res" 64
+  let t3_tag := makeIndexedWires "t3_tag" 6
+  let t3_exc := makeIndexedWires "t3_exc" 5
+  let t3_valid := Wire.mk "t3_valid"
+  let mux3_gates :=
+    (List.range 64 |>.map fun i => Gate.mkMUX (t2_result[i]!) (fma_result[i]!) fma_valid (t3_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (t2_tag[i]!) (fma_tag[i]!) fma_valid (t3_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (t2_exc[i]!) (fma_exc[i]!) fma_valid (t3_exc[i]!)) ++
+    [Gate.mkOR t2_valid fma_valid t3_valid]
+
+  let t4_result := makeIndexedWires "t4_res" 64
+  let t4_tag := makeIndexedWires "t4_tag" 6
+  let t4_exc := makeIndexedWires "t4_exc" 5
+  let t4_valid := Wire.mk "t4_valid"
+  let mux4_gates :=
+    (List.range 64 |>.map fun i => Gate.mkMUX (t3_result[i]!) (div_result[i]!) div_valid (t4_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (t3_tag[i]!) (div_tag[i]!) div_valid (t4_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (t3_exc[i]!) (div_exc[i]!) div_valid (t4_exc[i]!)) ++
+    [Gate.mkOR t3_valid div_valid t4_valid]
+
+  let mux5_gates :=
+    (List.range 64 |>.map fun i => Gate.mkMUX (t4_result[i]!) (sqrt_result[i]!) sqrt_valid (result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (t4_tag[i]!) (sqrt_tag[i]!) sqrt_valid (tag_out[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (t4_exc[i]!) (sqrt_exc[i]!) sqrt_valid (exceptions[i]!)) ++
+    [Gate.mkOR t4_valid sqrt_valid valid_out]
+
+  -- ══════════════════════════════════════════════
+  -- Collision Prevention & Busy
+  -- ══════════════════════════════════════════════
+  let pipe_dispatched := Wire.mk "pipe_dispatched_d"
+  let pipe_active_d1 := Wire.mk "pipe_active_d1_d"
+  let pipe_active_d2 := Wire.mk "pipe_active_d2_d"
+  let pipe_collision_gates := [
+    Gate.mkOR (Wire.mk "v_add") (Wire.mk "v_mul") (Wire.mk "pipe_am_d"),
+    Gate.mkOR (Wire.mk "pipe_am_d") (Wire.mk "v_fma") pipe_dispatched
+  ]
+  let pipe_collision_inst1 : CircuitInstance := {
+    moduleName := "DFlipFlop", instName := "u_pipe_d_reg1",
+    portMap := [("d", pipe_dispatched), ("q", pipe_active_d1), ("clock", clock), ("reset", reset_misc_dp)]
+  }
+  let pipe_collision_inst2 : CircuitInstance := {
+    moduleName := "DFlipFlop", instName := "u_pipe_d_reg2",
+    portMap := [("d", pipe_active_d1), ("q", pipe_active_d2), ("clock", clock), ("reset", reset_misc_dp)]
+  }
+  let pipe_was_active := Wire.mk "pipe_was_active_d"
+  let pipe_active_or_gate := [Gate.mkOR pipe_active_d1 pipe_active_d2 pipe_was_active]
+
+  let busy_gate := [
+    Gate.mkOR div_sp_busy div_dp_busy (Wire.mk "busy_div_any"),
+    Gate.mkOR sqrt_sp_busy sqrt_dp_busy (Wire.mk "busy_sqrt_any"),
+    Gate.mkOR (Wire.mk "busy_div_any") (Wire.mk "busy_sqrt_any") (Wire.mk "busy_iter"),
+    Gate.mkOR (Wire.mk "busy_iter") pipe_was_active (Wire.mk "busy_core_d"),
+    Gate.mkOR add_valid mul_valid (Wire.mk "pout_am_d"),
+    Gate.mkOR fma_valid sqrt_valid (Wire.mk "pout_fs_d"),
+    Gate.mkOR (Wire.mk "pout_am_d") (Wire.mk "pout_fs_d") (Wire.mk "pout_amfs_d"),
+    Gate.mkOR (Wire.mk "pout_amfs_d") div_valid (Wire.mk "any_pout_d"),
+    Gate.mkOR (Wire.mk "busy_core_d") (Wire.mk "any_pout_d") busy
+  ]
+
+  -- ══════════════════════════════════════════════
+  -- result_is_int
+  -- High when output comes from misc path and targets INT PRF
+  -- ══════════════════════════════════════════════
+  -- SP int-writing: 9..13, 16, 18
+  let sp_writes_int := Wire.mk "sp_writes_int"
+  let grp_8_15 := Wire.mk "sp_g8_15"
+  let not_both_21 := Wire.mk "sp_not_both_21"
+  let any_210 := Wire.mk "sp_any_210"
+  let grp_8_15_filt := Wire.mk "sp_g8_15_filt"
+  let grp_16_18 := Wire.mk "sp_g16_18"
+  let sp_int_detect_gates := [
+    Gate.mkAND (op[3]!) not_op4 grp_8_15,
+    Gate.mkAND (op[2]!) (op[1]!) (Wire.mk "sp_b21"),
+    Gate.mkNOT (Wire.mk "sp_b21") not_both_21,
+    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "sp_a01"),
+    Gate.mkOR (Wire.mk "sp_a01") (op[2]!) any_210,
+    Gate.mkAND grp_8_15 not_both_21 (Wire.mk "sp_gf1"),
+    Gate.mkAND (Wire.mk "sp_gf1") any_210 grp_8_15_filt,
+    Gate.mkAND (op[4]!) not_op3 (Wire.mk "sp_g16_t1"),
+    Gate.mkAND not_op0 not_op2 (Wire.mk "sp_g16_t2"),
+    Gate.mkAND (Wire.mk "sp_g16_t1") (Wire.mk "sp_g16_t2") grp_16_18,
+    Gate.mkOR grp_8_15_filt grp_16_18 sp_writes_int
+  ]
+
+  let dp_misc_or_conv_rint := Wire.mk "dp_rint_comb"
+  let int_result_gates := sp_int_detect_gates ++ [
+    Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
+    Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp (Wire.mk "active_writes_int"),
+    Gate.mkOR mul_valid add_valid (Wire.mk "rint_d_t1"),
+    Gate.mkOR fma_valid div_valid (Wire.mk "rint_d_t2"),
+    Gate.mkOR sqrt_valid (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
+    Gate.mkOR (Wire.mk "rint_d_t2") (Wire.mk "rint_d_t3") (Wire.mk "rint_d_t4"),
+    Gate.mkNOT (Wire.mk "rint_d_t4") (Wire.mk "no_override_d"),
+    Gate.mkAND misc_valid (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
+    Gate.mkAND (Wire.mk "rint_d_t5") (Wire.mk "active_writes_int") result_is_int
+  ]
+
+  let all_gates :=
+    reset_gates ++ op_inv_gates ++ cat_decode_gates ++ fma_ctrl_gates ++ valid_gates ++
+    s1_hi_ones_gates ++ s2_hi_ones_gates ++ s3_hi_ones_gates ++
+    s1_int_gates ++ [s1_byp_gate] ++ unbox_gates ++
+    add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
+    is_dp_conv_gates ++ misc_merge_gates ++
+    mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
+    pipe_collision_gates ++ pipe_active_or_gate ++ busy_gate ++ int_result_gates
+
+  { name := "FPExecUnit_D"
+    inputs := src1 ++ src2 ++ src3 ++ op ++ rm ++ dest_tag ++
+              [valid_in, clock, reset, zero, one]
+    outputs := result ++ tag_out ++ exceptions ++ [valid_out, busy, result_is_int]
+    gates := all_gates
+    instances := [
+      misc_sp_inst, adder_sp_inst, mul_sp_inst, fma_sp_inst, div_sp_inst, sqrt_sp_inst,
+      misc_dp_inst, conv_dp_inst, adder_dp_inst, mul_dp_inst, fma_dp_inst, div_dp_inst, sqrt_dp_inst,
+      pipe_collision_inst1, pipe_collision_inst2
+    ]
+    signalGroups := [
+      { name := "src1", width := 64, wires := src1 },
+      { name := "src2", width := 64, wires := src2 },
+      { name := "src3", width := 64, wires := src3 },
+      { name := "op", width := 6, wires := op },
+      { name := "rm", width := 3, wires := rm },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 64, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out },
+      { name := "exceptions", width := 5, wires := exceptions }
+    ]
+    keepHierarchy := true
+  }
+
 /-- Convenience alias -/
+def fpExecUnitD : Circuit := mkFPExecUnitD
+
 def fpExecUnit : Circuit := mkFPExecUnit
 
 end Shoumei.RISCV.Execution

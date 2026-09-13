@@ -66,6 +66,15 @@ import Shoumei.Circuits.Sequential.FPDivider
 import Shoumei.Circuits.Sequential.FPSqrt
 import Shoumei.RISCV.Execution.FPExecUnit
 
+-- D-Extension
+import Shoumei.Circuits.Combinational.FPDoubleMisc
+import Shoumei.Circuits.Combinational.FPDoubleConverter
+import Shoumei.Circuits.Sequential.FPAdderD
+import Shoumei.Circuits.Sequential.FPMultiplierD
+import Shoumei.Circuits.Sequential.FPFMAD
+import Shoumei.Circuits.Sequential.FPDividerD
+import Shoumei.Circuits.Sequential.FPSqrtD
+
 -- Phase 6: Retirement
 import Shoumei.RISCV.Retirement.ROB
 import Shoumei.RISCV.Retirement.Queue16x32
@@ -201,6 +210,16 @@ def allCircuits : List Circuit := [
   fpDividerCircuit,
   fpSqrtCircuit,
   mkFPExecUnit,
+
+  -- D-Extension: Double-Precision FPU building blocks
+  fpDoubleMiscCircuit,
+  fpDoubleConverterCircuit,
+  fpAdderDCircuit,
+  fpMultiplierDCircuit,
+  fpFMADCircuit,
+  fpDividerDCircuit,
+  fpSqrtDCircuit,
+  fpExecUnitD,
 
   -- Phase 6: Retirement
   mkROB16,

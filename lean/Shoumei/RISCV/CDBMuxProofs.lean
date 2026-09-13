@@ -17,8 +17,8 @@ theorem cdbmuxfw2_gate_count : cdbMuxFW2.gates.length = 243 := by native_decide
 
 -- Structural proofs for CDBMuxFDW2 (W=2, with F and D extensions)
 theorem cdbmuxfdw2_name : cdbMuxFDW2.name = "CDBMux_FD_W2" := by native_decide
-theorem cdbmuxfdw2_input_count : cdbMuxFDW2.inputs.length = 373 := by native_decide
-theorem cdbmuxfdw2_output_count : cdbMuxFDW2.outputs.length = 184 := by native_decide
-theorem cdbmuxfdw2_gate_count : cdbMuxFDW2.gates.length = 309 := by native_decide
+theorem cdbmuxfdw2_input_count : cdbMuxFDW2.inputs.length = 406 := by native_decide
+theorem cdbmuxfdw2_output_count : cdbMuxFDW2.outputs.length = 216 := by native_decide
+theorem cdbmuxfdw2_gate_count : cdbMuxFDW2.gates.length = 341 := by native_decide
 
 end Shoumei.RISCV.CDBMuxProofs

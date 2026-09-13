@@ -67,6 +67,7 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
                    $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
                    $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv32ud-p-*.elf) \
                    $(wildcard $(TB_DIR)/riscv-tests/rv32ua-p-*.elf)
 
 CUSTOM_TEST_GLOBS = $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf)
@@ -92,7 +93,7 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
 # Arcilator compiles only the CPU design modules (not the SV testbench).
 # The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
-ARC_TOP_MODULE := CPU_RV32IMAF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B
+ARC_TOP_MODULE := CPU_$(CPU_NAME)_L1I256B_L1D256B_L2512B
 
 # Step 0: Preprocess design SV to convert async resets to sync resets
 # circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks

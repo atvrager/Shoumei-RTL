@@ -410,6 +410,54 @@ def fpMisc_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.FPMiscProofs"
 }
 
+/-- FPDoubleMisc: Double-precision FP sign injection, compare, classify, min/max -/
+def fpDoubleMisc_cert : CompositionalCert := {
+  moduleName := "FPDoubleMisc"
+  proofReference := "Shoumei.Circuits.Combinational.FPDoubleMiscProofs"
+}
+
+/-- FPDoubleConverter: Double-precision FP converters (float-int, float-float) -/
+def fpDoubleConverter_cert : CompositionalCert := {
+  moduleName := "FPDoubleConverter"
+  proofReference := "Shoumei.Circuits.Combinational.FPDoubleConverterProofs"
+}
+
+/-- FPAdderD: IEEE 754 DP adder (sequential, multi-stage pipeline) -/
+def fpAdderD_cert : CompositionalCert := {
+  moduleName := "FPAdderD"
+  proofReference := "Shoumei.Circuits.Sequential.FPAdderDProofs"
+}
+
+/-- FPMultiplierD: IEEE 754 DP multiplier (sequential, multi-stage pipeline) -/
+def fpMultiplierD_cert : CompositionalCert := {
+  moduleName := "FPMultiplierD"
+  proofReference := "Shoumei.Circuits.Sequential.FPMultiplierDProofs"
+}
+
+/-- FPFMAD: IEEE 754 DP fused multiply-add (sequential, multi-stage pipeline) -/
+def fpFMAD_cert : CompositionalCert := {
+  moduleName := "FPFMAD"
+  proofReference := "Shoumei.Circuits.Sequential.FPFMADProofs"
+}
+
+/-- FPDividerD: IEEE 754 DP divider (sequential, multi-cycle state machine) -/
+def fpDividerD_cert : CompositionalCert := {
+  moduleName := "FPDividerD"
+  proofReference := "Shoumei.Circuits.Sequential.FPDividerDProofs"
+}
+
+/-- FPSqrtD: IEEE 754 DP square root (sequential, multi-cycle state machine) -/
+def fpSqrtD_cert : CompositionalCert := {
+  moduleName := "FPSqrtD"
+  proofReference := "Shoumei.Circuits.Sequential.FPSqrtDProofs"
+}
+
+/-- FPExecUnit_D: Combined DP/SP FP execution unit (structural proof + leaf certs) -/
+def fpExecUnit_d_cert : CompositionalCert := {
+  moduleName := "FPExecUnit_D"
+  proofReference := "Shoumei.RISCV.Execution.FPExecUnitProofs"
+}
+
 /-- RenameStage_W2: Composite rename stage for dual issue -/
 def renameStage_w2_cert : CompositionalCert := {
   moduleName := "RenameStage_W2"
@@ -480,6 +528,15 @@ def allCerts : List CompositionalCert := [
   fpDivider_cert,
   fpSqrt_cert,
   fpExecUnit_cert,
+  -- D-Extension
+  fpDoubleMisc_cert,
+  fpDoubleConverter_cert,
+  fpAdderD_cert,
+  fpMultiplierD_cert,
+  fpFMAD_cert,
+  fpDividerD_cert,
+  fpSqrtD_cert,
+  fpExecUnit_d_cert,
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
   renameStage_w2_64_cert,

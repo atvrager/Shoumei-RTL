@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **180**
-- Circuits with a literal `name :=` (graph nodes): **49**
-- Compositional certificates (Lean registry): **64**
-- Proof files: **40**
+- Lean files: **196**
+- Circuits with a literal `name :=` (graph nodes): **57**
+- Compositional certificates (Lean registry): **72**
+- Proof files: **48**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -24,19 +24,19 @@ label is how many distinct instantiations cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>21 circuits"]
-  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>7 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>23 circuits"]
+  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>12 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
-  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>5 circuits"]
+  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>6 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
   Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>2 circuits"]
   Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>1 circuits"]
   Shoumei_RISCV_Retirement["Shoumei/RISCV/Retirement<br/>3 circuits"]
-  Shoumei_RISCV_Execution -->|7| Shoumei_Circuits_Sequential
-  Shoumei_RISCV_Execution -->|4| Shoumei_Circuits_Combinational
+  Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
+  Shoumei_RISCV_Execution -->|9| Shoumei_Circuits_Combinational
   Shoumei_Circuits_Sequential -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Combinational
@@ -57,14 +57,22 @@ graph TD
 | `DFlipFlop` | Shoumei/Circuits/Sequential | 0 |  | yes | yes |
 | `Decoder0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Divider32` | Shoumei/Circuits/Sequential | 1 | yes | yes | yes |
-| `FPAdder` | Shoumei/Circuits/Sequential | 0 | yes |  | yes |
-| `FPDivider` | Shoumei/Circuits/Sequential | 0 | yes |  | yes |
-| `FPExecUnit` | Shoumei/RISCV/Execution | 7 | yes |  | yes |
-| `FPFMA` | Shoumei/Circuits/Sequential | 2 | yes |  | yes |
+| `FPAdder` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPAdderD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPDivider` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPDividerD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPDoubleConverter` | Shoumei/Circuits/Combinational | 0 | yes | yes | yes |
+| `FPDoubleMisc` | Shoumei/Circuits/Combinational | 0 | yes | yes | yes |
+| `FPExecUnit` | Shoumei/RISCV/Execution | 14 | yes |  | yes |
+| `FPExecUnit_D` | Shoumei/RISCV/Execution | 14 | yes |  | yes |
+| `FPFMA` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
+| `FPFMAD` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
 | `FPMisc` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
-| `FPMultiplier` | Shoumei/Circuits/Sequential | 0 | yes |  | yes |
+| `FPMultiplier` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPMultiplierD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPPack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
-| `FPSqrt` | Shoumei/Circuits/Sequential | 0 | yes |  | yes |
+| `FPSqrt` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPSqrtD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPUnpack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes |
@@ -102,9 +110,9 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **23** circuits with no `*Proofs.lean` mentioning them
-- **33** circuits that instantiate nothing (leaves)
-- **28** circuits nothing else instantiates (tops)
+- **19** circuits with no `*Proofs.lean` mentioning them
+- **39** circuits that instantiate nothing (leaves)
+- **29** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 
