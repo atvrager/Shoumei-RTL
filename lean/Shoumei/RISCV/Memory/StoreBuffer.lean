@@ -195,7 +195,9 @@ def StoreBufferState.forwardCheck (sb : StoreBufferState) (addr : UInt32)
     if h : j < 8 then
       let idx : Fin 8 := ⟨(sb.tail.val + 7 - j) % 8, by omega⟩
       let e := sb.entries idx
-      if e.valid && e.address == addr then some e.data else none
+      if e.valid && e.address == addr then some e.data
+      else if e.valid && e.size == 3 && e.address + 4 == addr then some (e.data >>> 32)
+      else none
     else none
   -- Return youngest match (first in scan order)
   results.head?
@@ -641,69 +643,159 @@ def mkStoreBuffer8 : Circuit :=
         (e_cur.enum.map (fun ⟨j, w⟩ => (s!"q_{j}", w)))
     }
 
-    -- Forwarding match: valid AND address_eq (no stale match possible!)
-    let fwd_match := Wire.mk s!"e{i}_fwd_match"
-    let fwd_match_gate := Gate.mkAND valid[i]! cmp_eq fwd_match
-
-    -- Committed forwarding match: valid AND committed AND address_eq
-    let fwd_committed_match := Wire.mk s!"e{i}_fwd_committed_match"
-    let fwd_committed_match_gate := Gate.mkAND fwd_match committed[i]! fwd_committed_match
+    -- Double-precision store check: size == 2'b11
+    let is_double := Wire.mk s!"e{i}_is_double"
+    let is_double_gate := Gate.mkAND cur_size[0]! cur_size[1]! is_double
 
     -- Word-level address match: compare bits [31:2] (word-aligned address)
-    -- XOR bits 2..31, OR-reduce to check any difference, then NOT for equality
+    -- XOR bits 2..31
     let word_xor := (List.range 30).map (fun j => Wire.mk s!"e{i}_wxor_{j}")
     let word_xor_gates := (List.range 30).map (fun j =>
       Gate.mkXOR fwd_address[j+2]! cur_address[j+2]! word_xor[j]!)
-    -- OR-tree reduction: 30 → 15 → 8 → 4 → 2 → 1
-    let wor_l0 := (List.range 15).map (fun j => Wire.mk s!"e{i}_wor0_{j}")
-    let wor_l0_gates := (List.range 15).map (fun j =>
-      Gate.mkOR word_xor[2*j]! word_xor[2*j+1]! wor_l0[j]!)
-    -- 15 → 8 (pad last with zero via BUF)
-    let wor_l1_in := Wire.mk s!"e{i}_wor1_pad"
-    let wor_l1_pad_gate := Gate.mkBUF wor_l0[14]! wor_l1_in
-    let wor_l1 := (List.range 8).map (fun j => Wire.mk s!"e{i}_wor1_{j}")
+
+    -- Reduction of 29 upper address bits (bits 3..31, i.e. word_xor[1..29])
+    -- Level 0: 29 bits -> 14 pairs + 1 leftover = 15 wires
+    let wor_l0 := (List.range 14).map (fun j => Wire.mk s!"e{i}_wor0_{j}")
+    let wor_l0_gates := (List.range 14).map (fun j =>
+      Gate.mkOR word_xor[1 + 2*j]! word_xor[1 + 2*j + 1]! wor_l0[j]!)
+    let wor_l0_all := wor_l0 ++ [word_xor[29]!]
+
+    -- Level 1: 15 wires -> 7 pairs + 1 leftover = 8 wires
+    let wor_l1 := (List.range 7).map (fun j => Wire.mk s!"e{i}_wor1_{j}")
     let wor_l1_gates := (List.range 7).map (fun j =>
-      Gate.mkOR wor_l0[2*j]! wor_l0[2*j+1]! wor_l1[j]!) ++
-      [Gate.mkBUF wor_l1_in wor_l1[7]!]
+      Gate.mkOR wor_l0_all[2*j]! wor_l0_all[2*j + 1]! wor_l1[j]!)
+    let wor_l1_all := wor_l1 ++ [wor_l0_all[14]!]
+
+    -- Level 2: 8 wires -> 4 pairs = 4 wires
     let wor_l2 := (List.range 4).map (fun j => Wire.mk s!"e{i}_wor2_{j}")
     let wor_l2_gates := (List.range 4).map (fun j =>
-      Gate.mkOR wor_l1[2*j]! wor_l1[2*j+1]! wor_l2[j]!)
+      Gate.mkOR wor_l1_all[2*j]! wor_l1_all[2*j + 1]! wor_l2[j]!)
+
+    -- Level 3: 4 wires -> 2 pairs = 2 wires
     let wor_l3 := (List.range 2).map (fun j => Wire.mk s!"e{i}_wor3_{j}")
     let wor_l3_gates := (List.range 2).map (fun j =>
-      Gate.mkOR wor_l2[2*j]! wor_l2[2*j+1]! wor_l3[j]!)
-    let any_word_neq := Wire.mk s!"e{i}_any_word_neq"
-    let wor_final_gate := Gate.mkOR wor_l3[0]! wor_l3[1]! any_word_neq
-    let word_eq := Wire.mk s!"e{i}_word_eq"
-    let word_eq_gate := Gate.mkNOT any_word_neq word_eq
-    let word_match := Wire.mk s!"e{i}_word_match"
-    let word_match_gate := Gate.mkAND valid[i]! word_eq word_match
+      Gate.mkOR wor_l2[2*j]! wor_l2[2*j + 1]! wor_l3[j]!)
 
-    -- word_only_match: word-level match but NOT exact byte-address match
-    let not_cmp_eq := Wire.mk s!"e{i}_not_cmp_eq"
-    let word_only_match := Wire.mk s!"e{i}_word_only_match"
-    let word_only_gates := [
-      Gate.mkNOT cmp_eq not_cmp_eq,
-      Gate.mkAND word_match not_cmp_eq word_only_match
+    -- Level 4: 2 wires -> 1 wire (upper_neq)
+    let upper_neq := Wire.mk s!"e{i}_upper_neq"
+    let upper_neq_gate := Gate.mkOR wor_l3[0]! wor_l3[1]! upper_neq
+
+    let upper_eq := Wire.mk s!"e{i}_upper_eq"
+    let upper_eq_gate := Gate.mkNOT upper_neq upper_eq
+
+    -- Low word address match: upper_eq AND (fwd_address[2] == cur_address[2])
+    let not_wxor0 := Wire.mk s!"e{i}_not_wxor0"
+    let not_wxor0_gate := Gate.mkNOT word_xor[0]! not_wxor0
+    let word_eq := Wire.mk s!"e{i}_word_eq"
+    let word_eq_gate := Gate.mkAND upper_eq not_wxor0 word_eq
+
+    -- High word address match: upper_eq AND fwd_address[2] AND NOT(cur_address[2])
+    let not_cur_addr2 := Wire.mk s!"e{i}_not_cur_addr2"
+    let not_cur_addr2_gate := Gate.mkNOT cur_address[2]! not_cur_addr2
+    let fwd2_and_not_cur2 := Wire.mk s!"e{i}_fwd2_not_cur2"
+    let fwd2_and_not_cur2_gate := Gate.mkAND fwd_address[2]! not_cur_addr2 fwd2_and_not_cur2
+    let hi_word_addr_match := Wire.mk s!"e{i}_hi_word_addr_match"
+    let hi_word_addr_match_gate := Gate.mkAND upper_eq fwd2_and_not_cur2 hi_word_addr_match
+
+    -- Compare bits 1:0 for exact match in high word
+    let lo2_xor0 := Wire.mk s!"e{i}_lo2_xor0"
+    let lo2_xor1 := Wire.mk s!"e{i}_lo2_xor1"
+    let lo2_or := Wire.mk s!"e{i}_lo2_or"
+    let lo2_eq := Wire.mk s!"e{i}_lo2_eq"
+    let lo2_gates := [
+      Gate.mkXOR fwd_address[0]! cur_address[0]! lo2_xor0,
+      Gate.mkXOR fwd_address[1]! cur_address[1]! lo2_xor1,
+      Gate.mkOR lo2_xor0 lo2_xor1 lo2_or,
+      Gate.mkNOT lo2_or lo2_eq
     ]
 
-    let word_match_gates := word_xor_gates ++ wor_l0_gates ++ [wor_l1_pad_gate] ++
-      wor_l1_gates ++ wor_l2_gates ++ wor_l3_gates ++ [wor_final_gate, word_eq_gate, word_match_gate] ++
-      word_only_gates
+    -- High word exact match: hi_word_addr_match AND lo2_eq
+    let hi_word_eq := Wire.mk s!"e{i}_hi_word_eq"
+    let hi_word_eq_gate := Gate.mkAND hi_word_addr_match lo2_eq hi_word_eq
 
-    let entry_gates := address_gates ++ data_gates ++ size_gates ++
-      [fwd_match_gate, fwd_committed_match_gate] ++ word_match_gates
+    -- match_hi_word: is_double AND hi_word_eq
+    let match_hi_word := Wire.mk s!"e{i}_match_hi_word"
+    let match_hi_word_gate := Gate.mkAND is_double hi_word_eq match_hi_word
 
-    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, cur_data, word_match, word_only_match)
+    -- Forwarding match: valid AND (cmp_eq OR match_hi_word)
+    let match_any := Wire.mk s!"e{i}_match_any"
+    let match_any_gate := Gate.mkOR cmp_eq match_hi_word match_any
+    let fwd_match := Wire.mk s!"e{i}_fwd_match"
+    let fwd_match_gate := Gate.mkAND valid[i]! match_any fwd_match
+
+    -- Committed forwarding match: valid AND committed AND match_any
+    let fwd_committed_match := Wire.mk s!"e{i}_fwd_committed_match"
+    let fwd_committed_match_gate := Gate.mkAND fwd_match committed[i]! fwd_committed_match
+
+    -- Word matches:
+    let lo_word_match := Wire.mk s!"e{i}_lo_word_match"
+    let lo_word_match_gate := Gate.mkAND valid[i]! word_eq lo_word_match
+
+    let hi_word_valid := Wire.mk s!"e{i}_hi_word_valid"
+    let hi_word_valid_gate := Gate.mkAND valid[i]! hi_word_addr_match hi_word_valid
+    let hi_word_double_valid := Wire.mk s!"e{i}_hi_word_double_valid"
+    let hi_word_double_valid_gate := Gate.mkAND hi_word_valid is_double hi_word_double_valid
+
+    let word_match := Wire.mk s!"e{i}_word_match"
+    let word_match_gate := Gate.mkOR lo_word_match hi_word_double_valid word_match
+
+    -- Word-only matches (sub-word access stalling):
+    let not_cmp_eq := Wire.mk s!"e{i}_not_cmp_eq"
+    let not_cmp_eq_gate := Gate.mkNOT cmp_eq not_cmp_eq
+    let lo_word_only_match := Wire.mk s!"e{i}_lo_word_only_match"
+    let lo_word_only_gate := Gate.mkAND lo_word_match not_cmp_eq lo_word_only_match
+
+    let hi_word_only_match := Wire.mk s!"e{i}_hi_word_only_match"
+    let hi_word_only_gate := Gate.mkAND hi_word_double_valid lo2_or hi_word_only_match
+
+    let word_only_match := Wire.mk s!"e{i}_word_only_match"
+    let word_only_match_gate := Gate.mkOR lo_word_only_match hi_word_only_match word_only_match
+
+    -- Forwarding data: on match_hi_word, bits [31:0] get cur_data[63:32]
+    let entry_fwd_data := mkWires s!"e{i}_fwd_data_" 64
+    let fwd_data_mux_gates :=
+      (List.range 32).map (fun j =>
+        Gate.mkMUX cur_data[j]! cur_data[32+j]! match_hi_word entry_fwd_data[j]!) ++
+      (List.range 32).map (fun j =>
+        Gate.mkBUF cur_data[32+j]! entry_fwd_data[32+j]!)
+
+    -- Forwarding size: on match_hi_word, size becomes word (2'b10)
+    let not_match_hi_word := Wire.mk s!"e{i}_not_match_hi_word"
+    let not_match_hi_word_gate := Gate.mkNOT match_hi_word not_match_hi_word
+    let entry_size := mkWires s!"e{i}_fwd_sz_" 2
+    let fwd_size_gates := [
+      Gate.mkAND cur_size[0]! not_match_hi_word entry_size[0]!,
+      Gate.mkBUF cur_size[1]! entry_size[1]!
+    ]
+
+    let word_match_gates :=
+      [is_double_gate] ++ word_xor_gates ++
+      wor_l0_gates ++ wor_l1_gates ++ wor_l2_gates ++ wor_l3_gates ++
+      [upper_neq_gate, upper_eq_gate,
+       not_wxor0_gate, word_eq_gate,
+       not_cur_addr2_gate, fwd2_and_not_cur2_gate, hi_word_addr_match_gate] ++
+      lo2_gates ++
+      [hi_word_eq_gate, match_hi_word_gate,
+       match_any_gate, fwd_match_gate, fwd_committed_match_gate,
+       lo_word_match_gate, hi_word_valid_gate, hi_word_double_valid_gate, word_match_gate,
+       not_cmp_eq_gate, lo_word_only_gate, hi_word_only_gate, word_only_match_gate,
+       not_match_hi_word_gate] ++
+      fwd_data_mux_gates ++ fwd_size_gates
+
+    let entry_gates := address_gates ++ data_gates ++ size_gates ++ word_match_gates
+
+    (entry_gates, [cmp_inst, reg_inst], e_cur, fwd_match, fwd_committed_match, entry_fwd_data, entry_size, word_match, word_only_match)
 
   -- Flatten per-entry results
-  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _, _, _, _) => g)).flatten
-  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _, _, _, _) => insts)).flatten
-  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _, _, _, _) => cur)
-  let fwd_matches := entryResults.map (fun (_, _, _, m, _, _, _, _) => m)
-  let fwd_committed_matches := entryResults.map (fun (_, _, _, _, cm, _, _, _) => cm)
-  let all_entry_data := entryResults.map (fun (_, _, _, _, _, d, _, _) => d)
-  let word_matches := entryResults.map (fun (_, _, _, _, _, _, wm, _) => wm)
-  let word_only_matches := entryResults.map (fun (_, _, _, _, _, _, _, wom) => wom)
+  let all_entry_gates := (entryResults.map (fun (g, _, _, _, _, _, _, _, _) => g)).flatten
+  let all_entry_instances := (entryResults.map (fun (_, insts, _, _, _, _, _, _, _) => insts)).flatten
+  let all_entry_cur := entryResults.map (fun (_, _, cur, _, _, _, _, _, _) => cur)
+  let fwd_matches := entryResults.map (fun (_, _, _, m, _, _, _, _, _) => m)
+  let fwd_committed_matches := entryResults.map (fun (_, _, _, _, cm, _, _, _, _) => cm)
+  let all_entry_data := entryResults.map (fun (_, _, _, _, _, d, _, _, _) => d)
+  let all_entry_size := entryResults.map (fun (_, _, _, _, _, _, sz, _, _) => sz)
+  let word_matches := entryResults.map (fun (_, _, _, _, _, _, _, wm, _) => wm)
+  let word_only_matches := entryResults.map (fun (_, _, _, _, _, _, _, _, wom) => wom)
 
   -- === Forwarding Logic: Youngest-Match via Barrel Rotation ===
 
@@ -852,8 +944,7 @@ def mkStoreBuffer8 : Circuit :=
     instName := "u_fwd_size_mux"
     portMap :=
       ((List.range 8).map (fun i =>
-        let e := all_entry_cur[i]!
-        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[96+j]!))
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", all_entry_size[i]![j]!))
       )).flatten ++
       (fwd_sel.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
       (fwd_size.enum.map (fun ⟨j, w⟩ => (s!"out[{j}]", w)))

@@ -12,7 +12,7 @@ GEN_INT_ELFS := $(GEN_INT_ASM:.S=.elf)
 GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 
 # FP tests (F and D extension)
-CFLAGS_FP = -march=rv32imfd_zicsr_zifencei -mabi=ilp32d -O2 -nostdlib -nostartfiles -ffreestanding
+CFLAGS_FP = -march=rv32imafd_zicsr_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
 
 # FreeRTOS kernel sources
 FREERTOS_DIR = ../../third_party/FreeRTOS-Kernel
@@ -36,11 +36,14 @@ FREERTOS_CFLAGS = $(CFLAGS) $(FREERTOS_INC)
 FREERTOS_AFLAGS = $(CFLAGS) -I$(FREERTOS_CHIP_EXT) $(FREERTOS_INC)
 FREERTOS_LDFLAGS = -T freertos.ld -nostdlib -Wl,--no-relax
 
-all: $(TESTS:=.elf) $(GEN_INT_ELFS) $(GEN_FP_ELFS) freertos_demo.elf
+all: $(TESTS:=.elf) nan_boxing.elf $(GEN_INT_ELFS) $(GEN_FP_ELFS) freertos_demo.elf
 
 # Hand-written C tests use crt0.S
 %.elf: %.c crt0.S shoumei.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) crt0.S $< -o $@
+
+nan_boxing.elf: nan_boxing.c crt0.S shoumei.ld
+	$(CC) $(CFLAGS_FP) $(LDFLAGS) crt0.S $< -o $@
 
 # Generated integer tests are self-contained (have _start + main)
 generated/%.elf: generated/%.S shoumei.ld

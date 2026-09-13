@@ -23,12 +23,14 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
   let mkIdx (pfx : String) (n : Nat) := (List.range n).map (fun i => mk s!"{pfx}_{i}")
 
   let data0Width := if enableD then 64 else 32
+  let data1Width := if enableD then 64 else 32
   let lsuDeqWidth := if enableD then 72 else 39
+  let fpDeqWidth := if enableD then 72 else 39
 
   -- Shared inputs
   let ib_valid_0  := mk "ib_valid_0";  let ib_deq_0  := mkIdx "ib_deq_0"  72
   let ib_valid_1  := mk "ib_valid_1";  let ib_deq_1  := mkIdx "ib_deq_1"  72
-  let fp_valid    := mk "fp_valid";     let fp_deq    := mkIdx "fp_deq"     39
+  let fp_valid    := mk "fp_valid";     let fp_deq    := mkIdx "fp_deq"     fpDeqWidth
   let muldiv_valid := mk "muldiv_valid"; let muldiv_deq := mkIdx "muldiv_deq" 39
   let lsu_valid   := mk "lsu_valid";   let lsu_deq   := mkIdx "lsu_deq"    lsuDeqWidth
   let dmem_valid  := mk "dmem_valid";  let dmem_fmt  := mkIdx "dmem_fmt"   data0Width
@@ -45,7 +47,7 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
 
   -- CDB 1 outputs
   let pre_valid_1  := mk "pre_valid_1";  let pre_tag_1  := mkIdx "pre_tag_1"  6
-  let pre_data_1   := mkIdx "pre_data_1" 32; let pre_is_fp_1 := mk "pre_is_fp_1"
+  let pre_data_1   := mkIdx "pre_data_1" data1Width; let pre_is_fp_1 := mk "pre_is_fp_1"
   let redirect_1   := mkIdx "redirect_1" 32; let pre_mispred_1 := mk "pre_mispredicted_1"
   let drain_fp     := mk "drain_fp";  let drain_muldiv := mk "drain_muldiv"
   let drain_ib_1   := mk "drain_ib_1"
@@ -118,15 +120,22 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
     let m1 := mk s!"t1_m1_{i}"
     [Gate.mkMUX ib_deq_1[i]! muldiv_deq[i]! muldiv_wins m1,
      Gate.mkMUX m1 fp_deq[i]! fp_wins pre_tag_1[i]!]) |>.flatten
-  let data1_gates := (List.range 32).map (fun i =>
+  let data1_lo_gates := (List.range 32).map (fun i =>
     let m1 := mk s!"d1_m1_{i}"
     [Gate.mkMUX ib_deq_1[6+i]! muldiv_deq[6+i]! muldiv_wins m1,
      Gate.mkMUX m1 fp_deq[6+i]! fp_wins pre_data_1[i]!]) |>.flatten
+  let data1_hi_gates :=
+    if enableD then
+      (List.range 32).map (fun i =>
+        [Gate.mkMUX zero fp_deq[38+i]! fp_wins pre_data_1[32+i]!]) |>.flatten
+    else []
+  let data1_gates := data1_lo_gates ++ data1_hi_gates
   let is_fp1_gates :=
     if enableF then
       let m1 := mk "f1_m1"
+      let fp_is_fp_bit := if enableD then fp_deq[70]! else fp_deq[38]!
       [Gate.mkMUX ib_deq_1[38]! muldiv_deq[38]! muldiv_wins m1,
-       Gate.mkMUX m1 fp_deq[38]! fp_wins pre_is_fp_1]
+       Gate.mkMUX m1 fp_is_fp_bit fp_wins pre_is_fp_1]
     else [Gate.mkBUF zero pre_is_fp_1]
   let redir1_gates :=
     (List.range 32).map (fun i => Gate.mkAND ib_deq_1[39+i]! ib1_wins redirect_1[i]!) ++
