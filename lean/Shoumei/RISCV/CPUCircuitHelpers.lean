@@ -260,7 +260,14 @@ def fpuMappingByName : List (OpType × Nat) :=
     (.FCVT_W_S, 12), (.FCVT_WU_S, 13), (.FCVT_S_W, 14), (.FCVT_S_WU, 15),
     (.FMV_X_W, 16), (.FMV_W_X, 17), (.FCLASS_S, 18),
     (.FMIN_S, 19), (.FMAX_S, 20),
-    (.FSGNJ_S, 21), (.FSGNJN_S, 22), (.FSGNJX_S, 23) ]
+    (.FSGNJ_S, 21), (.FSGNJN_S, 22), (.FSGNJX_S, 23),
+    (.FADD_D, 32), (.FSUB_D, 33), (.FMUL_D, 34), (.FDIV_D, 35), (.FSQRT_D, 36),
+    (.FMADD_D, 37), (.FMSUB_D, 38), (.FNMADD_D, 39), (.FNMSUB_D, 40),
+    (.FEQ_D, 41), (.FLT_D, 42), (.FLE_D, 43),
+    (.FCVT_W_D, 44), (.FCVT_WU_D, 45), (.FCVT_D_W, 46), (.FCVT_D_WU, 47),
+    (.FCVT_S_D, 48), (.FCVT_D_S, 49), (.FCLASS_D, 50),
+    (.FMIN_D, 51), (.FMAX_D, 52),
+    (.FSGNJ_D, 53), (.FSGNJN_D, 54), (.FSGNJX_D, 55) ]
 
 /-- Build a 64:1 mux tree from 64 single-bit inputs using 6 select bits. -/
 def mkMux64to1 (inputs : List Wire) (sel : List Wire) (pfx : String) (output : Wire) : List Gate :=

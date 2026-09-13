@@ -48,8 +48,8 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 177 := by na
     - 1 x PriorityArbiter8 (youngest-match selection) -/
 theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 49 := by native_decide
 
-/-- StoreBuffer8 gate count: 1625 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 1625 := by native_decide
+/-- StoreBuffer8 gate count: 2281 combinational gates -/
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 2281 := by native_decide
 
 /-! ## Building Block Verification -/
 
