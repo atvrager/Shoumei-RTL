@@ -210,6 +210,18 @@ def register68_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
+/-- Register98 = Register64 + Register32 + Register2 (hierarchical) -/
+def register98_cert : CompositionalCert := {
+  moduleName := "Register98"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register159 = Register64 + Register64 + Register16 + Register8 + Register4 + Register2 + Register1 (hierarchical) -/
+def register159_cert : CompositionalCert := {
+  moduleName := "Register159"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-! ## RISC-V Renaming -/
 
 /-- PhysRegFile_64x32: Physical register file (64 registers × 32 bits) -/
@@ -260,6 +272,12 @@ def divider32_cert : CompositionalCert := {
 def muldivExecUnit_cert : CompositionalCert := {
   moduleName := "MulDivExecUnit"
   proofReference := "Shoumei.RISCV.Execution.MulDivExecUnitProofs"
+}
+
+/-- ReservationStation4_W2_64: 64-bit dual-issue reservation station -/
+def rs4w2_64_cert : CompositionalCert := {
+  moduleName := "ReservationStation4_W2_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }
 
 /-! ## RISC-V Retirement -/
@@ -322,10 +340,8 @@ def memoryHierarchy_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs"
 }
 
-/-- CachedCPU (Microcoded): Microcoded CPU + MemoryHierarchy composition.
-    Both the name and its dependency come from the config, so the rename that
-    turns on the A extension moves this certificate with them. -/
-def cachedCPU_microcoded_cert : CompositionalCert := {
+/-- CachedCPU: CPU + L1I + L1D + L2 composition -/
+def cachedCPU_cert : CompositionalCert := {
   moduleName := Shoumei.RISCV.defaultCPUConfig.fullName
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
@@ -364,34 +380,34 @@ def fpMultiplier_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.FPMultiplierProofs"
 }
 
-/-- FPFMA: Fused multiply-add (FPMultiplier + FPAdder) -/
+/-- FPFMA: IEEE 754 SP fused multiply-add (sequential, pipeline DFFs cause induction failure) -/
 def fpFMA_cert : CompositionalCert := {
   moduleName := "FPFMA"
   proofReference := "Shoumei.Circuits.Sequential.FPFMAProofs"
 }
 
-/-- FPDivider: IEEE 754 SP divider (iterative, sequential) -/
+/-- FPDivider: IEEE 754 SP divider (sequential, multi-cycle state machine) -/
 def fpDivider_cert : CompositionalCert := {
   moduleName := "FPDivider"
   proofReference := "Shoumei.Circuits.Sequential.FPDividerProofs"
 }
 
-/-- FPSqrt: IEEE 754 SP square root (iterative, sequential) -/
+/-- FPSqrt: IEEE 754 SP square root (sequential, multi-cycle state machine) -/
 def fpSqrt_cert : CompositionalCert := {
   moduleName := "FPSqrt"
   proofReference := "Shoumei.Circuits.Sequential.FPSqrtProofs"
 }
 
-/-- FPMisc: FP sign-inject, min/max, compare, classify, convert (combinational, JVM method size limit) -/
-def fpMisc_cert : CompositionalCert := {
-  moduleName := "FPMisc"
-  proofReference := "Shoumei.Circuits.Combinational.FPMisc"
-}
-
-/-- FPExecUnit: Top-level FP execution unit (all FP sub-units) -/
+/-- FPExecUnit: Combined FP execution unit (structural proof + leaf certs) -/
 def fpExecUnit_cert : CompositionalCert := {
   moduleName := "FPExecUnit"
   proofReference := "Shoumei.RISCV.Execution.FPExecUnitProofs"
+}
+
+/-- FPMisc: FP sign injection, compare, classify, convert -/
+def fpMisc_cert : CompositionalCert := {
+  moduleName := "FPMisc"
+  proofReference := "Shoumei.Circuits.Combinational.FPMiscProofs"
 }
 
 /-- RenameStage_W2: Composite rename stage for dual issue -/
@@ -405,6 +421,7 @@ def renameStage_w2_64_cert : CompositionalCert := {
   moduleName := "RenameStage_W2_64"
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
+
 /-- MicrocodeSequencer: ROM-driven µop sequencer for CSR/FENCE.I -/
 def microcodeSequencer_cert : CompositionalCert := {
   moduleName := "MicrocodeSequencer"
@@ -424,12 +441,16 @@ def allCerts : List CompositionalCert := [
   -- Combinational (hierarchical muxes)
   mux64x32_cert,
   mux8x32_cert,
+  mux8x64_cert,
+  mux64x64_cert,
   -- Sequential
   register24_cert,
-  register66_cert,
+  register98_cert,
+  register159_cert,
   queuePointer_3_cert,
   -- Renaming
   physregfile_cert,
+  physregfile_64x64_cert,
   rat_cert,
   bitmapFreelist_w2_cert,
   -- Execution
@@ -437,6 +458,7 @@ def allCerts : List CompositionalCert := [
   pipelinedMultiplier_cert,
   divider32_cert,
   muldivExecUnit_cert,
+  rs4w2_64_cert,
   -- Retirement
   queue16x32_dualport_cert,
   rob16_w2_cert,
@@ -449,7 +471,7 @@ def allCerts : List CompositionalCert := [
   l2Cache_cert,
   memoryHierarchy_cert,
   -- Decoders
-  rv32imfDecoder_cert,
+  rv32gDecoder_cert,
   -- F-Extension
   fpMisc_cert,
   fpAdder_cert,
@@ -460,12 +482,13 @@ def allCerts : List CompositionalCert := [
   fpExecUnit_cert,
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
+  renameStage_w2_64_cert,
   -- Microcode
   microcodeSequencer_cert,
   -- Microcoded variant
   cpu_microcoded_cert,
   -- Microcoded cached variant
-  cachedCPU_microcoded_cert
+  cachedCPU_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

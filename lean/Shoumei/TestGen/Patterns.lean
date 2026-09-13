@@ -432,6 +432,83 @@ def fpMemoryTest : TestProgram := {
     failEpilogue ".Lfail"
 }
 
+/-- D1: FP double-precision memory test — FLD/FSD, forwarding, cross-size, NaN-boxing. -/
+def fpDoubleMemoryTest : TestProgram := {
+  name := "fp_double_memory"
+  description := "D1: Double-precision FP memory (FLD/FSD), 64-bit store-load forwarding, cross-size, and NaN-boxing"
+  instrs :=
+    [ pseudo "li x1, 0x2000"
+    , blank
+    , comment "1. Basic 64-bit store and load (FLD / FSD)"
+    , pseudo "li x2, 0x11223344"
+    , pseudo "li x3, 0x55667788"
+    , stype "sw" (x 2) (x 1) 0
+    , stype "sw" (x 3) (x 1) 4
+    , fld (f 1) (x 1) 0             -- f1 = {0x55667788, 0x11223344}
+    , fsd (f 1) (x 1) 8             -- store to 0x2008
+    , load "lw" (x 4) (x 1) 8       -- check low word in memory
+    , load "lw" (x 5) (x 1) 12      -- check high word in memory
+    , btype "bne" (x 4) (x 2) ".Lfail"
+    , btype "bne" (x 5) (x 3) ".Lfail"
+    , fld (f 2) (x 1) 8             -- load back via FLD
+    , fsd (f 2) (x 1) 16
+    , load "lw" (x 6) (x 1) 16
+    , load "lw" (x 7) (x 1) 20
+    , btype "bne" (x 6) (x 2) ".Lfail"
+    , btype "bne" (x 7) (x 3) ".Lfail"
+    , blank
+    , comment "2. Store-to-load forwarding in Store Buffer (64-bit FSD -> FLD)"
+    , fsd (f 1) (x 1) 24
+    , fld (f 3) (x 1) 24            -- immediate FLD forwards from StoreBuffer
+    , fsd (f 3) (x 1) 32
+    , load "lw" (x 8) (x 1) 32
+    , load "lw" (x 9) (x 1) 36
+    , btype "bne" (x 8) (x 2) ".Lfail"
+    , btype "bne" (x 9) (x 3) ".Lfail"
+    , blank
+    , comment "3. Cross-size forwarding from 64-bit store (S=3, L=2/1/0)"
+    , fsd (f 1) (x 1) 40
+    , load "lw" (x 10) (x 1) 40     -- S=3, L=2: forward low 32 bits
+    , btype "bne" (x 10) (x 2) ".Lfail"
+    , fsd (f 1) (x 1) 48
+    , load "lh" (x 11) (x 1) 48     -- S=3, L=1: forward low 16 bits (0x3344)
+    , pseudo "li x12, 0x3344"
+    , btype "bne" (x 11) (x 12) ".Lfail"
+    , fsd (f 1) (x 1) 56
+    , load "lbu" (x 13) (x 1) 56    -- S=3, L=0: forward low byte (0x44)
+    , pseudo "li x14, 0x44"
+    , btype "bne" (x 13) (x 14) ".Lfail"
+    , blank
+    , comment "4. Cross-size stall check (S=2, L=3: 32-bit store followed by 64-bit load)"
+    , pseudo "li x15, 0x12345678"
+    , pseudo "li x16, 0x23456789"
+    , stype "sw" (x 15) (x 1) 64
+    , stype "sw" (x 16) (x 1) 68
+    , pseudo "fence"
+    , pseudo "li x17, 0x3456789A"
+    , stype "sw" (x 17) (x 1) 64    -- overwrite low word
+    , fld (f 4) (x 1) 64            -- S=2, L=3 must stall until 32-bit store commits
+    , fsd (f 4) (x 1) 72
+    , load "lw" (x 18) (x 1) 72
+    , load "lw" (x 19) (x 1) 76
+    , btype "bne" (x 18) (x 17) ".Lfail"
+    , btype "bne" (x 19) (x 16) ".Lfail"
+    , blank
+    , comment "5. Single-precision NaN-boxing interaction (FLW -> FSD)"
+    , pseudo "li x20, 0x3F800000"
+    , stype "sw" (x 20) (x 1) 80
+    , flw (f 5) (x 1) 80            -- single-precision load
+    , fsd (f 5) (x 1) 88            -- store 64-bit FPR to memory
+    , load "lw" (x 21) (x 1) 88     -- low word should match float
+    , load "lw" (x 22) (x 1) 92     -- high word should be NaN-boxed (all 1s)
+    , btype "bne" (x 21) (x 20) ".Lfail"
+    , pseudo "li x23, -1"
+    , btype "bne" (x 22) (x 23) ".Lfail"
+    ] ++
+    passEpilogue ++
+    failEpilogue ".Lfail"
+}
+
 /-- All test patterns -/
 def allPatterns : List TestProgram :=
   [smokeTest] ++
@@ -441,7 +518,7 @@ def allPatterns : List TestProgram :=
 
 /-- F-extension test patterns (separate so they can be gated on enableF) -/
 def fpPatterns : List TestProgram :=
-  [fpSmokeTest, fpMemoryTest] ++
+  [fpSmokeTest, fpMemoryTest, fpDoubleMemoryTest] ++
   (List.range 5 |>.map fpRawChainTest)  -- nop0..nop4
 
 end Shoumei.TestGen

@@ -104,10 +104,10 @@ def mkMemoryHierarchy : Circuit :=
   let dmem_req_valid := Wire.mk "dmem_req_valid"
   let dmem_req_we := Wire.mk "dmem_req_we"
   let dmem_req_addr := (List.range 32).map fun i => Wire.mk s!"dmem_req_addr_{i}"
-  let dmem_req_wdata := (List.range 32).map fun i => Wire.mk s!"dmem_req_wdata_{i}"
+  let dmem_req_wdata := (List.range 64).map fun i => Wire.mk s!"dmem_req_wdata_{i}"
   let dmem_req_size := (List.range 2).map fun i => Wire.mk s!"dmem_req_size_{i}"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
-  let dmem_resp_data := (List.range 32).map fun i => Wire.mk s!"dmem_resp_data_{i}"
+  let dmem_resp_data := (List.range 64).map fun i => Wire.mk s!"dmem_resp_data_{i}"
   let dmem_stall := Wire.mk "dmem_stall"
 
   -- External memory interface
@@ -156,13 +156,13 @@ def mkMemoryHierarchy : Circuit :=
     ([("clock", clock), ("reset", reset),
       ("req_valid", dmem_req_valid), ("req_we", dmem_req_we)] ++
      (List.range 32).map (fun i => (s!"req_addr_{i}", dmem_req_addr[i]!)) ++
-     (List.range 32).map (fun i => (s!"req_wdata_{i}", dmem_req_wdata[i]!)) ++
+     (List.range 64).map (fun i => (s!"req_wdata_{i}", dmem_req_wdata[i]!)) ++
      (List.range 2).map (fun i => (s!"req_size_{i}", dmem_req_size[i]!)) ++
      [("refill_valid", l1d_refill_valid)] ++
      (List.range 256).map (fun i => (s!"refill_data_{i}", l1d_refill_data[i]!)) ++
      [("wb_ack", l1d_wb_ack), ("fence_i", fence_i),
       ("resp_valid", dmem_resp_valid)] ++
-     (List.range 32).map (fun i => (s!"resp_data_{i}", dmem_resp_data[i]!)) ++
+     (List.range 64).map (fun i => (s!"resp_data_{i}", dmem_resp_data[i]!)) ++
      [("miss_valid", l1d_miss_valid)] ++
      (List.range 32).map (fun i => (s!"miss_addr_{i}", l1d_miss_addr[i]!)) ++
      [("wb_valid", l1d_wb_valid)] ++
@@ -217,9 +217,9 @@ def mkMemoryHierarchy : Circuit :=
       { name := "ifetch_data", width := 32, wires := ifetch_data },
       { name := "ifetch_data_1", width := 32, wires := ifetch_data_1 },
       { name := "dmem_req_addr", width := 32, wires := dmem_req_addr },
-      { name := "dmem_req_wdata", width := 32, wires := dmem_req_wdata },
+      { name := "dmem_req_wdata", width := 64, wires := dmem_req_wdata },
       { name := "dmem_req_size", width := 2, wires := dmem_req_size },
-      { name := "dmem_resp_data", width := 32, wires := dmem_resp_data },
+      { name := "dmem_resp_data", width := 64, wires := dmem_resp_data },
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
       { name := "mem_req_data", width := 256, wires := mem_req_data },
       { name := "mem_resp_data", width := 256, wires := mem_resp_data }

@@ -475,8 +475,8 @@ axiom rs_dispatch_returns_operands (n : Nat) (rs : RSState n) (idx : Fin n) :
 private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
   (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
-/-- Config-driven Reservation Station (W=2 dual-issue, banked architecture) -/
-def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+/-- Parameterized Reservation Station (W=2 dual-issue, banked architecture) with configurable data width. -/
+def mkReservationStationWithWidth (dataWidth : Nat := 32) : Circuit :=
   -- === W=2: Dual-Issue Reservation Station, banked architecture ===
   -- 4 entries split into 2 banks (Bank 0: entries 0,1; Bank 1: entries 2,3).
   -- issue_0 → Bank 0, issue_1 → Bank 1.
@@ -491,7 +491,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   -- Opcode field is 7 bits: the integer-with-extensions opcode space exceeds
   -- 64 entries (I+M+A+F+Zicsr+Zifencei+system), so a 6-bit field would alias
   -- distinct ops in the same dispatch domain (e.g. ADD vs XORI, SC vs FLW).
-  let opcodeWidth := 7; let tagWidth := 7; let dataWidth := 32
+  let opcodeWidth := 7; let tagWidth := 7
   let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
   -- Computed offsets into entry bitfield
   let off_dest := 1 + opcodeWidth
@@ -871,7 +871,7 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
   let b1_mux_s1d := mkMux2 "b1_m_s1d" dataWidth   e2_s1bp      e3_s1bp      dispatch_src1_data_1 arb1_gr1
   let b1_mux_s2d := mkMux2 "b1_m_s2d" dataWidth   e2_s2bp      e3_s2bp      dispatch_src2_data_1 arb1_gr1
 
-  { name := "ReservationStation4_W2"
+  { name := if dataWidth == 64 then "ReservationStation4_W2_64" else "ReservationStation4_W2"
     inputs :=
       [clock, reset, zero, one, issue_en_0, issue_en_1] ++
       [issue_is_store_0, issue_is_store_1, issue_is_atomic_0, issue_is_atomic_1] ++
@@ -903,6 +903,14 @@ def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit
     instances :=
       [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst] ++ slo_i0 ++ slo_i1 ++ slo_i2 ++ slo_i3 ++
       ei0 ++ ei1 ++ ei2 ++ ei3 }
+
+/-- Config-driven Reservation Station (W=2 dual-issue, banked architecture) -/
+def mkReservationStationFromConfig (_config : Shoumei.RISCV.CPUConfig) : Circuit :=
+  mkReservationStationWithWidth 32
+
+/-- 64-bit Reservation Station (W=2 dual-issue, banked architecture) -/
+def mkReservationStation4W2_64 : Circuit :=
+  mkReservationStationWithWidth 64
 
 /-- Config-driven MulDiv RS -/
 def mkMulDivRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=

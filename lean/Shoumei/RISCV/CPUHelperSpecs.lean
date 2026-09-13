@@ -97,9 +97,11 @@ deriving Repr, BEq, DecidableEq
     isLoad: instruction is a load -/
 def loadForwardingSpec (loadSize fwdSize : UInt32) (sbHit sbCommittedHit sbWordOnlyHit : Bool)
     (memValid isLoadR : Bool) (rsMemDispatchValid isLoad : Bool) : LoadFwdResult :=
-  -- Size check: fwd OK when store covers the full load
-  -- fwd_size_ok = fwdSize[1] OR (NOT(loadSize[1]) AND (fwdSize[0] OR NOT(loadSize[0])))
-  let fwdSizeOk := (fwdSize &&& 2 != 0) || ((loadSize &&& 2 == 0) && ((fwdSize &&& 1 != 0) || (loadSize &&& 1 == 0)))
+  -- Size check: fwd OK when store covers the full load (fwdSize >= loadSize for 2-bit sizes)
+  let k := (fwdSize &&& 1 != 0) || (loadSize &&& 1 == 0)
+  let a := (fwdSize &&& 2 != 0) || k
+  let b := (fwdSize &&& 2 != 0) && k
+  let fwdSizeOk := if loadSize &&& 2 != 0 then b else a
   let loadFwdPre := sbHit && memValid && isLoadR && fwdSizeOk
   let fwdValid := loadFwdPre && !sbWordOnlyHit
   let crossSizeAny := sbHit && memValid && isLoadR && !fwdSizeOk

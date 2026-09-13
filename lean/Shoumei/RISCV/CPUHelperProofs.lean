@@ -234,6 +234,21 @@ theorem load_fwd_word_overlap_stall :
     let r := loadForwardingSpec 2 2 false false true true true true true
     r.crossSizeStall = true := by native_decide
 
+/-- Double load with double-size SB entry: forward valid -/
+theorem load_fwd_double_match :
+    let r := loadForwardingSpec 3 3 true false false true true false false
+    r.fwdValid = true := by native_decide
+
+/-- Double load with word-size SB entry: cross-size stall (store does not cover load) -/
+theorem load_fwd_double_from_word_stall :
+    let r := loadForwardingSpec 3 2 true false false true true false false
+    r.fwdValid = false ∧ r.crossSizeStall = true := by native_decide
+
+/-- Word load with double-size SB entry: forward valid (double covers word) -/
+theorem load_fwd_word_from_double :
+    let r := loadForwardingSpec 2 3 true false false true true false false
+    r.fwdValid = true := by native_decide
+
 /-! ## 8. Source Selection Proofs -/
 
 /-- Register mode: return full register data -/
