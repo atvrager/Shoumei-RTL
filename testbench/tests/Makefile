@@ -11,8 +11,8 @@ GEN_INT_ASM:= $(filter-out generated/fp_%.S,$(GEN_ASM))
 GEN_INT_ELFS := $(GEN_INT_ASM:.S=.elf)
 GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 
-# F-extension tests need rv32imf
-CFLAGS_FP = -march=rv32imf_zicsr_zifencei -mabi=ilp32f -O2 -nostdlib -nostartfiles -ffreestanding
+# FP tests (F and D extension)
+CFLAGS_FP = -march=rv32imfd_zicsr_zifencei -mabi=ilp32d -O2 -nostdlib -nostartfiles -ffreestanding
 
 # FreeRTOS kernel sources
 FREERTOS_DIR = ../../third_party/FreeRTOS-Kernel

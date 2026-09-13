@@ -111,7 +111,7 @@ open Shoumei.RISCV.CPUTestbench
     the circuit registry above.  Named once because the stale-output pruner and
     the certificate registry must both agree with what is actually emitted. -/
 def riscvDecoderModules : List String :=
-  ["RV32IMFDecoder"]
+  ["RV32GDecoder"]
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -138,13 +138,16 @@ def allCircuits : List Circuit := [
   mkEqualityComparatorN 6,
   mkEqualityComparator32,  -- Phase 7: Store buffer address matching (XOR + OR-tree)
   mkMuxTree 4 32,
+  mkMuxTree 4 64,
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
   mkMux8x32Hierarchical, -- Hierarchical 8:1 (2× Mux4x32 + sel buffers)
+  mkMux8x64Hierarchical, -- Hierarchical 8:1 64-bit
   mkMuxTree 16 5, -- Phase 6: ROB head archRd readout
   mkMuxTree 16 6, -- Phase 6: ROB head physRd/oldPhysRd readout
   mkMuxTree 16 32, -- Phase 8: RVVI Queue16x32 read mux
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
+  mkMux64x64Hierarchical,  -- Hierarchical version 64-bit
   mkPriorityArbiter2,
   mkPriorityArbiter8,
   mkPriorityArbiter64,  -- Bitmap free list allocation
@@ -166,19 +169,22 @@ def allCircuits : List Circuit := [
   mkRegisterN 32,
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
-  mkRegisterNHierarchical 66,  -- Phase 7: Store buffer entry payload (32+32+2)
   mkRegisterNHierarchical 95,  -- RS entry: 7-bit opcode + 7-bit tags (1+7+7+1+7+32+1+7+32)
+  mkRegisterNHierarchical 98,  -- Store buffer entry payload (32+64+2)
+  mkRegisterNHierarchical 159, -- RS 64-bit entry (1+7+7+1+7+64+1+7+64)
 
   -- Phase 4: RISC-V Components
   mkRAT64,
   mkBitmapFreeList64_W2,
   mkPhysRegFile64,
+  mkPhysRegFile64x64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
   mkReservationStationFromConfig defaultCPUConfig,
+  mkReservationStation4W2_64,
 
   -- M-Extension (conditional on CPUConfig.enableM)
   mkKoggeStoneAdder64,
@@ -223,9 +229,10 @@ def allCircuits : List Circuit := [
   microcodeSequencerCircuit,
 
   -- Phase 8: Top-Level Integration
-  cdbMuxFW2,
+  cdbMuxFDW2,
   mkFetchStage,
   mkRenameStage,
+  mkRenameStage 64,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]

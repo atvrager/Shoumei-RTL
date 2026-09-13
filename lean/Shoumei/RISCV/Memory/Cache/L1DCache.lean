@@ -173,7 +173,7 @@ def mkL1DCache : Circuit :=
   let req_valid := Wire.mk "req_valid"
   let req_we := Wire.mk "req_we"
   let req_addr := (List.range 32).map fun i => Wire.mk s!"req_addr_{i}"
-  let req_wdata := (List.range 32).map fun i => Wire.mk s!"req_wdata_{i}"
+  let req_wdata := (List.range 64).map fun i => Wire.mk s!"req_wdata_{i}"
   let req_size := (List.range 2).map fun i => Wire.mk s!"req_size_{i}"
   let refill_valid := Wire.mk "refill_valid"
   let refill_data := (List.range 256).map fun i => Wire.mk s!"refill_data_{i}"
@@ -182,10 +182,10 @@ def mkL1DCache : Circuit :=
 
   -- Outputs (registered for 1-cycle hit latency)
   let resp_valid := Wire.mk "resp_valid"
-  let resp_data := (List.range 32).map fun i => Wire.mk s!"resp_data_{i}"
+  let resp_data := (List.range 64).map fun i => Wire.mk s!"resp_data_{i}"
   -- Combinational versions (before register)
   let resp_valid_comb := Wire.mk "resp_valid_comb"
-  let resp_data_comb := (List.range 32).map fun i => Wire.mk s!"resp_data_comb_{i}"
+  let resp_data_comb := (List.range 64).map fun i => Wire.mk s!"resp_data_comb_{i}"
   let miss_valid := Wire.mk "miss_valid"
   let miss_addr := (List.range 32).map fun i => Wire.mk s!"miss_addr_{i}"
   let wb_valid := Wire.mk "wb_valid"
@@ -351,7 +351,7 @@ def mkL1DCache : Circuit :=
   let way_word := (List.range 2).map fun way =>
     (List.range 32).map fun b => Wire.mk s!"way{way}_word_{b}"
 
-  -- Per-way word mux: select word from RAM-read 256-bit line
+  -- Per-way word mux: select word from RAM-read 256-bit line (bits 0..31)
   -- data_rd_w{way} is the selected set's line (from RAM read port)
   let data_word_mux_instances := (List.range 2).map fun way =>
     CircuitInstance.mk "Mux8x32" s!"u_data_word_mux_w{way}"
@@ -362,14 +362,32 @@ def mkL1DCache : Circuit :=
       (List.range 3).map (fun i => (s!"sel_{i}", word_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_word[way]!)[b]!)))
 
-  -- Hit data mux: way1_hit selects between way0 and way1 data
-  let hit_data := (List.range 32).map fun b => Wire.mk s!"hit_data_{b}"
-  let hit_data_mux_gates := (List.range 32).map fun b =>
-    Gate.mkMUX (way_word[0]![b]!) (way_word[1]![b]!) way_hit[1]! hit_data[b]!
+  -- Per-way doubleword-high mux: select upper 32 bits of 64-bit dword (words 1, 3, 5, 7)
+  let dword_sel := [req_addr[3]!, req_addr[4]!]
+  let way_dword_hi := (List.range 2).map fun way =>
+    (List.range 32).map fun b => Wire.mk s!"way{way}_dwhi_{b}"
 
-  -- Refill word mux: extract the requested word from 256-bit refill data using pend_q[4:2]
+  let data_dwhi_mux_instances := (List.range 2).map fun way =>
+    CircuitInstance.mk "Mux4x32" s!"u_data_dwhi_mux_w{way}"
+      ((List.range 4).foldl (fun acc dwIdx =>
+        let wordIdx := dwIdx * 2 + 1
+        acc ++ (List.range 32).map (fun b =>
+          (s!"in{dwIdx}_{b}", (data_ram_rd[way]!)[wordIdx * 32 + b]!))
+      ) [] ++
+      (List.range 2).map (fun i => (s!"sel_{i}", dword_sel[i]!)) ++
+      (List.range 32).map (fun b => (s!"out_{b}", (way_dword_hi[way]!)[b]!)))
+
+  -- Hit data mux (64 bits): way1_hit selects between way0 and way1 data
+  let hit_data := (List.range 64).map fun b => Wire.mk s!"hit_data_{b}"
+  let hit_data_mux_gates :=
+    (List.range 32).map (fun b =>
+      Gate.mkMUX (way_word[0]![b]!) (way_word[1]![b]!) way_hit[1]! hit_data[b]!) ++
+    (List.range 32).map (fun b =>
+      Gate.mkMUX (way_dword_hi[0]![b]!) (way_dword_hi[1]![b]!) way_hit[1]! hit_data[32+b]!)
+
+  -- Refill word mux: extract the requested lower word from 256-bit refill data using pend_q[4:2]
   let pend_word_sel := [pend_q[2]!, pend_q[3]!, pend_q[4]!]
-  let refill_word := (List.range 32).map fun b => Wire.mk s!"refill_word_{b}"
+  let refill_word := (List.range 64).map fun b => Wire.mk s!"refill_word_{b}"
 
   let refill_word_mux_inst := CircuitInstance.mk "Mux8x32" "u_refill_word_mux"
     ((List.range 8).foldl (fun acc wordIdx =>
@@ -379,9 +397,20 @@ def mkL1DCache : Circuit :=
     (List.range 3).map (fun i => (s!"sel_{i}", pend_word_sel[i]!)) ++
     (List.range 32).map (fun b => (s!"out_{b}", refill_word[b]!)))
 
-  -- Final resp_data_comb: MUX(hit_data, refill_word, refill_done)
-  -- On refill_done, return the word from refill data; otherwise return hit data
-  let resp_data_mux_gates := (List.range 32).map fun b =>
+  -- Refill doubleword-high mux: extract upper 32 bits from 256-bit refill data using pend_q[4:3]
+  let pend_dword_sel := [pend_q[3]!, pend_q[4]!]
+  let refill_dwhi_mux_inst := CircuitInstance.mk "Mux4x32" "u_refill_dwhi_mux"
+    ((List.range 4).foldl (fun acc dwIdx =>
+      let wordIdx := dwIdx * 2 + 1
+      acc ++ (List.range 32).map (fun b =>
+        (s!"in{dwIdx}_{b}", refill_data[wordIdx * 32 + b]!))
+    ) [] ++
+    (List.range 2).map (fun i => (s!"sel_{i}", pend_dword_sel[i]!)) ++
+    (List.range 32).map (fun b => (s!"out_{b}", refill_word[32+b]!)))
+
+  -- Final resp_data_comb (64 bits): MUX(hit_data, refill_word, refill_done)
+  -- On refill_done, return the dword from refill data; otherwise return hit data
+  let resp_data_mux_gates := (List.range 64).map fun b =>
     Gate.mkMUX hit_data[b]! refill_word[b]! (Wire.mk "refill_done") resp_data_comb[b]!
 
   -- FSM decode
@@ -411,7 +440,7 @@ def mkL1DCache : Circuit :=
   -- Register resp_valid and resp_data for 1-cycle hit latency
   let resp_reg_gates :=
     [Gate.mkDFF resp_valid_comb clock reset resp_valid] ++
-    (List.range 32).map fun b =>
+    (List.range 64).map fun b =>
       Gate.mkDFF resp_data_comb[b]! clock reset resp_data[b]!
 
   -- miss_valid, miss_addr, stall, wb_valid, wb_addr, wb_data, fence_i_busy
@@ -543,65 +572,69 @@ def mkL1DCache : Circuit :=
   ) []
 
   -- === Byte-enable decode from req_size[1:0] + req_addr[1:0] ===
-  -- req_size: 00=byte, 01=halfword, 10=word
+  -- req_size: 00=byte, 01=halfword, 10=word, 11=doubleword
   -- be_0..be_3: per-byte enables
   let not_sz := (List.range 2).map fun i => Wire.mk s!"not_sz_{i}"
   let not_ba := (List.range 2).map fun i => Wire.mk s!"not_ba_{i}"
   let be := (List.range 4).map fun i => Wire.mk s!"be_{i}"
+  let is_word := Wire.mk "is_word"
+  let is_dword := Wire.mk "is_dword"
   let byte_en_gates :=
     [Gate.mkNOT req_size[0]! not_sz[0]!, Gate.mkNOT req_size[1]! not_sz[1]!,
      Gate.mkNOT req_addr[0]! not_ba[0]!, Gate.mkNOT req_addr[1]! not_ba[1]!] ++
-    -- is_byte = NOT sz1 AND NOT sz0;  is_half = NOT sz1 AND sz0;  is_word = sz1
-    -- be_0: word OR (half AND NOT addr1) OR (byte AND NOT addr1 AND NOT addr0)
+    -- is_byte = NOT sz1 AND NOT sz0;  is_half = NOT sz1 AND sz0;  is_word = sz1 AND NOT sz0; is_dword = sz1 AND sz0
     [Gate.mkAND not_sz[1]! not_sz[0]! (Wire.mk "is_byte"),
      Gate.mkAND not_sz[1]! req_size[0]! (Wire.mk "is_half"),
+     Gate.mkAND req_size[1]! not_sz[0]! is_word,
+     Gate.mkAND req_size[1]! req_size[0]! is_dword,
      -- be_0: byte AND ba==00, OR half AND ba1==0, OR word
      Gate.mkAND (Wire.mk "is_byte") not_ba[1]! (Wire.mk "be0_bt"),
      Gate.mkAND (Wire.mk "be0_bt") not_ba[0]! (Wire.mk "be0_b"),
      Gate.mkAND (Wire.mk "is_half") not_ba[1]! (Wire.mk "be0_h"),
      Gate.mkOR (Wire.mk "be0_b") (Wire.mk "be0_h") (Wire.mk "be0_bh"),
-     Gate.mkOR (Wire.mk "be0_bh") req_size[1]! be[0]!,
+     Gate.mkOR (Wire.mk "be0_bh") is_word be[0]!,
      -- be_1: byte AND ba==01, OR half AND ba1==0, OR word
      Gate.mkAND (Wire.mk "is_byte") not_ba[1]! (Wire.mk "be1_bt"),
      Gate.mkAND (Wire.mk "be1_bt") req_addr[0]! (Wire.mk "be1_b"),
      Gate.mkOR (Wire.mk "be1_b") (Wire.mk "be0_h") (Wire.mk "be1_bh"),
-     Gate.mkOR (Wire.mk "be1_bh") req_size[1]! be[1]!,
+     Gate.mkOR (Wire.mk "be1_bh") is_word be[1]!,
      -- be_2: byte AND ba==10, OR half AND ba1==1, OR word
      Gate.mkAND (Wire.mk "is_byte") req_addr[1]! (Wire.mk "be2_bt"),
      Gate.mkAND (Wire.mk "be2_bt") not_ba[0]! (Wire.mk "be2_b"),
      Gate.mkAND (Wire.mk "is_half") req_addr[1]! (Wire.mk "be2_h"),
      Gate.mkOR (Wire.mk "be2_b") (Wire.mk "be2_h") (Wire.mk "be2_bh"),
-     Gate.mkOR (Wire.mk "be2_bh") req_size[1]! be[2]!,
+     Gate.mkOR (Wire.mk "be2_bh") is_word be[2]!,
      -- be_3: byte AND ba==11, OR half AND ba1==1, OR word
      Gate.mkAND (Wire.mk "be2_bt") req_addr[0]! (Wire.mk "be3_b"),
      Gate.mkOR (Wire.mk "be3_b") (Wire.mk "be2_h") (Wire.mk "be3_bh"),
-     Gate.mkOR (Wire.mk "be3_bh") req_size[1]! be[3]!]
+     Gate.mkOR (Wire.mk "be3_bh") is_word be[3]!]
 
   -- === Shifted write data: replicate store data to correct byte lanes ===
-  -- wdata_shifted[7:0]   = req_wdata[7:0]  (always)
-  -- wdata_shifted[15:8]  = is_byte ? req_wdata[7:0] : req_wdata[15:8]
-  -- wdata_shifted[23:16] = is_word ? req_wdata[23:16] : req_wdata[7:0]
-  -- wdata_shifted[31:24] = is_word ? req_wdata[31:24] : (is_byte ? req_wdata[7:0] : req_wdata[15:8])
   let wdata_shifted := (List.range 32).map fun i => Wire.mk s!"wds_{i}"
   let wdata_shift_gates :=
     -- Byte 0: passthrough
     (List.range 8).map (fun i =>
       Gate.mkBUF req_wdata[i]! wdata_shifted[i]!) ++
     -- Byte 1: MUX(req_wdata[15:8], req_wdata[7:0], is_byte)
-    --   = is_byte ? req_wdata[7:0] : req_wdata[15:8]
     (List.range 8).map (fun i =>
       Gate.mkMUX req_wdata[8+i]! req_wdata[i]! (Wire.mk "is_byte") wdata_shifted[8+i]!) ++
-    -- Byte 2: MUX(req_wdata[7:0], req_wdata[23:16], req_size[1])
-    --   = is_word ? req_wdata[23:16] : req_wdata[7:0]
+    -- Byte 2: MUX(req_wdata[7:0], req_wdata[23:16], is_word)
     (List.range 8).map (fun i =>
-      Gate.mkMUX req_wdata[i]! req_wdata[16+i]! req_size[1]! wdata_shifted[16+i]!) ++
+      Gate.mkMUX req_wdata[i]! req_wdata[16+i]! is_word wdata_shifted[16+i]!) ++
     -- Byte 3: first MUX byte vs half source, then word override
-    --   temp = is_byte ? req_wdata[7:0] : req_wdata[15:8]
-    --   result = is_word ? req_wdata[31:24] : temp
     (List.range 8).map (fun i =>
       Gate.mkMUX req_wdata[8+i]! req_wdata[i]! (Wire.mk "is_byte") (Wire.mk s!"wds3t_{i}")) ++
     (List.range 8).map (fun i =>
-      Gate.mkMUX (Wire.mk s!"wds3t_{i}") req_wdata[24+i]! req_size[1]! wdata_shifted[24+i]!)
+      Gate.mkMUX (Wire.mk s!"wds3t_{i}") req_wdata[24+i]! is_word wdata_shifted[24+i]!)
+
+  -- 4-bit doubleword decoder for 64-bit store write enables
+  let dword_dec := (List.range 4).map fun i => Wire.mk s!"dwdc_{i}"
+  let dword_dec_gates := [
+    Gate.mkOR word_dec[0]! word_dec[1]! dword_dec[0]!,
+    Gate.mkOR word_dec[2]! word_dec[3]! dword_dec[1]!,
+    Gate.mkOR word_dec[4]! word_dec[5]! dword_dec[2]!,
+    Gate.mkOR word_dec[6]! word_dec[7]! dword_dec[3]!
+  ]
 
   -- === FSM next-state ===
   -- IDLE(000) → WRITEBACK(010) on miss_detect AND victim_needs_wb
@@ -685,12 +718,15 @@ def mkL1DCache : Circuit :=
   let data_ram_merge_gates := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 256).foldl (fun acc2 b =>
       let wd := b / 32
-      let bb := b % 32
-      let byte := bb / 8
-      -- merged_{way}_{b} = MUX(ram_rd, wdata_shifted, wdc AND be)
+      let dw := b / 64
+      let bb32 := b % 32
+      let bb64 := b % 64
+      let byte := bb32 / 8
       acc2 ++ [
-        Gate.mkAND word_dec[wd]! be[byte]! (Wire.mk s!"ram_be_w{way}_{b}"),
-        Gate.mkMUX (data_ram_rd[way]!)[b]! wdata_shifted[bb]!
+        Gate.mkAND word_dec[wd]! be[byte]! (Wire.mk s!"ram_be_base_w{way}_{b}"),
+        Gate.mkMUX (Wire.mk s!"ram_be_base_w{way}_{b}") dword_dec[dw]! is_dword (Wire.mk s!"ram_be_w{way}_{b}"),
+        Gate.mkMUX wdata_shifted[bb32]! req_wdata[bb64]! is_dword (Wire.mk s!"wr_data_w{way}_{b}"),
+        Gate.mkMUX (data_ram_rd[way]!)[b]! (Wire.mk s!"wr_data_w{way}_{b}")
           (Wire.mk s!"ram_be_w{way}_{b}") (Wire.mk s!"ram_merged_w{way}_{b}"),
         -- Final write data: MUX(merged, refill_data, refill_done)
         Gate.mkMUX (Wire.mk s!"ram_merged_w{way}_{b}") refill_data[b]!
@@ -740,7 +776,7 @@ def mkL1DCache : Circuit :=
     [wb_valid_gate] ++ wb_vtag_mux ++ wb_addr_gates ++ wb_data_gates ++ [fence_busy_gate] ++
     const_zero_gates ++
     pend_dec_gates ++ lru_mux_gates ++ [pend_victim_not_gate] ++
-    write_hit_gates ++ not_ws_gates ++ word_dec_gates ++
+    write_hit_gates ++ not_ws_gates ++ word_dec_gates ++ dword_dec_gates ++
     [not_way1_hit_gate] ++ refill_wh_gates ++ byte_en_gates ++ wdata_shift_gates ++
     fsm_next_gates ++ pend_capture_gates ++ [pend_victim_capture] ++
     tag_next_gates ++ data_ram_ctl_gates ++ data_ram_addr_gates ++ data_ram_merge_gates ++
@@ -749,8 +785,8 @@ def mkL1DCache : Circuit :=
   let allInstances :=
     tag_instances ++
     tag_mux_instances ++ tag_cmp_instances ++
-    data_word_mux_instances ++
-    [refill_word_mux_inst]
+    data_word_mux_instances ++ data_dwhi_mux_instances ++
+    [refill_word_mux_inst, refill_dwhi_mux_inst]
 
   { name := "L1DCache"
     inputs := [clock, reset, req_valid, req_we] ++ req_addr ++ req_wdata ++ req_size ++
@@ -762,10 +798,10 @@ def mkL1DCache : Circuit :=
     rams := data_rams
     signalGroups := [
       { name := "req_addr", width := 32, wires := req_addr },
-      { name := "req_wdata", width := 32, wires := req_wdata },
+      { name := "req_wdata", width := 64, wires := req_wdata },
       { name := "req_size", width := 2, wires := req_size },
       { name := "refill_data", width := 256, wires := refill_data },
-      { name := "resp_data", width := 32, wires := resp_data },
+      { name := "resp_data", width := 64, wires := resp_data },
       { name := "miss_addr", width := 32, wires := miss_addr },
       { name := "wb_addr", width := 32, wires := wb_addr },
       { name := "wb_data", width := 256, wires := wb_data }

@@ -69,7 +69,7 @@ structure MemoryInterfaceState where
   /-- Memory response is valid -/
   responseValid : Bool
   /-- Memory response data -/
-  responseData : UInt32
+  responseData : UInt64
 
 instance : Inhabited MemoryInterfaceState where
   default := {
@@ -119,7 +119,7 @@ def LSUState.executeStore
     (opcode : OpType)
     (base : UInt32)      -- rs1 value (address base)
     (offset : Int)       -- Immediate offset
-    (data : UInt32)      -- rs2 value (data to store)
+    (data : UInt64)      -- rs2 value (data to store)
     : LSUState × Bool :=
   -- Calculate effective address
   let addr := calculateMemoryAddress base offset
@@ -177,7 +177,7 @@ def LSUState.executeLoad
     match lsu.storeBuffer.forwardCheck addr with
     | some fwd_data =>
         -- FORWARDING HIT: Return data immediately, broadcast on CDB
-        let processed_data := processLoadResponse fwd_data size sign_ext
+        let processed_data := processLoadResponse fwd_data.toUInt32 size sign_ext
         (lsu, some (dest_tag, processed_data))
 
     | none =>
@@ -213,7 +213,7 @@ def LSUState.commitStore
 -/
 def LSUState.dequeueStore
     (lsu : LSUState)
-    : LSUState × Option (UInt32 × UInt32 × Fin 4) :=
+    : LSUState × Option (UInt32 × UInt64 × Fin 4) :=
   let (newSB, deqResult) := lsu.storeBuffer.dequeue
   match deqResult with
   | some entry =>
@@ -335,7 +335,7 @@ def mkLSU : Circuit :=
   let dispatch_base := mkWires "dispatch_base_" 32
   let dispatch_offset := mkWires "dispatch_offset_" 32
   let dispatch_dest_tag := mkWires "dispatch_dest_tag_" 6
-  let store_data := mkWires "store_data_" 32
+  let store_data := mkWires "store_data_" 64
 
   -- === Store Commit Interface (from ROB) ===
   let commit_store_en := Wire.mk "commit_store_en"
@@ -360,10 +360,10 @@ def mkLSU : Circuit :=
   let sb_fwd_committed_hit := Wire.mk "sb_fwd_committed_hit"
   let sb_fwd_word_hit := Wire.mk "sb_fwd_word_hit"
   let sb_fwd_word_only_hit := Wire.mk "sb_fwd_word_only_hit"
-  let sb_fwd_data := mkWires "sb_fwd_data_" 32
+  let sb_fwd_data := mkWires "sb_fwd_data_" 64
   let sb_fwd_size := mkWires "sb_fwd_size_" 2
   let sb_deq_valid := Wire.mk "sb_deq_valid"
-  let sb_deq_bits := mkWires "sb_deq_bits_" 66
+  let sb_deq_bits := mkWires "sb_deq_bits_" 98
   let sb_enq_idx := mkWires "sb_enq_idx_" 3
   let sb_flush_tail := mkWires "sb_flush_tail_" 3
 
@@ -455,13 +455,13 @@ def mkLSU : Circuit :=
       { name := "dispatch_base", width := 32, wires := dispatch_base },
       { name := "dispatch_offset", width := 32, wires := dispatch_offset },
       { name := "dispatch_dest_tag", width := 6, wires := dispatch_dest_tag },
-      { name := "store_data", width := 32, wires := store_data },
+      { name := "store_data", width := 64, wires := store_data },
       { name := "fwd_address", width := 32, wires := fwd_address },
       { name := "agu_address", width := 32, wires := agu_address },
       { name := "agu_tag_out", width := 6, wires := agu_tag_out },
-      { name := "sb_fwd_data", width := 32, wires := sb_fwd_data },
+      { name := "sb_fwd_data", width := 64, wires := sb_fwd_data },
       { name := "sb_fwd_size", width := 2, wires := sb_fwd_size },
-      { name := "sb_deq_bits", width := 66, wires := sb_deq_bits },
+      { name := "sb_deq_bits", width := 98, wires := sb_deq_bits },
       { name := "sb_enq_idx", width := 3, wires := sb_enq_idx },
       { name := "sb_enq_address", width := 32, wires := sb_enq_address },
       { name := "sb_enq_size", width := 2, wires := sb_enq_size },

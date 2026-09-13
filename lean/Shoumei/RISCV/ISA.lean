@@ -148,7 +148,7 @@ def OpType.hasFpRd : OpType → Bool
   -- int→FP conversions and moves write FP rd
   | .FCVT_S_W | .FCVT_S_WU | .FMV_W_X
   -- FP load writes FP rd
-  | .FLW => true
+  | .FLW | .FLD => true
   | _ => false
 
 /-- Does this op read FP source register rs1? -/
@@ -158,7 +158,7 @@ def OpType.hasFpRs1 : OpType → Bool
   | .FEQ_S | .FLT_S | .FLE_S
   | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W | .FCLASS_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
-  | .FSW => true
+  | .FSW | .FSD => true
   | _ => false
 
 /-- Does this op read FP source register rs2? -/
@@ -176,7 +176,7 @@ def OpType.hasFpRs3 : OpType → Bool
 
 /-- Does this op read integer rs1? (FLW/FSW use int rs1 for address) -/
 def OpType.hasIntRs1 : OpType → Bool
-  | .FLW | .FSW => true
+  | .FLW | .FSW | .FLD | .FSD => true
   -- FMV_W_X reads int rs1
   | .FMV_W_X => true
   -- FCVT_S_W/FCVT_S_WU read int rs1
