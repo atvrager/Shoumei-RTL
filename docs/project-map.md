@@ -6,8 +6,8 @@ not edit by hand; re-run it.  Composition edges come from
 Lean registry, docs from each file's leading comment block.
 
 - Lean files: **180**
-- Circuits with a literal `name :=` (graph nodes): **50**
-- Compositional certificates (Lean registry): **61**
+- Circuits with a literal `name :=` (graph nodes): **49**
+- Compositional certificates (Lean registry): **64**
 - Proof files: **40**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
@@ -29,7 +29,7 @@ graph TD
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
-  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>6 circuits"]
+  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>5 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
   Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>2 circuits"]
@@ -90,7 +90,6 @@ graph TD
 | `Queue16x32` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `Queue16x32_DualPort` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `ROB16_W2` | Shoumei/RISCV/Retirement | 0 | yes | yes | yes |
-| `ReservationStation4_W2` | Shoumei/RISCV/Execution | 0 |  | yes | yes |
 | `RippleCarryAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `RippleCarryAdder4` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `RippleCarryAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
@@ -104,8 +103,8 @@ graph TD
 
 - **0** circuit files without a leading doc comment
 - **23** circuits with no `*Proofs.lean` mentioning them
-- **34** circuits that instantiate nothing (leaves)
-- **29** circuits nothing else instantiates (tops)
+- **33** circuits that instantiate nothing (leaves)
+- **28** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

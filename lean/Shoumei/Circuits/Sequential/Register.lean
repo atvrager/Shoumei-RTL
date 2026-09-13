@@ -68,7 +68,7 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
 
   -- Decompose into power-of-2 chunks
   let chunks := decomposeToPowersOf2 n
-  
+
   -- Build instances for each chunk
   let rec buildInstances (chunks : List Nat) (startBit : Nat) : List CircuitInstance :=
     match chunks with
@@ -90,7 +90,7 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
             )
         }
         inst :: buildInstances rest (startBit + width)
-  
+
   let instances := buildInstances chunks 0
 
   { name := s!"Register{n}"
