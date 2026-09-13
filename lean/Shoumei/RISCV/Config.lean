@@ -168,11 +168,12 @@ def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.conta
 def CPUConfig.microcodesMRET (c : CPUConfig) : Bool := c.enabledMicrocode.contains .mret
 
 /-- THE default config. Edit this single definition to change what gets built.
-    RV32IMF + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
+    RV32IMAFD + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
 def defaultCPUConfig : CPUConfig := {
   enableM := true
   enableA := true
   enableF := true
+  enableD := true
   enableZicsr := true
   enableZifencei := true
   enableCache := true

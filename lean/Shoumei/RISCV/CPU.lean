@@ -46,7 +46,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let imem_resp_data_1 := CPU.makeIndexedWires "imem_resp_data_1" 32
   let dmem_req_ready := Wire.mk "dmem_req_ready"
   let dmem_resp_valid := Wire.mk "dmem_resp_valid"
-  let dmem_resp_data := CPU.makeIndexedWires "dmem_resp_data" 32
+  let dmem_resp_data := CPU.makeIndexedWires "dmem_resp_data" (if config.enableD then 64 else 32)
 
   -- === PIPELINE FLUSH ===
   let branch_redirect_valid_reg := Wire.mk "branch_redirect_valid_reg"
@@ -1154,7 +1154,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let prf_rvvi_data_0 := CPU.makeIndexedWires "prf_rvvi_data_0" 32
   let prf_rvvi_data_1 := CPU.makeIndexedWires "prf_rvvi_data_1" 32
 
-  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_tag_0 := CPU.makeIndexedWires "cdb_tag_0" 6; let cdb_data_0 := CPU.makeIndexedWires "cdb_data_0" 32
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_tag_0 := CPU.makeIndexedWires "cdb_tag_0" 6
+  let cdb_data_0 := CPU.makeIndexedWires "cdb_data_0" (if config.enableD then 64 else 32)
+  let cdb_data32_0 := cdb_data_0.take 32
   let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_tag_1 := CPU.makeIndexedWires "cdb_tag_1" 6; let cdb_data_1 := CPU.makeIndexedWires "cdb_data_1" 32
 
   -- CDB snoop for CSR rs1 capture: during drain, compare captured rs1 tag against CDB
@@ -1248,11 +1250,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_mux_rs1_phys := CPU.makeIndexedWires "mem_mux_rs1_phys" 6
   let mem_mux_rs2_phys := CPU.makeIndexedWires "mem_mux_rs2_phys" 6
   let mem_mux_rs1_data := CPU.makeIndexedWires "mem_mux_rs1_data" 32
-  let mem_mux_rs2_data := CPU.makeIndexedWires "mem_mux_rs2_data" 32
+  let mem_mux_rs2_data := CPU.makeIndexedWires "mem_mux_rs2_data" (if config.enableD then 64 else 32)
   let mem_mux_rd_phys := CPU.makeIndexedWires "mem_mux_rd_phys" 6
-  -- Forward-declare FP rename wires needed for FSW src2 override in mem RS
+  -- Forward-declare FP rename wires needed for FSW/FSD src2 override in mem RS
   let mem_fp_rs2_phys := CPU.makeIndexedWires "fp_rs2_phys" 6
-  let mem_fp_rs2_data := CPU.makeIndexedWires "fp_issue_src2_data" 32
+  let mem_fp_rs2_data := CPU.makeIndexedWires "fp_issue_src2_data" (if config.enableD then 64 else 32)
   let mem_fp_issue_src2_ready := Wire.mk "fp_issue_src2_ready"
   let mem_mux_src1_ready := Wire.mk "mem_mux_src1_ready"
   let mem_mux_src2_ready := Wire.mk "mem_mux_src2_ready"
@@ -1263,7 +1265,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       Gate.mkMUX (d0_op.take 7)[i]! (d1_op.take 7)[i]! mem_route_sel mem_mux_opcode[i]!) ++
     (List.range 6).map (fun i =>
       Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! mem_route_sel mem_mux_rs1_phys[i]!) ++
-    -- FSW: src2 tag/data from FP rename instead of INT rename
+    -- FSW/FSD: src2 tag/data from FP rename instead of INT rename
     (if enableF then
       let mem_mux_int_rs2_phys := CPU.makeIndexedWires "mem_mux_int_rs2_phys" 6
       let mem_mux_is_fp_store := Wire.mk "mem_mux_is_fp_store"
@@ -1280,7 +1282,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! mem_route_sel mem_mux_int_rs2_data[i]!) ++
       (List.range 32).map (fun i =>
         Gate.mkMUX mem_mux_int_rs2_data[i]! mem_fp_rs2_data[i]! mem_mux_is_fp_store mem_mux_rs2_data[i]!) ++
-      -- src2_ready override: FSW uses FP busy table ready
+      (if config.enableD then
+        (List.range 32).map (fun i =>
+          Gate.mkMUX zero mem_fp_rs2_data[32+i]! mem_mux_is_fp_store mem_mux_rs2_data[32+i]!)
+       else []) ++
+      -- src2_ready override: FSW/FSD uses FP busy table ready
       [Gate.mkMUX (Wire.mk "src2_ready0_reg") (Wire.mk "src2_ready1_reg") mem_route_sel mem_mux_int_src2_ready] ++
       []
     else
@@ -1403,7 +1409,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "commit_physRd" (CPU.makeIndexedWires "cmt_physRd_mux_0" 6) ++
                bundledPorts "commit_archRd_1" commit_archRd_1 ++ bundledPorts "commit_physRd_1" commit_physRd_1 ++
                [("cdb_valid", Wire.mk "cdb_valid_int_0"), ("cdb_valid_1", Wire.mk "cdb_valid_int_1")] ++
-               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" (cdb_data_0.take 32) ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("rename_valid", rename_valid_0), ("stall", Wire.mk "rename_stall_0"),
                 ("rename_valid_1", rename_valid_1), ("stall_1", Wire.mk "rename_stall_1")] ++
@@ -1680,7 +1686,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_tag_1" (rs1_phys_1 ++ [zero]) ++ bundledPorts "issue_src1_data_1" rs1_data_1 ++
                bundledPorts "issue_src2_tag_1" (rs2_phys_1 ++ [zero]) ++ bundledPorts "issue_src2_data_1" src2_muxed_1 ++
                [("cdb_valid_0", cdb_valid_0), ("cdb_valid_1", cdb_valid_1)] ++
-               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data32_0 ++
                bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                [("dispatch_en_0", one), ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
                 ("suppress_cdb_s1_0", zero), ("suppress_cdb_s2_0", zero),
@@ -1737,7 +1743,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_br_dummy_s1d1" 32) ++
                bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_br_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_br_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data32_0 ++
                bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_br_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_br_dispatch_src1 ++
@@ -1757,8 +1763,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_mem_issue_full := Wire.mk "rs_mem_issue_full"
   let rs_mem_dispatch_valid := Wire.mk "rs_mem_dispatch_valid"
   let rs_mem_dispatch_opcode := CPU.makeIndexedWires "rs_mem_dispatch_opcode" 7
-  let rs_mem_dispatch_src1 := CPU.makeIndexedWires "rs_mem_dispatch_src1" 32
-  let rs_mem_dispatch_src2 := CPU.makeIndexedWires "rs_mem_dispatch_src2" 32
+  let rs_mem_dispatch_src1 := CPU.makeIndexedWires "rs_mem_dispatch_src1" (if config.enableD then 64 else 32)
+  let rs_mem_dispatch_src2 := CPU.makeIndexedWires "rs_mem_dispatch_src2" (if config.enableD then 64 else 32)
   let rs_mem_dispatch_tag := CPU.makeIndexedWires "rs_mem_dispatch_tag" 7
   let rs_mem_alloc_ptr := CPU.makeIndexedWires "rs_mem_alloc_ptr" 2
   let rs_mem_grant := CPU.makeIndexedWires "rs_mem_grant" 4
@@ -1773,8 +1779,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let is_flw_r := Wire.mk "is_flw_r"
   let mem_dispatch_en := Wire.mk "mem_dispatch_en"
 
+  let rsMemDataWidth := if config.enableD then 64 else 32
   let rs_mem_inst : CircuitInstance := {
-    moduleName := "ReservationStation4_W2"
+    moduleName := if config.enableD then "ReservationStation4_W2_64" else "ReservationStation4_W2"
     instName := "u_rs_memory"
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_mem),
                 ("zero", zero), ("one", one),
@@ -1794,24 +1801,26 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_valid_0", rs_mem_dispatch_valid),
                 ("dispatch_valid_1", Wire.mk "rs_mem_dispatch_valid_1")] ++
                bundledPorts "issue_opcode_0" mem_mux_opcode ++ bundledPorts "issue_dest_tag_0" (mem_mux_rd_phys ++ [zero]) ++
-               bundledPorts "issue_src1_tag_0" (mem_mux_rs1_phys ++ [zero]) ++ bundledPorts "issue_src1_data_0" mem_mux_rs1_data ++
+               bundledPorts "issue_src1_tag_0" (mem_mux_rs1_phys ++ [zero]) ++
+               bundledPorts "issue_src1_data_0" (if config.enableD then mem_mux_rs1_data ++ (List.range 32).map fun _ => zero else mem_mux_rs1_data) ++
                bundledPorts "issue_src2_tag_0" (mem_mux_rs2_phys ++ [if enableF then Wire.mk "mem_mux_is_fp_store" else zero]) ++ bundledPorts "issue_src2_data_0" mem_mux_rs2_data ++
                -- Slot 1 issue: tied to zero
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_mem_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_dt1" 7) ++
                bundledPorts "issue_src1_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s1t1" 7) ++
-               bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s1d1" 32) ++
+               bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s1d1" rsMemDataWidth) ++
                bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_mem_dummy_s2t1" 7) ++
-               bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s2d1" 32) ++
+               bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_mem_dummy_s2d1" rsMemDataWidth) ++
                bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
-               bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
+               bundledPorts "cdb_tag_1" cdb_tag7_1 ++
+               bundledPorts "cdb_data_1" (if config.enableD then cdb_data_1 ++ (List.range 32).map fun _ => zero else cdb_data_1) ++
                bundledPorts "dispatch_opcode_0" rs_mem_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_mem_dispatch_src1 ++
                bundledPorts "dispatch_src2_data_0" rs_mem_dispatch_src2 ++
                bundledPorts "dispatch_dest_tag_0" rs_mem_dispatch_tag ++
                bundledPorts "dispatch_opcode_1" (CPU.makeIndexedWires "rs_mem_dop1" 7) ++
-               bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_mem_ds1_1" 32) ++
-               bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_mem_ds2_1" 32) ++
+               bundledPorts "dispatch_src1_data_1" (CPU.makeIndexedWires "rs_mem_ds1_1" rsMemDataWidth) ++
+               bundledPorts "dispatch_src2_data_1" (CPU.makeIndexedWires "rs_mem_ds2_1" rsMemDataWidth) ++
                bundledPorts "dispatch_dest_tag_1" (CPU.makeIndexedWires "rs_mem_ddt1" 7) ++
                bundledPorts "alloc_ptr" rs_mem_alloc_ptr ++
                bundledPorts "dispatch_grant" rs_mem_grant
@@ -1945,7 +1954,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_md_dummy_s1d1" 32) ++
                bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_md_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_md_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data32_0 ++
                bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_muldiv_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_muldiv_dispatch_src1 ++
@@ -1979,6 +1988,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- We register is_fp per CDB channel and use it to gate PRF writes
   let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
   let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  let cdb_is_double_0 := Wire.mk "cdb_is_double_0"
+  let fp_ch0_is_double := Wire.mk "fp_ch0_is_double"
   -- FP PRF: write if CDB valid AND is_fp on either channel
   -- For FP rename CDB wakeup: use channel 0 valid for simplicity (FP ops only go through one CDB)
   -- Actually: both channels can carry FP results, so we need to handle both.
@@ -1996,14 +2007,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkAND cdb_valid_0 cdb_is_fp_0 cdb_valid_fp_ch0,
        Gate.mkAND cdb_valid_1 cdb_is_fp_1 cdb_valid_fp_ch1,
        Gate.mkOR cdb_valid_fp_ch0 cdb_valid_fp_ch1 cdb_valid_fp_prf] ++
+      (if config.enableD then
+        [Gate.mkAND cdb_valid_fp_ch0 cdb_is_double_0 fp_ch0_is_double]
+       else []) ++
       -- MUX tag/data: if ch0 has FP, use ch0; else use ch1
       (List.range 6).map (fun i =>
         Gate.mkMUX cdb_tag_1[i]! cdb_tag_0[i]! cdb_valid_fp_ch0 cdb_tag_fp[i]!) ++
       (List.range 32).map (fun i =>
         Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! cdb_valid_fp_ch0 cdb_data_fp[i]!) ++
-      (List.range (config.flen - 32)).map (fun i =>
-        -- NaN-boxing: single-precision values written to 64-bit FP register have upper 32 bits set to 1
-        Gate.mkBUF one cdb_data_fp[32 + i]!)
+      (if config.enableD then
+        (List.range 32).map (fun i =>
+          Gate.mkMUX one cdb_data_0[32 + i]! fp_ch0_is_double cdb_data_fp[32 + i]!)
+       else [])
     else
       (List.range 6).map (fun i => Gate.mkBUF zero cdb_tag_fp[i]!) ++
       (List.range config.flen).map (fun i => Gate.mkBUF zero cdb_data_fp[i]!) ++
@@ -2215,9 +2230,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_issue_src1_tag := CPU.makeIndexedWires "fp_issue_src1_tag" 6
   let fp_issue_src2_tag := CPU.makeIndexedWires "fp_issue_src2_tag" 6
   let fp_issue_src1_data_pre := CPU.makeIndexedWires "fp_issue_src1_data_pre" 32
-  let fp_issue_src2_data_pre := CPU.makeIndexedWires "fp_issue_src2_data_pre" 32
+  let fp_issue_src2_data_pre := CPU.makeIndexedWires "fp_issue_src2_data_pre" (if config.enableD then 64 else 32)
   let fp_issue_src1_data := CPU.makeIndexedWires "fp_issue_src1_data" 32
-  let fp_issue_src2_data := CPU.makeIndexedWires "fp_issue_src2_data" 32
+  let fp_issue_src2_data := CPU.makeIndexedWires "fp_issue_src2_data" (if config.enableD then 64 else 32)
   -- MUX INT rename data from the correct slot first
   let fp_int_rs1_phys := CPU.makeIndexedWires "fp_int_rs1_phys" 6
   let fp_int_rs2_phys := CPU.makeIndexedWires "fp_int_rs2_phys" 6
@@ -2242,7 +2257,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i =>
         Gate.mkMUX fp_int_rs2_phys[i]! fp_rs2_phys[i]! fp_mux_fp_rs2_read fp_issue_src2_tag[i]!) ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[i]!)
+        Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[i]!) ++
+      (if config.enableD then
+        (List.range 32).map (fun i =>
+          Gate.mkMUX zero fp_rs2_data[32+i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[32+i]!)
+       else [])
     else []
 
   -- FP Busy-Bit Table (single-set, W=1)
@@ -2409,7 +2428,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         (List.range 32).map (fun i =>
           Gate.mkMUX fp_issue_src1_data_pre[i]! cdb_data_fp[i]! fp_cdb_fwd_s1 fp_issue_src1_data[i]!) ++
         (List.range 32).map (fun i =>
-          Gate.mkMUX fp_issue_src2_data_pre[i]! cdb_data_fp[i]! fp_cdb_fwd_s2 fp_issue_src2_data[i]!)
+          Gate.mkMUX fp_issue_src2_data_pre[i]! cdb_data_fp[i]! fp_cdb_fwd_s2 fp_issue_src2_data[i]!) ++
+        (if config.enableD then
+          (List.range 32).map (fun i =>
+            Gate.mkMUX fp_issue_src2_data_pre[32+i]! cdb_data_fp[32+i]! fp_cdb_fwd_s2 fp_issue_src2_data[32+i]!)
+         else [])
       (gates, [fp_cdb_fwd_cmp_s1_inst, fp_cdb_fwd_cmp_s2_inst])
     else
       ([Gate.mkBUF fp_issue_src1_ready_pre fp_issue_src1_ready,
@@ -2417,7 +2440,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        (List.range 32).map (fun i =>
          Gate.mkBUF fp_issue_src1_data_pre[i]! fp_issue_src1_data[i]!) ++
        (List.range 32).map (fun i =>
-         Gate.mkBUF fp_issue_src2_data_pre[i]! fp_issue_src2_data[i]!), [])
+         Gate.mkBUF fp_issue_src2_data_pre[i]! fp_issue_src2_data[i]!) ++
+       (if config.enableD then
+         (List.range 32).map (fun i =>
+           Gate.mkBUF fp_issue_src2_data_pre[32+i]! fp_issue_src2_data[32+i]!)
+        else []), [])
 
   -- Note: cross-domain stall not needed in W=2 because FP RS uses raw CDB
   -- (both INT and FP CDB channels) to avoid the need for domain filtering.
@@ -2517,7 +2544,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_opcode_0" fpu_opcode_padded ++
                bundledPorts "issue_dest_tag_0" (fp_issue_dest_tag ++ [fp_mux_has_fp_rd]) ++
                bundledPorts "issue_src1_tag_0" (fp_issue_src1_tag ++ [fp_mux_fp_rs1_read]) ++ bundledPorts "issue_src1_data_0" fp_issue_src1_data ++
-               bundledPorts "issue_src2_tag_0" (fp_issue_src2_tag ++ [fp_mux_fp_rs2_read]) ++ bundledPorts "issue_src2_data_0" fp_issue_src2_data ++
+               bundledPorts "issue_src2_tag_0" (fp_issue_src2_tag ++ [fp_mux_fp_rs2_read]) ++ bundledPorts "issue_src2_data_0" (fp_issue_src2_data.take 32) ++
                -- Slot 1 unused
                bundledPorts "issue_opcode_1" (CPU.makeIndexedWires "rs_fp_dummy_op1" 7) ++
                bundledPorts "issue_dest_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_dt1" 7) ++
@@ -2525,7 +2552,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "issue_src1_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s1d1" 32) ++
                bundledPorts "issue_src2_tag_1" (CPU.makeIndexedWires "rs_fp_dummy_s2t1" 7) ++
                bundledPorts "issue_src2_data_1" (CPU.makeIndexedWires "rs_fp_dummy_s2d1" 32) ++
-               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data_0 ++
+               bundledPorts "cdb_tag_0" cdb_tag7_0 ++ bundledPorts "cdb_data_0" cdb_data32_0 ++
                bundledPorts "cdb_tag_1" cdb_tag7_1 ++ bundledPorts "cdb_data_1" cdb_data_1 ++
                bundledPorts "dispatch_opcode_0" rs_fp_dispatch_opcode ++
                bundledPorts "dispatch_src1_data_0" rs_fp_dispatch_src1 ++
@@ -3018,7 +3045,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     moduleName := "MemoryExecUnit"
     instName := "u_exec_memory"
     portMap :=
-      bundledPorts "base" rs_mem_dispatch_src1 ++
+      bundledPorts "base" (rs_mem_dispatch_src1.take 32) ++
       bundledPorts "offset" captured_imm ++
       bundledPorts "dest_tag" (rs_mem_dispatch_tag.take 6) ++
       [("zero", zero)] ++
@@ -3056,14 +3083,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let lsu_sb_full := Wire.mk "lsu_sb_full"
   let lsu_sb_empty := Wire.mk "lsu_sb_empty"
   let lsu_sb_fwd_hit := Wire.mk "lsu_sb_fwd_hit"
-  let lsu_sb_fwd_data := CPU.makeIndexedWires "lsu_sb_fwd_data" 32
+  let lsu_sb_fwd_data := CPU.makeIndexedWires "lsu_sb_fwd_data" (if config.enableD then 64 else 32)
   let lsu_sb_fwd_size := CPU.makeIndexedWires "lsu_sb_fwd_size" 2
   let lsu_sb_deq_valid := Wire.mk "lsu_sb_deq_valid"
-  let lsu_sb_deq_bits := CPU.makeIndexedWires "lsu_sb_deq_bits" 66
+  let lsu_sb_deq_bits := CPU.makeIndexedWires "lsu_sb_deq_bits" (if config.enableD then 98 else 66)
   let lsu_agu_address := CPU.makeIndexedWires "lsu_agu_address" 32
   let lsu_agu_tag := CPU.makeIndexedWires "lsu_agu_tag" 6
   let sb_enq_en := Wire.mk "sb_enq_en"
   let commit_store_en := Wire.mk "commit_store_en"  -- TODO: drive from commit control
+
+  let store_data_masked := CPU.makeIndexedWires "store_data_masked" (if config.enableD then 64 else 32)
 
   let lsu_inst : CircuitInstance := {
     moduleName := "LSU"
@@ -3080,10 +3109,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("sb_fwd_word_hit", Wire.mk "lsu_sb_fwd_word_hit"),
                 ("sb_fwd_word_only_hit", Wire.mk "lsu_sb_fwd_word_only_hit"),
                 ("sb_deq_valid", lsu_sb_deq_valid)] ++
-               bundledPorts "dispatch_base" rs_mem_dispatch_src1 ++
+               bundledPorts "dispatch_base" (rs_mem_dispatch_src1.take 32) ++
                bundledPorts "dispatch_offset" captured_imm ++
                bundledPorts "dispatch_dest_tag" (rs_mem_dispatch_tag.take 6) ++
-               bundledPorts "store_data" (CPU.makeIndexedWires "store_data_masked" 32) ++
+               bundledPorts "store_data" store_data_masked ++
                bundledPorts "fwd_address" mem_addr_r ++
                bundledPorts "sb_enq_size" (CPU.makeIndexedWires "lsu_sb_enq_size" 2) ++
                bundledPorts "agu_address" lsu_agu_address ++
@@ -3117,6 +3146,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fsw_match_gates :=
     if enableF then mkOpcodeMatch7 "fsw_match" (oi .FSW) rs_mem_dispatch_opcode is_fsw
     else [Gate.mkBUF zero is_fsw]
+  -- FLD/FSD detection (conditional on D extension)
+  let is_fld := Wire.mk "is_fld"
+  let is_fsd := Wire.mk "is_fsd"
+  let fld_match_gates :=
+    if config.enableD then mkOpcodeMatch7 "fld_match" (oi .FLD) rs_mem_dispatch_opcode is_fld
+    else [Gate.mkBUF zero is_fld]
+  let fsd_match_gates :=
+    if config.enableD then mkOpcodeMatch7 "fsd_match" (oi .FSD) rs_mem_dispatch_opcode is_fsd
+    else [Gate.mkBUF zero is_fsd]
+  let is_fp_load := Wire.mk "is_fp_load"
+  let is_fp_load_gate :=
+    if config.enableD then [Gate.mkOR is_flw is_fld is_fp_load]
+    else [Gate.mkBUF is_flw is_fp_load]
+
   -- === A EXTENSION: ATOMIC OPCODE DETECTION ===
   let is_lr := Wire.mk "is_lr"
   let is_sc := Wire.mk "is_sc"
@@ -3142,7 +3185,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkOR (Wire.mk "is_load_tmp1") is_lhu (Wire.mk "is_load_tmp2"),
     Gate.mkOR (Wire.mk "is_load_tmp2") is_lb (Wire.mk "is_load_tmp3"),
     Gate.mkOR (Wire.mk "is_load_tmp3") is_lbu (Wire.mk "is_load_int"),
-    Gate.mkOR (Wire.mk "is_load_int") is_flw (Wire.mk "is_load_pre"),
+    Gate.mkOR (Wire.mk "is_load_int") is_flw (Wire.mk "is_load_pre0"),
+    Gate.mkOR (Wire.mk "is_load_pre0") is_fld (Wire.mk "is_load_pre"),
     Gate.mkOR (Wire.mk "is_load_pre") is_atomic_read is_load
   ]
 
@@ -3159,11 +3203,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let sign_extend := Wire.mk "sign_extend"
   let mem_size_gates := [
     Gate.mkOR is_lh is_lhu (Wire.mk "ms0_t1"),
-    Gate.mkOR (Wire.mk "ms0_t1") is_sh mem_size[0]!,
+    Gate.mkOR (Wire.mk "ms0_t1") is_sh (Wire.mk "ms0_t2"),
+    Gate.mkOR (Wire.mk "ms0_t2") is_fld (Wire.mk "ms0_t3"),
+    Gate.mkOR (Wire.mk "ms0_t3") is_fsd mem_size[0]!,
     Gate.mkOR is_lw is_sw (Wire.mk "ms1_t1"),
     Gate.mkOR (Wire.mk "ms1_t1") is_flw (Wire.mk "ms1_t2"),
     Gate.mkOR (Wire.mk "ms1_t2") is_fsw (Wire.mk "ms1_t3"),
-    Gate.mkOR (Wire.mk "ms1_t3") is_atomic_read mem_size[1]!,
+    Gate.mkOR (Wire.mk "ms1_t3") is_atomic_read (Wire.mk "ms1_t4"),
+    Gate.mkOR (Wire.mk "ms1_t4") is_fld (Wire.mk "ms1_t5"),
+    Gate.mkOR (Wire.mk "ms1_t5") is_fsd mem_size[1]!,
     Gate.mkOR is_lb is_lh sign_extend
   ]
 
@@ -3171,7 +3219,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let (mem_pipe_gates, mem_pipe_insts) := mkMemPipeline clock reset
     rs_mem_dispatch_valid (Wire.mk "mem_dispatch_en_any")
     mem_address (rs_mem_dispatch_tag.take 6)
-    is_load is_flw mem_size sign_extend
+    is_load is_fp_load mem_size sign_extend
     mem_addr_r mem_tag_r is_load_r mem_size_r sign_extend_r is_flw_r mem_valid_r
 
   -- sb_enq_size
@@ -3179,16 +3227,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let sb_enq_size_gates := (List.range 2).map (fun i => Gate.mkBUF mem_size[i]! lsu_sb_enq_size[i]!)
 
   -- Store data masking
-  let store_data_masked := CPU.makeIndexedWires "store_data_masked" 32
   let store_mask_gates :=
     [Gate.mkBUF mem_size[1]! (Wire.mk "keep_hi16"),
      Gate.mkOR mem_size[1]! mem_size[0]! (Wire.mk "keep_lo16_hi8")] ++
+    (if config.enableD then
+      [Gate.mkAND mem_size[0]! mem_size[1]! (Wire.mk "keep_hi32")]
+     else []) ++
     (List.range 8).map (fun i =>
       Gate.mkBUF rs_mem_dispatch_src2[i]! store_data_masked[i]!) ++
     (List.range 8).map (fun i =>
       Gate.mkAND rs_mem_dispatch_src2[8+i]! (Wire.mk "keep_lo16_hi8") store_data_masked[8+i]!) ++
     (List.range 16).map (fun i =>
-      Gate.mkAND rs_mem_dispatch_src2[16+i]! (Wire.mk "keep_hi16") store_data_masked[16+i]!)
+      Gate.mkAND rs_mem_dispatch_src2[16+i]! (Wire.mk "keep_hi16") store_data_masked[16+i]!) ++
+    (if config.enableD then
+      (List.range 32).map (fun i =>
+        Gate.mkAND rs_mem_dispatch_src2[32+i]! (Wire.mk "keep_hi32") store_data_masked[32+i]!)
+     else [])
 
   -- SB enqueue gate
   -- Stores use mem_store_dispatch_en (no sb_deq_valid gate) since SB enqueue
@@ -3332,17 +3386,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let store_complete_valid := Wire.mk "store_complete_valid"
   let lsu_valid := Wire.mk "lsu_valid"
   let lsu_tag := CPU.makeIndexedWires "lsu_tag" 6
-  let lsu_data := CPU.makeIndexedWires "lsu_data" 32
+  let lsu_data := CPU.makeIndexedWires "lsu_data" (if config.enableD then 64 else 32)
   let not_is_load_r := Wire.mk "not_is_load_r"
   -- Cross-size forwarding check: only forward when store size covers load size
   let cross_size_stall := Wire.mk "cross_size_stall"
   let fwd_size_ok := Wire.mk "fwd_size_ok"
   let fwd_size_check_gates := [
-    Gate.mkNOT mem_size_r[1]! (Wire.mk "not_load_size1"),
     Gate.mkNOT mem_size_r[0]! (Wire.mk "not_load_size0"),
-    Gate.mkOR lsu_sb_fwd_size[0]! (Wire.mk "not_load_size0") (Wire.mk "fwd_sz_tmp1"),
-    Gate.mkAND (Wire.mk "not_load_size1") (Wire.mk "fwd_sz_tmp1") (Wire.mk "fwd_sz_tmp2"),
-    Gate.mkOR lsu_sb_fwd_size[1]! (Wire.mk "fwd_sz_tmp2") fwd_size_ok
+    Gate.mkOR lsu_sb_fwd_size[0]! (Wire.mk "not_load_size0") (Wire.mk "fwd_sz_k"),
+    Gate.mkOR lsu_sb_fwd_size[1]! (Wire.mk "fwd_sz_k") (Wire.mk "fwd_sz_a"),
+    Gate.mkAND lsu_sb_fwd_size[1]! (Wire.mk "fwd_sz_k") (Wire.mk "fwd_sz_b"),
+    Gate.mkMUX (Wire.mk "fwd_sz_a") (Wire.mk "fwd_sz_b") mem_size_r[1]! fwd_size_ok
   ]
   let load_fwd_gates := [
     Gate.mkAND mem_valid_r is_load_r (Wire.mk "load_valid_tmp"),
@@ -3368,11 +3422,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let sc_lsu_data_gates :=
     [Gate.mkAND (Wire.mk "atom_sc_sel") (Wire.mk "atom_sc_result") sc_lsu_data[0]!] ++
     (List.range 31).map (fun i => Gate.mkBUF zero sc_lsu_data[i+1]!)
+  let lsu_is_double := Wire.mk "lsu_is_double"
+  let lsu_is_double_gates :=
+    if config.enableD then
+      [Gate.mkAND mem_size_r[0]! mem_size_r[1]! lsu_is_double]
+    else []
   let lsu_tag_data_gates :=
     (List.range 6).map (fun i => Gate.mkBUF mem_tag_r[i]! lsu_tag[i]!) ++
     -- Loads broadcast SB-forwarded data; SC broadcasts its result; stores broadcast 0
     (List.range 32).map (fun i =>
-      Gate.mkMUX sc_lsu_data[i]! lsu_sb_fwd_formatted[i]! is_load_r lsu_data[i]!)
+      Gate.mkMUX sc_lsu_data[i]! lsu_sb_fwd_formatted[i]! is_load_r lsu_data[i]!) ++
+    (if config.enableD then
+      (List.range 32).flatMap (fun i =>
+        let fwd_hi_mux := Wire.mk s!"lsu_fwd_hi_m_{i}"
+        [Gate.mkMUX (if enableF then is_flw_r else zero) lsu_sb_fwd_data[32+i]! lsu_is_double fwd_hi_mux,
+         Gate.mkMUX zero fwd_hi_mux is_load_r lsu_data[32+i]!])
+     else [])
 
   -- === A EXTENSION: ATOMIC UNIT ===
   let atomic_unit := mkAtomicUnit clock reset zero one
@@ -3416,7 +3481,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     dmem_addr_lo_capture_insts ++ dmem_mem_size_capture_insts ++ [dmem_sign_ext_inst]
 
   -- === DMEM RESPONSE LOAD FORMATTING ===
-  let dmem_resp_formatted := CPU.makeIndexedWires "dmem_resp_fmt" 32
+  let dmem_is_double := Wire.mk "dmem_is_double"
+  let dmem_is_double_gates :=
+    if config.enableD then
+      [Gate.mkAND dmem_mem_size_reg[0]! dmem_mem_size_reg[1]! dmem_is_double]
+    else []
+
+  let dmem_resp_formatted := CPU.makeIndexedWires "dmem_resp_fmt" (if config.enableD then 64 else 32)
   let dmem_resp_shifted := CPU.makeIndexedWires "dmem_resp_shifted" 32
   let dmem_sh8 := CPU.makeIndexedWires "dmem_sh8" 32
   let dmem_sh8_gates :=
@@ -3446,9 +3517,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (List.range 8).map (fun i =>
       Gate.mkMUX dmem_sign_bit dmem_resp_shifted[8+i]! dmem_ext_lo dmem_resp_formatted[8+i]!) ++
     (List.range 16).map (fun i =>
-      Gate.mkMUX dmem_sign_bit dmem_resp_shifted[16+i]! dmem_ext_hi dmem_resp_formatted[16+i]!)
+      Gate.mkMUX dmem_sign_bit dmem_resp_shifted[16+i]! dmem_ext_hi dmem_resp_formatted[16+i]!) ++
+    (if config.enableD then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX (if enableF then dmem_is_fp_reg else zero) dmem_resp_data[32+i]! dmem_is_double dmem_resp_formatted[32+i]!)
+     else [])
   let dmem_resp_format_all := dmem_sh8_gates ++ dmem_sh16_gates ++
-    dmem_sign_gates ++ dmem_format_gates
+    dmem_sign_gates ++ dmem_format_gates ++ dmem_is_double_gates
 
   -- DMEM valid gating
   let dmem_valid_gated := Wire.mk "dmem_valid_gated"
@@ -3565,8 +3640,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND ib1_br_cdb_drain not_sel_br ib1_fifo_drain]
 
   -- LSU FIFO
-  let lsu_fifo_enq_data := CPU.makeIndexedWires "lsu_fifo_enq_data" 39
-  let lsu_fifo_deq := CPU.makeIndexedWires "lsu_fifo_deq" 39
+  let lsu_fifo_width := if config.enableD then 72 else 39
+  let lsu_fifo_enq_data := CPU.makeIndexedWires "lsu_fifo_enq_data" lsu_fifo_width
+  let lsu_fifo_deq := CPU.makeIndexedWires "lsu_fifo_deq" lsu_fifo_width
   let lsu_fifo_enq_ready := Wire.mk "lsu_fifo_enq_ready"
   let lsu_fifo_deq_valid := Wire.mk "lsu_fifo_deq_valid"
   let lsu_fifo_drain := Wire.mk "lsu_fifo_drain"
@@ -3581,17 +3657,23 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let lsu_fifo_enq_assemble :=
     (List.range 6).map (fun i => Gate.mkBUF lsu_tag[i]! lsu_fifo_enq_data[i]!) ++
     (List.range 32).map (fun i => Gate.mkBUF lsu_data[i]! lsu_fifo_enq_data[6+i]!) ++
-    [Gate.mkBUF lsu_is_fp lsu_fifo_enq_data[38]!]
+    (if config.enableD then
+      (List.range 32).map (fun i => Gate.mkBUF lsu_data[32+i]! lsu_fifo_enq_data[38+i]!) ++
+      [Gate.mkBUF lsu_is_fp lsu_fifo_enq_data[70]!,
+       Gate.mkBUF lsu_is_double lsu_fifo_enq_data[71]!]
+     else
+      [Gate.mkBUF lsu_is_fp lsu_fifo_enq_data[38]!])
 
   let lsu_fifo_inst : CircuitInstance := {
-    moduleName := "Queue1Flow_39", instName := "u_cdb_fifo_lsu",
+    moduleName := if config.enableD then "Queue1Flow_72" else "Queue1Flow_39",
+    instName := "u_cdb_fifo_lsu",
     portMap := [("clock", clock), ("reset", pipeline_reset_misc),
                 ("enq_valid", lsu_valid),
                 ("deq_ready", lsu_fifo_drain),
                 ("enq_ready", lsu_fifo_enq_ready),
                 ("deq_valid", lsu_fifo_deq_valid)] ++
-      (List.range 39).map (fun i => (s!"enq_data_{i}", lsu_fifo_enq_data[i]!)) ++
-      (List.range 39).map (fun i => (s!"deq_data_{i}", lsu_fifo_deq[i]!))
+      (List.range lsu_fifo_width).map (fun i => (s!"enq_data_{i}", lsu_fifo_enq_data[i]!)) ++
+      (List.range lsu_fifo_width).map (fun i => (s!"deq_data_{i}", lsu_fifo_deq[i]!))
   }
 
   -- MulDiv FIFO
@@ -3692,13 +3774,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Uses CDBMux_W2: 2 IB FIFOs, LSU, MulDiv, FP, DMEM → 2 CDB channels
   let cdb_pre_valid_0 := Wire.mk "cdb_pre_valid_0"
   let cdb_pre_tag_0 := CPU.makeIndexedWires "cdb_pre_tag_0" 6
-  let cdb_pre_data_0 := CPU.makeIndexedWires "cdb_pre_data_0" 32
+  let cdb_pre_data_0 := CPU.makeIndexedWires "cdb_pre_data_0" (if config.enableD then 64 else 32)
   let cdb_pre_valid_1 := Wire.mk "cdb_pre_valid_1"
   let cdb_pre_tag_1 := CPU.makeIndexedWires "cdb_pre_tag_1" 6
   let cdb_pre_data_1 := CPU.makeIndexedWires "cdb_pre_data_1" 32
 
   let cdb_mux_inst : CircuitInstance :=
-    { moduleName := if enableF then "CDBMux_F_W2" else "CDBMux_W2"
+    { moduleName := if config.enableD then "CDBMux_FD_W2" else (if enableF then "CDBMux_F_W2" else "CDBMux_W2")
       instName := "u_cdb_mux"
       portMap :=
         [("ib_valid_0", ib0_fifo_deq_valid), ("ib_valid_1", ib1_br_merged_valid),
@@ -3710,19 +3792,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         (List.range 72).map (fun i => (s!"ib_deq_1_{i}", ib1_br_merged_deq[i]!)) ++
         (List.range 39).map (fun i => (s!"fp_deq_{i}", fp_fifo_deq[i]!)) ++
         (List.range 39).map (fun i => (s!"muldiv_deq_{i}", muldiv_fifo_deq[i]!)) ++
-        (List.range 39).map (fun i => (s!"lsu_deq_{i}", lsu_fifo_deq[i]!)) ++
-        (List.range 32).map (fun i => (s!"dmem_fmt_{i}", dmem_resp_formatted[i]!)) ++
+        (List.range (if config.enableD then 72 else 39)).map (fun i => (s!"lsu_deq_{i}", lsu_fifo_deq[i]!)) ++
+        (List.range (if config.enableD then 64 else 32)).map (fun i => (s!"dmem_fmt_{i}", dmem_resp_formatted[i]!)) ++
         (List.range 6).map (fun i => (s!"dmem_tag_{i}", dmem_load_tag_reg[i]!)) ++
-        [("dmem_is_fp", if enableF then dmem_is_fp_reg else zero), ("zero", zero)] ++
+        [("dmem_is_fp", if enableF then dmem_is_fp_reg else zero)] ++
+        (if config.enableD then [("dmem_is_double", dmem_is_double)] else []) ++
+        [("zero", zero)] ++
         -- Outputs (raw, before CSR injection)
         [("pre_valid_0", Wire.mk "cdb_pre_valid_0_raw")] ++
         (List.range 6).map (fun i => (s!"pre_tag_0_{i}", Wire.mk s!"cdb_pre_tag_0_raw_{i}")) ++
-        (List.range 32).map (fun i => (s!"pre_data_0_{i}", Wire.mk s!"cdb_pre_data_0_raw_{i}")) ++
+        (List.range (if config.enableD then 64 else 32)).map (fun i => (s!"pre_data_0_{i}", Wire.mk s!"cdb_pre_data_0_raw_{i}")) ++
         [("pre_is_fp_0", Wire.mk "cdb_pre_is_fp_0")] ++
         [("pre_valid_1", cdb_pre_valid_1)] ++
         (List.range 6).map (fun i => (s!"pre_tag_1_{i}", cdb_pre_tag_1[i]!)) ++
         (List.range 32).map (fun i => (s!"pre_data_1_{i}", cdb_pre_data_1[i]!)) ++
         [("pre_is_fp_1", Wire.mk "cdb_pre_is_fp_1")] ++
+        (if config.enableD then [("pre_is_double_0", Wire.mk "cdb_pre_is_double_0")] else []) ++
         [("drain_lsu", lsu_fifo_drain),
          ("drain_muldiv", muldiv_fifo_drain),
          ("drain_fp", fp_fifo_drain),
@@ -3748,7 +3833,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_0_{i}",
        portMap := [("d", cdb_pre_tag_0[i]!), ("q", cdb_tag_0[i]!),
                    ("clock", clock), ("reset", cdb_reset_w)] }) ++
-    (List.range 32).map (fun i => {
+    (List.range (if config.enableD then 64 else 32)).map (fun i => {
        moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_0_{i}",
        portMap := [("d", cdb_pre_data_0[i]!), ("q", cdb_data_0[i]!),
                    ("clock", clock), ("reset", cdb_reset_w)] }) ++
@@ -3770,7 +3855,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                    ("clock", clock), ("reset", cdb_reset_w)] },
      { moduleName := "DFlipFlop", instName := "u_cdb_is_fp_reg_1",
        portMap := [("d", Wire.mk "cdb_pre_is_fp_1"), ("q", cdb_is_fp_1),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }]
+                   ("clock", clock), ("reset", pipeline_reset_misc)] }] ++
+    (if config.enableD then
+      [{ moduleName := "DFlipFlop", instName := "u_cdb_is_double_reg_0",
+         portMap := [("d", Wire.mk "cdb_pre_is_double_0"), ("q", cdb_is_double_0),
+                     ("clock", clock), ("reset", cdb_reset_w)] }]
+     else [])
 
   -- CDB redirect target + mispredicted pipeline registers (for shadow register writes)
   let cdb_redirect_reg_0 := CPU.makeIndexedWires "cdb_redirect_reg_0" 32
@@ -3922,8 +4012,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let dmem_req_valid := Wire.mk "dmem_req_valid"
   let dmem_req_we := Wire.mk "dmem_req_we"
   let dmem_req_addr := CPU.makeIndexedWires "dmem_req_addr" 32
-  let dmem_req_data := CPU.makeIndexedWires "dmem_req_data" 32
+  let dmem_req_data := CPU.makeIndexedWires "dmem_req_data" (if config.enableD then 64 else 32)
   let dmem_req_size := CPU.makeIndexedWires "dmem_req_size" 2
+
+  let sb_deq_size_0 := if config.enableD then lsu_sb_deq_bits[96]! else lsu_sb_deq_bits[64]!
+  let sb_deq_size_1 := if config.enableD then lsu_sb_deq_bits[97]! else lsu_sb_deq_bits[65]!
 
   let dmem_gates :=
     -- Request sources: DMEM load, store-buffer dequeue, atomic direct write
@@ -3936,8 +4029,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       Gate.mkMUX (Wire.mk s!"dmem_addr_p{i}") (Wire.mk s!"atom_aw_addr_{i}") (Wire.mk "atom_aw_pending") dmem_req_addr[i]!) ++
     (List.range 32).map (fun i =>
       Gate.mkMUX lsu_sb_deq_bits[32+i]! (Wire.mk s!"atom_aw_data_{i}") (Wire.mk "atom_aw_pending") dmem_req_data[i]!) ++
-    [Gate.mkMUX zero lsu_sb_deq_bits[64]! dmem_req_we (Wire.mk "dmem_msize0"),
-     Gate.mkMUX one lsu_sb_deq_bits[65]! dmem_req_we (Wire.mk "dmem_msize1"),
+    (if config.enableD then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX lsu_sb_deq_bits[64+i]! zero (Wire.mk "atom_aw_pending") dmem_req_data[32+i]!)
+     else []) ++
+    [Gate.mkMUX mem_size_r[0]! sb_deq_size_0 dmem_req_we (Wire.mk "dmem_msize0"),
+     Gate.mkMUX mem_size_r[1]! sb_deq_size_1 dmem_req_we (Wire.mk "dmem_msize1"),
      Gate.mkMUX (Wire.mk "dmem_msize0") zero (Wire.mk "atom_aw_pending") dmem_req_size[0]!,
      Gate.mkMUX (Wire.mk "dmem_msize1") one (Wire.mk "atom_aw_pending") dmem_req_size[1]!]
 
@@ -4199,13 +4296,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- CDB channel 0 injection: OR csr_cdb_inject into pre_valid_0, MUX tag/data
   let cdb_pre_valid_0_raw := Wire.mk "cdb_pre_valid_0_raw"
   let cdb_pre_tag_0_raw := CPU.makeIndexedWires "cdb_pre_tag_0_raw" 6
-  let cdb_pre_data_0_raw := CPU.makeIndexedWires "cdb_pre_data_0_raw" 32
+  let cdb_pre_data_0_raw := CPU.makeIndexedWires "cdb_pre_data_0_raw" (if config.enableD then 64 else 32)
   let csr_cdb_channel_inject_gates : List Gate :=
     [Gate.mkOR cdb_pre_valid_0_raw csr_cdb_inject cdb_pre_valid_0] ++
     (List.range 6).map (fun i =>
       Gate.mkMUX cdb_pre_tag_0_raw[i]! csr_cdb_tag[i]! csr_cdb_inject cdb_pre_tag_0[i]!) ++
     (List.range 32).map (fun i =>
-      Gate.mkMUX cdb_pre_data_0_raw[i]! csr_cdb_data[i]! csr_cdb_inject cdb_pre_data_0[i]!)
+      Gate.mkMUX cdb_pre_data_0_raw[i]! csr_cdb_data[i]! csr_cdb_inject cdb_pre_data_0[i]!) ++
+    (if config.enableD then
+      (List.range 32).map (fun i =>
+        Gate.mkMUX cdb_pre_data_0_raw[32+i]! zero csr_cdb_inject cdb_pre_data_0[32+i]!)
+     else [])
 
   -- CDB reset gating: suppress flush on cycle after CSR inject
   let not_csr_flush_suppress := Wire.mk "not_csr_fsup"
@@ -4375,6 +4476,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              muldiv_lut_gates ++ muldiv_dispatch_gate ++
              imm_rf_we_gates ++ imm_rf_gates ++ imm_rf_sel_gates ++
              flw_match_gates ++ fsw_match_gates ++
+             fld_match_gates ++ fsd_match_gates ++ is_fp_load_gate ++
              lw_match_gates ++ lh_match_gates ++ lhu_match_gates ++ lb_match_gates ++ lbu_match_gates ++ is_load_gates ++
              sw_match_gates ++ sh_match_gates ++ sb_match_gates ++ mem_size_gates ++
              mem_pipe_gates ++ sb_enq_size_gates ++ store_mask_gates ++
@@ -4383,7 +4485,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              dmem_is_fp_gates ++
              lsu_sb_fwd_format_all ++ load_fwd_gates ++ lsu_tag_data_gates ++ sc_lsu_data_gates ++
              lr_match_gates ++ sc_match_gates ++ amo_match_gates ++ amo_funct_gates ++ atomic_read_gates ++ atomic_gates ++
-             lsu_is_fp_gates ++
+             lsu_is_fp_gates ++ lsu_is_double_gates ++
              dmem_meta_capture_gates ++ dmem_resp_format_all ++ dmem_valid_gate_gates ++
              ib0_fifo_enq_assemble ++ ib1_merge_gates ++ ib1_fifo_enq_assemble ++
              ib_br_fifo_enq_assemble ++ ib1_br_merge_gates ++ ib1_br_drain_gates ++

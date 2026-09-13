@@ -33,6 +33,8 @@ inductive AsmInstr where
   | fr4type (mnem : String) (fd fs1 fs2 fs3 : Fin 32)  -- fmadd.s fd, fs1, fs2, fs3
   | flw (fd rs1 : Fin 32) (offset : Int)                -- flw fd, offset(rs1)
   | fsw (fs2 rs1 : Fin 32) (offset : Int)               -- fsw fs2, offset(rs1)
+  | fld (fd rs1 : Fin 32) (offset : Int)                -- fld fd, offset(rs1)
+  | fsd (fs2 rs1 : Fin 32) (offset : Int)               -- fsd fs2, offset(rs1)
   | fcvt_to_int (mnem : String) (rd : Fin 32) (fs1 : Fin 32)  -- fcvt.w.s rd, fs1
   | fcvt_from_int (mnem : String) (fd : Fin 32) (rs1 : Fin 32) -- fcvt.s.w fd, rs1
   | fmv_to_int (rd : Fin 32) (fs1 : Fin 32)             -- fmv.x.w rd, fs1
@@ -69,6 +71,8 @@ def AsmInstr.toAsm : AsmInstr → String
   | .fr4type mnem fd fs1 fs2 fs3 => s!"    {mnem} {fregName fd}, {fregName fs1}, {fregName fs2}, {fregName fs3}"
   | .flw fd rs1 off => s!"    flw {fregName fd}, {off}({regName rs1})"
   | .fsw fs2 rs1 off => s!"    fsw {fregName fs2}, {off}({regName rs1})"
+  | .fld fd rs1 off => s!"    fld {fregName fd}, {off}({regName rs1})"
+  | .fsd fs2 rs1 off => s!"    fsd {fregName fs2}, {off}({regName rs1})"
   | .fcvt_to_int mnem rd fs1 => s!"    {mnem} {regName rd}, {fregName fs1}"
   | .fcvt_from_int mnem fd rs1 => s!"    {mnem} {fregName fd}, {regName rs1}"
   | .fmv_to_int rd fs1 => s!"    fmv.x.w {regName rd}, {fregName fs1}"

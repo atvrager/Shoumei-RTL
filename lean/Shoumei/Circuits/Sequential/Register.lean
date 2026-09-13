@@ -68,7 +68,7 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
 
   -- Decompose into power-of-2 chunks
   let chunks := decomposeToPowersOf2 n
-  
+
   -- Build instances for each chunk
   let rec buildInstances (chunks : List Nat) (startBit : Nat) : List CircuitInstance :=
     match chunks with
@@ -90,7 +90,7 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
             )
         }
         inst :: buildInstances rest (startBit + width)
-  
+
   let instances := buildInstances chunks 0
 
   { name := s!"Register{n}"
@@ -118,6 +118,8 @@ def mkRegister64 : Circuit := mkRegisterN 64
 
 -- Large registers (hierarchical, compositional verification)
 def mkRegister91Hierarchical : Circuit := mkRegisterNHierarchical 91
+def mkRegister98Hierarchical : Circuit := mkRegisterNHierarchical 98
+def mkRegister159Hierarchical : Circuit := mkRegisterNHierarchical 159
 
 -- Helper: Extract the number of DFFs in a register circuit
 def registerWidth (c : Circuit) : Nat :=

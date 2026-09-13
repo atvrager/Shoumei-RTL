@@ -60,13 +60,14 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let imem_resp_data := makeIndexedWires "cpu_imem_resp_data" 32
   let imem_resp_data_1 := makeIndexedWires "cpu_imem_resp_data_1" 32
 
+  let dmemDataWidth := if config.enableD then 64 else 32
   let dmem_req_valid := Wire.mk "cpu_dmem_req_valid"
   let dmem_req_we := Wire.mk "cpu_dmem_req_we"
   let dmem_req_addr := makeIndexedWires "cpu_dmem_req_addr" 32
-  let dmem_req_data := makeIndexedWires "cpu_dmem_req_data" 32
+  let dmem_req_data := makeIndexedWires "cpu_dmem_req_data" dmemDataWidth
   let dmem_req_size := makeIndexedWires "cpu_dmem_req_size" 2
   let dmem_resp_valid := Wire.mk "cpu_dmem_resp_valid"
-  let dmem_resp_data := makeIndexedWires "cpu_dmem_resp_data" 32
+  let dmem_resp_data := makeIndexedWires "cpu_dmem_resp_data" 64
 
   -- Cache stall signals
   let ifetch_stall := Wire.mk "cache_ifetch_stall"
@@ -131,7 +132,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 32).map (fun i => (s!"imem_resp_data_1_{i}", imem_resp_data_1[i]!)) ++
      [("dmem_req_ready", dmem_req_ready),
       ("dmem_resp_valid", dmem_resp_valid)] ++
-     (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
+     (List.range dmemDataWidth).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
      -- CPU outputs
      (List.range 32).map (fun i => (s!"fetch_pc_0_{i}", fetch_pc[i]!)) ++
      [("fetch_stalled", fetch_stalled),
@@ -139,7 +140,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       ("dmem_req_valid", dmem_req_valid),
       ("dmem_req_we", dmem_req_we)] ++
      (List.range 32).map (fun i => (s!"dmem_req_addr_{i}", dmem_req_addr[i]!)) ++
-     (List.range 32).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
+     (List.range dmemDataWidth).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("rob_empty", rob_empty),
       ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
@@ -165,7 +166,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("dmem_req_valid", dmem_req_valid),
       ("dmem_req_we", dmem_req_we)] ++
      (List.range 32).map (fun i => (s!"dmem_req_addr_{i}", dmem_req_addr[i]!)) ++
-     (List.range 32).map (fun i => (s!"dmem_req_wdata_{i}", dmem_req_data[i]!)) ++
+     (List.range 64).map (fun i => (s!"dmem_req_wdata_{i}", if i < dmemDataWidth then dmem_req_data[i]! else zero)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
      (List.range 256).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
@@ -176,7 +177,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      [("ifetch_stall", ifetch_stall),
       ("ifetch_last_word", ifetch_last_word),
       ("dmem_resp_valid", dmem_resp_valid)] ++
-     (List.range 32).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
+     (List.range 64).map (fun i => (s!"dmem_resp_data_{i}", dmem_resp_data[i]!)) ++
      [("dmem_stall", dmem_stall),
       ("mem_req_valid", mem_req_valid)] ++
      (List.range 32).map (fun i => (s!"mem_req_addr_{i}", mem_req_addr[i]!)) ++

@@ -20,12 +20,12 @@ open Shoumei
 
 /-- LSU has correct number of inputs. -/
 theorem lsu_input_count :
-    mkLSU.inputs.length = 147 := by
+    mkLSU.inputs.length = 179 := by
   native_decide
 
 /-- LSU has correct number of outputs. -/
 theorem lsu_output_count :
-    mkLSU.outputs.length = 151 := by
+    mkLSU.outputs.length = 215 := by
   native_decide
 
 /-- LSU has 2 instances (MemoryExecUnit + StoreBuffer8). -/

@@ -91,3 +91,37 @@ def rs4w2_cert : CompositionalCert := {
   moduleName := "ReservationStation4_W2"
   proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }
+
+/-! ## 64-bit Reservation Station (ReservationStation4_W2_64) -/
+
+/-- The 64-bit W=2 reservation station -/
+def rs4W2_64 := mkReservationStation4W2_64
+
+theorem rs4w2_64_input_count : rs4W2_64.inputs.length = 480 := by native_decide
+theorem rs4w2_64_output_count : rs4W2_64.outputs.length = 295 := by native_decide
+theorem rs4w2_64_instance_count : rs4W2_64.instances.length = 16 := by native_decide
+
+/-- ReservationStation4_W2_64 Building Block Dependencies -/
+def rs4w2_64_dependencies : List String := [
+  "Register1",          -- Allocation pointer bits
+  "Register159",        -- Entry storage (159-bit register x 4)
+  "PriorityArbiter2"   -- Ready selection (2-input priority arbiter)
+]
+
+/-- All RS64 instances use verified building blocks -/
+theorem rs4w2_64_uses_verified_blocks :
+  ∀ inst ∈ rs4W2_64.instances,
+    rs4w2_64_dependencies.contains inst.moduleName := by
+  native_decide
+
+/-- No duplicate instance names in RS64 -/
+theorem rs4w2_64_unique_instances :
+  let inst_names := rs4W2_64.instances.map (fun inst => inst.instName)
+  inst_names.eraseDups.length = inst_names.length := by
+  native_decide
+
+/-- RS64 W=2 compositional verification certificate -/
+def rs4w2_64_cert : CompositionalCert := {
+  moduleName := "ReservationStation4_W2_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}

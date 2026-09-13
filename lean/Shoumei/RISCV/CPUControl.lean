@@ -57,13 +57,13 @@ def needsFPExecRS (op : OpType) (config : CPUConfig) : Bool :=
 /-- Check if an operation is a load -/
 def isLoad (op : OpType) : Bool :=
   match op with
-  | .LB | .LH | .LW | .LBU | .LHU | .FLW => true
+  | .LB | .LH | .LW | .LBU | .LHU | .FLW | .FLD => true
   | _ => false
 
 /-- Check if an operation is a store -/
 def isStore (op : OpType) : Bool :=
   match op with
-  | .SB | .SH | .SW | .FSW => true
+  | .SB | .SH | .SW | .FSW | .FSD => true
   | _ => false
 
 /-- Generate global stall signal from all structural hazard sources.

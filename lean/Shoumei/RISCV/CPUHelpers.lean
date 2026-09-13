@@ -97,18 +97,18 @@ def mkLoadForwarding
     (load_fwd_valid cross_size_stall not_cross_size_stall cross_size_any cross_size_uncommitted : Wire)
     (not_int_dispatching branch_dispatch_en : Wire)
     : List Gate :=
-  -- SB fwd size check: only forward when store covers the full load
+  -- SB fwd size check: only forward when store covers the full load (S >= L)
   let fwd_size_ok := Wire.mk "fwd_size_ok"
-  let not_load_size1 := Wire.mk "not_load_size1"
   let not_load_size0 := Wire.mk "not_load_size0"
-  let fwd_sz_tmp1 := Wire.mk "fwd_sz_tmp1"
-  let fwd_sz_tmp2 := Wire.mk "fwd_sz_tmp2"
+  let fwd_sz_k := Wire.mk "fwd_sz_k"
+  let fwd_sz_a := Wire.mk "fwd_sz_a"
+  let fwd_sz_b := Wire.mk "fwd_sz_b"
   let fwd_size_check_gates := [
-    Gate.mkNOT mem_size_r[1]! not_load_size1,
     Gate.mkNOT mem_size_r[0]! not_load_size0,
-    Gate.mkOR lsu_sb_fwd_size[0]! not_load_size0 fwd_sz_tmp1,
-    Gate.mkAND not_load_size1 fwd_sz_tmp1 fwd_sz_tmp2,
-    Gate.mkOR lsu_sb_fwd_size[1]! fwd_sz_tmp2 fwd_size_ok
+    Gate.mkOR lsu_sb_fwd_size[0]! not_load_size0 fwd_sz_k,
+    Gate.mkOR lsu_sb_fwd_size[1]! fwd_sz_k fwd_sz_a,
+    Gate.mkAND lsu_sb_fwd_size[1]! fwd_sz_k fwd_sz_b,
+    Gate.mkMUX fwd_sz_a fwd_sz_b mem_size_r[1]! fwd_size_ok
   ]
   let load_fwd_tmp := Wire.mk "load_fwd_tmp"
   let load_fwd_tmp2 := Wire.mk "load_fwd_tmp2"
