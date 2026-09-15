@@ -110,7 +110,7 @@ def toASAP7SystemVerilog (c : Circuit) (allCircuits : List Circuit := []) : Stri
   -- Sub-module instances (reuse SV codegen instance generation)
   let instances := generateInstances ctx c allCircuits
 
-  let footer := "endmodule"
+  let footer := "endmodule\n"
 
   String.intercalate "\n" [
     header,

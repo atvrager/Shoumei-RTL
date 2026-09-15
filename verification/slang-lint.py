@@ -40,27 +40,33 @@ compilation.addSyntaxTree(tree)
 # Force full elaboration
 diagnostics = compilation.getAllDiagnostics()
 
-SUPPRESSED_CODES = set()
+# Known benign warnings to suppress:
+#   - UnconnectedOutputPort: Submodule output ports that the parent module
+#     intentionally does not consume (e.g. unused comparator flags, unused RS flags)
+SUPPRESSED_CODES = {"UnconnectedOutputPort"}
 
 errors = 0
 warnings = 0
+active_diagnostics = []
 for i in range(len(diagnostics)):
     d = diagnostics[i]
     if d.isError():
         errors += 1
+        active_diagnostics.append(d)
     elif str(d.code).split("(")[-1].rstrip(")") not in SUPPRESSED_CODES:
         warnings += 1
+        active_diagnostics.append(d)
 
 if errors > 0 or warnings > 0:
     report = pyslang.DiagnosticEngine.reportAll(
-        compilation.sourceManager, diagnostics
+        compilation.sourceManager, active_diagnostics
     )
     print(report)
 
 print(f"slang lint: {errors} errors, {warnings} warnings")
 
-if errors > 0:
-    print("FAIL: slang found errors")
+if errors > 0 or warnings > 0:
+    print("FAIL: slang found errors or warnings")
     sys.exit(1)
 else:
     print("PASS: all files clean")
