@@ -3533,7 +3533,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let atomic_unit := mkAtomicUnit clock reset zero one
     rs_mem_dispatch_valid (Wire.mk "mem_dispatch_en_any")
     is_lr is_sc is_amo is_atomic_d amo_funct rs_mem_dispatch_src2
-    pipeline_flush_comb mem_valid_r mem_addr_r
+    pipeline_flush_comb mem_valid_r is_load_r mem_addr_r
     dmem_resp_valid (Wire.mk "dmem_load_pending") dmem_resp_data
     dmem_req_ready lsu_sb_empty lsu_sb_deq_valid lsu_sb_deq_bits
     (Wire.mk "rs_mem_pending_store")

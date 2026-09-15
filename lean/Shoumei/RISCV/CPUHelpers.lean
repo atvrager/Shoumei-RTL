@@ -1570,7 +1570,7 @@ def mkAtomicUnit
     (amo_funct : List Wire)             -- 4 bits: AMO function select
     (rs_mem_dispatch_src2 : List Wire)  -- 32 bits: store operand (rs2)
     (pipeline_flush_comb : Wire)
-    (mem_valid_r : Wire)
+    (mem_valid_r is_load_r : Wire)
     (mem_addr_r : List Wire)            -- 32 bits: registered address
     (dmem_resp_valid dmem_load_pending : Wire)
     (dmem_resp_data : List Wire)        -- 32 bits
@@ -1878,8 +1878,14 @@ def mkAtomicUnit
       portMap := [("d", atomic_busy_next), ("q", atomic_busy),
                   ("clock", clock), ("reset", reset)] }
 
-  -- === Dispatch gate: atomics wait for a drained store buffer ===
+  -- === Dispatch gate: atomics wait for a drained store buffer and no in-flight load ===
   let atomic_disp_ok := Wire.mk "atom_disp_ok"
+  let disp_ok_pre := Wire.mk "atom_disp_ok_pre"
+  let pipe_load := Wire.mk "atom_pipe_load"
+  let load_in_flight := Wire.mk "atom_load_in_flight"
+  let not_load_in_flight := Wire.mk "atom_not_load_in_flight"
+  let not_is_atomic := Wire.mk "atom_not_is_atomic"
+  let atom_load_ok := Wire.mk "atom_load_ok"
   let di_dr := Wire.mk "atom_di_dr"
   let req_ok := Wire.mk "atom_req_ok"
   let not_busy := Wire.mk "atom_not_busy"
@@ -1889,6 +1895,11 @@ def mkAtomicUnit
   let disp_ok_gates := [
     Gate.mkNOT atomic_busy not_busy,
     Gate.mkNOT rs_pending_store nps,
+    Gate.mkAND mem_valid_r is_load_r pipe_load,
+    Gate.mkOR pipe_load dmem_load_pending load_in_flight,
+    Gate.mkNOT load_in_flight not_load_in_flight,
+    Gate.mkNOT is_atomic not_is_atomic,
+    Gate.mkOR not_is_atomic not_load_in_flight atom_load_ok,
     -- SC / AMO form an RMW: they wait for a fully drained store buffer and no
     -- pending plain store in the memory RS (an older store may not have reached
     -- the SB yet).  LR is a plain load plus a reservation set, so it does not.
@@ -1898,8 +1909,8 @@ def mkAtomicUnit
     Gate.mkOR not_drain_req di_dr req_ok,
     -- While an atomic op is in flight, block ALL memory dispatch so no
     -- load/store can slip between the atomic read and write.
-    Gate.mkAND req_ok not_busy atomic_disp_ok]
-
+    Gate.mkAND req_ok not_busy disp_ok_pre,
+    Gate.mkAND disp_ok_pre atom_load_ok atomic_disp_ok]
   let gates :=
     code_gates ++ pipe_en_gates ++ code_reg_gates ++ sel_gates ++ resp_gates ++
     [sc_exec_gate] ++ res_inval_gates ++ res_set_gates ++ res_addr_gates ++
