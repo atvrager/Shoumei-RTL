@@ -1552,10 +1552,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- === COMMIT CONTROL (W2) ===
   -- commit_en_0 = head_valid_0 AND head_complete_0 AND NOT redirect
   -- commit_en_1 = head_valid_1 AND head_complete_1 AND commit_en_0
+  let fp_commit_buf_stall := Wire.mk "fp_commit_buf_stall"
+  let not_fp_commit_buf_stall := Wire.mk "not_fp_commit_buf_stall"
+  let fp_buf_stall_gates :=
+    if enableF then
+      [Gate.mkAND (Wire.mk "fp_commit_buf_valid_reg") rob_head_is_fp_0 fp_commit_buf_stall,
+       Gate.mkNOT fp_commit_buf_stall not_fp_commit_buf_stall]
+    else
+      [Gate.mkBUF zero fp_commit_buf_stall, Gate.mkBUF one not_fp_commit_buf_stall]
   let commit_gates :=
+    fp_buf_stall_gates ++
     [Gate.mkNOT branch_redirect_valid_reg (Wire.mk "not_redirect_for_commit"),
      Gate.mkAND rob_head_valid_0 rob_head_complete_0 (Wire.mk "commit_ready_0"),
-     Gate.mkAND (Wire.mk "commit_ready_0") (Wire.mk "not_redirect_for_commit") retire_valid_0,
+     Gate.mkAND (Wire.mk "commit_ready_0") not_fp_commit_buf_stall (Wire.mk "commit_ready_0_gated"),
+     Gate.mkAND (Wire.mk "commit_ready_0_gated") (Wire.mk "not_redirect_for_commit") retire_valid_0,
      Gate.mkAND rob_head_valid_1 rob_head_complete_1 (Wire.mk "commit_ready_1"),
      -- Slot 1 must not commit if slot 0 triggers a redirect (mispredicted branch)
      Gate.mkAND retire_valid_0 rob_head_isBranch_0 (Wire.mk "s0_is_committing_branch"),
@@ -2250,8 +2260,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- MUX INT rename data from the correct slot first
   let fp_int_rs1_phys := CPU.makeIndexedWires "fp_int_rs1_phys" 6
   let fp_int_rs2_phys := CPU.makeIndexedWires "fp_int_rs2_phys" 6
-  let fp_int_rs1_data := CPU.makeIndexedWires "fp_int_rs1_data" 32
-  let fp_int_rs2_data := CPU.makeIndexedWires "fp_int_rs2_data" 32
+  let fpIntDataWidth := if config.xlen == 64 then 64 else 32
+  let fp_int_rs1_data := CPU.makeIndexedWires "fp_int_rs1_data" fpIntDataWidth
+  let fp_int_rs2_data := CPU.makeIndexedWires "fp_int_rs2_data" fpIntDataWidth
   let fp_crossdomain_gates :=
     if enableF then
       -- INT side: MUX between slot 0 and slot 1 rename outputs
@@ -2259,9 +2270,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! fp_route_sel fp_int_rs1_phys[i]!) ++
       (List.range 6).map (fun i =>
         Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! fp_route_sel fp_int_rs2_phys[i]!) ++
-      (List.range 32).map (fun i =>
+      (List.range fpIntDataWidth).map (fun i =>
         Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! fp_route_sel fp_int_rs1_data[i]!) ++
-      (List.range 32).map (fun i =>
+      (List.range fpIntDataWidth).map (fun i =>
         Gate.mkMUX rs2_data_0[i]! rs2_data_1[i]! fp_route_sel fp_int_rs2_data[i]!) ++
       -- Cross-domain MUX: fp_rs1_read → FP PRF, else INT PRF
       (List.range 6).map (fun i =>
@@ -2274,9 +2285,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX fp_int_rs2_data[i]! fp_rs2_data[i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[i]!) ++
       (if config.enableD then
         (List.range 32).map (fun i =>
-          Gate.mkMUX zero fp_rs1_data[32+i]! fp_mux_fp_rs1_read fp_issue_src1_data_pre[32+i]!) ++
+          let int_s1_hi := if config.xlen == 64 then fp_int_rs1_data[32+i]! else zero
+          Gate.mkMUX int_s1_hi fp_rs1_data[32+i]! fp_mux_fp_rs1_read fp_issue_src1_data_pre[32+i]!) ++
         (List.range 32).map (fun i =>
-          Gate.mkMUX zero fp_rs2_data[32+i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[32+i]!)
+          let int_s2_hi := if config.xlen == 64 then fp_int_rs2_data[32+i]! else zero
+          Gate.mkMUX int_s2_hi fp_rs2_data[32+i]! fp_mux_fp_rs2_read fp_issue_src2_data_pre[32+i]!)
        else [])
     else []
 

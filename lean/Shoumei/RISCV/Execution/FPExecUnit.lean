@@ -968,8 +968,9 @@ def mkFPExecUnitD : Circuit :=
         (out, acc.2 ++ [Gate.mkAND acc.1 (src3[32 + i]!) out])
     ) (zero, [])
 
-  -- Detect SP ops where src1 is integer: FCVT.S.W(14), FCVT.S.WU(15), FMV.W.X(17)
-  -- 14=01110, 15=01111, 17=10001. All have is_sp.
+  -- Detect SP ops where src1 bypasses NaN-unboxing:
+  -- FCVT.S.W(14), FCVT.S.WU(15), FMV.X.W(16), FMV.W.X(17)
+  -- 14=01110, 15=01111, 16=10000, 17=10001. All have is_sp.
   let op_s1_is_int := Wire.mk "op_s1_is_int"
   let s1_int_gates := [
     Gate.mkAND (op[3]!) (op[2]!) (Wire.mk "s1_int_32"),
@@ -977,9 +978,8 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkAND not_op4 (Wire.mk "s1_int_1415") (Wire.mk "s1_int_grp1415"),
     Gate.mkAND (op[4]!) not_op3 (Wire.mk "s1_int_17_t0"),
     Gate.mkAND not_op2 not_op1 (Wire.mk "s1_int_17_t1"),
-    Gate.mkAND (Wire.mk "s1_int_17_t0") (Wire.mk "s1_int_17_t1") (Wire.mk "s1_int_17_t2"),
-    Gate.mkAND (Wire.mk "s1_int_17_t2") (op[0]!) (Wire.mk "s1_int_17"),
-    Gate.mkOR (Wire.mk "s1_int_grp1415") (Wire.mk "s1_int_17") op_s1_is_int
+    Gate.mkAND (Wire.mk "s1_int_17_t0") (Wire.mk "s1_int_17_t1") (Wire.mk "s1_int_16_17"),
+    Gate.mkOR (Wire.mk "s1_int_grp1415") (Wire.mk "s1_int_16_17") op_s1_is_int
   ]
 
   let s1_bypass_box := Wire.mk "s1_byp_box"

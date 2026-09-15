@@ -214,6 +214,10 @@ def mkBitmapFreeList64_W2 : Circuit :=
     let g5b := Gate.mkAND commit_alloc_en_1 commit_dec_1_out[i]! commit_clr_1
     let g5c := Gate.mkOR  commit_clr_0   commit_clr_1         commit_clr
 
+    let cm1 := Wire.mk s!"comm_m1_{i}"
+    let g9  := Gate.mkMUX committed_bitmap[i]! zero             commit_clr  cm1
+    let g10 := Gate.mkMUX cm1                  one              retire_set  comm_next
+
     let m1 := Wire.mk s!"spec_m1_{i}"
     let m2 := Wire.mk s!"spec_m2_{i}"
     -- alloc_clr must have HIGHER priority than retire_set:
@@ -221,11 +225,7 @@ def mkBitmapFreeList64_W2 : Circuit :=
     -- the alloc wins and the bit stays cleared in spec bitmap.
     let g6 := Gate.mkMUX spec_bitmap[i]!      one               retire_set  m1
     let g7 := Gate.mkMUX m1                   zero              alloc_clr   m2
-    let g8 := Gate.mkMUX m2                   committed_bitmap[i]! flush_en spec_next
-
-    let cm1 := Wire.mk s!"comm_m1_{i}"
-    let g9  := Gate.mkMUX committed_bitmap[i]! zero             commit_clr  cm1
-    let g10 := Gate.mkMUX cm1                  one              retire_set  comm_next
+    let g8 := Gate.mkMUX m2                   comm_next         flush_en    spec_next
 
     let spec_dff := if i >= 32 then
       Gate.mkDFF_SET spec_next clock reset spec_bitmap[i]!
