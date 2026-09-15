@@ -947,7 +947,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     if instances.isEmpty then "" else instances
   ]
 
-  let footer := "endmodule"
+  let footer := "endmodule\n"
 
   joinLines [header, body, footer]
 

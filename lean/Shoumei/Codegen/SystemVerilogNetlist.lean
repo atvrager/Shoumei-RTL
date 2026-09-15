@@ -352,7 +352,7 @@ def toSystemVerilogNetlist (c : Circuit) : String :=
     if registers.isEmpty then "" else registers
   ]
 
-  let footer := "endmodule"
+  let footer := "endmodule\n"
 
   joinLines [header, body, footer]
 
