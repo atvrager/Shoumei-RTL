@@ -69,6 +69,7 @@ import Shoumei.RISCV.Execution.FPExecUnit
 -- D-Extension
 import Shoumei.Circuits.Combinational.FPDoubleMisc
 import Shoumei.Circuits.Combinational.FPDoubleConverter
+import Shoumei.Circuits.Combinational.FPLongConverter
 import Shoumei.Circuits.Sequential.FPAdderD
 import Shoumei.Circuits.Sequential.FPMultiplierD
 import Shoumei.Circuits.Sequential.FPFMAD
@@ -226,6 +227,7 @@ def allCircuits : List Circuit := [
   -- D-Extension: Double-Precision FPU building blocks
   fpDoubleMiscCircuit,
   fpDoubleConverterCircuit,
+  fpLongConverterCircuit,
   fpAdderDCircuit,
   fpMultiplierDCircuit,
   fpFMADCircuit,

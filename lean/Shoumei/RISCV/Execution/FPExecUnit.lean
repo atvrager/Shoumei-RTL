@@ -40,6 +40,7 @@ import Shoumei.Circuits.Sequential.FPSqrt
 import Shoumei.Circuits.Combinational.FPUDouble
 import Shoumei.Circuits.Combinational.FPDoubleMisc
 import Shoumei.Circuits.Combinational.FPDoubleConverter
+import Shoumei.Circuits.Combinational.FPLongConverter
 import Shoumei.Circuits.Sequential.FPAdderD
 import Shoumei.Circuits.Sequential.FPMultiplierD
 import Shoumei.Circuits.Sequential.FPFMAD
@@ -83,6 +84,10 @@ def opTypeToFPUOpcode (op : OpType) : Nat :=
   | .FSGNJ_S  => 21
   | .FSGNJN_S => 22
   | .FSGNJX_S => 23
+  | .FCVT_L_S  => 24
+  | .FCVT_LU_S => 25
+  | .FCVT_S_L  => 26
+  | .FCVT_S_LU => 27
   | .FADD_D   => 32
   | .FSUB_D   => 33
   | .FMUL_D   => 34
@@ -109,6 +114,10 @@ def opTypeToFPUOpcode (op : OpType) : Nat :=
   | .FSGNJX_D => 55
   | .FMV_X_D  => 56
   | .FMV_D_X  => 57
+  | .FCVT_L_D  => 58
+  | .FCVT_LU_D => 59
+  | .FCVT_D_L  => 60
+  | .FCVT_D_LU => 61
   | _ => 0  -- Non-FP op (shouldn't reach FPExecUnit)
 
 /-- Check if an FP operation is single-cycle (combinational) -/
@@ -119,11 +128,13 @@ def isSingleCycleFPOp (op : OpType) : Bool :=
   | .FMV_X_W | .FMV_W_X | .FCLASS_S
   | .FMIN_S | .FMAX_S
   | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FCVT_L_S | .FCVT_LU_S | .FCVT_S_L | .FCVT_S_LU
   | .FEQ_D | .FLT_D | .FLE_D
   | .FCVT_W_D | .FCVT_WU_D | .FCVT_D_W | .FCVT_D_WU
   | .FCVT_S_D | .FCVT_D_S | .FCLASS_D
   | .FMIN_D | .FMAX_D
   | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
+  | .FCVT_L_D | .FCVT_LU_D | .FCVT_D_L | .FCVT_D_LU
   | .FMV_X_D | .FMV_D_X => true
   | _ => false
 
@@ -1131,6 +1142,58 @@ def mkFPExecUnitD : Circuit :=
       (List.range 5 |>.map fun i => (s!"exc_{i}", conv_dp_exc[i]!)) ++
       [ ("result_is_int", conv_dp_rint) ]
   }
+  -- 64-bit integer / FP conversions (FPLongConverter)
+  -- SP: FCVT.L.S (24), FCVT.LU.S (25), FCVT.S.L (26), FCVT.S.LU (27)
+  -- DP: FCVT.L.D (58), FCVT.LU.D (59), FCVT.D.L (60), FCVT.D.LU (61)
+  let long_op := makeIndexedWires "long_op" 3
+  let long_op_gates := [
+    Gate.mkBUF (op[0]!) (long_op[0]!),
+    Gate.mkMUX (op[1]!) (op[2]!) (op[5]!) (long_op[1]!),
+    Gate.mkBUF (op[5]!) (long_op[2]!)
+  ]
+
+  let is_long_sp := Wire.mk "is_long_sp"
+  let is_long_dp := Wire.mk "is_long_dp"
+  let is_long_conv := Wire.mk "is_long_conv"
+  let op1_or_op2 := Wire.mk "op1_or_op2"
+  let long_conv_dec_gates := [
+    Gate.mkAND (op[4]!) (op[3]!) (Wire.mk "long_op43"),
+    Gate.mkAND (Wire.mk "long_op43") not_op2 (Wire.mk "long_op43_n2"),
+    Gate.mkAND not_op5 (Wire.mk "long_op43_n2") is_long_sp,
+
+    Gate.mkOR (op[1]!) (op[2]!) op1_or_op2,
+    Gate.mkAND (Wire.mk "long_op43") op1_or_op2 (Wire.mk "long_dp_t0"),
+    Gate.mkAND (op[5]!) (Wire.mk "long_dp_t0") is_long_dp,
+
+    Gate.mkOR is_long_sp is_long_dp is_long_conv
+  ]
+
+  let not_long_op1 := Wire.mk "not_long_op1"
+  let sp_f2i_active := Wire.mk "sp_f2i_active"
+  let sp_f2i_gates := [
+    Gate.mkNOT (long_op[1]!) not_long_op1,
+    Gate.mkAND is_long_sp not_long_op1 sp_f2i_active
+  ]
+  let long_src1 := (List.range 64).map fun i =>
+    if i < 32 then Wire.mk s!"long_s1_{i}" else src1[i]!
+  let long_src1_gates := sp_f2i_gates ++ (List.range 32).map fun i =>
+    Gate.mkMUX (src1[i]!) (src1_sp[i]!) sp_f2i_active (long_src1[i]!)
+
+  let conv_long_res := makeIndexedWires "conv_long_res" 64
+  let conv_long_exc := makeIndexedWires "conv_long_exc" 5
+  let conv_long_rint := Wire.mk "conv_long_rint"
+  let conv_long_inst : CircuitInstance := {
+    moduleName := "FPLongConverter", instName := "u_conv_long",
+    portMap :=
+      (List.range 64 |>.map fun i => (s!"src1_{i}", long_src1[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"op_{i}", long_op[i]!)) ++
+      (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
+      [ ("zero", zero), ("one", one) ] ++
+      (List.range 64 |>.map fun i => (s!"result_{i}", conv_long_res[i]!)) ++
+      (List.range 5 |>.map fun i => (s!"exc_{i}", conv_long_exc[i]!)) ++
+      [ ("result_is_int", conv_long_rint) ]
+  }
+
 
   let add_dp_res := makeIndexedWires "add_dp_res" 64
   let add_dp_tag := makeIndexedWires "add_dp_tag" 6
@@ -1341,6 +1404,8 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkOR grp_8_15_filt grp_16_18 sp_writes_int
   ]
 
+  let misc_res_pre := makeIndexedWires "misc_res_pre" 64
+  let misc_exc_pre := makeIndexedWires "misc_exc_pre" 5
   let misc_result := makeIndexedWires "misc_res" 64
   let misc_exc := makeIndexedWires "misc_exc" 5
   let misc_valid := Wire.mk "misc_valid"
@@ -1352,14 +1417,18 @@ def mkFPExecUnitD : Circuit :=
         let sp_hi := Wire.mk s!"misc_sp_hi_{i}"
         [Gate.mkMUX one (misc_sp_res[31]!) sp_writes_int sp_hi,
          Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
-         Gate.mkMUX sp_hi dp_sub is_dp (misc_result[i]!)]
+         Gate.mkMUX sp_hi dp_sub is_dp (misc_res_pre[i]!)]
       else
         [Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
-         Gate.mkMUX (misc_sp_res[i]!) dp_sub is_dp (misc_result[i]!)]) ++
+         Gate.mkMUX (misc_sp_res[i]!) dp_sub is_dp (misc_res_pre[i]!)]) ++
     (List.range 5 |>.flatMap fun i =>
       let dp_sub_exc := Wire.mk s!"m_dpexc_{i}"
       [Gate.mkMUX (misc_dp_exc[i]!) (conv_dp_exc[i]!) is_dp_conv dp_sub_exc,
-       Gate.mkMUX (misc_sp_exc[i]!) dp_sub_exc is_dp (misc_exc[i]!)]) ++
+       Gate.mkMUX (misc_sp_exc[i]!) dp_sub_exc is_dp (misc_exc_pre[i]!)]) ++
+    (List.range 64 |>.map fun i =>
+      Gate.mkMUX (misc_res_pre[i]!) (conv_long_res[i]!) is_long_conv (misc_result[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (misc_exc_pre[i]!) (conv_long_exc[i]!) is_long_conv (misc_exc[i]!)) ++
     [Gate.mkOR misc_valid_sp misc_valid_dp misc_valid]
 
   -- ══════════════════════════════════════════════
@@ -1455,9 +1524,11 @@ def mkFPExecUnitD : Circuit :=
   -- (SP int-writing op detection lives above, next to the misc merge)
   -- ══════════════════════════════════════════════
   let dp_misc_or_conv_rint := Wire.mk "dp_rint_comb"
+  let active_writes_int_pre := Wire.mk "active_writes_int_pre"
   let int_result_gates := [
     Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
-    Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp (Wire.mk "active_writes_int"),
+    Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp active_writes_int_pre,
+    Gate.mkMUX active_writes_int_pre conv_long_rint is_long_conv (Wire.mk "active_writes_int"),
     Gate.mkOR mul_valid add_valid (Wire.mk "rint_d_t1"),
     Gate.mkOR fma_valid div_valid (Wire.mk "rint_d_t2"),
     Gate.mkOR sqrt_valid (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
@@ -1473,6 +1544,7 @@ def mkFPExecUnitD : Circuit :=
     s1_int_gates ++ [s1_byp_gate] ++ unbox_gates ++
     add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
     is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++
+    long_op_gates ++ long_conv_dec_gates ++ long_src1_gates ++
     mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
     pipe_collision_gates ++ pipe_active_or_gate ++ busy_gate ++ int_result_gates
 
@@ -1483,7 +1555,7 @@ def mkFPExecUnitD : Circuit :=
     gates := all_gates
     instances := [
       misc_sp_inst, adder_sp_inst, mul_sp_inst, fma_sp_inst, div_sp_inst, sqrt_sp_inst,
-      misc_dp_inst, conv_dp_inst, adder_dp_inst, mul_dp_inst, fma_dp_inst, div_dp_inst, sqrt_dp_inst,
+      misc_dp_inst, conv_dp_inst, conv_long_inst, adder_dp_inst, mul_dp_inst, fma_dp_inst, div_dp_inst, sqrt_dp_inst,
       pipe_collision_inst1, pipe_collision_inst2
     ]
     signalGroups := [
