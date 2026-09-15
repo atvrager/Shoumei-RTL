@@ -69,27 +69,57 @@ public:
 
     void register_hart(size_t id, processor_t* p) { harts_[id] = p; }
 
-    // Load ELF segments into flat memory
+    // Load ELF segments into flat memory (supports both ELF32 and ELF64)
     int load_elf(const char* path) {
         FILE* f = fopen(path, "rb");
         if (!f) return -1;
 
-        Elf32_Ehdr ehdr;
-        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
+        unsigned char e_ident[EI_NIDENT];
+        if (fread(e_ident, 1, EI_NIDENT, f) != EI_NIDENT) {
+            fclose(f);
+            return -1;
+        }
+        fseek(f, 0, SEEK_SET);
 
-        for (int i = 0; i < ehdr.e_phnum; i++) {
-            Elf32_Phdr phdr;
-            fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);
-            if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;
-            if (phdr.p_type != PT_LOAD || phdr.p_filesz == 0) continue;
+        if (e_ident[EI_CLASS] == ELFCLASS64) {
+            Elf64_Ehdr ehdr;
+            if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
 
-            std::vector<uint8_t> seg(phdr.p_memsz, 0);
-            fseek(f, phdr.p_offset, SEEK_SET);
-            (void)fread(seg.data(), 1, phdr.p_filesz, f);
+            for (int i = 0; i < ehdr.e_phnum; i++) {
+                Elf64_Phdr phdr;
+                fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);
+                if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;
+                if (phdr.p_type != PT_LOAD || phdr.p_filesz == 0) continue;
 
-            if (phdr.p_paddr + phdr.p_memsz <= MEM_SIZE) {
-                memcpy(&mem_[phdr.p_paddr], seg.data(), phdr.p_memsz);
+                std::vector<uint8_t> seg(phdr.p_memsz, 0);
+                fseek(f, phdr.p_offset, SEEK_SET);
+                (void)fread(seg.data(), 1, phdr.p_filesz, f);
+
+                if (phdr.p_paddr + phdr.p_memsz <= MEM_SIZE) {
+                    memcpy(&mem_[phdr.p_paddr], seg.data(), phdr.p_memsz);
+                }
             }
+        } else if (e_ident[EI_CLASS] == ELFCLASS32) {
+            Elf32_Ehdr ehdr;
+            if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
+
+            for (int i = 0; i < ehdr.e_phnum; i++) {
+                Elf32_Phdr phdr;
+                fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);
+                if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;
+                if (phdr.p_type != PT_LOAD || phdr.p_filesz == 0) continue;
+
+                std::vector<uint8_t> seg(phdr.p_memsz, 0);
+                fseek(f, phdr.p_offset, SEEK_SET);
+                (void)fread(seg.data(), 1, phdr.p_filesz, f);
+
+                if (phdr.p_paddr + phdr.p_memsz <= MEM_SIZE) {
+                    memcpy(&mem_[phdr.p_paddr], seg.data(), phdr.p_memsz);
+                }
+            }
+        } else {
+            fclose(f);
+            return -1;
         }
         fclose(f);
         return 0;
@@ -123,8 +153,9 @@ SpikeOracle::SpikeOracle(const std::string& elf_path, const std::string& isa)
     flat->register_hart(0, proc_.get());
     proc_->get_state()->pc = 0;
 
-    // Enable FP if ISA includes F extension
-    if (isa.find('f') != std::string::npos || isa.find('F') != std::string::npos) {
+    // Enable FP if ISA includes F or D extension
+    if (isa.find('f') != std::string::npos || isa.find('F') != std::string::npos ||
+        isa.find('d') != std::string::npos || isa.find('D') != std::string::npos) {
         // Set MSTATUS.FS = Dirty (bits 14:13 = 11)
         // Without this, Spike traps on any FP instruction with illegal-insn
         proc_->put_csr(/*CSR_MSTATUS*/ 0x300,
@@ -136,16 +167,16 @@ SpikeOracle::~SpikeOracle() = default;
 
 SpikeStepResult SpikeOracle::step() {
     SpikeStepResult r = {};
-    r.pc = static_cast<uint32_t>(proc_->get_state()->pc);
+    r.pc = static_cast<uint64_t>(proc_->get_state()->pc);
 
-    uint32_t regs_before[32];
+    uint64_t regs_before[32];
     for (int i = 0; i < 32; i++)
-        regs_before[i] = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+        regs_before[i] = static_cast<uint64_t>(proc_->get_state()->XPR[i]);
 
     // Snapshot FP registers before stepping
-    uint32_t fregs_before[32];
+    uint64_t fregs_before[32];
     for (int i = 0; i < 32; i++)
-        fregs_before[i] = static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
+        fregs_before[i] = static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
 
     try {
         r.insn = static_cast<uint32_t>(
@@ -167,7 +198,7 @@ SpikeStepResult SpikeOracle::step() {
 
     // Detect integer register change
     for (int i = 1; i < 32; i++) {
-        uint32_t val = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+        uint64_t val = static_cast<uint64_t>(proc_->get_state()->XPR[i]);
         if (val != regs_before[i]) {
             r.rd = static_cast<uint32_t>(i);
             r.rd_value = val;
@@ -178,7 +209,7 @@ SpikeStepResult SpikeOracle::step() {
     // Detect FP register change
     r.frd_valid = false;
     for (int i = 0; i < 32; i++) {
-        uint32_t val = static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
+        uint64_t val = static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
         if (val != fregs_before[i]) {
             r.frd = static_cast<uint32_t>(i);
             r.frd_value = val;
@@ -193,27 +224,27 @@ SpikeStepResult SpikeOracle::step() {
     return r;
 }
 
-uint32_t SpikeOracle::get_xreg(int i) const {
-    return static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+uint64_t SpikeOracle::get_xreg(int i) const {
+    return static_cast<uint64_t>(proc_->get_state()->XPR[i]);
 }
 
-void SpikeOracle::set_xreg(int i, uint32_t val) {
+void SpikeOracle::set_xreg(int i, uint64_t val) {
     if (i != 0) proc_->get_state()->XPR.write(i, val);
 }
 
-uint32_t SpikeOracle::get_freg(int i) const {
-    return static_cast<uint32_t>(proc_->get_state()->FPR[i].v[0]);
+uint64_t SpikeOracle::get_freg(int i) const {
+    return static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
 }
 
-uint32_t SpikeOracle::get_pc() const {
-    return static_cast<uint32_t>(proc_->get_state()->pc);
+uint64_t SpikeOracle::get_pc() const {
+    return static_cast<uint64_t>(proc_->get_state()->pc);
 }
 
-void SpikeOracle::set_pc(uint32_t pc) {
+void SpikeOracle::set_pc(uint64_t pc) {
     proc_->get_state()->pc = pc;
 }
 
-uint32_t SpikeOracle::get_insn_at(uint32_t addr) const {
+uint32_t SpikeOracle::get_insn_at(uint64_t addr) const {
     return static_cast<uint32_t>(proc_->get_mmu()->load<uint32_t>(addr));
 }
 
@@ -223,9 +254,9 @@ void SpikeOracle::unhalt() {
 
 SpikeOracle::ArchState SpikeOracle::save_state() const {
     ArchState s;
-    s.pc = static_cast<uint32_t>(proc_->get_state()->pc);
+    s.pc = static_cast<uint64_t>(proc_->get_state()->pc);
     for (int i = 0; i < 32; i++)
-        s.xregs[i] = static_cast<uint32_t>(proc_->get_state()->XPR[i]);
+        s.xregs[i] = static_cast<uint64_t>(proc_->get_state()->XPR[i]);
     for (int i = 0; i < 32; i++)
         s.fregs[i] = proc_->get_state()->FPR[i].v[0];
     return s;

@@ -107,6 +107,8 @@ def opTypeToFPUOpcode (op : OpType) : Nat :=
   | .FSGNJ_D  => 53
   | .FSGNJN_D => 54
   | .FSGNJX_D => 55
+  | .FMV_X_D  => 56
+  | .FMV_D_X  => 57
   | _ => 0  -- Non-FP op (shouldn't reach FPExecUnit)
 
 /-- Check if an FP operation is single-cycle (combinational) -/
@@ -121,7 +123,8 @@ def isSingleCycleFPOp (op : OpType) : Bool :=
   | .FCVT_W_D | .FCVT_WU_D | .FCVT_D_W | .FCVT_D_WU
   | .FCVT_S_D | .FCVT_D_S | .FCLASS_D
   | .FMIN_D | .FMAX_D
-  | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D => true
+  | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
+  | .FMV_X_D | .FMV_D_X => true
   | _ => false
 
 /-- Estimated cycle latency for pipelined FP operations -/
@@ -1297,7 +1300,7 @@ def mkFPExecUnitD : Circuit :=
     [Gate.mkOR sqrt_sp_valid sqrt_dp_valid sqrt_valid]
 
   -- 6. Misc & Converter
-  -- Detect if op is DP conv (44..49)
+  -- Detect if op is a DP converter op (44..49) or a DP move (56/57)
   let is_dp_conv := Wire.mk "is_dp_conv"
   let is_dp_conv_gates := [
     Gate.mkAND (op[3]!) (op[2]!) (Wire.mk "dpc_4447"),
@@ -1305,8 +1308,37 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkAND (op[4]!) not_op3 (Wire.mk "dpc_4849_t0"),
     Gate.mkAND not_op2 not_op1 (Wire.mk "dpc_4849_t1"),
     Gate.mkAND (Wire.mk "dpc_4849_t0") (Wire.mk "dpc_4849_t1") (Wire.mk "dpc_g4849"),
-    Gate.mkOR (Wire.mk "dpc_g4447") (Wire.mk "dpc_g4849") (Wire.mk "dpc_any"),
+    -- FMV.X.D (56) / FMV.D.X (57): the converter passes the raw 64-bit operand
+    Gate.mkAND (op[5]!) (op[4]!) (Wire.mk "dpc_fmv_t0"),
+    Gate.mkAND (Wire.mk "dpc_fmv_t0") (op[3]!) (Wire.mk "dpc_fmv_t1"),
+    Gate.mkAND (Wire.mk "dpc_fmv_t1") not_op2 (Wire.mk "dpc_fmv_t2"),
+    Gate.mkAND (Wire.mk "dpc_fmv_t2") not_op1 (Wire.mk "dpc_g5657"),
+    Gate.mkOR (Wire.mk "dpc_g4447") (Wire.mk "dpc_g4849") (Wire.mk "dpc_any0"),
+    Gate.mkOR (Wire.mk "dpc_any0") (Wire.mk "dpc_g5657") (Wire.mk "dpc_any"),
     Gate.mkAND is_dp (Wire.mk "dpc_any") is_dp_conv
+  ]
+
+  -- SP ops that write an integer register (FMV.X.W, FCVT.W.S/WU.S, FCLASS.S,
+  -- FEQ/FLT/FLE.S). Their 32-bit result must be sign-extended to XLEN; every
+  -- other SP result is NaN-boxed into the 64-bit FP register.
+  let sp_writes_int := Wire.mk "sp_writes_int"
+  let grp_8_15 := Wire.mk "sp_g8_15"
+  let not_both_21 := Wire.mk "sp_not_both_21"
+  let any_210 := Wire.mk "sp_any_210"
+  let grp_8_15_filt := Wire.mk "sp_g8_15_filt"
+  let grp_16_18 := Wire.mk "sp_g16_18"
+  let sp_int_detect_gates := [
+    Gate.mkAND (op[3]!) not_op4 grp_8_15,
+    Gate.mkAND (op[2]!) (op[1]!) (Wire.mk "sp_b21"),
+    Gate.mkNOT (Wire.mk "sp_b21") not_both_21,
+    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "sp_a01"),
+    Gate.mkOR (Wire.mk "sp_a01") (op[2]!) any_210,
+    Gate.mkAND grp_8_15 not_both_21 (Wire.mk "sp_gf1"),
+    Gate.mkAND (Wire.mk "sp_gf1") any_210 grp_8_15_filt,
+    Gate.mkAND (op[4]!) not_op3 (Wire.mk "sp_g16_t1"),
+    Gate.mkAND not_op0 not_op2 (Wire.mk "sp_g16_t2"),
+    Gate.mkAND (Wire.mk "sp_g16_t1") (Wire.mk "sp_g16_t2") grp_16_18,
+    Gate.mkOR grp_8_15_filt grp_16_18 sp_writes_int
   ]
 
   let misc_result := makeIndexedWires "misc_res" 64
@@ -1314,10 +1346,16 @@ def mkFPExecUnitD : Circuit :=
   let misc_valid := Wire.mk "misc_valid"
   let misc_merge_gates :=
     (List.range 64 |>.flatMap fun i =>
-      let sp_boxed := if i >= 32 then one else misc_sp_res[i]!
       let dp_sub := Wire.mk s!"m_dpsub_{i}"
-      [Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
-       Gate.mkMUX sp_boxed dp_sub is_dp (misc_result[i]!)]) ++
+      if i >= 32 then
+        -- Upper 32 bits: sign-extend an int result, NaN-box an FP result
+        let sp_hi := Wire.mk s!"misc_sp_hi_{i}"
+        [Gate.mkMUX one (misc_sp_res[31]!) sp_writes_int sp_hi,
+         Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
+         Gate.mkMUX sp_hi dp_sub is_dp (misc_result[i]!)]
+      else
+        [Gate.mkMUX (misc_dp_res[i]!) (conv_dp_res[i]!) is_dp_conv dp_sub,
+         Gate.mkMUX (misc_sp_res[i]!) dp_sub is_dp (misc_result[i]!)]) ++
     (List.range 5 |>.flatMap fun i =>
       let dp_sub_exc := Wire.mk s!"m_dpexc_{i}"
       [Gate.mkMUX (misc_dp_exc[i]!) (conv_dp_exc[i]!) is_dp_conv dp_sub_exc,
@@ -1414,30 +1452,10 @@ def mkFPExecUnitD : Circuit :=
   -- ══════════════════════════════════════════════
   -- result_is_int
   -- High when output comes from misc path and targets INT PRF
+  -- (SP int-writing op detection lives above, next to the misc merge)
   -- ══════════════════════════════════════════════
-  -- SP int-writing: 9..13, 16, 18
-  let sp_writes_int := Wire.mk "sp_writes_int"
-  let grp_8_15 := Wire.mk "sp_g8_15"
-  let not_both_21 := Wire.mk "sp_not_both_21"
-  let any_210 := Wire.mk "sp_any_210"
-  let grp_8_15_filt := Wire.mk "sp_g8_15_filt"
-  let grp_16_18 := Wire.mk "sp_g16_18"
-  let sp_int_detect_gates := [
-    Gate.mkAND (op[3]!) not_op4 grp_8_15,
-    Gate.mkAND (op[2]!) (op[1]!) (Wire.mk "sp_b21"),
-    Gate.mkNOT (Wire.mk "sp_b21") not_both_21,
-    Gate.mkOR (op[0]!) (op[1]!) (Wire.mk "sp_a01"),
-    Gate.mkOR (Wire.mk "sp_a01") (op[2]!) any_210,
-    Gate.mkAND grp_8_15 not_both_21 (Wire.mk "sp_gf1"),
-    Gate.mkAND (Wire.mk "sp_gf1") any_210 grp_8_15_filt,
-    Gate.mkAND (op[4]!) not_op3 (Wire.mk "sp_g16_t1"),
-    Gate.mkAND not_op0 not_op2 (Wire.mk "sp_g16_t2"),
-    Gate.mkAND (Wire.mk "sp_g16_t1") (Wire.mk "sp_g16_t2") grp_16_18,
-    Gate.mkOR grp_8_15_filt grp_16_18 sp_writes_int
-  ]
-
   let dp_misc_or_conv_rint := Wire.mk "dp_rint_comb"
-  let int_result_gates := sp_int_detect_gates ++ [
+  let int_result_gates := [
     Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
     Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp (Wire.mk "active_writes_int"),
     Gate.mkOR mul_valid add_valid (Wire.mk "rint_d_t1"),
@@ -1454,7 +1472,7 @@ def mkFPExecUnitD : Circuit :=
     s1_hi_ones_gates ++ s2_hi_ones_gates ++ s3_hi_ones_gates ++
     s1_int_gates ++ [s1_byp_gate] ++ unbox_gates ++
     add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
-    is_dp_conv_gates ++ misc_merge_gates ++
+    is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++
     mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
     pipe_collision_gates ++ pipe_active_or_gate ++ busy_gate ++ int_result_gates
 

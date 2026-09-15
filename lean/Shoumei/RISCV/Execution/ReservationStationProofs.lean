@@ -31,17 +31,17 @@ def rs4W2 := mkReservationStationFromConfig defaultCPUConfig
 
 /-! ## Structural Proofs -/
 
-theorem rs4w2_input_count : rs4W2.inputs.length = 288 := by native_decide
-theorem rs4w2_output_count : rs4W2.outputs.length = 167 := by native_decide
+theorem rs4w2_input_count : rs4W2.inputs.length = 290 := by native_decide
+theorem rs4w2_output_count : rs4W2.outputs.length = 169 := by native_decide
 theorem rs4w2_instance_count : rs4W2.instances.length = 16 := by native_decide
-theorem rs4w2_gate_count : rs4W2.gates.length = 2409 := by native_decide
+theorem rs4w2_gate_count : rs4W2.gates.length = 2415 := by native_decide
 
 /-! ## Compositional Verification Certificate -/
 
 /-- ReservationStation W=2 Building Block Dependencies -/
 def rs4w2_dependencies : List String := [
   "Register1",          -- Allocation pointer bits
-  "Register95",         -- Entry storage (95-bit register x 4, 7-bit opcode + 7-bit tags)
+  "Register96",         -- Entry storage (96-bit register x 4, 8-bit opcode + 7-bit tags)
   "PriorityArbiter2"   -- Ready selection (2-input priority arbiter)
 ]
 
@@ -97,14 +97,14 @@ def rs4w2_cert : CompositionalCert := {
 /-- The 64-bit W=2 reservation station -/
 def rs4W2_64 := mkReservationStation4W2_64
 
-theorem rs4w2_64_input_count : rs4W2_64.inputs.length = 480 := by native_decide
-theorem rs4w2_64_output_count : rs4W2_64.outputs.length = 295 := by native_decide
+theorem rs4w2_64_input_count : rs4W2_64.inputs.length = 482 := by native_decide
+theorem rs4w2_64_output_count : rs4W2_64.outputs.length = 297 := by native_decide
 theorem rs4w2_64_instance_count : rs4W2_64.instances.length = 16 := by native_decide
 
 /-- ReservationStation4_W2_64 Building Block Dependencies -/
 def rs4w2_64_dependencies : List String := [
   "Register1",          -- Allocation pointer bits
-  "Register159",        -- Entry storage (159-bit register x 4)
+  "Register160",        -- Entry storage (160-bit register x 4)
   "PriorityArbiter2"   -- Ready selection (2-input priority arbiter)
 ]
 

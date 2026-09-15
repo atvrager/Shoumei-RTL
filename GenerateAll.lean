@@ -120,7 +120,7 @@ open Shoumei.RISCV.CPUTestbench
     the circuit registry above.  Named once because the stale-output pruner and
     the certificate registry must both agree with what is actually emitted. -/
 def riscvDecoderModules : List String :=
-  ["RV32GDecoder"]
+  ["RV64GDecoder"]
 
 -- Registry: Add circuits here for automatic generation
 def allCircuits : List Circuit := [
@@ -128,6 +128,7 @@ def allCircuits : List Circuit := [
   dff,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
   mkQueue1FlowStructural 72,     -- INT/Branch CDB FIFO (39 + 32 redirect_target + 1 mispredicted)
+  mkQueue1FlowStructural 104,    -- 64-bit CDB FIFO (IB0 / IB_BR)
 
   -- Phase 1: Arithmetic
   mkKoggeStoneAdder32,
@@ -146,6 +147,7 @@ def allCircuits : List Circuit := [
   mkComparatorN 6,
   mkEqualityComparatorN 6,
   mkEqualityComparator32,  -- Phase 7: Store buffer address matching (XOR + OR-tree)
+  mkEqualityComparator64,  -- Phase 7: 64-bit store buffer address matching
   mkMuxTree 4 32,
   mkMuxTree 4 64,
   mkMuxTree 8 2,  -- Phase 7: Store buffer size readout
@@ -178,9 +180,10 @@ def allCircuits : List Circuit := [
   mkRegisterN 32,
   mkRegisterN 64,
   -- Hierarchical registers (compositional verification)
-  mkRegisterNHierarchical 95,  -- RS entry: 7-bit opcode + 7-bit tags (1+7+7+1+7+32+1+7+32)
+  mkRegisterNHierarchical 96,  -- RS entry: 8-bit opcode + 7-bit tags (1+8+7+1+7+32+1+7+32)
   mkRegisterNHierarchical 98,  -- Store buffer entry payload (32+64+2)
-  mkRegisterNHierarchical 159, -- RS 64-bit entry (1+7+7+1+7+64+1+7+64)
+  mkRegisterNHierarchical 130, -- Store buffer 64-bit entry payload (64+64+2)
+  mkRegisterNHierarchical 160, -- RS 64-bit entry (1+8+7+1+7+64+1+7+64)
 
   -- Phase 4: RISC-V Components
   mkRAT64,
@@ -195,11 +198,20 @@ def allCircuits : List Circuit := [
   mkReservationStationFromConfig defaultCPUConfig,
   mkReservationStation4W2_64,
 
-  -- M-Extension (conditional on CPUConfig.enableM)
+  -- M-Extension & 64-bit Arithmetic Building Blocks
   mkKoggeStoneAdder64,
+  mkSubtractor64,
+  mkComparator64,
+  mkLogicUnit64,
+  mkShifter64,
+  mkALU64,
+  mkIntegerExecUnit64,
   csaCompressor64,
+  mul32x32To64,
   mkPipelinedMultiplier,
+  pipelinedMultiplier64,
   mkDividerCircuit,
+  divider64Circuit,
   mkMulDivExecUnit,
 
   -- F-Extension: FPU building blocks

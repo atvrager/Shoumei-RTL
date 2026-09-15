@@ -64,7 +64,7 @@ endif
 # Generate OpType enum from riscv-opcodes JSON
 generate-optype: opcodes
 	@echo "==> Generating OpType enum from riscv-opcodes..."
-	lake exe generate_optype
+	lake --no-ansi exe generate_optype
 
 # Build LEAN code
 lean:
@@ -73,11 +73,11 @@ ifndef HAS_LAKE
 	@exit 1
 endif
 	@echo "==> Building LEAN code with Lake..."
-	lake build
+	lake --no-ansi build
 
 # Generate RISC-V instruction definitions from riscv-opcodes
 # Extensions controlled by RISCV_EXTS variable (default: rv_i rv32_i rv_m rv_f rv_zifencei)
-RISCV_EXTS ?= rv_i rv32_i rv_m rv_a rv_f rv_d rv_zicsr rv_zifencei rv_system
+RISCV_EXTS ?= rv_i rv64_i rv_m rv64_m rv_a rv64_a rv_f rv64_f rv_d rv64_d rv_zicsr rv_zifencei rv_system
 opcodes:
 	@echo "==> Generating RISC-V instruction definitions ($(RISCV_EXTS))..."
 	@cd third_party/riscv-opcodes && \
@@ -95,10 +95,10 @@ opcodes-rv32im: opcodes
 codegen: lean opcodes
 	@echo "==> Running code generators..."
 	@echo "    Phase 1: All circuits (SV + netlist + C++ Sim)..."
-	lake exe generate_all     # circuits + decoders + filelists in one pass
+	lake --no-ansi exe generate_all     # circuits + decoders + filelists in one pass
 	@echo "    Phase 2: Exporting compositional verification certificates..."
 	@mkdir -p verification
-	lake exe generate_all --export-certs > verification/compositional-certs.txt
+	lake --no-ansi exe generate_all --export-certs > verification/compositional-certs.txt
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # generate_all dynamically generates filelists for all physical/*_synth.sv wrappers

@@ -94,5 +94,6 @@ def mkLogicUnitN (n : Nat) : Circuit :=
 def mkLogicUnit4 : Circuit := mkLogicUnitN 4
 def mkLogicUnit8 : Circuit := mkLogicUnitN 8
 def mkLogicUnit32 : Circuit := mkLogicUnitN 32
+def mkLogicUnit64 : Circuit := mkLogicUnitN 64
 
 end Shoumei.Circuits.Combinational

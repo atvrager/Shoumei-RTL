@@ -216,11 +216,24 @@ def register98_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
-/-- Register159 = Register64 + Register64 + Register16 + Register8 + Register4 + Register2 + Register1 (hierarchical) -/
-def register159_cert : CompositionalCert := {
-  moduleName := "Register159"
+/-- Register130 = Register64 + Register64 + Register2 (hierarchical) -/
+def register130_cert : CompositionalCert := {
+  moduleName := "Register130"
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
+
+/-- Register96 = Register64 + Register32 (hierarchical) -/
+def register96_cert : CompositionalCert := {
+  moduleName := "Register96"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register160 = Register64 + Register64 + Register32 (hierarchical) -/
+def register160_cert : CompositionalCert := {
+  moduleName := "Register160"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 
 /-! ## RISC-V Renaming -/
 
@@ -262,9 +275,21 @@ def pipelinedMultiplier_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.MultiplierProofs"
 }
 
+/-- PipelinedMultiplier64: 3-stage pipelined 64-bit multiplier -/
+def pipelinedMultiplier64_cert : CompositionalCert := {
+  moduleName := "PipelinedMultiplier64"
+  proofReference := "Shoumei.Circuits.Combinational.MultiplierProofs"
+}
+
 /-- Divider32: 32-cycle restoring divider -/
 def divider32_cert : CompositionalCert := {
   moduleName := "Divider32"
+  proofReference := "Shoumei.Circuits.Sequential.DividerProofs"
+}
+
+/-- Divider64: 64-cycle restoring divider -/
+def divider64_cert : CompositionalCert := {
+  moduleName := "Divider64"
   proofReference := "Shoumei.Circuits.Sequential.DividerProofs"
 }
 
@@ -273,6 +298,7 @@ def muldivExecUnit_cert : CompositionalCert := {
   moduleName := "MulDivExecUnit"
   proofReference := "Shoumei.RISCV.Execution.MulDivExecUnitProofs"
 }
+
 
 /-- ReservationStation4_W2_64: 64-bit dual-issue reservation station -/
 def rs4w2_64_cert : CompositionalCert := {
@@ -363,6 +389,11 @@ def rv32imfDecoder_cert : CompositionalCert := {
 
 def rv32gDecoder_cert : CompositionalCert := {
   moduleName := "RV32GDecoder"
+  proofReference := "Shoumei.RISCV.DecoderProofs"
+}
+
+def rv64gDecoder_cert : CompositionalCert := {
+  moduleName := "RV64GDecoder"
   proofReference := "Shoumei.RISCV.DecoderProofs"
 }
 
@@ -493,8 +524,10 @@ def allCerts : List CompositionalCert := [
   mux64x64_cert,
   -- Sequential
   register24_cert,
+  register96_cert,
   register98_cert,
-  register159_cert,
+  register130_cert,
+  register160_cert,
   queuePointer_3_cert,
   -- Renaming
   physregfile_cert,
@@ -504,7 +537,9 @@ def allCerts : List CompositionalCert := [
   -- Execution
   -- M-Extension
   pipelinedMultiplier_cert,
+  pipelinedMultiplier64_cert,
   divider32_cert,
+  divider64_cert,
   muldivExecUnit_cert,
   rs4w2_64_cert,
   -- Retirement
@@ -519,7 +554,7 @@ def allCerts : List CompositionalCert := [
   l2Cache_cert,
   memoryHierarchy_cert,
   -- Decoders
-  rv32gDecoder_cert,
+  rv64gDecoder_cert,
   -- F-Extension
   fpMisc_cert,
   fpAdder_cert,

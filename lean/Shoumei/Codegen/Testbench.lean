@@ -880,6 +880,7 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
     | none => ""
 
   let tbName := optOrDefault cfg.tbName s!"tb_{c.name}"
+  let rdDataWidth := (outputGroups.find? (·.name == "rvvi_rdd_0")).map (·.width) |>.getD 32
 
   "//==============================================================================\n" ++
   s!"// {tbName}.sv - Auto-generated testbench for {c.name} (cache-line memory)\n" ++
@@ -922,8 +923,8 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "    output logic [4:0]  o_rvvi_rd_1,\n" ++
   "    output logic        o_rvvi_rd_valid_0,\n" ++
   "    output logic        o_rvvi_rd_valid_1,\n" ++
-  "    output logic [31:0] o_rvvi_rd_data_0,\n" ++
-  "    output logic [31:0] o_rvvi_rd_data_1\n" ++
+  s!"    output logic [{rdDataWidth-1}:0] o_rvvi_rd_data_0,\n" ++
+  s!"    output logic [{rdDataWidth-1}:0] o_rvvi_rd_data_1\n" ++
   ");\n\n" ++
 
   "  // =========================================================================\n" ++
@@ -1209,29 +1210,59 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "static int64_t elf_lookup_symbol(const char* path, const char* sym_name) " ++ lb ++ "\n" ++
   "    FILE* f = fopen(path, \"rb\");\n" ++
   "    if (!f) return -1;\n" ++
-  "    Elf32_Ehdr ehdr;\n" ++
-  "    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
-  "    for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
-  "        Elf32_Shdr shdr;\n" ++
-  "        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
-  "        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
-  "        if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
-  "        Elf32_Shdr strhdr;\n" ++
-  "        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
-  "        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
-  "        auto* strtab = new char[strhdr.sh_size];\n" ++
-  "        fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
-  "        if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) " ++ lb ++ " delete[] strtab; continue; " ++ rb ++ "\n" ++
-  "        int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
-  "        for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
-  "            Elf32_Sym sym;\n" ++
-  "            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
-  "            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
-  "            if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) " ++ lb ++ "\n" ++
-  "                delete[] strtab; fclose(f); return (int64_t)sym.st_value;\n" ++
+  "    unsigned char ident[EI_NIDENT];\n" ++
+  "    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "    fseek(f, 0, SEEK_SET);\n" ++
+  "    if (ident[EI_CLASS] == ELFCLASS64) " ++ lb ++ "\n" ++
+  "        Elf64_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
+  "            Elf64_Shdr shdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
+  "            if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
+  "            Elf64_Shdr strhdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
+  "            auto* strtab = new char[strhdr.sh_size];\n" ++
+  "            fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
+  "            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) " ++ lb ++ " delete[] strtab; continue; " ++ rb ++ "\n" ++
+  "            int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
+  "            for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
+  "                Elf64_Sym sym;\n" ++
+  "                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
+  "                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
+  "                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) " ++ lb ++ "\n" ++
+  "                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;\n" ++
+  "                " ++ rb ++ "\n" ++
   "            " ++ rb ++ "\n" ++
+  "            delete[] strtab;\n" ++
   "        " ++ rb ++ "\n" ++
-  "        delete[] strtab;\n" ++
+  "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+  "        Elf32_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
+  "            Elf32_Shdr shdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
+  "            if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
+  "            Elf32_Shdr strhdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
+  "            auto* strtab = new char[strhdr.sh_size];\n" ++
+  "            fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
+  "            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) " ++ lb ++ " delete[] strtab; continue; " ++ rb ++ "\n" ++
+  "            int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
+  "            for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
+  "                Elf32_Sym sym;\n" ++
+  "                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
+  "                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
+  "                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) " ++ lb ++ "\n" ++
+  "                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            delete[] strtab;\n" ++
+  "        " ++ rb ++ "\n" ++
   "    " ++ rb ++ "\n" ++
   "    fclose(f);\n" ++
   "    return -1;\n" ++
@@ -1241,31 +1272,59 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "static int load_elf(const char* path) " ++ lb ++ "\n" ++
   "    FILE* f = fopen(path, \"rb\");\n" ++
   "    if (!f) " ++ lb ++ " fprintf(stderr, \"ERROR: Cannot open ELF: %s\\n\", path); return -1; " ++ rb ++ "\n" ++
-  "    Elf32_Ehdr ehdr;\n" ++
-  "    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
-  "    if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0 || ehdr.e_ident[EI_CLASS] != ELFCLASS32) " ++ lb ++ "\n" ++
-  "        fprintf(stderr, \"ERROR: Not a valid 32-bit ELF\\n\"); fclose(f); return -1;\n" ++
+  "    unsigned char ident[EI_NIDENT];\n" ++
+  "    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "    if (memcmp(ident, ELFMAG, SELFMAG) != 0) " ++ lb ++ "\n" ++
+  "        fprintf(stderr, \"ERROR: Not an ELF file\\n\"); fclose(f); return -1;\n" ++
   "    " ++ rb ++ "\n" ++
+  "    fseek(f, 0, SEEK_SET);\n" ++
   "    uint32_t total = 0;\n" ++
-  "    for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
-  "        Elf32_Phdr phdr;\n" ++
-  "        fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
-  "        if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
-  "        if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0) continue;\n" ++
-  "        for (uint32_t off = 0; off < phdr.p_memsz; off += 4)\n" ++
-  "            dpi_mem_write((phdr.p_paddr + off) / 4, 0);\n" ++
-  "        if (phdr.p_filesz > 0) " ++ lb ++ "\n" ++
-  "            fseek(f, phdr.p_offset, SEEK_SET);\n" ++
-  "            uint32_t words = (phdr.p_filesz + 3) / 4;\n" ++
-  "            for (uint32_t w = 0; w < words; w++) " ++ lb ++ "\n" ++
-  "                uint32_t word = 0;\n" ++
-  "                uint32_t rem = phdr.p_filesz - w * 4;\n" ++
-  "                (void)fread(&word, 1, rem < 4 ? rem : 4, f);\n" ++
-  "                dpi_mem_write((phdr.p_paddr / 4) + w, word);\n" ++
+  "    if (ident[EI_CLASS] == ELFCLASS64) " ++ lb ++ "\n" ++
+  "        Elf64_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
+  "            Elf64_Phdr phdr;\n" ++
+  "            fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
+  "            if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
+  "            if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0) continue;\n" ++
+  "            for (uint64_t off = 0; off < phdr.p_memsz; off += 4)\n" ++
+  "                dpi_mem_write((phdr.p_paddr + off) / 4, 0);\n" ++
+  "            if (phdr.p_filesz > 0) " ++ lb ++ "\n" ++
+  "                fseek(f, phdr.p_offset, SEEK_SET);\n" ++
+  "                uint64_t words = (phdr.p_filesz + 3) / 4;\n" ++
+  "                for (uint64_t w = 0; w < words; w++) " ++ lb ++ "\n" ++
+  "                    uint32_t word = 0;\n" ++
+  "                    uint64_t rem = phdr.p_filesz - w * 4;\n" ++
+  "                    (void)fread(&word, 1, rem < 4 ? rem : 4, f);\n" ++
+  "                    dpi_mem_write((phdr.p_paddr / 4) + w, word);\n" ++
+  "                " ++ rb ++ "\n" ++
   "            " ++ rb ++ "\n" ++
+  "            printf(\"  PT_LOAD: paddr=0x%016lx filesz=%lu memsz=%lu\\n\", phdr.p_paddr, phdr.p_filesz, phdr.p_memsz);\n" ++
+  "            total += phdr.p_memsz;\n" ++
   "        " ++ rb ++ "\n" ++
-  "        printf(\"  PT_LOAD: paddr=0x%08x filesz=%u memsz=%u\\n\", phdr.p_paddr, phdr.p_filesz, phdr.p_memsz);\n" ++
-  "        total += phdr.p_memsz;\n" ++
+  "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+  "        Elf32_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
+  "            Elf32_Phdr phdr;\n" ++
+  "            fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
+  "            if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
+  "            if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0) continue;\n" ++
+  "            for (uint32_t off = 0; off < phdr.p_memsz; off += 4)\n" ++
+  "                dpi_mem_write((phdr.p_paddr + off) / 4, 0);\n" ++
+  "            if (phdr.p_filesz > 0) " ++ lb ++ "\n" ++
+  "                fseek(f, phdr.p_offset, SEEK_SET);\n" ++
+  "                uint32_t words = (phdr.p_filesz + 3) / 4;\n" ++
+  "                for (uint32_t w = 0; w < words; w++) " ++ lb ++ "\n" ++
+  "                    uint32_t word = 0;\n" ++
+  "                    uint32_t rem = phdr.p_filesz - w * 4;\n" ++
+  "                    (void)fread(&word, 1, rem < 4 ? rem : 4, f);\n" ++
+  "                    dpi_mem_write((phdr.p_paddr / 4) + w, word);\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            printf(\"  PT_LOAD: paddr=0x%08x filesz=%u memsz=%u\\n\", phdr.p_paddr, phdr.p_filesz, phdr.p_memsz);\n" ++
+  "            total += phdr.p_memsz;\n" ++
+  "        " ++ rb ++ "\n" ++
   "    " ++ rb ++ "\n" ++
   "    fclose(f);\n" ++
   "    printf(\"Loaded ELF %s (%u bytes)\\n\", path, total);\n" ++
@@ -1338,16 +1397,16 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "        if (dut->o_rvvi_valid_0) " ++ lb ++ "\n" ++
   "            retired++;\n" ++
   "            if (verbose)\n" ++
-  "                printf(\"  RET0[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                printf(\"  RET0[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%016lx\\n\",\n" ++
   "                    cycle, retired, dut->o_rvvi_pc_rdata_0, dut->o_rvvi_insn_0,\n" ++
-  "                    dut->o_rvvi_rd_0, (int)dut->o_rvvi_rd_valid_0, dut->o_rvvi_rd_data_0);\n" ++
+  "                    dut->o_rvvi_rd_0, (int)dut->o_rvvi_rd_valid_0, (unsigned long)dut->o_rvvi_rd_data_0);\n" ++
   "        " ++ rb ++ "\n" ++
   "        if (dut->o_rvvi_valid_1) " ++ lb ++ "\n" ++
   "            retired++;\n" ++
   "            if (verbose)\n" ++
-  "                printf(\"  RET1[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%08x\\n\",\n" ++
+  "                printf(\"  RET1[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%016lx\\n\",\n" ++
   "                    cycle, retired, dut->o_rvvi_pc_rdata_1, dut->o_rvvi_insn_1,\n" ++
-  "                    dut->o_rvvi_rd_1, (int)dut->o_rvvi_rd_valid_1, dut->o_rvvi_rd_data_1);\n" ++
+  "                    dut->o_rvvi_rd_1, (int)dut->o_rvvi_rd_valid_1, (unsigned long)dut->o_rvvi_rd_data_1);\n" ++
   "        " ++ rb ++ "\n\n" ++
   (if !isCached then
     "        if (verbose && dut->o_dmem_req_valid)\n" ++
@@ -1793,7 +1852,10 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   else
     "\n") ++
   "extern \"C\" void dpi_mem_write(unsigned int word_addr, unsigned int data);\n" ++
-  "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n\n" ++
+  "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n" ++
+  (match cfg.putcharAddr with
+   | some _ => "extern \"C\" void dpi_set_putchar_addr(unsigned int addr);\n\n"
+   | none => "\n") ++
 
   "static const uint32_t DEFAULT_TIMEOUT = " ++ toString cfg.timeoutCycles ++ ";\n\n" ++
 
@@ -1805,36 +1867,130 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    return nullptr;\n" ++
   rb ++ "\n\n" ++
 
+  "static int64_t elf_lookup_symbol(const char* path, const char* sym_name) " ++ lb ++ "\n" ++
+  "    FILE* f = fopen(path, \"rb\");\n" ++
+  "    if (!f) return -1;\n" ++
+  "    unsigned char ident[EI_NIDENT];\n" ++
+  "    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "    fseek(f, 0, SEEK_SET);\n" ++
+  "    if (ident[EI_CLASS] == ELFCLASS64) " ++ lb ++ "\n" ++
+  "        Elf64_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
+  "            Elf64_Shdr shdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
+  "            if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
+  "            Elf64_Shdr strhdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
+  "            auto* strtab = new char[strhdr.sh_size];\n" ++
+  "            fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
+  "            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) " ++ lb ++ " delete[] strtab; continue; " ++ rb ++ "\n" ++
+  "            int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
+  "            for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
+  "                Elf64_Sym sym;\n" ++
+  "                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
+  "                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
+  "                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) " ++ lb ++ "\n" ++
+  "                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            delete[] strtab;\n" ++
+  "        " ++ rb ++ "\n" ++
+  "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+  "        Elf32_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
+  "            Elf32_Shdr shdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
+  "            if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
+  "            Elf32_Shdr strhdr;\n" ++
+  "            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
+  "            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
+  "            auto* strtab = new char[strhdr.sh_size];\n" ++
+  "            fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
+  "            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) " ++ lb ++ " delete[] strtab; continue; " ++ rb ++ "\n" ++
+  "            int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
+  "            for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
+  "                Elf32_Sym sym;\n" ++
+  "                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
+  "                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
+  "                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) " ++ lb ++ "\n" ++
+  "                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            delete[] strtab;\n" ++
+  "        " ++ rb ++ "\n" ++
+  "    " ++ rb ++ "\n" ++
+  "    fclose(f);\n" ++
+  "    return -1;\n" ++
+  rb ++ "\n\n" ++
+
   "static int load_elf(const char* path) " ++ lb ++ "\n" ++
   "    FILE* f = fopen(path, \"rb\");\n" ++
   "    if (!f) " ++ lb ++ " fprintf(stderr, \"ERROR: Cannot open ELF: %s\\n\", path); return -1; " ++ rb ++ "\n" ++
-  "    Elf32_Ehdr ehdr;\n" ++
-  "    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
-  "    if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0 || ehdr.e_ident[EI_CLASS] != ELFCLASS32) " ++ lb ++ "\n" ++
-  "        fclose(f); return -1;\n" ++
+  "    unsigned char ident[EI_NIDENT];\n" ++
+  "    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "    if (memcmp(ident, ELFMAG, SELFMAG) != 0) " ++ lb ++ "\n" ++
+  "        fprintf(stderr, \"ERROR: Not an ELF file\\n\"); fclose(f); return -1;\n" ++
   "    " ++ rb ++ "\n" ++
-  "    for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
-  "        Elf32_Phdr phdr;\n" ++
-  "        fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
-  "        if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
-  "        if (phdr.p_type != PT_LOAD || phdr.p_filesz == 0) continue;\n" ++
-  "        std::vector<uint8_t> seg(phdr.p_memsz, 0);\n" ++
-  "        fseek(f, phdr.p_offset, SEEK_SET);\n" ++
-  "        (void)fread(seg.data(), 1, phdr.p_filesz, f);\n" ++
-  "        for (uint32_t off = 0; off < phdr.p_memsz; off += 4) " ++ lb ++ "\n" ++
-  "            uint32_t word = 0;\n" ++
-  "            memcpy(&word, &seg[off], std::min<uint32_t>(4, phdr.p_memsz - off));\n" ++
-  "            dpi_mem_write((phdr.p_paddr + off) >> 2, word);\n" ++
+  "    fseek(f, 0, SEEK_SET);\n" ++
+  "    uint32_t total = 0;\n" ++
+  "    if (ident[EI_CLASS] == ELFCLASS64) " ++ lb ++ "\n" ++
+  "        Elf64_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
+  "            Elf64_Phdr phdr;\n" ++
+  "            fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
+  "            if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
+  "            if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0) continue;\n" ++
+  "            for (uint64_t off = 0; off < phdr.p_memsz; off += 4)\n" ++
+  "                dpi_mem_write((phdr.p_paddr + off) / 4, 0);\n" ++
+  "            if (phdr.p_filesz > 0) " ++ lb ++ "\n" ++
+  "                fseek(f, phdr.p_offset, SEEK_SET);\n" ++
+  "                uint64_t words = (phdr.p_filesz + 3) / 4;\n" ++
+  "                for (uint64_t w = 0; w < words; w++) " ++ lb ++ "\n" ++
+  "                    uint32_t word = 0;\n" ++
+  "                    uint64_t rem = phdr.p_filesz - w * 4;\n" ++
+  "                    (void)fread(&word, 1, rem < 4 ? rem : 4, f);\n" ++
+  "                    dpi_mem_write((phdr.p_paddr / 4) + w, word);\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            total += phdr.p_memsz;\n" ++
+  "        " ++ rb ++ "\n" ++
+  "    " ++ rb ++ " else " ++ lb ++ "\n" ++
+  "        Elf32_Ehdr ehdr;\n" ++
+  "        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return -1; " ++ rb ++ "\n" ++
+  "        for (int i = 0; i < ehdr.e_phnum; i++) " ++ lb ++ "\n" ++
+  "            Elf32_Phdr phdr;\n" ++
+  "            fseek(f, ehdr.e_phoff + i * ehdr.e_phentsize, SEEK_SET);\n" ++
+  "            if (fread(&phdr, sizeof(phdr), 1, f) != 1) continue;\n" ++
+  "            if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0) continue;\n" ++
+  "            for (uint32_t off = 0; off < phdr.p_memsz; off += 4)\n" ++
+  "                dpi_mem_write((phdr.p_paddr + off) / 4, 0);\n" ++
+  "            if (phdr.p_filesz > 0) " ++ lb ++ "\n" ++
+  "                fseek(f, phdr.p_offset, SEEK_SET);\n" ++
+  "                uint32_t words = (phdr.p_filesz + 3) / 4;\n" ++
+  "                for (uint32_t w = 0; w < words; w++) " ++ lb ++ "\n" ++
+  "                    uint32_t word = 0;\n" ++
+  "                    uint32_t rem = phdr.p_filesz - w * 4;\n" ++
+  "                    (void)fread(&word, 1, rem < 4 ? rem : 4, f);\n" ++
+  "                    dpi_mem_write((phdr.p_paddr / 4) + w, word);\n" ++
+  "                " ++ rb ++ "\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            total += phdr.p_memsz;\n" ++
   "        " ++ rb ++ "\n" ++
   "    " ++ rb ++ "\n" ++
   "    fclose(f);\n" ++
   "    return 0;\n" ++
   rb ++ "\n\n" ++
 
-  "static bool is_clint_load(uint32_t insn, uint32_t rs1_value) " ++ lb ++ "\n" ++
+  "static bool is_clint_load(uint32_t insn, uint64_t rs1_value) " ++ lb ++ "\n" ++
   "    if ((insn & 0x7f) != 0x03) return false; // not a load\n" ++
   "    int32_t imm = (int32_t)insn >> 20;\n" ++
-  "    uint32_t addr = rs1_value + (uint32_t)imm;\n" ++
+  "    uint64_t addr = rs1_value + (int64_t)imm;\n" ++
   "    return addr >= 0x02000000 && addr < 0x02010000;\n" ++
   rb ++ "\n\n" ++
 
@@ -1855,38 +2011,18 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   rb ++ "\n\n" ++
 
   "static uint32_t find_tohost_addr(const char* path) " ++ lb ++ "\n" ++
-  "    FILE* f = fopen(path, \"rb\");\n" ++
-  "    if (!f) return 0x1000;\n" ++
-  "    Elf32_Ehdr ehdr;\n" ++
-  "    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) " ++ lb ++ " fclose(f); return 0x1000; " ++ rb ++ "\n" ++
-  "    for (int i = 0; i < ehdr.e_shnum; i++) " ++ lb ++ "\n" ++
-  "        Elf32_Shdr shdr;\n" ++
-  "        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);\n" ++
-  "        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;\n" ++
-  "        if (shdr.sh_type != SHT_SYMTAB) continue;\n" ++
-  "        Elf32_Shdr strhdr;\n" ++
-  "        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);\n" ++
-  "        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;\n" ++
-  "        std::vector<char> strtab(strhdr.sh_size);\n" ++
-  "        fseek(f, strhdr.sh_offset, SEEK_SET);\n" ++
-  "        (void)fread(strtab.data(), 1, strhdr.sh_size, f);\n" ++
-  "        int nsyms = shdr.sh_size / shdr.sh_entsize;\n" ++
-  "        for (int j = 0; j < nsyms; j++) " ++ lb ++ "\n" ++
-  "            Elf32_Sym sym;\n" ++
-  "            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);\n" ++
-  "            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;\n" ++
-  "            if (sym.st_name < strhdr.sh_size && strcmp(&strtab[sym.st_name], \"tohost\") == 0) " ++ lb ++ "\n" ++
-  "                fclose(f); return sym.st_value;\n" ++
-  "            " ++ rb ++ "\n" ++
-  "        " ++ rb ++ "\n" ++
-  "    " ++ rb ++ "\n" ++
-  "    fclose(f);\n" ++
-  "    return 0x1000;\n" ++
+  "    int64_t addr = elf_lookup_symbol(path, \"tohost\");\n" ++
+  "    return (addr >= 0) ? (uint32_t)addr : 0x1000;\n" ++
   rb ++ "\n\n" ++
 
   "struct RVVIState " ++ lb ++ "\n" ++
   "    bool valid, trap, rd_valid, frd_valid;\n" ++
-  "    uint32_t pc, insn, rd, rd_data, frd, frd_data, fflags;\n" ++
+  "    uint64_t pc;\n" ++
+  "    uint32_t insn, rd;\n" ++
+  "    uint64_t rd_data;\n" ++
+  "    uint32_t frd;\n" ++
+  "    uint64_t frd_data;\n" ++
+  "    uint32_t fflags;\n" ++
   rb ++ ";\n\n" ++
 
   s!"static void read_rvvi_dual(const {vType}* dut, RVVIState out[2]) {lb}\n" ++
@@ -1926,6 +2062,11 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    if (load_elf(elf_path) != 0) return 1;\n\n" ++
   "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
   "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
+  (match cfg.putcharAddr with
+   | some _ =>
+     "    int64_t putchar_sym = elf_lookup_symbol(elf_path, \"putchar_addr\");\n" ++
+     "    if (putchar_sym >= 0) dpi_set_putchar_addr((uint32_t)putchar_sym);\n\n"
+   | none => "") ++
   s!"    auto spike = std::make_unique<SpikeOracle>(elf_path, \"{cfg.spikeIsa}\");\n" ++
   (if cfg.cacheLineMemPort.isNone then
     "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n"
@@ -1949,7 +2090,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                auto saved = spike->save_state();\n" ++
   "                int catchup = 0;\n" ++
   "                while (spike->get_pc() != rvvi[slot].pc && catchup < 32) " ++ lb ++ "\n" ++
-  "                    uint32_t before = spike->get_pc();\n" ++
+  "                    uint64_t before = spike->get_pc();\n" ++
   "                    spike->step(); catchup++;\n" ++
   "                    if (spike->get_pc() == before) spike->unhalt();\n" ++
   "                " ++ rb ++ "\n" ++
@@ -1958,7 +2099,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                    spike->restore_state(saved);\n" ++
   "                    spike->set_mip_mtip(true);\n" ++
   "                    for (int t = 0; t < 32 && spike->get_pc() != rvvi[slot].pc; t++) " ++ lb ++ "\n" ++
-  "                        uint32_t before = spike->get_pc();\n" ++
+  "                        uint64_t before = spike->get_pc();\n" ++
   "                        spike->step();\n" ++
   "                        if (spike->get_pc() == before) spike->unhalt();\n" ++
   "                    " ++ rb ++ "\n" ++
@@ -1994,8 +2135,8 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                skip_rd_cmp = true;\n" ++
   "            " ++ rb ++ "\n\n" ++
   "            if (!sync_forced && rvvi[slot].pc != spike_r.pc) " ++ lb ++ "\n" ++
-  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: PC RTL=0x%08x Spike=0x%08x (skip %d)\\n\",\n" ++
-  "                    retired, cycle, slot, rvvi[slot].pc, spike_r.pc, skip);\n" ++
+  "                fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: PC RTL=0x%016lx Spike=0x%016lx (skip %d)\\n\",\n" ++
+  "                    retired, cycle, slot, (unsigned long)rvvi[slot].pc, (unsigned long)spike_r.pc, skip);\n" ++
   "                mismatches++;\n" ++
   "            " ++ rb ++ "\n" ++
   "            if (!sync_forced && rvvi[slot].insn != spike_r.insn) " ++ lb ++ "\n" ++
@@ -2005,8 +2146,8 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "            " ++ rb ++ "\n" ++
   "            if (rvvi[slot].rd_valid && spike_r.rd != 0 && !skip_rd_cmp) " ++ lb ++ "\n" ++
   "                if (rvvi[slot].rd_data != spike_r.rd_value) " ++ lb ++ "\n" ++
-  "                    fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: x%u RTL=0x%08x Spike=0x%08x\\n\",\n" ++
-  "                        retired, cycle, slot, spike_r.rd, rvvi[slot].rd_data, spike_r.rd_value);\n" ++
+  "                    fprintf(stderr, \"MISMATCH ret#%lu cy%lu slot%d: PC=0x%016lx insn=0x%08x x%u RTL=0x%016lx Spike=0x%016lx\\n\",\n" ++
+  "                        retired, cycle, slot, (unsigned long)rvvi[slot].pc, rvvi[slot].insn, spike_r.rd, (unsigned long)rvvi[slot].rd_data, (unsigned long)spike_r.rd_value);\n" ++
   "                    mismatches++;\n" ++
   "                " ++ rb ++ "\n" ++
   "            " ++ rb ++ "\n\n" ++
@@ -2023,7 +2164,9 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    printf(\"  Retired:     %lu\\n\", retired);\n" ++
   "    printf(\"  IPC:         %.3f\\n\", cycle > 0 ? (double)retired / cycle : 0.0);\n" ++
   "    printf(\"  Mismatches:  %lu\\n\", mismatches);\n" ++
-  "    printf(\"  tohost:      0x%08x\\n\", dut->o_tohost);\n\n" ++
+  "    printf(\"  tohost:      0x%08x\\n\", dut->o_tohost);\n" ++
+  "    printf(\"  Spike PC:    0x%016lx\\n\", (unsigned long)spike->get_pc());\n" ++
+  "    printf(\"  rob_empty:   %d\\n\", (int)dut->o_rob_empty);\n\n" ++
   "    if (dut->o_tohost == 1)\n" ++
   "        printf(\"COSIM PASS\\n\");\n" ++
   "    else\n" ++

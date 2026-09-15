@@ -36,11 +36,19 @@ theorem subtractor8_structure :
   := by native_decide
 
 -- Theorem: Subtractor32 has correct structure
--- 32 NOT gates + 32 FullAdders (160 gates) = 192 total gates
+-- 32 NOT gates + 32 BUFs + 2 glue gates = 66 gates
 theorem subtractor32_structure :
-  mkSubtractor32.gates.length = 66 ∧  -- 32 NOT + 160 RCA gates
+  mkSubtractor32.gates.length = 66 ∧
   mkSubtractor32.inputs.length = 65 ∧   -- a[32] + b[32] + one
   mkSubtractor32.outputs.length = 33    -- diff[32] + borrow
+  := by native_decide
+
+-- Theorem: Subtractor64 has correct structure
+-- 64 NOT gates + 64 BUFs + 2 glue gates = 130 gates
+theorem subtractor64_structure :
+  mkSubtractor64.gates.length = 130 ∧
+  mkSubtractor64.inputs.length = 129 ∧  -- a[64] + b[64] + one
+  mkSubtractor64.outputs.length = 65    -- diff[64] + borrow
   := by native_decide
 
 -- TODO: Behavioral proofs

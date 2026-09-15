@@ -24,6 +24,13 @@ theorem shifter32_structure :
   mkShifter32.inputs.length = 40 ∧  -- 32 input + 5 shamt + 2 op + 1 zero = 40
   mkShifter32.outputs.length = 32 := by native_decide
 
+-- Shifter64 structural properties
+theorem shifter64_structure :
+  mkShifter64.gates.length = 1298 ∧  -- 18 shamt BUFs + 3 shifters × 6 stages × 64 bits + 2 MUX levels × 64 bits
+                                      -- = 18 + 3 × 6 × 64 + 2 × 64 = 18 + 1152 + 128 = 1298
+  mkShifter64.inputs.length = 73 ∧   -- 64 input + 6 shamt + 2 op + 1 zero = 73
+  mkShifter64.outputs.length = 64 := by native_decide
+
 -- TODO: Behavioral proofs
 -- These would prove functional correctness:
 -- - SLL: shifts left, fills with 0

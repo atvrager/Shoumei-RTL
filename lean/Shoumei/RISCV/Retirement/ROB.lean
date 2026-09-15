@@ -598,16 +598,23 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let alloc_idx_0_gates := List.zipWith Gate.mkBUF tail_ptr  alloc_idx_0
   let alloc_idx_1_gates := List.zipWith Gate.mkBUF tail1_ptr alloc_idx_1
 
-  -- empty / full
+  -- empty / full / nearly_full
+  -- nearly_full = (count == 15): only one entry free, so a 2-wide alloc would
+  -- overflow the 16-entry buffer. The CPU forces single-issue in that cycle.
   let eo1 := Wire.mk "w2_eo1"; let eo2 := Wire.mk "w2_eo2"
   let eo3 := Wire.mk "w2_eo3"; let eo4 := Wire.mk "w2_eo4"
+  let nf_01 := Wire.mk "w2_nf01"; let nf_23 := Wire.mk "w2_nf23"
+  let nearly_full := Wire.mk "nearly_full"
   let empty_gates := [
     Gate.mkOR count[0]! count[1]! eo1,
     Gate.mkOR eo1 count[2]! eo2,
     Gate.mkOR eo2 count[3]! eo3,
     Gate.mkOR eo3 count[4]! eo4,
     Gate.mkNOT eo4 empty,
-    Gate.mkBUF count[4]! full
+    Gate.mkBUF count[4]! full,
+    Gate.mkAND count[0]! count[1]! nf_01,
+    Gate.mkAND count[2]! count[3]! nf_23,
+    Gate.mkAND nf_01 nf_23 nearly_full
   ]
 
   -- === Alloc Decoders (Decoder4) ===
@@ -1028,7 +1035,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     [commit_en_0, commit_en_1, flush_en]
 
   let all_outputs2 :=
-    [full, empty] ++ alloc_idx_0 ++ alloc_idx_1 ++
+    [full, empty, nearly_full] ++ alloc_idx_0 ++ alloc_idx_1 ++
     head_idx_0 ++ head_idx_1 ++
     [hv0, hcmp0] ++ hpr0 ++ [hhpr0] ++ hopr0 ++ [hhopr0] ++ har0 ++ [hexc0, hibr0, hmisp0] ++
     [hv1, hcmp1] ++ hpr1 ++ [hhpr1] ++ hopr1 ++ [hhopr1] ++ har1 ++ [hexc1, hibr1, hmisp1] ++

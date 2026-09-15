@@ -20,7 +20,7 @@
 #include "lib/elf_loader.h"
 #include "lib/spike_oracle.h"
 
-using Model = CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B_model;
+using Model = CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B_model;
 
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 static const uint32_t MEM_SIZE_WORDS = 16384;
@@ -52,28 +52,60 @@ static bool is_unsyncable_csr_read(uint32_t insn) {
 static uint32_t find_tohost_addr(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return 0x1000;
-    Elf32_Ehdr ehdr;
-    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return 0x1000; }
-    for (int i = 0; i < ehdr.e_shnum; i++) {
-        Elf32_Shdr shdr;
-        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
-        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
-        if (shdr.sh_type != SHT_SYMTAB) continue;
-        Elf32_Shdr strhdr;
-        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
-        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
-        std::vector<char> strtab(strhdr.sh_size);
-        fseek(f, strhdr.sh_offset, SEEK_SET);
-        (void)fread(strtab.data(), 1, strhdr.sh_size, f);
-        int nsyms = shdr.sh_size / shdr.sh_entsize;
-        for (int j = 0; j < nsyms; j++) {
-            Elf32_Sym sym;
-            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
-            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
-            if (sym.st_name < strhdr.sh_size &&
-                strcmp(&strtab[sym.st_name], "tohost") == 0) {
-                fclose(f);
-                return sym.st_value;
+    unsigned char ident[EI_NIDENT];
+    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) { fclose(f); return 0x1000; }
+    fseek(f, 0, SEEK_SET);
+
+    if (ident[EI_CLASS] == ELFCLASS64) {
+        Elf64_Ehdr ehdr;
+        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return 0x1000; }
+        for (int i = 0; i < ehdr.e_shnum; i++) {
+            Elf64_Shdr shdr;
+            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+            if (shdr.sh_type != SHT_SYMTAB) continue;
+            Elf64_Shdr strhdr;
+            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+            std::vector<char> strtab(strhdr.sh_size);
+            fseek(f, strhdr.sh_offset, SEEK_SET);
+            (void)fread(strtab.data(), 1, strhdr.sh_size, f);
+            int nsyms = shdr.sh_size / shdr.sh_entsize;
+            for (int j = 0; j < nsyms; j++) {
+                Elf64_Sym sym;
+                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+                if (sym.st_name < strhdr.sh_size &&
+                    strcmp(&strtab[sym.st_name], "tohost") == 0) {
+                    fclose(f);
+                    return sym.st_value;
+                }
+            }
+        }
+    } else {
+        Elf32_Ehdr ehdr;
+        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return 0x1000; }
+        for (int i = 0; i < ehdr.e_shnum; i++) {
+            Elf32_Shdr shdr;
+            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+            if (shdr.sh_type != SHT_SYMTAB) continue;
+            Elf32_Shdr strhdr;
+            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+            std::vector<char> strtab(strhdr.sh_size);
+            fseek(f, strhdr.sh_offset, SEEK_SET);
+            (void)fread(strtab.data(), 1, strhdr.sh_size, f);
+            int nsyms = shdr.sh_size / shdr.sh_entsize;
+            for (int j = 0; j < nsyms; j++) {
+                Elf32_Sym sym;
+                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+                if (sym.st_name < strhdr.sh_size &&
+                    strcmp(&strtab[sym.st_name], "tohost") == 0) {
+                    fclose(f);
+                    return sym.st_value;
+                }
             }
         }
     }
@@ -178,9 +210,9 @@ int main(int argc, char** argv) {
             uint32_t rtl_insn = model.get_rvvi_insn();
             uint32_t rtl_rd   = model.get_rvvi_rd();
             bool     rtl_rd_v = model.get_rvvi_rd_valid();
-            uint32_t rtl_rd_d = model.get_rvvi_rd_data();
+            uint64_t rtl_rd_d = model.get_rvvi_rd_data();
             bool     rtl_frd_v = model.get_rvvi_frd_valid();
-            uint32_t rtl_frd_d = model.get_rvvi_frd_data();
+            uint64_t rtl_frd_d = model.get_rvvi_frd_data();
 
             SpikeStepResult spike_r = spike->step();
             int skip = 0;
@@ -209,13 +241,13 @@ int main(int argc, char** argv) {
                 mismatches++;
             }
             if (rtl_rd_v && spike_r.rd != 0 && !skip_rd_cmp && rtl_rd_d != spike_r.rd_value) {
-                fprintf(stderr, "MISMATCH ret#%lu cyc%lu: x%u RTL=0x%08x Spike=0x%08x\n",
-                    retired, cycle, spike_r.rd, rtl_rd_d, spike_r.rd_value);
+                fprintf(stderr, "MISMATCH ret#%lu cyc%lu: x%u RTL=0x%016lx Spike=0x%016lx\n",
+                    retired, cycle, spike_r.rd, (unsigned long)rtl_rd_d, (unsigned long)spike_r.rd_value);
                 mismatches++;
             }
             if (spike_r.frd_valid && rtl_frd_v && rtl_frd_d != spike_r.frd_value) {
-                fprintf(stderr, "MISMATCH ret#%lu cyc%lu: f%u RTL=0x%08x Spike=0x%08x\n",
-                    retired, cycle, spike_r.frd, rtl_frd_d, spike_r.frd_value);
+                fprintf(stderr, "MISMATCH ret#%lu cyc%lu: f%u RTL=0x%016lx Spike=0x%016lx\n",
+                    retired, cycle, spike_r.frd, (unsigned long)rtl_frd_d, (unsigned long)spike_r.frd_value);
                 mismatches++;
             }
 

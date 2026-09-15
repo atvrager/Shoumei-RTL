@@ -193,4 +193,163 @@ def mkALU32 : Circuit :=
     keepHierarchy := true
   }
 
+-- Helper: Zero-extend a single bit to 64 bits
+private def zeroExtend1to64 (bit_wire : Wire) (zero : Wire) (output : List Wire) : List Gate :=
+  let gate0 := Gate.mkBUF bit_wire (output[0]!)
+  let rest_gates := List.range 63 |>.map (fun i =>
+    Gate.mkBUF zero (output[i + 1]!)
+  )
+  gate0 :: rest_gates
+
+/-- Complete 64-bit ALU for RV64I + RV64 word operations.
+    Supports all RV64I base ops + word ops (*W) with sign extension to 64 bits.
+    Opcode encoding (5 bits):
+    - [3:0]: base operation (0=ADD, 1=SUB, 2=SLT, 3=SLTU, 4=AND, 5=OR, 6=XOR, 8=SLL, 9=SRL, 11=SRA)
+    - [4]: is_word (1 = 32-bit word op with 64-bit sign extension) -/
+def mkALU64 : Circuit :=
+  let a := makeIndexedWires "a" 64
+  let b := makeIndexedWires "b" 64
+  let opcode := makeIndexedWires "op" 5  -- 5-bit opcode
+  let result := makeIndexedWires "result" 64
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+
+  let add_result := makeIndexedWires "add_out" 64
+  let sub_result := makeIndexedWires "sub_out" 64
+  let sub_borrow := Wire.mk "sub_borrow"
+  let cmp_lt := Wire.mk "cmp_lt"
+  let cmp_ltu := Wire.mk "cmp_ltu"
+  let cmp_eq := Wire.mk "cmp_eq"
+  let cmp_gt := Wire.mk "cmp_gt"
+  let cmp_gtu := Wire.mk "cmp_gtu"
+  let slt_result := makeIndexedWires "slt_out" 64
+  let sltu_result := makeIndexedWires "sltu_out" 64
+  let logic_result := makeIndexedWires "logic_out" 64
+  let shift_result := makeIndexedWires "shift_out" 64
+
+  let logic_op := [opcode[0]!, opcode[1]!]
+
+  let is_word := opcode[4]!
+  let shift_dir := opcode[0]!
+  let shift_arith := opcode[1]!
+
+  -- Shamt bit 5 is forced to 0 for word shifts
+  let shamt5_eff := Wire.mk "shamt5_eff"
+  let shamt5_gate := Gate.mkMUX (b[5]!) zero is_word shamt5_eff
+  let shift_amt := (List.range 5 |>.map (fun i => b[i]!)) ++ [shamt5_eff]
+
+  -- Shifter input preparation for word operations:
+  -- When is_word: pad upper 32 bits with zero (logical) or a[31] (arithmetic)
+  let word_pad := Wire.mk "word_pad"
+  let word_pad_gate := Gate.mkMUX zero (a[31]!) shift_arith word_pad
+  let shifter_in_hi := makeIndexedWires "shifter_in_hi" 32
+  let shifter_pad_gates := List.range 32 |>.map (fun i =>
+    Gate.mkMUX (a[i + 32]!) word_pad is_word (shifter_in_hi[i]!)
+  )
+  let shifter_in := (List.range 32 |>.map (fun i => a[i]!)) ++ shifter_in_hi
+
+  let slt_extend_gates := zeroExtend1to64 cmp_lt zero slt_result
+  let sltu_extend_gates := zeroExtend1to64 cmp_ltu zero sltu_result
+
+  -- MUX tree
+  let arith_mux1 := makeIndexedWires "arith_mux1" 64
+  let arith_mux2 := makeIndexedWires "arith_mux2" 64
+  let arith_final := makeIndexedWires "arith_out" 64
+
+  let arith_level1_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (add_result[i]!) (sub_result[i]!) (opcode[0]!) (arith_mux1[i]!)
+  )
+  let arith_level2_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (slt_result[i]!) (sltu_result[i]!) (opcode[0]!) (arith_mux2[i]!)
+  )
+  let arith_level3_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (arith_mux1[i]!) (arith_mux2[i]!) (opcode[1]!) (arith_final[i]!)
+  )
+
+  let top_mux1 := makeIndexedWires "top_mux1" 64
+  let top_mux2 := makeIndexedWires "top_mux2" 64
+  let raw_result := makeIndexedWires "raw_result" 64
+
+  let top_level1_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (arith_final[i]!) (logic_result[i]!) (opcode[2]!) (top_mux1[i]!)
+  )
+  let top_level2_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (shift_result[i]!) zero (opcode[2]!) (top_mux2[i]!)
+  )
+  let top_level3_gates := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (top_mux1[i]!) (top_mux2[i]!) (opcode[3]!) (raw_result[i]!)
+  )
+
+  -- Word sign extension: bits 0..31 pass through; bits 32..63 are MUXed with raw_result[31]
+  let out_lo_gates := List.range 32 |>.map (fun i =>
+    Gate.mkBUF (raw_result[i]!) (result[i]!)
+  )
+  let out_hi_gates := List.range 32 |>.map (fun i =>
+    Gate.mkMUX (raw_result[i + 32]!) (raw_result[31]!) is_word (result[i + 32]!)
+  )
+
+  { name := "ALU64"
+    inputs := a ++ b ++ opcode ++ [zero, one]
+    outputs := result
+    gates := slt_extend_gates ++ sltu_extend_gates
+             ++ [shamt5_gate, word_pad_gate] ++ shifter_pad_gates
+             ++ arith_level1_gates ++ arith_level2_gates ++ arith_level3_gates
+             ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
+             ++ out_lo_gates ++ out_hi_gates
+    instances := [
+      { moduleName := "KoggeStoneAdder64"
+        instName := "u_add"
+        portMap := (List.range 64 |>.flatMap (fun i =>
+          [ (s!"a{i}", a[i]!)
+          , (s!"b{i}", b[i]!)
+          , (s!"sum{i}", add_result[i]!)
+          ]
+        )) ++ [("cin", zero)]
+      },
+      { moduleName := "Subtractor64"
+        instName := "u_sub"
+        portMap := (List.range 64 |>.flatMap (fun i =>
+          [ (s!"a{i}", a[i]!)
+          , (s!"b{i}", b[i]!)
+          , (s!"diff{i}", sub_result[i]!)
+          ]
+        )) ++ [("one", one), ("borrow", sub_borrow)]
+      },
+      { moduleName := "Comparator64"
+        instName := "u_cmp"
+        portMap := (List.range 64 |>.flatMap (fun i =>
+          [ (s!"a{i}", a[i]!)
+          , (s!"b{i}", b[i]!)
+          ]
+        )) ++ [("one", one), ("lt", cmp_lt), ("ltu", cmp_ltu),
+               ("eq", cmp_eq), ("gt", cmp_gt), ("gtu", cmp_gtu)]
+      },
+      { moduleName := "LogicUnit64"
+        instName := "u_logic"
+        portMap := (List.range 64 |>.flatMap (fun i =>
+          [ (s!"a{i}", a[i]!)
+          , (s!"b{i}", b[i]!)
+          , (s!"result{i}", logic_result[i]!)
+          ]
+        )) ++ List.zip ["op0", "op1"] logic_op
+      },
+      { moduleName := "Shifter64"
+        instName := "u_shift"
+        portMap := (List.range 64 |>.flatMap (fun i =>
+          [ (s!"in{i}", shifter_in[i]!)
+          , (s!"result{i}", shift_result[i]!)
+          ]
+        )) ++ (List.range 6 |>.map (fun i => (s!"shamt{i}", shift_amt[i]!)))
+           ++ [("op0", shift_dir), ("op1", shift_arith), ("zero", zero)]
+      }
+    ]
+    signalGroups := [
+      { name := "a",      width := 64, wires := a },
+      { name := "b",      width := 64, wires := b },
+      { name := "op",     width := 5,  wires := opcode },
+      { name := "result", width := 64, wires := result }
+    ]
+    keepHierarchy := true
+  }
+
 end Shoumei.Circuits.Combinational

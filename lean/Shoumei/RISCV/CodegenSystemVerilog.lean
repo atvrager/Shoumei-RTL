@@ -177,7 +177,7 @@ always_comb begin
   let decoderCases := String.intercalate "\n" (defs.map fun d => genDecoderCase d enumPfx)
 
   let muldivClassify := if hasM then
-    "\n// MulDiv: R-type (0110011) with funct7[0]=1 (M-extension encoding)\nassign io_is_muldiv = io_valid && (io_instr[6:0] == 7'b0110011) && io_instr[25];"
+    "\n// MulDiv: R-type (0110011 or 0111011) with funct7[0]=1 (M-extension encoding)\nassign io_is_muldiv = io_valid && ((io_instr[6:0] == 7'b0110011) || (io_instr[6:0] == 7'b0111011)) && io_instr[25];"
   else ""
 
   let integerMuldivExclude := if hasM then " && !io_instr[25]" else ""
@@ -287,7 +287,7 @@ always_comb begin
 "
     // Select appropriate immediate based on instruction format
     casez (io_instr[6:0])
-        7'b0010011, 7'b0000011, 7'b1100111, 7'b1110011: io_imm = imm_i;  // I-type (ALU-I, LOAD, JALR, SYSTEM/CSR)" ++ fpImmMux ++ "
+        7'b0010011, 7'b0011011, 7'b0000011, 7'b1100111, 7'b1110011: io_imm = imm_i;  // I-type (ALU-I, ALU-IW, LOAD, JALR, SYSTEM/CSR)" ++ fpImmMux ++ "
         7'b0100011:                          io_imm = imm_s;  // S-type (STORE)" ++ (if hasF then "\n        7'b0100111:                          io_imm = imm_s;  // FSW (S-type)" else "") ++ "
         7'b1100011:                          io_imm = imm_b;  // B-type (BRANCH)
         7'b0110111, 7'b0010111:              io_imm = imm_u;  // U-type (LUI, AUIPC)
@@ -307,9 +307,12 @@ assign io_has_rd = io_valid &&
     (io_instr[6:0] != 7'b0001111)" ++ fpHasRdExclude ++ ";  // not FENCE
 
 // Integer: R-type ALU (0110011, excluding M-ext), I-type ALU (0010011), LUI (0110111), AUIPC (0010111)
+// RV64 word ALU: R-type 32-bit (0111011, excluding M-ext), I-type 32-bit (0011011)
 assign io_is_integer = io_valid && (
     (io_instr[6:0] == 7'b0110011" ++ integerMuldivExclude ++ ") ||  // R-type (ADD, SUB, AND, etc.)
     (io_instr[6:0] == 7'b0010011) ||  // I-type (ADDI, ANDI, etc.)
+    (io_instr[6:0] == 7'b0111011" ++ integerMuldivExclude ++ ") ||  // R-type 32-bit (ADDW, SUBW, etc.)
+    (io_instr[6:0] == 7'b0011011) ||  // I-type 32-bit (ADDIW, SLLIW, etc.)
     (io_instr[6:0] == 7'b0110111) ||  // LUI
     (io_instr[6:0] == 7'b0010111)     // AUIPC
 );
@@ -330,8 +333,8 @@ assign io_is_branch = io_valid && (
 // Store: STORE (0100011)" ++ (if hasF then " + FSW (0100111)" else "") ++ "
 assign io_is_store = io_valid && (io_instr[6:0] == 7'b0100011" ++ fpStore ++ ");
 
-// Use immediate: all instructions except R-type (OP = 0110011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
-assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
+// Use immediate: all instructions except R-type (OP = 0110011, OP-32 = 0111011) and branches (OP = 1100011)" ++ (if hasF then " and OP-FP/fused" else "") ++ "
+assign io_use_imm = io_valid && (io_instr[6:0] != 7'b0110011) && (io_instr[6:0] != 7'b0111011) && (io_instr[6:0] != 7'b1100011)" ++ (if hasF then " && (io_instr[6:0] != 7'b1010011) && (io_instr[6:0] != 7'b1000011) && (io_instr[6:0] != 7'b1000111) && (io_instr[6:0] != 7'b1001011) && (io_instr[6:0] != 7'b1001111)" else "") ++ ";" ++
 muldivClassify ++ fpClassify ++ atomicClassify ++ "
 
 endmodule

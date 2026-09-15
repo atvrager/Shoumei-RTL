@@ -64,11 +64,11 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32ud-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32ua-p-*.elf)
+RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv64ui-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv64um-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv64uf-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv64ud-p-*.elf) \
+                   $(wildcard $(TB_DIR)/riscv-tests/rv64ua-p-*.elf)
 
 CUSTOM_TEST_GLOBS = $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf)
 
@@ -214,7 +214,7 @@ run-elf: $(SIM_BIN)
 
 gen-tests:
 	@if command -v lake >/dev/null 2>&1; then \
-		cd $(PROJ_ROOT) && lake exe gen_tests; \
+		cd $(PROJ_ROOT) && lake --no-ansi exe gen_tests; \
 	elif ls $(TB_DIR)/tests/generated/*.S >/dev/null 2>&1; then \
 		echo "lake not found, using pre-generated .S files"; \
 	else \

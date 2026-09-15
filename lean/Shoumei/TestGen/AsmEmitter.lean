@@ -158,6 +158,23 @@ def opTypeToMnemonic : Shoumei.RISCV.OpType → String
   | .FMIN_D => "fmin.d" | .FMAX_D => "fmax.d"
   | .FSGNJ_D => "fsgnj.d" | .FSGNJN_D => "fsgnjn.d" | .FSGNJX_D => "fsgnjx.d"
   | .FLD => "fld" | .FSD => "fsd"
+  -- RV64I
+  | .LWU => "lwu" | .LD => "ld" | .SD => "sd"
+  | .ADDIW => "addiw" | .SLLIW => "slliw" | .SRLIW => "srliw" | .SRAIW => "sraiw"
+  | .ADDW => "addw" | .SUBW => "subw" | .SLLW => "sllw" | .SRLW => "srlw" | .SRAW => "sraw"
+  -- RV64M
+  | .MULW => "mulw" | .DIVW => "divw" | .DIVUW => "divuw" | .REMW => "remw" | .REMUW => "remuw"
+  -- RV64A
+  | .LR_D => "lr.d" | .SC_D => "sc.d"
+  | .AMOADD_D => "amoadd.d" | .AMOSWAP_D => "amoswap.d" | .AMOXOR_D => "amoxor.d"
+  | .AMOAND_D => "amoand.d" | .AMOOR_D => "amoor.d" | .AMOMIN_D => "amomin.d"
+  | .AMOMAX_D => "amomax.d" | .AMOMINU_D => "amominu.d" | .AMOMAXU_D => "amomaxu.d"
+  -- RV64F / RV64D
+  | .FCVT_L_S => "fcvt.l.s" | .FCVT_LU_S => "fcvt.lu.s"
+  | .FCVT_S_L => "fcvt.s.l" | .FCVT_S_LU => "fcvt.s.lu"
+  | .FCVT_L_D => "fcvt.l.d" | .FCVT_LU_D => "fcvt.lu.d"
+  | .FCVT_D_L => "fcvt.d.l" | .FCVT_D_LU => "fcvt.d.lu"
+  | .FMV_X_D => "fmv.x.d" | .FMV_D_X => "fmv.d.x"
   -- Zicsr
   | .CSRRW => "csrrw" | .CSRRS => "csrrs" | .CSRRC => "csrrc"
   | .CSRRWI => "csrrwi" | .CSRRSI => "csrrsi" | .CSRRCI => "csrrci"

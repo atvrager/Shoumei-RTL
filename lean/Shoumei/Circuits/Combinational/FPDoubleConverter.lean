@@ -131,8 +131,26 @@ def fpDoubleConverterCircuit : Circuit :=
     Gate.mkAND (Wire.mk "d49_t0") (op[0]!) is_fcvt_d_s
   ]
 
-  -- result_is_int = FCVT.W.D | FCVT.WU.D
-  let result_is_int_gate := Gate.mkOR is_fcvt_w_d is_fcvt_wu_d result_is_int
+  -- 56 = 111000 (FMV.X.D)
+  -- 57 = 111001 (FMV.D.X)
+  let is_fmv_x_d := Wire.mk "is_fmv_x_d"
+  let is_fmv_d_x := Wire.mk "is_fmv_d_x"
+  let is_any_fmv_d := Wire.mk "is_any_fmv_d"
+  let dec_fmv := [
+    Gate.mkAND (op[5]!) (op[4]!) (Wire.mk "dfmv_t0"),
+    Gate.mkAND (Wire.mk "dfmv_t0") (op[3]!) (Wire.mk "dfmv_t1"),
+    Gate.mkAND not_op2 not_op1 (Wire.mk "dfmv_t2"),
+    Gate.mkAND (Wire.mk "dfmv_t1") (Wire.mk "dfmv_t2") is_any_fmv_d,
+    Gate.mkAND is_any_fmv_d not_op0 is_fmv_x_d,
+    Gate.mkAND is_any_fmv_d (op[0]!) is_fmv_d_x
+  ]
+
+  -- result_is_int = FCVT.W.D | FCVT.WU.D | FMV.X.D
+  let res_is_int_t := Wire.mk "res_is_int_t"
+  let result_is_int_gates := [
+    Gate.mkOR is_fcvt_w_d is_fcvt_wu_d res_is_int_t,
+    Gate.mkOR res_is_int_t is_fmv_x_d result_is_int
+  ]
 
   -- ══════════════════════════════════════════════
   -- 1. Integer to DP float: FCVT.D.W / FCVT.D.WU
@@ -666,7 +684,7 @@ def fpDoubleConverterCircuit : Circuit :=
   let res_fcvt_w := makeIndexedWires "res_fcvt_w" 64
   let res_fcvt_w_gates := (List.range 64).flatMap fun i =>
     if i >= 32 then
-      [Gate.mkBUF zero (res_fcvt_w[i]!)]
+      [Gate.mkBUF (res_fcvt_w[31]!) (res_fcvt_w[i]!)]
     else
       let w := res_fcvt_w[i]!
       let clamp_w := if i == 31 then clamp_w_is_neg else not_clamp_w_is_neg
@@ -701,9 +719,11 @@ def fpDoubleConverterCircuit : Circuit :=
     let w := result[i]!
     let m0 := Wire.mk s!"out_m0_{i}"
     let m1 := Wire.mk s!"out_m1_{i}"
+    let m2 := Wire.mk s!"out_m2_{i}"
     [Gate.mkMUX (res_fcvt_d_int[i]!) (res_fcvt_d_s[i]!) is_fcvt_d_s m0,
      Gate.mkMUX m0 (res_fcvt_s_d[i]!) is_fcvt_s_d m1,
-     Gate.mkMUX m1 (res_fcvt_w[i]!) is_any_fcvt_w w]
+     Gate.mkMUX m1 (res_fcvt_w[i]!) is_any_fcvt_w m2,
+     Gate.mkMUX m2 (src1[i]!) is_any_fmv_d w]
 
   let nv_fcds := sp_is_snan
   let nv_fcsd := dp_is_snan
@@ -727,7 +747,7 @@ def fpDoubleConverterCircuit : Circuit :=
 
   let all_gates :=
     op_inv_gates ++ dec_44 ++ dec_45 ++ dec_46 ++ dec_47 ++ dec_48 ++ dec_49 ++
-    [result_is_int_gate] ++
+    dec_fmv ++ result_is_int_gates ++
     [int_sign_gate] ++ int_neg_gates ++ int_abs_gates ++
     int_abs_any_gates ++ [int_is_zero_gate] ++ pe_init_gates ++ pe_fold_gates ++
     norm_shamt_gates ++ bsl_s0_gates ++ bsl_s1_gates ++ bsl_s2_gates ++

@@ -48,7 +48,7 @@ open Shoumei.Circuits.Combinational
 /-- Pending load request waiting for memory response. -/
 structure PendingLoadRequest where
   /-- Memory address -/
-  address : UInt32
+  address : UInt64
   /-- Access size -/
   size : MemSize
   /-- Sign-extend result? -/
@@ -117,7 +117,7 @@ def LSUState.canAcceptLoad (lsu : LSUState) : Bool :=
 def LSUState.executeStore
     (lsu : LSUState)
     (opcode : OpType)
-    (base : UInt32)      -- rs1 value (address base)
+    (base : UInt64)      -- rs1 value (address base)
     (offset : Int)       -- Immediate offset
     (data : UInt64)      -- rs2 value (data to store)
     : LSUState × Bool :=
@@ -129,7 +129,8 @@ def LSUState.executeStore
     | .SB => 0  -- Byte
     | .SH => 1  -- Halfword
     | .SW => 2  -- Word
-    | _ => 2    -- Default to word
+    | .SD => 3  -- Doubleword
+    | _ => 3    -- Default to doubleword
 
   -- Enqueue into store buffer (uncommitted)
   let (newSB, allocResult) := lsu.storeBuffer.enqueue addr data size_fin
@@ -153,10 +154,10 @@ def LSUState.executeStore
 def LSUState.executeLoad
     (lsu : LSUState)
     (opcode : OpType)
-    (base : UInt32)      -- rs1 value (address base)
+    (base : UInt64)      -- rs1 value (address base)
     (offset : Int)       -- Immediate offset
     (dest_tag : Fin 64)  -- Destination physical register
-    : LSUState × Option (Fin 64 × UInt32) :=
+    : LSUState × Option (Fin 64 × UInt64) :=
   -- Cannot accept new load if one is already pending
   if !lsu.canAcceptLoad then
     (lsu, none)
@@ -168,16 +169,18 @@ def LSUState.executeLoad
     let (size, sign_ext) := match opcode with
       | .LB  => (MemSize.Byte, true)       -- Load byte, sign-extend
       | .LH  => (MemSize.Halfword, true)   -- Load halfword, sign-extend
-      | .LW  => (MemSize.Word, false)      -- Load word (no extension needed)
+      | .LW  => (MemSize.Word, true)       -- Load word, sign-extend to 64b
       | .LBU => (MemSize.Byte, false)      -- Load byte unsigned
       | .LHU => (MemSize.Halfword, false)  -- Load halfword unsigned
-      | _ => (MemSize.Word, false)         -- Invalid (shouldn't happen)
+      | .LWU => (MemSize.Word, false)      -- Load word unsigned
+      | .LD  => (MemSize.Doubleword, false) -- Load doubleword
+      | _ => (MemSize.Doubleword, false)
 
     -- Check store buffer for forwarding match (TSO: youngest match wins)
     match lsu.storeBuffer.forwardCheck addr with
     | some fwd_data =>
         -- FORWARDING HIT: Return data immediately, broadcast on CDB
-        let processed_data := processLoadResponse fwd_data.toUInt32 size sign_ext
+        let processed_data := processLoadResponse fwd_data size sign_ext
         (lsu, some (dest_tag, processed_data))
 
     | none =>
@@ -213,7 +216,7 @@ def LSUState.commitStore
 -/
 def LSUState.dequeueStore
     (lsu : LSUState)
-    : LSUState × Option (UInt32 × UInt64 × Fin 4) :=
+    : LSUState × Option (UInt64 × UInt64 × Fin 4) :=
   let (newSB, deqResult) := lsu.storeBuffer.dequeue
   match deqResult with
   | some entry =>
@@ -231,8 +234,8 @@ def LSUState.dequeueStore
 -/
 def LSUState.processMemoryResponse
     (lsu : LSUState)
-    (mem_data : UInt32)
-    : LSUState × Option (Fin 64 × UInt32) :=
+    (mem_data : UInt64)
+    : LSUState × Option (Fin 64 × UInt64) :=
   match lsu.pendingLoad with
   | none =>
       -- No pending load (shouldn't happen)
@@ -332,8 +335,8 @@ def mkLSU : Circuit :=
   let one := Wire.mk "one"
 
   -- === Dispatch Interface ===
-  let dispatch_base := mkWires "dispatch_base_" 32
-  let dispatch_offset := mkWires "dispatch_offset_" 32
+  let dispatch_base := mkWires "dispatch_base_" 64
+  let dispatch_offset := mkWires "dispatch_offset_" 64
   let dispatch_dest_tag := mkWires "dispatch_dest_tag_" 6
   let store_data := mkWires "store_data_" 64
 
@@ -344,13 +347,13 @@ def mkLSU : Circuit :=
   let deq_ready := Wire.mk "deq_ready"
 
   -- === Forwarding Interface ===
-  let fwd_address := mkWires "fwd_address_" 32
+  let fwd_address := mkWires "fwd_address_" 64
 
   -- === Flush Interface ===
   let flush_en := Wire.mk "flush_en"
 
   -- === AGU (Address Generation Unit) Outputs ===
-  let agu_address := mkWires "agu_address_" 32
+  let agu_address := mkWires "agu_address_" 64
   let agu_tag_out := mkWires "agu_tag_out_" 6
 
   -- === Store Buffer Outputs ===
@@ -363,19 +366,19 @@ def mkLSU : Circuit :=
   let sb_fwd_data := mkWires "sb_fwd_data_" 64
   let sb_fwd_size := mkWires "sb_fwd_size_" 2
   let sb_deq_valid := Wire.mk "sb_deq_valid"
-  let sb_deq_bits := mkWires "sb_deq_bits_" 98
+  let sb_deq_bits := mkWires "sb_deq_bits_" 130
   let sb_enq_idx := mkWires "sb_enq_idx_" 3
   let sb_flush_tail := mkWires "sb_flush_tail_" 3
 
   -- === Placeholder wires for StoreBuffer8 required inputs ===
   let sb_enq_en := Wire.mk "sb_enq_en"  -- Placeholder: would be driven by dispatch_is_store control logic
   let sb_enq_idx_in := mkWires "sb_enq_idx_in_" 3  -- Pre-allocated SB entry index from CPU
-  let sb_enq_address := mkWires "sb_enq_address_" 32  -- Connected to agu_address
+  let sb_enq_address := mkWires "sb_enq_address_" 64  -- Connected to agu_address
   let sb_enq_data := store_data  -- Direct connection from dispatch
   let sb_enq_size := mkWires "sb_enq_size_" 2  -- Placeholder: would be decoded from opcode
 
   -- === MemoryExecUnit Instance ===
-  -- MemoryExecUnit uses flat port names: base0, base1, ..., offset0, offset1, etc.
+  -- MemoryExecUnit uses flat port names: base_0, base_1, ..., offset_0, offset_1, etc.
   let agu_inst : CircuitInstance := {
     moduleName := "MemoryExecUnit"
     instName := "u_agu"
@@ -452,18 +455,18 @@ def mkLSU : Circuit :=
     instances := all_instances
     -- V2 codegen annotations
     signalGroups := [
-      { name := "dispatch_base", width := 32, wires := dispatch_base },
-      { name := "dispatch_offset", width := 32, wires := dispatch_offset },
+      { name := "dispatch_base", width := 64, wires := dispatch_base },
+      { name := "dispatch_offset", width := 64, wires := dispatch_offset },
       { name := "dispatch_dest_tag", width := 6, wires := dispatch_dest_tag },
       { name := "store_data", width := 64, wires := store_data },
-      { name := "fwd_address", width := 32, wires := fwd_address },
-      { name := "agu_address", width := 32, wires := agu_address },
+      { name := "fwd_address", width := 64, wires := fwd_address },
+      { name := "agu_address", width := 64, wires := agu_address },
       { name := "agu_tag_out", width := 6, wires := agu_tag_out },
       { name := "sb_fwd_data", width := 64, wires := sb_fwd_data },
       { name := "sb_fwd_size", width := 2, wires := sb_fwd_size },
-      { name := "sb_deq_bits", width := 98, wires := sb_deq_bits },
+      { name := "sb_deq_bits", width := 130, wires := sb_deq_bits },
       { name := "sb_enq_idx", width := 3, wires := sb_enq_idx },
-      { name := "sb_enq_address", width := 32, wires := sb_enq_address },
+      { name := "sb_enq_address", width := 64, wires := sb_enq_address },
       { name := "sb_enq_size", width := 2, wires := sb_enq_size },
       { name := "sb_enq_idx_in", width := 3, wires := sb_enq_idx_in },
       { name := "sb_flush_tail", width := 3, wires := sb_flush_tail }

@@ -100,3 +100,57 @@ Standard ASAP7 PDK releases often use a 4x coordinate scaling (to mimic 28nm dim
 *   **Permissions**: If you get permission errors, ensure your user is in the `docker` group or run with `sudo` (and `sg docker` if needed).
 *   **Missing Variables**: If Yosys fails with "no such variable", ensure variables in `config.mk` are exported (e.g., `export VERILOG_FILES = ...`).
 *   **Floorplan Errors**: If floorplanning fails, check `CORE_UTILIZATION` or `DIE_AREA` settings in `config.mk`.
+
+---
+
+## ASIC Synthesis Flow (Synopsys DC / DC NXT)
+
+In addition to OpenROAD, the CPU can be synthesized with commercial ASIC tools using the parameterizable script `physical/run-dc.tcl` and the generated filelists in `physical/`.
+
+### Running Synthesis
+
+```bash
+export TARGET_LIBRARY=/path/to/standard_cells.db
+export LINK_LIBRARIES="/path/to/multibit_cells.db /path/to/sram_macros.db"
+export CLK_PERIOD_NS=5.0
+export DESIGN_NAME=CPU_RV32IMAFD_Zicsr_Zifencei_Microcoded_synth
+
+dcnxt_shell -f physical/run-dc.tcl | tee syn.log
+```
+
+Generated outputs are placed in `syn_out/`:
+*   `syn_out/reports/`: `qor.rpt`, `area.rpt`, `timing.rpt`, `power.rpt`, `clock_gate.rpt`, `violators.rpt`
+*   `syn_out/netlist/`: Gate-level netlist (`.v`), timing constraints (`.sdc`), and database (`.ddc`)
+
+### ASIC Baseline: GF 12LPP+ (RV32IMAFD Core)
+
+Synthesized with Synopsys DC NXT using GlobalFoundries 12LPP+ 7.5T RVT standard cells (`sc7p5mcpp84_base_rvt_c16`, nominal corner 0.80V, 25°C):
+
+| Metric | Result |
+|---|---|
+| **Design** | `CPU_RV32IMAFD_Zicsr_Zifencei_Microcoded_synth` |
+| **Architecture** | Dual-dispatch superscalar ($W=2$), RV32IMAFD (with atomics & 64-bit DP FPU) |
+| **Clock Target** | 5.00 ns (200 MHz) |
+| **Timing** | **Met** (WNS = 0.00 ns, TNS = 0.00 ns, 0 violating paths) |
+| **Critical Path** | 4.91 ns ($F_{\max} \approx 203.7\text{ MHz}$) in `u_exec_fp/u_mul_dp` $\rightarrow$ CDB |
+| **Total Cell Area** | **$47,184.8\,\mu\text{m}^2$** ($0.0472\text{ mm}^2$) |
+| **Combinational Area** | $29,600.6\,\mu\text{m}^2$ (62.7%) |
+| **Sequential Area** | $17,584.2\,\mu\text{m}^2$ (37.3%) |
+| **Leaf Cell Count** | **143,122** (124,841 combinational, 18,281 sequential) |
+| **Dynamic Power** | 3.48 mW (3.18 mW internal, 0.29 mW switching) |
+| **Leakage Power** | 10.4 µW |
+
+#### Subsystem Area Breakdown
+
+| Subsystem | Area ($\mu\text{m}^2$) | Share | Notes |
+|---|---|---|---|
+| FP Rename & PRF | 11,961.4 | 25.4% | $64\times 64$-bit FP Physical Register File + rename logic |
+| DP FP Execution Unit | 11,779.4 | 25.0% | Double-precision `FPAdderD`, `FPMulD`, `FPDivD`, `FPSqrtD`, `FPFMAD` |
+| Integer Rename & PRF | 7,767.0 | 16.5% | $64\times 32$-bit Integer Physical Register File + rename logic |
+| Integer Mul/Div Unit | 1,706.5 | 3.6% | Pipelined multiplier & radix-4 divider |
+| Load-Store Unit | 1,641.2 | 3.5% | 64-bit LSU datapath & 8-entry store buffer |
+| Reservation Stations | 4,456.6 | 9.4% | FP (64b), Memory (64b), Integer, Mul/Div, Branch |
+| Queues & ROB | 2,757.4 | 5.9% | 16-entry dual-retire ROB, instruction & PC queues |
+| Integer ALU & Branch | 445.5 | 0.9% | Dual-issue integer execution units |
+| Control & Decoders | 489.2 | 1.0% | Dual `RV32GDecoder`, microcode sequencer & fetch |
+| Glue & Clock Gating | 4,180.6 | 8.8% | CDB muxes, bypass FIFOs, 52 clock gating cells |

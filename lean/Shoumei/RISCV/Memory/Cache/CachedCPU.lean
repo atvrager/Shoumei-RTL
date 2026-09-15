@@ -60,7 +60,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let imem_resp_data := makeIndexedWires "cpu_imem_resp_data" 32
   let imem_resp_data_1 := makeIndexedWires "cpu_imem_resp_data_1" 32
 
-  let dmemDataWidth := if config.enableD then 64 else 32
+  let dmemDataWidth := if config.xlen == 64 || config.enableD then 64 else 32
   let dmem_req_valid := Wire.mk "cpu_dmem_req_valid"
   let dmem_req_we := Wire.mk "cpu_dmem_req_we"
   let dmem_req_addr := makeIndexedWires "cpu_dmem_req_addr" 32
@@ -93,8 +93,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_insn_1 := makeIndexedWires "rvvi_insn_1" 32
   let rvvi_rd_0 := makeIndexedWires "rvvi_rd_0" 5
   let rvvi_rd_1 := makeIndexedWires "rvvi_rd_1" 5
-  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" 32
-  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" 32
+  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" config.xlen
+  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" config.xlen
 
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
@@ -213,8 +213,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "rvvi_insn_1", width := 32, wires := rvvi_insn_1 },
       { name := "rvvi_rd_0", width := 5, wires := rvvi_rd_0 },
       { name := "rvvi_rd_1", width := 5, wires := rvvi_rd_1 },
-      { name := "rvvi_rdd_0", width := 32, wires := rvvi_rd_data_0 },
-      { name := "rvvi_rdd_1", width := 32, wires := rvvi_rd_data_1 }
+      { name := "rvvi_rdd_0", width := config.xlen, wires := rvvi_rd_data_0 },
+      { name := "rvvi_rdd_1", width := config.xlen, wires := rvvi_rd_data_1 }
     ]
     keepHierarchy := true
   }

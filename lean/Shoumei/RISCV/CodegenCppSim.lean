@@ -289,7 +289,7 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "  uint32_t opcode = instr & 0x7f;",
     "  int32_t imm = 0;",
     s!"  switch (opcode) {lb}",
-    "    case 0x13: case 0x03: case 0x67: case 0x73:  // I-type (incl. SYSTEM/CSR)",
+    "    case 0x13: case 0x1b: case 0x03: case 0x67: case 0x73:  // I-type (incl. OP-IMM-32, SYSTEM/CSR)",
     "      imm = imm_i; break;",
     "    case 0x23:  // S-type",
     "      imm = imm_s; break;",
@@ -320,7 +320,7 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "  // Note: ECALL/EBREAK/MRET have rd=x0, excluded by rd!=0 check; CSR instructions write rd",
     "  *io_has_rd = valid && !is_store && !is_branch_op && !is_fence" ++ fpHasRdExclude ++ ";",
     "",
-    "  bool is_rtype = (opcode == 0x33);",
+    "  bool is_rtype = (opcode == 0x33) || (opcode == 0x3b);",
     if hasMCpp defs then
     "  bool is_mext = is_rtype && ((instr >> 25) & 1);"
     else "",
@@ -329,12 +329,12 @@ def genCppSimDecoderImpl (defs : List InstructionDef) (moduleName : String := "R
     "    (is_rtype && !is_mext) ||"
     else
     "    is_rtype ||",
-    "    (opcode == 0x13) || (opcode == 0x37) || (opcode == 0x17));",
+    "    (opcode == 0x13) || (opcode == 0x1b) || (opcode == 0x37) || (opcode == 0x17));",
     "  *io_is_memory = valid && ((opcode == 0x03) || (opcode == 0x23)" ++ fpMemoryCheck ++ atomicMemoryCheck ++ ");",
     "  *io_is_branch = valid && ((opcode == 0x63) || (opcode == 0x6f) || (opcode == 0x67));",
     "  *io_is_store = valid && is_store;",
     atomicClassify,
-    "  *io_use_imm = valid && (opcode != 0x33) && (opcode != 0x63)" ++ fpUseImmExclude ++ ";",
+    "  *io_use_imm = valid && (opcode != 0x33) && (opcode != 0x3b) && (opcode != 0x63)" ++ fpUseImmExclude ++ ";",
     if hasMCpp defs then
     "  *io_is_muldiv = valid && is_mext;"
     else "",
