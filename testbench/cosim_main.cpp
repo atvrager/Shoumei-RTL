@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
             fprintf(stderr,
                 "MISMATCH ret#%lu cy%lu slot%d: "
                 "PC RTL=0x%08x Spike=0x%08x (skip %d)\n",
-                retired, cycle, slot, rvvi.pc, spike_r.pc, skip);
+                retired, cycle, slot, rvvi.pc, (uint32_t)spike_r.pc, skip);
             mismatches++;
         }
 
@@ -268,7 +268,7 @@ int main(int argc, char** argv) {
                     "MISMATCH ret#%lu cy%lu slot%d: "
                     "PC=0x%08x insn=0x%08x x%u RTL=0x%08x Spike=0x%08x\n",
                     retired, cycle, slot, rvvi.pc, rvvi.insn,
-                    spike_r.rd, rvvi.rd_data, spike_r.rd_value);
+                    spike_r.rd, rvvi.rd_data, (uint32_t)spike_r.rd_value);
                 mismatches++;
             }
         }
@@ -283,7 +283,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr,
                     "MISMATCH ret#%lu cy%lu slot%d: "
                     "PC RTL=0x%08x LeanSim=0x%08x Spike=0x%08x\n",
-                    retired, cycle, slot, rvvi.pc, cs_r.pc, spike_r.pc);
+                    retired, cycle, slot, rvvi.pc, cs_r.pc, (uint32_t)spike_r.pc);
                 if (cs_r.pc == spike_r.pc)
                     fprintf(stderr, "  -> SV codegen bug (RTL wrong, LeanSim+Spike agree)\n");
                 else if (rvvi.pc == cs_r.pc)

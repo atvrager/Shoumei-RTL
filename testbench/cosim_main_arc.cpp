@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
         if (model.get_rvvi_valid()) {
             uint32_t rtl_pc   = model.get_rvvi_pc_rdata();
             uint32_t rtl_insn = model.get_rvvi_insn();
-            uint32_t rtl_rd   = model.get_rvvi_rd();
+            (void)model.get_rvvi_rd();
             bool     rtl_rd_v = model.get_rvvi_rd_valid();
             uint64_t rtl_rd_d = model.get_rvvi_rd_data();
             bool     rtl_frd_v = model.get_rvvi_frd_valid();
@@ -232,7 +232,7 @@ int main(int argc, char** argv) {
 
             if (rtl_pc != spike_r.pc) {
                 fprintf(stderr, "MISMATCH ret#%lu cyc%lu: PC RTL=0x%08x Spike=0x%08x\n",
-                    retired, cycle, rtl_pc, spike_r.pc);
+                    retired, cycle, rtl_pc, (uint32_t)spike_r.pc);
                 mismatches++;
             }
             if (rtl_insn != spike_r.insn) {
