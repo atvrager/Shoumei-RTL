@@ -1,4 +1,4 @@
-RISCV_PREFIX ?= riscv32-unknown-elf-
+RISCV_PREFIX ?= $(shell command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 && echo riscv64-unknown-elf- || (command -v riscv64-elf-gcc >/dev/null 2>&1 && echo riscv64-elf- || (command -v riscv32-unknown-elf-gcc >/dev/null 2>&1 && echo riscv32-unknown-elf- || echo riscv64-elf-)))
 CC      = $(RISCV_PREFIX)gcc
 CFLAGS  = -march=rv32im_zicsr_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib -Wl,--no-relax
