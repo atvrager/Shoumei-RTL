@@ -2,9 +2,8 @@
 # Uses our minimal riscv_test.h (no CSR/trap support)
 
 RISCV_TESTS := ../../third_party/riscv-tests
-ifeq ($(origin CC),default)
-CC := $(shell command -v riscv64-elf-gcc 2>/dev/null || command -v riscv64-unknown-elf-gcc 2>/dev/null || echo riscv64-elf-gcc)
-endif
+RISCV_PREFIX ?= $(shell command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 && echo riscv64-unknown-elf- || (command -v riscv64-elf-gcc >/dev/null 2>&1 && echo riscv64-elf- || echo riscv64-elf-))
+CC = $(RISCV_PREFIX)gcc
 CFLAGS_BASE := -static -nostdlib -nostartfiles \
                -I. -I$(RISCV_TESTS)/isa/macros/scalar
 LDFLAGS := -T shoumei64.ld
