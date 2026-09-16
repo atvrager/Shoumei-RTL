@@ -64,13 +64,13 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv64ui-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv64um-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv64uf-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv64ud-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv64ua-p-*.elf)
+RISCV_TEST_GLOBS = $(TB_DIR)/riscv-tests/rv64ui-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64um-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64uf-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64ud-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64ua-p-*.elf
 
-CUSTOM_TEST_GLOBS = $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf)
+CUSTOM_TEST_GLOBS = $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf
 
 # Auto-build Spike if missing (check for .so or .a)
 $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:

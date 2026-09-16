@@ -244,6 +244,7 @@ jobs:
         with:
           name: codegen-output
           path: |
+            output/config.mk
             output/sv-asap7/
             output/sv-from-lean/
             output/sv-netlist/
@@ -300,7 +301,9 @@ jobs:
           git submodule update --init third_party/FreeRTOS-Kernel
 
       - name: Build test ELFs
-        run: make -C testbench/tests
+        run: |
+          make -C testbench/tests
+          make -C testbench/riscv-tests
 
       - name: Build simulation
         run: make -C testbench sim
@@ -389,9 +392,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/spike
-          key: spike-rv32im-${{ hashFiles('third_party/riscv-isa-sim/**') }}
+          key: spike-rv64-${{ hashFiles('third_party/riscv-isa-sim/**') }}
           restore-keys: |
-            spike-rv32im-
+            spike-rv64-
 
       - name: Build Spike
         run: |
@@ -412,7 +415,9 @@ jobs:
           echo "$HOME/.local/riscv64-elf/bin" >> $GITHUB_PATH
 
       - name: Build test ELFs
-        run: make -C testbench/tests
+        run: |
+          make -C testbench/tests
+          make -C testbench/riscv-tests
 
       - name: Build cosim (RTL + Spike)
         run: make -C testbench cosim
