@@ -31,10 +31,17 @@ public:
         if (addr >= 0x02000000 && addr < 0x02010000) {
             // Return CLINT register values
             uint64_t val = 0;
-            if (addr == 0x0200BFF8) val = mtime_ & 0xFFFFFFFF;       // mtime lo
-            else if (addr == 0x0200BFFC) val = (mtime_ >> 32);        // mtime hi
-            else if (addr == 0x02004000) val = mtimecmp_ & 0xFFFFFFFF; // mtimecmp lo
-            else if (addr == 0x02004004) val = (mtimecmp_ >> 32);      // mtimecmp hi
+            if (addr == 0x0200BFF8) {
+                if (len == 8) val = mtime_;
+                else val = mtime_ & 0xFFFFFFFF;
+            } else if (addr == 0x0200BFFC) {
+                val = (mtime_ >> 32);
+            } else if (addr == 0x02004000) {
+                if (len == 8) val = mtimecmp_;
+                else val = mtimecmp_ & 0xFFFFFFFF;
+            } else if (addr == 0x02004004) {
+                val = (mtimecmp_ >> 32);
+            }
             memcpy(bytes, &val, len);
             return true;
         }
@@ -42,12 +49,17 @@ public:
     }
     bool mmio_store(reg_t addr, size_t len, const uint8_t* bytes) override {
         if (addr >= 0x02000000 && addr < 0x02010000) {
-            uint32_t val = 0;
-            memcpy(&val, bytes, std::min(len, sizeof(val)));
-            if (addr == 0x02004000) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF00000000ULL) | val;
-            else if (addr == 0x02004004) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
-            else if (addr == 0x0200BFF8) mtime_ = (mtime_ & 0xFFFFFFFF00000000ULL) | val;
-            else if (addr == 0x0200BFFC) mtime_ = (mtime_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
+            if (len == 8) {
+                if (addr == 0x02004000) memcpy(&mtimecmp_, bytes, 8);
+                else if (addr == 0x0200BFF8) memcpy(&mtime_, bytes, 8);
+            } else {
+                uint32_t val = 0;
+                memcpy(&val, bytes, std::min(len, sizeof(val)));
+                if (addr == 0x02004000) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF00000000ULL) | val;
+                else if (addr == 0x02004004) mtimecmp_ = (mtimecmp_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
+                else if (addr == 0x0200BFF8) mtime_ = (mtime_ & 0xFFFFFFFF00000000ULL) | val;
+                else if (addr == 0x0200BFFC) mtime_ = (mtime_ & 0xFFFFFFFF) | ((uint64_t)val << 32);
+            }
             return true;
         }
         return false;

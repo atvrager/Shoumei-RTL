@@ -4559,7 +4559,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX prf_rvvi_data_1[i]! csr_cdb_data[i]! csr_drain_complete rvvi_rd_data_1[i]!) ++
       (if config.xlen == 64 then
         (List.range 32).map (fun i =>
-          Gate.mkMUX prf_rvvi_data_1[32+i]! csr_cdb_data[31]! csr_drain_complete rvvi_rd_data_1[32+i]!)
+          Gate.mkMUX prf_rvvi_data_1[32+i]! zero csr_drain_complete rvvi_rd_data_1[32+i]!)
        else [])
     else
       [Gate.mkBUF retire_valid_0 rvvi_valid_0,
