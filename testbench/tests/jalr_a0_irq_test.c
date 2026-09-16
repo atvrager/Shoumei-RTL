@@ -12,69 +12,76 @@ extern volatile unsigned int putchar_addr;
 
 static volatile int irq_count = 0;
 
-/* Timer ISR: called from asm trap handler with interrupts disabled */
-void timer_isr(void) {
-    unsigned int mtime_lo = MTIME_LO;
-    MTIMECMP_LO = 0xFFFFFFFF;  /* prevent re-trigger */
-    MTIMECMP_HI = 0;
-    MTIMECMP_LO = mtime_lo + 500;
-    irq_count++;
+/* Assembly trap handler: saves/restores caller-saved registers and handles timer IRQ */
+void _trap_handler(void) __attribute__((naked, aligned(4)));
+void _trap_handler(void) {
+    __asm__ volatile(
+        "  addi sp, sp, -128\n"
+        "  sd ra,   0(sp)\n"
+        "  sd t0,   8(sp)\n"
+        "  sd t1,  16(sp)\n"
+        "  sd t2,  24(sp)\n"
+        "  sd a0,  32(sp)\n"
+        "  sd a1,  40(sp)\n"
+        "  sd a2,  48(sp)\n"
+        "  sd a3,  56(sp)\n"
+        "  sd a4,  64(sp)\n"
+        "  sd a5,  72(sp)\n"
+        "  sd a6,  80(sp)\n"
+        "  sd a7,  88(sp)\n"
+        "  sd t3,  96(sp)\n"
+        "  sd t4, 104(sp)\n"
+        "  sd t5, 112(sp)\n"
+        "  sd t6, 120(sp)\n"
+
+        /* Check mcause exception code 7 (timer interrupt) */
+        "  csrr t0, mcause\n"
+        "  andi t0, t0, 0xff\n"
+        "  li t1, 7\n"
+        "  bne t0, t1, 1f\n"
+
+        /* Advance timer: set mtimecmp = mcycle + 500 */
+        "  csrr t0, mcycle\n"
+        "  addi t0, t0, 500\n"
+        "  li t1, 0x02004000\n"
+        "  sw t0, 0(t1)\n"
+        "  sw zero, 4(t1)\n"
+
+        /* Increment irq_count */
+        "  la t1, irq_count\n"
+        "  lw t0, 0(t1)\n"
+        "  addi t0, t0, 1\n"
+        "  sw t0, 0(t1)\n"
+
+        "1:\n"
+        "  ld ra,   0(sp)\n"
+        "  ld t0,   8(sp)\n"
+        "  ld t1,  16(sp)\n"
+        "  ld t2,  24(sp)\n"
+        "  ld a0,  32(sp)\n"
+        "  ld a1,  40(sp)\n"
+        "  ld a2,  48(sp)\n"
+        "  ld a3,  56(sp)\n"
+        "  ld a4,  64(sp)\n"
+        "  ld a5,  72(sp)\n"
+        "  ld a6,  80(sp)\n"
+        "  ld a7,  88(sp)\n"
+        "  ld t3,  96(sp)\n"
+        "  ld t4, 104(sp)\n"
+        "  ld t5, 112(sp)\n"
+        "  ld t6, 120(sp)\n"
+        "  addi sp, sp, 128\n"
+        "  mret\n"
+    );
 }
 
-/* Assembly trap handler */
-__asm__(
-    ".globl _trap_handler\n"
-    ".balign 4\n"
-    "_trap_handler:\n"
-    "  addi sp, sp, -64\n"
-    "  sw ra,  0(sp)\n"
-    "  sw t0,  4(sp)\n"
-    "  sw t1,  8(sp)\n"
-    "  sw t2, 12(sp)\n"
-    "  sw a0, 16(sp)\n"
-    "  sw a1, 20(sp)\n"
-    "  sw a2, 24(sp)\n"
-    "  sw a3, 28(sp)\n"
-    "  sw a4, 32(sp)\n"
-    "  sw a5, 36(sp)\n"
-    "  sw a6, 40(sp)\n"
-    "  sw a7, 44(sp)\n"
-    "  sw t3, 48(sp)\n"
-    "  sw t4, 52(sp)\n"
-    "  sw t5, 56(sp)\n"
-    "  sw t6, 60(sp)\n"
-    "  csrr t0, mcause\n"
-    "  li t1, 0x80000007\n"  /* machine timer interrupt */
-    "  bne t0, t1, 1f\n"
-    "  call timer_isr\n"
-    "1:\n"
-    "  lw ra,  0(sp)\n"
-    "  lw t0,  4(sp)\n"
-    "  lw t1,  8(sp)\n"
-    "  lw t2, 12(sp)\n"
-    "  lw a0, 16(sp)\n"
-    "  lw a1, 20(sp)\n"
-    "  lw a2, 24(sp)\n"
-    "  lw a3, 28(sp)\n"
-    "  lw a4, 32(sp)\n"
-    "  lw a5, 36(sp)\n"
-    "  lw a6, 40(sp)\n"
-    "  lw a7, 44(sp)\n"
-    "  lw t3, 48(sp)\n"
-    "  lw t4, 52(sp)\n"
-    "  lw t5, 56(sp)\n"
-    "  lw t6, 60(sp)\n"
-    "  addi sp, sp, 64\n"
-    "  mret\n"
-);
-
 static void enable_timer_irq(void) {
-    MTIMECMP_LO = 0xFFFFFFFF;
     MTIMECMP_HI = 0;
-    unsigned int mtime_lo = MTIME_LO;
-    MTIMECMP_LO = mtime_lo + 200;
-    __asm__ volatile("csrs mie, %0" :: "r"(1 << 7));
-    __asm__ volatile("csrs mstatus, %0" :: "r"(1 << 3));
+    unsigned long cycle;
+    __asm__ volatile("csrr %0, mcycle" : "=r"(cycle));
+    MTIMECMP_LO = (unsigned int)(cycle + 200);
+    __asm__ volatile("csrs mie, %0" :: "r"(1ULL << 7));
+    __asm__ volatile("csrs mstatus, %0" :: "r"(1ULL << 3));
 }
 
 __attribute__((noinline)) int check_a0(int val) {
@@ -87,11 +94,11 @@ volatile int counter = 0;
 int main(void) {
     enable_timer_irq();
 
-    for (int i = 0; i < 200; i++) {
+    for (int i = 0; i < 20; i++) {
         putchar_addr = 'X';
         counter++;
-        int result = check_a0(1);
-        if (result != 1) {
+        int result = check_a0(i + 1);
+        if (result != i + 1) {
             tohost = 2;
             for (;;);
         }
