@@ -2060,13 +2060,6 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    dut->eval();\n" ++
   s!"    svSetScope(svGetScopeFromName(\"TOP.{tbName}\"));\n" ++
   "    if (load_elf(elf_path) != 0) return 1;\n\n" ++
-  "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
-  "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
-  (match cfg.putcharAddr with
-   | some _ =>
-     "    int64_t putchar_sym = elf_lookup_symbol(elf_path, \"putchar_addr\");\n" ++
-     "    if (putchar_sym >= 0) dpi_set_putchar_addr((uint32_t)putchar_sym);\n\n"
-   | none => "") ++
   s!"    auto spike = std::make_unique<SpikeOracle>(elf_path, \"{cfg.spikeIsa}\");\n" ++
   (if cfg.cacheLineMemPort.isNone then
     "    auto lean_sim = std::make_unique<LeanSim>(elf_path);\n\n"
@@ -2074,6 +2067,13 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    dut->clk = 0; dut->rst_n = 0;\n" ++
   "    for (int i = 0; i < 10; i++) " ++ lb ++ " dut->clk = !dut->clk; dut->eval(); " ++ rb ++ "\n" ++
   "    dut->rst_n = 1;\n\n" ++
+  "    uint32_t tohost_addr = find_tohost_addr(elf_path);\n" ++
+  "    dpi_set_tohost_addr(tohost_addr);\n\n" ++
+  (match cfg.putcharAddr with
+   | some _ =>
+     "    int64_t putchar_sym = elf_lookup_symbol(elf_path, \"putchar_addr\");\n" ++
+     "    if (putchar_sym >= 0) dpi_set_putchar_addr((uint32_t)putchar_sym);\n\n"
+   | none => "") ++
   "    uint64_t cycle = 0, retired = 0, mismatches = 0;\n" ++
   "    int sync_grace = 0;\n" ++
   "    bool done = false;\n\n" ++

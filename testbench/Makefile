@@ -250,7 +250,7 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 		--Mdir $(BUILD_DIR)/verilator_cosim \
 		$(VWARN) +define+COSIM_DEBUG \
 		--top-module tb_cpu \
-		-CFLAGS "-std=c++20 -O0 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
