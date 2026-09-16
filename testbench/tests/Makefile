@@ -1,6 +1,6 @@
 RISCV_PREFIX ?= $(shell command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 && echo riscv64-unknown-elf- || (command -v riscv64-elf-gcc >/dev/null 2>&1 && echo riscv64-elf- || (command -v riscv32-unknown-elf-gcc >/dev/null 2>&1 && echo riscv32-unknown-elf- || echo riscv64-elf-)))
 CC      = $(RISCV_PREFIX)gcc
-CFLAGS  = -march=rv32im_zicsr_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
+CFLAGS  = -march=rv64im_zicsr_zifencei -mabi=lp64 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib -Wl,--no-relax
 TESTS   = pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test subword_store_test sltiu_test ipc_loop csr_test hello_test branch_flush_x0_test mepc_only_test trap_csr_test ecall_test mret_test wfi_test timer_irq_test ss_independent_test ss_dependent_test minstret_test
 
@@ -12,7 +12,7 @@ GEN_INT_ELFS := $(GEN_INT_ASM:.S=.elf)
 GEN_FP_ELFS  := $(GEN_FP_ASM:.S=.elf)
 
 # FP tests (F and D extension)
-CFLAGS_FP = -march=rv32imafd_zicsr_zifencei -mabi=ilp32 -O2 -nostdlib -nostartfiles -ffreestanding
+CFLAGS_FP = -march=rv64imafd_zicsr_zifencei -mabi=lp64d -O2 -nostdlib -nostartfiles -ffreestanding
 
 # FreeRTOS kernel sources
 FREERTOS_DIR = ../../third_party/FreeRTOS-Kernel
