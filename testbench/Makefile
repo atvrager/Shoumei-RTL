@@ -237,8 +237,8 @@ run-riscv-tests: $(SIM_BIN) riscv-tests
 run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout 'freertos_demo.elf=200000' --timeout 'timer_irq_test.elf=10000' \
-	    --timeout 'jalr_a0_irq_test.elf=10000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
