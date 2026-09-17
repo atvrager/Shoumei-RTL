@@ -1,14 +1,10 @@
-/-
-Circuits/Combinational/ComparatorProofs.lean - Proofs for N-bit Comparator
-
-Structural proofs verifying gate counts and circuit structure.
--/
-
 import Shoumei.Circuits.Combinational.Comparator
+import Shoumei.Reflection.CompileCircuit
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Reflection
 
 -- Comparator4 structural properties
 theorem comparator4_structure :
@@ -48,15 +44,62 @@ theorem equalityComparator32_structure :
   mkEqualityComparator32.outputs.length = 1 ∧
   mkEqualityComparator32.instances.length = 0 := by native_decide
 
--- TODO: Behavioral proofs
--- These would prove functional correctness:
--- - eq output is 1 iff A == B
--- - lt output is 1 iff (signed)A < (signed)B
--- - ltu output is 1 iff (unsigned)A < (unsigned)B
--- - gt and gtu are correct complements
---
--- Example (to be implemented with proper evaluation functions):
--- theorem comparator_eq_correct (a b : UInt32) :
---   evalComparator32 a b = (..., a == b, ...) := by ...
+/-! ## L1 Functional Correctness Proofs -/
+
+/-- Helper: Construct input WireMap for 4-bit Comparator. -/
+def makeCmp4WireMap (a0 a1 a2 a3 b0 b1 b2 b3 : Bool) : WireMap :=
+  [
+    (Wire.mk "a_0", a0), (Wire.mk "a_1", a1), (Wire.mk "a_2", a2), (Wire.mk "a_3", a3),
+    (Wire.mk "b_0", b0), (Wire.mk "b_1", b1), (Wire.mk "b_2", b2), (Wire.mk "b_3", b3),
+    (Wire.mk "one", true)
+  ]
+
+/-- Helper: Decode 4 bits to unsigned Nat. -/
+def cmpBits4ToNat (b0 b1 b2 b3 : Bool) : Nat :=
+  (if b0 then 1 else 0) +
+  (if b1 then 2 else 0) +
+  (if b2 then 4 else 0) +
+  (if b3 then 8 else 0)
+
+/-- Helper: Decode 4 bits to two's-complement signed Int. -/
+def cmpBits4ToInt (b0 b1 b2 b3 : Bool) : Int :=
+  let u := cmpBits4ToNat b0 b1 b2 b3
+  if u >= 8 then (u : Int) - 16 else (u : Int)
+
+/-- Functional verification of all 5 comparator outputs for a single input pair. -/
+def checkCmp4 (a0 a1 a2 a3 b0 b1 b2 b3 : Bool) : Bool :=
+  let m := makeCmp4WireMap a0 a1 a2 a3 b0 b1 b2 b3
+  let res := compileCircuit mkComparator4 m
+  let eq := res.lookup (Wire.mk "eq")
+  let ltu := res.lookup (Wire.mk "ltu")
+  let gtu := res.lookup (Wire.mk "gtu")
+  let lt := res.lookup (Wire.mk "lt")
+  let gt := res.lookup (Wire.mk "gt")
+  let uA := cmpBits4ToNat a0 a1 a2 a3
+  let uB := cmpBits4ToNat b0 b1 b2 b3
+  let sA := cmpBits4ToInt a0 a1 a2 a3
+  let sB := cmpBits4ToInt b0 b1 b2 b3
+  (eq == (uA == uB)) &&
+  (ltu == (uA < uB)) &&
+  (gtu == (uA > uB)) &&
+  (lt == (sA < sB)) &&
+  (gt == (sA > sB))
+
+/-- Exhaustive check across all 256 input combinations. -/
+def checkCmp4All : Bool :=
+  let bools := [false, true]
+  bools.all fun a0 =>
+  bools.all fun a1 =>
+  bools.all fun a2 =>
+  bools.all fun a3 =>
+  bools.all fun b0 =>
+  bools.all fun b1 =>
+  bools.all fun b2 =>
+  bools.all fun b3 =>
+    checkCmp4 a0 a1 a2 a3 b0 b1 b2 b3
+
+/-- Theorem: 4-bit Comparator correctly evaluates eq, ltu, gtu, lt, gt across all 256 inputs (L1 Functional Truth). -/
+theorem comparator4_functional_correct : checkCmp4All = true := by
+  native_decide
 
 end Shoumei.Circuits.Combinational
