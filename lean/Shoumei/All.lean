@@ -27,6 +27,7 @@ import Shoumei.Circuits.Combinational.FPDoubleMiscProofs
 import Shoumei.Circuits.Combinational.FPLongConverter
 import Shoumei.Circuits.Combinational.FPLongConverterProofs
 import Shoumei.Circuits.Combinational.FPMisc
+import Shoumei.Circuits.Combinational.FPMiscProofs
 import Shoumei.Circuits.Combinational.FPPack
 import Shoumei.Circuits.Combinational.FPToInt64
 import Shoumei.Circuits.Combinational.FPU

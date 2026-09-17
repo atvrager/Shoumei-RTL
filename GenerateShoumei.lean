@@ -219,6 +219,10 @@ def allCircuits : List Circuit := [
   -- F-Extension
   fpUnpackCircuit,
   fpPackCircuit,
+  fpSgnjCircuit,
+  fpCompareCircuit,
+  fpClassCircuit,
+  fpCvtIntCircuit,
   fpMiscCircuit,
   fpAdderCircuit,
   fpMultiplierCircuit,

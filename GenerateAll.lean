@@ -219,6 +219,10 @@ def allCircuits : List Circuit := [
   mkMulDivExecUnit,
 
   -- F-Extension: FPU building blocks
+  fpSgnjCircuit,
+  fpCompareCircuit,
+  fpClassCircuit,
+  fpCvtIntCircuit,
   fpMiscCircuit,
   fpAdder_Stage1Circuit,
   fpAdder_Stage2Circuit,

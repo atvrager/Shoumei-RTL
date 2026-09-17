@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **206**
-- Circuits with a literal `name :=` (graph nodes): **65**
-- Compositional certificates (Lean registry): **78**
-- Proof files: **52**
+- Lean files: **208**
+- Circuits with a literal `name :=` (graph nodes): **78**
+- Compositional certificates (Lean registry): **79**
+- Proof files: **54**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -24,8 +24,8 @@ label is how many distinct instantiations cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>31 circuits"]
-  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>13 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>36 circuits"]
+  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
@@ -38,11 +38,11 @@ graph TD
   Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Execution -->|10| Shoumei_Circuits_Combinational
   Shoumei_Circuits_Sequential -->|4| Shoumei_Circuits_Combinational
+  Shoumei_RISCV_Renaming -->|2| Shoumei_Circuits_Combinational
   Shoumei_RISCV -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Memory -->|1| Shoumei_RISCV_Execution
-  Shoumei_RISCV_Renaming -->|1| Shoumei_Circuits_Combinational
 ```
 
 ## Coverage
@@ -51,7 +51,7 @@ graph TD
 | :--- | :--- | ---: | :---: | :---: | :---: |
 | `ALU32` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
 | `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
-| `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 1 | yes |  | yes |
+| `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BranchExecUnit` | Shoumei/RISCV/Execution | 0 |  |  | yes |
 | `Comparator32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Comparator64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
@@ -59,8 +59,19 @@ graph TD
 | `Decoder0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Divider32` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
 | `Divider64` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
-| `FPAdder` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
-| `FPAdderD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPAdder` | Shoumei/Circuits/Sequential | 4 | yes | yes | yes |
+| `FPAdderD` | Shoumei/Circuits/Sequential | 4 | yes | yes | yes |
+| `FPAdderD_Stage1_Unpack` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdderD_Stage2_Align` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdderD_Stage3_AddSub` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdderD_Stage4_NormRound` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdder_Stage1_Unpack` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdder_Stage2_Align` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdder_Stage3_AddSub` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPAdder_Stage4_NormRound` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPClass` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
+| `FPCompare` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
+| `FPCvtInt` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
 | `FPDivider` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPDividerD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPDoubleConverter` | Shoumei/Circuits/Combinational | 0 | yes | yes | yes |
@@ -70,10 +81,11 @@ graph TD
 | `FPFMA` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
 | `FPFMAD` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
 | `FPLongConverter` | Shoumei/Circuits/Combinational | 2 | yes | yes | yes |
-| `FPMisc` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
+| `FPMisc` | Shoumei/Circuits/Combinational | 4 | yes | yes | yes |
 | `FPMultiplier` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPMultiplierD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPPack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `FPSgnj` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
 | `FPSqrt` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPSqrtD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPToInt64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
@@ -101,6 +113,7 @@ graph TD
 | `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 4 | yes |  | yes |
 | `Popcount8` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `PriorityArbiter0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `PriorityArbiter64` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
 | `Queue16x32` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `Queue16x32_DualPort` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `ROB16_W2` | Shoumei/RISCV/Retirement | 0 | yes | yes | yes |
@@ -119,7 +132,7 @@ graph TD
 
 - **0** circuit files without a leading doc comment
 - **20** circuits with no `*Proofs.lean` mentioning them
-- **42** circuits that instantiate nothing (leaves)
+- **40** circuits that instantiate nothing (leaves)
 - **32** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
