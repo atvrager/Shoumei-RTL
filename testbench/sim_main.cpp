@@ -47,6 +47,10 @@ static struct _StdoutUnbuffer {
 #include "verilated_fst_c.h"
 #endif
 
+#if VM_COVERAGE
+#include "verilated_cov.h"
+#endif
+
 // DPI-C exported from tb_cpu.sv
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
 extern "C" void dpi_set_tohost_addr(unsigned int addr);
@@ -391,6 +395,12 @@ int main(int argc, char** argv) {
         trace->close();
         delete trace;
     }
+#endif
+
+#if VM_COVERAGE
+    const char* cov_file = get_plusarg(argc, argv, "+cov_file");
+    if (!cov_file) cov_file = "output/coverage/coverage.dat";
+    VerilatedCov::write(cov_file);
 #endif
 
     dut->final();

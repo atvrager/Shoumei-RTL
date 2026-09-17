@@ -148,6 +148,19 @@ structure RAMPrimitive where
   clock      : Wire
   deriving Repr, Hashable
 
+/-- Syntactic property for SystemVerilog Assertion (SVA) emission.
+    Mirrors proven temporal properties in Shoumei.Temporal. -/
+inductive SVAProperty where
+  | Always (wireName : String) (expected : Bool)
+  | HandshakeStable (validWire readyWire : String) (dataBus : String)
+  | ImpliesNext (anteWire : String) (anteVal : Bool) (conseqWire : String) (conseqVal : Bool)
+  | ImpliesOverlap (anteWire : String) (anteVal : Bool) (conseqWire : String) (conseqVal : Bool)
+  | FullNotReady (countBus : String) (cap : Nat) (enqReady : String)
+  | EmptyNotValid (countBus : String) (deqValid : String)
+  | CapacityBound (countBus : String) (cap : Nat)
+  | Conservation (enqValid enqReady deqValid deqReady countBus : String)
+  deriving Repr, BEq, Inhabited, Hashable
+
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules
 structure Circuit where
   name       : String           -- Module/circuit name
@@ -160,6 +173,7 @@ structure Circuit where
   inputBundles  : List InterfaceBundle  := []
   outputBundles : List InterfaceBundle  := []
   rams          : List RAMPrimitive     := []
+  svaProperties : List SVAProperty      := []
   keepHierarchy : Bool                  := false
   deriving Repr, Hashable
 
@@ -168,7 +182,8 @@ namespace Circuit
 -- Helper to create empty circuit
 def empty (name : String) : Circuit :=
   { name := name, inputs := [], outputs := [], gates := [], instances := []
-    signalGroups := [], inputBundles := [], outputBundles := [], rams := [] }
+    signalGroups := [], inputBundles := [], outputBundles := [], rams := []
+    svaProperties := [] }
 
 -- Inline a subcircuit with wire remapping
 -- This allows hierarchical composition while keeping a flat gate structure

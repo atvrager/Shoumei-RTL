@@ -108,16 +108,15 @@ def verifyMulPipeline (a b : UInt32) : Bool :=
 
 /-! ## CSA Compressor Sub-Module -/
 
-/-- Build a 64-bit 3-to-2 carry-save compressor.
+/-- Build a w-bit 3-to-2 carry-save compressor.
 
     At each bit position: sum = x XOR y XOR z, carry = majority(x, y, z).
     Carry output is shifted left by 1 (carry[0] = 0).
 
-    Inputs: x[63:0], y[63:0], z[63:0], zero (193 total)
-    Outputs: sum[63:0], carry[63:0] (128 total)
-    Gates: 512 (7 per bit × 64 + 64 shift BUFs) -/
-def mkCSACompressor64 : Circuit :=
-  let width := 64
+    Inputs: x[w-1:0], y[w-1:0], z[w-1:0], zero (3w + 1 total)
+    Outputs: sum[w-1:0], carry[w-1:0] (2w total)
+    Gates: 8w (7 per bit × w + w shift BUFs) -/
+def mkCSACompressor (width : Nat) : Circuit :=
   let x := makeIndexedWires "x" width
   let y := makeIndexedWires "y" width
   let z := makeIndexedWires "z" width
@@ -143,12 +142,11 @@ def mkCSACompressor64 : Circuit :=
     (List.range (width - 1)).map fun j =>
       Gate.mkBUF (c[j]!) (c_shifted[j + 1]!)
 
-  { name := "CSACompressor64"
+  { name := s!"CSACompressor{width}"
     inputs := x ++ y ++ z ++ [zero]
     outputs := s ++ c_shifted
     gates := csa_gates ++ shift_gates
     instances := []
-    -- V2 codegen annotations
     signalGroups := [
       { name := "x", width := width, wires := x },
       { name := "y", width := width, wires := y },
@@ -160,8 +158,13 @@ def mkCSACompressor64 : Circuit :=
     keepHierarchy := true
   }
 
+/-- 64-bit CSA compressor circuit. -/
+def mkCSACompressor64 : Circuit := mkCSACompressor 64
+
 /-- Convenience alias for CSA compressor. -/
-def csaCompressor64 : Circuit := mkCSACompressor64
+def csaCompressor64 : Circuit := mkCSACompressor 64
+def csaCompressor48 : Circuit := mkCSACompressor 48
+def csaCompressor106 : Circuit := mkCSACompressor 106
 
 /-! ## Structural Circuit Helpers -/
 
@@ -184,29 +187,25 @@ private def mkPipelineRegister
     (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
 
-/-- Build a hierarchical CSA tree using CSACompressor64 instances.
-
-    Takes a list of 64-bit row wire lists and returns:
+/-- Build a hierarchical CSA tree using CSACompressor<width> instances.
+    Takes a list of width-bit row wire lists and returns:
     - The two final rows (sum, carry) as wire lists
     - All BUF routing gates
-    - All CSACompressor64 instances
-
-    This is recursive: compress groups of 3 rows into 2, pass leftover
-    rows through, repeat until 2 rows remain. -/
-private partial def mkCSATreeHierarchical
+    - All CSACompressor<width> instances -/
+partial def mkCSATreeHierarchical
     (rows : List (List Wire)) (zero_wire : Wire)
-    (level : Nat := 0) (baseIdx : Nat := 0)
+    (width : Nat := 64) (level : Nat := 0) (baseIdx : Nat := 0)
     : List Wire × List Wire × List Gate × List CircuitInstance :=
   match rows with
   | [] =>
-    let s := makeIndexedWires "csa_empty_s" 64
-    let c := makeIndexedWires "csa_empty_c" 64
-    let g := (List.range 64).map fun j => Gate.mkBUF zero_wire (s[j]!)
-    let g2 := (List.range 64).map fun j => Gate.mkBUF zero_wire (c[j]!)
+    let s := makeIndexedWires "csa_empty_s" width
+    let c := makeIndexedWires "csa_empty_c" width
+    let g := (List.range width).map fun j => Gate.mkBUF zero_wire (s[j]!)
+    let g2 := (List.range width).map fun j => Gate.mkBUF zero_wire (c[j]!)
     (s, c, g ++ g2, [])
   | [single] =>
-    let c := makeIndexedWires s!"csa_l{level}_one_c" 64
-    let g := (List.range 64).map fun j => Gate.mkBUF zero_wire (c[j]!)
+    let c := makeIndexedWires s!"csa_l{level}_one_c" width
+    let g := (List.range width).map fun j => Gate.mkBUF zero_wire (c[j]!)
     (single, c, g, [])
   | [r1, r2] => (r1, r2, [], [])
   | _ =>
@@ -216,10 +215,10 @@ private partial def mkCSATreeHierarchical
       match rs with
       | x :: y :: z :: rest =>
         let tag := s!"csa_l{level}_g{idx}"
-        let s_out := makeIndexedWires s!"{tag}_s" 64
-        let c_out := makeIndexedWires s!"{tag}_c" 64
+        let s_out := makeIndexedWires s!"{tag}_s" width
+        let c_out := makeIndexedWires s!"{tag}_c" width
         let inst : CircuitInstance := {
-          moduleName := "CSACompressor64"
+          moduleName := s!"CSACompressor{width}"
           instName := s!"u_{tag}"
           portMap :=
             (x.enum.map (fun ⟨i, w⟩ => (s!"x[{i}]", w))) ++
@@ -234,7 +233,7 @@ private partial def mkCSATreeHierarchical
       | remaining => (remaining, [], [])
     let (next_rows, gates1, insts1) := compressGroups rows 0
     let (final_s, final_c, gates2, insts2) :=
-      mkCSATreeHierarchical next_rows zero_wire (level + 1) (baseIdx + insts1.length)
+      mkCSATreeHierarchical next_rows zero_wire width (level + 1) (baseIdx + insts1.length)
     (final_s, final_c, gates1 ++ gates2, insts1 ++ insts2)
 
 /-! ## Structural Circuit -/

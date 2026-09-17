@@ -24,6 +24,7 @@ Outputs (44):
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Combinational.Multiplier
 
 namespace Shoumei.Circuits.Sequential
 
@@ -68,65 +69,6 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
 def mkDFFBank (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
 
-/-- Inline 3:2 CSA compressor for w-bit values.
-    sum[i] = x[i] XOR y[i] XOR z[i]
-    carry[i+1] = MAJ(x[i], y[i], z[i]), carry[0] = zero -/
-private def mkCSAInline (x y z : List Wire) (sum carry : List Wire)
-    (zero : Wire) (pfx : String) : List Gate :=
-  let w := x.length
-  let c_raw := makeIndexedWires (pfx ++ "_cr") w
-  let csa_gates := (List.range w).flatMap fun i =>
-    let xy := Wire.mk s!"{pfx}_xy{i}"
-    let ab := Wire.mk s!"{pfx}_ab{i}"
-    let bc := Wire.mk s!"{pfx}_bc{i}"
-    let ac := Wire.mk s!"{pfx}_ac{i}"
-    let abbc := Wire.mk s!"{pfx}_abbc{i}"
-    [
-      Gate.mkXOR (x[i]!) (y[i]!) xy,
-      Gate.mkXOR xy (z[i]!) (sum[i]!),
-      Gate.mkAND (x[i]!) (y[i]!) ab,
-      Gate.mkAND (y[i]!) (z[i]!) bc,
-      Gate.mkAND (x[i]!) (z[i]!) ac,
-      Gate.mkOR ab bc abbc,
-      Gate.mkOR abbc ac (c_raw[i]!)
-    ]
-  -- Shift carry left by 1
-  let shift_gates := [Gate.mkBUF zero (carry[0]!)] ++
-    (List.range (w - 1)).map fun i => Gate.mkBUF (c_raw[i]!) (carry[i + 1]!)
-  csa_gates ++ shift_gates
-
-/-- Reduce a list of 48-bit rows to 2 (sum + carry) using a CSA tree.
-    Returns (final_sum, final_carry, all_gates). -/
-private partial def mkCSATree (rows : List (List Wire)) (zero : Wire)
-    (level : Nat) : List Wire × List Wire × List Gate :=
-  match rows with
-  | [] =>
-    let s := makeIndexedWires "csa_empty_s" 48
-    let c := makeIndexedWires "csa_empty_c" 48
-    let g := (List.range 48).flatMap fun j =>
-      [Gate.mkBUF zero (s[j]!), Gate.mkBUF zero (c[j]!)]
-    (s, c, g)
-  | [single] =>
-    let c := makeIndexedWires s!"csa_l{level}_one_c" 48
-    let g := (List.range 48).map fun j => Gate.mkBUF zero (c[j]!)
-    (single, c, g)
-  | [r1, r2] => (r1, r2, [])
-  | _ =>
-    -- Compress groups of 3
-    let rec compress (rs : List (List Wire)) (idx : Nat)
-        : List (List Wire) × List Gate :=
-      match rs with
-      | x :: y :: z :: rest =>
-        let pfx := s!"csa_l{level}_g{idx}"
-        let s := makeIndexedWires (pfx ++ "_s") 48
-        let c := makeIndexedWires (pfx ++ "_c") 48
-        let g := mkCSAInline x y z s c zero pfx
-        let (more, mg) := compress rest (idx + 1)
-        (s :: c :: more, g ++ mg)
-      | remaining => (remaining, [])
-    let (next, gates) := compress rows 0
-    let (fs, fc, more_gates) := mkCSATree next zero (level + 1)
-    (fs, fc, gates ++ more_gates)
 
 /-- N-bit 2:1 MUX bank. out[i] = sel ? b[i] : a[i]. -/
 private def mkMuxBank (a b : List Wire) (sel : Wire) (out : List Wire) : List Gate :=
@@ -311,7 +253,8 @@ def mkFPMultiplier : Circuit :=
   let pp_gates := pp_rows.map (·.2) |>.flatten
 
   -- CSA tree: reduce 24 partial products to 2 (sum + carry)
-  let (csa_sum, csa_carry, csa_tree_gates) := mkCSATree pp_wires zero 0
+  let (csa_sum, csa_carry, csa_tree_gates, csa_instances) :=
+    mkCSATreeHierarchical pp_wires zero 48
 
   -- NV = either_nan | (inf1 & zero2) | (zero1 & inf2)
   let inf1_zero2 := Wire.mk "mul_inf1_zero2"
@@ -608,7 +551,7 @@ def mkFPMultiplier : Circuit :=
     inputs := src1 ++ src2 ++ rm ++ dest_tag ++ [valid_in, clock, reset, zero]
     outputs := result ++ tag_out ++ exc ++ [valid_out]
     gates := all_gates
-    instances := []
+    instances := csa_instances
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },
       { name := "src2", width := 32, wires := src2 },

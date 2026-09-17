@@ -713,15 +713,17 @@ def mkShadowRegisters
       Gate.mkAND cdb_valid redir_tag_match[e]! we_tmp,
       Gate.mkAND we_tmp cdb_mispredicted we
     ]
-    let insts : List (List Gate × CircuitInstance) := (List.range 32).map (fun b =>
-      let next := Wire.mk s!"redir_tgt_next{e}_{b}"
-      ([Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target[b]! we next],
-       { moduleName := "DFlipFlop"
-         instName := s!"u_redir_tgt_dff_{e}_{b}"
-         portMap := [("d", next), ("q", redir_target_shadow[e]![b]!),
-                     ("clock", clock), ("reset", reset)]
-       }))
-    (gates ++ (insts.map Prod.fst).flatten, insts.map Prod.snd))
+    let next_wires := (List.range 32).map (fun b => Wire.mk s!"redir_tgt_next{e}_{b}")
+    let mux_gates := (List.range 32).map (fun b =>
+      Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target[b]! we (next_wires[b]!))
+    let reg_inst : CircuitInstance := {
+      moduleName := "Register32"
+      instName := s!"u_redir_tgt_reg_{e}"
+      portMap := (next_wires.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                 [("clock", clock), ("reset", reset)] ++
+                 (redir_target_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+    (gates ++ mux_gates, [reg_inst]))
   let redir_target_shadow_gates := (redir_target_shadow_results.map Prod.fst).flatten
   let redir_target_shadow_insts := (redir_target_shadow_results.map Prod.snd).flatten
 
@@ -871,16 +873,19 @@ def mkShadowRegisters2
       Gate.mkAND we0_tmp cdb_mispredicted_0 we0,
       Gate.mkAND cdb_valid_1 redir_tag_match_1[e]! we1_tmp,
       Gate.mkAND we1_tmp cdb_mispredicted_1 we1]
-    let insts := (List.range 32).map (fun b =>
+    let next_wires := (List.range 32).map (fun b => Wire.mk s!"redir_tgt_next{e}_{b}")
+    let mux_gates := (List.range 32).flatMap (fun b =>
       let mid := Wire.mk s!"redir_tgt_mid{e}_{b}"
-      let next := Wire.mk s!"redir_tgt_next{e}_{b}"
-      ([Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target_0[b]! we0 mid,
-        Gate.mkMUX mid cdb_redirect_target_1[b]! we1 next],
-       { moduleName := "DFlipFlop"
-         instName := s!"u_redir_tgt_dff_{e}_{b}"
-         portMap := [("d", next), ("q", redir_target_shadow[e]![b]!),
-                     ("clock", clock), ("reset", reset)] : CircuitInstance }))
-    (we_gates ++ (insts.map Prod.fst).flatten, insts.map Prod.snd))
+      [Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target_0[b]! we0 mid,
+       Gate.mkMUX mid cdb_redirect_target_1[b]! we1 (next_wires[b]!)])
+    let reg_inst : CircuitInstance := {
+      moduleName := "Register32"
+      instName := s!"u_redir_tgt_reg_{e}"
+      portMap := (next_wires.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                 [("clock", clock), ("reset", reset)] ++
+                 (redir_target_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+    }
+    (we_gates ++ mux_gates, [reg_inst]))
   let redir_target_gates := (redir_target_results.map Prod.fst).flatten
   let redir_target_insts := (redir_target_results.map Prod.snd).flatten
 

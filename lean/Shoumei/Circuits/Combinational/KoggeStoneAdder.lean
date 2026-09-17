@@ -268,4 +268,26 @@ def mkKoggeStoneSub (a b : List Wire) (sum_out : List Wire)
   let borrow_gate := Gate.mkNOT carry_out borrow_wire
   (inv_gates ++ add_gates ++ [borrow_gate], borrow_wire)
 
+/-- Parameterized Kogge-Stone parallel prefix adder circuit. -/
+def mkKoggeStoneAdder (width : Nat) : Circuit :=
+  let a := makeIndexedWires "a" width
+  let b := makeIndexedWires "b" width
+  let cin := Wire.mk "cin"
+  let sum := makeIndexedWires "sum" width
+  let (gates, _cout) := mkKoggeStoneAdd a b cin sum "ksa"
+  { name := s!"KoggeStoneAdder{width}"
+    inputs := a ++ b ++ [cin]
+    outputs := sum
+    gates := gates
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := width, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def koggeStoneAdder106 : Circuit := mkKoggeStoneAdder 106
+
 end Shoumei.Circuits.Combinational

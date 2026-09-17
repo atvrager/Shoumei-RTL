@@ -453,6 +453,12 @@ def fpDoubleConverter_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.FPDoubleConverterProofs"
 }
 
+/-- FPLongConverter: 64-bit FP/Integer converter (hierarchical: Int64ToFP + FPToInt64) -/
+def fpLongConverter_cert : CompositionalCert := {
+  moduleName := "FPLongConverter"
+  proofReference := "Shoumei.Circuits.Combinational.FPLongConverterProofs"
+}
+
 /-- FPAdderD: IEEE 754 DP adder (sequential, multi-stage pipeline) -/
 def fpAdderD_cert : CompositionalCert := {
   moduleName := "FPAdderD"
@@ -566,6 +572,7 @@ def allCerts : List CompositionalCert := [
   -- D-Extension
   fpDoubleMisc_cert,
   fpDoubleConverter_cert,
+  fpLongConverter_cert,
   fpAdderD_cert,
   fpMultiplierD_cert,
   fpFMAD_cert,

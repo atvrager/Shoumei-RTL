@@ -292,7 +292,15 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
     -- V2 codegen annotations
     signalGroups := [
       { name := "enq_data", width := width, wires := enq_data },
-      { name := "deq_data", width := width, wires := deq_data }
+      { name := "deq_data", width := width, wires := deq_data },
+      { name := "count", width := countWidth, wires := count }
+    ]
+    svaProperties := [
+      .EmptyNotValid "count" "deq_valid",
+      .FullNotReady "count" depth "enq_ready",
+      .CapacityBound "count" depth,
+      .HandshakeStable "deq_valid" "deq_ready" (if width == 1 then "deq_data_0" else "deq_data"),
+      .Conservation "enq_valid" "enq_ready" "deq_valid" "deq_ready" "count"
     ]
   }
 

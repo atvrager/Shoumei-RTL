@@ -39,6 +39,7 @@ TOTAL_AXIOMS=0
 TOTAL_SORRY=0
 TOTAL_ADMIT=0
 TOTAL_PROVEN=0
+TOTAL_VACUOUS=0
 
 # Associative arrays for per-component tracking
 declare -A COMP_THEOREMS
@@ -107,6 +108,7 @@ TOTAL_FILES=${#LEAN_FILES[@]}
 # Detailed sorry/admit locations for the report
 SORRY_LOCATIONS=()
 AXIOM_LOCATIONS=()
+VACUOUS_LOCATIONS=()
 
 PROJECT_PREFIX="$PROJECT_ROOT/"
 for f in "${LEAN_FILES[@]}"; do
@@ -159,6 +161,15 @@ for f in "${LEAN_FILES[@]}"; do
     admit_count=$((admit_count - admit_comment))
     if [ "$admit_count" -lt 0 ]; then admit_count=0; fi
     TOTAL_ADMIT=$((TOTAL_ADMIT + admit_count))
+
+    # Count vacuous (: True :=) theorems (banned by construction)
+    vac_count=$(grep -cE '^\s*(protected\s+|private\s+)?(theorem|lemma)\s+.*:\s*True\s*:=' "$f" 2>/dev/null || true)
+    TOTAL_VACUOUS=$((TOTAL_VACUOUS + vac_count))
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            VACUOUS_LOCATIONS+=("$rel:$line")
+        fi
+    done < <(grep -nE '^\s*(protected\s+|private\s+)?(theorem|lemma)\s+.*:\s*True\s*:=' "$f" 2>/dev/null | head -50 || true)
 done
 
 # Calculate proven counts per component
@@ -206,6 +217,7 @@ printf "  %-28s %s\n" "Theorems + Lemmas:" "$((TOTAL_THEOREMS + TOTAL_LEMMAS))"
 printf "  %-28s %s\n" "Axioms (unproven):" "$TOTAL_AXIOMS"
 printf "  %-28s %s\n" "Sorry occurrences:" "$TOTAL_SORRY"
 printf "  %-28s %s\n" "Admit occurrences:" "$TOTAL_ADMIT"
+printf "  %-28s %s\n" "Vacuous stubs (: True):" "$TOTAL_VACUOUS (Banned by construction)"
 printf "  %-28s %s\n" "Proven (no sorry/axiom):" "$TOTAL_PROVEN"
 printf "  %-28s %s\n" "Total declarations:" "$TOTAL_DECLS"
 echo ""
@@ -216,6 +228,26 @@ elif [ "$TOTAL_SORRY" -eq 0 ] && [ "$TOTAL_ADMIT" -eq 0 ]; then
     echo -e "  ${YELLOW}Coverage: ${COVERAGE_PCT}% -- No sorry/admit, but ${TOTAL_AXIOMS} axioms remain${NC}"
 else
     echo -e "  ${YELLOW}Coverage: ${COVERAGE_PCT}%${NC}"
+fi
+
+MANIFEST="$PROJECT_ROOT/output/proof-manifest.json"
+if [ ! -f "$MANIFEST" ]; then
+    lake env lean --run "$PROJECT_ROOT/scripts/export-proof-manifest.lean" "$MANIFEST" > /dev/null 2>&1 || true
+fi
+
+if [ -f "$MANIFEST" ]; then
+    L0_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['l0_structural'])" 2>/dev/null || echo "0")
+    L1_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['l1_functional'])" 2>/dev/null || echo "0")
+    L2_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['l2_invariant'])" 2>/dev/null || echo "0")
+    L3_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['l3_refinement'])" 2>/dev/null || echo "0")
+    HELPER_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['helper'])" 2>/dev/null || echo "0")
+    echo ""
+    echo "  Proof Depth Hierarchy (Lean Metaprogramming Reflection):"
+    echo "    L0 Structural (gate/port counts):          $L0_COUNT"
+    echo "    L1 Functional Truth (eval/truth tables):   $L1_COUNT"
+    echo "    L2 Inductive Invariants (state/CAM bounds):$L2_COUNT"
+    echo "    L3 Temporal Refinement (trace bisimulation):$L3_COUNT"
+    echo "    Helper & Algebraic Lemmas:                 $HELPER_COUNT"
 fi
 echo ""
 
@@ -270,71 +302,49 @@ if [ "${#AXIOM_LOCATIONS[@]}" -gt 0 ]; then
     echo ""
 fi
 
+# ─── Vacuous Locations (Banned) ─────────────────────────────
+
+if [ "${#VACUOUS_LOCATIONS[@]}" -gt 0 ]; then
+    echo -e "${BOLD}5. Vacuous Proof Violations (: True := trivial) [BANNED]${NC}"
+    echo ""
+    for loc in "${VACUOUS_LOCATIONS[@]}"; do
+        echo -e "  ${RED}$loc${NC}"
+    done
+    echo ""
+fi
+
 # ─── Coverage Matrix ────────────────────────────────────────
 
-echo -e "${BOLD}5. Coverage Matrix (Component x Property Type)${NC}"
+echo -e "${BOLD}6. Coverage Matrix (Component x Proof Depth)${NC}"
 echo ""
 echo "  Legend: [x] = proven  [~] = axiom/sorry  [ ] = no coverage"
 echo ""
+printf "  %-24s %10s %10s %10s %10s\n" "Component" "L0 (Str)" "L1 (Fun)" "L2 (Inv)" "L3 (Ref)"
+printf "  %-24s %10s %10s %10s %10s\n" "------------------------" "----------" "----------" "----------" "----------"
 
-# For each component, classify its proofs into categories
-# Categories: Structural (gate/port counts), Behavioral (correctness), Protocol (handshaking/ordering)
-printf "  %-24s %12s %12s %12s\n" "Component" "Structural" "Behavioral" "Protocol"
-printf "  %-24s %12s %12s %12s\n" "--------" "--------" "--------" "--------"
+if [ -f "$MANIFEST" ]; then
+    python3 -c "
+import json
+with open('$MANIFEST') as f:
+    d = json.load(f)
+matrix = {}
+for entry in d['declarations']:
+    comp = entry['component']
+    lvl = entry['level']
+    if comp not in matrix:
+        matrix[comp] = set()
+    matrix[comp].add(lvl)
 
-classify_component() {
-    local comp="$1"
-    local structural="[ ]"
-    local behavioral="[ ]"
-    local protocol="[ ]"
-
-    case "$comp" in
-        FullAdder)
-            structural="[x]"; behavioral="[x]" ;;
-        RippleCarryAdder|Subtractor|Comparator|LogicUnit|Shifter)
-            structural="[x]"; behavioral="[ ]" ;;
-        ALU32)
-            structural="[x]"; behavioral="[ ]" ;;
-        ALU-BitVec-Bridge)
-            structural="[ ]"; behavioral="[~]" ;;
-        Decoder)
-            structural="[x]"; behavioral="[x]" ;;
-        MuxTree)
-            structural="[x]"; behavioral="[x]" ;;
-        Arbiter)
-            structural="[ ]"; behavioral="[~]"; protocol="[~]" ;;
-        DFlipFlop)
-            structural="[x]"; behavioral="[x]" ;;
-        Register)
-            structural="[x]"; behavioral="[x]" ;;
-        Queue)
-            structural="[x]"; behavioral="[x]"; protocol="[x]" ;;
-        RV32I-Decoder)
-            structural="[x]"; behavioral="[x]" ;;
-        FreeList)
-            structural="[x]"; behavioral="[x]" ;;
-        RAT)
-            structural="[x]"; behavioral="[x]" ;;
-        PhysRegFile)
-            structural="[x]"; behavioral="[x]" ;;
-        RenameStage)
-            structural="[x]"; behavioral="[~]" ;;
-        ReservationStation)
-            structural="[x]"; behavioral="[~]" ;;
-        Decoupled)
-            structural="[ ]"; behavioral="[ ]"; protocol="[~]" ;;
-        Core-Theorems)
-            behavioral="[~]" ;;
-        *)
-            ;;
-    esac
-
-    printf "  %-24s %12s %12s %12s\n" "$comp" "$structural" "$behavioral" "$protocol"
-}
-
-for comp in "${COMPONENTS[@]}"; do
-    classify_component "$comp"
-done
+for comp in sorted(matrix.keys()):
+    if comp == 'Other': continue
+    s = matrix[comp]
+    l0 = '[x]' if 'L0_Structural' in s else '[ ]'
+    l1 = '[x]' if 'L1_Functional' in s else '[ ]'
+    l2 = '[x]' if 'L2_Invariant' in s else '[ ]'
+    l3 = '[x]' if 'L3_Refinement' in s else '[ ]'
+    print(f'  {comp:24s} {l0:^10s} {l1:^10s} {l2:^10s} {l3:^10s}')
+"
+fi
 echo ""
 
 # ─── Markdown Report ────────────────────────────────────────
@@ -356,6 +366,12 @@ MD="$REPORT_DIR/proof-coverage.md"
     echo "| Admit occurrences | $TOTAL_ADMIT |"
     echo "| Proven (no sorry/axiom) | $TOTAL_PROVEN |"
     echo "| **Coverage** | **${COVERAGE_PCT}%** |"
+    if [ -f "$MANIFEST" ]; then
+        echo "| L0 Structural | $L0_COUNT |"
+        echo "| L1 Functional Truth | $L1_COUNT |"
+        echo "| L2 Inductive Invariants | $L2_COUNT |"
+        echo "| L3 Temporal Refinement | $L3_COUNT |"
+    fi
     echo ""
     echo "## Per-Component Coverage"
     echo ""
@@ -378,43 +394,36 @@ MD="$REPORT_DIR/proof-coverage.md"
     done
 
     echo ""
-    echo "## Coverage Matrix"
+    echo "## Coverage Matrix (Proof Depth Hierarchy)"
     echo ""
-    echo "Legend: x = proven, ~ = axiom/sorry, blank = no coverage"
+    echo "Legend: x = proven, blank = no coverage"
     echo ""
-    echo "| Component | Structural | Behavioral | Protocol |"
-    echo "|-----------|:----------:|:----------:|:--------:|"
+    echo "| Component | L0 (Structural) | L1 (Functional) | L2 (Invariant) | L3 (Refinement) |"
+    echo "|-----------|:---------------:|:---------------:|:--------------:|:---------------:|"
 
-    matrix_row() {
-        local comp="$1"
-        local s="" b="" p=""
-        case "$comp" in
-            FullAdder)              s="x"; b="x" ;;
-            RippleCarryAdder|Subtractor|Comparator|LogicUnit|Shifter)
-                                    s="x" ;;
-            ALU32)                  s="x" ;;
-            ALU-BitVec-Bridge)      b="~" ;;
-            Decoder)                s="x"; b="x" ;;
-            MuxTree)                s="x"; b="x" ;;
-            Arbiter)                b="~"; p="~" ;;
-            DFlipFlop)              s="x"; b="x" ;;
-            Register)               s="x"; b="x" ;;
-            Queue)                  s="x"; b="x"; p="x" ;;
-            RV32I-Decoder)          s="x"; b="x" ;;
-            FreeList)               s="x"; b="x" ;;
-            RAT)                    s="x"; b="x" ;;
-            PhysRegFile)            s="x"; b="x" ;;
-            RenameStage)            s="x"; b="~" ;;
-            ReservationStation)     s="x"; b="~" ;;
-            Decoupled)              p="~" ;;
-            Core-Theorems)          b="~" ;;
-        esac
-        echo "| $comp | $s | $b | $p |"
-    }
+    if [ -f "$MANIFEST" ]; then
+        python3 -c "
+import json
+with open('$MANIFEST') as f:
+    d = json.load(f)
+matrix = {}
+for entry in d['declarations']:
+    comp = entry['component']
+    lvl = entry['level']
+    if comp not in matrix:
+        matrix[comp] = set()
+    matrix[comp].add(lvl)
 
-    for comp in "${COMPONENTS[@]}"; do
-        matrix_row "$comp"
-    done
+for comp in sorted(matrix.keys()):
+    if comp == 'Other': continue
+    s = matrix[comp]
+    l0 = 'x' if 'L0_Structural' in s else ''
+    l1 = 'x' if 'L1_Functional' in s else ''
+    l2 = 'x' if 'L2_Invariant' in s else ''
+    l3 = 'x' if 'L3_Refinement' in s else ''
+    print(f'| {comp} | {l0} | {l1} | {l2} | {l3} |')
+"
+    fi
 
     if [ "${#SORRY_LOCATIONS[@]}" -gt 0 ]; then
         echo ""

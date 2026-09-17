@@ -303,7 +303,7 @@ def toSystemVerilogNetlist (c : Circuit) : String :=
   let isSeq := flatGates.any (fun g => g.gateType.isDFF)
 
   -- Step 3: Auto-detect signal groups from wire patterns
-  let allWires := (c.inputs ++ c.outputs ++ flatGates.map (·.output)).eraseDups
+  let allWires := dedupWires (c.inputs ++ c.outputs ++ flatGates.map (·.output))
   let signalGroups := autoDetectSignalGroups allWires
 
   -- Step 4: Build wire→group mapping

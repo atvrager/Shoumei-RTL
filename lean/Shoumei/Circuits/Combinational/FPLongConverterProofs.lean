@@ -16,8 +16,8 @@ theorem fpLongConverterCircuit_inputs :
 theorem fpLongConverterCircuit_outputs :
     fpLongConverterCircuit.outputs.length = 70 := by native_decide
 
-/-- No submodules (pure flat combinational circuit). -/
+/-- Submodules: Int64ToFP and FPToInt64. -/
 theorem fpLongConverterCircuit_instances :
-    fpLongConverterCircuit.instances = [] := by rfl
+    fpLongConverterCircuit.instances.length = 2 := by native_decide
 
 end Shoumei.Circuits.Combinational

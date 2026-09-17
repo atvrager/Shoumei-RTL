@@ -8,8 +8,29 @@ Provides common functionality for code generators:
 -/
 
 import Shoumei.DSL
+import Std.Data.HashSet
 
 namespace Shoumei.Codegen
+
+/-- Deduplicate a list of wires in O(N) time using a HashSet on wire names. -/
+def dedupWires (wires : List Wire) : List Wire := Id.run do
+  let mut seen : Std.HashSet String := {}
+  let mut result : Array Wire := #[]
+  for w in wires do
+    if !seen.contains w.name then
+      seen := seen.insert w.name
+      result := result.push w
+  result.toList
+
+/-- Deduplicate a list of strings in O(N) time using a HashSet. -/
+def dedupStrings (strings : List String) : List String := Id.run do
+  let mut seen : Std.HashSet String := {}
+  let mut result : Array String := #[]
+  for s in strings do
+    if !seen.contains s then
+      seen := seen.insert s
+      result := result.push s
+  result.toList
 
 -- Indent a string by a given number of spaces
 def indent (n : Nat) (s : String) : String :=
@@ -62,7 +83,7 @@ def findClockWires (c : Circuit) : List Wire :=
     ) |>.head?
   )
   -- Filter to only include actual circuit inputs (not internal wires)
-  (dffClocks ++ instClocks).eraseDups.filter (fun w => c.inputs.any (fun i => i.name == w.name))
+  dedupWires (dffClocks ++ instClocks) |>.filter (fun w => c.inputs.any (fun i => i.name == w.name))
 
 -- Helper: find all reset wires (from DFF gates and instance connections)
 -- Only returns wires that are actual circuit inputs (not internal derived wires)
@@ -83,6 +104,6 @@ def findResetWires (c : Circuit) : List Wire :=
     ) |>.head?
   )
   -- Filter to only include actual circuit inputs (not internal wires)
-  (dffResets ++ instResets).eraseDups.filter (fun w => c.inputs.any (fun i => i.name == w.name))
+  dedupWires (dffResets ++ instResets) |>.filter (fun w => c.inputs.any (fun i => i.name == w.name))
 
 end Shoumei.Codegen

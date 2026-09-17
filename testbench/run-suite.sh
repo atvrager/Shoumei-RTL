@@ -18,6 +18,7 @@ BIN=""
 JOBS="$(nproc)"
 DEFAULT_TIMEOUT=5000
 CSV="/dev/null"
+COV_DIR=""
 declare -a OVERRIDES=()
 declare -a ELFS=()
 
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
         --jobs)            JOBS="$2"; shift 2 ;;
         --default-timeout) DEFAULT_TIMEOUT="$2"; shift 2 ;;
         --csv)             CSV="$2"; shift 2 ;;
+        --coverage-dir)    COV_DIR="$2"; shift 2 ;;
         --timeout)         OVERRIDES+=("$2"); shift 2 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) ELFS+=("$1"); shift ;;
@@ -54,10 +56,14 @@ OUT_DIR="$(mktemp -d)"
 trap 'rm -rf "$OUT_DIR"' EXIT
 
 run_one() {
-    local timeout="$1" elf="$2" mode="$3" bin="$4" out_dir="$5"
+    local timeout="$1" elf="$2" mode="$3" bin="$4" out_dir="$5" cov_dir="${6:-}"
     local name; name="$(basename "$elf")"
+    local cov_arg=()
+    if [[ -n "$cov_dir" ]]; then
+        cov_arg=("+cov_file=$cov_dir/${name}.dat")
+    fi
     local result
-    result=$(timeout "$timeout" "$bin" +elf="$elf" +timeout="$timeout" 2>&1)
+    result=$(timeout "$timeout" "$bin" +elf="$elf" +timeout="$timeout" "${cov_arg[@]}" 2>&1)
 
     local cycles retired ipc status
     cycles=$(echo "$result"  | grep -oP '(Cycles|Total cycles):\s+\K[0-9]+'   | tail -1)
@@ -85,12 +91,16 @@ for elf in "${ELFS[@]}"; do
     echo "$(timeout_for "$(basename "$elf")") $elf" >> "$JOBS_FILE"
 done
 
-# run_one is exported; mode/bin/out_dir ride in the environment so xargs can
+if [[ -n "$COV_DIR" ]]; then
+    mkdir -p "$COV_DIR"
+fi
+
+# run_one is exported; mode/bin/out_dir/cov_dir ride in the environment so xargs can
 # supply the per-test arguments as $1/$2.
-export SUITE_MODE="$MODE" SUITE_BIN="$BIN" SUITE_OUT_DIR="$OUT_DIR"
+export SUITE_MODE="$MODE" SUITE_BIN="$BIN" SUITE_OUT_DIR="$OUT_DIR" SUITE_COV_DIR="$COV_DIR"
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -a "$JOBS_FILE" -n 2 bash -c \
-    'run_one "$1" "$2" "$SUITE_MODE" "$SUITE_BIN" "$SUITE_OUT_DIR"' _
+    'run_one "$1" "$2" "$SUITE_MODE" "$SUITE_BIN" "$SUITE_OUT_DIR" "$SUITE_COV_DIR"' _
 
 echo "test,status,cycles,retired,ipc" > "$CSV"
 pass=0; fail=0
@@ -114,4 +124,20 @@ done < "$JOBS_FILE"
 
 echo ""
 echo "$pass/$((pass + fail)) passed, $fail failed"
+
+if [[ -n "$COV_DIR" ]] && compgen -G "$COV_DIR/*.dat" > /dev/null; then
+    echo ""
+    echo "==> Merging coverage data..."
+    mkdir -p "$COV_DIR/annotated"
+    # Merge individual test coverage files
+    # shellcheck disable=SC2086
+    verilator_coverage --write "$COV_DIR/coverage.dat" "$COV_DIR"/*.dat
+    echo "==> Generating annotated source files in $COV_DIR/annotated..."
+    verilator_coverage --annotate "$COV_DIR/annotated" "$COV_DIR/coverage.dat"
+    verilator_coverage --write-info "$COV_DIR/coverage.info" "$COV_DIR/coverage.dat"
+    echo ""
+    echo "==> Coverage summary:"
+    verilator_coverage "$COV_DIR/coverage.dat"
+fi
+
 [[ "$fail" -eq 0 ]]

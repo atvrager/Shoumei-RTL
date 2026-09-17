@@ -14,7 +14,7 @@ jobs:
     outputs:
       code: ${{ steps.detect.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       # Decide whether this change touches anything the heavy jobs care about.
@@ -36,7 +36,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Shellcheck
         run: |
@@ -100,17 +100,35 @@ jobs:
           git diff --exit-code -- docs/project-map.md
 
   proof-coverage:
-    needs: [changes]
+    needs: [changes, lean-build]
     if: needs.changes.outputs.code == 'true'
-    name: Proof Coverage
+    name: Proof Coverage & Depth Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Run proof coverage analysis
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
+      - name: Run proof coverage and depth hierarchy analysis
         run: |
           chmod +x verification/proof-coverage.sh
           verification/proof-coverage.sh
+
+      - name: Run hardware mutation testing suite
+        run: |
+          chmod +x verification/mutation-test.sh
+          verification/mutation-test.sh
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -120,6 +138,8 @@ jobs:
           path: |
             output/proof-coverage/proof-coverage.md
             output/proof-coverage/proof-coverage.json
+            output/proof-manifest.json
+            output/mutation-test/mutation-report.json
           retention-days: 90
 
   lean-build:
@@ -128,7 +148,7 @@ jobs:
     name: Lean Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install elan
         run: |
@@ -183,7 +203,7 @@ jobs:
     name: Shoumei Round-trip
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install elan
         run: |
@@ -206,7 +226,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lean-build]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Fetch riscv-opcodes submodule
         run: git submodule update --init third_party/riscv-opcodes
@@ -272,7 +292,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [codegen]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download codegen artifact
         uses: actions/download-artifact@v4
@@ -327,7 +347,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [codegen]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download codegen artifact
         uses: actions/download-artifact@v4
@@ -352,7 +372,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [codegen]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download codegen artifact
         uses: actions/download-artifact@v4
@@ -370,7 +390,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [codegen]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Fetch submodules
         run: |
@@ -437,7 +457,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [codegen]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download codegen artifact
         uses: actions/download-artifact@v4

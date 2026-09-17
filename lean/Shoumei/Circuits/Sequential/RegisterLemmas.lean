@@ -5,12 +5,7 @@ import Shoumei.Reflection.WireMap
 namespace Shoumei.Circuits.Sequential
 open Shoumei
 
--- 1. COMPLEX PROPERTY: Keep as Axiom
--- Proving Nat.repr is injective requires extensive lemmas about toDigitsCore/digitChar.
--- Not used by any downstream proofs; retained as a goal for future work.
-axiom natToString_injective {i j : Nat} (h : Nat.repr i = Nat.repr j) : i = j
-
--- 2. WIRE EQUALITY: Proven via String BEq roundtrip
+-- 1. WIRE EQUALITY: Proven via String BEq roundtrip
 -- Wire derives BEq from String, and String has LawfulBEq.
 theorem wire_beq_eq (w1 w2 : Wire) : (w1 == w2) = true → w1 = w2 :=
   Reflection.wire_beq_eq w1 w2

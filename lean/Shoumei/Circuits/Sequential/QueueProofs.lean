@@ -170,12 +170,89 @@ theorem enqueue_dequeue_count :
 ## Capacity Invariant
 -/
 
--- TODO: Prove general capacity invariant (requires induction)
-/-
-theorem never_exceeds_capacity (q : QueueState Nat) :
-  q.count ≤ q.capacity := by
-  sorry
--/
+/-- Queue operations: enqueue or dequeue. -/
+inductive QueueOp (α : Type) where
+  | enq (val : α)
+  | deq
+
+/-- Apply a single queue operation. -/
+def applyOp {α : Type} (op : QueueOp α) (q : QueueState α) : QueueState α :=
+  match op with
+  | .enq val => q.enqueue val
+  | .deq => (q.dequeue).1
+
+/-- Apply a sequence of operations from left to right. -/
+def applyTrace {α : Type} (ops : List (QueueOp α)) (q : QueueState α) : QueueState α :=
+  ops.foldl (fun acc op => applyOp op acc) q
+
+/-- Theorem: Enqueue preserves queue capacity. -/
+theorem enqueue_capacity {α : Type} (q : QueueState α) (val : α) :
+    (q.enqueue val).capacity = q.capacity := by
+  simp [QueueState.enqueue]
+  split <;> rfl
+
+/-- Theorem: Dequeue preserves queue capacity. -/
+theorem dequeue_capacity {α : Type} (q : QueueState α) :
+    (q.dequeue).1.capacity = q.capacity := by
+  simp [QueueState.dequeue]
+  cases q.entries <;> rfl
+
+/-- Theorem: Any operation preserves queue capacity. -/
+theorem applyOp_capacity {α : Type} (op : QueueOp α) (q : QueueState α) :
+    (applyOp op q).capacity = q.capacity := by
+  cases op with
+  | enq val => exact enqueue_capacity q val
+  | deq => exact dequeue_capacity q
+
+/-- Theorem: Enqueue preserves the capacity invariant. -/
+theorem enqueue_preserves_capacity_inv {α : Type} (q : QueueState α) (val : α) (h : q.count ≤ q.capacity) :
+    (q.enqueue val).count ≤ q.capacity := by
+  simp [QueueState.enqueue, QueueState.count]
+  split
+  · exact h
+  · rename_i h_not_full
+    simp [QueueState.isFull] at h_not_full
+    simp
+    omega
+
+/-- Theorem: Dequeue preserves the capacity invariant. -/
+theorem dequeue_preserves_capacity_inv {α : Type} (q : QueueState α) (h : q.count ≤ q.capacity) :
+    (q.dequeue).1.count ≤ q.capacity := by
+  rcases q with ⟨entries, cap⟩
+  simp [QueueState.dequeue, QueueState.count] at h ⊢
+  cases entries with
+  | nil =>
+    exact h
+  | cons head tail =>
+    simp at h ⊢
+    omega
+
+/-- Theorem: Any single operation preserves the capacity invariant. -/
+theorem applyOp_preserves_capacity_inv {α : Type} (op : QueueOp α) (q : QueueState α) (h : q.count ≤ q.capacity) :
+    (applyOp op q).count ≤ q.capacity := by
+  cases op with
+  | enq val => exact enqueue_preserves_capacity_inv q val h
+  | deq => exact dequeue_preserves_capacity_inv q h
+
+/-- Theorem: Any sequence of operations preserves the capacity invariant. -/
+theorem applyTrace_preserves_capacity_inv {α : Type} (ops : List (QueueOp α)) (q : QueueState α) (h : q.count ≤ q.capacity) :
+    (applyTrace ops q).count ≤ q.capacity := by
+  induction ops generalizing q with
+  | nil => exact h
+  | cons op rest ih =>
+    simp [applyTrace]
+    have h_op := applyOp_preserves_capacity_inv op q h
+    have h_cap := applyOp_capacity op q
+    rw [← h_cap] at h_op
+    have ih_applied := ih (applyOp op q) h_op
+    rw [h_cap] at ih_applied
+    exact ih_applied
+
+/-- Master Theorem: An initialized queue never exceeds its capacity under any sequence of operations. -/
+theorem never_exceeds_capacity {α : Type} (ops : List (QueueOp α)) (cap : Nat) :
+    (applyTrace ops (QueueState.empty (α := α) cap)).count ≤ cap := by
+  apply applyTrace_preserves_capacity_inv
+  simp [QueueState.empty, QueueState.count]
 
 -- Theorem: Full queue has count equal to capacity
 theorem full_means_at_capacity :

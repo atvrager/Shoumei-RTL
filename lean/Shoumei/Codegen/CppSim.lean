@@ -81,7 +81,7 @@ def findInternalWires (c : Circuit) : List Wire :=
     let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
     wpWires ++ rpWires)
   let allWires := gateOutputs ++ instanceWires ++ ramWires
-  (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w)).eraseDups
+  dedupWires (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w))
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
@@ -99,7 +99,7 @@ def findClockWires (c : Circuit) : List Wire :=
       none)
   let instanceClocks := c.instances.filterMap (fun inst =>
     inst.portMap.find? (fun (pname, _) => pname == "clock") |>.map (·.snd))
-  (dffClocks ++ instanceClocks).eraseDups
+  dedupWires (dffClocks ++ instanceClocks)
 
 -- Helper: find all reset wires (from DFF inputs)
 def findResetWires (c : Circuit) : List Wire :=
@@ -112,7 +112,7 @@ def findResetWires (c : Circuit) : List Wire :=
       none)
   let instanceResets := c.instances.filterMap (fun inst =>
     inst.portMap.find? (fun (pname, _) => pname == "reset") |>.map (·.snd))
-  (dffResets ++ instanceResets).eraseDups
+  dedupWires (dffResets ++ instanceResets)
 
 -- Helper: check if circuit has sequential elements (DFFs or instances with clock)
 def hasSequentialElements (c : Circuit) : Bool :=
@@ -125,7 +125,7 @@ def hasSequentialElements (c : Circuit) : Bool :=
 
 /-- Get unique submodule types used by this circuit -/
 def getInstanceModuleNames (c : Circuit) : List String :=
-  (c.instances.map (·.moduleName)).eraseDups
+  dedupStrings (c.instances.map (·.moduleName))
 
 /-- Generate #include directives for submodule headers -/
 def generateInstanceIncludes (c : Circuit) : String :=

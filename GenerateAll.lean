@@ -201,13 +201,16 @@ def allCircuits : List Circuit := [
 
   -- M-Extension & 64-bit Arithmetic Building Blocks
   mkKoggeStoneAdder64,
+  koggeStoneAdder106,
   mkSubtractor64,
   mkComparator64,
   mkLogicUnit64,
   mkShifter64,
   mkALU64,
   mkIntegerExecUnit64,
+  csaCompressor48,
   csaCompressor64,
+  csaCompressor106,
   mul32x32To64,
   mkPipelinedMultiplier,
   pipelinedMultiplier64,
@@ -227,6 +230,8 @@ def allCircuits : List Circuit := [
   -- D-Extension: Double-Precision FPU building blocks
   fpDoubleMiscCircuit,
   fpDoubleConverterCircuit,
+  int64ToFPCircuit,
+  fpToInt64Circuit,
   fpLongConverterCircuit,
   fpAdderDCircuit,
   fpMultiplierDCircuit,
