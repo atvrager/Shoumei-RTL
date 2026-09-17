@@ -690,24 +690,22 @@ def mkCsrReadMux
     (mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg : List Wire)
     (fflags_reg : List Wire) (frm_reg : List Wire)
     : List Gate × List Wire × Wire × Wire × Wire :=
-  let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  let dataWidth := if config.xlen == 64 || config.enableD then 64 else 32
+  let csr_read_data := (List.range dataWidth).map (fun i => Wire.mk s!"csr_rd_e{i}")
   let mstatus_sd_bit := Wire.mk "mstatus_sd_bit"
   let mstatus_fs_inv0 := Wire.mk "mstatus_fs_inv0"
   let mstatus_fs_inv1 := Wire.mk "mstatus_fs_inv1"
   let mstatus_sd_gate :=
     if config.enableZicsr && enableF then
-      [Gate.mkNOT mstatus_reg[13]! mstatus_fs_inv0,
-       Gate.mkNOT mstatus_reg[14]! mstatus_fs_inv1,
-       Gate.mkAND mstatus_fs_inv0 mstatus_fs_inv1 mstatus_sd_bit]
-    else if config.enableZicsr then
-      [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
-       Gate.mkBUF zero mstatus_sd_bit]
+      [Gate.mkAND mstatus_reg[13]! mstatus_reg[14]! mstatus_sd_bit,
+       Gate.mkBUF zero mstatus_fs_inv0,
+       Gate.mkBUF zero mstatus_fs_inv1]
     else
       [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
        Gate.mkBUF zero mstatus_sd_bit]
   let csr_read_mux_gates :=
     if config.enableZicsr then
-      (List.range 32).map (fun i =>
+      ((List.range 32).map (fun i =>
         let misa_bit := if Nat.testBit misa_val i then one else zero
         let r_misa := Wire.mk s!"csr_rmisa_e{i}"
         let r_mscr := Wire.mk s!"csr_rmscr_e{i}"
@@ -732,11 +730,12 @@ def mkCsrReadMux
                                else zero
                              else zero
         let mstatus_read_bit :=
-          if i == 31 then mstatus_sd_bit
+          if i == 31 then (if config.xlen == 64 then zero else mstatus_sd_bit)
           else if i == 11 || i == 12 then one
-          else if enableF && (i == 13 || i == 14) then
-            if i == 13 then mstatus_fs_inv0 else mstatus_fs_inv1
           else mstatus_reg[i]!
+        let mcause_read_bit :=
+          if i == 31 then (if config.xlen == 64 then zero else mcause_reg[31]!)
+          else mcause_reg[i]!
         [Gate.mkMUX zero misa_bit is_misa r_misa,
          Gate.mkMUX r_misa mscratch_reg[i]! is_mscratch r_mscr,
          Gate.mkMUX r_mscr mcycle_reg[i]! is_mcycle r_mcyc,
@@ -750,11 +749,25 @@ def mkCsrReadMux
          Gate.mkMUX r_mstatus mie_reg[i]! is_mie r_mie,
          Gate.mkMUX r_mie mtvec_reg[i]! is_mtvec r_mtvec,
          Gate.mkMUX r_mtvec mepc_reg[i]! is_mepc r_mepc,
-         Gate.mkMUX r_mepc mcause_reg[i]! is_mcause r_mcause,
+         Gate.mkMUX r_mepc mcause_read_bit is_mcause r_mcause,
          Gate.mkMUX r_mcause mtval_reg[i]! is_mtval r_mtval,
-         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten
+         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten) ++
+      (if config.xlen == 64 || config.enableD then
+        (List.range 32).map (fun k =>
+          let r_mcyc_hi := Wire.mk s!"csr_rmcyc_hi_{k}"
+          let r_mins_hi := Wire.mk s!"csr_rmins_hi_{k}"
+          let r_mstat_hi := Wire.mk s!"csr_rmstat_hi_{k}"
+          let r_mcause_hi := Wire.mk s!"csr_rmcause_hi_{k}"
+          let mstat_hi_bit := if k == 31 then mstatus_sd_bit else zero
+          let mcause_hi_bit := if k == 31 then mcause_reg[31]! else zero
+          [Gate.mkMUX zero mcycleh_reg[k]! is_mcycle r_mcyc_hi,
+           Gate.mkMUX r_mcyc_hi minstreth_reg[k]! is_minstret r_mins_hi,
+           Gate.mkMUX r_mins_hi mstat_hi_bit is_mstatus r_mstat_hi,
+           Gate.mkMUX r_mstat_hi mcause_hi_bit is_mcause r_mcause_hi,
+           Gate.mkBUF r_mcause_hi csr_read_data[32+k]!]) |>.flatten
+       else [])
     else
-      (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
+      (List.range dataWidth).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
   (mstatus_sd_gate ++ csr_read_mux_gates, csr_read_data, mstatus_sd_bit, mstatus_fs_inv0, mstatus_fs_inv1)
 
 /-- CSR operation decode: match captured optype to determine RW/RS/RC/IMM,
@@ -954,7 +967,7 @@ def mkCsrNextValue
     if config.enableZicsr then
       (List.range 32).map (fun i =>
         if i == 11 || i == 12 then Gate.mkBUF one mstatus_warl[i]!
-        else if enableF && (i == 13 || i == 14) then Gate.mkNOT csr_write_val[i]! mstatus_warl[i]!
+        else if enableF && (i == 13 || i == 14) then Gate.mkBUF csr_write_val[i]! mstatus_warl[i]!
         else if i == 3 || i == 7 then Gate.mkBUF csr_write_val[i]! mstatus_warl[i]!
         else Gate.mkBUF zero mstatus_warl[i]!)
     else
@@ -1014,7 +1027,10 @@ def mkCsrNextValue
   let mcause_next_gates :=
     if config.enableZicsr then
       (List.range 32).map (fun i =>
-        Gate.mkMUX mcause_reg[i]! csr_write_val[i]! csr_we_mcause mcause_next[i]!)
+        let wr_bit := if i == 31 && config.xlen == 64 && csr_write_val.length >= 64
+                      then csr_write_val[63]!
+                      else csr_write_val[i]!
+        Gate.mkMUX mcause_reg[i]! wr_bit csr_we_mcause mcause_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mcause_next[i]!)
   -- mtval: all 32 bits writable

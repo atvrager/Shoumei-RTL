@@ -248,6 +248,10 @@ uint64_t SpikeOracle::get_freg(int i) const {
     return static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
 }
 
+uint64_t SpikeOracle::get_csr(int which) const {
+    return static_cast<uint64_t>(proc_->get_csr(which));
+}
+
 uint64_t SpikeOracle::get_pc() const {
     return static_cast<uint64_t>(proc_->get_state()->pc);
 }

@@ -63,7 +63,7 @@ module tb_cpu #(
   logic [31:0] mem_req_addr;
   logic [255:0] mem_req_data;
   logic [31:0] store_snoop_addr;
-  logic [31:0] store_snoop_data;
+  logic [63:0] store_snoop_data;
   logic [31:0] rvvi_pc_0;
   logic [31:0] rvvi_pc_1;
   logic [31:0] rvvi_insn_0;
@@ -216,10 +216,16 @@ module tb_cpu #(
       mtimecmp <= 64'hFFFFFFFFFFFFFFFF;
     end else begin
       mtime <= mtime + 1;
-      if (clint_mtimecmp_lo_wr) mtimecmp[31:0]  <= store_snoop_data;
-      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data;
-      if (clint_mtime_lo_wr)    mtime[31:0]     <= store_snoop_data;
-      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data;
+      if (clint_mtimecmp_lo_wr) begin
+        mtimecmp[31:0]  <= store_snoop_data[31:0];
+        mtimecmp[63:32] <= store_snoop_data[63:32];
+      end
+      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data[31:0];
+      if (clint_mtime_lo_wr) begin
+        mtime[31:0]     <= store_snoop_data[31:0];
+        mtime[63:32]    <= store_snoop_data[63:32];
+      end
+      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data[31:0];
     end
   end
 
@@ -283,8 +289,8 @@ module tb_cpu #(
       test_code <= 32'b0;
     end else begin
       if (tohost_store) begin
-        test_code <= store_snoop_data;
-        test_pass <= (store_snoop_data == 32'h1);
+        test_code <= store_snoop_data[31:0];
+        test_pass <= (store_snoop_data[31:0] == 32'h1);
         test_done <= 1'b1;
       end
     end

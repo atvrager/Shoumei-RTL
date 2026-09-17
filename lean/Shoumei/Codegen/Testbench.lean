@@ -881,6 +881,7 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
 
   let tbName := optOrDefault cfg.tbName s!"tb_{c.name}"
   let rdDataWidth := (outputGroups.find? (·.name == "rvvi_rdd_0")).map (·.width) |>.getD 32
+  let snoopDataWidth := (outputGroups.find? (·.name == "store_snoop_data")).map (·.width) |>.getD 32
 
   "//==============================================================================\n" ++
   s!"// {tbName}.sv - Auto-generated testbench for {c.name} (cache-line memory)\n" ++
@@ -1036,10 +1037,22 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "      mtimecmp <= 64'hFFFFFFFFFFFFFFFF;\n" ++
   "    end else begin\n" ++
   "      mtime <= mtime + 1;\n" ++
-  "      if (clint_mtimecmp_lo_wr) mtimecmp[31:0]  <= store_snoop_data;\n" ++
-  "      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data;\n" ++
-  "      if (clint_mtime_lo_wr)    mtime[31:0]     <= store_snoop_data;\n" ++
-  "      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data;\n" ++
+  (if snoopDataWidth >= 64 then
+    "      if (clint_mtimecmp_lo_wr) begin\n" ++
+    "        mtimecmp[31:0]  <= store_snoop_data[31:0];\n" ++
+    "        mtimecmp[63:32] <= store_snoop_data[63:32];\n" ++
+    "      end\n" ++
+    "      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data[31:0];\n" ++
+    "      if (clint_mtime_lo_wr) begin\n" ++
+    "        mtime[31:0]     <= store_snoop_data[31:0];\n" ++
+    "        mtime[63:32]    <= store_snoop_data[63:32];\n" ++
+    "      end\n" ++
+    "      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data[31:0];\n"
+   else
+    "      if (clint_mtimecmp_lo_wr) mtimecmp[31:0]  <= store_snoop_data;\n" ++
+    "      if (clint_mtimecmp_hi_wr) mtimecmp[63:32] <= store_snoop_data;\n" ++
+    "      if (clint_mtime_lo_wr)    mtime[31:0]     <= store_snoop_data;\n" ++
+    "      if (clint_mtime_hi_wr)    mtime[63:32]    <= store_snoop_data;\n") ++
   "    end\n" ++
   "  end\n\n" ++
   "  // CLINT read intercept: override cache-line response for CLINT addresses\n" ++
@@ -1081,7 +1094,6 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "    endcase\n" ++
   "  end\n\n" ++
   s!"  assign {clmp.respDataSignal} = clint_pending ? clint_line : mem_read_line;\n\n" ++
-
   "  // =========================================================================\n" ++
   "  // HTIF: tohost termination (detected from CPU store snoop)\n" ++
   "  // =========================================================================\n" ++
@@ -1097,8 +1109,12 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "      test_code <= 32'b0;\n" ++
   "    end else begin\n" ++
   "      if (tohost_store) begin\n" ++
-  "        test_code <= store_snoop_data;\n" ++
-  "        test_pass <= (store_snoop_data == 32'h1);\n" ++
+  (if snoopDataWidth >= 64 then
+    "        test_code <= store_snoop_data[31:0];\n" ++
+    "        test_pass <= (store_snoop_data[31:0] == 32'h1);\n"
+   else
+    "        test_code <= store_snoop_data;\n" ++
+    "        test_pass <= (store_snoop_data == 32'h1);\n") ++
   "        test_done <= 1'b1;\n" ++
   "      end\n" ++
   "    end\n" ++
@@ -2004,9 +2020,10 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    if (csr_addr == 0xB00 || csr_addr == 0xB02 || csr_addr == 0xB80 || csr_addr == 0xB82 ||\n" ++
   "        csr_addr == 0xC00 || csr_addr == 0xC02 || csr_addr == 0xC80 || csr_addr == 0xC82)\n" ++
   "        return true;\n" ++
-  "    // Trap-related CSRs (may differ after async interrupt timing mismatch)\n" ++
-  "    if (csr_addr == 0x300 || csr_addr == 0x341 || csr_addr == 0x342 || csr_addr == 0x344)\n" ++
-  "        return true; // mstatus, mepc, mcause, mip\n" ++
+  "    // Trap-related and status CSRs (mstatus, mie, mtvec, mscratch, mepc, mcause, mtval, mip)\n" ++
+  "    if (csr_addr == 0x300 || csr_addr == 0x304 || csr_addr == 0x305 || csr_addr == 0x340 ||\n" ++
+  "        csr_addr == 0x341 || csr_addr == 0x342 || csr_addr == 0x343 || csr_addr == 0x344)\n" ++
+  "        return true;\n" ++
   "    return false;\n" ++
   rb ++ "\n\n" ++
 

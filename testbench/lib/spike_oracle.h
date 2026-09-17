@@ -41,6 +41,9 @@ public:
     // Read FP register (as raw bits)
     uint64_t get_freg(int i) const;
 
+    // Read CSR
+    uint64_t get_csr(int which) const;
+
     // Get/set current PC
     uint64_t get_pc() const;
     void set_pc(uint64_t pc);

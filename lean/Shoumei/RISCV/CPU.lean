@@ -1642,7 +1642,6 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       -- First: MUX between slot 1 and slot 0 branch redirect (slot 0 wins)
       let br_tgt := Wire.mk s!"br_redir_tgt_{i}"
       [Gate.mkMUX redir_tgt_1[i]! redir_tgt_0[i]! redirect_0 br_tgt,
-       -- Then: MUX between branch redirect and fence_i redirect (branch wins)
        Gate.mkMUX fence_i_redir_target[i]! br_tgt (Wire.mk "branch_redirect_any") branch_redirect_target[i]!]) |>.flatten
 
   -- === IMMEDIATE MUX: for I-type instructions, src2 = immediate ===
@@ -4277,11 +4276,21 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                     ("clock", clock), ("reset", reset)] })
     else []
 
+  -- CSR address: when microcode sequencer active, decode useq_addr_out; else csr_addr_reg
+  let eff_csr_addr := if enableTraps then
+    (List.range 12).map (fun i => Wire.mk s!"eff_csr_addr_{i}")
+  else
+    csr_addr_reg
+  let eff_csr_addr_gates := if enableTraps then
+    (List.range 12).map (fun i =>
+      Gate.mkMUX csr_addr_reg[i]! useq_addr_out[i]! useq_active eff_csr_addr[i]!)
+  else []
+
   -- CSR address decode
   let (csr_addr_decode_gates, is_mscratch, is_mcycle_m, is_mcycleh_m, is_minstret_m, is_minstreth_m,
        is_misa, is_fflags, is_frm, is_fcsr, is_mstatus, is_mie, is_mtvec, is_mepc, is_mcause,
        is_mtval, is_mip, is_mcycle, is_mcycleh, is_minstret, is_minstreth) :=
-    mkCsrAddrDecode csr_addr_reg
+    mkCsrAddrDecode eff_csr_addr
 
   -- fflags accumulator + frm register (proper DFFs, CSR write path)
   -- FP compute exceptions not yet wired in W2 (fp_valid_out = zero)
@@ -4323,8 +4332,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       fflags_reg frm_reg
 
   -- CSR op decode + write logic + CDB injection
+  let csrDataWidth := if config.xlen == 64 || config.enableD then 64 else 32
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tg_e{i}")
-  let csr_cdb_data := (List.range 32).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
+  let csr_cdb_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
   let (csr_op_decode_gates, csr_write_logic_gates, csr_write_val,
        csr_we_mscratch, csr_we_mcycle, csr_we_mcycleh, csr_we_minstret, csr_we_minstreth,
        csr_we_mstatus, csr_we_mie, csr_we_mtvec, csr_we_mepc, csr_we_mcause, csr_we_mtval,
@@ -4352,13 +4362,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
            Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
           (List.range 6).map (fun i =>
             Gate.mkBUF csr_phys_reg[i]! csr_cdb_tag[i]!) ++
-          (List.range 32).map (fun i =>
+          (List.range csrDataWidth).map (fun i =>
             Gate.mkBUF csr_read_data[i]! csr_cdb_data[i]!)
         else
           [Gate.mkBUF zero (Wire.mk "csr_rd_nonzero"),
            Gate.mkBUF zero csr_cdb_inject] ++
           (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
-          (List.range 32).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
+          (List.range csrDataWidth).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
       (opDecGates, wrGates, wrVal,
        we_mscr, we_mcyc, we_mcych, we_minst, we_minsth,
        we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
@@ -4460,7 +4470,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       Gate.mkMUX cdb_pre_data_0_raw[i]! csr_cdb_data[i]! csr_cdb_inject cdb_pre_data_0[i]!) ++
     (if config.enableD then
       (List.range 32).map (fun i =>
-        Gate.mkMUX cdb_pre_data_0_raw[32+i]! zero csr_cdb_inject cdb_pre_data_0[32+i]!)
+        Gate.mkMUX cdb_pre_data_0_raw[32+i]! csr_cdb_data[32+i]! csr_cdb_inject cdb_pre_data_0[32+i]!)
      else [])
 
   -- CDB reset gating: suppress flush on cycle after CSR inject
@@ -4471,7 +4481,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND pipeline_reset_misc not_csr_flush_suppress cdb_reset]
 
   -- Collect all CSR gates
-  let csr_all_gates := csr_drain_gate ++ fp_exceptions_stub_gates ++ fflags_frm_gates ++
+  let csr_all_gates := eff_csr_addr_gates ++ csr_drain_gate ++ fp_exceptions_stub_gates ++ fflags_frm_gates ++
     csr_addr_decode_gates ++ csr_read_mux_all_gates ++ csr_op_decode_gates ++
     csr_write_logic_gates ++ csr_next_value_gates ++
     csr_cdb_inject_gates ++ csr_commit_inject_gates ++
@@ -4559,7 +4569,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX prf_rvvi_data_1[i]! csr_cdb_data[i]! csr_drain_complete rvvi_rd_data_1[i]!) ++
       (if config.xlen == 64 then
         (List.range 32).map (fun i =>
-          Gate.mkMUX prf_rvvi_data_1[32+i]! zero csr_drain_complete rvvi_rd_data_1[32+i]!)
+          Gate.mkMUX prf_rvvi_data_1[32+i]! csr_cdb_data[32+i]! csr_drain_complete rvvi_rd_data_1[32+i]!)
        else [])
     else
       [Gate.mkBUF retire_valid_0 rvvi_valid_0,
