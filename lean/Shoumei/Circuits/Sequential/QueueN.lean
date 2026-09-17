@@ -298,7 +298,9 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
     svaProperties := [
       .EmptyNotValid "count" "deq_valid",
       .FullNotReady "count" depth "enq_ready",
-      .HandshakeStable "deq_valid" "deq_ready" (if width == 1 then "deq_data_0" else "deq_data")
+      .CapacityBound "count" depth,
+      .HandshakeStable "deq_valid" "deq_ready" (if width == 1 then "deq_data_0" else "deq_data"),
+      .Conservation "enq_valid" "enq_ready" "deq_valid" "deq_ready" "count"
     ]
   }
 

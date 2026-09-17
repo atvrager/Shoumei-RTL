@@ -284,7 +284,9 @@ def mkQueue1FlowStructural (width : Nat) : Circuit :=
         protocol := some "decoupled" }
     ]
     svaProperties := [
-      .HandshakeStable "valid" "deq_ready" "data_reg"
+      .HandshakeStable "valid" "deq_ready" "data_reg",
+      .CapacityBound "valid" 1,
+      .Conservation "enq_valid" "enq_ready" "deq_valid" "deq_ready" "valid"
     ]
   }
 

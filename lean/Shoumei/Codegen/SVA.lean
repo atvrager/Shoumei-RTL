@@ -72,6 +72,34 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_empty_not_valid_{idx}: assert property (p_empty_not_valid_{idx});\n"
 
+  | .CapacityBound count cap =>
+      s!"  // Formal Property: Occupancy never exceeds capacity\n" ++
+      s!"  property p_capacity_bound_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    ({count} <= {cap});\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_capacity_bound_{idx}: assert property (p_capacity_bound_{idx});\n"
+
+  | .Conservation enqValid enqReady deqValid deqReady count =>
+      s!"  // Formal Monitor: Ghost transaction counters for conservation\n" ++
+      s!"  int unsigned ghost_enqs_{idx};\n" ++
+      s!"  int unsigned ghost_deqs_{idx};\n\n" ++
+      s!"  always_ff @(posedge {clk}) begin\n" ++
+      s!"    if ({rst}) begin\n" ++
+      s!"      ghost_enqs_{idx} <= 0;\n" ++
+      s!"      ghost_deqs_{idx} <= 0;\n" ++
+      s!"    end else begin\n" ++
+      s!"      if ({enqValid} && {enqReady}) ghost_enqs_{idx} <= ghost_enqs_{idx} + 1;\n" ++
+      s!"      if ({deqValid} && {deqReady}) ghost_deqs_{idx} <= ghost_deqs_{idx} + 1;\n" ++
+      s!"    end\n" ++
+      s!"  end\n\n" ++
+      s!"  // Formal Property: Exact conservation of items (count = enqs - deqs)\n" ++
+      s!"  property p_conservation_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    ({count} == (ghost_enqs_{idx} - ghost_deqs_{idx}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_conservation_{idx}: assert property (p_conservation_{idx});\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""
