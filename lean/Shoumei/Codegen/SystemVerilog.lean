@@ -20,6 +20,8 @@ import Shoumei.DSL
 import Shoumei.DSL.Interfaces
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.SVA
+import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace Shoumei.Codegen.SystemVerilog
 
@@ -111,7 +113,7 @@ def findInternalWires (c : Circuit) : List Wire :=
     let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
     let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
     wpWires ++ rpWires)
-  (gateOutputs ++ instanceWires ++ ramWires).eraseDups.filter (fun w =>
+  dedupWires (gateOutputs ++ instanceWires ++ ramWires) |>.filter (fun w =>
     !c.inputs.contains w && !c.outputs.contains w
   )
 
@@ -265,9 +267,11 @@ def mkContext (c : Circuit) : Context :=
   let isSequential := c.gates.any (fun g => g.gateType.isDFF) ||
                       !clockWires.isEmpty || !resetWires.isEmpty
 
-  -- Auto-detect signal groups from internal wires
+  -- Auto-detect signal groups from internal wires not explicitly grouped
   let internalWires := findInternalWires c
-  let autoDetectedGroups := autoDetectSignalGroups internalWires
+  let explicitWires := c.signalGroups.flatMap (·.wires) |>.map (·.name)
+  let unassignedWires := internalWires.filter (fun w => !explicitWires.contains w.name)
+  let autoDetectedGroups := autoDetectSignalGroups unassignedWires
 
   -- Combine explicit annotations with auto-detected groups
   -- Explicit annotations take precedence (come first)
@@ -458,11 +462,156 @@ def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
           s!"  assign {outRef} = {wireRef ctx c i0} {op} {wireRef ctx c i1};"
       | _ => "  // ERROR: Binary gate should have 2 inputs"
 
-/-- Generate all combinational logic assignments -/
-def generateCombLogic (ctx : Context) (c : Circuit) : String :=
+/-- Try to resolve a list of wires to a single clean SystemVerilog expression.
+    Uses wireGroupMap for O(1) wire->(group, index) lookups. -/
+def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
+    (wireToGroup : List (Wire × SignalGroup)) (wireToIndex : List (Wire × Nat))
+    (wires : List Wire) : Option String :=
+  let width := wires.length
+  if width == 0 then none
+  else if wires.all (fun w => w.name == "zero") then
+    some s!"{width}'d0"
+  else
+    let wireInfos := wires.map (fun w => wireGroupMap[w.name]?)
+    if wireInfos.all Option.isSome then
+      let infos := wireInfos.filterMap id
+      match infos with
+      | (firstSg, _) :: _ =>
+          if infos.all (fun (sg, _) => sg.name == firstSg.name) then
+            let isOutput := c.outputs.any (fun ow => firstSg.wires.any (fun sw => sw.name == ow.name))
+            if isOutput && outputNeedsIndividualPorts wireToGroup wireToIndex c firstSg then
+              none
+            else
+              let indices := infos.map (·.2)
+              match indices with
+              | startIdx :: _ =>
+                  let isContiguous := indices.enum.all (fun (pos, idx) => idx == startIdx + pos)
+                  if isContiguous then
+                    if startIdx == 0 && width == firstSg.width then
+                      some firstSg.name
+                    else
+                      some s!"{firstSg.name}[{startIdx + width - 1}:{startIdx}]"
+                  else
+                    none
+              | [] => none
+          else
+            none
+      | [] => none
+    else
+      none
+
+/-- Generate all combinational logic assignments with O(N) bus collapsing -/
+def generateCombLogic (ctx : Context) (c : Circuit) : String := Id.run do
   let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
-  let assignments := combGates.map (generateCombAssignment ctx c)
-  joinLines (assignments.filter (· != ""))
+  if combGates.isEmpty then ""
+  else
+    -- Step 1: Build O(1) lookup tables
+    let mut wireGroupMap : Std.HashMap String (SignalGroup × Nat) := {}
+    for (w, sg) in ctx.wireToGroup do
+      if let some (_, idx) := ctx.wireToIndex.find? (fun (w', _) => w'.name == w.name) then
+        wireGroupMap := wireGroupMap.insert w.name (sg, idx)
+
+    let mut gateByOutput : Std.HashMap String (Nat × Gate) := {}
+    for (idx, g) in combGates.enum do
+      gateByOutput := gateByOutput.insert g.output.name (idx, g)
+
+    -- Step 2: Find all unique multi-bit signal groups
+    let allSgs := ctx.wireToGroup.map (·.2) |>.foldl (fun acc sg =>
+      if sg.width > 1 && !acc.any (fun s => s.name == sg.name) then acc ++ [sg] else acc
+    ) []
+
+    -- Step 3: Check each signal group once for bus collapsing
+    let mut collapseAtIdx : Std.HashMap Nat String := {}
+    let mut consumedIndices : Std.HashSet Nat := {}
+
+    for sg in allSgs do
+      let isOutput := c.outputs.any (fun ow => sg.wires.any (fun sw => sw.name == ow.name))
+      if !(isOutput && outputNeedsIndividualPorts ctx.wireToGroup ctx.wireToIndex c sg) then
+        let gatesOpt := sg.wires.map (fun w => gateByOutput[w.name]?)
+        if gatesOpt.all Option.isSome then
+          let entries := gatesOpt.filterMap id
+          if entries.length == sg.width then
+            let indices := entries.map (·.1)
+            let gates := entries.map (·.2)
+            match gates with
+            | firstGate :: _ =>
+                let allSameType := gates.all (fun g => g.gateType == firstGate.gateType)
+                if allSameType then
+                  let collapsed? : Option String := match firstGate.gateType with
+                    | GateType.MUX =>
+                        if gates.all (fun g => g.inputs.length == 3) then
+                          match firstGate.inputs[2]? with
+                          | some sel0 =>
+                              let allSameSel := gates.all (fun g => match g.inputs[2]? with | some s => s.name == sel0.name | none => false)
+                              if allSameSel then
+                                let in0Wires := gates.filterMap (fun g => g.inputs[0]?)
+                                let in1Wires := gates.filterMap (fun g => g.inputs[1]?)
+                                if in0Wires.length == sg.width && in1Wires.length == sg.width then
+                                  match resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex in0Wires,
+                                        resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex in1Wires with
+                                  | some in0Ref, some in1Ref =>
+                                      let selRef := wireRef ctx c sel0
+                                      some s!"  assign {sg.name} = {selRef} ? {in1Ref} : {in0Ref};"
+                                  | _, _ => none
+                                else none
+                              else none
+                          | none => none
+                        else none
+                    | GateType.BUF =>
+                        if gates.all (fun g => g.inputs.length == 1) then
+                          let inWires := gates.filterMap (fun g => g.inputs[0]?)
+                          if inWires.length == sg.width then
+                            match resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex inWires with
+                            | some inRef => some s!"  assign {sg.name} = {inRef};"
+                            | none => none
+                          else none
+                        else none
+                    | GateType.NOT =>
+                        if gates.all (fun g => g.inputs.length == 1) then
+                          let inWires := gates.filterMap (fun g => g.inputs[0]?)
+                          if inWires.length == sg.width then
+                            match resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex inWires with
+                            | some inRef => some s!"  assign {sg.name} = ~{inRef};"
+                            | none => none
+                          else none
+                        else none
+                    | GateType.AND | GateType.OR | GateType.XOR =>
+                        if gates.all (fun g => g.inputs.length == 2) then
+                          let in0Wires := gates.filterMap (fun g => g.inputs[0]?)
+                          let in1Wires := gates.filterMap (fun g => g.inputs[1]?)
+                          if in0Wires.length == sg.width && in1Wires.length == sg.width then
+                            match resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex in0Wires,
+                                  resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex in1Wires with
+                            | some in0Ref, some in1Ref =>
+                                let op := gateTypeToSVOperator firstGate.gateType
+                                some s!"  assign {sg.name} = {in0Ref} {op} {in1Ref};"
+                            | _, _ => none
+                          else none
+                        else none
+                    | _ => none
+                  if let some assignStr := collapsed? then
+                    match indices with
+                    | firstIdx :: _ =>
+                        let minIdx := indices.foldl min firstIdx
+                        collapseAtIdx := collapseAtIdx.insert minIdx assignStr
+                        for idx in indices do
+                          consumedIndices := consumedIndices.insert idx
+                    | [] => ()
+            | [] => ()
+
+    -- Step 4: Single linear pass to emit assignments
+    let mut assignments : List String := []
+    for (idx, g) in combGates.enum do
+      if let some assignStr := collapseAtIdx[idx]? then
+        assignments := assignments ++ [assignStr]
+      else if consumedIndices.contains idx then
+        continue
+      else
+        let a := generateCombAssignment ctx c g
+        if !a.isEmpty then
+          assignments := assignments ++ [a]
+
+    joinLines assignments
 
 /-! ## Register Generation -/
 
@@ -554,56 +703,117 @@ def generateDFFDecl (ctx : Context) (c : Circuit) (g : Gate) : Option (Option St
   | _ =>
       none
 
-/-- Generate always_ff block for register group -/
-def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire) (dffs : List Gate) : String :=
-  let results := dffs.filterMap (generateDFFDecl ctx c)
-  let decls := results.filterMap (fun (decl, _, _, _) => decl)
-  let assigns := results.map (fun (_, assign, _, _) => assign)
-  let resetAssigns := results.map (fun (_, _, resetAssign, _) => resetAssign) |>.filter (· != "")
-
-  if assigns.isEmpty then
-    ""
+/-- Generate always_ff block for register group with O(N) bus collapsing -/
+def generateAlwaysFFBlock (ctx : Context) (c : Circuit) (clk : Wire) (rst : Wire) (dffs : List Gate) : String := Id.run do
+  if dffs.isEmpty then ""
   else
-    let declsStr := joinLines decls
-    let clkRef := wireRef ctx c clk
-    let rstRef := wireRef ctx c rst
+    -- Step 1: Build lookup tables
+    let mut wireGroupMap : Std.HashMap String (SignalGroup × Nat) := {}
+    for (w, sg) in ctx.wireToGroup do
+      if let some (_, idx) := ctx.wireToIndex.find? (fun (w', _) => w'.name == w.name) then
+        wireGroupMap := wireGroupMap.insert w.name (sg, idx)
 
-    -- Generate always_ff block with reset logic
-    let alwaysBlock := joinLines [
-      s!"  always_ff @(posedge {clkRef} or posedge {rstRef}) begin",
-      s!"    if ({rstRef}) begin",
-      "      // Reset registers (DFF→0, DFF_SET→1)",
-      joinLines resetAssigns,
-      "    end else begin",
-      joinLines assigns,
-      "    end",
-      "  end"
-    ]
+    let mut dffByOutput : Std.HashMap String (Nat × Gate) := {}
+    for (idx, g) in dffs.enum do
+      dffByOutput := dffByOutput.insert g.output.name (idx, g)
 
-    -- Generate feedback assignments: connect _reg back to combinational bus
-    -- For non-circuit-output DFF groups, the register name differs from the bus name
-    let feedbackAssigns := results.filterMap (fun (_, _, _, regName) =>
-      -- If regName ends with "_reg", generate assign busName = regName
-      -- Skip if regName itself is a circuit output (the output port IS the register)
-      if regName.endsWith "_reg" then
-        let busName := regName.dropEnd 4  -- Remove "_reg" suffix
-        let regIsCircuitOutput := c.outputs.any (fun w =>
-          extractBaseName w.name == regName || w.name == regName)
-        if regIsCircuitOutput then none
-        else some s!"  assign {busName} = {regName};"
+    let allSgs := ctx.wireToGroup.map (·.2) |>.foldl (fun acc sg =>
+      if sg.width > 1 && !acc.any (fun s => s.name == sg.name) then acc ++ [sg] else acc
+    ) []
+
+    -- Step 2: Check multi-bit groups for collapsing
+    let mut collapseAtIdx : Std.HashMap Nat (Option String × String × String × String) := {}
+    let mut consumedIndices : Std.HashSet Nat := {}
+
+    for sg in allSgs do
+      let dffsOpt := sg.wires.map (fun w => dffByOutput[w.name]?)
+      if dffsOpt.all Option.isSome then
+        let entries := dffsOpt.filterMap id
+        if entries.length == sg.width then
+          let indices := entries.map (·.1)
+          let sgDFFs := entries.map (·.2)
+          let dWires := sgDFFs.filterMap (fun g => g.inputs.head?)
+          if dWires.length == sg.width then
+            if let some inRef := resolveBusRef c wireGroupMap ctx.wireToGroup ctx.wireToIndex dWires then
+              let isCircuitOutput := c.outputs.any (fun w => sg.wires.any (fun sw => sw.name == w.name))
+              let regName := if isCircuitOutput then sg.name else s!"{sg.name}_reg"
+              let svType := signalGroupToSV sg
+              let decl := if isCircuitOutput then none else some s!"  {svType} {regName};"
+              let resetVal := computeGroupResetVal c sg
+              let assignStr := s!"      {regName} <= {inRef};"
+              let resetAssignStr := s!"      {regName} <= {resetVal};"
+              match indices with
+              | firstIdx :: _ =>
+                  let minIdx := indices.foldl min firstIdx
+                  collapseAtIdx := collapseAtIdx.insert minIdx (decl, assignStr, resetAssignStr, regName)
+                  for idx in indices do
+                    consumedIndices := consumedIndices.insert idx
+              | [] => ()
+
+    -- Step 3: Single linear pass to collect decls, assigns, resets, regNames
+    let mut decls : List String := []
+    let mut assigns : List String := []
+    let mut resetAssigns : List String := []
+    let mut regNames : List String := []
+
+    for (idx, g) in dffs.enum do
+      if let some (declOpt, assignStr, resetStr, regName) := collapseAtIdx[idx]? then
+        if let some d := declOpt then decls := decls ++ [d]
+        assigns := assigns ++ [assignStr]
+        resetAssigns := resetAssigns ++ [resetStr]
+        regNames := regNames ++ [regName]
+      else if consumedIndices.contains idx then
+        continue
       else
-        none) |>.foldl (fun acc s => if acc.contains s then acc else acc ++ [s]) []
-    let feedbackStr := joinLines feedbackAssigns
+        if let some (declOpt, assignStr, resetStr, regName) := generateDFFDecl ctx c g then
+          if let some d := declOpt then decls := decls ++ [d]
+          assigns := assigns ++ [assignStr]
+          if !resetStr.isEmpty then resetAssigns := resetAssigns ++ [resetStr]
+          regNames := regNames ++ [regName]
 
-    let base := if declsStr.isEmpty then
-      alwaysBlock
+    if assigns.isEmpty then
+      ""
     else
-      declsStr ++ "\n\n" ++ alwaysBlock
+      let declsStr := joinLines decls
+      let clkRef := wireRef ctx c clk
+      let rstRef := wireRef ctx c rst
 
-    if feedbackStr.isEmpty then
-      base
-    else
-      base ++ "\n\n" ++ feedbackStr
+      -- Generate always_ff block with reset logic
+      let alwaysBlock := joinLines [
+        s!"  always_ff @(posedge {clkRef} or posedge {rstRef}) begin",
+        s!"    if ({rstRef}) begin",
+        "      // Reset registers (DFF→0, DFF_SET→1)",
+        joinLines resetAssigns,
+        "    end else begin",
+        joinLines assigns,
+        "    end",
+        "  end"
+      ]
+
+      -- Generate feedback assignments: connect _reg back to combinational bus
+      -- For non-circuit-output DFF groups, the register name differs from the bus name
+      let feedbackAssigns := regNames.filterMap (fun regName =>
+        -- If regName ends with "_reg", generate assign busName = regName
+        -- Skip if regName itself is a circuit output (the output port IS the register)
+        if regName.endsWith "_reg" then
+          let busName := regName.dropEnd 4  -- Remove "_reg" suffix
+          let regIsCircuitOutput := c.outputs.any (fun w =>
+            extractBaseName w.name == regName || w.name == regName)
+          if regIsCircuitOutput then none
+          else some s!"  assign {busName} = {regName};"
+        else
+          none) |>.foldl (fun acc s => if acc.contains s then acc else acc ++ [s]) []
+      let feedbackStr := joinLines feedbackAssigns
+
+      let base := if declsStr.isEmpty then
+        alwaysBlock
+      else
+        declsStr ++ "\n\n" ++ alwaysBlock
+
+      if feedbackStr.isEmpty then
+        base
+      else
+        base ++ "\n\n" ++ feedbackStr
 
 /-- Generate all register logic -/
 def generateRegisters (ctx : Context) (c : Circuit) : String :=
@@ -661,7 +871,7 @@ def getSubModuleIndividualOutputGroups (allCircuits : List Circuit) (moduleName 
   | some subMod =>
       let subCtx := mkContext subMod
       let allSgs := subCtx.wireToGroup.map (·.2)
-      let uniqueSgNames := (allSgs.map (·.name)).eraseDups
+      let uniqueSgNames := dedupStrings (allSgs.map (·.name))
       let uniqueSgs := uniqueSgNames.filterMap (fun n => allSgs.find? (fun sg => sg.name == n))
       uniqueSgs.filter (fun sg =>
           let isOutputGroup := sg.wires.any (fun w => subMod.outputs.any (fun ow => ow.name == w.name))
