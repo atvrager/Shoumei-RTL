@@ -76,6 +76,7 @@ import Shoumei.Circuits.Sequential.Queue1Bridge
 import Shoumei.Circuits.Sequential.QueueComponents
 import Shoumei.Circuits.Sequential.QueueN
 import Shoumei.Circuits.Sequential.QueueNCodegen
+import Shoumei.Circuits.Sequential.QueueNTemporalProofs
 import Shoumei.Circuits.Sequential.QueueProofs
 import Shoumei.Circuits.Sequential.QueueTemporalProofs
 import Shoumei.Circuits.Sequential.Register
