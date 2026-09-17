@@ -283,6 +283,9 @@ def mkQueue1FlowStructural (width : Nat) : Circuit :=
         signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
         protocol := some "decoupled" }
     ]
+    svaProperties := [
+      .HandshakeStable "valid" "deq_ready" "data_reg"
+    ]
   }
 
 -- Helper: create structural queue with proper output connections
@@ -315,6 +318,9 @@ def mkQueue1StructuralComplete (width : Nat) : Circuit :=
       { name := "deq"
         signals := [("data", .UInt width), ("valid", .Bool), ("ready", .Bool)]
         protocol := some "decoupled" }
+    ]
+    svaProperties := [
+      .HandshakeStable "valid" "deq_ready" (if width == 1 then "data_reg_0" else "data_reg")
     ]
   }
 

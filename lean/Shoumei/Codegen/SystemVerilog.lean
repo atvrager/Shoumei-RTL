@@ -19,6 +19,7 @@ Requires: a SystemVerilog frontend that understands struct types (e.g. yosys-sla
 import Shoumei.DSL
 import Shoumei.DSL.Interfaces
 import Shoumei.Codegen.Common
+import Shoumei.Codegen.SVA
 
 namespace Shoumei.Codegen.SystemVerilog
 
@@ -936,6 +937,7 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
   let registers := generateRegisters ctx c
   let instances := generateInstances ctx c allCircuits
   let rams := generateRAMs ctx c
+  let assertions := SVA.emitSVA c ctx.clockWires ctx.resetWires
 
   let body := joinLines [
     portSection,
@@ -944,7 +946,8 @@ def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
     if combLogic.isEmpty then "" else combLogic ++ "\n",
     if registers.isEmpty then "" else registers ++ "\n",
     if rams.isEmpty then "" else rams ++ "\n",
-    if instances.isEmpty then "" else instances
+    if instances.isEmpty then "" else instances,
+    if assertions.isEmpty then "" else "\n" ++ assertions
   ]
 
   let footer := "endmodule\n"
