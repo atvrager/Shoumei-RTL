@@ -2,7 +2,7 @@
 DSL/DecoupledProofs.lean - Formally Verified Decoupled Interface Composition
 
 Theorems about decoupled interface composition, pipeline cascading, and wire structure.
-Discharges previous placeholder axioms using the typed compositional refinement framework.
+Uses the typed compositional refinement framework to verify interface connections.
 -/
 
 import Shoumei.DSL
@@ -18,28 +18,12 @@ open Shoumei.DSL.Decoupled
 open Shoumei.Temporal
 open Shoumei.Verification
 
-/-! ## Protocol Properties and Fire Gate Evaluation -/
-
-/-- Decoupled protocol ensures stability under backpressure. -/
-theorem decoupled_stability_holds : ∀ {width : Nat} (_d : DecoupledSource width), True :=
-  fun _ => trivial
+/-! ## Fire Gate Semantic Evaluation -/
 
 /-- Theorem: Fire signal gate computes exactly (valid && ready). -/
 theorem decoupled_fire_gate_eval {width : Nat} (d : DecoupledSource width) (env : Env) :
     evalGate (mkDecoupledFireGate d) env = (env d.valid && env d.ready) := by
   simp [mkDecoupledFireGate, Gate.mkAND, evalGate]
-
-/-- Transfer condition: transfer occurs when valid and ready are both high. -/
-theorem decoupled_transfer_condition : ∀ {width : Nat} (_d : DecoupledSource width), True :=
-  fun _ => trivial
-
-/-- Producer has freedom to control the valid signal. -/
-theorem decoupled_valid_freedom : ∀ {width : Nat} (_d : DecoupledSource width), True :=
-  fun _ => trivial
-
-/-- Consumer has freedom to assert backpressure (ready signal). -/
-theorem decoupled_ready_freedom : ∀ {width : Nat} (_d : DecoupledSource width), True :=
-  fun _ => trivial
 
 /-! ## Pipeline Composition via dual_compositional_refinement -/
 
@@ -77,12 +61,6 @@ theorem decoupled_queue_insertion_preserves_semantics
     (h_glue : SpecSrc tr → SpecQueue tr → BufferSpec tr) :
     BufferSpec tr :=
   dual_compositional_refinement h_src h_queue h_glue
-
-/-! ## Deadlock Freedom -/
-
-/-- Acyclic decoupled networks preserve liveness. -/
-theorem acyclic_decoupled_network_deadlock_free : True :=
-  trivial
 
 /-! ## Basic Wire Properties -/
 

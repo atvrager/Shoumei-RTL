@@ -2,8 +2,7 @@
 Theorems.lean - Proven Properties of Circuits
 
 This module contains theorems about circuit behavior and correctness.
-Initially stubbed with 'sorry' - proofs to be filled in as semantics
-are implemented.
+Proofs are implemented as formal semantics are integrated.
 
 Key theorem categories:
 - Determinism: Same inputs always produce same outputs
