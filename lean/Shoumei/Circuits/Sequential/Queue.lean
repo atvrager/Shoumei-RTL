@@ -431,12 +431,12 @@ def mkQueue1Decoupled (width : Nat) : Circuit :=
 
     This proves that using Decoupled helpers doesn't change the circuit structure,
     just makes the interface semantics explicit.
-
-    TODO: Complete proof after establishing circuit equality
 -/
-axiom queue1_decoupled_equiv_structural (width : Nat)
+theorem queue1_decoupled_equiv_structural (width : Nat)
     : (mkQueue1Decoupled width).gates.length = (mkQueue1StructuralComplete width).gates.length ∧
       (mkQueue1Decoupled width).inputs.length = (mkQueue1StructuralComplete width).inputs.length ∧
-      (mkQueue1Decoupled width).outputs.length = (mkQueue1StructuralComplete width).outputs.length
+      (mkQueue1Decoupled width).outputs.length = (mkQueue1StructuralComplete width).outputs.length := by
+  simp [mkQueue1Decoupled, mkQueue1StructuralComplete, mkQueue1Structural,
+        mkDecoupledInput, mkDecoupledOutput, mkDecoupledFireGate]
 
 end Shoumei.Circuits.Sequential

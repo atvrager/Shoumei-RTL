@@ -190,50 +190,148 @@ def mkPriorityArbiter8 : Circuit := mkPriorityArbiter 8
 /-- 64-input arbiter (for bitmap free list allocation) -/
 def mkPriorityArbiter64 : Circuit := mkPriorityArbiter 64
 
-/-! ## Theorems (Stub Placeholders for Future Proofs) -/
+/-! ## Formally Verified Behavioral Theorems -/
 
 /-- At most one grant signal is high (one-hot property).
 
     For any request vector, the grant output is one-hot encoded:
     there exists at most one index i where grants[i] = true.
 -/
-axiom arbiter_onehot (n : Nat) (requests : Fin n → Bool) :
+theorem arbiter_onehot (n : Nat) (requests : Fin n → Bool) :
   let result := ArbiterResult.priorityArbitrate n requests
-  (∀ i j : Fin n, i ≠ j → result.grants i = true → result.grants j = false)
+  (∀ i j : Fin n, i ≠ j → result.grants i = true → result.grants j = false) := by
+  intro result i j h_ne h_gi
+  dsimp [result, ArbiterResult.priorityArbitrate] at h_gi ⊢
+  split at h_gi
+  · contradiction
+  · split at h_gi
+    · rename_i idx heq h_lt
+      rw [if_pos h_lt]
+      dsimp
+      dsimp at h_gi
+      cases h_gj : (j.val == idx)
+      · rfl
+      · have hi : i.val = idx := beq_iff_eq.mp h_gi
+        have hj : j.val = idx := beq_iff_eq.mp h_gj
+        have hij : i = j := Fin.ext (hi.trans hj.symm)
+        exact absurd hij h_ne
+    · contradiction
 
 /-- Priority ordering: lowest index wins.
 
     If requests[i] = true and grants[j] = true, then j ≤ i.
     (The granted index is not higher than any requesting index)
 -/
-axiom arbiter_priority (n : Nat) (requests : Fin n → Bool) :
+theorem arbiter_priority (n : Nat) (requests : Fin n → Bool) :
   let result := ArbiterResult.priorityArbitrate n requests
-  (∀ i j : Fin n, requests i = true → result.grants j = true → j.val ≤ i.val)
+  (∀ i j : Fin n, requests i = true → result.grants j = true → j.val ≤ i.val) := by
+  intro result i j h_req h_gj
+  dsimp [result, ArbiterResult.priorityArbitrate] at h_gj
+  split at h_gj
+  · contradiction
+  · rename_i idx heq
+    split at h_gj
+    · rename_i h_lt
+      have hj : j.val = idx := beq_iff_eq.mp h_gj
+      rw [hj]
+      rw [List.findIdx?_eq_some_iff_getElem] at heq
+      rcases heq with ⟨hlen, _, hmin⟩
+      by_cases h_lt_i : i.val < idx
+      · have h_not := hmin i.val h_lt_i
+        simp only [List.getElem_range] at h_not
+        rw [dif_pos i.isLt] at h_not
+        exact False.elim (h_not h_req)
+      · exact Nat.le_of_not_lt h_lt_i
+    · contradiction
 
 /-- Valid correctness: valid iff at least one request.
 
     The valid signal is true exactly when there is at least one request.
 -/
-axiom arbiter_valid (n : Nat) (requests : Fin n → Bool) :
+theorem arbiter_valid (n : Nat) (requests : Fin n → Bool) :
   let result := ArbiterResult.priorityArbitrate n requests
-  result.valid = true ↔ (∃ i : Fin n, requests i = true)
+  result.valid = true ↔ (∃ i : Fin n, requests i = true) := by
+  intro result
+  dsimp [result, ArbiterResult.priorityArbitrate]
+  constructor
+  · intro h_val
+    split at h_val
+    · contradiction
+    · rename_i idx heq
+      split at h_val
+      · rename_i h_lt
+        rw [List.findIdx?_eq_some_iff_getElem] at heq
+        rcases heq with ⟨hlen, hp, _⟩
+        simp only [List.length_range] at hlen
+        simp only [List.getElem_range] at hp
+        rw [dif_pos hlen] at hp
+        exact ⟨⟨idx, hlen⟩, hp⟩
+      · contradiction
+  · rintro ⟨i, h_req⟩
+    split
+    · rename_i h_none
+      rw [List.findIdx?_eq_none_iff] at h_none
+      have h_in : i.val ∈ List.range n := List.mem_range.mpr i.isLt
+      have h_false := h_none i.val h_in
+      rw [dif_pos i.isLt] at h_false
+      simp [h_req] at h_false
+    · rename_i idx heq
+      rw [List.findIdx?_eq_some_iff_getElem] at heq
+      rcases heq with ⟨hlen, _, _⟩
+      simp only [List.length_range] at hlen
+      rw [if_pos hlen]
 
 /-- Completeness: if any request, exactly one grant.
 
     If valid = true, then exactly one grant bit is high.
 -/
-axiom arbiter_completeness (n : Nat) (requests : Fin n → Bool) :
+theorem arbiter_completeness (n : Nat) (requests : Fin n → Bool) :
   let result := ArbiterResult.priorityArbitrate n requests
   result.valid = true →
     (∃ i : Fin n, result.grants i = true ∧
-      ∀ j : Fin n, result.grants j = true → i = j)
+      ∀ j : Fin n, result.grants j = true → i = j) := by
+  intro result h_val
+  dsimp [result, ArbiterResult.priorityArbitrate] at h_val ⊢
+  split at h_val
+  · contradiction
+  · rename_i idx heq
+    split at h_val
+    · rename_i h_lt
+      refine ⟨⟨idx, h_lt⟩, ?_⟩
+      constructor
+      · rw [if_pos h_lt]
+        dsimp
+        exact beq_self_eq_true idx
+      · intro j h_gj
+        rw [if_pos h_lt] at h_gj
+        dsimp at h_gj
+        have hj : j.val = idx := beq_iff_eq.mp h_gj
+        exact Fin.ext hj.symm
+    · contradiction
 
 /-- Grant implies request: if granted, then requested.
 
     If grants[i] = true, then requests[i] = true.
 -/
-axiom arbiter_grant_implies_request (n : Nat) (requests : Fin n → Bool) :
+theorem arbiter_grant_implies_request (n : Nat) (requests : Fin n → Bool) :
   let result := ArbiterResult.priorityArbitrate n requests
-  (∀ i : Fin n, result.grants i = true → requests i = true)
+  (∀ i : Fin n, result.grants i = true → requests i = true) := by
+  intro result i h_gi
+  dsimp [result, ArbiterResult.priorityArbitrate] at h_gi
+  split at h_gi
+  · contradiction
+  · rename_i idx heq
+    split at h_gi
+    · rename_i h_lt
+      have hi : i.val = idx := beq_iff_eq.mp h_gi
+      rw [List.findIdx?_eq_some_iff_getElem] at heq
+      rcases heq with ⟨hlen, hp, _⟩
+      simp only [List.length_range] at hlen
+      simp only [List.getElem_range] at hp
+      rw [dif_pos hlen] at hp
+      have hext : i = ⟨idx, hlen⟩ := Fin.ext hi
+      rw [hext]
+      exact hp
+    · contradiction
 
 end Shoumei.Circuits.Combinational
