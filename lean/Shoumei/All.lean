@@ -28,11 +28,13 @@ import Shoumei.Circuits.Combinational.FPLongConverter
 import Shoumei.Circuits.Combinational.FPLongConverterProofs
 import Shoumei.Circuits.Combinational.FPMisc
 import Shoumei.Circuits.Combinational.FPPack
+import Shoumei.Circuits.Combinational.FPToInt64
 import Shoumei.Circuits.Combinational.FPU
 import Shoumei.Circuits.Combinational.FPUDouble
 import Shoumei.Circuits.Combinational.FPUDoubleProofs
 import Shoumei.Circuits.Combinational.FPUTest
 import Shoumei.Circuits.Combinational.FPUnpack
+import Shoumei.Circuits.Combinational.Int64ToFP
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.LogicUnit
 import Shoumei.Circuits.Combinational.LogicUnitCodegen
@@ -68,6 +70,7 @@ import Shoumei.Circuits.Sequential.FPFMADProofs
 import Shoumei.Circuits.Sequential.FPMultiplier
 import Shoumei.Circuits.Sequential.FPMultiplierD
 import Shoumei.Circuits.Sequential.FPMultiplierDProofs
+import Shoumei.Circuits.Sequential.FPMultiplierProofs
 import Shoumei.Circuits.Sequential.FPSqrt
 import Shoumei.Circuits.Sequential.FPSqrtD
 import Shoumei.Circuits.Sequential.FPSqrtDProofs
