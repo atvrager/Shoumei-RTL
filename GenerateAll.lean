@@ -274,6 +274,12 @@ def allCircuits : List Circuit := [
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
 
+  -- Opcode PLA Decoders
+  mkALUOpDecoder defaultCPUConfig,
+  mkMulDivOpDecoder defaultCPUConfig,
+  mkFPUOpDecoder defaultCPUConfig,
+  mkAMOOpDecoder defaultCPUConfig,
+
   -- Phase 8: Top-Level Integration
   cdbMuxFDW2,
   mkFetchStage,

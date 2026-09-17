@@ -2493,9 +2493,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fpuOpWidth := if config.enableD then 6 else 5
   let fpu_opcode := CPU.makeIndexedWires "fpu_opcode" fpuOpWidth
   let fpu_opcode_padded := fpu_opcode ++ (List.replicate (opcodeWidth - fpuOpWidth) zero)  -- zero-pad to opcodeWidth for RS
-  let fpu_lut_gates :=
-    if enableF then mkOpTypeLUT "fpulut" fp_mux_opcode fpu_opcode
-      (OpType.resolveMapping config.decoderInstrNames fpuMappingByName)
+  let fpu_lut_gates : List Gate := []
+  let fpu_lut_inst : List CircuitInstance :=
+    if enableF then
+      [{ moduleName := s!"FPUOpDecoder_{config.isaString}"
+         instName := "u_fpu_lut"
+         portMap := bundledPorts "optype" fp_mux_opcode ++
+                    bundledPorts "out_op" fpu_opcode }]
     else []
 
   -- FP RS (single-issue, W=2 RS with only bank 0 used, like branch/muldiv)
@@ -2915,9 +2919,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let aluOpWidth := if config.xlen == 64 then 5 else 4
   let alu_op0 := CPU.makeIndexedWires "alu_op0" aluOpWidth
   let alu_op1 := CPU.makeIndexedWires "alu_op1" aluOpWidth
-  let optype_mapping := OpType.resolveMapping config.decoderInstrNames aluMappingByName
-  let alu_lut_gates0 := mkOpTypeLUT "lut0" dispatch_opcode_0 alu_op0 optype_mapping
-  let alu_lut_gates1 := mkOpTypeLUT "lut1" dispatch_opcode_1 alu_op1 optype_mapping
+  let alu_lut_gates0 : List Gate := []
+  let alu_lut_gates1 : List Gate := []
+  let alu_lut_inst0 : CircuitInstance := {
+    moduleName := s!"ALUOpDecoder_{config.isaString}"
+    instName := "u_alu_lut0"
+    portMap := bundledPorts "optype" dispatch_opcode_0 ++
+               bundledPorts "out_op" alu_op0
+  }
+  let alu_lut_inst1 : CircuitInstance := {
+    moduleName := s!"ALUOpDecoder_{config.isaString}"
+    instName := "u_alu_lut1"
+    portMap := bundledPorts "optype" dispatch_opcode_1 ++
+               bundledPorts "out_op" alu_op1
+  }
 
   let result0_raw := CPU.makeIndexedWires "exec_result0_raw" (if config.xlen == 64 then 64 else 32); let tag0 := CPU.makeIndexedWires "exec_tag0" 6
   let result1_raw := CPU.makeIndexedWires "exec_result1_raw" (if config.xlen == 64 then 64 else 32); let tag1 := CPU.makeIndexedWires "exec_tag1" 6
@@ -3121,9 +3136,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let muldiv_tag_out := CPU.makeIndexedWires "muldiv_tag_out" 6
   let muldiv_valid_out := Wire.mk "muldiv_valid_out"
   let muldiv_op := CPU.makeIndexedWires "muldiv_op" (if config.xlen == 64 then 4 else 3)
-  let muldiv_lut_gates :=
-    if enableM then mkOpTypeLUT "mdlut" rs_muldiv_dispatch_opcode muldiv_op
-      (OpType.resolveMapping config.decoderInstrNames mulDivMappingByName)
+  let muldiv_lut_gates : List Gate := []
+  let muldiv_lut_inst : List CircuitInstance :=
+    if enableM then
+      [{ moduleName := s!"MulDivOpDecoder_{config.isaString}"
+         instName := "u_muldiv_lut"
+         portMap := bundledPorts "optype" rs_muldiv_dispatch_opcode ++
+                    bundledPorts "out_op" muldiv_op }]
     else []
 
   let muldiv_exec_inst : CircuitInstance := {
@@ -3255,9 +3274,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let atomic_d_match_gates := if enableA then
       mkMatchAny "atomd_match" (([OpType.LR_D, OpType.SC_D] ++ amoD).map oi) rs_mem_dispatch_opcode is_atomic_d
     else [Gate.mkBUF zero is_atomic_d]
-  let amo_funct_gates := if enableA then
-      mkOpTypeLUT "amoflut" rs_mem_dispatch_opcode amo_funct
-        (OpType.resolveMapping config.decoderInstrNames amoMappingByName)
+  let amo_lut_inst : List CircuitInstance :=
+    if enableA then
+      [{ moduleName := s!"AMOOpDecoder_{config.isaString}"
+         instName := "u_amo_lut"
+         portMap := bundledPorts "optype" rs_mem_dispatch_opcode ++
+                    bundledPorts "out_op" amo_funct }]
+    else []
+  let amo_funct_gates := if enableA then []
     else (List.range 4).map (fun i => Gate.mkBUF zero amo_funct[i]!)
   let atomic_read_gates := [Gate.mkOR is_lr is_amo is_atomic_read]
 
@@ -4681,17 +4705,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                   rs_int_inst, rs_br_inst, rs_mem_inst] ++
                  (if enableM then [rs_muldiv_inst] else []) ++
                  (if enableF then [rs_fp_inst, fp_rename_inst, fp_exec_inst] else []) ++
+                 fpu_lut_inst ++
                  [int_pc_rf_dec0_inst, int_pc_rf_dec1_inst,
                   int_imm_rf_dec0_inst, int_imm_rf_dec1_inst,
                   br_pc_rf_dec_inst, br_pc_rf_mux_inst,
                   br_imm_rf_dec_inst, br_imm_rf_mux_inst] ++
-                 [exec_inst, auipc_adder_0_inst, auipc_adder_1_inst,
+                 [alu_lut_inst0, alu_lut_inst1, exec_inst, auipc_adder_0_inst, auipc_adder_1_inst,
                   branch_exec_inst, br_pc_plus_4_adder, br_target_adder, jalr_target_adder, br_cmp_inst,
                   mem_exec_inst] ++
-                 (if enableM then [muldiv_exec_inst] else []) ++
+                 (if enableM then [muldiv_exec_inst] ++ muldiv_lut_inst else []) ++
                  [rob_inst, lsu_inst,
                   imm_rf_decoder_inst, imm_rf_mux_inst] ++
-                 atomic_insts ++
+                 atomic_insts ++ amo_lut_inst ++
                  [redirect_valid_dff_inst, flush_dff_dispatch] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++

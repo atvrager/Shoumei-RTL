@@ -280,6 +280,55 @@ def fpuMappingByName : List (OpType × Nat) :=
     (.FMV_X_D, 56), (.FMV_D_X, 57),
     (.FCVT_L_D, 58), (.FCVT_LU_D, 59), (.FCVT_D_L, 60), (.FCVT_D_LU, 61) ]
 
+/-- Semantic AMO mapping: A-extension OpType → 4-bit AMO function select.
+    ADD=0, SWAP=1, XOR=2, AND=3, OR=4, MIN=5, MAX=6, MINU=7, MAXU=8.
+    Stable across decoder configurations (indices resolved at build time). -/
+def amoMappingByName : List (OpType × Nat) :=
+  [ (.AMOADD_W, 0), (.AMOSWAP_W, 1), (.AMOXOR_W, 2), (.AMOAND_W, 3), (.AMOOR_W, 4),
+    (.AMOMIN_W, 5), (.AMOMAX_W, 6), (.AMOMINU_W, 7), (.AMOMAXU_W, 8),
+    (.AMOADD_D, 0), (.AMOSWAP_D, 1), (.AMOXOR_D, 2), (.AMOAND_D, 3), (.AMOOR_D, 4),
+    (.AMOMIN_D, 5), (.AMOMAX_D, 6), (.AMOMINU_D, 7), (.AMOMAXU_D, 8) ]
+
+/-- Standalone module wrapper for an OpType PLA decoder. -/
+def mkOpTypeLUTModule (name : String) (inWidth outWidth : Nat)
+    (mapping : List (Nat × Nat)) : Circuit :=
+  let optype := makeIndexedWires "optype" inWidth
+  let outOp := makeIndexedWires "out_op" outWidth
+  let gates := mkOpTypeLUT "lut" optype outOp mapping
+  { name := name
+    inputs := optype
+    outputs := outOp
+    gates := gates
+    instances := [] }
+
+/-- Standalone ALU Op Decoder module -/
+def mkALUOpDecoder (config : CPUConfig) : Circuit :=
+  let inWidth := config.opcodeWidth
+  let outWidth := if config.xlen == 64 then 5 else 4
+  let mapping := OpType.resolveMapping config.decoderInstrNames aluMappingByName
+  mkOpTypeLUTModule s!"ALUOpDecoder_{config.isaString}" inWidth outWidth mapping
+
+/-- Standalone MulDiv Op Decoder module -/
+def mkMulDivOpDecoder (config : CPUConfig) : Circuit :=
+  let inWidth := config.opcodeWidth
+  let outWidth := if config.xlen == 64 then 4 else 3
+  let mapping := OpType.resolveMapping config.decoderInstrNames mulDivMappingByName
+  mkOpTypeLUTModule s!"MulDivOpDecoder_{config.isaString}" inWidth outWidth mapping
+
+/-- Standalone FPU Op Decoder module -/
+def mkFPUOpDecoder (config : CPUConfig) : Circuit :=
+  let inWidth := config.opcodeWidth
+  let outWidth := if config.enableD then 6 else 5
+  let mapping := OpType.resolveMapping config.decoderInstrNames fpuMappingByName
+  mkOpTypeLUTModule s!"FPUOpDecoder_{config.isaString}" inWidth outWidth mapping
+
+/-- Standalone AMO Op Decoder module -/
+def mkAMOOpDecoder (config : CPUConfig) : Circuit :=
+  let inWidth := config.opcodeWidth
+  let outWidth := 4
+  let mapping := OpType.resolveMapping config.decoderInstrNames amoMappingByName
+  mkOpTypeLUTModule s!"AMOOpDecoder_{config.isaString}" inWidth outWidth mapping
+
 /-- Build a 64:1 mux tree from 64 single-bit inputs using 6 select bits. -/
 def mkMux64to1 (inputs : List Wire) (sel : List Wire) (pfx : String) (output : Wire) : List Gate :=
   let l0 := (List.range 32).map fun i =>
@@ -1306,15 +1355,6 @@ def mkSidecarRegFile4x32_W2
   (we_gates ++ rf_gates ++ read0_gates ++ read1_gates, entries, dec0_inst, dec1_inst)
 
 end
-
-/-- Semantic AMO mapping: A-extension OpType → 4-bit AMO function select.
-    ADD=0, SWAP=1, XOR=2, AND=3, OR=4, MIN=5, MAX=6, MINU=7, MAXU=8.
-    Stable across decoder configurations (indices resolved at build time). -/
-def amoMappingByName : List (OpType × Nat) :=
-  [ (.AMOADD_W, 0), (.AMOSWAP_W, 1), (.AMOXOR_W, 2), (.AMOAND_W, 3), (.AMOOR_W, 4),
-    (.AMOMIN_W, 5), (.AMOMAX_W, 6), (.AMOMINU_W, 7), (.AMOMAXU_W, 8),
-    (.AMOADD_D, 0), (.AMOSWAP_D, 1), (.AMOXOR_D, 2), (.AMOAND_D, 3), (.AMOOR_D, 4),
-    (.AMOMIN_D, 5), (.AMOMAX_D, 6), (.AMOMINU_D, 7), (.AMOMAXU_D, 8) ]
 
 /-- Match a 7-bit opcode against any of a list of encodings; result = OR of matches. -/
 def mkOpcodeMatchAny7 (pfx : String) (encs : List Nat) (opcode : List Wire) (result : Wire) : List Gate :=
