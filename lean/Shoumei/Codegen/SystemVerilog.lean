@@ -376,57 +376,99 @@ def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
           s!"  assign {outRef} = {wireRef ctx c i0} {op} {wireRef ctx c i1};"
       | _ => "  // ERROR: Binary gate should have 2 inputs"
 
-/-- Try to resolve a list of wires to a single clean SystemVerilog expression.
+/-- Resolve a single contiguous slice of wires belonging to the same SignalGroup or all zero -/
+def resolveContiguousSlice (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
+    (wireToGroup : List (Wire × SignalGroup)) (wireToIndex : List (Wire × Nat))
+    (slice : List Wire) : Option String :=
+  let width := slice.length
+  if width == 0 then none
+  else if slice.all (fun w => w.name == "zero") then
+    some s!"{width}'d0"
+  else if slice.all (fun w => w.name == "one") then
+    if width == 1 then some "1'b1"
+    else some (s!"{width}'b" ++ String.join (List.replicate width "1"))
+  else
+    let wireInfos := slice.map (fun w => wireGroupMap[w.name]?)
+    if wireInfos.all Option.isSome then
+      let infos := wireInfos.filterMap id
+      match infos with
+      | (firstSg, _) :: _ =>
+          if infos.all (fun (sg, _) => sg.name == firstSg.name) then
+            let isOutput := c.outputs.any (fun ow => firstSg.wires.any (fun sw => sw.name == ow.name))
+            if isOutput && outputNeedsIndividualPorts wireToGroup wireToIndex c firstSg then
+              none
+            else
+              let indices := infos.map (·.2)
+              match indices with
+              | startIdx :: _ =>
+                  let isContiguous := indices.enum.all (fun (pos, idx) => idx == startIdx + pos)
+                  if isContiguous then
+                    if startIdx == 0 && width == firstSg.width then
+                      some firstSg.name
+                    else if width == 1 then
+                      some s!"{firstSg.name}[{startIdx}]"
+                    else
+                      some s!"{firstSg.name}[{startIdx + width - 1}:{startIdx}]"
+                  else
+                    none
+              | [] => none
+          else none
+      | [] => none
+    else if width == 1 then
+      let w := slice.head!
+      if w.name != "zero" && w.name != "one" then
+        some (sanitizeSVName w.name)
+      else none
+    else none
+
+/-- Partition wires into maximal contiguous slices (zeros, ones, or contiguous SignalGroup indices) -/
+def partitionIntoSlices (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
+    (wires : List Wire) : List (List Wire) :=
+  match wires with
+  | [] => []
+  | firstWire :: rest =>
+      let classify (w : Wire) : Option (String × Option Nat) :=
+        if w.name == "zero" then some ("zero", none)
+        else if w.name == "one" then some ("one", none)
+        else match wireGroupMap[w.name]? with
+        | some (sg, idx) => some (sg.name, some idx)
+        | none => some (w.name, none)
+
+      let (runs, currentRun, _) := rest.foldl (fun (accRuns, curRun, prevClass) w =>
+        let curClass := classify w
+        let canMerge := match prevClass, curClass with
+          | some ("zero", none), some ("zero", none) => true
+          | some ("one", none), some ("one", none) => true
+          | some (sg1, some idx1), some (sg2, some idx2) =>
+              sg1 == sg2 && idx2 == idx1 + 1
+          | _, _ => false
+        if canMerge then
+          (accRuns, curRun ++ [w], curClass)
+        else
+          (accRuns ++ [curRun], [w], curClass)
+      ) ([], [firstWire], classify firstWire)
+      runs ++ [currentRun]
+
+/-- Resolve a list of wires to a bus reference string, if all wires belong to the same
+    SignalGroup in contiguous order, or are all zero, or a concatenation of such.
     Uses wireGroupMap for O(1) wire->(group, index) lookups. -/
-partial def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
+def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
     (wireToGroup : List (Wire × SignalGroup)) (wireToIndex : List (Wire × Nat))
     (wires : List Wire) : Option String :=
   let width := wires.length
   if width == 0 then none
-  else if wires.all (fun w => w.name == "zero") then
-    some s!"{width}'d0"
   else
-    let leadZeros := wires.takeWhile (fun w => w.name == "zero") |>.length
-    if leadZeros > 0 && leadZeros < width then
-      let restWires := wires.drop leadZeros
-      match resolveBusRef c wireGroupMap wireToGroup wireToIndex restWires with
-      | some restRef => some ("{" ++ restRef ++ s!", {leadZeros}'d0}")
-      | none => none
+    let slices := partitionIntoSlices wireGroupMap wires
+    let resolvedSlices := slices.map (resolveContiguousSlice c wireGroupMap wireToGroup wireToIndex)
+    if resolvedSlices.all Option.isSome then
+      let sliceStrs := resolvedSlices.filterMap id
+      match sliceStrs with
+      | [single] => some single
+      | _ =>
+          -- Verilog concatenation is {MSB, ..., LSB}; wires[0] is LSB, so reverse
+          some ("{" ++ String.intercalate ", " sliceStrs.reverse ++ "}")
     else
-      let trailZeros := wires.reverse.takeWhile (fun w => w.name == "zero") |>.length
-      if trailZeros > 0 && trailZeros < width then
-        let restWires := wires.take (width - trailZeros)
-        match resolveBusRef c wireGroupMap wireToGroup wireToIndex restWires with
-        | some restRef => some ("{" ++ s!"{trailZeros}'d0, " ++ restRef ++ "}")
-        | none => none
-      else
-        let wireInfos := wires.map (fun w => wireGroupMap[w.name]?)
-        if wireInfos.all Option.isSome then
-          let infos := wireInfos.filterMap id
-          match infos with
-          | (firstSg, _) :: _ =>
-              if infos.all (fun (sg, _) => sg.name == firstSg.name) then
-                let isOutput := c.outputs.any (fun ow => firstSg.wires.any (fun sw => sw.name == ow.name))
-                if isOutput && outputNeedsIndividualPorts wireToGroup wireToIndex c firstSg then
-                  none
-                else
-                  let indices := infos.map (·.2)
-                  match indices with
-                  | startIdx :: _ =>
-                      let isContiguous := indices.enum.all (fun (pos, idx) => idx == startIdx + pos)
-                      if isContiguous then
-                        if startIdx == 0 && width == firstSg.width then
-                          some firstSg.name
-                        else
-                          some s!"{firstSg.name}[{startIdx + width - 1}:{startIdx}]"
-                      else
-                        none
-                  | [] => none
-              else
-                none
-          | [] => none
-        else
-          none
+      none
 
 /-- Generate all combinational logic assignments with O(N) bus collapsing -/
 def generateCombLogic (ctx : Context) (c : Circuit) : String := Id.run do
