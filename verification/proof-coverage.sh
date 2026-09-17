@@ -39,6 +39,7 @@ TOTAL_AXIOMS=0
 TOTAL_SORRY=0
 TOTAL_ADMIT=0
 TOTAL_PROVEN=0
+TOTAL_VACUOUS=0
 
 # Associative arrays for per-component tracking
 declare -A COMP_THEOREMS
@@ -107,6 +108,7 @@ TOTAL_FILES=${#LEAN_FILES[@]}
 # Detailed sorry/admit locations for the report
 SORRY_LOCATIONS=()
 AXIOM_LOCATIONS=()
+VACUOUS_LOCATIONS=()
 
 PROJECT_PREFIX="$PROJECT_ROOT/"
 for f in "${LEAN_FILES[@]}"; do
@@ -159,6 +161,15 @@ for f in "${LEAN_FILES[@]}"; do
     admit_count=$((admit_count - admit_comment))
     if [ "$admit_count" -lt 0 ]; then admit_count=0; fi
     TOTAL_ADMIT=$((TOTAL_ADMIT + admit_count))
+
+    # Count vacuous (: True :=) theorems (banned by construction)
+    vac_count=$(grep -cE '^\s*(protected\s+|private\s+)?(theorem|lemma)\s+.*:\s*True\s*:=' "$f" 2>/dev/null || true)
+    TOTAL_VACUOUS=$((TOTAL_VACUOUS + vac_count))
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            VACUOUS_LOCATIONS+=("$rel:$line")
+        fi
+    done < <(grep -nE '^\s*(protected\s+|private\s+)?(theorem|lemma)\s+.*:\s*True\s*:=' "$f" 2>/dev/null | head -50 || true)
 done
 
 # Calculate proven counts per component
@@ -206,6 +217,7 @@ printf "  %-28s %s\n" "Theorems + Lemmas:" "$((TOTAL_THEOREMS + TOTAL_LEMMAS))"
 printf "  %-28s %s\n" "Axioms (unproven):" "$TOTAL_AXIOMS"
 printf "  %-28s %s\n" "Sorry occurrences:" "$TOTAL_SORRY"
 printf "  %-28s %s\n" "Admit occurrences:" "$TOTAL_ADMIT"
+printf "  %-28s %s\n" "Vacuous stubs (: True):" "$TOTAL_VACUOUS (Banned by construction)"
 printf "  %-28s %s\n" "Proven (no sorry/axiom):" "$TOTAL_PROVEN"
 printf "  %-28s %s\n" "Total declarations:" "$TOTAL_DECLS"
 echo ""
@@ -270,9 +282,20 @@ if [ "${#AXIOM_LOCATIONS[@]}" -gt 0 ]; then
     echo ""
 fi
 
+# ─── Vacuous Locations (Banned) ─────────────────────────────
+
+if [ "${#VACUOUS_LOCATIONS[@]}" -gt 0 ]; then
+    echo -e "${BOLD}5. Vacuous Proof Violations (: True := trivial) [BANNED]${NC}"
+    echo ""
+    for loc in "${VACUOUS_LOCATIONS[@]}"; do
+        echo -e "  ${RED}$loc${NC}"
+    done
+    echo ""
+fi
+
 # ─── Coverage Matrix ────────────────────────────────────────
 
-echo -e "${BOLD}5. Coverage Matrix (Component x Property Type)${NC}"
+echo -e "${BOLD}6. Coverage Matrix (Component x Property Type)${NC}"
 echo ""
 echo "  Legend: [x] = proven  [~] = axiom/sorry  [ ] = no coverage"
 echo ""

@@ -63,6 +63,30 @@ def Refines (c : Circuit) (s0 : State) (spec : TraceSpec) : Prop :=
   ∀ (inputs : Nat → Env) (tr : Trace),
     Trace.IsExecutionOf c s0 inputs tr → spec tr
 
+/-! ## Non-Vacuous Specification Guarantee (Banned by Construction) -/
+
+/-- A specification is non-trivial if there exists at least one trace that violates it.
+    By construction, tautological specifications like `fun _ => True` can NEVER
+    satisfy this predicate, because `¬ True` reduces to `False`. -/
+def NonTrivialSpec (spec : TraceSpec) : Prop :=
+  ∃ tr : Trace, ¬ spec tr
+
+/-- **Theorem (Vacuous Specifications Banned)**:
+    It is mathematically impossible to certify the trivial specification `fun _ => True`. -/
+theorem tautology_is_not_non_trivial : ¬ NonTrivialSpec (fun _ => True) := by
+  intro ⟨tr, h_not_true⟩
+  exact h_not_true trivial
+
+/-- Robust Refinement Certificate:
+    Bans tautological proofs by construction. Requires:
+    1. A concrete circuit `c`
+    2. An initial state `s0`
+    3. A non-trivial specification `spec` (cannot be `fun _ => True`)
+    4. A formal proof that all executions of `c` refine `spec`. -/
+structure CertifiedRefinement (c : Circuit) (s0 : State) (spec : TraceSpec) where
+  non_trivial : NonTrivialSpec spec
+  refines     : Refines c s0 spec
+
 /-- Compositional Refinement Theorem:
     If a child subcircuit satisfies ChildSpec, and the parent interconnect logic
     ensures that ChildSpec implies ParentSpec, then the parent trace unconditionally satisfies ParentSpec. -/
