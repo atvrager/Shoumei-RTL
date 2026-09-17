@@ -519,6 +519,12 @@ def microcodeSequencer_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Microcode.MicrocodeSequencerProofs"
 }
 
+/-- CSRFile: Control and Status Register file (12 32-bit registers + WARL/traps/counters) -/
+def csrFile_cert : CompositionalCert := {
+  moduleName := s!"CSRFile_{Shoumei.RISCV.defaultCPUConfig.isaString}"
+  proofReference := "Shoumei.RISCV.CSRFileProofs"
+}
+
 /-- W=2 dual-issue microcoded CPU.  The module name is the config's, so enabling
     or renaming an extension renames the certificate with the circuit. -/
 def cpu_microcoded_cert : CompositionalCert := {
@@ -589,6 +595,8 @@ def allCerts : List CompositionalCert := [
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
   renameStage_w2_64_cert,
+  -- CSR File
+  csrFile_cert,
   -- Microcode
   microcodeSequencer_cert,
   -- Microcoded variant

@@ -120,6 +120,8 @@ import Shoumei.RISCV.CPUHelpers
 import Shoumei.RISCV.CPUProofs
 import Shoumei.RISCV.CPUTest
 import Shoumei.RISCV.CPUTestbench
+import Shoumei.RISCV.CSRFile
+import Shoumei.RISCV.CSRFileProofs
 import Shoumei.RISCV.CodegenCppSim
 import Shoumei.RISCV.CodegenSystemVerilog
 import Shoumei.RISCV.CodegenTest
