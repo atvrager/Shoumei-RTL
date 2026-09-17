@@ -47,39 +47,48 @@ structure Context where
 /-! ## Bus Reconstruction Helpers -/
 
 /-- Parse a wire name to extract base name and optional index.
-    Examples: "data_31" → some ("data", 31), "valid" → none -/
+    Examples: "data_31" → some ("data", 31), "x[3]" → some ("x", 3), "valid" → none -/
 def parseWireName (w : Wire) : Option (String × Nat) :=
   let name := w.name
-  -- Find the last underscore
-  match name.splitOn "_" with
-  | [] => none
-  | parts =>
-      match parts.reverse with
-      | [] => none
-      | lastPart :: restReversed =>
-          -- Check if last part is a number
-          match lastPart.toNat? with
-          | some idx =>
-              let baseName := String.intercalate "_" restReversed.reverse
-              some (baseName, idx)
-          | none => none
+  match name.splitOn "[" with
+  | [base, idxPart] =>
+      let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
+      match idxStr.toNat? with
+      | some idx => some (base, idx)
+      | none => none
+  | _ =>
+      let parts := name.splitOn "_"
+      if parts.length >= 2 then
+        let lastPart := parts.getLast!
+        match lastPart.toNat? with
+        | some idx =>
+            let base := String.intercalate "_" parts.dropLast
+            if base.isEmpty then none else some (base, idx)
+        | none => none
+      else
+        none
 
 /-- Group wires by base name (for bus reconstruction) -/
-def groupWiresByBaseName (wires : List Wire) : List (String × List (Nat × Wire)) :=
+def groupWiresByBaseName (wires : List Wire) : List (String × List (Nat × Wire)) := Id.run do
   let parsed := wires.filterMap (fun w =>
     match parseWireName w with
     | some (base, idx) => some (base, idx, w)
     | none => none
   )
-  -- Group by base name
-  let grouped := parsed.foldl (fun acc (base, idx, w) =>
-    match acc.find? (fun p => p.1 == base) with
-    | some (_, existing) =>
-        acc.filter (fun p => p.1 != base) ++ [(base, existing ++ [(idx, w)])]
+  let mut map : Std.HashMap String (List (Nat × Wire)) := {}
+  let mut order : List String := []
+  for (base, idx, w) in parsed do
+    match map[base]? with
+    | some existing =>
+        map := map.insert base (existing ++ [(idx, w)])
     | none =>
-        acc ++ [(base, [(idx, w)])]
-  ) []
-  grouped
+        map := map.insert base [(idx, w)]
+        order := order ++ [base]
+  let mut result : List (String × List (Nat × Wire)) := []
+  for base in order do
+    if let some entries := map[base]? then
+      result := result ++ [(base, entries)]
+  result
 
 /-- Check if a list of (index, wire) pairs forms a valid bus.
     Valid means: indices are contiguous from 0 to N-1 -/
@@ -93,9 +102,10 @@ def isValidBus (indexedWires : List (Nat × Wire)) : Bool :=
 
 /-- Auto-detect signal groups from wire naming patterns -/
 def autoDetectSignalGroups (wires : List Wire) : List SignalGroup :=
+  let wireNameSet : Std.HashSet String := wires.foldl (fun s w => s.insert w.name) {}
   let grouped := groupWiresByBaseName wires
   grouped.filterMap (fun (baseName, indexedWires) =>
-    if isValidBus indexedWires then
+    if isValidBus indexedWires && !wireNameSet.contains baseName then
       -- Sort wires by index to ensure correct order
       let sortedWires := indexedWires.toArray.qsort (fun a b => a.1 < b.1)
                          |>.toList.map (·.2)
@@ -127,7 +137,10 @@ def svReservedKeywords : List String :=
    "parameter", "localparam", "integer", "real", "time", "event",
    "posedge", "negedge", "edge", "supply0", "supply1", "tri", "wand", "wor",
    "default", "disable", "deassign", "force", "release", "fork", "join",
-   "table", "endtable", "primitive", "endprimitive", "specify", "endspecify"]
+   "table", "endtable", "primitive", "endprimitive", "specify", "endspecify",
+   "const", "type", "byte", "shortint", "int", "longint", "bit", "void",
+   "shortreal", "struct", "union", "enum", "string", "chandle", "class",
+   "interface", "package", "import", "export", "final", "return", "break", "continue"]
 
 /-- Sanitize a signal name to avoid Verilog reserved keyword conflicts.
     Prefixes with "w_" if the name is a reserved keyword. -/
@@ -267,10 +280,10 @@ def mkContext (c : Circuit) : Context :=
   let isSequential := c.gates.any (fun g => g.gateType.isDFF) ||
                       !clockWires.isEmpty || !resetWires.isEmpty
 
-  -- Auto-detect signal groups from internal wires not explicitly grouped
-  let internalWires := findInternalWires c
+  -- Auto-detect signal groups from all wires not explicitly grouped (inputs, outputs, and internal)
+  let allCircuitWires := c.inputs ++ c.outputs ++ findInternalWires c
   let explicitWires := c.signalGroups.flatMap (·.wires) |>.map (·.name)
-  let unassignedWires := internalWires.filter (fun w => !explicitWires.contains w.name)
+  let unassignedWires := allCircuitWires.filter (fun w => !explicitWires.contains w.name)
   let autoDetectedGroups := autoDetectSignalGroups unassignedWires
 
   -- Combine explicit annotations with auto-detected groups
@@ -464,7 +477,7 @@ def generateCombAssignment (ctx : Context) (c : Circuit) (g : Gate) : String :=
 
 /-- Try to resolve a list of wires to a single clean SystemVerilog expression.
     Uses wireGroupMap for O(1) wire->(group, index) lookups. -/
-def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
+partial def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup × Nat))
     (wireToGroup : List (Wire × SignalGroup)) (wireToIndex : List (Wire × Nat))
     (wires : List Wire) : Option String :=
   let width := wires.length
@@ -472,33 +485,47 @@ def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup 
   else if wires.all (fun w => w.name == "zero") then
     some s!"{width}'d0"
   else
-    let wireInfos := wires.map (fun w => wireGroupMap[w.name]?)
-    if wireInfos.all Option.isSome then
-      let infos := wireInfos.filterMap id
-      match infos with
-      | (firstSg, _) :: _ =>
-          if infos.all (fun (sg, _) => sg.name == firstSg.name) then
-            let isOutput := c.outputs.any (fun ow => firstSg.wires.any (fun sw => sw.name == ow.name))
-            if isOutput && outputNeedsIndividualPorts wireToGroup wireToIndex c firstSg then
-              none
-            else
-              let indices := infos.map (·.2)
-              match indices with
-              | startIdx :: _ =>
-                  let isContiguous := indices.enum.all (fun (pos, idx) => idx == startIdx + pos)
-                  if isContiguous then
-                    if startIdx == 0 && width == firstSg.width then
-                      some firstSg.name
-                    else
-                      some s!"{firstSg.name}[{startIdx + width - 1}:{startIdx}]"
-                  else
-                    none
-              | [] => none
-          else
-            none
-      | [] => none
+    let leadZeros := wires.takeWhile (fun w => w.name == "zero") |>.length
+    if leadZeros > 0 && leadZeros < width then
+      let restWires := wires.drop leadZeros
+      match resolveBusRef c wireGroupMap wireToGroup wireToIndex restWires with
+      | some restRef => some ("{" ++ restRef ++ s!", {leadZeros}'d0}")
+      | none => none
     else
-      none
+      let trailZeros := wires.reverse.takeWhile (fun w => w.name == "zero") |>.length
+      if trailZeros > 0 && trailZeros < width then
+        let restWires := wires.take (width - trailZeros)
+        match resolveBusRef c wireGroupMap wireToGroup wireToIndex restWires with
+        | some restRef => some ("{" ++ s!"{trailZeros}'d0, " ++ restRef ++ "}")
+        | none => none
+      else
+        let wireInfos := wires.map (fun w => wireGroupMap[w.name]?)
+        if wireInfos.all Option.isSome then
+          let infos := wireInfos.filterMap id
+          match infos with
+          | (firstSg, _) :: _ =>
+              if infos.all (fun (sg, _) => sg.name == firstSg.name) then
+                let isOutput := c.outputs.any (fun ow => firstSg.wires.any (fun sw => sw.name == ow.name))
+                if isOutput && outputNeedsIndividualPorts wireToGroup wireToIndex c firstSg then
+                  none
+                else
+                  let indices := infos.map (·.2)
+                  match indices with
+                  | startIdx :: _ =>
+                      let isContiguous := indices.enum.all (fun (pos, idx) => idx == startIdx + pos)
+                      if isContiguous then
+                        if startIdx == 0 && width == firstSg.width then
+                          some firstSg.name
+                        else
+                          some s!"{firstSg.name}[{startIdx + width - 1}:{startIdx}]"
+                      else
+                        none
+                  | [] => none
+              else
+                none
+          | [] => none
+        else
+          none
 
 /-- Generate all combinational logic assignments with O(N) bus collapsing -/
 def generateCombLogic (ctx : Context) (c : Circuit) : String := Id.run do
@@ -506,19 +533,26 @@ def generateCombLogic (ctx : Context) (c : Circuit) : String := Id.run do
   if combGates.isEmpty then ""
   else
     -- Step 1: Build O(1) lookup tables
+    let mut wireToIndexMap : Std.HashMap String Nat := {}
+    for (w, idx) in ctx.wireToIndex do
+      wireToIndexMap := wireToIndexMap.insert w.name idx
+
     let mut wireGroupMap : Std.HashMap String (SignalGroup × Nat) := {}
     for (w, sg) in ctx.wireToGroup do
-      if let some (_, idx) := ctx.wireToIndex.find? (fun (w', _) => w'.name == w.name) then
+      if let some idx := wireToIndexMap[w.name]? then
         wireGroupMap := wireGroupMap.insert w.name (sg, idx)
 
     let mut gateByOutput : Std.HashMap String (Nat × Gate) := {}
     for (idx, g) in combGates.enum do
       gateByOutput := gateByOutput.insert g.output.name (idx, g)
 
-    -- Step 2: Find all unique multi-bit signal groups
-    let allSgs := ctx.wireToGroup.map (·.2) |>.foldl (fun acc sg =>
-      if sg.width > 1 && !acc.any (fun s => s.name == sg.name) then acc ++ [sg] else acc
-    ) []
+    -- Step 2: Find all unique multi-bit signal groups in O(N)
+    let mut allSgs : List SignalGroup := []
+    let mut seenSgNames : Std.HashSet String := {}
+    for (_, sg) in ctx.wireToGroup do
+      if sg.width > 1 && !seenSgNames.contains sg.name then
+        seenSgNames := seenSgNames.insert sg.name
+        allSgs := allSgs ++ [sg]
 
     -- Step 3: Check each signal group once for bus collapsing
     let mut collapseAtIdx : Std.HashMap Nat String := {}
@@ -1038,14 +1072,25 @@ def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
 /-- Generate individual port connections for a bus group where the sub-module
     uses individual ports (e.g., out_0, out_1, ...). -/
 def generateIndividualBusPortConnections (ctx : Context) (c : Circuit)
-    (baseName : String) (entries : List (Nat × Wire)) : List String :=
+    (subMod : Option Circuit) (baseName : String) (entries : List (Nat × Wire)) : List String :=
   let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
-  sorted.map (fun (idx, w) => s!"    .{baseName}_{idx}({wireRef ctx c w})")
+  sorted.map (fun (idx, w) =>
+    let portName := match subMod with
+      | some sm =>
+          let candidateBare := s!"{baseName}{idx}"
+          let candidateWithUnderscore := s!"{baseName}_{idx}"
+          if (sm.inputs ++ sm.outputs).any (fun pw => pw.name == candidateBare) then
+            candidateBare
+          else
+            candidateWithUnderscore
+      | none => s!"{baseName}_{idx}"
+    s!"    .{portName}({wireRef ctx c w})")
 
 /-- Generate module instantiation -/
 def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
     (inst : CircuitInstance) : String :=
   let grouped := groupPortMapEntries allCircuits inst
+  let subMod := allCircuits.find? (fun sc => sc.name == inst.moduleName)
   -- Get output signal groups with individual ports for this sub-module
   let individualOutputGroups := getSubModuleIndividualOutputGroups allCircuits inst.moduleName
   let portConnections := grouped.flatMap (fun entry =>
@@ -1054,7 +1099,7 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
     | Sum.inr (baseName, entries) =>
         -- Check if this bus group corresponds to an individual-port output
         if individualOutputGroups.contains baseName then
-          generateIndividualBusPortConnections ctx c baseName entries
+          generateIndividualBusPortConnections ctx c subMod baseName entries
         else
           [generateBusPortConnection ctx c baseName entries]
   )

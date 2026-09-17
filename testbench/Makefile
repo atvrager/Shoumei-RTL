@@ -42,11 +42,20 @@ LLVM_LLC      := $(CIRCT_PREFIX)/bin/llc
 # --------------------------------------------------------------------------
 VERILATOR  := verilator
 VWARN      := -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEOVERLAP -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-NULLPORT -Wno-MULTIDRIVEN -Wno-MULTIDRIVEN
+VSPLIT     ?= --output-split 5000 --output-split-cfuncs 5000
+
+# Enable ccache for Verilator compilation if available
+OBJCACHE ?= $(if $(shell which ccache 2>/dev/null),ccache,)
+export OBJCACHE
+OPT_FAST ?= -O2
+export OPT_FAST
+OPT_SLOW ?= -O1
+export OPT_SLOW
 
 # Helper: disable precompiled headers then build (PCH can OOM on large designs)
 define verilator_build
 	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(1)/Vtb_cpu.mk
-	$(MAKE) -C $(1) -f Vtb_cpu.mk -j $(shell nproc)
+	$(MAKE) -C $(1) -f Vtb_cpu.mk -j $(shell nproc) OBJCACHE=$(OBJCACHE) OPT_FAST="$(OPT_FAST)" OPT_SLOW="$(OPT_SLOW)"
 endef
 
 # Source files: all SV from Lean + generated testbench
@@ -80,10 +89,12 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 
 .PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests \
         cosim run-cosim coremark run-coremark clean \
-        sim-arc cosim-arc run-all-tests-arc run-cosim-arc
+        sim-arc cosim-arc run-all-tests-arc run-cosim-arc \
+        sim-cov run-coverage
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
+SIM_COV_BIN  := $(BUILD_DIR)/sim_shoumei_cov
 ARC_SIM_BIN  := $(BUILD_DIR)/sim_shoumei_arc
 ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
@@ -174,9 +185,9 @@ $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator \
-		$(VWARN) --top-module tb_cpu \
+		$(VWARN) $(VSPLIT) --top-module tb_cpu \
 		--x-assign unique --x-initial unique \
-		-CFLAGS "-std=c++17 -O2" \
+		-CFLAGS "-std=c++17" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	$(call verilator_build,$(BUILD_DIR)/verilator)
@@ -187,9 +198,9 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@mkdir -p $(BUILD_DIR)/verilator_trace
 	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_trace \
-		$(VWARN) --top-module tb_cpu --trace-fst \
+		$(VWARN) $(VSPLIT) --top-module tb_cpu --trace-fst \
 		--x-assign unique --x-initial unique \
-		-CFLAGS "-std=c++17 -O2 -DVM_TRACE=1" \
+		-CFLAGS "-std=c++17 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	$(call verilator_build,$(BUILD_DIR)/verilator_trace)
@@ -200,14 +211,29 @@ sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
 	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_dbg \
-		$(VWARN) --top-module tb_cpu \
+		$(VWARN) $(VSPLIT) --top-module tb_cpu \
 		--x-assign unique --x-initial unique \
-		-CFLAGS "-std=c++17 -O2" \
+		-CFLAGS "-std=c++17" \
 		-DTRACE_PIPELINE \
 		-o $(BUILD_DIR)/sim_shoumei_dbg \
 		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
 	$(call verilator_build,$(BUILD_DIR)/verilator_dbg)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_dbg (with pipeline trace)"
+
+sim-cov: $(SIM_COV_BIN)
+$(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+	@rm -rf $(BUILD_DIR)/verilator_cov
+	@mkdir -p $(BUILD_DIR)/verilator_cov
+	$(VERILATOR) --cc --exe \
+		--Mdir $(BUILD_DIR)/verilator_cov \
+		$(VWARN) $(VSPLIT) --top-module tb_cpu \
+		--coverage-line --coverage-toggle \
+		--x-assign unique --x-initial unique \
+		-CFLAGS "-std=c++17 -DVM_COVERAGE=1" \
+		-o $@ \
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+	$(call verilator_build,$(BUILD_DIR)/verilator_cov)
+	@echo "Built: $@ (with coverage)"
 
 run-elf: $(SIM_BIN)
 	$(SIM_BIN) +elf=$(ELF)
@@ -242,20 +268,30 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
+run-coverage: $(SIM_COV_BIN) tests riscv-tests
+	@mkdir -p $(PROJ_ROOT)/output/coverage
+	@rm -f $(PROJ_ROOT)/output/coverage/*.dat $(PROJ_ROOT)/output/coverage/*.info
+	@rm -rf $(PROJ_ROOT)/output/coverage/annotated
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_COV_BIN) --jobs $(shell nproc) --default-timeout 5000 \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --coverage-dir $(PROJ_ROOT)/output/coverage \
+	    --csv $(PROJ_ROOT)/output/test-results-coverage.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+
 cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) --cc --exe \
 		--Mdir $(BUILD_DIR)/verilator_cosim \
-		$(VWARN) +define+COSIM_DEBUG \
+		$(VWARN) $(VSPLIT) +define+COSIM_DEBUG \
 		--top-module tb_cpu \
-		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
+		-CFLAGS "-std=c++20 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
-	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(BUILD_DIR)/verilator_cosim/Vtb_cpu.mk
-	$(MAKE) -C $(BUILD_DIR)/verilator_cosim -f Vtb_cpu.mk -j $(shell nproc)
+	$(call verilator_build,$(BUILD_DIR)/verilator_cosim)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
 run-cosim: $(COSIM_BIN) tests riscv-tests
@@ -273,8 +309,9 @@ run-coremark: $(SIM_BIN) coremark
 	$(SIM_BIN) +elf=$(TB_DIR)/coremark/coremark.elf +timeout=10000000
 
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
 	rm -rf $(BUILD_DIR)/arc $(ARC_SIM_BIN) $(ARC_COSIM_BIN)
+	rm -rf $(PROJ_ROOT)/output/coverage
 	rm -f shoumei_cpu.fst
 	$(MAKE) -C $(TB_DIR)/tests clean
 	$(MAKE) -C $(TB_DIR)/riscv-tests clean

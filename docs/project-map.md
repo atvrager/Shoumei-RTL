@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **203**
-- Circuits with a literal `name :=` (graph nodes): **64**
-- Compositional certificates (Lean registry): **77**
-- Proof files: **51**
+- Lean files: **206**
+- Circuits with a literal `name :=` (graph nodes): **65**
+- Compositional certificates (Lean registry): **78**
+- Proof files: **52**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -24,7 +24,7 @@ label is how many distinct instantiations cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>30 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>31 circuits"]
   Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>13 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
@@ -53,7 +53,6 @@ graph TD
 | `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
 | `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 1 | yes |  | yes |
 | `BranchExecUnit` | Shoumei/RISCV/Execution | 0 |  |  | yes |
-| `CSACompressor64` | Shoumei/Circuits/Combinational | 4 |  | yes | yes |
 | `Comparator32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Comparator64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `DFlipFlop` | Shoumei/Circuits/Sequential | 0 |  | yes | yes |
@@ -70,16 +69,18 @@ graph TD
 | `FPExecUnit_D` | Shoumei/RISCV/Execution | 15 | yes |  | yes |
 | `FPFMA` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
 | `FPFMAD` | Shoumei/Circuits/Sequential | 2 | yes | yes | yes |
-| `FPLongConverter` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `FPLongConverter` | Shoumei/Circuits/Combinational | 2 | yes | yes | yes |
 | `FPMisc` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
 | `FPMultiplier` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPMultiplierD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPPack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `FPSqrt` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPSqrtD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
+| `FPToInt64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `FPUnpack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes |
+| `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `L1DCache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
@@ -90,14 +91,14 @@ graph TD
 | `MemoryHierarchy` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `MicrocodeDecoder` | Shoumei/RISCV/Microcode | 0 |  |  | yes |
 | `MicrocodeSequencer` | Shoumei/RISCV/Microcode | 1 | yes | yes | yes |
-| `Mul32x32To64` | Shoumei/Circuits/Combinational | 4 |  |  | yes |
+| `Mul32x32To64` | Shoumei/Circuits/Combinational | 3 |  |  | yes |
 | `MulDivExecUnit` | Shoumei/RISCV/Execution | 2 | yes | yes | yes |
 | `Mux0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `MyModule` | Shoumei/DSL | 0 |  |  | yes |
 | `OneHotEncoder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Pipeline` | Shoumei/DSL | 0 |  | yes | yes |
-| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 5 | yes | yes | yes |
-| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 5 | yes |  | yes |
+| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 4 | yes | yes | yes |
+| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 4 | yes |  | yes |
 | `Popcount8` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `PriorityArbiter0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Queue16x32` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
@@ -118,7 +119,7 @@ graph TD
 
 - **0** circuit files without a leading doc comment
 - **20** circuits with no `*Proofs.lean` mentioning them
-- **41** circuits that instantiate nothing (leaves)
+- **42** circuits that instantiate nothing (leaves)
 - **32** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)

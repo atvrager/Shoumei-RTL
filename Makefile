@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit
+.PHONY: all clean lean codegen systemverilog cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -35,6 +35,7 @@ help:
 	@echo "  make presubmit      - Run full local presubmit verification suite"
 	@echo "  make proof-coverage - Run Lean-native proof depth coverage analysis"
 	@echo "  make mutation-test  - Run systematic hardware mutation testing"
+	@echo "  make coverage       - Run test suite with Verilator line & toggle coverage"
 	@echo "  make smoke-test     - Run comprehensive CI smoke tests"
 	@echo ""
 	@echo "Utility Targets:"
@@ -132,6 +133,11 @@ proof-coverage:
 mutation-test:
 	@echo "==> Running hardware mutation test suite..."
 	./verification/mutation-test.sh
+
+# Run simulation coverage analysis with Verilator
+coverage:
+	@echo "==> Running Verilator line & toggle coverage analysis..."
+	$(MAKE) -C testbench run-coverage
 
 # Presubmit check (runs local CI verification pipeline)
 presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test

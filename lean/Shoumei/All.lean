@@ -210,3 +210,4 @@ import Shoumei.Verification
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts
 import Shoumei.Verification.ExportCerts
+import Shoumei.Verification.ProofManifest

@@ -119,12 +119,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   }
   let branch_redirect_target := CPU.makeIndexedWires "branch_redirect_target" 32
   let branch_redirect_target_reg := CPU.makeIndexedWires "branch_redirect_target_reg" 32
-  let redirect_target_dff_insts : List CircuitInstance := (List.range 32).map (fun i => {
-    moduleName := "DFlipFlop"
-    instName := s!"u_redirect_target_dff_{i}"
-    portMap := [("d", branch_redirect_target[i]!), ("q", branch_redirect_target_reg[i]!),
-                ("clock", clock), ("reset", reset)]
-  })
+  let redirect_target_dff_insts : List CircuitInstance := [{
+    moduleName := "Register32"
+    instName := "u_redirect_target_reg"
+    portMap := (branch_redirect_target.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+               [("clock", clock), ("reset", reset)] ++
+               (branch_redirect_target_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+  }]
 
   -- === FETCH STAGE (W2) ===
   let fetch_pc_0 := CPU.makeIndexedWires "fetch_pc_0" 32
@@ -603,10 +604,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      { moduleName := "DFlipFlop", instName := "u_fence_start_dly_dff",
        portMap := [("d", fence_i_start), ("q", Wire.mk "fence_start_delayed"),
                    ("clock", clock), ("reset", reset)] }] ++
-    (List.range 32).map (fun i =>
-      { moduleName := "DFlipFlop", instName := s!"u_fencei_redir_dff_{i}",
-        portMap := [("d", fence_i_redir_next[i]!), ("q", fence_i_redir_target[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
+    [{ moduleName := "Register32", instName := "u_fencei_redir_reg",
+       portMap := (fence_i_redir_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                  [("clock", clock), ("reset", reset)] ++
+                  (fence_i_redir_target.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }] ++
     (if config.enableZicsr then
       (List.range 12).map (fun i =>
         { moduleName := "DFlipFlop", instName := s!"u_csr_addr_dff_{i}",
@@ -628,10 +629,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         { moduleName := "DFlipFlop", instName := s!"u_csr_ophys_dff_{i}",
           portMap := [("d", csr_old_phys_next[i]!), ("q", csr_old_phys_reg[i]!),
                       ("clock", clock), ("reset", reset)] }) ++
-      (List.range (if config.xlen == 64 then 64 else 32)).map (fun i =>
-        { moduleName := "DFlipFlop", instName := s!"u_csr_rs1cap_dff_{i}",
-          portMap := [("d", csr_rs1cap_next[i]!), ("q", csr_rs1cap_reg[i]!),
-                      ("clock", clock), ("reset", reset)] }) ++
+      (if config.xlen == 64 then
+        [{ moduleName := "Register64", instName := "u_csr_rs1cap_reg",
+           portMap := (csr_rs1cap_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                      [("clock", clock), ("reset", reset)] ++
+                      (csr_rs1cap_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]
+       else
+        [{ moduleName := "Register32", instName := "u_csr_rs1cap_reg",
+           portMap := (csr_rs1cap_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                      [("clock", clock), ("reset", reset)] ++
+                      (csr_rs1cap_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]) ++
       (List.range 6).map (fun i =>
         { moduleName := "DFlipFlop", instName := s!"u_csr_rs1tag_dff_{i}",
           portMap := [("d", csr_rs1tag_next[i]!), ("q", csr_rs1tag_reg[i]!),
@@ -640,14 +647,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         { moduleName := "DFlipFlop", instName := s!"u_csr_zimm_dff_{i}",
           portMap := [("d", csr_zimm_next[i]!), ("q", csr_zimm_reg[i]!),
                       ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i =>
-        { moduleName := "DFlipFlop", instName := s!"u_csr_pc_dff_{i}",
-          portMap := [("d", csr_pc_next[i]!), ("q", csr_pc_reg[i]!),
-                      ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i =>
-        { moduleName := "DFlipFlop", instName := s!"u_csr_insn_dff_{i}",
-          portMap := [("d", csr_insn_next[i]!), ("q", csr_insn_reg[i]!),
-                      ("clock", clock), ("reset", reset)] }) ++
+      [{ moduleName := "Register32", instName := "u_csr_pc_reg",
+         portMap := (csr_pc_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", reset)] ++
+                    (csr_pc_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) },
+       { moduleName := "Register32", instName := "u_csr_insn_reg",
+         portMap := (csr_insn_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", reset)] ++
+                    (csr_insn_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }] ++
       [{ moduleName := "DFlipFlop", instName := "u_csr_flush_sup",
          portMap := [("d", csr_cdb_inject), ("q", csr_flush_suppress),
                      ("clock", clock), ("reset", reset)] }]
@@ -3983,10 +3990,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_0_{i}",
        portMap := [("d", cdb_pre_tag_0[i]!), ("q", cdb_tag_0[i]!),
                    ("clock", clock), ("reset", cdb_reset_w)] }) ++
-    (List.range (if config.enableD then 64 else 32)).map (fun i => {
-       moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_0_{i}",
-       portMap := [("d", cdb_pre_data_0[i]!), ("q", cdb_data_0[i]!),
-                   ("clock", clock), ("reset", cdb_reset_w)] }) ++
+    (if config.enableD then
+      [{ moduleName := "Register64", instName := "u_cdb_data_reg_0",
+         portMap := (cdb_pre_data_0.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", cdb_reset_w)] ++
+                    (cdb_data_0.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]
+     else
+      [{ moduleName := "Register32", instName := "u_cdb_data_reg_0",
+         portMap := (cdb_pre_data_0.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", cdb_reset_w)] ++
+                    (cdb_data_0.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]) ++
     -- Channel 1
     [{ moduleName := "DFlipFlop", instName := "u_cdb_valid_reg_1",
        portMap := [("d", cdb_pre_valid_1), ("q", cdb_valid_1),
@@ -3995,10 +4008,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        moduleName := "DFlipFlop", instName := s!"u_cdb_tag_reg_1_{i}",
        portMap := [("d", cdb_pre_tag_1[i]!), ("q", cdb_tag_1[i]!),
                    ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
-    (List.range (if config.enableD then 64 else 32)).map (fun i => {
-       moduleName := "DFlipFlop", instName := s!"u_cdb_data_reg_1_{i}",
-       portMap := [("d", cdb_pre_data_1[i]!), ("q", cdb_data_1[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
+    (if config.enableD then
+      [{ moduleName := "Register64", instName := "u_cdb_data_reg_1",
+         portMap := (cdb_pre_data_1.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", pipeline_reset_misc)] ++
+                    (cdb_data_1.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]
+     else
+      [{ moduleName := "Register32", instName := "u_cdb_data_reg_1",
+         portMap := (cdb_pre_data_1.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                    [("clock", clock), ("reset", pipeline_reset_misc)] ++
+                    (cdb_data_1.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]) ++
     -- CDB is_fp pipeline registers
     [{ moduleName := "DFlipFlop", instName := "u_cdb_is_fp_reg_0",
        portMap := [("d", Wire.mk "cdb_pre_is_fp_0"), ("q", cdb_is_fp_0),
@@ -4017,16 +4036,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let cdb_redirect_reg_1 := CPU.makeIndexedWires "cdb_redirect_reg_1" 32
   let cdb_mispredicted_reg_0 := Wire.mk "cdb_mispredicted_reg_0"
   let cdb_mispredicted_reg_1 := Wire.mk "cdb_mispredicted_reg_1"
+  let cdb_redirect_0_wires := (List.range 32).map (fun i => Wire.mk s!"cdb_redirect_0_{i}")
+  let cdb_redirect_1_wires := (List.range 32).map (fun i => Wire.mk s!"cdb_redirect_1_{i}")
   let cdb_redirect_reg_insts : List CircuitInstance :=
-    (List.range 32).map (fun i => {
-       moduleName := "DFlipFlop", instName := s!"u_cdb_redirect_reg_0_{i}",
-       portMap := [("d", Wire.mk s!"cdb_redirect_0_{i}"), ("q", cdb_redirect_reg_0[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
-    (List.range 32).map (fun i => {
-       moduleName := "DFlipFlop", instName := s!"u_cdb_redirect_reg_1_{i}",
-       portMap := [("d", Wire.mk s!"cdb_redirect_1_{i}"), ("q", cdb_redirect_reg_1[i]!),
-                   ("clock", clock), ("reset", pipeline_reset_misc)] }) ++
-    [{ moduleName := "DFlipFlop", instName := "u_cdb_mispred_reg_0",
+    [{ moduleName := "Register32", instName := "u_cdb_redirect_reg_0",
+       portMap := (cdb_redirect_0_wires.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                  [("clock", clock), ("reset", pipeline_reset_misc)] ++
+                  (cdb_redirect_reg_0.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) },
+     { moduleName := "Register32", instName := "u_cdb_redirect_reg_1",
+       portMap := (cdb_redirect_1_wires.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                  [("clock", clock), ("reset", pipeline_reset_misc)] ++
+                  (cdb_redirect_reg_1.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) },
+     { moduleName := "DFlipFlop", instName := "u_cdb_mispred_reg_0",
        portMap := [("d", Wire.mk "cdb_mispredicted_0"), ("q", cdb_mispredicted_reg_0),
                    ("clock", clock), ("reset", pipeline_reset_misc)] },
      { moduleName := "DFlipFlop", instName := "u_cdb_mispred_reg_1",
@@ -4223,57 +4244,30 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mip_reg := (List.range 32).map (fun i => Wire.mk s!"mip_e{i}")
   let mip_next := (List.range 32).map (fun i => Wire.mk s!"mip_nx_e{i}")
 
-  -- CSR register DFFs
+  -- Helper to instantiate a Register32
+  let mkReg32Inst (name : String) (d : List Wire) (q : List Wire) : CircuitInstance := {
+    moduleName := "Register32"
+    instName := s!"u_{name}_reg"
+    portMap := (d.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+               [("clock", clock), ("reset", reset)] ++
+               (q.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w)))
+  }
+
+  -- CSR register file
   let csr_reg_instances : List CircuitInstance :=
     if config.enableZicsr then
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mscratch_dff_{i}",
-        portMap := [("d", mscratch_next[i]!), ("q", mscratch_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mcycle_dff_{i}",
-        portMap := [("d", mcycle_next[i]!), ("q", mcycle_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mcycleh_dff_{i}",
-        portMap := [("d", mcycleh_next[i]!), ("q", mcycleh_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_minstret_dff_{i}",
-        portMap := [("d", minstret_next[i]!), ("q", minstret_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_minstreth_dff_{i}",
-        portMap := [("d", minstreth_next[i]!), ("q", minstreth_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mstatus_dff_{i}",
-        portMap := [("d", mstatus_next[i]!), ("q", mstatus_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mie_dff_{i}",
-        portMap := [("d", mie_next[i]!), ("q", mie_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mtvec_dff_{i}",
-        portMap := [("d", mtvec_next[i]!), ("q", mtvec_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mepc_dff_{i}",
-        portMap := [("d", mepc_next[i]!), ("q", mepc_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mcause_dff_{i}",
-        portMap := [("d", mcause_next[i]!), ("q", mcause_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mtval_dff_{i}",
-        portMap := [("d", mtval_next[i]!), ("q", mtval_reg[i]!),
-                    ("clock", clock), ("reset", reset)] }) ++
-      (List.range 32).map (fun i => {
-        moduleName := "DFlipFlop", instName := s!"u_mip_dff_{i}",
-        portMap := [("d", mip_next[i]!), ("q", mip_reg[i]!),
-                    ("clock", clock), ("reset", reset)] })
+      [mkReg32Inst "mscratch" mscratch_next mscratch_reg,
+       mkReg32Inst "mcycle" mcycle_next mcycle_reg,
+       mkReg32Inst "mcycleh" mcycleh_next mcycleh_reg,
+       mkReg32Inst "minstret" minstret_next minstret_reg,
+       mkReg32Inst "minstreth" minstreth_next minstreth_reg,
+       mkReg32Inst "mstatus" mstatus_next mstatus_reg,
+       mkReg32Inst "mie" mie_next mie_reg,
+       mkReg32Inst "mtvec" mtvec_next mtvec_reg,
+       mkReg32Inst "mepc" mepc_next mepc_reg,
+       mkReg32Inst "mcause" mcause_next mcause_reg,
+       mkReg32Inst "mtval" mtval_next mtval_reg,
+       mkReg32Inst "mip" mip_next mip_reg]
     else []
 
   -- CSR address: when microcode sequencer active, decode useq_addr_out; else csr_addr_reg

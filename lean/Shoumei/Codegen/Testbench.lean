@@ -1202,6 +1202,11 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "#if VM_TRACE\n" ++
   "#include \"verilated_fst_c.h\"\n" ++
   "#endif\n\n" ++
+  "#if VM_COVERAGE\n" ++
+  "#include \"verilated_cov.h\"\n" ++
+  "#include <filesystem>\n" ++
+  "#include <string>\n" ++
+  "#endif\n\n" ++
   "extern \"C\" void dpi_mem_write(unsigned int word_addr, unsigned int data);\n" ++
   "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n" ++
   (if cfg.putcharAddr.isSome then
@@ -1460,6 +1465,16 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "    printf(\"IPC: %.3f\\n\", cycle > 0 ? (double)retired / cycle : 0.0);\n\n" ++
   "#if VM_TRACE\n" ++
   "    if (trace) " ++ lb ++ " trace->close(); delete trace; " ++ rb ++ "\n" ++
+  "#endif\n" ++
+  "#if VM_COVERAGE\n" ++
+  "    const char* cov_file = get_plusarg(argc, argv, \"+cov_file\");\n" ++
+  "    if (!cov_file) cov_file = \"output/coverage/coverage.dat\";\n" ++
+  "    std::string cov_path(cov_file);\n" ++
+  "    auto slash_pos = cov_path.find_last_of(\"/\\\\\");\n" ++
+  "    if (slash_pos != std::string::npos) " ++ lb ++ "\n" ++
+  "        std::filesystem::create_directories(cov_path.substr(0, slash_pos));\n" ++
+  "    " ++ rb ++ "\n" ++
+  "    VerilatedCov::write(cov_file);\n" ++
   "#endif\n" ++
   "    dut->final();\n" ++
   "    return done && dut->o_test_pass ? 0 : 1;\n" ++
