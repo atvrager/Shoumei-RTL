@@ -166,110 +166,10 @@ private def extractBaseName (wireName : String) : String :=
 
 /-- Check if an output signal group needs individual bit-level port declarations
     rather than a single vectorized port.
-    Returns true if the signal group needs individual ports. -/
-def outputNeedsIndividualPorts (wireToGroup : List (Wire × SignalGroup))
-    (wireToIndex : List (Wire × Nat)) (c : Circuit) (sg : SignalGroup) : Bool :=
-  if sg.width <= 1 then
-    false  -- Single-bit outputs don't need individual ports
-  else
-    let combGates := c.gates.filter (fun g => !g.gateType.isDFF)
-    let outputGates := combGates.filter (fun g =>
-      sg.wires.any (fun w => w.name == g.output.name)
-    )
-    if outputGates.isEmpty then
-      false  -- No gates write to this group (e.g., driven by instances)
-    else
-      match outputGates.head? with
-      | none => false
-      | some firstGate =>
-          let allSameType := outputGates.all (fun g => g.gateType == firstGate.gateType)
-          if !(allSameType && outputGates.length == sg.width) then
-            true  -- Mixed types or incomplete coverage → individual
-          else
-            -- Check if gates form a bus-wide operation pattern
-            match firstGate.gateType with
-            | GateType.BUF =>
-                match firstGate.inputs with
-                | [in0] =>
-                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
-                    match in0GroupName with
-                    | some firstBusName =>
-                        let allInSameBus := outputGates.all (fun g =>
-                          match g.inputs with
-                          | [inp] =>
-                              let inpGroupName := wireToGroup.find? (fun (w', _) => w'.name == inp.name) |>.map (·.2.name)
-                              inpGroupName == some firstBusName
-                          | _ => false
-                        )
-                        !allInSameBus
-                    | none => true
-                | _ => true
-            | GateType.AND | GateType.OR | GateType.XOR =>
-                match firstGate.inputs with
-                | [in0, in1] =>
-                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
-                    let in1GroupName := wireToGroup.find? (fun (w', _) => w'.name == in1.name) |>.map (·.2.name)
-                    if in0GroupName.isSome || in1GroupName.isSome then
-                      let allUniform := outputGates.all (fun g =>
-                        match g.inputs with
-                        | [gi0, gi1] =>
-                            let gi0GroupName := wireToGroup.find? (fun (w', _) => w'.name == gi0.name) |>.map (·.2.name)
-                            let gi1GroupName := wireToGroup.find? (fun (w', _) => w'.name == gi1.name) |>.map (·.2.name)
-                            gi0GroupName == in0GroupName && gi1GroupName == in1GroupName
-                        | _ => false
-                      )
-                      !allUniform
-                    else
-                      true
-                | _ => true
-            | GateType.MUX =>
-                match firstGate.inputs with
-                | [in0, in1, sel] =>
-                    let in0Bus := wireToGroup.any (fun (w', _) => w'.name == in0.name)
-                    let in1Bus := wireToGroup.any (fun (w', _) => w'.name == in1.name)
-                    if in0Bus && in1Bus then
-                      let in0Group := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
-                      let in1Group := wireToGroup.find? (fun (w', _) => w'.name == in1.name) |>.map (·.2.name)
-                      let selGroup := wireToGroup.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2.name)
-                      let allGatesUniform := outputGates.all (fun g =>
-                        match g.inputs with
-                        | [g_in0, g_in1, g_sel] =>
-                            let g0 := wireToGroup.find? (fun (w', _) => w'.name == g_in0.name) |>.map (·.2.name)
-                            let g1 := wireToGroup.find? (fun (w', _) => w'.name == g_in1.name) |>.map (·.2.name)
-                            let gs := wireToGroup.find? (fun (w', _) => w'.name == g_sel.name) |>.map (·.2.name)
-                            g0 == in0Group && g1 == in1Group && gs == selGroup
-                        | _ => false
-                      )
-                      if !allGatesUniform then
-                        true
-                      else
-                        let selInBus := wireToGroup.any (fun (w', _) => w'.name == sel.name)
-                        let selIdx := wireToIndex.find? (fun (w', _) => w'.name == sel.name) |>.map (·.2)
-                        match selInBus, selIdx with
-                        | false, _ => false
-                        | true, some _ => false
-                        | _, _ => true
-                    else
-                      true
-                | _ => true
-            | GateType.NOT =>
-                -- NOT gates: check if all inputs come from the same bus
-                match firstGate.inputs with
-                | [in0] =>
-                    let in0GroupName := wireToGroup.find? (fun (w', _) => w'.name == in0.name) |>.map (·.2.name)
-                    match in0GroupName with
-                    | some firstBusName =>
-                        let allInSameBus := outputGates.all (fun g =>
-                          match g.inputs with
-                          | [inp] =>
-                              let inpGroupName := wireToGroup.find? (fun (w', _) => w'.name == inp.name) |>.map (·.2.name)
-                              inpGroupName == some firstBusName
-                          | _ => false
-                        )
-                        !allInSameBus
-                    | none => true
-                | _ => true
-            | _ => true  -- DFF and other types → individual
+    Always returns false to ensure clean, human-readable SystemVerilog vector ports. -/
+def outputNeedsIndividualPorts (_wireToGroup : List (Wire × SignalGroup))
+    (_wireToIndex : List (Wire × Nat)) (_c : Circuit) (_sg : SignalGroup) : Bool :=
+  false
 
 /-- Build context from circuit -/
 def mkContext (c : Circuit) : Context :=
@@ -1024,45 +924,53 @@ def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
 def generatePortConnection (ctx : Context) (c : Circuit) (portName : String) (wire : Wire) : String :=
   s!"    .{portName}({wireRef ctx c wire})"
 
-/-- Try to extract the bus name from a list of wire references.
-    If all refs are busName[0], busName[1], ..., busName[N-1], return some busName.
-    Otherwise return none. -/
-def extractCommonBusName (wireRefs : List String) (sorted : List (Nat × Wire)) : Option String :=
+/-- Try to parse a wire reference of the form "busName[idx]" into (busName, idx). -/
+def parseIndexedWireRef (ref : String) : Option (String × Nat) :=
+  match ref.splitOn "[" with
+  | [busName, rest] =>
+      match rest.splitOn "]" with
+      | [idxStr, ""] => idxStr.toNat?.map (fun idx => (busName, idx))
+      | _ => none
+  | _ => none
+
+/-- Try to extract common bus name and contiguous index range from wire references.
+    If all refs are busName[start], busName[start+1], ..., busName[start+N-1],
+    returns some (busName, start, start + N - 1). Otherwise returns none. -/
+def extractCommonBusSlice (wireRefs : List String) : Option (String × Nat × Nat) :=
   match wireRefs.head? with
   | none => none
   | some firstRef =>
-      match firstRef.splitOn "[" with
-      | [busName, _] =>
-          let allMatch := sorted.enum.all (fun (i, (idx, _)) =>
-            match wireRefs[i]? with
-            | some ref => ref == busName ++ "[" ++ toString idx ++ "]"
-            | none => false)
-          if allMatch then some busName else none
-      | _ => none
+      match parseIndexedWireRef firstRef with
+      | some (busName, startIdx) =>
+          let allMatch := wireRefs.enum.all fun (pos, ref) =>
+            parseIndexedWireRef ref == some (busName, startIdx + pos)
+          if allMatch then
+            some (busName, startIdx, startIdx + wireRefs.length - 1)
+          else none
+      | none => none
 
 /-- Generate a bus port connection.
-    Entries are sorted by index. If all wires form a contiguous bus, connects
-    directly. Otherwise uses concatenation \{MSB, ..., LSB\} syntax.
+    Entries are sorted by index. If all wires form a contiguous bus or slice,
+    connects directly. Otherwise uses concatenation \{MSB, ..., LSB\} syntax.
     When entries cover only a subrange of the parent bus, emits a range slice. -/
 def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
     (entries : List (Nat × Wire)) : String :=
   let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
   let wireRefs := sorted.map (fun (_, w) => wireRef ctx c w)
-  match extractCommonBusName wireRefs sorted with
-  | some busName =>
-      -- Check if the entries cover only a subrange of the parent bus
+  match extractCommonBusSlice wireRefs with
+  | some (busName, lo, hi) =>
       let nEntries := sorted.length
-      -- Find the parent signal group width for this bus
       let parentWidth := match ctx.wireToGroup.find? (fun (_, sg) => sg.name == busName) with
         | some (_, sg) => sg.width
         | none => nEntries
-      if nEntries == parentWidth then
+      if lo == 0 && nEntries == parentWidth then
         -- Full bus connection: .portName(busName)
         s!"    .{baseName}({busName})"
+      else if hi == lo then
+        -- Single bit slice: .portName(busName[lo])
+        s!"    .{baseName}({busName}[{lo}])"
       else
         -- Subrange: .portName(busName[hi:lo])
-        let lo := match sorted.head? with | some (i, _) => i | none => 0
-        let hi := match sorted.getLast? with | some (i, _) => i | none => 0
         s!"    .{baseName}({busName}[{hi}:{lo}])"
   | none =>
       -- Concatenation: .portName({wire_N, ..., wire_0})

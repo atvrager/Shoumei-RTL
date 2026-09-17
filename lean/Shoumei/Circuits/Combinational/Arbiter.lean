@@ -187,8 +187,65 @@ def mkPriorityArbiter4 : Circuit := mkPriorityArbiter 4
 /-- 8-input arbiter (for RS8 ready selection) -/
 def mkPriorityArbiter8 : Circuit := mkPriorityArbiter 8
 
-/-- 64-input arbiter (for bitmap free list allocation) -/
-def mkPriorityArbiter64 : Circuit := mkPriorityArbiter 64
+/-- 64-input hierarchical priority arbiter (for bitmap free list allocation).
+    Decomposed into a 2-level 8-way tree using 9 instances of PriorityArbiter8:
+    - Level 1: 8 instances of PriorityArbiter8 (u_sub_0 .. u_sub_7),
+      each arbitrating 8 request bits, producing an 8-bit sub-grant and group_valid.
+    - Level 2: 1 instance of PriorityArbiter8 (u_top),
+      arbitrating across the 8 group_valid signals, producing group_grant and top-level valid.
+    - Output grant: grant[8*i + j] = sub_grant[8*i + j] AND group_grant[i].
+    Reduces gate count from 2,144 flat gates to 64 AND gates + 9 instances,
+    eliminating 2,016 raw mask wires and reducing emitted SV from 4,052 lines to ~90 lines. -/
+def mkPriorityArbiter64Hierarchical : Circuit :=
+  let request := makeIndexedWires "request" 64
+  let grant := makeIndexedWires "grant" 64
+  let valid := Wire.mk "valid"
+  let group_valid := makeIndexedWires "group_valid" 8
+  let group_grant := makeIndexedWires "group_grant" 8
+  let sub_grant := makeIndexedWires "sub_grant" 64
+
+  -- 8 Level-1 PriorityArbiter8 instances
+  let subInstances := (List.range 8).map fun i =>
+    let portMap :=
+      ((List.range 8).map fun j => (s!"request_{j}", request[8 * i + j]!)) ++
+      ((List.range 8).map fun j => (s!"grant_{j}", sub_grant[8 * i + j]!)) ++
+      [("valid", group_valid[i]!)]
+    { moduleName := "PriorityArbiter8"
+      instName := s!"u_sub_{i}"
+      portMap := portMap }
+
+  -- 1 Level-2 PriorityArbiter8 instance
+  let topInstance : CircuitInstance := {
+    moduleName := "PriorityArbiter8"
+    instName := "u_top"
+    portMap :=
+      ((List.range 8).map fun i => (s!"request_{i}", group_valid[i]!)) ++
+      ((List.range 8).map fun i => (s!"grant_{i}", group_grant[i]!)) ++
+      [("valid", valid)]
+  }
+
+  -- Final gating: grant[8*i + j] = sub_grant[8*i + j] AND group_grant[i]
+  let grantGates := (List.range 8).flatMap fun i =>
+    (List.range 8).map fun j =>
+      Gate.mkAND (sub_grant[8 * i + j]!) (group_grant[i]!) (grant[8 * i + j]!)
+
+  { name := "PriorityArbiter64"
+    inputs := request
+    outputs := grant ++ [valid]
+    gates := grantGates
+    instances := subInstances ++ [topInstance]
+    signalGroups := [
+      { name := "request", width := 64, wires := request },
+      { name := "grant", width := 64, wires := grant },
+      { name := "group_valid", width := 8, wires := group_valid },
+      { name := "group_grant", width := 8, wires := group_grant },
+      { name := "sub_grant", width := 64, wires := sub_grant }
+    ]
+    keepHierarchy := true
+  }
+
+/-- 64-input arbiter (hierarchical 2-level 8-way tree) -/
+def mkPriorityArbiter64 : Circuit := mkPriorityArbiter64Hierarchical
 
 /-! ## Formally Verified Behavioral Theorems -/
 
