@@ -162,6 +162,20 @@ if [ "$VACUOUS_COUNT" -eq 0 ]; then
 else
     fail "Found ${VACUOUS_COUNT} vacuous (: True) theorem stubs in Lean proofs"
 fi
+
+AXIOM_COUNT=$(grep -rnE '^\s*axiom\s' lean/ 2>/dev/null | wc -l || true)
+if [ "$AXIOM_COUNT" -eq 0 ]; then
+    pass "Zero unproven axioms across Lean proofs"
+else
+    fail "Found ${AXIOM_COUNT} unproven axioms in Lean proofs"
+fi
+
+SORRY_COUNT=$(grep -rnE '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
+if [ "$SORRY_COUNT" -eq 0 ]; then
+    pass "Zero sorry/admit occurrences in Lean proofs"
+else
+    fail "Found ${SORRY_COUNT} sorry occurrences in Lean proofs"
+fi
 echo ""
 
 # --- Summary ---

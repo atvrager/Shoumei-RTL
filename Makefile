@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype
+.PHONY: all clean lean codegen systemverilog cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -32,7 +32,10 @@ help:
 	@echo "  make cppsim     - Compile C++ simulation modules"
 	@echo ""
 	@echo "Verification Targets:"
-	@echo "  make smoke-test - Run comprehensive CI smoke tests"
+	@echo "  make presubmit      - Run full local presubmit verification suite"
+	@echo "  make proof-coverage - Run Lean-native proof depth coverage analysis"
+	@echo "  make mutation-test  - Run systematic hardware mutation testing"
+	@echo "  make smoke-test     - Run comprehensive CI smoke tests"
 	@echo ""
 	@echo "Utility Targets:"
 	@echo "  make clean      - Remove all generated files"
@@ -119,6 +122,21 @@ cppsim:
 smoke-test: codegen
 	@echo "==> Running smoke tests..."
 	./verification/smoke-test.sh
+
+# Run proof coverage analysis with Lean-native manifest
+proof-coverage:
+	@echo "==> Running proof coverage analysis..."
+	./verification/proof-coverage.sh
+
+# Run systematic hardware mutation testing suite
+mutation-test:
+	@echo "==> Running hardware mutation test suite..."
+	./verification/mutation-test.sh
+
+# Presubmit check (runs local CI verification pipeline)
+presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test
+	@echo ""
+	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Mutation + Smoke)"
 
 # Build debugging tools
 FST_INC := -I/usr/share/verilator/include/gtkwave '-DFST_CONFIG_INCLUDE="fstapi.h"'
