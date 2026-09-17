@@ -1466,16 +1466,39 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   }
 
   -- === BUSY TABLE (W2) ===
-  let (busy_gates, busy_insts) := mkBusyBitTable2
-    clock reset flush_busy_groups zero one
-    rd_phys_0 rd_phys_1 busy_set_en_0 busy_set_en_1
-    cdb_tag_0 cdb_tag_1
-    (if enableF then Wire.mk "cdb_valid_int_0" else cdb_valid_0)
-    (if enableF then Wire.mk "cdb_valid_int_1" else cdb_valid_1)
-    rs1_phys_0 rs2_phys_0 rs1_phys_1 rs2_phys_1
-    d0_use_imm d1_use_imm
-    src1_ready_0 src2_ready_0 (Wire.mk "src2_ready0_reg")
-    src1_ready_1 src2_ready_1 (Wire.mk "src2_ready1_reg")
+  let busy_raw_s1_hit := Wire.mk "busy_raw_s1_hit"
+  let busy_raw_s2_hit := Wire.mk "busy_raw_s2_hit"
+  let busy_inst : CircuitInstance := {
+    moduleName := "BusyTable_W2",
+    instName := "u_busy_table",
+    portMap := [
+      ("clock", clock),
+      ("reset", reset),
+      ("zero", zero),
+      ("one", one)
+    ] ++
+    (flush_busy_groups.enum.map fun ⟨i, w⟩ => (s!"flush_groups_{i}", w)) ++
+    (rd_phys_0.enum.map fun ⟨i, w⟩ => (s!"set_tag_0_{i}", w)) ++
+    (rd_phys_1.enum.map fun ⟨i, w⟩ => (s!"set_tag_1_{i}", w)) ++
+    [("set_en_0", busy_set_en_0), ("set_en_1", busy_set_en_1)] ++
+    (cdb_tag_0.enum.map fun ⟨i, w⟩ => (s!"clear_tag_0_{i}", w)) ++
+    (cdb_tag_1.enum.map fun ⟨i, w⟩ => (s!"clear_tag_1_{i}", w)) ++
+    [("clear_en_0", if enableF then Wire.mk "cdb_valid_int_0" else cdb_valid_0),
+     ("clear_en_1", if enableF then Wire.mk "cdb_valid_int_1" else cdb_valid_1)] ++
+    (rs1_phys_0.enum.map fun ⟨i, w⟩ => (s!"read1_tag_0_{i}", w)) ++
+    (rs2_phys_0.enum.map fun ⟨i, w⟩ => (s!"read2_tag_0_{i}", w)) ++
+    (rs1_phys_1.enum.map fun ⟨i, w⟩ => (s!"read1_tag_1_{i}", w)) ++
+    (rs2_phys_1.enum.map fun ⟨i, w⟩ => (s!"read2_tag_1_{i}", w)) ++
+    [("use_imm_0", d0_use_imm), ("use_imm_1", d1_use_imm),
+     ("src1_ready_0", src1_ready_0),
+     ("src2_ready_0", src2_ready_0),
+     ("src2_ready0_reg", Wire.mk "src2_ready0_reg"),
+     ("src1_ready_1", src1_ready_1),
+     ("src2_ready_1", src2_ready_1),
+     ("src2_ready1_reg", Wire.mk "src2_ready1_reg"),
+     ("busy_raw_s1_hit", busy_raw_s1_hit),
+     ("busy_raw_s2_hit", busy_raw_s2_hit)]
+  }
 
   -- === REORDER BUFFER (W2) ===
   -- Forward-declare FP wires (defined later in FP pipeline block)
@@ -2302,48 +2325,51 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_busy_src1_ready := Wire.mk "fp_busy_src1_ready"
   let fp_busy_src2_ready := Wire.mk "fp_busy_src2_ready"
   let fp_busy_src2_ready_reg := Wire.mk "fp_busy_src2_ready_reg"
+  let fp_src3_busy_raw := Wire.mk "fp_src3_busy_raw"
   let fp_busy_set_en := Wire.mk "fp_busy_set_en"
   let fp_busy_set_gate :=
     if enableF then Gate.mkAND fp_rename_dispatch_valid fp_mux_has_fp_rd fp_busy_set_en
     else Gate.mkBUF zero fp_busy_set_en
-  let (fp_busy_gates, fp_busy_instances) :=
-    if enableF then mkBusyBitTable1
-      clock reset flush_busy_groups zero one
-      fp_rd_phys fp_busy_set_en
-      cdb_tag_fp cdb_valid_fp_prf
-      fp_rs1_phys fp_rs2_phys
-      zero  -- no immediate bypass for FP
-      fp_busy_src1_ready fp_busy_src2_ready fp_busy_src2_ready_reg
-      "fp_busy"
-    else ([], [])
+  let fp_busy_instances : List CircuitInstance :=
+    if enableF then
+      [{
+        moduleName := "FPBusyTable",
+        instName := "u_fp_busy_table",
+        portMap := [
+          ("clock", clock),
+          ("reset", reset),
+          ("zero", zero),
+          ("one", one)
+        ] ++
+        (flush_busy_groups.enum.map fun ⟨i, w⟩ => (s!"flush_groups_{i}", w)) ++
+        (fp_rd_phys.enum.map fun ⟨i, w⟩ => (s!"set_tag_{i}", w)) ++
+        [("set_en", fp_busy_set_en)] ++
+        (cdb_tag_fp.enum.map fun ⟨i, w⟩ => (s!"clear_tag_{i}", w)) ++
+        [("clear_en", cdb_valid_fp_prf)] ++
+        (fp_rs1_phys.enum.map fun ⟨i, w⟩ => (s!"read1_tag_{i}", w)) ++
+        (fp_rs2_phys.enum.map fun ⟨i, w⟩ => (s!"read2_tag_{i}", w)) ++
+        (fp_rs3_phys.enum.map fun ⟨i, w⟩ => (s!"read3_tag_{i}", w)) ++
+        [("use_imm", zero),
+         ("src1_ready", fp_busy_src1_ready),
+         ("src2_ready", fp_busy_src2_ready),
+         ("src2_ready_reg", fp_busy_src2_ready_reg),
+         ("src3_busy_raw", fp_src3_busy_raw)]
+      }]
+    else []
+  let fp_busy_stub_gates : List Gate :=
+    if enableF then []
+    else [Gate.mkBUF one fp_busy_src1_ready,
+          Gate.mkBUF one fp_busy_src2_ready,
+          Gate.mkBUF one fp_busy_src2_ready_reg,
+          Gate.mkBUF zero fp_src3_busy_raw]
 
   -- FP src3 ready tracking: per RS-slot DFF tracks if src3 data is valid.
   -- At alloc: ready if NOT(busy[rs3_phys]) OR NOT(fp_rs3_used).
   -- On CDB match: becomes ready.
   -- Prevents RS from issuing FMADD before src3 operand arrives.
   let fp_src3_rdy := (List.range 4).map fun slot => Wire.mk s!"fp_src3_rdy_{slot}"
-  let fp_src3_busy_raw := Wire.mk "fp_src3_busy_raw"
   let fp_src3_busy_gates : List Gate :=
     if enableF then
-      -- Read fp_busy table for rs3 tag: 64:1 MUX tree
-      let busy_bits := (List.range 64).map fun i => Wire.mk s!"fp_busy_q_{i}"
-      -- Level 0: 32 MUX2 (sel = fp_rs3_phys[0])
-      let l0 := (List.range 32).flatMap fun i =>
-        [Gate.mkMUX busy_bits[2*i]! busy_bits[2*i+1]! fp_rs3_phys[0]! (Wire.mk s!"fp_s3b_l0_{i}")]
-      -- Level 1: 16 MUX2 (sel = fp_rs3_phys[1])
-      let l1 := (List.range 16).flatMap fun i =>
-        [Gate.mkMUX (Wire.mk s!"fp_s3b_l0_{2*i}") (Wire.mk s!"fp_s3b_l0_{2*i+1}") fp_rs3_phys[1]! (Wire.mk s!"fp_s3b_l1_{i}")]
-      -- Level 2: 8 MUX2 (sel = fp_rs3_phys[2])
-      let l2 := (List.range 8).flatMap fun i =>
-        [Gate.mkMUX (Wire.mk s!"fp_s3b_l1_{2*i}") (Wire.mk s!"fp_s3b_l1_{2*i+1}") fp_rs3_phys[2]! (Wire.mk s!"fp_s3b_l2_{i}")]
-      -- Level 3: 4 MUX2 (sel = fp_rs3_phys[3])
-      let l3 := (List.range 4).flatMap fun i =>
-        [Gate.mkMUX (Wire.mk s!"fp_s3b_l2_{2*i}") (Wire.mk s!"fp_s3b_l2_{2*i+1}") fp_rs3_phys[3]! (Wire.mk s!"fp_s3b_l3_{i}")]
-      -- Level 4: 2 MUX2 (sel = fp_rs3_phys[4])
-      let l4 := (List.range 2).flatMap fun i =>
-        [Gate.mkMUX (Wire.mk s!"fp_s3b_l3_{2*i}") (Wire.mk s!"fp_s3b_l3_{2*i+1}") fp_rs3_phys[4]! (Wire.mk s!"fp_s3b_l4_{i}")]
-      -- Level 5: final MUX2 (sel = fp_rs3_phys[5])
-      let l5 := [Gate.mkMUX (Wire.mk s!"fp_s3b_l4_0") (Wire.mk s!"fp_s3b_l4_1") fp_rs3_phys[5]! fp_src3_busy_raw]
       -- busy=1 means NOT ready. Invert, then OR with NOT(fp_rs3_used) for non-FMA ops.
       let fp_src3_not_busy := Wire.mk "fp_src3_not_busy"
       let fp_src3_alloc_ready := Wire.mk "fp_src3_alloc_ready"
@@ -2365,7 +2391,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
          Gate.mkMUX d_alloc zero (Wire.mk s!"fp_src3_eff_cdb_we_{slot}") d_cdb,
          Gate.mkDFF d_cdb clock reset fp_src3_not_rdy[slot]!,
          Gate.mkNOT fp_src3_not_rdy[slot]! fp_src3_rdy[slot]!]
-      l0 ++ l1 ++ l2 ++ l3 ++ l4 ++ l5 ++ alloc_ready_gates ++ per_slot_gates
+      alloc_ready_gates ++ per_slot_gates
     else
       -- If FP is disabled, all slots always ready
       (List.range 4).map fun slot => Gate.mkBUF one fp_src3_rdy[slot]!
@@ -4501,7 +4527,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
-             busy_gates ++ suppress_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ int_commit_fp_gate ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
+             suppress_gates ++ dest_tag_mask_gates ++ commit_gates ++ branch_tracking_gates ++ int_commit_fp_gate ++ branch_resolve_gates ++ branch_redirect_target_mux_gates ++
              shadow_gates ++ commit_store_gate ++
              int_pc_rf_gates ++ int_imm_rf_gates ++
              br_pc_rf_gates ++ br_imm_rf_gates ++
@@ -4535,7 +4561,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fp_fifo_dummy_gates ++ muldiv_fifo_dummy_gates ++
              fp_cdb_merge_gates ++ fp_int_prf_gate ++ fp_commit_gates ++ fp_commit_merge_gates ++ fp_redirect_gate ++
              fp_dest_tag_gates ++ fp_crossdomain_gates ++
-             [fp_busy_set_gate] ++ fp_busy_gates ++ fp_src3_busy_gates ++ fp_raw_bypass_gates ++ fp_ready_gates ++ fp_cdb_fwd_gates ++ crossdomain_stall_gates ++
+             [fp_busy_set_gate] ++ fp_busy_stub_gates ++ fp_src3_busy_gates ++ fp_raw_bypass_gates ++ fp_ready_gates ++ fp_cdb_fwd_gates ++ crossdomain_stall_gates ++
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++ fp_supp_gates ++
              fp_src3_alloc_decode ++ fp_src3_alloc_cdb_gates ++ fp_src3_cdb_data_mux ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
@@ -4573,7 +4599,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  [redirect_valid_dff_inst, flush_dff_dispatch] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++
-                 busy_insts ++ fp_busy_instances ++ fp_cdb_fwd_instances ++
+                 [busy_inst] ++ fp_busy_instances ++ fp_cdb_fwd_instances ++
                  [ib0_fifo_inst, ib1_fifo_inst, ib_br_fifo_inst, lsu_fifo_inst] ++
                  (if enableM then [muldiv_fifo_inst] else []) ++
                  (if enableF then [fp_fifo_inst] else []) ++

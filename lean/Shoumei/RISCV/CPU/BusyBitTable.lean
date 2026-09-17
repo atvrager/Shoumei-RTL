@@ -20,9 +20,9 @@ def mkBusyBitTable1
     (clock global_reset : Wire) (flush_groups : List Wire) (zero one : Wire)
     (set_tag : List Wire) (set_en : Wire)
     (clear_tag : List Wire) (clear_en : Wire)
-    (read1_tag : List Wire) (read2_tag : List Wire)
+    (read1_tag : List Wire) (read2_tag : List Wire) (read3_tag : List Wire)
     (use_imm : Wire)
-    (src1_ready src2_ready src2_ready_reg : Wire)
+    (src1_ready src2_ready src2_ready_reg src3_busy_raw : Wire)
     (pfx : String := "busy")
     : (List Gate × List CircuitInstance) :=
   let mkW := fun (s : String) => Wire.mk s
@@ -101,18 +101,21 @@ def mkBusyBitTable1
 
   let busy_rs1 := mkW s!"{pfx}_rs1_raw"
   let busy_rs2 := mkW s!"{pfx}_rs2_raw"
+  let busy_rs3 := mkW s!"{pfx}_rs3_raw"
   let mux1_gates := mkMux64to1 busy_cur read1_tag s!"{pfx}mux1" busy_rs1
   let mux2_gates := mkMux64to1 busy_cur read2_tag s!"{pfx}mux2" busy_rs2
+  let mux3_gates := mkMux64to1 busy_cur read3_tag s!"{pfx}mux3" busy_rs3
 
   let not_busy_rs2 := mkW s!"not_{pfx}_rs2"
   let readyGates := [
     Gate.mkNOT busy_rs1 src1_ready,
     Gate.mkNOT busy_rs2 not_busy_rs2,
     Gate.mkOR use_imm not_busy_rs2 src2_ready,
-    Gate.mkBUF not_busy_rs2 src2_ready_reg
+    Gate.mkBUF not_busy_rs2 src2_ready_reg,
+    Gate.mkBUF busy_rs3 src3_busy_raw
   ]
 
-  let allGates := resetGroupGates ++ perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ readyGates
+  let allGates := resetGroupGates ++ perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ mux3_gates ++ readyGates
   let allInstances := [set_dec_inst, clear_dec_inst] ++ perBitInstances
   (allGates, allInstances)
 
@@ -268,5 +271,90 @@ def mkBusyBitTable2
 
   (resetGroupGates ++ perBitGates ++ muxGates ++ s0_eq_r1_1_gates ++ s0_eq_r2_1_gates ++ raw_gates ++ readyGates,
    [set_dec0_inst, set_dec1_inst, clr_dec0_inst, clr_dec1_inst] ++ perBitInstances)
+
+/-- Standalone module for W=2 dual-issue Scoreboard Busy Bit Table -/
+def mkBusyTable_W2 : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+  let flush_groups := (List.range 8).map fun i => Wire.mk s!"flush_groups_{i}"
+  let set_tag_0 := (List.range 6).map fun i => Wire.mk s!"set_tag_0_{i}"
+  let set_tag_1 := (List.range 6).map fun i => Wire.mk s!"set_tag_1_{i}"
+  let set_en_0 := Wire.mk "set_en_0"
+  let set_en_1 := Wire.mk "set_en_1"
+  let clear_tag_0 := (List.range 6).map fun i => Wire.mk s!"clear_tag_0_{i}"
+  let clear_tag_1 := (List.range 6).map fun i => Wire.mk s!"clear_tag_1_{i}"
+  let clear_en_0 := Wire.mk "clear_en_0"
+  let clear_en_1 := Wire.mk "clear_en_1"
+  let read1_tag_0 := (List.range 6).map fun i => Wire.mk s!"read1_tag_0_{i}"
+  let read2_tag_0 := (List.range 6).map fun i => Wire.mk s!"read2_tag_0_{i}"
+  let read1_tag_1 := (List.range 6).map fun i => Wire.mk s!"read1_tag_1_{i}"
+  let read2_tag_1 := (List.range 6).map fun i => Wire.mk s!"read2_tag_1_{i}"
+  let use_imm_0 := Wire.mk "use_imm_0"
+  let use_imm_1 := Wire.mk "use_imm_1"
+  let src1_ready_0 := Wire.mk "src1_ready_0"
+  let src2_ready_0 := Wire.mk "src2_ready_0"
+  let src2_ready0_reg := Wire.mk "src2_ready0_reg"
+  let src1_ready_1 := Wire.mk "src1_ready_1"
+  let src2_ready_1 := Wire.mk "src2_ready_1"
+  let src2_ready1_reg := Wire.mk "src2_ready1_reg"
+  let (gates, insts) := mkBusyBitTable2
+    clock reset flush_groups zero one
+    set_tag_0 set_tag_1 set_en_0 set_en_1
+    clear_tag_0 clear_tag_1 clear_en_0 clear_en_1
+    read1_tag_0 read2_tag_0 read1_tag_1 read2_tag_1
+    use_imm_0 use_imm_1
+    src1_ready_0 src2_ready_0 src2_ready0_reg
+    src1_ready_1 src2_ready_1 src2_ready1_reg
+  let busy_raw_s1_hit := Wire.mk "busy_raw_s1_hit"
+  let busy_raw_s2_hit := Wire.mk "busy_raw_s2_hit"
+  { name := "BusyTable_W2"
+    inputs := [clock, reset, zero, one] ++ flush_groups ++
+              set_tag_0 ++ set_tag_1 ++ [set_en_0, set_en_1] ++
+              clear_tag_0 ++ clear_tag_1 ++ [clear_en_0, clear_en_1] ++
+              read1_tag_0 ++ read2_tag_0 ++ read1_tag_1 ++ read2_tag_1 ++
+              [use_imm_0, use_imm_1]
+    outputs := [src1_ready_0, src2_ready_0, src2_ready0_reg,
+                src1_ready_1, src2_ready_1, src2_ready1_reg,
+                busy_raw_s1_hit, busy_raw_s2_hit]
+    gates := gates
+    instances := insts }
+
+/-- Standalone module for single-issue FP Scoreboard Busy Bit Table with 3 read ports -/
+def mkFPBusyTable : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+  let flush_groups := (List.range 8).map fun i => Wire.mk s!"flush_groups_{i}"
+  let set_tag := (List.range 6).map fun i => Wire.mk s!"set_tag_{i}"
+  let set_en := Wire.mk "set_en"
+  let clear_tag := (List.range 6).map fun i => Wire.mk s!"clear_tag_{i}"
+  let clear_en := Wire.mk "clear_en"
+  let read1_tag := (List.range 6).map fun i => Wire.mk s!"read1_tag_{i}"
+  let read2_tag := (List.range 6).map fun i => Wire.mk s!"read2_tag_{i}"
+  let read3_tag := (List.range 6).map fun i => Wire.mk s!"read3_tag_{i}"
+  let use_imm := Wire.mk "use_imm"
+  let src1_ready := Wire.mk "src1_ready"
+  let src2_ready := Wire.mk "src2_ready"
+  let src2_ready_reg := Wire.mk "src2_ready_reg"
+  let src3_busy_raw := Wire.mk "src3_busy_raw"
+  let (gates, insts) := mkBusyBitTable1
+    clock reset flush_groups zero one
+    set_tag set_en
+    clear_tag clear_en
+    read1_tag read2_tag read3_tag
+    use_imm
+    src1_ready src2_ready src2_ready_reg src3_busy_raw
+    "fp_busy"
+  { name := "FPBusyTable"
+    inputs := [clock, reset, zero, one] ++ flush_groups ++
+              set_tag ++ [set_en] ++
+              clear_tag ++ [clear_en] ++
+              read1_tag ++ read2_tag ++ read3_tag ++ [use_imm]
+    outputs := [src1_ready, src2_ready, src2_ready_reg, src3_busy_raw]
+    gates := gates
+    instances := insts }
 
 end Shoumei.RISCV.CPU

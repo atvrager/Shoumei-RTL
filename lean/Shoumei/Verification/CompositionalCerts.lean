@@ -525,6 +525,18 @@ def csrFile_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.CSRFileProofs"
 }
 
+/-- BusyTable_W2: Dual-port scoreboard busy bit table (64 DFFs + 4 read muxes + RAW hazard logic) -/
+def busyTable_w2_cert : CompositionalCert := {
+  moduleName := "BusyTable_W2"
+  proofReference := "Shoumei.RISCV.CPU.BusyBitTableProofs"
+}
+
+/-- FPBusyTable: Single-port FP scoreboard busy bit table (64 DFFs + 3 read muxes) -/
+def fpBusyTable_cert : CompositionalCert := {
+  moduleName := "FPBusyTable"
+  proofReference := "Shoumei.RISCV.CPU.BusyBitTableProofs"
+}
+
 /-- W=2 dual-issue microcoded CPU.  The module name is the config's, so enabling
     or renaming an extension renames the certificate with the circuit. -/
 def cpu_microcoded_cert : CompositionalCert := {
@@ -597,6 +609,9 @@ def allCerts : List CompositionalCert := [
   renameStage_w2_64_cert,
   -- CSR File
   csrFile_cert,
+  -- Scoreboard Busy Tables
+  busyTable_w2_cert,
+  fpBusyTable_cert,
   -- Microcode
   microcodeSequencer_cert,
   -- Microcoded variant

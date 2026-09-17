@@ -109,6 +109,7 @@ import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CDBMuxProofs
 import Shoumei.RISCV.CPU
 import Shoumei.RISCV.CPU.BusyBitTable
+import Shoumei.RISCV.CPU.BusyBitTableProofs
 import Shoumei.RISCV.CPUBehavioral
 import Shoumei.RISCV.CPUCircuitHelpers
 import Shoumei.RISCV.CPUControl

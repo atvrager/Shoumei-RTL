@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **210**
-- Circuits with a literal `name :=` (graph nodes): **78**
-- Compositional certificates (Lean registry): **79**
-- Proof files: **55**
+- Lean files: **211**
+- Circuits with a literal `name :=` (graph nodes): **80**
+- Compositional certificates (Lean registry): **81**
+- Proof files: **56**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -29,6 +29,7 @@ graph TD
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
+  Shoumei_RISCV_CPU["Shoumei/RISCV/CPU<br/>2 circuits"]
   Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>5 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
@@ -38,6 +39,7 @@ graph TD
   Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Execution -->|10| Shoumei_Circuits_Combinational
   Shoumei_Circuits_Sequential -->|4| Shoumei_Circuits_Combinational
+  Shoumei_RISCV_CPU -->|2| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Renaming -->|2| Shoumei_Circuits_Combinational
   Shoumei_RISCV -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Combinational
@@ -53,6 +55,7 @@ graph TD
 | `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
 | `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BranchExecUnit` | Shoumei/RISCV/Execution | 0 |  |  | yes |
+| `BusyTable_W2` | Shoumei/RISCV/CPU | 1 | yes | yes | yes |
 | `Comparator32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Comparator64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `DFlipFlop` | Shoumei/Circuits/Sequential | 0 |  | yes | yes |
@@ -69,6 +72,7 @@ graph TD
 | `FPAdder_Stage2_Align` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
 | `FPAdder_Stage3_AddSub` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
 | `FPAdder_Stage4_NormRound` | Shoumei/Circuits/Sequential | 3 |  | yes | yes |
+| `FPBusyTable` | Shoumei/RISCV/CPU | 1 | yes | yes | yes |
 | `FPClass` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
 | `FPCompare` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
 | `FPCvtInt` | Shoumei/Circuits/Combinational | 3 |  | yes | yes |
@@ -133,7 +137,7 @@ graph TD
 - **0** circuit files without a leading doc comment
 - **20** circuits with no `*Proofs.lean` mentioning them
 - **40** circuits that instantiate nothing (leaves)
-- **32** circuits nothing else instantiates (tops)
+- **34** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

@@ -99,6 +99,7 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CSRFile
+import Shoumei.RISCV.CPU.BusyBitTable
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
@@ -291,6 +292,8 @@ def allCircuits : List Circuit := [
   mkRenameStage,
   mkRenameStage 64,
   mkCSRFile defaultCPUConfig,
+  mkBusyTable_W2,
+  mkFPBusyTable,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]
