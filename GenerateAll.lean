@@ -220,6 +220,10 @@ def allCircuits : List Circuit := [
 
   -- F-Extension: FPU building blocks
   fpMiscCircuit,
+  fpAdder_Stage1Circuit,
+  fpAdder_Stage2Circuit,
+  fpAdder_Stage3Circuit,
+  fpAdder_Stage4Circuit,
   fpAdderCircuit,
   fpMultiplierCircuit,
   fpFMACircuit,
