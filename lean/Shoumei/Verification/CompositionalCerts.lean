@@ -52,6 +52,12 @@ def mux64x64_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
 }
 
+/-- PriorityArbiter64: 64-input priority arbiter, hierarchical (9× PriorityArbiter8) -/
+def priorityArbiter64_cert : CompositionalCert := {
+  moduleName := "PriorityArbiter64"
+  proofReference := "Shoumei.Circuits.Combinational.Arbiter"
+}
+
 /-! ## Sequential Circuits -/
 
 /-- Register91 = Register64 + Register16 + Register8 + Register2 + Register1 -/
@@ -523,11 +529,12 @@ def cpu_microcoded_cert : CompositionalCert := {
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
-  -- Combinational (hierarchical muxes)
+  -- Combinational (hierarchical muxes and arbiters)
   mux64x32_cert,
   mux8x32_cert,
   mux8x64_cert,
   mux64x64_cert,
+  priorityArbiter64_cert,
   -- Sequential
   register24_cert,
   register96_cert,
