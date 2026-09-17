@@ -91,14 +91,15 @@ def groupWiresByBaseName (wires : List Wire) : List (String × List (Nat × Wire
   result
 
 /-- Check if a list of (index, wire) pairs forms a valid bus.
-    Valid means: indices are contiguous from 0 to N-1 -/
+    Valid means: at least 2 wires with contiguous indices [start, start+1, ..., start+N-1]. -/
 def isValidBus (indexedWires : List (Nat × Wire)) : Bool :=
-  if indexedWires.isEmpty then false
+  if indexedWires.length <= 1 then false
   else
     let indices := indexedWires.map (·.1)
     let sorted := indices.toArray.qsort (· < ·) |>.toList
-    -- Check if sorted indices are [0, 1, 2, ..., n-1]
-    sorted == List.range sorted.length
+    match sorted.head? with
+    | some h => sorted == (List.range sorted.length).map (· + h)
+    | none => false
 
 /-- Auto-detect signal groups from wire naming patterns -/
 def autoDetectSignalGroups (wires : List Wire) : List SignalGroup :=
