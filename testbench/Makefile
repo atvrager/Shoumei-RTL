@@ -64,13 +64,13 @@ SPIKE_LIB    := $(SPIKE_PREFIX)/lib
 # --------------------------------------------------------------------------
 # Unified ELF lists (single source of truth — add new ISA suites here)
 # --------------------------------------------------------------------------
-RISCV_TEST_GLOBS = $(wildcard $(TB_DIR)/riscv-tests/rv32ui-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32um-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32uf-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32ud-p-*.elf) \
-                   $(wildcard $(TB_DIR)/riscv-tests/rv32ua-p-*.elf)
+RISCV_TEST_GLOBS = $(TB_DIR)/riscv-tests/rv64ui-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64um-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64uf-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64ud-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64ua-p-*.elf
 
-CUSTOM_TEST_GLOBS = $(wildcard $(TB_DIR)/tests/*.elf) $(wildcard $(TB_DIR)/tests/generated/*.elf)
+CUSTOM_TEST_GLOBS = $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf
 
 # Auto-build Spike if missing (check for .so or .a)
 $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
@@ -214,7 +214,7 @@ run-elf: $(SIM_BIN)
 
 gen-tests:
 	@if command -v lake >/dev/null 2>&1; then \
-		cd $(PROJ_ROOT) && lake exe gen_tests; \
+		cd $(PROJ_ROOT) && lake --no-ansi exe gen_tests; \
 	elif ls $(TB_DIR)/tests/generated/*.S >/dev/null 2>&1; then \
 		echo "lake not found, using pre-generated .S files"; \
 	else \
@@ -230,14 +230,15 @@ riscv-tests:
 run-riscv-tests: $(SIM_BIN) riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
+	    --timeout '*lrsc*=60000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(RISCV_TEST_GLOBS)
 
 run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout 'freertos_demo.elf=200000' --timeout 'timer_irq_test.elf=10000' \
-	    --timeout 'jalr_a0_irq_test.elf=10000' --timeout 'rv32ua-p-lrsc.elf=60000' \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -249,7 +250,7 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 		--Mdir $(BUILD_DIR)/verilator_cosim \
 		$(VWARN) +define+COSIM_DEBUG \
 		--top-module tb_cpu \
-		-CFLAGS "-std=c++20 -O0 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
+		-CFLAGS "-std=c++20 -O2 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
 		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)

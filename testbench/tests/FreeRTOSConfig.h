@@ -55,7 +55,7 @@
 #define configMTIMECMP_BASE_ADDRESS             ( 0x02004000UL )
 
 /* CPU clock = 1 (mtime increments every cycle in our CLINT) */
-#define configCPU_CLOCK_HZ                      100000
+#define configCPU_CLOCK_HZ                      1000000
 
 /* No FPU/VPU context save for now */
 #define configENABLE_FPU                        0

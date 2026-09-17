@@ -8,6 +8,14 @@
   .macro init;                                                          \
   .endm
 
+#define RVTEST_RV64M                                                    \
+  .macro init;                                                          \
+  .endm
+
+#define RVTEST_RV64S                                                    \
+  .macro init;                                                          \
+  .endm
+
 #define RVTEST_RV32U                                                    \
   .macro init;                                                          \
   .endm

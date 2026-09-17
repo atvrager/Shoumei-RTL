@@ -488,10 +488,9 @@ def mkReservationStationWithWidth (dataWidth : Nat := 32) : Circuit :=
   let zero  := Wire.mk "zero"
   let one   := Wire.mk "one"
 
-  -- Opcode field is 7 bits: the integer-with-extensions opcode space exceeds
-  -- 64 entries (I+M+A+F+Zicsr+Zifencei+system), so a 6-bit field would alias
-  -- distinct ops in the same dispatch domain (e.g. ADD vs XORI, SC vs FLW).
-  let opcodeWidth := 7; let tagWidth := 7
+  -- Opcode field is 8 bits: the opcode space for RV64G has 158 instructions (> 128),
+  -- so an 8-bit field is required to avoid aliasing (e.g. SW=3 vs FLD=131).
+  let opcodeWidth := 8; let tagWidth := 7
   let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
   -- Computed offsets into entry bitfield
   let off_dest := 1 + opcodeWidth

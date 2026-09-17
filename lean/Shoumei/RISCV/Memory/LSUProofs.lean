@@ -20,12 +20,12 @@ open Shoumei
 
 /-- LSU has correct number of inputs. -/
 theorem lsu_input_count :
-    mkLSU.inputs.length = 179 := by
+    mkLSU.inputs.length = 275 := by
   native_decide
 
 /-- LSU has correct number of outputs. -/
 theorem lsu_output_count :
-    mkLSU.outputs.length = 215 := by
+    mkLSU.outputs.length = 279 := by
   native_decide
 
 /-- LSU has 2 instances (MemoryExecUnit + StoreBuffer8). -/
@@ -33,9 +33,9 @@ theorem lsu_instance_count :
     mkLSU.instances.length = 2 := by
   native_decide
 
-/-- LSU has 32 gates (AGU address → StoreBuffer address connection). -/
+/-- LSU has 64 gates (AGU address → StoreBuffer address connection). -/
 theorem lsu_gate_count :
-    mkLSU.gates.length = 32 := by
+    mkLSU.gates.length = 64 := by
   native_decide
 
 /-! ## Compositional Verification Certificate -/

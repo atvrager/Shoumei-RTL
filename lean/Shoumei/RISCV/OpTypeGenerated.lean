@@ -7,9 +7,11 @@ namespace Shoumei.RISCV
 
 /-- Instruction operation types (auto-generated from riscv-opcodes) -/
 inductive OpType where
-  -- RV32I Base Integer Instructions
+  -- RV64I Base Integer Instructions
   | ADD : OpType
   | ADDI : OpType
+  | ADDIW : OpType
+  | ADDW : OpType
   | AND : OpType
   | ANDI : OpType
   | AUIPC : OpType
@@ -26,52 +28,82 @@ inductive OpType where
   | JALR : OpType
   | LB : OpType
   | LBU : OpType
+  | LD : OpType
   | LH : OpType
   | LHU : OpType
   | LUI : OpType
   | LW : OpType
+  | LWU : OpType
   | OR : OpType
   | ORI : OpType
   | SB : OpType
+  | SD : OpType
   | SH : OpType
   | SLL : OpType
   | SLLI : OpType
+  | SLLIW : OpType
+  | SLLW : OpType
   | SLT : OpType
   | SLTI : OpType
   | SLTIU : OpType
   | SLTU : OpType
   | SRA : OpType
   | SRAI : OpType
+  | SRAIW : OpType
+  | SRAW : OpType
   | SRL : OpType
   | SRLI : OpType
+  | SRLIW : OpType
+  | SRLW : OpType
   | SUB : OpType
+  | SUBW : OpType
   | SW : OpType
   | XOR : OpType
   | XORI : OpType
   -- M Extension: Integer Multiply/Divide
   | DIV : OpType
   | DIVU : OpType
+  | DIVUW : OpType
+  | DIVW : OpType
   | MUL : OpType
   | MULH : OpType
   | MULHSU : OpType
   | MULHU : OpType
+  | MULW : OpType
   | REM : OpType
   | REMU : OpType
+  | REMUW : OpType
+  | REMW : OpType
   -- A Extension: Atomic Memory Operations
+  | AMOADD_D : OpType
   | AMOADD_W : OpType
+  | AMOAND_D : OpType
   | AMOAND_W : OpType
+  | AMOMAXU_D : OpType
   | AMOMAXU_W : OpType
+  | AMOMAX_D : OpType
   | AMOMAX_W : OpType
+  | AMOMINU_D : OpType
   | AMOMINU_W : OpType
+  | AMOMIN_D : OpType
   | AMOMIN_W : OpType
+  | AMOOR_D : OpType
   | AMOOR_W : OpType
+  | AMOSWAP_D : OpType
   | AMOSWAP_W : OpType
+  | AMOXOR_D : OpType
   | AMOXOR_W : OpType
+  | LR_D : OpType
   | LR_W : OpType
+  | SC_D : OpType
   | SC_W : OpType
   -- F Extension: Single-Precision Floating-Point
   | FADD_S : OpType
   | FCLASS_S : OpType
+  | FCVT_LU_S : OpType
+  | FCVT_L_S : OpType
+  | FCVT_S_L : OpType
+  | FCVT_S_LU : OpType
   | FCVT_S_W : OpType
   | FCVT_S_WU : OpType
   | FCVT_WU_S : OpType
@@ -99,9 +131,13 @@ inductive OpType where
   -- D Extension: Double-Precision Floating-Point
   | FADD_D : OpType
   | FCLASS_D : OpType
+  | FCVT_D_L : OpType
+  | FCVT_D_LU : OpType
   | FCVT_D_S : OpType
   | FCVT_D_W : OpType
   | FCVT_D_WU : OpType
+  | FCVT_LU_D : OpType
+  | FCVT_L_D : OpType
   | FCVT_S_D : OpType
   | FCVT_WU_D : OpType
   | FCVT_W_D : OpType
@@ -115,6 +151,8 @@ inductive OpType where
   | FMIN_D : OpType
   | FMSUB_D : OpType
   | FMUL_D : OpType
+  | FMV_D_X : OpType
+  | FMV_X_D : OpType
   | FNMADD_D : OpType
   | FNMSUB_D : OpType
   | FSD : OpType
@@ -139,36 +177,46 @@ inductive OpType where
 
 instance : ToString OpType where
   toString := fun
-    | .ADD => "ADD" | .ADDI => "ADDI" | .AND => "AND" | .ANDI => "ANDI" | .AUIPC => "AUIPC"
-    | .BEQ => "BEQ" | .BGE => "BGE" | .BGEU => "BGEU" | .BLT => "BLT" | .BLTU => "BLTU"
-    | .BNE => "BNE" | .EBREAK => "EBREAK" | .ECALL => "ECALL" | .FENCE => "FENCE" | .JAL => "JAL"
-    | .JALR => "JALR" | .LB => "LB" | .LBU => "LBU" | .LH => "LH" | .LHU => "LHU"
-    | .LUI => "LUI" | .LW => "LW" | .OR => "OR" | .ORI => "ORI" | .SB => "SB"
-    | .SH => "SH" | .SLL => "SLL" | .SLLI => "SLLI" | .SLT => "SLT" | .SLTI => "SLTI"
-    | .SLTIU => "SLTIU" | .SLTU => "SLTU" | .SRA => "SRA" | .SRAI => "SRAI" | .SRL => "SRL"
-    | .SRLI => "SRLI" | .SUB => "SUB" | .SW => "SW" | .XOR => "XOR" | .XORI => "XORI"
-    | .DIV => "DIV" | .DIVU => "DIVU" | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU"
-    | .MULHU => "MULHU" | .REM => "REM" | .REMU => "REMU" | .AMOADD_W => "AMOADD_W" | .AMOAND_W => "AMOAND_W"
-    | .AMOMAXU_W => "AMOMAXU_W" | .AMOMAX_W => "AMOMAX_W" | .AMOMINU_W => "AMOMINU_W" | .AMOMIN_W => "AMOMIN_W" | .AMOOR_W => "AMOOR_W"
-    | .AMOSWAP_W => "AMOSWAP_W" | .AMOXOR_W => "AMOXOR_W" | .LR_W => "LR_W" | .SC_W => "SC_W" | .FADD_S => "FADD_S"
-    | .FCLASS_S => "FCLASS_S" | .FCVT_S_W => "FCVT_S_W" | .FCVT_S_WU => "FCVT_S_WU" | .FCVT_WU_S => "FCVT_WU_S" | .FCVT_W_S => "FCVT_W_S"
-    | .FDIV_S => "FDIV_S" | .FEQ_S => "FEQ_S" | .FLE_S => "FLE_S" | .FLT_S => "FLT_S" | .FLW => "FLW"
-    | .FMADD_S => "FMADD_S" | .FMAX_S => "FMAX_S" | .FMIN_S => "FMIN_S" | .FMSUB_S => "FMSUB_S" | .FMUL_S => "FMUL_S"
-    | .FMV_W_X => "FMV_W_X" | .FMV_X_W => "FMV_X_W" | .FNMADD_S => "FNMADD_S" | .FNMSUB_S => "FNMSUB_S" | .FSGNJN_S => "FSGNJN_S"
-    | .FSGNJX_S => "FSGNJX_S" | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S" | .FSUB_S => "FSUB_S" | .FSW => "FSW"
-    | .FADD_D => "FADD_D" | .FCLASS_D => "FCLASS_D" | .FCVT_D_S => "FCVT_D_S" | .FCVT_D_W => "FCVT_D_W" | .FCVT_D_WU => "FCVT_D_WU"
-    | .FCVT_S_D => "FCVT_S_D" | .FCVT_WU_D => "FCVT_WU_D" | .FCVT_W_D => "FCVT_W_D" | .FDIV_D => "FDIV_D" | .FEQ_D => "FEQ_D"
-    | .FLD => "FLD" | .FLE_D => "FLE_D" | .FLT_D => "FLT_D" | .FMADD_D => "FMADD_D" | .FMAX_D => "FMAX_D"
-    | .FMIN_D => "FMIN_D" | .FMSUB_D => "FMSUB_D" | .FMUL_D => "FMUL_D" | .FNMADD_D => "FNMADD_D" | .FNMSUB_D => "FNMSUB_D"
-    | .FSD => "FSD" | .FSGNJN_D => "FSGNJN_D" | .FSGNJX_D => "FSGNJX_D" | .FSGNJ_D => "FSGNJ_D" | .FSQRT_D => "FSQRT_D"
-    | .FSUB_D => "FSUB_D" | .MRET => "MRET" | .WFI => "WFI" | .FENCE_I => "FENCE_I" | .CSRRW => "CSRRW"
-    | .CSRRS => "CSRRS" | .CSRRC => "CSRRC" | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
+    | .ADD => "ADD" | .ADDI => "ADDI" | .ADDIW => "ADDIW" | .ADDW => "ADDW" | .AND => "AND"
+    | .ANDI => "ANDI" | .AUIPC => "AUIPC" | .BEQ => "BEQ" | .BGE => "BGE" | .BGEU => "BGEU"
+    | .BLT => "BLT" | .BLTU => "BLTU" | .BNE => "BNE" | .EBREAK => "EBREAK" | .ECALL => "ECALL"
+    | .FENCE => "FENCE" | .JAL => "JAL" | .JALR => "JALR" | .LB => "LB" | .LBU => "LBU"
+    | .LD => "LD" | .LH => "LH" | .LHU => "LHU" | .LUI => "LUI" | .LW => "LW"
+    | .LWU => "LWU" | .OR => "OR" | .ORI => "ORI" | .SB => "SB" | .SD => "SD"
+    | .SH => "SH" | .SLL => "SLL" | .SLLI => "SLLI" | .SLLIW => "SLLIW" | .SLLW => "SLLW"
+    | .SLT => "SLT" | .SLTI => "SLTI" | .SLTIU => "SLTIU" | .SLTU => "SLTU" | .SRA => "SRA"
+    | .SRAI => "SRAI" | .SRAIW => "SRAIW" | .SRAW => "SRAW" | .SRL => "SRL" | .SRLI => "SRLI"
+    | .SRLIW => "SRLIW" | .SRLW => "SRLW" | .SUB => "SUB" | .SUBW => "SUBW" | .SW => "SW"
+    | .XOR => "XOR" | .XORI => "XORI" | .DIV => "DIV" | .DIVU => "DIVU" | .DIVUW => "DIVUW"
+    | .DIVW => "DIVW" | .MUL => "MUL" | .MULH => "MULH" | .MULHSU => "MULHSU" | .MULHU => "MULHU"
+    | .MULW => "MULW" | .REM => "REM" | .REMU => "REMU" | .REMUW => "REMUW" | .REMW => "REMW"
+    | .AMOADD_D => "AMOADD_D" | .AMOADD_W => "AMOADD_W" | .AMOAND_D => "AMOAND_D" | .AMOAND_W => "AMOAND_W" | .AMOMAXU_D => "AMOMAXU_D"
+    | .AMOMAXU_W => "AMOMAXU_W" | .AMOMAX_D => "AMOMAX_D" | .AMOMAX_W => "AMOMAX_W" | .AMOMINU_D => "AMOMINU_D" | .AMOMINU_W => "AMOMINU_W"
+    | .AMOMIN_D => "AMOMIN_D" | .AMOMIN_W => "AMOMIN_W" | .AMOOR_D => "AMOOR_D" | .AMOOR_W => "AMOOR_W" | .AMOSWAP_D => "AMOSWAP_D"
+    | .AMOSWAP_W => "AMOSWAP_W" | .AMOXOR_D => "AMOXOR_D" | .AMOXOR_W => "AMOXOR_W" | .LR_D => "LR_D" | .LR_W => "LR_W"
+    | .SC_D => "SC_D" | .SC_W => "SC_W" | .FADD_S => "FADD_S" | .FCLASS_S => "FCLASS_S" | .FCVT_LU_S => "FCVT_LU_S"
+    | .FCVT_L_S => "FCVT_L_S" | .FCVT_S_L => "FCVT_S_L" | .FCVT_S_LU => "FCVT_S_LU" | .FCVT_S_W => "FCVT_S_W" | .FCVT_S_WU => "FCVT_S_WU"
+    | .FCVT_WU_S => "FCVT_WU_S" | .FCVT_W_S => "FCVT_W_S" | .FDIV_S => "FDIV_S" | .FEQ_S => "FEQ_S" | .FLE_S => "FLE_S"
+    | .FLT_S => "FLT_S" | .FLW => "FLW" | .FMADD_S => "FMADD_S" | .FMAX_S => "FMAX_S" | .FMIN_S => "FMIN_S"
+    | .FMSUB_S => "FMSUB_S" | .FMUL_S => "FMUL_S" | .FMV_W_X => "FMV_W_X" | .FMV_X_W => "FMV_X_W" | .FNMADD_S => "FNMADD_S"
+    | .FNMSUB_S => "FNMSUB_S" | .FSGNJN_S => "FSGNJN_S" | .FSGNJX_S => "FSGNJX_S" | .FSGNJ_S => "FSGNJ_S" | .FSQRT_S => "FSQRT_S"
+    | .FSUB_S => "FSUB_S" | .FSW => "FSW" | .FADD_D => "FADD_D" | .FCLASS_D => "FCLASS_D" | .FCVT_D_L => "FCVT_D_L"
+    | .FCVT_D_LU => "FCVT_D_LU" | .FCVT_D_S => "FCVT_D_S" | .FCVT_D_W => "FCVT_D_W" | .FCVT_D_WU => "FCVT_D_WU" | .FCVT_LU_D => "FCVT_LU_D"
+    | .FCVT_L_D => "FCVT_L_D" | .FCVT_S_D => "FCVT_S_D" | .FCVT_WU_D => "FCVT_WU_D" | .FCVT_W_D => "FCVT_W_D" | .FDIV_D => "FDIV_D"
+    | .FEQ_D => "FEQ_D" | .FLD => "FLD" | .FLE_D => "FLE_D" | .FLT_D => "FLT_D" | .FMADD_D => "FMADD_D"
+    | .FMAX_D => "FMAX_D" | .FMIN_D => "FMIN_D" | .FMSUB_D => "FMSUB_D" | .FMUL_D => "FMUL_D" | .FMV_D_X => "FMV_D_X"
+    | .FMV_X_D => "FMV_X_D" | .FNMADD_D => "FNMADD_D" | .FNMSUB_D => "FNMSUB_D" | .FSD => "FSD" | .FSGNJN_D => "FSGNJN_D"
+    | .FSGNJX_D => "FSGNJX_D" | .FSGNJ_D => "FSGNJ_D" | .FSQRT_D => "FSQRT_D" | .FSUB_D => "FSUB_D" | .MRET => "MRET"
+    | .WFI => "WFI" | .FENCE_I => "FENCE_I" | .CSRRW => "CSRRW" | .CSRRS => "CSRRS" | .CSRRC => "CSRRC"
+    | .CSRRWI => "CSRRWI" | .CSRRSI => "CSRRSI" | .CSRRCI => "CSRRCI"
 
 /-- Parse OpType from instruction name (case-insensitive) -/
 def OpType.fromString (s : String) : Option OpType :=
   match s.toUpper with
   | "ADD" => some .ADD
   | "ADDI" => some .ADDI
+  | "ADDIW" => some .ADDIW
+  | "ADDW" => some .ADDW
   | "AND" => some .AND
   | "ANDI" => some .ANDI
   | "AUIPC" => some .AUIPC
@@ -185,49 +233,79 @@ def OpType.fromString (s : String) : Option OpType :=
   | "JALR" => some .JALR
   | "LB" => some .LB
   | "LBU" => some .LBU
+  | "LD" => some .LD
   | "LH" => some .LH
   | "LHU" => some .LHU
   | "LUI" => some .LUI
   | "LW" => some .LW
+  | "LWU" => some .LWU
   | "OR" => some .OR
   | "ORI" => some .ORI
   | "SB" => some .SB
+  | "SD" => some .SD
   | "SH" => some .SH
   | "SLL" => some .SLL
   | "SLLI" => some .SLLI
+  | "SLLIW" => some .SLLIW
+  | "SLLW" => some .SLLW
   | "SLT" => some .SLT
   | "SLTI" => some .SLTI
   | "SLTIU" => some .SLTIU
   | "SLTU" => some .SLTU
   | "SRA" => some .SRA
   | "SRAI" => some .SRAI
+  | "SRAIW" => some .SRAIW
+  | "SRAW" => some .SRAW
   | "SRL" => some .SRL
   | "SRLI" => some .SRLI
+  | "SRLIW" => some .SRLIW
+  | "SRLW" => some .SRLW
   | "SUB" => some .SUB
+  | "SUBW" => some .SUBW
   | "SW" => some .SW
   | "XOR" => some .XOR
   | "XORI" => some .XORI
   | "DIV" => some .DIV
   | "DIVU" => some .DIVU
+  | "DIVUW" => some .DIVUW
+  | "DIVW" => some .DIVW
   | "MUL" => some .MUL
   | "MULH" => some .MULH
   | "MULHSU" => some .MULHSU
   | "MULHU" => some .MULHU
+  | "MULW" => some .MULW
   | "REM" => some .REM
   | "REMU" => some .REMU
+  | "REMUW" => some .REMUW
+  | "REMW" => some .REMW
+  | "AMOADD_D" | "AMOADD.D" => some .AMOADD_D
   | "AMOADD_W" | "AMOADD.W" => some .AMOADD_W
+  | "AMOAND_D" | "AMOAND.D" => some .AMOAND_D
   | "AMOAND_W" | "AMOAND.W" => some .AMOAND_W
+  | "AMOMAXU_D" | "AMOMAXU.D" => some .AMOMAXU_D
   | "AMOMAXU_W" | "AMOMAXU.W" => some .AMOMAXU_W
+  | "AMOMAX_D" | "AMOMAX.D" => some .AMOMAX_D
   | "AMOMAX_W" | "AMOMAX.W" => some .AMOMAX_W
+  | "AMOMINU_D" | "AMOMINU.D" => some .AMOMINU_D
   | "AMOMINU_W" | "AMOMINU.W" => some .AMOMINU_W
+  | "AMOMIN_D" | "AMOMIN.D" => some .AMOMIN_D
   | "AMOMIN_W" | "AMOMIN.W" => some .AMOMIN_W
+  | "AMOOR_D" | "AMOOR.D" => some .AMOOR_D
   | "AMOOR_W" | "AMOOR.W" => some .AMOOR_W
+  | "AMOSWAP_D" | "AMOSWAP.D" => some .AMOSWAP_D
   | "AMOSWAP_W" | "AMOSWAP.W" => some .AMOSWAP_W
+  | "AMOXOR_D" | "AMOXOR.D" => some .AMOXOR_D
   | "AMOXOR_W" | "AMOXOR.W" => some .AMOXOR_W
+  | "LR_D" | "LR.D" => some .LR_D
   | "LR_W" | "LR.W" => some .LR_W
+  | "SC_D" | "SC.D" => some .SC_D
   | "SC_W" | "SC.W" => some .SC_W
   | "FADD_S" | "FADD.S" => some .FADD_S
   | "FCLASS_S" | "FCLASS.S" => some .FCLASS_S
+  | "FCVT_LU_S" | "FCVT.LU.S" => some .FCVT_LU_S
+  | "FCVT_L_S" | "FCVT.L.S" => some .FCVT_L_S
+  | "FCVT_S_L" | "FCVT.S.L" => some .FCVT_S_L
+  | "FCVT_S_LU" | "FCVT.S.LU" => some .FCVT_S_LU
   | "FCVT_S_W" | "FCVT.S.W" => some .FCVT_S_W
   | "FCVT_S_WU" | "FCVT.S.WU" => some .FCVT_S_WU
   | "FCVT_WU_S" | "FCVT.WU.S" => some .FCVT_WU_S
@@ -252,35 +330,41 @@ def OpType.fromString (s : String) : Option OpType :=
   | "FSQRT_S" | "FSQRT.S" => some .FSQRT_S
   | "FSUB_S" | "FSUB.S" => some .FSUB_S
   | "FSW" => some .FSW
-  | "FADD_D" => some .FADD_D
-  | "FCLASS_D" => some .FCLASS_D
+  | "FADD_D" | "FADD.D" => some .FADD_D
+  | "FCLASS_D" | "FCLASS.D" => some .FCLASS_D
+  | "FCVT_D_L" | "FCVT.D.L" => some .FCVT_D_L
+  | "FCVT_D_LU" | "FCVT.D.LU" => some .FCVT_D_LU
   | "FCVT_D_S" | "FCVT.D.S" => some .FCVT_D_S
   | "FCVT_D_W" | "FCVT.D.W" => some .FCVT_D_W
   | "FCVT_D_WU" | "FCVT.D.WU" => some .FCVT_D_WU
-  | "FCVT_S_D" => some .FCVT_S_D
-  | "FCVT_WU_D" => some .FCVT_WU_D
-  | "FCVT_W_D" => some .FCVT_W_D
-  | "FDIV_D" => some .FDIV_D
-  | "FEQ_D" => some .FEQ_D
+  | "FCVT_LU_D" | "FCVT.LU.D" => some .FCVT_LU_D
+  | "FCVT_L_D" | "FCVT.L.D" => some .FCVT_L_D
+  | "FCVT_S_D" | "FCVT.S.D" => some .FCVT_S_D
+  | "FCVT_WU_D" | "FCVT.WU.D" => some .FCVT_WU_D
+  | "FCVT_W_D" | "FCVT.W.D" => some .FCVT_W_D
+  | "FDIV_D" | "FDIV.D" => some .FDIV_D
+  | "FEQ_D" | "FEQ.D" => some .FEQ_D
   | "FLD" => some .FLD
-  | "FLE_D" => some .FLE_D
-  | "FLT_D" => some .FLT_D
-  | "FMADD_D" => some .FMADD_D
-  | "FMAX_D" => some .FMAX_D
-  | "FMIN_D" => some .FMIN_D
-  | "FMSUB_D" => some .FMSUB_D
-  | "FMUL_D" => some .FMUL_D
-  | "FNMADD_D" => some .FNMADD_D
-  | "FNMSUB_D" => some .FNMSUB_D
+  | "FLE_D" | "FLE.D" => some .FLE_D
+  | "FLT_D" | "FLT.D" => some .FLT_D
+  | "FMADD_D" | "FMADD.D" => some .FMADD_D
+  | "FMAX_D" | "FMAX.D" => some .FMAX_D
+  | "FMIN_D" | "FMIN.D" => some .FMIN_D
+  | "FMSUB_D" | "FMSUB.D" => some .FMSUB_D
+  | "FMUL_D" | "FMUL.D" => some .FMUL_D
+  | "FMV_D_X" | "FMV.D.X" => some .FMV_D_X
+  | "FMV_X_D" | "FMV.X.D" => some .FMV_X_D
+  | "FNMADD_D" | "FNMADD.D" => some .FNMADD_D
+  | "FNMSUB_D" | "FNMSUB.D" => some .FNMSUB_D
   | "FSD" => some .FSD
-  | "FSGNJN_D" => some .FSGNJN_D
-  | "FSGNJX_D" => some .FSGNJX_D
-  | "FSGNJ_D" => some .FSGNJ_D
-  | "FSQRT_D" => some .FSQRT_D
-  | "FSUB_D" => some .FSUB_D
+  | "FSGNJN_D" | "FSGNJN.D" => some .FSGNJN_D
+  | "FSGNJX_D" | "FSGNJX.D" => some .FSGNJX_D
+  | "FSGNJ_D" | "FSGNJ.D" => some .FSGNJ_D
+  | "FSQRT_D" | "FSQRT.D" => some .FSQRT_D
+  | "FSUB_D" | "FSUB.D" => some .FSUB_D
   | "MRET" => some .MRET
   | "WFI" => some .WFI
-  | "FENCE_I" => some .FENCE_I
+  | "FENCE_I" | "FENCE.I" => some .FENCE_I
   | "CSRRW" => some .CSRRW
   | "CSRRS" => some .CSRRS
   | "CSRRC" => some .CSRRC
@@ -291,267 +375,348 @@ def OpType.fromString (s : String) : Option OpType :=
 
 /-- All OpType constructors in canonical order -/
 def OpType.all : List OpType :=
-  [.ADD, .ADDI, .AND, .ANDI, .AUIPC, .BEQ, .BGE, .BGEU,
-   .BLT, .BLTU, .BNE, .EBREAK, .ECALL, .FENCE, .JAL, .JALR,
-   .LB, .LBU, .LH, .LHU, .LUI, .LW, .OR, .ORI,
-   .SB, .SH, .SLL, .SLLI, .SLT, .SLTI, .SLTIU, .SLTU,
-   .SRA, .SRAI, .SRL, .SRLI, .SUB, .SW, .XOR, .XORI,
-   .DIV, .DIVU, .MUL, .MULH, .MULHSU, .MULHU, .REM, .REMU,
-   .AMOADD_W, .AMOAND_W, .AMOMAXU_W, .AMOMAX_W, .AMOMINU_W, .AMOMIN_W, .AMOOR_W, .AMOSWAP_W,
-   .AMOXOR_W, .LR_W, .SC_W, .FADD_S, .FCLASS_S, .FCVT_S_W, .FCVT_S_WU, .FCVT_WU_S,
+  [.ADD, .ADDI, .ADDIW, .ADDW, .AND, .ANDI, .AUIPC, .BEQ,
+   .BGE, .BGEU, .BLT, .BLTU, .BNE, .EBREAK, .ECALL, .FENCE,
+   .JAL, .JALR, .LB, .LBU, .LD, .LH, .LHU, .LUI,
+   .LW, .LWU, .OR, .ORI, .SB, .SD, .SH, .SLL,
+   .SLLI, .SLLIW, .SLLW, .SLT, .SLTI, .SLTIU, .SLTU, .SRA,
+   .SRAI, .SRAIW, .SRAW, .SRL, .SRLI, .SRLIW, .SRLW, .SUB,
+   .SUBW, .SW, .XOR, .XORI, .DIV, .DIVU, .DIVUW, .DIVW,
+   .MUL, .MULH, .MULHSU, .MULHU, .MULW, .REM, .REMU, .REMUW,
+   .REMW, .AMOADD_D, .AMOADD_W, .AMOAND_D, .AMOAND_W, .AMOMAXU_D, .AMOMAXU_W, .AMOMAX_D,
+   .AMOMAX_W, .AMOMINU_D, .AMOMINU_W, .AMOMIN_D, .AMOMIN_W, .AMOOR_D, .AMOOR_W, .AMOSWAP_D,
+   .AMOSWAP_W, .AMOXOR_D, .AMOXOR_W, .LR_D, .LR_W, .SC_D, .SC_W, .FADD_S,
+   .FCLASS_S, .FCVT_LU_S, .FCVT_L_S, .FCVT_S_L, .FCVT_S_LU, .FCVT_S_W, .FCVT_S_WU, .FCVT_WU_S,
    .FCVT_W_S, .FDIV_S, .FEQ_S, .FLE_S, .FLT_S, .FLW, .FMADD_S, .FMAX_S,
    .FMIN_S, .FMSUB_S, .FMUL_S, .FMV_W_X, .FMV_X_W, .FNMADD_S, .FNMSUB_S, .FSGNJN_S,
-   .FSGNJX_S, .FSGNJ_S, .FSQRT_S, .FSUB_S, .FSW, .FADD_D, .FCLASS_D, .FCVT_D_S,
-   .FCVT_D_W, .FCVT_D_WU, .FCVT_S_D, .FCVT_WU_D, .FCVT_W_D, .FDIV_D, .FEQ_D, .FLD,
-   .FLE_D, .FLT_D, .FMADD_D, .FMAX_D, .FMIN_D, .FMSUB_D, .FMUL_D, .FNMADD_D,
-   .FNMSUB_D, .FSD, .FSGNJN_D, .FSGNJX_D, .FSGNJ_D, .FSQRT_D, .FSUB_D, .MRET,
-   .WFI, .FENCE_I, .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, .CSRRCI]
+   .FSGNJX_S, .FSGNJ_S, .FSQRT_S, .FSUB_S, .FSW, .FADD_D, .FCLASS_D, .FCVT_D_L,
+   .FCVT_D_LU, .FCVT_D_S, .FCVT_D_W, .FCVT_D_WU, .FCVT_LU_D, .FCVT_L_D, .FCVT_S_D, .FCVT_WU_D,
+   .FCVT_W_D, .FDIV_D, .FEQ_D, .FLD, .FLE_D, .FLT_D, .FMADD_D, .FMAX_D,
+   .FMIN_D, .FMSUB_D, .FMUL_D, .FMV_D_X, .FMV_X_D, .FNMADD_D, .FNMSUB_D, .FSD,
+   .FSGNJN_D, .FSGNJX_D, .FSGNJ_D, .FSQRT_D, .FSUB_D, .MRET, .WFI, .FENCE_I,
+   .CSRRW, .CSRRS, .CSRRC, .CSRRWI, .CSRRSI, .CSRRCI]
 
 /-- Get the index of an OpType in the canonical ordering -/
 def OpType.toIndex : OpType → Nat
   | .ADD => 0
   | .ADDI => 1
-  | .AND => 2
-  | .ANDI => 3
-  | .AUIPC => 4
-  | .BEQ => 5
-  | .BGE => 6
-  | .BGEU => 7
-  | .BLT => 8
-  | .BLTU => 9
-  | .BNE => 10
-  | .EBREAK => 11
-  | .ECALL => 12
-  | .FENCE => 13
-  | .JAL => 14
-  | .JALR => 15
-  | .LB => 16
-  | .LBU => 17
-  | .LH => 18
-  | .LHU => 19
-  | .LUI => 20
-  | .LW => 21
-  | .OR => 22
-  | .ORI => 23
-  | .SB => 24
-  | .SH => 25
-  | .SLL => 26
-  | .SLLI => 27
-  | .SLT => 28
-  | .SLTI => 29
-  | .SLTIU => 30
-  | .SLTU => 31
-  | .SRA => 32
-  | .SRAI => 33
-  | .SRL => 34
-  | .SRLI => 35
-  | .SUB => 36
-  | .SW => 37
-  | .XOR => 38
-  | .XORI => 39
-  | .DIV => 40
-  | .DIVU => 41
-  | .MUL => 42
-  | .MULH => 43
-  | .MULHSU => 44
-  | .MULHU => 45
-  | .REM => 46
-  | .REMU => 47
-  | .AMOADD_W => 48
-  | .AMOAND_W => 49
-  | .AMOMAXU_W => 50
-  | .AMOMAX_W => 51
-  | .AMOMINU_W => 52
-  | .AMOMIN_W => 53
-  | .AMOOR_W => 54
-  | .AMOSWAP_W => 55
-  | .AMOXOR_W => 56
-  | .LR_W => 57
-  | .SC_W => 58
-  | .FADD_S => 59
-  | .FCLASS_S => 60
-  | .FCVT_S_W => 61
-  | .FCVT_S_WU => 62
-  | .FCVT_WU_S => 63
-  | .FCVT_W_S => 64
-  | .FDIV_S => 65
-  | .FEQ_S => 66
-  | .FLE_S => 67
-  | .FLT_S => 68
-  | .FLW => 69
-  | .FMADD_S => 70
-  | .FMAX_S => 71
-  | .FMIN_S => 72
-  | .FMSUB_S => 73
-  | .FMUL_S => 74
-  | .FMV_W_X => 75
-  | .FMV_X_W => 76
-  | .FNMADD_S => 77
-  | .FNMSUB_S => 78
-  | .FSGNJN_S => 79
-  | .FSGNJX_S => 80
-  | .FSGNJ_S => 81
-  | .FSQRT_S => 82
-  | .FSUB_S => 83
-  | .FSW => 84
-  | .FADD_D => 85
-  | .FCLASS_D => 86
-  | .FCVT_D_S => 87
-  | .FCVT_D_W => 88
-  | .FCVT_D_WU => 89
-  | .FCVT_S_D => 90
-  | .FCVT_WU_D => 91
-  | .FCVT_W_D => 92
-  | .FDIV_D => 93
-  | .FEQ_D => 94
-  | .FLD => 95
-  | .FLE_D => 96
-  | .FLT_D => 97
-  | .FMADD_D => 98
-  | .FMAX_D => 99
-  | .FMIN_D => 100
-  | .FMSUB_D => 101
-  | .FMUL_D => 102
-  | .FNMADD_D => 103
-  | .FNMSUB_D => 104
-  | .FSD => 105
-  | .FSGNJN_D => 106
-  | .FSGNJX_D => 107
-  | .FSGNJ_D => 108
-  | .FSQRT_D => 109
-  | .FSUB_D => 110
-  | .MRET => 111
-  | .WFI => 112
-  | .FENCE_I => 113
-  | .CSRRW => 114
-  | .CSRRS => 115
-  | .CSRRC => 116
-  | .CSRRWI => 117
-  | .CSRRSI => 118
-  | .CSRRCI => 119
+  | .ADDIW => 2
+  | .ADDW => 3
+  | .AND => 4
+  | .ANDI => 5
+  | .AUIPC => 6
+  | .BEQ => 7
+  | .BGE => 8
+  | .BGEU => 9
+  | .BLT => 10
+  | .BLTU => 11
+  | .BNE => 12
+  | .EBREAK => 13
+  | .ECALL => 14
+  | .FENCE => 15
+  | .JAL => 16
+  | .JALR => 17
+  | .LB => 18
+  | .LBU => 19
+  | .LD => 20
+  | .LH => 21
+  | .LHU => 22
+  | .LUI => 23
+  | .LW => 24
+  | .LWU => 25
+  | .OR => 26
+  | .ORI => 27
+  | .SB => 28
+  | .SD => 29
+  | .SH => 30
+  | .SLL => 31
+  | .SLLI => 32
+  | .SLLIW => 33
+  | .SLLW => 34
+  | .SLT => 35
+  | .SLTI => 36
+  | .SLTIU => 37
+  | .SLTU => 38
+  | .SRA => 39
+  | .SRAI => 40
+  | .SRAIW => 41
+  | .SRAW => 42
+  | .SRL => 43
+  | .SRLI => 44
+  | .SRLIW => 45
+  | .SRLW => 46
+  | .SUB => 47
+  | .SUBW => 48
+  | .SW => 49
+  | .XOR => 50
+  | .XORI => 51
+  | .DIV => 52
+  | .DIVU => 53
+  | .DIVUW => 54
+  | .DIVW => 55
+  | .MUL => 56
+  | .MULH => 57
+  | .MULHSU => 58
+  | .MULHU => 59
+  | .MULW => 60
+  | .REM => 61
+  | .REMU => 62
+  | .REMUW => 63
+  | .REMW => 64
+  | .AMOADD_D => 65
+  | .AMOADD_W => 66
+  | .AMOAND_D => 67
+  | .AMOAND_W => 68
+  | .AMOMAXU_D => 69
+  | .AMOMAXU_W => 70
+  | .AMOMAX_D => 71
+  | .AMOMAX_W => 72
+  | .AMOMINU_D => 73
+  | .AMOMINU_W => 74
+  | .AMOMIN_D => 75
+  | .AMOMIN_W => 76
+  | .AMOOR_D => 77
+  | .AMOOR_W => 78
+  | .AMOSWAP_D => 79
+  | .AMOSWAP_W => 80
+  | .AMOXOR_D => 81
+  | .AMOXOR_W => 82
+  | .LR_D => 83
+  | .LR_W => 84
+  | .SC_D => 85
+  | .SC_W => 86
+  | .FADD_S => 87
+  | .FCLASS_S => 88
+  | .FCVT_LU_S => 89
+  | .FCVT_L_S => 90
+  | .FCVT_S_L => 91
+  | .FCVT_S_LU => 92
+  | .FCVT_S_W => 93
+  | .FCVT_S_WU => 94
+  | .FCVT_WU_S => 95
+  | .FCVT_W_S => 96
+  | .FDIV_S => 97
+  | .FEQ_S => 98
+  | .FLE_S => 99
+  | .FLT_S => 100
+  | .FLW => 101
+  | .FMADD_S => 102
+  | .FMAX_S => 103
+  | .FMIN_S => 104
+  | .FMSUB_S => 105
+  | .FMUL_S => 106
+  | .FMV_W_X => 107
+  | .FMV_X_W => 108
+  | .FNMADD_S => 109
+  | .FNMSUB_S => 110
+  | .FSGNJN_S => 111
+  | .FSGNJX_S => 112
+  | .FSGNJ_S => 113
+  | .FSQRT_S => 114
+  | .FSUB_S => 115
+  | .FSW => 116
+  | .FADD_D => 117
+  | .FCLASS_D => 118
+  | .FCVT_D_L => 119
+  | .FCVT_D_LU => 120
+  | .FCVT_D_S => 121
+  | .FCVT_D_W => 122
+  | .FCVT_D_WU => 123
+  | .FCVT_LU_D => 124
+  | .FCVT_L_D => 125
+  | .FCVT_S_D => 126
+  | .FCVT_WU_D => 127
+  | .FCVT_W_D => 128
+  | .FDIV_D => 129
+  | .FEQ_D => 130
+  | .FLD => 131
+  | .FLE_D => 132
+  | .FLT_D => 133
+  | .FMADD_D => 134
+  | .FMAX_D => 135
+  | .FMIN_D => 136
+  | .FMSUB_D => 137
+  | .FMUL_D => 138
+  | .FMV_D_X => 139
+  | .FMV_X_D => 140
+  | .FNMADD_D => 141
+  | .FNMSUB_D => 142
+  | .FSD => 143
+  | .FSGNJN_D => 144
+  | .FSGNJX_D => 145
+  | .FSGNJ_D => 146
+  | .FSQRT_D => 147
+  | .FSUB_D => 148
+  | .MRET => 149
+  | .WFI => 150
+  | .FENCE_I => 151
+  | .CSRRW => 152
+  | .CSRRS => 153
+  | .CSRRC => 154
+  | .CSRRWI => 155
+  | .CSRRSI => 156
+  | .CSRRCI => 157
 
 /-- Get OpType from canonical index -/
 def OpType.ofIndex : Nat → Option OpType
   | 0 => some .ADD
   | 1 => some .ADDI
-  | 2 => some .AND
-  | 3 => some .ANDI
-  | 4 => some .AUIPC
-  | 5 => some .BEQ
-  | 6 => some .BGE
-  | 7 => some .BGEU
-  | 8 => some .BLT
-  | 9 => some .BLTU
-  | 10 => some .BNE
-  | 11 => some .EBREAK
-  | 12 => some .ECALL
-  | 13 => some .FENCE
-  | 14 => some .JAL
-  | 15 => some .JALR
-  | 16 => some .LB
-  | 17 => some .LBU
-  | 18 => some .LH
-  | 19 => some .LHU
-  | 20 => some .LUI
-  | 21 => some .LW
-  | 22 => some .OR
-  | 23 => some .ORI
-  | 24 => some .SB
-  | 25 => some .SH
-  | 26 => some .SLL
-  | 27 => some .SLLI
-  | 28 => some .SLT
-  | 29 => some .SLTI
-  | 30 => some .SLTIU
-  | 31 => some .SLTU
-  | 32 => some .SRA
-  | 33 => some .SRAI
-  | 34 => some .SRL
-  | 35 => some .SRLI
-  | 36 => some .SUB
-  | 37 => some .SW
-  | 38 => some .XOR
-  | 39 => some .XORI
-  | 40 => some .DIV
-  | 41 => some .DIVU
-  | 42 => some .MUL
-  | 43 => some .MULH
-  | 44 => some .MULHSU
-  | 45 => some .MULHU
-  | 46 => some .REM
-  | 47 => some .REMU
-  | 48 => some .AMOADD_W
-  | 49 => some .AMOAND_W
-  | 50 => some .AMOMAXU_W
-  | 51 => some .AMOMAX_W
-  | 52 => some .AMOMINU_W
-  | 53 => some .AMOMIN_W
-  | 54 => some .AMOOR_W
-  | 55 => some .AMOSWAP_W
-  | 56 => some .AMOXOR_W
-  | 57 => some .LR_W
-  | 58 => some .SC_W
-  | 59 => some .FADD_S
-  | 60 => some .FCLASS_S
-  | 61 => some .FCVT_S_W
-  | 62 => some .FCVT_S_WU
-  | 63 => some .FCVT_WU_S
-  | 64 => some .FCVT_W_S
-  | 65 => some .FDIV_S
-  | 66 => some .FEQ_S
-  | 67 => some .FLE_S
-  | 68 => some .FLT_S
-  | 69 => some .FLW
-  | 70 => some .FMADD_S
-  | 71 => some .FMAX_S
-  | 72 => some .FMIN_S
-  | 73 => some .FMSUB_S
-  | 74 => some .FMUL_S
-  | 75 => some .FMV_W_X
-  | 76 => some .FMV_X_W
-  | 77 => some .FNMADD_S
-  | 78 => some .FNMSUB_S
-  | 79 => some .FSGNJN_S
-  | 80 => some .FSGNJX_S
-  | 81 => some .FSGNJ_S
-  | 82 => some .FSQRT_S
-  | 83 => some .FSUB_S
-  | 84 => some .FSW
-  | 85 => some .FADD_D
-  | 86 => some .FCLASS_D
-  | 87 => some .FCVT_D_S
-  | 88 => some .FCVT_D_W
-  | 89 => some .FCVT_D_WU
-  | 90 => some .FCVT_S_D
-  | 91 => some .FCVT_WU_D
-  | 92 => some .FCVT_W_D
-  | 93 => some .FDIV_D
-  | 94 => some .FEQ_D
-  | 95 => some .FLD
-  | 96 => some .FLE_D
-  | 97 => some .FLT_D
-  | 98 => some .FMADD_D
-  | 99 => some .FMAX_D
-  | 100 => some .FMIN_D
-  | 101 => some .FMSUB_D
-  | 102 => some .FMUL_D
-  | 103 => some .FNMADD_D
-  | 104 => some .FNMSUB_D
-  | 105 => some .FSD
-  | 106 => some .FSGNJN_D
-  | 107 => some .FSGNJX_D
-  | 108 => some .FSGNJ_D
-  | 109 => some .FSQRT_D
-  | 110 => some .FSUB_D
-  | 111 => some .MRET
-  | 112 => some .WFI
-  | 113 => some .FENCE_I
-  | 114 => some .CSRRW
-  | 115 => some .CSRRS
-  | 116 => some .CSRRC
-  | 117 => some .CSRRWI
-  | 118 => some .CSRRSI
-  | 119 => some .CSRRCI
+  | 2 => some .ADDIW
+  | 3 => some .ADDW
+  | 4 => some .AND
+  | 5 => some .ANDI
+  | 6 => some .AUIPC
+  | 7 => some .BEQ
+  | 8 => some .BGE
+  | 9 => some .BGEU
+  | 10 => some .BLT
+  | 11 => some .BLTU
+  | 12 => some .BNE
+  | 13 => some .EBREAK
+  | 14 => some .ECALL
+  | 15 => some .FENCE
+  | 16 => some .JAL
+  | 17 => some .JALR
+  | 18 => some .LB
+  | 19 => some .LBU
+  | 20 => some .LD
+  | 21 => some .LH
+  | 22 => some .LHU
+  | 23 => some .LUI
+  | 24 => some .LW
+  | 25 => some .LWU
+  | 26 => some .OR
+  | 27 => some .ORI
+  | 28 => some .SB
+  | 29 => some .SD
+  | 30 => some .SH
+  | 31 => some .SLL
+  | 32 => some .SLLI
+  | 33 => some .SLLIW
+  | 34 => some .SLLW
+  | 35 => some .SLT
+  | 36 => some .SLTI
+  | 37 => some .SLTIU
+  | 38 => some .SLTU
+  | 39 => some .SRA
+  | 40 => some .SRAI
+  | 41 => some .SRAIW
+  | 42 => some .SRAW
+  | 43 => some .SRL
+  | 44 => some .SRLI
+  | 45 => some .SRLIW
+  | 46 => some .SRLW
+  | 47 => some .SUB
+  | 48 => some .SUBW
+  | 49 => some .SW
+  | 50 => some .XOR
+  | 51 => some .XORI
+  | 52 => some .DIV
+  | 53 => some .DIVU
+  | 54 => some .DIVUW
+  | 55 => some .DIVW
+  | 56 => some .MUL
+  | 57 => some .MULH
+  | 58 => some .MULHSU
+  | 59 => some .MULHU
+  | 60 => some .MULW
+  | 61 => some .REM
+  | 62 => some .REMU
+  | 63 => some .REMUW
+  | 64 => some .REMW
+  | 65 => some .AMOADD_D
+  | 66 => some .AMOADD_W
+  | 67 => some .AMOAND_D
+  | 68 => some .AMOAND_W
+  | 69 => some .AMOMAXU_D
+  | 70 => some .AMOMAXU_W
+  | 71 => some .AMOMAX_D
+  | 72 => some .AMOMAX_W
+  | 73 => some .AMOMINU_D
+  | 74 => some .AMOMINU_W
+  | 75 => some .AMOMIN_D
+  | 76 => some .AMOMIN_W
+  | 77 => some .AMOOR_D
+  | 78 => some .AMOOR_W
+  | 79 => some .AMOSWAP_D
+  | 80 => some .AMOSWAP_W
+  | 81 => some .AMOXOR_D
+  | 82 => some .AMOXOR_W
+  | 83 => some .LR_D
+  | 84 => some .LR_W
+  | 85 => some .SC_D
+  | 86 => some .SC_W
+  | 87 => some .FADD_S
+  | 88 => some .FCLASS_S
+  | 89 => some .FCVT_LU_S
+  | 90 => some .FCVT_L_S
+  | 91 => some .FCVT_S_L
+  | 92 => some .FCVT_S_LU
+  | 93 => some .FCVT_S_W
+  | 94 => some .FCVT_S_WU
+  | 95 => some .FCVT_WU_S
+  | 96 => some .FCVT_W_S
+  | 97 => some .FDIV_S
+  | 98 => some .FEQ_S
+  | 99 => some .FLE_S
+  | 100 => some .FLT_S
+  | 101 => some .FLW
+  | 102 => some .FMADD_S
+  | 103 => some .FMAX_S
+  | 104 => some .FMIN_S
+  | 105 => some .FMSUB_S
+  | 106 => some .FMUL_S
+  | 107 => some .FMV_W_X
+  | 108 => some .FMV_X_W
+  | 109 => some .FNMADD_S
+  | 110 => some .FNMSUB_S
+  | 111 => some .FSGNJN_S
+  | 112 => some .FSGNJX_S
+  | 113 => some .FSGNJ_S
+  | 114 => some .FSQRT_S
+  | 115 => some .FSUB_S
+  | 116 => some .FSW
+  | 117 => some .FADD_D
+  | 118 => some .FCLASS_D
+  | 119 => some .FCVT_D_L
+  | 120 => some .FCVT_D_LU
+  | 121 => some .FCVT_D_S
+  | 122 => some .FCVT_D_W
+  | 123 => some .FCVT_D_WU
+  | 124 => some .FCVT_LU_D
+  | 125 => some .FCVT_L_D
+  | 126 => some .FCVT_S_D
+  | 127 => some .FCVT_WU_D
+  | 128 => some .FCVT_W_D
+  | 129 => some .FDIV_D
+  | 130 => some .FEQ_D
+  | 131 => some .FLD
+  | 132 => some .FLE_D
+  | 133 => some .FLT_D
+  | 134 => some .FMADD_D
+  | 135 => some .FMAX_D
+  | 136 => some .FMIN_D
+  | 137 => some .FMSUB_D
+  | 138 => some .FMUL_D
+  | 139 => some .FMV_D_X
+  | 140 => some .FMV_X_D
+  | 141 => some .FNMADD_D
+  | 142 => some .FNMSUB_D
+  | 143 => some .FSD
+  | 144 => some .FSGNJN_D
+  | 145 => some .FSGNJX_D
+  | 146 => some .FSGNJ_D
+  | 147 => some .FSQRT_D
+  | 148 => some .FSUB_D
+  | 149 => some .MRET
+  | 150 => some .WFI
+  | 151 => some .FENCE_I
+  | 152 => some .CSRRW
+  | 153 => some .CSRRS
+  | 154 => some .CSRRC
+  | 155 => some .CSRRWI
+  | 156 => some .CSRRSI
+  | 157 => some .CSRRCI
   | _ => none
 
 /-- Resolve a name-based mapping to index-based mapping given a decoder's instruction list.
@@ -566,18 +731,22 @@ def OpType.resolveMapping (decoderNames : List String) (mapping : List (OpType �
 /-- Extension group(s) for each OpType -/
 def OpType.extensionGroup : OpType → List String
   | .ADD | .ADDI | .AND | .ANDI | .AUIPC | .BEQ | .BGE | .BGEU | .BLT | .BLTU | .BNE | .EBREAK | .ECALL | .FENCE | .JAL | .JALR | .LB | .LBU | .LH | .LHU | .LUI | .LW | .OR | .ORI | .SB | .SH | .SLL | .SLT | .SLTI | .SLTIU | .SLTU | .SRA | .SRL | .SUB | .SW | .XOR | .XORI => ["rv_i"]
+  | .ADDIW | .ADDW | .LD | .LWU | .SD | .SLLI | .SLLIW | .SLLW | .SRAI | .SRAIW | .SRAW | .SRLI | .SRLIW | .SRLW | .SUBW => ["rv64_i"]
+  | .AMOADD_D | .AMOAND_D | .AMOMAXU_D | .AMOMAX_D | .AMOMINU_D | .AMOMIN_D | .AMOOR_D | .AMOSWAP_D | .AMOXOR_D | .LR_D | .SC_D => ["rv64_a"]
   | .AMOADD_W | .AMOAND_W | .AMOMAXU_W | .AMOMAX_W | .AMOMINU_W | .AMOMIN_W | .AMOOR_W | .AMOSWAP_W | .AMOXOR_W | .LR_W | .SC_W => ["rv_a"]
   | .CSRRC | .CSRRCI | .CSRRS | .CSRRSI | .CSRRW | .CSRRWI => ["rv_zicsr"]
   | .DIV | .DIVU | .MUL | .MULH | .MULHSU | .MULHU | .REM | .REMU => ["rv_m"]
+  | .DIVUW | .DIVW | .MULW | .REMUW | .REMW => ["rv64_m"]
   | .FADD_D | .FCLASS_D | .FCVT_D_S | .FCVT_D_W | .FCVT_D_WU | .FCVT_S_D | .FCVT_WU_D | .FCVT_W_D | .FDIV_D | .FEQ_D | .FLD | .FLE_D | .FLT_D | .FMADD_D | .FMAX_D | .FMIN_D | .FMSUB_D | .FMUL_D | .FNMADD_D | .FNMSUB_D | .FSD | .FSGNJN_D | .FSGNJX_D | .FSGNJ_D | .FSQRT_D | .FSUB_D => ["rv_d"]
   | .FADD_S | .FCLASS_S | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_S | .FCVT_W_S | .FDIV_S | .FEQ_S | .FLE_S | .FLT_S | .FLW | .FMADD_S | .FMAX_S | .FMIN_S | .FMSUB_S | .FMUL_S | .FMV_W_X | .FMV_X_W | .FNMADD_S | .FNMSUB_S | .FSGNJN_S | .FSGNJX_S | .FSGNJ_S | .FSQRT_S | .FSUB_S | .FSW => ["rv_f"]
+  | .FCVT_D_L | .FCVT_D_LU | .FCVT_LU_D | .FCVT_L_D | .FMV_D_X | .FMV_X_D => ["rv64_d"]
+  | .FCVT_LU_S | .FCVT_L_S | .FCVT_S_L | .FCVT_S_LU => ["rv64_f"]
   | .FENCE_I => ["rv_zifencei"]
   | .MRET | .WFI => ["rv_system"]
-  | .SLLI | .SRAI | .SRLI => ["rv32_i"]
 
 /-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/
 def OpType.isFpGroup : OpType → Bool
-  | .FADD_D | .FADD_S | .FCLASS_D | .FCLASS_S | .FCVT_D_S | .FCVT_D_W | .FCVT_D_WU | .FCVT_S_D | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_D | .FCVT_WU_S | .FCVT_W_D | .FCVT_W_S | .FDIV_D | .FDIV_S | .FEQ_D | .FEQ_S | .FLD | .FLE_D | .FLE_S | .FLT_D | .FLT_S | .FLW | .FMADD_D | .FMADD_S | .FMAX_D | .FMAX_S | .FMIN_D | .FMIN_S | .FMSUB_D | .FMSUB_S | .FMUL_D | .FMUL_S | .FMV_W_X | .FMV_X_W | .FNMADD_D | .FNMADD_S | .FNMSUB_D | .FNMSUB_S | .FSD | .FSGNJN_D | .FSGNJN_S | .FSGNJX_D | .FSGNJX_S | .FSGNJ_D | .FSGNJ_S | .FSQRT_D | .FSQRT_S | .FSUB_D | .FSUB_S | .FSW => true
+  | .FADD_D | .FADD_S | .FCLASS_D | .FCLASS_S | .FCVT_D_L | .FCVT_D_LU | .FCVT_D_S | .FCVT_D_W | .FCVT_D_WU | .FCVT_LU_D | .FCVT_LU_S | .FCVT_L_D | .FCVT_L_S | .FCVT_S_D | .FCVT_S_L | .FCVT_S_LU | .FCVT_S_W | .FCVT_S_WU | .FCVT_WU_D | .FCVT_WU_S | .FCVT_W_D | .FCVT_W_S | .FDIV_D | .FDIV_S | .FEQ_D | .FEQ_S | .FLD | .FLE_D | .FLE_S | .FLT_D | .FLT_S | .FLW | .FMADD_D | .FMADD_S | .FMAX_D | .FMAX_S | .FMIN_D | .FMIN_S | .FMSUB_D | .FMSUB_S | .FMUL_D | .FMUL_S | .FMV_D_X | .FMV_W_X | .FMV_X_D | .FMV_X_W | .FNMADD_D | .FNMADD_S | .FNMSUB_D | .FNMSUB_S | .FSD | .FSGNJN_D | .FSGNJN_S | .FSGNJX_D | .FSGNJX_S | .FSGNJ_D | .FSGNJ_S | .FSQRT_D | .FSQRT_S | .FSUB_D | .FSUB_S | .FSW => true
   | _ => false
 
 end Shoumei.RISCV

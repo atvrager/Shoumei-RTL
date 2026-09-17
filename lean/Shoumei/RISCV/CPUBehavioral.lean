@@ -471,9 +471,9 @@ def cpuStep
           | some (opcode, src1, _src2, _src3, destTag, immediate, _pc) =>
               -- Use proper immediate value from RS entry
               let offset : Int := immediate.getD 0
-              let addr := Execution.calculateMemoryAddress src1 offset
+              let addr := Execution.calculateMemoryAddress src1.toUInt64 offset
               -- TODO: Full LSU integration with executeLoad/executeStore, store buffer, forwarding
-              [{ valid := true, tag := destTag, data := addr, exception := false, mispredicted := false }]
+              [{ valid := true, tag := destTag, data := addr.toUInt32, exception := false, mispredicted := false }]
           | none => []
       | none => []
 

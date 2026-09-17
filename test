@@ -42,7 +42,7 @@ echo "==> Test 2: LEAN Code Formatting"
 export PATH="$HOME/.elan/bin:$PATH"
 # LEAN doesn't have a standard formatter yet, but we enforce style via linter
 # Check that build succeeds with -DwarningAsError=true (configured in lakefile.lean)
-if lake build > /dev/null 2>&1; then
+if lake --no-ansi build > /dev/null 2>&1; then
     echo -e "${GREEN}✓ All LEAN code passes linter checks${NC}"
 else
     echo -e "${RED}✗ LEAN linter check failed${NC}"

@@ -341,12 +341,12 @@ def fpSmokeTest : TestProgram := {
     , blank
     , comment "Check fnmadd: f17 should be -7.0 (0xC0E00000)"
     , .fmv_to_int (x 24) (f 17)
-    , pseudo "li x25, 0xC0E00000"
+    , pseudo "li x25, -0x3F200000"
     , btype "bne" (x 24) (x 25) ".Lfp_fail"
     , blank
     , comment "Check fnmsub: f18 should be -5.0 (0xC0A00000)"
     , .fmv_to_int (x 24) (f 18)
-    , pseudo "li x25, 0xC0A00000"
+    , pseudo "li x25, -0x3F600000"
     , btype "bne" (x 24) (x 25) ".Lfp_fail"
     , blank
     , comment "Check fsqrt: f19 should be 1.0 (0x3F800000)"

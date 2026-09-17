@@ -1,6 +1,6 @@
 // Test: jal + ret correctness after branch mispredict
 // Mimics CoreMark's start_time/stop_time pattern
-#include "test_macros.h"
+#include "shoumei.h"
 
 volatile int counter = 0;
 
@@ -27,9 +27,10 @@ int main() {
 
     // Verify we got here (return address wasn't corrupted)
     if (result != 0) {
-        TEST_PASS;
+        pass();
     } else {
         // Even if mcycle returns 0, we should still get here
-        TEST_PASS;
+        pass();
     }
+    return 0;
 }

@@ -43,7 +43,7 @@ structure CPUConfig where
   /-- Zifencei extension: instruction-fetch fence (FENCE.I) -/
   enableZifencei : Bool := false
   /-- Register width (32 for RV32, 64 for RV64) -/
-  xlen : Nat := 32
+  xlen : Nat := 64
   /-- Number of instructions fetched, decoded, renamed, and dispatched per cycle -/
   dispatchWidth : Nat := 1
   /-- ROB commit width (number of instructions retired per cycle) -/
@@ -113,13 +113,13 @@ def CPUConfig.sbIdxWidth (c : CPUConfig) : Nat := log2Ceil c.storeBufferEntries
 def CPUConfig.cacheOffsetBits (c : CPUConfig) : Nat := log2Ceil (c.cacheLineWords * 4)
 
 /-- L1I tag bits (address width - index bits - offset bits) -/
-def CPUConfig.l1iTagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l1iSets - c.cacheOffsetBits
+def CPUConfig.l1iTagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l1iSets - c.cacheOffsetBits
 
 /-- L1D tag bits -/
-def CPUConfig.l1dTagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l1dSets - c.cacheOffsetBits
+def CPUConfig.l1dTagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l1dSets - c.cacheOffsetBits
 
 /-- L2 tag bits -/
-def CPUConfig.l2TagBits (c : CPUConfig) : Nat := 32 - log2Ceil c.l2Sets - c.cacheOffsetBits
+def CPUConfig.l2TagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l2Sets - c.cacheOffsetBits
 
 /-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B") -/
 def CPUConfig.cacheString (c : CPUConfig) : String :=
@@ -138,11 +138,11 @@ def CPUConfig.flen (c : CPUConfig) : Nat :=
     This bridges CPUConfig and the JSON-based instruction definitions
     from third_party/riscv-opcodes/instr_dict.json. -/
 def CPUConfig.enabledExtensions (config : CPUConfig) : List String :=
-  (if config.enableI then ["rv_i", "rv32_i"] else []) ++
-  (if config.enableM then ["rv_m"] else []) ++
-  (if config.enableA then ["rv_a"] else []) ++
-  (if config.enableF then ["rv_f"] else []) ++
-  (if config.enableD then ["rv_d"] else []) ++
+  (if config.enableI then (if config.xlen == 64 then ["rv_i", "rv64_i"] else ["rv_i", "rv32_i"]) else []) ++
+  (if config.enableM then (if config.xlen == 64 then ["rv_m", "rv64_m"] else ["rv_m"]) else []) ++
+  (if config.enableA then (if config.xlen == 64 then ["rv_a", "rv64_a"] else ["rv_a"]) else []) ++
+  (if config.enableF then (if config.xlen == 64 then ["rv_f", "rv64_f"] else ["rv_f"]) else []) ++
+  (if config.enableD then (if config.xlen == 64 then ["rv_d", "rv64_d"] else ["rv_d"]) else []) ++
   (if config.enableC then ["rv_c"] else []) ++
   (if config.enableZicsr then ["rv_zicsr"] else []) ++
   (if config.enableZifencei then ["rv_zifencei"] else []) ++
@@ -168,8 +168,9 @@ def CPUConfig.microcodesTraps (c : CPUConfig) : Bool := c.enabledMicrocode.conta
 def CPUConfig.microcodesMRET (c : CPUConfig) : Bool := c.enabledMicrocode.contains .mret
 
 /-- THE default config. Edit this single definition to change what gets built.
-    RV32IMAFD + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
+    RV64IMAFD + Zicsr + Zifencei + Cache, N=2 superscalar dispatch + retire. -/
 def defaultCPUConfig : CPUConfig := {
+  xlen := 64
   enableM := true
   enableA := true
   enableF := true
@@ -183,25 +184,28 @@ def defaultCPUConfig : CPUConfig := {
 }
 
 /-- Default RV32I configuration (no extensions) -/
-def rv32iConfig : CPUConfig := {}
+def rv32iConfig : CPUConfig := { xlen := 32 }
 
 /-- RV32IM configuration (M extension enabled) -/
-def rv32imConfig : CPUConfig := { enableM := true, enableZicsr := true, enableZifencei := true }
+def rv32imConfig : CPUConfig := { xlen := 32, enableM := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IF configuration (F extension enabled, no M) -/
-def rv32ifConfig : CPUConfig := { enableF := true, enableZicsr := true, enableZifencei := true }
+def rv32ifConfig : CPUConfig := { xlen := 32, enableF := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMF configuration (M + F + Zicsr + Zifencei) -/
-def rv32imfConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
+def rv32imfConfig : CPUConfig := { xlen := 32, enableM := true, enableF := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMA configuration (M + A + Zicsr + Zifencei) -/
-def rv32imaConfig : CPUConfig := { enableM := true, enableA := true, enableZicsr := true, enableZifencei := true }
+def rv32imaConfig : CPUConfig := { xlen := 32, enableM := true, enableA := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32G configuration (RV32IMAFD + Zicsr + Zifencei) -/
-def rv32gConfig : CPUConfig := { enableM := true, enableA := true, enableF := true, enableD := true, enableZicsr := true, enableZifencei := true }
+def rv32gConfig : CPUConfig := { xlen := 32, enableM := true, enableA := true, enableF := true, enableD := true, enableZicsr := true, enableZifencei := true }
+
+/-- RV64G configuration (RV64IMAFD + Zicsr + Zifencei) -/
+def rv64gConfig : CPUConfig := { xlen := 64, enableM := true, enableA := true, enableF := true, enableD := true, enableZicsr := true, enableZifencei := true }
 
 /-- RV32IMF with microcoded trap entry sequencer -/
-def rv32imfMicrocodedConfig : CPUConfig := { enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
+def rv32imfMicrocodedConfig : CPUConfig := { xlen := 32, enableM := true, enableF := true, enableZicsr := true, enableZifencei := true, enabledMicrocode := [.trapEntry] }
 
 
 /-
@@ -287,4 +291,12 @@ def CPUConfig.opcodeIndex (cfg : CPUConfig) (op : OpType) : Nat :=
   | some idx => idx
   | none => 0
 
+/-- Opcode width in bits for reservation stations and execution pipeline.
+    8 bits for RV64G (> 128 instructions), 7 bits for RV32G/RV32IMF, 6 bits for base RV32I. -/
+def CPUConfig.opcodeWidth (c : CPUConfig) : Nat :=
+  if c.xlen == 64 || c.decoderInstrNames.length > 128 then 8
+  else if c.decoderInstrNames.length > 64 then 7
+  else 6
+
 end Shoumei.RISCV
+

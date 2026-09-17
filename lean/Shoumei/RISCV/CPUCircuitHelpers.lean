@@ -194,13 +194,20 @@ def aluMappingByName : List (OpType × Nat) :=
     (.XOR, 6), (.XORI, 6),
     (.SLL, 8), (.SLLI, 8),
     (.SRL, 9), (.SRLI, 9),
-    (.SRA, 11), (.SRAI, 11) ]
+    (.SRA, 11), (.SRAI, 11),
+    -- Word operations (RV64: bit 4 = 1)
+    (.ADDW, 16), (.ADDIW, 16),
+    (.SUBW, 17),
+    (.SLLW, 24), (.SLLIW, 24),
+    (.SRLW, 25), (.SRLIW, 25),
+    (.SRAW, 27), (.SRAIW, 27) ]
 
 /-- Semantic MulDiv mapping: OpType → 3-bit MulDiv opcode.
     MUL=0, MULH=1, MULHSU=2, MULHU=3, DIV=4, DIVU=5, REM=6, REMU=7 -/
 def mulDivMappingByName : List (OpType × Nat) :=
   [ (.MUL, 0), (.MULH, 1), (.MULHSU, 2), (.MULHU, 3),
-    (.DIV, 4), (.DIVU, 5), (.REM, 6), (.REMU, 7) ]
+    (.DIV, 4), (.DIVU, 5), (.REM, 6), (.REMU, 7),
+    (.MULW, 8), (.DIVW, 12), (.DIVUW, 13), (.REMW, 14), (.REMUW, 15) ]
 
 /-- Generic optype→opcode LUT for N-bit input → M-bit output.
     Same algorithm as mkOpTypeToALU4 but parameterized on widths. -/
@@ -232,6 +239,7 @@ def mkOpTypeLUT (pfx : String) (optype : List Wire) (outOp : List Wire)
     match wires with
     | [] => [Gate.mkBUF (Wire.mk s!"{pfx}_gnd") outWire]
     | [w] => [Gate.mkBUF w outWire]
+    | [w0, w1] => [Gate.mkOR w0 w1 outWire]
     | w0 :: w1 :: rest =>
       let first := Wire.mk s!"{pfx}_{outWire.name}_or0"
       let firstGate := Gate.mkOR w0 w1 first
@@ -261,13 +269,16 @@ def fpuMappingByName : List (OpType × Nat) :=
     (.FMV_X_W, 16), (.FMV_W_X, 17), (.FCLASS_S, 18),
     (.FMIN_S, 19), (.FMAX_S, 20),
     (.FSGNJ_S, 21), (.FSGNJN_S, 22), (.FSGNJX_S, 23),
+    (.FCVT_L_S, 24), (.FCVT_LU_S, 25), (.FCVT_S_L, 26), (.FCVT_S_LU, 27),
     (.FADD_D, 32), (.FSUB_D, 33), (.FMUL_D, 34), (.FDIV_D, 35), (.FSQRT_D, 36),
     (.FMADD_D, 37), (.FMSUB_D, 38), (.FNMADD_D, 39), (.FNMSUB_D, 40),
     (.FEQ_D, 41), (.FLT_D, 42), (.FLE_D, 43),
     (.FCVT_W_D, 44), (.FCVT_WU_D, 45), (.FCVT_D_W, 46), (.FCVT_D_WU, 47),
     (.FCVT_S_D, 48), (.FCVT_D_S, 49), (.FCLASS_D, 50),
     (.FMIN_D, 51), (.FMAX_D, 52),
-    (.FSGNJ_D, 53), (.FSGNJN_D, 54), (.FSGNJX_D, 55) ]
+    (.FSGNJ_D, 53), (.FSGNJN_D, 54), (.FSGNJX_D, 55),
+    (.FMV_X_D, 56), (.FMV_D_X, 57),
+    (.FCVT_L_D, 58), (.FCVT_LU_D, 59), (.FCVT_D_L, 60), (.FCVT_D_LU, 61) ]
 
 /-- Build a 64:1 mux tree from 64 single-bit inputs using 6 select bits. -/
 def mkMux64to1 (inputs : List Wire) (sel : List Wire) (pfx : String) (output : Wire) : List Gate :=
@@ -337,6 +348,29 @@ def mkOpcodeMatch7 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wir
     Gate.mkAND t45 bitWires[6]! t456,
     Gate.mkAND t0123 t456 result
   ]
+
+/-- Match an 8-bit opcode. Used when opcode space exceeds 128 instructions (e.g. RV64G with 158 instructions). -/
+def mkOpcodeMatch8 (pfx : String) (enc : Nat) (opcode : List Wire) (result : Wire) : List Gate :=
+  let bitWires := (List.range 8).map fun b =>
+    if testBit enc b then opcode[b]! else Wire.mk s!"{pfx}_n{b}"
+  let notGates := (List.range 8).filterMap fun b =>
+    if !testBit enc b then some (Gate.mkNOT opcode[b]! (Wire.mk s!"{pfx}_n{b}")) else none
+  let t01 := Wire.mk s!"{pfx}_t01"
+  let t23 := Wire.mk s!"{pfx}_t23"
+  let t45 := Wire.mk s!"{pfx}_t45"
+  let t67 := Wire.mk s!"{pfx}_t67"
+  let t0123 := Wire.mk s!"{pfx}_t0123"
+  let t4567 := Wire.mk s!"{pfx}_t4567"
+  notGates ++ [
+    Gate.mkAND bitWires[0]! bitWires[1]! t01,
+    Gate.mkAND bitWires[2]! bitWires[3]! t23,
+    Gate.mkAND bitWires[4]! bitWires[5]! t45,
+    Gate.mkAND bitWires[6]! bitWires[7]! t67,
+    Gate.mkAND t01 t23 t0123,
+    Gate.mkAND t45 t67 t4567,
+    Gate.mkAND t0123 t4567 result
+  ]
+
 
 /-- Branch resolution logic: PC+4 link, target computation, condition evaluation,
     misprediction detection, ROB redirect, and redirect target muxes. -/
@@ -1273,7 +1307,9 @@ end
     Stable across decoder configurations (indices resolved at build time). -/
 def amoMappingByName : List (OpType × Nat) :=
   [ (.AMOADD_W, 0), (.AMOSWAP_W, 1), (.AMOXOR_W, 2), (.AMOAND_W, 3), (.AMOOR_W, 4),
-    (.AMOMIN_W, 5), (.AMOMAX_W, 6), (.AMOMINU_W, 7), (.AMOMAXU_W, 8) ]
+    (.AMOMIN_W, 5), (.AMOMAX_W, 6), (.AMOMINU_W, 7), (.AMOMAXU_W, 8),
+    (.AMOADD_D, 0), (.AMOSWAP_D, 1), (.AMOXOR_D, 2), (.AMOAND_D, 3), (.AMOOR_D, 4),
+    (.AMOMIN_D, 5), (.AMOMAX_D, 6), (.AMOMINU_D, 7), (.AMOMAXU_D, 8) ]
 
 /-- Match a 7-bit opcode against any of a list of encodings; result = OR of matches. -/
 def mkOpcodeMatchAny7 (pfx : String) (encs : List Nat) (opcode : List Wire) (result : Wire) : List Gate :=
@@ -1292,4 +1328,22 @@ def mkOpcodeMatchAny7 (pfx : String) (encs : List Nat) (opcode : List Wire) (res
       Gate.mkOR lhs ms[i + 1]! orWires[i]!)
     matchGates ++ orGates
 
+/-- Match an 8-bit opcode against any of a list of encodings; result = OR of matches. -/
+def mkOpcodeMatchAny8 (pfx : String) (encs : List Nat) (opcode : List Wire) (result : Wire) : List Gate :=
+  match encs with
+  | [] => [Gate.mkBUF (Wire.mk s!"{pfx}_gnd") result]
+  | [e] => mkOpcodeMatch8 s!"{pfx}_0" e opcode result
+  | _ =>
+    let ms := encs.enum.map (fun ⟨i, _⟩ => Wire.mk s!"{pfx}_m{i}")
+    let matchGates := (encs.enum.map (fun ⟨i, e⟩ => mkOpcodeMatch8 s!"{pfx}_{i}" e opcode ms[i]!)).flatten
+    -- OR chain over ms
+    let n := ms.length
+    let orWires := (List.range (n - 1)).map (fun i =>
+      if i + 1 == n - 1 then result else Wire.mk s!"{pfx}_or{i}")
+    let orGates := (List.range (n - 1)).map (fun i =>
+      let lhs := if i == 0 then ms[0]! else orWires[i - 1]!
+      Gate.mkOR lhs ms[i + 1]! orWires[i]!)
+    matchGates ++ orGates
+
 end Shoumei.RISCV.CPU
+

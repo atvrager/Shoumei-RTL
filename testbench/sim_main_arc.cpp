@@ -19,7 +19,7 @@
 #include "lib/elf_loader.h"
 
 // Use a shorter alias for the long model name
-using Model = CPU_RV32IMF_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B_model;
+using Model = CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_L1I256B_L1D256B_L2512B_model;
 
 static struct _StdoutUnbuffer {
     _StdoutUnbuffer() { setvbuf(stdout, nullptr, _IONBF, 0); }
@@ -53,39 +53,64 @@ static bool has_plusarg(int argc, char** argv, const char* name) {
 static int64_t elf_lookup_symbol(const char* path, const char* sym_name) {
     FILE* f = fopen(path, "rb");
     if (!f) return -1;
+    unsigned char ident[EI_NIDENT];
+    if (fread(ident, 1, EI_NIDENT, f) != EI_NIDENT) { fclose(f); return -1; }
+    fseek(f, 0, SEEK_SET);
 
-    Elf32_Ehdr ehdr;
-    if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
-
-    for (int i = 0; i < ehdr.e_shnum; i++) {
-        Elf32_Shdr shdr;
-        fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
-        if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
-        if (shdr.sh_type != SHT_SYMTAB) continue;
-
-        Elf32_Shdr strhdr;
-        fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
-        if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
-
-        auto* strtab = new char[strhdr.sh_size];
-        fseek(f, strhdr.sh_offset, SEEK_SET);
-        if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) {
-            delete[] strtab; continue;
-        }
-
-        int nsyms = shdr.sh_size / shdr.sh_entsize;
-        for (int j = 0; j < nsyms; j++) {
-            Elf32_Sym sym;
-            fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
-            if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
-            if (sym.st_name < strhdr.sh_size &&
-                strcmp(strtab + sym.st_name, sym_name) == 0) {
-                delete[] strtab;
-                fclose(f);
-                return (int64_t)sym.st_value;
+    if (ident[EI_CLASS] == ELFCLASS64) {
+        Elf64_Ehdr ehdr;
+        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
+        for (int i = 0; i < ehdr.e_shnum; i++) {
+            Elf64_Shdr shdr;
+            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+            if (shdr.sh_type != SHT_SYMTAB) continue;
+            Elf64_Shdr strhdr;
+            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+            auto* strtab = new char[strhdr.sh_size];
+            fseek(f, strhdr.sh_offset, SEEK_SET);
+            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) {
+                delete[] strtab; continue;
             }
+            int nsyms = shdr.sh_size / shdr.sh_entsize;
+            for (int j = 0; j < nsyms; j++) {
+                Elf64_Sym sym;
+                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) {
+                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;
+                }
+            }
+            delete[] strtab;
         }
-        delete[] strtab;
+    } else {
+        Elf32_Ehdr ehdr;
+        if (fread(&ehdr, sizeof(ehdr), 1, f) != 1) { fclose(f); return -1; }
+        for (int i = 0; i < ehdr.e_shnum; i++) {
+            Elf32_Shdr shdr;
+            fseek(f, ehdr.e_shoff + i * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&shdr, sizeof(shdr), 1, f) != 1) continue;
+            if (shdr.sh_type != SHT_SYMTAB) continue;
+            Elf32_Shdr strhdr;
+            fseek(f, ehdr.e_shoff + shdr.sh_link * ehdr.e_shentsize, SEEK_SET);
+            if (fread(&strhdr, sizeof(strhdr), 1, f) != 1) continue;
+            auto* strtab = new char[strhdr.sh_size];
+            fseek(f, strhdr.sh_offset, SEEK_SET);
+            if (fread(strtab, 1, strhdr.sh_size, f) != strhdr.sh_size) {
+                delete[] strtab; continue;
+            }
+            int nsyms = shdr.sh_size / shdr.sh_entsize;
+            for (int j = 0; j < nsyms; j++) {
+                Elf32_Sym sym;
+                fseek(f, shdr.sh_offset + j * shdr.sh_entsize, SEEK_SET);
+                if (fread(&sym, sizeof(sym), 1, f) != 1) continue;
+                if (sym.st_name < strhdr.sh_size && strcmp(strtab + sym.st_name, sym_name) == 0) {
+                    delete[] strtab; fclose(f); return (int64_t)sym.st_value;
+                }
+            }
+            delete[] strtab;
+        }
     }
     fclose(f);
     return -1;

@@ -60,7 +60,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let imem_resp_data := makeIndexedWires "cpu_imem_resp_data" 32
   let imem_resp_data_1 := makeIndexedWires "cpu_imem_resp_data_1" 32
 
-  let dmemDataWidth := if config.enableD then 64 else 32
+  let dmemDataWidth := if config.xlen == 64 || config.enableD then 64 else 32
   let dmem_req_valid := Wire.mk "cpu_dmem_req_valid"
   let dmem_req_we := Wire.mk "cpu_dmem_req_we"
   let dmem_req_addr := makeIndexedWires "cpu_dmem_req_addr" 32
@@ -93,23 +93,25 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_insn_1 := makeIndexedWires "rvvi_insn_1" 32
   let rvvi_rd_0 := makeIndexedWires "rvvi_rd_0" 5
   let rvvi_rd_1 := makeIndexedWires "rvvi_rd_1" 5
-  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" 32
-  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" 32
+  let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" config.xlen
+  let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" config.xlen
 
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
   let store_snoop_addr := makeIndexedWires "store_snoop_addr" 32
-  let store_snoop_data := makeIndexedWires "store_snoop_data" 32
+  let store_snoop_data := makeIndexedWires "store_snoop_data" dmemDataWidth
 
   -- Gate: dmem_req_ready = NOT dmem_stall
   let stall_gate := Gate.mkNOT dmem_stall not_dmem_stall
   let ready_gate := Gate.mkBUF not_dmem_stall dmem_req_ready
 
   -- Store snoop gates
-  let snoop_valid_gate := Gate.mkAND dmem_req_valid dmem_req_we store_snoop_valid
+  let snoop_valid_pre := Wire.mk "snoop_valid_pre"
+  let snoop_valid_gate0 := Gate.mkAND dmem_req_valid dmem_req_ready snoop_valid_pre
+  let snoop_valid_gate := Gate.mkAND snoop_valid_pre dmem_req_we store_snoop_valid
   let snoop_addr_gates := (List.range 32).map fun i =>
     Gate.mkBUF dmem_req_addr[i]! store_snoop_addr[i]!
-  let snoop_data_gates := (List.range 32).map fun i =>
+  let snoop_data_gates := (List.range dmemDataWidth).map fun i =>
     Gate.mkBUF dmem_req_data[i]! store_snoop_data[i]!
 
   -- W=2 RVVI compat: expose rvvi_retire = rvvi_valid_0 OR rvvi_valid_1
@@ -197,7 +199,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
                rvvi_insn_0 ++ rvvi_insn_1 ++
                rvvi_rd_0 ++ rvvi_rd_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
-    gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate, rvvi_valid_gate] ++
+    gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate0, snoop_valid_gate, rvvi_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
     signalGroups := [
@@ -205,7 +207,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
       { name := "mem_req_data", width := 256, wires := mem_req_data },
       { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
-      { name := "store_snoop_data", width := 32, wires := store_snoop_data },
+      { name := "store_snoop_data", width := dmemDataWidth, wires := store_snoop_data },
       -- RVVI trace buses
       { name := "rvvi_pc_0", width := 32, wires := rvvi_pc_0 },
       { name := "rvvi_pc_1", width := 32, wires := rvvi_pc_1 },
@@ -213,8 +215,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       { name := "rvvi_insn_1", width := 32, wires := rvvi_insn_1 },
       { name := "rvvi_rd_0", width := 5, wires := rvvi_rd_0 },
       { name := "rvvi_rd_1", width := 5, wires := rvvi_rd_1 },
-      { name := "rvvi_rdd_0", width := 32, wires := rvvi_rd_data_0 },
-      { name := "rvvi_rdd_1", width := 32, wires := rvvi_rd_data_1 }
+      { name := "rvvi_rdd_0", width := config.xlen, wires := rvvi_rd_data_0 },
+      { name := "rvvi_rdd_1", width := config.xlen, wires := rvvi_rd_data_1 }
     ]
     keepHierarchy := true
   }

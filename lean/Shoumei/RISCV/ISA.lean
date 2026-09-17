@@ -35,7 +35,8 @@ inductive FieldType where
   | bimm12lo : FieldType  -- Branch immediate low bits
   | imm12hi  : FieldType  -- Store immediate high bits
   | imm12lo  : FieldType  -- Store immediate low bits
-  | shamtw   : FieldType  -- Shift amount (5 bits for RV32)
+  | shamtw   : FieldType  -- Shift amount (5 bits for RV32 and RV64 *W ops)
+  | shamtd   : FieldType  -- Shift amount (6 bits for RV64)
   | fm       : FieldType  -- Fence mode (FENCE instruction)
   | pred     : FieldType  -- Predecessor set (FENCE instruction)
   | succ     : FieldType  -- Successor set (FENCE instruction)
@@ -60,6 +61,7 @@ instance : ToString FieldType where
     | .imm12hi => "imm12hi"
     | .imm12lo => "imm12lo"
     | .shamtw => "shamtw"
+    | .shamtd => "shamtd"
     | .fm => "fm"
     | .pred => "pred"
     | .succ => "succ"
@@ -84,6 +86,7 @@ def FieldType.fromString (s : String) : Option FieldType :=
   | "imm12hi"  => some .imm12hi
   | "imm12lo"  => some .imm12lo
   | "shamtw"   => some .shamtw
+  | "shamtd"   => some .shamtd
   | "fm"       => some .fm
   | "pred"     => some .pred
   | "succ"     => some .succ
@@ -141,12 +144,16 @@ def rv32i_instructions : List InstructionDef :=
 
 /-- Does this op write to an FP destination register? -/
 def OpType.hasFpRd : OpType → Bool
-  -- FP arithmetic, fused, sign-inject, min/max all write FP rd
+  -- FP arithmetic, fused, sign-inject, min/max all write FP rd (SP & DP)
   | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
   | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FADD_D | .FSUB_D | .FMUL_D | .FDIV_D | .FSQRT_D
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
+  | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
   -- int→FP conversions and moves write FP rd
-  | .FCVT_S_W | .FCVT_S_WU | .FMV_W_X
+  | .FCVT_S_W | .FCVT_S_WU | .FCVT_S_L | .FCVT_S_LU | .FMV_W_X
+  | .FCVT_D_W | .FCVT_D_WU | .FCVT_D_L | .FCVT_D_LU | .FCVT_D_S | .FCVT_S_D | .FMV_D_X
   -- FP load writes FP rd
   | .FLW | .FLD => true
   | _ => false
@@ -156,8 +163,13 @@ def OpType.hasFpRs1 : OpType → Bool
   | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
   | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
   | .FEQ_S | .FLT_S | .FLE_S
-  | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W | .FCLASS_S
+  | .FCVT_W_S | .FCVT_WU_S | .FCVT_L_S | .FCVT_LU_S | .FMV_X_W | .FCLASS_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FADD_D | .FSUB_D | .FMUL_D | .FDIV_D | .FSQRT_D
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
+  | .FEQ_D | .FLT_D | .FLE_D
+  | .FCVT_W_D | .FCVT_WU_D | .FCVT_L_D | .FCVT_LU_D | .FCVT_S_D | .FCVT_D_S | .FMV_X_D | .FCLASS_D
+  | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
   | .FSW | .FSD => true
   | _ => false
 
@@ -166,29 +178,34 @@ def OpType.hasFpRs2 : OpType → Bool
   | .FADD_S | .FSUB_S | .FMUL_S
   | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
   | .FEQ_S | .FLT_S | .FLE_S
-  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S => true
+  | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
+  | .FADD_D | .FSUB_D | .FMUL_D
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
+  | .FEQ_D | .FLT_D | .FLE_D
+  | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D => true
   | _ => false
 
 /-- Does this op read FP source register rs3? (R4-type fused ops only) -/
 def OpType.hasFpRs3 : OpType → Bool
-  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S => true
+  | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
+  | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D => true
   | _ => false
 
 /-- Does this op read integer rs1? (FLW/FSW use int rs1 for address) -/
 def OpType.hasIntRs1 : OpType → Bool
   | .FLW | .FSW | .FLD | .FSD => true
-  -- FMV_W_X reads int rs1
-  | .FMV_W_X => true
-  -- FCVT_S_W/FCVT_S_WU read int rs1
-  | .FCVT_S_W | .FCVT_S_WU => true
-  -- All non-F ops read int rs1 (when they have rs1)
+  | .FMV_W_X | .FMV_D_X => true
+  | .FCVT_S_W | .FCVT_S_WU | .FCVT_S_L | .FCVT_S_LU => true
+  | .FCVT_D_W | .FCVT_D_WU | .FCVT_D_L | .FCVT_D_LU => true
   | op => !op.hasFpRs1
 
 /-- Does this op write to an integer destination register?
-    (Compare, classify, FP→int conversion, FMV_X_W) -/
+    (Compare, classify, FP→int conversion, FMV_X_W/FMV_X_D) -/
 def OpType.hasIntRd : OpType → Bool
   | .FEQ_S | .FLT_S | .FLE_S | .FCLASS_S
-  | .FCVT_W_S | .FCVT_WU_S | .FMV_X_W => true
+  | .FCVT_W_S | .FCVT_WU_S | .FCVT_L_S | .FCVT_LU_S | .FMV_X_W
+  | .FEQ_D | .FLT_D | .FLE_D | .FCLASS_D
+  | .FCVT_W_D | .FCVT_WU_D | .FCVT_L_D | .FCVT_LU_D | .FMV_X_D => true
   | op => !op.hasFpRd
 
 end Shoumei.RISCV

@@ -33,11 +33,11 @@ structure ExtGroup where
   exts : List String  -- extension keys to match
 
 def extGroups : List ExtGroup :=
-  [ { comment := "RV32I Base Integer Instructions", exts := ["rv_i", "rv32_i"] },
-    { comment := "M Extension: Integer Multiply/Divide", exts := ["rv_m"] },
-    { comment := "A Extension: Atomic Memory Operations", exts := ["rv_a"] },
-    { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f"] },
-    { comment := "D Extension: Double-Precision Floating-Point", exts := ["rv_d"] },
+  [ { comment := "RV64I Base Integer Instructions", exts := ["rv_i", "rv64_i"] },
+    { comment := "M Extension: Integer Multiply/Divide", exts := ["rv_m", "rv64_m"] },
+    { comment := "A Extension: Atomic Memory Operations", exts := ["rv_a", "rv64_a"] },
+    { comment := "F Extension: Single-Precision Floating-Point", exts := ["rv_f", "rv64_f"] },
+    { comment := "D Extension: Double-Precision Floating-Point", exts := ["rv_d", "rv64_d"] },
     { comment := "Privileged: Machine-Mode Instructions", exts := ["rv_system"] } ]
 
 def parseHex (s : String) : Option UInt32 :=
@@ -138,15 +138,9 @@ def main : IO Unit := do
   out := out ++ "def OpType.fromString (s : String) : Option OpType :=\n"
   out := out ++ "  match s.toUpper with\n"
   for n in allNames do
-    -- For F extension names with underscores, also accept dot variant
-    -- For F extension names, also accept dot variant (FADD_S → FADD.S)
-    let hasFpSuffix := n.endsWith "_S" || n.endsWith "_W" || n.endsWith "_WU" ||
-                        n.endsWith "_W_S" || n.endsWith "_WU_S" || n.endsWith "_S_W" || n.endsWith "_S_WU" ||
-                        n.endsWith "_X_W" || n.endsWith "_W_X"
-    let dotVariant := if hasFpSuffix then
+    let dotVariant :=
       let dv := n.replace "_" "."
       if dv != n then some dv else none
-    else none
     match dotVariant with
     | some dv => out := out ++ s!"  | \"{n}\" | \"{dv}\" => some .{n}\n"
     | none => out := out ++ s!"  | \"{n}\" => some .{n}\n"
@@ -238,7 +232,7 @@ def main : IO Unit := do
   out := out ++ "/-- Whether this OpType belongs to the floating-point group (sorted separately in decoder) -/\n"
   out := out ++ "def OpType.isFpGroup : OpType → Bool\n"
   let fpNames := extToNames.filterMap fun (k, ns) =>
-    if k == "rv_f" || k == "rv_d" then some ns else none
+    if k == "rv_f" || k == "rv_d" || k == "rv64_f" || k == "rv64_d" then some ns else none
   let allFp := fpNames.flatten.toArray.qsort (· < ·) |>.toList
   if !allFp.isEmpty then
     let joined := " | .".intercalate allFp

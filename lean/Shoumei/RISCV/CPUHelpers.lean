@@ -159,10 +159,11 @@ def mkMemPipeline
     Gate.mkAND pipe_load_en_tmp (Wire.mk "not_flush_comb") pipe_load_en
   ]
   -- Pipeline register: MUX(hold_value, new_value, enable) → DFF
-  let mem_addr_next := makeIndexedWires "mem_addr_next" 32
-  let mem_addr_pipe_gates := (List.range 32).map (fun i =>
+  let addrWidth := mem_address.length
+  let mem_addr_next := makeIndexedWires "mem_addr_next" addrWidth
+  let mem_addr_pipe_gates := (List.range addrWidth).map (fun i =>
     Gate.mkMUX mem_addr_r[i]! mem_address[i]! pipe_load_en mem_addr_next[i]!)
-  let mem_addr_pipe_insts := (List.range 32).map (fun i =>
+  let mem_addr_pipe_insts := (List.range addrWidth).map (fun i =>
     ({ moduleName := "DFlipFlop", instName := s!"u_mem_addr_r_{i}",
        portMap := [("d", mem_addr_next[i]!), ("q", mem_addr_r[i]!),
                    ("clock", clock), ("reset", reset)] } : CircuitInstance))
@@ -263,6 +264,20 @@ def mkSerializeDetect
     let notGates := (List.range opcodeWidth).filterMap fun b =>
       if !Nat.testBit encVal b then some (Gate.mkNOT decode_optype[b]! (Wire.mk s!"{pfx}_n{b}")) else none
     let andGates := match opcodeWidth with
+      | 8 =>
+        let t01 := Wire.mk s!"{pfx}_t01"
+        let t23 := Wire.mk s!"{pfx}_t23"
+        let t45 := Wire.mk s!"{pfx}_t45"
+        let t67 := Wire.mk s!"{pfx}_t67"
+        let t0123 := Wire.mk s!"{pfx}_t0123"
+        let t4567 := Wire.mk s!"{pfx}_t4567"
+        [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+         Gate.mkAND bitWires[2]! bitWires[3]! t23,
+         Gate.mkAND bitWires[4]! bitWires[5]! t45,
+         Gate.mkAND bitWires[6]! bitWires[7]! t67,
+         Gate.mkAND t01 t23 t0123,
+         Gate.mkAND t45 t67 t4567,
+         Gate.mkAND t0123 t4567 matchOut]
       | 7 =>
         let t01 := Wire.mk s!"{pfx}_t01"
         let t23 := Wire.mk s!"{pfx}_t23"
@@ -675,24 +690,22 @@ def mkCsrReadMux
     (mstatus_reg mie_reg mtvec_reg mepc_reg mcause_reg mtval_reg : List Wire)
     (fflags_reg : List Wire) (frm_reg : List Wire)
     : List Gate × List Wire × Wire × Wire × Wire :=
-  let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_rd_e{i}")
+  let dataWidth := if config.xlen == 64 || config.enableD then 64 else 32
+  let csr_read_data := (List.range dataWidth).map (fun i => Wire.mk s!"csr_rd_e{i}")
   let mstatus_sd_bit := Wire.mk "mstatus_sd_bit"
   let mstatus_fs_inv0 := Wire.mk "mstatus_fs_inv0"
   let mstatus_fs_inv1 := Wire.mk "mstatus_fs_inv1"
   let mstatus_sd_gate :=
     if config.enableZicsr && enableF then
-      [Gate.mkNOT mstatus_reg[13]! mstatus_fs_inv0,
-       Gate.mkNOT mstatus_reg[14]! mstatus_fs_inv1,
-       Gate.mkAND mstatus_fs_inv0 mstatus_fs_inv1 mstatus_sd_bit]
-    else if config.enableZicsr then
-      [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
-       Gate.mkBUF zero mstatus_sd_bit]
+      [Gate.mkAND mstatus_reg[13]! mstatus_reg[14]! mstatus_sd_bit,
+       Gate.mkBUF zero mstatus_fs_inv0,
+       Gate.mkBUF zero mstatus_fs_inv1]
     else
       [Gate.mkBUF zero mstatus_fs_inv0, Gate.mkBUF zero mstatus_fs_inv1,
        Gate.mkBUF zero mstatus_sd_bit]
   let csr_read_mux_gates :=
     if config.enableZicsr then
-      (List.range 32).map (fun i =>
+      ((List.range 32).map (fun i =>
         let misa_bit := if Nat.testBit misa_val i then one else zero
         let r_misa := Wire.mk s!"csr_rmisa_e{i}"
         let r_mscr := Wire.mk s!"csr_rmscr_e{i}"
@@ -717,11 +730,12 @@ def mkCsrReadMux
                                else zero
                              else zero
         let mstatus_read_bit :=
-          if i == 31 then mstatus_sd_bit
+          if i == 31 then (if config.xlen == 64 then zero else mstatus_sd_bit)
           else if i == 11 || i == 12 then one
-          else if enableF && (i == 13 || i == 14) then
-            if i == 13 then mstatus_fs_inv0 else mstatus_fs_inv1
           else mstatus_reg[i]!
+        let mcause_read_bit :=
+          if i == 31 then (if config.xlen == 64 then zero else mcause_reg[31]!)
+          else mcause_reg[i]!
         [Gate.mkMUX zero misa_bit is_misa r_misa,
          Gate.mkMUX r_misa mscratch_reg[i]! is_mscratch r_mscr,
          Gate.mkMUX r_mscr mcycle_reg[i]! is_mcycle r_mcyc,
@@ -735,11 +749,25 @@ def mkCsrReadMux
          Gate.mkMUX r_mstatus mie_reg[i]! is_mie r_mie,
          Gate.mkMUX r_mie mtvec_reg[i]! is_mtvec r_mtvec,
          Gate.mkMUX r_mtvec mepc_reg[i]! is_mepc r_mepc,
-         Gate.mkMUX r_mepc mcause_reg[i]! is_mcause r_mcause,
+         Gate.mkMUX r_mepc mcause_read_bit is_mcause r_mcause,
          Gate.mkMUX r_mcause mtval_reg[i]! is_mtval r_mtval,
-         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten
+         Gate.mkMUX r_mtval zero is_mip csr_read_data[i]!]) |>.flatten) ++
+      (if config.xlen == 64 || config.enableD then
+        (List.range 32).map (fun k =>
+          let r_mcyc_hi := Wire.mk s!"csr_rmcyc_hi_{k}"
+          let r_mins_hi := Wire.mk s!"csr_rmins_hi_{k}"
+          let r_mstat_hi := Wire.mk s!"csr_rmstat_hi_{k}"
+          let r_mcause_hi := Wire.mk s!"csr_rmcause_hi_{k}"
+          let mstat_hi_bit := if k == 31 then mstatus_sd_bit else zero
+          let mcause_hi_bit := if k == 31 then mcause_reg[31]! else zero
+          [Gate.mkMUX zero mcycleh_reg[k]! is_mcycle r_mcyc_hi,
+           Gate.mkMUX r_mcyc_hi minstreth_reg[k]! is_minstret r_mins_hi,
+           Gate.mkMUX r_mins_hi mstat_hi_bit is_mstatus r_mstat_hi,
+           Gate.mkMUX r_mstat_hi mcause_hi_bit is_mcause r_mcause_hi,
+           Gate.mkBUF r_mcause_hi csr_read_data[32+k]!]) |>.flatten
+       else [])
     else
-      (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
+      (List.range dataWidth).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
   (mstatus_sd_gate ++ csr_read_mux_gates, csr_read_data, mstatus_sd_bit, mstatus_fs_inv0, mstatus_fs_inv1)
 
 /-- CSR operation decode: match captured optype to determine RW/RS/RC/IMM,
@@ -765,6 +793,20 @@ def mkCsrOpDecode
         let notGates := (List.range opcodeWidth).filterMap fun b =>
           if !Nat.testBit encVal b then some (Gate.mkNOT csr_optype_reg[b]! (Wire.mk s!"csr_{pfx}_n{b}")) else none
         let andGates := match opcodeWidth with
+          | 8 =>
+            let t01 := Wire.mk s!"csr_{pfx}_t01"
+            let t23 := Wire.mk s!"csr_{pfx}_t23"
+            let t45 := Wire.mk s!"csr_{pfx}_t45"
+            let t67 := Wire.mk s!"csr_{pfx}_t67"
+            let t0123 := Wire.mk s!"csr_{pfx}_t0123"
+            let t4567 := Wire.mk s!"csr_{pfx}_t4567"
+            [Gate.mkAND bitWires[0]! bitWires[1]! t01,
+             Gate.mkAND bitWires[2]! bitWires[3]! t23,
+             Gate.mkAND bitWires[4]! bitWires[5]! t45,
+             Gate.mkAND bitWires[6]! bitWires[7]! t67,
+             Gate.mkAND t01 t23 t0123,
+             Gate.mkAND t45 t67 t4567,
+             Gate.mkAND t0123 t4567 matchOut]
           | 7 =>
             let t01 := Wire.mk s!"csr_{pfx}_t01"
             let t23 := Wire.mk s!"csr_{pfx}_t23"
@@ -925,7 +967,7 @@ def mkCsrNextValue
     if config.enableZicsr then
       (List.range 32).map (fun i =>
         if i == 11 || i == 12 then Gate.mkBUF one mstatus_warl[i]!
-        else if enableF && (i == 13 || i == 14) then Gate.mkNOT csr_write_val[i]! mstatus_warl[i]!
+        else if enableF && (i == 13 || i == 14) then Gate.mkBUF csr_write_val[i]! mstatus_warl[i]!
         else if i == 3 || i == 7 then Gate.mkBUF csr_write_val[i]! mstatus_warl[i]!
         else Gate.mkBUF zero mstatus_warl[i]!)
     else
@@ -985,7 +1027,10 @@ def mkCsrNextValue
   let mcause_next_gates :=
     if config.enableZicsr then
       (List.range 32).map (fun i =>
-        Gate.mkMUX mcause_reg[i]! csr_write_val[i]! csr_we_mcause mcause_next[i]!)
+        let wr_bit := if i == 31 && config.xlen == 64 && csr_write_val.length >= 64
+                      then csr_write_val[63]!
+                      else csr_write_val[i]!
+        Gate.mkMUX mcause_reg[i]! wr_bit csr_we_mcause mcause_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mcause_next[i]!)
   -- mtval: all 32 bits writable
@@ -1537,11 +1582,11 @@ structure AtomicUnit where
 def mkAtomicUnit
     (clock reset zero one : Wire)
     (rs_mem_dispatch_valid mem_dispatch_en_any : Wire)
-    (is_lr is_sc is_amo : Wire)
+    (is_lr is_sc is_amo is_atomic_d : Wire)
     (amo_funct : List Wire)             -- 4 bits: AMO function select
     (rs_mem_dispatch_src2 : List Wire)  -- 32 bits: store operand (rs2)
     (pipeline_flush_comb : Wire)
-    (mem_valid_r : Wire)
+    (mem_valid_r is_load_r : Wire)
     (mem_addr_r : List Wire)            -- 32 bits: registered address
     (dmem_resp_valid dmem_load_pending : Wire)
     (dmem_resp_data : List Wire)        -- 32 bits
@@ -1577,16 +1622,25 @@ def mkAtomicUnit
   let atomic_code_next := mkW "atom_code_next" 2
   let amo_funct_r := mkW "atom_funct_r" 4
   let amo_funct_next := mkW "atom_funct_next" 4
-  let amo_rs2_r := mkW "atom_rs2_r" 32
-  let amo_rs2_next := mkW "atom_rs2_next" 32
+  -- Operand/data paths are XLEN wide: 64-bit atomics (LR.D/SC.D/AMO*.D) need it
+  let dataW := dmem_resp_data.length
+  let amo_rs2_r := mkW "atom_rs2_r" dataW
+  let amo_rs2_next := mkW "atom_rs2_next" dataW
+  -- .W atomics compare 32-bit words, .D atomics the full 64-bit operands
+  let amo_d_r := Wire.mk "atom_d_r"
+  let amo_d_next := Wire.mk "atom_d_next"
   let code_reg_gates :=
-    [Gate.mkMUX atomic_code_r[0]! ac0 pipe_load_en atomic_code_next[0]!,
+    [Gate.mkMUX amo_d_r is_atomic_d pipe_load_en amo_d_next,
+     Gate.mkMUX atomic_code_r[0]! ac0 pipe_load_en atomic_code_next[0]!,
      Gate.mkMUX atomic_code_r[1]! ac1 pipe_load_en atomic_code_next[1]!] ++
     (List.range 4).map (fun i =>
       Gate.mkMUX amo_funct_r[i]! amo_funct[i]! pipe_load_en amo_funct_next[i]!) ++
-    (List.range 32).map (fun i =>
+    (List.range dataW).map (fun i =>
       Gate.mkMUX amo_rs2_r[i]! rs_mem_dispatch_src2[i]! pipe_load_en amo_rs2_next[i]!)
   let code_reg_insts : List CircuitInstance :=
+    ({ moduleName := "DFlipFlop", instName := "u_atom_d_r",
+       portMap := [("d", amo_d_next), ("q", amo_d_r),
+                   ("clock", clock), ("reset", reset)] } : CircuitInstance) ::
     (List.range 2).map (fun i =>
       ({ moduleName := "DFlipFlop", instName := s!"u_atom_code_r_{i}",
          portMap := [("d", atomic_code_next[i]!), ("q", atomic_code_r[i]!),
@@ -1595,7 +1649,7 @@ def mkAtomicUnit
       ({ moduleName := "DFlipFlop", instName := s!"u_atom_funct_r_{i}",
          portMap := [("d", amo_funct_next[i]!), ("q", amo_funct_r[i]!),
                      ("clock", clock), ("reset", reset)] } : CircuitInstance)) ++
-    (List.range 32).map (fun i =>
+    (List.range dataW).map (fun i =>
       ({ moduleName := "DFlipFlop", instName := s!"u_atom_rs2_r_{i}",
          portMap := [("d", amo_rs2_next[i]!), ("q", amo_rs2_r[i]!),
                      ("clock", clock), ("reset", reset)] } : CircuitInstance))
@@ -1617,12 +1671,16 @@ def mkAtomicUnit
 
   -- === Read responses and SC execute ===
   let resp_x := Wire.mk "atom_resp_x"
+  let resp_live := Wire.mk "atom_resp_live"
   let lr_resp := Wire.mk "atom_lr_resp"
   let amo_resp := Wire.mk "atom_amo_resp"
   let resp_gates := [
     Gate.mkAND dmem_resp_valid dmem_load_pending resp_x,
-    Gate.mkAND resp_x lr_sel lr_resp,
-    Gate.mkAND resp_x amo_sel amo_resp]
+    -- Only the atomic op currently in flight may consume a DMEM response; the
+    -- registered selector bits outlive it until the next memory dispatch.
+    Gate.mkAND resp_x (Wire.mk "atom_busy") resp_live,
+    Gate.mkAND resp_live lr_sel lr_resp,
+    Gate.mkAND resp_live amo_sel amo_resp]
   let sc_exec := Wire.mk "atom_sc_exec"
   let sc_exec_gate := Gate.mkAND mem_valid_r sc_sel sc_exec
 
@@ -1684,62 +1742,87 @@ def mkAtomicUnit
   -- === AMO new-value ALU: new = f(funct, old, rs2) ===
   let old := dmem_resp_data
   let rs2 := amo_rs2_r
-  let add_sum := mkW "atom_add_sum" 32
+  let add_sum := mkW "atom_add_sum" dataW
   let add_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32", instName := "u_atom_add",
+    moduleName := s!"KoggeStoneAdder{dataW}", instName := "u_atom_add",
     portMap :=
-      (List.range 32).map (fun i => (s!"a_{i}", old[i]!)) ++
-      (List.range 32).map (fun i => (s!"b_{i}", rs2[i]!)) ++
+      (List.range dataW).map (fun i => (s!"a_{i}", old[i]!)) ++
+      (List.range dataW).map (fun i => (s!"b_{i}", rs2[i]!)) ++
       [("cin", zero)] ++
-      (List.range 32).map (fun i => (s!"sum_{i}", add_sum[i]!)) }
-  let res_xor := mkW "atom_res_xor" 32
-  let res_and := mkW "atom_res_and" 32
-  let res_or := mkW "atom_res_or" 32
+      (List.range dataW).map (fun i => (s!"sum_{i}", add_sum[i]!)) }
+  let res_xor := mkW "atom_res_xor" dataW
+  let res_and := mkW "atom_res_and" dataW
+  let res_or := mkW "atom_res_or" dataW
   let bitwise_gates :=
-    (List.range 32).map (fun i => Gate.mkXOR old[i]! rs2[i]! res_xor[i]!) ++
-    (List.range 32).map (fun i => Gate.mkAND old[i]! rs2[i]! res_and[i]!) ++
-    (List.range 32).map (fun i => Gate.mkOR old[i]! rs2[i]! res_or[i]!)
+    (List.range dataW).map (fun i => Gate.mkXOR old[i]! rs2[i]! res_xor[i]!) ++
+    (List.range dataW).map (fun i => Gate.mkAND old[i]! rs2[i]! res_and[i]!) ++
+    (List.range dataW).map (fun i => Gate.mkOR old[i]! rs2[i]! res_or[i]!)
+  -- .W atomics (amo_d_r=0) compare only the low 32 bits: the signed compares need
+  -- a sign-extended operand pair, the unsigned compares a zero-extended pair.
+  -- .D atomics pass the raw 64-bit operands through.
+  let half := dataW / 2
+  let old_cmp_s := mkW "atom_old_cmp_s" dataW
+  let rs2_cmp_s := mkW "atom_rs2_cmp_s" dataW
+  let old_cmp_u := mkW "atom_old_cmp_u" dataW
+  let rs2_cmp_u := mkW "atom_rs2_cmp_u" dataW
+  let cmp_operand_gates :=
+    (List.range half).flatMap (fun i =>
+      [Gate.mkBUF old[i]! old_cmp_s[i]!, Gate.mkBUF rs2[i]! rs2_cmp_s[i]!,
+       Gate.mkBUF old[i]! old_cmp_u[i]!, Gate.mkBUF rs2[i]! rs2_cmp_u[i]!]) ++
+    (List.range (dataW - half)).flatMap (fun j =>
+      let i := half + j
+      [Gate.mkMUX old[half - 1]! old[i]! amo_d_r old_cmp_s[i]!,
+       Gate.mkMUX rs2[half - 1]! rs2[i]! amo_d_r rs2_cmp_s[i]!,
+       Gate.mkMUX zero old[i]! amo_d_r old_cmp_u[i]!,
+       Gate.mkMUX zero rs2[i]! amo_d_r rs2_cmp_u[i]!])
   let cmp_lt := Wire.mk "atom_cmp_lt"
   let cmp_ltu := Wire.mk "atom_cmp_ltu"
   let cmp_gt := Wire.mk "atom_cmp_gt"
   let cmp_gtu := Wire.mk "atom_cmp_gtu"
   let cmp_eq := Wire.mk "atom_cmp_eq"
   let cmp_inst : CircuitInstance := {
-    moduleName := "Comparator32", instName := "u_atom_cmp",
+    moduleName := s!"Comparator{dataW}", instName := "u_atom_cmp",
     portMap :=
-      (List.range 32).map (fun i => (s!"a_{i}", old[i]!)) ++
-      (List.range 32).map (fun i => (s!"b_{i}", rs2[i]!)) ++
-      [("one", one), ("eq", cmp_eq), ("lt", cmp_lt), ("ltu", cmp_ltu),
-       ("gt", cmp_gt), ("gtu", cmp_gtu)] }
-  let res_min_s := mkW "atom_res_min_s" 32
-  let res_max_s := mkW "atom_res_max_s" 32
-  let res_min_u := mkW "atom_res_min_u" 32
-  let res_max_u := mkW "atom_res_max_u" 32
+      (List.range dataW).map (fun i => (s!"a_{i}", old_cmp_s[i]!)) ++
+      (List.range dataW).map (fun i => (s!"b_{i}", rs2_cmp_s[i]!)) ++
+      [("one", one), ("eq", cmp_eq), ("lt", cmp_lt), ("ltu", Wire.mk "atom_cmp_ltu_s"),
+       ("gt", cmp_gt), ("gtu", Wire.mk "atom_cmp_gtu_s")] }
+  let cmp_u_inst : CircuitInstance := {
+    moduleName := s!"Comparator{dataW}", instName := "u_atom_cmp_u",
+    portMap :=
+      (List.range dataW).map (fun i => (s!"a_{i}", old_cmp_u[i]!)) ++
+      (List.range dataW).map (fun i => (s!"b_{i}", rs2_cmp_u[i]!)) ++
+      [("one", one), ("eq", Wire.mk "atom_cmp_eq_u"), ("lt", Wire.mk "atom_cmp_lt_u"),
+       ("ltu", cmp_ltu), ("gt", Wire.mk "atom_cmp_gt_u"), ("gtu", cmp_gtu)] }
+  let res_min_s := mkW "atom_res_min_s" dataW
+  let res_max_s := mkW "atom_res_max_s" dataW
+  let res_min_u := mkW "atom_res_min_u" dataW
+  let res_max_u := mkW "atom_res_max_u" dataW
   let minmax_gates :=
-    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_lt res_min_s[i]!) ++
-    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gt res_max_s[i]!) ++
-    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_ltu res_min_u[i]!) ++
-    (List.range 32).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gtu res_max_u[i]!)
+    (List.range dataW).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_lt res_min_s[i]!) ++
+    (List.range dataW).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gt res_max_s[i]!) ++
+    (List.range dataW).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_ltu res_min_u[i]!) ++
+    (List.range dataW).map (fun i => Gate.mkMUX rs2[i]! old[i]! cmp_gtu res_max_u[i]!)
   -- 16:1 select by amo_funct
-  let amo_new := mkW "atom_new" 32
-  let amo_l0 := (List.range 8).map (fun i => mkW s!"atom_l0_{i}" 32)
-  let amo_l1 := (List.range 4).map (fun i => mkW s!"atom_l1_{i}" 32)
-  let amo_l2 := (List.range 2).map (fun i => mkW s!"atom_l2_{i}" 32)
-  let zero32 := (List.range 32).map (fun _ => zero)
+  let amo_new := mkW "atom_new" dataW
+  let amo_l0 := (List.range 8).map (fun i => mkW s!"atom_l0_{i}" dataW)
+  let amo_l1 := (List.range 4).map (fun i => mkW s!"atom_l1_{i}" dataW)
+  let amo_l2 := (List.range 2).map (fun i => mkW s!"atom_l2_{i}" dataW)
+  let zeroW := (List.range dataW).map (fun _ => zero)
   let tree_inputs : List (List Wire) :=
     [add_sum, rs2, res_xor, res_and, res_or,
      res_min_s, res_max_s, res_min_u, res_max_u] ++
-    (List.range 7).map (fun _ => zero32)
+    (List.range 7).map (fun _ => zeroW)
   let l0_gates := (List.range 8).flatMap (fun i =>
-    (List.range 32).map (fun b =>
+    (List.range dataW).map (fun b =>
       Gate.mkMUX tree_inputs[2*i]![b]! tree_inputs[2*i+1]![b]! amo_funct_r[0]! amo_l0[i]![b]!))
   let l1_gates := (List.range 4).flatMap (fun i =>
-    (List.range 32).map (fun b =>
+    (List.range dataW).map (fun b =>
       Gate.mkMUX amo_l0[2*i]![b]! amo_l0[2*i+1]![b]! amo_funct_r[1]! amo_l1[i]![b]!))
   let l2_gates := (List.range 2).flatMap (fun i =>
-    (List.range 32).map (fun b =>
+    (List.range dataW).map (fun b =>
       Gate.mkMUX amo_l1[2*i]![b]! amo_l1[2*i+1]![b]! amo_funct_r[2]! amo_l2[i]![b]!))
-  let l3_gates := (List.range 32).map (fun b =>
+  let l3_gates := (List.range dataW).map (fun b =>
     Gate.mkMUX amo_l2[0]![b]! amo_l2[1]![b]! amo_funct_r[3]! amo_new[b]!)
 
   -- === Atomic direct write (AMO new value / SC store data) ===
@@ -1749,8 +1832,8 @@ def mkAtomicUnit
   let aw_clr := Wire.mk "atom_aw_clr"
   let aw_addr := mkW "atom_aw_addr" 32
   let aw_addr_next := mkW "atom_aw_addr_next" 32
-  let aw_data := mkW "atom_aw_data" 32
-  let aw_data_next := mkW "atom_aw_data_next" 32
+  let aw_data := mkW "atom_aw_data" dataW
+  let aw_data_next := mkW "atom_aw_data_next" dataW
   let aw_hold := Wire.mk "atom_aw_hold"
   let sc_wr := Wire.mk "atom_sc_wr"
   let aw_set_gates := [
@@ -1761,12 +1844,12 @@ def mkAtomicUnit
     Gate.mkMUX aw_pending one aw_set aw_hold,
     Gate.mkMUX aw_hold zero aw_clr aw_pending_next]
   -- write data: SC uses rs2, AMO uses the computed new value
-  let aw_data_sel := mkW "atom_aw_data_sel" 32
-  let aw_data_sel_gates := (List.range 32).map (fun i =>
+  let aw_data_sel := mkW "atom_aw_data_sel" dataW
+  let aw_data_sel_gates := (List.range dataW).map (fun i =>
     Gate.mkMUX amo_new[i]! amo_rs2_r[i]! sc_sel aw_data_sel[i]!)
   let aw_addr_next_gates := (List.range 32).map (fun i =>
     Gate.mkMUX aw_addr[i]! mem_addr_r[i]! aw_set aw_addr_next[i]!)
-  let aw_data_next_gates := (List.range 32).map (fun i =>
+  let aw_data_next_gates := (List.range dataW).map (fun i =>
     Gate.mkMUX aw_data[i]! aw_data_sel[i]! aw_set aw_data_next[i]!)
   let aw_insts : List CircuitInstance :=
     ({ moduleName := "DFlipFlop", instName := "u_atom_aw_pending",
@@ -1776,7 +1859,7 @@ def mkAtomicUnit
       ({ moduleName := "DFlipFlop", instName := s!"u_atom_aw_addr_{i}",
          portMap := [("d", aw_addr_next[i]!), ("q", aw_addr[i]!),
                      ("clock", clock), ("reset", reset)] } : CircuitInstance)) ++
-    (List.range 32).map (fun i =>
+    (List.range dataW).map (fun i =>
       ({ moduleName := "DFlipFlop", instName := s!"u_atom_aw_data_{i}",
          portMap := [("d", aw_data_next[i]!), ("q", aw_data[i]!),
                      ("clock", clock), ("reset", reset)] } : CircuitInstance))
@@ -1811,8 +1894,14 @@ def mkAtomicUnit
       portMap := [("d", atomic_busy_next), ("q", atomic_busy),
                   ("clock", clock), ("reset", reset)] }
 
-  -- === Dispatch gate: atomics wait for a drained store buffer ===
+  -- === Dispatch gate: atomics wait for a drained store buffer and no in-flight load ===
   let atomic_disp_ok := Wire.mk "atom_disp_ok"
+  let disp_ok_pre := Wire.mk "atom_disp_ok_pre"
+  let pipe_load := Wire.mk "atom_pipe_load"
+  let load_in_flight := Wire.mk "atom_load_in_flight"
+  let not_load_in_flight := Wire.mk "atom_not_load_in_flight"
+  let not_is_atomic := Wire.mk "atom_not_is_atomic"
+  let atom_load_ok := Wire.mk "atom_load_ok"
   let di_dr := Wire.mk "atom_di_dr"
   let req_ok := Wire.mk "atom_req_ok"
   let not_busy := Wire.mk "atom_not_busy"
@@ -1822,6 +1911,11 @@ def mkAtomicUnit
   let disp_ok_gates := [
     Gate.mkNOT atomic_busy not_busy,
     Gate.mkNOT rs_pending_store nps,
+    Gate.mkAND mem_valid_r is_load_r pipe_load,
+    Gate.mkOR pipe_load dmem_load_pending load_in_flight,
+    Gate.mkNOT load_in_flight not_load_in_flight,
+    Gate.mkNOT is_atomic not_is_atomic,
+    Gate.mkOR not_is_atomic not_load_in_flight atom_load_ok,
     -- SC / AMO form an RMW: they wait for a fully drained store buffer and no
     -- pending plain store in the memory RS (an older store may not have reached
     -- the SB yet).  LR is a plain load plus a reservation set, so it does not.
@@ -1831,18 +1925,18 @@ def mkAtomicUnit
     Gate.mkOR not_drain_req di_dr req_ok,
     -- While an atomic op is in flight, block ALL memory dispatch so no
     -- load/store can slip between the atomic read and write.
-    Gate.mkAND req_ok not_busy atomic_disp_ok]
-
+    Gate.mkAND req_ok not_busy disp_ok_pre,
+    Gate.mkAND disp_ok_pre atom_load_ok atomic_disp_ok]
   let gates :=
     code_gates ++ pipe_en_gates ++ code_reg_gates ++ sel_gates ++ resp_gates ++
     [sc_exec_gate] ++ res_inval_gates ++ res_set_gates ++ res_addr_gates ++
     [sc_ok_gate, sc_result_gate] ++
-    bitwise_gates ++ minmax_gates ++ l0_gates ++ l1_gates ++ l2_gates ++ l3_gates ++
+    bitwise_gates ++ cmp_operand_gates ++ minmax_gates ++ l0_gates ++ l1_gates ++ l2_gates ++ l3_gates ++
     aw_set_gates ++ aw_data_sel_gates ++ aw_addr_next_gates ++ aw_data_next_gates ++
     busy_gates ++ disp_ok_gates
   let instances :=
     code_reg_insts ++ [res_cmp_inst, sb_cmp_inst] ++ res_insts ++
-    [add_inst, cmp_inst] ++ aw_insts ++ [busy_inst]
+    [add_inst, cmp_inst, cmp_u_inst] ++ aw_insts ++ [busy_inst]
   { gates := gates
     instances := instances
     reservationValid := reservation_valid

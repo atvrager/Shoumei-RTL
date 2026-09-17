@@ -203,6 +203,119 @@ def mkShifter32 : Circuit :=
     ]
   }
 
+-- Build complete 6-stage left shifter (64-bit)
+def mkLeftShifter64 (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
+  let stage0_out := makeIndexedWires "sll_s0" 64
+  let stage1_out := makeIndexedWires "sll_s1" 64
+  let stage2_out := makeIndexedWires "sll_s2" 64
+  let stage3_out := makeIndexedWires "sll_s3" 64
+  let stage4_out := makeIndexedWires "sll_s4" 64
+  let stage5_out := output
+
+  let stage0 := mkLeftShiftStage input stage0_out (shamt[0]!) zero 1 64 0
+  let stage1 := mkLeftShiftStage stage0_out stage1_out (shamt[1]!) zero 2 64 1
+  let stage2 := mkLeftShiftStage stage1_out stage2_out (shamt[2]!) zero 4 64 2
+  let stage3 := mkLeftShiftStage stage2_out stage3_out (shamt[3]!) zero 8 64 3
+  let stage4 := mkLeftShiftStage stage3_out stage4_out (shamt[4]!) zero 16 64 4
+  let stage5 := mkLeftShiftStage stage4_out stage5_out (shamt[5]!) zero 32 64 5
+
+  stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4 ++ stage5
+
+-- Build complete 6-stage right logical shifter (64-bit)
+def mkRightLogicalShifter64 (input : List Wire) (shamt : List Wire) (zero : Wire) (output : List Wire) : List Gate :=
+  let stage0_out := makeIndexedWires "srl_s0" 64
+  let stage1_out := makeIndexedWires "srl_s1" 64
+  let stage2_out := makeIndexedWires "srl_s2" 64
+  let stage3_out := makeIndexedWires "srl_s3" 64
+  let stage4_out := makeIndexedWires "srl_s4" 64
+  let stage5_out := output
+
+  let stage0 := mkRightShiftStageLogical input stage0_out (shamt[0]!) zero 1 64 0
+  let stage1 := mkRightShiftStageLogical stage0_out stage1_out (shamt[1]!) zero 2 64 1
+  let stage2 := mkRightShiftStageLogical stage1_out stage2_out (shamt[2]!) zero 4 64 2
+  let stage3 := mkRightShiftStageLogical stage2_out stage3_out (shamt[3]!) zero 8 64 3
+  let stage4 := mkRightShiftStageLogical stage3_out stage4_out (shamt[4]!) zero 16 64 4
+  let stage5 := mkRightShiftStageLogical stage4_out stage5_out (shamt[5]!) zero 32 64 5
+
+  stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4 ++ stage5
+
+-- Build complete 6-stage right arithmetic shifter (64-bit)
+def mkRightArithmeticShifter64 (input : List Wire) (shamt : List Wire) (sign : Wire) (output : List Wire) : List Gate :=
+  let stage0_out := makeIndexedWires "sra_s0" 64
+  let stage1_out := makeIndexedWires "sra_s1" 64
+  let stage2_out := makeIndexedWires "sra_s2" 64
+  let stage3_out := makeIndexedWires "sra_s3" 64
+  let stage4_out := makeIndexedWires "sra_s4" 64
+  let stage5_out := output
+
+  let stage0 := mkRightShiftStageArithmetic input stage0_out (shamt[0]!) sign 1 64 0
+  let stage1 := mkRightShiftStageArithmetic stage0_out stage1_out (shamt[1]!) sign 2 64 1
+  let stage2 := mkRightShiftStageArithmetic stage1_out stage2_out (shamt[2]!) sign 4 64 2
+  let stage3 := mkRightShiftStageArithmetic stage2_out stage3_out (shamt[3]!) sign 8 64 3
+  let stage4 := mkRightShiftStageArithmetic stage3_out stage4_out (shamt[4]!) sign 16 64 4
+  let stage5 := mkRightShiftStageArithmetic stage4_out stage5_out (shamt[5]!) sign 32 64 5
+
+  stage0 ++ stage1 ++ stage2 ++ stage3 ++ stage4 ++ stage5
+
+-- Build complete 64-bit shifter with all three operations
+def mkShifter64 : Circuit :=
+  let input := makeIndexedWires "in" 64
+  let shamt := makeIndexedWires "shamt" 6  -- 6-bit shift amount (0-63)
+  let op0 := Wire.mk "op0"  -- LSB of operation selector
+  let op1 := Wire.mk "op1"  -- MSB of operation selector
+  let zero := Wire.mk "zero"  -- Constant 0 input (must be tied to 0)
+  let result := makeIndexedWires "result" 64
+
+  -- Intermediate outputs from each shifter
+  let sll_out := makeIndexedWires "sll_out" 64
+  let srl_out := makeIndexedWires "srl_out" 64
+  let sra_out := makeIndexedWires "sra_out" 64
+
+  -- Sign bit for arithmetic shift
+  let sign := input[63]!
+
+  -- Buffer shamt inputs (3 shifters × 64 bits = 192 fanout)
+  let shamt_sll := makeIndexedWires "shamt_sll" 6
+  let shamt_srl := makeIndexedWires "shamt_srl" 6
+  let shamt_sra := makeIndexedWires "shamt_sra" 6
+  let shamt_bufs := (List.range 6 |>.map (fun i => [
+    Gate.mkBUF (shamt[i]!) (shamt_sll[i]!),
+    Gate.mkBUF (shamt[i]!) (shamt_srl[i]!),
+    Gate.mkBUF (shamt[i]!) (shamt_sra[i]!)
+  ])).flatten
+
+  -- Build all three shifters with dedicated buffered shamt copies
+  let sll_gates := mkLeftShifter64 input shamt_sll zero sll_out
+  let srl_gates := mkRightLogicalShifter64 input shamt_srl zero srl_out
+  let sra_gates := mkRightArithmeticShifter64 input shamt_sra sign sra_out
+
+  -- Final MUX: select between SLL, SRL, SRA based on op[1:0]
+  let mux1 := makeIndexedWires "mux1" 64
+  let mux_level1 := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (sll_out[i]!) (srl_out[i]!) op0 (mux1[i]!)
+  )
+  let mux_level2 := List.range 64 |>.map (fun i =>
+    Gate.mkMUX (mux1[i]!) (sra_out[i]!) op1 (result[i]!)
+  )
+
+  { name := "Shifter64"
+    inputs := input ++ shamt ++ [op0, op1, zero]
+    outputs := result
+    gates := shamt_bufs ++ sll_gates ++ srl_gates ++ sra_gates ++ mux_level1 ++ mux_level2
+    instances := []
+    keepHierarchy := true
+    signalGroups := [
+      { name := "in", width := 64, wires := input },
+      { name := "shamt", width := 6, wires := shamt },
+      { name := "result", width := 64, wires := result },
+      { name := "op", width := 2, wires := [op0, op1] },
+      { name := "sll_out", width := 64, wires := sll_out },
+      { name := "srl_out", width := 64, wires := srl_out },
+      { name := "sra_out", width := 64, wires := sra_out },
+      { name := "mux1", width := 64, wires := mux1 }
+    ]
+  }
+
 -- Smaller variants for testing
 def mkShifter4 : Circuit :=
   let input := makeIndexedWires "in" 4

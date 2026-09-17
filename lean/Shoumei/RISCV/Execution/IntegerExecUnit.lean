@@ -64,25 +64,36 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .SLL | .SLLI  => 8  -- Shift left logical  (1000: dir=0, arith=0)
   | .SRL | .SRLI  => 9  -- Shift right logical (1001: dir=1, arith=0)
   | .SRA | .SRAI  => 11 -- Shift right arith   (1011: dir=1, arith=1)
+  -- RV64 word operations (bit 4 = 1 for 32-bit word op, sign-extended)
+  | .ADDW | .ADDIW => 16
+  | .SUBW          => 17
+  | .SLLW | .SLLIW => 24
+  | .SRLW | .SRLIW => 25
+  | .SRAW | .SRAIW => 27
   -- Non-ALU operations (shouldn't reach IntegerExecUnit)
   | .BEQ | .BNE | .BLT | .BGE | .BLTU | .BGEU => 0  -- Branches (handled by BranchUnit)
   | .JAL | .JALR => 0  -- Jumps (handled by JumpUnit)
-  | .LB | .LH | .LW | .LBU | .LHU => 0  -- Loads (handled by MemoryUnit)
-  | .SB | .SH | .SW => 0  -- Stores (handled by MemoryUnit)
+  | .LB | .LH | .LW | .LBU | .LHU | .LWU | .LD => 0  -- Loads (handled by MemoryUnit)
+  | .SB | .SH | .SW | .SD => 0  -- Stores (handled by MemoryUnit)
   -- A extension: atomics (handled by the LSU/atomic ALU)
   | .LR_W | .SC_W
   | .AMOADD_W | .AMOSWAP_W | .AMOXOR_W | .AMOAND_W | .AMOOR_W
-  | .AMOMIN_W | .AMOMAX_W | .AMOMINU_W | .AMOMAXU_W => 0
+  | .AMOMIN_W | .AMOMAX_W | .AMOMINU_W | .AMOMAXU_W
+  | .LR_D | .SC_D
+  | .AMOADD_D | .AMOSWAP_D | .AMOXOR_D | .AMOAND_D | .AMOOR_D
+  | .AMOMIN_D | .AMOMAX_D | .AMOMINU_D | .AMOMAXU_D => 0
   | .LUI | .AUIPC => 0  -- Upper immediates (special handling)
   | .FENCE | .FENCE_I | .ECALL | .EBREAK | .MRET | .WFI => 0  -- System ops (special handling)
   -- M extension operations (handled by MulDivExecUnit)
-  | .MUL | .MULH | .MULHSU | .MULHU => 0
-  | .DIV | .DIVU | .REM | .REMU => 0
+  | .MUL | .MULH | .MULHSU | .MULHU | .MULW => 0
+  | .DIV | .DIVU | .REM | .REMU
+  | .DIVW | .DIVUW | .REMW | .REMUW => 0
   -- F extension operations (handled by FPExecUnit)
   | .FADD_S | .FSUB_S | .FMUL_S | .FDIV_S | .FSQRT_S
   | .FMADD_S | .FMSUB_S | .FNMADD_S | .FNMSUB_S
   | .FEQ_S | .FLT_S | .FLE_S
   | .FCVT_W_S | .FCVT_WU_S | .FCVT_S_W | .FCVT_S_WU
+  | .FCVT_L_S | .FCVT_LU_S | .FCVT_S_L | .FCVT_S_LU
   | .FMV_X_W | .FMV_W_X | .FCLASS_S
   | .FMIN_S | .FMAX_S | .FSGNJ_S | .FSGNJN_S | .FSGNJX_S
   | .FLW | .FSW => 0
@@ -91,6 +102,8 @@ def opTypeToALUOpcode (op : OpType) : Nat :=
   | .FMADD_D | .FMSUB_D | .FNMADD_D | .FNMSUB_D
   | .FEQ_D | .FLT_D | .FLE_D
   | .FCVT_W_D | .FCVT_WU_D | .FCVT_D_W | .FCVT_D_WU
+  | .FCVT_L_D | .FCVT_LU_D | .FCVT_D_L | .FCVT_D_LU
+  | .FMV_X_D | .FMV_D_X
   | .FCVT_S_D | .FCVT_D_S
   | .FCLASS_D
   | .FMIN_D | .FMAX_D | .FSGNJ_D | .FSGNJN_D | .FSGNJX_D
@@ -281,62 +294,66 @@ open Shoumei.Circuits.Combinational
     - 0100=AND, 0101=OR, 0110=XOR
     - 1000=SLL, 1001=SRL, 1011=SRA
 -/
-def mkIntegerExecUnit : Circuit :=
+def mkIntegerExecUnitWithWidth (width : Nat := 64) (opWidth : Nat := 5) : Circuit :=
   let zero := Wire.mk "zero"
   let one  := Wire.mk "one"
-  -- Dual-issue: two independent ALU32 instances to execute two
-  -- arbitrary integer instructions per cycle
-  let a0 := makeIndexedWires "a0" 32
-    let b0 := makeIndexedWires "b0" 32
-    let opcode0 := makeIndexedWires "opcode0" 4
-    let dest_tag0 := makeIndexedWires "dest_tag0" 6
-    let result0 := makeIndexedWires "result0" 32
-    let tag_out0 := makeIndexedWires "tag_out0" 6
+  let a0 := makeIndexedWires "a0" width
+  let b0 := makeIndexedWires "b0" width
+  let opcode0 := makeIndexedWires "opcode0" opWidth
+  let dest_tag0 := makeIndexedWires "dest_tag0" 6
+  let result0 := makeIndexedWires "result0" width
+  let tag_out0 := makeIndexedWires "tag_out0" 6
 
-    -- Issue 1
-    let a1 := makeIndexedWires "a1" 32
-    let b1 := makeIndexedWires "b1" 32
-    let opcode1 := makeIndexedWires "opcode1" 4
-    let dest_tag1 := makeIndexedWires "dest_tag1" 6
-    let result1 := makeIndexedWires "result1" 32
-    let tag_out1 := makeIndexedWires "tag_out1" 6
+  let a1 := makeIndexedWires "a1" width
+  let b1 := makeIndexedWires "b1" width
+  let opcode1 := makeIndexedWires "opcode1" opWidth
+  let dest_tag1 := makeIndexedWires "dest_tag1" 6
+  let result1 := makeIndexedWires "result1" width
+  let tag_out1 := makeIndexedWires "tag_out1" 6
 
-    -- Instance ALU0
-    let alu0_inst : CircuitInstance := {
-      moduleName := "ALU32"
-      instName := "u_alu0"
-      portMap :=
-        (a0.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
-        (b0.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
-        (opcode0.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
-        [("zero", zero), ("one", one)] ++
-        (result0.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
-    }
+  let aluModule := s!"ALU{width}"
 
-    -- Instance ALU1
-    let alu1_inst : CircuitInstance := {
-      moduleName := "ALU32"
-      instName := "u_alu1"
-      portMap :=
-        (a1.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
-        (b1.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
-        (opcode1.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
-        [("zero", zero), ("one", one)] ++
-        (result1.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
-    }
+  let alu0_inst : CircuitInstance := {
+    moduleName := aluModule
+    instName := "u_alu0"
+    portMap :=
+      (a0.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
+      (b0.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
+      (opcode0.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
+      [("zero", zero), ("one", one)] ++
+      (result0.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
+  }
 
-    -- Tag pass-through
-    let tag0_passthrough := List.zipWith Gate.mkBUF dest_tag0 tag_out0
-    let tag1_passthrough := List.zipWith Gate.mkBUF dest_tag1 tag_out1
+  let alu1_inst : CircuitInstance := {
+    moduleName := aluModule
+    instName := "u_alu1"
+    portMap :=
+      (a1.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
+      (b1.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
+      (opcode1.enum.map (fun ⟨i, w⟩ => (s!"op[{i}]", w))) ++
+      [("zero", zero), ("one", one)] ++
+      (result1.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
+  }
 
-    { name := "IntegerExecUnit_W2"
-      inputs := a0 ++ b0 ++ opcode0 ++ dest_tag0 ++
-                a1 ++ b1 ++ opcode1 ++ dest_tag1 ++
-                [zero, one]
-      outputs := result0 ++ tag_out0 ++ result1 ++ tag_out1
-      gates := tag0_passthrough ++ tag1_passthrough
-      instances := [alu0_inst, alu1_inst]
-    }
+  let tag0_passthrough := List.zipWith Gate.mkBUF dest_tag0 tag_out0
+  let tag1_passthrough := List.zipWith Gate.mkBUF dest_tag1 tag_out1
+
+  let name := if width == 32 then "IntegerExecUnit_W2" else s!"IntegerExecUnit_W2_{width}"
+
+  { name := name
+    inputs := a0 ++ b0 ++ opcode0 ++ dest_tag0 ++
+              a1 ++ b1 ++ opcode1 ++ dest_tag1 ++
+              [zero, one]
+    outputs := result0 ++ tag_out0 ++ result1 ++ tag_out1
+    gates := tag0_passthrough ++ tag1_passthrough
+    instances := [alu0_inst, alu1_inst]
+  }
+
+/-- 32-bit dual-issue integer execution unit -/
+def mkIntegerExecUnit : Circuit := mkIntegerExecUnitWithWidth 32 4
+
+/-- 64-bit dual-issue integer execution unit -/
+def mkIntegerExecUnit64 : Circuit := mkIntegerExecUnitWithWidth 64 5
 
 /-- Convenience alias for the dual-issue integer execution unit -/
 def integerExecUnitW2 : Circuit := mkIntegerExecUnit

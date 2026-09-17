@@ -41,18 +41,30 @@ open Shoumei
 open Shoumei.Circuits.Sequential
 open Shoumei.Circuits.Combinational
 
+private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
+  match inputs with
+  | [] => (Wire.mk s!"{pfx}_empty", [])
+  | [w] => (w, [])
+  | w0 :: w1 :: rest =>
+    let firstOut := Wire.mk s!"{pfx}_0"
+    let firstGate := Gate.mkOR w0 w1 firstOut
+    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
+      let out := Wire.mk s!"{pfx}_{idx + 1}"
+      let g := Gate.mkOR acc.1 w out
+      (out, acc.2 ++ [g])
+    ) (firstOut, [])
+    (finalW, [firstGate] ++ restGates)
+
 /-! ## Store Buffer Entry -/
 
-/-- A single store buffer entry (68 bits in structural circuit).
+/-- A single store buffer entry (130 bits in structural circuit).
 
     Bit layout:
     | Bit(s) | Width | Field     |
     |--------|-------|-----------|
-    | 0      | 1     | valid     |
-    | 1      | 1     | committed |
-    | 2-33   | 32    | address   |
-    | 34-65  | 32    | data      |
-    | 66-67  | 2     | size      |
+    | 0-63   | 64    | address   |
+    | 64-127 | 64    | data      |
+    | 128-129| 2     | size      |
 -/
 structure StoreBufferEntry where
   /-- Entry occupied -/
@@ -60,7 +72,7 @@ structure StoreBufferEntry where
   /-- ROB has committed this store -/
   committed : Bool
   /-- Memory address -/
-  address : UInt32
+  address : UInt64
   /-- Store data -/
   data : UInt64
   /-- Access size: 0=byte, 1=half, 2=word, 3=double -/
@@ -123,7 +135,7 @@ private def advancePointer (ptr : Fin 8) : Fin 8 :=
 -/
 def StoreBufferState.enqueue
     (sb : StoreBufferState)
-    (address : UInt32) (data : UInt64) (size : Fin 4)
+    (address : UInt64) (data : UInt64) (size : Fin 4)
     : StoreBufferState × Option (Fin 8) :=
   if h : sb.count >= 8 then (sb, none)
   else
@@ -188,7 +200,7 @@ def StoreBufferState.dequeue (sb : StoreBufferState)
     - Barrel rotation + PriorityArbiter8 for youngest-match priority
     - Mux8x32 for data selection
 -/
-def StoreBufferState.forwardCheck (sb : StoreBufferState) (addr : UInt32)
+def StoreBufferState.forwardCheck (sb : StoreBufferState) (addr : UInt64)
     : Option UInt64 :=
   -- Scan entries from youngest (tail-1) to oldest (head)
   let results := (List.range 8).filterMap fun j =>
@@ -258,7 +270,7 @@ def mkStoreBuffer8 : Circuit :=
   -- === Enqueue Interface ===
   let enq_en := Wire.mk "enq_en"
   let enq_idx_in := mkWires "enq_idx_in_" 3  -- externally-provided entry index for enqueue
-  let enq_address := mkWires "enq_address_" 32
+  let enq_address := mkWires "enq_address_" 64
   let enq_data := mkWires "enq_data_" 64
   let enq_size := mkWires "enq_size_" 2
 
@@ -270,10 +282,10 @@ def mkStoreBuffer8 : Circuit :=
   -- === Dequeue Interface (Decoupled) ===
   let deq_ready := Wire.mk "deq_ready"
   let deq_valid := Wire.mk "deq_valid"
-  let deq_bits := mkWires "deq_bits_" 98
+  let deq_bits := mkWires "deq_bits_" 130
 
   -- === Forwarding Interface ===
-  let fwd_address := mkWires "fwd_address_" 32
+  let fwd_address := mkWires "fwd_address_" 64
   let fwd_hit := Wire.mk "fwd_hit"
   let fwd_data := mkWires "fwd_data_" 64
 
@@ -598,34 +610,34 @@ def mkStoreBuffer8 : Circuit :=
   -- but without valid/committed in the register). This gives us direct parallel read.
   -- This is simpler and matches the forwarding architecture better.
 
-  -- Per-entry storage: 8× Register98 (address[31:0] + data[63:0] + size[1:0])
+  -- Per-entry storage: 8× Register130 (address[63:0] + data[63:0] + size[1:0])
   let entryResults := (List.range 8).map fun i =>
-    let e_cur := mkWires s!"e{i}_" 98
-    let e_next := mkWires s!"e{i}_next_" 98
+    let e_cur := mkWires s!"e{i}_" 130
+    let e_next := mkWires s!"e{i}_next_" 130
 
-    let cur_address := (List.range 32).map (fun j => e_cur[j]!)
-    let cur_data := (List.range 64).map (fun j => e_cur[32+j]!)
-    let cur_size := (List.range 2).map (fun j => e_cur[96+j]!)
+    let cur_address := (List.range 64).map (fun j => e_cur[j]!)
+    let cur_data := (List.range 64).map (fun j => e_cur[64+j]!)
+    let cur_size := (List.range 2).map (fun j => e_cur[128+j]!)
 
     -- Enqueue write enable = AND(enq_en, enq_decode[i])
     let enq_we := Wire.mk s!"e{i}_enq_we"  -- already created in bitmap logic, reuse wire name
 
     -- address_next: only changes on enq
-    let address_gates := (List.range 32).map fun j =>
+    let address_gates := (List.range 64).map fun j =>
       Gate.mkMUX cur_address[j]! enq_address[j]! enq_we e_next[j]!
 
     -- data_next: only changes on enq
     let data_gates := (List.range 64).map fun j =>
-      Gate.mkMUX cur_data[j]! enq_data[j]! enq_we e_next[32+j]!
+      Gate.mkMUX cur_data[j]! enq_data[j]! enq_we e_next[64+j]!
 
     -- size_next: only changes on enq
     let size_gates := (List.range 2).map fun j =>
-      Gate.mkMUX cur_size[j]! enq_size[j]! enq_we e_next[96+j]!
+      Gate.mkMUX cur_size[j]! enq_size[j]! enq_we e_next[128+j]!
 
-    -- EqualityComparator32 instance: fwd_address vs entry address (XOR + OR-tree, no subtraction)
+    -- EqualityComparator64 instance: fwd_address vs entry address (XOR + OR-tree, no subtraction)
     let cmp_eq := Wire.mk s!"e{i}_cmp_eq"
     let cmp_inst : CircuitInstance := {
-      moduleName := "EqualityComparator32"
+      moduleName := "EqualityComparator64"
       instName := s!"u_cmp{i}"
       portMap :=
         (fwd_address.enum.map (fun ⟨j, w⟩ => (s!"a_{j}", w))) ++
@@ -633,9 +645,9 @@ def mkStoreBuffer8 : Circuit :=
         [("eq", cmp_eq)]
     }
 
-    -- Register98 instance: entry storage (uses buffered reset leaf)
+    -- Register130 instance: entry storage (uses buffered reset leaf)
     let reg_inst : CircuitInstance := {
-      moduleName := "Register98"
+      moduleName := "Register130"
       instName := s!"u_entry{i}"
       portMap :=
         (e_next.enum.map (fun ⟨j, w⟩ => (s!"d_{j}", w))) ++
@@ -647,38 +659,15 @@ def mkStoreBuffer8 : Circuit :=
     let is_double := Wire.mk s!"e{i}_is_double"
     let is_double_gate := Gate.mkAND cur_size[0]! cur_size[1]! is_double
 
-    -- Word-level address match: compare bits [31:2] (word-aligned address)
-    -- XOR bits 2..31
-    let word_xor := (List.range 30).map (fun j => Wire.mk s!"e{i}_wxor_{j}")
-    let word_xor_gates := (List.range 30).map (fun j =>
+    -- Word-level address match: compare bits [63:2] (word-aligned address)
+    -- XOR bits 2..63 (62 bits)
+    let word_xor := (List.range 62).map (fun j => Wire.mk s!"e{i}_wxor_{j}")
+    let word_xor_gates := (List.range 62).map (fun j =>
       Gate.mkXOR fwd_address[j+2]! cur_address[j+2]! word_xor[j]!)
 
-    -- Reduction of 29 upper address bits (bits 3..31, i.e. word_xor[1..29])
-    -- Level 0: 29 bits -> 14 pairs + 1 leftover = 15 wires
-    let wor_l0 := (List.range 14).map (fun j => Wire.mk s!"e{i}_wor0_{j}")
-    let wor_l0_gates := (List.range 14).map (fun j =>
-      Gate.mkOR word_xor[1 + 2*j]! word_xor[1 + 2*j + 1]! wor_l0[j]!)
-    let wor_l0_all := wor_l0 ++ [word_xor[29]!]
-
-    -- Level 1: 15 wires -> 7 pairs + 1 leftover = 8 wires
-    let wor_l1 := (List.range 7).map (fun j => Wire.mk s!"e{i}_wor1_{j}")
-    let wor_l1_gates := (List.range 7).map (fun j =>
-      Gate.mkOR wor_l0_all[2*j]! wor_l0_all[2*j + 1]! wor_l1[j]!)
-    let wor_l1_all := wor_l1 ++ [wor_l0_all[14]!]
-
-    -- Level 2: 8 wires -> 4 pairs = 4 wires
-    let wor_l2 := (List.range 4).map (fun j => Wire.mk s!"e{i}_wor2_{j}")
-    let wor_l2_gates := (List.range 4).map (fun j =>
-      Gate.mkOR wor_l1_all[2*j]! wor_l1_all[2*j + 1]! wor_l2[j]!)
-
-    -- Level 3: 4 wires -> 2 pairs = 2 wires
-    let wor_l3 := (List.range 2).map (fun j => Wire.mk s!"e{i}_wor3_{j}")
-    let wor_l3_gates := (List.range 2).map (fun j =>
-      Gate.mkOR wor_l2[2*j]! wor_l2[2*j + 1]! wor_l3[j]!)
-
-    -- Level 4: 2 wires -> 1 wire (upper_neq)
-    let upper_neq := Wire.mk s!"e{i}_upper_neq"
-    let upper_neq_gate := Gate.mkOR wor_l3[0]! wor_l3[1]! upper_neq
+    -- Reduction of 61 upper address bits (bits 3..63, i.e. word_xor[1..61])
+    let upper_bits := (List.range 61).map (fun j => word_xor[j + 1]!)
+    let (upper_neq, wor_gates) := mkOrTree s!"e{i}_wor" upper_bits
 
     let upper_eq := Wire.mk s!"e{i}_upper_eq"
     let upper_eq_gate := Gate.mkNOT upper_neq upper_eq
@@ -770,8 +759,8 @@ def mkStoreBuffer8 : Circuit :=
 
     let word_match_gates :=
       [is_double_gate] ++ word_xor_gates ++
-      wor_l0_gates ++ wor_l1_gates ++ wor_l2_gates ++ wor_l3_gates ++
-      [upper_neq_gate, upper_eq_gate,
+      wor_gates ++
+      [upper_eq_gate,
        not_wxor0_gate, word_eq_gate,
        not_cur_addr2_gate, fwd2_and_not_cur2_gate, hi_word_addr_match_gate] ++
       lo2_gates ++
@@ -977,17 +966,17 @@ def mkStoreBuffer8 : Circuit :=
 
   let deq_valid_gate := Gate.mkAND head_valid head_committed deq_valid
 
-  -- Dequeue data readout via Mux8x32 (address)
+  -- Dequeue data readout via Mux8x64 (address)
   let deq_addr_mux_inst : CircuitInstance := {
-    moduleName := "Mux8x32"
+    moduleName := "Mux8x64"
     instName := "u_deq_addr_mux"
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 32).map (fun j => (s!"in{i}[{j}]", e[j]!))
+        (List.range 64).map (fun j => (s!"in{i}[{j}]", e[j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
-      ((List.range 32).map (fun j => (s!"out[{j}]", deq_bits[j]!)))
+      ((List.range 64).map (fun j => (s!"out[{j}]", deq_bits[j]!)))
   }
 
   -- Dequeue data readout via Mux8x64 (data)
@@ -997,10 +986,10 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 64).map (fun j => (s!"in{i}[{j}]", e[32+j]!))
+        (List.range 64).map (fun j => (s!"in{i}[{j}]", e[64+j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
-      ((List.range 64).map (fun j => (s!"out[{j}]", deq_bits[32+j]!)))
+      ((List.range 64).map (fun j => (s!"out[{j}]", deq_bits[64+j]!)))
   }
 
   -- Dequeue size readout via Mux8x2
@@ -1010,10 +999,10 @@ def mkStoreBuffer8 : Circuit :=
     portMap :=
       ((List.range 8).map (fun i =>
         let e := all_entry_cur[i]!
-        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[96+j]!))
+        (List.range 2).map (fun j => (s!"in{i}[{j}]", e[128+j]!))
       )).flatten ++
       (head_ptr.enum.map (fun ⟨k, w⟩ => (s!"sel[{k}]", w))) ++
-      ((List.range 2).map (fun j => (s!"out[{j}]", deq_bits[96+j]!)))
+      ((List.range 2).map (fun j => (s!"out[{j}]", deq_bits[128+j]!)))
   }
 
   -- === Assemble Circuit ===
@@ -1060,12 +1049,12 @@ def mkStoreBuffer8 : Circuit :=
     -- V2 codegen annotations
     signalGroups := [
       { name := "enq_idx_in_", width := 3, wires := enq_idx_in },
-      { name := "enq_address_", width := 32, wires := enq_address },
+      { name := "enq_address_", width := 64, wires := enq_address },
       { name := "enq_data_", width := 64, wires := enq_data },
       { name := "enq_size_", width := 2, wires := enq_size },
       { name := "commit_ptr_", width := 3, wires := commit_ptr },
-      { name := "deq_bits_", width := 98, wires := deq_bits },
-      { name := "fwd_address_", width := 32, wires := fwd_address },
+      { name := "deq_bits_", width := 130, wires := deq_bits },
+      { name := "fwd_address_", width := 64, wires := fwd_address },
       { name := "fwd_data_", width := 64, wires := fwd_data },
       { name := "fwd_size_", width := 2, wires := fwd_size },
       { name := "enq_idx_", width := 3, wires := enq_idx },

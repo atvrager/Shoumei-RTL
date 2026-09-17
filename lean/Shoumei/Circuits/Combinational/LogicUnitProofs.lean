@@ -28,6 +28,12 @@ theorem logicunit32_structure :
   mkLogicUnit32.inputs.length = 66 ∧  -- 32 + 32 + 2
   mkLogicUnit32.outputs.length = 32 := by native_decide
 
+-- LogicUnit64 structural properties
+theorem logicunit64_structure :
+  mkLogicUnit64.gates.length = 320 ∧  -- 64 bits × 5 gates/bit = 320
+  mkLogicUnit64.inputs.length = 130 ∧ -- 64 + 64 + 2
+  mkLogicUnit64.outputs.length = 64 := by native_decide
+
 -- TODO: Behavioral proofs
 -- These would prove functional correctness for each operation:
 -- - When op=00, output = a AND b (bitwise)

@@ -577,4 +577,338 @@ def mkPipelinedMultiplier : Circuit :=
 /-- Convenience alias. -/
 def pipelinedMultiplier : Circuit := mkPipelinedMultiplier
 
+/-! ## 64-Bit Multiplier Building Blocks -/
+
+/-- Single 32x32 -> 64-bit unsigned combinational multiplier sub-module.
+    Uses CSACompressor64 reduction tree + KoggeStoneAdder64. -/
+def mkMul32x32To64 : Circuit :=
+  let a := makeIndexedWires "a" 32
+  let b := makeIndexedWires "b" 32
+  let zero := Wire.mk "zero"
+  let product := makeIndexedWires "product" 64
+
+  let ppResults := (List.range 32).map fun i =>
+    mkPartialProductRow i a b zero
+  let pp_rows := ppResults.map (·.1)
+  let pp_gates := ppResults.map (·.2) |> List.flatten
+
+  let (sum_s1, carry_s1, csa_routing_gates, csa_instances) :=
+    mkCSATreeHierarchical pp_rows zero
+
+  let ksa_inst : CircuitInstance := {
+    moduleName := "KoggeStoneAdder64"
+    instName := "u_final_adder"
+    portMap :=
+      (sum_s1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (carry_s1.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+  }
+
+  { name := "Mul32x32To64"
+    inputs := a ++ b ++ [zero]
+    outputs := product
+    gates := pp_gates ++ csa_routing_gates
+    instances := csa_instances ++ [ksa_inst]
+    keepHierarchy := true
+    signalGroups := [
+      { name := "a", width := 32, wires := a },
+      { name := "b", width := 32, wires := b },
+      { name := "product", width := 64, wires := product }
+    ]
+  }
+
+/-- Convenience alias. -/
+def mul32x32To64 : Circuit := mkMul32x32To64
+
+/-- 3-stage pipelined 64-bit multiplier supporting RV64M operations:
+    - MUL   (op=0): lower 64 bits of product
+    - MULH  (op=1): upper 64 bits (signed × signed)
+    - MULHSU(op=2): upper 64 bits (signed × unsigned)
+    - MULHU (op=3): upper 64 bits (unsigned × unsigned)
+    - MULW  (op=8): lower 32 bits of product sign-extended to 64 bits -/
+def mkPipelinedMultiplier64 : Circuit :=
+  let a := makeIndexedWires "a" 64
+  let b := makeIndexedWires "b" 64
+  let op := makeIndexedWires "op" 4
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let valid_in := Wire.mk "valid_in"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let zero := Wire.mk "zero"
+  let one := Wire.mk "one"
+
+  let result := makeIndexedWires "result" 64
+  let tag_out := makeIndexedWires "tag_out" 6
+  let valid_out := Wire.mk "valid_out"
+
+  -- Operand splitting
+  let a_lo := (List.range 32).map fun i => a[i]!
+  let a_hi := (List.range 32).map fun i => a[32 + i]!
+  let b_lo := (List.range 32).map fun i => b[i]!
+  let b_hi := (List.range 32).map fun i => b[32 + i]!
+
+  -- 4x 32x32 unsigned multipliers
+  let p_ll := makeIndexedWires "p_ll" 64
+  let p_lh := makeIndexedWires "p_lh" 64
+  let p_hl := makeIndexedWires "p_hl" 64
+  let p_hh := makeIndexedWires "p_hh" 64
+
+  let mul_instances := [
+    { moduleName := "Mul32x32To64", instName := "u_mul_ll",
+      portMap := (a_lo.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (b_lo.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+                 [("zero", zero)] ++
+                 (p_ll.enum.map (fun ⟨i, w⟩ => (s!"product_{i}", w))) },
+    { moduleName := "Mul32x32To64", instName := "u_mul_lh",
+      portMap := (a_lo.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (b_hi.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+                 [("zero", zero)] ++
+                 (p_lh.enum.map (fun ⟨i, w⟩ => (s!"product_{i}", w))) },
+    { moduleName := "Mul32x32To64", instName := "u_mul_hl",
+      portMap := (a_hi.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (b_lo.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+                 [("zero", zero)] ++
+                 (p_hl.enum.map (fun ⟨i, w⟩ => (s!"product_{i}", w))) },
+    { moduleName := "Mul32x32To64", instName := "u_mul_hh",
+      portMap := (a_hi.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+                 (b_hi.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+                 [("zero", zero)] ++
+                 (p_hh.enum.map (fun ⟨i, w⟩ => (s!"product_{i}", w))) }
+  ]
+
+  -- Stage 1 registers (DFFs)
+  let s1_p_ll := makeIndexedWires "s1_p_ll" 64
+  let s1_p_lh := makeIndexedWires "s1_p_lh" 64
+  let s1_p_hl := makeIndexedWires "s1_p_hl" 64
+  let s1_p_hh := makeIndexedWires "s1_p_hh" 64
+  let s1_a := makeIndexedWires "s1_a64" 64
+  let s1_b := makeIndexedWires "s1_b64" 64
+  let s1_op := makeIndexedWires "s1_op64" 4
+  let s1_tag := makeIndexedWires "s1_tag64" 6
+  let s1_valid := Wire.mk "s1_valid64"
+
+  let s1_reg_gates :=
+    mkPipelineRegister p_ll s1_p_ll clock reset ++
+    mkPipelineRegister p_lh s1_p_lh clock reset ++
+    mkPipelineRegister p_hl s1_p_hl clock reset ++
+    mkPipelineRegister p_hh s1_p_hh clock reset ++
+    mkPipelineRegister a s1_a clock reset ++
+    mkPipelineRegister b s1_b clock reset ++
+    mkPipelineRegister op s1_op clock reset ++
+    mkPipelineRegister dest_tag s1_tag clock reset ++
+    [Gate.mkDFF valid_in clock reset s1_valid]
+
+  -- Stage 2 registers (DFFs)
+  let s2_p_ll := makeIndexedWires "s2_p_ll" 64
+  let s2_p_lh := makeIndexedWires "s2_p_lh" 64
+  let s2_p_hl := makeIndexedWires "s2_p_hl" 64
+  let s2_p_hh := makeIndexedWires "s2_p_hh" 64
+  let s2_a := makeIndexedWires "s2_a64" 64
+  let s2_b := makeIndexedWires "s2_b64" 64
+  let s2_op := makeIndexedWires "s2_op64" 4
+  let s2_tag := makeIndexedWires "s2_tag64" 6
+  let s2_valid := Wire.mk "s2_valid64"
+
+  let s2_reg_gates :=
+    mkPipelineRegister s1_p_ll s2_p_ll clock reset ++
+    mkPipelineRegister s1_p_lh s2_p_lh clock reset ++
+    mkPipelineRegister s1_p_hl s2_p_hl clock reset ++
+    mkPipelineRegister s1_p_hh s2_p_hh clock reset ++
+    mkPipelineRegister s1_a s2_a clock reset ++
+    mkPipelineRegister s1_b s2_b clock reset ++
+    mkPipelineRegister s1_op s2_op clock reset ++
+    mkPipelineRegister s1_tag s2_tag clock reset ++
+    [Gate.mkDFF s1_valid clock reset s2_valid]
+
+  -- Stage 3: Combination & Sign Correction
+  let mid_sum := makeIndexedWires "m64_mid_sum" 64
+  let ksa_mid : CircuitInstance := {
+    moduleName := "KoggeStoneAdder64"
+    instName := "u_ksa_mid"
+    portMap :=
+      (s2_p_lh.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (s2_p_hl.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (mid_sum.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+  }
+  -- Carry-out from mid_sum (s2_p_lh + s2_p_hl)
+  let c_mid1_g := Wire.mk "m64_c_mid1_g"
+  let c_mid1_p := Wire.mk "m64_c_mid1_p"
+  let not_mid_sum63 := Wire.mk "m64_not_mid_sum63"
+  let c_mid1_prop := Wire.mk "m64_c_mid1_prop"
+  let c_mid1 := Wire.mk "m64_c_mid1"
+  let c_mid1_gates := [
+    Gate.mkAND (s2_p_lh[63]!) (s2_p_hl[63]!) c_mid1_g,
+    Gate.mkOR (s2_p_lh[63]!) (s2_p_hl[63]!) c_mid1_p,
+    Gate.mkNOT (mid_sum[63]!) not_mid_sum63,
+    Gate.mkAND c_mid1_p not_mid_sum63 c_mid1_prop,
+    Gate.mkOR c_mid1_g c_mid1_prop c_mid1
+  ]
+
+  let mid_shifted := (List.range 32 |>.map (fun _ => zero)) ++
+                     (List.range 32 |>.map (fun i => mid_sum[i]!))
+
+  let low_product := makeIndexedWires "m64_low_product" 64
+  let ksa_low : CircuitInstance := {
+    moduleName := "KoggeStoneAdder64"
+    instName := "u_ksa_low"
+    portMap :=
+      (s2_p_ll.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (mid_shifted.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", zero)] ++
+      (low_product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+  }
+
+  -- Carry-out from column 1 (s2_p_ll[63:32] + mid_sum[31:0])
+  let c_low_g := Wire.mk "m64_c_low_g"
+  let c_low_p := Wire.mk "m64_c_low_p"
+  let not_low_prod63 := Wire.mk "m64_not_low_prod63"
+  let c_low_prop := Wire.mk "m64_c_low_prop"
+  let c_low := Wire.mk "m64_c_low"
+  let c_low_gates := [
+    Gate.mkAND (s2_p_ll[63]!) (mid_sum[31]!) c_low_g,
+    Gate.mkOR (s2_p_ll[63]!) (mid_sum[31]!) c_low_p,
+    Gate.mkNOT (low_product[63]!) not_low_prod63,
+    Gate.mkAND c_low_p not_low_prod63 c_low_prop,
+    Gate.mkOR c_low_g c_low_prop c_low
+  ]
+
+  -- MULW result: lower 32 bits from p_ll, sign-extended to 64
+  let mulw_res := makeIndexedWires "m64_mulw_res" 64
+  let mulw_gates :=
+    (List.range 32 |>.map (fun i => Gate.mkBUF (s2_p_ll[i]!) (mulw_res[i]!))) ++
+    (List.range 32 |>.map (fun i => Gate.mkBUF (s2_p_ll[31]!) (mulw_res[32 + i]!)))
+
+  -- High product: p_hh + {31'b0, c_mid1, mid_sum[63:32]} + c_low
+  let mid_hi := (List.range 32 |>.map (fun i => mid_sum[32 + i]!)) ++
+                [c_mid1] ++
+                (List.range 31 |>.map (fun _ => zero))
+  let high_product := makeIndexedWires "m64_high_product" 64
+  let ksa_high : CircuitInstance := {
+    moduleName := "KoggeStoneAdder64"
+    instName := "u_ksa_high"
+    portMap :=
+      (s2_p_hh.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (mid_hi.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("cin", c_low)] ++
+      (high_product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+  }
+
+  -- Baugh-Wooley sign correction for high product:
+  --   MULH   (op=1): high - (a[63]?b:0) - (b[63]?a:0)
+  --   MULHSU (op=2): high - (a[63]?b:0)
+  --   MULHU  (op=3): high
+  let not_op3 := Wire.mk "sc64_not_op3"
+  let not_op2 := Wire.mk "sc64_not_op2"
+  let not_op1 := Wire.mk "sc64_not_op1"
+  let not_op0 := Wire.mk "sc64_not_op0"
+  let is_mulh := Wire.mk "sc64_is_mulh"
+  let is_mulhsu := Wire.mk "sc64_is_mulhsu"
+  let needs_sub_b_pre := Wire.mk "sc64_sub_b_pre"
+  let needs_sub_b := Wire.mk "sc64_needs_sub_b"
+  let needs_sub_a := Wire.mk "sc64_needs_sub_a"
+
+  let sc_ctrl_gates := [
+    Gate.mkNOT (s2_op[3]!) not_op3,
+    Gate.mkNOT (s2_op[2]!) not_op2,
+    Gate.mkNOT (s2_op[1]!) not_op1,
+    Gate.mkNOT (s2_op[0]!) not_op0,
+    -- op=1: MULH (!op3 & !op2 & !op1 & op0)
+    Gate.mkAND not_op3 not_op2 (Wire.mk "sc64_top0"),
+    Gate.mkAND (Wire.mk "sc64_top0") not_op1 (Wire.mk "sc64_top1"),
+    Gate.mkAND (Wire.mk "sc64_top1") (s2_op[0]!) is_mulh,
+    -- op=2: MULHSU (!op3 & !op2 & op1 & !op0)
+    Gate.mkAND (Wire.mk "sc64_top0") (s2_op[1]!) (Wire.mk "sc64_top2"),
+    Gate.mkAND (Wire.mk "sc64_top2") not_op0 is_mulhsu,
+    -- needs_sub_b = (is_mulh | is_mulhsu) & a[63]
+    Gate.mkOR is_mulh is_mulhsu needs_sub_b_pre,
+    Gate.mkAND needs_sub_b_pre (s2_a[63]!) needs_sub_b,
+    -- needs_sub_a = is_mulh & b[63]
+    Gate.mkAND is_mulh (s2_b[63]!) needs_sub_a
+  ]
+
+  let sub_b := makeIndexedWires "sc64_sub_b" 64
+  let sub_b_gates := (List.range 64).map fun i =>
+    Gate.mkAND (s2_b[i]!) needs_sub_b (sub_b[i]!)
+
+  let sub_a := makeIndexedWires "sc64_sub_a" 64
+  let sub_a_gates := (List.range 64).map fun i =>
+    Gate.mkAND (s2_a[i]!) needs_sub_a (sub_a[i]!)
+
+  let corr1 := makeIndexedWires "sc64_corr1" 64
+  let sub1_inst : CircuitInstance := {
+    moduleName := "Subtractor64"
+    instName := "u_sign_sub1"
+    portMap :=
+      (high_product.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (sub_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one)] ++
+      (corr1.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
+      [("borrow", Wire.mk "sc64_borrow1")]
+  }
+
+  let corr2 := makeIndexedWires "sc64_corr2" 64
+  let sub2_inst : CircuitInstance := {
+    moduleName := "Subtractor64"
+    instName := "u_sign_sub2"
+    portMap :=
+      (corr1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (sub_a.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one)] ++
+      (corr2.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
+      [("borrow", Wire.mk "sc64_borrow2")]
+  }
+
+  -- Output selection:
+  -- is_word = op[3] (MULW=8)
+  -- is_high = op[0] | op[1] (MULH=1, MULHSU=2, MULHU=3)
+  let is_word_op := s2_op[3]!
+  let is_high_op := Wire.mk "m64_is_high"
+  let sel_ctrl_gates := [
+    Gate.mkOR (s2_op[0]!) (s2_op[1]!) is_high_op
+  ]
+
+  let mux_lo_w := makeIndexedWires "m64_mux_lo_w" 64
+  let out_mux_gates := (List.range 64).flatMap fun i => [
+    Gate.mkMUX (low_product[i]!) (mulw_res[i]!) is_word_op (mux_lo_w[i]!),
+    Gate.mkMUX (mux_lo_w[i]!) (corr2[i]!) is_high_op (result[i]!)
+  ]
+
+  let tag_passthrough := List.zipWith (fun src dst => Gate.mkBUF src dst) s2_tag tag_out
+  let valid_passthrough := [Gate.mkBUF s2_valid valid_out]
+
+  let all_gates :=
+    s1_reg_gates ++
+    s2_reg_gates ++
+    mulw_gates ++
+    c_mid1_gates ++
+    c_low_gates ++
+    sc_ctrl_gates ++
+    sub_b_gates ++
+    sub_a_gates ++
+    sel_ctrl_gates ++
+    out_mux_gates ++
+    tag_passthrough ++
+    valid_passthrough
+
+  { name := "PipelinedMultiplier64"
+    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero, one]
+    outputs := result ++ tag_out ++ [valid_out]
+    gates := all_gates
+    instances := mul_instances ++ [ksa_mid, ksa_low, ksa_high, sub1_inst, sub2_inst]
+    keepHierarchy := true
+    signalGroups := [
+      { name := "a", width := 64, wires := a },
+      { name := "b", width := 64, wires := b },
+      { name := "op", width := 4, wires := op },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 64, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
+  }
+
+/-- Convenience alias for 64-bit pipelined multiplier. -/
+def pipelinedMultiplier64 : Circuit := mkPipelinedMultiplier64
+
 end Shoumei.Circuits.Combinational

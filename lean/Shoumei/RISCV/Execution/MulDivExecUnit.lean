@@ -107,21 +107,21 @@ def MulDivExecState.busy (state : MulDivExecState) : Bool :=
     - clock, reset: Sequential control
     - zero, one: Constant inputs
 
-    **Outputs (40):**
-    - result[31:0]: Computation result
+    **Outputs (72):**
+    - result[63:0]: Computation result
     - tag_out[5:0]: Pass-through destination tag
     - valid_out: Result ready for CDB broadcast
     - busy: Cannot accept new divide operation
 
     **Instances:**
-    - PipelinedMultiplier: 3-stage pipelined unsigned multiplier
-    - Divider32: 32-cycle restoring divider
+    - PipelinedMultiplier64: 3-stage pipelined 64-bit multiplier
+    - Divider64: 64-cycle restoring divider
 -/
 def mkMulDivExecUnit : Circuit :=
   -- Inputs
-  let a := makeIndexedWires "a" 32
-  let b := makeIndexedWires "b" 32
-  let op := makeIndexedWires "op" 3
+  let a := makeIndexedWires "a" 64
+  let b := makeIndexedWires "b" 64
+  let op := makeIndexedWires "op" 4
   let dest_tag := makeIndexedWires "dest_tag" 6
   let valid_in := Wire.mk "valid_in"
   let clock := Wire.mk "clock"
@@ -130,7 +130,7 @@ def mkMulDivExecUnit : Circuit :=
   let one := Wire.mk "one"
 
   -- Outputs
-  let result := makeIndexedWires "result" 32
+  let result := makeIndexedWires "result" 64
   let tag_out := makeIndexedWires "tag_out" 6
   let valid_out := Wire.mk "valid_out"
   let busy := Wire.mk "busy"
@@ -150,14 +150,14 @@ def mkMulDivExecUnit : Circuit :=
   ]
 
   -- ========================================================================
-  -- PipelinedMultiplier instance
+  -- PipelinedMultiplier64 instance
   -- ========================================================================
-  let mul_result := makeIndexedWires "mul_result" 32
+  let mul_result := makeIndexedWires "mul_result" 64
   let mul_tag_out := makeIndexedWires "mul_tag_out" 6
   let mul_valid_out := Wire.mk "mul_valid_out"
 
   let mul_inst : CircuitInstance := {
-    moduleName := "PipelinedMultiplier"
+    moduleName := "PipelinedMultiplier64"
     instName := "u_mul"
     portMap :=
       (a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -175,15 +175,15 @@ def mkMulDivExecUnit : Circuit :=
   }
 
   -- ========================================================================
-  -- Divider32 instance
+  -- Divider64 instance
   -- ========================================================================
-  let div_result := makeIndexedWires "div_result" 32
+  let div_result := makeIndexedWires "div_result" 64
   let div_tag_out := makeIndexedWires "div_tag_out" 6
   let div_valid_out := Wire.mk "div_valid_out"
   let div_busy := Wire.mk "div_busy"
 
   let div_inst : CircuitInstance := {
-    moduleName := "Divider32"
+    moduleName := "Divider64"
     instName := "u_div"
     portMap :=
       (a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -204,7 +204,7 @@ def mkMulDivExecUnit : Circuit :=
   -- Output MUX: select between multiplier and divider results
   -- div_valid_out selects divider output; otherwise multiplier output
   -- ========================================================================
-  let result_mux_gates := (List.range 32).map (fun i =>
+  let result_mux_gates := (List.range 64).map (fun i =>
     Gate.mkMUX (mul_result[i]!) (div_result[i]!) div_valid_out (result[i]!)
   )
 
@@ -235,15 +235,15 @@ def mkMulDivExecUnit : Circuit :=
     instances := [mul_inst, div_inst]
     -- V2 codegen annotations
     signalGroups := [
-      { name := "a", width := 32, wires := a },
-      { name := "b", width := 32, wires := b },
-      { name := "op", width := 3, wires := op },
+      { name := "a", width := 64, wires := a },
+      { name := "b", width := 64, wires := b },
+      { name := "op", width := 4, wires := op },
       { name := "dest_tag", width := 6, wires := dest_tag },
-      { name := "result", width := 32, wires := result },
+      { name := "result", width := 64, wires := result },
       { name := "tag_out", width := 6, wires := tag_out },
-      { name := "mul_result", width := 32, wires := mul_result },
+      { name := "mul_result", width := 64, wires := mul_result },
       { name := "mul_tag_out", width := 6, wires := mul_tag_out },
-      { name := "div_result", width := 32, wires := div_result },
+      { name := "div_result", width := 64, wires := div_result },
       { name := "div_tag_out", width := 6, wires := div_tag_out }
     ]
   }

@@ -32,6 +32,7 @@ Interface:
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.RippleCarryAdder
+import Shoumei.Circuits.Combinational.Subtractor
 
 namespace Shoumei.Circuits.Sequential
 
@@ -211,6 +212,138 @@ def verifyREMU (a b : UInt32) : Bool :=
   if b == 0 then true  -- Division by zero is undefined
   else
     match dividerRun a b 0 7 with
+    | some (_, result) => result == a % b
+    | none => false
+
+/-- State of the 64-cycle restoring divider. -/
+structure Divider64State where
+  remainder : Nat := 0
+  divisor : UInt64 := 0
+  quotient : UInt64 := 0
+  counter : Nat := 0
+  busy : Bool := false
+  tag : Fin 64 := 0
+  op : Nat := 0
+  a_neg : Bool := false
+  b_neg : Bool := false
+  is_word : Bool := false
+  deriving Repr
+
+/-- Initialize 64-bit divider. -/
+def divider64Start (a b : UInt64) (tag : Fin 64) (op : Nat) : Divider64State :=
+  let is_word := (op >>> 3) &&& 1 == 1
+  let is_signed := op % 2 == 0
+  let a_eff : UInt64 :=
+    if is_word then
+      let a32 := a.toNat &&& 0xFFFFFFFF
+      if is_signed && (a32 >>> 31 == 1) then
+        (a32 ||| 0xFFFFFFFF00000000).toUInt64
+      else
+        a32.toUInt64
+    else a
+  let b_eff : UInt64 :=
+    if is_word then
+      let b32 := b.toNat &&& 0xFFFFFFFF
+      if is_signed && (b32 >>> 31 == 1) then
+        (b32 ||| 0xFFFFFFFF00000000).toUInt64
+      else
+        b32.toUInt64
+    else b
+  let a_neg := is_signed && (a_eff.toNat >>> 63 == 1)
+  let b_neg := is_signed && (b_eff.toNat >>> 63 == 1)
+  let abs_a := if a_neg then (0 : UInt64) - a_eff else a_eff
+  let abs_b := if b_neg then (0 : UInt64) - b_eff else b_eff
+  { remainder := abs_a.toNat
+    divisor := abs_b
+    quotient := 0
+    counter := 0
+    busy := true
+    tag := tag
+    op := op
+    a_neg := a_neg
+    b_neg := b_neg
+    is_word := is_word
+  }
+
+/-- Step 64-bit divider. -/
+def divider64Step (state : Divider64State) : Divider64State × Option (Fin 64 × UInt64) :=
+  if !state.busy then
+    (state, none)
+  else
+    let shifted := state.remainder <<< 1
+    let upper := (shifted >>> 64) &&& 0xFFFFFFFFFFFFFFFF
+    let no_borrow := upper >= state.divisor.toNat
+    let trial := if no_borrow then upper - state.divisor.toNat else 0
+    let new_remainder :=
+      if no_borrow then
+        (trial <<< 64) ||| (shifted &&& 0xFFFFFFFFFFFFFFFF)
+      else
+        shifted
+    let bit_pos := 63 - state.counter
+    let new_quotient :=
+      if no_borrow then
+        state.quotient ||| (1 <<< bit_pos.toUInt64)
+      else
+        state.quotient
+    if state.counter == 63 then
+      let raw_result : UInt64 :=
+        if (state.op >>> 1) % 2 == 1 then
+          ((new_remainder >>> 64) &&& 0xFFFFFFFFFFFFFFFF).toUInt64
+        else
+          new_quotient
+      let needs_negate :=
+        if (state.op >>> 1) % 2 == 0 then
+          state.a_neg != state.b_neg && state.divisor != 0
+        else
+          (state.op % 2 == 0) && state.a_neg
+      let signed_result := if needs_negate then (0 : UInt64) - raw_result else raw_result
+      let final_result :=
+        if state.is_word then
+          let r32 := signed_result.toNat &&& 0xFFFFFFFF
+          if (r32 >>> 31 == 1) then (r32 ||| 0xFFFFFFFF00000000).toUInt64 else r32.toUInt64
+        else
+          signed_result
+      let final_state := { state with
+        remainder := new_remainder
+        quotient := new_quotient
+        counter := 0
+        busy := false
+      }
+      (final_state, some (state.tag, final_result))
+    else
+      let next_state := { state with
+        remainder := new_remainder
+        quotient := new_quotient
+        counter := state.counter + 1
+      }
+      (next_state, none)
+
+/-- Run 64-bit divider to completion. -/
+def divider64Run (a b : UInt64) (tag : Fin 64) (op : Nat) : Option (Fin 64 × UInt64) :=
+  let init := divider64Start a b tag op
+  let rec loop (state : Divider64State) (fuel : Nat) : Option (Fin 64 × UInt64) :=
+    match fuel with
+    | 0 => none
+    | fuel' + 1 =>
+      let (next, result) := divider64Step state
+      match result with
+      | some r => some r
+      | none => loop next fuel'
+  loop init 65
+
+/-- Verify 64-bit unsigned division. -/
+def verify64DIVU (a b : UInt64) : Bool :=
+  if b == 0 then true
+  else
+    match divider64Run a b 0 5 with
+    | some (_, result) => result == a / b
+    | none => false
+
+/-- Verify 64-bit unsigned remainder. -/
+def verify64REMU (a b : UInt64) : Bool :=
+  if b == 0 then true
+  else
+    match divider64Run a b 0 7 with
     | some (_, result) => result == a % b
     | none => false
 
@@ -826,5 +959,428 @@ def mkDividerCircuit : Circuit :=
 
 /-- Convenience definition for the divider circuit. -/
 def divider32Circuit : Circuit := mkDividerCircuit
+
+/-- Build the 64-cycle restoring divider structural circuit.
+    Supports RV64M operations (DIV, DIVU, REM, REMU) and word operations (DIVW, DIVUW, REMW, REMUW). -/
+def mkDivider64 : Circuit :=
+  -- Input wires
+  let a_in := makeIndexedWires "a" 64
+  let b_in := makeIndexedWires "b" 64
+  let op_in := makeIndexedWires "op" 4
+  let dest_tag := makeIndexedWires "dest_tag" 6
+  let start := Wire.mk "start"
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let one := Wire.mk "one"
+
+  -- Output wires
+  let result := makeIndexedWires "result" 64
+  let tag_out := makeIndexedWires "tag_out" 6
+  let valid_out := Wire.mk "valid_out"
+  let busy_out := Wire.mk "busy"
+
+  -- State register wires (DFF outputs)
+  let rem_q := makeIndexedWires "rem_q" 128
+  let div_q := makeIndexedWires "div_q" 64
+  let quo_q := makeIndexedWires "quo_q" 64
+  let cnt_q := makeIndexedWires "cnt_q" 6
+  let busy_q := Wire.mk "busy_q"
+  let tag_q := makeIndexedWires "tag_q" 6
+  let op_q := makeIndexedWires "op_q" 4
+  let a_neg_q := Wire.mk "a_neg_q"
+  let b_neg_q := Wire.mk "b_neg_q"
+  let is_word_q := Wire.mk "is_word_q"
+
+  -- Next-state wires (DFF inputs)
+  let rem_d := makeIndexedWires "rem_d" 128
+  let div_d := makeIndexedWires "div_d" 64
+  let quo_d := makeIndexedWires "quo_d" 64
+  let cnt_d := makeIndexedWires "cnt_d" 6
+  let busy_d := Wire.mk "busy_d"
+  let tag_d := makeIndexedWires "tag_d" 6
+  let op_d := makeIndexedWires "op_d" 4
+  let a_neg_d := Wire.mk "a_neg_d"
+  let b_neg_d := Wire.mk "b_neg_d"
+  let is_word_d := Wire.mk "is_word_d"
+
+  -- Control signals
+  let not_busy := Wire.mk "not_busy"
+  let start_and_not_busy := Wire.mk "start_and_not_busy"
+  let cnt_is_63 := Wire.mk "cnt_is_63"
+  let done := Wire.mk "done"
+  let not_done := Wire.mk "not_done"
+  let busy_and_not_done := Wire.mk "busy_and_not_done"
+
+  let ctrl_gates := [
+    Gate.mkNOT busy_q not_busy,
+    Gate.mkAND start not_busy start_and_not_busy,
+    Gate.mkAND (cnt_q[0]!) (cnt_q[1]!) (Wire.mk "cnt64_01"),
+    Gate.mkAND (cnt_q[2]!) (cnt_q[3]!) (Wire.mk "cnt64_23"),
+    Gate.mkAND (cnt_q[4]!) (cnt_q[5]!) (Wire.mk "cnt64_45"),
+    Gate.mkAND (Wire.mk "cnt64_01") (Wire.mk "cnt64_23") (Wire.mk "cnt64_0123"),
+    Gate.mkAND (Wire.mk "cnt64_0123") (Wire.mk "cnt64_45") cnt_is_63,
+    Gate.mkAND busy_q cnt_is_63 done,
+    Gate.mkNOT done not_done,
+    Gate.mkAND busy_q not_done busy_and_not_done
+  ]
+
+  let busy_gates := [Gate.mkOR start_and_not_busy busy_and_not_done busy_d]
+
+  -- Word input conditioning and sign detection
+  let is_signed := Wire.mk "is_signed"
+  let is_word_in := op_in[3]!
+  let a_sext_bit := Wire.mk "a_sext_bit"
+  let b_sext_bit := Wire.mk "b_sext_bit"
+
+  let cond_ctrl_gates := [
+    Gate.mkNOT (op_in[0]!) is_signed,
+    Gate.mkAND (a_in[31]!) is_signed a_sext_bit,
+    Gate.mkAND (b_in[31]!) is_signed b_sext_bit
+  ]
+
+  let a_eff := (List.range 32 |>.map (fun i => a_in[i]!)) ++
+               (List.range 32 |>.map (fun i => Wire.mk s!"a_eff_{i + 32}"))
+  let b_eff := (List.range 32 |>.map (fun i => b_in[i]!)) ++
+               (List.range 32 |>.map (fun i => Wire.mk s!"b_eff_{i + 32}"))
+
+  let cond_mux_gates :=
+    (List.range 32).flatMap (fun i => [
+      Gate.mkMUX (a_in[32 + i]!) a_sext_bit is_word_in (a_eff[32 + i]!),
+      Gate.mkMUX (b_in[32 + i]!) b_sext_bit is_word_in (b_eff[32 + i]!)
+    ])
+
+  let a_neg_start := Wire.mk "a_neg_start"
+  let b_neg_start := Wire.mk "b_neg_start"
+  let sign_detect_gates := [
+    Gate.mkAND (a_eff[63]!) is_signed a_neg_start,
+    Gate.mkAND (b_eff[63]!) is_signed b_neg_start
+  ]
+
+  -- 64-bit absolute value: abs = val XOR flag + flag
+  let abs_a := makeIndexedWires "abs_a64" 64
+  let abs_a_xor := makeIndexedWires "abs_a_xor64" 64
+  let abs_a_carry := makeIndexedWires "abs_a_carry64" 65
+  let abs_a_gates :=
+    [Gate.mkBUF a_neg_start (abs_a_carry[0]!)] ++
+    (List.range 64).flatMap (fun i => [
+      Gate.mkXOR (a_eff[i]!) a_neg_start (abs_a_xor[i]!),
+      Gate.mkXOR (abs_a_xor[i]!) (abs_a_carry[i]!) (abs_a[i]!),
+      Gate.mkAND (abs_a_xor[i]!) (abs_a_carry[i]!) (abs_a_carry[i + 1]!)
+    ])
+
+  let abs_b := makeIndexedWires "abs_b64" 64
+  let abs_b_xor := makeIndexedWires "abs_b_xor64" 64
+  let abs_b_carry := makeIndexedWires "abs_b_carry64" 65
+  let abs_b_gates :=
+    [Gate.mkBUF b_neg_start (abs_b_carry[0]!)] ++
+    (List.range 64).flatMap (fun i => [
+      Gate.mkXOR (b_eff[i]!) b_neg_start (abs_b_xor[i]!),
+      Gate.mkXOR (abs_b_xor[i]!) (abs_b_carry[i]!) (abs_b[i]!),
+      Gate.mkAND (abs_b_xor[i]!) (abs_b_carry[i]!) (abs_b_carry[i + 1]!)
+    ])
+
+  let sign_mux_gates := [
+    Gate.mkMUX a_neg_q a_neg_start start_and_not_busy a_neg_d,
+    Gate.mkMUX b_neg_q b_neg_start start_and_not_busy b_neg_d,
+    Gate.mkMUX is_word_q is_word_in start_and_not_busy is_word_d
+  ]
+
+  -- Shift logic (128 bits)
+  let shifted_rem := makeIndexedWires "shifted_rem64" 128
+  let zero_wire := Wire.mk "zero_from_one64"
+  let shift_gates :=
+    [Gate.mkNOT one zero_wire,
+     Gate.mkBUF zero_wire (shifted_rem[0]!)] ++
+    (List.range 127).map (fun i =>
+      Gate.mkBUF (rem_q[i]!) (shifted_rem[i + 1]!)
+    )
+
+  -- Trial subtraction
+  let trial_a := makeIndexedWires "trial_a64" 64
+  let trial_diff := makeIndexedWires "trial_diff64" 64
+  let trial_borrow := Wire.mk "trial_borrow64"
+
+  let trial_input_gates := (List.range 64).map (fun i =>
+    Gate.mkBUF (shifted_rem[64 + i]!) (trial_a[i]!)
+  )
+
+  let sub_inst : CircuitInstance := {
+    moduleName := "Subtractor64"
+    instName := "u_trial_sub"
+    portMap :=
+      (trial_a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
+      (div_q.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      [("one", one)] ++
+      (trial_diff.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
+      [("borrow", trial_borrow)]
+  }
+
+  let no_borrow := Wire.mk "no_borrow64"
+  let bw_msb_xor := Wire.mk "bw_msb_xor64"
+  let bw_msb_xnor := Wire.mk "bw_msb_xnor64"
+  let bw_not_a63 := Wire.mk "bw_not_a63"
+  let bw_term1 := Wire.mk "bw_term1_64"
+  let bw_term2 := Wire.mk "bw_term2_64"
+  let bw_borrow := Wire.mk "bw_borrow64"
+  let borrow_gates := [
+    Gate.mkXOR (trial_a[63]!) (div_q[63]!) bw_msb_xor,
+    Gate.mkNOT bw_msb_xor bw_msb_xnor,
+    Gate.mkNOT (trial_a[63]!) bw_not_a63,
+    Gate.mkAND bw_not_a63 (div_q[63]!) bw_term1,
+    Gate.mkAND bw_msb_xnor (trial_diff[63]!) bw_term2,
+    Gate.mkOR bw_term1 bw_term2 bw_borrow,
+    Gate.mkNOT bw_borrow no_borrow
+  ]
+
+  -- Remainder update
+  let new_rem := makeIndexedWires "new_rem64" 128
+  let rem_lower_gates := (List.range 64).map (fun i =>
+    Gate.mkBUF (shifted_rem[i]!) (new_rem[i]!)
+  )
+  let rem_upper_mux_gates := (List.range 64).map (fun i =>
+    Gate.mkMUX (shifted_rem[64 + i]!) (trial_diff[i]!) no_borrow (new_rem[64 + i]!)
+  )
+
+  -- Quotient bit insertion (6-to-64 decode)
+  let cnt_inv := makeIndexedWires "cnt_inv64" 6
+  let cnt_inv_gates := (List.range 6).map (fun i =>
+    Gate.mkNOT (cnt_q[i]!) (cnt_inv[i]!)
+  )
+
+  let quo_new := makeIndexedWires "quo_new64" 64
+
+  let selectCntBit (v : Nat) (bit : Nat) : Wire :=
+    if (v >>> bit) &&& 1 == 1 then cnt_q[bit]! else cnt_inv[bit]!
+
+  let quo_decode_gates := (List.range 64).flatMap (fun i =>
+    let target := 63 - i
+    let a01 := Wire.mk s!"qdec64_{i}_01"
+    let a23 := Wire.mk s!"qdec64_{i}_23"
+    let a45 := Wire.mk s!"qdec64_{i}_45"
+    let a0123 := Wire.mk s!"qdec64_{i}_0123"
+    let match_i := Wire.mk s!"qdec64_{i}_match"
+    let set_bit := Wire.mk s!"qset64_{i}"
+    [
+      Gate.mkAND (selectCntBit target 0) (selectCntBit target 1) a01,
+      Gate.mkAND (selectCntBit target 2) (selectCntBit target 3) a23,
+      Gate.mkAND (selectCntBit target 4) (selectCntBit target 5) a45,
+      Gate.mkAND a01 a23 a0123,
+      Gate.mkAND a0123 a45 match_i,
+      Gate.mkAND no_borrow match_i set_bit,
+      Gate.mkOR (quo_q[i]!) set_bit (quo_new[i]!)
+    ]
+  )
+
+  -- Counter increment (6 bits)
+  let cnt_inc := makeIndexedWires "cnt_inc64" 6
+  let cnt_carry := makeIndexedWires "cnt_carry64" 7
+  let cnt_inc_gates :=
+    [Gate.mkBUF one (cnt_carry[0]!)] ++
+    (List.range 6).flatMap (fun i =>
+      [
+        Gate.mkXOR (cnt_q[i]!) (cnt_carry[i]!) (cnt_inc[i]!),
+        Gate.mkAND (cnt_q[i]!) (cnt_carry[i]!) (cnt_carry[i + 1]!)
+      ]
+    )
+
+  -- Next-state MUXes
+  let rem_m1 := makeIndexedWires "rem_m1_64" 128
+  let rem_mux_gates :=
+    (List.range 64).flatMap (fun i => [
+      Gate.mkMUX (rem_q[i]!) (new_rem[i]!) busy_and_not_done (rem_m1[i]!),
+      Gate.mkMUX (rem_m1[i]!) (abs_a[i]!) start_and_not_busy (rem_d[i]!)
+    ]) ++
+    (List.range 64).flatMap (fun i => [
+      Gate.mkMUX (rem_q[64 + i]!) (new_rem[64 + i]!) busy_and_not_done (rem_m1[64 + i]!),
+      Gate.mkMUX (rem_m1[64 + i]!) zero_wire start_and_not_busy (rem_d[64 + i]!)
+    ])
+
+  let div_mux_gates := (List.range 64).map (fun i =>
+    Gate.mkMUX (div_q[i]!) (abs_b[i]!) start_and_not_busy (div_d[i]!)
+  )
+
+  let quo_m1 := makeIndexedWires "quo_m1_64" 64
+  let quo_mux_gates := (List.range 64).flatMap (fun i => [
+    Gate.mkMUX (quo_q[i]!) (quo_new[i]!) busy_and_not_done (quo_m1[i]!),
+    Gate.mkMUX (quo_m1[i]!) zero_wire start_and_not_busy (quo_d[i]!)
+  ])
+
+  let cnt_m1 := makeIndexedWires "cnt_m1_64" 6
+  let cnt_mux_gates := (List.range 6).flatMap (fun i => [
+    Gate.mkMUX (cnt_q[i]!) (cnt_inc[i]!) busy_and_not_done (cnt_m1[i]!),
+    Gate.mkMUX (cnt_m1[i]!) zero_wire start_and_not_busy (cnt_d[i]!)
+  ])
+
+  let tag_mux_gates := (List.range 6).map (fun i =>
+    Gate.mkMUX (tag_q[i]!) (dest_tag[i]!) start_and_not_busy (tag_d[i]!)
+  )
+
+  let op_mux_gates := (List.range 4).map (fun i =>
+    Gate.mkMUX (op_q[i]!) (op_in[i]!) start_and_not_busy (op_d[i]!)
+  )
+
+  -- DFFs
+  let rem_dffs := (List.range 128).map (fun i =>
+    Gate.mkDFF (rem_d[i]!) clock reset (rem_q[i]!)
+  )
+  let div_dffs := (List.range 64).map (fun i =>
+    Gate.mkDFF (div_d[i]!) clock reset (div_q[i]!)
+  )
+  let quo_dffs := (List.range 64).map (fun i =>
+    Gate.mkDFF (quo_d[i]!) clock reset (quo_q[i]!)
+  )
+  let cnt_dffs := (List.range 6).map (fun i =>
+    Gate.mkDFF (cnt_d[i]!) clock reset (cnt_q[i]!)
+  )
+  let busy_dff := [Gate.mkDFF busy_d clock reset busy_q]
+  let tag_dffs := (List.range 6).map (fun i =>
+    Gate.mkDFF (tag_d[i]!) clock reset (tag_q[i]!)
+  )
+  let op_dffs := (List.range 4).map (fun i =>
+    Gate.mkDFF (op_d[i]!) clock reset (op_q[i]!)
+  )
+  let sign_dffs := [
+    Gate.mkDFF a_neg_d clock reset a_neg_q,
+    Gate.mkDFF b_neg_d clock reset b_neg_q,
+    Gate.mkDFF is_word_d clock reset is_word_q
+  ]
+
+  -- Raw result selection
+  let raw_result := makeIndexedWires "raw_result64" 64
+  let result_mux_gates := (List.range 64).map (fun i =>
+    Gate.mkMUX (quo_new[i]!) (new_rem[64 + i]!) (op_q[1]!) (raw_result[i]!)
+  )
+
+  -- Divide by zero detection (64-bit OR reduction tree)
+  let dz := makeIndexedWires "dz64_l1" 32
+  let dz_l2 := makeIndexedWires "dz64_l2" 16
+  let dz_l3 := makeIndexedWires "dz64_l3" 8
+  let dz_l4 := makeIndexedWires "dz64_l4" 4
+  let dz_l5 := makeIndexedWires "dz64_l5" 2
+  let dz_l6 := Wire.mk "dz64_l6"
+  let divisor_is_zero := Wire.mk "divisor_is_zero64"
+
+  let divzero_gates :=
+    (List.range 32).map (fun i =>
+      Gate.mkOR (div_q[2*i]!) (div_q[2*i+1]!) (dz[i]!)
+    ) ++
+    (List.range 16).map (fun i =>
+      Gate.mkOR (dz[2*i]!) (dz[2*i+1]!) (dz_l2[i]!)
+    ) ++
+    (List.range 8).map (fun i =>
+      Gate.mkOR (dz_l2[2*i]!) (dz_l2[2*i+1]!) (dz_l3[i]!)
+    ) ++
+    (List.range 4).map (fun i =>
+      Gate.mkOR (dz_l3[2*i]!) (dz_l3[2*i+1]!) (dz_l4[i]!)
+    ) ++
+    (List.range 2).map (fun i =>
+      Gate.mkOR (dz_l4[2*i]!) (dz_l4[2*i+1]!) (dz_l5[i]!)
+    ) ++
+    [Gate.mkOR (dz_l5[0]!) (dz_l5[1]!) dz_l6,
+     Gate.mkNOT dz_l6 divisor_is_zero]
+
+  let is_signed_op := Wire.mk "is_signed_op64"
+  let sign_xor := Wire.mk "sign_xor64"
+  let negate_sel := Wire.mk "negate_sel64"
+  let raw_needs_negate := Wire.mk "raw_needs_negate64"
+  let dz_is_quotient := Wire.mk "dz_is_quotient64"
+  let dz_skip := Wire.mk "dz_skip64"
+  let not_dz_skip := Wire.mk "not_dz_skip64"
+  let needs_negate := Wire.mk "needs_negate64"
+
+  let sign_correct_ctrl := [
+    Gate.mkNOT (op_q[0]!) is_signed_op,
+    Gate.mkXOR a_neg_q b_neg_q sign_xor,
+    Gate.mkMUX sign_xor a_neg_q (op_q[1]!) negate_sel,
+    Gate.mkAND is_signed_op negate_sel raw_needs_negate,
+    Gate.mkNOT (op_q[1]!) dz_is_quotient,
+    Gate.mkAND divisor_is_zero dz_is_quotient dz_skip,
+    Gate.mkNOT dz_skip not_dz_skip,
+    Gate.mkAND raw_needs_negate not_dz_skip needs_negate
+  ]
+
+  let res_xor := makeIndexedWires "res_xor64" 64
+  let res_carry := makeIndexedWires "res_carry64" 65
+  let signed_res := makeIndexedWires "signed_res64" 64
+
+  let sign_correct_gates :=
+    [Gate.mkBUF needs_negate (res_carry[0]!)] ++
+    (List.range 64).flatMap (fun i => [
+      Gate.mkXOR (raw_result[i]!) needs_negate (res_xor[i]!),
+      Gate.mkXOR (res_xor[i]!) (res_carry[i]!) (signed_res[i]!),
+      Gate.mkAND (res_xor[i]!) (res_carry[i]!) (res_carry[i + 1]!)
+    ])
+
+  let word_extend_gates :=
+    (List.range 32).map (fun i =>
+      Gate.mkBUF (signed_res[i]!) (result[i]!)
+    ) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX (signed_res[32 + i]!) (signed_res[31]!) is_word_q (result[32 + i]!)
+    )
+
+  let tag_out_gates := (List.range 6).map (fun i =>
+    Gate.mkBUF (tag_q[i]!) (tag_out[i]!)
+  )
+  let valid_gate := [Gate.mkBUF done valid_out]
+  let busy_gate := [Gate.mkBUF busy_q busy_out]
+
+  let all_gates :=
+    ctrl_gates ++
+    busy_gates ++
+    cond_ctrl_gates ++
+    cond_mux_gates ++
+    sign_detect_gates ++
+    abs_a_gates ++
+    abs_b_gates ++
+    sign_mux_gates ++
+    shift_gates ++
+    trial_input_gates ++
+    borrow_gates ++
+    rem_lower_gates ++
+    rem_upper_mux_gates ++
+    cnt_inv_gates ++
+    quo_decode_gates ++
+    cnt_inc_gates ++
+    rem_mux_gates ++
+    div_mux_gates ++
+    quo_mux_gates ++
+    cnt_mux_gates ++
+    tag_mux_gates ++
+    op_mux_gates ++
+    rem_dffs ++
+    div_dffs ++
+    quo_dffs ++
+    cnt_dffs ++
+    busy_dff ++
+    tag_dffs ++
+    op_dffs ++
+    sign_dffs ++
+    result_mux_gates ++
+    divzero_gates ++
+    sign_correct_ctrl ++
+    sign_correct_gates ++
+    word_extend_gates ++
+    tag_out_gates ++
+    valid_gate ++
+    busy_gate
+
+  { name := "Divider64"
+    inputs := a_in ++ b_in ++ op_in ++ dest_tag ++ [start, clock, reset, one]
+    outputs := result ++ tag_out ++ [valid_out, busy_out]
+    gates := all_gates
+    instances := [sub_inst]
+    signalGroups := [
+      { name := "a", width := 64, wires := a_in },
+      { name := "b", width := 64, wires := b_in },
+      { name := "op", width := 4, wires := op_in },
+      { name := "dest_tag", width := 6, wires := dest_tag },
+      { name := "result", width := 64, wires := result },
+      { name := "tag_out", width := 6, wires := tag_out }
+    ]
+  }
+
+/-- Convenience definition for the 64-bit divider circuit. -/
+def divider64Circuit : Circuit := mkDivider64
 
 end Shoumei.Circuits.Sequential

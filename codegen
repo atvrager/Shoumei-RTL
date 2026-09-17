@@ -5,5 +5,5 @@ set -e
 
 export PATH="$HOME/.elan/bin:$PATH"
 
-lake build
-lake exe codegen
+lake --no-ansi build
+lake --no-ansi exe generate_all

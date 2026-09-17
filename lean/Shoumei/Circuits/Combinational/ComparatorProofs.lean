@@ -34,6 +34,13 @@ theorem comparator32_structure :
   mkComparator32.outputs.length = 5 ∧
   mkComparator32.instances.length = 1 := by native_decide
 
+-- Comparator64 structural properties (KSA-based via Subtractor64 instance)
+theorem comparator64_structure :
+  mkComparator64.gates.length = 82 ∧
+  mkComparator64.inputs.length = 129 ∧
+  mkComparator64.outputs.length = 5 ∧
+  mkComparator64.instances.length = 1 := by native_decide
+
 -- EqualityComparator32 structural properties (XOR + OR-tree, no subtraction)
 theorem equalityComparator32_structure :
   mkEqualityComparator32.gates.length = 65 ∧

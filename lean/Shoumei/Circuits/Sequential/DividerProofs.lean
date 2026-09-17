@@ -42,4 +42,33 @@ theorem remu_10_mod_3 : verifyREMU 10 3 = true := by native_decide
 /-- Behavioral: unsigned 255 / 1 = 255 (DIVU, identity). -/
 theorem divu_identity : verifyDIVU 255 1 = true := by native_decide
 
+/-- The 64-bit divider circuit has the correct name. -/
+theorem divider64_name :
+    divider64Circuit.name = "Divider64" := by native_decide
+
+/-- The 64-bit divider has 142 input signals. -/
+theorem divider64_input_count :
+    divider64Circuit.inputs.length = 142 := by native_decide
+
+/-- The 64-bit divider has 72 output signals. -/
+theorem divider64_output_count :
+    divider64Circuit.outputs.length = 72 := by native_decide
+
+/-- The 64-bit divider is sequential. -/
+theorem divider64_sequential :
+    divider64Circuit.hasSequentialElements = true := by native_decide
+
+/-- The 64-bit divider uses 1 submodule instance (Subtractor64). -/
+theorem divider64_instance_count :
+    divider64Circuit.instances.length = 1 := by native_decide
+
+/-- Behavioral: 64-bit unsigned 10 / 3 = 3 (DIVU). -/
+theorem divu64_10_by_3 : verify64DIVU 10 3 = true := by native_decide
+
+/-- Behavioral: 64-bit unsigned 100 / 7 = 14 (DIVU). -/
+theorem divu64_100_by_7 : verify64DIVU 100 7 = true := by native_decide
+
+/-- Behavioral: 64-bit unsigned 10 % 3 = 1 (REMU). -/
+theorem remu64_10_mod_3 : verify64REMU 10 3 = true := by native_decide
+
 end Shoumei.Circuits.Sequential.DividerProofs
