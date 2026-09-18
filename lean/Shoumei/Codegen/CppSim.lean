@@ -46,7 +46,11 @@ def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × N
       match outputToIndex.find? (fun p => p.fst.name == w.name) with
       | some (_wire, idx) => s!"outputs[{idx}]"
       | none =>
-        if implPrefix != "" && !portNames.contains w.name then implPrefix ++ w.name
+        if !portNames.contains w.name && w.name == "zero" then
+          if implPrefix != "" then implPrefix ++ "const_false" else "const_false"
+        else if !portNames.contains w.name && w.name == "one" then
+          if implPrefix != "" then implPrefix ++ "const_true" else "const_true"
+        else if implPrefix != "" && !portNames.contains w.name then implPrefix ++ w.name
         else w.name
 
 -- Check if a wire is a pointer (bundled I/O or port) — needs dereference for read/write
@@ -60,9 +64,13 @@ private def isPointerWire (inputToIndex : List (Wire × Nat)) (outputToIndex : L
 def wireReadExpr (inputToIndex : List (Wire × Nat))
     (outputToIndex : List (Wire × Nat)) (w : Wire)
     (portNames : List String := []) (implPrefix : String := "") : String :=
-  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
-  if isPointerWire inputToIndex outputToIndex portNames w then s!"*{ref}"
-  else ref
+  let isPort := isPointerWire inputToIndex outputToIndex portNames w
+  if !isPort && w.name == "zero" then "false"
+  else if !isPort && w.name == "one" then "true"
+  else
+    let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
+    if isPort then s!"*{ref}"
+    else ref
 
 -- Write statement for a wire: dereference for pointers, direct assignment for plain bool
 def wireWriteStmt (inputToIndex : List (Wire × Nat))
@@ -81,7 +89,9 @@ def findInternalWires (c : Circuit) : List Wire :=
     let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
     wpWires ++ rpWires)
   let allWires := gateOutputs ++ instanceWires ++ ramWires
-  dedupWires (allWires.filter (fun w => !c.outputs.contains w && !c.inputs.contains w))
+  dedupWires (allWires.filter (fun w =>
+    !c.outputs.contains w && !c.inputs.contains w &&
+    w.name != "zero" && w.name != "one"))
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
@@ -229,15 +239,19 @@ def generateInstanceBindings (allCircuits : List Circuit) (inst : CircuitInstanc
             | some _ => bmap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
             | none => bmap ++ [(portName, 1)]
           else bmap
+          let wireExpr :=
+            if wire.name == "zero" then "&const_false"
+            else if wire.name == "one" then "&const_true"
+            else s!"&{wire.name}"
           match inputNames.findIdx? (· == actualName) with
           | some idx =>
-              (lines ++ [s!"    {inst.instName}.inputs[{idx}] = &{wire.name};"], newMap)
+              (lines ++ [s!"    {inst.instName}.inputs[{idx}] = {wireExpr};"], newMap)
           | none =>
               match outputNames.findIdx? (· == actualName) with
               | some idx =>
-                  (lines ++ [s!"    {inst.instName}.outputs[{idx}] = &{wire.name};"], newMap)
+                  (lines ++ [s!"    {inst.instName}.outputs[{idx}] = {wireExpr};"], newMap)
               | none =>
-                  (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], newMap)
+                  (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], newMap)
         ) ([], [])
       joinLines bindings
     else
@@ -250,6 +264,10 @@ where
     let mapping := buildPortNameMapping allCircuits inst.moduleName
     let (bindings, _) := inst.portMap.foldl (fun (acc : List String × List (String × Nat)) (portName, wire) =>
       let (lines, bareIdxMap) := acc
+      let wireExpr :=
+        if wire.name == "zero" then "&const_false"
+        else if wire.name == "one" then "&const_true"
+        else s!"&{wire.name}"
       match mapping.find? (fun (key, _) => key == portName) with
       | some (_, actualName) =>
           let count := inst.portMap.filter (fun (pn, _) => pn == portName) |>.length
@@ -262,13 +280,13 @@ where
             let newMap := match bareIdxMap.find? (fun (n, _) => n == portName) with
               | some _ => bareIdxMap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
               | none => bareIdxMap ++ [(portName, 1)]
-            (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], newMap)
+            (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], newMap)
           else
-            (lines ++ [s!"    {inst.instName}.{actualName} = &{wire.name};"], bareIdxMap)
+            (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], bareIdxMap)
       | none =>
           let s := portName.replace "[" "_"
           let cppPortName := s.replace "]" ""
-          (lines ++ [s!"    {inst.instName}.{cppPortName} = &{wire.name};"], bareIdxMap)
+          (lines ++ [s!"    {inst.instName}.{cppPortName} = {wireExpr};"], bareIdxMap)
     ) ([], [])
     joinLines bindings
 
@@ -310,14 +328,15 @@ def generateSignalDeclarations (c : Circuit) : String :=
   let dffSavedDecls := dffGates.map (fun g => s!"  bool d_saved_{g.output.name} = false;")
   let ramDecls := generateRAMDeclarations c
   let wireDecls := internalWires.map (fun w => s!"  bool {w.name} = false;")
-  let allDecls := wireDecls ++ dffSavedDecls
-  if allDecls.isEmpty && ramDecls.isEmpty then
-    ""
-  else
-    let base := joinLines allDecls
-    if ramDecls.isEmpty then base
-    else if base.isEmpty then ramDecls
-    else base ++ "\n" ++ ramDecls
+  let constDecls := [
+    "  bool const_false = false;",
+    "  bool const_true = true;"
+  ]
+  let allDecls := constDecls ++ wireDecls ++ dffSavedDecls
+  let base := joinLines allDecls
+  if ramDecls.isEmpty then base
+  else if base.isEmpty then ramDecls
+  else base ++ "\n" ++ ramDecls
 
 -- Generate constructor
 def generateConstructor (c : Circuit) (_useBundledIO : Bool) (allCircuits : List Circuit := []) : String :=
@@ -382,7 +401,7 @@ def topSortCombGates (c : Circuit) : List Gate :=
   let dffOutputNames := c.gates.filter (·.gateType.isDFF) |>.map (·.output.name)
   let instOutputNames := List.flatten (c.instances.map (fun inst =>
     inst.portMap.map (fun p => p.2.name)))
-  let available := (inputNames ++ dffOutputNames ++ instOutputNames).filter
+  let available := (["zero", "one"] ++ inputNames ++ dffOutputNames ++ instOutputNames).filter
     (fun n => !combGateOutputNames.contains n)
   let rec loop (remaining : List Gate) (avail : List String) (sorted : List Gate)
       (fuel : Nat) : List Gate :=
@@ -715,7 +734,10 @@ def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : S
       else bareIdxMap
       -- Parent ports are already bool* pointers; internal wires are plain bool (need &)
       let isPort := portNames.contains wire.name
-      let wireExpr := if isPort then wire.name else s!"&pImpl->{wire.name}"
+      let wireExpr := if isPort then wire.name
+        else if wire.name == "zero" then "&pImpl->const_false"
+        else if wire.name == "one" then "&pImpl->const_true"
+        else s!"&pImpl->{wire.name}"
       if subUseBundled then
         match subInputNames.findIdx? (· == actualName) with
         | some idx =>
