@@ -324,6 +324,7 @@ def main (args : List String) : IO Unit := do
 
   -- Pre-compute dependency-aware hashes for incremental generation
   let hashMap := computeAllHashes allCircuits
+  let loadedMap := Shoumei.Codegen.SystemVerilog.computeAllLoadedWires allCircuits
 
   -- Generate all circuits (pass allCircuits for sub-module port direction lookup)
   let mut count := 0
@@ -334,7 +335,7 @@ def main (args : List String) : IO Unit := do
         isUpToDate c.name h
       else pure false
     else pure false
-    writeCircuit c allCircuits force hashMap
+    writeCircuit c allCircuits force hashMap loadedMap
     if wasCached then skipped := skipped + 1
     count := count + 1
 

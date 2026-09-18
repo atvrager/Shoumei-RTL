@@ -335,10 +335,10 @@ def mkLSU : Circuit :=
   let one := Wire.mk "one"
 
   -- === Dispatch Interface ===
-  let dispatch_base := mkWires "dispatch_base_" 64
-  let dispatch_offset := mkWires "dispatch_offset_" 64
-  let dispatch_dest_tag := mkWires "dispatch_dest_tag_" 6
-  let store_data := mkWires "store_data_" 64
+  let dispatch_base := mkWires "dispatch_base" 64
+  let dispatch_offset := mkWires "dispatch_offset" 64
+  let dispatch_dest_tag := mkWires "dispatch_dest_tag" 6
+  let store_data := mkWires "store_data" 64
 
   -- === Store Commit Interface (from ROB) ===
   let commit_store_en := Wire.mk "commit_store_en"
@@ -347,14 +347,14 @@ def mkLSU : Circuit :=
   let deq_ready := Wire.mk "deq_ready"
 
   -- === Forwarding Interface ===
-  let fwd_address := mkWires "fwd_address_" 64
+  let fwd_address := mkWires "fwd_address" 64
 
   -- === Flush Interface ===
   let flush_en := Wire.mk "flush_en"
 
   -- === AGU (Address Generation Unit) Outputs ===
-  let agu_address := mkWires "agu_address_" 64
-  let agu_tag_out := mkWires "agu_tag_out_" 6
+  let agu_address := mkWires "agu_address" 64
+  let agu_tag_out := mkWires "agu_tag_out" 6
 
   -- === Store Buffer Outputs ===
   let sb_full := Wire.mk "sb_full"
@@ -363,19 +363,19 @@ def mkLSU : Circuit :=
   let sb_fwd_committed_hit := Wire.mk "sb_fwd_committed_hit"
   let sb_fwd_word_hit := Wire.mk "sb_fwd_word_hit"
   let sb_fwd_word_only_hit := Wire.mk "sb_fwd_word_only_hit"
-  let sb_fwd_data := mkWires "sb_fwd_data_" 64
-  let sb_fwd_size := mkWires "sb_fwd_size_" 2
+  let sb_fwd_data := mkWires "sb_fwd_data" 64
+  let sb_fwd_size := mkWires "sb_fwd_size" 2
   let sb_deq_valid := Wire.mk "sb_deq_valid"
-  let sb_deq_bits := mkWires "sb_deq_bits_" 130
-  let sb_enq_idx := mkWires "sb_enq_idx_" 3
-  let sb_flush_tail := mkWires "sb_flush_tail_" 3
+  let sb_deq_bits := mkWires "sb_deq_bits" 130
+  let sb_enq_idx := mkWires "sb_enq_idx" 3
+  let sb_flush_tail := mkWires "sb_flush_tail" 3
 
   -- === Placeholder wires for StoreBuffer8 required inputs ===
   let sb_enq_en := Wire.mk "sb_enq_en"  -- Placeholder: would be driven by dispatch_is_store control logic
-  let sb_enq_idx_in := mkWires "sb_enq_idx_in_" 3  -- Pre-allocated SB entry index from CPU
-  let sb_enq_address := mkWires "sb_enq_address_" 64  -- Connected to agu_address
+  let sb_enq_idx_in := mkWires "sb_enq_idx_in" 3  -- Pre-allocated SB entry index from CPU
+  let sb_enq_address := mkWires "sb_enq_address" 64  -- Connected to agu_address
   let sb_enq_data := store_data  -- Direct connection from dispatch
-  let sb_enq_size := mkWires "sb_enq_size_" 2  -- Placeholder: would be decoded from opcode
+  let sb_enq_size := mkWires "sb_enq_size" 2  -- Placeholder: would be decoded from opcode
 
   -- === MemoryExecUnit Instance ===
   -- MemoryExecUnit uses flat port names: base_0, base_1, ..., offset_0, offset_1, etc.

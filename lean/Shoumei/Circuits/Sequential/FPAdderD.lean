@@ -798,7 +798,6 @@ def mkFPAdderD : Circuit :=
 
   -- Pipeline register 2 (DFFs)
   let p2_big_sign := Wire.mk "p2_big_sign"
-  let p2_small_sign := Wire.mk "p2_small_sign"
   let p2_eff_sub := Wire.mk "p2_eff_sub"
   let p2_sticky := Wire.mk "p2_sticky"
   let p2_any_nan := Wire.mk "p2_any_nan"
@@ -814,7 +813,6 @@ def mkFPAdderD : Circuit :=
 
   let p2_dffs :=
     [Gate.mkDFF s2_big_sign clock reset p2_big_sign,
-     Gate.mkDFF s2_small_sign clock reset p2_small_sign,
      Gate.mkDFF s2_eff_sub clock reset p2_eff_sub,
      Gate.mkDFF s2_shift_sticky clock reset p2_sticky,
      Gate.mkDFF p1_any_nan clock reset p2_any_nan,
