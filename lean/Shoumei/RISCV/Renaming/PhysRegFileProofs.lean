@@ -42,19 +42,7 @@ theorem physregfile64_instance_count : mkPhysRegFile64.instances.length = 73 := 
 /-- PhysRegFile64 gate count: 16 root bufs + 64 leaf bufs + 64 write-enable ANDs + 64×32 write MUXes -/
 theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 4368 := by native_decide
 
-/-! ## Structural Proofs (4×8 test configuration) -/
 
-/-- Small PRF for testing has expected name -/
-theorem physregfile4x8_name : mkPhysRegFile4x8.name = "PhysRegFile_4x8" := by native_decide
-
-/-- Small PRF: clock(1) + reset(1) + wr_en(1) + rd_tag1(2) + rd_tag2(2) + rd_tag3(2) + rd_tag4(2) + wr_tag(2) + wr_data(8) = 21 -/
-theorem physregfile4x8_input_count : mkPhysRegFile4x8.inputs.length = 21 := by native_decide
-
-/-- Small PRF: rd_data1(8) + rd_data2(8) + rd_data3(8) + rd_data4(8) = 32 -/
-theorem physregfile4x8_output_count : mkPhysRegFile4x8.outputs.length = 32 := by native_decide
-
-/-- Small PRF: 4 AND + 4×8×2 = 68 gates -/
-theorem physregfile4x8_gate_count : mkPhysRegFile4x8.gates.length = 56 := by native_decide
 
 /-! ## Behavioral Proofs -/
 

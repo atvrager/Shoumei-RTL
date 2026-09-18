@@ -17,13 +17,13 @@ def csrFile := mkCSRFile defaultCPUConfig
 theorem csrFile_name : csrFile.name = s!"CSRFile_{defaultCPUConfig.isaString}" := by
   rfl
 
-/-- Verify CSRFile instance count (12 Register32 + 8 DFF + 4 KoggeStoneAdder32) -/
-theorem csrFile_instances : csrFile.instances.length = 24 := by
+/-- Verify CSRFile instance count (12 Register32 + 8 DFF) -/
+theorem csrFile_instances : csrFile.instances.length = 20 := by
   native_decide
 
 /-- Verify CSRFile output count -/
 theorem csrFile_outputs : csrFile.outputs.length =
-    (if defaultCPUConfig.xlen == 64 || defaultCPUConfig.enableD then 64 else 32) * 2 + 6 + 2 + 3 + 5 + 1 := by
+    32 + (if defaultCPUConfig.xlen == 64 || defaultCPUConfig.enableD then 64 else 32) + 6 + 2 + 3 + 5 + 1 := by
   native_decide
 
 end Shoumei.RISCV.CSRFileProofs

@@ -578,7 +578,7 @@ def mkSerializeDetect
         instName := "u_trap_seq"
         portMap :=
           [("clock", clock), ("reset", reset),
-           ("start", useq_start), ("vdd_tie", one)] ++
+           ("start", useq_start)] ++
           (List.range 3).map (fun i => (s!"seq_id_{i}", seq_id[i]!)) ++
           -- rs1_val: unused for ECALL (tie to zero)
           (List.range 32).map (fun i => (s!"rs1_val_{i}", zero)) ++
@@ -1047,27 +1047,36 @@ def mkCsrNextValue
       if i == 7 then Gate.mkBUF mtip_in mip_next[i]!
       else Gate.mkBUF zero mip_next[i]!)
   -- Counter auto-increment
+  -- Counter auto-increment (pure inlined gates: replaces 4 KoggeStoneAdder32 instances)
   let mcycle_plus_1 := makeIndexedWires "mcycle_p1" 32
-  let mcycle_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_mcycle_adder"
-    portMap :=
-      (mcycle_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      ((List.range 32).map (fun i => (s!"b_{i}", if i == 0 then one else zero))) ++
-      [("cin", zero)] ++
-      (mcycle_plus_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
-  }
+  let mcycle_inc_carries := (List.range 31).map fun i => Wire.mk s!"mcyc_inc_c_{i}"
+  let mcycle_inc_gates : List Gate :=
+    if config.enableZicsr then
+      [Gate.mkNOT mcycle_reg[0]! mcycle_plus_1[0]!,
+       Gate.mkBUF mcycle_reg[0]! mcycle_inc_carries[0]!] ++
+      ((List.range 31).map (fun i =>
+        let prev_c := mcycle_inc_carries[i]!
+        let next_c := if i < 30 then mcycle_inc_carries[i+1]! else Wire.mk "mcyc_inc_c_last"
+        [Gate.mkXOR mcycle_reg[i+1]! prev_c mcycle_plus_1[i+1]!,
+         Gate.mkAND mcycle_reg[i+1]! prev_c next_c]
+      ) |>.flatten)
+    else
+      (List.range 32).map fun i => Gate.mkBUF zero mcycle_plus_1[i]!
+
   let mcycle_carry := Wire.mk "mcycle_carry"
   let mcycleh_plus_c := makeIndexedWires "mcycleh_pc" 32
-  let mcycleh_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_mcycleh_adder"
-    portMap :=
-      (mcycleh_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      ((List.range 32).map (fun i => (s!"b_{i}", zero))) ++
-      [("cin", mcycle_carry)] ++
-      (mcycleh_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
-  }
+  let mcycleh_inc_carries := (List.range 32).map fun i => Wire.mk s!"mcych_inc_c_{i}"
+  let mcycleh_inc_gates : List Gate :=
+    if config.enableZicsr then
+      (List.range 32).map (fun i =>
+        let in_c := if i == 0 then mcycle_carry else mcycleh_inc_carries[i-1]!
+        let out_c := mcycleh_inc_carries[i]!
+        [Gate.mkXOR mcycleh_reg[i]! in_c mcycleh_plus_c[i]!,
+         Gate.mkAND mcycleh_reg[i]! in_c out_c]
+      ) |>.flatten
+    else
+      (List.range 32).map fun i => Gate.mkBUF zero mcycleh_plus_c[i]!
+
   let mins_inc_0 := Wire.mk "mins_inc_0"
   let mins_inc_1 := Wire.mk "mins_inc_1"
   let mins_inc_gates :=
@@ -1076,31 +1085,49 @@ def mkCsrNextValue
        Gate.mkAND commit_valid_0 commit_valid_1 mins_inc_1]
     else []
   let minstret_plus_c := makeIndexedWires "minstret_pc" 32
-  let minstret_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_minstret_adder"
-    portMap :=
-      (minstret_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      ((List.range 32).map (fun i =>
-        (s!"b_{i}", if i == 0 then mins_inc_0 else if i == 1 then mins_inc_1 else zero))) ++
-      [("cin", zero)] ++
-      (minstret_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
-  }
+  let mins_c0 := Wire.mk "mins_c0"
+  let mins_c1 := Wire.mk "mins_c1_mid"
+  let mins_c1_xor := Wire.mk "mins_c1_xor"
+  let mins_c1_and1 := Wire.mk "mins_c1_and1"
+  let mins_c1_and2 := Wire.mk "mins_c1_and2"
+  let mins_inc_carries := (List.range 30).map fun i => Wire.mk s!"mins_inc_c_{i}"
+  let minstret_inc_gates : List Gate :=
+    if config.enableZicsr then
+      -- Bit 0: Half-adder with mins_inc_0
+      [Gate.mkXOR minstret_reg[0]! mins_inc_0 minstret_plus_c[0]!,
+       Gate.mkAND minstret_reg[0]! mins_inc_0 mins_c0,
+       -- Bit 1: Full-adder with mins_inc_1 and mins_c0
+       Gate.mkXOR minstret_reg[1]! mins_inc_1 mins_c1_xor,
+       Gate.mkXOR mins_c1_xor mins_c0 minstret_plus_c[1]!,
+       Gate.mkAND minstret_reg[1]! mins_inc_1 mins_c1_and1,
+       Gate.mkAND mins_c1_xor mins_c0 mins_c1_and2,
+       Gate.mkOR mins_c1_and1 mins_c1_and2 mins_c1] ++
+      -- Bits 2..31: Half-adder ripple
+      ((List.range 30).map (fun i =>
+        let in_c := if i == 0 then mins_c1 else mins_inc_carries[i-1]!
+        let out_c := mins_inc_carries[i]!
+        [Gate.mkXOR minstret_reg[i+2]! in_c minstret_plus_c[i+2]!,
+         Gate.mkAND minstret_reg[i+2]! in_c out_c]
+      ) |>.flatten)
+    else
+      (List.range 32).map fun i => Gate.mkBUF zero minstret_plus_c[i]!
+
   let minstret_carry := Wire.mk "minstret_carry"
   let minstreth_plus_c := makeIndexedWires "minstreth_pc" 32
-  let minstreth_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
-    instName := "u_minstreth_adder"
-    portMap :=
-      (minstreth_reg.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      ((List.range 32).map (fun i => (s!"b_{i}", zero))) ++
-      [("cin", minstret_carry)] ++
-      (minstreth_plus_c.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
-  }
-  let csr_counter_instances : List CircuitInstance :=
+  let minstreth_inc_carries := (List.range 32).map fun i => Wire.mk s!"minsh_inc_c_{i}"
+  let minstreth_inc_gates : List Gate :=
     if config.enableZicsr then
-      [mcycle_adder_inst, mcycleh_adder_inst, minstret_adder_inst, minstreth_adder_inst]
-    else []
+      (List.range 32).map (fun i =>
+        let in_c := if i == 0 then minstret_carry else minstreth_inc_carries[i-1]!
+        let out_c := minstreth_inc_carries[i]!
+        [Gate.mkXOR minstreth_reg[i]! in_c minstreth_plus_c[i]!,
+         Gate.mkAND minstreth_reg[i]! in_c out_c]
+      ) |>.flatten
+    else
+      (List.range 32).map fun i => Gate.mkBUF zero minstreth_plus_c[i]!
+
+  let csr_counter_instances : List CircuitInstance := []
+
   -- Carry computation
   let mcycle_carry_tmp := (List.range 31).map (fun i => Wire.mk s!"mcyc_ct_e{i}")
   let mcycle_carry_gates :=
@@ -1129,7 +1156,9 @@ def mkCsrNextValue
     else [Gate.mkBUF zero minstret_carry]
   let counter_next_gates :=
     if config.enableZicsr then
-      mins_inc_gates ++ mcycle_carry_gates ++ minstret_carry_gates ++
+      mins_inc_gates ++ mcycle_inc_gates ++ mcycleh_inc_gates ++
+      minstret_inc_gates ++ minstreth_inc_gates ++
+      mcycle_carry_gates ++ minstret_carry_gates ++
       (List.range 32).map (fun i =>
         Gate.mkMUX mcycle_plus_1[i]! csr_write_val[i]! csr_we_mcycle mcycle_next[i]!) ++
       (List.range 32).map (fun i =>
@@ -1435,7 +1464,7 @@ def mkMicrocodeSerializePath
       instName := "u_microcode_seq"
       portMap :=
         [("clock", clock), ("reset", reset),
-         ("start", fence_i_start), ("vdd_tie", one)] ++
+         ("start", fence_i_start)] ++
         (List.range 3).map (fun i => (s!"seq_id_{i}", seq_id[i]!)) ++
         -- rs1_val: fwd_src1_data for register CSR, zero-extended zimm for immediate CSR
         (List.range 32).map (fun i => (s!"rs1_val_{i}", useq_rs1_muxed[i]!)) ++
@@ -1671,6 +1700,7 @@ def mkAtomicUnit
 
   -- === Read responses and SC execute ===
   let resp_x := Wire.mk "atom_resp_x"
+  let resp_busy := Wire.mk "atom_resp_busy"
   let resp_live := Wire.mk "atom_resp_live"
   let lr_resp := Wire.mk "atom_lr_resp"
   let amo_resp := Wire.mk "atom_amo_resp"
@@ -1678,11 +1708,16 @@ def mkAtomicUnit
     Gate.mkAND dmem_resp_valid dmem_load_pending resp_x,
     -- Only the atomic op currently in flight may consume a DMEM response; the
     -- registered selector bits outlive it until the next memory dispatch.
-    Gate.mkAND resp_x (Wire.mk "atom_busy") resp_live,
+    -- Responses arriving during a pipeline flush are for squashed operations.
+    Gate.mkAND resp_x (Wire.mk "atom_busy") resp_busy,
+    Gate.mkAND resp_busy not_flush resp_live,
     Gate.mkAND resp_live lr_sel lr_resp,
     Gate.mkAND resp_live amo_sel amo_resp]
   let sc_exec := Wire.mk "atom_sc_exec"
-  let sc_exec_gate := Gate.mkAND mem_valid_r sc_sel sc_exec
+  let sc_exec_t := Wire.mk "atom_sc_exec_t"
+  let sc_exec_gates := [
+    Gate.mkAND mem_valid_r sc_sel sc_exec_t,
+    Gate.mkAND sc_exec_t not_flush sc_exec]
 
   -- === Reservation registers ===
   let reservation_valid := Wire.mk "atom_res_valid"
@@ -1929,7 +1964,7 @@ def mkAtomicUnit
     Gate.mkAND disp_ok_pre atom_load_ok atomic_disp_ok]
   let gates :=
     code_gates ++ pipe_en_gates ++ code_reg_gates ++ sel_gates ++ resp_gates ++
-    [sc_exec_gate] ++ res_inval_gates ++ res_set_gates ++ res_addr_gates ++
+    sc_exec_gates ++ res_inval_gates ++ res_set_gates ++ res_addr_gates ++
     [sc_ok_gate, sc_result_gate] ++
     bitwise_gates ++ cmp_operand_gates ++ minmax_gates ++ l0_gates ++ l1_gates ++ l2_gates ++ l3_gates ++
     aw_set_gates ++ aw_data_sel_gates ++ aw_addr_next_gates ++ aw_data_next_gates ++
@@ -1950,5 +1985,70 @@ def mkAtomicUnit
     awData := aw_data
     atomicBusy := atomic_busy
     atomicDispatchOk := atomic_disp_ok }
+
+/-- Generate combinational increment-by-4 gates for 32-bit PC.
+    Avoids instantiating a full 32-bit KoggeStone adder with 31 bits tied to 0. -/
+def mkPCPlus4Gates (pfx : String) (pc : List Wire) (pc_p4 : List Wire) : List Gate :=
+  let b0 := Gate.mkBUF (pc[0]!) (pc_p4[0]!)
+  let b1 := Gate.mkBUF (pc[1]!) (pc_p4[1]!)
+  let n2 := Gate.mkNOT (pc[2]!) (pc_p4[2]!)
+  let rec makeChain (i : Nat) (c_prev : Wire) (acc : List Gate) : List Gate :=
+    if i >= 32 then acc
+    else
+      let sum_gate := Gate.mkXOR (pc[i]!) c_prev (pc_p4[i]!)
+      if i == 31 then
+        acc ++ [sum_gate]
+      else
+        let c_next := Wire.mk s!"{pfx}_c{i}"
+        let carry_gate := Gate.mkAND (pc[i]!) c_prev c_next
+        makeChain (i + 1) c_next (acc ++ [sum_gate, carry_gate])
+  [b0, b1, n2] ++ makeChain 3 (pc[2]!) []
+
+/-- Emit flat gates for a 1-entry flow queue (skid buffer).
+    Eliminates submodule instances and tied-to-zero LINT-32 warnings on unused data bits. -/
+def mkQueue1FlowGates
+    (pfx : String) (width : Nat)
+    (enq_data : List Wire) (enq_valid : Wire) (enq_ready : Wire)
+    (deq_data : List Wire) (deq_valid : Wire) (deq_ready : Wire)
+    (clock : Wire) (reset : Wire) : List Gate :=
+  let valid := Wire.mk s!"{pfx}_v"
+  let valid_next := Wire.mk s!"{pfx}_vnx"
+  let data_reg := List.range width |>.map (fun i => Wire.mk s!"{pfx}_dreg_{i}")
+  let data_next := List.range width |>.map (fun i => Wire.mk s!"{pfx}_dnx_{i}")
+
+  let enq_fire := Wire.mk s!"{pfx}_efire"
+  let deq_fire := Wire.mk s!"{pfx}_dfire"
+  let not_valid := Wire.mk s!"{pfx}_nv"
+  let valid_hold := Wire.mk s!"{pfx}_vhold"
+  let not_deq_fire := Wire.mk s!"{pfx}_ndfire"
+  let bypass_consumed := Wire.mk s!"{pfx}_bp_cons"
+  let bypass_tmp := Wire.mk s!"{pfx}_bp_tmp"
+  let not_bypass_consumed := Wire.mk s!"{pfx}_nbp_cons"
+  let actual_enq := Wire.mk s!"{pfx}_act_enq"
+
+  let ctrl_gates := [
+    Gate.mkNOT valid not_valid,
+    Gate.mkAND valid deq_ready deq_fire,
+    Gate.mkOR not_valid deq_fire enq_ready,
+    Gate.mkAND enq_valid enq_ready enq_fire,
+    Gate.mkOR valid enq_valid deq_valid,
+    Gate.mkAND not_valid enq_valid bypass_tmp,
+    Gate.mkAND bypass_tmp deq_ready bypass_consumed,
+    Gate.mkNOT bypass_consumed not_bypass_consumed,
+    Gate.mkAND enq_fire not_bypass_consumed actual_enq,
+    Gate.mkNOT deq_fire not_deq_fire,
+    Gate.mkAND valid not_deq_fire valid_hold,
+    Gate.mkOR actual_enq valid_hold valid_next,
+    Gate.mkDFF valid_next clock reset valid
+  ]
+
+  let data_mux_gates := (List.range width).map (fun i =>
+    Gate.mkMUX (data_reg[i]!) (enq_data[i]!) actual_enq (data_next[i]!))
+  let dff_gates := (List.range width).map (fun i =>
+    Gate.mkDFF (data_next[i]!) clock reset (data_reg[i]!))
+  let bypass_gates := (List.range width).map (fun i =>
+    Gate.mkMUX (enq_data[i]!) (data_reg[i]!) valid (deq_data[i]!))
+
+  ctrl_gates ++ data_mux_gates ++ dff_gates ++ bypass_gates
 
 end Shoumei.RISCV.CPU

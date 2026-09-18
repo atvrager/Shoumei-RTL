@@ -297,9 +297,28 @@ def mkFPAdderD_Stage2_Align : Circuit :=
      Gate.mkAND nbit (s2_neg_carry[i]!) (s2_neg_carry[i + 1]!)]
   )
 
+  let exp_diff_zeros := (List.range 5).map fun i =>
+    (Gate.mkNOT (exp_diff[6 + i]!) (Wire.mk s!"s2_ed_not_{6 + i}"),
+     Gate.mkAND (exp_diff[6 + i]!) (Wire.mk s!"s2_ed_not_{6 + i}") (Wire.mk s!"s2_ed_z_{6 + i}"))
+  let exp_diff_zero_gates := exp_diff_zeros.flatMap fun (g1, g2) => [g1, g2]
+  let ed_z_or01 := Wire.mk "s2_ed_z_or01"
+  let ed_z_or23 := Wire.mk "s2_ed_z_or23"
+  let ed_z_or0123 := Wire.mk "s2_ed_z_or0123"
+  let ed_z_all := Wire.mk "s2_ed_z_all"
+  let ed_tree_gates := [
+    Gate.mkOR (Wire.mk "s2_ed_z_6") (Wire.mk "s2_ed_z_7") ed_z_or01,
+    Gate.mkOR (Wire.mk "s2_ed_z_8") (Wire.mk "s2_ed_z_9") ed_z_or23,
+    Gate.mkOR ed_z_or01 ed_z_or23 ed_z_or0123,
+    Gate.mkOR ed_z_or0123 (Wire.mk "s2_ed_z_10") ed_z_all
+  ]
+
   let s2_shift_amt := makeIndexedWires "s2_sh_amt" 6
-  let s2_sh_mux_gates := (List.range 6).map fun i =>
-    Gate.mkMUX (exp_diff[i]!) (s2_neg_diff[i]!) swap (s2_shift_amt[i]!)
+  let s2_sh_amt_pre0 := Wire.mk "s2_sh_amt_pre0"
+  let s2_sh_mux_gates :=
+    [Gate.mkMUX (exp_diff[0]!) (s2_neg_diff[0]!) swap s2_sh_amt_pre0,
+     Gate.mkOR s2_sh_amt_pre0 ed_z_all (s2_shift_amt[0]!)] ++
+    (List.range 5).map fun i =>
+      Gate.mkMUX (exp_diff[i + 1]!) (s2_neg_diff[i + 1]!) swap (s2_shift_amt[i + 1]!)
 
   let s2_small_mant56 := [zero, zero, zero] ++ s2_small_mant
   let s2_shift_gates := mkBarrelShiftRight56WithSticky s2_small_mant56 s2_shift_amt aligned_small shift_sticky zero "s2_align"
@@ -317,7 +336,7 @@ def mkFPAdderD_Stage2_Align : Circuit :=
 
   let all_gates :=
     [one_gate] ++ s2_sign_swap_gates ++ s2_exp_swap_gates ++ s2_mant_swap_gates ++
-    s2_neg_gates ++ s2_sh_mux_gates ++ s2_shift_gates ++
+    s2_neg_gates ++ exp_diff_zero_gates ++ ed_tree_gates ++ s2_sh_mux_gates ++ s2_shift_gates ++
     [s2_eff_sub_gate, s2_inf_sub_inf_gate, s2_inf_sign_gate] ++ big_mant_gates
 
   { name := "FPAdderD_Stage2_Align"
@@ -621,12 +640,20 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
     [Gate.mkMUX (reg_res[i]!) inf_bit is_inf_res (res_m0[i]!),
      Gate.mkMUX (res_m0[i]!) nan_bit is_nan_res (result[i]!)]
 
+  let not_rm1 := Wire.mk "s4_not_rm1"
+  let not_rm2 := Wire.mk "s4_not_rm2"
+  let rm_xor12 := Wire.mk "s4_rm_xor12"
+  let not_rm_xor12 := Wire.mk "s4_not_rm_xor12"
   let not_special := Wire.mk "s4_not_special"
   let exc_gates := [
     Gate.mkBUF is_nan_res (exc[4]!),
-    Gate.mkBUF zero (exc[3]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[1]!),
+    Gate.mkNOT (rm[1]!) not_rm1,
+    Gate.mkAND (rm[1]!) not_rm1 (exc[1]!),
+    Gate.mkNOT (rm[2]!) not_rm2,
+    Gate.mkAND (rm[2]!) not_rm2 (exc[2]!),
+    Gate.mkXOR (rm[1]!) (rm[2]!) rm_xor12,
+    Gate.mkNOT rm_xor12 not_rm_xor12,
+    Gate.mkAND rm_xor12 not_rm_xor12 (exc[3]!),
     Gate.mkOR is_nan_res is_inf_res (Wire.mk "s4_is_sp"),
     Gate.mkNOT (Wire.mk "s4_is_sp") not_special,
     Gate.mkAND reg_nx not_special (exc[0]!)

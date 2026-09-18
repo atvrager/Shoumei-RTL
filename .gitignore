@@ -65,7 +65,7 @@ verification/logs/
 verification/compositional-certs.txt
 
 # Generated testbenches (produced by lake exe generate_all)
-testbench/generated/
+testbench/generated/**
 
 # Test ELF binaries
 testbench/tests/*.elf

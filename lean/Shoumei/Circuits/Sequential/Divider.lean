@@ -1028,14 +1028,19 @@ def mkDivider64 : Circuit :=
 
   -- Word input conditioning and sign detection
   let is_signed := Wire.mk "is_signed"
-  let is_word_in := op_in[3]!
+  let op2_not := Wire.mk "op2_not"
+  let op2_zero := Wire.mk "op2_zero"
+  let is_word_in := Wire.mk "is_word_in_eff"
   let a_sext_bit := Wire.mk "a_sext_bit"
   let b_sext_bit := Wire.mk "b_sext_bit"
 
   let cond_ctrl_gates := [
     Gate.mkNOT (op_in[0]!) is_signed,
     Gate.mkAND (a_in[31]!) is_signed a_sext_bit,
-    Gate.mkAND (b_in[31]!) is_signed b_sext_bit
+    Gate.mkAND (b_in[31]!) is_signed b_sext_bit,
+    Gate.mkNOT (op_in[2]!) op2_not,
+    Gate.mkAND (op_in[2]!) op2_not op2_zero,
+    Gate.mkOR (op_in[3]!) op2_zero is_word_in
   ]
 
   let a_eff := (List.range 32 |>.map (fun i => a_in[i]!)) ++

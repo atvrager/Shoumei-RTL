@@ -17,11 +17,11 @@ theorem fetchStage_instance_count : mkFetchStage.instances.length = 5 := by
   native_decide
 
 /-- FetchStage gate count -/
-theorem fetchStage_gate_count : mkFetchStage.gates.length = 518 := by
+theorem fetchStage_gate_count : mkFetchStage.gates.length = 524 := by
   native_decide
 
 /-- FetchStage input count -/
-theorem fetchStage_input_count : mkFetchStage.inputs.length = 103 := by
+theorem fetchStage_input_count : mkFetchStage.inputs.length = 101 := by
   native_decide
 
 /-- FetchStage output count -/

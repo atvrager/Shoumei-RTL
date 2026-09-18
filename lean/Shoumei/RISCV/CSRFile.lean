@@ -27,7 +27,6 @@ open Shoumei.RISCV.CPU
 def mkCSRFile (config : CPUConfig) : Circuit :=
   let enableTraps := config.microcodesTraps
   let enableF := config.enableF
-  let xlen := config.xlen
   let opcodeWidth := config.opcodeWidth
   let oi := config.opcodeIndex
   let csrDataWidth := if config.xlen == 64 || config.enableD then 64 else 32
@@ -40,6 +39,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
 
   let csr_addr := (List.range 12).map (fun i => Wire.mk s!"csr_addr_{i}")
   let csr_optype := (List.range opcodeWidth).map (fun i => Wire.mk s!"csr_optype_{i}")
+  let xlen := config.xlen
   let csr_rs1cap := (List.range xlen).map (fun i => Wire.mk s!"csr_rs1cap_{i}")
   let csr_zimm := (List.range 5).map (fun i => Wire.mk s!"csr_zimm_{i}")
   let csr_phys := (List.range 6).map (fun i => Wire.mk s!"csr_phys_{i}")
@@ -59,8 +59,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
 
   let fp_valid_out := Wire.mk "fp_valid_out"
   let fp_exceptions := (List.range 5).map (fun i => Wire.mk s!"fp_exceptions_{i}")
-
-  let csr_read_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_read_data_{i}")
+  let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_read_data_{i}")
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tag_{i}")
   let csr_cdb_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_cdb_data_{i}")
@@ -115,8 +114,15 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
        mkReg32Inst "mepc" mepc_next mepc_reg,
        mkReg32Inst "mcause" mcause_next mcause_reg,
        mkReg32Inst "mtval" mtval_next mtval_reg,
-       mkReg32Inst "mip" mip_next mip_reg]
+       { moduleName := "DFlipFlop", instName := "u_mip_reg_7",
+         portMap := [("d", mip_next[7]!), ("q", mip_reg[7]!),
+                     ("clock", clock), ("reset", reset)] }]
     else []
+
+  let mip_gates : List Gate :=
+    (List.range 32).filterMap (fun i =>
+      if i == 7 then none
+      else some (Gate.mkBUF zero mip_reg[i]!))
 
   -- Effective address multiplexing
   let eff_csr_addr := if enableTraps then
@@ -193,25 +199,47 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
        we_mstat, we_mie_w, we_mtvec, we_mepc, we_mcause, we_mtval,
        ([] : List Gate))
 
+  -- Absorb unused upper bits of csr_rs1cap when xlen > 32
+  let (rs1cap_extra_gates, rs1cap_extra_zero) :=
+    if xlen > 32 then
+      let zeros := (List.range (xlen - 32)).map fun i =>
+        let idx := 32 + i
+        let not_w := Wire.mk s!"not_rs1cap_{idx}"
+        let z_w := Wire.mk s!"z_rs1cap_{idx}"
+        ([Gate.mkNOT (csr_rs1cap[idx]!) not_w,
+          Gate.mkAND (csr_rs1cap[idx]!) not_w z_w], z_w)
+      let gts := zeros.flatMap (·.1)
+      let zwires := zeros.map (·.2)
+      let (orGates, finalZero) := zwires.tail.foldl (fun (accGates, curWire) nextWire =>
+        let orOut := Wire.mk (curWire.name ++ "_or")
+        (accGates ++ [Gate.mkOR curWire nextWire orOut], orOut)
+      ) ([], zwires.head!)
+      (gts ++ orGates, finalZero)
+    else
+      ([], zero)
+
   -- CDB injection gates
   let csr_rd_nonzero := Wire.mk "csr_rd_nonzero"
   let csr_rd_nz_tmp := (List.range 4).map (fun i => Wire.mk s!"csr_rdnz_e{i}")
   let cdb_inject_gates :=
     if config.enableZicsr then
+      rs1cap_extra_gates ++
       [Gate.mkOR csr_rd[0]! csr_rd[1]! csr_rd_nz_tmp[0]!,
        Gate.mkOR csr_rd_nz_tmp[0]! csr_rd[2]! csr_rd_nz_tmp[1]!,
        Gate.mkOR csr_rd_nz_tmp[1]! csr_rd[3]! csr_rd_nz_tmp[2]!,
-       Gate.mkOR csr_rd_nz_tmp[2]! csr_rd[4]! csr_rd_nonzero,
+       Gate.mkOR csr_rd_nz_tmp[2]! csr_rd[4]! csr_rd_nz_tmp[3]!,
+       Gate.mkOR csr_rd_nz_tmp[3]! rs1cap_extra_zero csr_rd_nonzero,
        Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
       (List.range 6).map (fun i => Gate.mkBUF csr_phys[i]! csr_cdb_tag[i]!) ++
       (List.range csrDataWidth).map (fun i => Gate.mkBUF internal_read_data[i]! csr_cdb_data[i]!) ++
-      (List.range csrDataWidth).map (fun i => Gate.mkBUF internal_read_data[i]! csr_read_data[i]!)
+      (List.range 32).map (fun i => Gate.mkBUF internal_read_data[i]! csr_read_data[i]!)
     else
+      rs1cap_extra_gates ++
       [Gate.mkBUF zero csr_rd_nonzero,
        Gate.mkBUF zero csr_cdb_inject] ++
       (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
       (List.range csrDataWidth).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!) ++
-      (List.range csrDataWidth).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
+      (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
 
   -- Trap sequencer merge
   let (merged_csr_write_val, merged_csr_we_mstatus, merged_csr_we_mepc, merged_csr_we_mcause, trap_we_merge_gates) :=
@@ -283,7 +311,8 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     eff_csr_addr_gates ++ fp_exceptions_stub_gates ++ fflags_frm_gates ++
     csr_addr_decode_gates ++ mstatus_force_gates ++ csr_read_mux_all_gates ++
     csr_op_decode_gates ++ csr_write_logic_gates ++ cdb_inject_gates ++
-    trap_we_merge_gates ++ csr_next_value_gates ++ irq_gates ++ fp_out_gates
+    trap_we_merge_gates ++ csr_next_value_gates ++ irq_gates ++ fp_out_gates ++
+    mip_gates
 
   let all_instances :=
     csr_reg_instances ++ fflags_frm_dff_instances ++ csr_counter_instances
@@ -298,7 +327,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     sg "csr_zimm" 5 csr_zimm,
     sg "csr_phys" 6 csr_phys,
     sg "csr_rd" 5 csr_rd,
-    sg "csr_read_data" csrDataWidth csr_read_data,
+    sg "csr_read_data" 32 csr_read_data,
     sg "csr_cdb_tag" 6 csr_cdb_tag,
     sg "csr_cdb_data" csrDataWidth csr_cdb_data,
     sg "frm" 3 frm,

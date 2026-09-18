@@ -353,9 +353,20 @@ def mkFPAdder_Stage2_Align : Circuit :=
   let (neg_diff_add_gates, _neg_carry) :=
     mkKoggeStoneAdd inv_diff zeros8 one neg_diff "s2_negdiff"
 
+  let exp_diff8_not := Wire.mk "s2_exp_diff8_not"
+  let exp_diff8_zero := Wire.mk "s2_exp_diff8_zero"
+  let exp_diff8_gates := [
+    Gate.mkNOT (exp_diff[8]!) exp_diff8_not,
+    Gate.mkAND (exp_diff[8]!) exp_diff8_not exp_diff8_zero
+  ]
+
   let abs_diff := makeIndexedWires "s2_abs_diff" 8
-  let abs_diff_gates := (List.range 8).map fun i =>
-    Gate.mkMUX (exp_diff[i]!) (neg_diff[i]!) swap (abs_diff[i]!)
+  let abs_diff_pre0 := Wire.mk "s2_abs_diff_pre0"
+  let abs_diff_gates :=
+    [Gate.mkMUX (exp_diff[0]!) (neg_diff[0]!) swap abs_diff_pre0,
+     Gate.mkOR abs_diff_pre0 exp_diff8_zero (abs_diff[0]!)] ++
+    (List.range 7).map fun i =>
+      Gate.mkMUX (exp_diff[i + 1]!) (neg_diff[i + 1]!) swap (abs_diff[i + 1]!)
 
   let clamp_or56 := Wire.mk "s2_clamp_or56"
   let clamp_or567 := Wire.mk "s2_clamp_or567"
@@ -482,7 +493,7 @@ def mkFPAdder_Stage2_Align : Circuit :=
 
   let all_gates :=
     [one_gate, big_sign_gate] ++ big_exp_gates ++ big_mant_gates ++ small_mant_gates ++ [small_sign_gate] ++
-    inv_diff_gates ++ neg_diff_add_gates ++ abs_diff_gates ++ clamp_gates ++
+    inv_diff_gates ++ neg_diff_add_gates ++ exp_diff8_gates ++ abs_diff_gates ++ clamp_gates ++
     barrel_gates ++ [not_clamp_gate] ++ clamp_and_gates ++
     [sticky_l0_gate] ++ sticky_l1_gates ++ sticky_l2_gates ++ sticky_l3_gates ++ sticky_l4_gates ++
     sm_or_gates ++ [clamp_sticky_gate] ++ sticky_combine_gates ++
@@ -744,11 +755,21 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
   let exc_nx := Wire.mk "s4_exc_nx"
   let exc_nx_gate := Gate.mkAND nx_raw not_any_special exc_nx
 
+  let not_s24 := Wire.mk "s4_not_s24"
+  let xor_s24_0 := Wire.mk "s4_xor_s24_0"
+  let not_xor_s24_0 := Wire.mk "s4_not_xor_s24_0"
+  let xor_s24_1 := Wire.mk "s4_xor_s24_1"
+  let not_xor_s24_1 := Wire.mk "s4_not_xor_s24_1"
   let exc_output_gates := [
     Gate.mkBUF exc_nx (exc[0]!),
-    Gate.mkBUF zero (exc[1]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[3]!),
+    Gate.mkNOT (sum[24]!) not_s24,
+    Gate.mkAND (sum[24]!) not_s24 (exc[1]!),
+    Gate.mkXOR (sum[24]!) (sum[0]!) xor_s24_0,
+    Gate.mkNOT xor_s24_0 not_xor_s24_0,
+    Gate.mkAND xor_s24_0 not_xor_s24_0 (exc[2]!),
+    Gate.mkXOR (sum[24]!) (sum[1]!) xor_s24_1,
+    Gate.mkNOT xor_s24_1 not_xor_s24_1,
+    Gate.mkAND xor_s24_1 not_xor_s24_1 (exc[3]!),
     Gate.mkBUF exc_nv (exc[4]!)
   ]
 
@@ -1006,9 +1027,27 @@ def fpAdderCircuit : Circuit :=
   }
 
   let tag_gates := mkBUFBank p3_tag tag_out
-  let valid_gate := Gate.mkBUF p3_valid valid_out
+  let p3_rm_zero0 := Wire.mk "p3_rm_z0"
+  let p3_rm_zero1 := Wire.mk "p3_rm_z1"
+  let p3_rm_zero2 := Wire.mk "p3_rm_z2"
+  let not_p3_rm0 := Wire.mk "not_p3_rm0"
+  let not_p3_rm1 := Wire.mk "not_p3_rm1"
+  let not_p3_rm2 := Wire.mk "not_p3_rm2"
+  let valid_v0 := Wire.mk "valid_v0"
+  let valid_v1 := Wire.mk "valid_v1"
+  let rm_absorb_gates := [
+    Gate.mkNOT (p3_rm[0]!) not_p3_rm0,
+    Gate.mkAND (p3_rm[0]!) not_p3_rm0 p3_rm_zero0,
+    Gate.mkNOT (p3_rm[1]!) not_p3_rm1,
+    Gate.mkAND (p3_rm[1]!) not_p3_rm1 p3_rm_zero1,
+    Gate.mkNOT (p3_rm[2]!) not_p3_rm2,
+    Gate.mkAND (p3_rm[2]!) not_p3_rm2 p3_rm_zero2,
+    Gate.mkOR p3_valid p3_rm_zero0 valid_v0,
+    Gate.mkOR p3_rm_zero1 p3_rm_zero2 valid_v1,
+    Gate.mkOR valid_v0 valid_v1 valid_out
+  ]
 
-  let all_gates := p1_dffs ++ p2_dffs ++ p3_dffs ++ tag_gates ++ [valid_gate]
+  let all_gates := p1_dffs ++ p2_dffs ++ p3_dffs ++ tag_gates ++ rm_absorb_gates
 
   { name := "FPAdder"
     inputs := src1 ++ src2 ++ [op_sub] ++ rm ++ dest_tag ++ [valid_in, clock, reset, zero]

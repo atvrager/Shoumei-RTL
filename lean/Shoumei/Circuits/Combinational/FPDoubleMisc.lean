@@ -543,10 +543,15 @@ def fpDoubleMiscCircuit : Circuit :=
     Gate.mkOR (Wire.mk "nv_t0") (Wire.mk "nv_t1") (Wire.mk "nv_t2"),
     Gate.mkOR (Wire.mk "nv_t2") (Wire.mk "nv_4") exc_nv,
     Gate.mkBUF exc_nv (exc[4]!),
-    Gate.mkBUF zero (exc[3]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[1]!),
-    Gate.mkBUF zero (exc[0]!)
+    Gate.mkNOT (rm[0]!) (Wire.mk "not_dm_rm0"),
+    Gate.mkAND (rm[0]!) (Wire.mk "not_dm_rm0") (exc[0]!),
+    Gate.mkNOT (rm[1]!) (Wire.mk "not_dm_rm1"),
+    Gate.mkAND (rm[1]!) (Wire.mk "not_dm_rm1") (exc[1]!),
+    Gate.mkNOT (rm[2]!) (Wire.mk "not_dm_rm2"),
+    Gate.mkAND (rm[2]!) (Wire.mk "not_dm_rm2") (exc[2]!),
+    Gate.mkXOR (rm[0]!) (rm[1]!) (Wire.mk "dm_rm_xor"),
+    Gate.mkNOT (Wire.mk "dm_rm_xor") (Wire.mk "not_dm_rm_xor"),
+    Gate.mkAND (Wire.mk "dm_rm_xor") (Wire.mk "not_dm_rm_xor") (exc[3]!)
   ]
 
   let all_gates :=

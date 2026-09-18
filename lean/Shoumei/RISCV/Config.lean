@@ -45,9 +45,9 @@ structure CPUConfig where
   /-- Register width (32 for RV32, 64 for RV64) -/
   xlen : Nat := 64
   /-- Number of instructions fetched, decoded, renamed, and dispatched per cycle -/
-  dispatchWidth : Nat := 1
+  dispatchWidth : Nat := 2
   /-- ROB commit width (number of instructions retired per cycle) -/
-  commitWidth : Nat := 1
+  commitWidth : Nat := 2
   /-- Number of harts (hardware threads / cores) - FUTURE -/
   numHarts : Nat := 1
   /-- Entry point address for program execution (typically 0x80000000 for bare-metal RISC-V) -/

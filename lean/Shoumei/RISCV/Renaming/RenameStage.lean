@@ -370,7 +370,6 @@ def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
   -- commit_hasPhysRd controls CRAT write only; retire_hasPhysRd controls free list enqueue
   let retire_hasPhysRd_0 := Wire.mk "retire_hasPhysRd"
   let retire_hasPhysRd_1 := Wire.mk "retire_hasPhysRd_1"
-  let rd_data4     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data4_{i}"
   let rd_tag5      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag5_{i}"
   let rd_data5     := (List.range dataWidth).map fun i => Wire.mk s!"rd_data5_{i}"
   let rd_tag6      := (List.range tagWidth).map  fun i => Wire.mk s!"rd_tag6_{i}"
@@ -646,8 +645,6 @@ def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
   -- On flush: restore from committed RAT instead.
   let srat_0_dump := (List.range 32).map fun i =>
     (List.range tagWidth).map fun j => Wire.mk s!"srat0_dump_{i}_{j}"
-  let srat_1_dump := (List.range 32).map fun i =>
-    (List.range tagWidth).map fun j => Wire.mk s!"srat1_dump_{i}_{j}"
 
   -- 5-to-32 decoder for rd_addr_0
   let dec0_an := (List.range archWidth).map fun k => Wire.mk s!"s0dec_an{k}"
@@ -747,9 +744,7 @@ def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
       (old_rd_raw_1.enum.map fun ⟨i,w⟩ => (s!"old_rd_data_{i}", w)) ++
       [("restore_en", one)] ++
       ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"restore_data_{i}_{j}", final_restore[i]![j]!)).flatten ++
-      ((List.range 32).map fun i => (List.range tagWidth).map fun j =>
-        (s!"dump_data_{i}_{j}", srat_1_dump[i]![j]!)).flatten
+        (s!"restore_data_{i}_{j}", final_restore[i]![j]!)).flatten
   }
 
   -- Gate freelist enqueue: only return old phys reg if instruction actually had one
@@ -861,10 +856,9 @@ def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
     (List.range tagWidth).map (fun i => Gate.mkBUF rs3_phys_1_rat[i]! rs3_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF rd_phys_1[i]!  rd_phys_out_1[i]!) ++
     (List.range tagWidth).map (fun i => Gate.mkBUF old_rd_bypassed_1[i]! old_rd_phys_1[i]!)
-  -- PRF read data pass-through: rd_data3 = rs3_data_0, rd_data4 = rs2_data_1
+  -- PRF read data pass-through: rd_data3 = rs3_data_0
   let prf_data_out_gates :=
-    (List.range dataWidth).map (fun i => Gate.mkBUF rs3_data_0[i]! rd_data3_0[i]!) ++
-    (List.range dataWidth).map (fun i => Gate.mkBUF rs2_data_1[i]! rd_data4[i]!)
+    (List.range dataWidth).map (fun i => Gate.mkBUF rs3_data_0[i]! rd_data3_0[i]!)
 
   -- === Assemble ===
   let all_inputs :=
@@ -884,7 +878,7 @@ def mkRenameStage (dataWidth : Nat := 32) : Circuit :=
 
   let all_outputs :=
     [rename_valid_0, stall_0] ++ rs1_phys_out_0 ++ rs2_phys_out_0 ++ rs3_phys_out_0 ++
-    rd_phys_out_0 ++ old_rd_phys_0 ++ rs1_data_0 ++ rs2_data_0 ++ rd_data3_0 ++ rd_data4 ++
+    rd_phys_out_0 ++ old_rd_phys_0 ++ rs1_data_0 ++ rs2_data_0 ++ rd_data3_0 ++
     [rename_valid_1, stall_1] ++ rs1_phys_out_1 ++ rs2_phys_out_1 ++ rs3_phys_out_1 ++
     rd_phys_out_1 ++ old_rd_phys_1 ++ rs1_data_1 ++ rs2_data_1 ++
     rd_data5 ++ rd_data6

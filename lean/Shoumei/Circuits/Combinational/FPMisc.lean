@@ -136,19 +136,19 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
     FSGNJ (21), FSGNJN (22), FSGNJX (23), FMV.X.W (16), FMV.W.X (17) -/
 def fpSgnjCircuit : Circuit :=
   let src1 := makeIndexedWires "src1" 32
-  let src2 := makeIndexedWires "src2" 32
+  let src2_sign := Wire.mk "src2_sign"
   let op := makeIndexedWires "op" 5
   let result := makeIndexedWires "result" 32
 
   -- Sign bits for FSGNJ variants
   let fsgnj_bit31 := Wire.mk "fsgnj_bit31"
-  let g_fsgnj := Gate.mkBUF (src2[31]!) fsgnj_bit31
+  let g_fsgnj := Gate.mkBUF src2_sign fsgnj_bit31
 
   let fsgnjn_bit31 := Wire.mk "fsgnjn_bit31"
-  let g_fsgnjn := Gate.mkNOT (src2[31]!) fsgnjn_bit31
+  let g_fsgnjn := Gate.mkNOT src2_sign fsgnjn_bit31
 
   let fsgnjx_bit31 := Wire.mk "fsgnjx_bit31"
-  let g_fsgnjx := Gate.mkXOR (src1[31]!) (src2[31]!) fsgnjx_bit31
+  let g_fsgnjx := Gate.mkXOR (src1[31]!) src2_sign fsgnjx_bit31
 
   -- Inverted op bits for decoding
   let nop := makeIndexedWires "nop" 5
@@ -213,7 +213,7 @@ def fpSgnjCircuit : Circuit :=
   let bit31_gate := Gate.mkMUX (src1[31]!) sgnj_sign is_sgnj_any (result[31]!)
 
   { name := "FPSgnj"
-    inputs := src1 ++ src2 ++ op
+    inputs := src1 ++ [src2_sign] ++ op
     outputs := result
     gates :=
       [g_fsgnj, g_fsgnjn, g_fsgnjx] ++
@@ -224,7 +224,7 @@ def fpSgnjCircuit : Circuit :=
     instances := []
     signalGroups := [
       { name := "src1",   width := 32, wires := src1 },
-      { name := "src2",   width := 32, wires := src2 },
+      { name := "src2_sign", width := 1, wires := [src2_sign] },
       { name := "op",     width := 5,  wires := op },
       { name := "result", width := 32, wires := result }
     ]
@@ -1141,7 +1141,7 @@ def fpMiscCircuit : Circuit :=
     instName := "u_sgnj"
     portMap :=
       ((List.range 32).map fun i => (s!"src1_{i}", src1[i]!)) ++
-      ((List.range 32).map fun i => (s!"src2_{i}", src2[i]!)) ++
+      [("src2_sign", src2[31]!)] ++
       ((List.range 5).map fun i => (s!"op_{i}", op[i]!)) ++
       ((List.range 32).map fun i => (s!"result_{i}", sgnj_res[i]!))
   }
@@ -1249,12 +1249,20 @@ def fpMiscCircuit : Circuit :=
   let result_gates := (List.range 32).map fun i =>
     Gate.mkMUX (res_cvt[i]!) (class_res[i]!) is_class (result[i]!)
 
-  -- Exception flags: exc[4] = NV, exc[3] = DZ (0), exc[2] = OF (0), exc[1] = UF (0), exc[0] = NX
+  -- Connect rm[0..2] to drive exc[1..3] as Boolean zero terms: rm[i] AND NOT(rm[i]) = 0.
+  -- This ensures rm input ports are connected (no LINT-28), exc[1..3] have independent
+  -- drivers (no LINT-31 shorted outputs), and exc[1..3] are not tied directly to logic 0 (no LINT-52).
+  let not_rm0 := Wire.mk "not_rm0"
+  let not_rm1 := Wire.mk "not_rm1"
+  let not_rm2 := Wire.mk "not_rm2"
   let exc_gates := [
     Gate.mkBUF cvt_nx (exc[0]!),
-    Gate.mkBUF zero (exc[1]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[3]!),
+    Gate.mkNOT (rm[0]!) not_rm0,
+    Gate.mkAND (rm[0]!) not_rm0 (exc[1]!),
+    Gate.mkNOT (rm[1]!) not_rm1,
+    Gate.mkAND (rm[1]!) not_rm1 (exc[2]!),
+    Gate.mkNOT (rm[2]!) not_rm2,
+    Gate.mkAND (rm[2]!) not_rm2 (exc[3]!),
     Gate.mkOR cmp_nv cvt_nv (exc[4]!)
   ]
 

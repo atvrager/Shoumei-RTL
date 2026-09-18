@@ -166,8 +166,8 @@ def mkFetchStage : Circuit :=
   let stall := Wire.mk "stall"
   let branch_valid := Wire.mk "branch_valid"
   let branch_target := makeW "branch_target" 32
-  let const_0 := Wire.mk "const_0"
-  let const_1 := Wire.mk "const_1"
+  let const_0 := Wire.mk "zero"
+  let const_1 := Wire.mk "one"
 
   -- Dual instructions from I-cache
   let instr_0 := makeW "instr_0" 32
@@ -216,19 +216,21 @@ def mkFetchStage : Circuit :=
   let predict_imm_0  := makeW "predict_imm_0" 32
   let predict_target_0 := makeW "predict_target_0" 32
   let pt_0 := Wire.mk "pt_0"
-  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0
-  let btype_gates_0 := [Gate.mkNOT instr_0[4]! (Wire.mk "not0_op4"),
+  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0, bit[1]=1, bit[0]=1
+  let btype_gates_0 := [Gate.mkAND instr_0[1]! instr_0[0]! (Wire.mk "bt0_10"),
+                        Gate.mkNOT instr_0[4]! (Wire.mk "not0_op4"),
                         Gate.mkNOT instr_0[3]! (Wire.mk "not0_op3"),
                         Gate.mkNOT instr_0[2]! (Wire.mk "not0_op2"),
                         Gate.mkAND instr_0[6]! instr_0[5]! (Wire.mk "bt0_65"),
                         Gate.mkAND (Wire.mk "not0_op4") (Wire.mk "not0_op3") (Wire.mk "bt0_43"),
                         Gate.mkAND (Wire.mk "bt0_65") (Wire.mk "bt0_43") (Wire.mk "bt0_6543"),
-                        Gate.mkAND (Wire.mk "bt0_6543") (Wire.mk "not0_op2") is_btype_0]
-  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1
-  -- (must check bit[5] to distinguish from R4-type FP: FMADD=1000011, FNMADD=1001111 etc.)
+                        Gate.mkAND (Wire.mk "bt0_6543") (Wire.mk "bt0_10") (Wire.mk "bt0_654310"),
+                        Gate.mkAND (Wire.mk "bt0_654310") (Wire.mk "not0_op2") is_btype_0]
+  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1, bit[1]=1, bit[0]=1
   let jal_gates_0   := [Gate.mkAND instr_0[6]! instr_0[5]! (Wire.mk "jal0_65"),
-                         Gate.mkAND instr_0[3]! instr_0[2]! (Wire.mk "jal0_32"),
-                         Gate.mkAND (Wire.mk "jal0_65") (Wire.mk "jal0_32") is_jal_0]
+                        Gate.mkAND instr_0[3]! instr_0[2]! (Wire.mk "jal0_32"),
+                        Gate.mkAND (Wire.mk "jal0_65") (Wire.mk "jal0_32") (Wire.mk "jal0_6532"),
+                        Gate.mkAND (Wire.mk "jal0_6532") (Wire.mk "bt0_10") is_jal_0]
   let b_ext_0 : List Gate :=
     [Gate.mkBUF const_0 b_imm_0[0]!] ++
     (List.range 4).map  (fun i => Gate.mkBUF instr_0[8+i]!  b_imm_0[1+i]!) ++
@@ -243,8 +245,8 @@ def mkFetchStage : Circuit :=
     (List.range 12).map (fun i => Gate.mkBUF instr_0[31]!   j_imm_0[20+i]!)
   let pred_imm_0_gates : List Gate :=
     (List.range 32).map (fun i => Gate.mkMUX b_imm_0[i]! j_imm_0[i]! is_jal_0 predict_imm_0[i]!)
-  -- BTFN disabled for now: hardwire pt_0 = 0 (always predict not-taken for B-type)
-  let btfn_0_gate := Gate.mkBUF const_0 pt_0
+  -- BTFN: predict taken for backward branches (offset sign bit = instr[31] = 1)
+  let btfn_0_gate := Gate.mkAND is_btype_0 instr_0[31]! pt_0
   let pred_gates_0 := btype_gates_0 ++ jal_gates_0 ++ b_ext_0 ++ j_ext_0 ++ pred_imm_0_gates ++ [btfn_0_gate]
   let predict_target_0_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -262,18 +264,21 @@ def mkFetchStage : Circuit :=
   let predict_imm_1  := makeW "predict_imm_1" 32
   let predict_target_1 := makeW "predict_target_1" 32
   let pt_1 := Wire.mk "pt_1"
-  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0
-  let btype_gates_1 := [Gate.mkNOT instr_1[4]! (Wire.mk "not1_op4"),
+  -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0, bit[1]=1, bit[0]=1
+  let btype_gates_1 := [Gate.mkAND instr_1[1]! instr_1[0]! (Wire.mk "bt1_10"),
+                        Gate.mkNOT instr_1[4]! (Wire.mk "not1_op4"),
                         Gate.mkNOT instr_1[3]! (Wire.mk "not1_op3"),
                         Gate.mkNOT instr_1[2]! (Wire.mk "not1_op2"),
                         Gate.mkAND instr_1[6]! instr_1[5]! (Wire.mk "bt1_65"),
                         Gate.mkAND (Wire.mk "not1_op4") (Wire.mk "not1_op3") (Wire.mk "bt1_43"),
                         Gate.mkAND (Wire.mk "bt1_65") (Wire.mk "bt1_43") (Wire.mk "bt1_6543"),
-                        Gate.mkAND (Wire.mk "bt1_6543") (Wire.mk "not1_op2") is_btype_1]
-  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1
+                        Gate.mkAND (Wire.mk "bt1_6543") (Wire.mk "bt1_10") (Wire.mk "bt1_654310"),
+                        Gate.mkAND (Wire.mk "bt1_654310") (Wire.mk "not1_op2") is_btype_1]
+  -- JAL opcode = 1101111: bit[6]=1, bit[5]=1, bit[3]=1, bit[2]=1, bit[1]=1, bit[0]=1
   let jal_gates_1   := [Gate.mkAND instr_1[6]! instr_1[5]! (Wire.mk "jal1_65"),
-                         Gate.mkAND instr_1[3]! instr_1[2]! (Wire.mk "jal1_32"),
-                         Gate.mkAND (Wire.mk "jal1_65") (Wire.mk "jal1_32") is_jal_1]
+                        Gate.mkAND instr_1[3]! instr_1[2]! (Wire.mk "jal1_32"),
+                        Gate.mkAND (Wire.mk "jal1_65") (Wire.mk "jal1_32") (Wire.mk "jal1_6532"),
+                        Gate.mkAND (Wire.mk "jal1_6532") (Wire.mk "bt1_10") is_jal_1]
   let b_ext_1 : List Gate :=
     [Gate.mkBUF const_0 b_imm_1[0]!] ++
     (List.range 4).map  (fun i => Gate.mkBUF instr_1[8+i]!  b_imm_1[1+i]!) ++
@@ -288,8 +293,8 @@ def mkFetchStage : Circuit :=
     (List.range 12).map (fun i => Gate.mkBUF instr_1[31]!   j_imm_1[20+i]!)
   let pred_imm_1_gates : List Gate :=
     (List.range 32).map (fun i => Gate.mkMUX b_imm_1[i]! j_imm_1[i]! is_jal_1 predict_imm_1[i]!)
-  -- BTFN disabled for now: hardwire pt_1 = 0
-  let btfn_1_gate := Gate.mkBUF const_0 pt_1
+  -- BTFN: predict taken for backward branches (offset sign bit = instr[31] = 1)
+  let btfn_1_gate := Gate.mkAND is_btype_1 instr_1[31]! pt_1
   let pred_gates_1 := btype_gates_1 ++ jal_gates_1 ++ b_ext_1 ++ j_ext_1 ++ pred_imm_1_gates ++ [btfn_1_gate]
   let predict_target_1_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder32"
@@ -377,7 +382,7 @@ def mkFetchStage : Circuit :=
   ]
 
   { name := "FetchStage_W2"
-    inputs := [clock, reset, stall, half_step, branch_valid, const_0, const_1] ++
+    inputs := [clock, reset, stall, half_step, branch_valid] ++
               branch_target ++ instr_0 ++ instr_1
     outputs := pc_0_out ++ pc_1_out ++ [valid_0, valid_1, pt_0, pt_1, stalled_reg]
     gates := const_4_gates ++ const_8_gates ++

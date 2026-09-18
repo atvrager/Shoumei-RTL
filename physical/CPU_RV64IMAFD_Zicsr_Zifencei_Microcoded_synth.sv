@@ -5,6 +5,10 @@
 module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
   input  logic        clock,
   input  logic        reset,
+  input  logic        fetch_stall_ext,
+  input  logic        ifetch_last_word,
+  input  logic        dmem_stall_ext,
+  input  logic        mtip_in,
   // Instruction memory (dual fetch W=2)
   input  logic [31:0] imem_resp_data_0,
   input  logic [31:0] imem_resp_data_1,
@@ -26,12 +30,10 @@ module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
   CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded u_cpu (
     .clock(clock),
     .reset(reset),
-    .zero(1'b0),
-    .one(1'b1),
-    .fetch_stall_ext(1'b0),
-    .ifetch_last_word(1'b0),
-    .dmem_stall_ext(1'b0),
-    .mtip_in(1'b0),
+    .fetch_stall_ext(fetch_stall_ext),
+    .ifetch_last_word(ifetch_last_word),
+    .dmem_stall_ext(dmem_stall_ext),
+    .mtip_in(mtip_in),
     .imem_resp_data_0(imem_resp_data_0),
     .imem_resp_data_1(imem_resp_data_1),
     .dmem_req_ready(dmem_req_ready),

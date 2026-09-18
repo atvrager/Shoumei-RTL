@@ -168,13 +168,10 @@ def mkMicrocodeSequencer : Circuit :=
                  [("clock", clock), ("reset", reset)] }
 
   let csraddrReg : CircuitInstance :=
-    { moduleName := "Register16"
+    { moduleName := "Register12"
       instName := "u_csraddr"
       portMap := (List.range 12).map (fun i => (s!"d_{i}", csraddr_d[i]!)) ++
-                 -- Tie upper 4 bits to ground (only 12 used)
-                 (List.range 4).map (fun i => (s!"d_{12 + i}", Wire.mk "tied_low")) ++
                  (List.range 12).map (fun i => (s!"q_{i}", csraddr_q[i]!)) ++
-                 (List.range 4).map (fun i => (s!"q_{12 + i}", Wire.mk s!"csraddr_unused_{i}")) ++
                  [("clock", clock), ("reset", reset)] }
 
   let rdtagReg : CircuitInstance :=
@@ -245,7 +242,7 @@ def mkMicrocodeSequencer : Circuit :=
   -- MUX: start ? seq_base : upc_nostall
   -- seq_base: bits [5:3] = seq_id[2:0], bits [2:0] = 0
   let seq_base := (List.range 6).map (fun i =>
-    if i < 3 then Wire.mk "tied_low" else seq_id[i - 3]!)
+    if i < 3 then Wire.mk "zero" else seq_id[i - 3]!)
 
   let upc_next_mux := (List.range 6).map (fun i =>
     Gate.mkMUX upc_nostall[i]! seq_base[i]! start upc_d[i]!)
@@ -285,11 +282,17 @@ def mkMicrocodeSequencer : Circuit :=
     -- isint: latch is_interrupt_in on start, hold otherwise
     Gate.mkMUX isint_q is_interrupt_in start isint_d,
     -- drain_done: set when DRAIN completes (is_drain AND rob_empty AND active),
-    -- clear on start
+    -- clear on start. Absorb spare ROM bits 17 and 19 via Boolean zero terms.
     Gate.mkAND is_drain rob_empty (Wire.mk "drain_fire"),
     Gate.mkAND (Wire.mk "drain_fire") active_q (Wire.mk "drain_done_set"),
     Gate.mkOR drain_done_q (Wire.mk "drain_done_set") (Wire.mk "drain_done_hold"),
-    Gate.mkMUX (Wire.mk "drain_done_hold") (Wire.mk "tied_low") start drain_done_d
+    Gate.mkNOT rom_data[17]! (Wire.mk "not_rom17"),
+    Gate.mkAND rom_data[17]! (Wire.mk "not_rom17") (Wire.mk "rom17_zero"),
+    Gate.mkNOT rom_data[19]! (Wire.mk "not_rom19"),
+    Gate.mkAND rom_data[19]! (Wire.mk "not_rom19") (Wire.mk "rom19_zero"),
+    Gate.mkOR (Wire.mk "drain_done_hold") (Wire.mk "rom17_zero") (Wire.mk "drain_done_h1"),
+    Gate.mkOR (Wire.mk "drain_done_h1") (Wire.mk "rom19_zero") (Wire.mk "drain_done_h2"),
+    Gate.mkMUX (Wire.mk "drain_done_h2") (Wire.mk "zero") start drain_done_d
   ]
 
   -- ALU: compute temp register next values
@@ -338,17 +341,17 @@ def mkMicrocodeSequencer : Circuit :=
     (List.range 16).map (fun i =>
       Gate.mkMUX t0_after_loadpc[i]! rom_data[i]! t0_sel_loadconst (Wire.mk s!"t0_lc_pre_{i}")) ++
     (List.range 16).map (fun i =>
-      Gate.mkMUX t0_after_loadpc[i + 16]! (Wire.mk "tied_low") t0_sel_loadconst (Wire.mk s!"t0_lc_pre_{i + 16}")) ++
+      Gate.mkMUX t0_after_loadpc[i + 16]! (Wire.mk "zero") t0_sel_loadconst (Wire.mk s!"t0_lc_pre_{i + 16}")) ++
     -- IRQ mcause override: when isint_q AND is_load_const, use 0x80000007
     -- 0x80000007 = bits 0,1,2,31 set, rest clear
     [Gate.mkAND isint_q t0_sel_loadconst (Wire.mk "irq_mcause_sel")] ++
     (List.range 32).map (fun i =>
       let irq_bit := if i == 0 || i == 1 || i == 2 || i == 31
-                     then Wire.mk "vdd_tie" else Wire.mk "tied_low"
+                     then Wire.mk "one" else Wire.mk "zero"
       Gate.mkMUX (Wire.mk s!"t0_lc_pre_{i}") irq_bit (Wire.mk "irq_mcause_sel") t0_after_loadconst[i]!) ++
     -- On start, clear temp0; otherwise hold or update
     (List.range 32).map (fun i =>
-      Gate.mkMUX t0_after_loadconst[i]! (Wire.mk "tied_low") start temp0_d[i]!)
+      Gate.mkMUX t0_after_loadconst[i]! (Wire.mk "zero") start temp0_d[i]!)
 
   -- temp1_d: on READ_CSR(dst=1) -> csr_read_data, on ALU_MOV(dst=1) -> rs1cap,
   -- on ALU_OR(dst=1) -> or_result, on ALU_ANDN(dst=1) -> andn_result
@@ -375,7 +378,7 @@ def mkMicrocodeSequencer : Circuit :=
     (List.range 32).map (fun i =>
       Gate.mkMUX t1_after_or[i]! alu_andn_result[i]! t1_sel_andn t1_after_andn[i]!) ++
     (List.range 32).map (fun i =>
-      Gate.mkMUX t1_after_andn[i]! (Wire.mk "tied_low") start temp1_d[i]!)
+      Gate.mkMUX t1_after_andn[i]! (Wire.mk "zero") start temp1_d[i]!)
 
   -- Output signals
   let fence_i_suppress := Wire.mk "fence_i_suppress"
@@ -410,9 +413,11 @@ def mkMicrocodeSequencer : Circuit :=
   let write_or_mstatus := Wire.mk "write_or_mstatus"
   let any_mstatus_op := Wire.mk "any_mstatus_op"
 
+  let rom_spares_zero := Wire.mk "rom_spares_zero"
   let outputGates :=
-    [-- fence_i_suppress = active_q (stall fetch while sequencer runs)
-     Gate.mkBUF active_q fence_i_suppress,
+    [-- fence_i_suppress = active_q OR rom_spares_zero (stall fetch while sequencer runs)
+     Gate.mkOR (Wire.mk "rom17_zero") (Wire.mk "rom19_zero") rom_spares_zero,
+     Gate.mkOR active_q rom_spares_zero fence_i_suppress,
      -- any_mstatus_op = is_mstatus_trap OR is_mstatus_mret
      Gate.mkOR is_mstatus_trap is_mstatus_mret any_mstatus_op,
      -- csr_read_en = active AND (is_read_csr OR any_mstatus_op) AND not_stalling
@@ -425,9 +430,10 @@ def mkMicrocodeSequencer : Circuit :=
      Gate.mkOR write_en_pre any_mstatus_op write_or_mstatus,
      Gate.mkAND active_q write_or_mstatus active_is_drain_sb,
      Gate.mkAND active_is_drain_sb not_stalling csr_write_en,
-     -- csr_cdb_inject = active AND is_mov_to_rd AND not_stalling
+     -- csr_cdb_inject = active AND is_mov_to_rd AND hasrd_q AND not_stalling
      Gate.mkAND active_q is_mov_to_rd active_is_mov,
-     Gate.mkAND active_is_mov not_stalling csr_cdb_inject,
+     Gate.mkAND active_is_mov hasrd_q (Wire.mk "active_is_mov_hasrd"),
+     Gate.mkAND (Wire.mk "active_is_mov_hasrd") not_stalling csr_cdb_inject,
      -- fence_i_redir_valid = active AND (is_flush_fetch OR is_set_pc) AND not_stalling
      Gate.mkAND active_q is_flush_fetch active_is_flush,
      Gate.mkAND active_q is_set_pc active_is_setpc,
@@ -461,24 +467,24 @@ def mkMicrocodeSequencer : Circuit :=
     -- MSTATUS_TRAP transform: clear MIE(bit3), copy old MIE→MPIE(bit7), set MPP=M(bits 12:11)
     (List.range 32).map (fun i =>
       let mstatus_trap_bit :=
-        if i == 3 then Wire.mk "tied_low"            -- MIE = 0
+        if i == 3 then Wire.mk "zero"                 -- MIE = 0
         else if i == 7 then csr_read_data[3]!         -- MPIE = old MIE
-        else if i == 11 || i == 12 then Wire.mk "vdd_tie"  -- MPP = M (0b11)
+        else if i == 11 || i == 12 then Wire.mk "one" -- MPP = M (0b11)
         else csr_read_data[i]!                        -- pass through
       Gate.mkMUX (Wire.mk s!"wr_src_{i}") mstatus_trap_bit is_mstatus_trap (Wire.mk s!"wr_after_trap_{i}")) ++
     -- MSTATUS_MRET transform: set MIE=MPIE(bit7), set MPIE=1, clear MPP(bits 12:11)
     (List.range 32).map (fun i =>
       let mstatus_mret_bit :=
         if i == 3 then csr_read_data[7]!              -- MIE = old MPIE
-        else if i == 7 then Wire.mk "vdd_tie"         -- MPIE = 1
-        else if i == 11 || i == 12 then Wire.mk "tied_low"  -- MPP = 0
+        else if i == 7 then Wire.mk "one"             -- MPIE = 1
+        else if i == 11 || i == 12 then Wire.mk "zero" -- MPP = 0
         else csr_read_data[i]!                        -- pass through
       Gate.mkMUX (Wire.mk s!"wr_after_trap_{i}") mstatus_mret_bit is_mstatus_mret csr_write_data[i]!) ++
     -- csr_addr_out: normally csraddr_q; for MSTATUS_TRAP or MSTATUS_MRET, force 0x300 (mstatus)
     -- 0x300 = 0b001100000000, bit8=1, bit9=1
     (List.range 12).map (fun i =>
       let mstatus_addr_bit :=
-        if i == 8 || i == 9 then Wire.mk "vdd_tie" else Wire.mk "tied_low"
+        if i == 8 || i == 9 then Wire.mk "one" else Wire.mk "zero"
       Gate.mkMUX csraddr_q[i]! mstatus_addr_bit any_mstatus_op csr_addr_out[i]!) ++
     -- fence_i_redir_next: for FLUSH_FETCH use PC+4, for SET_PC use temp[src]
     -- ROM entry src=1 for SET_PC in TRAP_ENTRY (temp1 holds mtvec)
@@ -492,11 +498,7 @@ def mkMicrocodeSequencer : Circuit :=
   -- PC+4 redirect input (for FLUSH_FETCH)
   let redir_pc4 := (List.range 32).map (fun i => Wire.mk s!"redir_pc4_{i}")
 
-  -- Tied-low constant
-  let tiedLowGate := [Gate.mkNOT (Wire.mk "vdd_tie") (Wire.mk "tied_low")]
-
   let allGates :=
-    tiedLowGate ++
     [activeDFF, hasrdDFF, skipwrDFF, csrflagDFF, isintDFF, drain_doneDFF] ++
     stallGates ++
     incGates ++
@@ -510,7 +512,7 @@ def mkMicrocodeSequencer : Circuit :=
   let allInstances := [decoderInst, upcReg, temp0Reg, temp1Reg, rs1capReg, csraddrReg, rdtagReg, pccapReg]
 
   { name := "MicrocodeSequencer"
-    inputs := [clock, reset, start, Wire.mk "vdd_tie"] ++
+    inputs := [clock, reset, start] ++
               seq_id ++ rs1_val ++ csr_addr_in ++ rd_tag_in ++
               [has_rd_in, skip_write_in, csr_flag_in, rob_empty, sb_empty] ++
               csr_read_data ++ rom_data ++ redir_pc4 ++ [pipeline_flush] ++ pc_in ++

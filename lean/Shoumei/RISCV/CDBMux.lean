@@ -25,9 +25,9 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
   let data0Width := if enableD then 64 else 32
   let data1Width := if enableD then 64 else 32
   let lsuDeqWidth := if enableD then 72 else 39
-  let fpDeqWidth := if enableD then 72 else 39
+  let fpDeqWidth := if enableD then 71 else 39
   let ibDeqWidth := if enableD then 104 else 72
-  let muldivDeqWidth := if enableD then 72 else 39
+  let muldivDeqWidth := if enableD then 71 else 39
 
   -- Shared inputs
   let ib_valid_0  := mk "ib_valid_0";  let ib_deq_0  := mkIdx "ib_deq_0"  ibDeqWidth

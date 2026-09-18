@@ -181,6 +181,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 4,
   mkRegisterN 6,
   mkRegisterN 8,
+  mkRegisterN 12,
   mkRegisterN 16,
   mkRegisterN 32,
   mkRegisterN 64,

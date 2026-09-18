@@ -28,7 +28,6 @@ def cpuTestbenchConfig : TestbenchConfig := {
     respValidSignal := "mem_resp_valid"
     respDataSignal := "mem_resp_data"
   }
-  constantPorts := [("zero", false), ("one", true)]
   tbName := some "tb_cpu"
   memSizeWords := defaultCPUConfig.memSizeWords
   tohostAddr := 0x1000

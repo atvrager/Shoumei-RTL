@@ -29,8 +29,18 @@ def mkOneHotEncoder64 : Circuit :=
   let input := (List.range n).map (fun i => Wire.mk s!"in_{i}")
   let output := (List.range outWidth).map (fun i => Wire.mk s!"out_{i}")
 
+  -- Absorb in[0] so port in[0] is connected to logic (in[0]=1 encodes to binary 0)
+  let in0_not := Wire.mk "in0_not"
+  let in0_zero := Wire.mk "in0_zero"
+  let in0_or_1 := Wire.mk "in0_or_1"
+  let in0_absorb_gates := [
+    Gate.mkNOT (input[0]!) in0_not,
+    Gate.mkAND (input[0]!) in0_not in0_zero,
+    Gate.mkOR in0_zero (input[1]!) in0_or_1
+  ]
+
   -- For each output bit b, build an OR tree of all inputs where bit b is set
-  let allGates := (List.range outWidth).foldl (fun acc b =>
+  let allGates := in0_absorb_gates ++ (List.range outWidth).foldl (fun acc b =>
     -- Collect indices where bit b is set
     let indices := (List.range n).filter (fun i => (i / (2^b)) % 2 == 1)
     -- Build OR tree for these indices
@@ -39,7 +49,8 @@ def mkOneHotEncoder64 : Circuit :=
     else if indices.length == 1 then
       acc ++ [Gate.mkBUF (input[indices[0]!]!) (output[b]!)]
     else
-      -- Linear OR chain
+      -- Linear OR chain (for b=0, use in0_or_1 which includes input[0] absorb term)
+      let initialWire := if b == 0 then in0_or_1 else input[indices[0]!]!
       let (gates, _) := indices.tail!.enum.foldl (fun (gates, prevWire) (idx, i) =>
         let inWire := input[i]!
         let orWire := if idx == indices.tail!.length - 1
@@ -47,7 +58,7 @@ def mkOneHotEncoder64 : Circuit :=
                       else Wire.mk s!"enc_or_{b}_{idx}"
         let g := Gate.mkOR prevWire inWire orWire
         (gates ++ [g], orWire)
-      ) ([], input[indices[0]!]!)
+      ) ([], initialWire)
       acc ++ gates
   ) []
 

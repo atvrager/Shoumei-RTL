@@ -12,7 +12,7 @@ theorem fpMisc_outputs : fpMiscCircuit.outputs.length = 37 := by native_decide
 theorem fpMisc_instances : fpMiscCircuit.instances.length = 4 := by native_decide
 
 theorem fpSgnj_name : fpSgnjCircuit.name = "FPSgnj" := by rfl
-theorem fpSgnj_inputs : fpSgnjCircuit.inputs.length = 69 := by native_decide
+theorem fpSgnj_inputs : fpSgnjCircuit.inputs.length = 38 := by native_decide
 theorem fpSgnj_outputs : fpSgnjCircuit.outputs.length = 32 := by native_decide
 
 theorem fpCompare_name : fpCompareCircuit.name = "FPCompare" := by rfl

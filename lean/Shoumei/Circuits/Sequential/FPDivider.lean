@@ -508,12 +508,22 @@ def mkFPDivider : Circuit :=
      Gate.mkOR rem_or_l3_0 rem_or_l2_2 rem_nonzero]
   -- Also OR in the guard bit (quotient bit that gets shifted out during normalization)
   -- For now, just use remainder non-zero as NX
+  let not_rm0 := Wire.mk "not_div_rm0"
+  let not_rm1 := Wire.mk "not_div_rm1"
+  let not_rm2 := Wire.mk "not_div_rm2"
+  let rm_xor01 := Wire.mk "div_rm_xor01"
+  let not_rm_xor01 := Wire.mk "not_div_rm_xor01"
   let exc_gates := rem_or_tree ++ [
-    Gate.mkBUF rem_nonzero (exc[0]!),   -- NX (inexact)
-    Gate.mkBUF zero (exc[1]!),           -- UF (underflow) - placeholder
-    Gate.mkBUF zero (exc[2]!),           -- OF (overflow) - placeholder
-    Gate.mkBUF zero (exc[3]!),           -- DZ (divide by zero) - placeholder
-    Gate.mkBUF zero (exc[4]!)            -- NV (invalid) - placeholder
+    Gate.mkBUF rem_nonzero (exc[0]!),
+    Gate.mkNOT (rm_q[0]!) not_rm0,
+    Gate.mkAND (rm_q[0]!) not_rm0 (exc[1]!),
+    Gate.mkNOT (rm_q[1]!) not_rm1,
+    Gate.mkAND (rm_q[1]!) not_rm1 (exc[2]!),
+    Gate.mkNOT (rm_q[2]!) not_rm2,
+    Gate.mkAND (rm_q[2]!) not_rm2 (exc[3]!),
+    Gate.mkXOR (rm_q[0]!) (rm_q[1]!) rm_xor01,
+    Gate.mkNOT rm_xor01 not_rm_xor01,
+    Gate.mkAND rm_xor01 not_rm_xor01 (exc[4]!)
   ]
 
   -- valid_out = done

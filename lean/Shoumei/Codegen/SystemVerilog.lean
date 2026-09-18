@@ -253,7 +253,9 @@ def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
         sg.name
   | none =>
       -- Standalone wire
-      sanitizeSVName w.name
+      if w.name == "zero" then "1'b0"
+      else if w.name == "one" then "1'b1"
+      else sanitizeSVName w.name
 
 /-! ## Module Port Generation -/
 
@@ -267,6 +269,8 @@ def generateSignalGroupPort (direction : String) (sg : SignalGroup) : String :=
 def generateWirePorts (ctx : Context) (_c : Circuit) (w : Wire) (direction : String) : List String :=
   -- Skip clock and reset (will be added explicitly)
   if ctx.clockWires.contains w || ctx.resetWires.contains w then
+    []
+  else if w.name == "zero" || w.name == "one" then
     []
   else
     -- Check if wire is part of a signal group
@@ -317,24 +321,30 @@ def generatePorts (ctx : Context) (c : Circuit) : String :=
 
 /-- Generate signal declaration for internal wires -/
 def generateInternalSignalDecl (ctx : Context) (_c : Circuit) (w : Wire) : Option String :=
-  -- Check if wire is part of a signal group
-  match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
-  | some (_, sg) =>
-      -- Only emit for first wire in group
-      if sg.wires.head? == some w then
-        let svType := signalGroupToSV sg
-        some s!"  {svType} {sg.name};"
-      else
-        none
-  | none =>
-      -- Standalone wire
-      some s!"  logic {sanitizeSVName w.name};"
+  if w.name == "zero" || w.name == "one" then none
+  else
+    -- Check if wire is part of a signal group
+    match ctx.wireToGroup.find? (fun (w', _) => w'.name == w.name) with
+    | some (_, sg) =>
+        -- Only emit for first wire in group
+        if sg.wires.head? == some w then
+          let svType := signalGroupToSV sg
+          some s!"  {svType} {sg.name};"
+        else
+          none
+    | none =>
+        -- Standalone wire
+        some s!"  logic {sanitizeSVName w.name};"
 
 /-- Generate all internal signal declarations -/
 def generateInternalSignals (ctx : Context) (c : Circuit) : String :=
   let internalWires := findInternalWires c
   let decls := internalWires.filterMap (generateInternalSignalDecl ctx c)
-  joinLines decls
+  let constDecls := [
+    "  localparam logic zero = 1'b0;",
+    "  localparam logic one = 1'b1;"
+  ]
+  joinLines (constDecls ++ decls)
 
 /-! ## Combinational Logic Generation -/
 
@@ -982,26 +992,27 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
     them according to the sub-module's signal groups. -/
 def groupPortMapEntries (allCircuits : List Circuit) (inst : CircuitInstance)
     : List (Sum (String × Wire) (String × List (Nat × Wire))) :=
+  let instPortMap := inst.portMap.filter (fun (pname, _) => pname != "zero" && pname != "one")
   let subModFound := allCircuits.any (fun sc => sc.name == inst.moduleName)
   let portGroups := buildSubModulePortGroups allCircuits inst.moduleName
   -- If sub-module not in allCircuits, infer grouping from port name patterns
   -- If sub-module IS in allCircuits but has no groups, respect that (don't infer)
   let portGroups := if portGroups.isEmpty && !subModFound then
-    inst.portMap.filterMap (fun (pname, _) =>
+    instPortMap.filterMap (fun (pname, _) =>
       match parsePortIndex pname with
       | some (base, idx) => some (pname, base, idx)
       | none => none)
   else portGroups
   -- Pre-compute: count how many times each port name appears in portMap
   -- (for detecting bare group names like "sum" repeated 32 times)
-  let portNameCounts := inst.portMap.foldl (fun acc (pname, _) =>
+  let portNameCounts := instPortMap.foldl (fun acc (pname, _) =>
     match acc.find? (fun (n, _) => n == pname) with
     | some _ => acc.map (fun (n, c) => if n == pname then (n, c + 1) else (n, c))
     | none => acc ++ [(pname, 1)]
   ) ([] : List (String × Nat))
   -- Track running index per bare group name
   let initAcc : List (String × Wire × Option (String × Nat)) × List (String × Nat) := ([], [])
-  let (parsed, _) := inst.portMap.foldl (fun acc (pname, w) =>
+  let (parsed, _) := instPortMap.foldl (fun acc (pname, w) =>
     let results := acc.1
     let bareIdxMap := acc.2
     -- Try direct match: portMap name == sub-module wire name
