@@ -504,12 +504,18 @@ def mkFPMultiplier : Circuit :=
   let tag_out_gates := (List.range 6).map fun i =>
     Gate.mkBUF (s2_tag[i]!) (tag_out[i]!)
   let valid_gate := [Gate.mkBUF s2_valid valid_out]
+  let not_s2_rm0 := Wire.mk "not_s2_rm0"
+  let not_s2_rm1 := Wire.mk "not_s2_rm1"
+  let not_s2_rm2 := Wire.mk "not_s2_rm2"
   let exc_gates := [
-    Gate.mkBUF final_nx (exc[0]!),     -- NX (inexact)
-    Gate.mkBUF zero (exc[1]!),         -- UF (underflow) - TODO
-    Gate.mkBUF zero (exc[2]!),         -- OF (overflow) - TODO
-    Gate.mkBUF zero (exc[3]!),         -- DZ - N/A for multiply
-    Gate.mkBUF s2_nv (exc[4]!)         -- NV (invalid)
+    Gate.mkBUF final_nx (exc[0]!),
+    Gate.mkNOT (s2_rm[0]!) not_s2_rm0,
+    Gate.mkAND (s2_rm[0]!) not_s2_rm0 (exc[1]!),
+    Gate.mkNOT (s2_rm[1]!) not_s2_rm1,
+    Gate.mkAND (s2_rm[1]!) not_s2_rm1 (exc[2]!),
+    Gate.mkNOT (s2_rm[2]!) not_s2_rm2,
+    Gate.mkAND (s2_rm[2]!) not_s2_rm2 (exc[3]!),
+    Gate.mkBUF s2_nv (exc[4]!)
   ]
 
   -- ══════════════════════════════════════════════

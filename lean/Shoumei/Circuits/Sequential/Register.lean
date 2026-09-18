@@ -112,6 +112,7 @@ def mkRegister1 : Circuit := mkRegisterN 1
 def mkRegister2 : Circuit := mkRegisterN 2
 def mkRegister4 : Circuit := mkRegisterN 4
 def mkRegister8 : Circuit := mkRegisterN 8
+def mkRegister12 : Circuit := mkRegisterN 12
 def mkRegister16 : Circuit := mkRegisterN 16
 def mkRegister32 : Circuit := mkRegisterN 32
 def mkRegister64 : Circuit := mkRegisterN 64

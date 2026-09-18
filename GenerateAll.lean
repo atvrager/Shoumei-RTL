@@ -98,6 +98,8 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
 import Shoumei.RISCV.CDBMux
+import Shoumei.RISCV.CSRFile
+import Shoumei.RISCV.CPU.BusyBitTable
 import Shoumei.RISCV.CPU
 
 -- Testbench generation
@@ -177,6 +179,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 4,
   mkRegisterN 6,  -- Used in PipelinedMultiplier and PhysRegFile
   mkRegisterN 8,
+  mkRegisterN 12,
   mkRegisterN 16,
   mkRegisterN 32,
   mkRegisterN 64,
@@ -219,7 +222,15 @@ def allCircuits : List Circuit := [
   mkMulDivExecUnit,
 
   -- F-Extension: FPU building blocks
+  fpSgnjCircuit,
+  fpCompareCircuit,
+  fpClassCircuit,
+  fpCvtIntCircuit,
   fpMiscCircuit,
+  fpAdder_Stage1Circuit,
+  fpAdder_Stage2Circuit,
+  fpAdder_Stage3Circuit,
+  fpAdder_Stage4Circuit,
   fpAdderCircuit,
   fpMultiplierCircuit,
   fpFMACircuit,
@@ -233,6 +244,10 @@ def allCircuits : List Circuit := [
   int64ToFPCircuit,
   fpToInt64Circuit,
   fpLongConverterCircuit,
+  fpAdderD_Stage1Circuit,
+  fpAdderD_Stage2Circuit,
+  fpAdderD_Stage3Circuit,
+  fpAdderD_Stage4Circuit,
   fpAdderDCircuit,
   fpMultiplierDCircuit,
   fpFMADCircuit,
@@ -266,11 +281,20 @@ def allCircuits : List Circuit := [
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
 
+  -- Opcode PLA Decoders
+  mkALUOpDecoder defaultCPUConfig,
+  mkMulDivOpDecoder defaultCPUConfig,
+  mkFPUOpDecoder defaultCPUConfig,
+  mkAMOOpDecoder defaultCPUConfig,
+
   -- Phase 8: Top-Level Integration
   cdbMuxFDW2,
   mkFetchStage,
   mkRenameStage,
   mkRenameStage 64,
+  mkCSRFile defaultCPUConfig,
+  mkBusyTable_W2,
+  mkFPBusyTable,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
 ]

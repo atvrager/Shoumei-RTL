@@ -181,6 +181,7 @@ def allCircuits : List Circuit := [
   mkRegisterN 4,
   mkRegisterN 6,
   mkRegisterN 8,
+  mkRegisterN 12,
   mkRegisterN 16,
   mkRegisterN 32,
   mkRegisterN 64,
@@ -219,6 +220,10 @@ def allCircuits : List Circuit := [
   -- F-Extension
   fpUnpackCircuit,
   fpPackCircuit,
+  fpSgnjCircuit,
+  fpCompareCircuit,
+  fpClassCircuit,
+  fpCvtIntCircuit,
   fpMiscCircuit,
   fpAdderCircuit,
   fpMultiplierCircuit,

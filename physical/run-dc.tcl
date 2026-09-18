@@ -2,7 +2,7 @@
 # Parameterized flow for Shoumei RTL physical synthesis.
 #
 # Environment variables:
-#   DESIGN_NAME       - Top-level module name (default: CPU_RV32IMAFD_Zicsr_Zifencei_Microcoded_synth)
+#   DESIGN_NAME       - Top-level module name (default: CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth)
 #   TARGET_LIBRARY    - Path to primary target standard cell .db library (required)
 #   LINK_LIBRARIES    - Additional .db libraries (optional, space-separated)
 #   CLK_PERIOD_NS     - Target clock period in nanoseconds (default: 5.0)
@@ -16,7 +16,7 @@ if {![info exists env(TARGET_LIBRARY)]} {
     exit 1
 }
 
-set design_name "CPU_RV32IMAFD_Zicsr_Zifencei_Microcoded_synth"
+set design_name "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth"
 if {[info exists env(DESIGN_NAME)]} {
     set design_name $env(DESIGN_NAME)
 }
@@ -69,13 +69,18 @@ puts "INFO: Clock period:   ${clk_period} ns"
 file mkdir .WORK
 define_design_lib work -path .WORK
 
-# Read RTL via filelist
-if {![file exists $rtl_dotf]} {
-    puts "ERROR: Filelist not found: $rtl_dotf"
+# Read RTL via directory or filelist
+if {[info exists env(RTL_DIR)]} {
+    set sv_files [lsort [glob -nocomplain $env(RTL_DIR)/*.sv]]
+    puts "INFO: Analyzing [llength $sv_files] SystemVerilog files from $env(RTL_DIR)..."
+    analyze -format sverilog -work work $sv_files
+} elseif {[file exists $rtl_dotf]} {
+    puts "INFO: Reading RTL via filelist: $rtl_dotf"
+    analyze -format sverilog -work work -vcs "-f $rtl_dotf"
+} else {
+    puts "ERROR: No RTL source found (neither RTL_DIR nor $rtl_dotf exists)"
     exit 1
 }
-
-analyze -format sverilog -work work -vcs "-f $rtl_dotf"
 elaborate $design_name -work work
 current_design $design_name
 link

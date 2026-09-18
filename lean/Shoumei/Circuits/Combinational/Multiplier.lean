@@ -187,11 +187,11 @@ private def mkPipelineRegister
     (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
 
-/-- Build a hierarchical CSA tree using CSACompressor<width> instances.
+/-- Build a CSA reduction tree using flat full-adder gates.
     Takes a list of width-bit row wire lists and returns:
     - The two final rows (sum, carry) as wire lists
-    - All BUF routing gates
-    - All CSACompressor<width> instances -/
+    - All full-adder and shift gates
+    - Submodule instances (empty list, fully inlined to avoid LINT-32 on tied inputs) -/
 partial def mkCSATreeHierarchical
     (rows : List (List Wire)) (zero_wire : Wire)
     (width : Nat := 64) (level : Nat := 0) (baseIdx : Nat := 0)
@@ -209,7 +209,7 @@ partial def mkCSATreeHierarchical
     (single, c, g, [])
   | [r1, r2] => (r1, r2, [], [])
   | _ =>
-    -- Compress groups of 3 into 2
+    -- Compress groups of 3 into 2 using flat gates
     let rec compressGroups (rs : List (List Wire)) (idx : Nat)
         : List (List Wire) × List Gate × List CircuitInstance :=
       match rs with
@@ -217,19 +217,29 @@ partial def mkCSATreeHierarchical
         let tag := s!"csa_l{level}_g{idx}"
         let s_out := makeIndexedWires s!"{tag}_s" width
         let c_out := makeIndexedWires s!"{tag}_c" width
-        let inst : CircuitInstance := {
-          moduleName := s!"CSACompressor{width}"
-          instName := s!"u_{tag}"
-          portMap :=
-            (x.enum.map (fun ⟨i, w⟩ => (s!"x[{i}]", w))) ++
-            (y.enum.map (fun ⟨i, w⟩ => (s!"y[{i}]", w))) ++
-            (z.enum.map (fun ⟨i, w⟩ => (s!"z[{i}]", w))) ++
-            [("zero", zero_wire)] ++
-            (s_out.enum.map (fun ⟨i, w⟩ => (s!"sum[{i}]", w))) ++
-            (c_out.enum.map (fun ⟨i, w⟩ => (s!"carry[{i}]", w)))
-        }
+        let c_raw := makeIndexedWires s!"{tag}_craw" width
+        let csa_gates := List.flatten <| (List.range width).map fun j =>
+          let xy := Wire.mk s!"{tag}_xy_{j}"
+          let ab := Wire.mk s!"{tag}_ab_{j}"
+          let bc := Wire.mk s!"{tag}_bc_{j}"
+          let ac := Wire.mk s!"{tag}_ac_{j}"
+          let abbc := Wire.mk s!"{tag}_abbc_{j}"
+          [
+            Gate.mkXOR (x[j]!) (y[j]!) xy,
+            Gate.mkXOR xy (z[j]!) (s_out[j]!),
+            Gate.mkAND (x[j]!) (y[j]!) ab,
+            Gate.mkAND (y[j]!) (z[j]!) bc,
+            Gate.mkAND (x[j]!) (z[j]!) ac,
+            Gate.mkOR ab bc abbc,
+            Gate.mkOR abbc ac (c_raw[j]!)
+          ]
+        let shift_gates :=
+          [Gate.mkBUF zero_wire (c_out[0]!)] ++
+          (List.range (width - 1)).map fun j =>
+            Gate.mkBUF (c_raw[j]!) (c_out[j + 1]!)
+        let cur_gates := csa_gates ++ shift_gates
         let (more_rows, more_gates, more_insts) := compressGroups rest (idx + 1)
-        (s_out :: c_out :: more_rows, more_gates, inst :: more_insts)
+        (s_out :: c_out :: more_rows, cur_gates ++ more_gates, more_insts)
       | remaining => (remaining, [], [])
     let (next_rows, gates1, insts1) := compressGroups rows 0
     let (final_s, final_c, gates2, insts2) :=

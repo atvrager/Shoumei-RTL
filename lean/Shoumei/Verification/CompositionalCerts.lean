@@ -52,6 +52,12 @@ def mux64x64_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Combinational.MuxTreeProofs"
 }
 
+/-- PriorityArbiter64: 64-input priority arbiter, hierarchical (9× PriorityArbiter8) -/
+def priorityArbiter64_cert : CompositionalCert := {
+  moduleName := "PriorityArbiter64"
+  proofReference := "Shoumei.Circuits.Combinational.Arbiter"
+}
+
 /-! ## Sequential Circuits -/
 
 /-- Register91 = Register64 + Register16 + Register8 + Register2 + Register1 -/
@@ -513,6 +519,24 @@ def microcodeSequencer_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Microcode.MicrocodeSequencerProofs"
 }
 
+/-- CSRFile: Control and Status Register file (12 32-bit registers + WARL/traps/counters) -/
+def csrFile_cert : CompositionalCert := {
+  moduleName := s!"CSRFile_{Shoumei.RISCV.defaultCPUConfig.isaString}"
+  proofReference := "Shoumei.RISCV.CSRFileProofs"
+}
+
+/-- BusyTable_W2: Dual-port scoreboard busy bit table (64 DFFs + 4 read muxes + RAW hazard logic) -/
+def busyTable_w2_cert : CompositionalCert := {
+  moduleName := "BusyTable_W2"
+  proofReference := "Shoumei.RISCV.CPU.BusyBitTableProofs"
+}
+
+/-- FPBusyTable: Single-port FP scoreboard busy bit table (64 DFFs + 3 read muxes) -/
+def fpBusyTable_cert : CompositionalCert := {
+  moduleName := "FPBusyTable"
+  proofReference := "Shoumei.RISCV.CPU.BusyBitTableProofs"
+}
+
 /-- W=2 dual-issue microcoded CPU.  The module name is the config's, so enabling
     or renaming an extension renames the certificate with the circuit. -/
 def cpu_microcoded_cert : CompositionalCert := {
@@ -523,11 +547,12 @@ def cpu_microcoded_cert : CompositionalCert := {
 /-! ## Export All -/
 
 def allCerts : List CompositionalCert := [
-  -- Combinational (hierarchical muxes)
+  -- Combinational (hierarchical muxes and arbiters)
   mux64x32_cert,
   mux8x32_cert,
   mux8x64_cert,
   mux64x64_cert,
+  priorityArbiter64_cert,
   -- Sequential
   register24_cert,
   register96_cert,
@@ -582,6 +607,11 @@ def allCerts : List CompositionalCert := [
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
   renameStage_w2_64_cert,
+  -- CSR File
+  csrFile_cert,
+  -- Scoreboard Busy Tables
+  busyTable_w2_cert,
+  fpBusyTable_cert,
   -- Microcode
   microcodeSequencer_cert,
   -- Microcoded variant

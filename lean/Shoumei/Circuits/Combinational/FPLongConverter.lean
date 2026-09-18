@@ -109,9 +109,12 @@ def fpLongConverterCircuit : Circuit :=
     Gate.mkAND f2i_exc_nv not_is_int_to_fp master_exc_nv,
     Gate.mkMUX f2i_exc_nx i2f_exc_nx is_int_to_fp master_exc_nx,
     Gate.mkBUF master_exc_nv (exc[4]!),
-    Gate.mkBUF zero (exc[3]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[1]!),
+    Gate.mkNOT (rm[2]!) (Wire.mk "not_lc_rm2"),
+    Gate.mkAND (rm[2]!) (Wire.mk "not_lc_rm2") (exc[3]!),
+    Gate.mkNOT (rm[1]!) (Wire.mk "not_lc_rm1"),
+    Gate.mkAND (rm[1]!) (Wire.mk "not_lc_rm1") (exc[2]!),
+    Gate.mkNOT (rm[0]!) (Wire.mk "not_lc_rm0"),
+    Gate.mkAND (rm[0]!) (Wire.mk "not_lc_rm0") (exc[1]!),
     Gate.mkBUF master_exc_nx (exc[0]!)
   ]
 

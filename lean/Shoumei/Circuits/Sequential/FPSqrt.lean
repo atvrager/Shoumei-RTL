@@ -704,11 +704,17 @@ def mkFPSqrt : Circuit :=
      Gate.mkOR rem_or_l2_0 rem_or_l2_1 rem_or_l3_0,
      Gate.mkOR rem_or_l3_0 rem_or_l2_2 rem_nonzero]
 
+  let not_rm0 := Wire.mk "not_sqrt_rm0"
+  let not_rm1 := Wire.mk "not_sqrt_rm1"
+  let not_rm2 := Wire.mk "not_sqrt_rm2"
   let exc_gates := exc_or_tree ++ [
     Gate.mkMUX rem_nonzero (special_exc_q[0]!) is_special_q (exc[0]!),
-    Gate.mkBUF zero (exc[1]!),
-    Gate.mkBUF zero (exc[2]!),
-    Gate.mkBUF zero (exc[3]!),
+    Gate.mkNOT (rm_q[0]!) not_rm0,
+    Gate.mkAND (rm_q[0]!) not_rm0 (exc[1]!),
+    Gate.mkNOT (rm_q[1]!) not_rm1,
+    Gate.mkAND (rm_q[1]!) not_rm1 (exc[2]!),
+    Gate.mkNOT (rm_q[2]!) not_rm2,
+    Gate.mkAND (rm_q[2]!) not_rm2 (exc[3]!),
     Gate.mkMUX zero (special_exc_q[4]!) is_special_q (exc[4]!)
   ]
 

@@ -27,6 +27,7 @@ import Shoumei.Circuits.Combinational.FPDoubleMiscProofs
 import Shoumei.Circuits.Combinational.FPLongConverter
 import Shoumei.Circuits.Combinational.FPLongConverterProofs
 import Shoumei.Circuits.Combinational.FPMisc
+import Shoumei.Circuits.Combinational.FPMiscProofs
 import Shoumei.Circuits.Combinational.FPPack
 import Shoumei.Circuits.Combinational.FPToInt64
 import Shoumei.Circuits.Combinational.FPU
@@ -61,6 +62,7 @@ import Shoumei.Circuits.Sequential.DividerProofs
 import Shoumei.Circuits.Sequential.FPAdder
 import Shoumei.Circuits.Sequential.FPAdderD
 import Shoumei.Circuits.Sequential.FPAdderDProofs
+import Shoumei.Circuits.Sequential.FPAdderProofs
 import Shoumei.Circuits.Sequential.FPDivider
 import Shoumei.Circuits.Sequential.FPDividerD
 import Shoumei.Circuits.Sequential.FPDividerDProofs
@@ -107,6 +109,7 @@ import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CDBMuxProofs
 import Shoumei.RISCV.CPU
 import Shoumei.RISCV.CPU.BusyBitTable
+import Shoumei.RISCV.CPU.BusyBitTableProofs
 import Shoumei.RISCV.CPUBehavioral
 import Shoumei.RISCV.CPUCircuitHelpers
 import Shoumei.RISCV.CPUControl
@@ -118,6 +121,8 @@ import Shoumei.RISCV.CPUHelpers
 import Shoumei.RISCV.CPUProofs
 import Shoumei.RISCV.CPUTest
 import Shoumei.RISCV.CPUTestbench
+import Shoumei.RISCV.CSRFile
+import Shoumei.RISCV.CSRFileProofs
 import Shoumei.RISCV.CodegenCppSim
 import Shoumei.RISCV.CodegenSystemVerilog
 import Shoumei.RISCV.CodegenTest

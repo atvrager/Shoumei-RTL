@@ -51,9 +51,9 @@ theorem multiplier_output_count :
 theorem multiplier_sequential :
     pipelinedMultiplier.hasSequentialElements = true := by native_decide
 
-/-- The multiplier uses 37 submodule instances (CSACompressor64s + pipeline regs + KSA64 + sign correction). -/
+/-- The multiplier uses 15 submodule instances (pipeline regs + KSA64 + sign correction). -/
 theorem multiplier_instance_count :
-    pipelinedMultiplier.instances.length = 45 := by native_decide
+    pipelinedMultiplier.instances.length = 15 := by native_decide
 
 /-! ## Behavioral Proofs -/
 

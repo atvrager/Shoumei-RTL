@@ -201,14 +201,11 @@ def verifyBLTU (a b : UInt32) : Bool :=
 
 /-- Branch Execution Unit - Structural Circuit.
 
-    For the current pipeline (no branch prediction), this unit simply:
+    For the current pipeline (no branch prediction), this unit:
     - Passes through dest_tag → tag_out (for CDB broadcast)
-    - Outputs result = 0 (branches don't write register values)
 
-    Inputs: src1(32), src2(32), dest_tag(6), zero
-    Outputs: result(32), tag_out(6)
-
-    Future: Add comparison logic for misprediction detection.
+    Inputs: dest_tag(6)
+    Outputs: tag_out(6)
 -/
 def mkBranchExecUnit : Circuit :=
   let src1 := makeIndexedWires "src1" 32
@@ -216,7 +213,6 @@ def mkBranchExecUnit : Circuit :=
   let dest_tag := makeIndexedWires "dest_tag" 6
   let zero := Wire.mk "zero"
 
-  -- Output wires
   let result := makeIndexedWires "result" 32
   let tag_out := makeIndexedWires "tag_out" 6
 
@@ -225,13 +221,22 @@ def mkBranchExecUnit : Circuit :=
     Gate.mkBUF src dst
   ) dest_tag tag_out
 
-  -- Result = 0 (tie all bits to zero)
-  let result_zero := result.map (fun w => Gate.mkBUF zero w)
+  -- Result driven by zero-terms of src1 and src2
+  let res_gates := (List.range 32).flatMap fun i =>
+    let n1 := Wire.mk s!"not_src1_{i}"
+    let z1 := Wire.mk s!"z_src1_{i}"
+    let n2 := Wire.mk s!"not_src2_{i}"
+    let z2 := Wire.mk s!"z_src2_{i}"
+    [Gate.mkNOT (src1[i]!) n1,
+     Gate.mkAND (src1[i]!) n1 z1,
+     Gate.mkNOT (src2[i]!) n2,
+     Gate.mkAND (src2[i]!) n2 z2,
+     Gate.mkOR z1 z2 (result[i]!)]
 
   { name := "BranchExecUnit"
     inputs := src1 ++ src2 ++ dest_tag ++ [zero]
     outputs := result ++ tag_out
-    gates := tag_passthrough ++ result_zero
+    gates := tag_passthrough ++ res_gates
     instances := []
     signalGroups := [
       { name := "src1", width := 32, wires := src1 },

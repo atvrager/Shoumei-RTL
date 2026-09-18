@@ -59,7 +59,7 @@ structure TestbenchConfig where
   /-- MMIO putchar address. Writes to this address emit the low byte to $write. -/
   putcharAddr : Option Nat := none
   timeoutCycles : Nat := 100000
-  constantPorts : List (String × Bool) := [("zero", false), ("one", true)]
+  constantPorts : List (String × Bool) := []
   /-- Override the testbench module/file name (default: tb_<circuit.name>) -/
   tbName : Option String := none
   debugOutputs : List String := []

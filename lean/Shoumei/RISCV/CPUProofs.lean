@@ -20,6 +20,44 @@ open Shoumei.RISCV.CPU_W2
 theorem cpu_w2_name : (mkCPU_W2 defaultCPUConfig).name = s!"CPU_{defaultCPUConfig.isaString}" := by
   rfl
 
+/-! ## Opcode PLA Decoder Properties -/
+
+theorem aluOpDecoder_ports :
+    (mkALUOpDecoder defaultCPUConfig).inputs.length = defaultCPUConfig.opcodeWidth ∧
+    (mkALUOpDecoder defaultCPUConfig).outputs.length = 5 := by
+  native_decide
+
+theorem aluOpDecoder_leaf :
+    (mkALUOpDecoder defaultCPUConfig).instances.isEmpty := by
+  native_decide
+
+theorem mulDivOpDecoder_ports :
+    (mkMulDivOpDecoder defaultCPUConfig).inputs.length = defaultCPUConfig.opcodeWidth ∧
+    (mkMulDivOpDecoder defaultCPUConfig).outputs.length = 4 := by
+  native_decide
+
+theorem mulDivOpDecoder_leaf :
+    (mkMulDivOpDecoder defaultCPUConfig).instances.isEmpty := by
+  native_decide
+
+theorem fpuOpDecoder_ports :
+    (mkFPUOpDecoder defaultCPUConfig).inputs.length = defaultCPUConfig.opcodeWidth ∧
+    (mkFPUOpDecoder defaultCPUConfig).outputs.length = 6 := by
+  native_decide
+
+theorem fpuOpDecoder_leaf :
+    (mkFPUOpDecoder defaultCPUConfig).instances.isEmpty := by
+  native_decide
+
+theorem amoOpDecoder_ports :
+    (mkAMOOpDecoder defaultCPUConfig).inputs.length = defaultCPUConfig.opcodeWidth ∧
+    (mkAMOOpDecoder defaultCPUConfig).outputs.length = 4 := by
+  native_decide
+
+theorem amoOpDecoder_leaf :
+    (mkAMOOpDecoder defaultCPUConfig).instances.isEmpty := by
+  native_decide
+
 /-! ## Behavioral Correspondence (Axioms) -/
 
 /-
