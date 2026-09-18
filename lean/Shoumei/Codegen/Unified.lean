@@ -52,7 +52,7 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
     without altering circuit structure, or when the set of emitted formats
     changes.  The cache key includes this version, so a bump invalidates every
     cached output and forces a full regeneration. -/
-def codegenVersion : String := "sv-subslice-rep-2026-09-17"
+def codegenVersion : String := "sv-unloaded-nets-2026-09-18"
 
 /-- Check if circuit hash matches cached value (and the codegen version). -/
 def isUpToDate (name : String) (h : UInt64) : IO Bool := do

@@ -42,6 +42,12 @@ structure Context where
   resetWires : List Wire
   /-- Whether this is a sequential circuit (has DFFs) -/
   isSequential : Bool
+  /-- Wire names that have loads in the circuit -/
+  loadedWires : Std.HashSet String := {}
+  /-- Wire names driven by gates -/
+  gateOutputs : Std.HashSet String := {}
+  /-- Wire names driven by instance output ports -/
+  instanceOutputs : Std.HashSet String := {}
   deriving Repr
 
 /-! ## Bus Reconstruction Helpers -/
@@ -165,6 +171,58 @@ private def extractBaseName (wireName : String) : String :=
   else
     wireName
 
+/-- Parse a port name that may contain indexing in various formats.
+    Bracket:    "alloc_physRd[0]" → some ("alloc_physRd", 0)
+    Underscore: "data_3"          → some ("data", 3)
+    Bare:       "in0"             → some ("in", 0)
+    Non-indexed:"enq_valid"       → none -/
+def parsePortIndex (portName : String) : Option (String × Nat) :=
+  -- Try bracket indexing first: portName[N]
+  match portName.splitOn "[" with
+  | [base, idxPart] =>
+      let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
+      match idxStr.toNat? with
+      | some idx => some (base, idx)
+      | none => none
+  | _ =>
+      -- Try underscore or bare suffix: extract trailing digits
+      let chars := portName.toList
+      let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
+      if digitSuffix.isEmpty then
+        none
+      else
+        let idxStr := String.ofList digitSuffix
+        let baseStr := String.ofList (chars.take (chars.length - digitSuffix.length))
+        match idxStr.toNat? with
+        | some idx =>
+            -- Strip trailing underscore from base if present (underscore indexing)
+            let base := if baseStr.endsWith "_" then
+              String.ofList (baseStr.toList.dropLast)
+            else
+              baseStr
+            -- Don't parse if base is empty
+            if base.isEmpty then none
+            else some (base, idx)
+        | none => none
+
+/-- Check if a port name corresponds to an input port of subMod -/
+def isSubModuleInputPort (subMod : Circuit) (pname : String) : Bool :=
+  let inputNames := subMod.inputs.map (·.name)
+  inputNames.contains pname ||
+  inputNames.any (fun iname => iname.startsWith (pname ++ "_") || iname.startsWith (pname ++ "[")) ||
+  match parsePortIndex pname with
+  | some (base, _) => inputNames.any (fun iname => iname == base || iname.startsWith (base ++ "_") || iname.startsWith (base ++ "["))
+  | none => false
+
+/-- Check if a port name corresponds to an output port of subMod -/
+def isSubModuleOutputPort (subMod : Circuit) (pname : String) : Bool :=
+  let outputNames := subMod.outputs.map (·.name)
+  outputNames.contains pname ||
+  outputNames.any (fun oname => oname.startsWith (pname ++ "_") || oname.startsWith (pname ++ "[")) ||
+  match parsePortIndex pname with
+  | some (base, _) => outputNames.any (fun oname => oname == base || oname.startsWith (base ++ "_") || oname.startsWith (base ++ "["))
+  | none => false
+
 /-- Check if an output signal group needs individual bit-level port declarations
     rather than a single vectorized port.
     Always returns false to ensure clean, human-readable SystemVerilog vector ports. -/
@@ -172,8 +230,18 @@ def outputNeedsIndividualPorts (_wireToGroup : List (Wire × SignalGroup))
     (_wireToIndex : List (Wire × Nat)) (_c : Circuit) (_sg : SignalGroup) : Bool :=
   false
 
+/-- Check if a wire is an unloaded instance output (driven by an instance output and never read) -/
+def isUnloadedInstanceWire (ctx : Context) (w : Wire) : Bool :=
+  !ctx.loadedWires.contains w.name &&
+  !ctx.gateOutputs.contains w.name &&
+  ctx.instanceOutputs.contains w.name
+
+/-- Check if a signal group consists entirely of unloaded instance wires -/
+def isUnloadedSignalGroup (ctx : Context) (sg : SignalGroup) : Bool :=
+  sg.wires.all (isUnloadedInstanceWire ctx)
+
 /-- Build context from circuit -/
-def mkContext (c : Circuit) : Context :=
+def mkContext (c : Circuit) (allCircuits : List Circuit := []) : Context :=
   let clockWires := findClockWires c
   let resetWires := findResetWires c
   -- A circuit is sequential if it has DFF gates OR clock/reset wires
@@ -202,7 +270,59 @@ def mkContext (c : Circuit) : Context :=
     sg.wires.enum.map (fun (idx, w) => (w, idx))
   )
 
-  { wireToGroup, wireToIndex, clockWires, resetWires, isSequential }
+  let initSet : Std.HashSet String := {}
+  let set1 := c.outputs.foldl (fun s w => s.insert w.name) initSet
+  let set2 := c.gates.foldl (fun s g => g.inputs.foldl (fun s' w => s'.insert w.name) s) set1
+  let set3 := c.rams.foldl (fun s ram =>
+    let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
+    let rpWires := ram.readPorts.flatMap (fun rp => rp.addr)
+    (wpWires ++ rpWires).foldl (fun s' w => s'.insert w.name) s) set2
+  let loadedWires := c.instances.foldl (fun s inst =>
+    match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | some subMod =>
+        inst.portMap.foldl (fun s' (pname, w) =>
+          if isSubModuleInputPort subMod pname then s'.insert w.name else s') s
+    | none =>
+        inst.portMap.foldl (fun s' (_, w) => s'.insert w.name) s
+  ) set3
+  let loadedWiresWithGroups := allGroups.foldl (fun s sg =>
+    if sg.wires.any (fun w => s.contains w.name) then
+      sg.wires.foldl (fun s' w => s'.insert w.name) s
+    else s
+  ) loadedWires
+  -- For any instance bus port (grouped by port name base):
+  -- if ANY wire connected to that bus port is loaded, all wires connected to that bus port must be kept loaded.
+  let loadedWiresWithInstBuses := c.instances.foldl (fun s inst =>
+    let portBaseMap : Std.HashMap String (List Wire) := inst.portMap.foldl (fun m (pname, w) =>
+      let base := match parsePortIndex pname with
+        | some (b, _) => b
+        | none => pname
+      match m.get? base with
+      | some ws => m.insert base (w :: ws)
+      | none => m.insert base [w]
+    ) {}
+    inst.portMap.foldl (fun s' (pname, _) =>
+      let base := match parsePortIndex pname with
+        | some (b, _) => b
+        | none => pname
+      match portBaseMap.get? base with
+      | some ws =>
+          if ws.any (fun w => s.contains w.name) then
+            ws.foldl (fun s'' w => s''.insert w.name) s'
+          else s'
+      | none => s'
+    ) s
+  ) loadedWiresWithGroups
+  let gateOutputs : Std.HashSet String := c.gates.foldl (fun s g => s.insert g.output.name) {}
+  let instanceOutputs : Std.HashSet String := c.instances.foldl (fun s inst =>
+    match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
+    | some subMod =>
+        inst.portMap.foldl (fun s' (pname, w) =>
+          if isSubModuleOutputPort subMod pname then s'.insert w.name else s') s
+    | none => s
+  ) {}
+
+  { wireToGroup, wireToIndex, clockWires, resetWires, isSequential, loadedWires := loadedWiresWithInstBuses, gateOutputs, instanceOutputs }
 
 /-! ## Signal Type Helpers -/
 
@@ -328,13 +448,17 @@ def generateInternalSignalDecl (ctx : Context) (_c : Circuit) (w : Wire) : Optio
     | some (_, sg) =>
         -- Only emit for first wire in group
         if sg.wires.head? == some w then
-          let svType := signalGroupToSV sg
-          some s!"  {svType} {sg.name};"
+          if isUnloadedSignalGroup ctx sg then none
+          else
+            let svType := signalGroupToSV sg
+            some s!"  {svType} {sg.name};"
         else
           none
     | none =>
         -- Standalone wire
-        some s!"  logic {sanitizeSVName w.name};"
+        if isUnloadedInstanceWire ctx w then none
+        else
+          some s!"  logic {sanitizeSVName w.name};"
 
 /-- Generate all internal signal declarations -/
 def generateInternalSignals (ctx : Context) (c : Circuit) : String :=
@@ -916,47 +1040,13 @@ def generateRegisters (ctx : Context) (c : Circuit) : String :=
 
 /-! ## Module Instantiation -/
 
-/-- Parse a port name that may contain indexing in various formats.
-    Bracket:    "alloc_physRd[0]" → some ("alloc_physRd", 0)
-    Underscore: "data_3"          → some ("data", 3)
-    Bare:       "in0"             → some ("in", 0)
-    Non-indexed:"enq_valid"       → none -/
-def parsePortIndex (portName : String) : Option (String × Nat) :=
-  -- Try bracket indexing first: portName[N]
-  match portName.splitOn "[" with
-  | [base, idxPart] =>
-      let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
-      match idxStr.toNat? with
-      | some idx => some (base, idx)
-      | none => none
-  | _ =>
-      -- Try underscore or bare suffix: extract trailing digits
-      let chars := portName.toList
-      let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
-      if digitSuffix.isEmpty then
-        none
-      else
-        let idxStr := String.ofList digitSuffix
-        let baseStr := String.ofList (chars.take (chars.length - digitSuffix.length))
-        match idxStr.toNat? with
-        | some idx =>
-            -- Strip trailing underscore from base if present (underscore indexing)
-            let base := if baseStr.endsWith "_" then
-              String.ofList (baseStr.toList.dropLast)
-            else
-              baseStr
-            -- Don't parse if base is empty
-            if base.isEmpty then none
-            else some (base, idx)
-        | none => none
-
 /-- Get the set of output signal group names that use individual ports for a sub-module. -/
 def getSubModuleIndividualOutputGroups (allCircuits : List Circuit) (moduleName : String)
     : List String :=
   match allCircuits.find? (fun sc => sc.name == moduleName) with
   | none => []
   | some subMod =>
-      let subCtx := mkContext subMod
+      let subCtx := mkContext subMod allCircuits
       let allSgs := subCtx.wireToGroup.map (·.2)
       let uniqueSgNames := dedupStrings (allSgs.map (·.name))
       let uniqueSgs := uniqueSgNames.filterMap (fun n => allSgs.find? (fun sg => sg.name == n))
@@ -975,7 +1065,7 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
   match allCircuits.find? (fun sc => sc.name == moduleName) with
   | none => []
   | some subMod =>
-      let subCtx := mkContext subMod
+      let subCtx := mkContext subMod allCircuits
       -- For each input and output wire in the sub-module, check if it's in a signal group
       -- Include ALL signal groups (even individual-port outputs) for grouping
       (subMod.inputs ++ subMod.outputs).filterMap (fun w =>
@@ -1136,17 +1226,19 @@ def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
 def generateIndividualBusPortConnections (ctx : Context) (c : Circuit)
     (subMod : Option Circuit) (baseName : String) (entries : List (Nat × Wire)) : List String :=
   let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
-  sorted.map (fun (idx, w) =>
-    let portName := match subMod with
-      | some sm =>
-          let candidateBare := s!"{baseName}{idx}"
-          let candidateWithUnderscore := s!"{baseName}_{idx}"
-          if (sm.inputs ++ sm.outputs).any (fun pw => pw.name == candidateBare) then
-            candidateBare
-          else
-            candidateWithUnderscore
-      | none => s!"{baseName}_{idx}"
-    s!"    .{portName}({wireRef ctx c w})")
+  sorted.filterMap (fun (idx, w) =>
+    if isUnloadedInstanceWire ctx w then none
+    else
+      let portName := match subMod with
+        | some sm =>
+            let candidateBare := s!"{baseName}{idx}"
+            let candidateWithUnderscore := s!"{baseName}_{idx}"
+            if (sm.inputs ++ sm.outputs).any (fun pw => pw.name == candidateBare) then
+              candidateBare
+            else
+              candidateWithUnderscore
+        | none => s!"{baseName}_{idx}"
+      some s!"    .{portName}({wireRef ctx c w})")
 
 /-- Generate module instantiation -/
 def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
@@ -1157,13 +1249,26 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
   let individualOutputGroups := getSubModuleIndividualOutputGroups allCircuits inst.moduleName
   let portConnections := grouped.flatMap (fun entry =>
     match entry with
-    | Sum.inl (pname, w) => [generatePortConnection ctx c pname w]
+    | Sum.inl (pname, w) =>
+        let isUnloaded := match subMod with
+          | some sm => isSubModuleOutputPort sm pname && isUnloadedInstanceWire ctx w
+          | none => false
+        if isUnloaded then
+          []
+        else
+          [generatePortConnection ctx c pname w]
     | Sum.inr (baseName, entries) =>
         -- Check if this bus group corresponds to an individual-port output
         if individualOutputGroups.contains baseName then
           generateIndividualBusPortConnections ctx c subMod baseName entries
         else
-          [generateBusPortConnection ctx c baseName entries]
+          let isUnloadedBus := match subMod with
+            | some sm => isSubModuleOutputPort sm baseName && entries.all (fun (_, w) => isUnloadedInstanceWire ctx w)
+            | none => false
+          if isUnloadedBus then
+            []
+          else
+            [generateBusPortConnection ctx c baseName entries]
   )
 
   let connectionsStr := String.intercalate ",\n" portConnections
@@ -1229,7 +1334,7 @@ def generateRAMs (ctx : Context) (c : Circuit) : String :=
 
 /-- Generate complete SystemVerilog module for a circuit -/
 def generateModule (c : Circuit) (allCircuits : List Circuit := []) : String :=
-  let ctx := mkContext c
+  let ctx := mkContext c allCircuits
 
   let keepHierarchyAttr := if c.keepHierarchy then
     "(* keep_hierarchy = \"yes\" *)\n"
