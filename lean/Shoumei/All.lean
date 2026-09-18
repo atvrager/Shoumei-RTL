@@ -60,9 +60,9 @@ import Shoumei.Circuits.Sequential.DFFProofs
 import Shoumei.Circuits.Sequential.Divider
 import Shoumei.Circuits.Sequential.DividerProofs
 import Shoumei.Circuits.Sequential.FPAdder
-import Shoumei.Circuits.Sequential.FPAdderProofs
 import Shoumei.Circuits.Sequential.FPAdderD
 import Shoumei.Circuits.Sequential.FPAdderDProofs
+import Shoumei.Circuits.Sequential.FPAdderProofs
 import Shoumei.Circuits.Sequential.FPDivider
 import Shoumei.Circuits.Sequential.FPDividerD
 import Shoumei.Circuits.Sequential.FPDividerDProofs
