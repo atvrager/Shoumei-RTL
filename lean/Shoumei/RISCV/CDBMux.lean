@@ -26,12 +26,13 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
   let data1Width := if enableD then 64 else 32
   let lsuDeqWidth := if enableD then 72 else 39
   let fpDeqWidth := if enableD then 71 else 39
-  let ibDeqWidth := if enableD then 104 else 72
-  let muldivDeqWidth := if enableD then 71 else 39
+  let ib0DeqWidth := if enableD then 70 else 72
+  let ib1DeqWidth := if enableD then 103 else 72
+  let muldivDeqWidth := if enableD then 70 else 39
 
   -- Shared inputs
-  let ib_valid_0  := mk "ib_valid_0";  let ib_deq_0  := mkIdx "ib_deq_0"  ibDeqWidth
-  let ib_valid_1  := mk "ib_valid_1";  let ib_deq_1  := mkIdx "ib_deq_1"  ibDeqWidth
+  let ib_valid_0  := mk "ib_valid_0";  let ib_deq_0  := mkIdx "ib_deq_0"  ib0DeqWidth
+  let ib_valid_1  := mk "ib_valid_1";  let ib_deq_1  := mkIdx "ib_deq_1"  ib1DeqWidth
   let fp_valid    := mk "fp_valid";     let fp_deq    := mkIdx "fp_deq"     fpDeqWidth
   let muldiv_valid := mk "muldiv_valid"; let muldiv_deq := mkIdx "muldiv_deq" muldivDeqWidth
   let lsu_valid   := mk "lsu_valid";   let lsu_deq   := mkIdx "lsu_deq"    lsuDeqWidth
@@ -44,7 +45,6 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
   let pre_valid_0  := mk "pre_valid_0";  let pre_tag_0  := mkIdx "pre_tag_0"  6
   let pre_data_0   := mkIdx "pre_data_0" data0Width; let pre_is_fp_0 := mk "pre_is_fp_0"
   let pre_is_double_0 := mk "pre_is_double_0"
-  let redirect_0   := mkIdx "redirect_0" 32; let pre_mispred_0 := mk "pre_mispredicted_0"
   let drain_lsu    := mk "drain_lsu";   let drain_ib_0 := mk "drain_ib_0"
 
   -- CDB 1 outputs
@@ -86,10 +86,15 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
     else []
   let data0_gates := data0_lo_gates ++ data0_hi_gates
   let is_fp0_gates :=
-    if enableF then
+    if enableD then
       let m1 := mk "f0_m1"
-      let lsu_fp_bit := if enableD then lsu_deq[70]! else lsu_deq[38]!
-      let ib0_fp_bit := if enableD then ib_deq_0[70]! else ib_deq_0[38]!
+      let lsu_fp_bit := lsu_deq[70]!
+      [Gate.mkMUX zero lsu_fp_bit lsu_wins m1,
+       Gate.mkMUX m1 dmem_is_fp dmem_wins pre_is_fp_0]
+    else if enableF then
+      let m1 := mk "f0_m1"
+      let lsu_fp_bit := lsu_deq[38]!
+      let ib0_fp_bit := ib_deq_0[38]!
       [Gate.mkMUX ib0_fp_bit lsu_fp_bit lsu_wins m1,
        Gate.mkMUX m1 dmem_is_fp dmem_wins pre_is_fp_0]
     else [Gate.mkBUF zero pre_is_fp_0]
@@ -99,24 +104,19 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
       [Gate.mkMUX zero lsu_deq[71]! lsu_wins m1,
        Gate.mkMUX m1 dmem_is_double dmem_wins pre_is_double_0]
     else []
-  let redir0_gates :=
-    if enableD then
-      (List.range 32).map (fun i => Gate.mkAND ib_deq_0[71+i]! ib0_wins redirect_0[i]!) ++
-      [Gate.mkAND ib_deq_0[103]! ib0_wins pre_mispred_0]
-    else
-      (List.range 32).map (fun i => Gate.mkAND ib_deq_0[39+i]! ib0_wins redirect_0[i]!) ++
-      [Gate.mkAND ib_deq_0[71]! ib0_wins pre_mispred_0]
-
   -- CDB 1: fp > muldiv > ib_1
-  let fp_wins    := mk "fp_wins";  let not_fp     := mk "not_fp"
+  let fp_wins := mk "fp_wins"
+  let not_fp := mk "not_fp"; let not_not_fp := mk "not_not_fp"
   let muldiv_wins := mk "muldiv_wins"; let not_muldiv := mk "not_muldiv"
   let ib1_wins_tmp := mk "ib1_wins_tmp"; let ib1_wins := mk "ib1_wins"
   let arb1_gates := [
-    Gate.mkBUF fp_valid fp_wins,      Gate.mkNOT fp_valid not_fp,
+    Gate.mkNOT fp_valid not_fp,
+    Gate.mkNOT not_fp not_not_fp,
+    Gate.mkAND fp_valid not_not_fp fp_wins,
     Gate.mkAND muldiv_valid not_fp muldiv_wins, Gate.mkNOT muldiv_wins not_muldiv,
     Gate.mkAND ib_valid_1 not_fp ib1_wins_tmp,
     Gate.mkAND ib1_wins_tmp not_muldiv ib1_wins,
-    Gate.mkBUF fp_wins drain_fp,  Gate.mkBUF muldiv_wins drain_muldiv,
+    Gate.mkAND fp_wins not_not_fp drain_fp,  Gate.mkBUF muldiv_wins drain_muldiv,
     Gate.mkBUF ib1_wins drain_ib_1
   ]
   let valid1_gates := [
@@ -140,18 +140,21 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
     else []
   let data1_gates := data1_lo_gates ++ data1_hi_gates
   let is_fp1_gates :=
-    if enableF then
+    if enableD then
+      let fp_is_fp_bit := fp_deq[70]!
+      [Gate.mkAND fp_is_fp_bit fp_wins pre_is_fp_1]
+    else if enableF then
       let m1 := mk "f1_m1"
-      let fp_is_fp_bit := if enableD then fp_deq[70]! else fp_deq[38]!
-      let ib1_fp_bit := if enableD then ib_deq_1[70]! else ib_deq_1[38]!
-      let md_fp_bit := if enableD then muldiv_deq[70]! else muldiv_deq[38]!
+      let fp_is_fp_bit := fp_deq[38]!
+      let ib1_fp_bit := ib_deq_1[38]!
+      let md_fp_bit := muldiv_deq[38]!
       [Gate.mkMUX ib1_fp_bit md_fp_bit muldiv_wins m1,
        Gate.mkMUX m1 fp_is_fp_bit fp_wins pre_is_fp_1]
     else [Gate.mkBUF zero pre_is_fp_1]
   let redir1_gates :=
     if enableD then
-      (List.range 32).map (fun i => Gate.mkAND ib_deq_1[71+i]! ib1_wins redirect_1[i]!) ++
-      [Gate.mkAND ib_deq_1[103]! ib1_wins pre_mispred_1]
+      (List.range 32).map (fun i => Gate.mkAND ib_deq_1[70+i]! ib1_wins redirect_1[i]!) ++
+      [Gate.mkAND ib_deq_1[102]! ib1_wins pre_mispred_1]
     else
       (List.range 32).map (fun i => Gate.mkAND ib_deq_1[39+i]! ib1_wins redirect_1[i]!) ++
       [Gate.mkAND ib_deq_1[71]! ib1_wins pre_mispred_1]
@@ -165,9 +168,9 @@ def mkCDBMux (enableF : Bool) (enableD : Bool := false) : Circuit :=
                pre_data_0 ++ pre_data_1 ++ [pre_is_fp_0, pre_is_fp_1] ++
                (if enableD then [pre_is_double_0] else []) ++
                [drain_lsu, drain_muldiv, drain_fp, drain_ib_0, drain_ib_1] ++
-               redirect_0 ++ redirect_1 ++ [pre_mispred_0, pre_mispred_1]
+               redirect_1 ++ [pre_mispred_1]
     gates := arb0_gates ++ valid0_gates ++ tag0_gates ++ data0_gates ++
-             is_fp0_gates ++ is_double0_gates ++ redir0_gates ++
+             is_fp0_gates ++ is_double0_gates ++
              arb1_gates ++ valid1_gates ++ tag1_gates ++ data1_gates ++
              is_fp1_gates ++ redir1_gates
     instances := [] }

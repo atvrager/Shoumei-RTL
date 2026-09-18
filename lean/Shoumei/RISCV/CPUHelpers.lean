@@ -1779,11 +1779,10 @@ def mkAtomicUnit
   let rs2 := amo_rs2_r
   let add_sum := mkW "atom_add_sum" dataW
   let add_inst : CircuitInstance := {
-    moduleName := s!"KoggeStoneAdder{dataW}", instName := "u_atom_add",
+    moduleName := s!"KoggeStoneAdder{dataW}NoCin", instName := "u_atom_add",
     portMap :=
       (List.range dataW).map (fun i => (s!"a_{i}", old[i]!)) ++
       (List.range dataW).map (fun i => (s!"b_{i}", rs2[i]!)) ++
-      [("cin", zero)] ++
       (List.range dataW).map (fun i => (s!"sum_{i}", add_sum[i]!)) }
   let res_xor := mkW "atom_res_xor" dataW
   let res_and := mkW "atom_res_and" dataW

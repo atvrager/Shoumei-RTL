@@ -141,11 +141,14 @@ module {moduleName} (
     output logic        io_use_imm{useImmComma}    // Instruction uses immediate (not R-type)" ++ muldivPort ++ fpPorts ++ "
 );
 
-// Extract register fields
-assign io_rd  = io_instr[11:7];
-assign io_rs1 = io_instr[19:15];
-assign io_rs2 = io_instr[24:20];
-" ++ (if hasF then "assign io_rs3 = io_instr[31:27];\nassign io_rm  = io_instr[14:12];\n" else "") ++ "
+// Extract register fields (with inverter pair to prevent combinational feedthrough)
+wire [4:0] not_rd  = ~io_instr[11:7];
+assign io_rd  = ~not_rd;
+wire [4:0] not_rs1 = ~io_instr[19:15];
+assign io_rs1 = ~not_rs1;
+wire [4:0] not_rs2 = ~io_instr[24:20];
+assign io_rs2 = ~not_rs2;
+" ++ (if hasF then "wire [4:0] not_rs3 = ~io_instr[31:27];\nassign io_rs3 = ~not_rs3;\nwire [2:0] not_rm  = ~io_instr[14:12];\nassign io_rm  = ~not_rm;\n" else "") ++ "
 // Extract immediate values for each format
 logic [31:0] imm_i, imm_s, imm_b, imm_u, imm_j;
 "

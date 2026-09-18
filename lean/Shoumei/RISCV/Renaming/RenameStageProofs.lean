@@ -31,13 +31,25 @@ theorem renamestage_name : mkRenameStage.name = "RenameStage_W2" := by native_de
 theorem renamestage_input_count : mkRenameStage.inputs.length = 190 := by native_decide
 
 /-- RenameStage output count -/
-theorem renamestage_output_count : mkRenameStage.outputs.length = 320 := by native_decide
+theorem renamestage_output_count : mkRenameStage.outputs.length = 287 := by native_decide
 
 /-- RenameStage uses 5 submodule instances (CRAT + 2 RATs + FreeList + PhysRegFile) -/
 theorem renamestage_instance_count : mkRenameStage.instances.length = 5 := by native_decide
 
 /-- RenameStage gate count -/
-theorem renamestage_gate_count : mkRenameStage.gates.length = 1904 := by native_decide
+theorem renamestage_gate_count : mkRenameStage.gates.length = 1871 := by native_decide
+
+/-- IntRenameStage has the expected name -/
+theorem intrenamestage_name : (mkIntRenameStage 64).name = "IntRenameStage_W2_64" := by native_decide
+
+/-- IntRenameStage uses 5 submodule instances (CRAT + 2 IntRATs + FreeList + IntPhysRegFile) -/
+theorem intrenamestage_instance_count : (mkIntRenameStage 64).instances.length = 5 := by native_decide
+
+/-- FPRenameStage has the expected name -/
+theorem fprenamestage_name : (mkFPRenameStage 64).name = "FPRenameStage_W1_64" := by native_decide
+
+/-- FPRenameStage uses 4 submodule instances (CRAT + RAT + FreeList_W1 + FPPhysRegFile) -/
+theorem fprenamestage_instance_count : (mkFPRenameStage 64).instances.length = 4 := by native_decide
 
 /-! ## Behavioral Proofs - Initialization -/
 

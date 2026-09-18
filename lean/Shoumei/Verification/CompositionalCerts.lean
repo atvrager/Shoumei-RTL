@@ -234,6 +234,24 @@ def register96_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
+/-- Register157 = Register64 + Register64 + Register16 + Register8 + Register4 + Register1 (hierarchical) -/
+def register157_cert : CompositionalCert := {
+  moduleName := "Register157"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register158 = Register64 + Register64 + Register16 + Register8 + Register4 + Register2 (hierarchical) -/
+def register158_cert : CompositionalCert := {
+  moduleName := "Register158"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register159 = Register64 + Register64 + Register16 + Register8 + Register4 + Register2 + Register1 (hierarchical) -/
+def register159_cert : CompositionalCert := {
+  moduleName := "Register159"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-- Register160 = Register64 + Register64 + Register32 (hierarchical) -/
 def register160_cert : CompositionalCert := {
   moduleName := "Register160"
@@ -261,6 +279,12 @@ def rat_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.RATProofs"
 }
 
+/-- CRAT_32x6: Committed register alias table (32 architectural → 64 physical) -/
+def crat_cert : CompositionalCert := {
+  moduleName := "CRAT_32x6"
+  proofReference := "Shoumei.RISCV.Renaming.RATProofs"
+}
+
 /-- FreeList_64: Free physical register list (64-entry queue) -/
 def freelist_cert : CompositionalCert := {
   moduleName := "FreeList_64"
@@ -271,6 +295,42 @@ def freelist_cert : CompositionalCert := {
 def bitmapFreelist_w2_cert : CompositionalCert := {
   moduleName := "BitmapFreeList_64_W2"
   proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
+}
+
+/-- IntRAT_32x6: Integer register alias table (no rs3) -/
+def intRat_cert : CompositionalCert := {
+  moduleName := "IntRAT_32x6"
+  proofReference := "Shoumei.RISCV.Renaming.RATProofs"
+}
+
+/-- BitmapFreeList_64_W1: Single-dequeue bitmap free list for FP domain -/
+def bitmapFreelist_w1_cert : CompositionalCert := {
+  moduleName := "BitmapFreeList_64_W1"
+  proofReference := "Shoumei.RISCV.Renaming.BitmapFreeListProofs"
+}
+
+/-- IntPhysRegFile_64x32: Integer physical register file (64 registers × 32 bits, 6 read ports) -/
+def intPhysRegFile_cert : CompositionalCert := {
+  moduleName := "IntPhysRegFile_64x32"
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
+/-- IntPhysRegFile_64x64: Integer physical register file (64 registers × 64 bits, 6 read ports) -/
+def intPhysRegFile_64x64_cert : CompositionalCert := {
+  moduleName := "IntPhysRegFile_64x64"
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
+/-- FPPhysRegFile_64x32: FP physical register file (64 registers × 32 bits, 3 read ports) -/
+def fpPhysRegFile_cert : CompositionalCert := {
+  moduleName := "FPPhysRegFile_64x32"
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
+}
+
+/-- FPPhysRegFile_64x64: FP physical register file (64 registers × 64 bits, 3 read ports) -/
+def fpPhysRegFile_64x64_cert : CompositionalCert := {
+  moduleName := "FPPhysRegFile_64x64"
+  proofReference := "Shoumei.RISCV.Renaming.PhysRegFileProofs"
 }
 
 /-! ## M-Extension -/
@@ -309,6 +369,30 @@ def muldivExecUnit_cert : CompositionalCert := {
 /-- ReservationStation4_W2_64: 64-bit dual-issue reservation station -/
 def rs4w2_64_cert : CompositionalCert := {
   moduleName := "ReservationStation4_W2_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
+/-- IntReservationStation4_W2_64: 64-bit specialized integer reservation station -/
+def intRs4w2_64_cert : CompositionalCert := {
+  moduleName := "IntReservationStation4_W2_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
+/-- ReservationStation2_W1_64: 64-bit specialized single-issue reservation station -/
+def rs2w1_64_cert : CompositionalCert := {
+  moduleName := "ReservationStation2_W1_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
+/-- MemoryReservationStation2_W1_64: 64-bit specialized memory reservation station -/
+def memRs2w1_64_cert : CompositionalCert := {
+  moduleName := "MemoryReservationStation2_W1_64"
+  proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
+}
+
+/-- FPReservationStation2_W1_64: 64-bit specialized floating-point reservation station -/
+def fpRs2w1_64_cert : CompositionalCert := {
+  moduleName := "FPReservationStation2_W1_64"
   proofReference := "Shoumei.RISCV.Execution.ReservationStationProofs"
 }
 
@@ -513,10 +597,40 @@ def renameStage_w2_64_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
 }
 
+/-- IntRenameStage_W2: Integer rename stage for dual issue (32-bit) -/
+def intRenameStage_w2_cert : CompositionalCert := {
+  moduleName := "IntRenameStage_W2"
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
+/-- IntRenameStage_W2_64: Integer rename stage for dual issue (64-bit) -/
+def intRenameStage_w2_64_cert : CompositionalCert := {
+  moduleName := "IntRenameStage_W2_64"
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
+/-- FPRenameStage_W1: FP rename stage for single issue (32-bit) -/
+def fpRenameStage_w1_cert : CompositionalCert := {
+  moduleName := "FPRenameStage_W1"
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
+/-- FPRenameStage_W1_64: FP rename stage for single issue (64-bit) -/
+def fpRenameStage_w1_64_cert : CompositionalCert := {
+  moduleName := "FPRenameStage_W1_64"
+  proofReference := "Shoumei.RISCV.Renaming.RenameStageProofs"
+}
+
 /-- MicrocodeSequencer: ROM-driven µop sequencer for CSR/FENCE.I -/
 def microcodeSequencer_cert : CompositionalCert := {
   moduleName := "MicrocodeSequencer"
   proofReference := "Shoumei.RISCV.Microcode.MicrocodeSequencerProofs"
+}
+
+/-- TrapSequencer: Dedicated sequencer for TRAP_ENTRY and MRET sequences -/
+def trapSequencer_cert : CompositionalCert := {
+  moduleName := "TrapSequencer"
+  proofReference := "Shoumei.RISCV.Microcode.TrapSequencerProofs"
 }
 
 /-- CSRFile: Control and Status Register file (12 32-bit registers + WARL/traps/counters) -/
@@ -558,13 +672,23 @@ def allCerts : List CompositionalCert := [
   register96_cert,
   register98_cert,
   register130_cert,
+  register157_cert,
+  register158_cert,
+  register159_cert,
   register160_cert,
   queuePointer_3_cert,
   -- Renaming
   physregfile_cert,
   physregfile_64x64_cert,
+  intPhysRegFile_cert,
+  intPhysRegFile_64x64_cert,
+  fpPhysRegFile_cert,
+  fpPhysRegFile_64x64_cert,
   rat_cert,
+  intRat_cert,
+  crat_cert,
   bitmapFreelist_w2_cert,
+  bitmapFreelist_w1_cert,
   -- Execution
   -- M-Extension
   pipelinedMultiplier_cert,
@@ -573,6 +697,10 @@ def allCerts : List CompositionalCert := [
   divider64_cert,
   muldivExecUnit_cert,
   rs4w2_64_cert,
+  intRs4w2_64_cert,
+  rs2w1_64_cert,
+  memRs2w1_64_cert,
+  fpRs2w1_64_cert,
   -- Retirement
   queue16x32_dualport_cert,
   rob16_w2_cert,
@@ -607,6 +735,10 @@ def allCerts : List CompositionalCert := [
   -- Phase 8: Top-Level Integration
   renameStage_w2_cert,
   renameStage_w2_64_cert,
+  intRenameStage_w2_cert,
+  intRenameStage_w2_64_cert,
+  fpRenameStage_w1_cert,
+  fpRenameStage_w1_64_cert,
   -- CSR File
   csrFile_cert,
   -- Scoreboard Busy Tables
@@ -614,6 +746,7 @@ def allCerts : List CompositionalCert := [
   fpBusyTable_cert,
   -- Microcode
   microcodeSequencer_cert,
+  trapSequencer_cert,
   -- Microcoded variant
   cpu_microcoded_cert,
   -- Microcoded cached variant

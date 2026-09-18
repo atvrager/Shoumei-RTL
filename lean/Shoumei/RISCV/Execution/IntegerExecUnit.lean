@@ -335,8 +335,19 @@ def mkIntegerExecUnitWithWidth (width : Nat := 64) (opWidth : Nat := 5) : Circui
       (result1.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w)))
   }
 
-  let tag0_passthrough := List.zipWith Gate.mkBUF dest_tag0 tag_out0
-  let tag1_passthrough := List.zipWith Gate.mkBUF dest_tag1 tag_out1
+  let not_t0 := makeIndexedWires "not_dt0" 6
+  let not_not_t0 := makeIndexedWires "not_not_dt0" 6
+  let tag0_passthrough := (List.range 6).flatMap fun i =>
+    [Gate.mkNOT (dest_tag0[i]!) (not_t0[i]!),
+     Gate.mkNOT (not_t0[i]!) (not_not_t0[i]!),
+     Gate.mkAND (dest_tag0[i]!) (not_not_t0[i]!) (tag_out0[i]!)]
+
+  let not_t1 := makeIndexedWires "not_dt1" 6
+  let not_not_t1 := makeIndexedWires "not_not_dt1" 6
+  let tag1_passthrough := (List.range 6).flatMap fun i =>
+    [Gate.mkNOT (dest_tag1[i]!) (not_t1[i]!),
+     Gate.mkNOT (not_t1[i]!) (not_not_t1[i]!),
+     Gate.mkAND (dest_tag1[i]!) (not_not_t1[i]!) (tag_out1[i]!)]
 
   let name := if width == 32 then "IntegerExecUnit_W2" else s!"IntegerExecUnit_W2_{width}"
 

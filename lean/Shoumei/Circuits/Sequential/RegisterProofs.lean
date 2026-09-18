@@ -34,6 +34,18 @@ def register130_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
+/-- Register157 is built from power-of-2 building blocks (64+64+16+8+4+1) -/
+def register157_cert : CompositionalCert := {
+  moduleName := "Register157"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
+/-- Register158 is built from power-of-2 building blocks (64+64+16+8+4+2) -/
+def register158_cert : CompositionalCert := {
+  moduleName := "Register158"
+  proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
+}
+
 /-- Register159 is built from power-of-2 building blocks (64+64+16+8+4+2+1) -/
 def register159_cert : CompositionalCert := {
   moduleName := "Register159"
@@ -89,6 +101,24 @@ theorem register130_no_gates : mkRegister130Hierarchical.gates.length = 0 := by 
 
 /-- Register130 decomposition correctness: 64+64+2 = 130 -/
 theorem register130_decomposition : decomposeToPowersOf2 130 = [64, 64, 2] := by native_decide
+
+/-- Register157 uses 6 hierarchical instances (64+64+16+8+4+1) -/
+theorem register157_instance_count : mkRegister157Hierarchical.instances.length = 6 := by native_decide
+
+/-- Register157 has no gates (hierarchical, not flat) -/
+theorem register157_no_gates : mkRegister157Hierarchical.gates.length = 0 := by native_decide
+
+/-- Register157 decomposition correctness: 64+64+16+8+4+1 = 157 -/
+theorem register157_decomposition : decomposeToPowersOf2 157 = [64, 64, 16, 8, 4, 1] := by native_decide
+
+/-- Register158 uses 6 hierarchical instances (64+64+16+8+4+2) -/
+theorem register158_instance_count : mkRegister158Hierarchical.instances.length = 6 := by native_decide
+
+/-- Register158 has no gates (hierarchical, not flat) -/
+theorem register158_no_gates : mkRegister158Hierarchical.gates.length = 0 := by native_decide
+
+/-- Register158 decomposition correctness: 64+64+16+8+4+2 = 158 -/
+theorem register158_decomposition : decomposeToPowersOf2 158 = [64, 64, 16, 8, 4, 2] := by native_decide
 
 /-- Register159 uses 7 hierarchical instances (64+64+16+8+4+2+1) -/
 theorem register159_instance_count : mkRegister159Hierarchical.instances.length = 7 := by native_decide

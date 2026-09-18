@@ -222,9 +222,8 @@ open Shoumei.Circuits.Combinational
 -/
 def mkMemoryExecUnit : Circuit :=
   let base := makeIndexedWires "base" 64
-  let offset := makeIndexedWires "offset" 64
+  let offset := makeIndexedWires "offset" 32
   let dest_tag := makeIndexedWires "dest_tag" 6
-  let zero := Wire.mk "zero"
 
   let a := makeIndexedWires "a" 64
   let b := makeIndexedWires "b" 64
@@ -234,29 +233,38 @@ def mkMemoryExecUnit : Circuit :=
   let tag_out := makeIndexedWires "tag_out" 6
 
   let base_to_a := List.zipWith Gate.mkBUF base a
-  let offset_to_b := List.zipWith Gate.mkBUF offset b
+  let sign_n := (List.range 32).map (fun i => Wire.mk s!"sign_n_{i}")
+  let offset_to_b :=
+    (List.range 32).map (fun i => Gate.mkBUF offset[i]! b[i]!) ++
+    (List.range 32).flatMap (fun i =>
+      [Gate.mkNOT offset[31]! sign_n[i]!,
+       Gate.mkNOT sign_n[i]! b[32 + i]!])
 
   let adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "KoggeStoneAdder64NoCin"
     instName := "u_adder"
     portMap :=
       (a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
       (sum.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
 
   let sum_to_address := List.zipWith Gate.mkBUF sum address
-  let tag_passthrough := List.zipWith Gate.mkBUF dest_tag tag_out
+  let not_tag := makeIndexedWires "not_dt" 6
+  let not_not_tag := makeIndexedWires "not_not_dt" 6
+  let tag_passthrough := (List.range 6).flatMap fun i =>
+    [Gate.mkNOT (dest_tag[i]!) (not_tag[i]!),
+     Gate.mkNOT (not_tag[i]!) (not_not_tag[i]!),
+     Gate.mkAND (dest_tag[i]!) (not_not_tag[i]!) (tag_out[i]!)]
 
   { name := "MemoryExecUnit"
-    inputs := base ++ offset ++ dest_tag ++ [zero]
+    inputs := base ++ offset ++ dest_tag
     outputs := address ++ tag_out
     gates := base_to_a ++ offset_to_b ++ sum_to_address ++ tag_passthrough
     instances := [adder_inst]
     signalGroups := [
       { name := "base", width := 64, wires := base },
-      { name := "offset", width := 64, wires := offset },
+      { name := "offset", width := 32, wires := offset },
       { name := "dest_tag", width := 6, wires := dest_tag },
       { name := "a", width := 64, wires := a },
       { name := "b", width := 64, wires := b },

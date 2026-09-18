@@ -27,9 +27,9 @@ theorem rat64_name : mkRAT64.name = "RAT_32x6" := by native_decide
 
 /-- RAT64 has correct number of inputs:
     clock(1) + reset(1) + write_en(1) + write_addr(5) + write_data(6)
-    + rs1_addr(5) + rs2_addr(5) + rs3_addr(5) + restore_en(1) + restore_data(192)
-    = 3 + 5 + 6 + 15 + 1 + 192 = 222 -/
-theorem rat64_input_count : mkRAT64.inputs.length = 222 := by native_decide
+    + rs1_addr(5) + rs2_addr(5) + rs3_addr(5) + restore_data(192)
+    = 3 + 5 + 6 + 15 + 192 = 221 -/
+theorem rat64_input_count : mkRAT64.inputs.length = 221 := by native_decide
 
 /-- RAT64 has correct number of outputs:
     rs1_data(6) + rs2_data(6) + rs3_data(6) + old_rd_data(6) + dump_data(192)
@@ -40,9 +40,39 @@ theorem rat64_output_count : mkRAT64.outputs.length = 216 := by native_decide
 theorem rat64_instance_count : mkRAT64.instances.length = 5 := by native_decide
 
 /-- RAT64 gate count: 32 write-enable ANDs + 20 reset buffers (4 root + 16 leaf)
-    + 32*6*4 storage gates (write MUX, restore MUX, DFF, dump BUF)
-    = 32 + 20 + 768 = 820 -/
-theorem rat64_gate_count : mkRAT64.gates.length = 820 := by native_decide
+    + 32*6*3 storage gates (write MUX, DFF, dump BUF)
+    = 32 + 20 + 576 = 628 -/
+theorem rat64_gate_count : mkRAT64.gates.length = 628 := by native_decide
+
+/-- IntRAT64 has the expected name -/
+theorem intrat64_name : mkIntRAT64.name = "IntRAT_32x6" := by native_decide
+
+/-- IntRAT64 input count (221 - 5 rs3_addr wires = 216) -/
+theorem intrat64_input_count : mkIntRAT64.inputs.length = 216 := by native_decide
+
+/-- IntRAT64 output count (216 - 6 rs3_data wires = 210) -/
+theorem intrat64_output_count : mkIntRAT64.outputs.length = 210 := by native_decide
+
+/-- IntRAT64 uses 4 submodule instances (1 write dec + 3 read muxes: rs1, rs2, old_rd) -/
+theorem intrat64_instance_count : mkIntRAT64.instances.length = 4 := by native_decide
+
+/-- IntRAT64 gate count (same storage array = 628) -/
+theorem intrat64_gate_count : mkIntRAT64.gates.length = 628 := by native_decide
+
+/-- CRAT64 has the expected name -/
+theorem crat64_name : mkCRAT64.name = "CRAT_32x6" := by native_decide
+
+/-- CRAT64 has correct number of inputs: clock(1) + reset(1) + restore_data(192) = 194 -/
+theorem crat64_input_count : mkCRAT64.inputs.length = 194 := by native_decide
+
+/-- CRAT64 has correct number of outputs: dump_data(192) = 192 -/
+theorem crat64_output_count : mkCRAT64.outputs.length = 192 := by native_decide
+
+/-- CRAT64 is purely storage without submodules -/
+theorem crat64_instance_count : mkCRAT64.instances.length = 0 := by native_decide
+
+/-- CRAT64 gate count: 20 reset buffers + 192 DFFs = 212 -/
+theorem crat64_gate_count : mkCRAT64.gates.length = 212 := by native_decide
 
 /-! ## Behavioral Proofs -/
 

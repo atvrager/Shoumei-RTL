@@ -16,6 +16,8 @@ import Shoumei.Circuits.Sequential.DFF
 import Shoumei.Circuits.Sequential.Queue
 
 -- Phase 1: Arithmetic Building Blocks
+import Shoumei.Circuits.Combinational.PCIncrementer
+import Shoumei.Circuits.Combinational.BranchTargetAdder
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.Subtractor
 import Shoumei.Circuits.Combinational.Comparator
@@ -94,6 +96,7 @@ import Shoumei.RISCV.Memory.Cache.CachedCPU
 
 -- Phase 8a: Microcode Sequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
+import Shoumei.RISCV.Microcode.TrapSequencerCodegen
 
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
@@ -130,11 +133,18 @@ def allCircuits : List Circuit := [
   -- Phase 0: Foundation
   dff,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
+  mkQueue1FlowStructural 70,     -- 64-bit result FIFOs (tag6 + data64)
+  mkQueue1FlowStructural 71,     -- FP result FIFO (tag6 + data64 + is_fp)
   mkQueue1FlowStructural 72,     -- INT/Branch CDB FIFO (39 + 32 redirect_target + 1 mispredicted)
+  mkQueue1FlowStructural 103,    -- 64-bit Branch CDB FIFO (tag6 + data64 + 32 redir + 1 mispred)
   mkQueue1FlowStructural 104,    -- 64-bit CDB FIFO (IB0 / IB_BR)
 
   -- Phase 1: Arithmetic
+  pcIncrementer4Circuit,
+  pcIncrementer8Circuit,
+  branchTargetAdder32Circuit,
   mkKoggeStoneAdder32,
+  mkKoggeStoneAdder32NoCin,
   mkSubtractor32,
   mkComparator32,
   mkLogicUnit32,
@@ -187,13 +197,23 @@ def allCircuits : List Circuit := [
   mkRegisterNHierarchical 96,  -- RS entry: 8-bit opcode + 7-bit tags (1+8+7+1+7+32+1+7+32)
   mkRegisterNHierarchical 98,  -- Store buffer entry payload (32+64+2)
   mkRegisterNHierarchical 130, -- Store buffer 64-bit entry payload (64+64+2)
+  mkRegisterNHierarchical 157, -- Specialized RS 64-bit entry
+  mkRegisterNHierarchical 158,
+  mkRegisterNHierarchical 159,
   mkRegisterNHierarchical 160, -- RS 64-bit entry (1+8+7+1+7+64+1+7+64)
 
   -- Phase 4: RISC-V Components
   mkRAT64,
+  mkIntRAT64,
+  mkCRAT64,
   mkBitmapFreeList64_W2,
+  mkBitmapFreeList64_W1,
   mkPhysRegFile64,
   mkPhysRegFile64x64,
+  mkIntPhysRegFile 64 32,
+  mkIntPhysRegFile 64 64,
+  mkFPPhysRegFile 64 32,
+  mkFPPhysRegFile 64 64,
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
@@ -201,10 +221,18 @@ def allCircuits : List Circuit := [
   mkMemoryExecUnit,
   mkReservationStationFromConfig defaultCPUConfig,
   mkReservationStation4W2_64,
+  mkIntReservationStation4_W2 64,
+  mkReservationStation2_W1 64,
+  mkMemoryReservationStation2_W1 64,
+  mkFPReservationStation2_W1 64,
 
   -- M-Extension & 64-bit Arithmetic Building Blocks
   mkKoggeStoneAdder64,
+  mkKoggeStoneAdder64NoCin,
+  koggeStoneAdder64WithCin1,
+  mkMulFinalAdder64,
   koggeStoneAdder106,
+  koggeStoneAdder106NoCin,
   mkSubtractor64,
   mkComparator64,
   mkLogicUnit64,
@@ -280,6 +308,7 @@ def allCircuits : List Circuit := [
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
+  trapSequencerCircuit,
 
   -- Opcode PLA Decoders
   mkALUOpDecoder defaultCPUConfig,
@@ -292,6 +321,10 @@ def allCircuits : List Circuit := [
   mkFetchStage,
   mkRenameStage,
   mkRenameStage 64,
+  mkIntRenameStage 32,
+  mkIntRenameStage 64,
+  mkFPRenameStage 32,
+  mkFPRenameStage 64,
   mkCSRFile defaultCPUConfig,
   mkBusyTable_W2,
   mkFPBusyTable,

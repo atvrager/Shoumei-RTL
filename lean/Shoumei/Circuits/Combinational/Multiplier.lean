@@ -605,12 +605,11 @@ def mkMul32x32To64 : Circuit :=
     mkCSATreeHierarchical pp_rows zero
 
   let ksa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "MulFinalAdder64"
     instName := "u_final_adder"
     portMap :=
       (sum_s1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (carry_s1.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
+      ((carry_s1.drop 1).enum.map (fun ⟨i, w⟩ => (s!"b_{i + 1}", w))) ++
       (product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
 
@@ -733,12 +732,11 @@ def mkPipelinedMultiplier64 : Circuit :=
   -- Stage 3: Combination & Sign Correction
   let mid_sum := makeIndexedWires "m64_mid_sum" 64
   let ksa_mid : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "KoggeStoneAdder64NoCin"
     instName := "u_ksa_mid"
     portMap :=
       (s2_p_lh.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (s2_p_hl.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
       (mid_sum.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
   }
   -- Carry-out from mid_sum (s2_p_lh + s2_p_hl)
@@ -755,18 +753,16 @@ def mkPipelinedMultiplier64 : Circuit :=
     Gate.mkOR c_mid1_g c_mid1_prop c_mid1
   ]
 
-  let mid_shifted := (List.range 32 |>.map (fun _ => zero)) ++
-                     (List.range 32 |>.map (fun i => mid_sum[i]!))
-
   let low_product := makeIndexedWires "m64_low_product" 64
+  let low_prod_lo_gates :=
+    (List.range 32 |>.map (fun i => Gate.mkBUF (s2_p_ll[i]!) (low_product[i]!)))
   let ksa_low : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "KoggeStoneAdder32NoCin"
     instName := "u_ksa_low"
     portMap :=
-      (s2_p_ll.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (mid_shifted.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (low_product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      ((List.range 32).map (fun i => (s!"a_{i}", s2_p_ll[32 + i]!))) ++
+      ((List.range 32).map (fun i => (s!"b_{i}", mid_sum[i]!))) ++
+      ((List.range 32).map (fun i => (s!"sum_{i}", low_product[32 + i]!)))
   }
 
   -- Carry-out from column 1 (s2_p_ll[63:32] + mid_sum[31:0])
@@ -790,19 +786,56 @@ def mkPipelinedMultiplier64 : Circuit :=
     (List.range 32 |>.map (fun i => Gate.mkBUF (s2_p_ll[31]!) (mulw_res[32 + i]!)))
 
   -- High product: p_hh + {31'b0, c_mid1, mid_sum[63:32]} + c_low
-  let mid_hi := (List.range 32 |>.map (fun i => mid_sum[32 + i]!)) ++
-                [c_mid1] ++
-                (List.range 31 |>.map (fun _ => zero))
+  -- Lower 32 bits: KoggeStoneAdder32(s2_p_hh[31:0], mid_sum[63:32], c_low)
   let high_product := makeIndexedWires "m64_high_product" 64
   let ksa_high : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "KoggeStoneAdder32"
     instName := "u_ksa_high"
     portMap :=
-      (s2_p_hh.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (mid_hi.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
+      ((List.range 32).map (fun i => (s!"a_{i}", s2_p_hh[i]!))) ++
+      ((List.range 32).map (fun i => (s!"b_{i}", mid_sum[32 + i]!))) ++
       [("cin", c_low)] ++
-      (high_product.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      ((List.range 32).map (fun i => (s!"sum_{i}", high_product[i]!)))
   }
+
+  -- Carry-out from bit 31 of high product
+  let c_hi32_g := Wire.mk "m64_c_hi32_g"
+  let c_hi32_p := Wire.mk "m64_c_hi32_p"
+  let not_high_prod31 := Wire.mk "m64_not_high_prod31"
+  let c_hi32_prop := Wire.mk "m64_c_hi32_prop"
+  let c_hi32 := Wire.mk "m64_c_hi32"
+  let c_hi32_gates := [
+    Gate.mkAND (s2_p_hh[31]!) (mid_sum[63]!) c_hi32_g,
+    Gate.mkOR (s2_p_hh[31]!) (mid_sum[63]!) c_hi32_p,
+    Gate.mkNOT (high_product[31]!) not_high_prod31,
+    Gate.mkAND c_hi32_p not_high_prod31 c_hi32_prop,
+    Gate.mkOR c_hi32_g c_hi32_prop c_hi32
+  ]
+
+  -- Bit 32: Full Adder on s2_p_hh[32] + c_mid1 + c_hi32
+  let sum32_half := Wire.mk "m64_sum32_half"
+  let c32_g1 := Wire.mk "m64_c32_g1"
+  let c32_p1 := Wire.mk "m64_c32_p1"
+  let c32_prop := Wire.mk "m64_c32_prop"
+  let c_hi33 := Wire.mk "m64_c_hi33"
+  let bit32_gates := [
+    Gate.mkXOR (s2_p_hh[32]!) c_mid1 sum32_half,
+    Gate.mkXOR sum32_half c_hi32 (high_product[32]!),
+    Gate.mkAND (s2_p_hh[32]!) c_mid1 c32_g1,
+    Gate.mkOR (s2_p_hh[32]!) c_mid1 c32_p1,
+    Gate.mkAND c32_p1 c_hi32 c32_prop,
+    Gate.mkOR c32_g1 c32_prop c_hi33
+  ]
+
+  -- Bits 33-63: Increment s2_p_hh[63:33] by c_hi33
+  let inc_gates := (List.range 31).flatMap fun i =>
+    let c_in := if i == 0 then c_hi33 else Wire.mk s!"m64_c_inc_{i}"
+    let c_out := Wire.mk s!"m64_c_inc_{i + 1}"
+    let xor_gate := Gate.mkXOR (s2_p_hh[33 + i]!) c_in (high_product[33 + i]!)
+    if i < 30 then
+      [xor_gate, Gate.mkAND (s2_p_hh[33 + i]!) c_in c_out]
+    else
+      [xor_gate]
 
   -- Baugh-Wooley sign correction for high product:
   --   MULH   (op=1): high - (a[63]?b:0) - (b[63]?a:0)
@@ -852,9 +885,7 @@ def mkPipelinedMultiplier64 : Circuit :=
     portMap :=
       (high_product.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (sub_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("one", one)] ++
-      (corr1.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
-      [("borrow", Wire.mk "sc64_borrow1")]
+      (corr1.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w)))
   }
 
   let corr2 := makeIndexedWires "sc64_corr2" 64
@@ -864,9 +895,7 @@ def mkPipelinedMultiplier64 : Circuit :=
     portMap :=
       (corr1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (sub_a.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("one", one)] ++
-      (corr2.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
-      [("borrow", Wire.mk "sc64_borrow2")]
+      (corr2.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w)))
   }
 
   -- Output selection:
@@ -890,9 +919,13 @@ def mkPipelinedMultiplier64 : Circuit :=
   let all_gates :=
     s1_reg_gates ++
     s2_reg_gates ++
+    low_prod_lo_gates ++
     mulw_gates ++
     c_mid1_gates ++
     c_low_gates ++
+    c_hi32_gates ++
+    bit32_gates ++
+    inc_gates ++
     sc_ctrl_gates ++
     sub_b_gates ++
     sub_a_gates ++

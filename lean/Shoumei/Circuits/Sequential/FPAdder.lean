@@ -104,9 +104,12 @@ def mkFPAdder_Stage1_Unpack : Circuit :=
   let one_gate := Gate.mkNOT zero one
 
   -- Unpack operand A
-  let sign_a_gate := Gate.mkBUF (src1[31]!) sign_a
-  let exp_a_gates := (List.range 8).map fun i =>
-    Gate.mkBUF (src1[23 + i]!) (exp_a[i]!)
+  let not_sign_a := Wire.mk "s1_not_sign_a"
+  let sign_a_gate := [Gate.mkNOT (src1[31]!) not_sign_a, Gate.mkNOT not_sign_a sign_a]
+  let not_exp_a := makeIndexedWires "s1_not_exp_a" 8
+  let exp_a_gates := (List.range 8).flatMap fun i =>
+    [Gate.mkNOT (src1[23 + i]!) (not_exp_a[i]!),
+     Gate.mkNOT (not_exp_a[i]!) (exp_a[i]!)]
 
   let exp_a_or01 := Wire.mk "s1_exp_a_or01"
   let exp_a_or23 := Wire.mk "s1_exp_a_or23"
@@ -125,8 +128,10 @@ def mkFPAdder_Stage1_Unpack : Circuit :=
     Gate.mkOR exp_a_or0123 exp_a_or4567 exp_a_or_all
   ]
 
-  let mant_a_gates := (List.range 23).map (fun i =>
-    Gate.mkBUF (src1[i]!) (mant_a[i]!)) ++
+  let not_mant_a := makeIndexedWires "s1_not_mant_a" 23
+  let mant_a_gates := (List.range 23).flatMap (fun i =>
+    [Gate.mkNOT (src1[i]!) (not_mant_a[i]!),
+     Gate.mkNOT (not_mant_a[i]!) (mant_a[i]!)]) ++
     [Gate.mkBUF exp_a_or_all (mant_a[23]!)]
 
   -- Unpack operand B
@@ -134,8 +139,10 @@ def mkFPAdder_Stage1_Unpack : Circuit :=
   let sign_b_raw_gate := Gate.mkBUF (src2[31]!) sign_b_raw
   let eff_sign_b_gate := Gate.mkXOR sign_b_raw op_sub eff_sign_b
 
-  let exp_b_gates := (List.range 8).map fun i =>
-    Gate.mkBUF (src2[23 + i]!) (exp_b[i]!)
+  let not_exp_b := makeIndexedWires "s1_not_exp_b" 8
+  let exp_b_gates := (List.range 8).flatMap fun i =>
+    [Gate.mkNOT (src2[23 + i]!) (not_exp_b[i]!),
+     Gate.mkNOT (not_exp_b[i]!) (exp_b[i]!)]
 
   let exp_b_or01 := Wire.mk "s1_exp_b_or01"
   let exp_b_or23 := Wire.mk "s1_exp_b_or23"
@@ -154,8 +161,10 @@ def mkFPAdder_Stage1_Unpack : Circuit :=
     Gate.mkOR exp_b_or0123 exp_b_or4567 exp_b_or_all
   ]
 
-  let mant_b_gates := (List.range 23).map (fun i =>
-    Gate.mkBUF (src2[i]!) (mant_b[i]!)) ++
+  let not_mant_b := makeIndexedWires "s1_not_mant_b" 23
+  let mant_b_gates := (List.range 23).flatMap (fun i =>
+    [Gate.mkNOT (src2[i]!) (not_mant_b[i]!),
+     Gate.mkNOT (not_mant_b[i]!) (mant_b[i]!)]) ++
     [Gate.mkBUF exp_b_or_all (mant_b[23]!)]
 
   -- NaN / Inf detection for A
@@ -277,7 +286,7 @@ def mkFPAdder_Stage1_Unpack : Circuit :=
   let swap_gate := Gate.mkBUF _exp_diff_borrow swap
 
   let all_gates :=
-    [one_gate, sign_a_gate] ++ exp_a_gates ++ exp_a_zero_gates ++ mant_a_gates ++
+    [one_gate] ++ sign_a_gate ++ exp_a_gates ++ exp_a_zero_gates ++ mant_a_gates ++
     [sign_b_raw_gate, eff_sign_b_gate] ++ exp_b_gates ++ exp_b_zero_gates ++ mant_b_gates ++
     exp_a_and_gates ++ exp_b_and_gates ++ mant_a_or_gates ++ a_nan_inf_gates ++
     mant_b_or_gates ++ b_nan_inf_gates ++
@@ -527,7 +536,8 @@ def mkFPAdder_Stage3_AddSub : Circuit :=
   let eff_sub := Wire.mk "eff_sub"
   let zero := Wire.mk "zero"
 
-  let sum := makeIndexedWires "sum" 25
+  let sum_full := makeIndexedWires "s3_sum_full" 25
+  let sum := makeIndexedWires "sum" 24
   let overflow := Wire.mk "overflow"
   let lead_pos := makeIndexedWires "lead_pos" 5
   let found := Wire.mk "found"
@@ -550,13 +560,13 @@ def mkFPAdder_Stage3_AddSub : Circuit :=
     Gate.mkXOR (aligned_ext[i]!) eff_sub (cond_inv_aligned[i]!)
 
   let (sum_add_gates, _sum_carry) :=
-    mkKoggeStoneAdd big_ext cond_inv_aligned eff_sub sum "s3_mantadd"
+    mkKoggeStoneAdd big_ext cond_inv_aligned eff_sub sum_full "s3_mantadd"
 
   -- Parallel prefix leading zero count on 25-bit sum
   let lz_v := makeIndexedWires "s3_lz_v" 25
   let lz_p := (List.range 25).map fun i => makeIndexedWires ("s3_lz_p_" ++ toString i) 5
   let lz_leaf_gates := (List.range 25).flatMap fun i =>
-    [Gate.mkBUF (sum[i]!) (lz_v[i]!)] ++
+    [Gate.mkBUF (sum_full[i]!) (lz_v[i]!)] ++
     (List.range 5).map fun k =>
       let bit_val := if (i >>> k) &&& 1 == 1 then one else zero
       Gate.mkBUF bit_val ((lz_p[i]!)[k]!)
@@ -587,11 +597,13 @@ def mkFPAdder_Stage3_AddSub : Circuit :=
   let lead_pos_gates := (List.range 5).map fun k =>
     Gate.mkBUF ((lz_final_p[0]!)[k]!) (lead_pos[k]!)
   let found_gate := Gate.mkBUF (lz_final_v[0]!) found
-  let overflow_gate := Gate.mkBUF (sum[24]!) overflow
+  let sum_out_gates := (List.range 24).map fun i =>
+    Gate.mkBUF (sum_full[i]!) (sum[i]!)
+  let overflow_gate := Gate.mkBUF (sum_full[24]!) overflow
 
   let all_gates :=
     [one_gate] ++ big_ext_gates ++ aligned_ext_gates ++ cond_inv_gates ++ sum_add_gates ++
-    lz_leaf_gates ++ lz_prefix_gates ++ lead_pos_gates ++ [found_gate, overflow_gate]
+    lz_leaf_gates ++ lz_prefix_gates ++ lead_pos_gates ++ sum_out_gates ++ [found_gate, overflow_gate]
 
   { name := "FPAdder_Stage3_AddSub"
     inputs := big_mant ++ aligned ++ [eff_sub, zero]
@@ -601,7 +613,7 @@ def mkFPAdder_Stage3_AddSub : Circuit :=
     signalGroups := [
       { name := "big_mant", width := 24, wires := big_mant },
       { name := "aligned", width := 24, wires := aligned },
-      { name := "sum", width := 25, wires := sum },
+      { name := "sum", width := 24, wires := sum },
       { name := "lead_pos", width := 5, wires := lead_pos }
     ] }
 
@@ -612,7 +624,7 @@ def fpAdder_Stage3Circuit : Circuit := mkFPAdder_Stage3_AddSub
 def mkFPAdder_Stage4_NormRound : Circuit :=
   let big_sign := Wire.mk "big_sign"
   let big_exp := makeIndexedWires "big_exp" 8
-  let sum := makeIndexedWires "sum" 25
+  let sum := makeIndexedWires "sum" 24
   let lead_pos := makeIndexedWires "lead_pos" 5
   let overflow := Wire.mk "overflow"
   let found := Wire.mk "found"
@@ -755,21 +767,21 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
   let exc_nx := Wire.mk "s4_exc_nx"
   let exc_nx_gate := Gate.mkAND nx_raw not_any_special exc_nx
 
-  let not_s24 := Wire.mk "s4_not_s24"
-  let xor_s24_0 := Wire.mk "s4_xor_s24_0"
-  let not_xor_s24_0 := Wire.mk "s4_not_xor_s24_0"
-  let xor_s24_1 := Wire.mk "s4_xor_s24_1"
-  let not_xor_s24_1 := Wire.mk "s4_not_xor_s24_1"
+  let not_ovf := Wire.mk "s4_not_ovf"
+  let xor_ovf_0 := Wire.mk "s4_xor_ovf_0"
+  let not_xor_ovf_0 := Wire.mk "s4_not_xor_ovf_0"
+  let xor_ovf_1 := Wire.mk "s4_xor_ovf_1"
+  let not_xor_ovf_1 := Wire.mk "s4_not_xor_ovf_1"
   let exc_output_gates := [
     Gate.mkBUF exc_nx (exc[0]!),
-    Gate.mkNOT (sum[24]!) not_s24,
-    Gate.mkAND (sum[24]!) not_s24 (exc[1]!),
-    Gate.mkXOR (sum[24]!) (sum[0]!) xor_s24_0,
-    Gate.mkNOT xor_s24_0 not_xor_s24_0,
-    Gate.mkAND xor_s24_0 not_xor_s24_0 (exc[2]!),
-    Gate.mkXOR (sum[24]!) (sum[1]!) xor_s24_1,
-    Gate.mkNOT xor_s24_1 not_xor_s24_1,
-    Gate.mkAND xor_s24_1 not_xor_s24_1 (exc[3]!),
+    Gate.mkNOT overflow not_ovf,
+    Gate.mkAND overflow not_ovf (exc[1]!),
+    Gate.mkXOR overflow (sum[0]!) xor_ovf_0,
+    Gate.mkNOT xor_ovf_0 not_xor_ovf_0,
+    Gate.mkAND xor_ovf_0 not_xor_ovf_0 (exc[2]!),
+    Gate.mkXOR overflow (sum[1]!) xor_ovf_1,
+    Gate.mkNOT xor_ovf_1 not_xor_ovf_1,
+    Gate.mkAND xor_ovf_1 not_xor_ovf_1 (exc[3]!),
     Gate.mkBUF exc_nv (exc[4]!)
   ]
 
@@ -795,7 +807,7 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
     instances := []
     signalGroups := [
       { name := "big_exp", width := 8, wires := big_exp },
-      { name := "sum", width := 25, wires := sum },
+      { name := "sum", width := 24, wires := sum },
       { name := "lead_pos", width := 5, wires := lead_pos },
       { name := "result", width := 32, wires := result },
       { name := "exc", width := 5, wires := exc }
@@ -954,7 +966,7 @@ def fpAdderCircuit : Circuit :=
     mkDFFBank p1_tag p2_tag clock reset
 
   -- Stage 3 wires
-  let s3_sum := makeIndexedWires "s3_sum" 25
+  let s3_sum := makeIndexedWires "s3_sum" 24
   let s3_overflow := Wire.mk "s3_overflow"
   let s3_lead_pos := makeIndexedWires "s3_lead_pos" 5
   let s3_found := Wire.mk "s3_found"
@@ -966,7 +978,7 @@ def fpAdderCircuit : Circuit :=
       ((List.range 24).map fun i => (s!"big_mant_{i}", p2_big_mant[i]!)) ++
       ((List.range 24).map fun i => (s!"aligned_{i}", p2_aligned[i]!)) ++
       [("eff_sub", p2_eff_sub), ("zero", zero)] ++
-      ((List.range 25).map fun i => (s!"sum_{i}", s3_sum[i]!)) ++
+      ((List.range 24).map fun i => (s!"sum_{i}", s3_sum[i]!)) ++
       [("overflow", s3_overflow)] ++
       ((List.range 5).map fun i => (s!"lead_pos_{i}", s3_lead_pos[i]!)) ++
       [("found", s3_found)]
@@ -975,7 +987,7 @@ def fpAdderCircuit : Circuit :=
   -- Stage 3 DFFs
   let p3_big_sign := Wire.mk "p3_big_sign"
   let p3_big_exp := makeIndexedWires "p3_big_exp" 8
-  let p3_sum := makeIndexedWires "p3_sum" 25
+  let p3_sum := makeIndexedWires "p3_sum" 24
   let p3_lead_pos := makeIndexedWires "p3_lead_pos" 5
   let p3_overflow := Wire.mk "p3_overflow"
   let p3_found := Wire.mk "p3_found"
@@ -1015,7 +1027,7 @@ def fpAdderCircuit : Circuit :=
     portMap :=
       [("big_sign", p3_big_sign)] ++
       ((List.range 8).map fun i => (s!"big_exp_{i}", p3_big_exp[i]!)) ++
-      ((List.range 25).map fun i => (s!"sum_{i}", p3_sum[i]!)) ++
+      ((List.range 24).map fun i => (s!"sum_{i}", p3_sum[i]!)) ++
       ((List.range 5).map fun i => (s!"lead_pos_{i}", p3_lead_pos[i]!)) ++
       [("overflow", p3_overflow), ("found", p3_found),
        ("sticky", p3_sticky), ("any_nan", p3_any_nan),

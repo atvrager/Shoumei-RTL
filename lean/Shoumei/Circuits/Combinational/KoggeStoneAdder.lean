@@ -116,6 +116,137 @@ def mkKoggeStoneAdder64 : Circuit :=
 /-- Convenience alias. -/
 def koggeStoneAdder64 : Circuit := mkKoggeStoneAdder64
 
+/-- Build a 64-bit Kogge-Stone parallel prefix adder without carry-in.
+    Inputs:  a[63:0], b[63:0]
+    Outputs: sum[63:0] -/
+def mkKoggeStoneAdder64NoCin : Circuit :=
+  let width := 64
+  let a := makeIndexedWires "a" width
+  let b := makeIndexedWires "b" width
+  let sum := makeIndexedWires "sum" width
+
+  let g0 := makeIndexedWires "g0" width
+  let p0 := makeIndexedWires "p0" width
+  let init_gates := List.flatten <| (List.range width).map fun i =>
+    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+  let levels := [1, 2, 4, 8, 16, 32]
+
+  let (all_prefix_gates, final_g, _final_p) :=
+    levels.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"l{stride}"
+      let g_new := makeIndexedWires s!"g{level_tag}" width
+      let p_new := makeIndexedWires s!"p{level_tag}" width
+
+      let level_gates := List.flatten <| (List.range width).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"pg_{level_tag}_{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], g0, p0)
+
+  let sum_gates :=
+    [Gate.mkBUF (p0[0]!) (sum[0]!)] ++
+    ((List.range (width - 1)).map fun i =>
+      Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!))
+
+  { name := "KoggeStoneAdder64NoCin"
+    inputs := a ++ b
+    outputs := sum
+    gates := init_gates ++ all_prefix_gates ++ sum_gates
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := width, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def koggeStoneAdder64NoCin : Circuit := mkKoggeStoneAdder64NoCin
+
+/-- 64-bit Adder with b[0]=0 and cin=0 for multiplier final addition.
+    Inputs: a[63:0], b[63:1] (63 bits, since b[0]=0)
+    Outputs: sum[63:0]
+    Bit 0: sum[0] = a[0] (passed through via BUF)
+    Bits 1..63: 63-bit Kogge-Stone addition of a[63:1] + b[63:1]
+-/
+def mkMulFinalAdder64 : Circuit :=
+  let width := 64
+  let a := makeIndexedWires "a" width
+  let b := (List.range 63).map (fun i => Wire.mk s!"b_{i + 1}")
+  let sum := makeIndexedWires "sum" width
+
+  -- Bit 0: NOT-NOT inverter pair (prevents LINT-29 feedthrough warning)
+  let mid0 := Wire.mk "mfa_mid_0"
+  let bit0_gates := [
+    Gate.mkNOT (a[0]!) mid0,
+    Gate.mkNOT mid0 (sum[0]!)
+  ]
+
+  -- Level 0 for bits 1..63
+  let g0 := (List.range 64).map (fun i => Wire.mk s!"mfa_g0_{i}")
+  let p0 := (List.range 64).map (fun i => Wire.mk s!"mfa_p0_{i}")
+  let init_gates := List.flatten <| (List.range 63).map fun i =>
+    let idx := i + 1
+    [ Gate.mkAND (a[idx]!) (b[i]!) (g0[idx]!),
+      Gate.mkXOR (a[idx]!) (b[i]!) (p0[idx]!) ]
+
+  -- Prefix levels 1-6 (strides 1, 2, 4, 8, 16, 32) over bits 1..63
+  let levels := [1, 2, 4, 8, 16, 32]
+  let (all_prefix_gates, final_g, _final_p) :=
+    levels.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"l{stride}"
+      let g_new := (List.range 64).map (fun i => Wire.mk s!"mfa_g{level_tag}_{i}")
+      let p_new := (List.range 64).map (fun i => Wire.mk s!"mfa_p{level_tag}_{i}")
+
+      let level_gates := List.flatten <| (List.range 63).map fun i =>
+        let idx := i + 1
+        if idx <= stride then
+          [ Gate.mkBUF (g_prev[idx]!) (g_new[idx]!),
+            Gate.mkBUF (p_prev[idx]!) (p_new[idx]!) ]
+        else
+          let pg := Wire.mk s!"mfa_pg_{level_tag}_{idx}"
+          [ Gate.mkAND (p_prev[idx]!) (g_prev[idx - stride]!) pg,
+            Gate.mkOR (g_prev[idx]!) pg (g_new[idx]!),
+            Gate.mkAND (p_prev[idx]!) (p_prev[idx - stride]!) (p_new[idx]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], g0, p0)
+
+  -- Final sum: sum[1] = p0[1], sum[i] = p0[i] XOR final_g[i-1] for i in 2..63
+  let sum_gates :=
+    [Gate.mkBUF (p0[1]!) (sum[1]!)] ++
+    ((List.range 62).map fun i =>
+      let idx := i + 2
+      Gate.mkXOR (p0[idx]!) (final_g[idx - 1]!) (sum[idx]!))
+
+  { name := "MulFinalAdder64"
+    inputs := a ++ b
+    outputs := sum
+    gates := bit0_gates ++ init_gates ++ all_prefix_gates ++ sum_gates
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := 63, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def mulFinalAdder64 : Circuit := mkMulFinalAdder64
+
 /-- Build a 32-bit Kogge-Stone parallel prefix adder.
 
     This is a gate-level implementation with O(log₂ 32) = 5 prefix levels,
@@ -190,6 +321,64 @@ def mkKoggeStoneAdder32 : Circuit :=
 
 /-- Convenience alias. -/
 def koggeStoneAdder32 : Circuit := mkKoggeStoneAdder32
+
+/-- Build a 32-bit Kogge-Stone parallel prefix adder without carry-in.
+    Inputs:  a[31:0], b[31:0]
+    Outputs: sum[31:0] -/
+def mkKoggeStoneAdder32NoCin : Circuit :=
+  let width := 32
+  let a := makeIndexedWires "a" width
+  let b := makeIndexedWires "b" width
+  let sum := makeIndexedWires "sum" width
+
+  let g0 := makeIndexedWires "g0" width
+  let p0 := makeIndexedWires "p0" width
+  let init_gates := List.flatten <| (List.range width).map fun i =>
+    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+  let levels := [1, 2, 4, 8, 16]
+
+  let (all_prefix_gates, final_g, _final_p) :=
+    levels.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"l{stride}"
+      let g_new := makeIndexedWires s!"g{level_tag}" width
+      let p_new := makeIndexedWires s!"p{level_tag}" width
+
+      let level_gates := List.flatten <| (List.range width).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"pg_{level_tag}_{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], g0, p0)
+
+  let sum_gates :=
+    [Gate.mkBUF (p0[0]!) (sum[0]!)] ++
+    ((List.range (width - 1)).map fun i =>
+      Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!))
+
+  { name := "KoggeStoneAdder32NoCin"
+    inputs := a ++ b
+    outputs := sum
+    gates := init_gates ++ all_prefix_gates ++ sum_gates
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := width, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def koggeStoneAdder32NoCin : Circuit := mkKoggeStoneAdder32NoCin
 
 /-- Inline Kogge-Stone adder gate generator (parameterized width).
 
@@ -289,5 +478,122 @@ def mkKoggeStoneAdder (width : Nat) : Circuit :=
   }
 
 def koggeStoneAdder106 : Circuit := mkKoggeStoneAdder 106
+
+/-- Parameterized Kogge-Stone parallel prefix adder circuit without cin (cin=0 absorbed). -/
+def mkKoggeStoneAdderNoCin (width : Nat) : Circuit :=
+  let a := makeIndexedWires "a" width
+  let b := makeIndexedWires "b" width
+  let sum := makeIndexedWires "sum" width
+
+  let g0 := makeIndexedWires "g0" width
+  let p0 := makeIndexedWires "p0" width
+  let init_gates := List.flatten <| (List.range width).map fun i =>
+    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+  let strides := (List.range 20).filterMap fun k =>
+    let s := 1 <<< k
+    if s < width then some s else none
+
+  let (all_prefix_gates, final_g, _final_p) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"l{stride}"
+      let g_new := makeIndexedWires s!"g{level_tag}" width
+      let p_new := makeIndexedWires s!"p{level_tag}" width
+
+      let level_gates := List.flatten <| (List.range width).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"pg_{level_tag}_{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], g0, p0)
+
+  let sum_gates :=
+    [Gate.mkBUF (p0[0]!) (sum[0]!)] ++
+    ((List.range (width - 1)).map fun i =>
+      Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!))
+
+  { name := s!"KoggeStoneAdder{width}NoCin"
+    inputs := a ++ b
+    outputs := sum
+    gates := init_gates ++ all_prefix_gates ++ sum_gates
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := width, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def koggeStoneAdder106NoCin : Circuit := mkKoggeStoneAdderNoCin 106
+
+/-- 64-bit Kogge-Stone adder with cin=1 absorbed (computes a + b + 1 without cin input pin). -/
+def mkKoggeStoneAdder64WithCin1 : Circuit :=
+  let width := 64
+  let a := makeIndexedWires "a" width
+  let b := makeIndexedWires "b" width
+  let sum := makeIndexedWires "sum" width
+
+  let g0 := makeIndexedWires "g0" width
+  let p0 := makeIndexedWires "p0" width
+  let init_gates := List.flatten <| (List.range width).map fun i =>
+    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+  -- With cin=1, bit 0 generate is g0[0] | (p0[0] & 1) = a[0] | b[0]
+  let g0_m0 := Wire.mk "g0_m0"
+  let cin1_gate := Gate.mkOR (a[0]!) (b[0]!) g0_m0
+  let g0_init := [g0_m0] ++ (List.range (width - 1)).map fun i => g0[i + 1]!
+
+  let strides := [1, 2, 4, 8, 16, 32]
+  let (all_prefix_gates, final_g, _final_p) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"l{stride}"
+      let g_new := makeIndexedWires s!"g{level_tag}" width
+      let p_new := makeIndexedWires s!"p{level_tag}" width
+
+      let level_gates := List.flatten <| (List.range width).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"pg_{level_tag}_{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+      (gates_acc ++ level_gates, g_new, p_new)
+    )
+    ([], g0_init, p0)
+
+  -- sum[0] = p0[0] ^ 1 = ~p0[0]
+  let sum0_gate := Gate.mkNOT (p0[0]!) (sum[0]!)
+  let sum_rest := (List.range (width - 1)).map fun i =>
+    Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!)
+
+  { name := "KoggeStoneAdder64WithCin1"
+    inputs := a ++ b
+    outputs := sum
+    gates := init_gates ++ [cin1_gate] ++ all_prefix_gates ++ [sum0_gate] ++ sum_rest
+    instances := []
+    signalGroups := [
+      { name := "a", width := width, wires := a },
+      { name := "b", width := width, wires := b },
+      { name := "sum", width := width, wires := sum }
+    ]
+    keepHierarchy := true
+  }
+
+def koggeStoneAdder64WithCin1 : Circuit := mkKoggeStoneAdder64WithCin1
 
 end Shoumei.Circuits.Combinational

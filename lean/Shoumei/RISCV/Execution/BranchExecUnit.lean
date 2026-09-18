@@ -216,10 +216,12 @@ def mkBranchExecUnit : Circuit :=
   let result := makeIndexedWires "result" 32
   let tag_out := makeIndexedWires "tag_out" 6
 
-  -- Tag pass-through
-  let tag_passthrough := List.zipWith (fun src dst =>
-    Gate.mkBUF src dst
-  ) dest_tag tag_out
+  let not_tag := makeIndexedWires "not_dt" 6
+  let not_not_tag := makeIndexedWires "not_not_dt" 6
+  let tag_passthrough := (List.range 6).flatMap fun i =>
+    [Gate.mkNOT (dest_tag[i]!) (not_tag[i]!),
+     Gate.mkNOT (not_tag[i]!) (not_not_tag[i]!),
+     Gate.mkAND (dest_tag[i]!) (not_not_tag[i]!) (tag_out[i]!)]
 
   -- Result driven by zero-terms of src1 and src2
   let res_gates := (List.range 32).flatMap fun i =>

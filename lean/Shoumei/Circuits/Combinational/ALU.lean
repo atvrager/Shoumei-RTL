@@ -133,15 +133,15 @@ def mkALU32 : Circuit :=
              ++ arith_level1_gates ++ arith_level2_gates ++ arith_level3_gates
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
     instances := [
-      -- KoggeStoneAdder32 for ADD operation
-      { moduleName := "KoggeStoneAdder32"
+      -- KoggeStoneAdder32NoCin for ADD operation
+      { moduleName := "KoggeStoneAdder32NoCin"
         instName := "u_add"
         portMap := (List.range 32 |>.flatMap (fun i =>
           [ (s!"a{i}", a[i]!)
           , (s!"b{i}", b[i]!)
           , (s!"sum{i}", add_result[i]!)
           ]
-        )) ++ [("cin", zero)]
+        ))
       },
       -- Subtractor32 for SUB operation
       { moduleName := "Subtractor32"
@@ -216,7 +216,6 @@ def mkALU64 : Circuit :=
 
   let add_result := makeIndexedWires "add_out" 64
   let sub_result := makeIndexedWires "sub_out" 64
-  let sub_borrow := Wire.mk "sub_borrow"
   let cmp_lt := Wire.mk "cmp_lt"
   let cmp_ltu := Wire.mk "cmp_ltu"
   let cmp_eq := Wire.mk "cmp_eq"
@@ -297,14 +296,14 @@ def mkALU64 : Circuit :=
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
              ++ out_lo_gates ++ out_hi_gates
     instances := [
-      { moduleName := "KoggeStoneAdder64"
+      { moduleName := "KoggeStoneAdder64NoCin"
         instName := "u_add"
         portMap := (List.range 64 |>.flatMap (fun i =>
           [ (s!"a{i}", a[i]!)
           , (s!"b{i}", b[i]!)
           , (s!"sum{i}", add_result[i]!)
           ]
-        )) ++ [("cin", zero)]
+        ))
       },
       { moduleName := "Subtractor64"
         instName := "u_sub"
@@ -313,7 +312,7 @@ def mkALU64 : Circuit :=
           , (s!"b{i}", b[i]!)
           , (s!"diff{i}", sub_result[i]!)
           ]
-        )) ++ [("one", one), ("borrow", sub_borrow)]
+        ))
       },
       { moduleName := "Comparator64"
         instName := "u_cmp"

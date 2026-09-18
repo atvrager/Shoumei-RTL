@@ -208,8 +208,11 @@ def fpSgnjCircuit : Circuit :=
     Gate.mkMUX sgnj_sign_inner fsgnjx_bit31 is_fsgnjx sgnj_sign
   ]
 
-  -- Result: bits [30:0] pass src1 directly, bit 31 is sgnj_sign if sgnj else src1[31] (FMV)
-  let low_gates := (List.range 31).map fun i => Gate.mkBUF (src1[i]!) (result[i]!)
+  -- Result: bits [30:0] pass src1 through NOT-NOT pair to prevent feedthrough; bit 31 is sgnj_sign if sgnj else src1[31] (FMV)
+  let not_src1 := makeIndexedWires "not_src1" 31
+  let low_gates := (List.range 31).flatMap fun i =>
+    [Gate.mkNOT (src1[i]!) (not_src1[i]!),
+     Gate.mkNOT (not_src1[i]!) (result[i]!)]
   let bit31_gate := Gate.mkMUX (src1[31]!) sgnj_sign is_sgnj_any (result[31]!)
 
   { name := "FPSgnj"
@@ -489,9 +492,7 @@ def fpCompareCircuit : Circuit :=
 /-- Floating-point classify operation: FCLASS.S (18) -/
 def fpClassCircuit : Circuit :=
   let src1 := makeIndexedWires "src1" 32
-  let zero := Wire.mk "zero"
-  let one := Wire.mk "one"
-  let result := makeIndexedWires "result" 32
+  let result := makeIndexedWires "result" 10
 
   -- Helper signals for classification
   let fclass_exp_bits := (List.range 8).map fun i => src1[23 + i]!
@@ -584,14 +585,13 @@ def fpClassCircuit : Circuit :=
   ]
 
   let fclass_bits : List Wire := [fclass_b0, fclass_b1, fclass_b2, fclass_b3,
-    fclass_b4, fclass_b5, fclass_b6, fclass_b7, fclass_b8, fclass_b9] ++
-    (List.range 22).map (fun _ => zero)
+    fclass_b4, fclass_b5, fclass_b6, fclass_b7, fclass_b8, fclass_b9]
 
-  let out_gates := (List.range 32).map fun i =>
+  let out_gates := (List.range 10).map fun i =>
     Gate.mkBUF (fclass_bits[i]!) (result[i]!)
 
   { name := "FPClass"
-    inputs := src1 ++ [zero, one]
+    inputs := src1
     outputs := result
     gates :=
       fclass_exp_ones_gates ++ fclass_exp_or_gates ++ [g_fclass_eaz] ++
@@ -603,7 +603,7 @@ def fpClassCircuit : Circuit :=
     instances := []
     signalGroups := [
       { name := "src1",   width := 32, wires := src1 },
-      { name := "result", width := 32, wires := result }
+      { name := "result", width := 10, wires := result }
     ]
   }
 
@@ -1130,7 +1130,7 @@ def fpMiscCircuit : Circuit :=
   let sgnj_res := makeIndexedWires "sgnj_res" 32
   let cmp_res := makeIndexedWires "cmp_res" 32
   let cmp_nv := Wire.mk "cmp_nv"
-  let class_res := makeIndexedWires "class_res" 32
+  let class_res := makeIndexedWires "class_res" 10
   let cvt_res := makeIndexedWires "cvt_res" 32
   let cvt_nv := Wire.mk "cvt_nv"
   let cvt_nx := Wire.mk "cvt_nx"
@@ -1163,8 +1163,7 @@ def fpMiscCircuit : Circuit :=
     instName := "u_class"
     portMap :=
       ((List.range 32).map fun i => (s!"src1_{i}", src1[i]!)) ++
-      [("zero", zero), ("one", one)] ++
-      ((List.range 32).map fun i => (s!"result_{i}", class_res[i]!))
+      ((List.range 10).map fun i => (s!"result_{i}", class_res[i]!))
   }
 
   let cvt_inst : CircuitInstance := {
@@ -1247,7 +1246,8 @@ def fpMiscCircuit : Circuit :=
     Gate.mkMUX (res_cmp_sgnj[i]!) (cvt_res[i]!) is_cvt (res_cvt[i]!)
 
   let result_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (res_cvt[i]!) (class_res[i]!) is_class (result[i]!)
+    let class_bit := if i < 10 then class_res[i]! else zero
+    Gate.mkMUX (res_cvt[i]!) class_bit is_class (result[i]!)
 
   -- Connect rm[0..2] to drive exc[1..3] as Boolean zero terms: rm[i] AND NOT(rm[i]) = 0.
   -- This ensures rm input ports are connected (no LINT-28), exc[1..3] have independent

@@ -23,7 +23,7 @@ theorem csrFile_instances : csrFile.instances.length = 20 := by
 
 /-- Verify CSRFile output count -/
 theorem csrFile_outputs : csrFile.outputs.length =
-    32 + (if defaultCPUConfig.xlen == 64 || defaultCPUConfig.enableD then 64 else 32) + 6 + 2 + 3 + 5 + 1 := by
+    (if defaultCPUConfig.xlen == 64 || defaultCPUConfig.enableD then 64 else 32) + 6 + 2 + 3 + 5 + 1 := by
   native_decide
 
 end Shoumei.RISCV.CSRFileProofs

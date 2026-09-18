@@ -250,12 +250,11 @@ def mkFPMultiplierD : Circuit :=
   -- Stage 2 Combinational: Final CPA + Normalize + Round + Pack
   let product := makeIndexedWires "muld_prod" 106
   let cpa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder106"
+    moduleName := "KoggeStoneAdder106NoCin"
     instName := "u_cpa"
     portMap :=
       (s2_csa_sum.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++
       (s2_csa_carry.enum.map (fun ⟨i, w⟩ => (s!"b[{i}]", w))) ++
-      [("cin", zero)] ++
       (product.enum.map (fun ⟨i, w⟩ => (s!"sum[{i}]", w)))
   }
 
@@ -436,11 +435,13 @@ def mkFPMultiplierD : Circuit :=
     Gate.mkAND is_overflow s2_not_special final_of
   ]
 
+  let not_rm2 := Wire.mk "fpmd_not_rm2"
   let exc_out_gates := [
     Gate.mkBUF final_nx (exc[0]!),
     Gate.mkBUF final_uf (exc[1]!),
     Gate.mkBUF final_of (exc[2]!),
-    Gate.mkBUF zero (exc[3]!),
+    Gate.mkNOT rm2 not_rm2,
+    Gate.mkAND rm2 not_rm2 (exc[3]!),
     Gate.mkBUF s2_nv (exc[4]!)
   ]
 

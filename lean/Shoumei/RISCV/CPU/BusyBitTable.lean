@@ -21,8 +21,8 @@ def mkBusyBitTable1
     (set_tag : List Wire) (set_en : Wire)
     (clear_tag : List Wire) (clear_en : Wire)
     (read1_tag : List Wire) (read2_tag : List Wire) (read3_tag : List Wire)
-    (use_imm : Wire)
-    (src1_ready src2_ready src2_ready_reg src3_busy_raw : Wire)
+    (use_imm : Option Wire := none)
+    (src1_ready src2_ready src3_busy_raw : Wire)
     (pfx : String := "busy")
     : (List Gate × List CircuitInstance) :=
   let mkW := fun (s : String) => Wire.mk s
@@ -109,11 +109,11 @@ def mkBusyBitTable1
   let not_busy_rs2 := mkW s!"not_{pfx}_rs2"
   let readyGates := [
     Gate.mkNOT busy_rs1 src1_ready,
-    Gate.mkNOT busy_rs2 not_busy_rs2,
-    Gate.mkOR use_imm not_busy_rs2 src2_ready,
-    Gate.mkBUF not_busy_rs2 src2_ready_reg,
-    Gate.mkBUF busy_rs3 src3_busy_raw
-  ]
+    Gate.mkNOT busy_rs2 not_busy_rs2] ++
+    (match use_imm with
+     | some imm => [Gate.mkOR imm not_busy_rs2 src2_ready]
+     | none => [Gate.mkBUF not_busy_rs2 src2_ready]) ++
+    [Gate.mkBUF busy_rs3 src3_busy_raw]
 
   let allGates := resetGroupGates ++ perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ mux3_gates ++ readyGates
   let allInstances := [set_dec_inst, clear_dec_inst] ++ perBitInstances
@@ -335,25 +335,23 @@ def mkFPBusyTable : Circuit :=
   let read1_tag := (List.range 6).map fun i => Wire.mk s!"read1_tag_{i}"
   let read2_tag := (List.range 6).map fun i => Wire.mk s!"read2_tag_{i}"
   let read3_tag := (List.range 6).map fun i => Wire.mk s!"read3_tag_{i}"
-  let use_imm := Wire.mk "use_imm"
   let src1_ready := Wire.mk "src1_ready"
   let src2_ready := Wire.mk "src2_ready"
-  let src2_ready_reg := Wire.mk "src2_ready_reg"
   let src3_busy_raw := Wire.mk "src3_busy_raw"
   let (gates, insts) := mkBusyBitTable1
     clock reset flush_groups zero one
     set_tag set_en
     clear_tag clear_en
     read1_tag read2_tag read3_tag
-    use_imm
-    src1_ready src2_ready src2_ready_reg src3_busy_raw
+    none
+    src1_ready src2_ready src3_busy_raw
     "fp_busy"
   { name := "FPBusyTable"
     inputs := [clock, reset, zero, one] ++ flush_groups ++
               set_tag ++ [set_en] ++
               clear_tag ++ [clear_en] ++
-              read1_tag ++ read2_tag ++ read3_tag ++ [use_imm]
-    outputs := [src1_ready, src2_ready, src2_ready_reg, src3_busy_raw]
+              read1_tag ++ read2_tag ++ read3_tag
+    outputs := [src1_ready, src2_ready, src3_busy_raw]
     gates := gates
     instances := insts }
 

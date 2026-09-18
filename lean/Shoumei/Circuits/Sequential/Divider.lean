@@ -1103,7 +1103,6 @@ def mkDivider64 : Circuit :=
   -- Trial subtraction
   let trial_a := makeIndexedWires "trial_a64" 64
   let trial_diff := makeIndexedWires "trial_diff64" 64
-  let trial_borrow := Wire.mk "trial_borrow64"
 
   let trial_input_gates := (List.range 64).map (fun i =>
     Gate.mkBUF (shifted_rem[64 + i]!) (trial_a[i]!)
@@ -1115,9 +1114,7 @@ def mkDivider64 : Circuit :=
     portMap :=
       (trial_a.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
       (div_q.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("one", one)] ++
-      (trial_diff.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w))) ++
-      [("borrow", trial_borrow)]
+      (trial_diff.enum.map (fun ⟨i, w⟩ => (s!"diff_{i}", w)))
   }
 
   let no_borrow := Wire.mk "no_borrow64"

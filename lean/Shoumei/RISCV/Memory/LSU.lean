@@ -336,7 +336,7 @@ def mkLSU : Circuit :=
 
   -- === Dispatch Interface ===
   let dispatch_base := mkWires "dispatch_base" 64
-  let dispatch_offset := mkWires "dispatch_offset" 64
+  let dispatch_offset := mkWires "dispatch_offset" 32
   let dispatch_dest_tag := mkWires "dispatch_dest_tag" 6
   let store_data := mkWires "store_data" 64
 
@@ -386,7 +386,6 @@ def mkLSU : Circuit :=
       (dispatch_base.enum.map (fun ⟨i, w⟩ => (s!"base_{i}", w))) ++
       (dispatch_offset.enum.map (fun ⟨i, w⟩ => (s!"offset_{i}", w))) ++
       (dispatch_dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
-      [("zero", zero)] ++
       (agu_address.enum.map (fun ⟨i, w⟩ => (s!"address_{i}", w))) ++
       (agu_tag_out.enum.map (fun ⟨i, w⟩ => (s!"tag_out_{i}", w)))
   }
@@ -456,7 +455,7 @@ def mkLSU : Circuit :=
     -- V2 codegen annotations
     signalGroups := [
       { name := "dispatch_base", width := 64, wires := dispatch_base },
-      { name := "dispatch_offset", width := 64, wires := dispatch_offset },
+      { name := "dispatch_offset", width := 32, wires := dispatch_offset },
       { name := "dispatch_dest_tag", width := 6, wires := dispatch_dest_tag },
       { name := "store_data", width := 64, wires := store_data },
       { name := "fwd_address", width := 64, wires := fwd_address },

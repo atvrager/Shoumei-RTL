@@ -149,15 +149,13 @@ def mkSubtractor32 : Circuit :=
     keepHierarchy := true
   }
 
-/-- 64-bit subtractor using KoggeStoneAdder64 for O(log n) carry propagation.
-    A - B = A + (~B) + 1: NOT gates invert B, KSA64 adds A + ~B with cin=1. -/
+/-- 64-bit subtractor using KoggeStoneAdder64WithCin1 for O(log n) carry propagation.
+    A - B = A + (~B) + 1: NOT gates invert B, KSA64 adds A + ~B with cin=1 absorbed. -/
 def mkSubtractor64 : Circuit :=
   let n := 64
   let a := makeIndexedWires "a" n
   let b := makeIndexedWires "b" n
   let diff := makeIndexedWires "diff" n
-  let borrow := Wire.mk "borrow"
-  let one := Wire.mk "one"
 
   let b_inv := makeIndexedWires "b_inv" n
   let not_gates := List.zipWith (fun b_wire b_inv_wire =>
@@ -166,7 +164,7 @@ def mkSubtractor64 : Circuit :=
 
   let ksa_sum := makeIndexedWires "ksa_sum" n
   let ksa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := "KoggeStoneAdder64WithCin1"
     instName := "u_ksa_sub"
     portMap :=
       (List.range n |>.flatMap (fun i =>
@@ -174,20 +172,16 @@ def mkSubtractor64 : Circuit :=
         , (s!"b{i}", b_inv[i]!)
         , (s!"sum{i}", ksa_sum[i]!)
         ]
-      )) ++ [("cin", one)]
+      ))
   }
 
   let diff_bufs := List.zipWith (fun src dst =>
     Gate.mkBUF src dst) ksa_sum diff
 
-  let zero_internal := Wire.mk "zero_internal"
-  let zero_gen := Gate.mkXOR one one zero_internal
-  let borrow_buf := Gate.mkBUF zero_internal borrow
-
   { name := "Subtractor64"
-    inputs := a ++ b ++ [one]
-    outputs := diff ++ [borrow]
-    gates := not_gates ++ diff_bufs ++ [zero_gen, borrow_buf]
+    inputs := a ++ b
+    outputs := diff
+    gates := not_gates ++ diff_bufs
     instances := [ksa_inst]
     signalGroups := [
       { name := "a", width := n, wires := a },

@@ -122,6 +122,8 @@ def mkRegister91Hierarchical : Circuit := mkRegisterNHierarchical 91
 def mkRegister96Hierarchical : Circuit := mkRegisterNHierarchical 96
 def mkRegister98Hierarchical : Circuit := mkRegisterNHierarchical 98
 def mkRegister130Hierarchical : Circuit := mkRegisterNHierarchical 130
+def mkRegister157Hierarchical : Circuit := mkRegisterNHierarchical 157
+def mkRegister158Hierarchical : Circuit := mkRegisterNHierarchical 158
 def mkRegister159Hierarchical : Circuit := mkRegisterNHierarchical 159
 def mkRegister160Hierarchical : Circuit := mkRegisterNHierarchical 160
 

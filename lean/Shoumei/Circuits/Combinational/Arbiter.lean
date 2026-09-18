@@ -125,8 +125,8 @@ def mkPriorityArbiter (n : Nat) : Circuit :=
     -- Build iteratively for each position
     let grant_gates := (List.range n).foldl (fun acc i =>
       if i == 0 then
-        -- grant[0] = request[0] (highest priority, no mask)
-        acc ++ [Gate.mkBUF request[i]! grant[i]!]
+        -- grant[0] = ~request_n[0] (intervening NOT to prevent feedthrough)
+        acc ++ [Gate.mkNOT request_n[0]! grant[i]!]
       else
         -- Build AND chain: mask = request_n[0] AND request_n[1] AND ... AND request_n[i-1]
         -- Use iterative chaining

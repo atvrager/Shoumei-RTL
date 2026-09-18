@@ -44,11 +44,11 @@ theorem subtractor32_structure :
   := by native_decide
 
 -- Theorem: Subtractor64 has correct structure
--- 64 NOT gates + 64 BUFs + 2 glue gates = 130 gates
+-- 64 NOT gates + 64 BUFs = 128 gates
 theorem subtractor64_structure :
-  mkSubtractor64.gates.length = 130 ∧
-  mkSubtractor64.inputs.length = 129 ∧  -- a[64] + b[64] + one
-  mkSubtractor64.outputs.length = 65    -- diff[64] + borrow
+  mkSubtractor64.gates.length = 128 ∧
+  mkSubtractor64.inputs.length = 128 ∧  -- a[64] + b[64]
+  mkSubtractor64.outputs.length = 64    -- diff[64]
   := by native_decide
 
 -- TODO: Behavioral proofs
