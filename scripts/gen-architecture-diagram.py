@@ -36,8 +36,12 @@ DEFAULT_OUT_SVG = ROOT / "output" / "architecture-treemap.svg"
 DEFAULT_OUT_PNG = ROOT / "docs" / "architecture-treemap.png"
 
 
-def ensure_xkcd_font() -> None:
-    """Ensure authentic XKCD comic font is registered if available."""
+def ensure_xkcd_font() -> bool:
+    """Fetch/register the XKCD font; True when it is usable.
+
+    The treemap PNG is diff-checked in CI, so a missing font must fail the
+    run loudly instead of silently rendering fallback-family pixels.
+    """
     font_path = Path.home() / ".local" / "share" / "fonts" / "xkcd.otf"
     if not font_path.exists():
         try:
@@ -47,14 +51,17 @@ def ensure_xkcd_font() -> None:
             url = "https://github.com/ipython/xkcd-font/raw/master/xkcd/build/xkcd.otf"
             urllib.request.urlretrieve(url, font_path)
         except Exception:
-            pass
+            return False
 
-    if font_path.exists():
-        try:
-            fm.fontManager.addfont(str(font_path))
-            plt.rcParams["font.family"] = "xkcd"
-        except Exception:
-            pass
+    if not font_path.exists():
+        return False
+
+    try:
+        fm.fontManager.addfont(str(font_path))
+        plt.rcParams["font.family"] = "xkcd"
+        return True
+    except Exception:
+        return False
 
 # Palette: Pastel comic colors for subsystems with corresponding border and inner tints
 PALETTE = {
@@ -516,6 +523,8 @@ def draw_treemap(
 ) -> None:
     """Render the squarified treemap using matplotlib and plt.xkcd."""
     ensure_xkcd_font()
+    # Vector text: the Pages SVG stays small and readable at any zoom
+    plt.rcParams["svg.fonttype"] = "none"
     np.random.seed(42)
     random.seed(42)
 
@@ -815,6 +824,15 @@ def main() -> int:
         help=f"Top-level module name (default: {DEFAULT_TOP})",
     )
     args = parser.parse_args()
+
+    # PNG bytes feed the CI freshness check; a font fallback would render
+    # different pixels and fail it with a confusing diff.
+    if not ensure_xkcd_font():
+        print(
+            "Error: xkcd font unavailable; PNG would not be reproducible.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not SV_DIR.exists():
         print(

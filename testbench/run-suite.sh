@@ -9,6 +9,7 @@
 # Usage:
 #   run-suite.sh --mode sim|cosim --bin <binary> [--jobs N]
 #                [--default-timeout N] [--csv <path>] [--timeout <glob>=<sec>]...
+#                [--kanata-dir <dir>]
 #                <elf> [<elf> ...]
 
 set -uo pipefail
@@ -19,6 +20,7 @@ JOBS="$(nproc)"
 DEFAULT_TIMEOUT=5000
 CSV="/dev/null"
 COV_DIR=""
+KANATA_DIR=""
 declare -a OVERRIDES=()
 declare -a ELFS=()
 
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --default-timeout) DEFAULT_TIMEOUT="$2"; shift 2 ;;
         --csv)             CSV="$2"; shift 2 ;;
         --coverage-dir)    COV_DIR="$2"; shift 2 ;;
+        --kanata-dir)      KANATA_DIR="$2"; shift 2 ;;
         --timeout)         OVERRIDES+=("$2"); shift 2 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) ELFS+=("$1"); shift ;;
@@ -62,8 +65,12 @@ run_one() {
     if [[ -n "$cov_dir" ]]; then
         cov_arg=("+cov_file=$cov_dir/${name}.dat")
     fi
+    local kanata_arg=()
+    if [[ -n "$SUITE_KANATA_DIR" ]]; then
+        kanata_arg=("+kanata=$SUITE_KANATA_DIR/${name}.txt")
+    fi
     local result
-    result=$(timeout "$timeout" "$bin" +elf="$elf" +timeout="$timeout" "${cov_arg[@]}" 2>&1)
+    result=$(timeout "$timeout" "$bin" +elf="$elf" +timeout="$timeout" "${cov_arg[@]}" "${kanata_arg[@]}" 2>&1)
 
     local cycles retired ipc status
     cycles=$(echo "$result"  | grep -oP '(Cycles|Total cycles):\s+\K[0-9]+'   | tail -1)
@@ -95,9 +102,14 @@ if [[ -n "$COV_DIR" ]]; then
     mkdir -p "$COV_DIR"
 fi
 
+if [[ -n "$KANATA_DIR" ]]; then
+    mkdir -p "$KANATA_DIR"
+fi
+
 # run_one is exported; mode/bin/out_dir/cov_dir ride in the environment so xargs can
 # supply the per-test arguments as $1/$2.
 export SUITE_MODE="$MODE" SUITE_BIN="$BIN" SUITE_OUT_DIR="$OUT_DIR" SUITE_COV_DIR="$COV_DIR"
+export SUITE_KANATA_DIR="$KANATA_DIR"
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -a "$JOBS_FILE" -n 2 bash -c \
     'run_one "$1" "$2" "$SUITE_MODE" "$SUITE_BIN" "$SUITE_OUT_DIR" "$SUITE_COV_DIR"' _

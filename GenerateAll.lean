@@ -107,6 +107,7 @@ import Shoumei.RISCV.CPU
 
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
+import Shoumei.RISCV.TraceSchema
 
 open Shoumei.Codegen.Unified
 open Shoumei.Examples
@@ -432,6 +433,14 @@ def main (args : List String) : IO Unit := do
     s!"RS_ENTRIES := {cfg.rsEntries}\n"
   IO.FS.writeFile "output/config.mk" configMk
   IO.println "✓ Generated output/config.mk"
+
+  -- Generate the canonical trace schema used by the C++ Kanata tracer and
+  -- the TS pipeline viewer; stage drift becomes a compile error on both.
+  IO.println ""
+  IO.println "Generating trace schema..."
+  IO.FS.writeFile "testbench/generated/trace_schema.gen.h" Shoumei.TraceSchema.renderCHeader
+  IO.FS.writeFile "viewer/src/schema.gen.ts" Shoumei.TraceSchema.renderTsSchema
+  IO.println "✓ Generated trace schema (C++ header + TS module)"
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

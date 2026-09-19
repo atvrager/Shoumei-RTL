@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -161,6 +161,11 @@ presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test
 architecture-diagram:
 	@echo "==> Generating architecture treemap..."
 	python3 scripts/gen-architecture-diagram.py --png
+
+# Sunburst/treemap/gate-city views for every netlist source + Pages hub
+architecture-visuals:
+	@echo "==> Generating architecture visualizations..."
+	python3 scripts/gen-architecture-visuals.py
 
 
 # Build debugging tools

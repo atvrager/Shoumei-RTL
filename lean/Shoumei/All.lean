@@ -208,6 +208,7 @@ import Shoumei.RISCV.Retirement.ROBProofs
 import Shoumei.RISCV.Retirement.ROBTest
 import Shoumei.RISCV.Semantics
 import Shoumei.RISCV.SemanticsProofs
+import Shoumei.RISCV.TraceSchema
 import Shoumei.Reflection.ALUSymbolic
 import Shoumei.Reflection.BitVecPacking
 import Shoumei.Reflection.BoolExpr

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# pre-commit - fast local guards (installed via scripts/install-githooks.sh)
+#
+# Heavy validation stays in CI (lake build, verilator, cosim). This hook
+# only catches what is instant and would spam CI: syntax errors, broken
+# workflow YAML, and stale generated manifests.
+#
+# To reinstall after updating this file: ./scripts/install-githooks.sh
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+failed=0
+staged() {
+    git diff --cached --name-only --diff-filter=ACM
+}
+
+# 1. Python syntax on staged scripts (no imports executed)
+py_files=$(staged | grep -E '\.py$' || true)
+if [ -n "$py_files" ]; then
+    # shellcheck disable=SC2086
+    if ! python3 -m py_compile $py_files; then
+        echo "pre-commit: fix Python syntax before committing" >&2
+        failed=1
+    fi
+fi
+
+# 2. Shell syntax + shellcheck on staged shell scripts
+    sh_files=$(staged | grep -E '\.sh$' || true)
+    if [ -n "$sh_files" ]; then
+        for f in $sh_files; do
+            if ! bash -n "$f"; then
+                echo "pre-commit: fix shell syntax before committing" >&2
+                failed=1
+            fi
+        done
+        if command -v shellcheck > /dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            if ! shellcheck $sh_files; then
+                echo "pre-commit: fix shellcheck findings before committing" >&2
+                failed=1
+            fi
+        fi
+    fi
+
+# 3. Workflow YAML parses (CI-only edits no longer run the heavy pipeline)
+if staged | grep -q '^\.github/workflows/'; then
+    if ! python3 - <<'EOF'
+import pathlib, sys, yaml
+for p in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+    try:
+        yaml.safe_load(p.read_text())
+    except Exception as e:
+        print(f"{p}: {e}", file=sys.stderr)
+        sys.exit(1)
+print("workflow YAML OK")
+EOF
+    then
+        echo "pre-commit: fix workflow YAML before committing" >&2
+        failed=1
+    fi
+fi
+
+# 4. Generated manifests stay fresh when lean/ changes
+if staged | grep -q '^lean/'; then
+    python3 scripts/gen-lean-root.py > /dev/null
+    if ! git diff --exit-code --quiet -- lean/Shoumei/All.lean; then
+        echo "pre-commit: lean/Shoumei/All.lean is stale; stage the regeneration" >&2
+        failed=1
+    fi
+    python3 scripts/gen-project-map.py > /dev/null
+    if ! git diff --exit-code --quiet -- docs/project-map.md; then
+        echo "pre-commit: docs/project-map.md is stale; stage the regeneration" >&2
+        failed=1
+    fi
+fi
+
+if [ "$failed" -ne 0 ]; then
+    exit 1
+fi
+exit 0

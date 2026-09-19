@@ -25,12 +25,42 @@ jobs:
         id: detect
         run: |
           base="origin/${{ github.base_ref || 'main' }}"
-          if git diff --name-only "$base"...HEAD | grep -qE '^(lean/|testbench/|verification/|physical/|\.github/|Makefile|Generate.*\.lean|lakefile\.lean|lean-toolchain)'; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "code=false" >> "$GITHUB_OUTPUT"
+          # Granular gating: heavy jobs run only when the paths they depend
+          # on change. Unknown paths default to `rtl` so build-relevant
+          # renames can never skip validation.
+          #
+          #   .github/ docs/ *.md images -> nothing (files still linted)
+          #   scripts/                   -> codegen (treemap freshness check)
+          #   testbench/ verification/   -> sims (no synthesis)
+          #   physical/                  -> synthesis (no sims)
+          #   lean/ Makefile others      -> rtl (everything)
+          files="$(git diff --name-only "$base"...HEAD)"
+          rtl=false; sim=false; synth=false; scripts=false
+          if [ -n "$files" ]; then
+            while IFS= read -r f; do
+              case "$f" in
+                lean/*|Generate*.lean|lakefile*.lean|lake-manifest.json|lean-toolchain|Makefile) rtl=true ;;
+                testbench/*|verification/*) sim=true ;;
+                physical/*) synth=true ;;
+                scripts/*) scripts=true ;;
+                .github/*|docs/*|*.md|*.png|*.svg|LICENSE|.gitignore) ;;
+                *) rtl=true ;;
+              esac
+            done <<< "$files"
           fi
-          echo "changed files:"; git diff --name-only "$base"...HEAD | head -20
+
+          code=false
+          [ "$rtl" = true ] && code=true
+          [ "$sim" = true ] && code=true
+          [ "$synth" = true ] && code=true
+          [ "$scripts" = true ] && code=true
+
+          echo "rtl=$rtl" >> "$GITHUB_OUTPUT"
+          echo "sim=$sim" >> "$GITHUB_OUTPUT"
+          echo "synth=$synth" >> "$GITHUB_OUTPUT"
+          echo "scripts=$scripts" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "changed files:"; echo "$files" | head -20
 
   lint:
     name: Lint
@@ -53,6 +83,22 @@ jobs:
           python3 -m py_compile bootstrap.py
           python3 -m py_compile scripts/*.py
           python3 -m py_compile verification/*.py
+
+      # CI-only changes no longer trigger the heavy pipeline, so at least
+      # validate the workflow files themselves on every run.
+      - name: Workflow YAML parse
+        run: |
+          pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import pathlib, sys, yaml
+          for p in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+              try:
+                  yaml.safe_load(p.read_text())
+              except Exception as e:
+                  print(f"{p}: {e}", file=sys.stderr)
+                  sys.exit(1)
+          print("workflow YAML OK")
+          EOF
 
       - name: C/C++ lint (cppcheck)
         run: |
@@ -264,8 +310,14 @@ jobs:
 
       - name: Generate architecture diagram
         run: |
-          pip install --quiet matplotlib
+          pip install --quiet matplotlib==3.11.2
           make architecture-diagram
+
+      # The treemap is generated from emitted SV and embedded in the README,
+      # so the committed PNG must not drift from the Lean sources (same rule
+      # as docs/project-map.md in the lint job).
+      - name: Treemap is current
+        run: git diff --exit-code -- docs/architecture-treemap.png
 
       - name: Treemap summary
         run: |
@@ -313,10 +365,122 @@ jobs:
             physical/config.mk
           retention-days: 30
 
+  # Publication job: rebuilds everything from main and deploys the
+  # visualization suite (treemaps, sunbursts, gate cities, pipeline-traces
+  # viewer) to GitHub Pages (free, public repo). Deliberately NOT in
+  # ci-pass: publishing is not validation.
+  visuals:
+    name: Visuals & Pages
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v6
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Generate code
+        run: |
+          pip install --quiet matplotlib==3.11.2
+          make codegen
+
+      - name: Setup OSS CAD Suite (Yosys)
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build visualization suite
+        run: ./scripts/build-visuals.sh
+
+      - name: Upload visualization suite
+        uses: actions/upload-artifact@v6
+        with:
+          name: visuals-pages
+          path: output/architecture-visuals/
+          retention-days: 30
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: output/architecture-visuals/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # PR-side verification of the visualization pipeline (no publish): script or
+  # synthesis-flow breakage surfaces on the PR, not on merge.
+  visuals-check:
+    name: Visuals Check
+    runs-on: ubuntu-24.04
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: codegen-output
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Setup OSS CAD Suite (Yosys)
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build visualization suite
+        run: |
+          pip install --quiet matplotlib==3.11.2
+          ./scripts/build-visuals.sh
+
+      - name: Upload visualization suite
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: visuals-check
+          path: output/architecture-visuals/
+          retention-days: 14
+
   verilator-sim:
     name: Verilator Simulation
     runs-on: ubuntu-24.04
-    needs: [codegen]
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -371,7 +535,8 @@ jobs:
   cppsim:
     name: C++ Simulation
     runs-on: ubuntu-24.04
-    needs: [codegen]
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -396,7 +561,8 @@ jobs:
   slang-lint:
     name: Slang Lint
     runs-on: ubuntu-24.04
-    needs: [codegen]
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -414,7 +580,8 @@ jobs:
   cosim:
     name: Cosimulation (RTL vs Spike)
     runs-on: ubuntu-24.04
-    needs: [codegen]
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -481,7 +648,8 @@ jobs:
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-24.04
-    needs: [codegen]
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -561,6 +729,7 @@ jobs:
       - proof-coverage
       - shoumei-roundtrip
       - codegen
+      - visuals-check
       - verilator-sim
       - cppsim
       - slang-lint
@@ -587,6 +756,7 @@ jobs:
             "proof-coverage:${{ needs.proof-coverage.result }}" \
             "shoumei-roundtrip:${{ needs.shoumei-roundtrip.result }}" \
             "codegen:${{ needs.codegen.result }}" \
+            "visuals-check:${{ needs.visuals-check.result }}" \
             "verilator-sim:${{ needs.verilator-sim.result }}" \
             "cppsim:${{ needs.cppsim.result }}" \
             "slang-lint:${{ needs.slang-lint.result }}" \
