@@ -119,7 +119,7 @@ def tree_hier(gen, top: str) -> dict:
             "children": leaves,
         })
 
-    return {"name": f"{top} — Lean RTL", "size": total, "unit": "gates", "children": children}
+    return {"name": f"{top} — Lean RTL", "short": "Lean RTL", "size": total, "unit": "gates", "children": children}
 
 
 def tree_flatmod(gen) -> dict:
@@ -133,7 +133,7 @@ def tree_flatmod(gen) -> dict:
 
     leaves.sort(key=lambda c: -c["size"])
     total = sum(c["size"] for c in leaves)
-    return {"name": "Lean flat netlist (per module)", "size": total, "unit": "gates", "children": leaves}
+    return {"name": "Lean flat netlist (per module)", "short": "Flat netlist", "size": total, "unit": "gates", "children": leaves}
 
 
 def _seq_count(cell: str) -> bool:
@@ -203,7 +203,7 @@ def tree_cells_hier(netlist_dir: Path) -> dict:
     total = sum(c["size"] for c in children)
     if total == 0:
         raise ValueError(f"no cells parsed from {netlist_dir}")
-    return {"name": f"{tech} — Yosys netlist",
+    return {"name": f"{tech} — Yosys netlist", "short": tech,
             "size": total, "unit": "cells", "children": children}
 
 
@@ -390,8 +390,9 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
             total = tree["size"]
 
             # Root disk + total in the center (light hub, dark text)
+            center_name = tree.get("short", tree["name"].split(" — ")[-1])
             ax.add_patch(Wedge((0, 0), root_r, 0, 360, facecolor="#e9edf1", edgecolor="#101418", linewidth=2.0))
-            ax.text(0, 0, f"{tree['name'].split(' — ')[-1]}\n{size_units(total, tree['unit'])}",
+            ax.text(0, 0, f"{center_name}\n{size_units(total, tree['unit'])}",
                     ha="center", va="center", fontsize=10.5, fontweight="bold", color="#1a1a1a")
 
             a0 = 0.0
