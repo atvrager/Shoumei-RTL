@@ -7,6 +7,10 @@
 
 ## 1. Architectural Overview
 
+### Hierarchical Gate Distribution
+
+![Shoumei Tomasulo RV64G Microarchitecture Gate Treemap](architecture-treemap.svg)
+
 ### Pipeline Organization
 
 ```

@@ -46,6 +46,8 @@ A complete pipeline from formal specification to verified, simulated RTL:
 - 0 axioms in production proofs; verified with mutation testing.
 - ASIC flows: GF180MCU at 64 MHz (15.625 ns) and ASAP7 at 1.0 GHz (1.000 ns). See [docs/physical-design.md](docs/physical-design.md).
 
+![Shoumei Tomasulo RV64G Microarchitecture Gate Treemap](docs/architecture-treemap.svg)
+
 | Category | Modules | Examples |
 |----------|---------|---------|
 | Arithmetic | 17 | FullAdder, KoggeStone, Subtractor, ALU64, PipelinedMultiplier64, Divider64 |
