@@ -352,21 +352,26 @@ def draw_treemap(gen, tree: dict, out: Path) -> None:
                         cc = pal_color(gen, c["name"], 1)
                         ax.add_patch(mp.FancyBboxPatch((cx + 0.03, cy + 0.03), cw - 0.06, ch - 0.06,
                                      boxstyle="round,pad=0.01", facecolor=cc, edgecolor="#444444", linewidth=0.6))
-                        cpct = c["size"] / tree["size"] * 100
-                        fs = 8.5 if cw > 2.4 else 7.0 if cw > 1.3 else 0
-                        if fs:
-                            ax.text(cx + cw / 2, cy + ch / 2,
-                                    f"{c['name']}\n{c['size']:,} ({cpct:.1f}%)",
-                                    ha="center", va="center", fontsize=fs,
-                                    fontweight="bold" if fs >= 7.6 else "normal",
-                                    color="#1a1a1a", multialignment="center")
+                    cpct = c["size"] / tree["size"] * 100
+                    fs = 8.5 if cw > 2.4 else 7.0 if cw > 1.3 else 0
+                    if fs:
+                        max_chars = max(4, int(cw * 100 / (fs * 0.62)))
+                        name = c["name"] if len(c["name"]) <= max_chars else c["name"][:max_chars - 1] + "…"
+                        ax.text(cx + cw / 2, cy + ch / 2,
+                                f"{name}\n{c['size']:,} ({cpct:.1f}%)",
+                                ha="center", va="center", fontsize=fs,
+                                fontweight="bold" if fs >= 7.6 else "normal",
+                                color="#1a1a1a", multialignment="center", clip_on=True)
                 else:
                     if gw >= 1.4 and gh >= 0.55:
                         ax.text(gx + gw / 2, gy + gh / 2, f"{g['name']} ({g['size']:,})",
                                 ha="center", va="center", fontsize=7.5, color="#1a1a1a")
 
             ax.set_title(f"{tree['name']} — {size_units(tree['size'], tree['unit'])}",
-                         fontsize=15, pad=12, color="#e6e9ee")
+                         fontsize=14, pad=16,
+                         color="#1a1a1a",
+                         bbox=dict(boxstyle="round,pad=0.45", facecolor="#e9edf1",
+                                   edgecolor="#c8cdd3", linewidth=1))
             ax.set_xlim(0, TREEMAP_W)
             ax.set_ylim(0, TREEMAP_H)
             ax.axis("off")
@@ -407,8 +412,15 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
                 mid = a + span / 2
                 rm = r0 + ring_w / 2
                 fs = 9.0 if depth == 0 else 7.0 if depth == 1 else 6.0
+                # Tangent-aligned text: rises along its wedge, flipped on the
+                # left half so it never reads upside-down. Avoids the
+                # horizontal collisions of axis-aligned labels.
+                horizontal = np.cos(mid) >= 0
+                rot = np.degrees(mid) if horizontal else np.degrees(mid) + 180
                 ax.text(rm * np.cos(mid), rm * np.sin(mid), it["name"],
-                        ha="center", va="center", fontsize=fs, color="#1a1a1a")
+                        ha="left" if horizontal else "right", va="center",
+                        rotation=rot, rotation_mode="anchor",
+                        fontsize=fs, color="#1a1a1a")
             kids = it.get("children") or []
             if kids and depth + 1 < max_depth:
                 draw_items(ax, kids, a, r1, depth + 1, total)
@@ -439,7 +451,10 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
                     a0 += span
 
             max_r = root_r + ring_w * (max_depth - 0.5)
-            ax.set_title(f"{tree['name']} — {size_units(total, tree['unit'])}", fontsize=14, pad=10, color="#e6e9ee")
+            ax.set_title(f"{tree['name']} — {size_units(total, tree['unit'])}", fontsize=13, pad=14,
+                        color="#1a1a1a",
+                        bbox=dict(boxstyle="round,pad=0.45", facecolor="#e9edf1",
+                                  edgecolor="#c8cdd3", linewidth=1))
             ax.set_xlim(-max_r * 1.07, max_r * 1.07)
             ax.set_ylim(-max_r * 1.07, max_r * 1.07)
             ax.axis("off")
