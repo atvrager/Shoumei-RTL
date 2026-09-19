@@ -114,7 +114,7 @@ python3 verification/slang-lint.py output/sv-from-lean   # slang elaboration
 ### Prerequisites
 
 - **Lean 4** (v4.27.0) -- installed via elan by `make setup`
-- **Yosys** -- SystemVerilog read/hierarchy checks (`apt install yosys`)
+- **Yosys** (>= 0.66) -- SystemVerilog read/hierarchy checks and ASIC synthesis (`setup-oss-cad-suite` or modern package)
 - **slang** (`pyslang`) -- IEEE 1800-2017 elaboration of the emitted SV (`pip install pyslang`)
 - **Verilator** -- for RTL simulation (`apt install verilator`)
 - **RISC-V GCC** -- for test compilation (`./scripts/setup-riscv-toolchain.sh`)

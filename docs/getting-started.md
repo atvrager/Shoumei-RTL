@@ -26,7 +26,7 @@ export PATH="$HOME/.elan/bin:$HOME/.local/bin:$PATH"
 To run the full verification and synthesis pipeline:
 - **Verilator**: RTL simulation (`sudo apt install verilator`)
 - **slang**: IEEE 1800-2017 linting (`pip install pyslang`)
-- **Yosys**: Open-source synthesis (`sudo apt install yosys` or `YosysHQ/setup-oss-cad-suite`)
+- **Yosys**: Open-source synthesis (>= 0.66 recommended via `YosysHQ/setup-oss-cad-suite` or modern distribution package; avoid older releases like 0.33)
 - **RISC-V GCC**: `riscv64-unknown-elf-gcc` for test compilation (`scripts/setup-riscv-toolchain.sh`)
 
 ---
