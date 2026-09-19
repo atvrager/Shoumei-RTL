@@ -150,7 +150,7 @@ jobs:
 
   proof-coverage:
     needs: [changes, lean-build]
-    if: needs.changes.outputs.rtl == 'true'
+    if: needs.changes.outputs.code == 'true'
     name: Proof Coverage & Depth Analysis
     runs-on: ubuntu-24.04
     steps:
@@ -248,7 +248,7 @@ jobs:
 
   shoumei-roundtrip:
     needs: [changes, lean-build]
-    if: needs.changes.outputs.rtl == 'true'
+    if: needs.changes.outputs.code == 'true'
     name: Shoumei Round-trip
     runs-on: ubuntu-24.04
     steps:
@@ -442,7 +442,7 @@ jobs:
     name: Visuals Check
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.synth == 'true' || needs.changes.outputs.scripts == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -480,7 +480,7 @@ jobs:
     name: Verilator Simulation
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.sim == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -536,7 +536,7 @@ jobs:
     name: C++ Simulation
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.sim == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -562,7 +562,7 @@ jobs:
     name: Slang Lint
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.sim == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -581,7 +581,7 @@ jobs:
     name: Cosimulation (RTL vs Spike)
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.sim == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -649,7 +649,7 @@ jobs:
     name: Smoke Test
     runs-on: ubuntu-24.04
     needs: [changes, codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.sim == 'true'
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v5
 
@@ -670,7 +670,7 @@ jobs:
 
   open-source-synthesis:
     needs: [codegen]
-    if: needs.changes.outputs.rtl == 'true' || needs.changes.outputs.synth == 'true'
+    if: needs.changes.outputs.code == 'true'
     name: Synthesis (${{ matrix.name }})
     runs-on: ubuntu-24.04
     strategy:
