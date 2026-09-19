@@ -645,6 +645,12 @@ def trapSequencer_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Microcode.TrapSequencerProofs"
 }
 
+/-- FallbackSequencer: Dedicated sequencer for fallback instruction emulation (Zb*) and illegal traps -/
+def fallbackSequencer_cert : CompositionalCert := {
+  moduleName := "FallbackSequencer"
+  proofReference := "Shoumei.RISCV.Microcode.FallbackSequencerProofs"
+}
+
 /-- CSRFile: Control and Status Register file (12 32-bit registers + WARL/traps/counters) -/
 def csrFile_cert : CompositionalCert := {
   moduleName := s!"CSRFile_{Shoumei.RISCV.defaultCPUConfig.isaString}"
@@ -760,6 +766,7 @@ def allCerts : List CompositionalCert := [
   -- Microcode
   microcodeSequencer_cert,
   trapSequencer_cert,
+  fallbackSequencer_cert,
   -- Microcoded variant
   cpu_microcoded_cert,
   -- Microcoded cached variant

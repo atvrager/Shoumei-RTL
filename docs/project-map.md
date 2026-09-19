@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **238**
-- Circuits with a literal `name :=` (graph nodes): **97**
-- Compositional certificates (Lean registry): **102**
-- Proof files: **68**
+- Lean files: **244**
+- Circuits with a literal `name :=` (graph nodes): **98**
+- Compositional certificates (Lean registry): **103**
+- Proof files: **70**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -35,7 +35,7 @@ graph TD
   Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>6 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
-  Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>3 circuits"]
+  Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>4 circuits"]
   Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>2 circuits"]
   Shoumei_RISCV_Retirement["Shoumei/RISCV/Retirement<br/>3 circuits"]
   Shoumei_SoC["Shoumei/SoC<br/>1 circuits"]
@@ -105,6 +105,7 @@ graph TD
 | `FPSqrtD` | Shoumei/Circuits/Sequential | 0 | yes | yes | yes |
 | `FPToInt64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `FPUnpack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `FallbackSequencer` | Shoumei/RISCV/Microcode | 0 | yes | yes | yes |
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes |
 | `GPIO` | Shoumei/Peripherals | 0 |  | yes | yes |
@@ -159,8 +160,8 @@ graph TD
 
 - **0** circuit files without a leading doc comment
 - **27** circuits with no `*Proofs.lean` mentioning them
-- **54** circuits that instantiate nothing (leaves)
-- **38** circuits nothing else instantiates (tops)
+- **55** circuits that instantiate nothing (leaves)
+- **39** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

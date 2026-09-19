@@ -266,7 +266,8 @@ def CPUConfig.spikeIsa (c : CPUConfig) : String :=
   let c_ := if c.enableC then "c" else ""
   let zicsr := if c.enableZicsr then "_zicsr" else ""
   let zifencei := if c.enableZifencei then "_zifencei" else ""
-  base ++ m ++ a ++ f ++ d ++ c_ ++ zicsr ++ zifencei
+  let zb := if c.microcodesTraps then "_zba_zbb_zbc_zbs" else ""
+  base ++ m ++ a ++ f ++ d ++ c_ ++ zicsr ++ zifencei ++ zb
 
 /-- Compute the decoder instruction name list for a given config.
     Derived from `OpType.all` and `OpType.extensionGroup` -- no handwritten tables.

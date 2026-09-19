@@ -77,7 +77,8 @@ RISCV_TEST_GLOBS = $(TB_DIR)/riscv-tests/rv64ui-p-*.elf \
                    $(TB_DIR)/riscv-tests/rv64um-p-*.elf \
                    $(TB_DIR)/riscv-tests/rv64uf-p-*.elf \
                    $(TB_DIR)/riscv-tests/rv64ud-p-*.elf \
-                   $(TB_DIR)/riscv-tests/rv64ua-p-*.elf
+                   $(TB_DIR)/riscv-tests/rv64ua-p-*.elf \
+                   $(TB_DIR)/riscv-tests/rv64uzb-p-*.elf
 
 CUSTOM_TEST_GLOBS = $(TB_DIR)/tests/*.elf $(TB_DIR)/tests/generated/*.elf
 

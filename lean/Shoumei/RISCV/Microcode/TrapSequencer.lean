@@ -43,6 +43,7 @@ def mkTrapSequencer : Circuit :=
   let start := Wire.mk "start"
   let is_interrupt := Wire.mk "is_interrupt"
   let is_mret := Wire.mk "is_mret"
+  let is_illegal := Wire.mk "is_illegal"
   let rob_empty := Wire.mk "rob_empty"
   let sb_empty := Wire.mk "sb_empty"
   let pipeline_flush := Wire.mk "pipeline_flush"
@@ -64,11 +65,20 @@ def mkTrapSequencer : Circuit :=
   let is_irq_mux := Gate.mkMUX is_irq_q is_interrupt start is_irq_d
   let is_irq_dff := Gate.mkDFF is_irq_d clock reset is_irq_q
 
+  let is_illegal_q := Wire.mk "is_illegal_q"
+  let is_illegal_d := Wire.mk "is_illegal_d"
+  let is_illegal_mux := Gate.mkMUX is_illegal_q is_illegal start is_illegal_d
+  let is_illegal_dff := Gate.mkDFF is_illegal_d clock reset is_illegal_q
+
   let not_is_mret := Wire.mk "not_is_mret"
   let not_is_irq := Wire.mk "not_is_irq"
+  let not_is_illegal := Wire.mk "not_is_illegal"
+  let not_is_irq_and_legal := Wire.mk "not_is_irq_and_legal"
   let modeInvGates := [
     Gate.mkNOT is_mret_q not_is_mret,
-    Gate.mkNOT is_irq_q not_is_irq
+    Gate.mkNOT is_irq_q not_is_irq,
+    Gate.mkNOT is_illegal_q not_is_illegal,
+    Gate.mkAND not_is_irq not_is_illegal not_is_irq_and_legal
   ]
 
   -- Active state latch
@@ -252,12 +262,13 @@ def mkTrapSequencer : Circuit :=
   let temp0_d := (List.range 32).map (fun i => Wire.mk s!"temp0_d_{i}")
   let temp0_after_load_pc := (List.range 32).map (fun i => Wire.mk s!"t0_alpc_{i}")
 
-  -- Cause constants: IRQ -> 0x80000007, Exception -> 0x0000000B (11)
+  -- Cause constants: IRQ -> 0x80000007, Exception ECALL -> 0x0000000B (11), Illegal -> 0x00000002 (2)
   let cause_bits : List Wire := (List.range 32).map (fun i =>
     if i == 31 then is_irq_q
-    else if i == 3 then not_is_irq
+    else if i == 3 then not_is_irq_and_legal
     else if i == 2 then is_irq_q
-    else if i == 1 || i == 0 then one
+    else if i == 1 then one
+    else if i == 0 then not_is_illegal
     else zero)
 
   let temp0MuxGates : List Gate := (List.range 32).flatMap (fun i => [
@@ -392,7 +403,7 @@ def mkTrapSequencer : Circuit :=
     (List.range 32).map (fun i => Gate.mkBUF temp1_q[i]! redir_next[i]!)
 
   let allGates : List Gate :=
-    [is_mret_mux, is_mret_dff, is_irq_mux, is_irq_dff, active_dff] ++
+    [is_mret_mux, is_mret_dff, is_irq_mux, is_irq_dff, is_illegal_mux, is_illegal_dff, active_dff] ++
     modeInvGates ++
     notStepGates ++
     stepDecGates ++
@@ -415,7 +426,7 @@ def mkTrapSequencer : Circuit :=
   ]
 
   { name := "TrapSequencer"
-    inputs := [clock, reset, start, is_interrupt, is_mret, rob_empty, sb_empty] ++
+    inputs := [clock, reset, start, is_interrupt, is_mret, is_illegal, rob_empty, sb_empty] ++
               csr_read_data ++ [pipeline_flush] ++ pc_in
     outputs := [active, drain_complete, write_en] ++
                write_data ++ [csr_sel_0, csr_sel_1] ++ redir_next ++

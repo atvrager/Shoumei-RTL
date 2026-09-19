@@ -12,6 +12,7 @@ import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.RISCV.CSRFile
 import Shoumei.RISCV.Microcode.TrapSequencer
+import Shoumei.RISCV.Microcode.FallbackSequencer
 
 namespace Shoumei.RISCV.CPU_W2
 
@@ -157,6 +158,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fence_i_draining := Wire.mk "fence_i_draining"
   let fence_i_draining_next := Wire.mk "fence_i_draining_next"
   let fence_i_not_draining := Wire.mk "fence_i_not_draining"
+  let hw_draining_reg := Wire.mk "hw_draining_reg"
+  let hw_draining_next := Wire.mk "hw_draining_next"
+  let hw_drain_complete := Wire.mk "hw_drain_complete"
   let fence_i_start := Wire.mk "fence_i_start"
   let fence_i_drain_complete := Wire.mk "fence_i_drain_complete"
   let fence_i_suppress := Wire.mk "fence_i_suppress"
@@ -192,6 +196,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- RS1 physical tag capture (for CDB snooping during drain)
   let csr_rs1tag_reg := CPU.makeIndexedWires "csr_r1t_e" 6
   let csr_rs1tag_next := CPU.makeIndexedWires "csr_r1tn_e" 6
+
+  -- RS2 capture and physical tag (for FallbackSequencer)
+  let ser_rs2cap_reg := CPU.makeIndexedWires "ser_r2c_e" (if config.xlen == 64 then 64 else 32)
+  let ser_rs2cap_next := CPU.makeIndexedWires "ser_r2n_e" (if config.xlen == 64 then 64 else 32)
+  let ser_rs2tag_reg := CPU.makeIndexedWires "ser_r2t_e" 6
+  let ser_rs2tag_next := CPU.makeIndexedWires "ser_r2tn_e" 6
+
   let csr_zimm_reg := CPU.makeIndexedWires "csr_zmc_e" 5
   let csr_zimm_next := CPU.makeIndexedWires "csr_zmn_e" 5
 
@@ -215,6 +226,25 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let ecall_detected_0 := Wire.mk "ecall_det_s0"
   let ecall_detected_1 := Wire.mk "ecall_det_s1"
   let ecall_detected := Wire.mk "ecall_detected"
+
+  -- Illegal instruction detection wires (for fallback / trap entry)
+  let illegal_detected_0 := Wire.mk "illegal_det_s0"
+  let illegal_detected_1 := Wire.mk "illegal_det_s1"
+  let illegal_detected := Wire.mk "illegal_detected"
+  let illegal_selected := Wire.mk "illegal_selected"
+  let illegal_seq_start := Wire.mk "illegal_seq_start"
+
+  -- Fallback sequencer wires
+  let fallback_seq_start := Wire.mk "fallback_seq_start"
+  let fallback_active := Wire.mk "fallback_active"
+  let fallback_cdb_inject := Wire.mk "fallback_cdb_inject"
+  let fallback_redir_valid := Wire.mk "fallback_redir_valid"
+  let fallback_trap_active := Wire.mk "fallback_trap_active"
+  let fallback_cdb_tag := CPU.makeIndexedWires "fallback_cdb_tag" 6
+  let fallback_cdb_data := CPU.makeIndexedWires "fallback_cdb_data" 64
+  let fallback_redir_pc := CPU.makeIndexedWires "fallback_redir_pc" 64
+  let fallback_trap_cause := CPU.makeIndexedWires "fallback_trap_cause" 64
+  let fallback_trap_val := CPU.makeIndexedWires "fallback_trap_val" 64
 
   -- Trap sequencer wires (when config.microcodesTraps)
   let trap_seq_start := Wire.mk "trap_seq_start"
@@ -344,26 +374,41 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else
       [Gate.mkBUF zero wfi_detected_0, Gate.mkBUF zero wfi_detected_1,
        Gate.mkBUF zero wfi_detected]) ++
-    -- serialize_detected includes ECALL, MRET, WFI when enabled
+    -- Illegal / un-decoded instruction detection (when enableTraps)
+    (if enableTraps then
+      [Gate.mkAND (Wire.mk "d0_unknown_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_du0_nr"),
+       Gate.mkAND (Wire.mk "ser_du0_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_du0_pre"),
+       Gate.mkAND (Wire.mk "ser_du0_pre") (Wire.mk "ser_not_stall") illegal_detected_0,
+       Gate.mkAND (Wire.mk "d1_unknown_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_du1_nr"),
+       Gate.mkAND (Wire.mk "ser_du1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_du1_pre"),
+       Gate.mkAND (Wire.mk "ser_du1_pre") (Wire.mk "ser_not_stall") illegal_detected_1,
+       Gate.mkOR illegal_detected_0 illegal_detected_1 illegal_detected]
+    else
+      [Gate.mkBUF zero illegal_detected_0, Gate.mkBUF zero illegal_detected_1,
+       Gate.mkBUF zero illegal_detected]) ++
+    -- serialize_detected includes ECALL, MRET, WFI, ILLEGAL when enabled
     [Gate.mkOR fence_i_detected csr_detected (Wire.mk "hw_ser_pre"),
      Gate.mkOR (Wire.mk "hw_ser_pre") ecall_detected (Wire.mk "hw_ser_pre2"),
      Gate.mkOR (Wire.mk "hw_ser_pre2") mret_detected (Wire.mk "hw_ser_pre3"),
-     Gate.mkOR (Wire.mk "hw_ser_pre3") wfi_detected serialize_detected] ++
+     Gate.mkOR (Wire.mk "hw_ser_pre3") wfi_detected (Wire.mk "hw_ser_pre4"),
+     Gate.mkOR (Wire.mk "hw_ser_pre4") illegal_detected serialize_detected] ++
     [-- Slot selection: slot 0 priority. sel=0 when slot 0 has the serialize op.
      -- ser_slot_sel = NOT(slot 0 detected) AND (slot 1 detected)
-     Gate.mkNOT (Wire.mk "ser_dv0_det") (Wire.mk "ser_not_s0"),
+     Gate.mkNOT (Wire.mk "ser_s0_det_all") (Wire.mk "ser_not_s0"),
      -- Include ECALL/MRET/WFI in slot any-match
      Gate.mkOR fence_i_detected_0 (Wire.mk "csr_match_0") (Wire.mk "ser_s0_csrfi"),
      Gate.mkOR (Wire.mk "ser_s0_csrfi") (Wire.mk "ecall_match_0") (Wire.mk "ser_s0_pre"),
      Gate.mkOR (Wire.mk "ser_s0_pre") (Wire.mk "mret_match_0") (Wire.mk "ser_s0_pre2"),
      Gate.mkOR (Wire.mk "ser_s0_pre2") (Wire.mk "wfi_match_0") (Wire.mk "ser_s0_any"),
      Gate.mkAND (Wire.mk "ser_dv0") (Wire.mk "ser_s0_any") (Wire.mk "ser_dv0_det"),
+     Gate.mkOR (Wire.mk "ser_dv0_det") illegal_detected_0 (Wire.mk "ser_s0_det_all"),
      Gate.mkOR fence_i_detected_1 (Wire.mk "csr_match_1") (Wire.mk "ser_s1_csrfi"),
      Gate.mkOR (Wire.mk "ser_s1_csrfi") (Wire.mk "ecall_match_1") (Wire.mk "ser_s1_pre"),
      Gate.mkOR (Wire.mk "ser_s1_pre") (Wire.mk "mret_match_1") (Wire.mk "ser_s1_pre2"),
      Gate.mkOR (Wire.mk "ser_s1_pre2") (Wire.mk "wfi_match_1") (Wire.mk "ser_s1_any"),
      Gate.mkAND (Wire.mk "ser_dv1") (Wire.mk "ser_s1_any") (Wire.mk "ser_dv1_det"),
-     Gate.mkAND (Wire.mk "ser_not_s0") (Wire.mk "ser_dv1_det") ser_slot_sel] ++
+     Gate.mkOR (Wire.mk "ser_dv1_det") illegal_detected_1 (Wire.mk "ser_s1_det_all"),
+     Gate.mkAND (Wire.mk "ser_not_s0") (Wire.mk "ser_s1_det_all") ser_slot_sel] ++
     -- Slot-selected detection: when both slots have serialize ops, only the winning
     -- slot's operation type should start. e.g., CSR in slot 0 + ECALL in slot 1 →
     -- CSR wins (ser_slot_sel=0), so ecall_selected=0.
@@ -372,6 +417,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND ecall_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "ecall_sel_s0"),
      Gate.mkAND ecall_detected_1 ser_slot_sel (Wire.mk "ecall_sel_s1"),
      Gate.mkOR (Wire.mk "ecall_sel_s0") (Wire.mk "ecall_sel_s1") (Wire.mk "ecall_selected"),
+     -- illegal_selected
+     Gate.mkAND illegal_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "ill_sel_s0"),
+     Gate.mkAND illegal_detected_1 ser_slot_sel (Wire.mk "ill_sel_s1"),
+     Gate.mkOR (Wire.mk "ill_sel_s0") (Wire.mk "ill_sel_s1") illegal_selected,
      -- mret_selected
      Gate.mkAND mret_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "mret_sel_s0"),
      Gate.mkAND mret_detected_1 ser_slot_sel (Wire.mk "mret_sel_s1"),
@@ -394,46 +443,53 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [Gate.mkNOT fence_i_draining fence_i_not_draining,
      Gate.mkNOT pipeline_flush_comb (Wire.mk "ser_not_flush")] ++
     if enableTraps then
-      -- Split start: ECALL → trap_seq_start, MRET → mret_seq_start, CSR/FENCE.I/WFI → hw_csr_fence_start
+      -- Split start: ECALL → ecall_seq_start, MRET → mret_seq_start, Illegal → fallback_seq_start, CSR/FENCE.I/WFI → hw_csr_fence_start
       let mret_seq_start := Wire.mk "mret_seq_start"
-      [Gate.mkOR fence_i_draining useq_active (Wire.mk "any_active"),
+      [Gate.mkOR fence_i_draining useq_active (Wire.mk "any_active_pre"),
+       Gate.mkOR (Wire.mk "any_active_pre") fallback_active (Wire.mk "any_active"),
        Gate.mkNOT (Wire.mk "any_active") (Wire.mk "not_any_active"),
        -- ECALL starts trap sequencer (TRAP_ENTRY) — use slot-selected signal
-       Gate.mkAND (Wire.mk "ecall_selected") (Wire.mk "not_any_active") trap_seq_start,
+       Gate.mkAND (Wire.mk "ecall_selected") (Wire.mk "not_any_active") (Wire.mk "ecall_seq_start"),
+       -- Illegal starts fallback sequencer to evaluate Zb* / emulate
+       Gate.mkAND illegal_selected (Wire.mk "not_any_active") fallback_seq_start,
+       -- Trap sequencer starts on ECALL OR un-emulated illegal fault from fallback
+       Gate.mkOR (Wire.mk "ecall_seq_start") fallback_trap_active trap_seq_start,
        -- MRET starts trap sequencer (MRET sequence) — use slot-selected signal
        Gate.mkAND (Wire.mk "mret_selected") (Wire.mk "not_any_active") mret_seq_start,
        -- CSR/FENCE.I/WFI starts hardwired FSM — use slot-selected signals
        Gate.mkOR (Wire.mk "fi_selected") (Wire.mk "csr_selected") (Wire.mk "csrfi_det"),
        Gate.mkOR (Wire.mk "csrfi_det") (Wire.mk "wfi_selected") (Wire.mk "csrfiwfi_det"),
        Gate.mkAND (Wire.mk "csrfiwfi_det") (Wire.mk "not_any_active") hw_csr_fence_start,
-       -- useq_start = ecall OR mret (both start the microcode sequencer)
+       -- useq_start = trap OR mret (starts the microcode sequencer)
        Gate.mkOR trap_seq_start mret_seq_start (Wire.mk "useq_start"),
-       -- any_serialize_start = useq_start OR hw_start OR irq_inject
+       -- any_serialize_start = useq_start OR hw_start OR irq_inject OR fallback_seq_start
        Gate.mkOR (Wire.mk "useq_start") hw_csr_fence_start (Wire.mk "any_ser_start_pre"),
-       Gate.mkOR (Wire.mk "any_ser_start_pre") (Wire.mk "irq_inject") (Wire.mk "any_ser_start"),
+       Gate.mkOR (Wire.mk "any_ser_start_pre") (Wire.mk "irq_inject") (Wire.mk "any_ser_start_pre2"),
+       Gate.mkOR (Wire.mk "any_ser_start_pre2") fallback_seq_start (Wire.mk "any_ser_start"),
        -- fence_i_start = any_serialize_start (drives capture latches)
        Gate.mkBUF (Wire.mk "any_ser_start") fence_i_start,
        -- Hardwired drain FSM (only active for CSR/FENCE.I/WFI, not ECALL/MRET)
        -- Suppress drain_complete on first cycle of draining (fence_i_start_delayed)
        -- to prevent false completion when pipeline is already empty from previous op.
-       Gate.mkAND fence_i_draining rob_empty (Wire.mk "ser_dc_tmp"),
-       Gate.mkAND (Wire.mk "ser_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "ser_dc_tmp2"),
-       Gate.mkAND (Wire.mk "ser_dc_tmp2") (Wire.mk "ser_not_flush") (Wire.mk "hw_dc_pre"),
-       -- Gate hw_drain_complete with NOT(useq_active) AND NOT(fence_i_start_delayed)
-       Gate.mkNOT useq_active (Wire.mk "not_useq_active"),
+       -- Hardwired drain FSM (only active for CSR/FENCE.I/WFI, not ECALL/MRET/Fallback)
+       -- hw_drain_complete asserts when hw_draining_reg is active, ROB and SB are empty, and not flushing
+       Gate.mkAND hw_draining_reg rob_empty (Wire.mk "hw_dc_tmp"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "hw_dc_tmp2"),
        Gate.mkNOT (Wire.mk "fence_start_delayed") (Wire.mk "not_fsd"),
-       Gate.mkAND (Wire.mk "hw_dc_pre") (Wire.mk "not_useq_active") (Wire.mk "hw_dc_pre2"),
-       Gate.mkAND (Wire.mk "hw_dc_pre2") (Wire.mk "not_fsd") (Wire.mk "hw_drain_complete"),
-       -- draining_next for hw path
-       Gate.mkOR hw_csr_fence_start fence_i_draining (Wire.mk "hw_set_or"),
-       Gate.mkNOT (Wire.mk "hw_drain_complete") (Wire.mk "hw_not_dc"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp2") (Wire.mk "not_fsd") (Wire.mk "hw_dc_tmp3"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp3") (Wire.mk "ser_not_flush") hw_drain_complete,
+       -- draining_next for hw path: set by hw_csr_fence_start, held by hw_draining_reg until hw_drain_complete
+       Gate.mkOR hw_csr_fence_start hw_draining_reg (Wire.mk "hw_set_or"),
+       Gate.mkNOT hw_drain_complete (Wire.mk "hw_not_dc"),
        Gate.mkAND (Wire.mk "hw_set_or") (Wire.mk "hw_not_dc") (Wire.mk "hw_drain_next_tmp"),
-       Gate.mkAND (Wire.mk "hw_drain_next_tmp") (Wire.mk "ser_not_flush") (Wire.mk "hw_draining_next"),
-       -- Merge: fence_i_draining_next = hw OR useq_active
-       Gate.mkOR (Wire.mk "hw_draining_next") useq_active (Wire.mk "drain_merge_pre"),
-       Gate.mkAND (Wire.mk "drain_merge_pre") (Wire.mk "ser_not_flush") fence_i_draining_next,
-       -- fence_i_drain_complete = hw_drain_complete OR useq_dc_delayed (1-cycle delay)
-       Gate.mkOR (Wire.mk "hw_drain_complete") (Wire.mk "useq_dc_delayed") fence_i_drain_complete,
+       Gate.mkAND (Wire.mk "hw_drain_next_tmp") (Wire.mk "ser_not_flush") hw_draining_next,
+       -- Merge: fence_i_draining_next = hw OR useq_active OR fallback_active
+       Gate.mkOR hw_draining_next useq_active (Wire.mk "drain_merge_pre"),
+       Gate.mkOR (Wire.mk "drain_merge_pre") fallback_active (Wire.mk "drain_merge_all"),
+       Gate.mkAND (Wire.mk "drain_merge_all") (Wire.mk "ser_not_flush") fence_i_draining_next,
+       -- fence_i_drain_complete = hw_drain_complete OR useq_dc_delayed OR fallback_redir_valid
+       Gate.mkOR hw_drain_complete (Wire.mk "useq_dc_delayed") (Wire.mk "dc_pre"),
+       Gate.mkOR (Wire.mk "dc_pre") fallback_redir_valid fence_i_drain_complete,
        -- NOT(drain_complete) for csr_flag hold logic
        Gate.mkNOT fence_i_drain_complete (Wire.mk "ser_not_dc"),
        -- Suppress: CSR start allows rename; FENCE.I/ECALL/MRET/WFI/drain suppress
@@ -442,9 +498,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkAND hw_csr_fence_start not_csr_rename_en (Wire.mk "fi_start_nocsr"),
        Gate.mkOR (Wire.mk "fi_start_nocsr") fence_i_draining (Wire.mk "hw_suppress"),
        Gate.mkOR (Wire.mk "hw_suppress") useq_active (Wire.mk "suppress_pre"),
-       -- ECALL/MRET detected (slot-selected) also suppress
+       Gate.mkOR (Wire.mk "suppress_pre") fallback_active (Wire.mk "suppress_all"),
+       -- ECALL/MRET/Illegal detected (slot-selected) also suppress
        Gate.mkOR (Wire.mk "ecall_selected") (Wire.mk "mret_selected") (Wire.mk "ecall_or_mret_det"),
-       Gate.mkOR (Wire.mk "suppress_pre") (Wire.mk "ecall_or_mret_det") fence_i_suppress]
+       Gate.mkAND illegal_selected (Wire.mk "not_ser_slot") (Wire.mk "ill_sup_s0"),
+       Gate.mkOR (Wire.mk "ecall_or_mret_det") (Wire.mk "ill_sup_s0") (Wire.mk "trap_or_mret_det"),
+       Gate.mkOR (Wire.mk "suppress_all") (Wire.mk "trap_or_mret_det") fence_i_suppress]
     else
       -- Original hardwired-only path (no traps)
       [Gate.mkAND serialize_detected fence_i_not_draining fence_i_start,
@@ -488,9 +547,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let ser_capture_gates :=
     -- Redirect target: hw path captures PC+4; merge with trap sequencer redirect
     (if enableTraps then
-      -- hw redir = MUX(hold, pc+4, hw_csr_fence_start)
+      let hw_or_fb_start := Wire.mk "hw_or_fb_start"
+      -- hw redir = MUX(hold, pc+4, hw_or_fb_start)
+      [Gate.mkOR hw_csr_fence_start fallback_seq_start hw_or_fb_start] ++
       (List.range 32).map (fun i =>
-        Gate.mkMUX fence_i_redir_target[i]! ser_pc_plus_4[i]! hw_csr_fence_start (Wire.mk s!"hw_redir_{i}")) ++
+        Gate.mkMUX fence_i_redir_target[i]! ser_pc_plus_4[i]! hw_or_fb_start (Wire.mk s!"hw_redir_{i}")) ++
       -- final redir = MUX(hw_redir, useq_redir, useq_active)
       (List.range 32).map (fun i =>
         Gate.mkMUX (Wire.mk s!"hw_redir_{i}") useq_redir_next[i]! useq_active fence_i_redir_next[i]!)
@@ -539,6 +600,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       -- Final capture: MUX(hold, snoop_data, update_en)
       ((List.range (if config.xlen == 64 then 64 else 32)).map (fun i =>
         Gate.mkMUX csr_rs1cap_reg[i]! (Wire.mk s!"csr_snoop_data_{i}") (Wire.mk "rs1cap_update_en") csr_rs1cap_next[i]!)) ++
+      -- RS2 phys tag capture (for FallbackSequencer CDB snoop)
+      ((List.range 6).map (fun i =>
+        let muxed := Wire.mk s!"ser_r2t_{i}"
+        [Gate.mkMUX (Wire.mk s!"rs2_phys_0_{i}") (Wire.mk s!"rs2_phys_1_{i}") ser_slot_sel muxed,
+         Gate.mkMUX ser_rs2tag_reg[i]! muxed fence_i_start ser_rs2tag_next[i]!])).flatten ++
+      -- RS2 data: slot-mux raw data (ser_r2)
+      ((List.range (if config.xlen == 64 then 64 else 32)).map (fun i =>
+        Gate.mkMUX (Wire.mk s!"rs2_data_0_{i}") (Wire.mk s!"rs2_data_1_{i}") ser_slot_sel (Wire.mk s!"ser_r2_{i}"))) ++
+      -- Final RS2 capture: MUX(hold, snoop2_data, update_en)
+      ((List.range (if config.xlen == 64 then 64 else 32)).map (fun i =>
+        Gate.mkMUX ser_rs2cap_reg[i]! (Wire.mk s!"ser_snoop2_data_{i}") (Wire.mk "rs2cap_update_en") ser_rs2cap_next[i]!)) ++
       -- CSR zimm (rs1 field from instruction)
       ((List.range 5).map (fun i =>
         let muxed := Wire.mk s!"ser_zm_{i}"
@@ -560,6 +632,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 6).map (fun i => Gate.mkBUF csr_phys_reg[i]! csr_phys_next[i]!) ++
       (List.range 6).map (fun i => Gate.mkBUF csr_old_phys_reg[i]! csr_old_phys_next[i]!) ++
       (List.range (if config.xlen == 64 then 64 else 32)).map (fun i => Gate.mkBUF csr_rs1cap_reg[i]! csr_rs1cap_next[i]!) ++
+      (List.range (if config.xlen == 64 then 64 else 32)).map (fun i => Gate.mkBUF ser_rs2cap_reg[i]! ser_rs2cap_next[i]!) ++
+      (List.range 6).map (fun i => Gate.mkBUF ser_rs2tag_reg[i]! ser_rs2tag_next[i]!) ++
       (List.range 5).map (fun i => Gate.mkBUF csr_zimm_reg[i]! csr_zimm_next[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF csr_pc_reg[i]! csr_pc_next[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF csr_insn_reg[i]! csr_insn_next[i]!))
@@ -568,6 +642,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let ser_dff_insts : List CircuitInstance :=
     [{ moduleName := "DFlipFlop", instName := "u_fence_i_draining_dff",
        portMap := [("d", fence_i_draining_next), ("q", fence_i_draining),
+                   ("clock", clock), ("reset", reset)] },
+     { moduleName := "DFlipFlop", instName := "u_hw_draining_dff",
+       portMap := [("d", hw_draining_next), ("q", hw_draining_reg),
                    ("clock", clock), ("reset", reset)] },
      { moduleName := "DFlipFlop", instName := "u_csr_flag_dff",
        portMap := [("d", csr_flag_next), ("q", csr_flag_reg),
@@ -615,6 +692,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         { moduleName := "DFlipFlop", instName := s!"u_csr_rs1tag_dff_{i}",
           portMap := [("d", csr_rs1tag_next[i]!), ("q", csr_rs1tag_reg[i]!),
                       ("clock", clock), ("reset", reset)] }) ++
+      (if config.xlen == 64 then
+        [{ moduleName := "Register64", instName := "u_ser_rs2cap_reg",
+           portMap := (ser_rs2cap_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                      [("clock", clock), ("reset", reset)] ++
+                      (ser_rs2cap_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]
+       else
+        [{ moduleName := "Register32", instName := "u_ser_rs2cap_reg",
+           portMap := (ser_rs2cap_next.enum.map (fun ⟨i, w⟩ => (s!"d_{i}", w))) ++
+                      [("clock", clock), ("reset", reset)] ++
+                      (ser_rs2cap_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }]) ++
+      (List.range 6).map (fun i =>
+        { moduleName := "DFlipFlop", instName := s!"u_ser_rs2tag_dff_{i}",
+          portMap := [("d", ser_rs2tag_next[i]!), ("q", ser_rs2tag_reg[i]!),
+                      ("clock", clock), ("reset", reset)] }) ++
       (List.range 5).map (fun i =>
         { moduleName := "DFlipFlop", instName := s!"u_csr_zimm_dff_{i}",
           portMap := [("d", csr_zimm_next[i]!), ("q", csr_zimm_reg[i]!),
@@ -628,7 +719,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                     [("clock", clock), ("reset", reset)] ++
                     (csr_insn_reg.enum.map (fun ⟨i, w⟩ => (s!"q_{i}", w))) }] ++
       [{ moduleName := "DFlipFlop", instName := "u_csr_flush_sup",
-         portMap := [("d", csr_cdb_inject), ("q", csr_flush_suppress),
+         portMap := [("d", Wire.mk "all_cdb_inject"), ("q", csr_flush_suppress),
                      ("clock", clock), ("reset", reset)] }]
     else [])
 
@@ -647,7 +738,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let ser_pc_for_trap := CPU.makeIndexedWires "ser_pc_trap" 32
       let ser_pc_trap_gates := (List.range 32).map (fun i =>
         Gate.mkMUX fetch_pc_0[i]! fetch_pc_1[i]! ser_slot_sel ser_pc_for_trap[i]!)
-      -- Sequencer instance
+      let trap_pc_mux := CPU.makeIndexedWires "trap_pc_mux" 32
+      let trap_pc_mux_gates := (List.range 32).map (fun i =>
+        Gate.mkMUX ser_pc_for_trap[i]! csr_pc_reg[i]! fallback_trap_active trap_pc_mux[i]!)
       let sequencerInst : CircuitInstance := {
         moduleName := "TrapSequencer"
         instName := "u_trap_seq"
@@ -656,11 +749,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
            ("start", Wire.mk "useq_start_irq"),
            ("is_interrupt", Wire.mk "irq_inject"),
            ("is_mret", mret_seq_start_w),
+           ("is_illegal", fallback_trap_active),
            ("rob_empty", rob_empty),
            ("sb_empty", Wire.mk "lsu_sb_empty")] ++
           (List.range 32).map (fun i => (s!"csr_read_data_{i}", Wire.mk s!"csr_cdb_dt_e{i}")) ++
           [("pipeline_flush", pipeline_flush_comb)] ++
-          (List.range 32).map (fun i => (s!"pc_in_{i}", ser_pc_for_trap[i]!)) ++
+          (List.range 32).map (fun i => (s!"pc_in_{i}", trap_pc_mux[i]!)) ++
           [("active", useq_active),
            ("drain_complete", useq_drain_complete),
            ("write_en", useq_write_en)] ++
@@ -671,6 +765,38 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
           [("mstatus_trap_active", useq_mstatus_trap),
            ("mstatus_mret_active", useq_mstatus_mret)]
       }
+      -- FallbackSequencer instance (Zb* emulation & illegal instruction filter)
+      let fallbackInst : CircuitInstance := {
+        moduleName := "FallbackSequencer"
+        instName := "u_fallback_seq"
+        portMap :=
+          [("clock", clock), ("reset", reset),
+           ("start", fallback_seq_start),
+           ("pipeline_flush", pipeline_flush_comb)] ++
+          (List.range 32).map (fun i => (s!"insn_{i}", Wire.mk s!"ser_insn_{i}")) ++
+          (List.range 32).map (fun i => (s!"pc_in_{i}", ser_pc_muxed[i]!)) ++
+          (List.range 32).map (fun i => (s!"pc_in_{32+i}", zero)) ++
+          (List.range 64).map (fun i => (s!"rs1_val_{i}", csr_rs1cap_reg[i]!)) ++
+          (List.range 64).map (fun i => (s!"rs2_val_{i}", ser_rs2cap_reg[i]!)) ++
+          (List.range 6).map (fun i => (s!"rd_tag_in_{i}", Wire.mk s!"ser_ophrd_{i}")) ++
+          [("rob_empty", rob_empty),
+           ("sb_empty", Wire.mk "lsu_sb_empty"),
+           ("wcs_write_en", zero)] ++
+          (List.range 8).map (fun i => (s!"wcs_write_addr_{i}", zero)) ++
+          (List.range 32).map (fun i => (s!"wcs_write_data_{i}", zero)) ++
+          [("wcs_enable", zero),
+           ("wcs_lock", zero),
+           ("active", fallback_active),
+           ("cdb_inject", fallback_cdb_inject),
+           ("redir_valid", fallback_redir_valid),
+           ("trap_active", fallback_trap_active),
+           ("wcs_busy", Wire.mk "fallback_wcs_busy")] ++
+          (List.range 6).map (fun i => (s!"cdb_tag_{i}", fallback_cdb_tag[i]!)) ++
+          (List.range 64).map (fun i => (s!"cdb_data_{i}", fallback_cdb_data[i]!)) ++
+          (List.range 64).map (fun i => (s!"redir_pc_{i}", fallback_redir_pc[i]!)) ++
+          (List.range 64).map (fun i => (s!"trap_cause_{i}", fallback_trap_cause[i]!)) ++
+          (List.range 64).map (fun i => (s!"trap_val_{i}", fallback_trap_val[i]!))
+      }
       -- DFF to delay useq_drain_complete by 1 cycle
       let useq_dc_dff : CircuitInstance := {
         moduleName := "DFlipFlop"
@@ -678,8 +804,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         portMap := [("d", useq_drain_complete), ("q", Wire.mk "useq_dc_delayed"),
                     ("clock", clock), ("reset", reset)]
       }
-      (irq_gates ++ ser_pc_trap_gates,
-       [sequencerInst, useq_dc_dff])
+      (irq_gates ++ ser_pc_trap_gates ++ trap_pc_mux_gates,
+       [sequencerInst, fallbackInst, useq_dc_dff])
     else
       (useq_csr_sel.map (fun w => Gate.mkBUF zero w), [])
 
@@ -783,9 +909,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fetch_valid_1_masked := Wire.mk "fetch_valid_1_masked"
   let fetch_valid_gates :=
     [Gate.mkAND d0_valid_raw fetch_valid_0 d0_valid,
+     Gate.mkNOT d0_valid_raw (Wire.mk "not_d0_valid_raw"),
+     Gate.mkAND fetch_valid_0 (Wire.mk "not_d0_valid_raw") (Wire.mk "d0_unknown_raw"),
      Gate.mkNOT ifetch_last_word (Wire.mk "not_last_word"),
      Gate.mkAND fetch_valid_1 (Wire.mk "not_last_word") fetch_valid_1_masked,
-     Gate.mkAND d1_valid_raw fetch_valid_1_masked d1_valid]
+     Gate.mkAND d1_valid_raw fetch_valid_1_masked d1_valid,
+     Gate.mkNOT d1_valid_raw (Wire.mk "not_d1_valid_raw"),
+     Gate.mkAND fetch_valid_1_masked (Wire.mk "not_d1_valid_raw") (Wire.mk "d1_unknown_raw")]
 
   -- === PIPELINE CONTROL ===
   let rob_full := Wire.mk "rob_full"
@@ -973,9 +1103,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND d1_valid_raw d1_is_br (Wire.mk "pre_br_1"),
      Gate.mkAND (Wire.mk "pre_br_0") (Wire.mk "pre_br_1") br_dual_stall,
      -- Memory dual stall: only 1 memory RS issue port, stall if both slots are memory
-     Gate.mkAND d0_valid_raw d0_is_mem (Wire.mk "pre_mem_0"),
-     Gate.mkAND d1_valid_raw d1_is_mem (Wire.mk "pre_mem_1"),
-     Gate.mkAND (Wire.mk "pre_mem_0") (Wire.mk "pre_mem_1") mem_dual_stall] ++
+    Gate.mkAND d0_valid_raw d0_is_mem (Wire.mk "pre_mem_0"),
+    Gate.mkAND d1_valid_raw d1_is_mem (Wire.mk "pre_mem_1"),
+    Gate.mkAND (Wire.mk "pre_mem_0") (Wire.mk "pre_mem_1") mem_dual_stall] ++
     (if enableM then
       [Gate.mkAND d0_valid_raw d0_is_muldiv (Wire.mk "pre_md_0"),
        Gate.mkAND d1_valid_raw d1_is_muldiv (Wire.mk "pre_md_1"),
@@ -1087,8 +1217,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_tag_1 := CPU.makeIndexedWires "cdb_tag_1" 6; let cdb_data_1 := CPU.makeIndexedWires "cdb_data_1" (if config.xlen == 64 || config.enableD then 64 else 32)
   let cdb_data32_1 := cdb_data_1.take (if config.xlen == 64 then 64 else 32)
 
-  -- CDB snoop for CSR rs1 capture: during drain, compare captured rs1 tag against CDB
-  -- If match, capture CDB data into csr_rs1cap_reg. Also capture initial value on fence_i_start.
+  -- CDB snoop for CSR rs1 and Fallback rs2 capture: during drain, compare captured tags against CDB
+  -- If match, capture CDB data into csr_rs1cap_reg / ser_rs2cap_reg. Also capture initial value on fence_i_start.
   let (cdb_fwd_rs1_gates, cdb_fwd_rs1_insts) : (List Gate × List CircuitInstance) :=
     if config.enableZicsr then
       let pfx := "csr_snoop"
@@ -1103,21 +1233,25 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         instName := s!"u_{pfx}_cmp0"
         portMap := [("eq", match0)] ++
                    (cdb_tag_0.enum.map fun ⟨i, w⟩ => (s!"a_{i}", w)) ++
-                   (csr_rs1tag_reg.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
+                   (csr_rs1tag_next.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
       let cmp1_inst : CircuitInstance := {
         moduleName := "EqualityComparator6"
         instName := s!"u_{pfx}_cmp1"
         portMap := [("eq", match1)] ++
                    (cdb_tag_1.enum.map fun ⟨i, w⟩ => (s!"a_{i}", w)) ++
-                   (csr_rs1tag_reg.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
-      -- Gate with valid AND fence_i_draining (only snoop during drain)
+                   (csr_rs1tag_next.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
+      -- Gate with valid AND snoop_draining; compare fresh tags (next) so the drain
+      -- start cycle itself is captured (registered tags lag by one cycle)
+      let snoop_draining := Wire.mk "snoop_draining"
       let m0_drain := Wire.mk s!"{pfx}_m0d"
       let m1_drain := Wire.mk s!"{pfx}_m1d"
       let gates :=
-        [Gate.mkAND match0 cdb_valid_0 match0_v,
+        [Gate.mkOR fallback_active fallback_seq_start (Wire.mk "fb_act_or_st"),
+         Gate.mkOR fence_i_draining (Wire.mk "fb_act_or_st") snoop_draining,
+         Gate.mkAND match0 cdb_valid_0 match0_v,
          Gate.mkAND match1 cdb_valid_1 match1_v,
-         Gate.mkAND match0_v fence_i_draining m0_drain,
-         Gate.mkAND match1_v fence_i_draining m1_drain,
+         Gate.mkAND match0_v snoop_draining m0_drain,
+         Gate.mkAND match1_v snoop_draining m1_drain,
          Gate.mkOR m0_drain m1_drain cdb_snoop_hit,
          -- rs1cap_update_en = fence_i_start OR cdb_snoop_hit
          Gate.mkOR fence_i_start cdb_snoop_hit (Wire.mk "rs1cap_update_en")]
@@ -1126,14 +1260,45 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let snoop_data_gates := (List.range (if config.xlen == 64 then 64 else 32)).map fun i =>
         let tmp := Wire.mk s!"csr_snoop_tmp_{i}"
         [Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! m0_drain tmp,
-         -- On fence_i_start: use slot-muxed rs1_data (initial capture)
-         -- During drain snoop: use snoop data from CDB
-         -- ser_r1 wires from capture section hold slot-muxed value
          Gate.mkMUX (Wire.mk s!"ser_r1_{i}") tmp cdb_snoop_hit snoop_data[i]!]
-      -- The snoop_data feeds csr_rs1cap_next through rs1cap_update_en
-      -- But wait - the capture MUX in ser_capture_gates uses ser_r1 → csr_rs1cap_next
-      -- We need snoop_data to override. Redefine: csr_rs1cap_next MUX uses snoop_data
-      (gates ++ snoop_data_gates.flatten, [cmp0_inst, cmp1_inst])
+
+      -- RS2 Snoop Logic for FallbackSequencer
+      let pfx2 := "ser_snoop2"
+      let match2_0 := Wire.mk s!"{pfx2}_m0"
+      let match2_0_v := Wire.mk s!"{pfx2}_m0v"
+      let match2_1 := Wire.mk s!"{pfx2}_m1"
+      let match2_1_v := Wire.mk s!"{pfx2}_m1v"
+      let cdb_snoop2_hit := Wire.mk "cdb_snoop2_hit"
+      let cmp2_0_inst : CircuitInstance := {
+        moduleName := "EqualityComparator6"
+        instName := s!"u_{pfx2}_cmp0"
+        portMap := [("eq", match2_0)] ++
+                   (cdb_tag_0.enum.map fun ⟨i, w⟩ => (s!"a_{i}", w)) ++
+                   (ser_rs2tag_next.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
+      let cmp2_1_inst : CircuitInstance := {
+        moduleName := "EqualityComparator6"
+        instName := s!"u_{pfx2}_cmp1"
+        portMap := [("eq", match2_1)] ++
+                   (cdb_tag_1.enum.map fun ⟨i, w⟩ => (s!"a_{i}", w)) ++
+                   (ser_rs2tag_next.enum.map fun ⟨i, w⟩ => (s!"b_{i}", w)) }
+      let m2_0_drain := Wire.mk s!"{pfx2}_m0d"
+      let m2_1_drain := Wire.mk s!"{pfx2}_m1d"
+      let gates2 :=
+        [Gate.mkAND match2_0 cdb_valid_0 match2_0_v,
+         Gate.mkAND match2_1 cdb_valid_1 match2_1_v,
+         Gate.mkAND match2_0_v snoop_draining m2_0_drain,
+         Gate.mkAND match2_1_v snoop_draining m2_1_drain,
+         Gate.mkOR m2_0_drain m2_1_drain cdb_snoop2_hit,
+         -- rs2cap_update_en = fence_i_start OR cdb_snoop2_hit
+         Gate.mkOR fence_i_start cdb_snoop2_hit (Wire.mk "rs2cap_update_en")]
+      let snoop2_data := CPU.makeIndexedWires "ser_snoop2_data" (if config.xlen == 64 then 64 else 32)
+      let snoop2_data_gates := (List.range (if config.xlen == 64 then 64 else 32)).map fun i =>
+        let tmp := Wire.mk s!"ser_snoop2_tmp_{i}"
+        [Gate.mkMUX cdb_data_1[i]! cdb_data_0[i]! m2_0_drain tmp,
+         Gate.mkMUX (Wire.mk s!"ser_r2_{i}") tmp cdb_snoop2_hit snoop2_data[i]!]
+
+      (gates ++ snoop_data_gates.flatten ++ gates2 ++ snoop2_data_gates.flatten,
+       [cmp0_inst, cmp1_inst, cmp2_0_inst, cmp2_1_inst])
     else ([], [])
 
   let cdb_mispredicted_reg_1 := Wire.mk "cdb_mispredicted_reg_1"
@@ -3898,7 +4063,6 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else
       [Gate.mkOR br_dual_stall cache_line_boundary (Wire.mk "dual_stall_xc"),
        Gate.mkOR (Wire.mk "dual_stall_xc") rob_nearly_full any_dual_stall,
-       Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
        Gate.mkOR rs_br_issue_full zero (Wire.mk "stall_L0_c"),
@@ -3994,10 +4158,22 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [("irq_pending", irq_pending)]
   }
 
-  -- CSR commit injection: since CSR is NOT in ROB (gated by not_csr_rename_en),
+  -- CSR / Fallback commit injection: since CSR and Fallback are NOT in ROB,
   -- we need to fake a commit to free the old phys reg and update freelist.
-  -- MUX the commit signals for slot 0 with CSR data when csr_cdb_inject fires.
+  -- MUX the commit signals for slot 0 with CSR data when all_cdb_inject fires.
   -- (ROB is empty at drain_complete, so retire_valid_0=0, no conflict.)
+  let all_cdb_inject := Wire.mk "all_cdb_inject"
+  let all_cdb_inject_gate := [Gate.mkOR csr_cdb_inject fallback_cdb_inject all_cdb_inject]
+
+  let cdb_inj_data := CPU.makeIndexedWires "cdb_inj_dt" (if config.enableD then 64 else 32)
+  let cdb_inj_data_gates := (List.range (if config.enableD then 64 else 32)).map fun i =>
+    let csr_dt := if i < csrDataWidth then csr_cdb_data[i]! else zero
+    Gate.mkMUX csr_dt fallback_cdb_data[i]! fallback_cdb_inject cdb_inj_data[i]!
+
+  let cdb_inj_tag := CPU.makeIndexedWires "cdb_inj_tg" 6
+  let cdb_inj_tag_gates := (List.range 6).map fun i =>
+    Gate.mkMUX csr_cdb_tag[i]! fallback_cdb_tag[i]! fallback_cdb_inject cdb_inj_tag[i]!
+
   let commit_archRd_muxed_0 := CPU.makeIndexedWires "cmt_archRd_mux_0" 5
   let commit_physRd_muxed_0 := CPU.makeIndexedWires "cmt_physRd_mux_0" 6
   let retire_tag_muxed_0 := CPU.makeIndexedWires "cmt_retag_mux_0" 6
@@ -4007,19 +4183,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let csr_commit_hasAllocSlot_0 := Wire.mk "csr_commit_hasAllocSlot_0"
   let csr_commit_inject_gates : List Gate :=
     if config.enableZicsr then
-      [Gate.mkOR retire_valid_0 csr_cdb_inject csr_commit_valid_0,
+      [Gate.mkOR retire_valid_0 all_cdb_inject csr_commit_valid_0,
        -- commit_hasPhysRd: for CRAT write only (branches excluded, FP excluded)
-       Gate.mkMUX int_hasOldPhysRd_0 one csr_cdb_inject csr_commit_hasPhysRd_0,
-       -- retire_hasPhysRd: for free list enqueue (branches included via branch_tracking, FP excluded)
-       Gate.mkMUX int_retire_any_old_0 one csr_cdb_inject csr_retire_hasPhysRd_0,
-       Gate.mkMUX int_hasPhysRd_0 one csr_cdb_inject csr_commit_hasAllocSlot_0] ++
+       Gate.mkMUX int_hasOldPhysRd_0 one all_cdb_inject csr_commit_hasPhysRd_0,
+       -- retire_hasPhysRd: for free list enqueue (only free old register for CSR, not fallback)
+       Gate.mkMUX int_retire_any_old_0 csr_cdb_inject all_cdb_inject csr_retire_hasPhysRd_0,
+       Gate.mkMUX int_hasPhysRd_0 csr_cdb_inject all_cdb_inject csr_commit_hasAllocSlot_0] ++
       (List.range 5).map (fun i =>
-        Gate.mkMUX commit_archRd_0[i]! csr_rd_reg[i]! csr_cdb_inject commit_archRd_muxed_0[i]!) ++
+        Gate.mkMUX commit_archRd_0[i]! csr_rd_reg[i]! all_cdb_inject commit_archRd_muxed_0[i]!) ++
+      ((List.range 6).flatMap (fun i =>
+        let cdb_phys := Wire.mk s!"cdb_cmt_phys_{i}"
+        [Gate.mkMUX csr_phys_reg[i]! csr_old_phys_reg[i]! fallback_cdb_inject cdb_phys,
+         Gate.mkMUX commit_physRd_0[i]! cdb_phys all_cdb_inject commit_physRd_muxed_0[i]!])) ++
       (List.range 6).map (fun i =>
-        Gate.mkMUX commit_physRd_0[i]! csr_phys_reg[i]! csr_cdb_inject commit_physRd_muxed_0[i]!) ++
-      -- retire_tag: MUX with CSR's old phys reg for freelist return
-      (List.range 6).map (fun i =>
-        Gate.mkMUX retire_tag_bt_0[i]! csr_old_phys_reg[i]! csr_cdb_inject retire_tag_muxed_0[i]!)
+        Gate.mkMUX retire_tag_bt_0[i]! csr_old_phys_reg[i]! all_cdb_inject retire_tag_muxed_0[i]!)
     else
       [Gate.mkBUF retire_valid_0 csr_commit_valid_0,
        -- commit_hasPhysRd: CRAT write only (branches excluded, FP excluded)
@@ -4037,20 +4214,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Rename port decoupling buffers (unused, ports eliminated on u_rename)
   let rename_buf_gates : List Gate := []
 
-  -- CDB channel 0 injection: OR csr_cdb_inject into pre_valid_0, MUX tag/data
+  -- CDB channel 0 injection: OR all_cdb_inject into pre_valid_0, MUX tag/data
   let cdb_pre_valid_0_raw := Wire.mk "cdb_pre_valid_0_raw"
   let cdb_pre_tag_0_raw := CPU.makeIndexedWires "cdb_pre_tag_0_raw" 6
   let cdb_pre_data_0_raw := CPU.makeIndexedWires "cdb_pre_data_0_raw" (if config.enableD then 64 else 32)
   let csr_cdb_channel_inject_gates : List Gate :=
-    [Gate.mkOR cdb_pre_valid_0_raw csr_cdb_inject cdb_pre_valid_0] ++
+    [Gate.mkOR cdb_pre_valid_0_raw all_cdb_inject cdb_pre_valid_0] ++
     (List.range 6).map (fun i =>
-      Gate.mkMUX cdb_pre_tag_0_raw[i]! csr_cdb_tag[i]! csr_cdb_inject cdb_pre_tag_0[i]!) ++
-    (List.range 32).map (fun i =>
-      Gate.mkMUX cdb_pre_data_0_raw[i]! csr_cdb_data[i]! csr_cdb_inject cdb_pre_data_0[i]!) ++
-    (if config.enableD then
-      (List.range 32).map (fun i =>
-        Gate.mkMUX cdb_pre_data_0_raw[32+i]! csr_cdb_data[32+i]! csr_cdb_inject cdb_pre_data_0[32+i]!)
-     else [])
+      Gate.mkMUX cdb_pre_tag_0_raw[i]! cdb_inj_tag[i]! all_cdb_inject cdb_pre_tag_0[i]!) ++
+    (List.range (if config.enableD then 64 else 32)).map (fun i =>
+      Gate.mkMUX cdb_pre_data_0_raw[i]! cdb_inj_data[i]! all_cdb_inject cdb_pre_data_0[i]!)
 
   -- CDB reset gating: suppress flush on cycle after CSR inject
   let not_csr_flush_suppress := Wire.mk "not_csr_fsup"
@@ -4060,7 +4233,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND pipeline_reset_misc not_csr_flush_suppress cdb_reset]
 
   -- Collect all CSR gates
-  let csr_all_gates := csr_drain_gate ++ csr_commit_inject_gates ++ rename_buf_gates ++
+  let csr_all_gates := csr_drain_gate ++ all_cdb_inject_gate ++ cdb_inj_data_gates ++
+    cdb_inj_tag_gates ++
+    csr_commit_inject_gates ++ rename_buf_gates ++
     csr_cdb_channel_inject_gates ++ csr_cdb_reset_gates
 
   -- === RVVI TRACE (full dual-retire for W2) ===
@@ -4116,36 +4291,39 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- on the same cycle as drain_complete), emit the CSR RVVI on SLOT 1.
   -- At drain_complete, ROB is empty so retire_valid_1=0, no conflict.
   let csr_rd_nonzero_w := Wire.mk "csr_rd_nonzero"  -- already defined above
+  let all_drain_complete := Wire.mk "all_drain_complete"
+  let all_drain_gate := [Gate.mkOR csr_drain_complete fallback_cdb_inject all_drain_complete]
   let rvvi_gates :=
     (if config.enableZicsr then
+      all_drain_gate ++
       [Gate.mkBUF retire_valid_0 rvvi_valid_0,
-       -- rvvi_valid_1 = retire_valid_1 OR csr_drain_complete
-       Gate.mkOR retire_valid_1 csr_drain_complete rvvi_valid_1,
-       -- trap: CSR retires are not traps
+       -- rvvi_valid_1 = retire_valid_1 OR all_drain_complete
+       Gate.mkOR retire_valid_1 all_drain_complete rvvi_valid_1,
+       -- trap: CSR / fallback retires are not traps
        Gate.mkAND rob_head_exception_0 retire_valid_0 rvvi_trap_0,
        Gate.mkAND rob_head_exception_1 retire_valid_1 rvvi_trap_1,
        -- slot 0 rd_valid: normal ROB path
        Gate.mkNOT rob_head_isBranch_0 (Wire.mk "not_isBr_0"),
        Gate.mkAND rob_head_hasPhysRd_0 (Wire.mk "not_isBr_0") (Wire.mk "hasRealRd_0"),
        Gate.mkAND (Wire.mk "hasRealRd_0") retire_valid_0 rvvi_rd_valid_0,
-       -- slot 1 rd_valid: MUX(ROB, CSR, csr_drain_complete)
+       -- slot 1 rd_valid: MUX(ROB, CSR/Fallback, all_drain_complete)
        Gate.mkNOT rob_head_isBranch_1 (Wire.mk "not_isBr_1"),
        Gate.mkAND rob_head_hasPhysRd_1 (Wire.mk "not_isBr_1") (Wire.mk "hasRealRd_1"),
        Gate.mkAND (Wire.mk "hasRealRd_1") retire_valid_1 (Wire.mk "rob_rd_valid_1"),
-       Gate.mkAND csr_rd_nonzero_w csr_drain_complete (Wire.mk "csr_rd_valid_1"),
+       Gate.mkAND csr_rd_nonzero_w all_drain_complete (Wire.mk "csr_rd_valid_1"),
        Gate.mkOR (Wire.mk "rob_rd_valid_1") (Wire.mk "csr_rd_valid_1") rvvi_rd_valid_1] ++
       -- slot 0: unchanged
       (List.range 5).map (fun i => Gate.mkBUF commit_archRd_0[i]! rvvi_rd_0[i]!) ++
       (List.range (if config.xlen == 64 then 64 else 32)).map (fun i => Gate.mkBUF prf_rvvi_data_0[i]! rvvi_rd_data_0[i]!) ++
-      -- slot 1 rd = MUX(commit_archRd_1, csr_rd_reg, csr_drain_complete)
+      -- slot 1 rd = MUX(commit_archRd_1, csr_rd_reg, all_drain_complete)
       (List.range 5).map (fun i =>
-        Gate.mkMUX commit_archRd_1[i]! csr_rd_reg[i]! csr_drain_complete rvvi_rd_1[i]!) ++
-      -- slot 1 rd_data = MUX(prf_data_1, csr_cdb_data, csr_drain_complete)
+        Gate.mkMUX commit_archRd_1[i]! csr_rd_reg[i]! all_drain_complete rvvi_rd_1[i]!) ++
+      -- slot 1 rd_data = MUX(prf_data_1, cdb_inj_data, all_drain_complete)
       (List.range 32).map (fun i =>
-        Gate.mkMUX prf_rvvi_data_1[i]! csr_cdb_data[i]! csr_drain_complete rvvi_rd_data_1[i]!) ++
+        Gate.mkMUX prf_rvvi_data_1[i]! cdb_inj_data[i]! all_drain_complete rvvi_rd_data_1[i]!) ++
       (if config.xlen == 64 then
         (List.range 32).map (fun i =>
-          Gate.mkMUX prf_rvvi_data_1[32+i]! csr_cdb_data[32+i]! csr_drain_complete rvvi_rd_data_1[32+i]!)
+          Gate.mkMUX prf_rvvi_data_1[32+i]! cdb_inj_data[32+i]! all_drain_complete rvvi_rd_data_1[32+i]!)
        else [])
     else
       [Gate.mkBUF retire_valid_0 rvvi_valid_0,
@@ -4168,13 +4346,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rvvi_pc_insn_gates :=
     if config.enableZicsr then
       (List.range 32).map (fun i => Gate.mkBUF rob_pc_0[i]! rvvi_pc_rdata_0[i]!) ++
-      -- rvvi_pc_1 = MUX(rob_pc_1, csr_pc_reg, csr_drain_complete)
+      -- rvvi_pc_1 = MUX(rob_pc_1, csr_pc_reg, all_drain_complete)
       (List.range 32).map (fun i =>
-        Gate.mkMUX rob_pc_1[i]! csr_pc_reg[i]! csr_drain_complete rvvi_pc_rdata_1[i]!) ++
+        Gate.mkMUX rob_pc_1[i]! csr_pc_reg[i]! all_drain_complete rvvi_pc_rdata_1[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF rob_insn_0[i]! rvvi_insn_0[i]!) ++
-      -- rvvi_insn_1 = MUX(rob_insn_1, csr_insn_reg, csr_drain_complete)
+      -- rvvi_insn_1 = MUX(rob_insn_1, csr_insn_reg, all_drain_complete)
       (List.range 32).map (fun i =>
-        Gate.mkMUX rob_insn_1[i]! csr_insn_reg[i]! csr_drain_complete rvvi_insn_1[i]!)
+        Gate.mkMUX rob_insn_1[i]! csr_insn_reg[i]! all_drain_complete rvvi_insn_1[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF rob_pc_0[i]! rvvi_pc_rdata_0[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF rob_pc_1[i]! rvvi_pc_rdata_1[i]!) ++
