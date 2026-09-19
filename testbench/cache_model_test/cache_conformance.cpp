@@ -88,6 +88,8 @@ struct RefCache {
 // ---------------------------------------------------------------------------
 struct Dut {
   VL1DCache* d;
+  Dut(const Dut&) = delete;             // owns a verilated model
+  Dut& operator=(const Dut&) = delete;
   Dut() {
     d = new VL1DCache;
     d->clock = 0; d->reset = 1; d->req_valid = 0; d->req_we = 0;
