@@ -6,7 +6,7 @@ not edit by hand; re-run it.  Composition edges come from
 Lean registry, docs from each file's leading comment block.
 
 - Lean files: **219**
-- Circuits with a literal `name :=` (graph nodes): **87**
+- Circuits with a literal `name :=` (graph nodes): **88**
 - Compositional certificates (Lean registry): **100**
 - Proof files: **59**
 
@@ -30,14 +30,14 @@ graph TD
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
   Shoumei_RISCV_CPU["Shoumei/RISCV/CPU<br/>2 circuits"]
-  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>5 circuits"]
+  Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>6 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
   Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>3 circuits"]
   Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>2 circuits"]
   Shoumei_RISCV_Retirement["Shoumei/RISCV/Retirement<br/>3 circuits"]
   Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
-  Shoumei_RISCV_Execution -->|10| Shoumei_Circuits_Combinational
+  Shoumei_RISCV_Execution -->|11| Shoumei_Circuits_Combinational
   Shoumei_Circuits_Sequential -->|4| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Renaming -->|4| Shoumei_Circuits_Combinational
   Shoumei_RISCV_CPU -->|2| Shoumei_Circuits_Sequential
@@ -109,6 +109,7 @@ graph TD
 | `L2Cache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `LSU` | Shoumei/RISCV/Memory | 2 | yes | yes | yes |
 | `MemoryExecUnit` | Shoumei/RISCV/Execution | 1 |  | yes | yes |
+| `MemoryExecUnitDecoupled` | Shoumei/RISCV/Execution | 1 |  |  | yes |
 | `MemoryHierarchy` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `MicrocodeDecoder` | Shoumei/RISCV/Microcode | 0 |  |  | yes |
 | `MicrocodeSequencer` | Shoumei/RISCV/Microcode | 1 | yes | yes | yes |
@@ -142,9 +143,9 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **25** circuits with no `*Proofs.lean` mentioning them
+- **26** circuits with no `*Proofs.lean` mentioning them
 - **46** circuits that instantiate nothing (leaves)
-- **36** circuits nothing else instantiates (tops)
+- **37** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

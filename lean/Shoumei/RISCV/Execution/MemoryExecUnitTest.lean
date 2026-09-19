@@ -40,7 +40,7 @@ theorem test_addr_calc_zero :
 
 /-- Test: Address calculation with wraparound -/
 theorem test_addr_calc_wraparound :
-  let addr := calculateMemoryAddress 0xFFFFFFFF 1
+  let addr := calculateMemoryAddress 0xFFFFFFFFFFFFFFFF 1
   addr == 0 := by
   native_decide
 
@@ -70,7 +70,7 @@ theorem test_load_word :
   let req := executeLoad OpType.LW 0x1000 12 42
   req.access_type == MemAccessType.Load ∧
   req.size == MemSize.Word ∧
-  req.sign_extend == false ∧  -- No extension needed for 32-bit load
+  req.sign_extend == true ∧  -- RV64: LW sign-extends into the 64-bit register
   req.address == 0x100C := by
   native_decide
 
@@ -127,7 +127,7 @@ theorem test_store_word :
 /-- Test: Process byte with sign extension (negative) -/
 theorem test_process_byte_sign_extend :
   let result := processLoadResponse 0x80 MemSize.Byte true
-  result == 0xFFFFFF80 := by
+  result == 0xFFFFFFFFFFFFFF80 := by
   native_decide
 
 /-- Test: Process byte without sign extension (positive) -/
@@ -139,7 +139,7 @@ theorem test_process_byte_no_sign_extend :
 /-- Test: Process halfword with sign extension (negative) -/
 theorem test_process_halfword_sign_extend :
   let result := processLoadResponse 0x8000 MemSize.Halfword true
-  result == 0xFFFF8000 := by
+  result == 0xFFFFFFFFFFFF8000 := by
   native_decide
 
 /-- Test: Process halfword without sign extension -/
@@ -190,13 +190,23 @@ theorem test_store_negative_offset :
   req.address == 0x0FFC := by
   native_decide
 
-/-- Test: Address verification helpers -/
-theorem test_verify_load_address :
-  verifyLoadAddress 0x1000 100 == true := by
+/-! ## Decoupled Micro-op Tests -/
+
+/-- STA computes the address; STD carries data; the two are independent. -/
+theorem test_sta_std_decoupled :
+  let sta := executeSta 0x1000 0x24 5
+  let std := executeStd 0xDEADBEEFCAFE1234 MemSize.Doubleword 5
+  sta.address = 0x1024 ∧
+  sta.sq_tag = 5 ∧
+  std.data = 0xDEADBEEFCAFE1234 ∧
+  std.size = MemSize.Doubleword ∧
+  std.sq_tag = 5 := by
   native_decide
 
-theorem test_verify_store_address :
-  verifyStoreAddress 0x1000 100 == true := by
+/-- Decoupled unit has the classic group split: address(64) + tag(6) +
+    std_data(64) + sta/std valid, all outputs present. -/
+theorem test_decoupled_unit_outputs :
+  mkMemoryExecUnitDecoupled.outputs.length = 64 + 6 + 64 + 2 := by
   native_decide
 
 end Shoumei.RISCV.Execution.MemoryExecUnitTest
