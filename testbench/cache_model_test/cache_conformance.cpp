@@ -199,10 +199,7 @@ struct Tester {
       expectResp = true;      // hit read, miss read, or write-miss refill all resp
       respAddr = a;
       if (we) {
-        uint32_t sz = dut.d->req_size;
-        uint64_t wd = dut.d->req_wdata;
-        uint32_t szb = 1u << sz;
-        if (ref.find(a)) { ref.writeHit(a, wd, szb); expectResp = false; }
+        if (ref.find(a)) { ref.writeHit(a, dut.d->req_wdata, 1u << dut.d->req_size); expectResp = false; }
         else { missLine = a & ~31u; m = M::REQ; }   // KNOWN-GAP: store dropped
       } else {
         if (!ref.find(a)) { missLine = a & ~31u; m = M::REQ; }
