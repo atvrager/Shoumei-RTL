@@ -1,0 +1,90 @@
+name: Preview Pages
+
+# Manual preview of the visualization suite from any branch, deployed to the
+# real Pages URL. The main-branch `visuals` job in ci.yml publishes the
+# authoritative build on merge; keep these steps in sync with it.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preview:
+    name: Preview & Deploy
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v6
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Generate code
+        run: |
+          pip install --quiet matplotlib==3.11.2
+          make codegen
+
+      - name: Setup OSS CAD Suite (Yosys)
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Synthesize netlists
+        run: |
+          make synth-gf180
+          make synth-asap7
+          FLATTEN=0 OUTPUT_DIR=syn_out_gf180_hier ./physical/run-yosys-gf180.sh
+          FLATTEN=0 OUTPUT_DIR=syn_out_asap7_hier ./physical/run-yosys-asap7.sh
+
+      - name: Compile pipeline viewer
+        run: |
+          npx -y -p typescript@5.5.4 tsc -p viewer/tsconfig.json
+
+      - name: Generate visualization suite
+        run: |
+          make architecture-diagram
+          mkdir -p output/architecture-visuals
+          cp viewer/viewer.html viewer/dist/viewer.js viewer/dist/schema.gen.js output/architecture-visuals/
+          python3 scripts/gen-architecture-visuals.py
+
+      - name: Upload visualization suite
+        uses: actions/upload-artifact@v6
+        with:
+          name: visuals-preview
+          path: output/architecture-visuals/
+          retention-days: 30
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: output/architecture-visuals/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
