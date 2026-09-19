@@ -46,6 +46,9 @@ A complete pipeline from formal specification to verified, simulated RTL:
 - 0 axioms in production proofs; verified with mutation testing.
 - ASIC flows: GF180MCU at 64 MHz (15.625 ns) and ASAP7 at 1.0 GHz (1.000 ns). See [docs/physical-design.md](docs/physical-design.md).
 ![Shoumei RV64G OoO CPU Microarchitecture Gate Treemap](docs/architecture-treemap.png)
+*Interactive sunburst / 3D gate-city views and per-test pipeline traces are
+[auto-published to GitHub Pages](https://atvrager.github.io/Shoumei-RTL/) on
+every merge to `main`.*
 
 | Category | Modules | Examples |
 |----------|---------|---------|
