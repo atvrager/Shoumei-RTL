@@ -163,6 +163,15 @@ if [ "$SYNTH_STATUS" -eq 0 ]; then
         echo "Summary from area report:"
         grep -E "(Chip area for top module|wires|cells|used for sequential elements)" "$OUTPUT_DIR/reports/area.rpt" | tail -n 6 || true
     fi
+
+    # Aggressive lint pop (DC NXT LINT-* mimic)
+    LINT_HITS=$(grep -nE "multiple driv|Width of|width.*does not match|unsized|inferred latch|\\\$dlatch|comb loop|combinational|is used but never|never driven|tristate" "$LOG_FILE" || true)
+    if [ -n "$LINT_HITS" ]; then
+        echo ""
+        echo "ERROR: lint-style warnings in elaboration (mimicking DC NXT LINT-*):"
+        echo "$LINT_HITS" | head -30
+        exit 1
+    fi
 else
     echo ""
     echo "ERROR: Yosys synthesis failed. Last 50 lines of $LOG_FILE:"

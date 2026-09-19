@@ -130,7 +130,10 @@ if {[llength $sv_files] == 0} {
 
 puts "INFO: Reading [llength $sv_files] SystemVerilog files from $rtl_dir..."
 foreach f $sv_files {
-    read_verilog -sv $f
+    # -nolatches: inferred latches abort the flow (DC NXT LINT-1 mimic).
+    # Elaboration warnings (width, multi-driver) remain fatal via set -e in
+    # the calling script's post-check (see run-yosys-*.sh: lint-grep).
+    read_verilog -sv -nolatches $f
 }
 
 # Read optional top synthesis wrapper if present
@@ -140,11 +143,19 @@ if {[info exists env(SYNTH_WRAPPER)]} {
 }
 if {[file exists $synth_wrapper] && [lsearch -exact $sv_files $synth_wrapper] == -1} {
     puts "INFO: Reading synthesis wrapper: $synth_wrapper"
-    read_verilog -sv $synth_wrapper
+    read_verilog -sv -nolatches $synth_wrapper
 }
 
 # Step 4: Check hierarchy and set top module
 hierarchy -check -top $design_name
+
+# Pre-synth lint (DC status: LINT-2 comb loops, LINT-3 multi-driver,
+# LINT-7 tristate, mem integrity)
+proc; opt
+select -assert-none t:$dlatch
+select -assert-none t:$tribuf
+check -assert
+if {[llength [memory -list]] > 0} { memory -check }
 
 # Step 5: Coarse synthesis
 if {$flatten} {

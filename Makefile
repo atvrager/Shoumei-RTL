@@ -153,9 +153,25 @@ coverage:
 	$(MAKE) -C testbench run-coverage
 
 # Presubmit check (runs local CI verification pipeline)
-presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test
+presubmit: check-tools lean codegen proof-coverage lint mutation-test smoke-test
 	@echo ""
-	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Mutation + Smoke)"
+	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Lint + Mutation + Smoke)"
+
+# DC-NXT-style lint: latch inference, comb loops, width/undriven/multi-driver
+# pops on all emitted SV (Yosys proxy) + slang elaboration (default and the
+# SHOUMEI_SRAM_MACROS branch against the macro stubs).
+lint: systemverilog
+	@echo "==> Running slang elaboration lint..."
+	@python3 verification/slang-lint.py output/sv-from-lean
+	@python3 verification/slang-lint.py --sram output/sv-from-lean
+	@echo "==> Running DC-NXT-style lint (Yosys proxy)..."
+	@./verification/dc-lint.sh output/sv-from-lean
+	@echo "✓ Lint clean"
+
+# Generate cache SRAM macros with OpenRAM (foundry-grade, not FF arrays).
+# Contract: sram_1r1w_<width>x<depth> (.clk/.we/.waddr/.wdata/.raddr/.rdata).
+sram-macros:
+	@./scripts/gen-sram-macros.sh
 
 # Generate XKCD-style hierarchical architecture treemap
 architecture-diagram:
