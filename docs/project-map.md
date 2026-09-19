@@ -153,8 +153,7 @@ they land.
 
 - No `Circuit satisfies Behavior` refinement atom: LEC relates the two emitted artifacts, the theorems talk about the behavioural models, and nothing joins the two.  This is the missing link that would let composition be mechanical.
 - Certificates are unverified pointers: `CompositionalCert.proofReference` is a `String` and the LEC script only checks that dependencies were verified.
-- Widths are not yet parameters: `CPUConfig.xlen` is unused, 91 data buses in `CPU.lean` are hard-wired to 32, and the behavioural models use `UInt32`. FLEN and VLEN are specified in docs/roadmap-rv32g-rv64g.md but not in code.
+- Widths are fixed to 64-bit for the RV64G core: `CPUConfig.xlen = 64` and `CPUConfig.flen = 64`. Parameterized width polymorphism across 32/64-bit is not yet abstracted into a single unified top-level circuit generator.
 - The flat netlist emitter (`SystemVerilogNetlist.lean`) is combinational-only: it drops DFFs and clock/reset, and full instance inlining does not scale (8.7 MB for one module).
 - The CPU top-level has no compositional certificate, so it is the dominant cost of a full LEC run.
-- Pre-existing FP-store race: `fsw` intermittently enqueues a zero operand into the store buffer (timing-dependent, value-independent).
 

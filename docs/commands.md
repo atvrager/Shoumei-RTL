@@ -76,7 +76,7 @@ elan update
 elan show
 
 # Switch LEAN versions
-elan default leanprover/lean4:v4.15.0
+elan default leanprover/lean4:v4.27.0
 ```
 
 ### Common Lake Workflows
@@ -134,6 +134,10 @@ make systemverilog
 # Compile the C++ simulation
 make cppsim
 
+# Open-source ASIC synthesis
+make synth-gf180   # Synthesize to GF180MCU at 64 MHz (15.625 ns)
+make synth-asap7   # Synthesize to ASAP7 7nm at 1.0 GHz (1.000 ns)
+
 # Run the CI smoke tests
 make smoke-test
 
@@ -156,6 +160,8 @@ make clean all
 | `make codegen` | Runs `lake exe generate_all`, then exports the certificate registry |
 | `make systemverilog` | Runs `verification/validate-sv.sh` on `output/sv-from-lean/` |
 | `make cppsim` | Compiles the generated C++ simulation with CMake |
+| `make synth-gf180` | Synthesizes RV64 core to GF180MCU via Yosys + ABC |
+| `make synth-asap7` | Synthesizes RV64 core to ASAP7 7nm via Yosys + ABC |
 | `make smoke-test` | `make codegen` followed by `verification/smoke-test.sh` |
 | `make all` | Runs `check-tools lean codegen systemverilog cppsim` |
 | `make clean` | Removes generated files (graceful if tools missing) |
@@ -269,7 +275,7 @@ lake build
 
 # Problem: Wrong LEAN version
 # Solution: Use elan to reset
-elan default leanprover/lean4:v4.15.0
+elan default leanprover/lean4:v4.27.0
 elan toolchain list
 
 # Problem: Import errors

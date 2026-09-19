@@ -88,8 +88,8 @@ jobs:
         run: |
           test -f README.md
           test -f CLAUDE.md
-          test -f GETTING_STARTED.md
-          test -f COMMANDS.md
+          test -f docs/getting-started.md
+          test -f docs/commands.md
           test -f LICENSE
 
       # The project map is generated from `lean/` and is part of the review
