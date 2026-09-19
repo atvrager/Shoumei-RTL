@@ -964,6 +964,14 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
             "", "", "city-lean.html", "tree-lean.html",
             "click a figure for full size · labels readable at any zoom"))
 
+    # Shoumei SoC Interactive Architecture
+    parts.append("<h2>Shoumei System-on-Chip (SoC) Interactive Architecture</h2>")
+    parts.append('<div class="card">'
+                 '<h3>Shoumei SoC &mdash; Top-Level Die, Interconnect &amp; Peripherals</h3>'
+                 '<div class="note">Interactive SVG block diagram: RV64G OoO CPU, TileLink TL-UH crossbar, ACLINT, APLIC, UART, GPIO, BootROM &amp; SRAM</div>'
+                 '<p style="margin: 14px 0;"><a style="display:inline-block;padding:9px 18px;background:#1e293b;border:1px solid #4cc9f0;color:#4cc9f0;border-radius:6px;font-weight:600;text-decoration:none;" href="soc-diagram.html">Launch Interactive SoC Diagram &rarr;</a> &nbsp; <span style="font-size:13px;color:#8892b0;">Includes pad ring pinout, TileLink bus flow &amp; block inspector</span></p>'
+                 '</div>')
+
     for name, tree in trees.items():
         title = SOURCE_TITLE.get(name, name)
         note = f'{tree["size"]:,} {tree["unit"]} total · click a figure for full size'

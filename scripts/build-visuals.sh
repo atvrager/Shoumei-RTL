@@ -23,5 +23,6 @@ make architecture-diagram
 mkdir -p output/architecture-visuals
 cp viewer/viewer.html viewer/dist/viewer.js viewer/dist/schema.gen.js output/architecture-visuals/
 python3 scripts/gen-architecture-visuals.py
+python3 scripts/gen-soc-visual.py
 
 echo "✓ visual suite ready in output/architecture-visuals"
