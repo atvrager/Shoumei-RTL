@@ -38,9 +38,8 @@ int main(void) {
     if (mem[1] != 0xBBBB || mem[0] != 0xAAAA) { fail(5); while (1) {} }
 
     /* 6. Store then immediate load in a tight loop (fp plausible limit). */
-    volatile uint64_t s;
     for (int i = 0; i < 64; i++) {
-        s = 0xF00D000000000000ull + i;
+        volatile uint64_t s = 0xF00D000000000000ull + i;
         if (s != (0xF00D000000000000ull + i)) { fail(6); while (1) {} }
     }
 
