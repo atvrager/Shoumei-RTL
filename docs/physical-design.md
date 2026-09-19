@@ -250,3 +250,42 @@ Open-source and academic PDKs exhibit scaling conventions that differ from legac
     *   Typical gate delay: 4–15 ps; pin cap: 0.2–1.5 fF.
 *   **Tool Implications**: Tools or scripts assuming hardcoded `ns` or `pF` units can miscalculate timing constraints by $10^3$ to $10^6$. In `physical/run-yosys.tcl`, driver cell instances and standard load equivalents (`ABC_DRIVER_CELL`, `ABC_LOAD_IN_FF`) are passed explicitly to match each platform's native units.
 
+
+---
+
+## Cache SRAM Strategy: Foundry Macros, Not FF Arrays
+
+Emitted cache data RAMs (`RAMPrimitive` in the Lean DSL) carry a
+process-explicit SRAM hook.  Every RAM emits as:
+
+```
+`ifdef SHOUMEI_SRAM_MACROS
+  sram_1r1w_<width>x<depth> u_ram_<name> (.clk, .we, .waddr, .wdata,
+                                          .raddr, .rdata);
+`else
+  reg [width-1:0] <name> [0:depth-1];   // sim/verilator fallback only
+`endif
+```
+
+- **Port contract**: `clk/we/waddr/wdata/raddr/rdata` matches the
+  GF180MCU vendor family (`gf180mcu_fd_ip_sram`) and OpenRAM 1R1W macros.
+  RAMPrimitives with exactly one write + one read port map to the macro;
+  other configurations keep the fallback.
+- **Generation**: `make sram-macros` drives
+  `scripts/gen-sram-macros.sh` (OpenRAM, `--pdk gf180mcuD`/`asap7`,
+  1R1W), emitting a shim with the canonical module name so the codegen
+  contract is immune to OpenRAM's internal naming.  Sizes per node follow
+  the heuristic in `docs/lsu-architecture.md` §13 (GF180: 8 KB ITCM /
+  16 KB DTCM; FinFET-class: 16 / 64).
+- **Verification of the macro branch without real IP**:
+  `verification/sram-macro-stub.sv` provides behavioral stubs
+  (synchronous read) so slang lint checks the `ifdef` path in CI
+  (`python3 verification/slang-lint.py --sram output/sv-from-lean`).
+- **Simulation**: the `else` reg-array fallback is the Verilator path —
+  intentionally a plain memory, never an FF array in synthesis.  If a
+  macro-accurate sim model is needed, the fallback can be replaced by a
+  DPI-backed model of the same `1w1r` contract without touching RTL.
+- **Measured impact (FF-array caches)**: GF180MCU CachedCPU 8.40 mm²
+  @ 20 ns vs 6.40 mm² core — the ~2 mm² delta is exactly what the
+  foundry SRAM macros (≈3 µm²/bit, ≈0.5 mm² for 24 KB) recover.
+  ASAP7 CachedCPU synthesizes clean at 1.0 GHz (32.5 kµm²).
