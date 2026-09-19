@@ -416,6 +416,9 @@ jobs:
         run: |
           make synth-gf180
           make synth-asap7
+          # Module-first cell charts need the unflattened netlists
+          FLATTEN=0 OUTPUT_DIR=syn_out_gf180_hier ./physical/run-yosys-gf180.sh
+          FLATTEN=0 OUTPUT_DIR=syn_out_asap7_hier ./physical/run-yosys-asap7.sh
 
       - name: Compile pipeline viewer
         run: |

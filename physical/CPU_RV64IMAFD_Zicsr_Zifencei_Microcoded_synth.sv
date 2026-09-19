@@ -47,22 +47,9 @@ module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
     .dmem_req_addr(dmem_req_addr),
     .dmem_req_data(dmem_req_data),
     .dmem_req_size(dmem_req_size),
-    .rob_empty(rob_empty),
-    // Debug ports — unconnected, synthesized away
-    .rvvi_validS0(),
-    .rvvi_validS1(),
-    .rvvi_trapS0(),
-    .rvvi_trapS1(),
-    .rvvi_rd_validS0(),
-    .rvvi_rd_validS1(),
-    .rvvi_pc_0(),
-    .rvvi_pc_1(),
-    .rvvi_insn_0(),
-    .rvvi_insn_1(),
-    .rvvi_rd_0(),
-    .rvvi_rd_1(),
-    .rvvi_rdd_0(),
-    .rvvi_rdd_1()
+    // Debug ports left unconnected (synthesized away); removed the stale
+    // renamed `.port()` ties that break hierarchical (FLATTEN=0) synthesis
+    .rob_empty(rob_empty)
   );
 
 endmodule

@@ -42,15 +42,15 @@ TOP_DEFAULT = "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded"
 SOURCES = [
     ("lean", "hier", str(LEAN_DIR)),
     ("netlist", "flatmod", str(FLAT_DIR)),
-    ("gf180", "cells", str(ROOT / "syn_out_gf180" / "netlist")),
-    ("asap7", "cells", str(ROOT / "syn_out_asap7" / "netlist")),
+    ("gf180", "cellsh", str(ROOT / "syn_out_gf180_hier" / "netlist")),
+    ("asap7", "cellsh", str(ROOT / "syn_out_asap7_hier" / "netlist")),
 ]
 
 SOURCE_TITLE = {
     "lean": "RV64G OoO CPU — Lean RTL (subsystem groups)",
     "netlist": "Lean flat netlist (per-module gate counts)",
-    "gf180": "Yosys GF180MCU netlist (flattened, standard cells)",
-    "asap7": "Yosys ASAP7 netlist (flattened, standard cells)",
+    "gf180": "Yosys GF180MCU netlist (hierarchical, module-first)",
+    "asap7": "Yosys ASAP7 netlist (hierarchical, module-first)",
 }
 
 MAX_CELL_TYPES = 30  # per-group cell-type leaves in Yosys trees
@@ -130,22 +130,8 @@ def _seq_count(cell: str) -> bool:
     return any(mark in cell.lower() for mark in DFF_MARK)
 
 
-def tree_cells(netlist_dir: Path) -> dict:
-    """Flattened Yosys netlist: root -> {Sequential, Combinational} -> cell types.
-
-    A flattened netlist has no instance hierarchy, so cell type is the only
-    structure left; the two groups keep the tree readable in every renderer.
-    """
-    counts: Counter[str] = Counter()
-    for path in sorted(netlist_dir.glob("*.v")):
-        for line in path.read_text().splitlines():
-            m = INST_RE.match(line)
-            if m and m.group(1) not in NON_CELL:
-                counts[m.group(1)] += 1
-
-    total = sum(counts.values())
-    if total == 0:
-        raise ValueError(f"no cells parsed from {netlist_dir}")
+def _cell_groups(counts: Counter) -> list[dict]:
+    """{Sequential, Combinational} children with per-type leaves (shared)."""
 
     def leaves(seq: bool) -> list[dict]:
         picked = {t: n for t, n in counts.items() if _seq_count(t) == seq}
@@ -157,11 +143,60 @@ def tree_cells(netlist_dir: Path) -> dict:
         return out
 
     seq_total = sum(n for t, n in counts.items() if _seq_count(t))
-    children = [
+    return [
         {"name": "Sequential cells", "size": seq_total, "children": leaves(True)},
-        {"name": "Combinational cells", "size": total - seq_total, "children": leaves(False)},
+        {"name": "Combinational cells", "size": sum(counts.values()) - seq_total, "children": leaves(False)},
     ]
-    return {"name": f"{netlist_dir.parent.name} — Yosys netlist", "size": total, "unit": "cells", "children": children}
+
+
+MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z0-9_$]+)", re.MULTILINE)
+
+
+def tree_cells_hier(netlist_dir: Path) -> dict:
+    """Hierarchical Yosys netlist: root -> module -> {seq, comb} -> cell types.
+
+    Uses the FLATTEN=0 synth output so the first cut is the module, exactly
+    as the Lean hierarchy; only then sequential vs combinational.
+    """
+    text_all = "\n".join(p.read_text() for p in sorted(netlist_dir.glob("*.v")))
+    known = {m.group(1) for m in MODULE_RE.finditer(text_all)}
+
+    per_module: dict[str, Counter] = {}
+    order: list[str] = []
+
+    for text in (p.read_text() for p in sorted(netlist_dir.glob("*.v"))):
+        for m in MODULE_RE.finditer(text):
+            name = m.group(1)
+            nxt = MODULE_RE.search(text, m.end())
+            block = text[m.end():nxt.start() if nxt else len(text)]
+            counts = Counter()
+            for line in block.splitlines():
+                im = INST_RE.match(line)
+                if im and im.group(1) not in NON_CELL and im.group(1) not in known:
+                    counts[im.group(1)] += 1
+            if counts:
+                per_module[name] = counts
+                order.append(name)
+
+    children = [{
+        "name": name,
+        "size": sum(per_module[name].values()),
+        "children": _cell_groups(per_module[name]),
+    } for name in order]
+    total = sum(c["size"] for c in children)
+    if total == 0:
+        raise ValueError(f"no cells parsed from {netlist_dir}")
+    return {"name": f"{netlist_dir.parent.name} — Yosys netlist (hier)",
+            "size": total, "unit": "cells", "children": children}
+
+
+def prune_zero(node: dict) -> dict:
+    """Drop zero-size children everywhere (squarify divides by min area)."""
+    if "children" in node:
+        node["children"] = [
+            prune_zero(c) for c in node["children"] if c["size"] > 0
+        ]
+    return node
 
 
 def build_trees(gen) -> dict:
@@ -177,8 +212,8 @@ def build_trees(gen) -> dict:
         elif kind == "flatmod":
             tree = tree_flatmod(gen)
         else:
-            tree = tree_cells(d)
-        trees[name] = tree
+            tree = tree_cells_hier(d)
+        trees[name] = prune_zero(tree)
         print(f"{name:8s} {tree['size']:>8,} {tree['unit']}  {tree['name']}")
     return trees
 
