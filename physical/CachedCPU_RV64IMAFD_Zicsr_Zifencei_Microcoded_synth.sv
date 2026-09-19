@@ -7,6 +7,8 @@ module CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
   input  logic          clock,
   input  logic          reset,
   input  logic          mtip_in,
+  input  logic          msip_in,
+  input  logic          meip_in,
   // Main memory interface (to DRAM/AXI)
   input  logic          mem_resp_valid,
   input  logic [255:0]  mem_resp_data,
@@ -23,6 +25,8 @@ module CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
     .reset(reset),
     .mem_resp_valid(mem_resp_valid),
     .mtip_in(mtip_in),
+    .msip_in(msip_in),
+    .meip_in(meip_in),
     .mem_resp_data(mem_resp_data),
     .mem_req_valid(mem_req_valid),
     .mem_req_addr(mem_req_addr),

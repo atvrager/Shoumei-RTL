@@ -3978,7 +3978,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else []) ++
     [("retire_valid_0", retire_valid_0),
      ("retire_valid_1", retire_valid_1),
-     ("mtip_in", Wire.mk "mtip_in")] ++
+     ("mtip_in", Wire.mk "mtip_in"),
+     ("msip_in", Wire.mk "msip_in"),
+     ("meip_in", Wire.mk "meip_in")] ++
     (if enableF then
       [("fp_valid_out", fp_valid_out)] ++
       (fp_exceptions.enum.map fun ⟨i, w⟩ => (s!"fp_exceptions_{i}", w))
@@ -4188,7 +4190,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     inputs := [clock, reset, zero, one, fetch_stall_ext, ifetch_last_word, dmem_stall_ext] ++
               imem_resp_data_0 ++ imem_resp_data_1 ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
-              [Wire.mk "mtip_in"]
+              [Wire.mk "mtip_in", Wire.mk "msip_in", Wire.mk "meip_in"]
     outputs := fetch_pc_0 ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
                [rob_empty] ++

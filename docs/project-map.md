@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **219**
-- Circuits with a literal `name :=` (graph nodes): **88**
-- Compositional certificates (Lean registry): **101**
-- Proof files: **59**
+- Lean files: **238**
+- Circuits with a literal `name :=` (graph nodes): **97**
+- Compositional certificates (Lean registry): **102**
+- Proof files: **68**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -25,9 +25,11 @@ label is how many distinct instantiations cross it.
 ```mermaid
 graph TD
   Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>41 circuits"]
-  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
+  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>22 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
+  Shoumei_Interconnect_TileLink["Shoumei/Interconnect/TileLink<br/>1 circuits"]
+  Shoumei_Peripherals["Shoumei/Peripherals<br/>6 circuits"]
   Shoumei_RISCV["Shoumei/RISCV<br/>1 circuits"]
   Shoumei_RISCV_CPU["Shoumei/RISCV/CPU<br/>2 circuits"]
   Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>6 circuits"]
@@ -36,8 +38,10 @@ graph TD
   Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>3 circuits"]
   Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>2 circuits"]
   Shoumei_RISCV_Retirement["Shoumei/RISCV/Retirement<br/>3 circuits"]
+  Shoumei_SoC["Shoumei/SoC<br/>1 circuits"]
   Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Execution -->|11| Shoumei_Circuits_Combinational
+  Shoumei_SoC -->|6| Shoumei_Peripherals
   Shoumei_Circuits_Sequential -->|4| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Renaming -->|4| Shoumei_Circuits_Combinational
   Shoumei_RISCV_CPU -->|2| Shoumei_Circuits_Sequential
@@ -45,16 +49,21 @@ graph TD
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Memory -->|1| Shoumei_RISCV_Execution
+  Shoumei_SoC -->|1| Shoumei_Circuits_Sequential
+  Shoumei_SoC -->|1| Shoumei_Interconnect_TileLink
 ```
 
 ## Coverage
 
 | Circuit | Subsystem | Inst. | Cert | Proofs | Doc |
 | :--- | :--- | ---: | :---: | :---: | :---: |
+| `ACLINT` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `ALU32` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
 | `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
+| `APLIC` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `BitmapFreeList_64_W1` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
+| `BootROM` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `BranchExecUnit` | Shoumei/RISCV/Execution | 0 |  |  | yes |
 | `BranchTargetAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `BusyTable_W2` | Shoumei/RISCV/CPU | 1 | yes | yes | yes |
@@ -98,6 +107,7 @@ graph TD
 | `FPUnpack` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes |
+| `GPIO` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder32NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
@@ -128,24 +138,29 @@ graph TD
 | `Queue16x32` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `Queue16x32_DualPort` | Shoumei/RISCV/Retirement | 0 | yes |  | yes |
 | `ROB16_W2` | Shoumei/RISCV/Retirement | 0 | yes | yes | yes |
+| `ResetSync` | Shoumei/Circuits/Sequential | 0 |  | yes | yes |
 | `RippleCarryAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `RippleCarryAdder4` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `RippleCarryAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `RippleCarryAdder8` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `SRAM` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `Shifter32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `Shifter4` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `Shifter64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `Shoumei_SoC` | Shoumei/SoC | 8 | yes |  | yes |
 | `StoreBuffer8` | Shoumei/RISCV/Memory | 2 | yes | yes | yes |
 | `Subtractor32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Subtractor64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
+| `TLXbar8` | Shoumei/Interconnect/TileLink | 0 |  | yes | yes |
 | `TrapSequencer` | Shoumei/RISCV/Microcode | 0 | yes | yes | yes |
+| `UART` | Shoumei/Peripherals | 0 |  | yes | yes |
 
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **26** circuits with no `*Proofs.lean` mentioning them
-- **46** circuits that instantiate nothing (leaves)
-- **37** circuits nothing else instantiates (tops)
+- **27** circuits with no `*Proofs.lean` mentioning them
+- **54** circuits that instantiate nothing (leaves)
+- **38** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

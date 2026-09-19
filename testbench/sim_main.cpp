@@ -56,6 +56,14 @@ extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
 extern "C" void dpi_set_tohost_addr(unsigned int addr);
 extern "C" void dpi_set_putchar_addr(unsigned int addr);
 
+static FILE* g_uart_tx_file = nullptr;
+extern "C" void dpi_uart_tx_byte(char data) {
+    if (g_uart_tx_file) {
+        fputc(data, g_uart_tx_file);
+        fflush(g_uart_tx_file);
+    }
+}
+
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 
 // Parse +arg=value from command line
@@ -213,6 +221,10 @@ int main(int argc, char** argv) {
     const char* elf_path = get_plusarg(argc, argv, "+elf");
     const char* timeout_str = get_plusarg(argc, argv, "+timeout");
     const char* kanata_path = get_plusarg(argc, argv, "+kanata");
+    const char* uart_log_path = get_plusarg(argc, argv, "+uart_tx_log");
+    if (uart_log_path) {
+        g_uart_tx_file = fopen(uart_log_path, "wb");
+    }
     bool do_trace = has_plusarg(argc, argv, "+trace");
     bool verbose = has_plusarg(argc, argv, "+verbose");
 
@@ -402,6 +414,11 @@ int main(int argc, char** argv) {
     if (!cov_file) cov_file = "output/coverage/coverage.dat";
     VerilatedCov::write(cov_file);
 #endif
+
+    if (g_uart_tx_file) {
+        fclose(g_uart_tx_file);
+        g_uart_tx_file = nullptr;
+    }
 
     dut->final();
     return done && dut->o_test_pass ? 0 : 1;

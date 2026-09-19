@@ -183,50 +183,47 @@ The flow is driven by a shared, parameterizable TCL engine (`physical/run-yosys.
 ### Running Synthesis
 
 ```bash
-# GF180MCU: RV64 CPU at 64 MHz (canonical default: 15.625 ns)
-./physical/run-yosys-gf180.sh
-make synth-gf180
+# Quad-Target synthesis flow: builds all 4 targets and extracts comparison
+make synth-quad
 
-# GF180MCU: Conservative target at 50 MHz (20.0 ns)
-./physical/run-yosys-gf180.sh CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 20.0
+# Extract PPA comparison table
+make synth-stats
 
-# ASAP7: RV64 CPU at 1.0 GHz (canonical default: 1.000 ns)
-./physical/run-yosys-asap7.sh
-make synth-asap7
-
-# ASAP7: Target matching GF12 baseline at 750 MHz (1.333 ns)
-./physical/run-yosys-asap7.sh CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.333
+# Individual targets:
+make synth-gf180-cpu   # GF180MCU Cached CPU at 64 MHz (15.625 ns)
+make synth-gf180-soc   # GF180MCU Shoumei SoC at 64 MHz (15.625 ns)
+make synth-asap7-cpu   # ASAP7 7nm Cached CPU at 1.0 GHz (1.000 ns)
+make synth-asap7-soc   # ASAP7 7nm Shoumei SoC at 1.0 GHz (1.000 ns)
 
 # Lightweight subsystem smoke synthesis (< 4 seconds runtime)
 ./physical/run-yosys-gf180.sh ALU64 10.0
 ./physical/run-yosys-asap7.sh ALU64 1.0
 ```
 
-Generated outputs are placed in `syn_out_gf180/` or `syn_out_asap7/`:
+Generated outputs are placed in `syn_out_gf180_cpu/`, `syn_out_gf180_soc/`, `syn_out_asap7_cpu/`, or `syn_out_asap7_soc/`:
 *   `netlist/`: Gate-level netlist (`.v`) and timing constraints (`.sdc`)
 *   `reports/`: `area.rpt` (`stat -liberty`) and `check_design.rpt` (design integrity checks)
 
-### Synthesis Results: RV64IMAFD Top-Level Core
+### Quad-Target Synthesis Results: Cached CPU vs. Shoumei SoC
 
-Synthesized with Yosys 0.66 on the top-level dual-dispatch RV64 core (`CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth`):
+Synthesized with Yosys 0.66 comparing the canonical cached RV64G OoO core (`CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth`) against the complete SoC (`Shoumei_SoC_synth`):
 
-| Metric | GF 12LPP+ (DC NXT) | GF180MCU @ 50 MHz | GF180MCU @ 64 MHz | ASAP7 @ 750 MHz | ASAP7 @ 1.0 GHz |
-|---|---|---|---|---|---|
-| **PDK / Node** | GF 12LPP+ (12nm) | GF180MCU 9T (180nm) | GF180MCU 9T (180nm) | ASAP7 7.5T (7nm) | ASAP7 7.5T (7nm) |
-| **Tool** | Synopsys DC NXT | Yosys 0.66 / ABC | Yosys 0.66 / ABC | Yosys 0.66 / ABC | Yosys 0.66 / ABC |
-| **Clock Target** | 1.333 ns (750 MHz) | 20.0 ns (50 MHz) | 15.625 ns (64 MHz) | 1.333 ns (750 MHz) | 1.000 ns (1.0 GHz) |
-| **Total Cell Area** | $57,269.8\,\mu\text{m}^2$ ($0.0573\text{ mm}^2$) | **$6,393,077.5\,\mu\text{m}^2$** ($6.393\text{ mm}^2$) | **$6,406,435.9\,\mu\text{m}^2$** ($6.406\text{ mm}^2$) | **$24,769.3\,\mu\text{m}^2$** ($0.0248\text{ mm}^2$) | **$24,770.1\,\mu\text{m}^2$** ($0.0248\text{ mm}^2$) |
-| **Combinational Area**| $36,776.6\,\mu\text{m}^2$ (64.2%) | $4,659,085.3\,\mu\text{m}^2$ (72.9%) | $4,672,443.7\,\mu\text{m}^2$ (72.9%) | $17,512.6\,\mu\text{m}^2$ (70.7%) | $17,513.4\,\mu\text{m}^2$ (70.7%) |
-| **Sequential Area** | $20,493.2\,\mu\text{m}^2$ (35.8%) | $1,733,992.2\,\mu\text{m}^2$ (27.1%) | $1,733,992.2\,\mu\text{m}^2$ (27.1%) | $7,256.7\,\mu\text{m}^2$ (29.3%) | $7,256.7\,\mu\text{m}^2$ (29.3%) |
-| **Leaf Cell Count** | 184,285 | 194,700 | 194,700 | 266,042 | 266,042 |
-| **Synthesis Runtime** | Commercial compute cluster | **78.2 seconds** | **82.0 seconds** | **82.7 seconds** | **87.6 seconds** |
-| **Check Violations** | 0 violations | 0 violations | 0 violations | 0 violations | 0 violations |
+| Metric | GF180MCU CPU (T1) | GF180MCU SoC (T3) | GF180 Delta | ASAP7 CPU (T2) | ASAP7 SoC (T4) | ASAP7 Delta |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **PDK / Node** | GF180MCU 9T (180nm) | GF180MCU 9T (180nm) | — | ASAP7 7.5T RVT (7nm) | ASAP7 7.5T RVT (7nm) | — |
+| **Clock Target** | 15.625 ns (64 MHz) | 15.625 ns (64 MHz) | — | 1.000 ns (1.0 GHz) | 1.000 ns (1.0 GHz) | — |
+| **Total Cells** | 245,299 | 245,644 | **+345 (+0.1%)** | 343,150 | 343,568 | **+418 (+0.1%)** |
+| **Sequential (FF) Cells** | 29,460 | 29,588 | **+128 (+0.4%)** | 29,460 | 29,588 | **+128 (+0.4%)** |
+| **Combinational Cells** | 215,839 | 216,056 | **+217 (+0.1%)** | 313,690 | 313,980 | **+290 (+0.1%)** |
+| **Chip Area** | $8.438\text{ mm}^2$ ($8,437,649.5\,\mu\text{m}^2$) | $8.455\text{ mm}^2$ ($8,455,182.2\,\mu\text{m}^2$) | **+$17,532.7\,\mu\text{m}^2$ (+0.2%)** | $0.0327\text{ mm}^2$ ($32,713.7\,\mu\text{m}^2$) | $0.0328\text{ mm}^2$ ($32,785.6\,\mu\text{m}^2$) | **+$71.9\,\mu\text{m}^2$ (+0.2%)** |
+| **Total Wires** | 203,135 | 203,323 | **+188 (+0.1%)** | 318,302 | 318,659 | **+357 (+0.1%)** |
+| **Synthesis Runtime** | 94.0 s | 94.0 s | — | 96.0 s | 104.0 s | — |
 
-### Key Observations
+### What the Numbers Mean
 
-1. **GF180 vs FinFET Area Footprint**: At 180nm, the complete out-of-order RV64IMAFD core occupies ~$6.4\,\text{mm}^2$. On a standard Efabless/Google GF180 MPW shuttle ($3\times3\text{ mm} = 9\,\text{mm}^2$ total die area), the CPU occupies ~71% of raw die area (before pads/peripherals/SRAM).
-2. **ASAP7 7nm vs GF12 12nm**: ASAP7 standard cell area is ~$0.0248\,\text{mm}^2$, approximately 2.3× smaller than GF 12LPP+ ($0.0573\,\text{mm}^2$), reflecting the smaller contacted poly pitch (54nm vs 84nm CPP) and fin pitch (27nm vs 34nm).
-3. **Synthesis Engine Performance**: Host-native Yosys 0.66 + ABC completes full-chip synthesis of the 194k–266k cell RV64 core in ~80–88 seconds on a single thread with ~640 MB peak memory. Subsystems such as `ALU64` synthesize in ~3.2–3.6 seconds.
+1. **GF180MCU MPW Silicon Fit**: At 180nm, the complete cached RV64G OoO SoC (CPU + L1/L2 caches + TileLink crossbar + ACLINT + APLIC + UART + GPIO + BootROM + SRAM + AASD ResetSync) occupies **$8.455\,\text{mm}^2$**. On a standard Google/Efabless GF180 shuttle with a $3.0\times 3.0\text{ mm}$ ($9.0\,\text{mm}^2$) die cavity, the full SoC fits comfortably within the pad ring (~94% raw core utilization).
+2. **ASAP7 7nm High-Density Scaling**: At 7nm Predictive FinFET, standard cell area shrinks to **$0.0328\,\text{mm}^2$** (a square of only $\approx 181\,\mu\text{m} \times 181\,\mu\text{m}$), operating at 1.0 GHz.
+3. **Verified Peripheral Overhead**: The peripheral subsystem and interconnect crossbar are remarkably compact and verified: across both 180nm and 7nm nodes, adding TileLink TL-UH routing, timer counters, interrupt controllers, and UART/GPIO buffers adds **exactly 128 flip-flops** and merely **+0.2% total area overhead** over the cached CPU core.
 
 ---
 

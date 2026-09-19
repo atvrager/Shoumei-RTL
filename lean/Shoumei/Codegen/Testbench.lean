@@ -281,7 +281,8 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
      "  export \"DPI-C\" function dpi_set_putchar_addr;\n" ++
      "  function void dpi_set_putchar_addr(input int unsigned addr);\n" ++
      "    putchar_addr_r = addr;\n" ++
-     "  endfunction\n\n"
+     "  endfunction\n\n" ++
+     "  import \"DPI-C\" function void dpi_uart_tx_byte(input byte data);\n\n"
    | none => "") ++
   "  localparam logic [31:0] MEM_BASE = 32'h00000000;\n\n" ++
   "  function automatic logic [31:0] addr_to_idx(input logic [31:0] addr);\n" ++
@@ -371,12 +372,12 @@ def toTestbenchSV (cfg : TestbenchConfig) : String :=
   (match cfg.putcharAddr with
    | some _ =>
      "  // =========================================================================\n" ++
-     "  // MMIO putchar: writes to PUTCHAR_ADDR emit a character\n" ++
+     "  // MMIO putchar & UART: writes to PUTCHAR_ADDR or 0x10000000 emit a character\n" ++
      "  // =========================================================================\n" ++
      s!"  always_ff @(posedge clk) begin\n" ++
-     s!"    if (!{resetName} && {dmemValid} && {dmemWe} &&\n" ++
-     s!"        {dmemAddr} == putchar_addr_r) begin\n" ++
+     s!"    if (!{resetName} && {dmemValid} && {dmemWe} && ({dmemAddr} == putchar_addr_r || {dmemAddr} == 32'h10000000)) begin\n" ++
      s!"      $write(\"%c\", {dmemDataOut}[7:0]);\n" ++
+     s!"      dpi_uart_tx_byte({dmemDataOut}[7:0]);\n" ++
      "    end\n" ++
      "  end\n\n"
    | none => "") ++
@@ -965,7 +966,8 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
      "  export \"DPI-C\" function dpi_set_putchar_addr;\n" ++
      "  function void dpi_set_putchar_addr(input int unsigned addr);\n" ++
      "    putchar_addr_r = addr;\n" ++
-     "  endfunction\n\n"
+     "  endfunction\n\n" ++
+     "  import \"DPI-C\" function void dpi_uart_tx_byte(input byte data);\n\n"
    | none => "") ++
   "  localparam logic [31:0] MEM_BASE = 32'h00000000;\n\n" ++
   "  function automatic logic [31:0] addr_to_idx(input logic [31:0] addr);\n" ++
@@ -1021,7 +1023,9 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "  logic [63:0] mtime;\n" ++
   "  logic [63:0] mtimecmp;\n" ++
   "  wire         mtip = (mtime >= mtimecmp);\n" ++
-  "  assign       mtip_in = mtip;\n\n" ++
+  "  assign       mtip_in = mtip;\n" ++
+  "  assign       msip_in = 1'b0;\n" ++
+  "  assign       meip_in = 1'b0;\n\n" ++
   "  // CLINT MMIO addresses\n" ++
   "  localparam logic [31:0] CLINT_MTIMECMP_LO = 32'h02004000;\n" ++
   "  localparam logic [31:0] CLINT_MTIMECMP_HI = 32'h02004004;\n" ++
@@ -1124,12 +1128,15 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   (match cfg.putcharAddr with
    | some _ =>
      "  // =========================================================================\n" ++
-     "  // MMIO putchar: monitor CPU store snoop for putchar address\n" ++
+     "  // MMIO putchar & UART: monitor CPU store snoop for putchar / UART TX address\n" ++
      "  // =========================================================================\n" ++
-     "  wire putchar_store = store_snoop_valid && (store_snoop_addr == putchar_addr_r);\n\n" ++
+     "  wire is_uart_store = store_snoop_valid && (store_snoop_addr == 32'h10000000);\n" ++
+     "  wire is_putchar_store = store_snoop_valid && (store_snoop_addr == putchar_addr_r);\n" ++
+     "  wire putchar_store = is_uart_store || is_putchar_store;\n\n" ++
      s!"  always_ff @(posedge clk) begin\n" ++
      s!"    if (!{resetName} && putchar_store) begin\n" ++
      "      $write(\"%c\", store_snoop_data[7:0]);\n" ++
+     "      dpi_uart_tx_byte(store_snoop_data[7:0]);\n" ++
      "    end\n" ++
      "  end\n\n"
    | none => "") ++
@@ -1212,7 +1219,14 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   (if cfg.putcharAddr.isSome then
     "extern \"C\" void dpi_set_putchar_addr(unsigned int addr);\n"
    else "") ++
-  "\nstatic const uint32_t DEFAULT_TIMEOUT = " ++ toString cfg.timeoutCycles ++ ";\n\n" ++
+  "static FILE* g_uart_tx_file = nullptr;\n" ++
+  "extern \"C\" void dpi_uart_tx_byte(char data) " ++ lb ++ "\n" ++
+  "    if (g_uart_tx_file) " ++ lb ++ "\n" ++
+  "        fputc(data, g_uart_tx_file);\n" ++
+  "        fflush(g_uart_tx_file);\n" ++
+  "    " ++ rb ++ "\n" ++
+  rb ++ "\n\n" ++
+  "static const uint32_t DEFAULT_TIMEOUT = " ++ toString cfg.timeoutCycles ++ ";\n\n" ++
 
   "static const char* get_plusarg(int argc, char** argv, const char* name) " ++ lb ++ "\n" ++
   "    size_t len = strlen(name);\n" ++
@@ -1357,6 +1371,8 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   s!"    auto dut = std::make_unique<{vType}>();\n\n" ++
   "    const char* elf_path = get_plusarg(argc, argv, \"+elf\");\n" ++
   "    const char* timeout_str = get_plusarg(argc, argv, \"+timeout\");\n" ++
+  "    const char* uart_log_path = get_plusarg(argc, argv, \"+uart_tx_log\");\n" ++
+  "    if (uart_log_path) g_uart_tx_file = fopen(uart_log_path, \"wb\");\n" ++
   "    bool do_trace = has_plusarg(argc, argv, \"+trace\");\n" ++
   "    bool verbose = has_plusarg(argc, argv, \"+verbose\");\n" ++
   "    uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;\n\n" ++
@@ -1476,6 +1492,7 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "    " ++ rb ++ "\n" ++
   "    VerilatedCov::write(cov_file);\n" ++
   "#endif\n" ++
+  "    if (g_uart_tx_file) { fclose(g_uart_tx_file); g_uart_tx_file = nullptr; }\n" ++
   "    dut->final();\n" ++
   "    return done && dut->o_test_pass ? 0 : 1;\n" ++
   rb ++ "\n"
@@ -1885,9 +1902,15 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "extern \"C\" void dpi_mem_write(unsigned int word_addr, unsigned int data);\n" ++
   "extern \"C\" void dpi_set_tohost_addr(unsigned int addr);\n" ++
   (match cfg.putcharAddr with
-   | some _ => "extern \"C\" void dpi_set_putchar_addr(unsigned int addr);\n\n"
-   | none => "\n") ++
-
+   | some _ => "extern \"C\" void dpi_set_putchar_addr(unsigned int addr);\n"
+   | none => "") ++
+  "static FILE* g_cosim_uart_tx_file = nullptr;\n" ++
+  "extern \"C\" void dpi_uart_tx_byte(char data) " ++ lb ++ "\n" ++
+  "    if (g_cosim_uart_tx_file) " ++ lb ++ "\n" ++
+  "        fputc(data, g_cosim_uart_tx_file);\n" ++
+  "        fflush(g_cosim_uart_tx_file);\n" ++
+  "    " ++ rb ++ "\n" ++
+  rb ++ "\n\n" ++
   "static const uint32_t DEFAULT_TIMEOUT = " ++ toString cfg.timeoutCycles ++ ";\n\n" ++
 
   "static const char* get_plusarg(int argc, char** argv, const char* name) " ++ lb ++ "\n" ++
@@ -2087,7 +2110,9 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    " ++ rb ++ "\n" ++
   "    uint32_t timeout = DEFAULT_TIMEOUT;\n" ++
   "    const char* to = get_plusarg(argc, argv, \"+timeout\");\n" ++
-  "    if (to) timeout = (uint32_t)atol(to);\n\n" ++
+  "    if (to) timeout = (uint32_t)atol(to);\n" ++
+  "    const char* uart_log_path = get_plusarg(argc, argv, \"+uart_tx_log\");\n" ++
+  "    if (uart_log_path) g_cosim_uart_tx_file = fopen(uart_log_path, \"wb\");\n\n" ++
   s!"    auto dut = std::make_unique<{vType}>();\n" ++
   "    dut->eval();\n" ++
   s!"    svSetScope(svGetScopeFromName(\"TOP.{tbName}\"));\n" ++
@@ -2203,6 +2228,7 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "        printf(\"COSIM PASS\\n\");\n" ++
   "    else\n" ++
   "        printf(\"COSIM FAIL\\n\");\n\n" ++
+  "    if (g_cosim_uart_tx_file) { fclose(g_cosim_uart_tx_file); g_cosim_uart_tx_file = nullptr; }\n" ++
   "    return (dut->o_tohost == 1) ? 0 : 1;\n" ++
   rb ++ "\n"
 

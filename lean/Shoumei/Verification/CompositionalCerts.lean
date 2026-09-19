@@ -468,6 +468,12 @@ def cachedCPU_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.Cache.CachedCPUProofs"
 }
 
+/-- Shoumei SoC: CachedCPU + ResetSync + TLXbar8 + BootROM + ACLINT + APLIC + UART + GPIO + SRAM -/
+def shoumeiSoC_cert : CompositionalCert := {
+  moduleName := "Shoumei_SoC"
+  proofReference := "Shoumei.SoC.ShoumeiSoCProofs"
+}
+
 /-! ## Decoders (LUT-based) -/
 
 /-- RV32IMFDecoder: Pure LUT decoder.
@@ -757,7 +763,9 @@ def allCerts : List CompositionalCert := [
   -- Microcoded variant
   cpu_microcoded_cert,
   -- Microcoded cached variant
-  cachedCPU_cert
+  cachedCPU_cert,
+  -- Shoumei SoC top-level
+  shoumeiSoC_cert
 ]
 
 end Shoumei.Verification.CompositionalCerts

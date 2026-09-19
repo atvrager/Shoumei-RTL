@@ -14,9 +14,12 @@ uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 extern volatile unsigned int tohost;
 extern volatile unsigned int putchar_addr;
 
+/* Shoumei SoC UART MMIO (0x1000_0000) */
+#define UART_TX_DATA (*(volatile unsigned int *)0x10000000)
+
 static void put_char(char c)
 {
-    putchar_addr = (unsigned int)c;
+    UART_TX_DATA = (unsigned int)c;
 }
 
 static void put_str(const char *s)
@@ -33,12 +36,11 @@ static void vTaskA(void *pvParameters)
 {
     (void)pvParameters;
     for (;;) {
-        put_char('A');
+        put_str("[Task A: Ping]\n");
         task_a_count++;
         /* Check if we've run enough to declare success */
         if (task_a_count >= 3 && task_b_count >= 3) {
-            put_char('\n');
-            put_str("PASS\n");
+            put_str("\nPASS\n");
             tohost = 1;
             for (;;);
         }
@@ -53,7 +55,7 @@ static void vTaskB(void *pvParameters)
 {
     (void)pvParameters;
     for (;;) {
-        put_char('B');
+        put_str("[Task B: Pong]\n");
         task_b_count++;
         *debug_probe = 0xDEAD0001;  /* marker: about to call vTaskDelay(1) */
         vTaskDelay(1);

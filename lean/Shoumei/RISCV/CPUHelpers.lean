@@ -1040,11 +1040,15 @@ def mkCsrNextValue
         Gate.mkMUX mtval_reg[i]! csr_write_val[i]! csr_we_mtval mtval_next[i]!)
     else
       (List.range 32).map (fun i => Gate.mkBUF zero mtval_next[i]!)
-  -- mip: bit7 = mtip_in (machine timer interrupt pending), rest zero
+  -- mip: bit3 = msip_in, bit7 = mtip_in, bit11 = meip_in, rest zero
+  let msip_in := Wire.mk "msip_in"
   let mtip_in := Wire.mk "mtip_in"
+  let meip_in := Wire.mk "meip_in"
   let mip_next_gates :=
     (List.range 32).map (fun i =>
-      if i == 7 then Gate.mkBUF mtip_in mip_next[i]!
+      if i == 3 then Gate.mkBUF msip_in mip_next[i]!
+      else if i == 7 then Gate.mkBUF mtip_in mip_next[i]!
+      else if i == 11 then Gate.mkBUF meip_in mip_next[i]!
       else Gate.mkBUF zero mip_next[i]!)
   -- Counter auto-increment
   -- Counter auto-increment (pure inlined gates: replaces 4 KoggeStoneAdder32 instances)
