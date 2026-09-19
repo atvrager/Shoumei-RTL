@@ -189,11 +189,13 @@ fails if the certificate names a module the generator does not emit.
 
 | Document | Description |
 |----------|-------------|
+| [docs/getting-started.md](docs/getting-started.md) | Setup, build, simulation, and synthesis quick start |
+| [docs/commands.md](docs/commands.md) | Comprehensive command and Make target reference |
 | [docs/FEATURES.md](docs/FEATURES.md) | What's built -- complete feature list |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What's planned -- near/medium/long-term |
 | [CLAUDE.md](CLAUDE.md) | Development guide -- procedures, workflows, conventions |
-| [RISCV_TOMASULO_DESIGN.md](RISCV_TOMASULO_DESIGN.md) | Microarchitecture specification |
-| [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Implementation phase ledger and milestone history |
+| [docs/tomasulo-design.md](docs/tomasulo-design.md) | RV64G microarchitecture specification |
+| [docs/tomasulo-plan.md](docs/tomasulo-plan.md) | Implementation phase ledger and milestone history |
 | [docs/physical-design.md](docs/physical-design.md) | OpenROAD, ASAP7 (1.0 GHz), GF180MCU (64 MHz), Synopsys DC |
 | [docs/cosimulation.md](docs/cosimulation.md) | Lock-step cosimulation via RVVI and Spike |
 | [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |

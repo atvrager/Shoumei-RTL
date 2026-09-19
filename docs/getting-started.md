@@ -105,8 +105,8 @@ Shoumei-RTL/
 
 ## Where to Go Next
 
-- [docs/project-map.md](docs/project-map.md): Subsystem composition graph and proof coverage matrix.
-- [docs/adding-a-module.md](docs/adding-a-module.md): Step-by-step walkthrough for building a new verified circuit.
-- [docs/adding-an-extension.md](docs/adding-an-extension.md): Adding an ISA extension (decode, classify, execute, verify).
-- [docs/verification-guide.md](docs/verification-guide.md): Details on proofs, compositional certificates, and cosimulation.
-- [docs/physical-design.md](docs/physical-design.md): ASIC synthesis targets and OpenROAD flow.
+- [project-map.md](project-map.md): Subsystem composition graph and proof coverage matrix.
+- [adding-a-module.md](adding-a-module.md): Step-by-step walkthrough for building a new verified circuit.
+- [adding-an-extension.md](adding-an-extension.md): Adding an ISA extension (decode, classify, execute, verify).
+- [verification-guide.md](verification-guide.md): Details on proofs, compositional certificates, and cosimulation.
+- [physical-design.md](physical-design.md): ASIC synthesis targets and OpenROAD flow.
