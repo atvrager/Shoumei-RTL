@@ -477,8 +477,20 @@ jobs:
   open-source-synthesis:
     needs: [codegen]
     if: needs.changes.outputs.code == 'true'
-    name: Open-Source Synthesis (GF180 & ASAP7)
+    name: Synthesis (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: gf180
+            name: GF180MCU 64MHz
+            script: ./physical/run-yosys-gf180.sh
+            out_dir: syn_out_gf180
+          - platform: asap7
+            name: ASAP7 1.0GHz
+            script: ./physical/run-yosys-asap7.sh
+            out_dir: syn_out_asap7
     steps:
       - uses: actions/checkout@v5
 
@@ -496,24 +508,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y yosys
 
-      - name: Synthesize RV64 to GF180MCU (64 MHz)
+      - name: Synthesize RV64 (${{ matrix.name }})
         run: |
-          time ./physical/run-yosys-gf180.sh
-
-      - name: Synthesize RV64 to ASAP7 (1.0 GHz)
-        run: |
-          time ./physical/run-yosys-asap7.sh
+          time ${{ matrix.script }}
 
       - name: Upload synthesis reports
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: synthesis-reports
+          name: synthesis-report-${{ matrix.platform }}
           path: |
-            syn_out_gf180/reports/
-            syn_out_gf180/synth.log
-            syn_out_asap7/reports/
-            syn_out_asap7/synth.log
+            ${{ matrix.out_dir }}/reports/
+            ${{ matrix.out_dir }}/synth.log
           retention-days: 14
 
   ci-pass:
