@@ -5,7 +5,7 @@
 #   DESIGN_NAME       - Top-level module name (default: CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth)
 #   TARGET_LIBRARY    - Path to primary target standard cell .db library (required)
 #   LINK_LIBRARIES    - Additional .db libraries (optional, space-separated)
-#   CLK_PERIOD_NS     - Target clock period in nanoseconds (default: 5.0)
+#   CLK_PERIOD_NS     - Target clock period in nanoseconds (default: 1.333)
 #   CLK_NAME          - Name of clock port (default: clock)
 #   RTL_FILELIST      - Path to .f filelist (default: physical/${DESIGN_NAME}.f)
 #   OUTPUT_DIR        - Directory for output artifacts (default: syn_out)
@@ -21,7 +21,7 @@ if {[info exists env(DESIGN_NAME)]} {
     set design_name $env(DESIGN_NAME)
 }
 
-set clk_period 5.0
+set clk_period 1.333
 if {[info exists env(CLK_PERIOD_NS)]} {
     set clk_period $env(CLK_PERIOD_NS)
 }
