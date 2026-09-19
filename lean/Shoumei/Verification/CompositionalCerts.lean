@@ -430,6 +430,12 @@ def lsu_cert : CompositionalCert := {
   proofReference := "Shoumei.RISCV.Memory.LSUProofs"
 }
 
+/-- MemoryExecUnitDecoupled: independent STA/STD micro-op output groups. -/
+def memoryExecUnitDecoupled_cert : CompositionalCert := {
+  moduleName := "MemoryExecUnitDecoupled"
+  proofReference := "Shoumei.RISCV.Execution.MemoryExecUnitCodegen"
+}
+
 /-! ## Cache Hierarchy -/
 
 /-- L1ICache: Direct-mapped L1 instruction cache -/
@@ -707,6 +713,7 @@ def allCerts : List CompositionalCert := [
   -- Memory
   storeBuffer8_cert,
   lsu_cert,
+  memoryExecUnitDecoupled_cert,
   -- Cache Hierarchy
   l1iCache_cert,
   l1dCache_cert,

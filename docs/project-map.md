@@ -7,7 +7,7 @@ Lean registry, docs from each file's leading comment block.
 
 - Lean files: **219**
 - Circuits with a literal `name :=` (graph nodes): **88**
-- Compositional certificates (Lean registry): **100**
+- Compositional certificates (Lean registry): **101**
 - Proof files: **59**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
@@ -109,7 +109,7 @@ graph TD
 | `L2Cache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `LSU` | Shoumei/RISCV/Memory | 2 | yes | yes | yes |
 | `MemoryExecUnit` | Shoumei/RISCV/Execution | 1 |  | yes | yes |
-| `MemoryExecUnitDecoupled` | Shoumei/RISCV/Execution | 1 |  |  | yes |
+| `MemoryExecUnitDecoupled` | Shoumei/RISCV/Execution | 1 | yes |  | yes |
 | `MemoryHierarchy` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `MicrocodeDecoder` | Shoumei/RISCV/Microcode | 0 |  |  | yes |
 | `MicrocodeSequencer` | Shoumei/RISCV/Microcode | 1 | yes | yes | yes |

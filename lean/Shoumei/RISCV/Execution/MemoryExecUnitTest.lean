@@ -204,9 +204,10 @@ theorem test_sta_std_decoupled :
   native_decide
 
 /-- Decoupled unit has the classic group split: address(64) + tag(6) +
-    std_data(64) + sta/std valid, all outputs present. -/
+    std_data(64) outputs; sta/std valid are inputs (independence is about
+    the two *groups*, not port symmetry). -/
 theorem test_decoupled_unit_outputs :
-  mkMemoryExecUnitDecoupled.outputs.length = 64 + 6 + 64 + 2 := by
+  mkMemoryExecUnitDecoupled.outputs.length = 64 + 6 + 64 := by
   native_decide
 
 end Shoumei.RISCV.Execution.MemoryExecUnitTest

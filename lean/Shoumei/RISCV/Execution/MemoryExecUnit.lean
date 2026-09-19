@@ -393,7 +393,7 @@ def mkMemoryExecUnitDecoupled : Circuit :=
   { name := "MemoryExecUnitDecoupled"
     inputs := base ++ offset ++ dest_tag ++ store_data ++
               [sta_valid, std_valid]
-    outputs := address ++ tag_out ++ std_data ++ [sta_valid, std_valid]
+    outputs := address ++ tag_out ++ std_data
     gates := base_to_a ++ offset_to_b ++ sum_to_address ++ tag_passthrough ++
              std_data_gates
     instances := [adder_inst]
