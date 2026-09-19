@@ -69,7 +69,7 @@ struct RefCache {
     ln->dirty = true;
   }
   uint64_t readDword(uint32_t a) {
-    Line* ln = find(a);
+    const Line* ln = find(a);
     if (!ln) return 0;
     uint32_t off = dwOff(a) * 4;
     uint64_t v = 0;
@@ -118,10 +118,6 @@ struct Dut {
       for (int b = 0; b < 4; b++) w |= (CData)line[i * 4 + b] << (8 * b);
       d->refill_data[i] = w;
     }
-  }
-  uint64_t getLine256(const CData* arr, int bit) {  // bit -> byte lane
-    uint8_t v = (arr[bit >> 5] >> ((bit & 31) & 7)) & 0xFF;  // byte lane
-    return (uint64_t)v;
   }
   void deassert() { d->req_valid = 0; d->req_we = 0; }
 };
@@ -200,12 +196,12 @@ struct Tester {
     if (dut.d->req_valid) {
       bool we = dut.d->req_we;
       uint32_t a = dut.d->req_addr;
-      uint64_t wd = dut.d->req_wdata;
-      uint32_t sz = dut.d->req_size;
-      uint32_t szb = 1u << sz;
       expectResp = true;      // hit read, miss read, or write-miss refill all resp
       respAddr = a;
       if (we) {
+        uint32_t sz = dut.d->req_size;
+        uint64_t wd = dut.d->req_wdata;
+        uint32_t szb = 1u << sz;
         if (ref.find(a)) { ref.writeHit(a, wd, szb); expectResp = false; }
         else { missLine = a & ~31u; m = M::REQ; }   // KNOWN-GAP: store dropped
       } else {
