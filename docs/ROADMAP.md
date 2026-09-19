@@ -45,7 +45,7 @@ Current directions and future milestones for Shoumei RTL.
 ### Privileged Supervisor Mode & Virtual Memory
 - Privileged S-mode and U-mode execution.
 - SV39/SV48 hardware page table walker and Translation Lookaside Buffer (TLB).
-- Milestone: Booting Linux on the formally verified core.
+- Milestone: Booting Linux on the "formally verified" core.
 
 ### 2-Wide Superscalar Execution
 - 2-wide decode, renaming, and dispatch into reservation stations.

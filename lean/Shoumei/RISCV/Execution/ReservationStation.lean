@@ -1,5 +1,5 @@
 /-
-RISCV/Execution/ReservationStation.lean - Reservation Station for Tomasulo Algorithm
+RISCV/Execution/ReservationStation.lean - Reservation Station for Dynamic Out-of-Order Execution
 
 Implements a reservation station (RS) array that:
 - Issues renamed instructions (captures operands from register file or tags)
@@ -159,7 +159,7 @@ def init (numEntries : Nat) (h : numEntries > 0 := by omega) : RSState numEntrie
     **Operand capture logic:**
     - This implements "bypass" - if a recent instruction just wrote to the
       physical register file, we grab the value immediately instead of waiting
-    - This is standard Tomasulo - the register file is checked at issue time
+    - This is standard out-of-order execution - the register file is checked at issue time
 -/
 def issue
     (rs : RSState n)
@@ -178,7 +178,7 @@ def issue
       | some tag =>
           -- Check if value is available in PhysRegFile
           let value := prf.read tag
-          (true, tag, value)  -- In Tomasulo, assume PRF has valid data
+          (true, tag, value)  -- In out-of-order execution, assume PRF has valid data
 
     -- Capture operand 2
     let (src2_ready, src2_tag, src2_data) :=

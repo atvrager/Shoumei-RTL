@@ -248,7 +248,7 @@ def CPUState.getPC (cpu : CPUState config) : UInt32 :=
 /-
 CPU Step Function - Pipeline Orchestration
 
-Executes one cycle of the entire Tomasulo pipeline. Stages execute in
+Executes one cycle of the entire out-of-order pipeline. Stages execute in
 REVERSE ORDER (commit → fetch) to avoid structural hazards and simplify
 data dependencies.
 

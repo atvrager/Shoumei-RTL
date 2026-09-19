@@ -1,7 +1,7 @@
 /-
 RISCV/Renaming/FreeList.lean - Free Physical Register List
 
-Manages a pool of available physical register tags for Tomasulo register renaming.
+Manages a pool of available physical register tags for dynamic register renaming.
 The Free List is a FIFO queue of physical register tags that can be allocated
 to new instructions (dequeue) and freed when instructions retire (enqueue).
 

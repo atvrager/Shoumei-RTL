@@ -1,6 +1,6 @@
-# RV64G Tomasulo CPU - Implementation Phase Ledger
+# RV64G Out-of-Order CPU - Implementation Phase Ledger
 
-**Project:** 証明 Shoumei RTL - Formally Verified Out-of-Order Processor  
+**Project:** 証明 Shoumei RTL - "Formally Verified" Out-of-Order Processor  
 **Current Milestone:** All 12 Phases (0 through 11) COMPLETE. 87 modules verified, 0 axioms, 107/107 architectural compliance suite passed, and ASIC flows established.
 
 ---
@@ -17,7 +17,7 @@
 | **5** | **Execution Units** | Integer, Multiplier, Divider, FPU | ALU64, PipelinedMultiplier64 (3-stage), Divider64 (iterative), FPExecUnit_D. |
 | **6** | **Reorder Buffer & Retirement** | In-order commit & flush | ROB16_W2 circular buffer, 2-wide commit, precise exception recovery. |
 | **7** | **Memory Subsystem** | LSU & Store Buffer | StoreBuffer8, TSO memory consistency, youngest-match store-to-load forwarding. |
-| **8** | **Core CPU Integration** | Out-of-Order Tomasulo Pipeline | Full CPU integration, RVVI retirement trace, Verilator & C++ simulation. |
+| **8** | **Core CPU Integration** | Out-of-Order Pipeline | Full CPU integration, RVVI retirement trace, Verilator & C++ simulation. |
 | **9** | **Privileged & Microcode** | Zicsr, Zifencei, Trap Handling | Microcoded TrapSequencer, CSRFile, MRET, machine status CSRs, pipeline flush. |
 | **10** | **RV64G Expansion** | 64-Bit Datapath & Compliance | 64-bit integer datapath, D extension, 107/107 riscv-arch-test compliance suite pass. |
 | **11** | **Production Hardening & ASIC** | 0 Axioms, Mutation, ASIC flows | Zero axioms, mutation testing, ASAP7 1.0 GHz & GF180MCU 64 MHz open-source synthesis. |
@@ -29,7 +29,7 @@
 ### Phase 0–2: Foundations, Arithmetic & Decoding
 - Extended hardware DSL to support sequential state (`DFF`, `Register`, `Queue`).
 - Proved FIFO ordering invariants without axioms.
-- Implemented and formally verified 64-bit arithmetic units (Kogge-Stone, Ripple-Carry, Subtractor, Comparators).
+- Implemented and "formally verified" 64-bit arithmetic units (Kogge-Stone, Ripple-Carry, Subtractor, Comparators).
 - Connected Lean arithmetic implementations to `BitVec` semantics via `bv_decide`.
 - Implemented full RV64G instruction decoder and immediate extraction logic.
 
@@ -42,7 +42,7 @@
 ### Phase 6–8: Retirement, Memory & Top-Level Integration
 - Implemented 16-entry 2-wide Reorder Buffer (`ROB16_W2`) ensuring in-order retirement and precise exceptions.
 - Implemented 8-entry TSO Store Buffer (`StoreBuffer8`) with youngest-match store-to-load forwarding.
-- Integrated full Tomasulo pipeline with multi-port priority CDB arbitration.
+- Integrated full out-of-order pipeline with multi-port priority CDB arbitration.
 - Built cycle-accurate C++ simulation backend and RVVI lock-step cosimulation against Spike reference model.
 
 ### Phase 9–11: Privileged ISA, RV64G Compliance & ASIC Synthesis

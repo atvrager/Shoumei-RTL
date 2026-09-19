@@ -2,9 +2,9 @@
 
 What Shoumei RTL provides today.
 
-## Formally Verified RV64G Out-of-Order CPU
+## "Formally Verified" RV64G Out-of-Order CPU
 
-Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 87 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, Spike lock-step cosimulation, and architectural compliance testing.
+Complete out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 87 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, Spike lock-step cosimulation, and architectural compliance testing.
 
 ### Supported ISA: `RV64IMAFD_Zicsr_Zifencei` (RV64G)
 

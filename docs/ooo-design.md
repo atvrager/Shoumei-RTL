@@ -1,11 +1,15 @@
-# RV64G Tomasulo CPU Microarchitecture Specification
-## 証明 Shoumei RTL - Formally Verified Out-of-Order Processor
+# RV64G Out-of-Order CPU Microarchitecture Specification
+## 証明 Shoumei RTL - "Formally Verified" Out-of-Order Processor
 
-**Architecture**: Formally verified, out-of-order 64-bit RISC-V CPU (`RV64IMAFD_Zicsr_Zifencei`) implementing Tomasulo's dynamic scheduling algorithm with precise exceptions, proven in Lean 4.
+**Architecture**: "Formally verified", out-of-order 64-bit RISC-V CPU (`RV64IMAFD_Zicsr_Zifencei`) implementing dynamic out-of-order scheduling with precise exceptions, proven in Lean 4.
 
 ---
 
 ## 1. Architectural Overview
+
+### Hierarchical Gate Distribution
+
+![Shoumei RV64G OoO CPU Microarchitecture Gate Treemap](architecture-treemap.png)
 
 ### Pipeline Organization
 

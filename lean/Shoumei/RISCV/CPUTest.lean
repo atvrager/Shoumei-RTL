@@ -4,7 +4,7 @@ CPU Integration Tests
 Comprehensive test suite for top-level CPU integration covering:
 - Initialization and basic stepping
 - Single-instruction execution
-- Data dependencies (Tomasulo correctness)
+- Data dependencies (out-of-order correctness)
 - Control flow (branches, loops)
 - Memory operations (LSU forwarding)
 - M-extension multiply/divide
@@ -430,7 +430,7 @@ theorem test_raw_hazard_chain :
 
 /-
 Test 28: Independent Instructions - No Dependency
-x1 = 10, x2 = 20 (independent, can execute in parallel in Tomasulo)
+x1 = 10, x2 = 20 (independent, can execute in parallel in out-of-order execution)
 -/
 theorem test_independent_instructions :
     let cpu := CPUState.init rv32imConfig
@@ -460,7 +460,7 @@ theorem test_x0_no_dependency :
 
 /-
 Test 30: WAR Hazard Handling (Write-After-Read)
-In Tomasulo, WAR hazards are eliminated by register renaming
+In out-of-order execution, WAR hazards are eliminated by register renaming
 -/
 theorem test_war_hazard_eliminated :
     let cpu := CPUState.init rv32imConfig
@@ -475,7 +475,7 @@ theorem test_war_hazard_eliminated :
 
 /-
 Test 31: WAW Hazard Handling (Write-After-Write)
-In Tomasulo, WAW hazards are eliminated by register renaming
+In out-of-order execution, WAW hazards are eliminated by register renaming
 -/
 theorem test_waw_hazard_eliminated :
     let cpu := CPUState.init rv32imConfig

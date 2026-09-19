@@ -2,7 +2,7 @@
 RISCV/Renaming/RAT.lean - Register Alias Table
 
 Maps 32 architectural registers to 64 physical registers (6-bit tags).
-Used in Tomasulo out-of-order execution for register renaming.
+Used in dynamic out-of-order execution for register renaming.
 
 Design:
 - 32 entries, each 6 bits wide (physical register tag)

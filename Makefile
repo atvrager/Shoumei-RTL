@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -41,6 +41,7 @@ help:
 	@echo "  make smoke-test     - Run comprehensive CI smoke tests"
 	@echo ""
 	@echo "Utility Targets:"
+	@echo "  make architecture-diagram - Generate XKCD-style gate treemap (SVG + PNG)"
 	@echo "  make clean      - Remove all generated files"
 	@echo "  make help       - Show this help message"
 	@echo ""
@@ -105,6 +106,8 @@ codegen: lean opcodes
 	@echo "    Phase 2: Exporting compositional verification certificates..."
 	@mkdir -p verification
 	lake --no-ansi exe generate_all --export-certs > verification/compositional-certs.txt
+	@echo "    Phase 3: Generating architecture diagram..."
+	-python3 scripts/gen-architecture-diagram.py --png 2>/dev/null || true
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # generate_all dynamically generates filelists for all physical/*_synth.sv wrappers
@@ -153,6 +156,12 @@ coverage:
 presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test
 	@echo ""
 	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Mutation + Smoke)"
+
+# Generate XKCD-style hierarchical architecture treemap
+architecture-diagram:
+	@echo "==> Generating architecture treemap..."
+	python3 scripts/gen-architecture-diagram.py --png
+
 
 # Build debugging tools
 FST_INC := -I/usr/share/verilator/include/gtkwave '-DFST_CONFIG_INCLUDE="fstapi.h"'

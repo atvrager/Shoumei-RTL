@@ -2,7 +2,7 @@
 RISCV/Renaming/PhysRegFile.lean - Physical Register File
 
 Stores 64 physical registers, each 32 bits wide.
-Used in Tomasulo out-of-order execution to hold renamed register values.
+Used in dynamic out-of-order execution to hold renamed register values.
 
 Design:
 - 64 entries, each 32 bits wide (full RISC-V word)

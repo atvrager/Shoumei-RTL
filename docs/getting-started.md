@@ -91,7 +91,7 @@ Shoumei-RTL/
 ├── lean/Shoumei/           # Lean 4 source tree
 │   ├── DSL.lean            # Hardware DSL (Wire, Gate, CircuitInstance, Circuit)
 │   ├── Circuits/           # Combinational & Sequential circuit library
-│   ├── RISCV/              # RV64G Tomasulo CPU implementation & proofs
+│   ├── RISCV/              # RV64G out-of-order CPU implementation & proofs
 │   ├── Codegen/            # Multi-target code generators (SV, Netlist, ASAP7, C++)
 │   └── Verification/       # Compositional certificate registry & proof manifests
 ├── output/                 # Emitted RTL and C++ simulation artifacts

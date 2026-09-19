@@ -49,7 +49,10 @@ jobs:
           fi
 
       - name: Python syntax
-        run: python3 -m py_compile bootstrap.py
+        run: |
+          python3 -m py_compile bootstrap.py
+          python3 -m py_compile scripts/*.py
+          python3 -m py_compile verification/*.py
 
       - name: C/C++ lint (cppcheck)
         run: |
@@ -259,6 +262,27 @@ jobs:
       - name: Generate test assembly
         run: lake exe gen_tests
 
+      - name: Generate architecture diagram
+        run: |
+          pip install --quiet matplotlib
+          make architecture-diagram
+
+      - name: Treemap summary
+        run: |
+          if [ -f output/architecture-treemap.svg ]; then
+            echo "### Microarchitecture Gate Treemap" >> $GITHUB_STEP_SUMMARY
+            echo "Generated XKCD-style microarchitecture treemap (\`output/architecture-treemap.svg\` and \`output/architecture-treemap.png\`)." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload architecture diagram
+        uses: actions/upload-artifact@v6
+        with:
+          name: architecture-treemap
+          path: |
+            output/architecture-treemap.svg
+            output/architecture-treemap.png
+          retention-days: 30
+
       - name: Upload codegen artifact
         uses: actions/upload-artifact@v6
         with:
@@ -269,6 +293,8 @@ jobs:
             output/sv-from-lean/
             output/sv-netlist/
             output/cpp_sim/
+            output/architecture-treemap.svg
+            output/architecture-treemap.png
             testbench/generated/
             testbench/tests/generated/
             verification/compositional-certs.txt

@@ -2,7 +2,7 @@
 // kanata_tracer.h - Kanata pipeline trace output for Konata viewer
 //
 // Generates a Kanata log file showing instruction flow through the
-// Tomasulo OoO pipeline: F→D→Rn→Is→Xec→Cm→Rt
+// OoO pipeline: F→D→Rn→Is→Xec→Cm→Rt
 //
 // Usage:
 //   KanataTracer tracer("trace.log");
