@@ -503,10 +503,10 @@ jobs:
         run: |
           git submodule update --init --depth 1 third_party/orfs
 
-      - name: Install Yosys
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y yosys
+      - name: Setup OSS CAD Suite (Yosys)
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Synthesize RV64 (${{ matrix.name }})
         run: |
