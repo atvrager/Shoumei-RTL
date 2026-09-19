@@ -308,11 +308,9 @@ int main(int argc, char** argv) {
   // (documented at D4 below; probe evidence in this directory).  Run this
   // scenario explicitly with --dirty-evict to expose it; the default suite
   // stays green until the cache rework fixes the data path.
-  bool runD3 = false;
-  for (int i = 1; i < argc; i++)
-    if (std::string(argv[i]) == "--stress" || std::string(argv[i]) == "--dirty-evict") runD3 = true;
+  bool runD3 = getenv("NO_D3") == nullptr;
   if (runD3) {
-    printf("D3 dirty eviction -> writeback (KNOWN-BUG exposure)\n");
+    printf("D3 dirty eviction -> writeback\n");
     uint32_t base = 0x800;
     for (uint32_t w = 0; w < 2; w++) {
       t.dut.issue(base + w * 0x80, true, 0x1111111100000000ull + w, 8); t.cycle(); t.dut.deassert(); drain(t, 2);
@@ -322,23 +320,25 @@ int main(int argc, char** argv) {
     check(t.ref.find(base + 0x80) != nullptr, "D3 touched way survives");
     check(t.ref.find(base + 0x100) != nullptr, "D3 new line installed");
   } else {
-    printf("D3 (skipped: run --dirty-evict to exercise dirty writeback)\n");
+    printf("D3 (skipped: NO_D3 set)\n");
   }
 
-  // D4: word-write merge is EXERCISED here but currently BROKEN in the
-  // L1D structural — see debug probes in this directory:
-  //   - word (4B) writes duplicate across both words of the dword
-  //     (wprobe-style reproduction: read-back == 0xAABBCCDDAABBCCDD)
-  //   - refill-after-dirty-eviction corrupts the line (write does not merge,
-  //     read resp never pulses)
-  // Pinned deliberately OUT of the pass/fail set: the cache rework must fix
-  // these and re-add a strict D4 (low == 0xAABBCCDD, high preserved).
-  printf("D4 (skipped: L1D word-write bugs documented in this file)\n");
+  // D4: word (4B) write merge — verified CORRECT on the emitted SV with an
+  // internal-signal probe (tb2: word lane 1 merged, word 0 untouched), so it
+  // is a real regression case again.  Only *unaligned dword* loads remain
+  // wrong (read path assembles the aligned dword only); seen in the SV
+  // probe tb3 and tracked at the cache rework (byte-lane read merge).
+  printf("D4 aligned word write merge\n");
+  t.dut.issue(0x120, false, 0, 8); t.cycle(); t.dut.deassert(); drain(t, 12);  // install set 1
+  t.dut.issue(0x120, true, 0xAABBCCDD, 4); t.cycle(); t.dut.deassert(); drain(t, 2);
+  t.dut.issue(0x120, false, 0, 4); t.cycle(); t.dut.deassert(); drain(t, 4);
+  check((t.ref.readDword(0x120) & 0xFFFFFFFF) == 0xAABBCCDD, "D4 aligned word merge low");
+  check(t.ref.readDword(0x120) >> 32 == 0, "D4 high dword untouched");
 
   // Random stress traffic (only with --stress; the reads+refill/LRU sequence
   // reliably exposes the documented L1D data-path bugs until the cache
   // rework lands — the default suite keeps the clean-path regressions).
-  bool stress = runD3;
+  bool stress = getenv("STRESS") != nullptr;
   if (stress) {
     printf("random stress traffic (%d cycles, reads-only)\n", cycles);
     uint64_t ops = 0, m = 0, wb = 0;
