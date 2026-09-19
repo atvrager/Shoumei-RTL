@@ -372,7 +372,7 @@ jobs:
   visuals:
     name: Visuals & Pages
     runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
     permissions:
       pages: write
       id-token: write

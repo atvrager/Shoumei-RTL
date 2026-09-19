@@ -853,7 +853,7 @@ HUB_TEMPLATE = """<!DOCTYPE html>
   .card { border: 1px solid #232a32; border-radius: 10px; background: #141a21; padding: 14px; }
   .card h3 { margin: 0 0 6px; color: #fff; font-size: 15px; }
   .card a.fig { display: block; border-radius: 6px; overflow: hidden; border: 1px solid #2a3038; }
-  .card a.fig img { width: 100%; height: auto; display: block; }
+  .card a.fig img { width: auto; max-width: 100%; height: auto; display: block; margin: 0 auto; }
   .card a.fig:hover { border-color: #4a5568; }
   .card .note { margin: 6px 2px 8px; font-size: 12.5px; color: #9aa4b0; }
   .card .meta { font-size: 13px; }
@@ -885,12 +885,11 @@ HUB_TEMPLATE = """<!DOCTYPE html>
 
 def source_card(title: str, tm_svg: str, tm_png: str, sb_svg: str, sb_png: str,
                 city: str, tree3d: str, note: str) -> str:
-    """Card with crisp SVG figures (click for full-size PNG) and links."""
-    fig_tm = (f'<a class="fig" href="{tm_png}"><img src="{tm_svg}" alt="{title} treemap"></a>'
-              if tm_svg else f'<a class="fig" href="{tm_png}"><img src="{tm_png}" alt="{title} treemap"></a>')
+    """Card with PNG figures (xkcd font) and SVG/3D links."""
+    fig_tm = f'<a class="fig" href="{tm_png}" target="_blank"><img src="{tm_png}" alt="{title} treemap"></a>'
     fig_sb = ""
     if sb_svg:
-        fig_sb = f'<a class="fig" style="margin-top:8px" href="{sb_png}"><img src="{sb_svg}" alt="{title} sunburst"></a>'
+        fig_sb = f'<a class="fig" style="margin-top:8px" href="{sb_png}" target="_blank"><img src="{sb_png}" alt="{title} sunburst"></a>'
     links = f'<a href="{tm_svg}">treemap SVG</a> · <a href="{tm_png}">treemap PNG</a>'
     if sb_svg:
         links += f' · <a href="{sb_svg}">sunburst SVG</a> · <a href="{sb_png}">sunburst PNG</a>'
