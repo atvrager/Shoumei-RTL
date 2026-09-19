@@ -16,3 +16,6 @@
 [submodule "third_party/FreeRTOS-Kernel"]
 	path = third_party/FreeRTOS-Kernel
 	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+[submodule "third_party/libfst"]
+	path = third_party/libfst
+	url = https://github.com/gtkwave/libfst
