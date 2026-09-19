@@ -75,23 +75,45 @@ echo ""
 
 mkdir -p "$OUTPUT_DIR"
 
+# Decompress liberty file to output dir if gzipped (required for older Yosys like 0.33 on Ubuntu)
+if [[ "$LIB_PATH" == *.gz ]]; then
+    LIB_BASENAME="$(basename "$LIB_PATH" .gz)"
+    UNCOMPRESSED_LIB="$OUTPUT_DIR/$LIB_BASENAME"
+    if [ ! -f "$UNCOMPRESSED_LIB" ]; then
+        echo "==> Decompressing GF180MCU liberty file..."
+        gunzip -c "$LIB_PATH" > "$UNCOMPRESSED_LIB"
+    fi
+    TARGET_LIB="$UNCOMPRESSED_LIB"
+else
+    TARGET_LIB="$LIB_PATH"
+fi
+
 export PLATFORM="gf180"
 export DESIGN_NAME
 export CLK_PERIOD_NS
 export TRACK_OPTION
 export VOLTAGE_OPTION
 export OUTPUT_DIR
-export TARGET_LIBRARY="$LIB_PATH"
-export DFF_LIBRARY="$LIB_PATH"
+export TARGET_LIBRARY="$TARGET_LIB"
+export DFF_LIBRARY="$TARGET_LIB"
 export IGNORE_MISS_FUNC=1
 export ABC_DRIVER_CELL="gf180mcu_fd_sc_mcu${TRACK_OPTION}${VOLTAGE_OPTION}__buf_4"
 export ABC_LOAD_IN_FF="13.43"
 
 LOG_FILE="$OUTPUT_DIR/synth.log"
-echo "==> Running Yosys synthesis (log: $LOG_FILE)..."
+VERBOSE="${VERBOSE:-0}"
+
+echo "==> Running Yosys synthesis (log: $LOG_FILE, verbose: $VERBOSE)..."
 
 START_TIME=$(date +%s)
-if yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE"; then
+SYNTH_STATUS=0
+if [ "$VERBOSE" -eq 1 ]; then
+    yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE" || SYNTH_STATUS=$?
+else
+    yosys -c "$SCRIPT_DIR/run-yosys.tcl" > "$LOG_FILE" 2>&1 || SYNTH_STATUS=$?
+fi
+
+if [ "$SYNTH_STATUS" -eq 0 ]; then
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - START_TIME))
 
@@ -111,6 +133,7 @@ if yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE"; then
     fi
 else
     echo ""
-    echo "ERROR: Yosys synthesis failed. Check $LOG_FILE for details."
+    echo "ERROR: Yosys synthesis failed. Last 50 lines of $LOG_FILE:"
+    tail -n 50 "$LOG_FILE"
     exit 1
 fi

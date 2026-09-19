@@ -133,10 +133,19 @@ export ABC_DRIVER_CELL="BUFx2_ASAP7_75t_R"
 export ABC_LOAD_IN_FF="3.898"
 
 LOG_FILE="$OUTPUT_DIR/synth.log"
-echo "==> Running Yosys synthesis (log: $LOG_FILE)..."
+VERBOSE="${VERBOSE:-0}"
+
+echo "==> Running Yosys synthesis (log: $LOG_FILE, verbose: $VERBOSE)..."
 
 START_TIME=$(date +%s)
-if yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE"; then
+SYNTH_STATUS=0
+if [ "$VERBOSE" -eq 1 ]; then
+    yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE" || SYNTH_STATUS=$?
+else
+    yosys -c "$SCRIPT_DIR/run-yosys.tcl" > "$LOG_FILE" 2>&1 || SYNTH_STATUS=$?
+fi
+
+if [ "$SYNTH_STATUS" -eq 0 ]; then
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - START_TIME))
 
@@ -156,6 +165,7 @@ if yosys -c "$SCRIPT_DIR/run-yosys.tcl" 2>&1 | tee "$LOG_FILE"; then
     fi
 else
     echo ""
-    echo "ERROR: Yosys synthesis failed. Check $LOG_FILE for details."
+    echo "ERROR: Yosys synthesis failed. Last 50 lines of $LOG_FILE:"
+    tail -n 50 "$LOG_FILE"
     exit 1
 fi
