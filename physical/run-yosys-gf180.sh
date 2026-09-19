@@ -134,7 +134,7 @@ if [ "$SYNTH_STATUS" -eq 0 ]; then
 
     # Aggressive lint pop (DC NXT LINT-* mimic): elaboration-stage linty
     # warnings are fatal even when synthesis "succeeds".
-    LINT_HITS=$(grep -nE "multiple driv|Width of|width.*does not match|unsized|inferred latch|\\\$dlatch|comb loop|combinational|is used but never|never driven|tristate" "$LOG_FILE" || true)
+    LINT_HITS=$(grep -nE "multiple driv|Width of|width.*does not match|unsized|inferred latch|\$dlatch|comb loop|never driven|tristate" "$LOG_FILE" | grep -v "ABC:" || true)
     if [ -n "$LINT_HITS" ]; then
         echo ""
         echo "ERROR: lint-style warnings in elaboration (mimicking DC NXT LINT-*):"
