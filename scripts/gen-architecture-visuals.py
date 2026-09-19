@@ -387,10 +387,12 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
             ax.text(0, 0, f"{tree['name'].split(' — ')[-1]}\n{size_units(total, tree['unit'])}",
                     ha="center", va="center", fontsize=10.5, fontweight="bold", color="#1a1a1a")
 
+            a0 = 0.0
             for g in children:
                 span = (g["size"] / total) * 2 * np.pi
                 if span > 0:
-                    draw_items(ax, [g], 0.0, root_r, 0, total, g["name"])
+                    draw_items(ax, [g], a0, root_r, 0, total, g["name"])
+                    a0 += span
 
             max_r = root_r + ring_w * (max_depth - 0.5)
             ax.set_title(f"{tree['name']} — {size_units(total, tree['unit'])}", fontsize=14, pad=10, color="#e6e9ee")
