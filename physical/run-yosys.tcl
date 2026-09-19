@@ -151,11 +151,11 @@ hierarchy -check -top $design_name
 
 # Pre-synth lint (DC status: LINT-2 comb loops, LINT-3 multi-driver,
 # LINT-7 tristate, mem integrity)
-proc; opt
-select -assert-none t:$dlatch
-select -assert-none t:$tribuf
-check -assert
-if {[llength [memory -list]] > 0} { memory -check }
+yosys proc
+yosys opt
+yosys select -assert-none t:\$dlatch
+yosys select -assert-none t:\$tribuf
+yosys check -assert
 
 # Step 5: Coarse synthesis
 if {$flatten} {

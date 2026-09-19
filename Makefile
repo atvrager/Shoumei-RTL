@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 synth-cached-gf180 synth-cached-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -122,6 +122,14 @@ systemverilog:
 # Synthesize CPU to GF180MCU netlist via Yosys
 synth-gf180:
 	@./physical/run-yosys-gf180.sh
+
+# Synthesize CPU + cache hierarchy (CachedCPU top) to GF180MCU via Yosys
+synth-cached-gf180:
+	@./physical/run-yosys-gf180.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth
+
+# Synthesize CPU + cache hierarchy (CachedCPU top) to ASAP7 7nm via Yosys (1.0 GHz)
+synth-cached-asap7:
+	@./physical/run-yosys-asap7.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.0
 
 # Synthesize CPU to ASAP7 7nm netlist via Yosys
 synth-asap7:
