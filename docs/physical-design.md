@@ -165,3 +165,88 @@ To eliminate long timing paths without regressing architectural correctness:
 | Scoreboard Busy Tables | 397.1 | 0.7% | Modular `BusyTable_W2` and `FPBusyTable` |
 | Microcode & Control | 309.7 | 0.5% | Modular `TrapSequencer` and `FetchStage_W2` |
 | Glue & Clock Gating | 4,834.4 | 8.4% | CDB muxes, bypass FIFOs, comparators, ICG clock gating cells |
+
+---
+
+## Open-Source Synthesis Flow: GF180MCU & ASAP7 (Yosys)
+
+In addition to commercial DC NXT and full OpenROAD PnR flows, Shoumei provides a lightweight, native open-source synthesis flow targeting both **GlobalFoundries 180nm MCU (GF180MCU)** and **ASAP7 7nm Predictive FinFET** using host-native Yosys and ABC.
+
+No Docker containers, OpenROAD PnR engines, or commercial licenses are required to generate mapped gate-level netlists and area reports.
+
+### Architecture of the Flow
+
+The flow is driven by a shared, parameterizable TCL engine (`physical/run-yosys.tcl`) with dedicated platform frontends:
+*   `physical/run-yosys-gf180.sh`: Targets GF180MCU 9-track 5.0V standard cells (`gf180mcu_fd_sc_mcu9t5v0__tt_025C_5v00.lib.gz`).
+*   `physical/run-yosys-asap7.sh`: Targets ASAP7 7.5-track RVT standard cells, automatically merging multi-category combinational libraries (`INVBUF`, `SIMPLE`, `OA`, `AO`) into an ABC-compatible library.
+
+### Running Synthesis
+
+```bash
+# GF180MCU: RV64 CPU at 64 MHz (canonical default: 15.625 ns)
+./physical/run-yosys-gf180.sh
+make synth-gf180
+
+# GF180MCU: Conservative target at 50 MHz (20.0 ns)
+./physical/run-yosys-gf180.sh CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 20.0
+
+# ASAP7: RV64 CPU at 1.0 GHz (canonical default: 1.000 ns)
+./physical/run-yosys-asap7.sh
+make synth-asap7
+
+# ASAP7: Target matching GF12 baseline at 750 MHz (1.333 ns)
+./physical/run-yosys-asap7.sh CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.333
+
+# Lightweight subsystem smoke synthesis (< 4 seconds runtime)
+./physical/run-yosys-gf180.sh ALU64 10.0
+./physical/run-yosys-asap7.sh ALU64 1.0
+```
+
+Generated outputs are placed in `syn_out_gf180/` or `syn_out_asap7/`:
+*   `netlist/`: Gate-level netlist (`.v`) and timing constraints (`.sdc`)
+*   `reports/`: `area.rpt` (`stat -liberty`) and `check_design.rpt` (design integrity checks)
+
+### Synthesis Results: RV64IMAFD Top-Level Core
+
+Synthesized with Yosys 0.66 on the top-level dual-dispatch RV64 core (`CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth`):
+
+| Metric | GF 12LPP+ (DC NXT) | GF180MCU @ 50 MHz | GF180MCU @ 64 MHz | ASAP7 @ 750 MHz | ASAP7 @ 1.0 GHz |
+|---|---|---|---|---|---|
+| **PDK / Node** | GF 12LPP+ (12nm) | GF180MCU 9T (180nm) | GF180MCU 9T (180nm) | ASAP7 7.5T (7nm) | ASAP7 7.5T (7nm) |
+| **Tool** | Synopsys DC NXT | Yosys 0.66 / ABC | Yosys 0.66 / ABC | Yosys 0.66 / ABC | Yosys 0.66 / ABC |
+| **Clock Target** | 1.333 ns (750 MHz) | 20.0 ns (50 MHz) | 15.625 ns (64 MHz) | 1.333 ns (750 MHz) | 1.000 ns (1.0 GHz) |
+| **Total Cell Area** | $57,269.8\,\mu\text{m}^2$ ($0.0573\text{ mm}^2$) | **$6,393,077.5\,\mu\text{m}^2$** ($6.393\text{ mm}^2$) | **$6,406,435.9\,\mu\text{m}^2$** ($6.406\text{ mm}^2$) | **$24,769.3\,\mu\text{m}^2$** ($0.0248\text{ mm}^2$) | **$24,770.1\,\mu\text{m}^2$** ($0.0248\text{ mm}^2$) |
+| **Combinational Area**| $36,776.6\,\mu\text{m}^2$ (64.2%) | $4,659,085.3\,\mu\text{m}^2$ (72.9%) | $4,672,443.7\,\mu\text{m}^2$ (72.9%) | $17,512.6\,\mu\text{m}^2$ (70.7%) | $17,513.4\,\mu\text{m}^2$ (70.7%) |
+| **Sequential Area** | $20,493.2\,\mu\text{m}^2$ (35.8%) | $1,733,992.2\,\mu\text{m}^2$ (27.1%) | $1,733,992.2\,\mu\text{m}^2$ (27.1%) | $7,256.7\,\mu\text{m}^2$ (29.3%) | $7,256.7\,\mu\text{m}^2$ (29.3%) |
+| **Leaf Cell Count** | 184,285 | 194,700 | 194,700 | 266,042 | 266,042 |
+| **Synthesis Runtime** | Commercial compute cluster | **78.2 seconds** | **82.0 seconds** | **82.7 seconds** | **87.6 seconds** |
+| **Check Violations** | 0 violations | 0 violations | 0 violations | 0 violations | 0 violations |
+
+### Key Observations
+
+1. **GF180 vs FinFET Area Footprint**: At 180nm, the complete out-of-order RV64IMAFD core occupies ~$6.4\,\text{mm}^2$. On a standard Efabless/Google GF180 MPW shuttle ($3\times3\text{ mm} = 9\,\text{mm}^2$ total die area), the CPU occupies ~71% of raw die area (before pads/peripherals/SRAM).
+2. **ASAP7 7nm vs GF12 12nm**: ASAP7 standard cell area is ~$0.0248\,\text{mm}^2$, approximately 2.3× smaller than GF 12LPP+ ($0.0573\,\text{mm}^2$), reflecting the smaller contacted poly pitch (54nm vs 84nm CPP) and fin pitch (27nm vs 34nm).
+3. **Synthesis Engine Performance**: Host-native Yosys 0.66 + ABC completes full-chip synthesis of the 194k–266k cell RV64 core in ~80–88 seconds on a single thread with ~640 MB peak memory. Subsystems such as `ALU64` synthesize in ~3.2–3.6 seconds.
+
+---
+
+## PDK Scaling Quirks & Units in the Open-Source Ecosystem
+
+Open-source and academic PDKs exhibit scaling conventions that differ from legacy tool assumptions:
+
+### 1. The ASAP7 "4x Scaling Problem"
+*   **Historical Context**: When ASU released ASAP7 in 2016, commercial physical design tools enforced a minimum database/manufacturing grid (typically 1nm) and had fixed 32-bit integer database units (DBU). True 7nm dimensions (CPP = 54nm, M2 pitch = 36nm, min wire width = 18nm, grid = 0.25nm) caused severe grid-snapping errors, false DRC violations, and router crashes in legacy tools.
+*   **Original 4x Workaround**: ASU scaled up the original PDK layouts by **4x linearly** in LEF/DEF/GDS (CPP became 216nm, cell height became $1.080\,\mu\text{m}$). Consequently, layout area reported by tools was **16x ($4^2$) larger** than physical reality. Standard cell delay and capacitance tables were adjusted so timing remained realistic.
+*   **Modern 1x Adoption**: Modern OpenROAD and the flow platform files under `third_party/orfs/flow/platforms/asap7` use true **1x views** (`asap7_tech_1x_201209.lef`, `asap7sc7p5t_28_R_1x_220121a.lef`, $4000\text{ DBU}/\mu\text{m}$). Our synthesis flow operates directly on true 1x dimensions ($0.0248\,\text{mm}^2$).
+
+### 2. Liberty Timing and Capacitance Units
+*   **GF180MCU / Legacy Nodes**:
+    *   `time_unit : 1ns;`
+    *   `capacitive_load_unit(1, pf);`
+    *   Typical gate delay: 0.2–1.5 ns; pin cap: 10–50 fF (0.01–0.05 pF).
+*   **ASAP7 / Advanced FinFET**:
+    *   `time_unit : "1ps";` (1,000× smaller)
+    *   `capacitive_load_unit(1, ff);` (1,000× smaller, femtofarads)
+    *   Typical gate delay: 4–15 ps; pin cap: 0.2–1.5 fF.
+*   **Tool Implications**: Tools or scripts assuming hardcoded `ns` or `pF` units can miscalculate timing constraints by $10^3$ to $10^6$. In `physical/run-yosys.tcl`, driver cell instances and standard load equivalents (`ABC_DRIVER_CELL`, `ABC_LOAD_IN_FF`) are passed explicitly to match each platform's native units.
+

@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -29,6 +29,8 @@ help:
 	@echo "  make opcodes-rv32im - Generate RV32IM instruction definitions (with M extension)"
 	@echo "  make codegen    - Run code generators (SV + netlist + C++ Sim)"
 	@echo "  make systemverilog - Validate generated SystemVerilog with Yosys"
+	@echo "  make synth-gf180 - Synthesize CPU to GF180MCU netlist via Yosys"
+	@echo "  make synth-asap7 - Synthesize CPU to ASAP7 7nm netlist via Yosys"
 	@echo "  make cppsim     - Compile C++ simulation modules"
 	@echo ""
 	@echo "Verification Targets:"
@@ -113,6 +115,14 @@ filelists: codegen
 systemverilog:
 	@echo "==> Validating generated SystemVerilog modules..."
 	@./verification/validate-sv.sh output/sv-from-lean
+
+# Synthesize CPU to GF180MCU netlist via Yosys
+synth-gf180:
+	@./physical/run-yosys-gf180.sh
+
+# Synthesize CPU to ASAP7 7nm netlist via Yosys
+synth-asap7:
+	@./physical/run-yosys-asap7.sh
 
 # Compile C++ simulation modules
 cppsim:

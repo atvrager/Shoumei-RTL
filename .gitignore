@@ -88,6 +88,10 @@ venv/
 # Layout render outputs
 *.png
 
+# Synthesis outputs
+syn_out*/
+abc.history
+
 # Temporary files
 /tmp/
 *.tmp

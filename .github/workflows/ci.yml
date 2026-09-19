@@ -474,6 +474,48 @@ jobs:
           chmod +x verification/smoke-test.sh
           ./verification/smoke-test.sh
 
+  open-source-synthesis:
+    needs: [codegen]
+    if: needs.changes.outputs.code == 'true'
+    name: Open-Source Synthesis (GF180 & ASAP7)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codegen-output
+
+      - name: Fetch ORFS submodule
+        run: |
+          git submodule update --init --depth 1 third_party/orfs
+
+      - name: Install Yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yosys
+
+      - name: Synthesize RV64 to GF180MCU (64 MHz)
+        run: |
+          time ./physical/run-yosys-gf180.sh
+
+      - name: Synthesize RV64 to ASAP7 (1.0 GHz)
+        run: |
+          time ./physical/run-yosys-asap7.sh
+
+      - name: Upload synthesis reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthesis-reports
+          path: |
+            syn_out_gf180/reports/
+            syn_out_gf180/synth.log
+            syn_out_asap7/reports/
+            syn_out_asap7/synth.log
+          retention-days: 14
+
   ci-pass:
     name: CI Pass
     if: always()
