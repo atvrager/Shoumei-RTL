@@ -31,29 +31,55 @@ private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
   | [] => (Wire.mk s!"{pfx}_empty", [])
   | [w] => (w, [])
-  | w0 :: w1 :: rest =>
-    let firstOut := Wire.mk s!"{pfx}_0"
-    let firstGate := Gate.mkOR w0 w1 firstOut
-    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
-      let out := Wire.mk s!"{pfx}_{idx + 1}"
-      let g := Gate.mkOR acc.1 w out
-      (out, acc.2 ++ [g])
-    ) (firstOut, [])
-    (finalW, [firstGate] ++ restGates)
+  | _ =>
+    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
+      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
+        match remaining with
+        | [] => (acc_w.reverse, acc_g)
+        | [w] => ((w :: acc_w).reverse, acc_g)
+        | w1 :: w2 :: rest =>
+          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
+          let gate := Gate.mkOR w1 w2 intermediate
+          go rest (intermediate :: acc_w) (acc_g ++ [gate])
+      go ws [] []
+    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
+      match fuel with
+      | 0 => (ws.head!, acc)
+      | fuel' + 1 =>
+        match ws with
+        | [] => (Wire.mk s!"{pfx}_empty", acc)
+        | [w] => (w, acc)
+        | _ =>
+          let (next_ws, next_gates) := buildLevel ws lvl
+          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
+    reduceTree inputs 0 [] (inputs.length + 1)
 
 private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
   | [] => (Wire.mk s!"{pfx}_empty", [])
   | [w] => (w, [])
-  | w0 :: w1 :: rest =>
-    let firstOut := Wire.mk s!"{pfx}_0"
-    let firstGate := Gate.mkAND w0 w1 firstOut
-    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
-      let out := Wire.mk s!"{pfx}_{idx + 1}"
-      let g := Gate.mkAND acc.1 w out
-      (out, acc.2 ++ [g])
-    ) (firstOut, [])
-    (finalW, [firstGate] ++ restGates)
+  | _ =>
+    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
+      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
+        match remaining with
+        | [] => (acc_w.reverse, acc_g)
+        | [w] => ((w :: acc_w).reverse, acc_g)
+        | w1 :: w2 :: rest =>
+          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
+          let gate := Gate.mkAND w1 w2 intermediate
+          go rest (intermediate :: acc_w) (acc_g ++ [gate])
+      go ws [] []
+    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
+      match fuel with
+      | 0 => (ws.head!, acc)
+      | fuel' + 1 =>
+        match ws with
+        | [] => (Wire.mk s!"{pfx}_empty", acc)
+        | [w] => (w, acc)
+        | _ =>
+          let (next_ws, next_gates) := buildLevel ws lvl
+          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
+    reduceTree inputs 0 [] (inputs.length + 1)
 
 /-- 64-bit Float to Integer Converter Circuit -/
 def mkFPToInt64 : Circuit :=

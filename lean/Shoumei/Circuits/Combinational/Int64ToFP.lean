@@ -26,19 +26,85 @@ namespace Shoumei.Circuits.Combinational
 
 open Shoumei
 
-private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
+private def mkBalancedOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
   | [] => (Wire.mk s!"{pfx}_empty", [])
   | [w] => (w, [])
-  | w0 :: w1 :: rest =>
-    let firstOut := Wire.mk s!"{pfx}_0"
-    let firstGate := Gate.mkOR w0 w1 firstOut
-    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
-      let out := Wire.mk s!"{pfx}_{idx + 1}"
-      let g := Gate.mkOR acc.1 w out
-      (out, acc.2 ++ [g])
-    ) (firstOut, [])
-    (finalW, [firstGate] ++ restGates)
+  | _ =>
+    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
+      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
+        match remaining with
+        | [] => (acc_w.reverse, acc_g)
+        | [w] => ((w :: acc_w).reverse, acc_g)
+        | w1 :: w2 :: rest =>
+          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
+          let gate := Gate.mkOR w1 w2 intermediate
+          go rest (intermediate :: acc_w) (acc_g ++ [gate])
+      go ws [] []
+    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
+      match fuel with
+      | 0 => (ws.head!, acc)
+      | fuel' + 1 =>
+        match ws with
+        | [] => (Wire.mk s!"{pfx}_empty", acc)
+        | [w] => (w, acc)
+        | _ =>
+          let (next_ws, next_gates) := buildLevel ws lvl
+          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
+    reduceTree inputs 0 [] (inputs.length + 1)
+
+/-- 8-bit Priority Encoder: finds leading 1 (b7 down to b0), returns (has_1, pos[2:0], gates) -/
+private def mkPE8 (pfx : String) (b : List Wire) : Wire × List Wire × List Gate :=
+  let b0 := b[0]!
+  let b1 := b[1]!
+  let b2 := b[2]!
+  let b3 := b[3]!
+  let b4 := b[4]!
+  let b5 := b[5]!
+  let b6 := b[6]!
+  let b7 := b[7]!
+  let hi_pair := Wire.mk s!"{pfx}_hipair"
+  let g_hipair := Gate.mkOR b7 b6 hi_pair
+  let hi_lo := Wire.mk s!"{pfx}_hilo"
+  let g_hilo := Gate.mkOR b5 b4 hi_lo
+  let hi4 := Wire.mk s!"{pfx}_hi4"
+  let g_hi4 := Gate.mkOR hi_pair hi_lo hi4
+
+  let lo_pair := Wire.mk s!"{pfx}_lopair"
+  let g_lopair := Gate.mkOR b3 b2 lo_pair
+  let lo_lo := Wire.mk s!"{pfx}_lolo"
+  let g_lolo := Gate.mkOR b1 b0 lo_lo
+  let lo4 := Wire.mk s!"{pfx}_lo4"
+  let g_lo4 := Gate.mkOR lo_pair lo_lo lo4
+
+  let has_1 := Wire.mk s!"{pfx}_has1"
+  let g_has1 := Gate.mkOR hi4 lo4 has_1
+
+  let pos2 := hi4
+
+  let pos1 := Wire.mk s!"{pfx}_pos1"
+  let g_pos1 := Gate.mkMUX lo_pair hi_pair hi4 pos1
+
+  let not_b6 := Wire.mk s!"{pfx}_nb6"
+  let g_nb6 := Gate.mkNOT b6 not_b6
+  let b65 := Wire.mk s!"{pfx}_b65"
+  let g_b65 := Gate.mkAND not_b6 b5 b65
+  let hi_b0 := Wire.mk s!"{pfx}_hib0"
+  let g_hib0 := Gate.mkOR b7 b65 hi_b0
+
+  let not_b2 := Wire.mk s!"{pfx}_nb2"
+  let g_nb2 := Gate.mkNOT b2 not_b2
+  let b21 := Wire.mk s!"{pfx}_b21"
+  let g_b21 := Gate.mkAND not_b2 b1 b21
+  let lo_b0 := Wire.mk s!"{pfx}_lob0"
+  let g_lob0 := Gate.mkOR b3 b21 lo_b0
+
+  let pos0 := Wire.mk s!"{pfx}_pos0"
+  let g_pos0 := Gate.mkMUX lo_b0 hi_b0 hi4 pos0
+
+  let gates := [g_hipair, g_hilo, g_hi4, g_lopair, g_lolo, g_lo4, g_has1,
+                g_pos1, g_nb6, g_b65, g_hib0, g_nb2, g_b21, g_lob0, g_pos0]
+  (has_1, [pos0, pos1, pos2], gates)
 
 /-- 64-bit Integer to Float Converter Circuit -/
 def mkInt64ToFP : Circuit :=
@@ -72,34 +138,41 @@ def mkInt64ToFP : Circuit :=
   let int_abs_gates := (List.range 64).map fun i =>
     Gate.mkMUX (src1[i]!) (int_neg[i]!) int_sign (int_abs[i]!)
 
-  -- Check if int_abs is zero
-  let (int_abs_any, int_abs_any_gates) := mkOrTree "int_abs_any" (List.range 64 |>.map fun i => int_abs[i]!)
+  -- Check if int_abs is zero and find leading 1 (63 down to 0) via 8x8 tree priority encoder
+  let group_pe_results := (List.range 8).map fun g =>
+    let group_bits := (List.range 8).map fun j => int_abs[8 * g + j]!
+    mkPE8 s!"grp_pe_{g}" group_bits
+
+  let grp_has_1 := group_pe_results.map (·.1)
+  let grp_pos3 := group_pe_results.map (·.2.1)
+  let grp_pe_gates := group_pe_results.flatMap (·.2.2)
+
+  let (int_abs_any, top_pos3, top_pe_gates) := mkPE8 "top_pe" grp_has_1
   let int_is_zero := Wire.mk "int_is_zero"
   let int_is_zero_gate := Gate.mkNOT int_abs_any int_is_zero
 
-  -- 64-bit Priority Encoder: find leading 1 in int_abs (63 down to 0)
-  let pe_init := makeIndexedWires "pe_init" 6
-  let pe_init_gates := (List.range 6).map fun k => Gate.mkBUF zero (pe_init[k]!)
-  let (_, _, pe_fold_gates) := (List.range 64).foldl
-    (fun (acc : Wire × (List Wire × List Gate)) idx =>
-      let i := 63 - idx
-      let old_found := acc.1
-      let old_pos := acc.2.1
-      let gates_acc := acc.2.2
-      let nf := Wire.mk s!"pe_nf_{i}"
-      let take := Wire.mk s!"pe_take_{i}"
-      let g_nf := Gate.mkNOT old_found nf
-      let g_take := Gate.mkAND (int_abs[i]!) nf take
-      let new_found := Wire.mk s!"pe_found_{i}"
-      let g_found := Gate.mkOR old_found (int_abs[i]!) new_found
-      let new_pos := makeIndexedWires s!"pe_pos_{i}" 6
-      let pos_gates := (List.range 6).map fun k =>
-        let bit_k := if (i &&& (1 <<< k)) != 0 then one else zero
-        Gate.mkMUX (old_pos[k]!) bit_k take (new_pos[k]!)
-      (new_found, (new_pos, gates_acc ++ [g_nf, g_take, g_found] ++ pos_gates))
-    ) (zero, (pe_init, []))
+  let lead_pos_wires := makeIndexedWires "pe_lead_pos" 6
+  let lead_pos_hi_gates := [
+    Gate.mkBUF (top_pos3[0]!) (lead_pos_wires[3]!),
+    Gate.mkBUF (top_pos3[1]!) (lead_pos_wires[4]!),
+    Gate.mkBUF (top_pos3[2]!) (lead_pos_wires[5]!)
+  ]
 
-  let lead_pos_wires := makeIndexedWires "pe_pos_0" 6
+  let mux8_low_gates := (List.range 3).flatMap fun bit_idx =>
+    let m01 := Wire.mk s!"lp_m01_{bit_idx}"
+    let m23 := Wire.mk s!"lp_m23_{bit_idx}"
+    let m45 := Wire.mk s!"lp_m45_{bit_idx}"
+    let m67 := Wire.mk s!"lp_m67_{bit_idx}"
+    let g01 := Gate.mkMUX ((grp_pos3[0]!)[bit_idx]!) ((grp_pos3[1]!)[bit_idx]!) (top_pos3[0]!) m01
+    let g23 := Gate.mkMUX ((grp_pos3[2]!)[bit_idx]!) ((grp_pos3[3]!)[bit_idx]!) (top_pos3[0]!) m23
+    let g45 := Gate.mkMUX ((grp_pos3[4]!)[bit_idx]!) ((grp_pos3[5]!)[bit_idx]!) (top_pos3[0]!) m45
+    let g67 := Gate.mkMUX ((grp_pos3[6]!)[bit_idx]!) ((grp_pos3[7]!)[bit_idx]!) (top_pos3[0]!) m67
+    let m0123 := Wire.mk s!"lp_m0123_{bit_idx}"
+    let m4567 := Wire.mk s!"lp_m4567_{bit_idx}"
+    let g0123 := Gate.mkMUX m01 m23 (top_pos3[1]!) m0123
+    let g4567 := Gate.mkMUX m45 m67 (top_pos3[1]!) m4567
+    let g_final := Gate.mkMUX m0123 m4567 (top_pos3[2]!) (lead_pos_wires[bit_idx]!)
+    [g01, g23, g45, g67, g0123, g4567, g_final]
 
   -- Shift left amount to normalize: shamt = 63 - lead_pos = ~lead_pos
   let norm_shamt := makeIndexedWires "norm_shamt" 6
@@ -148,7 +221,7 @@ def mkInt64ToFP : Circuit :=
   -- ── Subpart 1A: Int64 -> DP Float ──
   let dp_raw_mant := (List.range 52).map fun i => norm64[11 + i]!
   let dp_round_bit := norm64[10]!
-  let (dp_sticky_bit, dp_sticky_gates) := mkOrTree "dp_stk" (List.range 10 |>.map fun i => norm64[i]!)
+  let (dp_sticky_bit, dp_sticky_gates) := mkBalancedOrTree "dp_stk" (List.range 10 |>.map fun i => norm64[i]!)
   let dp_inexact := Wire.mk "dp_inexact"
   let dp_inexact_gate := Gate.mkOR dp_round_bit dp_sticky_bit dp_inexact
 
@@ -198,7 +271,7 @@ def mkInt64ToFP : Circuit :=
   -- ── Subpart 1B: Int64 -> SP Float ──
   let sp_raw_mant := (List.range 23).map fun i => norm64[40 + i]!
   let sp_round_bit := norm64[39]!
-  let (sp_sticky_bit, sp_sticky_gates) := mkOrTree "sp_stk" (List.range 39 |>.map fun i => norm64[i]!)
+  let (sp_sticky_bit, sp_sticky_gates) := mkBalancedOrTree "sp_stk" (List.range 39 |>.map fun i => norm64[i]!)
   let sp_inexact := Wire.mk "sp_inexact"
   let sp_inexact_gate := Gate.mkOR sp_round_bit sp_sticky_bit sp_inexact
 
@@ -259,8 +332,9 @@ def mkInt64ToFP : Circuit :=
   let all_gates :=
     [not_is_unsigned_gate, int_sign_gate, not_int_sign_gate] ++
     int_neg_sub_gates ++ int_abs_gates ++
-    int_abs_any_gates ++ [int_is_zero_gate] ++
-    pe_init_gates ++ pe_fold_gates ++ norm_shamt_gates ++ norm_shift_gates ++
+    grp_pe_gates ++ top_pe_gates ++ [int_is_zero_gate] ++
+    lead_pos_hi_gates ++ mux8_low_gates ++
+    norm_shamt_gates ++ norm_shift_gates ++
     rm_inv_gates ++ rm_dec_gates ++
     dp_sticky_gates ++ [dp_inexact_gate] ++ dp_round_gates ++ dp_mant_add_gates ++ dp_mant_fin_gates ++
     dp_exp_add_gates ++ res_int_to_dp_gates ++
