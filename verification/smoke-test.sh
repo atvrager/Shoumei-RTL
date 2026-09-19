@@ -35,7 +35,7 @@ fi
 # --- Test 1: Generated file existence ---
 echo "==> Test 1: Generated Files"
 
-for mod in DFlipFlop Queue1Flow_39 Queue1Flow_72 ALU32; do
+for mod in DFlipFlop Queue1Flow_39 Queue1Flow_72 ALU32 Shoumei_SoC ResetSync TLXbar8 UART GPIO ACLINT APLIC BootROM SRAM; do
     if [ -f "output/sv-from-lean/${mod}.sv" ]; then
         pass "Lean SV: ${mod}.sv"
     else
@@ -101,16 +101,14 @@ for port in enq_data enq_valid enq_ready deq_data deq_valid deq_ready; do
     fi
 done
 
-# RV32IMFDecoder (conditional - requires third_party/riscv-opcodes submodule)
-if [ -f "output/sv-from-lean/RV32IMFDecoder.sv" ]; then
-    for port in io_instr io_optype io_rd io_rs1 io_rs2 io_imm io_valid; do
-        if grep -q "$port" output/sv-from-lean/RV32IMFDecoder.sv 2>/dev/null; then
-            pass "RV32IMFDecoder port '${port}'"
-        else
-            fail "RV32IMFDecoder port '${port}' missing"
-        fi
-    done
-fi
+# Shoumei_SoC
+for port in clock reset_n uart_rx uart_tx rob_empty mem_req_valid mem_resp_valid; do
+    if grep -q "$port" output/sv-from-lean/Shoumei_SoC.sv 2>/dev/null; then
+        pass "Shoumei_SoC port '${port}'"
+    else
+        fail "Shoumei_SoC port '${port}' missing"
+    fi
+done
 echo ""
 
 # --- Test 4: Logic validation ---
@@ -144,12 +142,20 @@ else
 fi
 
 # Decoder immediate extraction (conditional)
-if [ -f "output/sv-from-lean/RV32IMFDecoder.sv" ]; then
-    if grep -qE "imm_i|imm_s|imm_b" output/sv-from-lean/RV32IMFDecoder.sv 2>/dev/null; then
-        pass "RV32IMFDecoder immediate extraction"
+# Shoumei_SoC integration logic
+for inst in u_rst_sync u_cached_cpu u_tl_xbar u_uart u_gpio u_aclint u_aplic u_bootrom u_sram; do
+    if grep -q "$inst" output/sv-from-lean/Shoumei_SoC.sv 2>/dev/null; then
+        pass "Shoumei_SoC instance '${inst}'"
     else
-        fail "RV32IMFDecoder missing immediate extraction"
+        fail "Shoumei_SoC instance '${inst}' missing"
     fi
+done
+
+# Physical synthesis wrapper
+if [ -f "physical/Shoumei_SoC_synth.sv" ]; then
+    pass "ASIC synthesis wrapper: Shoumei_SoC_synth.sv"
+else
+    fail "ASIC synthesis wrapper: Shoumei_SoC_synth.sv missing"
 fi
 echo ""
 

@@ -27,6 +27,14 @@
 extern "C" void dpi_mem_write(unsigned int word_addr, unsigned int data);
 extern "C" void dpi_set_tohost_addr(unsigned int addr);
 
+static FILE* g_cosim_uart_tx_file = nullptr;
+extern "C" void dpi_uart_tx_byte(char data) {
+    if (g_cosim_uart_tx_file) {
+        fputc(data, g_cosim_uart_tx_file);
+        fflush(g_cosim_uart_tx_file);
+    }
+}
+
 static const uint32_t DEFAULT_TIMEOUT = 100000;
 
 static const char* get_plusarg(int argc, char** argv, const char* name) {
@@ -183,6 +191,11 @@ int main(int argc, char** argv) {
     uint32_t timeout = DEFAULT_TIMEOUT;
     const char* to = get_plusarg(argc, argv, "+timeout");
     if (to) timeout = static_cast<uint32_t>(atol(to));
+
+    const char* uart_log_path = get_plusarg(argc, argv, "+uart_tx_log");
+    if (uart_log_path) {
+        g_cosim_uart_tx_file = fopen(uart_log_path, "wb");
+    }
 
     // Initialize RTL DUT
     auto dut = std::make_unique<Vtb_cpu>();
@@ -348,6 +361,11 @@ int main(int argc, char** argv) {
     printf("  IPC:         %.3f\n", cycle > 0 ? (double)retired / cycle : 0.0);
     printf("  Mismatches:  %lu\n", mismatches);
     printf("  tohost:      0x%08x\n", tohost);
+
+    if (g_cosim_uart_tx_file) {
+        fclose(g_cosim_uart_tx_file);
+        g_cosim_uart_tx_file = nullptr;
+    }
 
     if (mismatches == 0 && tohost == 1) {
         printf("COSIM PASS\n");

@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 synth-cached-gf180 synth-cached-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -119,21 +119,36 @@ systemverilog:
 	@echo "==> Validating generated SystemVerilog modules..."
 	@./verification/validate-sv.sh output/sv-from-lean
 
-# Synthesize CPU to GF180MCU netlist via Yosys
-synth-gf180:
-	@./physical/run-yosys-gf180.sh
+# Synthesize CPU to GF180MCU netlist via Yosys (64 MHz)
+synth-gf180: synth-gf180-cpu
 
-# Synthesize CPU + cache hierarchy (CachedCPU top) to GF180MCU via Yosys
-synth-cached-gf180:
-	@./physical/run-yosys-gf180.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth
+synth-gf180-cpu:
+	@OUTPUT_DIR=syn_out_gf180_cpu ./physical/run-yosys-gf180.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 15.625
 
-# Synthesize CPU + cache hierarchy (CachedCPU top) to ASAP7 7nm via Yosys (1.0 GHz)
-synth-cached-asap7:
-	@./physical/run-yosys-asap7.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.0
+# Aliases for CachedCPU targets
+synth-cached-gf180: synth-gf180-cpu
+synth-cached-asap7: synth-asap7-cpu
 
-# Synthesize CPU to ASAP7 7nm netlist via Yosys
-synth-asap7:
-	@./physical/run-yosys-asap7.sh
+# Synthesize Shoumei SoC to GF180MCU netlist via Yosys (64 MHz)
+synth-gf180-soc:
+	@OUTPUT_DIR=syn_out_gf180_soc ./physical/run-yosys-gf180.sh Shoumei_SoC_synth 15.625
+
+# Synthesize CPU to ASAP7 7nm netlist via Yosys (1.0 GHz)
+synth-asap7: synth-asap7-cpu
+
+synth-asap7-cpu:
+	@OUTPUT_DIR=syn_out_asap7_cpu ./physical/run-yosys-asap7.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.0
+
+# Synthesize Shoumei SoC to ASAP7 7nm netlist via Yosys (1.0 GHz)
+synth-asap7-soc:
+	@OUTPUT_DIR=syn_out_asap7_soc ./physical/run-yosys-asap7.sh Shoumei_SoC_synth 1.0
+
+# Run all 4 synthesis targets and extract comparison statistics
+synth-quad: synth-gf180-cpu synth-gf180-soc synth-asap7-cpu synth-asap7-soc synth-stats
+
+# Extract synthesis PPA comparison table
+synth-stats:
+	@python3 scripts/extract-synth-stats.py --markdown
 
 # Compile C++ simulation modules
 cppsim:

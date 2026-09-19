@@ -9,6 +9,8 @@ module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
   input  logic        ifetch_last_word,
   input  logic        dmem_stall_ext,
   input  logic        mtip_in,
+  input  logic        msip_in,
+  input  logic        meip_in,
   // Instruction memory (dual fetch W=2)
   input  logic [31:0] imem_resp_data_0,
   input  logic [31:0] imem_resp_data_1,
@@ -34,6 +36,8 @@ module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
     .ifetch_last_word(ifetch_last_word),
     .dmem_stall_ext(dmem_stall_ext),
     .mtip_in(mtip_in),
+    .msip_in(msip_in),
+    .meip_in(meip_in),
     .imem_resp_data_0(imem_resp_data_0),
     .imem_resp_data_1(imem_resp_data_1),
     .dmem_req_ready(dmem_req_ready),

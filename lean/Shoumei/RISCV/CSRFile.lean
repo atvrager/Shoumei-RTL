@@ -56,6 +56,8 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   let retire_valid_0 := Wire.mk "retire_valid_0"
   let retire_valid_1 := Wire.mk "retire_valid_1"
   let mtip_in := Wire.mk "mtip_in"
+  let msip_in := Wire.mk "msip_in"
+  let meip_in := Wire.mk "meip_in"
 
   let fp_valid_out := Wire.mk "fp_valid_out"
   let fp_exceptions := (List.range 5).map (fun i => Wire.mk s!"fp_exceptions_{i}")
@@ -313,8 +315,17 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   -- IRQ pending generation
   let irq_gates :=
     if enableTraps then
-      [Gate.mkAND mip_reg[7]! mie_reg[7]! (Wire.mk "irq_pre"),
-       Gate.mkAND (Wire.mk "irq_pre") mstatus_reg[3]! irq_pending]
+      let irq_mtip_pre := Wire.mk "irq_mtip_pre"
+      let irq_msip_pre := Wire.mk "irq_msip_pre"
+      let irq_meip_pre := Wire.mk "irq_meip_pre"
+      let irq_or0 := Wire.mk "irq_or0"
+      let irq_pre := Wire.mk "irq_pre"
+      [Gate.mkAND mip_reg[7]! mie_reg[7]! irq_mtip_pre,
+       Gate.mkAND mip_reg[3]! mie_reg[3]! irq_msip_pre,
+       Gate.mkAND mip_reg[11]! mie_reg[11]! irq_meip_pre,
+       Gate.mkOR irq_mtip_pre irq_msip_pre irq_or0,
+       Gate.mkOR irq_or0 irq_meip_pre irq_pre,
+       Gate.mkAND irq_pre mstatus_reg[3]! irq_pending]
     else
       [Gate.mkBUF zero irq_pending]
 
@@ -332,7 +343,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
       [useq_mstatus_trap, useq_mstatus_mret, useq_write_en] ++
       useq_write_data
     else []) ++
-    [retire_valid_0, retire_valid_1, mtip_in] ++
+    [retire_valid_0, retire_valid_1, mtip_in, msip_in, meip_in] ++
     (if enableF then [fp_valid_out] ++ fp_exceptions else [])
 
   let all_outputs : List Wire :=

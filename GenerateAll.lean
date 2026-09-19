@@ -105,6 +105,17 @@ import Shoumei.RISCV.CSRFile
 import Shoumei.RISCV.CPU.BusyBitTable
 import Shoumei.RISCV.CPU
 
+-- Phase 9: Shoumei SoC & Peripherals
+import Shoumei.Circuits.Sequential.ResetSync
+import Shoumei.Interconnect.TileLink.TLXbar
+import Shoumei.Peripherals.BootROM
+import Shoumei.Peripherals.ACLINT
+import Shoumei.Peripherals.APLIC
+import Shoumei.Peripherals.UART
+import Shoumei.Peripherals.GPIO
+import Shoumei.Peripherals.SRAM
+import Shoumei.SoC.ShoumeiSoC
+
 -- Testbench generation
 import Shoumei.RISCV.CPUTestbench
 import Shoumei.RISCV.TraceSchema
@@ -122,6 +133,9 @@ open Shoumei.RISCV.Memory.Cache
 open Shoumei.RISCV.CPU
 open Shoumei.RISCV.Microcode
 open Shoumei.RISCV.CPUTestbench
+open Shoumei.Interconnect.TileLink
+open Shoumei.Peripherals
+open Shoumei.SoC
 
 /-- Decoder modules generated from riscv-opcodes instruction definitions, outside
     the circuit registry above.  Named once because the stale-output pruner and
@@ -331,7 +345,18 @@ def allCircuits : List Circuit := [
   mkBusyTable_W2,
   mkFPBusyTable,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
-  Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
+  Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig,
+
+  -- Phase 9: Shoumei SoC & Peripherals
+  resetSyncCircuit,
+  tlXbar8Circuit,
+  bootROMCircuit,
+  aclintCircuit,
+  aplicCircuit,
+  uartCircuit,
+  gpioCircuit,
+  sramCircuit,
+  shoumeiSoCCircuit
 ]
 
 /-- Everything this generator emits, by module name. -/
