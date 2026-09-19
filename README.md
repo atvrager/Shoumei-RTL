@@ -6,6 +6,27 @@
 
 > Shoumei (証明, Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and code generators emit SystemVerilog, a flat netlist, ASAP7 gates and a cycle-accurate C++ model from the same proven source.
 
+### Decoupled, timing-first Load-Store Unit
+
+The LSU is a two-stage decoupled memory engine targeting the synthesis
+budgets in [docs/lsu-architecture.md](docs/lsu-architecture.md):
+
+- **M1 → M2 load pipeline**: the 64-bit AGU adder is isolated in `lsu_stage1`;
+  the store-queue forwarding decision (age-ordered youngest match), byte
+  extraction and CDB drive sit in `lsu_stage2` on registered values -- no
+  combinational path spans the stages.
+- **Decoupled micro-ops**: STA (address) and STD (data) flow independently;
+  `MemoryExecUnitDecoupled` emits `sta_valid/sta_addr` and
+  `std_valid/std_data` as separate groups.
+- **8-entry circular store queue** with explicit age masking (`older(i,j)`),
+  1-cycle exact-match forwarding straight to the CDB, and `replay_needed`
+  on partial word overlap (no byte merger in the critical path).
+- **2-entry MSHR**: misses allocate a slot and free the request bus
+  (hit-under-miss); the blocking single-load path is gone.
+- Store data-path width is length-agnostic with a **128-bit base** -- two
+  64-bit memory ops per execution slot, vector-ready.
+
+
 ## What This Is
 
 A complete pipeline from formal specification to verified, simulated RTL:

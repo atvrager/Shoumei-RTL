@@ -220,6 +220,7 @@ def allCircuits : List Circuit := [
   mkIntegerExecUnit,
   mkBranchExecUnit,
   mkMemoryExecUnit,
+  mkMemoryExecUnitDecoupled,
   mkReservationStationFromConfig defaultCPUConfig,
   mkReservationStation4W2_64,
   mkIntReservationStation4_W2 64,

@@ -1362,42 +1362,101 @@ def generateInstances (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
 
 /-! ## RAM Primitive Generation -/
 
-/-- Generate SystemVerilog for a single RAMPrimitive.
-    Emits a reg array with clocked write and combinational (async) read. -/
-def generateRAM (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
-  let addrBits := ram.readPorts.head?.map (·.addr.length) |>.getD 1
+/-- Build the address/data concatenation expressions for a port (MSB first). -/
+private def portAddrExpr (ctx : Context) (c : Circuit) (wires : List Wire) : String :=
+  let refs := wires.reverse.map (wireRef ctx c ·)
+  if refs.length == 1 then refs.head!
+  else "{" ++ String.intercalate ", " refs ++ "}"
+
+/-- Emit the reg-array fallback model for a RAMPrimitive.
+
+    This is the *simulation* model (Verilator-friendly) and the
+    no-macro synthesis fallback.  The primary synthesis intent is the
+    foundry/OpenRAM macro branch (SRAM ifdef), never an FF array. -/
+def generateRAMFallback (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
   let depthMinusOne := ram.depth - 1
-  -- RAM array declaration
-  let arrayDecl := s!"  reg [{ram.width - 1}:0] {ram.name} [0:{depthMinusOne}];"
-  -- Write ports
   let clkRef := wireRef ctx c ram.clock
+  -- RAM array declaration (block-style intent; hints rejected by some
+  -- Verilator builds, keep the plain reg array)
+  let arrayDecl := s!"  // reg-array fallback (SRAM macro branch above)"
+  let arrayDecl2 := s!"  reg [{ram.width - 1}:0] {ram.name} [0:{depthMinusOne}];"
   let writePorts := ram.writePorts.enum.map (fun (_, wp) =>
     let enRef := wireRef ctx c wp.en
-    -- Build address concatenation (MSB first)
-    let addrRefs := wp.addr.reverse.map (wireRef ctx c ·)
-    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
-                    else "{" ++ String.intercalate ", " addrRefs ++ "}"
-    -- Build data concatenation (MSB first)
-    let dataRefs := wp.data.reverse.map (wireRef ctx c ·)
-    let dataExpr := if dataRefs.length == 1 then dataRefs.head!
-                    else "{" ++ String.intercalate ", " dataRefs ++ "}"
+    let addrExpr := portAddrExpr ctx c wp.addr
+    let dataExpr := portAddrExpr ctx c wp.data
     joinLines [
       s!"  always @(posedge {clkRef})",
       s!"    if ({enRef}) {ram.name}[{addrExpr}] <= {dataExpr};"
     ])
-  -- Read ports (async)
   let readPorts := ram.readPorts.enum.map (fun (_, rp) =>
-    -- Build address concatenation (MSB first)
-    let addrRefs := rp.addr.reverse.map (wireRef ctx c ·)
-    let addrExpr := if addrRefs.length == 1 then addrRefs.head!
-                    else "{" ++ String.intercalate ", " addrRefs ++ "}"
-    -- Assign individual output bits from the read data
+    let addrExpr := portAddrExpr ctx c rp.addr
     let readDataWire := s!"{ram.name}[{addrExpr}]"
     let assigns := rp.data.enum.map (fun (idx, w) =>
       s!"  assign {wireRef ctx c w} = {readDataWire}[{idx}];")
     joinLines assigns)
-  let _ := addrBits  -- suppress unused warning
-  joinLines ([arrayDecl] ++ writePorts ++ readPorts)
+  joinLines ([arrayDecl, arrayDecl2] ++ writePorts ++ readPorts)
+
+/-- Emit a foundry/OpenRAM SRAM macro instantiation for a 1-write/1-read RAM.
+
+    Port contract (matches OpenRAM `sram_1r1w` and the GF180MCU
+    `gf180mcu_fd_ip_sram` family):
+    - .clk, .we, .waddr, .wdata  (write port)
+    - .raddr, .rdata             (read port)
+
+    The module name encodes geometry: `sram_1r1w_<width>x<depth>`.
+    Only exactly-one write + exactly-one read ports map to a macro; other
+    port count combinations keep the fallback (no invented ports). -/
+def generateSRAMMacro (ctx : Context) (c : Circuit) (ram : RAMPrimitive)
+    : Option String :=
+  match ram.writePorts, ram.readPorts with
+  | [wp], [rp] =>
+      let clkRef := wireRef ctx c ram.clock
+      let depth := ram.depth
+      let width := ram.width
+      let modName := s!"sram_1r1w_{width}x{depth}"
+      let instName := s!"u_ram_{ram.name}"
+      let wdataBus := s!"{ram.name}_sram_wdata"
+      let rdataBus := s!"{ram.name}_sram_rdata"
+      let waddrExpr := portAddrExpr ctx c wp.addr
+      let raddrExpr := portAddrExpr ctx c rp.addr
+      let enRef := wireRef ctx c wp.en
+      -- wdata: assign bus from bit wires (LSB first), rdata: fan out to bits
+      let wdataAssigns := wp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wdataBus}[{idx}] = {wireRef ctx c w};")
+      let rdataAssigns := rp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wireRef ctx c w} = {rdataBus}[{idx}];")
+      some <| joinLines [
+        s!"  // Foundry/OpenRAM SRAM macro: {modName}",
+        s!"  wire [{width - 1}:0] {wdataBus};",
+        s!"  wire [{width - 1}:0] {rdataBus};",
+        joinLines wdataAssigns,
+        joinLines rdataAssigns,
+        s!"  {modName} {instName} (",
+        s!"    .clk  ({clkRef}),",
+        s!"    .we   ({enRef}),",
+        s!"    .waddr({waddrExpr}),",
+        s!"    .wdata({wdataBus}),",
+        s!"    .raddr({raddrExpr}),",
+        s!"    .rdata({rdataBus})",
+        s!"  );"
+      ]
+  | _, _ => none
+
+/-- Generate SystemVerilog for a single RAMPrimitive.
+
+    Primary path: foundry/OpenRAM SRAM macro under ``ifdef SHOUMEI_SRAM_MACROS``.
+    Fallback (simulation / no-macro flows): clocked reg array with
+    combinational read. -/
+def generateRAM (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
+  match generateSRAMMacro ctx c ram with
+  | some macroBody => joinLines [
+      "`ifdef SHOUMEI_SRAM_MACROS",
+      macroBody,
+      "`else",
+      generateRAMFallback ctx c ram,
+      "`endif"
+    ]
+  | none => generateRAMFallback ctx c ram
 
 /-- Generate all RAM primitives -/
 def generateRAMs (ctx : Context) (c : Circuit) : String :=

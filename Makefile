@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-asap7 synth-cached-gf180 synth-cached-asap7 cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -123,6 +123,14 @@ systemverilog:
 synth-gf180:
 	@./physical/run-yosys-gf180.sh
 
+# Synthesize CPU + cache hierarchy (CachedCPU top) to GF180MCU via Yosys
+synth-cached-gf180:
+	@./physical/run-yosys-gf180.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth
+
+# Synthesize CPU + cache hierarchy (CachedCPU top) to ASAP7 7nm via Yosys (1.0 GHz)
+synth-cached-asap7:
+	@./physical/run-yosys-asap7.sh CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth 1.0
+
 # Synthesize CPU to ASAP7 7nm netlist via Yosys
 synth-asap7:
 	@./physical/run-yosys-asap7.sh
@@ -153,9 +161,25 @@ coverage:
 	$(MAKE) -C testbench run-coverage
 
 # Presubmit check (runs local CI verification pipeline)
-presubmit: check-tools lean codegen proof-coverage mutation-test smoke-test
+presubmit: check-tools lean codegen proof-coverage lint mutation-test smoke-test
 	@echo ""
-	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Mutation + Smoke)"
+	@echo "✓ Presubmit checks passed (Lean + Codegen + Proof Coverage + Lint + Mutation + Smoke)"
+
+# DC-NXT-style lint: latch inference, comb loops, width/undriven/multi-driver
+# pops on all emitted SV (Yosys proxy) + slang elaboration (default and the
+# SHOUMEI_SRAM_MACROS branch against the macro stubs).
+lint: systemverilog
+	@echo "==> Running slang elaboration lint..."
+	@python3 verification/slang-lint.py output/sv-from-lean
+	@python3 verification/slang-lint.py --sram output/sv-from-lean
+	@echo "==> Running DC-NXT-style lint (Yosys proxy)..."
+	@./verification/dc-lint.sh output/sv-from-lean
+	@echo "✓ Lint clean"
+
+# Generate cache SRAM macros with OpenRAM (foundry-grade, not FF arrays).
+# Contract: sram_1r1w_<width>x<depth> (.clk/.we/.waddr/.wdata/.raddr/.rdata).
+sram-macros:
+	@./scripts/gen-sram-macros.sh
 
 # Generate XKCD-style hierarchical architecture treemap
 architecture-diagram:

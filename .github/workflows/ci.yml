@@ -524,6 +524,9 @@ jobs:
       - name: Run all ELF tests
         run: make -C testbench run-all-tests
 
+      - name: Cache behavior conformance (L1D SV vs reference model)
+        run: make -C testbench cache-model-test
+
       - name: Upload test results
         uses: actions/upload-artifact@v6
         if: always()

@@ -18,14 +18,39 @@ except ImportError:
     print("ERROR: pyslang not installed. Run: pip install pyslang")
     sys.exit(1)
 
-sv_dir = sys.argv[1] if len(sys.argv) > 1 else "output/sv-from-lean"
+args = [a for a in sys.argv[1:] if a != "--sram"]
+sv_dir = args[0] if args else "output/sv-from-lean"
+sram_mode = "--sram" in sys.argv
 
-sv_files = sorted(glob.glob(os.path.join(sv_dir, "*.sv")))
+if sram_mode:
+    # Lint the `ifdef SHOUMEI_SRAM_MACROS` branch (foundry/OpenRAM macros)
+    # by defining the macro in every file and adding the behavioral stubs as
+    # an extra file.  No text transformation: the preprocessor picks the
+    # macro branch naturally, so hierarchy resolves exactly like the default
+    # lint (all 168 modules cooperate).
+    import tempfile
+    stub_path = os.path.join(os.path.dirname(__file__), "sram-macro-stub.sv")
+    tmpdir = tempfile.mkdtemp(prefix="slang-sram-")
+    sv_files = []
+    for f in sorted(glob.glob(os.path.join(sv_dir, "*.sv"))):
+        with open(f) as fh:
+            content = fh.read()
+        tmp = os.path.join(tmpdir, os.path.basename(f))
+        with open(tmp, "w") as fh:
+            fh.write("`undef SHOUMEI_SRAM_MACROS\n`define SHOUMEI_SRAM_MACROS\n" + content)
+        sv_files.append(tmp)
+    sv_files.append(os.path.abspath(stub_path))
+    print(f"slang lint (SRAM-macros branch): {len(sv_files) - 1} files + macro stubs")
+    if len(sv_files) == 1:
+        print("  (no SRAM-bearing modules emitted)")
+        sys.exit(0)
+else:
+    sv_files = sorted(glob.glob(os.path.join(sv_dir, "*.sv")))
+    print(f"slang lint: {len(sv_files)} files in {sv_dir}")
+
 if not sv_files:
     print(f"ERROR: No .sv files found in {sv_dir}")
     sys.exit(1)
-
-print(f"slang lint: {len(sv_files)} files in {sv_dir}")
 
 # Parse all files together (so cross-module references resolve)
 # Support both older (pyslang <11) and newer (pyslang >=11) module layouts

@@ -320,6 +320,29 @@ coremark:
 run-coremark: $(SIM_BIN) coremark
 	$(SIM_BIN) +elf=$(TB_DIR)/coremark/coremark.elf +timeout=10000000
 
+# --------------------------------------------------------------------------
+# Cache behavior conformance (long-term software verification of cache RTL)
+# Verilator-builds the emitted L1DCache SV and checks it against an
+# independent reference (LRU, refill, dirty writeback, byte merge, protocol).
+# --------------------------------------------------------------------------
+CACHE_TEST_CPP := $(TB_DIR)/cache_model_test/cache_conformance.cpp
+CACHE_BUILD    := $(TB_DIR)/build/cache_l1d
+CACHE_TEST_BIN := $(TB_DIR)/build/cache_model_test
+
+cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv $(CACHE_TEST_CPP)
+	@echo "==> Building cache conformance test (Verilator SV)..."
+	@mkdir -p $(TB_DIR)/build
+	@rm -rf $(CACHE_BUILD)
+	@verilator --cc --build -j $(shell nproc) --Mdir $(CACHE_BUILD) \
+	    -Wno-fatal -O3 \
+	    --top-module L1DCache --exe \
+	    $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv \
+	    $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv \
+	    -CFLAGS "-std=c++17 -O2" \
+	    -o $(CACHE_TEST_BIN) $(CACHE_TEST_CPP)
+	@echo "==> Running cache conformance..."
+	@$(CACHE_TEST_BIN) --cycles 2000
+
 clean:
 	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
 	rm -rf $(BUILD_DIR)/arc $(ARC_SIM_BIN) $(ARC_COSIM_BIN)

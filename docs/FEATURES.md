@@ -28,7 +28,7 @@ Complete out-of-order processor defined in Lean 4, with dependent-type proofs of
   - **Floating-Point Unit (`FPExecUnit_D`)**: Multi-stage pipelined FP adder, multiplier, iterative divider, square root unit, and FP-to-integer converters.
   - **Memory Execution Unit**: AGU address calculation and load/store formatting.
   - **Microcoded Trap Sequencer (`TrapSequencer`)**: Multi-cycle sequencer managing CSR operations, exceptions, traps, `MRET`, and pipeline draining for `FENCE.I`.
-- **Memory**: 8-entry store buffer (`StoreBuffer8`) with TSO ordering, youngest-match store-to-load forwarding, and byte mask tracking.
+- **Memory**: decoupled two-stage LSU (`lsu_stage1` AGU → `lsu_stage2` forwarding/CDB), 2-entry MSHR with hit-under-miss, 8-entry circular store queue (`StoreBuffer8`) with explicit age-ordered `older(i,j)` forwarding, `replay_needed` on partial overlaps, and a 128-bit length-agnostic data path (two 64-bit ops per execution slot).
 - **Retire**: 16-entry 2-wide reorder buffer (`ROB16_W2`), in-order commit, and precise exception flush.
 - **CDB Arbitration**: Multi-port priority arbitration across integer, memory, and floating-point execution units.
 

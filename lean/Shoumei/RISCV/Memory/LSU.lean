@@ -81,11 +81,67 @@ instance : Inhabited MemoryInterfaceState where
 
 /-! ## LSU State -/
 
+/-- M1 pipeline register: AGU output latched at the stage1 boundary.
+    The 64-bit adder result (M1) is isolated here; the forwarding driver
+    (M2) consumes only registered values, so no combinational loop spans
+    the two stages (docs/lsu-architecture.md §4). -/
+structure Stage1Register where
+  /-- Effective address from the AGU (M1) -/
+  address : UInt64
+  /-- Destination tag for the CDB -/
+  dest_tag : Fin 64
+  /-- Access size -/
+  size : MemSize
+  /-- Sign-extend result? -/
+  sign_extend : Bool
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited Stage1Register where
+  default := { address := 0, dest_tag := 0, size := MemSize.Word, sign_extend := false }
+
+/-- M2 pipeline register: CDB broadcast staged for the writeback cycle.
+    The forwarding decision (exact/replay/miss) is made on stage1 values. -/
+structure Stage2Register where
+  /-- Destination tag -/
+  dest_tag : Fin 64
+  /-- Forwarded/loaded data -/
+  data : UInt64
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited Stage2Register where
+  default := { dest_tag := 0, data := 0 }
+
+/-- Miss Status Holding Register slot: tracks an outstanding miss so the
+    request bus stays free (hit-under-miss). -/
+structure MSHREntry where
+  /-- Slot occupied -/
+  valid : Bool
+  /-- Line-aligned miss address -/
+  line_addr : UInt64
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited MSHREntry where
+  default := { valid := false, line_addr := 0 }
+
+/-- MSHR state: two registered slots; allocates on miss, frees on refill. -/
+structure MSHRState where
+  /-- Two miss slots -/
+  slots : Fin 2 → MSHREntry
+
+instance : Inhabited MSHRState where
+  default := { slots := fun _ => default }
+
 /-- Load-Store Unit State. -/
 structure LSUState where
   /-- Store buffer (8 entries) -/
   storeBuffer : StoreBufferState
-  /-- Pending load request (only one load in-flight for MVP) -/
+  /-- M1 AGU pipeline register -/
+  stage1 : Option Stage1Register
+  /-- M2 CDB pipeline register -/
+  stage2 : Option Stage2Register
+  /-- Two registered miss slots (non-blocking cache port) -/
+  mshr : MSHRState
+  /-- Legacy single-pending-load alias (MSHR head) -/
   pendingLoad : Option PendingLoadRequest
   /-- Memory interface state -/
   memoryInterface : MemoryInterfaceState
@@ -93,6 +149,9 @@ structure LSUState where
 /-- Create an empty LSU. -/
 def LSUState.empty : LSUState :=
   { storeBuffer := StoreBufferState.empty
+    stage1 := none
+    stage2 := none
+    mshr := default
     pendingLoad := none
     memoryInterface := default
   }
@@ -108,6 +167,32 @@ def LSUState.canAcceptLoad (lsu : LSUState) : Bool :=
   lsu.pendingLoad.isNone
 
 /-! ## Core Operations -/
+/-! ## MSHR Helpers -/
+
+/-- First free MSHR slot, if any. -/
+def LSUState.mshrFreeSlot (lsu : LSUState) : Option (Fin 2) :=
+  if !(lsu.mshr.slots 0).valid then some 0
+  else if !(lsu.mshr.slots 1).valid then some 1
+  else none
+
+/-- Allocate an MSHR slot for a miss line (caller latches the entry). -/
+def LSUState.mshrAlloc (lsu : LSUState) (_line_addr : UInt64) : Option (Fin 2) :=
+  lsu.mshrFreeSlot
+
+/-- Free a slot after its refill completes. -/
+def LSUState.mshrFree (lsu : LSUState) (idx : Fin 2) : LSUState :=
+  { lsu with
+    mshr := { slots := fun i => if i == idx then default else lsu.mshr.slots i } }
+
+/-- Any miss slot occupied? -/
+def LSUState.mshrBusy (lsu : LSUState) : Bool :=
+  (lsu.mshr.slots 0).valid || (lsu.mshr.slots 1).valid
+
+/-- Both miss slots occupied? -/
+def LSUState.mshrFull (lsu : LSUState) : Bool :=
+  (lsu.mshr.slots 0).valid && (lsu.mshr.slots 1).valid
+
+
 
 /-- Execute store instruction.
 
@@ -143,18 +228,76 @@ def LSUState.executeStore
       -- Failure: store buffer full (stall)
       (lsu, false)
 
-/-- Execute load instruction.
+/-- Execute load instruction, stage M1: AGU (64-bit adder) + stage1 latch.
 
-    Checks store buffer for forwarding match first (TSO semantics).
-    If match: return forwarded data immediately.
-    If no match: issue memory read request.
-
-    Returns (updated state, optional CDB broadcast).
+    Nothing in M1 consults the store queue or cache tags; the result is
+    purely register-bound at the stage1 boundary.
 -/
+def LSUState.executeLoadM1
+    (lsu : LSUState)
+    (opcode : OpType)
+    (base : UInt64)      -- rs1 value (base address)
+    (offset : Int)       -- Immediate offset
+    (dest_tag : Fin 64)  -- Destination physical register
+    : LSUState :=
+  let addr := calculateMemoryAddress base offset
+  let (size, sign_ext) := match opcode with
+    | .LB  => (MemSize.Byte, true)
+    | .LH  => (MemSize.Halfword, true)
+    | .LW  => (MemSize.Word, true)
+    | .LBU => (MemSize.Byte, false)
+    | .LHU => (MemSize.Halfword, false)
+    | .LWU => (MemSize.Word, false)
+    | .LD  => (MemSize.Doubleword, false)
+    | _ => (MemSize.Doubleword, false)
+  { lsu with
+    stage1 := some { address := addr, dest_tag := dest_tag, size := size, sign_extend := sign_ext } }
+
+/-- Execute load stage M2: consume the stage1 register, make the
+    forwarding decision against the SQ (registered domain), and either
+    drive the CDB staging, raise replay, or allocate an MSHR slot. -/
+def LSUState.executeLoadM2 (lsu : LSUState) : LSUState × Option (Fin 64 × UInt64) :=
+  match lsu.stage1 with
+  | none => (lsu, none)
+  | some s1 =>
+      if lsu.storeBuffer.replayNeeded s1.address then
+        -- Partial overlap: never byte-merge in the critical path; replay.
+        ({ lsu with stage1 := none }, none)
+      else
+        match lsu.storeBuffer.forwardProbe s1.address with
+        | some (data, true) =>
+            let processed := processLoadResponse data s1.size s1.sign_extend
+            ({ lsu with
+               stage1 := none
+               stage2 := some { dest_tag := s1.dest_tag, data := processed } },
+             some (s1.dest_tag, processed))
+        | some (_, false) =>
+            -- word-only overlap handled by replayNeeded above; unreachable
+            ({ lsu with stage1 := none }, none)
+        | none =>
+            match lsu.mshrAlloc s1.address with
+            | some idx =>
+                let pendingReq : PendingLoadRequest := {
+                  address := s1.address
+                  size := s1.size
+                  sign_extend := s1.sign_extend
+                  dest_tag := s1.dest_tag
+                }
+                ({ lsu with
+                   stage1 := none
+                   pendingLoad := some pendingReq
+                   mshr := { slots := fun i =>
+                     if i == idx then { valid := true, line_addr := s1.address } else lsu.mshr.slots i } },
+                 none)
+            | none =>
+                ({ lsu with stage1 := none }, none)  -- MSHR full: stall upstream
+
+/-- Legacy one-shot load: M1 then M2 in the same step (tests/behavioral).
+    The structural retime separates them with the stage registers. -/
 def LSUState.executeLoad
     (lsu : LSUState)
     (opcode : OpType)
-    (base : UInt64)      -- rs1 value (address base)
+    (base : UInt64)      -- rs1 value (base address)
     (offset : Int)       -- Immediate offset
     (dest_tag : Fin 64)  -- Destination physical register
     : LSUState × Option (Fin 64 × UInt64) :=
@@ -162,38 +305,7 @@ def LSUState.executeLoad
   if !lsu.canAcceptLoad then
     (lsu, none)
   else
-    -- Calculate effective address
-    let addr := calculateMemoryAddress base offset
-
-    -- Determine access size and sign extension
-    let (size, sign_ext) := match opcode with
-      | .LB  => (MemSize.Byte, true)       -- Load byte, sign-extend
-      | .LH  => (MemSize.Halfword, true)   -- Load halfword, sign-extend
-      | .LW  => (MemSize.Word, true)       -- Load word, sign-extend to 64b
-      | .LBU => (MemSize.Byte, false)      -- Load byte unsigned
-      | .LHU => (MemSize.Halfword, false)  -- Load halfword unsigned
-      | .LWU => (MemSize.Word, false)      -- Load word unsigned
-      | .LD  => (MemSize.Doubleword, false) -- Load doubleword
-      | _ => (MemSize.Doubleword, false)
-
-    -- Check store buffer for forwarding match (TSO: youngest match wins)
-    match lsu.storeBuffer.forwardCheck addr with
-    | some fwd_data =>
-        -- FORWARDING HIT: Return data immediately, broadcast on CDB
-        let processed_data := processLoadResponse fwd_data size sign_ext
-        (lsu, some (dest_tag, processed_data))
-
-    | none =>
-        -- FORWARDING MISS: Issue memory read request
-        let pendingReq : PendingLoadRequest := {
-          address := addr
-          size := size
-          sign_extend := sign_ext
-          dest_tag := dest_tag
-        }
-        let newLSU := { lsu with pendingLoad := some pendingReq }
-        -- Memory request will be handled by memory interface (next cycle)
-        (newLSU, none)
+    (lsu.executeLoadM1 opcode base offset dest_tag).executeLoadM2
 
 /-- Commit a store instruction (called when ROB commits).
 
@@ -257,6 +369,9 @@ def LSUState.processMemoryResponse
 -/
 def LSUState.fullFlush (lsu : LSUState) : LSUState :=
   { storeBuffer := lsu.storeBuffer.fullFlush
+    stage1 := none
+    stage2 := none
+    mshr := default
     pendingLoad := none
     memoryInterface := default
   }
@@ -369,6 +484,17 @@ def mkLSU : Circuit :=
   let sb_deq_bits := mkWires "sb_deq_bits" 130
   let sb_enq_idx := mkWires "sb_enq_idx" 3
   let sb_flush_tail := mkWires "sb_flush_tail" 3
+  let sb_replay_raw := Wire.mk "sb_replay_raw"
+
+  -- === Two-Stage Pipeline Registers (M1 -> M2, docs §4) ===
+  -- stage1: AGU (64-bit adder) output latched; stage2: forwarding driver
+  -- output latched for the CDB.  The SB's combinational compare/priority
+  -- sits between the two register layers, so no comb path spans M1+M2.
+  let lsu_stage1_addr_q := mkWires "lsu_stage1_addr_q" 64
+  let lsu_stage1_tag_q := mkWires "lsu_stage1_tag_q" 6
+  let lsu_stage2_fwd_q := mkWires "lsu_stage2_fwd_q" 64
+  let lsu_stage2_hit_q := Wire.mk "lsu_stage2_hit_q"
+  let lsu_replay_needed := Wire.mk "lsu_replay_needed"
 
   -- === Placeholder wires for StoreBuffer8 required inputs ===
   let sb_enq_en := Wire.mk "sb_enq_en"  -- Placeholder: would be driven by dispatch_is_store control logic
@@ -412,6 +538,7 @@ def mkLSU : Circuit :=
       (sb_enq_address.enum.map (fun ⟨i, w⟩ => (s!"enq_address_[{i}]", w))) ++
       (sb_enq_data.enum.map (fun ⟨i, w⟩ => (s!"enq_data_[{i}]", w))) ++
       (sb_enq_size.enum.map (fun ⟨i, w⟩ => (s!"enq_size_[{i}]", w))) ++
+      [("replay_needed", sb_replay_raw)] ++
       (fwd_address.enum.map (fun ⟨i, w⟩ => (s!"fwd_address_[{i}]", w))) ++
       (sb_fwd_data.enum.map (fun ⟨i, w⟩ => (s!"fwd_data_[{i}]", w))) ++
       (sb_fwd_size.enum.map (fun ⟨i, w⟩ => (s!"fwd_size_[{i}]", w))) ++
@@ -441,9 +568,19 @@ def mkLSU : Circuit :=
     [sb_deq_valid] ++
     sb_deq_bits ++
     sb_enq_idx ++
-    sb_flush_tail
+    sb_flush_tail ++
+    lsu_stage1_addr_q ++ lsu_stage1_tag_q ++
+    lsu_stage2_fwd_q ++ [lsu_stage2_hit_q, lsu_replay_needed]
 
-  let all_gates := agu_to_sb_gates
+  -- M1->M2 register layers (free-running pipeline captures)
+  let stage1_pipe_gates :=
+    (List.range 64).map (fun i => Gate.mkDFF agu_address[i]! clock reset lsu_stage1_addr_q[i]!) ++
+    (List.range 6).map (fun i => Gate.mkDFF agu_tag_out[i]! clock reset lsu_stage1_tag_q[i]!) ++
+    (List.range 64).map (fun i => Gate.mkDFF sb_fwd_data[i]! clock reset lsu_stage2_fwd_q[i]!) ++
+    [Gate.mkDFF sb_fwd_hit clock reset lsu_stage2_hit_q]
+  let replay_out_gate := Gate.mkBUF sb_replay_raw lsu_replay_needed
+
+  let all_gates := agu_to_sb_gates ++ stage1_pipe_gates ++ [replay_out_gate]
 
   let all_instances := [agu_inst, sb_inst]
 

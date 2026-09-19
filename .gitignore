@@ -110,3 +110,4 @@ Thumbs.db
 
 # TS viewer build output (compiled by CI: npx tsc -p viewer)
 viewer/dist/
+testbench/build/
