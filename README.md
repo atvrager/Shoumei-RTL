@@ -40,22 +40,26 @@ A complete pipeline from formal specification to verified, simulated RTL:
 
 ## Current Status
 
-**Complete `RV32IMAF_Zicsr_Zifencei` out-of-order Tomasulo CPU.**
-- Supported extensions: I, M (multiply/divide), A (LR/SC/AMO), F (single-precision floating point), Zicsr, Zifencei.
-- Verified with 112/112 tests passing in Verilator simulation and lock-step Spike cosimulation (including `fp_memory` and full RV32IMF suites).
+**Complete `RV64IMAFD_Zicsr_Zifencei` (RV64G) out-of-order Tomasulo CPU.**
+- Supported extensions: RV64I, M (64-bit multiply/divide), A (LR.W/SC.W/LR.D/SC.D/AMO), F (single-precision float), D (double-precision float), Zicsr (microcoded TrapSequencer + CSRFile), Zifencei.
+- 107/107 official RISC-V architectural compliance suite (`riscv-arch-test`) tests passing in Verilator simulation and lock-step Spike cosimulation.
+- 0 axioms in production proofs; verified with mutation testing.
+- ASIC flows: GF180MCU at 64 MHz (15.625 ns) and ASAP7 at 1.0 GHz (1.000 ns). See [docs/physical-design.md](docs/physical-design.md).
 
 | Category | Modules | Examples |
 |----------|---------|---------|
-| Arithmetic | 15 | FullAdder, RCA, Subtractor, ALU32 |
-| Comparison | 5 | Comparator (4/6/8/32-bit) |
+| Arithmetic | 17 | FullAdder, KoggeStone, Subtractor, ALU64, PipelinedMultiplier64, Divider64 |
+| Comparison | 5 | Comparator (4/6/8/32/64-bit) |
 | Logic/Shift | 5 | LogicUnit, Barrel Shifter |
-| Mux/Decoder | 14 | Decoder (1-6 bit), Mux (2:1 to 64:1) |
-| Arbitration | 3 | PriorityArbiter (2/4/8-input) |
-| Sequential | 16 | DFF, Register (1-91 bit), Queue |
-| RISC-V Pipeline | 31 | Decoder, RAT, FreeList, PhysRegFile, RS4, ROB, LSU, CPU top |
+| Floating-Point | 16 | FPAdder (S/D), FPMultiplier (S/D), FPDivider, FPSqrt, FPToInt, IntToFP |
+| Mux/Decoder | 14 | Decoder (1-6 bit), Mux (2:1 to 64:1), PriorityEncoder |
+| Arbitration | 3 | PriorityArbiter (2/4/8/64-input) |
+| Sequential | 16 | DFF, Register (1-91 bit), Queue, QueueN |
+| RISC-V Pipeline | 35 | Decoder, RAT, FreeList, PhysRegFile, RS4, ROB, LSU, CSRFile, TrapSequencer, CPU top |
 
 **Verification:**
 - Lean proofs (structural + behavioural) checked by `lake build`; coverage reported by `verification/proof-coverage.sh`
+- Zero axioms in production circuits (`verification/mutation-test.sh` validates proof sensitivity)
 - Modules that cannot be discharged in one step are justified compositionally from their sub-modules (`CompositionalCert`; dependencies derived from the circuit's instances)
 - Emitted SV elaborated by slang, simulated under Verilator, cosimulated lock-step against Spike
 
@@ -64,17 +68,19 @@ A complete pipeline from formal specification to verified, simulated RTL:
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Sequential DSL (DFF, Queue, Register) | Complete |
-| 1 | Arithmetic (Adder, Subtractor, Comparator, ALU32) | Complete |
-| 2 | RV32I Decoder (all formats) | Complete |
+| 1 | Arithmetic (Adder, Subtractor, Comparator, ALU64) | Complete |
+| 2 | RISC-V Decoder (RV64G all formats) | Complete |
 | 3 | Register Renaming (RAT, FreeList, PhysRegFile) | Complete |
 | 4 | Reservation Stations (RS4, Decoupled interfaces) | Complete |
 | 5 | Execution Units (ALU, Multiplier, Divider, Memory, FPU) | Complete |
 | 6 | ROB & Retirement (16-entry, in-order commit) | Complete |
 | 7 | Memory System (LSU, StoreBuffer, TSO ordering) | Complete |
-| 8 | CPU Integration (RV32IMAF_Zicsr_Zifencei Tomasulo CPU) | Complete |
-| 9 | RV32G / RV64G Roadmap (D-extension, XLEN parameterization) | In Progress |
+| 8 | CPU Integration (Tomasulo OOO CPU) | Complete |
+| 9 | Privileged & System (Zicsr CSRs, Zifencei, TrapSequencer) | Complete |
+| 10 | RV64G Migration (64-bit datapath, D-extension, 107/107 compliance) | Complete |
+| 11 | Physical Design (ASAP7 1.0 GHz, GF180MCU 64 MHz, Synopsys DC) | Complete |
 
-See [docs/roadmap-rv32g-rv64g.md](docs/roadmap-rv32g-rv64g.md) and [docs/rv32g-d-extension-plan.md](docs/rv32g-d-extension-plan.md) for roadmap and D-extension details.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for future directions.
 
 ## Quick Start
 
@@ -186,12 +192,15 @@ fails if the certificate names a module the generator does not emit.
 | [docs/FEATURES.md](docs/FEATURES.md) | What's built -- complete feature list |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What's planned -- near/medium/long-term |
 | [CLAUDE.md](CLAUDE.md) | Development guide -- procedures, workflows, conventions |
-| [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Detailed implementation roadmap |
 | [RISCV_TOMASULO_DESIGN.md](RISCV_TOMASULO_DESIGN.md) | Microarchitecture specification |
+| [RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) | Implementation phase ledger and milestone history |
+| [docs/physical-design.md](docs/physical-design.md) | OpenROAD, ASAP7 (1.0 GHz), GF180MCU (64 MHz), Synopsys DC |
+| [docs/cosimulation.md](docs/cosimulation.md) | Lock-step cosimulation via RVVI and Spike |
 | [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |
+| [docs/adding-an-extension.md](docs/adding-an-extension.md) | Step-by-step guide for adding ISA extensions |
 | [docs/verification-guide.md](docs/verification-guide.md) | Proofs, certificates, elaboration, sim and cosim |
 | [docs/proof-strategies.md](docs/proof-strategies.md) | Parameterized circuit proof techniques |
-| [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) | Interactive proof development |
+| [docs/lean-lsp-guide.md](docs/lean-lsp-guide.md) | Interactive proof development with Lean LSP |
 
 ## Technology Stack
 

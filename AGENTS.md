@@ -14,17 +14,18 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, and code generators that emit SystemVerilog, a flat netlist, ASAP7 tech-mapped gates and a cycle-accurate C++ model from the same proven source.
 
-**Current state:** 89 modules, complete `RV32IMAF_Zicsr_Zifencei`
-Tomasulo CPU (A extension: `LR.W`/`SC.W`/`AMO*.W`). See
-[RISCV_TOMASULO_PLAN.md](RISCV_TOMASULO_PLAN.md) for roadmap.
+**Current state:** 87 modules, complete `RV64IMAFD_Zicsr_Zifencei` (RV64G)
+Tomasulo CPU (microcoded TrapSequencer, LR/SC/AMO, double-precision FPU,
+107/107 architectural compliance pass, 0 axioms). ASIC flows for
+GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Key Toolchain Versions
 
 - **Lean 4:** v4.27.0 (controlled by `lean-toolchain`)
-- **Yosys:** system package (reads and elaborates the emitted SV in `verification/validate-sv.sh`)
+- **Yosys:** >= 0.33 (system package or `YosysHQ/setup-oss-cad-suite` in CI)
 - **slang:** `verification/slang-lint.py` elaborates every emitted SV file (IEEE 1800-2017)
 - **CIRCT/firtool:** 1.140.0 (for arcilator simulation backend; install via `scripts/install-circt.sh`)
-- **RISC-V GCC:** `riscv32-unknown-elf-gcc` at `~/.local/riscv32-elf/bin/` (add to PATH for test compilation)
+- **RISC-V GCC:** `riscv64-unknown-elf-gcc` / `riscv32-unknown-elf-gcc` (add to PATH for test compilation)
 
 ## Build Commands
 
@@ -123,6 +124,8 @@ python3 verification/slang-lint.py output/sv-from-lean # slang elaboration
 make systemverilog                                     # Yosys read/hierarchy check
 make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
 make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
+make synth-gf180                                       # Native Yosys GF180MCU synthesis (64 MHz)
+make synth-asap7                                       # Native Yosys ASAP7 synthesis (1.0 GHz)
 ./verification/smoke-test.sh                           # CI smoke tests
 ```
 

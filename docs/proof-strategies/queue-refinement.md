@@ -68,7 +68,7 @@ How does the circuit netlist guarantee this?
    - Since $\text{enq\_fire} = 0$, the MUX selects $\text{data\_reg}_i$.
    - At the clock tick, the DFF latches $\text{data\_next}_i = \text{data\_reg}_i$.
 
-This reasoning is formally verified for width 1, width 2, and factored width 32 in [`lean/Shoumei/Circuits/Sequential/QueueTemporalProofs.lean`](file:///home/atv/src/Shoumei-RTL/lean/Shoumei/Circuits/Sequential/QueueTemporalProofs.lean).
+This reasoning is formally verified for width 1, width 2, and factored width 32 in [`lean/Shoumei/Circuits/Sequential/QueueTemporalProofs.lean`](../../lean/Shoumei/Circuits/Sequential/QueueTemporalProofs.lean).
 
 ---
 

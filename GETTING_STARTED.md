@@ -1,259 +1,112 @@
 # Getting Started with Shoumei RTL
 
-This guide will help you set up and start using the Shoumei RTL framework.
+This guide walks through setting up the environment, compiling Lean proofs, generating synthesizable RTL, running simulations, and synthesizing ASIC targets.
 
-## What We've Built
+---
 
-A **complete build infrastructure scaffold** for formally verified hardware design:
+## Prerequisites & Environment Setup
 
-✅ **LEAN 4 Project** - DSL, semantics, theorems, and code generators (stubbed)
-✅ **Bootstrap Script** - Automatic installation of elan, LEAN, and dependencies
-✅ **Build Orchestration** - Makefile for end-to-end pipeline
-✅ **Simulation and Elaboration Checks** - Verilator testbench build, Spike cosimulation, slang/Yosys elaboration of the emitted SV
-✅ **Example Circuit** - Full adder defined in DSL
-
-## Quick Start
-
-### 1. Bootstrap the Environment
+### Automatic Setup
 
 ```bash
 make setup
 ```
 
-Or directly:
+This runs `python3 bootstrap.py` to install:
+- `elan` (Lean toolchain manager) and Lean 4 (v4.27.0 as pinned in `lean-toolchain`).
+- Python build dependencies (via `uv` or `pip`).
+
+Ensure your shell has the tools in `PATH`:
 ```bash
-python3 bootstrap.py
+export PATH="$HOME/.elan/bin:$HOME/.local/bin:$PATH"
 ```
 
-This will (all without requiring sudo/system packages):
-- Verify Python 3.11+
-- Install `uv` (Python package manager) to `~/.local/bin`
-- Install `elan` (LEAN toolchain manager) to `~/.elan/bin`
-- Install LEAN 4.15.0 via elan
+### Optional Simulation & Synthesis Tools
 
-### 2. Build the LEAN Code
+To run the full verification and synthesis pipeline:
+- **Verilator**: RTL simulation (`sudo apt install verilator`)
+- **slang**: IEEE 1800-2017 linting (`pip install pyslang`)
+- **Yosys**: Open-source synthesis (`sudo apt install yosys` or `YosysHQ/setup-oss-cad-suite`)
+- **RISC-V GCC**: `riscv64-unknown-elf-gcc` for test compilation (`scripts/setup-riscv-toolchain.sh`)
 
-```bash
-make lean
-# or directly: lake build
-```
+---
 
-Expected output: Build succeeds with warnings about `sorry` (stubbed proofs).
+## Build & Verification Workflow
 
-**Note:** The Makefile now checks for required tools and provides helpful error messages if they're missing.
-
-### 3. View the Project Structure
-
-```
-provable-rtl/
-├── bootstrap.py              # Environment setup script
-├── lean-toolchain            # LEAN version (v4.15.0)
-├── lakefile.lean             # Lake build configuration
-├── Makefile                  # Top-level build orchestration
-│
-├── lean/Shoumei/           # LEAN source code
-│   ├── DSL.lean              # Hardware DSL (Wire, Gate, Circuit)
-│   ├── Semantics.lean        # Operational semantics (stubbed)
-│   ├── Theorems.lean         # Proven properties (stubbed)
-│   ├── Codegen/
-│   │   ├── Common.lean       # Shared utilities
-│   │   ├── SystemVerilog.lean # SV generator (stubbed)
-│   │   └── CppSim.lean       # C++ simulation generator
-│   └── Examples/
-│       └── Adder.lean        # Full adder circuit
-│
-├── output/                   # Generated artifacts
-│   ├── sv-from-lean/         # SystemVerilog from LEAN (hierarchical)
-│   ├── sv-netlist/           # SystemVerilog from LEAN (flat netlist)
-│   ├── sv-asap7/             # ASAP7 tech-mapped gates
-│   └── cpp_sim/              # C++ simulation model
-│
-├── verification/
-│   ├── slang-lint.py         # slang elaboration of the emitted SV
-│   └── smoke-test.sh         # CI smoke tests
-│
-└── examples/
-    └── adder/
-        └── README.md         # Full adder documentation
-```
-
-## Build Targets
+### 1. Build Lean Proofs
 
 ```bash
-# Build LEAN code
-make lean
-
-# Run all code generators + export the compositional certificate registry
-make codegen
-
-# Elaborate the generated SystemVerilog with Yosys
-make systemverilog
-
-# Compile the C++ simulation
-make cppsim
-
-# Run entire pipeline
-make all
-
-# Clean all generated files
-make clean
-
-# Show help
-make help
+lake --no-ansi build
+# or: make lean
 ```
 
-## Current Status: Scaffolded and Ready
+Compiles all 87 hardware modules, behavioral models, and formal correctness proofs with zero warnings and zero axioms.
 
-### ✅ What Works
-
-1. **LEAN build system** - All modules compile successfully
-2. **Bootstrap script** - Automates environment setup
-3. **Project structure** - Complete directory layout
-4. **Build orchestration** - Makefile coordinates all steps
-5. **Simulation and elaboration checks** - Verilator simulation, Spike cosimulation, slang/Yosys elaboration of the emitted SV
-
-### 🚧 What's Stubbed (Ready to Implement)
-
-1. **DSL Semantics** (`Semantics.lean`)
-   - `evalGate` - Evaluate individual gates
-   - `evalCircuit` - Evaluate complete circuits
-   - Currently use `sorry` placeholders
-
-2. **Code Generators** (`Codegen/SystemVerilog.lean`)
-   - Generate from circuit structure (currently hardcoded templates)
-   - Need to traverse gates and produce actual code
-
-3. **Theorems** (`Theorems.lean`)
-   - Commutativity, associativity proofs
-   - Code generator correctness proofs
-   - Currently use `sorry` placeholders
-
-4. **Code Generation Executable**
-   - Need to add Lake executable target
-   - Wire up code generators to file I/O
-   - Generate actual .sv files
-
-## Next Steps (Bottom-Up Development)
-
-### Step 1: Implement Gate Evaluation (15-30 min)
-
-File: `lean/Shoumei/Semantics.lean`
-
-Replace `sorry` in `evalGate`:
-```lean
-def evalGate (g : Gate) (env : Env) : Bool :=
-  match g.gateType with
-  | GateType.AND =>
-      (env g.inputs[0]!) && (env g.inputs[1]!)
-  | GateType.OR =>
-      (env g.inputs[0]!) || (env g.inputs[1]!)
-  | GateType.NOT =>
-      !(env g.inputs[0]!)
-  | GateType.XOR =>
-      (env g.inputs[0]!) != (env g.inputs[1]!)
-```
-
-### Step 2: Implement Circuit Evaluation (30-60 min)
-
-File: `lean/Shoumei/Semantics.lean`
-
-Implement topological evaluation in `evalCircuit`.
-
-### Step 3: Implement SystemVerilog Generator (1-2 hours)
-
-File: `lean/Shoumei/Codegen/SystemVerilog.lean`
-
-Generate actual Verilog from circuit structure instead of hardcoded template.
-
-### Step 4: Add Code Generation Executable (30 min)
-
-File: `lakefile.lean`
-
-Add:
-```lean
-lean_exe codegen where
-  root := `Shoumei.Examples.Adder
-  supportInterpreter := true
-```
-
-Then create IO functions to write generated code to files.
-
-### Step 5: Prove Theorems (Ongoing)
-
-File: `lean/Shoumei/Theorems.lean`
-
-Replace `sorry` with actual proofs.
-
-## Example: Full Adder
-
-The full adder circuit is defined in `lean/Shoumei/Examples/Adder.lean`:
-
-```lean
-def fullAdderCircuit : Circuit :=
-  { name := "FullAdder"
-    inputs := [a, b, cin]
-    outputs := [sum, cout]
-    gates := [
-      Gate.mkXOR a b ab_xor,
-      Gate.mkXOR ab_xor cin sum,
-      Gate.mkAND a b ab_and,
-      Gate.mkAND cin ab_xor cin_ab,
-      Gate.mkOR ab_and cin_ab cout
-    ]
-  }
-```
-
-See `examples/adder/README.md` for full documentation.
-
-## Dependencies
-
-### Required
-
-- **Python 3.11+** - For bootstrap script
-- **elan** - LEAN toolchain manager (installed by bootstrap.py)
-- **LEAN 4.15.0** - Installed via elan
-
-### Optional (for full pipeline)
-
-- **Yosys** - SystemVerilog read/hierarchy check (`make systemverilog`)
-- **slang (`pyslang`)** - SystemVerilog elaboration (`pip install pyslang`)
-- **Verilator** - RTL simulation of the emitted SV
-- **RISC-V GCC** - Test compilation for the simulation suite
-
-## Troubleshooting
-
-### "lake: command not found"
+### 2. Generate RTL, Netlists, and C++ Simulation
 
 ```bash
-# Add elan to PATH
-export PATH="$HOME/.elan/bin:$PATH"
-
-# Or restart your shell after running bootstrap.py
+lake --no-ansi exe generate_all
+# or: make codegen
 ```
 
-### Build warnings about 'sorry'
+Emits all target artifacts from the proven Lean source:
+- `output/sv-from-lean/*.sv`: Hierarchical SystemVerilog.
+- `output/sv-netlist/*.sv`: Flat gate-level netlists.
+- `output/sv-asap7/*.sv`: ASAP7 7nm FinFET tech-mapped netlists.
+- `output/cpp_sim/*`: Cycle-accurate C++ simulation model.
+- `testbench/generated/*`: Testbench scaffolding.
 
-Expected! These are stubbed proofs. Replace with actual implementations.
+### 3. Elaborate & Lint RTL
 
-### "unused variable" warnings
+```bash
+python3 verification/slang-lint.py output/sv-from-lean  # IEEE 1800-2017 elaboration
+make systemverilog                                     # Yosys read/hierarchy validation
+```
 
-Expected! These are in stubbed code generators that will use variables later.
+### 4. Run Simulation & Cosimulation
 
-## Resources
+```bash
+# Build & run Verilator simulation
+make -C testbench sim
+make -C testbench run-all-tests
 
-- [LEAN 4 Documentation](https://lean-lang.org/)
-- [Lake Build System](https://github.com/leanprover/lean4/blob/master/src/lake/README.md)
-- [Verilator Documentation](https://verilator.org/guide/latest/)
+# Build & run 2-way lock-step cosimulation (RTL vs Spike)
+make -C testbench cosim
+make -C testbench run-cosim
+```
 
-## Contributing
+### 5. Run Open-Source ASIC Synthesis
 
-The scaffold is complete and ready for development. Pick any stubbed component and start implementing!
+```bash
+make synth-gf180  # Synthesize RV64 core to GF180MCU at 64 MHz (15.625 ns)
+make synth-asap7  # Synthesize RV64 core to ASAP7 7nm at 1.0 GHz (1.000 ns)
+```
 
-Priority areas:
-1. Semantics (enables testing)
-2. Code generators (enables verification)
-3. Theorems (proves correctness)
+---
 
-## License
+## Repository Structure
 
-See LICENSE file.
+```
+Shoumei-RTL/
+├── lean/Shoumei/           # Lean 4 source tree
+│   ├── DSL.lean            # Hardware DSL (Wire, Gate, CircuitInstance, Circuit)
+│   ├── Circuits/           # Combinational & Sequential circuit library
+│   ├── RISCV/              # RV64G Tomasulo CPU implementation & proofs
+│   ├── Codegen/            # Multi-target code generators (SV, Netlist, ASAP7, C++)
+│   └── Verification/       # Compositional certificate registry & proof manifests
+├── output/                 # Emitted RTL and C++ simulation artifacts
+├── physical/               # OpenROAD, ASAP7, GF180, and Synopsys DC synthesis scripts
+├── testbench/              # Verilator and cosimulation harnesses
+├── verification/           # Verification scripts (slang, proof coverage, mutation testing)
+└── docs/                   # Architecture, verification, and physical design guides
+```
+
+---
+
+## Where to Go Next
+
+- [docs/project-map.md](docs/project-map.md): Subsystem composition graph and proof coverage matrix.
+- [docs/adding-a-module.md](docs/adding-a-module.md): Step-by-step walkthrough for building a new verified circuit.
+- [docs/adding-an-extension.md](docs/adding-an-extension.md): Adding an ISA extension (decode, classify, execute, verify).
+- [docs/verification-guide.md](docs/verification-guide.md): Details on proofs, compositional certificates, and cosimulation.
+- [docs/physical-design.md](docs/physical-design.md): ASIC synthesis targets and OpenROAD flow.

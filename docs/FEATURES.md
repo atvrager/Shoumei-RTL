@@ -1,25 +1,36 @@
 # Features
 
-What Shoumei RTL can do today.
+What Shoumei RTL provides today.
 
-## Formally Verified RV32IM Out-of-Order CPU
+## Formally Verified RV64G Out-of-Order CPU
 
-Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 89 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, and Spike cosimulation.
+Complete Tomasulo-style out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 87 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, Spike lock-step cosimulation, and architectural compliance testing.
 
-### Pipeline Stages
+### Supported ISA: `RV64IMAFD_Zicsr_Zifencei` (RV64G)
 
-- **Fetch**: PC generation, instruction memory interface
-- **Decode**: Full RV32IM decoder (all 48 instruction types), immediate generation
-- **Rename**: 32-entry RAT, 64-entry free list, 64x32 physical register file, checkpoint/restore for flush recovery
-- **Issue/Dispatch**: 4-entry reservation stations with CDB snooping and operand capture, round-robin allocation, priority-based ready selection
+- **RV64I**: 64-bit base integer instruction set (including 32-bit `*W` word instructions).
+- **M Extension**: 64-bit integer multiplication and division (`MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`, plus `*W` variants).
+- **A Extension**: Atomic memory operations (`LR.W`/`SC.W`, `LR.D`/`SC.D`, and `AMO*.W`/`AMO*.D` swap, add, xor, and, or, min, max).
+- **F & D Extensions**: Single- and double-precision IEEE 754 floating-point execution, fused multiply-add, and FP-integer conversions.
+- **Zicsr**: Full CSR access (`CSRRW`, `CSRRS`, `CSRRC`, immediate forms) and machine-mode status registers.
+- **Zifencei**: Instruction fetch barrier with pipeline serialization.
+
+### Microarchitecture Pipeline Stages
+
+- **Fetch**: 64-bit PC generation, direct instruction memory bus, and cache-integrated wrapper (`CachedCPU_RV64...`).
+- **Decode**: Full RV64G instruction decoder and immediate generator.
+- **Rename**: Dual 32-entry RATs (Integer and Floating-Point), 64-entry free list, 64x64-bit physical register file, and single-cycle checkpoint/restore for branch misprediction and exception flush recovery.
+- **Issue/Dispatch**: 4-entry reservation stations across execution units with Common Data Bus (CDB) snooping, operand capture, round-robin allocation, and priority-based ready selection.
 - **Execute**:
-  - Integer ALU (add/sub/logic/shift/compare)
-  - 3-stage pipelined multiplier with metadata passthrough
-  - 32-cycle iterative divider
-  - Memory execution unit (AGU + load/store)
-- **Memory**: 8-entry store buffer with TSO ordering, store-to-load forwarding (youngest-match), sign extension for byte/halfword loads
-- **Retire**: 16-entry reorder buffer, in-order commit, flush on exception/misprediction
-- **CDB Arbitration**: Priority-based broadcast from execution units
+  - **Integer ALU**: 64-bit arithmetic, logic, shift, and compare; dedicated 32-bit W-subtraction/shift logic.
+  - **Multiplier**: 3-stage pipelined 64-bit multiplier (`PipelinedMultiplier64`) with metadata passthrough.
+  - **Divider**: Iterative 64-bit divider (`Divider64`) with signed/unsigned support.
+  - **Floating-Point Unit (`FPExecUnit_D`)**: Multi-stage pipelined FP adder, multiplier, iterative divider, square root unit, and FP-to-integer converters.
+  - **Memory Execution Unit**: AGU address calculation and load/store formatting.
+  - **Microcoded Trap Sequencer (`TrapSequencer`)**: Multi-cycle sequencer managing CSR operations, exceptions, traps, `MRET`, and pipeline draining for `FENCE.I`.
+- **Memory**: 8-entry store buffer (`StoreBuffer8`) with TSO ordering, youngest-match store-to-load forwarding, and byte mask tracking.
+- **Retire**: 16-entry 2-wide reorder buffer (`ROB16_W2`), in-order commit, and precise exception flush.
+- **CDB Arbitration**: Multi-port priority arbitration across integer, memory, and floating-point execution units.
 
 ### Decoupled Interfaces
 
@@ -27,73 +38,40 @@ Formal ready/valid handshaking abstraction (`DecoupledSource`/`DecoupledSink`) u
 
 ## Code Generation
 
-Every circuit generates its outputs from a single Lean definition:
+Every circuit generates all its implementation targets from a single Lean definition:
 
-| Output | Purpose |
-|--------|---------|
-| SystemVerilog (hierarchical) | Primary RTL for synthesis and simulation |
-| SystemVerilog (flat netlist) | Gate-level for analysis |
-| SystemVerilog (ASAP7) | Tech-mapped gates for the physical-design flow |
-| C++ Sim | Cycle-accurate C++ simulation model |
-| Testbenches | Generated testbench scaffolding |
+| Output | Path | Purpose |
+|--------|------|---------|
+| SystemVerilog (hierarchical) | `output/sv-from-lean/` | Primary synthesizable RTL |
+| SystemVerilog (flat netlist) | `output/sv-netlist/` | Gate-level netlist for equivalence checking |
+| ASAP7 Tech-Mapped SV | `output/sv-asap7/` | Technology-mapped netlist for 7nm FinFET |
+| C++ Sim | `output/cpp_sim/` | Cycle-accurate C++ simulation model |
+| Testbenches | `testbench/generated/` | Emitted testbench harnesses |
 
-Bus reconstruction groups indexed wires into arrays (`wire [31:0] data` instead of 32 individual wires), giving 60-75% fewer wire declarations.
+Bus reconstruction groups indexed scalar wires into clean vector ports (`logic [63:0] data`), reducing signal count and declarations by 60–75%.
 
-## Verification
+## Formal Verification
 
-Correctness rests on Lean proofs checked by `lake build`, on the compositional certificate registry, and on running the emitted RTL:
-
-- **Lean proofs**: modules carry structural facts (port, gate, and instance counts) and behavioural properties stated as Lean theorems checked by the kernel; `verification/proof-coverage.sh` reports coverage
-- **Compositional certificates**: a `CompositionalCert` names a module and its proof reference; `lake exe generate_all --export-certs` (run by `make codegen`) derives each certificate's dependencies from the circuit's instances and validates the registry against the emitted circuits, exiting non-zero on any inconsistency
-- **slang elaboration**: `python3 verification/slang-lint.py output/sv-from-lean` parses and elaborates every emitted SystemVerilog file
-- **Yosys read/hierarchy check**: `make systemverilog` runs `verification/validate-sv.sh output/sv-from-lean`
-- **Verilator simulation**: `make -C testbench sim` + `make -C testbench run-all-tests`
-- **Spike cosimulation**: `make -C testbench cosim` + `make -C testbench run-cosim`
-
-## Lean Proofs
-
-- Structural proofs (`native_decide`): port counts, gate counts, instance counts
-- Behavioral proofs: state machine correctness via concrete tests and `native_decide`
-- 110+ memory system tests (StoreBuffer, MemoryExecUnit, LSU)
-- 11 reservation station tests (issue, CDB broadcast, ready selection, round-robin)
-- TSO memory ordering correctness (store-to-load forwarding, youngest-match priority)
+- **Lean Proofs**: Structural proofs (`native_decide` for ports, gates, instances) and behavioral theorems (state transitions, order preservation, arithmetic equivalence) checked by `lake build`.
+- **Zero Axioms**: Production circuits contain 0 unproven axioms or `sorry` statements.
+- **Mutation Testing**: `verification/mutation-test.sh` validates that proof suites detect intentional circuit regressions.
+- **Compositional Certificates**: Large sequential modules carry a `CompositionalCert` validated at codegen time against emitted module instances.
 
 ## Simulation & Testing
 
-### Verilator Simulation
-- Full RTL simulation of all 8 ELF test programs
-- X-prop simulation mode for detecting uninitialized signal issues
-- FST trace support for waveform debugging
+### 1. Architectural Compliance
+- Passes **107/107** tests in the official RISC-V Architectural Compliance Test Suite (`riscv-arch-test`) for RV64I, RV64M, RV64A, RV64F, RV64D, and Privileged specifications.
 
-### C++ Simulation
-- Cycle-accurate simulation from Lean-generated C++ simulation
-- Same 8 ELF tests pass identically
+### 2. Lock-Step Cosimulation (RTL vs Spike)
+- CPU exposes `rvviTrace` output ports on instruction retirement.
+- Testbench compares retired PC, instruction word, and destination register state against Spike (`libriscv`) cycle-by-cycle.
 
-### 2-Way Lock-Step Cosimulation (RTL vs Spike)
-- RVVI-TRACE output ports on CPU report every instruction retirement
-- Spike ISA reference oracle via `libriscv` (custom `flat_simif_t` for flat memory at 0x0)
-- Per-retirement comparison of PC, instruction word, and destination register
-- Automatic fault isolation: catches Lean circuit bugs vs SV codegen bugs
-- 8/8 ELF tests pass in cosim mode
+### 3. RTL Simulation
+- Verilator testbench suite with full X-prop (unknown value propagation) and FST waveform tracing.
+- C++ simulation backend for high-speed cycle-accurate execution.
 
-### Test Programs
-- 8 bare-metal RV32IM ELF tests compiled with `riscv32-unknown-elf-gcc`
-- Tests cover: basic ALU, branches, memory load/store, M-extension multiply/divide
+## Physical Design & ASIC Flows
 
-## Physical Design
-
-OpenROAD Flow Scripts integration with ASAP7 7nm PDK for synthesis exploration.
-
-## CI Pipeline
-
-CI runs the following checks on every PR:
-- Lint (shellcheck, cppcheck, Python syntax, trailing whitespace)
-- Proof coverage analysis
-- Lean build + sorry check
-- Shoumei round-trip
-- Code generation (hierarchical SV + flat netlist + ASAP7 + C++ Sim + testbenches)
-- Slang IEEE 1800-2017 lint
-- Verilator simulation (standard + X-prop)
-- C++ simulation
-- Smoke tests
-- 2-way cosimulation (RTL vs Spike)
+- **GF180MCU**: Canonical target of 64 MHz (15.625 ns period) using open-source Yosys + ABC.
+- **ASAP7 7nm FinFET**: Canonical target of 1.0 GHz (1.000 ns period) with multi-corner cell mapping.
+- **Synopsys Design Compiler**: Production ASIC synthesis scripts (`physical/run-dc.tcl`).
