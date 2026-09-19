@@ -22,6 +22,7 @@ import argparse
 import colorsys
 import importlib.util
 import json
+import math
 import random
 import re
 import shutil
@@ -80,12 +81,21 @@ def load_gen():
 # ------------------------------------------------------------- tree builders
 
 def module_children(gen, analyzer, mod: str) -> list[dict]:
-    """One level of instance children, largest first (feeds deeper sunbursts)."""
+    """One level of instance children plus the module's own direct gates.
+
+    A module's size is direct gates + its instances; without a synthetic
+    "direct logic" node every ring under the module would show a gap.
+    """
+    direct, insts = analyzer.get_module(mod)
     kids = []
-    for sub, _inst in analyzer.get_module(mod)[1]:
+    for sub, _inst in insts:
         sz = analyzer.hier_gates(sub)
         if sz > 0:
             kids.append({"name": sub, "size": sz})
+    covered = sum(k["size"] for k in kids)
+    left = analyzer.hier_gates(mod) - covered
+    if left > 0:
+        kids.append({"name": f"direct logic ({left:,}g)", "size": left})
     kids.sort(key=lambda c: -c["size"])
     return kids
 
@@ -400,7 +410,7 @@ def flatten_city(tree: dict, gen) -> tuple[list[dict], list[dict]]:
     """Leaves for the 3D city: (leaf list, group legend). Each leaf carries color."""
     leaves, legend = [], []
     for g in tree.get("children") or [tree]:
-        color = pal_color(gen, g["name"], 0).replace("hsl(", "hsl(")  # keep as-is
+        color = pal_color(gen, g["name"], 0)
         legend.append({"name": g["name"], "size": g["size"], "color": color})
         if g.get("children"):
             for c in g["children"]:
@@ -567,6 +577,253 @@ def draw_city(gen, tree: dict, out: Path) -> None:
     out.write_text(html)
 
 
+# ---------------------------------------------------------- 3D hierarchy
+
+def layout_tree3d(tree: dict, gen) -> dict:
+    """Cone layout: depth layers, angular span proportional to share.
+
+    Layout done here (sunburst angle math on the client would duplicate it);
+    the JS scene just consumes flat arrays.
+    """
+    nodes: list[dict] = []
+    edges: list[list[int]] = []
+    total = tree["size"]
+    max_log = max(1.0, math.log10(1 + total))
+
+    def walk(node: dict, depth: int, a0: float, span: float,
+             parent: int | None, group: str) -> None:
+        idx = len(nodes)
+        mid = a0 + span / 2
+        ring_r = 2.6 + depth * 3.6
+        rad = 0.4 + 2.2 * math.log10(1 + node["size"]) / max_log
+        nodes.append({
+            "name": node["name"],
+            "size": node["size"],
+            "pct": round(node["size"] / total * 100, 2),
+            "x": round(math.sin(mid) * ring_r, 3),
+            "y": round(-depth * 3.2, 3),
+            "z": round(math.cos(mid) * ring_r, 3),
+            "r": round(min(rad, 3.0), 3),
+            "color": pal_color(gen, group, 0),
+            "group": group,
+        })
+        if parent is not None:
+            edges.append([parent, idx])
+        kids = node.get("children") or []
+        child_group = node["name"] if depth == 0 else group
+        a = a0
+        for k in kids:
+            kspan = (k["size"] / node["size"]) * span if node["size"] else 0.0
+            walk(k, depth + 1, a, kspan, idx, child_group)
+            a += kspan
+
+    walk(tree, 0, 0.0, 2 * math.pi, None, tree["name"])
+    legend = [{"name": c["name"], "size": c["size"], "color": pal_color(gen, c["name"], 0)}
+              for c in tree.get("children") or [tree]]
+    return {"nodes": nodes, "edges": edges, "legend": legend, "total": total}
+
+
+TREE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__ — Hierarchy tree</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #101418; color: #c8cdd3; overflow: hidden; }
+  #info { position: absolute; top: 12px; left: 12px; z-index: 10; background: rgba(0,0,0,.55);
+          padding: 8px 14px; border-radius: 8px; font-size: 13px; line-height: 1.5; }
+  #info b { color: #fff; }
+  #legend { position: absolute; bottom: 12px; left: 12px; z-index: 10; background: rgba(0,0,0,.55);
+            padding: 8px 14px; border-radius: 8px; font-size: 12px; max-height: 45vh; overflow-y: auto; }
+  #legend div { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+  #tooltip { position: absolute; z-index: 20; display: none; background: rgba(0,0,0,.85);
+             padding: 6px 10px; border-radius: 6px; font-size: 12px; pointer-events: none;
+             border: 1px solid #444; max-width: 340px; line-height: 1.45; }
+  #tooltip b { color: #fff; }
+  #panel { position: absolute; right: 12px; top: 12px; z-index: 10; display: none; background: rgba(0,0,0,.85);
+           border: 1px solid #2a3038; border-radius: 8px; padding: 10px 14px; font-size: 12px; max-width: 300px;
+           max-height: 70vh; overflow-y: auto; line-height: 1.5; }
+  #panel b { color: #fff; }
+  a { color: #8ab4ff; }
+</style>
+</head>
+<body>
+<div id="info"><b>__TITLE__</b><br>__COUNT__ __UNIT__ &middot; drag to orbit, scroll to zoom, hover to trace a path, click to pin</div>
+<div id="legend">__LEGEND__</div>
+<div id="tooltip"></div>
+<div id="panel"></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const DATA = __DATA__;
+const N = DATA.nodes;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101418);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 2000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 1.15));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(60, 120, 40);
+scene.add(sun);
+
+const spheres = [];
+const tubes = [];
+for (const n of N) {
+  const geo = new THREE.SphereGeometry(n.r, 20, 16);
+  const mat = new THREE.MeshLambertMaterial({ color: n.color, transparent: true });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(n.x, n.y, n.z);
+  mesh.userData = { idx: spheres.length };
+  scene.add(mesh);
+  spheres.push(mesh);
+}
+const parentOf = new Map();
+for (const [p, c] of DATA.edges) {
+  parentOf.set(c, p);
+  const a = new THREE.Vector3(N[p].x, N[p].y, N[p].z);
+  const b = new THREE.Vector3(N[c].x, N[c].y, N[c].z);
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  const len = a.distanceTo(b);
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.028, len, 6),
+    new THREE.MeshLambertMaterial({ color: 0x4a5568, transparent: true, opacity: 0.85 })
+  );
+  m.position.copy(mid);
+  m.lookAt(b);
+  m.rotateX(Math.PI / 2);
+  scene.add(m);
+  tubes.push(m);
+}
+
+// exposed for automated checks
+window.__shoumei = { nodes: spheres.length, edges: DATA.edges.length, total: DATA.total, unit: DATA.unit };
+const box = new THREE.Box3().setFromObject(spheres[0] ?? new THREE.Object3D(), true);
+for (const s of spheres) box.expandByObject(s);
+const center = box.getCenter(new THREE.Vector3());
+const size = box.getSize(new THREE.Vector3()).length() || 20;
+camera.position.set(center.x + size * 0.9, center.y + size * 0.6, center.z + size * 0.9);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const tooltip = document.getElementById("tooltip");
+const panel = document.getElementById("panel");
+let active = -1;
+
+function descendants(i) {
+  const out = [i];
+  for (let k = 0; k < out.length; k++) {
+    for (const [p, c] of DATA.edges) if (p === out[k] && !out.includes(c)) out.push(c);
+  }
+  return new Set(out);
+}
+function ancestors(i) {
+  const out = new Set([i]);
+  let cur = i;
+  while (parentOf.has(cur)) { cur = parentOf.get(cur); out.add(cur); }
+  return out;
+}
+function applyFocus(i) {
+  const focus = i >= 0 ? new Set([...ancestors(i), ...descendants(i)]) : null;
+  for (const s of spheres) {
+    const on = focus === null || focus.has(s.userData.idx);
+    s.material.opacity = on ? 1 : 0.10;
+  }
+  for (const t of tubes) t.material.opacity = 0.9;
+  for (let e = 0; e < DATA.edges.length; e++) {
+    const [p, c] = DATA.edges[e];
+    if (focus !== null && !(focus.has(p) && focus.has(c))) tubes[e].material.opacity = 0.06;
+  }
+}
+function fmt(n) { return n.toLocaleString("en-US"); }
+
+renderer.domElement.addEventListener("pointermove", (ev) => {
+  pointer.x = (ev.clientX / innerWidth) * 2 - 1;
+  pointer.y = -(ev.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(spheres)[0];
+  if (hit) {
+    const i = hit.object.userData.idx;
+    const d = N[i];
+    active = i;
+    applyFocus(i);
+    tooltip.style.display = "block";
+    tooltip.style.left = Math.min(ev.clientX + 14, innerWidth - 350) + "px";
+    tooltip.style.top = Math.max(ev.clientY - 30, 8) + "px";
+    tooltip.innerHTML = "<b>" + d.name + "</b><br>" + fmt(d.size) + " " + DATA.unit +
+      " (" + d.pct + "%) <span style='color:#9aa'>&middot; " + d.group + "</span>";
+  } else {
+    active = -1;
+    applyFocus(-1);
+    tooltip.style.display = "none";
+  }
+});
+renderer.domElement.addEventListener("click", () => {
+  if (active < 0) { panel.style.display = "none"; return; }
+  const d = N[active];
+  const kids = [];
+  for (const [p, c] of DATA.edges) if (p === active) kids.push(N[c]);
+  kids.sort((a, b) => b.size - a.size);
+  panel.style.display = "block";
+  panel.innerHTML = "<b>" + d.name + "</b> — " + fmt(d.size) + " " + DATA.unit + " (" + d.pct + "%)<br>" +
+    (kids.length ? "<span style='color:#9aa'>children:</span><br>" + kids.slice(0, 30)
+      .map(k => "&nbsp;&nbsp;" + k.name + " <span style='color:#9aa'>" + fmt(k.size) + "</span>").join("<br>")
+      : "<span style='color:#9aa'>leaf</span>") +
+    (kids.length > 30 ? "<br>&nbsp;&nbsp;<span style='color:#9aa'>… " + (kids.length - 30) + " more</span>" : "");
+  panel.style.top = "12px";
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def draw_tree3d(gen, tree: dict, out: Path) -> None:
+    """3D hierarchy HTML: cone layout, spheres sized by share, parent edges."""
+    data = layout_tree3d(tree, gen)
+    if not data["nodes"]:
+        raise ValueError("tree needs at least one node")
+
+    legend_html = "".join(
+        f'<div><span class="swatch" style="background:{l["color"]}"></span>'
+        f'{l["name"]} &mdash; {l["size"]:,} ({l["size"] / data["total"] * 100:.1f}%)</div>'
+        for l in data["legend"])
+    html = (TREE_TEMPLATE
+            .replace("__TITLE__", tree["name"].replace("&", "&amp;").replace("<", "&lt;"))
+            .replace("__COUNT__", f'{data["total"]:,}')
+            .replace("__UNIT__", tree["unit"])
+            .replace("__LEGEND__", legend_html)
+            .replace("__DATA__", json_safe(data)))
+    out.write_text(html)
+
+
 # ---------------------------------------------------------------------- hub
 
 HUB_TEMPLATE = """<!DOCTYPE html>
@@ -608,7 +865,7 @@ HUB_TEMPLATE = """<!DOCTYPE html>
 
 
 def source_card(title: str, tm_svg: str, tm_png: str, sb_svg: str, sb_png: str,
-                city: str, note: str) -> str:
+                city: str, tree3d: str, note: str) -> str:
     """Card with crisp SVG figures (click for full-size PNG) and links."""
     fig_tm = (f'<a class="fig" href="{tm_png}"><img src="{tm_svg}" alt="{title} treemap"></a>'
               if tm_svg else f'<a class="fig" href="{tm_png}"><img src="{tm_png}" alt="{title} treemap"></a>')
@@ -618,7 +875,7 @@ def source_card(title: str, tm_svg: str, tm_png: str, sb_svg: str, sb_png: str,
     links = f'<a href="{tm_svg}">treemap SVG</a> · <a href="{tm_png}">treemap PNG</a>'
     if sb_svg:
         links += f' · <a href="{sb_svg}">sunburst SVG</a> · <a href="{sb_png}">sunburst PNG</a>'
-    links += f' · <a href="{city}">3D gate city</a>'
+    links += f' · <a href="{city}">3D gate city</a> · <a href="{tree3d}">3D hierarchy</a>'
     return (f'<div class="card"><h3>{title}</h3><div class="note">{note}</div>'
             f'{fig_tm}{fig_sb}<div class="meta">{links}</div></div>')
 
@@ -633,7 +890,7 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
         parts.append(source_card(
             "RV64G OoO CPU — subsystem + leaf labels",
             "architecture-treemap.svg", "architecture-treemap.png",
-            "", "", "city-lean.html",
+            "", "", "city-lean.html", "tree-lean.html",
             "click a figure for full size · labels readable at any zoom"))
 
     for name, tree in trees.items():
@@ -642,7 +899,7 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
         parts.append(f"<h2>{title}</h2>")
         parts.append(source_card(title, f"treemap-{name}.svg", f"treemap-{name}.png",
                                  f"sunburst-{name}.svg", f"sunburst-{name}.png",
-                                 f"city-{name}.html", note))
+                                 f"city-{name}.html", f"tree-{name}.html", note))
 
     # Kanata pipeline traces published by the Test group
     kanata_dir = out_dir / "kanata"
@@ -718,7 +975,8 @@ def main(argv: list[str] | None = None) -> int:
         draw_treemap(gen, t, out_dir / f"treemap-{name}.png")
         draw_sunburst(gen, t, out_dir / f"sunburst-{name}.svg", out_dir / f"sunburst-{name}.png")
         draw_city(gen, t, out_dir / f"city-{name}.html")
-        print(f"rendered {name}: treemap, sunburst, city")
+        draw_tree3d(gen, t, out_dir / f"tree-{name}.html")
+        print(f"rendered {name}: treemap, sunburst, city, tree")
 
     # Hero: reuse the detailed treemap painter, but patch plt.xkcd away so
     # the SVG keeps real <text> (the xkcd stroke effect forces glyph paths,
