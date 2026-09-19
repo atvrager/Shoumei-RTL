@@ -847,7 +847,8 @@ HUB_TEMPLATE = """<!DOCTYPE html>
   header { padding: 20px 28px; border-bottom: 1px solid #232a32; }
   header h1 { margin: 0 0 4px; color: #fff; }
   header p { margin: 0; font-size: 14px; }
-  main { padding: 20px 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); gap: 22px; align-items: start; }
+  main { padding: 20px 28px; display: grid; grid-template-columns: 1fr; gap: 22px; align-items: start; max-width: 1720px; margin: 0 auto; }
+  main.grid { grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); max-width: none; }
   h2 { color: #fff; font-size: 17px; margin: 0; grid-column: 1 / -1; }
   .card { border: 1px solid #232a32; border-radius: 10px; background: #141a21; padding: 14px; }
   .card h3 { margin: 0 0 6px; color: #fff; font-size: 15px; }
@@ -864,11 +865,19 @@ HUB_TEMPLATE = """<!DOCTYPE html>
 <body>
 <header>
   <h1>Shoumei RTL &mdash; Architecture visualizations</h1>
-  <p>Generated from Lean circuits and Yosys netlists by <code>scripts/gen-architecture-visuals.py</code> on every merge to <code>main</code>.</p>
+  <p>Generated from Lean circuits and Yosys netlists by <code>scripts/gen-architecture-visuals.py</code> on every merge to <code>main</code>.
+  <span style="float:right">
+    <button onclick="setView('')">Wide</button>
+    <button onclick="setView('grid')">Grid</button>
+  </span></p>
 </header>
-<main>
+<main id="gallery">
   __SECTIONS__
 </main>
+<script>
+  // Wide (readable figures) by default; grid for an overview
+  function setView(mode) { document.getElementById("gallery").className = mode; }
+</script>
 </body>
 </html>
 """
