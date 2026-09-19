@@ -66,7 +66,6 @@ DFF_MARK = ("df", "dlx", "lat")  # PDK cell names containing these are sequentia
 TREEMAP_W, TREEMAP_H = 16.0, 9.0
 CITY_W, CITY_H = 100.0, 62.0
 CITY_HEIGHT_MAX = 22.0
-ROOT_R, RING1_R, RING2_R = 1.0, 1.7, 2.45  # sunburst radii
 
 
 def load_gen():
@@ -80,6 +79,17 @@ def load_gen():
 
 # ------------------------------------------------------------- tree builders
 
+def module_children(gen, analyzer, mod: str) -> list[dict]:
+    """One level of instance children, largest first (feeds deeper sunbursts)."""
+    kids = []
+    for sub, _inst in analyzer.get_module(mod)[1]:
+        sz = analyzer.hier_gates(sub)
+        if sz > 0:
+            kids.append({"name": sub, "size": sz})
+    kids.sort(key=lambda c: -c["size"])
+    return kids
+
+
 def tree_hier(gen, top: str) -> dict:
     """Subsystem tree: same 100% hierarchical accounting as the treemap."""
     analyzer = gen.ModuleAnalyzer(LEAN_DIR)
@@ -88,7 +98,11 @@ def tree_hier(gen, top: str) -> dict:
 
     children = []
     for group, items in subs.items():
-        leaves = [{"name": item["name"], "size": item["size"]} for item in items]
+        leaves = [{
+            "name": item["name"],
+            "size": item["size"],
+            "children": module_children(gen, analyzer, item["name"]),
+        } for item in items]
         children.append({
             "name": group,
             "size": sum(i["size"] for i in leaves),
@@ -181,6 +195,22 @@ def size_units(size: int, unit: str) -> str:
     return f"{size:,} {unit}"
 
 
+def style_ctx(plt, style: str, *, scale: float = 0.85, length: float = 90,
+              randomness: float = 1.4):
+    """xkcd sketch context, or null for the clean vector twin.
+
+    plt.xkcd applies a stroke path-effect, which forces SVG text to glyph
+    outlines (13 MB hero). The clean twin renders the same layout with
+    svg.fonttype=none: small SVGs with selectable, zoomable <text>.
+    """
+    import contextlib
+
+    if style == "xkcd":
+        return plt.xkcd(scale=scale, length=length, randomness=randomness)
+    plt.rcParams["svg.fonttype"] = "none"
+    return contextlib.nullcontext()
+
+
 def pal_color(gen, key: str, shade: int) -> str:
     """Stable pastel per group: PALETTE bg when known, else deterministic HSV."""
     if key in gen.PALETTE:
@@ -200,119 +230,135 @@ def json_safe(data: dict) -> str:
 # ----------------------------------------------------------------- treemap
 
 def draw_treemap(gen, tree: dict, out: Path) -> None:
-    """Two-level squarified treemap: group rects, then leaves inside groups."""
+    """Two-level squarified treemap; xkcd PNG plus clean vector SVG twin."""
     import matplotlib.pyplot as plt
     import matplotlib.patches as mp
 
     seed_xkcd()
-    with plt.xkcd(scale=0.85, length=90, randomness=1.4):
-        fig, ax = plt.subplots(figsize=(16, 9), dpi=100)
-        groups = tree["children"] if tree.get("children") else [tree]
-        rects = gen.squarify([{"name": g["name"], "size": g["size"]} for g in groups],
-                             0, 0, TREEMAP_W, TREEMAP_H)
+    for style, target, dpi in (
+        ("xkcd", out, 150),
+        ("clean", out.with_suffix(".svg"), None),
+    ):
+        with style_ctx(plt, style):
+            fig, ax = plt.subplots(figsize=(16, 9), dpi=100)
+            fig.patch.set_facecolor("#101418")
+            ax.set_facecolor("#101418")
+            groups = tree["children"] if tree.get("children") else [tree]
+            rects = gen.squarify([{"name": g["name"], "size": g["size"]} for g in groups],
+                                 0, 0, TREEMAP_W, TREEMAP_H)
 
-        for g, gx, gy, gw, gh in rects:
-            gc = pal_color(gen, g["name"], 0)
-            ax.add_patch(mp.FancyBboxPatch((gx + 0.05, gy + 0.05), gw - 0.1, gh - 0.1,
-                         boxstyle="round,pad=0.01", facecolor=gc, edgecolor="#555555", linewidth=1.0))
-            pct = g["size"] / tree["size"] * 100
-            if gw >= 2.8:
-                ax.text(gx + 0.15, gy + gh - 0.35, f"{g['name']}\n{size_units(g['size'], tree['unit'])} ({pct:.1f}%)",
-                        fontsize=10.5, fontweight="bold", color="#222222", va="top")
+            for g, gx, gy, gw, gh in rects:
+                gc = pal_color(gen, g["name"], 0)
+                ax.add_patch(mp.FancyBboxPatch((gx + 0.05, gy + 0.05), gw - 0.1, gh - 0.1,
+                             boxstyle="round,pad=0.01", facecolor=gc, edgecolor="#555555", linewidth=1.0))
+                pct = g["size"] / tree["size"] * 100
+                if gw >= 2.8:
+                    ax.text(gx + 0.15, gy + gh - 0.35, f"{g['name']}\n{size_units(g['size'], tree['unit'])} ({pct:.1f}%)",
+                            fontsize=10.5, fontweight="bold", color="#222222", va="top")
 
-            if g.get("children"):
-                rects_in = gen.squarify(g["children"], gx + 0.15, gy + 0.5, gw - 0.3, gh - 0.65)
-                for c, cx, cy, cw, ch in rects_in:
-                    if cw * ch < 0.12 or cw < 0.45 or ch < 0.3:
-                        continue
-                    cc = pal_color(gen, g["name"], 1)
-                    ax.add_patch(mp.FancyBboxPatch((cx + 0.03, cy + 0.03), cw - 0.06, ch - 0.06,
-                                 boxstyle="round,pad=0.01", facecolor=cc, edgecolor="#444444", linewidth=0.6))
-                    cpct = c["size"] / tree["size"] * 100
-                    fs = 8.5 if cw > 2.4 else 7.0 if cw > 1.3 else 0
-                    if fs:
-                        ax.text(cx + cw / 2, cy + ch / 2,
-                                f"{c['name']}\n{c['size']:,} ({cpct:.1f}%)",
-                                ha="center", va="center", fontsize=fs,
-                                fontweight="bold" if fs >= 7.6 else "normal",
-                                color="#1a1a1a", multialignment="center")
+                if g.get("children"):
+                    rects_in = gen.squarify(g["children"], gx + 0.15, gy + 0.5, gw - 0.3, gh - 0.65)
+                    for c, cx, cy, cw, ch in rects_in:
+                        if cw * ch < 0.12 or cw < 0.45 or ch < 0.3:
+                            continue
+                        cc = pal_color(gen, g["name"], 1)
+                        ax.add_patch(mp.FancyBboxPatch((cx + 0.03, cy + 0.03), cw - 0.06, ch - 0.06,
+                                     boxstyle="round,pad=0.01", facecolor=cc, edgecolor="#444444", linewidth=0.6))
+                        cpct = c["size"] / tree["size"] * 100
+                        fs = 8.5 if cw > 2.4 else 7.0 if cw > 1.3 else 0
+                        if fs:
+                            ax.text(cx + cw / 2, cy + ch / 2,
+                                    f"{c['name']}\n{c['size']:,} ({cpct:.1f}%)",
+                                    ha="center", va="center", fontsize=fs,
+                                    fontweight="bold" if fs >= 7.6 else "normal",
+                                    color="#1a1a1a", multialignment="center")
+                else:
+                    if gw >= 1.4 and gh >= 0.55:
+                        ax.text(gx + gw / 2, gy + gh / 2, f"{g['name']} ({g['size']:,})",
+                                ha="center", va="center", fontsize=7.5, color="#1a1a1a")
+
+            ax.set_title(f"{tree['name']} — {size_units(tree['size'], tree['unit'])}",
+                         fontsize=15, pad=12, color="#e6e9ee")
+            ax.set_xlim(0, TREEMAP_W)
+            ax.set_ylim(0, TREEMAP_H)
+            ax.axis("off")
+            ax.set_aspect("equal")
+
+            if dpi:
+                fig.savefig(target, bbox_inches="tight", pad_inches=0.1, dpi=dpi)
             else:
-                if gw >= 1.4 and gh >= 0.55:
-                    ax.text(gx + gw / 2, gy + gh / 2, f"{g['name']} ({g['size']:,})",
-                            ha="center", va="center", fontsize=7.5, color="#1a1a1a")
-
-        ax.set_title(f"{tree['name']} — {size_units(tree['size'], tree['unit'])}",
-                     fontsize=15, pad=12)
-        ax.set_xlim(0, TREEMAP_W)
-        ax.set_ylim(0, TREEMAP_H)
-        ax.axis("off")
-        ax.set_aspect("equal")
-
-    fig.savefig(out, bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
-
+                fig.savefig(target, bbox_inches="tight", pad_inches=0.1)
+            plt.close(fig)
 
 # ---------------------------------------------------------------- sunburst
 
 def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
-    """Baobab-style rings: root disk, one ring per level, span proportional to size."""
+    """Baobab rings, one ring per tree level; xkcd PNG plus clean SVG twin."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Wedge
 
     seed_xkcd()
-    with plt.xkcd(scale=0.8, length=80, randomness=1.3):
-        fig, ax = plt.subplots(figsize=(12, 12), dpi=100)
-        children = tree.get("children") or [tree]
-        total = tree["size"]
+    max_depth = 6      # rings beyond this collapse into the deepest drawn ring
+    ring_w = 0.72
+    root_r = 1.0
+    label_min = (14.0, 8.0, 5.0, 3.5, 2.5)  # min wedge angle (deg) to label per level
 
-        # Root disk + total in the center
-        ax.add_patch(Wedge((0, 0), ROOT_R, 0, 360, facecolor="#4a4a4a", edgecolor="white", linewidth=1.5))
-        ax.text(0, 0, f"{tree['name'].split(' — ')[-1]}\n{size_units(total, tree['unit'])}",
-                ha="center", va="center", fontsize=10, fontweight="bold", color="white")
-
-        a0 = 0.0
-        for g in children:
-            span = (g["size"] / total) * 2 * np.pi
-            if g["size"] <= 0 and span <= 0:
+    def draw_items(ax, items, a0, r0, depth, total, group) -> None:
+        """Wedges for one level; children recurse into the next ring."""
+        a = a0
+        for it in items:
+            span = (it["size"] / total) * 2 * np.pi
+            if span <= 0:
                 continue
-            ax.add_patch(Wedge((0, 0), RING1_R, np.degrees(a0), np.degrees(a0 + span),
-                         width=RING1_R - ROOT_R, facecolor=pal_color(gen, g["name"], 0),
-                         edgecolor="white", linewidth=1.0))
-            mid = a0 + span / 2
-            rm = (ROOT_R + RING1_R) / 2
-            if span > np.radians(14):
-                ax.text(rm * np.cos(mid), rm * np.sin(mid), g["name"],
-                        ha="center", va="center", fontsize=9, fontweight="bold", color="#222222")
-            elif span > np.radians(5):
-                ax.text(rm * np.cos(mid) * 0.92, rm * np.sin(mid) * 0.92, g["name"],
-                        ha="center", va="center", fontsize=6.5, color="#222222")
+            r1 = r0 + ring_w
+            ax.add_patch(Wedge((0, 0), r1, np.degrees(a), np.degrees(a + span),
+                         width=ring_w, facecolor=pal_color(gen, group, depth & 1),
+                         edgecolor="#101418", linewidth=0.8))
+            deg = np.degrees(span)
+            if depth < len(label_min) and deg > label_min[depth]:
+                mid = a + span / 2
+                rm = r0 + ring_w / 2
+                fs = 9.0 if depth == 0 else 7.0 if depth == 1 else 6.0
+                ax.text(rm * np.cos(mid), rm * np.sin(mid), it["name"],
+                        ha="center", va="center", fontsize=fs, color="#1a1a1a")
+            kids = it.get("children") or []
+            if kids and depth + 1 < max_depth:
+                draw_items(ax, kids, a, r1, depth + 1, total, group)
+            a += span
 
-            # Second ring: grandchildren occupy the parent's angular span
-            leaves = g.get("children") or []
-            if leaves:
-                b0 = a0
-                for c in leaves:
-                    lspan = (c["size"] / g["size"]) * span if g["size"] else 0.0
-                    ax.add_patch(Wedge((0, 0), RING2_R, np.degrees(b0), np.degrees(b0 + lspan),
-                                 width=RING2_R - RING1_R, facecolor=pal_color(gen, g["name"], 1),
-                                 edgecolor="white", linewidth=0.8))
-                    if lspan > np.radians(8):
-                        lmid = b0 + lspan / 2
-                        lr = (RING1_R + RING2_R) / 2
-                        ax.text(lr * np.cos(lmid), lr * np.sin(lmid), c["name"],
-                                ha="center", va="center", fontsize=6, color="#222222", rotation=0)
-                    b0 += lspan
-            a0 += span
+    for style, target, fmt, dpi in (
+        ("xkcd", out_png, "png", 150),
+        ("clean", out_svg, "svg", None),
+    ):
+        with style_ctx(plt, style, scale=0.8, length=80, randomness=1.3):
+            fig, ax = plt.subplots(figsize=(12, 12), dpi=100)
+            fig.patch.set_facecolor("#101418")
+            ax.set_facecolor("#101418")
+            children = tree.get("children") or [tree]
+            total = tree["size"]
 
-        ax.set_title(f"{tree['name']} — {size_units(total, tree['unit'])}", fontsize=14, pad=10)
-        ax.set_xlim(-RING2_R * 1.06, RING2_R * 1.06)
-        ax.set_ylim(-RING2_R * 1.06, RING2_R * 1.06)
-        ax.axis("off")
-        ax.set_aspect("equal")
+            # Root disk + total in the center (light hub, dark text)
+            ax.add_patch(Wedge((0, 0), root_r, 0, 360, facecolor="#e9edf1", edgecolor="#101418", linewidth=2.0))
+            ax.text(0, 0, f"{tree['name'].split(' — ')[-1]}\n{size_units(total, tree['unit'])}",
+                    ha="center", va="center", fontsize=10.5, fontweight="bold", color="#1a1a1a")
 
-    fig.savefig(out_svg, format="svg", bbox_inches="tight", pad_inches=0.1)
-    fig.savefig(out_png, format="png", dpi=110, bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
+            for g in children:
+                span = (g["size"] / total) * 2 * np.pi
+                if span > 0:
+                    draw_items(ax, [g], 0.0, root_r, 0, total, g["name"])
+
+            max_r = root_r + ring_w * (max_depth - 0.5)
+            ax.set_title(f"{tree['name']} — {size_units(total, tree['unit'])}", fontsize=14, pad=10, color="#e6e9ee")
+            ax.set_xlim(-max_r * 1.07, max_r * 1.07)
+            ax.set_ylim(-max_r * 1.07, max_r * 1.07)
+            ax.axis("off")
+            ax.set_aspect("equal")
+
+            if dpi:
+                fig.savefig(target, format=fmt, dpi=dpi, bbox_inches="tight", pad_inches=0.1)
+            else:
+                fig.savefig(target, format=fmt, bbox_inches="tight", pad_inches=0.1)
+            plt.close(fig)
 
 
 def flatten_city(tree: dict, gen) -> tuple[list[dict], list[dict]]:
@@ -499,13 +545,15 @@ HUB_TEMPLATE = """<!DOCTYPE html>
   header { padding: 20px 28px; border-bottom: 1px solid #232a32; }
   header h1 { margin: 0 0 4px; color: #fff; }
   header p { margin: 0; font-size: 14px; }
-  main { padding: 20px 28px; }
-  section { margin-bottom: 26px; }
-  h2 { color: #fff; font-size: 17px; margin: 0 0 8px; }
-  .gallery { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
-  .card { border: 1px solid #232a32; border-radius: 10px; background: #141a21; padding: 12px; max-width: 640px; }
-  .card img { width: 100%; border-radius: 6px; display: block; }
-  .card .meta { margin: 8px 2px 0; font-size: 13px; }
+  main { padding: 20px 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); gap: 22px; align-items: start; }
+  h2 { color: #fff; font-size: 17px; margin: 0; grid-column: 1 / -1; }
+  .card { border: 1px solid #232a32; border-radius: 10px; background: #141a21; padding: 14px; }
+  .card h3 { margin: 0 0 6px; color: #fff; font-size: 15px; }
+  .card a.fig { display: block; border-radius: 6px; overflow: hidden; border: 1px solid #2a3038; }
+  .card a.fig img { width: 100%; height: auto; display: block; }
+  .card a.fig:hover { border-color: #4a5568; }
+  .card .note { margin: 6px 2px 8px; font-size: 12.5px; color: #9aa4b0; }
+  .card .meta { font-size: 13px; }
   a { color: #8ab4ff; }
   table { border-collapse: collapse; font-size: 13px; }
   td { padding: 3px 10px 3px 0; }
@@ -524,35 +572,42 @@ HUB_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def hub_section(title: str, body: str) -> str:
-    return f"<section><h2>{title}</h2>{body}</section>"
-
-
-def leaf_links(name: str, png: str, svg: str, city: str) -> str:
-    return (f'<div class="card"><img src="{png}" alt="{name}">'
-            f'<div class="meta"><a href="{png}">PNG</a> · '
-            f'<a href="{svg}">SVG (sunburst)</a> · '
-            f'<a href="{city}">3D gate city</a></div></div>')
+def source_card(title: str, tm_svg: str, tm_png: str, sb_svg: str, sb_png: str,
+                city: str, note: str) -> str:
+    """Card with crisp SVG figures (click for full-size PNG) and links."""
+    fig_tm = (f'<a class="fig" href="{tm_png}"><img src="{tm_svg}" alt="{title} treemap"></a>'
+              if tm_svg else f'<a class="fig" href="{tm_png}"><img src="{tm_png}" alt="{title} treemap"></a>')
+    fig_sb = ""
+    if sb_svg:
+        fig_sb = f'<a class="fig" style="margin-top:8px" href="{sb_png}"><img src="{sb_svg}" alt="{title} sunburst"></a>'
+    links = f'<a href="{tm_svg}">treemap SVG</a> · <a href="{tm_png}">treemap PNG</a>'
+    if sb_svg:
+        links += f' · <a href="{sb_svg}">sunburst SVG</a> · <a href="{sb_png}">sunburst PNG</a>'
+    links += f' · <a href="{city}">3D gate city</a>'
+    return (f'<div class="card"><h3>{title}</h3><div class="note">{note}</div>'
+            f'{fig_tm}{fig_sb}<div class="meta">{links}</div></div>')
 
 
 def draw_hub(trees: dict, out_dir: Path, gen) -> None:
-    sections = []
+    parts: list[str] = []
 
     # Hero: the detailed CPU treemap regenerated by gen-architecture-diagram.py
-    hero = out_dir / "architecture-treemap.png"
+    hero = out_dir / "architecture-treemap.svg"
     if hero.exists():
-        body = leaf_links("Detailed CPU gate treemap (subsystem + leaf labels)",
-                          "architecture-treemap.png", "architecture-treemap.svg",
-                          "city-lean.html")
-        sections.append(hub_section("Detailed CPU gate treemap (XKCD)", body))
+        parts.append("<h2>Detailed CPU gate treemap (XKCD)</h2>")
+        parts.append(source_card(
+            "RV64G OoO CPU — subsystem + leaf labels",
+            "architecture-treemap.svg", "architecture-treemap.png",
+            "", "", "city-lean.html",
+            "click a figure for full size · labels readable at any zoom"))
 
     for name, tree in trees.items():
         title = SOURCE_TITLE.get(name, name)
-        body = leaf_links(title, f"treemap-{name}.png", f"sunburst-{name}.svg",
-                          f"city-{name}.html")
-        body += (f'<p style="font-size:13px;margin:6px 2px">{tree["size"]:,} '
-                 f'{tree["unit"]} total</p>')
-        sections.append(hub_section(title, body))
+        note = f'{tree["size"]:,} {tree["unit"]} total · click a figure for full size'
+        parts.append(f"<h2>{title}</h2>")
+        parts.append(source_card(title, f"treemap-{name}.svg", f"treemap-{name}.png",
+                                 f"sunburst-{name}.svg", f"sunburst-{name}.png",
+                                 f"city-{name}.html", note))
 
     # Kanata pipeline traces published by the Test group
     kanata_dir = out_dir / "kanata"
@@ -568,13 +623,32 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
                     "(<code>viewer/viewer.ts</code>). "
                     "Open a raw <code>.txt</code> in <a href='https://github.com/anders-energy/konata'>Konata</a> for the classic view.</p>"
                     f"<table>{rows}</table>")
-            sections.append(hub_section("Pipeline traces (Kanata)", body))
+            parts.append("<h2>Pipeline traces (Kanata)</h2>")
+            parts.append(f'<div class="card">{body}</div>')
 
     out_dir.joinpath("index.html").write_text(
-        HUB_TEMPLATE.replace("__SECTIONS__", "\n".join(sections)))
+        HUB_TEMPLATE.replace("__SECTIONS__", "\n".join(parts)))
 
 
 # --------------------------------------------------------------------- main
+
+def draw_hero_svg(gen, out_svg: Path) -> None:
+    """Clean vector twin of the detailed CPU treemap (house text, small file)."""
+    import contextlib
+    import matplotlib.pyplot as plt
+
+    analyzer = gen.ModuleAnalyzer(LEAN_DIR)
+    subsystems = gen.build_cpu_hierarchy(analyzer, TOP_DEFAULT)
+    total = analyzer.hier_gates(TOP_DEFAULT)
+
+    real_xkcd = plt.xkcd
+    plt.rcParams["svg.fonttype"] = "none"
+    plt.xkcd = lambda *_a, **_k: contextlib.nullcontext()
+    try:
+        gen.draw_treemap(subsystems, total, out_svg)
+    finally:
+        plt.xkcd = real_xkcd
+
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate architecture visualizations for Pages.")
@@ -611,11 +685,13 @@ def main(argv: list[str] | None = None) -> int:
         draw_city(gen, t, out_dir / f"city-{name}.html")
         print(f"rendered {name}: treemap, sunburst, city")
 
-    # Hero images come from the existing treemap generator when present
-    for f in ("architecture-treemap.png", "architecture-treemap.svg"):
-        src = ROOT / "output" / f
-        if src.exists():
-            shutil.copyfile(src, out_dir / f)
+    # Hero: reuse the detailed treemap painter, but patch plt.xkcd away so
+    # the SVG keeps real <text> (the xkcd stroke effect forces glyph paths,
+    # which would bloat the hub copy past 13 MB). PNG stays the xkcd one.
+    hero_png = ROOT / "output" / "architecture-treemap.png"
+    if hero_png.exists():
+        shutil.copyfile(hero_png, out_dir / "architecture-treemap.png")
+        draw_hero_svg(gen, out_dir / "architecture-treemap.svg")
 
     draw_hub(tree, out_dir, gen)
     print(f"hub: {out_dir / 'index.html'}")
