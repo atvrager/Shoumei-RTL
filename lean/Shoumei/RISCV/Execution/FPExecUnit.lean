@@ -1432,8 +1432,25 @@ def mkFPExecUnitD : Circuit :=
     [Gate.mkOR misc_valid_sp misc_valid_dp misc_valid]
 
   -- ══════════════════════════════════════════════
+  -- 1-Cycle Pipeline Register for Misc/Converter Path
+  -- Decouples RS issue + 64-bit converter from CDB mux
+  -- ══════════════════════════════════════════════
+  let misc_reg_result := makeIndexedWires "misc_reg_res" 64
+  let misc_reg_tag := makeIndexedWires "misc_reg_tag" 6
+  let misc_reg_exc := makeIndexedWires "misc_reg_exc" 5
+  let misc_reg_valid := Wire.mk "misc_reg_valid"
+  let misc_reg_writes_int := Wire.mk "misc_reg_rint"
+
+  let misc_pipe_dffs :=
+    (List.range 64 |>.map fun i => Gate.mkDFF (misc_result[i]!) clock reset_misc_dp (misc_reg_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkDFF (dest_tag[i]!) clock reset_misc_dp (misc_reg_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkDFF (misc_exc[i]!) clock reset_misc_dp (misc_reg_exc[i]!)) ++
+    [Gate.mkDFF misc_valid clock reset_misc_dp misc_reg_valid,
+     Gate.mkDFF (Wire.mk "active_writes_int") clock reset_misc_dp misc_reg_writes_int]
+
+  -- ══════════════════════════════════════════════
   -- 5-Level Priority Writeback MUX Tree
-  -- Level 1: MUX(misc, adder, adder_valid) -> t1
+  -- Level 1: MUX(misc_reg, adder, adder_valid) -> t1
   -- Level 2: MUX(t1, mul, mul_valid) -> t2
   -- Level 3: MUX(t2, fma, fma_valid) -> t3
   -- Level 4: MUX(t3, div, div_valid) -> t4
@@ -1444,10 +1461,10 @@ def mkFPExecUnitD : Circuit :=
   let t1_exc := makeIndexedWires "t1_exc" 5
   let t1_valid := Wire.mk "t1_valid"
   let mux1_gates :=
-    (List.range 64 |>.map fun i => Gate.mkMUX (misc_result[i]!) (add_result[i]!) add_valid (t1_result[i]!)) ++
-    (List.range 6 |>.map fun i => Gate.mkMUX (dest_tag[i]!) (add_tag[i]!) add_valid (t1_tag[i]!)) ++
-    (List.range 5 |>.map fun i => Gate.mkMUX (misc_exc[i]!) (add_exc[i]!) add_valid (t1_exc[i]!)) ++
-    [Gate.mkOR misc_valid add_valid t1_valid]
+    (List.range 64 |>.map fun i => Gate.mkMUX (misc_reg_result[i]!) (add_result[i]!) add_valid (t1_result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkMUX (misc_reg_tag[i]!) (add_tag[i]!) add_valid (t1_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkMUX (misc_reg_exc[i]!) (add_exc[i]!) add_valid (t1_exc[i]!)) ++
+    [Gate.mkOR misc_reg_valid add_valid t1_valid]
 
   let t2_result := makeIndexedWires "t2_res" 64
   let t2_tag := makeIndexedWires "t2_tag" 6
@@ -1514,7 +1531,8 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkOR add_valid mul_valid (Wire.mk "pout_am_d"),
     Gate.mkOR fma_valid sqrt_valid (Wire.mk "pout_fs_d"),
     Gate.mkOR (Wire.mk "pout_am_d") (Wire.mk "pout_fs_d") (Wire.mk "pout_amfs_d"),
-    Gate.mkOR (Wire.mk "pout_amfs_d") div_valid (Wire.mk "any_pout_d"),
+    Gate.mkOR (Wire.mk "pout_amfs_d") div_valid (Wire.mk "pout_amfsd_d"),
+    Gate.mkOR (Wire.mk "pout_amfsd_d") misc_reg_valid (Wire.mk "any_pout_d"),
     Gate.mkOR (Wire.mk "busy_core_d") (Wire.mk "any_pout_d") busy
   ]
 
@@ -1534,8 +1552,8 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkOR sqrt_valid (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
     Gate.mkOR (Wire.mk "rint_d_t2") (Wire.mk "rint_d_t3") (Wire.mk "rint_d_t4"),
     Gate.mkNOT (Wire.mk "rint_d_t4") (Wire.mk "no_override_d"),
-    Gate.mkAND misc_valid (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
-    Gate.mkAND (Wire.mk "rint_d_t5") (Wire.mk "active_writes_int") result_is_int
+    Gate.mkAND misc_reg_valid (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
+    Gate.mkAND (Wire.mk "rint_d_t5") misc_reg_writes_int result_is_int
   ]
 
   let all_gates :=
@@ -1543,7 +1561,7 @@ def mkFPExecUnitD : Circuit :=
     s1_hi_ones_gates ++ s2_hi_ones_gates ++ s3_hi_ones_gates ++
     s1_int_gates ++ [s1_byp_gate] ++ unbox_gates ++
     add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
-    is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++
+    is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++ misc_pipe_dffs ++
     long_op_gates ++ long_conv_dec_gates ++ long_src1_gates ++
     mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
     pipe_collision_gates ++ pipe_active_or_gate ++ busy_gate ++ int_result_gates

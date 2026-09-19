@@ -98,10 +98,17 @@ if {[sizeof_collection [all_outputs]] > 0} {
     set_output_delay -clock $clk_name [expr {$clk_period * 0.1}] [all_outputs]
 }
 
-# False paths on reset
+# False paths and ideal network on reset
 if {[sizeof_collection [get_ports -quiet reset]] > 0} {
     set_false_path -from [get_ports reset]
+    set_ideal_network [get_ports reset]
 }
+
+# Pre-CTS ideal clock network for logic synthesis
+set_ideal_network [get_ports $clk_name]
+
+# Suppress pre-CTS high-fanout delay estimation warnings on clock/reset/scan
+suppress_message TIM-134
 
 # Separate path groups for clear timing analysis
 group_path -name INPUTS -from [all_inputs]

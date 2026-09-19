@@ -247,7 +247,7 @@ def mkFPMultiplierD : Circuit :=
      Gate.mkDFF s1_zero_res clock reset s2_zero_res,
      Gate.mkDFF s1_not_special clock reset s2_not_special]
 
-  -- Stage 2 Combinational: Final CPA + Normalize + Round + Pack
+  -- Stage 2 Combinational: Final CPA + Normalization
   let product := makeIndexedWires "muld_prod" 106
   let cpa_inst : CircuitInstance := {
     moduleName := "KoggeStoneAdder106NoCin"
@@ -262,26 +262,74 @@ def mkFPMultiplierD : Circuit :=
   let is_shift := product[105]!
   let mant_shifted := (List.range 52).map fun i => product[53 + i]!
   let mant_unshifted := (List.range 52).map fun i => product[52 + i]!
-  let pre_mant := makeIndexedWires "muld_pre_mant" 52
-  let pre_mant_gates := mkMuxBank mant_unshifted mant_shifted is_shift pre_mant
+  let pre_mant_comb := makeIndexedWires "muld_pre_mant_c" 52
+  let pre_mant_gates := mkMuxBank mant_unshifted mant_shifted is_shift pre_mant_comb
 
-  let g_bit := Wire.mk "muld_g"
-  let r_bit := Wire.mk "muld_r"
-  let g_gate := Gate.mkMUX (product[51]!) (product[52]!) is_shift g_bit
-  let r_gate := Gate.mkMUX (product[50]!) (product[51]!) is_shift r_bit
+  let g_bit_comb := Wire.mk "muld_g_c"
+  let r_bit_comb := Wire.mk "muld_r_c"
+  let g_gate := Gate.mkMUX (product[51]!) (product[52]!) is_shift g_bit_comb
+  let r_gate := Gate.mkMUX (product[50]!) (product[51]!) is_shift r_bit_comb
 
   let s_extra := Wire.mk "muld_s_extra"
   let s_extra_gate := Gate.mkAND is_shift (product[50]!) s_extra
 
   let low50 := (List.range 50).map fun i => product[i]!
   let (s_low50, s_low50_gates) := mkOrTree "muld_low50" low50
-  let s_bit := Wire.mk "muld_s"
-  let s_gate := Gate.mkOR s_low50 s_extra s_bit
+  let s_bit_comb := Wire.mk "muld_s_c"
+  let s_gate := Gate.mkOR s_low50 s_extra s_bit_comb
 
   -- Exponent adjustment by shift: exp_adj = s2_expub + is_shift
   let exp_inc_13 := [is_shift] ++ (List.replicate 12 zero)
-  let exp_adj13 := makeIndexedWires "muld_eadj" 13
-  let (exp_adj_gates, _) := mkKoggeStoneAdd s2_expub exp_inc_13 zero exp_adj13 "muld_eadj"
+  let exp_adj13_comb := makeIndexedWires "muld_eadj_c" 13
+  let (exp_adj_gates, _) := mkKoggeStoneAdd s2_expub exp_inc_13 zero exp_adj13_comb "muld_eadj"
+
+  -- Stage 3 Pipeline Registers: Latch intermediate normalized product and status
+  let s3_pre_mant := makeIndexedWires "s3_pre_mant" 52
+  let s3_g := Wire.mk "s3_g"
+  let s3_r := Wire.mk "s3_r"
+  let s3_s := Wire.mk "s3_s"
+  let s3_exp_adj13 := makeIndexedWires "s3_exp_adj13" 13
+  let s3_sign := Wire.mk "s3_sign"
+  let s3_rm := makeIndexedWires "s3_rm" 3
+  let s3_tag := makeIndexedWires "s3_tag" 6
+  let s3_valid := Wire.mk "s3_valid"
+  let s3_nv := Wire.mk "s3_nv"
+  let s3_nan_res := Wire.mk "s3_nan_res"
+  let s3_inf_res := Wire.mk "s3_inf_res"
+  let s3_zero_res := Wire.mk "s3_zero_res"
+  let s3_not_special := Wire.mk "s3_not_special"
+
+  let s3_dffs :=
+    mkDFFBank pre_mant_comb s3_pre_mant clock reset ++
+    [Gate.mkDFF g_bit_comb clock reset s3_g,
+     Gate.mkDFF r_bit_comb clock reset s3_r,
+     Gate.mkDFF s_bit_comb clock reset s3_s] ++
+    mkDFFBank exp_adj13_comb s3_exp_adj13 clock reset ++
+    [Gate.mkDFF s2_sign clock reset s3_sign] ++
+    mkDFFBank s2_rm s3_rm clock reset ++
+    mkDFFBank s2_tag s3_tag clock reset ++
+    [Gate.mkDFF s2_valid clock reset s3_valid,
+     Gate.mkDFF s2_nv clock reset s3_nv,
+     Gate.mkDFF s2_nan_res clock reset s3_nan_res,
+     Gate.mkDFF s2_inf_res clock reset s3_inf_res,
+     Gate.mkDFF s2_zero_res clock reset s3_zero_res,
+     Gate.mkDFF s2_not_special clock reset s3_not_special]
+
+  -- Stage 3 Combinational: Rounding + Format Packing + Special Cases
+  let pre_mant := s3_pre_mant
+  let g_bit := s3_g
+  let r_bit := s3_r
+  let s_bit := s3_s
+  let exp_adj13 := s3_exp_adj13
+  let s2_sign := s3_sign
+  let s2_rm := s3_rm
+  let s2_tag := s3_tag
+  let s2_valid := s3_valid
+  let s2_nv := s3_nv
+  let s2_nan_res := s3_nan_res
+  let s2_inf_res := s3_inf_res
+  let s2_zero_res := s3_zero_res
+  let s2_not_special := s3_not_special
 
   -- Rounding mode decoding
   let rm0 := s2_rm[0]!
@@ -456,7 +504,7 @@ def mkFPMultiplierD : Circuit :=
     exp_add_gates ++ exp_sub_gates ++ pp_gates ++ csa_tree_gates ++
     s2_dffs ++ pre_mant_gates ++
     [g_gate, r_gate, s_extra_gate] ++ s_low50_gates ++ [s_gate] ++
-    exp_adj_gates ++ rm_inv_gates ++ rm_dec_gates ++ rnd_cond_gates ++
+    exp_adj_gates ++ s3_dffs ++ rm_inv_gates ++ rm_dec_gates ++ rnd_cond_gates ++
     mant_inc_gates ++ final_mant_gates ++ exp_final_gates ++ norm_res_gates ++
     exp11_all1_gates ++ ovf_unf_gates ++ sel_gates ++
     l1_gates ++ l2_gates ++ l3_gates ++
