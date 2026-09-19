@@ -1376,8 +1376,9 @@ private def portAddrExpr (ctx : Context) (c : Circuit) (wires : List Wire) : Str
 def generateRAMFallback (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
   let depthMinusOne := ram.depth - 1
   let clkRef := wireRef ctx c ram.clock
-  -- RAM array declaration (block-style for Verilator)
-  let arrayDecl := s!"  /* verilator ram_style=\"block\" */"
+  -- RAM array declaration (block-style intent; hints rejected by some
+  -- Verilator builds, keep the plain reg array)
+  let arrayDecl := s!"  // reg-array fallback (SRAM macro branch above)"
   let arrayDecl2 := s!"  reg [{ram.width - 1}:0] {ram.name} [0:{depthMinusOne}];"
   let writePorts := ram.writePorts.enum.map (fun (_, wp) =>
     let enRef := wireRef ctx c wp.en

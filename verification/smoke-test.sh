@@ -170,6 +170,16 @@ else
     fail "Found ${AXIOM_COUNT} unproven axioms in Lean proofs"
 fi
 
+# Cache behavior conformance (emitted SV vs reference model)
+echo ""
+echo "==> Cache behavior conformance"
+if make -C testbench cache-model-test > /tmp/cache-conformance.log 2>&1; then
+    pass "Cache conformance (L1D SV vs reference)"
+else
+    fail "Cache conformance (see /tmp/cache-conformance.log)"
+    tail -20 /tmp/cache-conformance.log || true
+fi
+
 SORRY_COUNT=$(grep -rnE '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
 if [ "$SORRY_COUNT" -eq 0 ]; then
     pass "Zero sorry/admit occurrences in Lean proofs"
