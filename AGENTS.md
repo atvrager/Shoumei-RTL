@@ -12,10 +12,10 @@ Instructions and procedures for working on the Shoumei RTL project.
 
 ## Project Summary
 
-Formally verified hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, and code generators that emit SystemVerilog, a flat netlist, ASAP7 tech-mapped gates and a cycle-accurate C++ model from the same proven source.
+"Formally verified" hardware design: circuits defined in Lean 4 DSL, properties proven with dependent types, and code generators that emit SystemVerilog, a flat netlist, ASAP7 tech-mapped gates and a cycle-accurate C++ model from the same proven source.
 
 **Current state:** 87 modules, complete `RV64IMAFD_Zicsr_Zifencei` (RV64G)
-Tomasulo CPU (microcoded TrapSequencer, LR/SC/AMO, double-precision FPU,
+Out-of-Order (OoO) CPU (microcoded TrapSequencer, LR/SC/AMO, double-precision FPU,
 107/107 architectural compliance pass, 0 axioms). ASIC flows for
 GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 

@@ -1,6 +1,6 @@
 # Hazard Pattern Catalog
 
-Catalog of microarchitecture-targeted test patterns for the Shoumei RV32IM Tomasulo CPU. Each pattern is designed to exercise a specific pipeline hazard or corner case, guided by the Lean behavioral models.
+Catalog of microarchitecture-targeted test patterns for the Shoumei RV64G out-of-order CPU. Each pattern is designed to exercise a specific pipeline hazard or corner case, guided by the Lean behavioral models.
 
 For the overall test generation architecture, see [test-generation.md](test-generation.md). For the cosimulation flow, see [cosimulation.md](cosimulation.md).
 

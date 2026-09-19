@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml/badge.svg)](https://github.com/atvrager/Shoumei-RTL/actions/workflows/ci.yml)
 
-**Formally verified hardware design with Lean 4 theorem proving.**
+**"Formally verified" hardware design with Lean 4 theorem proving.**
 
 > Shoumei (証明, Japanese: proof) -- a hardware design framework where circuits are defined in Lean 4, properties are proven with dependent types, and code generators emit SystemVerilog, a flat netlist, ASAP7 gates and a cycle-accurate C++ model from the same proven source.
 
@@ -40,13 +40,12 @@ A complete pipeline from formal specification to verified, simulated RTL:
 
 ## Current Status
 
-**Complete `RV64IMAFD_Zicsr_Zifencei` (RV64G) out-of-order Tomasulo CPU.**
+**Complete `RV64IMAFD_Zicsr_Zifencei` (RV64G) "formally verified" out-of-order CPU.**
 - Supported extensions: RV64I, M (64-bit multiply/divide), A (LR.W/SC.W/LR.D/SC.D/AMO), F (single-precision float), D (double-precision float), Zicsr (microcoded TrapSequencer + CSRFile), Zifencei.
 - 107/107 official RISC-V architectural compliance suite (`riscv-arch-test`) tests passing in Verilator simulation and lock-step Spike cosimulation.
 - 0 axioms in production proofs; verified with mutation testing.
 - ASIC flows: GF180MCU at 64 MHz (15.625 ns) and ASAP7 at 1.0 GHz (1.000 ns). See [docs/physical-design.md](docs/physical-design.md).
-
-![Shoumei Tomasulo RV64G Microarchitecture Gate Treemap](docs/architecture-treemap.svg)
+![Shoumei RV64G OoO CPU Microarchitecture Gate Treemap](docs/architecture-treemap.png)
 
 | Category | Modules | Examples |
 |----------|---------|---------|
@@ -77,7 +76,7 @@ A complete pipeline from formal specification to verified, simulated RTL:
 | 5 | Execution Units (ALU, Multiplier, Divider, Memory, FPU) | Complete |
 | 6 | ROB & Retirement (16-entry, in-order commit) | Complete |
 | 7 | Memory System (LSU, StoreBuffer, TSO ordering) | Complete |
-| 8 | CPU Integration (Tomasulo OOO CPU) | Complete |
+| 8 | CPU Integration (Out-of-Order CPU) | Complete |
 | 9 | Privileged & System (Zicsr CSRs, Zifencei, TrapSequencer) | Complete |
 | 10 | RV64G Migration (64-bit datapath, D-extension, 107/107 compliance) | Complete |
 | 11 | Physical Design (ASAP7 1.0 GHz, GF180MCU 64 MHz, Synopsys DC) | Complete |
@@ -196,8 +195,8 @@ fails if the certificate names a module the generator does not emit.
 | [docs/FEATURES.md](docs/FEATURES.md) | What's built -- complete feature list |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What's planned -- near/medium/long-term |
 | [CLAUDE.md](CLAUDE.md) | Development guide -- procedures, workflows, conventions |
-| [docs/tomasulo-design.md](docs/tomasulo-design.md) | RV64G microarchitecture specification |
-| [docs/tomasulo-plan.md](docs/tomasulo-plan.md) | Implementation phase ledger and milestone history |
+| [docs/ooo-design.md](docs/ooo-design.md) | RV64G microarchitecture specification |
+| [docs/ooo-plan.md](docs/ooo-plan.md) | Implementation phase ledger and milestone history |
 | [docs/physical-design.md](docs/physical-design.md) | OpenROAD, ASAP7 (1.0 GHz), GF180MCU (64 MHz), Synopsys DC |
 | [docs/cosimulation.md](docs/cosimulation.md) | Lock-step cosimulation via RVVI and Spike |
 | [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |

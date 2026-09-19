@@ -87,6 +87,7 @@ venv/
 
 # Layout render outputs
 *.png
+!docs/architecture-treemap.png
 
 # Synthesis outputs
 syn_out*/

@@ -1,5 +1,5 @@
 /-
-RISCV/Retirement/ROB.lean - Reorder Buffer for RV32I Tomasulo CPU
+RISCV/Retirement/ROB.lean - Reorder Buffer for RV32I Out-of-Order CPU
 
 The ROB tracks in-flight instructions and enforces in-order commit.
 It is a 16-entry circular buffer with three key interfaces:
@@ -8,7 +8,7 @@ It is a 16-entry circular buffer with three key interfaces:
 2. **CDB Snoop** (from Execution Units): Mark instruction complete when CDB tag matches
 3. **Commit** (to Architectural State): Retire head entry in program order
 
-Architecture: Tomasulo-style
+Architecture: Out-of-Order Execution
 - CDB writes directly to Physical Register File (not stored in ROB)
 - ROB only tracks completion status, not result data
 - At commit: update committed RAT, deallocate old physical register

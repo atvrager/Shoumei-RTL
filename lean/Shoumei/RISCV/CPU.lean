@@ -1,5 +1,5 @@
 /-
-Top-Level CPU Integration - RV32 W=2 Dual-Issue Tomasulo Processor
+Top-Level CPU Integration - RV32 W=2 Dual-Issue Out-of-Order Processor
 -/
 
 import Shoumei.RISCV.Config

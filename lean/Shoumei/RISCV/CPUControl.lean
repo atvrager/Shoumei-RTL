@@ -1,7 +1,7 @@
 /-
 CPU Control Logic - Pipeline Stall and Flush Generation
 
-This module implements centralized control logic for the Tomasulo pipeline:
+This module implements centralized control logic for the out-of-order pipeline:
 1. Stall generation - OR of all structural hazards
 2. Flush handling - Pipeline recovery from branch misprediction/exception
 3. Stage enable signals - Coordination across pipeline stages

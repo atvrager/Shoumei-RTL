@@ -1,5 +1,5 @@
 /-
-RISCV/Memory/LSU.lean - Load-Store Unit for RV32I Tomasulo CPU
+RISCV/Memory/LSU.lean - Load-Store Unit for RV32I Out-of-Order CPU
 
 The LSU integrates memory operations into the out-of-order pipeline:
 - Address calculation via MemoryExecUnit

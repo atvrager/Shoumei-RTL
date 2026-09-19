@@ -2,31 +2,59 @@
 """gen-architecture-diagram.py - Generate an XKCD-style architecture treemap in SVG.
 
 Generates a squarified treemap visualizing the hierarchical gate distribution of the
-Shoumei Tomasulo RISC-V CPU, derived directly from the emitted SystemVerilog modules.
+Shoumei RISC-V out-of-order CPU, derived directly from the emitted SystemVerilog modules.
 
 Usage:
-  scripts/gen-architecture-diagram.py [--out docs/architecture-treemap.svg] [--png]
+  scripts/gen-architecture-diagram.py [--out output/architecture-treemap.svg] [--png]
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import random
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
+
 # Suppress matplotlib font discovery noise before importing matplotlib
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
+import matplotlib  # noqa: E402
+matplotlib.use("Agg")
+import matplotlib.font_manager as fm  # noqa: E402
 import matplotlib.patches as patches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SV_DIR = ROOT / "output" / "sv-from-lean"
 DEFAULT_TOP = "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded"
-DEFAULT_OUT_SVG = ROOT / "docs" / "architecture-treemap.svg"
+DEFAULT_OUT_SVG = ROOT / "output" / "architecture-treemap.svg"
+DEFAULT_OUT_PNG = ROOT / "docs" / "architecture-treemap.png"
+
+
+def ensure_xkcd_font() -> None:
+    """Ensure authentic XKCD comic font is registered if available."""
+    font_path = Path.home() / ".local" / "share" / "fonts" / "xkcd.otf"
+    if not font_path.exists():
+        try:
+            import urllib.request
+
+            font_path.parent.mkdir(parents=True, exist_ok=True)
+            url = "https://github.com/ipython/xkcd-font/raw/master/xkcd/build/xkcd.otf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception:
+            pass
+
+    if font_path.exists():
+        try:
+            fm.fontManager.addfont(str(font_path))
+            plt.rcParams["font.family"] = "xkcd"
+        except Exception:
+            pass
 
 # Palette: Pastel comic colors for subsystems with corresponding border and inner tints
 PALETTE = {
@@ -115,8 +143,12 @@ LABEL_CONVERSIONS = {
     "FP Misc (SP)": "FP Misc (SP)",
     "FP Misc (DP)": "FP Misc (DP)",
     "FP D_Misc (DP)": "FP Misc (DP)",
+    "FP D_Misc (SP)": "FP Misc (SP)",
+    "FP  D_Misc (SP)": "FP Misc (SP)",
     "FP Converter (DP)": "FP D-Conv",
     "FP D_Converter (DP)": "FP D-Conv",
+    "FP D_Converter (SP)": "FP D-Conv",
+    "FP  D_Converter (SP)": "FP D-Conv",
     "StoreBuffer8 (Speculative)": "StoreBuffer8",
     "Dual ALU (64b)": "Dual ALU (64b)",
     "Branch & Target Adders/Cmp": "Branch Logic",
@@ -322,16 +354,20 @@ def build_cpu_hierarchy(analyzer: ModuleAnalyzer, top_name: str) -> dict[str, li
         # Execution Units
         elif inst == "u_exec_fp":
             fpu_direct, sub_insts = analyzer.get_module(mod)
-            if fpu_direct > 0:
-                subsystems["Execution Units"].append({"name": "FP Output Mux & Rounding", "inst": "u_fpu_mux", "mod": "Glue", "size": fpu_direct})
+            extra_fp_glue = fpu_direct
             for sm, si in sub_insts:
                 g = analyzer.hier_gates(sm)
-                label = sm.replace("FPDouble", "FP D_").replace("FP", "")
+                if g < 10:
+                    extra_fp_glue += g
+                    continue
+                label = sm.replace("FPDouble", "D_").replace("FP", "")
                 if label.endswith("D") and not label.endswith("FPD"):
                     label = label[:-1] + " (DP)"
                 elif not label.endswith(")"):
                     label = label + " (SP)"
                 subsystems["Execution Units"].append({"name": f"FP {label}", "inst": si, "mod": sm, "size": g})
+            if extra_fp_glue > 0:
+                subsystems["Execution Units"].append({"name": "FP Output Mux & Rounding", "inst": "u_fpu_mux", "mod": "Glue", "size": extra_fp_glue})
         elif inst == "u_exec_muldiv":
             muldiv_direct, sub_insts = analyzer.get_module(mod)
             for sm, si in sub_insts:
@@ -459,7 +495,7 @@ def format_box_text(
 
     # Instance name line for spacious boxes
     if inst and bw >= 8.5 and bh >= 4.0:
-        lines.append(f"`{inst}`")
+        lines.append(f"{inst}")
 
     num_lines = len(lines)
     max_len = max(len(l) for l in lines)
@@ -479,6 +515,10 @@ def draw_treemap(
     out_png: Path | None = None,
 ) -> None:
     """Render the squarified treemap using matplotlib and plt.xkcd."""
+    ensure_xkcd_font()
+    np.random.seed(42)
+    random.seed(42)
+
     sub_totals = []
     for name, items in subsystems.items():
         s = sum(it["size"] for it in items)
@@ -496,7 +536,7 @@ def draw_treemap(
         ax.text(
             50,
             97.6,
-            "Shoumei Tomasulo RV64G CPU — Microarchitecture Gate Treemap",
+            "Shoumei RV64G OoO CPU — Microarchitecture Gate Treemap",
             ha="center",
             va="center",
             fontsize=18,
@@ -505,18 +545,21 @@ def draw_treemap(
         )
         ax.text(
             50,
-            94.8,
-            f"Formally Verified in Lean 4 • {total_cpu_gates:,} Total Hierarchical Gates • RV64IMAFD_Zicsr_Zifencei",
+            95.0,
+            f'"Formally Verified" in Lean 4 • {total_cpu_gates:,} Total Hierarchical Gates • RV64IMAFD_Zicsr_Zifencei',
             ha="center",
             va="center",
             fontsize=11.5,
             color="#495057",
         )
 
-        canvas_x, canvas_y = 2.0, 3.5
-        canvas_w, canvas_h = 96.0, 88.5
+        canvas_x, canvas_y = 2.0, 5.0
+        canvas_w, canvas_h = 96.0, 86.8
 
         sub_rects = squarify(sub_totals, canvas_x, canvas_y, canvas_w, canvas_h)
+
+        legend_items: list[tuple[int, str, int, float, str]] = []
+        callout_arrows: list[tuple[int, str, int, float, float, float, float, str]] = []
 
         for sub_item, sx, sy, sw, sh in sub_rects:
             sub_name = sub_item["name"]
@@ -622,56 +665,131 @@ def draw_treemap(
                     c_bh,
                 )
 
-                ax.text(
-                    c_bx + c_bw / 2,
-                    c_by + c_bh / 2,
-                    box_text,
-                    ha="center",
-                    va="center",
-                    multialignment="center",
-                    linespacing=1.18,
-                    fontsize=fs,
-                    fontweight="bold" if fs >= 6.8 else "normal",
-                    color="#1a1a1a",
-                    clip_on=True,
-                    zorder=3,
-                )
+                is_overflow = (c_bw < 2.5 or c_bh < 1.3 or fs < 5.2)
 
+                if is_overflow:
+                    key_num = len(legend_items) + 1
+                    badge = f"[{key_num}]"
+                    legend_items.append((key_num, name, c_size, c_pct, colors["box_edge"]))
+                    ax.text(
+                        c_bx + c_bw / 2,
+                        c_by + c_bh / 2,
+                        badge,
+                        ha="center",
+                        va="center",
+                        fontsize=7.8,
+                        fontweight="bold",
+                        color=colors["box_edge"],
+                        clip_on=True,
+                        zorder=3,
+                    )
+                    if c_bw < 2.2:
+                        callout_arrows.append(
+                            (key_num, name, c_size, c_bx + c_bw / 2, c_by + c_bh / 2, c_bw, c_bh, colors["box_edge"])
+                        )
+                else:
+                    ax.text(
+                        c_bx + c_bw / 2,
+                        c_by + c_bh / 2,
+                        box_text,
+                        ha="center",
+                        va="center",
+                        multialignment="center",
+                        linespacing=1.18,
+                        fontsize=fs,
+                        fontweight="bold" if fs >= 6.8 else "normal",
+                        color="#1a1a1a",
+                        clip_on=True,
+                        zorder=3,
+                    )
+
+        # Draw callout arrows for narrow vertical strips
+        for k, name, sz, tx, ty, bw, bh, col in callout_arrows:
+            ax.annotate(
+                f"[{k}] {name} ({sz}g)",
+                xy=(tx, ty + bh / 2),
+                xytext=(tx - 1.0, ty + bh / 2 + 2.8),
+                arrowprops=dict(
+                    arrowstyle="->",
+                    connectionstyle="arc3,rad=-0.15",
+                    color=col,
+                    lw=1.3,
+                ),
+                fontsize=8.0,
+                fontweight="bold",
+                color=col,
+                ha="center",
+                va="bottom",
+                zorder=10,
+            )
+
+        # Legend Bar across bottom for small units
+        if legend_items:
+            leg_str_parts = [f"[{k}] {name}: {sz:,}g ({pct:.1f}%)" for k, name, sz, pct, _ in legend_items]
+            leg_text = "Small Units Key:   " + "   •   ".join(leg_str_parts)
+            ax.text(
+                50,
+                3.2,
+                leg_text,
+                ha="center",
+                va="center",
+                fontsize=8.4,
+                fontweight="bold",
+                color="#343a40",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="#f1f3f5", edgecolor="#adb5bd", lw=1.0),
+            )
+
+        # Footnote
         ax.text(
             canvas_x + 0.5,
-            canvas_y - 1.8,
+            1.2,
             "* Treemap area is directly proportional to hierarchical gate count (combinational assigns + sequential flip-flops).",
             ha="left",
             va="center",
-            fontsize=8.5,
+            fontsize=8.0,
             fontstyle="italic",
             color="#6c757d",
         )
         ax.text(
             canvas_x + canvas_w - 0.5,
-            canvas_y - 1.8,
+            1.2,
             "Generated by scripts/gen-architecture-diagram.py",
             ha="right",
             va="center",
-            fontsize=8.5,
+            fontsize=8.0,
             color="#6c757d",
         )
 
         out_svg.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_svg, bbox_inches="tight", pad_inches=0.2)
+        fig.savefig(out_svg, bbox_inches="tight", pad_inches=0.15)
         print(f"Exported architecture treemap SVG to: {out_svg}")
 
         if out_png:
             out_png.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out_png, bbox_inches="tight", pad_inches=0.2, dpi=120)
+            fig.savefig(out_png, bbox_inches="tight", pad_inches=0.15, dpi=100)
+            try:
+                from PIL import Image
+
+                im = Image.open(out_png)
+                im_opt = im.convert("P", palette=Image.ADAPTIVE, colors=256)
+                im_opt.save(out_png, optimize=True)
+            except Exception:
+                pass
             print(f"Exported architecture treemap PNG to: {out_png}")
+
+            aux_png = ROOT / "output" / "architecture-treemap.png"
+            if out_png.resolve() != aux_png.resolve():
+                aux_png.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+
+                shutil.copyfile(out_png, aux_png)
 
         plt.close(fig)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate an XKCD-style architecture treemap in SVG."
+        description="Generate an XKCD-style architecture treemap in SVG and PNG."
     )
     parser.add_argument(
         "--out",
@@ -682,7 +800,13 @@ def main() -> int:
     parser.add_argument(
         "--png",
         action="store_true",
-        help="Also export a PNG alongside the SVG for easy raster viewing",
+        help="Also export a PNG (default docs/architecture-treemap.png)",
+    )
+    parser.add_argument(
+        "--out-png",
+        type=Path,
+        default=DEFAULT_OUT_PNG,
+        help=f"Output PNG path (default: {DEFAULT_OUT_PNG})",
     )
     parser.add_argument(
         "--top",
@@ -706,7 +830,7 @@ def main() -> int:
         return 1
 
     subsystems = build_cpu_hierarchy(analyzer, args.top)
-    out_png = args.out.with_suffix(".png") if args.png else None
+    out_png = args.out_png if args.png else None
 
     draw_treemap(subsystems, total_gates, args.out, out_png)
     return 0
