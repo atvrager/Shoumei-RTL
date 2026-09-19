@@ -21,6 +21,7 @@ DEFAULT_TIMEOUT=5000
 CSV="/dev/null"
 COV_DIR=""
 KANATA_DIR=""
+BENCH_CSV=""
 declare -a OVERRIDES=()
 declare -a ELFS=()
 
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --jobs)            JOBS="$2"; shift 2 ;;
         --default-timeout) DEFAULT_TIMEOUT="$2"; shift 2 ;;
         --csv)             CSV="$2"; shift 2 ;;
+        --bench-csv)       BENCH_CSV="$2"; shift 2 ;;
         --coverage-dir)    COV_DIR="$2"; shift 2 ;;
         --kanata-dir)      KANATA_DIR="$2"; shift 2 ;;
         --timeout)         OVERRIDES+=("$2"); shift 2 ;;
@@ -72,6 +74,12 @@ run_one() {
     local result
     result=$(timeout "$timeout" "$bin" +elf="$elf" +timeout="$timeout" "${cov_arg[@]}" "${kanata_arg[@]}" 2>&1)
 
+    # Per-benchmark CPI lines ("BENCH <name> <thr_milli> <lat_milli>") land in
+    # a per-test file; the driver aggregates them in input order at the end.
+    if [[ -n "$SUITE_BENCH_CSV" ]]; then
+        echo "$result" | grep '^BENCH ' > "$out_dir/bench_$(basename "$elf")" || true
+    fi
+
     local cycles retired ipc status
     cycles=$(echo "$result"  | grep -oP '(Cycles|Total cycles):\s+\K[0-9]+'   | tail -1)
     retired=$(echo "$result" | grep -oP '(Retired|Total retired):\s+\K[0-9]+' | tail -1)
@@ -109,7 +117,7 @@ fi
 # run_one is exported; mode/bin/out_dir/cov_dir ride in the environment so xargs can
 # supply the per-test arguments as $1/$2.
 export SUITE_MODE="$MODE" SUITE_BIN="$BIN" SUITE_OUT_DIR="$OUT_DIR" SUITE_COV_DIR="$COV_DIR"
-export SUITE_KANATA_DIR="$KANATA_DIR"
+export SUITE_KANATA_DIR="$KANATA_DIR" SUITE_BENCH_CSV="$BENCH_CSV"
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -a "$JOBS_FILE" -n 2 bash -c \
     'run_one "$1" "$2" "$SUITE_MODE" "$SUITE_BIN" "$SUITE_OUT_DIR" "$SUITE_COV_DIR"' _
@@ -133,6 +141,19 @@ while read -r _timeout elf; do
     fi
     echo "$name,$status,$cycles,$retired,$ipc" >> "$CSV"
 done < "$JOBS_FILE"
+
+# Aggregate per-benchmark CPI rows into the suite bench CSV (input order):
+# name,throughput_cpi_milli,latency_cpi_milli
+if [[ -n "$BENCH_CSV" && "$BENCH_CSV" != "/dev/null" ]]; then
+    printf 'name,throughput_cpi_milli,latency_cpi_milli\n' > "$BENCH_CSV"
+    while read -r _t elf; do
+        name="$(basename "$elf")"
+        rec="$OUT_DIR/bench_$name"
+        if [[ -f "$rec" ]]; then
+            sed 's/^BENCH //; s/ /,/g' "$rec" >> "$BENCH_CSV"
+        fi
+    done < "$JOBS_FILE"
+fi
 
 echo ""
 echo "$pass/$((pass + fail)) passed, $fail failed"

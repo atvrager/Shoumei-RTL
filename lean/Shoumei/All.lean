@@ -141,6 +141,7 @@ import Shoumei.Peripherals.SRAM
 import Shoumei.Peripherals.SRAMProofs
 import Shoumei.Peripherals.UART
 import Shoumei.Peripherals.UARTProofs
+import Shoumei.RISCV.BenchmarkSpecs
 import Shoumei.RISCV.CDBMux
 import Shoumei.RISCV.CDBMuxProofs
 import Shoumei.RISCV.CPU

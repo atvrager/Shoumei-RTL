@@ -91,11 +91,13 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 .PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests \
         cosim run-cosim coremark run-coremark clean \
         sim-arc cosim-arc run-all-tests-arc run-cosim-arc \
-        sim-cov run-coverage run-kanata-traces
+        sim-cov run-coverage run-kanata-traces \
+        bench run-benchmarks sim-leansim bench-cppsim bench-compare
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
 SIM_COV_BIN  := $(BUILD_DIR)/sim_shoumei_cov
+LEANSIM_BIN  := $(BUILD_DIR)/sim_leansim
 ARC_SIM_BIN  := $(BUILD_DIR)/sim_shoumei_arc
 ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
@@ -292,6 +294,66 @@ run-coverage: $(SIM_COV_BIN) tests riscv-tests
 	    --csv $(PROJ_ROOT)/output/test-results-coverage.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
+# ==========================================================================
+# Instruction benchmark suite
+#
+# `bench`          generate + assemble the benchmark ELFs
+# `run-benchmarks` run every bench ELF on the RTL sim (parallel), emit
+#                  bench-results-rtl.csv + bench-metrics.csv
+# `sim-leansim`    build the LeanSim (gate-level C++) standalone driver
+# `bench-cppsim`   run the same ELFs on LeanSim
+# `bench-compare`  merge RTL + LeanSim CSVs into bench-metrics.json and
+#                  output/cpp_sim/bench_metrics.h
+# ==========================================================================
+BENCH_ELF_GLOBS := $(TB_DIR)/tests/generated/bench/*.elf
+
+bench:
+	@cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks
+	$(MAKE) -C $(TB_DIR)/tests bench
+
+run-benchmarks: $(SIM_BIN) bench
+	@mkdir -p $(PROJ_ROOT)/output/bench
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
+	    --default-timeout 1000000 \
+	    --csv $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
+	    --bench-csv $(PROJ_ROOT)/output/bench/bench-metrics.csv \
+	    $(BENCH_ELF_GLOBS)
+
+# LeanSim standalone driver: generated lean_sim_{cpu}.{h,cpp} + cpu_setup_{cpu} +
+# the driver main (tb_cpu), compiled with the shared ELF loader. The cached CPU
+# module appends its cache hierarchy (same spelling as ARC_TOP_MODULE above).
+LEANSIM_MODULE := CPU_$(CPU_NAME)_L1I256B_L1D256B_L2512B
+# The gate-level model needs every emitted module implementation (the design is
+# hierarchical); cpu_setup_/lean_sim_ tie them to the DUT ports + trace buses.
+LEANSIM_CPPS := $(wildcard $(PROJ_ROOT)/output/cpp_sim/*.cpp)
+LEANSIM_SRCS := $(TB_DIR)/generated/lean_sim_$(LEANSIM_MODULE).cpp \
+                $(TB_DIR)/generated/cpu_setup_$(LEANSIM_MODULE).cpp \
+                $(TB_DIR)/generated/lean_sim_main_tb_cpu.cpp \
+                $(LEANSIM_CPPS)
+sim-leansim: $(LEANSIM_BIN)
+$(LEANSIM_BIN): $(LEANSIM_SRCS) $(TB_DIR)/lib/elf_loader.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -std=c++17 -O2 -no-pie \
+		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
+		$(LEANSIM_SRCS) $(TB_DIR)/lib/elf_loader.cpp \
+		-o $@
+	@echo "Built: $@ (LeanSim gate-level sim)"
+
+bench-cppsim: sim-leansim bench
+	@mkdir -p $(PROJ_ROOT)/output/bench
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(LEANSIM_BIN) --jobs $(shell nproc) \
+	    --default-timeout 1000000 \
+	    --csv $(PROJ_ROOT)/output/bench/bench-results-cppsim.csv \
+	    --bench-csv /dev/null \
+	    $(BENCH_ELF_GLOBS)
+
+bench-compare: run-benchmarks bench-cppsim
+	python3 $(PROJ_ROOT)/scripts/bench_compare.py \
+	    --rtl $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
+	    --cpp $(PROJ_ROOT)/output/bench/bench-results-cppsim.csv \
+	    --programs $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --out $(PROJ_ROOT)/output/bench
+
 cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
@@ -345,7 +407,7 @@ cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x2
 	@$(CACHE_TEST_BIN) --cycles 2000
 
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(LEANSIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
 	rm -rf $(BUILD_DIR)/arc $(ARC_SIM_BIN) $(ARC_COSIM_BIN)
 	rm -rf $(PROJ_ROOT)/output/coverage
 	rm -f shoumei_cpu.fst

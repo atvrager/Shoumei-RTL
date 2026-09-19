@@ -1561,7 +1561,8 @@ def toLeanSimH (cfg : TestbenchConfig) : String :=
   "public:\n" ++
   "    explicit LeanSim(const std::string& elf_path);\n" ++
   "    ~LeanSim();\n" ++
-  "    LeanSimStepResult step();\n\n" ++
+  "    LeanSimStepResult step();\n" ++
+  "    uint32_t cycle() const { return cycle_; }\n\n" ++
   "private:\n" ++
   "    static constexpr uint32_t MEM_SIZE_WORDS = " ++ toString cfg.memSizeWords ++ ";\n" ++
   "    uint32_t mem_[MEM_SIZE_WORDS] = " ++ lb ++ rb ++ ";\n" ++
@@ -1620,6 +1621,27 @@ def toLeanSimCpp (cfg : TestbenchConfig) : String :=
   let busWireMap : List (String × String × Nat) :=
     groups.flatMap fun sg =>
       sg.wires.enum.map fun ⟨i, w⟩ => (w.name, sg.name, i)
+
+  -- RVVI retire sideband names differ per CPU: the uncached CPU exposes a
+  -- single `rvvi_valid` + `rvvi_pc_rdata`/`rvvi_rd_data`/`rvvi_frd_data` and an
+  -- `fflags_acc` sideband; the cached (CachedCPU) top uses dual-slot
+  -- `rvvi_validS0/S1` + `rvvi_pc_0`/`rvvi_rdd_0` and no frd/fflags ports.
+  let groupExists (n : String) : Bool := groups.any fun sg => sg.name == n
+  let portExists (n : String) : Bool :=
+    (c.inputs ++ c.outputs).any fun w => w.name == n
+  let busOf (candidates : List String) (fallback : String) : String :=
+    match candidates.find? groupExists with
+    | some n => n
+    | none => fallback
+  let rvviValidName := if portExists "rvvi_valid" then "rvvi_valid" else "rvvi_validS0"
+  let rvviRdValidName := if portExists "rvvi_rd_valid" then "rvvi_rd_valid" else "rvvi_rd_validS0"
+  let rvviPcBus := busOf ["rvvi_pc_rdata", "rvvi_pc_0"] "rvvi_pc_rdata"
+  let rvviInsnBus := busOf ["rvvi_insn", "rvvi_insn_0"] "rvvi_insn"
+  let rvviRdBus := busOf ["rvvi_rd", "rvvi_rd_0"] "rvvi_rd"
+  let rvviRdDataBus := busOf ["rvvi_rd_data", "rvvi_rdd_0"] "rvvi_rd_data"
+  let rvviFrdBus := busOf ["rvvi_frd", "rvvi_frd_0"] "rvvi_frd"
+  let rvviFrdDataBus := busOf ["rvvi_frd_data", "rvvi_frdd_0"] "rvvi_frd_data"
+  let hasFFlags := portExists "fflags_acc"
 
   -- Generate the port pointer array entries with correct signal variable names
   let portPtrEntries := String.intercalate ",\n" (
@@ -1844,17 +1866,25 @@ def toLeanSimCpp (cfg : TestbenchConfig) : String :=
      | none => "") ++
     "        " ++ rb ++ "\n\n"
    else "") ++
-  "        if (rvvi_valid_) " ++ lb ++ "\n" ++
+  "        if (" ++ rvviValidName ++ "_) " ++ lb ++ "\n" ++
   "            LeanSimStepResult r = " ++ lb ++ rb ++ ";\n" ++
-  "            r.pc       = read_bus(rvvi_pc_rdata_sigs_, 32);\n" ++
-  "            r.insn     = read_bus(rvvi_insn_sigs_, 32);\n" ++
-  "            r.rd       = read_bus(rvvi_rd_sigs_, 5);\n" ++
-  "            r.rd_valid = rvvi_rd_valid_;\n" ++
-  "            r.rd_data  = read_bus(rvvi_rd_data_sigs_, 32);\n" ++
-  "            r.frd      = read_bus(rvvi_frd_sigs_, 5);\n" ++
-  "            r.frd_valid = rvvi_frd_valid_;\n" ++
-  "            r.frd_data = read_bus(rvvi_frd_data_sigs_, 32);\n" ++
-  "            r.fflags   = read_bus(fflags_acc_sigs_, 5);\n" ++
+  s!"            r.pc       = read_bus({rvviPcBus}_sigs_, 32);\n" ++
+  s!"            r.insn     = read_bus({rvviInsnBus}_sigs_, 32);\n" ++
+  s!"            r.rd       = read_bus({rvviRdBus}_sigs_, 5);\n" ++
+  s!"            r.rd_valid = {rvviRdValidName}_;\n" ++
+  s!"            r.rd_data  = read_bus({rvviRdDataBus}_sigs_, 32);\n" ++
+  (if groupExists rvviFrdBus then
+     s!"            r.frd      = read_bus({rvviFrdBus}_sigs_, 5);\n" ++
+     s!"            r.frd_valid = {if portExists "rvvi_frd_valid" then "rvvi_frd_valid_" else "rvvi_frd_validS0_" };\n" ++
+     s!"            r.frd_data = read_bus({rvviFrdDataBus}_sigs_, 32);\n"
+   else
+     "            r.frd      = 0;\n" ++
+     "            r.frd_valid = false;\n" ++
+     "            r.frd_data = 0;\n") ++
+  (if hasFFlags then
+     "            r.fflags   = read_bus(fflags_acc_sigs_, 5);\n"
+   else
+     "            r.fflags   = 0;\n") ++
   "            r.done     = test_done_;\n" ++
   "            r.tohost   = test_data_;\n" ++
   "            return r;\n" ++
@@ -1871,6 +1901,82 @@ def toLeanSimCpp (cfg : TestbenchConfig) : String :=
   "    r.tohost = 0;\n" ++
   "    return r;\n" ++
   s!"{rb}\n"
+
+/--
+  Standalone driver for the LeanSim gate-level C++ model.
+
+  Same CLI as `toSimMainCpp` (`+elf`, `+timeout`, `+verbose`) and prints the
+  same summary block (Cycle/Retired/IPC/tohost + TEST PASS/FAIL) so
+  `run-suite.sh` parses its output unchanged and the benchmark ELFs can be run
+  against the model as well as the RTL. Each `step()` retires at most one
+  instruction; putchar is handled inside `LeanSim::step` already.
+-/
+def toLeanSimMainCpp (cfg : TestbenchConfig) : String :=
+  let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
+  let lb := "{"
+  let rb := "}"
+
+  "//==============================================================================\n" ++
+  s!"// lean_sim_main_{tbName}.cpp - Auto-generated LeanSim standalone driver\n" ++
+  "// DO NOT EDIT - regenerate with: lake exe generate_all\n" ++
+  "//==============================================================================\n\n" ++
+  "#include <cstdio>\n" ++
+  "#include <cstdlib>\n" ++
+  "#include <cstring>\n\n" ++
+  s!"#include \"lean_sim_{cfg.circuit.name}.h\"\n\n" ++
+  "static const uint32_t DEFAULT_TIMEOUT = " ++ toString cfg.timeoutCycles ++ ";\n\n" ++
+  "static const char* get_plusarg(int argc, char** argv, const char* name) " ++ lb ++ "\n" ++
+  "    size_t len = strlen(name);\n" ++
+  "    for (int i = 1; i < argc; i++)\n" ++
+  "        if (strncmp(argv[i], name, len) == 0 && argv[i][len] == '=')\n" ++
+  "            return argv[i] + len + 1;\n" ++
+  "    return nullptr;\n" ++
+  rb ++ "\n\n" ++
+  "static bool has_plusarg(int argc, char** argv, const char* name) " ++ lb ++ "\n" ++
+  "    for (int i = 1; i < argc; i++)\n" ++
+  "        if (strcmp(argv[i], name) == 0) return true;\n" ++
+  "    return false;\n" ++
+  rb ++ "\n\n" ++
+
+  s!"int main(int argc, char** argv) {lb}\n" ++
+  "    const char* elf_path = get_plusarg(argc, argv, \"+elf\");\n" ++
+  "    const char* timeout_str = get_plusarg(argc, argv, \"+timeout\");\n" ++
+  "    bool verbose = has_plusarg(argc, argv, \"+verbose\");\n" ++
+  "    uint32_t timeout = timeout_str ? atoi(timeout_str) : DEFAULT_TIMEOUT;\n\n" ++
+  "    if (!elf_path) " ++ lb ++ "\n" ++
+  "        fprintf(stderr, \"ERROR: No ELF file. Use +elf=path\\n\");\n" ++
+  "        return 1;\n" ++
+  "    " ++ rb ++ "\n\n" ++
+  s!"    LeanSim sim(elf_path);\n\n" ++
+  "    uint32_t retired = 0;\n" ++
+  "    bool timed_out = false;\n" ++
+  "    LeanSimStepResult r;\n\n" ++
+  "    printf(\"Simulation started (timeout=%u cycles)\\n\", timeout);\n" ++
+  "    printf(\"─────────────────────────────────────────────\\n\");\n\n" ++
+  "    while (true) " ++ lb ++ "\n" ++
+  "        r = sim.step();\n" ++
+  "        if (r.done) break;\n" ++
+  "        retired++;\n" ++
+  "        if (sim.cycle() >= timeout) " ++ lb ++ " timed_out = true; break; " ++ rb ++ "\n" ++
+  "        if (verbose)\n" ++
+  "            printf(\"  RET[cy%u #%u] PC=0x%08x insn=0x%08x rd=x%u(%d) data=0x%016lx\\n\",\n" ++
+  "                sim.cycle(), retired, r.pc, r.insn,\n" ++
+  "                r.rd, (int)r.rd_valid, (unsigned long)r.rd_data);\n" ++
+  "    " ++ rb ++ "\n\n" ++
+  "    uint32_t cycle = sim.cycle();\n" ++
+  "    bool passed = (r.tohost == 1);\n" ++
+  "    printf(\"\\n══════ TEST %s ══════\\n\", passed ? \"PASS\" : \"FAIL\");\n" ++
+  "    if (timed_out) printf(\"\\n══════ TIMEOUT ══════\\n\");\n" ++
+  "    printf(\"  Cycle:     %u\\n\", cycle);\n" ++
+  "    printf(\"  Retired:   %u\\n\", retired);\n" ++
+  "    printf(\"  IPC:       %.3f\\n\", cycle > 0 ? (double)retired / cycle : 0.0);\n" ++
+  "    printf(\"  tohost:    0x%08x\\n\", r.tohost);\n" ++
+  "    printf(\"─────────────────────────────────────────────\\n\");\n" ++
+  "    printf(\"Total cycles: %u\\n\", cycle);\n" ++
+  "    printf(\"Total retired: %u\\n\", retired);\n" ++
+  "    printf(\"IPC: %.3f\\n\", cycle > 0 ? (double)retired / cycle : 0.0);\n" ++
+  "    return passed ? 0 : 1;\n" ++
+  rb ++ "\n"
 
 /-! ## Verilator cosim_main.cpp Generator -/
 
@@ -2244,15 +2350,18 @@ def writeTestbenchSV (cfg : TestbenchConfig) : IO Unit := do
   IO.FS.writeFile path sv
   IO.println s!"  ✓ {tbName}.sv (testbench)"
 
+def writeCpuSetup (cfg : TestbenchConfig) : IO Unit := do
+  IO.FS.createDirAll testbenchOutputDir
+  let c := cfg.circuit
+  -- Thin setup header (port order + names only)
+  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.h" (toCpuSetupHeader c)
+  -- Heavy setup cpp (includes full module header)
+  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.cpp" (toCpuSetupCpp cfg)
+
 def writeTestbenchCppSim (cfg : TestbenchConfig) : IO Unit := do
   IO.FS.createDirAll testbenchOutputDir
   let c := cfg.circuit
-  -- Write thin setup header
-  let setupH := toCpuSetupHeader c
-  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.h" setupH
-  -- Write heavy setup cpp (includes full module header)
-  let setupCpp := toCpuSetupCpp cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.cpp" setupCpp
+  Testbench.writeCpuSetup cfg
   -- Write thin sim_main (no module header includes)
   let sc := toTestbenchCppSim cfg
   IO.FS.writeFile s!"{testbenchOutputDir}/sim_main_{c.name}.cpp" sc
@@ -2281,13 +2390,24 @@ def writeLeanSim (cfg : TestbenchConfig) : IO Unit := do
   IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_{c.name}.cpp" cpp
   IO.println s!"  ✓ lean_sim_{c.name}.h + lean_sim_{c.name}.cpp (Lean gate-level sim)"
 
+def writeLeanSimMainCpp (cfg : TestbenchConfig) : IO Unit := do
+  IO.FS.createDirAll testbenchOutputDir
+  let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
+  let cpp := toLeanSimMainCpp cfg
+  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_main_{tbName}.cpp" cpp
+  IO.println s!"  ✓ lean_sim_main_{tbName}.cpp (Lean simulator driver)"
+
 def writeTestbenches (cfg : TestbenchConfig) : IO Unit := do
   Testbench.writeTestbenchSV cfg
-  -- CppSim and LeanSim generators don't support cache-line memory interface yet
+  -- CppSim (plain C++ model) does not support the cache-line memory interface;
+  -- LeanSim does, so the gate-level model + its standalone driver are always
+  -- emitted (bench-cppsim builds from them).
   if cfg.cacheLineMemPort.isNone then
     Testbench.writeTestbenchCppSim cfg
-    Testbench.writeLeanSim cfg
+  Testbench.writeCpuSetup cfg
+  Testbench.writeLeanSim cfg
   Testbench.writeSimMainCpp cfg
+  Testbench.writeLeanSimMainCpp cfg
   Testbench.writeCosimMainCpp cfg
 
 end Shoumei.Codegen.Testbench

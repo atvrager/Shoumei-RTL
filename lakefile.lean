@@ -47,3 +47,10 @@ lean_exe generate_shoumei where
 lean_exe gen_tests where
   root := `GenTests
   supportInterpreter := true
+
+-- Executable target for generating the instruction benchmark suite.
+-- Derives one benchmark program per decoder instruction (riscv-opcodes table)
+-- and validates every sample encoding by decoding it back.
+lean_exe gen_benchmarks where
+  root := `GenBenchmarks
+  supportInterpreter := true

@@ -53,6 +53,30 @@ generated/%.elf: generated/%.S shoumei.ld
 generated/fp_%.elf: generated/fp_%.S shoumei.ld
 	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
 
+# ==========================================================================
+# Benchmark programs (generated/bench/): three march variants.
+# - plain:  rv64im_zicsr_zifencei           (integer-only programs)
+# - fp_*:   rv64imafd_zicsr_zifencei        (F/D programs)
+# - amo_*:  AMO programs; IMAFD already includes A, so the same flags work
+#           (older riscv-gcc rejects the redundant 'a' in rv64imafda).
+# `bench` is NOT part of `all`: run-all-tests globs generated/*.elf
+# non-recursively, so the bench ELFs stay out of the regression suite.
+# ==========================================================================
+BENCH_ASM  := $(wildcard generated/bench/*.S)
+BENCH_ELFS := $(patsubst %.S,%.elf,$(BENCH_ASM))
+CFLAGS_AMO = $(CFLAGS_FP)
+
+generated/bench/fp_%.elf: generated/bench/fp_%.S shoumei.ld
+	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
+
+generated/bench/amo_%.elf: generated/bench/amo_%.S shoumei.ld
+	$(CC) $(CFLAGS_AMO) $(LDFLAGS) $< -o $@
+
+generated/bench/%.elf: generated/bench/%.S shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
+bench: $(BENCH_ELFS)
+
 # FreeRTOS demo - special build
 freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld $(FREERTOS_SRCS) $(FREERTOS_PORT_DIR)/portASM.S
 	$(CC) $(FREERTOS_CFLAGS) $(FREERTOS_LDFLAGS) \
@@ -65,4 +89,4 @@ freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld 
 		-o $@
 
 clean:
-	rm -f *.elf *.o generated/*.elf
+	rm -f *.elf *.o generated/*.elf generated/bench/*.elf
