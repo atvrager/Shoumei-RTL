@@ -168,6 +168,13 @@ def tree_cells_hier(netlist_dir: Path) -> dict:
     Uses the FLATTEN=0 synth output so the first cut is the module, exactly
     as the Lean hierarchy; only then sequential vs combinational.
     """
+    path_str = str(netlist_dir)
+    if "gf180" in path_str:
+        tech = "GF180MCU (180 nm)"
+    elif "asap7" in path_str:
+        tech = "ASAP7 (7 nm)"
+    else:
+        tech = netlist_dir.parent.name
     text_all = "\n".join(p.read_text() for p in sorted(netlist_dir.glob("*.v")))
     known = {m.group(1) for m in MODULE_RE.finditer(text_all)}
 
@@ -196,7 +203,7 @@ def tree_cells_hier(netlist_dir: Path) -> dict:
     total = sum(c["size"] for c in children)
     if total == 0:
         raise ValueError(f"no cells parsed from {netlist_dir}")
-    return {"name": f"{netlist_dir.parent.name} — Yosys netlist (hier)",
+    return {"name": f"{tech} — Yosys netlist",
             "size": total, "unit": "cells", "children": children}
 
 

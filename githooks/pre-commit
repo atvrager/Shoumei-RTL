@@ -26,16 +26,23 @@ if [ -n "$py_files" ]; then
     fi
 fi
 
-# 2. Shell syntax on staged shell scripts
-sh_files=$(staged | grep -E '\.sh$' || true)
-if [ -n "$sh_files" ]; then
-    for f in $sh_files; do
-        if ! bash -n "$f"; then
-            echo "pre-commit: fix shell syntax before committing" >&2
-            failed=1
+# 2. Shell syntax + shellcheck on staged shell scripts
+    sh_files=$(staged | grep -E '\.sh$' || true)
+    if [ -n "$sh_files" ]; then
+        for f in $sh_files; do
+            if ! bash -n "$f"; then
+                echo "pre-commit: fix shell syntax before committing" >&2
+                failed=1
+            fi
+        done
+        if command -v shellcheck > /dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            if ! shellcheck $sh_files; then
+                echo "pre-commit: fix shellcheck findings before committing" >&2
+                failed=1
+            fi
         fi
-    done
-fi
+    fi
 
 # 3. Workflow YAML parses (CI-only edits no longer run the heavy pipeline)
 if staged | grep -q '^\.github/workflows/'; then

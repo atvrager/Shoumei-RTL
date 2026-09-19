@@ -17,4 +17,4 @@ install -m 0755 "$HOOK_SRC"/* "$HOOK_DST/" 2>/dev/null || {
 }
 
 echo "Installed hooks:"
-ls -1 "$HOOK_SRC" | sed 's/^/  /'
+find "$HOOK_SRC" -maxdepth 1 -type f -printf '  %f\n'
