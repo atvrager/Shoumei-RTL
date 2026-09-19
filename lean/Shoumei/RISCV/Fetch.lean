@@ -15,6 +15,7 @@ import Shoumei.RISCV.Config
 import Shoumei.DSL
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Combinational.BranchTargetAdder
 
 namespace Shoumei.RISCV
 
@@ -166,8 +167,6 @@ def mkFetchStage : Circuit :=
   let stall := Wire.mk "stall"
   let branch_valid := Wire.mk "branch_valid"
   let branch_target := makeW "branch_target" 32
-  let const_0 := Wire.mk "zero"
-  let const_1 := Wire.mk "one"
 
   -- Dual instructions from I-cache
   let instr_0 := makeW "instr_0" 32
@@ -177,43 +176,27 @@ def mkFetchStage : Circuit :=
   let pc_reg := makeW "pc_reg" 32
 
   -- PC + 4 (slot 0 sequential, and base for slot 1)
-  let const_4w := makeW "const4" 32
   let pc_plus_4 := makeW "pc_plus_4" 32
-  let const_4_gates :=
-    [Gate.mkBUF const_0 const_4w[0]!, Gate.mkBUF const_0 const_4w[1]!,
-     Gate.mkBUF const_1 const_4w[2]!, Gate.mkBUF const_0 const_4w[3]!] ++
-    (List.range 28).map (fun i => Gate.mkBUF const_0 const_4w[4+i]!)
   let pc_adder_4_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := "PCIncrementer4"
     instName := "u_pc_adder_4"
     portMap :=
-      (pc_reg.enum.map   (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (const_4w.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", const_0)] ++
-      (pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      (pc_reg.enum.map    (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
+      (pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"pc_next_{i}", w)))
   }
 
   -- PC + 8 (sequential next when both slots valid and not taken)
-  let const_8w := makeW "const8" 32
   let pc_plus_8 := makeW "pc_plus_8" 32
-  let const_8_gates :=
-    [Gate.mkBUF const_0 const_8w[0]!, Gate.mkBUF const_0 const_8w[1]!,
-     Gate.mkBUF const_0 const_8w[2]!, Gate.mkBUF const_1 const_8w[3]!] ++
-    (List.range 28).map (fun i => Gate.mkBUF const_0 const_8w[4+i]!)
   let pc_adder_8_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := "PCIncrementer8"
     instName := "u_pc_adder_8"
     portMap :=
-      (pc_reg.enum.map   (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (const_8w.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", const_0)] ++
-      (pc_plus_8.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      (pc_reg.enum.map    (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
+      (pc_plus_8.enum.map (fun ⟨i, w⟩ => (s!"pc_next_{i}", w)))
   }
 
   -- Slot 0 branch prediction (BTFN)
   let is_btype_0 := Wire.mk "is_btype_0"; let is_jal_0 := Wire.mk "is_jal_0"
-  let b_imm_0 := makeW "b_imm_0" 32;     let j_imm_0 := makeW "j_imm_0" 32
-  let predict_imm_0  := makeW "predict_imm_0" 32
   let predict_target_0 := makeW "predict_target_0" 32
   let pt_0 := Wire.mk "pt_0"
   -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0, bit[1]=1, bit[0]=1
@@ -231,37 +214,21 @@ def mkFetchStage : Circuit :=
                         Gate.mkAND instr_0[3]! instr_0[2]! (Wire.mk "jal0_32"),
                         Gate.mkAND (Wire.mk "jal0_65") (Wire.mk "jal0_32") (Wire.mk "jal0_6532"),
                         Gate.mkAND (Wire.mk "jal0_6532") (Wire.mk "bt0_10") is_jal_0]
-  let b_ext_0 : List Gate :=
-    [Gate.mkBUF const_0 b_imm_0[0]!] ++
-    (List.range 4).map  (fun i => Gate.mkBUF instr_0[8+i]!  b_imm_0[1+i]!) ++
-    (List.range 6).map  (fun i => Gate.mkBUF instr_0[25+i]! b_imm_0[5+i]!) ++
-    [Gate.mkBUF instr_0[7]! b_imm_0[11]!] ++
-    (List.range 20).map (fun i => Gate.mkBUF instr_0[31]!   b_imm_0[12+i]!)
-  let j_ext_0 : List Gate :=
-    [Gate.mkBUF const_0 j_imm_0[0]!] ++
-    (List.range 10).map (fun i => Gate.mkBUF instr_0[21+i]! j_imm_0[1+i]!) ++
-    [Gate.mkBUF instr_0[20]! j_imm_0[11]!] ++
-    (List.range 8).map  (fun i => Gate.mkBUF instr_0[12+i]! j_imm_0[12+i]!) ++
-    (List.range 12).map (fun i => Gate.mkBUF instr_0[31]!   j_imm_0[20+i]!)
-  let pred_imm_0_gates : List Gate :=
-    (List.range 32).map (fun i => Gate.mkMUX b_imm_0[i]! j_imm_0[i]! is_jal_0 predict_imm_0[i]!)
   -- BTFN: predict taken for backward branches (offset sign bit = instr[31] = 1)
   let btfn_0_gate := Gate.mkAND is_btype_0 instr_0[31]! pt_0
-  let pred_gates_0 := btype_gates_0 ++ jal_gates_0 ++ b_ext_0 ++ j_ext_0 ++ pred_imm_0_gates ++ [btfn_0_gate]
+  let pred_gates_0 := btype_gates_0 ++ jal_gates_0 ++ [btfn_0_gate]
   let predict_target_0_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := "BranchTargetAdder32"
     instName := "u_pred_adder_0"
     portMap :=
-      (pc_reg.enum.map        (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (predict_imm_0.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", const_0)] ++
-      (predict_target_0.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      (pc_reg.enum.map        (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
+      ((List.range 25).map    (fun i => (s!"instr_{i}", instr_0[7 + i]!))) ++
+      [("is_jal", is_jal_0)] ++
+      (predict_target_0.enum.map (fun ⟨i, w⟩ => (s!"target_{i}", w)))
   }
 
   -- Slot 1 branch prediction (BTFN, target relative to pc+4)
   let is_btype_1 := Wire.mk "is_btype_1"; let is_jal_1 := Wire.mk "is_jal_1"
-  let b_imm_1 := makeW "b_imm_1" 32;     let j_imm_1 := makeW "j_imm_1" 32
-  let predict_imm_1  := makeW "predict_imm_1" 32
   let predict_target_1 := makeW "predict_target_1" 32
   let pt_1 := Wire.mk "pt_1"
   -- B-type opcode = 1100011: bit[6]=1, bit[5]=1, bit[4]=0, bit[3]=0, bit[2]=0, bit[1]=1, bit[0]=1
@@ -279,31 +246,17 @@ def mkFetchStage : Circuit :=
                         Gate.mkAND instr_1[3]! instr_1[2]! (Wire.mk "jal1_32"),
                         Gate.mkAND (Wire.mk "jal1_65") (Wire.mk "jal1_32") (Wire.mk "jal1_6532"),
                         Gate.mkAND (Wire.mk "jal1_6532") (Wire.mk "bt1_10") is_jal_1]
-  let b_ext_1 : List Gate :=
-    [Gate.mkBUF const_0 b_imm_1[0]!] ++
-    (List.range 4).map  (fun i => Gate.mkBUF instr_1[8+i]!  b_imm_1[1+i]!) ++
-    (List.range 6).map  (fun i => Gate.mkBUF instr_1[25+i]! b_imm_1[5+i]!) ++
-    [Gate.mkBUF instr_1[7]! b_imm_1[11]!] ++
-    (List.range 20).map (fun i => Gate.mkBUF instr_1[31]!   b_imm_1[12+i]!)
-  let j_ext_1 : List Gate :=
-    [Gate.mkBUF const_0 j_imm_1[0]!] ++
-    (List.range 10).map (fun i => Gate.mkBUF instr_1[21+i]! j_imm_1[1+i]!) ++
-    [Gate.mkBUF instr_1[20]! j_imm_1[11]!] ++
-    (List.range 8).map  (fun i => Gate.mkBUF instr_1[12+i]! j_imm_1[12+i]!) ++
-    (List.range 12).map (fun i => Gate.mkBUF instr_1[31]!   j_imm_1[20+i]!)
-  let pred_imm_1_gates : List Gate :=
-    (List.range 32).map (fun i => Gate.mkMUX b_imm_1[i]! j_imm_1[i]! is_jal_1 predict_imm_1[i]!)
   -- BTFN: predict taken for backward branches (offset sign bit = instr[31] = 1)
   let btfn_1_gate := Gate.mkAND is_btype_1 instr_1[31]! pt_1
-  let pred_gates_1 := btype_gates_1 ++ jal_gates_1 ++ b_ext_1 ++ j_ext_1 ++ pred_imm_1_gates ++ [btfn_1_gate]
+  let pred_gates_1 := btype_gates_1 ++ jal_gates_1 ++ [btfn_1_gate]
   let predict_target_1_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := "BranchTargetAdder32"
     instName := "u_pred_adder_1"
     portMap :=
-      (pc_plus_4.enum.map     (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (predict_imm_1.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", const_0)] ++
-      (predict_target_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
+      (pc_plus_4.enum.map     (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
+      ((List.range 25).map    (fun i => (s!"instr_{i}", instr_1[7 + i]!))) ++
+      [("is_jal", is_jal_1)] ++
+      (predict_target_1.enum.map (fun ⟨i, w⟩ => (s!"target_{i}", w)))
   }
 
   -- Valid signals: slot1 masked if slot0 is taken
@@ -312,7 +265,6 @@ def mkFetchStage : Circuit :=
   let valid_0     := Wire.mk "valid_0"
   let valid_1     := Wire.mk "valid_1"
   let not_s0taken := Wire.mk "not_s0taken"
-  let one_slot1   := Wire.mk "one_slot1"
   let half_step := Wire.mk "half_step"
   let not_half_step := Wire.mk "not_half_step"
   let btype_pt_0 := Wire.mk "btype_pt_0"
@@ -322,10 +274,8 @@ def mkFetchStage : Circuit :=
     Gate.mkAND pt_0 is_btype_0 btype_pt_0,
     Gate.mkOR is_jal_0 btype_pt_0 slot0_taken,
     Gate.mkNOT slot0_taken not_s0taken,
-    Gate.mkBUF const_1 one_slot1,
-    Gate.mkAND not_s0taken one_slot1 (Wire.mk "valid_1_pre"),
-    Gate.mkAND (Wire.mk "valid_1_pre") not_half_step valid_1,  -- mask slot 1 on half_step
-    Gate.mkBUF const_1 valid_0   -- slot 0 always valid (stall handled externally)
+    Gate.mkAND not_s0taken not_half_step valid_1,  -- mask slot 1 on half_step
+    Gate.mkNOT reset valid_0   -- slot 0 valid when not in reset
   ]
 
   -- Next-PC mux: branch > slot0_taken > slot1_taken > sequential (+8 or +4)
@@ -385,8 +335,7 @@ def mkFetchStage : Circuit :=
     inputs := [clock, reset, stall, half_step, branch_valid] ++
               branch_target ++ instr_0 ++ instr_1
     outputs := pc_0_out ++ pc_1_out ++ [valid_0, valid_1, pt_0, pt_1, stalled_reg]
-    gates := const_4_gates ++ const_8_gates ++
-             pred_gates_0 ++ pred_gates_1 ++ half_step_gates ++ combined_mux_gates ++
+    gates := pred_gates_0 ++ pred_gates_1 ++ half_step_gates ++ combined_mux_gates ++
              slot_pred_gates ++
              mux_s1_gates ++ mux_s0_gates ++ mux_br_gates ++ stall_mux_gates ++
              pc_out_gates ++ pc_1_out_gates ++ stalled_cntrl_gates

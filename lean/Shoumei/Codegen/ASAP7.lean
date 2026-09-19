@@ -73,8 +73,9 @@ private def generateGateInst (ctx : Context) (c : Circuit) (g : Gate) (idx : Nat
 /-- Generate the complete ASAP7 tech-mapped module.
     Gates are mapped to ASAP7 cells; sub-module instances are emitted verbatim
     (they will be resolved from their own ASAP7 or generic SV definitions). -/
-def toASAP7SystemVerilog (c : Circuit) (allCircuits : List Circuit := []) : String :=
-  let ctx := mkContext c
+def toASAP7SystemVerilog (c : Circuit) (allCircuits : List Circuit := [])
+    (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : String :=
+  let ctx := mkContext c allCircuits precomputedLoaded
 
   -- Header
   let header := String.intercalate "\n" [

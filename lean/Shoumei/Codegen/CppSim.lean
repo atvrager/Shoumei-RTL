@@ -17,6 +17,8 @@ Target: C++17
 
 import Shoumei.DSL
 import Shoumei.Codegen.Common
+import Std.Data.HashSet
+import Std.Data.HashMap
 
 namespace Shoumei.Codegen.CppSim
 
@@ -39,59 +41,84 @@ def gateTypeToOperator (gt : GateType) : String :=
 -- For internal with implPrefix: pImpl->name (these are plain bool)
 -- For internal without prefix: name (plain bool)
 def wireRef (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (w : Wire)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
+    (portNames : List String := []) (implPrefix : String := "") (portSet : Std.HashSet String := {}) : String :=
   match inputToIndex.find? (fun p => p.fst.name == w.name) with
   | some (_wire, idx) => s!"inputs[{idx}]"
   | none =>
       match outputToIndex.find? (fun p => p.fst.name == w.name) with
       | some (_wire, idx) => s!"outputs[{idx}]"
       | none =>
-        if !portNames.contains w.name && w.name == "zero" then
+        let isPort := if !portSet.isEmpty then portSet.contains w.name else portNames.contains w.name
+        if !isPort && w.name == "zero" then
           if implPrefix != "" then implPrefix ++ "const_false" else "const_false"
-        else if !portNames.contains w.name && w.name == "one" then
+        else if !isPort && w.name == "one" then
           if implPrefix != "" then implPrefix ++ "const_true" else "const_true"
-        else if implPrefix != "" && !portNames.contains w.name then implPrefix ++ w.name
+        else if implPrefix != "" && !isPort then implPrefix ++ w.name
         else w.name
 
 -- Check if a wire is a pointer (bundled I/O or port) — needs dereference for read/write
 private def isPointerWire (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat))
-    (portNames : List String) (w : Wire) : Bool :=
+    (portNames : List String) (w : Wire) (portSet : Std.HashSet String := {}) : Bool :=
   inputToIndex.any (fun p => p.fst.name == w.name) ||
   outputToIndex.any (fun p => p.fst.name == w.name) ||
-  portNames.contains w.name
+  (if !portSet.isEmpty then portSet.contains w.name else portNames.contains w.name)
 
 -- Read expression for a wire: dereference for pointers, direct access for plain bool
 def wireReadExpr (inputToIndex : List (Wire × Nat))
     (outputToIndex : List (Wire × Nat)) (w : Wire)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  let isPort := isPointerWire inputToIndex outputToIndex portNames w
+    (portNames : List String := []) (implPrefix : String := "") (portSet : Std.HashSet String := {}) : String :=
+  let isPort := isPointerWire inputToIndex outputToIndex portNames w portSet
   if !isPort && w.name == "zero" then "false"
   else if !isPort && w.name == "one" then "true"
   else
-    let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
+    let ref := wireRef inputToIndex outputToIndex w portNames implPrefix portSet
     if isPort then s!"*{ref}"
     else ref
 
 -- Write statement for a wire: dereference for pointers, direct assignment for plain bool
 def wireWriteStmt (inputToIndex : List (Wire × Nat))
     (outputToIndex : List (Wire × Nat)) (w : Wire) (expr : String)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
-  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix
-  if isPointerWire inputToIndex outputToIndex portNames w then s!"  *{ref} = {expr};"
+    (portNames : List String := []) (implPrefix : String := "") (portSet : Std.HashSet String := {}) : String :=
+  let ref := wireRef inputToIndex outputToIndex w portNames implPrefix portSet
+  if isPointerWire inputToIndex outputToIndex portNames w portSet then s!"  *{ref} = {expr};"
   else s!"  {ref} = {expr};"
 
 -- Helper: find all internal wires (gate outputs and instance wires that are not circuit I/O)
-def findInternalWires (c : Circuit) : List Wire :=
-  let gateOutputs := c.gates.map (fun g => g.output)
-  let instanceWires := c.instances.flatMap (fun inst => inst.portMap.map (·.snd))
-  let ramWires := c.rams.flatMap (fun ram =>
-    let wpWires := ram.writePorts.flatMap (fun wp => [wp.en] ++ wp.addr ++ wp.data)
-    let rpWires := ram.readPorts.flatMap (fun rp => rp.addr ++ rp.data)
-    wpWires ++ rpWires)
-  let allWires := gateOutputs ++ instanceWires ++ ramWires
-  dedupWires (allWires.filter (fun w =>
-    !c.outputs.contains w && !c.inputs.contains w &&
-    w.name != "zero" && w.name != "one"))
+def findInternalWires (c : Circuit) : List Wire := Id.run do
+  let mut ioSet : Std.HashSet String := {}
+  for w in c.inputs do ioSet := ioSet.insert w.name
+  for w in c.outputs do ioSet := ioSet.insert w.name
+  ioSet := ioSet.insert "zero"
+  ioSet := ioSet.insert "one"
+
+  let mut seen : Std.HashSet String := {}
+  let mut result : Array Wire := #[]
+
+  for g in c.gates do
+    let w := g.output
+    if !ioSet.contains w.name && !seen.contains w.name then
+      seen := seen.insert w.name
+      result := result.push w
+
+  for inst in c.instances do
+    for (_, w) in inst.portMap do
+      if !ioSet.contains w.name && !seen.contains w.name then
+        seen := seen.insert w.name
+        result := result.push w
+
+  for ram in c.rams do
+    for wp in ram.writePorts do
+      for w in [wp.en] ++ wp.addr ++ wp.data do
+        if !ioSet.contains w.name && !seen.contains w.name then
+          seen := seen.insert w.name
+          result := result.push w
+    for rp in ram.readPorts do
+      for w in rp.addr ++ rp.data do
+        if !ioSet.contains w.name && !seen.contains w.name then
+          seen := seen.insert w.name
+          result := result.push w
+
+  result.toList
 
 -- Helper: find all DFF output wires (need special handling)
 def findDFFOutputs (c : Circuit) : List Wire :=
@@ -181,17 +208,17 @@ private def parsePortMapKey (portName : String) : Option (String × Nat) :=
 
 /-- Build a mapping from possible portMap key names → actual wire names for a submodule. -/
 private def buildPortNameMapping (allCircuits : List Circuit) (moduleName : String)
-    : List (String × String) :=
+    : Std.HashMap String (Array String) := Id.run do
+  let mut map : Std.HashMap String (Array String) := {}
   match allCircuits.find? (fun sc => sc.name == moduleName) with
-  | none => []
+  | none => return map
   | some subMod =>
-      (subMod.inputs ++ subMod.outputs).flatMap fun w =>
+      for w in subMod.inputs ++ subMod.outputs do
         let name := w.name
-        let candidates := [name]
+        let mut candidates : Array String := #[name]
         let chars := name.toList
         let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
-        let candidates := if digitSuffix.isEmpty then candidates
-        else
+        if !digitSuffix.isEmpty then
           let idxStr := String.ofList digitSuffix
           let baseChars := chars.take (chars.length - digitSuffix.length)
           let baseStr := String.ofList baseChars
@@ -200,95 +227,100 @@ private def buildPortNameMapping (allCircuits : List Circuit) (moduleName : Stri
             (if baseStr.endsWith "_b" then [(baseStr.dropEnd 2).toString] else []) ++
             (if baseStr.endsWith "__" then [(baseStr.dropEnd 2).toString] else []) ++
             (if baseStr.endsWith "_" then [(baseStr.dropEnd 1).toString] else [])
-          let extraCandidates := strippedBases.flatMap fun b =>
-            [s!"{b}[{idxStr}]", s!"{b}_{idxStr}", s!"{b}{idxStr}", b]
-          candidates ++ extraCandidates
-        candidates.map fun c => (c, name)
+          for b in strippedBases do
+            candidates := candidates.push s!"{b}[{idxStr}]"
+            candidates := candidates.push s!"{b}_{idxStr}"
+            candidates := candidates.push s!"{b}{idxStr}"
+            candidates := candidates.push b
+        for c in candidates do
+          let cur := map.getD c #[]
+          map := map.insert c (cur.push name)
+  return map
 
 /-- Resolve a portMap key to the actual port name on the submodule. -/
-private def resolvePortName (mapping : List (String × String)) (portName : String) : String :=
-  match mapping.find? (fun (key, _) => key == portName) with
-  | some (_, actualName) => actualName
+private def resolvePortName (mapping : Std.HashMap String (Array String)) (portName : String) : String :=
+  match mapping.get? portName with
+  | some arr => arr[0]?.getD portName
   | none =>
       let s := portName.replace "[" "_"
       s.replace "]" ""
 
 /-- Generate port bindings for a single instance in the constructor body.
     Uses pointer assignment: inst.port = &signal; -/
-def generateInstanceBindings (allCircuits : List Circuit) (inst : CircuitInstance) : String :=
+def generateInstanceBindings (allCircuits : List Circuit) (inst : CircuitInstance) : String := Id.run do
   match allCircuits.find? (fun sc => sc.name == inst.moduleName) with
   | some subMod =>
     let useBundledIO := (subMod.inputs.length + subMod.outputs.length) > 500 && subMod.instances.isEmpty
     if useBundledIO then
-      let inputNames := subMod.inputs.map (·.name)
-      let outputNames := subMod.outputs.map (·.name)
       let mapping := buildPortNameMapping allCircuits inst.moduleName
-      let (bindings, _bareIdxMap) := inst.portMap.foldl
-        (fun (acc : List String × List (String × Nat)) (portName, wire) =>
-          let (lines, bmap) := acc
-          let curIdx := (bmap.find? (fun (n, _) => n == portName)).map (·.2) |>.getD 0
-          let candidates := mapping.filter (fun (key, _) => key == portName)
-          let count := inst.portMap.filter (fun (pn, _) => pn == portName) |>.length
-          let actualName := if count > 1 && curIdx < candidates.length then
-            (candidates[curIdx]!).2
-          else match candidates.head? with
-            | some (_, n) => n
-            | none => portName
-          let newMap := if count > 1 then
-            match bmap.find? (fun (n, _) => n == portName) with
-            | some _ => bmap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
-            | none => bmap ++ [(portName, 1)]
-          else bmap
-          let wireExpr :=
-            if wire.name == "zero" then "&const_false"
-            else if wire.name == "one" then "&const_true"
-            else s!"&{wire.name}"
-          match inputNames.findIdx? (· == actualName) with
-          | some idx =>
-              (lines ++ [s!"    {inst.instName}.inputs[{idx}] = {wireExpr};"], newMap)
-          | none =>
-              match outputNames.findIdx? (· == actualName) with
-              | some idx =>
-                  (lines ++ [s!"    {inst.instName}.outputs[{idx}] = {wireExpr};"], newMap)
-              | none =>
-                  (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], newMap)
-        ) ([], [])
-      joinLines bindings
+      let mut subInputMap : Std.HashMap String Nat := {}
+      for (idx, w) in subMod.inputs.enum do
+        subInputMap := subInputMap.insert w.name idx
+      let mut subOutputMap : Std.HashMap String Nat := {}
+      for (idx, w) in subMod.outputs.enum do
+        subOutputMap := subOutputMap.insert w.name idx
+      let mut portCounts : Std.HashMap String Nat := {}
+      for (pn, _) in inst.portMap do
+        portCounts := portCounts.insert pn (portCounts.getD pn 0 + 1)
+      let mut lines : Array String := #[]
+      let mut bareIdxMap : Std.HashMap String Nat := {}
+      for (portName, wire) in inst.portMap do
+        let curIdx := bareIdxMap.getD portName 0
+        let candidates := mapping.getD portName #[]
+        let count := portCounts.getD portName 0
+        let actualName := if count > 1 && curIdx < candidates.size then
+          candidates[curIdx]!
+        else match candidates[0]? with
+          | some n => n
+          | none => portName
+        if count > 1 then
+          bareIdxMap := bareIdxMap.insert portName (curIdx + 1)
+        let wireExpr :=
+          if wire.name == "zero" then "&const_false"
+          else if wire.name == "one" then "&const_true"
+          else s!"&{wire.name}"
+        match subInputMap.get? actualName with
+        | some idx =>
+            lines := lines.push s!"    {inst.instName}.inputs[{idx}] = {wireExpr};"
+        | none =>
+            match subOutputMap.get? actualName with
+            | some idx =>
+                lines := lines.push s!"    {inst.instName}.outputs[{idx}] = {wireExpr};"
+            | none =>
+                lines := lines.push s!"    {inst.instName}.{actualName} = {wireExpr};"
+      joinLines lines.toList
     else
       generateInstanceBindingsNamed allCircuits inst
   | none =>
       generateInstanceBindingsNamed allCircuits inst
 where
   /-- Generate bindings using named ports with pointer assignment -/
-  generateInstanceBindingsNamed (allCircuits : List Circuit) (inst : CircuitInstance) : String :=
+  generateInstanceBindingsNamed (allCircuits : List Circuit) (inst : CircuitInstance) : String := Id.run do
     let mapping := buildPortNameMapping allCircuits inst.moduleName
-    let (bindings, _) := inst.portMap.foldl (fun (acc : List String × List (String × Nat)) (portName, wire) =>
-      let (lines, bareIdxMap) := acc
+    let mut portCounts : Std.HashMap String Nat := {}
+    for (pn, _) in inst.portMap do
+      portCounts := portCounts.insert pn (portCounts.getD pn 0 + 1)
+    let mut lines : Array String := #[]
+    let mut bareIdxMap : Std.HashMap String Nat := {}
+    for (portName, wire) in inst.portMap do
       let wireExpr :=
         if wire.name == "zero" then "&const_false"
         else if wire.name == "one" then "&const_true"
         else s!"&{wire.name}"
-      match mapping.find? (fun (key, _) => key == portName) with
-      | some (_, actualName) =>
-          let count := inst.portMap.filter (fun (pn, _) => pn == portName) |>.length
-          if count > 1 then
-            let curIdx := (bareIdxMap.find? (fun (n, _) => n == portName)).map (·.2) |>.getD 0
-            let candidates := mapping.filter (fun (key, _) => key == portName)
-            let actualName := if curIdx < candidates.length then
-              (candidates[curIdx]!).2
-            else actualName
-            let newMap := match bareIdxMap.find? (fun (n, _) => n == portName) with
-              | some _ => bareIdxMap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
-              | none => bareIdxMap ++ [(portName, 1)]
-            (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], newMap)
-          else
-            (lines ++ [s!"    {inst.instName}.{actualName} = {wireExpr};"], bareIdxMap)
-      | none =>
+      let candidates := mapping.getD portName #[]
+      let count := portCounts.getD portName 0
+      let curIdx := bareIdxMap.getD portName 0
+      let actualName := if count > 1 && curIdx < candidates.size then
+        candidates[curIdx]!
+      else match candidates[0]? with
+        | some n => n
+        | none =>
           let s := portName.replace "[" "_"
-          let cppPortName := s.replace "]" ""
-          (lines ++ [s!"    {inst.instName}.{cppPortName} = {wireExpr};"], bareIdxMap)
-    ) ([], [])
-    joinLines bindings
+          s.replace "]" ""
+      if count > 1 then
+        bareIdxMap := bareIdxMap.insert portName (curIdx + 1)
+      lines := lines.push s!"    {inst.instName}.{actualName} = {wireExpr};"
+    joinLines lines.toList
 
 /-- Generate all instance port bindings for the constructor body -/
 def generateAllInstanceBindings (allCircuits : List Circuit) (c : Circuit) : String :=
@@ -360,10 +392,10 @@ def generateConstructor (c : Circuit) (_useBundledIO : Bool) (allCircuits : List
 
 -- Generate a single combinational gate assignment
 def generateCombGateCppSim (inputToIndex : List (Wire × Nat)) (outputToIndex : List (Wire × Nat)) (g : Gate)
-    (portNames : List String := []) (implPrefix : String := "") : String :=
+    (portNames : List String := []) (implPrefix : String := "") (portSet : Std.HashSet String := {}) : String :=
   let op := gateTypeToOperator g.gateType
-  let rd := fun w => wireReadExpr inputToIndex outputToIndex w portNames implPrefix
-  let wr := fun expr => wireWriteStmt inputToIndex outputToIndex g.output expr portNames implPrefix
+  let rd := fun w => wireReadExpr inputToIndex outputToIndex w portNames implPrefix portSet
+  let wr := fun expr => wireWriteStmt inputToIndex outputToIndex g.output expr portNames implPrefix portSet
 
   match g.gateType with
   | GateType.NOT =>
@@ -393,33 +425,82 @@ def generateCombGateCppSim (inputToIndex : List (Wire × Nat)) (outputToIndex : 
             wr s!"{rd i0} {op} {rd i1}"
       | _ => "  // ERROR: Binary gate should have 2 inputs"
 
--- Topological sort of combinational gates.
-def topSortCombGates (c : Circuit) : List Gate :=
-  let combGates := c.gates.filter (fun g => g.gateType.isCombinational)
-  let combGateOutputNames := combGates.map (·.output.name)
-  let inputNames := c.inputs.map (·.name)
-  let dffOutputNames := c.gates.filter (·.gateType.isDFF) |>.map (·.output.name)
-  let instOutputNames := List.flatten (c.instances.map (fun inst =>
-    inst.portMap.map (fun p => p.2.name)))
-  let available := (["zero", "one"] ++ inputNames ++ dffOutputNames ++ instOutputNames).filter
-    (fun n => !combGateOutputNames.contains n)
-  let rec loop (remaining : List Gate) (avail : List String) (sorted : List Gate)
-      (fuel : Nat) : List Gate :=
-    match fuel with
-    | 0 => sorted ++ remaining
-    | fuel + 1 =>
-      if remaining.isEmpty then sorted
-      else
-        let (ready, notReady) := remaining.partition (fun g =>
-          g.inputs.all (fun w => avail.contains w.name))
-        if ready.isEmpty then
-          match remaining with
-          | g :: rest => loop rest (avail ++ [g.output.name]) (sorted ++ [g]) fuel
-          | [] => sorted
-        else
-          let newAvail := avail ++ ready.map (·.output.name)
-          loop notReady newAvail (sorted ++ ready) fuel
-  loop combGates available [] (combGates.length + 1)
+-- Topological sort of combinational gates using Kahn's algorithm (O(V + E)).
+def topSortCombGates (c : Circuit) : List Gate := Id.run do
+  let combGates := (c.gates.filter (fun g => g.gateType.isCombinational)).toArray
+  let n := combGates.size
+  if n == 0 then
+    return []
+
+  -- Set of all wires produced by combinational gates
+  let mut combOutputs : Std.HashSet String := {}
+  for g in combGates do
+    combOutputs := combOutputs.insert g.output.name
+
+  -- Dependency graph: for each comb wire name, which gate indices consume it?
+  let mut consumers : Std.HashMap String (List Nat) := {}
+  -- Unresolved in-degree for each gate
+  let mut inDegree : Array Nat := Array.replicate n 0
+
+  for i in [0:n] do
+    let g := combGates[i]!
+    let mut deg := 0
+    for input in g.inputs do
+      if combOutputs.contains input.name then
+        deg := deg + 1
+        let cur := match consumers.get? input.name with
+          | some cs => cs
+          | none => []
+        consumers := consumers.insert input.name (i :: cur)
+    inDegree := inDegree.set! i deg
+
+  -- Queue of gates with in-degree 0
+  let mut queue : Array Nat := #[]
+  let mut inQueue : Array Bool := Array.replicate n false
+  for i in [0:n] do
+    if inDegree[i]! == 0 then
+      queue := queue.push i
+      inQueue := inQueue.set! i true
+
+  let mut result : Array Gate := #[]
+  let mut head := 0
+  let mut nextUnvisited := 0
+
+  for _ in [0:n] do
+    if head < queue.size then
+      let idx := queue[head]!
+      head := head + 1
+      let g := combGates[idx]!
+      result := result.push g
+      if let some cons := consumers.get? g.output.name then
+        for consumerIdx in cons do
+          let curDeg := inDegree[consumerIdx]!
+          if curDeg > 0 then
+            let newDeg := curDeg - 1
+            inDegree := inDegree.set! consumerIdx newDeg
+            if newDeg == 0 && !inQueue[consumerIdx]! then
+              queue := queue.push consumerIdx
+              inQueue := inQueue.set! consumerIdx true
+    else
+      -- Fallback for cyclic dependencies: pick the next unvisited gate
+      for j in [nextUnvisited:n] do
+        if !inQueue[j]! then
+          nextUnvisited := j + 1
+          inQueue := inQueue.set! j true
+          let g := combGates[j]!
+          result := result.push g
+          if let some cons := consumers.get? g.output.name then
+            for consumerIdx in cons do
+              let curDeg := inDegree[consumerIdx]!
+              if curDeg > 0 then
+                let newDeg := curDeg - 1
+                inDegree := inDegree.set! consumerIdx newDeg
+                if newDeg == 0 && !inQueue[consumerIdx]! then
+                  queue := queue.push consumerIdx
+                  inQueue := inQueue.set! consumerIdx true
+          break
+
+  result.toList
 
 -- Generate RAM read logic (async reads go in comb_logic)
 def generateRAMReadLogic (c : Circuit) (inputToIndex : List (Wire × Nat))
@@ -477,12 +558,13 @@ def generateCombMethod (c : Circuit) (useBundledIO : Bool)
     (portNames : List String := []) (implPrefix : String := "") : String :=
   let inputToIndex := if useBundledIO then c.inputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
   let outputToIndex := if useBundledIO then c.outputs.enum.map (fun ⟨idx, w⟩ => (w, idx)) else []
+  let portSet : Std.HashSet String := portNames.foldl (·.insert ·) {}
 
   let combGates := topSortCombGates c
   let ramReads := generateRAMReadLogic c inputToIndex outputToIndex portNames implPrefix
   if combGates.isEmpty && ramReads.isEmpty then ""
   else
-    let assignments := combGates.map (fun g => generateCombGateCppSim inputToIndex outputToIndex g portNames implPrefix)
+    let assignments := combGates.map (fun g => generateCombGateCppSim inputToIndex outputToIndex g portNames implPrefix portSet)
     joinLines [
       s!"void {c.name}::comb_logic() " ++ "{",
       joinLines assignments,
@@ -700,59 +782,79 @@ def toCppSimHeader (c : Circuit) (allCircuits : List Circuit := []) : String :=
 
 -- Generate PIMPL-aware instance port bindings for the constructor body.
 -- Uses pointer assignment: inst.port = &signal;
-def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : String :=
-  let portNames := (c.inputs ++ c.outputs).map (·.name)
-  let bindings := c.instances.map fun inst =>
-    let mapping := buildPortNameMapping allCircuits inst.moduleName
+def generatePimplInstanceBindings (allCircuits : List Circuit) (c : Circuit) : String := Id.run do
+  let portNameSet : Std.HashSet String := (c.inputs ++ c.outputs).foldl (fun s w => s.insert w.name) {}
+
+  let mut cache : Std.HashMap String (Std.HashMap String (Array String) × Bool × Std.HashMap String Nat × Std.HashMap String Nat) := {}
+  for inst in c.instances do
+    if !cache.contains inst.moduleName then
+      let mapping := buildPortNameMapping allCircuits inst.moduleName
+      let subMod := allCircuits.find? (fun (sc : Circuit) => sc.name == inst.moduleName)
+      let subUseBundled := match subMod with
+        | some sm => (sm.inputs.length + sm.outputs.length) > 500 && sm.instances.isEmpty
+        | none => false
+      let mut subInputMap : Std.HashMap String Nat := {}
+      if let some sm := subMod then
+        for (idx, w) in sm.inputs.enum do
+          subInputMap := subInputMap.insert w.name idx
+      let mut subOutputMap : Std.HashMap String Nat := {}
+      if let some sm := subMod then
+        for (idx, w) in sm.outputs.enum do
+          subOutputMap := subOutputMap.insert w.name idx
+      cache := cache.insert inst.moduleName (mapping, subUseBundled, subInputMap, subOutputMap)
+
+  let mut bindings : Array String := #[]
+  for inst in c.instances do
     let comment := s!"    // {inst.instName} ({inst.moduleName})"
-    let subMod := allCircuits.find? (fun (sc : Circuit) => sc.name == inst.moduleName)
-    let subUseBundled := match subMod with
-      | some sm => (sm.inputs.length + sm.outputs.length) > 500 && sm.instances.isEmpty
-      | none => false
-    let subInputNames := match subMod with
-      | some sm => sm.inputs.map Wire.name
-      | none => []
-    let subOutputNames := match subMod with
-      | some sm => sm.outputs.map Wire.name
-      | none => []
-    let (lines, _) := inst.portMap.foldl (fun (acc : List String × List (String × Nat)) (portName, wire) =>
-      let (ls, bareIdxMap) := acc
-      let candidates := mapping.filter (fun (key, _) => key == portName)
-      let count := inst.portMap.filter (fun (pn, _) => pn == portName) |>.length
-      let curIdx := (bareIdxMap.find? (fun (n, _) => n == portName)).map (·.2) |>.getD 0
-      let actualName := if count > 1 && curIdx < candidates.length then
-        (candidates[curIdx]!).2
-      else match candidates.head? with
-        | some (_, n) => n
+    let (mapping, subUseBundled, subInputMap, subOutputMap) := match cache[inst.moduleName]? with
+      | some info => info
+      | none => ({}, false, {}, {})
+
+    -- Precompute port name counts for this instance
+    let mut portCounts : Std.HashMap String Nat := {}
+    for (pn, _) in inst.portMap do
+      portCounts := portCounts.insert pn (portCounts.getD pn 0 + 1)
+
+    let mut lines : Array String := #[]
+    let mut bareIdxMap : Std.HashMap String Nat := {}
+
+    for (portName, wire) in inst.portMap do
+      let candidates := mapping.getD portName #[]
+      let count := portCounts.getD portName 0
+      let curIdx := bareIdxMap.getD portName 0
+      let actualName := if count > 1 && curIdx < candidates.size then
+        candidates[curIdx]!
+      else match candidates[0]? with
+        | some n => n
         | none =>
           let s := portName.replace "[" "_"
           s.replace "]" ""
-      let newMap := if count > 1 then
-        match bareIdxMap.find? (fun (n, _) => n == portName) with
-        | some _ => bareIdxMap.map (fun (n, i) => if n == portName then (n, i + 1) else (n, i))
-        | none => bareIdxMap ++ [(portName, 1)]
-      else bareIdxMap
+      if count > 1 then
+        bareIdxMap := bareIdxMap.insert portName (curIdx + 1)
+
       -- Parent ports are already bool* pointers; internal wires are plain bool (need &)
-      let isPort := portNames.contains wire.name
+      let isPort := portNameSet.contains wire.name
       let wireExpr := if isPort then wire.name
         else if wire.name == "zero" then "&pImpl->const_false"
         else if wire.name == "one" then "&pImpl->const_true"
         else s!"&pImpl->{wire.name}"
+
       if subUseBundled then
-        match subInputNames.findIdx? (· == actualName) with
+        match subInputMap.get? actualName with
         | some idx =>
-            (ls ++ [s!"    pImpl->{inst.instName}.inputs[{idx}] = {wireExpr};"], newMap)
+            lines := lines.push s!"    pImpl->{inst.instName}.inputs[{idx}] = {wireExpr};"
         | none =>
-            match subOutputNames.findIdx? (· == actualName) with
+            match subOutputMap.get? actualName with
             | some idx =>
-                (ls ++ [s!"    pImpl->{inst.instName}.outputs[{idx}] = {wireExpr};"], newMap)
+                lines := lines.push s!"    pImpl->{inst.instName}.outputs[{idx}] = {wireExpr};"
             | none =>
-                (ls ++ [s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"], newMap)
+                lines := lines.push s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"
       else
-        (ls ++ [s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"], newMap)
-    ) ([], [])
-    comment ++ "\n" ++ joinLines lines
-  joinLines bindings
+        lines := lines.push s!"    pImpl->{inst.instName}.{actualName} = {wireExpr};"
+
+    bindings := bindings.push (comment ++ "\n" ++ joinLines lines.toList)
+
+  joinLines bindings.toList
 
 -- Main function: Generate C++ simulation implementation file (.cpp)
 def toCppSimImpl (c : Circuit) (allCircuits : List Circuit := []) : String :=

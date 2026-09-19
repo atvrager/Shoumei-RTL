@@ -132,26 +132,28 @@ Synthesized with Synopsys DC NXT using GlobalFoundries 12LPP+ 7.5T RVT standard 
 | **Architecture** | Dual-dispatch superscalar ($W=2$), RV64IMAFD (64-bit integer datapath, atomics & 64-bit DP FPU) |
 | **Clock Target** | 5.00 ns (200 MHz) |
 | **Timing** | **Met** (WNS = 0.00 ns, TNS = 0.00 ns, 0 violating paths) |
-| **Critical Path** | 4.69 ns ($F_{\max} \approx 213.2\text{ MHz}$) in `u_cdb_tag_reg` $\rightarrow$ `u_rs_fp` $\rightarrow$ `u_cdb_mux` $\rightarrow$ PRF |
-| **Total Cell Area** | **$60,460.2\,\mu\text{m}^2$** ($0.0605\text{ mm}^2$) |
-| **Combinational Area** | $39,251.7\,\mu\text{m}^2$ (64.9%) |
-| **Sequential Area** | $21,208.6\,\mu\text{m}^2$ (35.1%) |
-| **Leaf Cell Count** | **186,599** (164,474 combinational, 22,125 sequential) |
-| **Dynamic Power** | 4.18 mW (3.83 mW internal, 0.35 mW switching) |
-| **Leakage Power** | 13.2 µW |
+| **Critical Path** | 4.85 ns ($F_{\max} \approx 206.2\text{ MHz}$) in `u_cdb_tag_reg` $\rightarrow$ `u_rs_fp` $\rightarrow$ `u_exec_fp` $\rightarrow$ PRF |
+| **Total Cell Area** | **$55,499.8\,\mu\text{m}^2$** ($0.0555\text{ mm}^2$) |
+| **Combinational Area** | $35,449.5\,\mu\text{m}^2$ (63.9%) |
+| **Sequential Area** | $20,050.4\,\mu\text{m}^2$ (36.1%) |
+| **Leaf Cell Count** | **168,140** (147,206 combinational, 20,934 sequential) |
+| **Dynamic Power** | 3.90 mW (3.58 mW internal, 0.32 mW switching) |
+| **Leakage Power** | 12.2 µW |
 
 #### Subsystem Area Breakdown
 
 | Subsystem | Area ($\mu\text{m}^2$) | Share | Notes |
 |---|---|---|---|
-| Integer Rename & PRF | 13,832.1 | 22.9% | $64\times 64$-bit Integer Physical Register File + rename logic (widened from 32b) |
-| DP FP Execution Unit | 12,276.1 | 20.3% | Double-precision `FPAdderD`, `FPMulD`, `FPDivD`, `FPSqrtD`, `FPFMAD` |
-| FP Rename & PRF | 11,961.0 | 19.8% | $64\times 64$-bit FP Physical Register File + rename logic |
-| Integer Mul/Div Unit | 5,346.2 | 8.8% | 64-bit Pipelined multiplier & radix-4 divider |
-| Reservation Stations | 5,086.2 | 8.4% | FP, Memory, Integer, Mul/Div, Branch (all 64-bit tag/operand datapaths) |
-| Queues & ROB | 2,758.1 | 4.6% | 16-entry dual-retire ROB, instruction & PC queues |
-| Load-Store Unit | 2,230.1 | 3.7% | 64-bit LSU datapath & 8-entry store buffer |
-| Integer ALU & Branch | 983.9 | 1.6% | Dual-issue 64-bit integer execution units |
-| Microcode & Control | 328.3 | 0.5% | Microcode trap sequencer & fetch stage |
-| Decoders | 133.0 | 0.2% | Dual `RV64GDecoder` |
-| Glue & Clock Gating | 5,525.2 | 9.1% | CDB muxes, bypass FIFOs, comparators, 52 clock gating cells |
+| Integer Rename & PRF | 12,953.4 | 23.3% | $64\times 64$-bit Integer Physical Register File + rename logic (modular `IntRenameStage_W2_64`) |
+| DP FP Execution Unit | 12,516.6 | 22.6% | Double-precision `FPAdderD`, `FPMulD`, `FPDivD`, `FPSqrtD`, `FPFMAD` |
+| FP Rename & PRF | 9,031.7 | 16.3% | $64\times 64$-bit FP Physical Register File + rename logic (`FPRenameStage_W1_64`) |
+| Integer Mul/Div Unit | 5,365.9 | 9.7% | 64-bit Pipelined multiplier & radix-4 divider |
+| Reservation Stations | 3,606.5 | 6.5% | FP, Memory, Integer, Mul/Div, Branch (modular RS subcircuits) |
+| Queues & ROB | 2,785.6 | 5.0% | 16-entry dual-retire ROB, instruction & PC queues |
+| Load-Store Unit | 2,242.4 | 4.0% | 64-bit LSU datapath & 8-entry store buffer |
+| Integer ALU & Branch | 1,029.7 | 1.9% | Dual-issue 64-bit integer execution units |
+| CSR File | 533.2 | 1.0% | Modular `CSRFile_RV64IMAFD_Zicsr_Zifencei_Microcoded` |
+| Scoreboard Busy Tables | 394.4 | 0.7% | Modular `BusyTable_W2` and `FPBusyTable` |
+| Microcode & Control | 309.7 | 0.6% | Modular `TrapSequencer` and `FetchStage_W2` |
+| Decoders | 129.2 | 0.2% | Dual `RV64GDecoder` |
+| Glue & Clock Gating | 4,601.5 | 8.3% | CDB muxes, bypass FIFOs, comparators, 53 clock gating cells |

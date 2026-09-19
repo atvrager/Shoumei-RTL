@@ -67,7 +67,7 @@ def mkBitmapFreeList64_W2 : Circuit :=
 
   let one  := Wire.mk "one"
   let zero := Wire.mk "zero"
-  let enq_ready_gate := Gate.mkBUF one enq_ready
+  let enq_ready_gate := Gate.mkNOT reset enq_ready
 
   -- === Decoder instances (retire0, retire1, alloc0, alloc1, commit_alloc0, commit_alloc1) ===
   let retire_dec_0_out := (List.range n).map (fun i => Wire.mk s!"retire_dec0_{i}")
@@ -270,6 +270,134 @@ def mkBitmapFreeList64_W2 : Circuit :=
     ]
   }
 
+/-- Single-dequeue Bitmap Free List (N=1) for single-issue pipelines (e.g. FP).
+    Uses 1 arbiter + 1 encoder, 3 decoders (retire, alloc, commit_alloc). -/
+def mkBitmapFreeList64_W1 : Circuit :=
+  let n := 64
+  let tagWidth := 6
+
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let enq_data := (List.range tagWidth).map (fun i => Wire.mk s!"enq_data_{i}")
+  let enq_valid := Wire.mk "enq_valid"
+  let deq_ready := Wire.mk "deq_ready"
+  let flush_en := Wire.mk "flush_en"
+  let commit_alloc_en := Wire.mk "commit_alloc_en"
+  let commit_alloc_tag := (List.range tagWidth).map (fun i => Wire.mk s!"commit_alloc_tag_{i}")
+
+  let enq_ready := Wire.mk "enq_ready"
+  let deq_data := (List.range tagWidth).map (fun i => Wire.mk s!"deq_data_{i}")
+  let deq_valid := Wire.mk "deq_valid"
+
+  let one := Wire.mk "one"
+  let zero := Wire.mk "zero"
+  let enq_ready_gate := Gate.mkNOT reset enq_ready
+
+  let retire_dec_out := (List.range n).map (fun i => Wire.mk s!"retire_dec_{i}")
+  let retire_dec_inst : CircuitInstance := {
+    moduleName := "Decoder6"
+    instName := "u_retire_dec"
+    portMap :=
+      (enq_data.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (retire_dec_out.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+
+  let alloc_dec_out := (List.range n).map (fun i => Wire.mk s!"alloc_dec_{i}")
+  let alloc_dec_inst : CircuitInstance := {
+    moduleName := "Decoder6"
+    instName := "u_alloc_dec"
+    portMap :=
+      (deq_data.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (alloc_dec_out.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+
+  let commit_dec_out := (List.range n).map (fun i => Wire.mk s!"commit_dec_{i}")
+  let commit_dec_inst : CircuitInstance := {
+    moduleName := "Decoder6"
+    instName := "u_commit_dec"
+    portMap :=
+      (commit_alloc_tag.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (commit_dec_out.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+
+  let spec_bitmap := (List.range n).map (fun i => Wire.mk s!"spec_{i}")
+  let committed_bitmap := (List.range n).map (fun i => Wire.mk s!"comm_{i}")
+
+  let arb_grant := (List.range n).map (fun i => Wire.mk s!"arb_grant_{i}")
+  let arb_valid := Wire.mk "arb_valid"
+  let arb_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter64"
+    instName := "u_arb"
+    portMap :=
+      (spec_bitmap.enum.map (fun ⟨i, w⟩ => (s!"request_{i}", w))) ++
+      (arb_grant.enum.map (fun ⟨i, w⟩ => (s!"grant_{i}", w))) ++
+      [("valid", arb_valid)]
+  }
+  let enc_out := (List.range tagWidth).map (fun i => Wire.mk s!"enc_out_{i}")
+  let enc_inst : CircuitInstance := {
+    moduleName := "OneHotEncoder64"
+    instName := "u_enc"
+    portMap :=
+      (arb_grant.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (enc_out.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+
+  let deq_valid_gate := Gate.mkBUF arb_valid deq_valid
+  let deq_data_gates := (List.range tagWidth).map fun i =>
+    Gate.mkBUF enc_out[i]! deq_data[i]!
+
+  let alloc_fire := Wire.mk "alloc_fire"
+  let alloc_fire_gate := Gate.mkAND deq_ready arb_valid alloc_fire
+
+  let perBitGates := (List.range n).foldl (fun acc i =>
+    let retire_set := Wire.mk s!"ret_set_{i}"
+    let alloc_clr := Wire.mk s!"alloc_clr_{i}"
+    let commit_clr := Wire.mk s!"comm_clr_{i}"
+    let spec_next := Wire.mk s!"spec_nx_{i}"
+    let comm_next := Wire.mk s!"comm_nx_{i}"
+
+    let g1 := Gate.mkAND enq_valid retire_dec_out[i]! retire_set
+    let g2 := Gate.mkAND alloc_fire alloc_dec_out[i]! alloc_clr
+    let g3 := Gate.mkAND commit_alloc_en commit_dec_out[i]! commit_clr
+
+    let cm1 := Wire.mk s!"comm_m1_{i}"
+    let g9 := Gate.mkMUX committed_bitmap[i]! zero commit_clr cm1
+    let g10 := Gate.mkMUX cm1 one retire_set comm_next
+
+    let m1 := Wire.mk s!"spec_m1_{i}"
+    let m2 := Wire.mk s!"spec_m2_{i}"
+    let g6 := Gate.mkMUX spec_bitmap[i]! one retire_set m1
+    let g7 := Gate.mkMUX m1 zero alloc_clr m2
+    let g8 := Gate.mkMUX m2 comm_next flush_en spec_next
+
+    let spec_dff := if i >= 32 then
+      Gate.mkDFF_SET spec_next clock reset spec_bitmap[i]!
+    else
+      Gate.mkDFF spec_next clock reset spec_bitmap[i]!
+    let comm_dff := if i >= 32 then
+      Gate.mkDFF_SET comm_next clock reset committed_bitmap[i]!
+    else
+      Gate.mkDFF comm_next clock reset committed_bitmap[i]!
+
+    acc ++ [g1, g2, g3, g6, g7, g8, g9, g10, spec_dff, comm_dff]
+  ) []
+
+  { name := "BitmapFreeList_64_W1"
+    inputs := [clock, reset, zero, one] ++
+              enq_data ++ [enq_valid] ++
+              [deq_ready, flush_en, commit_alloc_en] ++ commit_alloc_tag
+    outputs := [enq_ready] ++ deq_data ++ [deq_valid]
+    gates := [enq_ready_gate, deq_valid_gate, alloc_fire_gate] ++ deq_data_gates ++ perBitGates
+    instances := [retire_dec_inst, alloc_dec_inst, commit_dec_inst, arb_inst, enc_inst]
+    signalGroups := [
+      { name := "enq_data", width := tagWidth, wires := enq_data },
+      { name := "deq_data", width := tagWidth, wires := deq_data },
+      { name := "commit_alloc_tag", width := tagWidth, wires := commit_alloc_tag },
+      { name := "spec", width := n, wires := spec_bitmap },
+      { name := "comm", width := n, wires := committed_bitmap }
+    ]
+  }
+
 end Shoumei.RISCV.Renaming
 
 -- ============================================================================
@@ -284,6 +412,14 @@ open Shoumei.RISCV.Renaming
 
 /-- BitmapFreeList_64_W2 has the correct module name. -/
 theorem bfl_w2_name : mkBitmapFreeList64_W2.name = "BitmapFreeList_64_W2" := by native_decide
+
+/-- BitmapFreeList_64_W1 has the correct module name. -/
+theorem bfl_w1_name : mkBitmapFreeList64_W1.name = "BitmapFreeList_64_W1" := by native_decide
+
+/-- W1 has exactly 5 submodule instances:
+    retire_dec (Decoder6), alloc_dec (Decoder6), commit_dec (Decoder6),
+    arb (PriorityArbiter64), enc (OneHotEncoder64). -/
+theorem bfl_w1_instance_count : mkBitmapFreeList64_W1.instances.length = 5 := by native_decide
 
 /-- W2 has exactly 10 submodule instances:
     retire_dec0/1 (Decoder6), alloc_dec_0/1 (Decoder6), commit_dec0/1 (Decoder6),

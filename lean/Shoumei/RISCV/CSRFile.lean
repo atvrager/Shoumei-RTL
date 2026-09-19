@@ -47,7 +47,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   let csr_drain_complete := Wire.mk "csr_drain_complete"
 
   let useq_active := Wire.mk "useq_active"
-  let useq_addr_out := (List.range 12).map (fun i => Wire.mk s!"useq_addr_out_{i}")
+  let useq_csr_sel := (List.range 2).map (fun i => Wire.mk s!"useq_csr_sel_{i}")
   let useq_mstatus_trap := Wire.mk "useq_mstatus_trap"
   let useq_mstatus_mret := Wire.mk "useq_mstatus_mret"
   let useq_write_en := Wire.mk "useq_write_en"
@@ -59,7 +59,6 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
 
   let fp_valid_out := Wire.mk "fp_valid_out"
   let fp_exceptions := (List.range 5).map (fun i => Wire.mk s!"fp_exceptions_{i}")
-  let csr_read_data := (List.range 32).map (fun i => Wire.mk s!"csr_read_data_{i}")
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tag_{i}")
   let csr_cdb_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_cdb_data_{i}")
@@ -130,8 +129,38 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   else
     csr_addr
   let eff_csr_addr_gates := if enableTraps then
-    (List.range 12).map (fun i =>
-      Gate.mkMUX csr_addr[i]! useq_addr_out[i]! useq_active eff_csr_addr[i]!)
+    let not_useq_active := Wire.mk "not_useq_active"
+    let n_useq_s0 := Wire.mk "n_useq_s0"
+    let useq_a1 := Wire.mk "useq_a1"
+    let useq_a2 := Wire.mk "useq_a2"
+    let useq_a6 := Wire.mk "useq_a6"
+    [
+      Gate.mkNOT useq_active not_useq_active,
+      Gate.mkNOT useq_csr_sel[0]! n_useq_s0,
+      Gate.mkAND useq_csr_sel[1]! n_useq_s0 useq_a1,
+      Gate.mkAND useq_csr_sel[1]! useq_csr_sel[0]! useq_a2,
+      Gate.mkXOR useq_csr_sel[0]! useq_csr_sel[1]! useq_a6,
+      -- bit 0: MUX(csr_addr[0], useq_csr_sel[0], useq_active)
+      Gate.mkMUX csr_addr[0]! useq_csr_sel[0]! useq_active eff_csr_addr[0]!,
+      -- bit 1: MUX(csr_addr[1], useq_a1, useq_active)
+      Gate.mkMUX csr_addr[1]! useq_a1 useq_active eff_csr_addr[1]!,
+      -- bit 2: MUX(csr_addr[2], useq_a2, useq_active)
+      Gate.mkMUX csr_addr[2]! useq_a2 useq_active eff_csr_addr[2]!,
+      -- bits 3, 4, 5: 0 on trap -> csr_addr[i] AND not_useq_active
+      Gate.mkAND csr_addr[3]! not_useq_active eff_csr_addr[3]!,
+      Gate.mkAND csr_addr[4]! not_useq_active eff_csr_addr[4]!,
+      Gate.mkAND csr_addr[5]! not_useq_active eff_csr_addr[5]!,
+      -- bit 6: MUX(csr_addr[6], useq_a6, useq_active)
+      Gate.mkMUX csr_addr[6]! useq_a6 useq_active eff_csr_addr[6]!,
+      -- bit 7: 0 on trap -> csr_addr[7] AND not_useq_active
+      Gate.mkAND csr_addr[7]! not_useq_active eff_csr_addr[7]!,
+      -- bits 8, 9: 1 on trap -> csr_addr[i] OR useq_active
+      Gate.mkOR csr_addr[8]! useq_active eff_csr_addr[8]!,
+      Gate.mkOR csr_addr[9]! useq_active eff_csr_addr[9]!,
+      -- bits 10, 11: 0 on trap -> csr_addr[i] AND not_useq_active
+      Gate.mkAND csr_addr[10]! not_useq_active eff_csr_addr[10]!,
+      Gate.mkAND csr_addr[11]! not_useq_active eff_csr_addr[11]!
+    ]
   else []
 
   -- CSR address decode
@@ -230,16 +259,19 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
        Gate.mkOR csr_rd_nz_tmp[2]! csr_rd[4]! csr_rd_nz_tmp[3]!,
        Gate.mkOR csr_rd_nz_tmp[3]! rs1cap_extra_zero csr_rd_nonzero,
        Gate.mkAND csr_drain_complete csr_rd_nonzero csr_cdb_inject] ++
-      (List.range 6).map (fun i => Gate.mkBUF csr_phys[i]! csr_cdb_tag[i]!) ++
-      (List.range csrDataWidth).map (fun i => Gate.mkBUF internal_read_data[i]! csr_cdb_data[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF internal_read_data[i]! csr_read_data[i]!)
+      (List.range 6).flatMap (fun i =>
+        let not_p := Wire.mk s!"not_csr_phys_{i}"
+        let not_not_p := Wire.mk s!"not_not_csr_phys_{i}"
+        [Gate.mkNOT (csr_phys[i]!) not_p,
+         Gate.mkNOT not_p not_not_p,
+         Gate.mkAND (csr_phys[i]!) not_not_p (csr_cdb_tag[i]!)]) ++
+      (List.range csrDataWidth).map (fun i => Gate.mkBUF internal_read_data[i]! csr_cdb_data[i]!)
     else
       rs1cap_extra_gates ++
       [Gate.mkBUF zero csr_rd_nonzero,
        Gate.mkBUF zero csr_cdb_inject] ++
       (List.range 6).map (fun i => Gate.mkBUF zero csr_cdb_tag[i]!) ++
-      (List.range csrDataWidth).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!) ++
-      (List.range 32).map (fun i => Gate.mkBUF zero csr_read_data[i]!)
+      (List.range csrDataWidth).map (fun i => Gate.mkBUF zero csr_cdb_data[i]!)
 
   -- Trap sequencer merge
   let (merged_csr_write_val, merged_csr_we_mstatus, merged_csr_we_mepc, merged_csr_we_mcause, trap_we_merge_gates) :=
@@ -296,7 +328,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     csr_addr ++ csr_optype ++ csr_rs1cap ++ csr_zimm ++ csr_phys ++ csr_rd ++
     [csr_drain_complete] ++
     (if enableTraps then
-      [useq_active] ++ useq_addr_out ++
+      [useq_active] ++ useq_csr_sel ++
       [useq_mstatus_trap, useq_mstatus_mret, useq_write_en] ++
       useq_write_data
     else []) ++
@@ -304,7 +336,7 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     (if enableF then [fp_valid_out] ++ fp_exceptions else [])
 
   let all_outputs : List Wire :=
-    csr_read_data ++ [csr_cdb_inject, csr_rd_nonzero] ++ csr_cdb_tag ++ csr_cdb_data ++
+    [csr_cdb_inject, csr_rd_nonzero] ++ csr_cdb_tag ++ csr_cdb_data ++
     frm ++ fflags ++ [irq_pending]
 
   let all_gates :=
@@ -327,13 +359,12 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     sg "csr_zimm" 5 csr_zimm,
     sg "csr_phys" 6 csr_phys,
     sg "csr_rd" 5 csr_rd,
-    sg "csr_read_data" 32 csr_read_data,
     sg "csr_cdb_tag" 6 csr_cdb_tag,
     sg "csr_cdb_data" csrDataWidth csr_cdb_data,
     sg "frm" 3 frm,
     sg "fflags" 5 fflags
   ] ++ (if enableTraps then [
-    sg "useq_addr_out" 12 useq_addr_out,
+    sg "useq_csr_sel" 2 useq_csr_sel,
     sg "useq_write_data" 32 useq_write_data
   ] else []) ++ (if enableF then [
     sg "fp_exceptions" 5 fp_exceptions

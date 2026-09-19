@@ -132,14 +132,22 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   let any_inf := Wire.mk "any_inf"
   let a_is_inf := Wire.mk "a_is_inf"
 
-  let s1_sign1_gate := Gate.mkBUF (src1[63]!) sign1
+  let not_s1_sign1 := Wire.mk "s1_not_sign1"
+  let s1_sign1_gate := [Gate.mkNOT (src1[63]!) not_s1_sign1, Gate.mkNOT not_s1_sign1 sign1]
   let s1_sign2_gate := Gate.mkXOR (src2[63]!) op_sub sign2
 
   let s1_exp1_src := (List.range 11).map fun i => src1[52 + i]!
   let s1_exp2_src := (List.range 11).map fun i => src2[52 + i]!
 
-  let exp1_buf_gates := List.zipWith Gate.mkBUF s1_exp1_src exp1
-  let exp2_buf_gates := List.zipWith Gate.mkBUF s1_exp2_src exp2
+  let not_exp1 := makeIndexedWires "s1_not_exp1" 11
+  let exp1_buf_gates := (List.range 11).flatMap fun i =>
+    [Gate.mkNOT (s1_exp1_src[i]!) (not_exp1[i]!),
+     Gate.mkNOT (not_exp1[i]!) (exp1[i]!)]
+
+  let not_exp2 := makeIndexedWires "s1_not_exp2" 11
+  let exp2_buf_gates := (List.range 11).flatMap fun i =>
+    [Gate.mkNOT (s1_exp2_src[i]!) (not_exp2[i]!),
+     Gate.mkNOT (not_exp2[i]!) (exp2[i]!)]
 
   let (exp1_or_all, exp1_or_gates) := mkOrTree "s1_e1_or" s1_exp1_src
   let (exp2_or_all, exp2_or_gates) := mkOrTree "s1_e2_or" s1_exp2_src
@@ -166,11 +174,18 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
     Gate.mkOR a_is_inf (Wire.mk "s1_b_is_inf") any_inf
   ]
 
+  let not_mant1 := makeIndexedWires "s1_not_mant1" 52
   let mant1_gates :=
-    ((List.range 52).map fun i => Gate.mkBUF (src1[i]!) (mant1[i]!)) ++
+    ((List.range 52).flatMap fun i =>
+      [Gate.mkNOT (src1[i]!) (not_mant1[i]!),
+       Gate.mkNOT (not_mant1[i]!) (mant1[i]!)]) ++
     [Gate.mkBUF exp1_or_all (mant1[52]!)]
+
+  let not_mant2 := makeIndexedWires "s1_not_mant2" 52
   let mant2_gates :=
-    ((List.range 52).map fun i => Gate.mkBUF (src2[i]!) (mant2[i]!)) ++
+    ((List.range 52).flatMap fun i =>
+      [Gate.mkNOT (src2[i]!) (not_mant2[i]!),
+       Gate.mkNOT (not_mant2[i]!) (mant2[i]!)]) ++
     [Gate.mkBUF exp2_or_all (mant2[52]!)]
 
   -- Exponent difference exp1 - exp2 (11-bit)
@@ -223,7 +238,7 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   ]
 
   let all_gates :=
-    [s1_sign1_gate, s1_sign2_gate] ++ exp1_buf_gates ++ exp2_buf_gates ++
+    s1_sign1_gate ++ [s1_sign2_gate] ++ exp1_buf_gates ++ exp2_buf_gates ++
     exp1_or_gates ++ exp2_or_gates ++ exp1_and_gates ++ exp2_and_gates ++
     mant1_lo_gates ++ mant2_lo_gates ++ special_gates ++
     mant1_gates ++ mant2_gates ++ s1_sub_gates ++ s1_mant_sub_gates ++ swap_gates
@@ -268,7 +283,7 @@ def mkFPAdderD_Stage2_Align : Circuit :=
   let inf_sub_inf := Wire.mk "inf_sub_inf"
   let inf_sign := Wire.mk "inf_sign"
   let big_exp := makeIndexedWires "big_exp" 11
-  let big_mant := makeIndexedWires "big_mant" 56
+  let big_mant := makeIndexedWires "big_mant" 53
   let aligned_small := makeIndexedWires "aligned_small" 56
 
   let one := Wire.mk "s2_one"
@@ -282,10 +297,9 @@ def mkFPAdderD_Stage2_Align : Circuit :=
   let s2_exp_swap_gates := (List.range 11).map fun i =>
     Gate.mkMUX (exp1[i]!) (exp2[i]!) swap (big_exp[i]!)
 
-  let s2_big_mant53 := makeIndexedWires "s2_big_mant53" 53
   let s2_small_mant := makeIndexedWires "s2_small_mant" 53
   let s2_mant_swap_gates := (List.range 53).flatMap fun i =>
-    [Gate.mkMUX (mant1[i]!) (mant2[i]!) swap (s2_big_mant53[i]!),
+    [Gate.mkMUX (mant1[i]!) (mant2[i]!) swap (big_mant[i]!),
      Gate.mkMUX (mant2[i]!) (mant1[i]!) swap (s2_small_mant[i]!)]
 
   let s2_neg_diff := makeIndexedWires "s2_neg_diff" 6
@@ -327,17 +341,10 @@ def mkFPAdderD_Stage2_Align : Circuit :=
   let s2_inf_sub_inf_gate := Gate.mkAND both_inf eff_sub inf_sub_inf
   let s2_inf_sign_gate := Gate.mkMUX sign2 sign1 a_is_inf inf_sign
 
-  let big_mant_gates :=
-    [Gate.mkBUF zero (big_mant[0]!),
-     Gate.mkBUF zero (big_mant[1]!),
-     Gate.mkBUF zero (big_mant[2]!)] ++
-    (List.range 53).map fun i =>
-      Gate.mkBUF (s2_big_mant53[i]!) (big_mant[3 + i]!)
-
   let all_gates :=
     [one_gate] ++ s2_sign_swap_gates ++ s2_exp_swap_gates ++ s2_mant_swap_gates ++
     s2_neg_gates ++ exp_diff_zero_gates ++ ed_tree_gates ++ s2_sh_mux_gates ++ s2_shift_gates ++
-    [s2_eff_sub_gate, s2_inf_sub_inf_gate, s2_inf_sign_gate] ++ big_mant_gates
+    [s2_eff_sub_gate, s2_inf_sub_inf_gate, s2_inf_sign_gate]
 
   { name := "FPAdderD_Stage2_Align"
     inputs := [sign1, sign2] ++ exp1 ++ exp2 ++ mant1 ++ mant2 ++ exp_diff ++
@@ -353,7 +360,7 @@ def mkFPAdderD_Stage2_Align : Circuit :=
       { name := "mant2", width := 53, wires := mant2 },
       { name := "exp_diff", width := 11, wires := exp_diff },
       { name := "big_exp", width := 11, wires := big_exp },
-      { name := "big_mant", width := 56, wires := big_mant },
+      { name := "big_mant", width := 53, wires := big_mant },
       { name := "aligned_small", width := 56, wires := aligned_small }
     ] }
 
@@ -362,7 +369,7 @@ def fpAdderD_Stage2Circuit : Circuit := mkFPAdderD_Stage2_Align
 /-! ## Pipeline Stage 3: Mantissa Add/Sub + Leading Zero Detect -/
 
 def mkFPAdderD_Stage3_AddSub : Circuit :=
-  let big_mant := makeIndexedWires "big_mant" 56
+  let big_mant := makeIndexedWires "big_mant" 53
   let aligned_small := makeIndexedWires "aligned_small" 56
   let eff_sub := Wire.mk "eff_sub"
   let zero := Wire.mk "zero"
@@ -377,7 +384,7 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
 
   let s3_carry := makeIndexedWires "s3_c" 57
   let s3_add_gates := [Gate.mkBUF eff_sub (s3_carry[0]!)] ++ (List.range 56).flatMap (fun i =>
-    let a := big_mant[i]!
+    let a := if i < 3 then zero else big_mant[i - 3]!
     let b_raw := aligned_small[i]!
     let b := Wire.mk s!"s3_b_{i}"
     let ci := s3_carry[i]!
@@ -445,7 +452,7 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
     gates := all_gates
     instances := []
     signalGroups := [
-      { name := "big_mant", width := 56, wires := big_mant },
+      { name := "big_mant", width := 53, wires := big_mant },
       { name := "aligned_small", width := 56, wires := aligned_small },
       { name := "sum", width := 56, wires := sum },
       { name := "lead_pos", width := 6, wires := lead_pos }
@@ -774,7 +781,7 @@ def mkFPAdderD : Circuit :=
   let s2_inf_sub_inf := Wire.mk "s2_inf_sub_inf"
   let s2_inf_sign := Wire.mk "s2_inf_sign"
   let s2_big_exp := makeIndexedWires "s2_big_exp" 11
-  let s2_big_mant := makeIndexedWires "s2_big_mant" 56
+  let s2_big_mant := makeIndexedWires "s2_big_mant" 53
   let s2_aligned_small := makeIndexedWires "s2_aligned_small" 56
 
   let stage2_inst : CircuitInstance := {
@@ -792,13 +799,12 @@ def mkFPAdderD : Circuit :=
        ("eff_sub", s2_eff_sub), ("shift_sticky", s2_shift_sticky),
        ("inf_sub_inf", s2_inf_sub_inf), ("inf_sign", s2_inf_sign)] ++
       ((List.range 11).map fun i => (s!"big_exp_{i}", s2_big_exp[i]!)) ++
-      ((List.range 56).map fun i => (s!"big_mant_{i}", s2_big_mant[i]!)) ++
+      ((List.range 53).map fun i => (s!"big_mant_{i}", s2_big_mant[i]!)) ++
       ((List.range 56).map fun i => (s!"aligned_small_{i}", s2_aligned_small[i]!))
   }
 
   -- Pipeline register 2 (DFFs)
   let p2_big_sign := Wire.mk "p2_big_sign"
-  let p2_small_sign := Wire.mk "p2_small_sign"
   let p2_eff_sub := Wire.mk "p2_eff_sub"
   let p2_sticky := Wire.mk "p2_sticky"
   let p2_any_nan := Wire.mk "p2_any_nan"
@@ -806,7 +812,7 @@ def mkFPAdderD : Circuit :=
   let p2_any_inf := Wire.mk "p2_any_inf"
   let p2_inf_sign := Wire.mk "p2_inf_sign"
   let p2_big_exp := makeIndexedWires "p2_big_exp" 11
-  let p2_big_mant := makeIndexedWires "p2_big_mant" 56
+  let p2_big_mant := makeIndexedWires "p2_big_mant" 53
   let p2_aligned_small := makeIndexedWires "p2_aligned_small" 56
   let p2_rm := makeIndexedWires "p2_rm" 3
   let p2_tag := makeIndexedWires "p2_tag" 6
@@ -814,7 +820,6 @@ def mkFPAdderD : Circuit :=
 
   let p2_dffs :=
     [Gate.mkDFF s2_big_sign clock reset p2_big_sign,
-     Gate.mkDFF s2_small_sign clock reset p2_small_sign,
      Gate.mkDFF s2_eff_sub clock reset p2_eff_sub,
      Gate.mkDFF s2_shift_sticky clock reset p2_sticky,
      Gate.mkDFF p1_any_nan clock reset p2_any_nan,
@@ -838,7 +843,7 @@ def mkFPAdderD : Circuit :=
     moduleName := "FPAdderD_Stage3_AddSub"
     instName := "u_stage3"
     portMap :=
-      ((List.range 56).map fun i => (s!"big_mant_{i}", p2_big_mant[i]!)) ++
+      ((List.range 53).map fun i => (s!"big_mant_{i}", p2_big_mant[i]!)) ++
       ((List.range 56).map fun i => (s!"aligned_small_{i}", p2_aligned_small[i]!)) ++
       [("eff_sub", p2_eff_sub), ("zero", zero)] ++
       ((List.range 56).map fun i => (s!"sum_{i}", s3_sum[i]!)) ++

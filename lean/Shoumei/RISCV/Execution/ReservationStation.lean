@@ -1028,6 +1028,765 @@ def mkMulDivRSFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
   let base := mkReservationStationFromConfig config
   { base with name := "MulDivRS4_W2" }
 
+/-! ## Specialized Reservation Stations (Zero Warnings Architecture) -/
+
+/-- 6-bit or 7-bit tag comparator against CDB tag, gated by CDB valid -/
+private def mkTagMatch (pfx : String) (w : Nat) (src_tag : List Wire) (cdb_tag : List Wire) (cdb_valid : Wire)
+    : List Gate × Wire :=
+  let xns := (List.range w).flatMap fun i =>
+    let x := Wire.mk s!"{pfx}_x{i}"; let xn := Wire.mk s!"{pfx}_xn{i}"
+    [Gate.mkXOR src_tag[i]! cdb_tag[i]! x, Gate.mkNOT x xn]
+  let eq := Wire.mk s!"{pfx}_eq"
+  let andGates :=
+    if w == 6 then
+      [Gate.mkAND (Wire.mk s!"{pfx}_xn0") (Wire.mk s!"{pfx}_xn1") (Wire.mk s!"{pfx}_a1"),
+       Gate.mkAND (Wire.mk s!"{pfx}_xn2") (Wire.mk s!"{pfx}_xn3") (Wire.mk s!"{pfx}_a2"),
+       Gate.mkAND (Wire.mk s!"{pfx}_xn4") (Wire.mk s!"{pfx}_xn5") (Wire.mk s!"{pfx}_a3"),
+       Gate.mkAND (Wire.mk s!"{pfx}_a1") (Wire.mk s!"{pfx}_a2") (Wire.mk s!"{pfx}_a4"),
+       Gate.mkAND (Wire.mk s!"{pfx}_a4") (Wire.mk s!"{pfx}_a3") eq]
+    else if w == 7 then
+      [Gate.mkAND (Wire.mk s!"{pfx}_xn0") (Wire.mk s!"{pfx}_xn1") (Wire.mk s!"{pfx}_a1"),
+       Gate.mkAND (Wire.mk s!"{pfx}_xn2") (Wire.mk s!"{pfx}_xn3") (Wire.mk s!"{pfx}_a2"),
+       Gate.mkAND (Wire.mk s!"{pfx}_xn4") (Wire.mk s!"{pfx}_xn5") (Wire.mk s!"{pfx}_a3"),
+       Gate.mkAND (Wire.mk s!"{pfx}_a1") (Wire.mk s!"{pfx}_a2") (Wire.mk s!"{pfx}_a4"),
+       Gate.mkAND (Wire.mk s!"{pfx}_a4") (Wire.mk s!"{pfx}_a3") (Wire.mk s!"{pfx}_a5"),
+       Gate.mkAND (Wire.mk s!"{pfx}_a5") (Wire.mk s!"{pfx}_xn6") eq]
+    else []
+  let m := Wire.mk s!"{pfx}_m"
+  (xns ++ andGates ++ [Gate.mkAND eq cdb_valid m], m)
+
+/-- Helper to build a single reservation station entry -/
+private def buildRSEntry
+    (idx : Nat)
+    (opcodeWidth : Nat) (destTagWidth : Nat) (src1TagWidth : Nat) (src2TagWidth : Nat) (dataWidth : Nat)
+    (issue_we : Wire)
+    (issue_opcode : List Wire) (issue_dest : List Wire)
+    (issue_s1r : Wire) (issue_s1t : List Wire) (issue_s1d : List Wire)
+    (issue_s2r : Wire) (issue_s2t : List Wire) (issue_s2d : List Wire)
+    (cdb_tag_s1_0 : List Wire) (cdb_valid_s1_0 : Wire) (cdb_data_0 : List Wire)
+    (cdb_tag_s1_1 : List Wire) (cdb_valid_s1_1 : Wire) (cdb_data_1 : List Wire)
+    (cdb_tag_s2_0 : List Wire) (cdb_valid_s2_0 : Wire)
+    (cdb_tag_s2_1 : List Wire) (cdb_valid_s2_1 : Wire)
+    (suppress_s1 : Option Wire) (suppress_s2 : Option Wire)
+    (dispatch_en : Option Wire) (dispatch_grant : Wire)
+    (clock reset : Wire)
+    : List Gate × List CircuitInstance × Wire × Wire × List Wire × List Wire :=
+  let entryWidth := 1 + opcodeWidth + destTagWidth + 1 + src1TagWidth + dataWidth + 1 + src2TagWidth + dataWidth
+  let off_dest := 1 + opcodeWidth
+  let off_src1_ready := off_dest + destTagWidth
+  let off_src1_tag := off_src1_ready + 1
+  let off_src1_data := off_src1_tag + src1TagWidth
+  let off_src2_ready := off_src1_data + dataWidth
+  let off_src2_tag := off_src2_ready + 1
+  let off_src2_data := off_src2_tag + src2TagWidth
+
+  let e_cur := makeIndexedWires s!"e{idx}" entryWidth
+  let e_next := makeIndexedWires s!"e{idx}_next" entryWidth
+  let valid := e_cur[0]!
+  let src1_ready := e_cur[off_src1_ready]!
+  let src1_tag := e_cur.drop off_src1_tag |>.take src1TagWidth
+  let src1_data := e_cur.drop off_src1_data |>.take dataWidth
+  let src2_ready := e_cur[off_src2_ready]!
+  let src2_tag := e_cur.drop off_src2_tag |>.take src2TagWidth
+  let src2_data := e_cur.drop off_src2_data |>.take dataWidth
+
+  -- CDB matches against STORED tags
+  let (m1_0g, m1_0m) := mkTagMatch s!"e{idx}_m1_0" src1TagWidth src1_tag cdb_tag_s1_0 cdb_valid_s1_0
+  let (m1_1g, m1_1m) := mkTagMatch s!"e{idx}_m1_1" src1TagWidth src1_tag cdb_tag_s1_1 cdb_valid_s1_1
+  let (m2_0g, m2_0m) := mkTagMatch s!"e{idx}_m2_0" src2TagWidth src2_tag cdb_tag_s2_0 cdb_valid_s2_0
+  let (m2_1g, m2_1m) := mkTagMatch s!"e{idx}_m2_1" src2TagWidth src2_tag cdb_tag_s2_1 cdb_valid_s2_1
+
+  -- CDB matches against INCOMING dispatch tags
+  let (n1_0g, n1_0m) := mkTagMatch s!"e{idx}_n1_0" src1TagWidth issue_s1t cdb_tag_s1_0 cdb_valid_s1_0
+  let (n1_1g, n1_1m) := mkTagMatch s!"e{idx}_n1_1" src1TagWidth issue_s1t cdb_tag_s1_1 cdb_valid_s1_1
+  let (n2_0g, n2_0m) := mkTagMatch s!"e{idx}_n2_0" src2TagWidth issue_s2t cdb_tag_s2_0 cdb_valid_s2_0
+  let (n2_1g, n2_1m) := mkTagMatch s!"e{idx}_n2_1" src2TagWidth issue_s2t cdb_tag_s2_1 cdb_valid_s2_1
+
+  let n1_any := Wire.mk s!"e{idx}_n1_any"
+  let n2_any := Wire.mk s!"e{idx}_n2_any"
+  let alloc_s1r := Wire.mk s!"e{idx}_alloc_s1r"
+  let alloc_s2r := Wire.mk s!"e{idx}_alloc_s2r"
+
+  let alloc_ready_gates :=
+    match suppress_s1, suppress_s2 with
+    | some s1, some s2 =>
+      let n1_any_raw := Wire.mk s!"e{idx}_n1_any_raw"
+      let n2_any_raw := Wire.mk s!"e{idx}_n2_any_raw"
+      let not_supp_s1 := Wire.mk s!"e{idx}_not_supp_s1"
+      let not_supp_s2 := Wire.mk s!"e{idx}_not_supp_s2"
+      [Gate.mkOR n1_0m n1_1m n1_any_raw,
+       Gate.mkNOT s1 not_supp_s1,
+       Gate.mkAND n1_any_raw not_supp_s1 n1_any,
+       Gate.mkOR issue_s1r n1_any alloc_s1r,
+       Gate.mkOR n2_0m n2_1m n2_any_raw,
+       Gate.mkNOT s2 not_supp_s2,
+       Gate.mkAND n2_any_raw not_supp_s2 n2_any,
+       Gate.mkOR issue_s2r n2_any alloc_s2r]
+    | _, _ =>
+      [Gate.mkOR n1_0m n1_1m n1_any,
+       Gate.mkOR issue_s1r n1_any alloc_s1r,
+       Gate.mkOR n2_0m n2_1m n2_any,
+       Gate.mkOR issue_s2r n2_any alloc_s2r]
+
+  let not_is1r := Wire.mk s!"e{idx}_not_is1r"
+  let not_is2r := Wire.mk s!"e{idx}_not_is2r"
+  let n1_0d := Wire.mk s!"e{idx}_n1_0d"
+  let n1_1d := Wire.mk s!"e{idx}_n1_1d"
+  let n2_0d := Wire.mk s!"e{idx}_n2_0d"
+  let n2_1d := Wire.mk s!"e{idx}_n2_1d"
+  let alloc_data_gate := [
+    Gate.mkNOT issue_s1r not_is1r, Gate.mkNOT issue_s2r not_is2r,
+    Gate.mkAND n1_0m not_is1r n1_0d, Gate.mkAND n1_1m not_is1r n1_1d,
+    Gate.mkAND n2_0m not_is2r n2_0d, Gate.mkAND n2_1m not_is2r n2_1d]
+  let a1d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a1d_t_{i}"
+  let a1d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a1d_m_{i}"
+  let ad1 := (List.range dataWidth).map fun i => Gate.mkMUX issue_s1d[i]! cdb_data_1[i]! n1_1d a1d_t[i]!
+  let ad2 := (List.range dataWidth).map fun i => Gate.mkMUX a1d_t[i]! cdb_data_0[i]! n1_0d a1d_m[i]!
+  let a2d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a2d_t_{i}"
+  let a2d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_a2d_m_{i}"
+  let ad3 := (List.range dataWidth).map fun i => Gate.mkMUX issue_s2d[i]! cdb_data_1[i]! n2_1d a2d_t[i]!
+  let ad4 := (List.range dataWidth).map fun i => Gate.mkMUX a2d_t[i]! cdb_data_0[i]! n2_0d a2d_m[i]!
+
+  let s1_any := Wire.mk s!"e{idx}_m1_any"
+  let r1_m1 := Wire.mk s!"e{idx}_r1_m1"
+  let not_s1r := Wire.mk s!"e{idx}_not_s1r"
+  let m1_0d := Wire.mk s!"e{idx}_m1_0d"
+  let m1_1d := Wire.mk s!"e{idx}_m1_1d"
+  let wakeup1_gates := [Gate.mkOR m1_0m m1_1m s1_any, Gate.mkOR src1_ready s1_any r1_m1,
+                        Gate.mkMUX r1_m1 alloc_s1r issue_we e_next[off_src1_ready]!,
+                        Gate.mkNOT src1_ready not_s1r,
+                        Gate.mkAND m1_0m not_s1r m1_0d, Gate.mkAND m1_1m not_s1r m1_1d]
+  let w1d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_t_{i}"
+  let w1d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w1d_m_{i}"
+  let wd1 := (List.range dataWidth).map fun i => Gate.mkMUX src1_data[i]! cdb_data_1[i]! m1_1d w1d_t[i]!
+  let wd2 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_t[i]! cdb_data_0[i]! m1_0d w1d_m[i]!
+  let wd3 := (List.range dataWidth).map fun i => Gate.mkMUX w1d_m[i]! a1d_m[i]! issue_we e_next[off_src1_data+i]!
+
+  let s2_any := Wire.mk s!"e{idx}_m2_any"
+  let r2_m2 := Wire.mk s!"e{idx}_r2_m2"
+  let not_s2r := Wire.mk s!"e{idx}_not_s2r"
+  let m2_0d := Wire.mk s!"e{idx}_m2_0d"
+  let m2_1d := Wire.mk s!"e{idx}_m2_1d"
+  let wakeup2_gates := [Gate.mkOR m2_0m m2_1m s2_any, Gate.mkOR src2_ready s2_any r2_m2,
+                        Gate.mkMUX r2_m2 alloc_s2r issue_we e_next[off_src2_ready]!,
+                        Gate.mkNOT src2_ready not_s2r,
+                        Gate.mkAND m2_0m not_s2r m2_0d, Gate.mkAND m2_1m not_s2r m2_1d]
+  let w2d_t := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_t_{i}"
+  let w2d_m := (List.range dataWidth).map fun i => Wire.mk s!"e{idx}_w2d_m_{i}"
+  let wd4 := (List.range dataWidth).map fun i => Gate.mkMUX src2_data[i]! cdb_data_1[i]! m2_1d w2d_t[i]!
+  let wd5 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_t[i]! cdb_data_0[i]! m2_0d w2d_m[i]!
+  let wd6 := (List.range dataWidth).map fun i => Gate.mkMUX w2d_m[i]! a2d_m[i]! issue_we e_next[off_src2_data+i]!
+
+  let dispatch := Wire.mk s!"e{idx}_dispatch"
+  let dispatch_gate :=
+    match dispatch_en with
+    | some de => Gate.mkAND de dispatch_grant dispatch
+    | none => Gate.mkBUF dispatch_grant dispatch
+  let v_keep := Wire.mk s!"e{idx}_v_keep"
+  let not_dispatch := Wire.mk s!"e{idx}_not_dispatch"
+  let valid_we := [Gate.mkNOT dispatch not_dispatch, Gate.mkAND valid not_dispatch v_keep,
+                   Gate.mkOR v_keep issue_we e_next[0]!]
+  let opcode_g := (List.range opcodeWidth).map fun i => Gate.mkMUX e_cur[1+i]! issue_opcode[i]! issue_we e_next[1+i]!
+  let dest_g := (List.range destTagWidth).map fun i => Gate.mkMUX e_cur[off_dest+i]! issue_dest[i]! issue_we e_next[off_dest+i]!
+  let src1t_g := (List.range src1TagWidth).map fun i => Gate.mkMUX e_cur[off_src1_tag+i]! issue_s1t[i]! issue_we e_next[off_src1_tag+i]!
+  let src2t_g := (List.range src2TagWidth).map fun i => Gate.mkMUX e_cur[off_src2_tag+i]! issue_s2t[i]! issue_we e_next[off_src2_tag+i]!
+
+  let e_inst : CircuitInstance := {
+    moduleName := s!"Register{entryWidth}", instName := s!"u_e{idx}",
+    portMap := (e_next.enum.map fun ⟨i,w⟩ => (s!"d_{i}", w)) ++
+               [("clock", clock), ("reset", reset)] ++
+               (e_cur.enum.map fun ⟨i,w⟩ => (s!"q_{i}", w))
+  }
+  let is_ready := Wire.mk s!"e{idx}_ready"
+  let r12 := Wire.mk s!"e{idx}_r12"
+  let e_gates :=
+    m1_0g ++ m1_1g ++ m2_0g ++ m2_1g ++
+    n1_0g ++ n1_1g ++ n2_0g ++ n2_1g ++
+    alloc_ready_gates ++ alloc_data_gate ++
+    ad1 ++ ad2 ++ ad3 ++ ad4 ++
+    wakeup1_gates ++ wd1 ++ wd2 ++ wd3 ++
+    wakeup2_gates ++ wd4 ++ wd5 ++ wd6 ++
+    [dispatch_gate] ++ valid_we ++ opcode_g ++ dest_g ++ src1t_g ++ src2t_g ++
+    [Gate.mkAND r1_m1 r2_m2 r12,
+     Gate.mkAND valid r12 is_ready]
+  (e_gates, [e_inst], valid, is_ready, w1d_m, w2d_m)
+
+private def mkLocalMux2 (w : Nat) (in0 in1 out_wires : List Wire) (sel : Wire) : List Gate :=
+  (List.range w).map fun i => Gate.mkMUX in0[i]! in1[i]! sel out_wires[i]!
+
+/-- Specialized Integer Reservation Station (W=2 dual-issue, 4 entries, 6-bit tags).
+    ALU0 is combinational (no dispatch_en_0 needed). Bank 1 has dispatch_en_1 and suppress inputs. -/
+def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
+  let clock := Wire.mk "clock"; let reset := Wire.mk "reset"
+  let opcodeWidth := 8; let tagWidth := 6
+  let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
+  let off_dest := 1 + opcodeWidth
+
+  let issue_en_0 := Wire.mk "issue_en_0"; let issue_en_1 := Wire.mk "issue_en_1"
+  let issue_opcode_0 := makeIndexedWires "issue_opcode_0" opcodeWidth
+  let issue_dest_tag_0 := makeIndexedWires "issue_dest_tag_0" tagWidth
+  let issue_src1_ready_0 := Wire.mk "issue_src1_ready_0"
+  let issue_src1_tag_0 := makeIndexedWires "issue_src1_tag_0" tagWidth
+  let issue_src1_data_0 := makeIndexedWires "issue_src1_data_0" dataWidth
+  let issue_src2_ready_0 := Wire.mk "issue_src2_ready_0"
+  let issue_src2_tag_0 := makeIndexedWires "issue_src2_tag_0" tagWidth
+  let issue_src2_data_0 := makeIndexedWires "issue_src2_data_0" dataWidth
+
+  let issue_opcode_1 := makeIndexedWires "issue_opcode_1" opcodeWidth
+  let issue_dest_tag_1 := makeIndexedWires "issue_dest_tag_1" tagWidth
+  let issue_src1_ready_1 := Wire.mk "issue_src1_ready_1"
+  let issue_src1_tag_1 := makeIndexedWires "issue_src1_tag_1" tagWidth
+  let issue_src1_data_1 := makeIndexedWires "issue_src1_data_1" dataWidth
+  let issue_src2_ready_1 := Wire.mk "issue_src2_ready_1"
+  let issue_src2_tag_1 := makeIndexedWires "issue_src2_tag_1" tagWidth
+  let issue_src2_data_1 := makeIndexedWires "issue_src2_data_1" dataWidth
+
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_tag_0 := makeIndexedWires "cdb_tag_0" tagWidth
+  let cdb_data_0 := makeIndexedWires "cdb_data_0" dataWidth
+  let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  let cdb_tag_1 := makeIndexedWires "cdb_tag_1" tagWidth
+  let cdb_data_1 := makeIndexedWires "cdb_data_1" dataWidth
+
+  let dispatch_en_1 := Wire.mk "dispatch_en_1"
+  let suppress_cdb_s1_1 := Wire.mk "suppress_cdb_s1_1"
+  let suppress_cdb_s2_1 := Wire.mk "suppress_cdb_s2_1"
+
+  let alloc_avail_0 := Wire.mk "alloc_avail_0"; let alloc_avail_1 := Wire.mk "alloc_avail_1"
+  let dispatch_valid_0 := Wire.mk "dispatch_valid_0"; let dispatch_valid_1 := Wire.mk "dispatch_valid_1"
+  let alloc_ptr_0 := Wire.mk "alloc_ptr_0"; let alloc_ptr_next_0 := Wire.mk "alloc_ptr_next_0"
+  let alloc_ptr_1 := Wire.mk "alloc_ptr_1"; let alloc_ptr_next_1 := Wire.mk "alloc_ptr_next_1"
+  let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
+  let arb1_gr0 := Wire.mk "dispatch_grant_2"; let arb1_gr1 := Wire.mk "dispatch_grant_3"
+
+  let dispatch_opcode_0 := makeIndexedWires "dispatch_opcode_0" opcodeWidth
+  let dispatch_src1_data_0 := makeIndexedWires "dispatch_src1_data_0" dataWidth
+  let dispatch_src2_data_0 := makeIndexedWires "dispatch_src2_data_0" dataWidth
+  let dispatch_dest_tag_0 := makeIndexedWires "dispatch_dest_tag_0" tagWidth
+
+  let dispatch_opcode_1 := makeIndexedWires "dispatch_opcode_1" opcodeWidth
+  let dispatch_src1_data_1 := makeIndexedWires "dispatch_src1_data_1" dataWidth
+  let dispatch_src2_data_1 := makeIndexedWires "dispatch_src2_data_1" dataWidth
+  let dispatch_dest_tag_1 := makeIndexedWires "dispatch_dest_tag_1" tagWidth
+
+  -- Gate CDB valid for INT domain (only snoop when not FP)
+  let not_cdb_fp_0 := Wire.mk "not_cdb_fp_0"
+  let not_cdb_fp_1 := Wire.mk "not_cdb_fp_1"
+  let cdb_valid_int_0 := Wire.mk "cdb_valid_int_0"
+  let cdb_valid_int_1 := Wire.mk "cdb_valid_int_1"
+  let cdb_valid_gates := [
+    Gate.mkNOT cdb_is_fp_0 not_cdb_fp_0,
+    Gate.mkAND cdb_valid_0 not_cdb_fp_0 cdb_valid_int_0,
+    Gate.mkNOT cdb_is_fp_1 not_cdb_fp_1,
+    Gate.mkAND cdb_valid_1 not_cdb_fp_1 cdb_valid_int_1
+  ]
+
+  let ptr_gates := [Gate.mkXOR alloc_ptr_0 issue_en_0 alloc_ptr_next_0,
+                    Gate.mkXOR alloc_ptr_1 issue_en_1 alloc_ptr_next_1]
+  let ptr_inst_0 : CircuitInstance := {
+    moduleName := "Register1", instName := "u_alloc_ptr_0",
+    portMap := [("d_0", alloc_ptr_next_0), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr_0)]
+  }
+  let ptr_inst_1 : CircuitInstance := {
+    moduleName := "Register1", instName := "u_alloc_ptr_1",
+    portMap := [("d_0", alloc_ptr_next_1), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr_1)]
+  }
+
+  let issue_we_0_0 := Wire.mk "issue_we_0_0"; let issue_we_0_1 := Wire.mk "issue_we_0_1"
+  let not_ptr_0 := Wire.mk "not_ptr_0"
+  let base_issue_gates_0 := [
+    Gate.mkNOT alloc_ptr_0 not_ptr_0,
+    Gate.mkAND issue_en_0 not_ptr_0 issue_we_0_0,
+    Gate.mkAND issue_en_0 alloc_ptr_0 issue_we_0_1
+  ]
+  let issue_we_1_0 := Wire.mk "issue_we_1_0"; let issue_we_1_1 := Wire.mk "issue_we_1_1"
+  let not_ptr_1 := Wire.mk "not_ptr_1"
+  let base_issue_gates_1 := [
+    Gate.mkNOT alloc_ptr_1 not_ptr_1,
+    Gate.mkAND issue_en_1 not_ptr_1 issue_we_1_0,
+    Gate.mkAND issue_en_1 alloc_ptr_1 issue_we_1_1
+  ]
+
+  let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
+    buildRSEntry 0 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_0_0 issue_opcode_0 issue_dest_tag_0 issue_src1_ready_0 issue_src1_tag_0 issue_src1_data_0
+      issue_src2_ready_0 issue_src2_tag_0 issue_src2_data_0
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      none none none arb0_gr0 clock reset
+  let (eg1, ei1, ev1, er1, e1_s1bp, e1_s2bp) :=
+    buildRSEntry 1 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_0_1 issue_opcode_0 issue_dest_tag_0 issue_src1_ready_0 issue_src1_tag_0 issue_src1_data_0
+      issue_src2_ready_0 issue_src2_tag_0 issue_src2_data_0
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      none none none arb0_gr1 clock reset
+  let (eg2, ei2, ev2, er2, e2_s1bp, e2_s2bp) :=
+    buildRSEntry 2 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_1_0 issue_opcode_1 issue_dest_tag_1 issue_src1_ready_1 issue_src1_tag_1 issue_src1_data_1
+      issue_src2_ready_1 issue_src2_tag_1 issue_src2_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      (some suppress_cdb_s1_1) (some suppress_cdb_s2_1) (some dispatch_en_1) arb1_gr0 clock reset
+  let (eg3, ei3, ev3, er3, e3_s1bp, e3_s2bp) :=
+    buildRSEntry 3 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_1_1 issue_opcode_1 issue_dest_tag_1 issue_src1_ready_1 issue_src1_tag_1 issue_src1_data_1
+      issue_src2_ready_1 issue_src2_tag_1 issue_src2_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      (some suppress_cdb_s1_1) (some suppress_cdb_s2_1) (some dispatch_en_1) arb1_gr1 clock reset
+
+  let v01_mux := Wire.mk "v_01_mux"
+  let alloc_avail_g_0 := [Gate.mkMUX ev0 ev1 alloc_ptr_0 v01_mux, Gate.mkNOT v01_mux alloc_avail_0]
+  let v23_mux := Wire.mk "v_23_mux"
+  let alloc_avail_g_1 := [Gate.mkMUX ev2 ev3 alloc_ptr_1 v23_mux, Gate.mkNOT v23_mux alloc_avail_1]
+
+  let arb0_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter2", instName := "u_arb0",
+    portMap := [("request_0", er0), ("request_1", er1),
+                ("grant_0", arb0_gr0), ("grant_1", arb0_gr1),
+                ("valid", dispatch_valid_0)]
+  }
+  let arb1_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter2", instName := "u_arb1",
+    portMap := [("request_0", er2), ("request_1", er3),
+                ("grant_0", arb1_gr0), ("grant_1", arb1_gr1),
+                ("valid", dispatch_valid_1)]
+  }
+
+  let e0 := makeIndexedWires "e0" entryWidth; let e1 := makeIndexedWires "e1" entryWidth
+  let e2 := makeIndexedWires "e2" entryWidth; let e3 := makeIndexedWires "e3" entryWidth
+  let b0_mux_op := mkLocalMux2 opcodeWidth (e0.drop 1) (e1.drop 1) dispatch_opcode_0 arb0_gr1
+  let b0_mux_dst := mkLocalMux2 tagWidth (e0.drop off_dest) (e1.drop off_dest) dispatch_dest_tag_0 arb0_gr1
+  let b0_mux_s1d := mkLocalMux2 dataWidth e0_s1bp e1_s1bp dispatch_src1_data_0 arb0_gr1
+  let b0_mux_s2d := mkLocalMux2 dataWidth e0_s2bp e1_s2bp dispatch_src2_data_0 arb0_gr1
+
+  let b1_mux_op := mkLocalMux2 opcodeWidth (e2.drop 1) (e3.drop 1) dispatch_opcode_1 arb1_gr1
+  let b1_mux_dst := mkLocalMux2 tagWidth (e2.drop off_dest) (e3.drop off_dest) dispatch_dest_tag_1 arb1_gr1
+  let b1_mux_s1d := mkLocalMux2 dataWidth e2_s1bp e3_s1bp dispatch_src1_data_1 arb1_gr1
+  let b1_mux_s2d := mkLocalMux2 dataWidth e2_s2bp e3_s2bp dispatch_src2_data_1 arb1_gr1
+
+  { name := if dataWidth == 64 then "IntReservationStation4_W2_64" else "IntReservationStation4_W2"
+    inputs :=
+      [clock, reset, issue_en_0, issue_en_1] ++
+      issue_opcode_0 ++ issue_dest_tag_0 ++ [issue_src1_ready_0] ++ issue_src1_tag_0 ++ issue_src1_data_0 ++
+      [issue_src2_ready_0] ++ issue_src2_tag_0 ++ issue_src2_data_0 ++
+      issue_opcode_1 ++ issue_dest_tag_1 ++ [issue_src1_ready_1] ++ issue_src1_tag_1 ++ issue_src1_data_1 ++
+      [issue_src2_ready_1] ++ issue_src2_tag_1 ++ issue_src2_data_1 ++
+      [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+      [cdb_valid_1, cdb_is_fp_1] ++ cdb_tag_1 ++ cdb_data_1 ++
+      [dispatch_en_1, suppress_cdb_s1_1, suppress_cdb_s2_1]
+    outputs :=
+      [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
+       alloc_ptr_0, alloc_ptr_1,
+       arb0_gr0, arb0_gr1, arb1_gr0, arb1_gr1] ++
+      dispatch_opcode_0 ++ dispatch_src1_data_0 ++ dispatch_src2_data_0 ++ dispatch_dest_tag_0 ++
+      dispatch_opcode_1 ++ dispatch_src1_data_1 ++ dispatch_src2_data_1 ++ dispatch_dest_tag_1
+    gates :=
+      cdb_valid_gates ++ ptr_gates ++ base_issue_gates_0 ++ base_issue_gates_1 ++
+      eg0 ++ eg1 ++ eg2 ++ eg3 ++
+      alloc_avail_g_0 ++ alloc_avail_g_1 ++
+      b0_mux_op ++ b0_mux_dst ++ b0_mux_s1d ++ b0_mux_s2d ++
+      b1_mux_op ++ b1_mux_dst ++ b1_mux_s1d ++ b1_mux_s2d
+    instances := [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst] ++ ei0 ++ ei1 ++ ei2 ++ ei3 }
+
+/-- Specialized Single-Issue Reservation Station (W=1, 2 entries, 6-bit tags).
+    Used for Branch and MulDiv execution units. -/
+def mkReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
+  let clock := Wire.mk "clock"; let reset := Wire.mk "reset"
+  let opcodeWidth := 8; let tagWidth := 6
+  let entryWidth := 1 + opcodeWidth + tagWidth + 1 + tagWidth + dataWidth + 1 + tagWidth + dataWidth
+  let off_dest := 1 + opcodeWidth
+
+  let issue_en := Wire.mk "issue_en"
+  let issue_opcode := makeIndexedWires "issue_opcode" opcodeWidth
+  let issue_dest_tag := makeIndexedWires "issue_dest_tag" tagWidth
+  let issue_src1_ready := Wire.mk "issue_src1_ready"
+  let issue_src1_tag := makeIndexedWires "issue_src1_tag" tagWidth
+  let issue_src1_data := makeIndexedWires "issue_src1_data" dataWidth
+  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let issue_src2_tag := makeIndexedWires "issue_src2_tag" tagWidth
+  let issue_src2_data := makeIndexedWires "issue_src2_data" dataWidth
+
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_tag_0 := makeIndexedWires "cdb_tag_0" tagWidth
+  let cdb_data_0 := makeIndexedWires "cdb_data_0" dataWidth
+  let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  let cdb_tag_1 := makeIndexedWires "cdb_tag_1" tagWidth
+  let cdb_data_1 := makeIndexedWires "cdb_data_1" dataWidth
+
+  let dispatch_en := Wire.mk "dispatch_en"
+  let suppress_cdb_s1 := Wire.mk "suppress_cdb_s1"
+  let suppress_cdb_s2 := Wire.mk "suppress_cdb_s2"
+
+  let alloc_avail := Wire.mk "alloc_avail"
+  let dispatch_valid := Wire.mk "dispatch_valid"
+  let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
+  let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
+
+  let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
+  let dispatch_src1_data := makeIndexedWires "dispatch_src1_data" dataWidth
+  let dispatch_src2_data := makeIndexedWires "dispatch_src2_data" dataWidth
+  let dispatch_dest_tag := makeIndexedWires "dispatch_dest_tag" tagWidth
+
+  let not_cdb_fp_0 := Wire.mk "not_cdb_fp_0"
+  let not_cdb_fp_1 := Wire.mk "not_cdb_fp_1"
+  let cdb_valid_int_0 := Wire.mk "cdb_valid_int_0"
+  let cdb_valid_int_1 := Wire.mk "cdb_valid_int_1"
+  let cdb_valid_gates := [
+    Gate.mkNOT cdb_is_fp_0 not_cdb_fp_0,
+    Gate.mkAND cdb_valid_0 not_cdb_fp_0 cdb_valid_int_0,
+    Gate.mkNOT cdb_is_fp_1 not_cdb_fp_1,
+    Gate.mkAND cdb_valid_1 not_cdb_fp_1 cdb_valid_int_1
+  ]
+
+  let ptr_gates := [Gate.mkXOR alloc_ptr issue_en alloc_ptr_next]
+  let ptr_inst : CircuitInstance := {
+    moduleName := "Register1", instName := "u_alloc_ptr",
+    portMap := [("d_0", alloc_ptr_next), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr)]
+  }
+
+  let issue_we_0 := Wire.mk "issue_we_0"; let issue_we_1 := Wire.mk "issue_we_1"
+  let not_ptr := Wire.mk "not_ptr"
+  let issue_gates := [
+    Gate.mkNOT alloc_ptr not_ptr,
+    Gate.mkAND issue_en not_ptr issue_we_0,
+    Gate.mkAND issue_en alloc_ptr issue_we_1
+  ]
+
+  let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
+    buildRSEntry 0 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_0 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_0 clock reset
+  let (eg1, ei1, ev1, er1, e1_s1bp, e1_s2bp) :=
+    buildRSEntry 1 opcodeWidth tagWidth tagWidth tagWidth dataWidth
+      issue_we_1 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_1 clock reset
+
+  let v01_mux := Wire.mk "v_01_mux"
+  let alloc_avail_g := [Gate.mkMUX ev0 ev1 alloc_ptr v01_mux, Gate.mkNOT v01_mux alloc_avail]
+
+  let arb_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter2", instName := "u_arb",
+    portMap := [("request_0", er0), ("request_1", er1),
+                ("grant_0", dispatch_grant_0), ("grant_1", dispatch_grant_1),
+                ("valid", dispatch_valid)]
+  }
+
+  let e0 := makeIndexedWires "e0" entryWidth; let e1 := makeIndexedWires "e1" entryWidth
+  let mux_op := mkLocalMux2 opcodeWidth (e0.drop 1) (e1.drop 1) dispatch_opcode dispatch_grant_1
+  let mux_dst := mkLocalMux2 tagWidth (e0.drop off_dest) (e1.drop off_dest) dispatch_dest_tag dispatch_grant_1
+  let mux_s1d := mkLocalMux2 dataWidth e0_s1bp e1_s1bp dispatch_src1_data dispatch_grant_1
+  let mux_s2d := mkLocalMux2 dataWidth e0_s2bp e1_s2bp dispatch_src2_data dispatch_grant_1
+
+  { name := if dataWidth == 64 then "ReservationStation2_W1_64" else "ReservationStation2_W1"
+    inputs :=
+      [clock, reset, issue_en] ++
+      issue_opcode ++ issue_dest_tag ++ [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
+      [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data ++
+      [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+      [cdb_valid_1, cdb_is_fp_1] ++ cdb_tag_1 ++ cdb_data_1 ++
+      [dispatch_en, suppress_cdb_s1, suppress_cdb_s2]
+    outputs :=
+      [alloc_avail, dispatch_valid, alloc_ptr,
+       dispatch_grant_0, dispatch_grant_1] ++
+      dispatch_opcode ++ dispatch_src1_data ++ dispatch_src2_data ++ dispatch_dest_tag
+    gates :=
+      cdb_valid_gates ++ ptr_gates ++ issue_gates ++
+      eg0 ++ eg1 ++ alloc_avail_g ++
+      mux_op ++ mux_dst ++ mux_s1d ++ mux_s2d
+    instances := [ptr_inst, arb_inst] ++ ei0 ++ ei1 }
+
+/-- Specialized Single-Issue Memory Reservation Station (W=1, 2 entries, SLO tracking).
+    dest_tag is 7-bit (is_fp_load), src1_tag is 6-bit (base addr), src2_tag is 7-bit (is_fp_store). -/
+def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
+  let clock := Wire.mk "clock"; let reset := Wire.mk "reset"
+  let opcodeWidth := 8; let destTagWidth := 6; let src1TagWidth := 6; let src2TagWidth := 7
+  let entryWidth := 1 + opcodeWidth + destTagWidth + 1 + src1TagWidth + dataWidth + 1 + src2TagWidth + dataWidth
+  let off_dest := 1 + opcodeWidth
+
+  let issue_en := Wire.mk "issue_en"
+  let issue_is_store := Wire.mk "issue_is_store"
+  let issue_is_atomic := Wire.mk "issue_is_atomic"
+  let issue_opcode := makeIndexedWires "issue_opcode" opcodeWidth
+  let issue_dest_tag := makeIndexedWires "issue_dest_tag" destTagWidth
+  let issue_src1_ready := Wire.mk "issue_src1_ready"
+  let issue_src1_tag := makeIndexedWires "issue_src1_tag" src1TagWidth
+  let issue_src1_data := makeIndexedWires "issue_src1_data" dataWidth
+  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let issue_src2_tag := makeIndexedWires "issue_src2_tag" src2TagWidth
+  let issue_src2_data := makeIndexedWires "issue_src2_data" dataWidth
+
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_tag_0 := makeIndexedWires "cdb_tag_0" src1TagWidth
+  let cdb_data_0 := makeIndexedWires "cdb_data_0" dataWidth
+  let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  let cdb_tag_1 := makeIndexedWires "cdb_tag_1" src1TagWidth
+  let cdb_data_1 := makeIndexedWires "cdb_data_1" dataWidth
+
+  let dispatch_en := Wire.mk "dispatch_en"
+  let suppress_cdb_s1 := Wire.mk "suppress_cdb_s1"
+  let suppress_cdb_s2 := Wire.mk "suppress_cdb_s2"
+
+  let alloc_avail := Wire.mk "alloc_avail"
+  let dispatch_valid := Wire.mk "dispatch_valid"
+  let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
+  let pending_store := Wire.mk "pending_store"
+  let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
+
+  let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
+  let dispatch_src1_data := makeIndexedWires "dispatch_src1_data" dataWidth
+  let dispatch_src2_data := makeIndexedWires "dispatch_src2_data" dataWidth
+  let dispatch_dest_tag := makeIndexedWires "dispatch_dest_tag" destTagWidth
+
+  let not_cdb_fp_0 := Wire.mk "not_cdb_fp_0"
+  let not_cdb_fp_1 := Wire.mk "not_cdb_fp_1"
+  let cdb_valid_int_0 := Wire.mk "cdb_valid_int_0"
+  let cdb_valid_int_1 := Wire.mk "cdb_valid_int_1"
+  let cdb_valid_gates := [
+    Gate.mkNOT cdb_is_fp_0 not_cdb_fp_0,
+    Gate.mkAND cdb_valid_0 not_cdb_fp_0 cdb_valid_int_0,
+    Gate.mkNOT cdb_is_fp_1 not_cdb_fp_1,
+    Gate.mkAND cdb_valid_1 not_cdb_fp_1 cdb_valid_int_1
+  ]
+
+  let cdb_tag7_0 := cdb_tag_0 ++ [cdb_is_fp_0]
+  let cdb_tag7_1 := cdb_tag_1 ++ [cdb_is_fp_1]
+
+  let ptr_gates := [Gate.mkXOR alloc_ptr issue_en alloc_ptr_next]
+  let ptr_inst : CircuitInstance := {
+    moduleName := "Register1", instName := "u_alloc_ptr",
+    portMap := [("d_0", alloc_ptr_next), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr)]
+  }
+
+  let issue_we_0 := Wire.mk "issue_we_0"; let issue_we_1 := Wire.mk "issue_we_1"
+  let not_ptr := Wire.mk "not_ptr"
+  let issue_gates := [
+    Gate.mkNOT alloc_ptr not_ptr,
+    Gate.mkAND issue_en not_ptr issue_we_0,
+    Gate.mkAND issue_en alloc_ptr issue_we_1
+  ]
+
+  let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
+    buildRSEntry 0 opcodeWidth destTagWidth src1TagWidth src2TagWidth dataWidth
+      issue_we_0 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag7_0 cdb_valid_0 cdb_tag7_1 cdb_valid_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_0 clock reset
+  let (eg1, ei1, ev1, er1, e1_s1bp, e1_s2bp) :=
+    buildRSEntry 1 opcodeWidth destTagWidth src1TagWidth src2TagWidth dataWidth
+      issue_we_1 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
+      cdb_tag7_0 cdb_valid_0 cdb_tag7_1 cdb_valid_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_1 clock reset
+
+  let v01_mux := Wire.mk "v_01_mux"
+  let alloc_avail_g := [Gate.mkMUX ev0 ev1 alloc_ptr v01_mux, Gate.mkNOT v01_mux alloc_avail]
+
+  -- SLO tracking for 2 entries
+  let is_store_cur_0 := Wire.mk "slo_st_0"; let is_store_next_0 := Wire.mk "slo_st_next_0"
+  let is_atomic_cur_0 := Wire.mk "slo_at_0"; let is_atomic_next_0 := Wire.mk "slo_at_next_0"
+  let is_store_cur_1 := Wire.mk "slo_st_1"; let is_store_next_1 := Wire.mk "slo_st_next_1"
+  let is_atomic_cur_1 := Wire.mk "slo_at_1"; let is_atomic_next_1 := Wire.mk "slo_at_next_1"
+  let slo_gates := [
+    Gate.mkMUX is_store_cur_0 issue_is_store issue_we_0 is_store_next_0,
+    Gate.mkMUX is_atomic_cur_0 issue_is_atomic issue_we_0 is_atomic_next_0,
+    Gate.mkMUX is_store_cur_1 issue_is_store issue_we_1 is_store_next_1,
+    Gate.mkMUX is_atomic_cur_1 issue_is_atomic issue_we_1 is_atomic_next_1
+  ]
+  let slo_insts : List CircuitInstance := [
+    { moduleName := "Register1", instName := "u_slo_st_0",
+      portMap := [("d_0", is_store_next_0), ("clock", clock), ("reset", reset), ("q_0", is_store_cur_0)] },
+    { moduleName := "Register1", instName := "u_slo_at_0",
+      portMap := [("d_0", is_atomic_next_0), ("clock", clock), ("reset", reset), ("q_0", is_atomic_cur_0)] },
+    { moduleName := "Register1", instName := "u_slo_st_1",
+      portMap := [("d_0", is_store_next_1), ("clock", clock), ("reset", reset), ("q_0", is_store_cur_1)] },
+    { moduleName := "Register1", instName := "u_slo_at_1",
+      portMap := [("d_0", is_atomic_next_1), ("clock", clock), ("reset", reset), ("q_0", is_atomic_cur_1)] }
+  ]
+  let nat0 := Wire.mk "slo_nat0"; let nat1 := Wire.mk "slo_nat1"
+  let ps0 := Wire.mk "slo_ps0"; let ps1 := Wire.mk "slo_ps1"
+  let pst0 := Wire.mk "slo_pst0"; let pst1 := Wire.mk "slo_pst1"
+  let pending_store_gates := [
+    Gate.mkNOT is_atomic_cur_0 nat0, Gate.mkNOT is_atomic_cur_1 nat1,
+    Gate.mkAND is_store_cur_0 nat0 ps0, Gate.mkAND is_store_cur_1 nat1 ps1,
+    Gate.mkAND ev0 ps0 pst0, Gate.mkAND ev1 ps1 pst1,
+    Gate.mkOR pst0 pst1 pending_store
+  ]
+  let vs0 := Wire.mk "slo_vs0"; let vs1 := Wire.mk "slo_vs1"
+  let hos0 := Wire.mk "slo_hos0"; let hos1 := Wire.mk "slo_hos1"
+  let not_hos0 := Wire.mk "slo_not_hos0"; let not_hos1 := Wire.mk "slo_not_hos1"
+  let not_ap := Wire.mk "slo_not_ap"
+  let ok0 := Wire.mk "slo_ok0"; let ok1 := Wire.mk "slo_ok1"
+  let ar0 := Wire.mk "slo_ar0"; let ar1 := Wire.mk "slo_ar1"
+  let slo_check_gates := [
+    Gate.mkAND ev0 is_store_cur_0 vs0,
+    Gate.mkAND ev1 is_store_cur_1 vs1,
+    Gate.mkNOT alloc_ptr not_ap,
+    Gate.mkAND vs1 alloc_ptr hos0,
+    Gate.mkAND vs0 not_ap hos1,
+    Gate.mkNOT hos0 not_hos0,
+    Gate.mkOR ps0 not_hos0 ok0,
+    Gate.mkAND er0 ok0 ar0,
+    Gate.mkNOT hos1 not_hos1,
+    Gate.mkOR ps1 not_hos1 ok1,
+    Gate.mkAND er1 ok1 ar1
+  ]
+
+  let arb_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter2", instName := "u_arb",
+    portMap := [("request_0", ar0), ("request_1", ar1),
+                ("grant_0", dispatch_grant_0), ("grant_1", dispatch_grant_1),
+                ("valid", dispatch_valid)]
+  }
+
+  let e0 := makeIndexedWires "e0" entryWidth; let e1 := makeIndexedWires "e1" entryWidth
+  let mux_op := mkLocalMux2 opcodeWidth (e0.drop 1) (e1.drop 1) dispatch_opcode dispatch_grant_1
+  let mux_dst := mkLocalMux2 destTagWidth (e0.drop off_dest) (e1.drop off_dest) dispatch_dest_tag dispatch_grant_1
+  let mux_s1d := mkLocalMux2 dataWidth e0_s1bp e1_s1bp dispatch_src1_data dispatch_grant_1
+  let mux_s2d := mkLocalMux2 dataWidth e0_s2bp e1_s2bp dispatch_src2_data dispatch_grant_1
+
+  { name := if dataWidth == 64 then "MemoryReservationStation2_W1_64" else "MemoryReservationStation2_W1"
+    inputs :=
+      [clock, reset, issue_en, issue_is_store, issue_is_atomic] ++
+      issue_opcode ++ issue_dest_tag ++ [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
+      [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data ++
+      [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+      [cdb_valid_1, cdb_is_fp_1] ++ cdb_tag_1 ++ cdb_data_1 ++
+      [dispatch_en, suppress_cdb_s1, suppress_cdb_s2]
+    outputs :=
+      [alloc_avail, dispatch_valid, alloc_ptr, pending_store,
+       dispatch_grant_0, dispatch_grant_1] ++
+      dispatch_opcode ++ dispatch_src1_data ++ dispatch_src2_data ++ dispatch_dest_tag
+    gates :=
+      cdb_valid_gates ++ ptr_gates ++ issue_gates ++
+      eg0 ++ eg1 ++ alloc_avail_g ++
+      slo_gates ++ pending_store_gates ++ slo_check_gates ++
+      mux_op ++ mux_dst ++ mux_s1d ++ mux_s2d
+    instances := [ptr_inst, arb_inst] ++ slo_insts ++ ei0 ++ ei1 }
+
+/-- Specialized Single-Issue Floating-Point Reservation Station (W=1, 2 entries, 6-bit opcode, 7-bit tags).
+    Includes ext_ready_mask for FP src3 dependency tracking. -/
+def mkFPReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
+  let clock := Wire.mk "clock"; let reset := Wire.mk "reset"
+  let opcodeWidth := 6; let destTagWidth := 6; let src1TagWidth := 7; let src2TagWidth := 7
+  let entryWidth := 1 + opcodeWidth + destTagWidth + 1 + src1TagWidth + dataWidth + 1 + src2TagWidth + dataWidth
+  let off_dest := 1 + opcodeWidth
+
+  let issue_en := Wire.mk "issue_en"
+  let issue_opcode := makeIndexedWires "issue_opcode" opcodeWidth
+  let issue_dest_tag := makeIndexedWires "issue_dest_tag" destTagWidth
+  let issue_src1_ready := Wire.mk "issue_src1_ready"
+  let issue_src1_tag := makeIndexedWires "issue_src1_tag" src1TagWidth
+  let issue_src1_data := makeIndexedWires "issue_src1_data" dataWidth
+  let issue_src2_ready := Wire.mk "issue_src2_ready"
+  let issue_src2_tag := makeIndexedWires "issue_src2_tag" src2TagWidth
+  let issue_src2_data := makeIndexedWires "issue_src2_data" dataWidth
+
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"; let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_tag_0 := makeIndexedWires "cdb_tag_0" 6
+  let cdb_data_0 := makeIndexedWires "cdb_data_0" dataWidth
+  let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  let cdb_tag_1 := makeIndexedWires "cdb_tag_1" 6
+  let cdb_data_1 := makeIndexedWires "cdb_data_1" dataWidth
+
+  let dispatch_en := Wire.mk "dispatch_en"
+  let suppress_cdb_s1 := Wire.mk "suppress_cdb_s1"
+  let suppress_cdb_s2 := Wire.mk "suppress_cdb_s2"
+  let ext_ready_mask_0 := Wire.mk "ext_ready_mask_0"
+  let ext_ready_mask_1 := Wire.mk "ext_ready_mask_1"
+
+  let alloc_avail := Wire.mk "alloc_avail"
+  let dispatch_valid := Wire.mk "dispatch_valid"
+  let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
+  let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
+
+  let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
+  let dispatch_src1_data := makeIndexedWires "dispatch_src1_data" dataWidth
+  let dispatch_src2_data := makeIndexedWires "dispatch_src2_data" dataWidth
+  let dispatch_dest_tag := makeIndexedWires "dispatch_dest_tag" destTagWidth
+
+  let cdb_tag7_0 := cdb_tag_0 ++ [cdb_is_fp_0]
+  let cdb_tag7_1 := cdb_tag_1 ++ [cdb_is_fp_1]
+
+  let ptr_gates := [Gate.mkXOR alloc_ptr issue_en alloc_ptr_next]
+  let ptr_inst : CircuitInstance := {
+    moduleName := "Register1", instName := "u_alloc_ptr",
+    portMap := [("d_0", alloc_ptr_next), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr)]
+  }
+
+  let issue_we_0 := Wire.mk "issue_we_0"; let issue_we_1 := Wire.mk "issue_we_1"
+  let not_ptr := Wire.mk "not_ptr"
+  let issue_gates := [
+    Gate.mkNOT alloc_ptr not_ptr,
+    Gate.mkAND issue_en not_ptr issue_we_0,
+    Gate.mkAND issue_en alloc_ptr issue_we_1
+  ]
+
+  let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
+    buildRSEntry 0 opcodeWidth destTagWidth src1TagWidth src2TagWidth dataWidth
+      issue_we_0 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag7_0 cdb_valid_0 cdb_data_0 cdb_tag7_1 cdb_valid_1 cdb_data_1
+      cdb_tag7_0 cdb_valid_0 cdb_tag7_1 cdb_valid_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_0 clock reset
+  let (eg1, ei1, ev1, er1, e1_s1bp, e1_s2bp) :=
+    buildRSEntry 1 opcodeWidth destTagWidth src1TagWidth src2TagWidth dataWidth
+      issue_we_1 issue_opcode issue_dest_tag issue_src1_ready issue_src1_tag issue_src1_data
+      issue_src2_ready issue_src2_tag issue_src2_data
+      cdb_tag7_0 cdb_valid_0 cdb_data_0 cdb_tag7_1 cdb_valid_1 cdb_data_1
+      cdb_tag7_0 cdb_valid_0 cdb_tag7_1 cdb_valid_1
+      (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_1 clock reset
+
+  let v01_mux := Wire.mk "v_01_mux"
+  let alloc_avail_g := [Gate.mkMUX ev0 ev1 alloc_ptr v01_mux, Gate.mkNOT v01_mux alloc_avail]
+
+  let ar0 := Wire.mk "ar0"; let ar1 := Wire.mk "ar1"
+  let ready_mask_gates := [
+    Gate.mkAND er0 ext_ready_mask_0 ar0,
+    Gate.mkAND er1 ext_ready_mask_1 ar1
+  ]
+
+  let arb_inst : CircuitInstance := {
+    moduleName := "PriorityArbiter2", instName := "u_arb",
+    portMap := [("request_0", ar0), ("request_1", ar1),
+                ("grant_0", dispatch_grant_0), ("grant_1", dispatch_grant_1),
+                ("valid", dispatch_valid)]
+  }
+
+  let e0 := makeIndexedWires "e0" entryWidth; let e1 := makeIndexedWires "e1" entryWidth
+  let mux_op := mkLocalMux2 opcodeWidth (e0.drop 1) (e1.drop 1) dispatch_opcode dispatch_grant_1
+  let mux_dst := mkLocalMux2 destTagWidth (e0.drop off_dest) (e1.drop off_dest) dispatch_dest_tag dispatch_grant_1
+  let mux_s1d := mkLocalMux2 dataWidth e0_s1bp e1_s1bp dispatch_src1_data dispatch_grant_1
+  let mux_s2d := mkLocalMux2 dataWidth e0_s2bp e1_s2bp dispatch_src2_data dispatch_grant_1
+
+  { name := if dataWidth == 64 then "FPReservationStation2_W1_64" else "FPReservationStation2_W1"
+    inputs :=
+      [clock, reset, issue_en] ++
+      issue_opcode ++ issue_dest_tag ++ [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
+      [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data ++
+      [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+      [cdb_valid_1, cdb_is_fp_1] ++ cdb_tag_1 ++ cdb_data_1 ++
+      [dispatch_en, suppress_cdb_s1, suppress_cdb_s2,
+       ext_ready_mask_0, ext_ready_mask_1]
+    outputs :=
+      [alloc_avail, dispatch_valid, alloc_ptr,
+       dispatch_grant_0, dispatch_grant_1] ++
+      dispatch_opcode ++ dispatch_src1_data ++ dispatch_src2_data ++ dispatch_dest_tag
+    gates :=
+      ptr_gates ++ issue_gates ++
+      eg0 ++ eg1 ++ alloc_avail_g ++ ready_mask_gates ++
+      mux_op ++ mux_dst ++ mux_s1d ++ mux_s2d
+    instances := [ptr_inst, arb_inst] ++ ei0 ++ ei1 }
+
 end Shoumei.RISCV.Execution
 
 

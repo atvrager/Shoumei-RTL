@@ -52,7 +52,7 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
     without altering circuit structure, or when the set of emitted formats
     changes.  The cache key includes this version, so a bump invalidates every
     cached output and forces a full regeneration. -/
-def codegenVersion : String := "sv-subslice-rep-2026-09-17"
+def codegenVersion : String := "sv-zero-lint2-2026-09-18"
 
 /-- Check if circuit hash matches cached value (and the codegen version). -/
 def isUpToDate (name : String) (h : UInt64) : IO Bool := do
@@ -75,8 +75,9 @@ def asap7OutputDir : String := "output/sv-asap7"
 
 -- Write SystemVerilog (hierarchical) for a circuit
 -- Pass allCircuits for sub-module port structure lookup in hierarchical modules
-def writeCircuitSV (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
-  let sv := SystemVerilog.toSystemVerilog c allCircuits
+def writeCircuitSV (c : Circuit) (allCircuits : List Circuit := [])
+    (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : IO Unit := do
+  let sv := SystemVerilog.toSystemVerilog c allCircuits precomputedLoaded
   let path := s!"{svOutputDir}/{c.name}.sv"
   IO.FS.writeFile path sv
 
@@ -96,9 +97,10 @@ def writeCircuitCppSim (c : Circuit) (allCircuits : List Circuit := []) : IO Uni
   IO.FS.writeFile cppPath impl
 
 -- Write ASAP7 tech-mapped SystemVerilog for a circuit (only if keepHierarchy)
-def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
+def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := [])
+    (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : IO Unit := do
   if c.keepHierarchy then
-    let sv := ASAP7.toASAP7SystemVerilog c allCircuits
+    let sv := ASAP7.toASAP7SystemVerilog c allCircuits precomputedLoaded
     let path := s!"{asap7OutputDir}/{c.name}.sv"
     IO.FS.writeFile path sv
 
@@ -106,17 +108,18 @@ def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := []) : IO Unit
 -- When force=false, skip generation if the circuit hash matches the cached value.
 -- hashMap provides pre-computed dependency-aware hashes.
 def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
-    (force : Bool := true) (hashMap : List (String × UInt64) := {}) : IO Unit := do
+    (force : Bool := true) (hashMap : List (String × UInt64) := {})
+    (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : IO Unit := do
   -- Check cache (skip if unchanged)
   if !force then
     if let some h := lookupHash hashMap c.name then
       if ← isUpToDate c.name h then
         IO.println s!"— {c.name} (unchanged, skipping)"
         return
-  writeCircuitSV c allCircuits
+  writeCircuitSV c allCircuits precomputedLoaded
   writeCircuitNetlist c
   writeCircuitCppSim c allCircuits
-  writeCircuitASAP7 c allCircuits
+  writeCircuitASAP7 c allCircuits precomputedLoaded
   -- Update cache after successful generation
   if let some h := lookupHash hashMap c.name then
     updateCache c.name h

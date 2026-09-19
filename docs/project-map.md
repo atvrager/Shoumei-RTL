@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **211**
-- Circuits with a literal `name :=` (graph nodes): **80**
-- Compositional certificates (Lean registry): **81**
-- Proof files: **56**
+- Lean files: **218**
+- Circuits with a literal `name :=` (graph nodes): **87**
+- Compositional certificates (Lean registry): **100**
+- Proof files: **59**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -24,7 +24,7 @@ label is how many distinct instantiations cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>36 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>41 circuits"]
   Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
@@ -33,14 +33,14 @@ graph TD
   Shoumei_RISCV_Execution["Shoumei/RISCV/Execution<br/>5 circuits"]
   Shoumei_RISCV_Memory["Shoumei/RISCV/Memory<br/>2 circuits"]
   Shoumei_RISCV_Memory_Cache["Shoumei/RISCV/Memory/Cache<br/>4 circuits"]
-  Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>2 circuits"]
-  Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>1 circuits"]
+  Shoumei_RISCV_Microcode["Shoumei/RISCV/Microcode<br/>3 circuits"]
+  Shoumei_RISCV_Renaming["Shoumei/RISCV/Renaming<br/>2 circuits"]
   Shoumei_RISCV_Retirement["Shoumei/RISCV/Retirement<br/>3 circuits"]
   Shoumei_RISCV_Execution -->|23| Shoumei_Circuits_Sequential
   Shoumei_RISCV_Execution -->|10| Shoumei_Circuits_Combinational
   Shoumei_Circuits_Sequential -->|4| Shoumei_Circuits_Combinational
+  Shoumei_RISCV_Renaming -->|4| Shoumei_Circuits_Combinational
   Shoumei_RISCV_CPU -->|2| Shoumei_Circuits_Sequential
-  Shoumei_RISCV_Renaming -->|2| Shoumei_Circuits_Combinational
   Shoumei_RISCV -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Combinational
   Shoumei_RISCV_Memory -->|1| Shoumei_Circuits_Sequential
@@ -53,8 +53,10 @@ graph TD
 | :--- | :--- | ---: | :---: | :---: | :---: |
 | `ALU32` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
 | `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
+| `BitmapFreeList_64_W1` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BranchExecUnit` | Shoumei/RISCV/Execution | 0 |  |  | yes |
+| `BranchTargetAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `BusyTable_W2` | Shoumei/RISCV/CPU | 1 | yes | yes | yes |
 | `Comparator32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Comparator64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
@@ -98,7 +100,10 @@ graph TD
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes |
 | `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `KoggeStoneAdder32NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `KoggeStoneAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `KoggeStoneAdder64NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `KoggeStoneAdder64WithCin1` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `L1DCache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `L1ICache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `L2Cache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
@@ -107,14 +112,15 @@ graph TD
 | `MemoryHierarchy` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `MicrocodeDecoder` | Shoumei/RISCV/Microcode | 0 |  |  | yes |
 | `MicrocodeSequencer` | Shoumei/RISCV/Microcode | 1 | yes | yes | yes |
-| `Mul32x32To64` | Shoumei/Circuits/Combinational | 3 |  |  | yes |
+| `Mul32x32To64` | Shoumei/Circuits/Combinational | 7 |  |  | yes |
 | `MulDivExecUnit` | Shoumei/RISCV/Execution | 2 | yes | yes | yes |
+| `MulFinalAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Mux0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `MyModule` | Shoumei/DSL | 0 |  |  | yes |
 | `OneHotEncoder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Pipeline` | Shoumei/DSL | 0 |  | yes | yes |
-| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 4 | yes | yes | yes |
-| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 4 | yes |  | yes |
+| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 8 | yes | yes | yes |
+| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 8 | yes |  | yes |
 | `Popcount8` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `PriorityArbiter0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `PriorityArbiter64` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
@@ -131,13 +137,14 @@ graph TD
 | `StoreBuffer8` | Shoumei/RISCV/Memory | 2 | yes | yes | yes |
 | `Subtractor32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
 | `Subtractor64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
+| `TrapSequencer` | Shoumei/RISCV/Microcode | 0 | yes | yes | yes |
 
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **20** circuits with no `*Proofs.lean` mentioning them
-- **40** circuits that instantiate nothing (leaves)
-- **34** circuits nothing else instantiates (tops)
+- **25** circuits with no `*Proofs.lean` mentioning them
+- **46** circuits that instantiate nothing (leaves)
+- **36** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

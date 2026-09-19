@@ -15,6 +15,8 @@ import Shoumei.Circuits.Combinational.ALUBitVecBridge
 import Shoumei.Circuits.Combinational.ALUCodegen
 import Shoumei.Circuits.Combinational.ALUProofs
 import Shoumei.Circuits.Combinational.Arbiter
+import Shoumei.Circuits.Combinational.BranchTargetAdder
+import Shoumei.Circuits.Combinational.BranchTargetAdderProofs
 import Shoumei.Circuits.Combinational.Comparator
 import Shoumei.Circuits.Combinational.ComparatorCodegen
 import Shoumei.Circuits.Combinational.ComparatorProofs
@@ -45,6 +47,8 @@ import Shoumei.Circuits.Combinational.MultiplierProofs
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.MuxTreeProofs
 import Shoumei.Circuits.Combinational.OneHotEncoder
+import Shoumei.Circuits.Combinational.PCIncrementer
+import Shoumei.Circuits.Combinational.PCIncrementerProofs
 import Shoumei.Circuits.Combinational.Popcount
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.RippleCarryAdderCodegen
@@ -181,6 +185,9 @@ import Shoumei.RISCV.Microcode.MicrocodeSequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 import Shoumei.RISCV.Microcode.MicrocodeSequencerProofs
 import Shoumei.RISCV.Microcode.MicrocodeTypes
+import Shoumei.RISCV.Microcode.TrapSequencer
+import Shoumei.RISCV.Microcode.TrapSequencerCodegen
+import Shoumei.RISCV.Microcode.TrapSequencerProofs
 import Shoumei.RISCV.OpTypeGenerated
 import Shoumei.RISCV.OpcodeParser
 import Shoumei.RISCV.Renaming.BitmapFreeList

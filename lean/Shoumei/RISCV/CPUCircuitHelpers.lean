@@ -440,20 +440,12 @@ def mkBranchResolve
     : List Gate × List CircuitInstance × Wire × Wire × List Wire × List Wire × List Wire × Wire × List Wire :=
   -- === JAL/JALR LINK REGISTER (PC+4) ===
   let br_pc_plus_4 := makeIndexedWires "br_pc_plus_4" 32
-  let br_pc_plus_4_b := makeIndexedWires "br_pc_plus_4_b" 32
-  let br_pc_plus_4_b_gates := (List.range 32).map (fun i =>
-    if i == 2 then Gate.mkBUF one br_pc_plus_4_b[i]!
-    else Gate.mkBUF zero br_pc_plus_4_b[i]!)
-
   let br_pc_plus_4_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := "PCIncrementer4"
     instName := "u_br_pc_plus_4"
     portMap :=
-      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-      (br_pc_plus_4_b.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
-      [("cin", zero)] ++
-      (br_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w))) ++
-      []
+      (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"pc_{i}", w))) ++
+      (br_pc_plus_4.enum.map (fun ⟨i, w⟩ => (s!"pc_next_{i}", w)))
   }
 
   -- Opcode match: JAL/JALR from config
@@ -605,7 +597,7 @@ def mkBranchResolve
     Gate.mkMUX final_branch_target[i]! br_pc_plus_4[i]! mispredict_sel mispredict_redirect_target[i]!)
 
   let allGates :=
-    br_pc_plus_4_b_gates ++ branch_result_mux_gates ++
+    branch_result_mux_gates ++
     jal_match_gates ++ jalr_match_gates ++ jal_jalr_or_gate ++
     beq_match_gates ++ bne_match_gates ++ blt_match_gates ++
     bge_match_gates ++ bltu_match_gates ++ bgeu_match_gates ++
@@ -803,10 +795,10 @@ def mkShadowRegisters2
     (rename_valid_0 rename_valid_1 : Wire)
     (dispatch_is_store_0 dispatch_is_store_1 : Wire)
     (alloc_physRd_0 alloc_physRd_1 : List Wire) -- 6-bit each
-    (cdb_tag_0 cdb_tag_1 : List Wire) -- 6-bit each
-    (cdb_valid_0 cdb_valid_1 : Wire)
-    (cdb_mispredicted_0 cdb_mispredicted_1 : Wire)
-    (cdb_redirect_target_0 cdb_redirect_target_1 : List Wire) -- 32-bit each
+    (cdb_tag_1 : List Wire) -- 6-bit
+    (cdb_valid_1 : Wire)
+    (cdb_mispredicted_1 : Wire)
+    (cdb_redirect_target_1 : List Wire) -- 32-bit
     (rob_head_idx_0 rob_head_idx_1 : List Wire) -- 4-bit each
     : (List Gate × List CircuitInstance × Wire × Wire × List Wire × List Wire) :=
   let rob_head_isStore := Wire.mk "rob_head_isStore_0"
@@ -890,18 +882,9 @@ def mkShadowRegisters2
   let redir_tag_alloc_gates := (rt0_dec.map Prod.fst).flatten ++ (rt1_dec.map Prod.fst).flatten
   let redir_tag_write_gates := redir_tag_results.flatten
 
-  -- === Redirect tag comparison (dual CDB) ===
-  -- For each entry, check both CDB tags for match
-  let redir_tag_match_0 := (List.range 16).map (fun e => Wire.mk s!"redir_tm0_{e}")
+  -- === Redirect tag comparison (CDB Channel 1) ===
   let redir_tag_match_1 := (List.range 16).map (fun e => Wire.mk s!"redir_tm1_{e}")
   let redir_tag_cmp_insts : List CircuitInstance :=
-    (List.range 16).map (fun e => {
-      moduleName := "EqualityComparator6"
-      instName := s!"u_redir_tag_cmp0_{e}"
-      portMap := [("eq", redir_tag_match_0[e]!)] ++
-                 (cdb_tag_0.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
-                 (redir_tag_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
-    }) ++
     (List.range 16).map (fun e => {
       moduleName := "EqualityComparator6"
       instName := s!"u_redir_tag_cmp1_{e}"
@@ -910,23 +893,17 @@ def mkShadowRegisters2
                  (redir_tag_shadow[e]!.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w)))
     })
 
-  -- === Redirect target shadow (32-bit per entry, dual CDB write) ===
+  -- === Redirect target shadow (32-bit per entry, CDB Channel 1 write) ===
   let redir_target_shadow := (List.range 16).map (fun e => makeIndexedWires s!"redir_tgt_e{e}" 32)
   let redir_target_results := (List.range 16).map (fun e =>
-    let we0_tmp := Wire.mk s!"redir_tgt_we0_tmp{e}"
-    let we0 := Wire.mk s!"redir_tgt_we0_{e}"
     let we1_tmp := Wire.mk s!"redir_tgt_we1_tmp{e}"
     let we1 := Wire.mk s!"redir_tgt_we1_{e}"
     let we_gates := [
-      Gate.mkAND cdb_valid_0 redir_tag_match_0[e]! we0_tmp,
-      Gate.mkAND we0_tmp cdb_mispredicted_0 we0,
       Gate.mkAND cdb_valid_1 redir_tag_match_1[e]! we1_tmp,
       Gate.mkAND we1_tmp cdb_mispredicted_1 we1]
     let next_wires := (List.range 32).map (fun b => Wire.mk s!"redir_tgt_next{e}_{b}")
-    let mux_gates := (List.range 32).flatMap (fun b =>
-      let mid := Wire.mk s!"redir_tgt_mid{e}_{b}"
-      [Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target_0[b]! we0 mid,
-       Gate.mkMUX mid cdb_redirect_target_1[b]! we1 (next_wires[b]!)])
+    let mux_gates := (List.range 32).map (fun b =>
+      Gate.mkMUX redir_target_shadow[e]![b]! cdb_redirect_target_1[b]! we1 (next_wires[b]!))
     let reg_inst : CircuitInstance := {
       moduleName := "Register32"
       instName := s!"u_redir_tgt_reg_{e}"
@@ -1238,25 +1215,26 @@ def mkCDBForwardFP
 
 /-- Generate a 4-entry × 32-bit sidecar register file.
     Used for immediate, PC, and other per-RS-entry storage.
-    Returns (rf_gates, rf_entries, decoder_inst, mux_inst). -/
+    Returns (rf_gates, rf_entries, mux_inst). -/
 def mkSidecarRegFile4x32
     (pfx : String)
     (clock reset : Wire)
     (alloc_ptr : List Wire) (we_en : Wire)
     (write_data : List Wire) (grant : List Wire)
     (captured_out : List Wire)
-    : (List Gate × List (List Wire) × CircuitInstance × CircuitInstance) :=
+    : (List Gate × List (List Wire) × CircuitInstance) :=
   let decoded := makeIndexedWires s!"{pfx}_decoded" 4
+  let not_a0 := Wire.mk s!"{pfx}_dec_na0"
+  let not_a1 := Wire.mk s!"{pfx}_dec_na1"
+  let dec_gates := [
+    Gate.mkNOT alloc_ptr[0]! not_a0,
+    Gate.mkNOT alloc_ptr[1]! not_a1,
+    Gate.mkAND not_a1 not_a0 decoded[0]!,
+    Gate.mkAND not_a1 alloc_ptr[0]! decoded[1]!,
+    Gate.mkAND alloc_ptr[1]! not_a0 decoded[2]!,
+    Gate.mkAND alloc_ptr[1]! alloc_ptr[0]! decoded[3]!
+  ]
   let we := makeIndexedWires s!"{pfx}_we" 4
-  let decoder_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := s!"u_{pfx}_dec"
-    portMap := [
-      ("in_0", alloc_ptr[0]!), ("in_1", alloc_ptr[1]!),
-      ("out_0", decoded[0]!), ("out_1", decoded[1]!),
-      ("out_2", decoded[2]!), ("out_3", decoded[3]!)
-    ]
-  }
   let we_gates := (List.range 4).map (fun e =>
     Gate.mkAND decoded[e]! we_en we[e]!)
   let entries := (List.range 4).map (fun e =>
@@ -1286,73 +1264,85 @@ def mkSidecarRegFile4x32
       (sel.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))) ++
       (captured_out.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
   }
-  (we_gates ++ rf_gates ++ sel_gates, entries, decoder_inst, mux_inst)
+  (dec_gates ++ we_gates ++ rf_gates ++ sel_gates, entries, mux_inst)
+
+/-- 2-entry × 32-bit sidecar register file for single-unit RS (branch, memory, fp).
+    Entry 0 or 1 selected by 1-bit alloc_ptr for write, selected by grant_1 for read.
+    Returns (rf_gates, rf_entries). -/
+def mkSidecarRegFile2x32
+    (pfx : String)
+    (clock reset : Wire)
+    (alloc_ptr : Wire) (we_en : Wire)
+    (write_data : List Wire) (grant_1 : Wire)
+    (captured_out : List Wire)
+    : (List Gate × List (List Wire)) :=
+  let not_ap := Wire.mk s!"{pfx}_not_ap"
+  let we_0 := Wire.mk s!"{pfx}_we_0"
+  let we_1 := Wire.mk s!"{pfx}_we_1"
+  let dec_gates := [
+    Gate.mkNOT alloc_ptr not_ap,
+    Gate.mkAND not_ap we_en we_0,
+    Gate.mkAND alloc_ptr we_en we_1
+  ]
+  let entries := (List.range 2).map (fun e =>
+    makeIndexedWires s!"{pfx}_e{e}" 32)
+  let wes := [we_0, we_1]
+  let rf_gates := (List.range 2).map (fun e =>
+    let entry := entries[e]!
+    (List.range 32).map (fun b =>
+      let next := Wire.mk s!"{pfx}_next_e{e}_{b}"
+      [ Gate.mkMUX entry[b]! write_data[b]! wes[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+  let read_gates := (List.range 32).map (fun b =>
+    Gate.mkMUX entries[0]![b]! entries[1]![b]! grant_1 captured_out[b]!)
+  (dec_gates ++ rf_gates ++ read_gates, entries)
 
 /-- 4-entry × 32-bit sidecar register file with 2 write ports and 2 read ports (for W=2).
     Port 0 writes to entries 0,1 (bank 0), port 1 writes to entries 2,3 (bank 1).
     Read port 0 selects between entries 0,1 via grant[1] (bank 0 arbiter).
     Read port 1 selects between entries 2,3 via grant[3] (bank 1 arbiter).
-    Returns (gates, entries, dec0_inst, dec1_inst, out_lane0, out_lane1). -/
+    Returns (gates, entries). -/
 def mkSidecarRegFile4x32_W2
     (pfx : String)
     (clock reset : Wire)
-    (alloc_ptr_0 : List Wire) (we_en_0 : Wire) (write_data_0 : List Wire)
-    (alloc_ptr_1 : List Wire) (we_en_1 : Wire) (write_data_1 : List Wire)
+    (alloc_ptr_0 : Wire) (we_en_0 : Wire) (write_data_0 : List Wire)
+    (alloc_ptr_1 : Wire) (we_en_1 : Wire) (write_data_1 : List Wire)
     (grant : List Wire)
     (captured_out_0 captured_out_1 : List Wire)
-    : (List Gate × List (List Wire) × CircuitInstance × CircuitInstance) :=
-  -- Decoder for write port 0
-  let decoded_0 := makeIndexedWires s!"{pfx}_dec0" 4
-  let dec0_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := s!"u_{pfx}_dec0"
-    portMap := [
-      ("in_0", alloc_ptr_0[0]!), ("in_1", alloc_ptr_0[1]!),
-      ("out_0", decoded_0[0]!), ("out_1", decoded_0[1]!),
-      ("out_2", decoded_0[2]!), ("out_3", decoded_0[3]!)
-    ]
-  }
-  -- Decoder for write port 1
-  let decoded_1 := makeIndexedWires s!"{pfx}_dec1" 4
-  let dec1_inst : CircuitInstance := {
-    moduleName := "Decoder2"
-    instName := s!"u_{pfx}_dec1"
-    portMap := [
-      ("in_0", alloc_ptr_1[0]!), ("in_1", alloc_ptr_1[1]!),
-      ("out_0", decoded_1[0]!), ("out_1", decoded_1[1]!),
-      ("out_2", decoded_1[2]!), ("out_3", decoded_1[3]!)
-    ]
-  }
-  -- Write enables: OR the two ports (non-overlapping banks, so OR is fine)
-  let we_0 := makeIndexedWires s!"{pfx}_we0" 4
-  let we_1 := makeIndexedWires s!"{pfx}_we1" 4
-  let we := makeIndexedWires s!"{pfx}_we" 4
-  let we_gates := (List.range 4).map (fun e =>
-    [Gate.mkAND decoded_0[e]! we_en_0 we_0[e]!,
-     Gate.mkAND decoded_1[e]! we_en_1 we_1[e]!,
-     Gate.mkOR we_0[e]! we_1[e]! we[e]!]) |>.flatten
-  -- Write data mux: if port 1 writes this entry, use its data; else port 0's
+    : (List Gate × List (List Wire)) :=
+  let not_p0 := Wire.mk s!"{pfx}_dec0_na0"
+  let not_p1 := Wire.mk s!"{pfx}_dec1_na0"
+  let we_0_0 := Wire.mk s!"{pfx}_we_0_0"
+  let we_0_1 := Wire.mk s!"{pfx}_we_0_1"
+  let we_1_0 := Wire.mk s!"{pfx}_we_1_0"
+  let we_1_1 := Wire.mk s!"{pfx}_we_1_1"
+  let dec_gates := [
+    Gate.mkNOT alloc_ptr_0 not_p0,
+    Gate.mkAND not_p0 we_en_0 we_0_0,
+    Gate.mkAND alloc_ptr_0 we_en_0 we_0_1,
+    Gate.mkNOT alloc_ptr_1 not_p1,
+    Gate.mkAND not_p1 we_en_1 we_1_0,
+    Gate.mkAND alloc_ptr_1 we_en_1 we_1_1
+  ]
   let entries := (List.range 4).map (fun e =>
     makeIndexedWires s!"{pfx}_e{e}" 32)
+  let wes := [we_0_0, we_0_1, we_1_0, we_1_1]
   let rf_gates := (List.range 4).map (fun e =>
     let entry := entries[e]!
+    let wdata := if e < 2 then write_data_0 else write_data_1
     (List.range 32).map (fun b =>
-      let wd_muxed := Wire.mk s!"{pfx}_wd_e{e}_{b}"
       let next := Wire.mk s!"{pfx}_next_e{e}_{b}"
-      [ Gate.mkMUX write_data_0[b]! write_data_1[b]! we_1[e]! wd_muxed,
-        Gate.mkMUX entry[b]! wd_muxed we[e]! next,
+      [ Gate.mkMUX entry[b]! wdata[b]! wes[e]! next,
         Gate.mkDFF next clock reset entry[b]! ]
     ) |>.flatten
   ) |>.flatten
-  -- Read port 0: 2:1 mux between entries 0,1, selected by grant[1]
-  -- (bank 0: grant[0]=entry 0, grant[1]=entry 1)
   let read0_gates := (List.range 32).map (fun b =>
     Gate.mkMUX entries[0]![b]! entries[1]![b]! grant[1]! captured_out_0[b]!)
-  -- Read port 1: 2:1 mux between entries 2,3, selected by grant[3]
-  -- (bank 1: grant[2]=entry 2, grant[3]=entry 3)
   let read1_gates := (List.range 32).map (fun b =>
     Gate.mkMUX entries[2]![b]! entries[3]![b]! grant[3]! captured_out_1[b]!)
-  (we_gates ++ rf_gates ++ read0_gates ++ read1_gates, entries, dec0_inst, dec1_inst)
+  (dec_gates ++ rf_gates ++ read0_gates ++ read1_gates, entries)
 
 end
 

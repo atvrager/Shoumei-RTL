@@ -82,7 +82,7 @@ Architecture:
 - Decoder5 for write address decode
 - Two Mux32x6 for read ports
 -/
-def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
+def mkRAT (numPhysRegs : Nat := 64) (hasRs3 : Bool := true) (hasRestoreEn : Bool := false) : Circuit :=
   let tagWidth := log2Ceil numPhysRegs  -- 6 for 64 phys regs
   let numArchRegs := 32
   let addrWidth := 5   -- log2(32) = 5
@@ -163,17 +163,15 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
       [
         -- Write data mux: normal_next = we ? write_data : reg (hold)
         Gate.mkMUX reg (write_data[j]!) (we[i]!) normal_next,
-        -- Restore override: next = restore_en ? restore_data : normal_next
-        Gate.mkMUX normal_next (restore_data[i]![j]!) restore_en next,
         -- Storage DFF: DFF_SET for 1-bits, DFF for 0-bits (identity reset)
-        if bitVal == 1 then
-          Gate.mkDFF_SET next clock reset_leaf reg
+        (if bitVal == 1 then
+          Gate.mkDFF_SET (if hasRestoreEn then next else (restore_data[i]![j]!)) clock reset_leaf reg
         else
-          Gate.mkDFF next clock reset_leaf reg,
+          Gate.mkDFF (if hasRestoreEn then next else (restore_data[i]![j]!)) clock reset_leaf reg),
         -- Dump output: write-through (bypass) so committed RAT dump
         -- reflects current-cycle writes combinationally
         Gate.mkBUF normal_next (getDump i j)
-      ]
+      ] ++ (if hasRestoreEn then [Gate.mkMUX normal_next (restore_data[i]![j]!) restore_en next] else [])
     )
   ) |>.flatten |>.flatten
 
@@ -217,22 +215,31 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     portMap := mux_in_map ++ mkMuxSelMap write_addr ++ mkMuxOutMap old_rd_data
   }
 
-  { name := s!"RAT_{numArchRegs}x{tagWidth}"
-    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++ rs3_addr ++
-              [restore_en] ++ restore_data.flatten
-    outputs := rs1_data ++ rs2_data ++ rs3_data ++ old_rd_data ++ dump_data.flatten
+  let instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst] ++
+                   (if hasRs3 then [mux_rs3_inst] else []) ++
+                   [mux_old_rd_inst]
+
+  { name := if hasRs3 then s!"RAT_{numArchRegs}x{tagWidth}" else s!"IntRAT_{numArchRegs}x{tagWidth}"
+    inputs := [clock, reset, write_en] ++ write_addr ++ write_data ++ rs1_addr ++ rs2_addr ++
+              (if hasRs3 then rs3_addr else []) ++
+              (if hasRestoreEn then [restore_en] else []) ++ restore_data.flatten
+    outputs := rs1_data ++ rs2_data ++ (if hasRs3 then rs3_data else []) ++ old_rd_data ++ dump_data.flatten
     gates := we_gates ++ reset_buf_gates ++ storage_gates
-    instances := [decoder_inst, mux_rs1_inst, mux_rs2_inst, mux_rs3_inst, mux_old_rd_inst]
+    instances := instances
     -- V2 codegen annotations
     signalGroups := [
       { name := "write_addr", width := addrWidth, wires := write_addr },
       { name := "write_data", width := tagWidth, wires := write_data },
       { name := "rs1_addr", width := addrWidth, wires := rs1_addr },
-      { name := "rs2_addr", width := addrWidth, wires := rs2_addr },
-      { name := "rs3_addr", width := addrWidth, wires := rs3_addr },
+      { name := "rs2_addr", width := addrWidth, wires := rs2_addr }
+    ] ++ (if hasRs3 then [
+      { name := "rs3_addr", width := addrWidth, wires := rs3_addr }
+    ] else []) ++ [
       { name := "rs1_data", width := tagWidth, wires := rs1_data },
-      { name := "rs2_data", width := tagWidth, wires := rs2_data },
-      { name := "rs3_data", width := tagWidth, wires := rs3_data },
+      { name := "rs2_data", width := tagWidth, wires := rs2_data }
+    ] ++ (if hasRs3 then [
+      { name := "rs3_data", width := tagWidth, wires := rs3_data }
+    ] else []) ++ [
       { name := "write_sel", width := numArchRegs, wires := write_sel },
       { name := "we", width := numArchRegs, wires := we },
       { name := "old_rd_data", width := tagWidth, wires := old_rd_data }
@@ -243,11 +250,67 @@ def mkRAT (numPhysRegs : Nat := 64) : Circuit :=
     )
   }
 
+/-- Integer RAT without rs3 read port (default 64 physical registers). -/
+def mkIntRAT (numPhysRegs : Nat := 64) : Circuit := mkRAT numPhysRegs false false
+
+/-- Integer RAT with 64 physical registers. -/
+def mkIntRAT64 : Circuit := mkIntRAT 64
+
 /-- RAT with 64 physical registers (default configuration) -/
-def mkRAT64 : Circuit := mkRAT 64
+def mkRAT64 : Circuit := mkRAT 64 true false
 
 /-- Config-driven Register Alias Table -/
 def mkRATFromConfig (config : Shoumei.RISCV.CPUConfig) : Circuit :=
-  mkRAT config.numPhysRegs
+  mkRAT config.numPhysRegs true false
+
+/-- Committed Register Alias Table (CRAT) storage array.
+    32 entries × tagWidth bits. Direct restore/dump interface only,
+    no unused read muxes or write decoders. -/
+def mkCRAT (numArchRegs : Nat := 32) (tagWidth : Nat := 6) : Circuit :=
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+
+  let restore_data := (List.range numArchRegs).map (fun i =>
+    (List.range tagWidth).map (fun j => Wire.mk s!"restore_data_{i}_{j}"))
+  let dump_data := (List.range numArchRegs).map (fun i =>
+    (List.range tagWidth).map (fun j => Wire.mk s!"dump_data_{i}_{j}"))
+
+  let numRoots := 4
+  let reset_roots := (List.range numRoots).map (fun i =>
+    Wire.mk s!"reset_root_{i}")
+  let reset_root_gates := (List.range numRoots).map (fun i =>
+    Gate.mkBUF reset (reset_roots[i]!))
+  let numResetLeaves := 16
+  let reset_leaves := (List.range numResetLeaves).map (fun i =>
+    Wire.mk s!"reset_buf_{i}")
+  let reset_buf_gates := reset_root_gates ++ (List.range numResetLeaves).map (fun i =>
+    Gate.mkBUF (reset_roots[i / 4]!) (reset_leaves[i]!))
+
+  let storage_gates := (List.range numArchRegs).map (fun i =>
+    let reset_leaf := reset_leaves[i / 2]!
+    (List.range tagWidth).map (fun j =>
+      let reg := dump_data[i]![j]!
+      let bitVal := (i >>> j) % 2
+      if bitVal == 1 then
+        Gate.mkDFF_SET (restore_data[i]![j]!) clock reset_leaf reg
+      else
+        Gate.mkDFF (restore_data[i]![j]!) clock reset_leaf reg
+    )
+  ) |>.flatten
+
+  { name := s!"CRAT_{numArchRegs}x{tagWidth}"
+    inputs := [clock, reset] ++ restore_data.flatten
+    outputs := dump_data.flatten
+    gates := reset_buf_gates ++ storage_gates
+    instances := []
+    signalGroups := (List.range numArchRegs).map (fun i =>
+      { name := s!"restore_data_{i}", width := tagWidth, wires := restore_data[i]! }
+    ) ++ (List.range numArchRegs).map (fun i =>
+      { name := s!"dump_data_{i}", width := tagWidth, wires := dump_data[i]! }
+    )
+  }
+
+/-- CRAT with 64 physical registers (default configuration) -/
+def mkCRAT64 : Circuit := mkCRAT 32 6
 
 end Shoumei.RISCV.Renaming

@@ -17,7 +17,7 @@ theorem fetchStage_instance_count : mkFetchStage.instances.length = 5 := by
   native_decide
 
 /-- FetchStage gate count -/
-theorem fetchStage_gate_count : mkFetchStage.gates.length = 524 := by
+theorem fetchStage_gate_count : mkFetchStage.gates.length = 266 := by
   native_decide
 
 /-- FetchStage input count -/
@@ -39,9 +39,9 @@ theorem fetchStage_has_register :
     ∃ inst ∈ mkFetchStage.instances, inst.moduleName = "Register32" ∧ inst.instName = "u_pc_reg" := by
   native_decide
 
-/-- Has KoggeStoneAdder32 for PC+4 -/
+/-- Has PCIncrementer4 for PC+4 -/
 theorem fetchStage_has_adder :
-    ∃ inst ∈ mkFetchStage.instances, inst.moduleName = "KoggeStoneAdder32" ∧ inst.instName = "u_pc_adder_4" := by
+    ∃ inst ∈ mkFetchStage.instances, inst.moduleName = "PCIncrementer4" ∧ inst.instName = "u_pc_adder_4" := by
   native_decide
 
 /-! ## Behavioral Correspondence (Axioms) -/

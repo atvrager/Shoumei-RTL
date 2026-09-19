@@ -18,10 +18,10 @@ theorem fpAdderD_stage1_outputs : fpAdderD_Stage1Circuit.outputs.length = 146 :=
 
 theorem fpAdderD_stage2_name : fpAdderD_Stage2Circuit.name = "FPAdderD_Stage2_Align" := by rfl
 theorem fpAdderD_stage2_inputs : fpAdderD_Stage2Circuit.inputs.length = 145 := by native_decide
-theorem fpAdderD_stage2_outputs : fpAdderD_Stage2Circuit.outputs.length = 129 := by native_decide
+theorem fpAdderD_stage2_outputs : fpAdderD_Stage2Circuit.outputs.length = 126 := by native_decide
 
 theorem fpAdderD_stage3_name : fpAdderD_Stage3Circuit.name = "FPAdderD_Stage3_AddSub" := by rfl
-theorem fpAdderD_stage3_inputs : fpAdderD_Stage3Circuit.inputs.length = 114 := by native_decide
+theorem fpAdderD_stage3_inputs : fpAdderD_Stage3Circuit.inputs.length = 111 := by native_decide
 theorem fpAdderD_stage3_outputs : fpAdderD_Stage3Circuit.outputs.length = 64 := by native_decide
 
 theorem fpAdderD_stage4_name : fpAdderD_Stage4Circuit.name = "FPAdderD_Stage4_NormRound" := by rfl

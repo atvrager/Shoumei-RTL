@@ -30,7 +30,7 @@ theorem fpBusyTable_instances : mkFPBusyTable.instances.length = 66 := by
   native_decide
 
 /-- Verify FPBusyTable port counts -/
-theorem fpBusyTable_ports : mkFPBusyTable.inputs.length = 45 ∧ mkFPBusyTable.outputs.length = 4 := by
+theorem fpBusyTable_ports : mkFPBusyTable.inputs.length = 44 ∧ mkFPBusyTable.outputs.length = 3 := by
   native_decide
 
 end Shoumei.RISCV.CPU.BusyBitTableProofs

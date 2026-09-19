@@ -515,13 +515,10 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   -- === CDB Interface (W=2) ===
   let cdb_valid_0     := Wire.mk "cdb_valid"
   let cdb_tag         := mkWires2 "cdb_tag" 6
-  let cdb_exception_0 := Wire.mk "cdb_exception"
-  let cdb_mispred_0   := Wire.mk "cdb_mispredicted"
   let cdb_is_fp_0     := Wire.mk "cdb_is_fp"
 
   let cdb_valid_1     := Wire.mk "cdb_valid_1"
   let cdb_tag_1       := mkWires2 "cdb_tag_1" 6
-  let cdb_exception_1 := Wire.mk "cdb_exception_1"
   let cdb_mispred_1   := Wire.mk "cdb_mispredicted_1"
   let cdb_is_fp_1     := Wire.mk "cdb_is_fp_1"
 
@@ -730,7 +727,6 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     let hpob := Wire.mk s!"e{i}_hpob"
     let cdb_we_0 := Wire.mk s!"e{i}_cwe0"; let cdb_we_1 := Wire.mk s!"e{i}_cwe1"
     let cwe      := Wire.mk s!"e{i}_cwe"
-    let exc_sel  := Wire.mk s!"e{i}_exc_sel"
     let mis_sel  := Wire.mk s!"e{i}_mis_sel"
 
     let cdb_we_gates := [
@@ -752,10 +748,9 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
       Gate.mkXOR cdb_is_fp_1 is_fp_shadow[i]! (Wire.mk s!"e{i}_dx1"),
       Gate.mkNOT (Wire.mk s!"e{i}_dx1") (Wire.mk s!"e{i}_dm1"),
       Gate.mkAND (Wire.mk s!"e{i}_ct1_4") (Wire.mk s!"e{i}_dm1") cdb_we_1,
-      -- Combined WE (Port 1 priority for exception/mispred mux if both hit)
+      -- Combined WE
       Gate.mkOR cdb_we_0 cdb_we_1 cwe,
-      Gate.mkMUX cdb_exception_0 cdb_exception_1 cdb_we_1 exc_sel,
-      Gate.mkMUX cdb_mispred_0 cdb_mispred_1 cdb_we_1 mis_sel
+      Gate.mkAND cdb_mispred_1 cdb_we_1 mis_sel
     ]
 
     -- Commit clear
@@ -793,11 +788,10 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     let hasOPR_gate := Gate.mkMUX cur_hasOPR sel_hasOPR awe e_next[15]!
     let archRd_gates := (List.range 5).map fun j =>
       Gate.mkMUX cur_archRd[j]! sel_archRd[j]! awe e_next[16+j]!
-    let em1 := Wire.mk s!"e{i}_em1"; let em2 := Wire.mk s!"e{i}_em2"
+    let not_clear := Wire.mk s!"e{i}_ncl"
     let exc_gates := [
-      Gate.mkMUX cur_exc exc_sel cwe em1,
-      Gate.mkMUX em1 zero clear em2,
-      Gate.mkMUX em2 zero awe e_next[21]!
+      Gate.mkNOT clear not_clear,
+      Gate.mkAND cur_exc not_clear e_next[21]!
     ]
     let isBr_gate := Gate.mkMUX cur_isBr sel_isBr_w awe e_next[22]!
     let mm1 := Wire.mk s!"e{i}_mm1"; let mm2 := Wire.mk s!"e{i}_mm2"
@@ -1030,8 +1024,8 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     alloc_oldPhysRd_0 ++ [alloc_hasOldPR_0] ++ alloc_archRd_0 ++ [alloc_isBranch_0, alloc_is_fp_0] ++
     [alloc_en_1] ++ alloc_physRd_1 ++ [alloc_hasPhysRd_1] ++
     alloc_oldPhysRd_1 ++ [alloc_hasOldPR_1] ++ alloc_archRd_1 ++ [alloc_isBranch_1, alloc_is_fp_1] ++
-    [cdb_valid_0] ++ cdb_tag ++ [cdb_exception_0, cdb_mispred_0, cdb_is_fp_0] ++
-    [cdb_valid_1] ++ cdb_tag_1 ++ [cdb_exception_1, cdb_mispred_1, cdb_is_fp_1] ++
+    [cdb_valid_0] ++ cdb_tag ++ [cdb_is_fp_0] ++
+    [cdb_valid_1] ++ cdb_tag_1 ++ [cdb_mispred_1, cdb_is_fp_1] ++
     [commit_en_0, commit_en_1, flush_en]
 
   let all_outputs2 :=

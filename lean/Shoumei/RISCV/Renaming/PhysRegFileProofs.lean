@@ -42,6 +42,12 @@ theorem physregfile64_instance_count : mkPhysRegFile64.instances.length = 73 := 
 /-- PhysRegFile64 gate count: 16 root bufs + 64 leaf bufs + 64 write-enable ANDs + 64×32 write MUXes -/
 theorem physregfile64_gate_count : mkPhysRegFile64.gates.length = 4368 := by native_decide
 
+/-- IntPhysRegFile has the expected name -/
+theorem intphysregfile_name : (mkIntPhysRegFile 64 64).name = "IntPhysRegFile_64x64" := by native_decide
+
+/-- FPPhysRegFile has the expected name -/
+theorem fpphysregfile_name : (mkFPPhysRegFile 64 64).name = "FPPhysRegFile_64x64" := by native_decide
+
 
 
 /-! ## Behavioral Proofs -/

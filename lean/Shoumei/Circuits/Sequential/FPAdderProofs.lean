@@ -22,10 +22,10 @@ theorem fpAdder_stage2_outputs : fpAdder_Stage2Circuit.outputs.length = 61 := by
 
 theorem fpAdder_stage3_name : fpAdder_Stage3Circuit.name = "FPAdder_Stage3_AddSub" := by rfl
 theorem fpAdder_stage3_inputs : fpAdder_Stage3Circuit.inputs.length = 50 := by native_decide
-theorem fpAdder_stage3_outputs : fpAdder_Stage3Circuit.outputs.length = 32 := by native_decide
+theorem fpAdder_stage3_outputs : fpAdder_Stage3Circuit.outputs.length = 31 := by native_decide
 
 theorem fpAdder_stage4_name : fpAdder_Stage4Circuit.name = "FPAdder_Stage4_NormRound" := by rfl
-theorem fpAdder_stage4_inputs : fpAdder_Stage4Circuit.inputs.length = 49 := by native_decide
+theorem fpAdder_stage4_inputs : fpAdder_Stage4Circuit.inputs.length = 48 := by native_decide
 theorem fpAdder_stage4_outputs : fpAdder_Stage4Circuit.outputs.length = 37 := by native_decide
 
 end Shoumei.Circuits.Sequential

@@ -287,7 +287,6 @@ def mkComparator64 : Circuit :=
   let gtu := Wire.mk "gtu"
 
   let diff := makeIndexedWires "diff" n
-  let borrow := Wire.mk "borrow"
   let one := Wire.mk "one"
 
   let sub_inst : CircuitInstance := {
@@ -299,7 +298,7 @@ def mkComparator64 : Circuit :=
         , (s!"b{i}", b[i]!)
         , (s!"diff{i}", diff[i]!)
         ]
-      )) ++ [("one", one), ("borrow", borrow)]
+      ))
   }
 
   let any_diff := Wire.mk "any_diff"

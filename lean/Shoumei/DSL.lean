@@ -43,14 +43,14 @@ inductive GateType where
   -- Sequential elements
   | DFF       -- D Flip-Flop (inputs: [d, clk, reset], output: q) — resets to 0
   | DFF_SET   -- D Flip-Flop with preset (inputs: [d, clk, reset], output: q) — resets to 1
-  deriving Repr, BEq, Hashable
+  deriving Repr, BEq, Hashable, Inhabited
 
 -- Gate: represents a logic gate with inputs and output
 structure Gate where
   gateType : GateType
   inputs : List Wire
   output : Wire
-  deriving Repr, Hashable
+  deriving Repr, Hashable, Inhabited
 
 namespace Gate
 
