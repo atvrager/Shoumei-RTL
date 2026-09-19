@@ -165,8 +165,11 @@ MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z0-9_$]+)", re.MULTILINE)
 def tree_cells_hier(netlist_dir: Path) -> dict:
     """Hierarchical Yosys netlist: root -> module -> {seq, comb} -> cell types.
 
-    Uses the FLATTEN=0 synth output so the first cut is the module, exactly
-    as the Lean hierarchy; only then sequential vs combinational.
+    Module DECLARATIONS are siblings in the file; the real structure is the
+    instance graph (a module block instantiates KNOWN modules). Walk it from
+    the top module so submodules hang under their instantiator. Direct cells
+    of a module become a synthetic "direct cells" child (like lean's
+    direct-logic node), keeping every level 100%.
     """
     path_str = str(netlist_dir)
     if "gf180" in path_str:
@@ -175,36 +178,69 @@ def tree_cells_hier(netlist_dir: Path) -> dict:
         tech = "ASAP7 (7 nm)"
     else:
         tech = netlist_dir.parent.name
+
     text_all = "\n".join(p.read_text() for p in sorted(netlist_dir.glob("*.v")))
     known = {m.group(1) for m in MODULE_RE.finditer(text_all)}
 
-    per_module: dict[str, Counter] = {}
-    order: list[str] = []
-
+    direct: dict[str, Counter] = {}
+    edges: dict[str, list[str]] = {}
     for text in (p.read_text() for p in sorted(netlist_dir.glob("*.v"))):
         for m in MODULE_RE.finditer(text):
             name = m.group(1)
             nxt = MODULE_RE.search(text, m.end())
             block = text[m.end():nxt.start() if nxt else len(text)]
-            counts = Counter()
+            counts: Counter = Counter()
+            kids: list[str] = []
             for line in block.splitlines():
                 im = INST_RE.match(line)
-                if im and im.group(1) not in NON_CELL and im.group(1) not in known:
-                    counts[im.group(1)] += 1
-            if counts:
-                per_module[name] = counts
-                order.append(name)
+                if not im or im.group(1) in NON_CELL:
+                    continue
+                t = im.group(1)
+                if t in known and t != name:
+                    if t not in kids:
+                        kids.append(t)
+                else:
+                    counts[t] += 1
+            if counts or kids:
+                direct[name] = counts
+                edges[name] = kids
 
-    children = [{
-        "name": name,
-        "size": sum(per_module[name].values()),
-        "children": _cell_groups(per_module[name]),
-    } for name in order]
-    total = sum(c["size"] for c in children)
+    seen: set[str] = set()
+    parents = {c for _, kids in edges.items() for c in kids}
+
+    def node(mod: str) -> dict | None:
+        if mod in seen:
+            return None
+        seen.add(mod)
+        counts = direct.get(mod, Counter())
+        children = []
+        for kid in edges.get(mod, []):
+            sub = node(kid)
+            if sub:
+                children.append(sub)
+        direct_total = sum(counts.values())
+        if direct_total > 0:
+            children.append({"name": "direct cells", "size": direct_total,
+                             "children": _cell_groups(counts)})
+        children.sort(key=lambda c: -c["size"])
+        size = direct_total + sum(c["size"] for c in children)
+        return {"name": mod, "size": size, "children": children}
+
+    tops = [n for n in edges if n not in parents]
+    payloads = []
+    for t in tops:
+        n = node(t)
+        if n:
+            payloads.append(n)
+    total = sum(p["size"] for p in payloads)
     if total == 0:
         raise ValueError(f"no cells parsed from {netlist_dir}")
+
+    if len(payloads) == 1:
+        return {"name": f"{tech} — Yosys netlist", "short": tech,
+                "size": total, "unit": "cells", "children": payloads[0]["children"]}
     return {"name": f"{tech} — Yosys netlist", "short": tech,
-            "size": total, "unit": "cells", "children": children}
+            "size": total, "unit": "cells", "children": payloads}
 
 
 def prune_zero(node: dict) -> dict:

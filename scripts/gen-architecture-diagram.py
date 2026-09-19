@@ -523,6 +523,8 @@ def draw_treemap(
 ) -> None:
     """Render the squarified treemap using matplotlib and plt.xkcd."""
     ensure_xkcd_font()
+    # Vector text: the Pages SVG stays small and readable at any zoom
+    plt.rcParams["svg.fonttype"] = "none"
     np.random.seed(42)
     random.seed(42)
 
