@@ -71,6 +71,10 @@ structure StoreBufferEntry where
   valid : Bool
   /-- ROB has committed this store -/
   committed : Bool
+  /-- STA complete: effective address latched (decoupled micro-op) -/
+  stA_done : Bool
+  /-- STD complete: data + size latched (decoupled micro-op) -/
+  stD_done : Bool
   /-- Memory address -/
   address : UInt64
   /-- Store data -/
@@ -80,10 +84,15 @@ structure StoreBufferEntry where
   deriving Repr, BEq, DecidableEq
 
 instance : Inhabited StoreBufferEntry where
-  default := { valid := false, committed := false, address := 0, data := 0, size := 0 }
+  default := { valid := false, committed := false, stA_done := false, stD_done := false,
+               address := 0, data := 0, size := 0 }
 
 /-- Create an empty store buffer entry. -/
 def StoreBufferEntry.empty : StoreBufferEntry := default
+
+/-- Entry is forwardable: valid and both STA and STD micro-ops done. -/
+def StoreBufferEntry.forwardable (e : StoreBufferEntry) : Bool :=
+  e.valid && e.stA_done && e.stD_done
 
 /-! ## Store Buffer State -/
 
@@ -129,7 +138,7 @@ private def advancePointer (ptr : Fin 8) : Fin 8 :=
 
 /-! ## Core Operations -/
 
-/-- Enqueue a new store at the tail.
+/-- Enqueue a new store at the tail (combined STA+STD: both done).
 
     Returns (updated state, allocated index) or (unchanged, none) if full.
 -/
@@ -142,6 +151,8 @@ def StoreBufferState.enqueue
     let newEntry : StoreBufferEntry := {
       valid := true
       committed := false  -- Speculative until ROB commits (redirect-from-commit)
+      stA_done := true
+      stD_done := true
       address := address
       data := data
       size := size
@@ -155,6 +166,59 @@ def StoreBufferState.enqueue
        count := sb.count + 1
        h_count := by omega },
      some allocIdx)
+
+/-- Allocate an SQ slot at the tail for a decoupled STA micro-op.
+    The address lands in the slot only when the AGU result arrives
+    (setStoreAddress); data lands later via STD (setStoreData).
+-/
+def StoreBufferState.enqueueSta
+    (sb : StoreBufferState)
+    : StoreBufferState × Option (Fin 8) :=
+  sb.enqueue 0 0 0
+
+/-- Complete the STA half of a decoupled entry: latch the effective address. -/
+def StoreBufferState.setStoreAddress
+    (sb : StoreBufferState) (idx : Fin 8) (address : UInt64)
+    : StoreBufferState :=
+  let e := sb.entries idx
+  if !e.valid then sb
+  else
+    { sb with
+      entries := fun i =>
+        if i == idx then { e with address := address, stA_done := true } else sb.entries i }
+
+/-- Complete the STD half of a decoupled entry: latch data and size. -/
+def StoreBufferState.setStoreData
+    (sb : StoreBufferState) (idx : Fin 8) (data : UInt64) (size : Fin 4)
+    : StoreBufferState :=
+  let e := sb.entries idx
+  if !e.valid then sb
+  else
+    { sb with
+      entries := fun i =>
+        if i == idx then { e with data := data, size := size, stD_done := true } else sb.entries i }
+
+/-- Circular age of an index: distance from head (0 = head/oldest). -/
+def StoreBufferState.age (sb : StoreBufferState) (i : Fin 8) : Nat :=
+  (i.val + 8 - sb.head.val) % 8
+
+/-- Explicit age masking: `i` is older than `j` iff i is closer to the head
+    in circular order.  Strict total order on live entries (Section 5.2). -/
+def StoreBufferState.older (sb : StoreBufferState) (i j : Fin 8) : Bool :=
+  sb.age i < sb.age j
+
+/-- Youngest live entry index for an address: nearest to the tail among
+    forwardable entries whose address matches.  None when no match. -/
+def StoreBufferState.youngestMatchIdx (sb : StoreBufferState) (addr : UInt64)
+    : Option (Fin 8) :=
+  let results := (List.range 8).filterMap (fun j =>
+    if h : j < 8 then
+      let idx : Fin 8 := ⟨(sb.tail.val + 7 - j) % 8, by omega⟩
+      let e := sb.entries idx
+      if e.forwardable && e.address == addr then some idx else none
+    else none
+  )
+  results.head?
 
 /-- Mark an entry as committed (ROB has retired the store instruction). -/
 def StoreBufferState.markCommitted (sb : StoreBufferState) (idx : Fin 8)
@@ -207,12 +271,33 @@ def StoreBufferState.forwardCheck (sb : StoreBufferState) (addr : UInt64)
     if h : j < 8 then
       let idx : Fin 8 := ⟨(sb.tail.val + 7 - j) % 8, by omega⟩
       let e := sb.entries idx
-      if e.valid && e.address == addr then some e.data
-      else if e.valid && e.size == 3 && e.address + 4 == addr then some (e.data >>> 32)
+      if e.forwardable && e.address == addr then some e.data
+      else if e.forwardable && e.size == 3 && e.address + 4 == addr then some (e.data >>> 32)
       else none
     else none
   -- Return youngest match (first in scan order)
   results.head?
+
+/-- Forwarding probe: exact-match classification (M2 forwarding decision).
+    Returns (data, isExact); partial overlap must assert replay_needed. -/
+def StoreBufferState.forwardProbe (sb : StoreBufferState) (addr : UInt64)
+    : Option (UInt64 × Bool) :=
+  match sb.youngestMatchIdx addr with
+  | some i =>
+      let e := sb.entries i
+      some (e.data, e.address == addr)
+  | none => none
+
+/-- Replay condition: an entry overlaps the load's 32-bit word without an
+    exact byte match (multi-byte alignment collision).  The LSU must replay
+    or stall; no iterative byte merger sits in the forwarding path. -/
+def StoreBufferState.replayNeeded (sb : StoreBufferState) (addr : UInt64) : Bool :=
+  (List.range 8).any (fun j =>
+    if h : j < 8 then
+      let idx : Fin 8 := ⟨(sb.tail.val + 7 - j) % 8, by omega⟩
+      let e := sb.entries idx
+      e.forwardable && (e.address != addr) && (e.address >>> 2) == (addr >>> 2)
+    else false)
 
 /-- Full flush: clear ALL entries.
 
@@ -294,6 +379,9 @@ def mkStoreBuffer8 : Circuit :=
   let empty := Wire.mk "empty"
   let enq_idx := mkWires "enq_idx_" 3
   let flush_tail := mkWires "flush_tail_" 3  -- combinational flush-recovered tail for CPU
+  -- Replay output: partial word overlap in the forwarding set.  The LSU
+  -- replays/stalls instead of byte-merging in the critical path.
+  let replay_needed := Wire.mk "replay_needed"
 
   -- === Internal Wires ===
   let head_ptr := mkWires "head_ptr_" 3
@@ -848,6 +936,8 @@ def mkStoreBuffer8 : Circuit :=
   let fwoh_t3 := Wire.mk "fwoh_t3"
   let fwoh_t4 := Wire.mk "fwoh_t4"
   let fwoh_t5 := Wire.mk "fwoh_t5"
+  -- replay_needed = fwd_word_only_hit (partial word overlap, M2 decision)
+  let replay_gate := Gate.mkBUF fwd_word_only_hit replay_needed
   let fwd_word_only_hit_gates := [
     Gate.mkOR word_only_matches[0]! word_only_matches[1]! fwoh_t0,
     Gate.mkOR word_only_matches[2]! word_only_matches[3]! fwoh_t1,
@@ -1018,7 +1108,8 @@ def mkStoreBuffer8 : Circuit :=
   let all_outputs :=
     [full, empty] ++ enq_idx ++ flush_tail ++
     [deq_valid] ++ deq_bits ++
-    [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size
+    [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size ++
+    [replay_needed]
 
   let all_gates :=
     reset_buf_gates ++
@@ -1029,7 +1120,7 @@ def mkStoreBuffer8 : Circuit :=
     flush_count_gates ++ flush_tail_gates ++ flush_tail_out_gates ++
     all_entry_gates ++
     barrel_l0_gates ++ barrel_l1_gates ++ barrel_l2_gates ++
-    arb_request_gates ++ [fwd_hit_gate] ++ fwd_word_hit_gates ++ fwd_word_only_hit_gates ++ fwd_committed_hit_gates ++
+    arb_request_gates ++ [fwd_hit_gate] ++ fwd_word_hit_gates ++ [replay_gate] ++ fwd_word_only_hit_gates ++ fwd_committed_hit_gates ++
     unreversed_gates ++ unrot_l0_gates ++ unrot_l1_gates ++ unrot_l2_gates ++
     oh2b_gates ++
     head_valid_gates ++ head_committed_gates

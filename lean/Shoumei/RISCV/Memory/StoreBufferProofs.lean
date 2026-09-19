@@ -35,7 +35,7 @@ theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 205 := by nati
     deq_valid(1) + deq_bits(130) +
     fwd_hit(1) + fwd_committed_hit(1) + fwd_word_hit(1) + fwd_word_only_hit(1) +
     fwd_data(64) + fwd_size(2) = 209 -/
-theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 209 := by native_decide
+theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 210 := by native_decide
 
 /-- StoreBuffer8 uses 49 verified submodule instances:
     - 8 x Register130 (entry storage)
@@ -52,7 +52,7 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 209 := by na
 theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 49 := by native_decide
 
 /-- StoreBuffer8 gate count: 3049 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3049 := by native_decide
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3050 := by native_decide
 
 /-! ## Building Block Verification -/
 
@@ -83,6 +83,113 @@ theorem storebuffer8_uses_verified_blocks :
 theorem storebuffer8_unique_instances :
   let names := mkStoreBuffer8.instances.map (fun inst => inst.instName)
   names.length == names.eraseDups.length := by native_decide
+
+/-! ## Age-Ordered Forwarding Coherence (Section 5.2 / 11.1) -/
+
+/-- Canonical full ring for strict-order checks: every slot live, ages
+    0..7 (head = 0). -/
+def fullRing : StoreBufferState :=
+  { entries := fun i =>
+      { valid := true, committed := false, stA_done := true, stD_done := true,
+        address := i.val.toUInt64 * 0x10, data := i.val.toUInt64, size := 2 }
+    head := 0
+    tail := 0
+    count := 8
+    h_count := by omega
+  }
+
+/-- `older` is strict on the live ring: no self-older, total, transitive.
+    (native_decide sweeps all 8^3 index triples.) -/
+theorem older_strict_on_ring :
+  (∀ i : Fin 8, ¬ fullRing.older i i) ∧
+  (∀ i j : Fin 8, fullRing.older i j ∨ fullRing.older j i ∨ i = j) ∧
+  (∀ i j k : Fin 8, fullRing.older i j → fullRing.older j k → fullRing.older i k) := by
+  native_decide
+
+/-- **Forwarding coherence**: the exact probe returns the data of the
+    youngest match, and the legacy scan agrees for exact matches.
+    Concrete: two stores at the same address -> probe = youngest data. -/
+theorem forward_probe_youngest_exact :
+  let sb : StoreBufferState :=
+    { entries := fun i =>
+        if i.val = 1 then { valid := true, committed := false, stA_done := true, stD_done := true, address := 0x1000, data := 0xAA, size := 2 }
+        else if i.val = 3 then { valid := true, committed := false, stA_done := true, stD_done := true, address := 0x1000, data := 0xBB, size := 2 }
+        else StoreBufferEntry.empty
+      head := 1  -- i=1 oldest, i=3 youngest
+      tail := 4
+      count := 2
+      h_count := by omega
+    }
+  sb.forwardProbe 0x1000 = some (0xBB, true) ∧
+  sb.forwardCheck 0x1000 = some 0xBB := by
+  native_decide
+
+/-- Same address in a decoupled order: address unknown (stD missing) is
+    NEVER forwarded; replay/stall instead. -/
+theorem forward_probe_requires_stD :
+  let sb : StoreBufferState :=
+    { entries := fun i =>
+        if i.val = 2 then { valid := true, committed := false, stA_done := true, stD_done := false, address := 0x2000, data := 0, size := 3 }
+        else StoreBufferEntry.empty
+      head := 0
+      tail := 3
+      count := 1
+      h_count := by omega
+    }
+  sb.forwardProbe 0x2000 = none ∧
+  sb.forwardCheck 0x2000 = none := by
+  native_decide
+
+/-- Partial word overlap: different byte offsets in one word assert
+    replay_needed (no byte merger in the critical path). -/
+theorem replay_on_partial_overlap :
+  let sb : StoreBufferState :=
+    { entries := fun i =>
+        if i.val = 0 then { valid := true, committed := false, stA_done := true, stD_done := true, address := 0x1001, data := 0xAA, size := 0 }
+        else StoreBufferEntry.empty
+      head := 0
+      tail := 1
+      count := 1
+      h_count := by omega
+    }
+  sb.replayNeeded 0x1000 = true := by
+  native_decide
+
+/-- No partial overlap for an exact match: no replay. -/
+theorem no_replay_on_exact_match :
+  let sb : StoreBufferState :=
+    { entries := fun i =>
+        if i.val = 0 then { valid := true, committed := false, stA_done := true, stD_done := true, address := 0x1000, data := 0xAA, size := 2 }
+        else StoreBufferEntry.empty
+      head := 0
+      tail := 1
+      count := 1
+      h_count := by omega
+    }
+  sb.replayNeeded 0x1000 = false := by
+  native_decide
+
+/-- Loop-freedom of the forwarding match stage (LINT-2): every address
+    comparator input is a primary input (fwd_address) or the registered
+    output of an entry storage cell — never a signal produced downstream of
+    the compare (priority/mux), so the match stage cannot close a
+    combinational loop.  Full-circuit loop closure is additionally checked
+    on the emitted SV by `make lint` (yosys check -assert). -/
+def comparatorInputsAreRegsOrPrimary (c : Circuit) : Bool :=
+  let entries := c.instances.filter (fun i => i.instName.startsWith "u_entry")
+  let entryQ : List String := entries.flatMap (fun inst =>
+    (inst.portMap.filter (fun (p, _) => p.startsWith "q_")).map (fun (_, w) => w.name))
+  let cmps := c.instances.filter (fun i => i.moduleName == "EqualityComparator64")
+  cmps.all (fun inst =>
+    inst.portMap.all (fun (pname, w) =>
+      (pname.startsWith "a_" ∨ pname.startsWith "b_") →
+        (c.inputs.any (fun i => i.name == w.name) ∨
+         entryQ.any (fun q => q == w.name))))
+
+/-- StoreBuffer8 forwarding match stage is feed-forward (no comb loop). -/
+theorem storebuffer8_forwarding_loop_free :
+    comparatorInputsAreRegsOrPrimary mkStoreBuffer8 = true := by
+  native_decide
 
 /-! ## Behavioral Commit Interconnect Refinement (Spatial Locality: StoreBuffer) -/
 
