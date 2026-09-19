@@ -67,8 +67,6 @@ struct RefCache {
     uint32_t base = (a & ~(szb - 1)) & 31;
     for (uint32_t b = 0; b < szb; b++) ln->d[base + (b & 7)] = (wdata >> (8 * b)) & 0xFF;
     ln->dirty = true;
-    if (getenv("DBG")) printf("    writeHit szb=%u base=%u d0=%02x d1=%02x d7=%02x dirty=%d\n",
-      szb, base, ln->d[0], ln->d[1], ln->d[7], (int)ln->dirty);
   }
   uint64_t readDword(uint32_t a) {
     Line* ln = find(a);
@@ -207,7 +205,6 @@ struct Tester {
       uint32_t szb = 1u << sz;
       expectResp = true;      // hit read, miss read, or write-miss refill all resp
       respAddr = a;
-      if (getenv("DBG") && we) printf("    commit ST we=%d a=%x wd=%llx sz=%u\n", we, a, (unsigned long long)wd, sz);
       if (we) {
         if (ref.find(a)) { ref.writeHit(a, wd, szb); expectResp = false; }
         else { missLine = a & ~31u; m = M::REQ; }   // KNOWN-GAP: store dropped
@@ -287,21 +284,7 @@ int main(int argc, char** argv) {
 
   // D2: write hit -> read back
   printf("D2 write hit -> read back\n");
-  if (getenv("DBG")) {
-    auto ln = t.ref.find(0x100);
-    printf("  D2 pre-write: line=%p dirty=%d d0..7=%02x%02x%02x%02x%02x%02x%02x%02x\n",
-      (void*)ln, ln ? (int)ln->dirty : -1,
-      ln ? ln->d[0]:0, ln?ln->d[1]:0, ln?ln->d[2]:0, ln?ln->d[3]:0,
-      ln?ln->d[4]:0, ln?ln->d[5]:0, ln?ln->d[6]:0, ln?ln->d[7]:0);
-  }
   t.dut.issue(0x100, true, 0xDEADBEEFCAFE1234ull, 8); t.cycle(); t.dut.deassert(); drain(t, 2);
-  if (getenv("DBG")) {
-    auto ln = t.ref.find(0x100);
-    printf("  D2 post-write: line=%p dirty=%d d0..7=%02x%02x%02x%02x%02x%02x%02x%02x\n",
-      (void*)ln, ln ? (int)ln->dirty : -1,
-      ln ? ln->d[0]:0, ln?ln->d[1]:0, ln?ln->d[2]:0, ln?ln->d[3]:0,
-      ln?ln->d[4]:0, ln?ln->d[5]:0, ln?ln->d[6]:0, ln?ln->d[7]:0);
-  }
   t.dut.issue(0x100, false, 0, 8); t.cycle(); t.dut.deassert(); drain(t, 4);
   check(t.ref.readDword(0x100) == 0xDEADBEEFCAFE1234ull, "D2 read-after-write value");
 
