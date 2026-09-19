@@ -97,6 +97,7 @@ import Shoumei.RISCV.Memory.Cache.CachedCPU
 -- Phase 8a: Microcode Sequencer
 import Shoumei.RISCV.Microcode.MicrocodeSequencerCodegen
 import Shoumei.RISCV.Microcode.TrapSequencerCodegen
+import Shoumei.RISCV.Microcode.FallbackSequencerCodegen
 
 -- Phase 8: Top-Level Integration
 import Shoumei.RISCV.Fetch
@@ -325,6 +326,7 @@ def allCircuits : List Circuit := [
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
   trapSequencerCircuit,
+  fallbackSequencerCircuitExport,
 
   -- Opcode PLA Decoders
   mkALUOpDecoder defaultCPUConfig,

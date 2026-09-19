@@ -195,6 +195,10 @@ import Shoumei.RISCV.Memory.LSUTest
 import Shoumei.RISCV.Memory.StoreBuffer
 import Shoumei.RISCV.Memory.StoreBufferProofs
 import Shoumei.RISCV.Memory.StoreBufferTest
+import Shoumei.RISCV.Microcode.FallbackSequencer
+import Shoumei.RISCV.Microcode.FallbackSequencerCodegen
+import Shoumei.RISCV.Microcode.FallbackSequencerProofs
+import Shoumei.RISCV.Microcode.FallbackTypes
 import Shoumei.RISCV.Microcode.MicrocodeDecoder
 import Shoumei.RISCV.Microcode.MicrocodeROM
 import Shoumei.RISCV.Microcode.MicrocodeROMProofs
@@ -205,6 +209,8 @@ import Shoumei.RISCV.Microcode.MicrocodeTypes
 import Shoumei.RISCV.Microcode.TrapSequencer
 import Shoumei.RISCV.Microcode.TrapSequencerCodegen
 import Shoumei.RISCV.Microcode.TrapSequencerProofs
+import Shoumei.RISCV.Microcode.ZbEmulationLibrary
+import Shoumei.RISCV.Microcode.ZbEmulationProofs
 import Shoumei.RISCV.OpTypeGenerated
 import Shoumei.RISCV.OpcodeParser
 import Shoumei.RISCV.Renaming.BitmapFreeList

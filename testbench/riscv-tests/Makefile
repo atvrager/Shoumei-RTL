@@ -13,6 +13,8 @@ CFLAGS_IM   := $(CFLAGS_BASE) -march=rv64im_zifencei -mabi=lp64
 CFLAGS_IMF  := $(CFLAGS_BASE) -march=rv64imf_zifencei -mabi=lp64f
 CFLAGS_IMA  := $(CFLAGS_BASE) -march=rv64ima_zifencei -mabi=lp64
 CFLAGS_IMFD := $(CFLAGS_BASE) -march=rv64imafd_zifencei -mabi=lp64d
+# Zb* microcoded extensions: assembled as macros, executed via FallbackSequencer
+CFLAGS_UZB  := $(CFLAGS_BASE) -march=rv64im_zba_zbb_zbc_zbs_zifencei -mabi=lp64
 
 # All pure RV64I user-mode integer tests
 RV64UI_TESTS := simple add addi addiw addw and andi \
@@ -36,11 +38,18 @@ RV64UD_TESTS := fadd fclass fcmp fcvt fcvt_w fdiv fmadd fmin ldst recoding struc
 RV64UA_TESTS := amoadd_w amoand_w amomax_w amomaxu_w amomin_w amominu_w amoor_w amoswap_w amoxor_w \
   amoadd_d amoand_d amomax_d amomaxu_d amomin_d amominu_d amoor_d amoswap_d amoxor_d lrsc
 
+# RV64UZB microcoded Zb* tests (executed combinationally by FallbackSequencer)
+RV64UZBA_TESTS := sh1add sh2add sh3add
+RV64UZBB_TESTS := andn orn xnor min max minu maxu rol ror
+RV64UZBC_TESTS := clmul
+RV64UZBS_TESTS := bset bclr binv bext
+
 ELFS := $(addprefix rv64ui-p-,$(addsuffix .elf,$(RV64UI_TESTS))) \
         $(addprefix rv64um-p-,$(addsuffix .elf,$(RV64UM_TESTS))) \
         $(addprefix rv64uf-p-,$(addsuffix .elf,$(RV64UF_TESTS))) \
         $(addprefix rv64ud-p-,$(addsuffix .elf,$(RV64UD_TESTS))) \
-        $(addprefix rv64ua-p-,$(addsuffix .elf,$(RV64UA_TESTS)))
+        $(addprefix rv64ua-p-,$(addsuffix .elf,$(RV64UA_TESTS))) \
+        $(addprefix rv64uzb-p-,$(addsuffix .elf,$(RV64UZBA_TESTS) $(RV64UZBB_TESTS) $(RV64UZBC_TESTS) $(RV64UZBS_TESTS)))
 
 all: $(ELFS)
 
@@ -58,6 +67,11 @@ rv64ud-p-%.elf: $(RISCV_TESTS)/isa/rv64ud/%.S shoumei64.ld riscv_test.h
 
 rv64ua-p-%.elf: $(RISCV_TESTS)/isa/rv64ua/%.S shoumei64.ld riscv_test.h
 	$(CC) $(CFLAGS_IMA) $(LDFLAGS) $< -o $@
+
+vpath %.S $(RISCV_TESTS)/isa/rv64uzba $(RISCV_TESTS)/isa/rv64uzbb $(RISCV_TESTS)/isa/rv64uzbc $(RISCV_TESTS)/isa/rv64uzbs
+
+rv64uzb-p-%.elf: %.S shoumei64.ld riscv_test.h
+	$(CC) $(CFLAGS_UZB) $(LDFLAGS) $< -o $@
 
 clean:
 	rm -f *.elf
