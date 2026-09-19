@@ -90,7 +90,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 .PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests \
         cosim run-cosim coremark run-coremark clean \
         sim-arc cosim-arc run-all-tests-arc run-cosim-arc \
-        sim-cov run-coverage
+        sim-cov run-coverage run-kanata-traces
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
@@ -266,6 +266,18 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
 	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+
+KANATA_DIR := $(PROJ_ROOT)/output/kanata-traces
+
+# Re-run the ELF suite once per test with +kanata tracing enabled; the
+# per-test .txt files feed the TS pipeline viewer and the Pages site.
+run-kanata-traces: $(SIM_BIN) tests riscv-tests
+	@mkdir -p $(KANATA_DIR)
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
+	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
+	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --csv /dev/null --kanata-dir $(KANATA_DIR) \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 run-coverage: $(SIM_COV_BIN) tests riscv-tests

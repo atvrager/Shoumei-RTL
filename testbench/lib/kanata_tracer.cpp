@@ -13,18 +13,20 @@
 
 #include "kanata_tracer.h"
 #include "rv32_disasm.h"
+#include "../generated/trace_schema.gen.h"
+
+// The stage enum (order, count) and the Lean-generated table must agree;
+// a stage added/removed in Lean/Shoumei/RISCV/TraceSchema.lean fails here.
+static_assert(TRACE_STAGE_COUNT == (static_cast<int>(STAGE_DONE) - static_cast<int>(STAGE_FETCH)),
+              "trace schema drift: re-run `lake exe generate_all`");
 
 const char* KanataTracer::stage_name(Stage s) {
-    switch (s) {
-        case STAGE_FETCH:    return "F";
-        case STAGE_DECODE:   return "D";
-        case STAGE_RENAME:   return "Rn";
-        case STAGE_ISSUE:    return "Is";
-        case STAGE_EXECUTE:  return "Xec";
-        case STAGE_COMPLETE: return "Cm";
-        case STAGE_RETIRE:   return "Rt";
-        default:             return "?";
+    // Index into the Lean-generated table; order is pinned by the
+    // static_assert above.
+    if (s < STAGE_FETCH || s > STAGE_RETIRE) {
+        return "?";
     }
+    return TRACE_STAGES[static_cast<int>(s) - static_cast<int>(STAGE_FETCH)].code;
 }
 
 KanataTracer::KanataTracer(const char* filename)
@@ -73,7 +75,7 @@ void KanataTracer::advance_stages() {
         }
 
         if (next == STAGE_DONE) {
-            fprintf(fp_, "E\t%lu\t0\tRt\n", (unsigned long)e.kanata_id);
+            fprintf(fp_, "E\t%lu\t0\t%s\n", (unsigned long)e.kanata_id, stage_name(STAGE_RETIRE));
             fprintf(fp_, "R\t%lu\t%lu\t0\n", (unsigned long)e.kanata_id, (unsigned long)e.kanata_id);
             e.active = false;
             e.stage = STAGE_DONE;
@@ -115,9 +117,9 @@ void KanataTracer::tick(uint64_t cycle, const Signals& sig) {
                     rob_[i].dispatch_seen = true;
                     // If already in Is, immediately transition
                     if (rob_[i].stage == STAGE_ISSUE) {
-                        fprintf(fp_, "E\t%lu\t0\tIs\n", (unsigned long)id);
+                        fprintf(fp_, "E\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_ISSUE));
                         rob_[i].stage = STAGE_EXECUTE;
-                        fprintf(fp_, "S\t%lu\t0\tXec\n", (unsigned long)id);
+                        fprintf(fp_, "S\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_EXECUTE));
                     }
                     break;
                 }
@@ -136,9 +138,9 @@ void KanataTracer::tick(uint64_t cycle, const Signals& sig) {
                 rob_[i].cdb_seen = true;
                 rob_[i].dispatch_seen = true; // CDB implies dispatch happened
                 if (rob_[i].stage == STAGE_EXECUTE) {
-                    fprintf(fp_, "E\t%lu\t0\tXec\n", (unsigned long)id);
+                    fprintf(fp_, "E\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_EXECUTE));
                     rob_[i].stage = STAGE_COMPLETE;
-                    fprintf(fp_, "S\t%lu\t0\tCm\n", (unsigned long)id);
+                    fprintf(fp_, "S\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_COMPLETE));
                 }
                 break;
             }
@@ -160,9 +162,9 @@ void KanataTracer::tick(uint64_t cycle, const Signals& sig) {
 
             if (e.stage == STAGE_COMPLETE) {
                 // Normal: CDB already fired, instruction waiting for commit
-                fprintf(fp_, "E\t%lu\t0\tCm\n", (unsigned long)id);
+                fprintf(fp_, "E\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_COMPLETE));
                 e.stage = STAGE_RETIRE;
-                fprintf(fp_, "S\t%lu\t0\tRt\n", (unsigned long)id);
+                fprintf(fp_, "S\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_RETIRE));
             }
             // Otherwise: stage machine will auto-advance through remaining
             // stages (1 cycle each) via the commit_seen flag.
@@ -176,7 +178,7 @@ void KanataTracer::tick(uint64_t cycle, const Signals& sig) {
 
         fprintf(fp_, "I\t%lu\t0\t0\n", (unsigned long)id);
         fprintf(fp_, "L\t%lu\t0\tROB[%u] p%u\n", (unsigned long)id, idx, sig.alloc_physrd);
-        fprintf(fp_, "S\t%lu\t0\tF\n", (unsigned long)id);
+        fprintf(fp_, "S\t%lu\t0\t%s\n", (unsigned long)id, stage_name(STAGE_FETCH));
 
         rob_[idx] = {id, sig.alloc_physrd, STAGE_FETCH, true, false, false, false};
 
