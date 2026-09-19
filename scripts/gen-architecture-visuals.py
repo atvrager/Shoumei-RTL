@@ -349,7 +349,7 @@ def draw_treemap(gen, tree: dict, out: Path) -> None:
                     for c, cx, cy, cw, ch in rects_in:
                         if cw * ch < 0.12 or cw < 0.45 or ch < 0.3:
                             continue
-                        cc = pal_color(gen, g["name"], 1)
+                        cc = pal_color(gen, c["name"], 1)
                         ax.add_patch(mp.FancyBboxPatch((cx + 0.03, cy + 0.03), cw - 0.06, ch - 0.06,
                                      boxstyle="round,pad=0.01", facecolor=cc, edgecolor="#444444", linewidth=0.6))
                         cpct = c["size"] / tree["size"] * 100
@@ -391,7 +391,7 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
     root_r = 1.0
     label_min = (14.0, 8.0, 5.0, 3.5, 2.5)  # min wedge angle (deg) to label per level
 
-    def draw_items(ax, items, a0, r0, depth, total, group) -> None:
+    def draw_items(ax, items, a0, r0, depth, total) -> None:
         """Wedges for one level; children recurse into the next ring."""
         a = a0
         for it in items:
@@ -400,7 +400,7 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
                 continue
             r1 = r0 + ring_w
             ax.add_patch(Wedge((0, 0), r1, np.degrees(a), np.degrees(a + span),
-                         width=ring_w, facecolor=pal_color(gen, group, depth & 1),
+                         width=ring_w, facecolor=pal_color(gen, it["name"], depth & 1),
                          edgecolor="#101418", linewidth=0.8))
             deg = np.degrees(span)
             if depth < len(label_min) and deg > label_min[depth]:
@@ -411,7 +411,7 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
                         ha="center", va="center", fontsize=fs, color="#1a1a1a")
             kids = it.get("children") or []
             if kids and depth + 1 < max_depth:
-                draw_items(ax, kids, a, r1, depth + 1, total, group)
+                draw_items(ax, kids, a, r1, depth + 1, total)
             a += span
 
     for style, target, fmt, dpi in (
@@ -435,7 +435,7 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
             for g in children:
                 span = (g["size"] / total) * 2 * np.pi
                 if span > 0:
-                    draw_items(ax, [g], a0, root_r, 0, total, g["name"])
+                    draw_items(ax, [g], a0, root_r, 0, total)
                     a0 += span
 
             max_r = root_r + ring_w * (max_depth - 0.5)
@@ -460,9 +460,11 @@ def flatten_city(tree: dict, gen) -> tuple[list[dict], list[dict]]:
         legend.append({"name": g["name"], "size": g["size"], "color": color})
         if g.get("children"):
             for c in g["children"]:
-                leaves.append({"name": c["name"], "size": c["size"], "group": g["name"], "color": color})
+                leaves.append({"name": c["name"], "size": c["size"], "group": g["name"],
+                               "color": pal_color(gen, c["name"], 0)})
         else:
-            leaves.append({"name": g["name"], "size": g["size"], "group": g["name"], "color": color})
+            leaves.append({"name": g["name"], "size": g["size"], "group": g["name"],
+                           "color": pal_color(gen, g["name"], 0)})
     return leaves, legend
 
 
@@ -650,7 +652,7 @@ def layout_tree3d(tree: dict, gen) -> dict:
             "y": round(-depth * 3.2, 3),
             "z": round(math.cos(mid) * ring_r, 3),
             "r": round(min(rad, 3.0), 3),
-            "color": pal_color(gen, group, 0),
+            "color": pal_color(gen, node["name"], depth % 2),
             "group": group,
         })
         if parent is not None:
