@@ -170,10 +170,15 @@ else
     fail "Found ${AXIOM_COUNT} unproven axioms in Lean proofs"
 fi
 
-# Cache behavior conformance (emitted SV vs reference model)
+# Cache behavior conformance (emitted SV vs reference model).
+# Needs Verilator, which the general smoke job does not install (the
+# verilator-sim CI job runs the conformance suite instead); skip cleanly
+# when the model can't be built.
 echo ""
 echo "==> Cache behavior conformance"
-if make -C testbench cache-model-test > /tmp/cache-conformance.log 2>&1; then
+if ! command -v verilator > /dev/null 2>&1; then
+    echo "(skipped: verilator not installed; CI runs it in verilator-sim)"
+elif make -C testbench cache-model-test > /tmp/cache-conformance.log 2>&1; then
     pass "Cache conformance (L1D SV vs reference)"
 else
     fail "Cache conformance (see /tmp/cache-conformance.log)"
