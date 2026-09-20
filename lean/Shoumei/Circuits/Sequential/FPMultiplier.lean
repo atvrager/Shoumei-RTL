@@ -23,12 +23,14 @@ Outputs (44):
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.Multiplier
 
 namespace Shoumei.Circuits.Sequential
 
 open Shoumei
+open Shoumei.Components
 open Shoumei.Circuits.Combinational
 
 /-- OR-reduce: returns (wire, gates) where wire = OR of all input wires. -/
@@ -232,13 +234,13 @@ def mkFPMultiplier : Circuit :=
   let exp_a9 := eff_exp_a ++ [zero]
   let exp_b9 := eff_exp_b ++ [zero]
   let exp_sum := makeIndexedWires "fp_expsum" 9
-  let (exp_add_gates, _) := mkKoggeStoneAdd exp_a9 exp_b9 zero exp_sum "fp_expadd"
+  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp_a9.length .none) exp_a9 exp_b9 zero exp_sum "fp_expadd"
 
   -- Subtract bias (127): exp_unbiased = exp_sum - 127
   let bias9 := (List.range 9).map fun i =>
     if i < 7 then one_w else zero
   let exp_unbiased := makeIndexedWires "fp_expub" 9
-  let (exp_sub_gates, _) := mkKoggeStoneSub exp_sum bias9 exp_unbiased "fp_expsub" one_w
+  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum.length .one) exp_sum bias9 exp_unbiased "fp_expsub" one_w
 
   -- Generate 24 partial products (each 48 bits, shifted)
   let pp_rows := (List.range 24).map fun j =>

@@ -97,7 +97,11 @@ import Shoumei.Circuits.Sequential.RegisterLemmas
 import Shoumei.Circuits.Sequential.RegisterProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
-import Shoumei.Codegen.ASAP7
+import Shoumei.Codegen.CellLibrary
+import Shoumei.Codegen.CellLibs.ASAP7
+import Shoumei.Codegen.CellLibs.GF180
+import Shoumei.Codegen.CellLibs.Library
+import Shoumei.Codegen.CellNetlist
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.CppSim
 import Shoumei.Codegen.SVA
@@ -105,6 +109,8 @@ import Shoumei.Codegen.ShoumeiEmit
 import Shoumei.Codegen.ShoumeiParse
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
+import Shoumei.Codegen.TechMap
+import Shoumei.Codegen.TechMapProofs
 import Shoumei.Codegen.Testbench
 import Shoumei.Codegen.Unified
 import Shoumei.Components.AdderLibrary

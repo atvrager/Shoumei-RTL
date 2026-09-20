@@ -20,11 +20,13 @@ Interface:
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Components
 
 private def mkBalancedOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
@@ -131,7 +133,7 @@ def mkInt64ToFP : Circuit :=
   -- Negation of integer input: 0 - src1
   let zeros64 := (List.range 64).map fun _ => zero
   let int_neg := makeIndexedWires "int_neg" 64
-  let (int_neg_sub_gates, _) := mkKoggeStoneSub zeros64 (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
+  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
 
   -- Absolute value of integer input
   let int_abs := makeIndexedWires "int_abs" 64
@@ -249,7 +251,7 @@ def mkInt64ToFP : Circuit :=
 
   let dp_mant_inc := makeIndexedWires "dp_mant_inc" 52
   let zeros52 := (List.range 52).map fun _ => zero
-  let (dp_mant_add_gates, dp_mant_ovf) := mkKoggeStoneAdd dp_raw_mant zeros52 dp_round_up dp_mant_inc "dp_mant_add"
+  let (dp_mant_add_gates, dp_mant_ovf) := mkAddFor (AdderSpec.minArea dp_raw_mant.length .input) dp_raw_mant zeros52 dp_round_up dp_mant_inc "dp_mant_add"
 
   let dp_mant_final := makeIndexedWires "dp_mant_fin" 52
   let dp_mant_fin_gates := (List.range 52).map fun i =>
@@ -258,7 +260,7 @@ def mkInt64ToFP : Circuit :=
   let const1023 := (List.range 10 |>.map fun _ => one) ++ [zero]
   let lead_pos_ext11 := (List.range 6 |>.map fun i => lead_pos_wires[i]!) ++ (List.range 5 |>.map fun _ => zero)
   let dp_exp_base := makeIndexedWires "dp_exp_base" 11
-  let (dp_exp_add_gates, _) := mkKoggeStoneAdd const1023 lead_pos_ext11 dp_mant_ovf dp_exp_base "dp_exp_add"
+  let (dp_exp_add_gates, _) := mkAddFor (AdderSpec.minArea const1023.length .input) const1023 lead_pos_ext11 dp_mant_ovf dp_exp_base "dp_exp_add"
 
   let res_int_to_dp := makeIndexedWires "res_int_to_dp" 64
   let res_int_to_dp_gates := (List.range 64).map fun i =>
@@ -299,7 +301,7 @@ def mkInt64ToFP : Circuit :=
 
   let sp_mant_inc := makeIndexedWires "sp_mant_inc" 23
   let zeros23 := (List.range 23).map fun _ => zero
-  let (sp_mant_add_gates, sp_mant_ovf) := mkKoggeStoneAdd sp_raw_mant zeros23 sp_round_up sp_mant_inc "sp_mant_add"
+  let (sp_mant_add_gates, sp_mant_ovf) := mkAddFor (AdderSpec.minArea sp_raw_mant.length .input) sp_raw_mant zeros23 sp_round_up sp_mant_inc "sp_mant_add"
 
   let sp_mant_final := makeIndexedWires "sp_mant_fin" 23
   let sp_mant_fin_gates := (List.range 23).map fun i =>
@@ -308,7 +310,7 @@ def mkInt64ToFP : Circuit :=
   let const127 := (List.range 7 |>.map fun _ => one) ++ [zero]
   let lead_pos_ext8 := (List.range 6 |>.map fun i => lead_pos_wires[i]!) ++ [zero, zero]
   let sp_exp_base := makeIndexedWires "sp_exp_base" 8
-  let (sp_exp_add_gates, _) := mkKoggeStoneAdd const127 lead_pos_ext8 sp_mant_ovf sp_exp_base "sp_exp_add"
+  let (sp_exp_add_gates, _) := mkAddFor (AdderSpec.minArea const127.length .input) const127 lead_pos_ext8 sp_mant_ovf sp_exp_base "sp_exp_add"
 
   let res_int_to_sp := makeIndexedWires "res_int_to_sp" 64
   let res_int_to_sp_gates := (List.range 64).map fun i =>

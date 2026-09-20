@@ -201,10 +201,10 @@ def mkFPMultiplierD : Circuit :=
   let exp1_13 := exp1 ++ [zero, zero]
   let exp2_13 := exp2 ++ [zero, zero]
   let exp_sum13 := makeIndexedWires "muld_esum" 13
-  let (exp_add_gates, _) := mkKoggeStoneAdd exp1_13 exp2_13 zero exp_sum13 "muld_eadd"
+  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp1_13.length .none) exp1_13 exp2_13 zero exp_sum13 "muld_eadd"
   let bias13 := (List.range 13).map fun i => if i < 10 then one_w else zero
   let exp_ub13 := makeIndexedWires "muld_eub" 13
-  let (exp_sub_gates, _) := mkKoggeStoneSub exp_sum13 bias13 exp_ub13 "muld_esub" one_w
+  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum13.length .one) exp_sum13 bias13 exp_ub13 "muld_esub" one_w
 
   -- 53 partial products of 106 bits
   let pp_rows := (List.range 53).map fun j =>

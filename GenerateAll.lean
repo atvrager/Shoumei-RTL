@@ -439,10 +439,11 @@ def main (args : List String) : IO Unit := do
   writeFilelist svOutputDir ".sv"
   writeFilelist svNetlistOutputDir ".sv"
   writeFilelist cppSimOutputDir ".h"
-  writeFilelist asap7OutputDir ".sv"
+  for pdk in allPdks do
+    writeFilelist (pdkOutputDir pdk) ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
 
-  -- Generate physical synthesis filelists (ASAP7-priority merge)
+  -- Generate physical synthesis filelists (target-PDK-priority merge)
   IO.println ""
   IO.println "Generating physical synthesis filelists..."
   let physEntries ← System.FilePath.readDir physicalOutputDir
@@ -488,4 +489,5 @@ def main (args : List String) : IO Unit := do
   IO.println "  Netlist: output/sv-netlist/"
   IO.println "  C++ Sim: output/cpp_sim/"
   IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
+  IO.println "  GF180:   output/sv-gf180/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

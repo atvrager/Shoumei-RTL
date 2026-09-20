@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv cell-models
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -183,13 +183,27 @@ presubmit: check-tools lean codegen proof-coverage lint mutation-test smoke-test
 # DC-NXT-style lint: latch inference, comb loops, width/undriven/multi-driver
 # pops on all emitted SV (Yosys proxy) + slang elaboration (default and the
 # SHOUMEI_SRAM_MACROS branch against the macro stubs).
-lint: systemverilog
+lint: systemverilog techmap-equiv
 	@echo "==> Running slang elaboration lint..."
 	@python3 verification/slang-lint.py output/sv-from-lean
 	@python3 verification/slang-lint.py --sram output/sv-from-lean
+	@python3 verification/slang-lint.py output/sv-asap7
+	@python3 verification/slang-lint.py output/sv-gf180
 	@echo "==> Running DC-NXT-style lint (Yosys proxy)..."
 	@./verification/dc-lint.sh output/sv-from-lean
 	@echo "✓ Lint clean"
+
+# Yosys logical equivalence check: every tech-mapped module (output/sv-asap7,
+# output/sv-gf180) must equal its gate-level counterpart (output/sv-from-lean).
+techmap-equiv:
+	@echo "==> Running techmap LEC (Yosys miter)..."
+	@./verification/techmap-equiv.sh
+	@echo "✓ Techmap LEC clean"
+
+# Re-derive the PDK cell models used by slang and the LEC from Liberty.
+cell-models:
+	@python3 scripts/gen-pdk-cell-models.py
+	@python3 scripts/check-cell-tables.py
 
 # Generate cache SRAM macros with OpenRAM (foundry-grade, not FF arrays).
 # Contract: sram_1r1w_<width>x<depth> (.clk/.we/.waddr/.wdata/.raddr/.rdata).

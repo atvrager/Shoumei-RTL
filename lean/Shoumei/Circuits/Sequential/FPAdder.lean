@@ -16,11 +16,13 @@ Interface:
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Sequential
 
 open Shoumei
+open Shoumei.Components
 open Shoumei.Circuits.Combinational
 
 /-! ## Helper: Indexed Wire Generation -/
@@ -653,7 +655,7 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
   let ovf_exp_one_gates := [Gate.mkBUF one (ovf_exp_one[0]!)] ++
     (List.range 7).map (fun i => Gate.mkBUF zero (ovf_exp_one[i+1]!))
   let (ovf_exp_add_gates, _ovf_exp_carry) :=
-    mkKoggeStoneAdd big_exp ovf_exp_one zero ovf_exp "s4_ovfexp"
+    mkAddFor (AdderSpec.minArea big_exp.length .none) big_exp ovf_exp_one zero ovf_exp "s4_ovfexp"
 
   -- Non-overflow: normalize left-shift
   let const_23 := makeIndexedWires "s4_const23" 5
@@ -667,7 +669,7 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
 
   let lshift_amt := makeIndexedWires "s4_lshift_amt" 5
   let (lshift_sub_gates, _lshift_borrow) :=
-    mkKoggeStoneSub const_23 lead_pos lshift_amt "s4_lshamt" one
+    mkSubFor (AdderSpec.minArea const_23.length .one) const_23 lead_pos lshift_amt "s4_lshamt" one
 
   let sum_lower := makeIndexedWires "s4_sum_lower" 24
   let sum_lower_gates := (List.range 24).map fun i =>
@@ -687,7 +689,7 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
 
   let norm_exp := makeIndexedWires "s4_norm_exp" 8
   let (norm_exp_sub_gates, _norm_exp_borrow) :=
-    mkKoggeStoneSub big_exp lshift_ext norm_exp "s4_normexp" one
+    mkSubFor (AdderSpec.minArea big_exp.length .one) big_exp lshift_ext norm_exp "s4_normexp" one
 
   let result_mant := makeIndexedWires "s4_res_mant" 23
   let result_mant_gates := (List.range 23).map fun i =>

@@ -21,11 +21,13 @@ Interface:
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Components
 
 private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
@@ -208,7 +210,7 @@ def mkFPToInt64 : Circuit :=
   -- 1138 in 11-bit binary: 10001110010
   let const1138 := [zero, one, zero, zero, one, one, one, zero, zero, zero, one]
   let shamt_full := makeIndexedWires "shamt_full" 11
-  let (shamt_sub_gates, shamt_borrow) := mkKoggeStoneSub const1138 flt_exp shamt_full "shamt_sub" one
+  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minArea const1138.length .one) const1138 flt_exp shamt_full "shamt_sub" one
 
   -- If shamt_borrow=1 or flt_exp >= 1139 (i.e. unbiased_exp >= 116): shift amount is 0 (huge overflow)
   let shamt7 := (List.range 7).map fun i =>
@@ -322,11 +324,11 @@ def mkFPToInt64 : Circuit :=
   -- Increment integer magnitude by flt_round_up
   let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
   let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) := mkKoggeStoneAdd (List.range 64 |>.map fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
+  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minArea 64 .input) (List.range 64 |>.map fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
 
   -- 2's complement negation if signed and negative: -flt_int_mag_inc
   let flt_int_neg := makeIndexedWires "flt_int_neg" 64
-  let (fint_neg_gates, _) := mkKoggeStoneSub zeros64 (List.range 64 |>.map fun i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
+  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
 
   -- Un-clamped normal integer result
   let flt_int_norm := makeIndexedWires "flt_int_norm" 64

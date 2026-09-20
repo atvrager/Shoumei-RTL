@@ -48,6 +48,20 @@ else:
     sv_files = sorted(glob.glob(os.path.join(sv_dir, "*.sv")))
     print(f"slang lint: {len(sv_files)} files in {sv_dir}")
 
+# Tech-mapped output instantiates real PDK cells; their port-only stubs (derived
+# from the Lean cell tables) let elaboration resolve them.  Hierarchical mapped
+# modules also instantiate gate-level sub-modules, so pull in the sv-from-lean
+# files the PDK directory does not override (mirrors the physical filelist).
+_cells = os.path.join(os.path.dirname(__file__), "pdk-cells-model.sv")
+if os.path.isfile(_cells) and ("sv-asap7" in sv_dir or "sv-gf180" in sv_dir):
+    sv_files.append(_cells)
+    mapped = {os.path.basename(f) for f in sv_files}
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    lean_dir = os.path.join(_root, "output/sv-from-lean")
+    for f in sorted(glob.glob(os.path.join(lean_dir, "*.sv"))):
+        if os.path.basename(f) not in mapped:
+            sv_files.append(f)
+
 if not sv_files:
     print(f"ERROR: No .sv files found in {sv_dir}")
     sys.exit(1)

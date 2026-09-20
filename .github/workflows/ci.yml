@@ -580,6 +580,37 @@ jobs:
       - name: Lint Lean-generated SV
         run: python3 verification/slang-lint.py output/sv-from-lean
 
+      - name: Check PDK cell tables against Liberty
+        run: |
+          python3 scripts/gen-pdk-cell-models.py
+          python3 scripts/check-cell-tables.py
+
+      - name: Lint tech-mapped SV (ASAP7 + GF180)
+        run: |
+          python3 verification/slang-lint.py output/sv-asap7
+          python3 verification/slang-lint.py output/sv-gf180
+
+  techmap-equiv:
+    name: Techmap LEC
+    runs-on: ubuntu-24.04
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: codegen-output
+
+      - name: Install Yosys
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq yosys
+
+      - name: Tech-mapped vs gate-level equivalence
+        run: make techmap-equiv
+
   cosim:
     name: Cosimulation (RTL vs Spike)
     runs-on: ubuntu-24.04
@@ -736,6 +767,7 @@ jobs:
       - verilator-sim
       - cppsim
       - slang-lint
+      - techmap-equiv
       - cosim
       - smoke-test
     steps:
@@ -763,6 +795,7 @@ jobs:
             "verilator-sim:${{ needs.verilator-sim.result }}" \
             "cppsim:${{ needs.cppsim.result }}" \
             "slang-lint:${{ needs.slang-lint.result }}" \
+            "techmap-equiv:${{ needs.techmap-equiv.result }}" \
             "cosim:${{ needs.cosim.result }}" \
             "smoke-test:${{ needs.smoke-test.result }}" \
           )

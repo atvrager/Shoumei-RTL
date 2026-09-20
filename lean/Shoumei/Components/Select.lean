@@ -104,4 +104,15 @@ def mkAddFor (spec : AdderSpec) (a b : List Wire) (cin : Wire)
   | .koggeStone => mkKoggeStoneAdd a b cin sum pfx
   | impl        => mkPrefixAdd impl.tree a b (some cin) sum pfx
 
+/-- Inline a subtractor of the selected structure: `a - b` = `a + ~b + 1`.
+    Inverts `b`, adds with carry-in `one`, and complements the carry for the
+    borrow. -/
+def mkSubFor (spec : AdderSpec) (a b : List Wire) (sum : List Wire) (pfx : String)
+    (one : Wire) : List Gate × Wire :=
+  let inv_b := (List.range b.length).map fun i => Wire.mk s!"{pfx}_invb_{i}"
+  let invGates := (List.range b.length).map fun i => Gate.mkNOT (b[i]!) (inv_b[i]!)
+  let (addGates, carry) := mkAddFor spec a inv_b one sum (pfx ++ "_add")
+  let borrow := Wire.mk (pfx ++ "_borrow")
+  (invGates ++ addGates ++ [Gate.mkNOT carry borrow], borrow)
+
 end Shoumei.Components
