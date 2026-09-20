@@ -307,9 +307,16 @@ run-coverage: $(SIM_COV_BIN) tests riscv-tests
 #                  output/cpp_sim/bench_metrics.h
 # ==========================================================================
 BENCH_ELF_GLOBS := $(TB_DIR)/tests/generated/bench/*.elf
+BENCH_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench/*.S)
 
+# Benchmark programs: the .S sources are generated from the Lean spec table by
+# the codegen artifact; regenerate them only when missing (so a job that only
+# has the artifact - e.g. cosim - does not need a Lean toolchain), then build
+# the ELFs.
 bench:
-	@cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks
+	@if [ -z "$(BENCH_ASM_FILES)" ]; then \
+	    cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks; \
+	fi
 	$(MAKE) -C $(TB_DIR)/tests bench
 
 run-benchmarks: $(SIM_BIN) bench
