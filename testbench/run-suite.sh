@@ -127,6 +127,16 @@ run_one() {
 
     printf '%s,%s,%s,%s,%s\n' "$status" "$name" "${cycles:-0}" "${retired:-0}" "${ipc:-0}" \
         > "$out_dir/$(echo "$name" | tr -c 'A-Za-z0-9._-' '_')"
+
+    # Report as soon as the program finishes: a sweep of hundreds of programs
+    # otherwise prints nothing until the whole xargs barrier drains, which is
+    # indistinguishable from a hang.  The lock keeps the lines from interleaving.
+    # (The CSV is written after the barrier, in input order.)
+    {
+        flock 9
+        printf '%s  %s  (cycles %s, retired %s, IPC %s)\n' \
+            "$status" "$name" "${cycles:-0}" "${retired:-0}" "${ipc:-0}"
+    } 9>>"$out_dir/.report.lock"
 }
 export -f run_one
 
@@ -149,10 +159,13 @@ fi
 # supply the per-test arguments as $1/$2.
 export SUITE_MODE="$MODE" SUITE_BIN="$BIN" SUITE_OUT_DIR="$OUT_DIR" SUITE_COV_DIR="$COV_DIR"
 export SUITE_KANATA_DIR="$KANATA_DIR" SUITE_BENCH_CSV="$BENCH_CSV"
+
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -a "$JOBS_FILE" -n 2 bash -c \
     'run_one "$1" "$2" "$SUITE_MODE" "$SUITE_BIN" "$SUITE_OUT_DIR" "$SUITE_COV_DIR"' _
 
+# PASS/FAIL lines were streamed as each program finished; the CSV is written
+# here so its rows stay in input order regardless of completion order.
 echo "test,status,cycles,retired,ipc" > "$CSV"
 pass=0; fail=0
 while read -r _timeout elf; do
@@ -162,12 +175,11 @@ while read -r _timeout elf; do
         IFS=, read -r status _n cycles retired ipc < "$rec"
     else
         status=FAIL; cycles=0; retired=0; ipc=0
+        printf 'FAIL  %s  (no result: timed out or killed)\n' "$name"
     fi
     if [[ "$status" == "PASS" ]]; then
-        printf 'PASS  %s  (cycles %s, retired %s, IPC %s)\n' "$name" "$cycles" "$retired" "$ipc"
         pass=$((pass + 1))
     else
-        printf 'FAIL  %s  (cycles %s, retired %s, IPC %s)\n' "$name" "$cycles" "$retired" "$ipc"
         fail=$((fail + 1))
     fi
     echo "$name,$status,$cycles,$retired,$ipc" >> "$CSV"
