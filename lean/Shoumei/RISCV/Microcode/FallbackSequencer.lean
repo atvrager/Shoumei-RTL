@@ -572,16 +572,22 @@ def mkFallbackSequencer : Circuit :=
   let redir_valid := Wire.mk "redir_valid"
   let trap_active := Wire.mk "trap_active"
   let wcs_busy := Wire.mk "wcs_busy"
+  let seq_live := Wire.mk "seq_live"
 
   let ctrlGates := [
     -- Sequence completes when exec_step_q is high
     Gate.mkBUF exec_step_q seq_done,
+    -- A redirect that flushes the sequencer clears active_q, but the DFF'd
+    -- exec_step_q stays high one more cycle.  Gate the completion strobes with
+    -- active_q so a flushed (squashed) sequence cannot inject its result or
+    -- override the redirect that flushed it.
+    Gate.mkAND active_q exec_step_q seq_live,
     -- cdb_inject fires on completion if matched and not illegal
-    Gate.mkAND exec_step_q zb_matched cdb_inject,
+    Gate.mkAND seq_live zb_matched cdb_inject,
     -- redir_valid fires on completion IF matched
-    Gate.mkAND exec_step_q zb_matched redir_valid,
+    Gate.mkAND seq_live zb_matched redir_valid,
     -- trap_active fires if unhandled instruction completes
-    Gate.mkAND exec_step_q not_zb_matched trap_active,
+    Gate.mkAND seq_live not_zb_matched trap_active,
     -- wcs_busy is high whenever sequencer is active
     Gate.mkBUF active_q wcs_busy
   ]

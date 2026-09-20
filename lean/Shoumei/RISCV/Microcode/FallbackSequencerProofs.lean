@@ -16,6 +16,6 @@ theorem fallbackSequencer_outputs : fallbackSequencerCircuit.outputs.length = 26
 
 theorem fallbackSequencer_instances : fallbackSequencerCircuit.instances.length = 5 := by native_decide
 
-theorem fallbackSequencer_gates : fallbackSequencerCircuit.gates.length = 9056 := by native_decide
+theorem fallbackSequencer_gates : fallbackSequencerCircuit.gates.length = 9057 := by native_decide
 
 end Shoumei.RISCV.Microcode
