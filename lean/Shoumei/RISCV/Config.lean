@@ -5,6 +5,7 @@
   Controls which instructions are decoded and which execution units are synthesized.
   This is a build-time parameter -- no runtime mux overhead in hardware.
 -/
+import Shoumei.DSL
 import Shoumei.RISCV.OpTypeGenerated
 
 namespace Shoumei.RISCV
@@ -20,6 +21,85 @@ inductive MicrocodeSequence where
 
 /-- All sequences the ROM currently implements. -/
 def knownMicrocodeSequences : List MicrocodeSequence := [.csr, .fenceI, .trapEntry, .mret]
+
+/-- Cache hierarchy geometry.
+
+    Sizes are chosen per PDK from one rule (`docs/lsu-architecture.md` §13):
+    the SRAM budget is the silicon left after the core, and every level is a
+    multiple of the 4 KiB page granularity that TileLink/AXI address decoding
+    uses.  With `lineWords` words per line, a level's per-way array is
+    `sets × lineWords × 4` bytes; keeping that at 4 KiB puts every index bit
+    inside the page offset (`indexBits + offsetBits = 12`), so no lookup
+    reaches outside one page and all levels share one index/tag geometry.
+
+    `default` is the historical geometry (L1I 256 B, L1D 256 B, L2 512 B, 32 B
+    lines) and the builders keep it byte-identical, so proofs, compositional
+    certificates and the cosimulation baseline stay valid.
+
+    `dataPort` selects the physical memory contract the data arrays are written
+    against (see `Shoumei.SRAMPortKind`); `r1w1` is the historical one. -/
+structure CacheGeom where
+  /-- L1 Instruction cache: sets per way (direct-mapped when `l1iWays = 1`) -/
+  l1iSets : Nat := 8
+  /-- L1 Instruction cache: ways -/
+  l1iWays : Nat := 1
+  /-- L1 Data cache: sets per way -/
+  l1dSets : Nat := 4
+  /-- L1 Data cache: ways -/
+  l1dWays : Nat := 2
+  /-- L2 unified cache: sets per way -/
+  l2Sets : Nat := 8
+  /-- L2 unified cache: ways -/
+  l2Ways : Nat := 2
+  /-- Words per line (8 words = 32 B) -/
+  lineWords : Nat := 8
+  /-- Physical contract for the data arrays -/
+  dataPort : SRAMPortKind := .r1w1
+  deriving Repr, BEq, DecidableEq
+
+namespace CacheGeom
+
+/-- The historical geometry: 32 B lines, L1I 256 B, L1D 256 B, L2 512 B. -/
+def default : CacheGeom := {}
+
+/-- Production-MCU geometry for a several-KB hierarchy: L1I 8 KiB 2-way,
+    L1D 16 KiB 4-way, L2 32 KiB 8-way, 64 B lines.  Every level is 64 sets per
+    way, so index+offset = 12 bits - exactly one 4 KiB page - and all three
+    share one index/tag geometry.  Data arrays use the single-port byte-mask
+    contract so a process's 1RW macros bind directly. -/
+def mcu64 : CacheGeom :=
+  { l1iSets := 64, l1iWays := 2
+    l1dSets := 64, l1dWays := 4
+    l2Sets := 64, l2Ways := 8
+    lineWords := 16
+    dataPort := .rw1ByteMask }
+
+/-- Bytes per line. -/
+def lineBytes (g : CacheGeom) : Nat := g.lineWords * 4
+
+/-- Capacity of one level in bytes. -/
+def levelBytes (g : CacheGeom) (sets ways : Nat) : Nat := sets * ways * g.lineBytes
+
+/-- Total capacity in bytes. -/
+def totalBytes (g : CacheGeom) : Nat :=
+  g.levelBytes g.l1iSets g.l1iWays + g.levelBytes g.l1dSets g.l1dWays +
+    g.levelBytes g.l2Sets g.l2Ways
+
+/-- True for the geometry the builders keep byte-identical. -/
+def isDefault (g : CacheGeom) : Bool := g == default
+
+/-- Module-name suffix: empty for the default geometry (emitted module names,
+    proofs and certificates unchanged), else the capacity, so two configured
+    hierarchies can coexist in one build. -/
+def nameSuffix (g : CacheGeom) : String :=
+  if g.isDefault then ""
+  else
+    let l1i := g.levelBytes g.l1iSets g.l1iWays
+    let l1d := g.levelBytes g.l1dSets g.l1dWays
+    let l2 := g.levelBytes g.l2Sets g.l2Ways
+    s!"_L1I{l1i}B_L1D{l1d}B_L2{l2}B"
+
+end CacheGeom
 
 /-- CPU configuration flags. Controls which extensions are synthesized.
     Each Bool flag gates the inclusion of circuits at code generation time
@@ -73,18 +153,8 @@ structure CPUConfig where
   -- ═══ Cache Hierarchy ═══
   /-- Enable L1I/L1D/L2 cache hierarchy (wraps CPU in CachedCPU) -/
   enableCache : Bool := false
-  /-- L1 Instruction cache: number of sets -/
-  l1iSets : Nat := 8
-  /-- L1 Data cache: number of sets -/
-  l1dSets : Nat := 4
-  /-- L1 Data cache: number of ways (associativity) -/
-  l1dWays : Nat := 2
-  /-- L2 Unified cache: number of sets -/
-  l2Sets : Nat := 8
-  /-- L2 Unified cache: number of ways (associativity) -/
-  l2Ways : Nat := 2
-  /-- Words per cache line (8 words = 32 bytes) -/
-  cacheLineWords : Nat := 8
+  /-- Cache hierarchy geometry (sizes, associativity, line size) -/
+  cacheGeom : CacheGeom := CacheGeom.default
 
   -- ═══ Simulation ═══
   /-- Memory size in words for testbench -/
@@ -109,24 +179,27 @@ def CPUConfig.robIdxWidth (c : CPUConfig) : Nat := log2Ceil c.robEntries
 /-- Store buffer index width in bits (e.g., 3 for 8 entries) -/
 def CPUConfig.sbIdxWidth (c : CPUConfig) : Nat := log2Ceil c.storeBufferEntries
 
-/-- Cache line offset bits (e.g., 5 for 8 words × 4 bytes = 32 bytes) -/
-def CPUConfig.cacheOffsetBits (c : CPUConfig) : Nat := log2Ceil (c.cacheLineWords * 4)
+/-- Cache line offset bits (e.g. 5 for 8 words × 4 bytes = 32 bytes) -/
+def CPUConfig.cacheOffsetBits (c : CPUConfig) : Nat := log2Ceil c.cacheGeom.lineBytes
 
 /-- L1I tag bits (address width - index bits - offset bits) -/
-def CPUConfig.l1iTagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l1iSets - c.cacheOffsetBits
+def CPUConfig.l1iTagBits (c : CPUConfig) : Nat :=
+  c.xlen - log2Ceil c.cacheGeom.l1iSets - c.cacheOffsetBits
 
 /-- L1D tag bits -/
-def CPUConfig.l1dTagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l1dSets - c.cacheOffsetBits
+def CPUConfig.l1dTagBits (c : CPUConfig) : Nat :=
+  c.xlen - log2Ceil c.cacheGeom.l1dSets - c.cacheOffsetBits
 
 /-- L2 tag bits -/
-def CPUConfig.l2TagBits (c : CPUConfig) : Nat := c.xlen - log2Ceil c.l2Sets - c.cacheOffsetBits
+def CPUConfig.l2TagBits (c : CPUConfig) : Nat :=
+  c.xlen - log2Ceil c.cacheGeom.l2Sets - c.cacheOffsetBits
 
 /-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B") -/
 def CPUConfig.cacheString (c : CPUConfig) : String :=
-  let lineBytes := c.cacheLineWords * 4
-  let l1iBytes := c.l1iSets * lineBytes
-  let l1dBytes := c.l1dSets * c.l1dWays * lineBytes
-  let l2Bytes := c.l2Sets * c.l2Ways * lineBytes
+  let g := c.cacheGeom
+  let l1iBytes := g.levelBytes g.l1iSets g.l1iWays
+  let l1dBytes := g.levelBytes g.l1dSets g.l1dWays
+  let l2Bytes := g.levelBytes g.l2Sets g.l2Ways
   s!"L1I{l1iBytes}B_L1D{l1dBytes}B_L2{l2Bytes}B"
 
 /-- Floating-point register width in bits (FLEN): 64 if D enabled or RV64, else 32.
