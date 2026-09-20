@@ -938,7 +938,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
     [refill_word_mux_inst, refill_dwhi_mux_inst] ++
     plru_insts ++ valid_dec_insts
 
-  { name := s!"L1DCache{g.nameSuffix}"
+  { name := "L1DCache"
     inputs := [clock, reset, req_valid, req_we] ++ req_addr ++ req_wdata ++ req_size ++
               [refill_valid] ++ refill_data ++ [wb_ack, fence_i]
     outputs := [resp_valid] ++ resp_data ++ [miss_valid] ++ miss_addr ++

@@ -174,7 +174,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let ifetch_valid := Wire.mk "ifetch_valid"
   let ifetch_valid_gate := Gate.mkBUF one ifetch_valid
 
-  let memhier_inst := CircuitInstance.mk s!"MemoryHierarchy{g.nameSuffix}" "u_memhier"
+  let memhier_inst := CircuitInstance.mk "MemoryHierarchy" "u_memhier"
     ([("clock", clock), ("reset", reset),
       ("ifetch_valid", ifetch_valid)] ++
      (List.range 32).map (fun i => (s!"ifetch_addr_{i}", fetch_pc[i]!)) ++

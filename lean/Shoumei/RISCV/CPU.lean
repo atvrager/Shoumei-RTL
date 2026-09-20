@@ -4081,13 +4081,32 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      else [Gate.mkBUF zero rs_fp_issue_full])
 
   -- === STALL GENERATION ===
-  -- Cache line boundary: when fetch_pc word offset = 7 (bits [4:2] = 111),
-  -- the L1I can only return one valid word (slot 1 would wrap to wrong line).
-  -- Force half_step so only slot 0 dispatches and fetch advances by 4.
+  -- Cache line boundary: the L1I returns one line per request, so when the
+  -- fetch PC sits on the last word of a line, slot 1 would address the next
+  -- line, which the L1I did not fetch.  Force half_step so only slot 0
+  -- dispatches and the fetch PC advances by 4.
+  --
+  -- The boundary is word offset == lineWords-1, i.e. every bit of the word
+  -- index (PC bits [2 .. 2+log2(lineWords)-1]) set.  Derived from the
+  -- configured line so a wider line moves the boundary: the default 8-word
+  -- (32 B) line puts it at word 7 (bits [4:2]), a 16-word (64 B) line at
+  -- word 15 (bits [5:2]).
   let cache_line_boundary := Wire.mk "cache_line_boundary"
+  let clbBits := (List.range (log2Ceil config.cacheGeom.lineWords)).map (fun i => fetch_pc_0[2 + i]!)
   let clb_gates :=
-    [Gate.mkAND fetch_pc_0[2]! fetch_pc_0[3]! (Wire.mk "clb_23"),
-     Gate.mkAND (Wire.mk "clb_23") fetch_pc_0[4]! cache_line_boundary]
+    match clbBits with
+    | [] => [Gate.mkBUF zero cache_line_boundary]
+    | [b] => [Gate.mkBUF b cache_line_boundary]
+    | b0 :: rest =>
+        -- AND-reduce the index bits; the i-th partial result ANDs bits
+        -- (2+i) and (3+i), so the default geometry keeps the name `clb_23`.
+        let outs := (List.range (rest.length - 1)).map (fun i => Wire.mk s!"clb_{2 + i}{3 + i}") ++
+                    [cache_line_boundary]
+        let (gs, _) := (rest.zip outs).foldl
+          (fun (acc : List Gate × Wire) (bo : Wire × Wire) =>
+            (acc.1 ++ [Gate.mkAND acc.2 bo.1 bo.2], bo.2))
+          ([], b0)
+        gs
 
   -- Serialize in slot 1 with a live slot-0 predecessor: defer the serialize one cycle
   -- instead of suppressing both slots and redirecting past the predecessor.  The forced

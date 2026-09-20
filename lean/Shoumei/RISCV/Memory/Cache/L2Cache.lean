@@ -690,7 +690,7 @@ def mkL2Cache (g : CacheGeom := CacheGeom.default) : Circuit :=
   let access_evt_gate := Gate.mkOR hit_detect effective_wb_write (Wire.mk "l2_access_evt")
 
   -- === Assemble ===
-  { name := s!"L2Cache{g.nameSuffix}"
+  { name := "L2Cache"
     inputs := [clock, reset, l1i_req_valid] ++ l1i_req_addr ++
               [l1d_req_valid] ++ l1d_req_addr ++ [l1d_req_we] ++ l1d_req_data ++
               [mem_resp_valid] ++ mem_resp_data

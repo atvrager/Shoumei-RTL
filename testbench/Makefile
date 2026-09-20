@@ -101,8 +101,6 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
         bench run-benchmarks bench-compare
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
-MCU64_SIM_BIN := $(BUILD_DIR)/sim_shoumei_mcu64
-MCU64_SIM_CPP := $(TB_DIR)/generated/sim_main_tb_cpu_mcu64.cpp
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
 SIM_COV_BIN  := $(BUILD_DIR)/sim_shoumei_cov
 ARC_SIM_BIN  := $(BUILD_DIR)/sim_shoumei_arc
@@ -114,7 +112,7 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
 # Arcilator compiles only the CPU design modules (not the SV testbench).
 # The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
-ARC_TOP_MODULE := CPU_$(CPU_NAME)_L1I256B_L1D256B_L2512B
+ARC_TOP_MODULE := CPU_$(CPU_NAME)_L1I8K_L1D16K_L232K
 
 # Step 0: Preprocess design SV to convert async resets to sync resets
 # circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks
@@ -172,7 +170,7 @@ $(ARC_COSIM_BIN): $(BUILD_DIR)/arc/cpu.o $(BUILD_DIR)/arc/cpu_arc.h $(TB_DIR)/co
 # Run all tests with arcilator
 run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@$(TB_DIR)/run-suite.sh --mode sim --bin $(ARC_SIM_BIN) --jobs $(shell nproc) --default-timeout 200000 \
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(ARC_SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
 	    --csv $(PROJ_ROOT)/output/test-results-arc.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -180,9 +178,9 @@ run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(ARC_COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
-	    --timeout '*bench*=3000000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results-arc.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
 
@@ -206,28 +204,6 @@ $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 
 # The MCU-class geometry (64-byte lines, 8K/16K/32K caches) is emitted beside
 # the default one; simulate it with the same test suite.
-sim-mcu64: $(MCU64_SIM_BIN)
-$(MCU64_SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
-	@rm -rf $(BUILD_DIR)/verilator-mcu64
-	@mkdir -p $(BUILD_DIR)/verilator-mcu64
-	$(VERILATOR) --cc --exe \
-		--Mdir $(BUILD_DIR)/verilator-mcu64 \
-		$(VWARN) $(VSPLIT) --top-module tb_cpu_mcu64 \
-		--x-assign unique --x-initial unique \
-		-CFLAGS "-std=c++17" \
-		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
-	$(call verilator_build,$(BUILD_DIR)/verilator-mcu64,tb_cpu_mcu64)
-	@echo "Built: $@"
-
-run-mcu64-tests: $(MCU64_SIM_BIN) tests
-	@mkdir -p $(PROJ_ROOT)/output
-	@$(TB_DIR)/run-suite.sh --mode sim --bin $(MCU64_SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
-	    --csv $(PROJ_ROOT)/output/test-results-mcu64.csv \
-	    $(CUSTOM_TEST_GLOBS)
-
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_trace
 	@mkdir -p $(BUILD_DIR)/verilator_trace
@@ -242,19 +218,6 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
 # FST trace of the MCU-class geometry, for debugging it
-sim-mcu64-trace: $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP)
-	@rm -rf $(BUILD_DIR)/verilator_trace-mcu64
-	@mkdir -p $(BUILD_DIR)/verilator_trace-mcu64
-	$(VERILATOR) --cc --exe \
-		--Mdir $(BUILD_DIR)/verilator_trace-mcu64 \
-		$(VWARN) $(VSPLIT) --top-module tb_cpu_mcu64 --trace-fst \
-		--x-assign unique --x-initial unique \
-		-CFLAGS "-std=c++17 -DVM_TRACE=1" \
-		-o $(BUILD_DIR)/sim_shoumei_mcu64_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
-	$(call verilator_build,$(BUILD_DIR)/verilator_trace-mcu64,tb_cpu_mcu64)
-	@echo "Built: $(BUILD_DIR)/sim_shoumei_mcu64_trace (with FST trace)"
-
 sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_dbg
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
@@ -312,8 +275,8 @@ run-riscv-tests: $(SIM_BIN) riscv-tests
 run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -324,8 +287,8 @@ KANATA_DIR := $(PROJ_ROOT)/output/kanata-traces
 run-kanata-traces: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(KANATA_DIR)
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --csv /dev/null --kanata-dir $(KANATA_DIR) \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -334,8 +297,8 @@ run-coverage: $(SIM_COV_BIN) tests riscv-tests
 	@rm -f $(PROJ_ROOT)/output/coverage/*.dat $(PROJ_ROOT)/output/coverage/*.info
 	@rm -rf $(PROJ_ROOT)/output/coverage/annotated
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_COV_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --coverage-dir $(PROJ_ROOT)/output/coverage \
 	    --csv $(PROJ_ROOT)/output/test-results-coverage.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
@@ -356,6 +319,11 @@ BENCH_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench/*.S)
 # benchmark carries its own max_cycles (see BenchmarkSpecs.timeoutCycles), so
 # this only applies to a hand-written program dropped into the bench dir.
 BENCH_DEFAULT_TIMEOUT := 200000
+
+# Test budgets are the *measured* cycles plus headroom, not a round number:
+# wfi_test 62, timer_irq_test 226, jalr_a0_irq_test 693, lrsc 13.4k, freertos
+# 19.2k.  A hung test therefore fails in thousands of cycles, not hundreds of
+# thousands.  The default covers everything else (slowest is 2.3k).
 
 # Benchmark programs: the .S sources are generated from the Lean spec table by
 # the codegen artifact; regenerate them only when missing (so a job that only
@@ -398,31 +366,13 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_
 	$(call verilator_build,$(BUILD_DIR)/verilator_cosim,tb_cpu)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
-# Lock-step comparison of the MCU-class geometry against Spike
-MCU64_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_mcu64
-MCU64_COSIM_CPP := $(TB_DIR)/generated/cosim_main_tb_cpu_mcu64.cpp $(TB_DIR)/lib/spike_oracle.cpp \
-                   $(TB_DIR)/lib/elf_loader.cpp
-cosim-mcu64: $(MCU64_COSIM_BIN)
-$(MCU64_COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_DPI_C)
-	@rm -rf $(BUILD_DIR)/verilator_cosim-mcu64
-	@mkdir -p $(BUILD_DIR)/verilator_cosim-mcu64
-	$(VERILATOR) --cc --exe \
-		--Mdir $(BUILD_DIR)/verilator_cosim-mcu64 \
-		$(VWARN) $(VSPLIT) +define+COSIM_DEBUG \
-		--top-module tb_cpu_mcu64 \
-		-CFLAGS "-std=c++20 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
-		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
-		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_COSIM_CPP) $(SRAM_DPI_C)
-	$(call verilator_build,$(BUILD_DIR)/verilator_cosim-mcu64,tb_cpu_mcu64)
-	@echo "Built: $@ (RTL + Spike cosim, MCU-class geometry)"
-
+# Lock-step comparison against Spike
 run-cosim: $(COSIM_BIN) tests riscv-tests bench
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
-	    --timeout '*bench*=3000000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
 

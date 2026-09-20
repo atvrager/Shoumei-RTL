@@ -143,7 +143,7 @@ def mkMemoryHierarchy (g : CacheGeom := CacheGeom.default) : Circuit :=
   let l1d_wb_ack := Wire.mk "l1d_wb_ack"
 
   -- L1I Cache instance
-  let l1i_inst := CircuitInstance.mk s!"L1ICache{g.nameSuffix}" "u_l1i"
+  let l1i_inst := CircuitInstance.mk "L1ICache" "u_l1i"
     ([("clock", clock), ("reset", reset), ("req_valid", ifetch_valid)] ++
      (List.range 32).map (fun i => (s!"req_addr_{i}", ifetch_addr[i]!)) ++
      [("refill_valid", l1i_refill_valid)] ++
@@ -157,7 +157,7 @@ def mkMemoryHierarchy (g : CacheGeom := CacheGeom.default) : Circuit :=
      [("stall", ifetch_stall), ("last_word", ifetch_last_word)])
 
   -- L1D Cache instance
-  let l1d_inst := CircuitInstance.mk s!"L1DCache{g.nameSuffix}" "u_l1d"
+  let l1d_inst := CircuitInstance.mk "L1DCache" "u_l1d"
     ([("clock", clock), ("reset", reset),
       ("req_valid", dmem_req_valid), ("req_we", dmem_req_we)] ++
      (List.range 32).map (fun i => (s!"req_addr_{i}", dmem_req_addr[i]!)) ++
@@ -185,7 +185,7 @@ def mkMemoryHierarchy (g : CacheGeom := CacheGeom.default) : Circuit :=
   let l1d_l2_req_valid_gate := Gate.mkOR l1d_miss_valid l1d_wb_valid l1d_l2_req_valid
 
   -- L2 Cache instance
-  let l2_inst := CircuitInstance.mk s!"L2Cache{g.nameSuffix}" "u_l2"
+  let l2_inst := CircuitInstance.mk "L2Cache" "u_l2"
     ([("clock", clock), ("reset", reset),
       ("l1i_req_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"l1i_req_addr_{i}", l1i_miss_addr[i]!)) ++
@@ -207,7 +207,7 @@ def mkMemoryHierarchy (g : CacheGeom := CacheGeom.default) : Circuit :=
       ("stall_i", Wire.mk "l2_stall_i"),
       ("stall_d", Wire.mk "l2_stall_d")])
 
-  { name := s!"MemoryHierarchy{g.nameSuffix}"
+  { name := "MemoryHierarchy"
     inputs := [clock, reset, ifetch_valid] ++ ifetch_addr ++
               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_wdata ++ dmem_req_size ++
               [mem_resp_valid] ++ mem_resp_data ++ [fence_i]

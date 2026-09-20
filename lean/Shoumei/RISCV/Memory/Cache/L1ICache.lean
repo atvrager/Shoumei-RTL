@@ -506,7 +506,7 @@ def mkL1ICache (g : CacheGeom := CacheGeom.default) : Circuit :=
     tag_mux_insts ++ tag_cmp_insts ++ plru_insts ++
     [word_mux_inst, word_mux_1_inst]
 
-  { name := s!"L1ICache{g.nameSuffix}"
+  { name := "L1ICache"
     inputs := [clock, reset, req_valid] ++ req_addr ++ [refill_valid] ++ refill_data ++ [fence_i]
     outputs := [resp_valid] ++ resp_data ++ resp_data_1 ++ [miss_valid] ++ miss_addr ++ [stall, last_word]
     gates := allGates

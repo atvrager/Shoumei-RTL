@@ -59,15 +59,12 @@ structure CacheGeom where
 
 namespace CacheGeom
 
-/-- The historical geometry: 32 B lines, L1I 256 B, L1D 256 B, L2 512 B. -/
-def default : CacheGeom := {}
-
-/-- Production-MCU geometry for a several-KB hierarchy: L1I 8 KiB 2-way,
-    L1D 16 KiB 4-way, L2 32 KiB 8-way, 64 B lines.  Every level is 64 sets per
-    way, so index+offset = 12 bits - exactly one 4 KiB page - and all three
-    share one index/tag geometry.  Data arrays use the single-port byte-mask
-    contract so a process's 1RW macros bind directly. -/
-def mcu64 : CacheGeom :=
+/-- The production-MCU geometry: L1I 8 KiB 2-way, L1D 16 KiB 4-way, L2 32 KiB
+    8-way, 64 B lines.  Every level is 64 sets per way, so index+offset = 12
+    bits - exactly one 4 KiB page - and all three share one index/tag geometry.
+    Data arrays use the single-port byte-mask contract so a process's 1RW
+    macros bind directly. -/
+def default : CacheGeom :=
   { l1iSets := 64, l1iWays := 2
     l1dSets := 64, l1dWays := 4
     l2Sets := 64, l2Ways := 8
@@ -85,26 +82,12 @@ def totalBytes (g : CacheGeom) : Nat :=
   g.levelBytes g.l1iSets g.l1iWays + g.levelBytes g.l1dSets g.l1dWays +
     g.levelBytes g.l2Sets g.l2Ways
 
-/-- True for the geometry the builders keep byte-identical. -/
-def isDefault (g : CacheGeom) : Bool := g == default
-
 /-- Short capacity label for module names: 8192 -> "8K", 1048576 -> "1M";
     a value with no exact unit falls back to bytes. -/
 def sizeLabel (bytes : Nat) : String :=
   if bytes % (1024 * 1024) == 0 then s!"{bytes / (1024 * 1024)}M"
   else if bytes % 1024 == 0 then s!"{bytes / 1024}K"
   else s!"{bytes}B"
-
-/-- Module-name suffix: empty for the default geometry (emitted module names,
-    proofs and certificates unchanged), else the capacity, so two configured
-    hierarchies can coexist in one build. -/
-def nameSuffix (g : CacheGeom) : String :=
-  if g.isDefault then ""
-  else
-    let l1i := g.levelBytes g.l1iSets g.l1iWays
-    let l1d := g.levelBytes g.l1dSets g.l1dWays
-    let l2 := g.levelBytes g.l2Sets g.l2Ways
-    s!"_L1I{sizeLabel l1i}_L1D{sizeLabel l1d}_L2{sizeLabel l2}"
 
 end CacheGeom
 
@@ -264,11 +247,6 @@ def defaultCPUConfig : CPUConfig := {
   dispatchWidth := 2
   commitWidth := 2
 }
-
-/-- The MCU-class part: the default RV64IMAFD_Zicsr_Zifencei CPU with the
-    `CacheGeom.mcu64` hierarchy (L1I 8 KiB 2-way, L1D 16 KiB 4-way, L2 32 KiB
-    8-way, 64-byte lines, single-port byte-mask data arrays). -/
-def mcu64CPUConfig : CPUConfig := { defaultCPUConfig with cacheGeom := CacheGeom.mcu64 }
 
 /-- Default RV32I configuration (no extensions) -/
 def rv32iConfig : CPUConfig := { xlen := 32 }
