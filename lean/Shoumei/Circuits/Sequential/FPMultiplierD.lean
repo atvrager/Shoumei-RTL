@@ -23,12 +23,14 @@ Outputs (76):
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.Multiplier
 
 namespace Shoumei.Circuits.Sequential
 
 open Shoumei
+open Shoumei.Components
 open Shoumei.Circuits.Combinational
 
 private def makeIndexedWires (pfx : String) (n : Nat) : List Wire :=
@@ -250,7 +252,7 @@ def mkFPMultiplierD : Circuit :=
   -- Stage 2 Combinational: Final CPA + Normalization
   let product := makeIndexedWires "muld_prod" 106
   let cpa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder106NoCin"
+    moduleName := adderModule (AdderSpec.minDelay 106 .none)
     instName := "u_cpa"
     portMap :=
       (s2_csa_sum.enum.map (fun ⟨i, w⟩ => (s!"a[{i}]", w))) ++

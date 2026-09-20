@@ -26,6 +26,7 @@ Operation types (op encoding):
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 import Shoumei.Circuits.Combinational.Subtractor
@@ -33,6 +34,7 @@ import Shoumei.Circuits.Combinational.Subtractor
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Components
 
 /-! ## Behavioral Model -/
 
@@ -429,7 +431,7 @@ def mkPipelinedMultiplier : Circuit :=
   let adder_sum := makeIndexedWires "add_sum" 64
 
   let ksa64_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64"
+    moduleName := adderModule (AdderSpec.minDelay 64 .input)
     instName := "u_final_adder"
     portMap :=
       (s2_sum_q.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -732,7 +734,7 @@ def mkPipelinedMultiplier64 : Circuit :=
   -- Stage 3: Combination & Sign Correction
   let mid_sum := makeIndexedWires "m64_mid_sum" 64
   let ksa_mid : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64NoCin"
+    moduleName := adderModule (AdderSpec.minDelay 64 .none)
     instName := "u_ksa_mid"
     portMap :=
       (s2_p_lh.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -757,7 +759,7 @@ def mkPipelinedMultiplier64 : Circuit :=
   let low_prod_lo_gates :=
     (List.range 32 |>.map (fun i => Gate.mkBUF (s2_p_ll[i]!) (low_product[i]!)))
   let ksa_low : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32NoCin"
+    moduleName := adderModule (AdderSpec.minDelay 32 .none)
     instName := "u_ksa_low"
     portMap :=
       ((List.range 32).map (fun i => (s!"a_{i}", s2_p_ll[32 + i]!))) ++
@@ -789,7 +791,7 @@ def mkPipelinedMultiplier64 : Circuit :=
   -- Lower 32 bits: KoggeStoneAdder32(s2_p_hh[31:0], mid_sum[63:32], c_low)
   let high_product := makeIndexedWires "m64_high_product" 64
   let ksa_high : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := adderModule (AdderSpec.minDelay 32 .input)
     instName := "u_ksa_high"
     portMap :=
       ((List.range 32).map (fun i => (s!"a_{i}", s2_p_hh[i]!))) ++

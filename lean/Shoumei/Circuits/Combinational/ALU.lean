@@ -40,6 +40,7 @@ Opcode encoding (4 bits):
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.Subtractor
 import Shoumei.Circuits.Combinational.Comparator
@@ -49,6 +50,7 @@ import Shoumei.Circuits.Combinational.Shifter
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Components
 
 -- Helper: Zero-extend a single bit to 32 bits
 -- bit_wire is connected to result[0], all other bits connected to zero
@@ -133,8 +135,8 @@ def mkALU32 : Circuit :=
              ++ arith_level1_gates ++ arith_level2_gates ++ arith_level3_gates
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
     instances := [
-      -- KoggeStoneAdder32NoCin for ADD operation
-      { moduleName := "KoggeStoneAdder32NoCin"
+      -- ADD operation: selector resolves to KoggeStoneAdder32NoCin
+      { moduleName := adderModule (AdderSpec.minDelay 32 .none)
         instName := "u_add"
         portMap := (List.range 32 |>.flatMap (fun i =>
           [ (s!"a{i}", a[i]!)
@@ -296,7 +298,7 @@ def mkALU64 : Circuit :=
              ++ top_level1_gates ++ top_level2_gates ++ top_level3_gates
              ++ out_lo_gates ++ out_hi_gates
     instances := [
-      { moduleName := "KoggeStoneAdder64NoCin"
+      { moduleName := adderModule (AdderSpec.minDelay 64 .none)
         instName := "u_add"
         portMap := (List.range 64 |>.flatMap (fun i =>
           [ (s!"a{i}", a[i]!)

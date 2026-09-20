@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
 
 -- Phase 0: Foundation
@@ -122,6 +123,7 @@ import Shoumei.RISCV.CPUTestbench
 import Shoumei.RISCV.TraceSchema
 
 open Shoumei.Codegen.Unified
+open Shoumei.Components
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
@@ -145,7 +147,7 @@ def riscvDecoderModules : List String :=
   ["RV64GDecoder"]
 
 -- Registry: Add circuits here for automatic generation
-def allCircuits : List Circuit := [
+def baseCircuits : List Circuit := [
   -- Phase 0: Foundation
   dff,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
@@ -360,6 +362,12 @@ def allCircuits : List Circuit := [
   sramCircuit,
   shoumeiSoCCircuit
 ]
+
+/-- The registry plus every selectable adder the sites may resolve to, minus
+    any adder already emitted under the same name. -/
+def allCircuits : List Circuit :=
+  baseCircuits ++ allAdderCircuits.filter
+    (fun c => !(baseCircuits.map (·.name)).contains c.name)
 
 /-- Everything this generator emits, by module name. -/
 def emittedModuleNames : List String :=

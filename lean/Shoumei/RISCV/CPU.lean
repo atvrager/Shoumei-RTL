@@ -8,6 +8,7 @@ import Shoumei.RISCV.CPUCircuitHelpers
 import Shoumei.RISCV.CPUHelpers
 import Shoumei.RISCV.CPU.BusyBitTable
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.RISCV.CSRFile
@@ -18,6 +19,7 @@ namespace Shoumei.RISCV.CPU_W2
 
 open Shoumei.RISCV
 open Shoumei
+open Shoumei.Components
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
 open Shoumei.RISCV.CPU
@@ -2855,7 +2857,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let auipc_match_gates_0 := mkMatch "auipc_m0" (oi .AUIPC) dispatch_opcode_0 is_auipc_0
   let auipc_result_0 := CPU.makeIndexedWires "auipc_result_0" 32
   let auipc_adder_0_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32NoCin", instName := "u_auipc_adder_0",
+    moduleName := adderModule (AdderSpec.minDelay 32 .none), instName := "u_auipc_adder_0",
     portMap := (int_captured_pc_0.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (int_captured_imm_0.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
                (auipc_result_0.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
@@ -2876,7 +2878,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let auipc_match_gates_1 := mkMatch "auipc_m1" (oi .AUIPC) dispatch_opcode_1 is_auipc_1
   let auipc_result_1 := CPU.makeIndexedWires "auipc_result_1" 32
   let auipc_adder_1_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32NoCin", instName := "u_auipc_adder_1",
+    moduleName := adderModule (AdderSpec.minDelay 32 .none), instName := "u_auipc_adder_1",
     portMap := (int_captured_pc_1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (int_captured_imm_1.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
                (auipc_result_1.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
@@ -2934,7 +2936,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Branch target: PC + IMM
   let br_final_target := CPU.makeIndexedWires "br_final_target" 32
   let br_target_adder : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32NoCin", instName := "u_br_target",
+    moduleName := adderModule (AdderSpec.minDelay 32 .none), instName := "u_br_target",
     portMap := (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
                (br_final_target.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))
@@ -2943,7 +2945,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let jalr_target_raw := CPU.makeIndexedWires "jalr_target_raw" 32
   let jalr_target := CPU.makeIndexedWires "jalr_target" 32
   let jalr_target_adder : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32NoCin", instName := "u_jalr_target",
+    moduleName := adderModule (AdderSpec.minDelay 32 .none), instName := "u_jalr_target",
     portMap := ((rs_br_dispatch_src1.take 32).enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
                (br_captured_imm.enum.map (fun ⟨i, w⟩ => (s!"b_{i}", w))) ++
                (jalr_target_raw.enum.map (fun ⟨i, w⟩ => (s!"sum_{i}", w)))

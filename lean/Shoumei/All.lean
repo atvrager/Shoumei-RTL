@@ -17,6 +17,8 @@ import Shoumei.Circuits.Combinational.ALUProofs
 import Shoumei.Circuits.Combinational.Arbiter
 import Shoumei.Circuits.Combinational.BranchTargetAdder
 import Shoumei.Circuits.Combinational.BranchTargetAdderProofs
+import Shoumei.Circuits.Combinational.CarrySelectAdder
+import Shoumei.Circuits.Combinational.CarrySelectAdderProofs
 import Shoumei.Circuits.Combinational.Comparator
 import Shoumei.Circuits.Combinational.ComparatorCodegen
 import Shoumei.Circuits.Combinational.ComparatorProofs
@@ -50,6 +52,8 @@ import Shoumei.Circuits.Combinational.OneHotEncoder
 import Shoumei.Circuits.Combinational.PCIncrementer
 import Shoumei.Circuits.Combinational.PCIncrementerProofs
 import Shoumei.Circuits.Combinational.Popcount
+import Shoumei.Circuits.Combinational.PrefixAdder
+import Shoumei.Circuits.Combinational.PrefixAdderProofs
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.RippleCarryAdderCodegen
 import Shoumei.Circuits.Combinational.RippleCarryAdderProofs
@@ -103,6 +107,11 @@ import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.Testbench
 import Shoumei.Codegen.Unified
+import Shoumei.Components.AdderLibrary
+import Shoumei.Components.AdderLibraryProofs
+import Shoumei.Components.Cost
+import Shoumei.Components.Select
+import Shoumei.Components.Spec
 import Shoumei.DSL
 import Shoumei.DSL.AutoCodegen
 import Shoumei.DSL.Decoupled
