@@ -608,6 +608,9 @@ jobs:
         with:
           name: codegen-output
 
+      - name: Fetch PDK Liberty (cell models)
+        run: git submodule update --init --depth 1 third_party/orfs
+
       - name: Install Yosys
         run: |
           sudo apt-get update -qq
@@ -697,10 +700,16 @@ jobs:
         with:
           name: codegen-output
 
+      - name: Fetch PDK Liberty (cell-table check)
+        run: git submodule update --init --depth 1 third_party/orfs
+
       - name: Install Yosys
         run: |
           sudo apt-get update
           sudo apt-get install -y yosys
+
+      - name: Generate PDK cell models
+        run: make cell-models
 
       - name: Run smoke tests
         run: |

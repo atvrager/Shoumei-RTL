@@ -94,7 +94,17 @@ def pins(group: str) -> list[str]:
     return re.findall(r'"([^"]+)"', group)
 
 
+def liberty_present() -> bool:
+    """The PDK Liberty lives in the third_party/orfs submodule."""
+    return all((ROOT / p).exists() for p in ASAP7_LIBS + [GF180_LIB])
+
+
 def main() -> int:
+    if not liberty_present():
+        print("SKIP: PDK Liberty not found (init third_party/orfs); "
+              "not regenerating cell models")
+        return 0
+
     libs: dict[str, dict[str, str]] = {}
     for p in ASAP7_LIBS:
         libs.update(load_lib(str(ROOT / p)))

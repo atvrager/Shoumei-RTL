@@ -156,7 +156,7 @@ cppsim:
 	cd cpp_sim && mkdir -p build && cd build && cmake .. && make -j$$(nproc)
 
 # Run comprehensive smoke tests for CI
-smoke-test: codegen
+smoke-test: codegen cell-models
 	@echo "==> Running smoke tests..."
 	./verification/smoke-test.sh
 
@@ -195,7 +195,7 @@ lint: systemverilog techmap-equiv
 
 # Yosys logical equivalence check: every tech-mapped module (output/sv-asap7,
 # output/sv-gf180) must equal its gate-level counterpart (output/sv-from-lean).
-techmap-equiv:
+techmap-equiv: cell-models
 	@echo "==> Running techmap LEC (Yosys miter)..."
 	@./verification/techmap-equiv.sh
 	@echo "✓ Techmap LEC clean"

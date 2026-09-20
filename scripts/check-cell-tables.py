@@ -218,7 +218,16 @@ def check(table: Path, lib: dict[str, dict[str, str]], tag: str) -> int:
     return bad
 
 
+def liberty_present() -> bool:
+    """The PDK Liberty lives in the third_party/orfs submodule."""
+    return all((ROOT / p).exists() for p in ASAP7_LIBS + [GF180_LIB])
+
+
 def main() -> int:
+    if not liberty_present():
+        print("SKIP: PDK Liberty not found (init third_party/orfs)")
+        return 0
+
     asap7: dict[str, dict[str, str]] = {}
     for p in ASAP7_LIBS:
         asap7.update(load_lib(str(ROOT / p)))
