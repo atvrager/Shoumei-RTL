@@ -9,6 +9,7 @@ On L2 miss: sends request to main memory.
 -/
 
 import Shoumei.DSL
+import Shoumei.RISCV.Config
 import Shoumei.RISCV.Memory.Cache.CacheTypes
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Combinational.Comparator
@@ -118,50 +119,66 @@ def L2CacheState.writeBack (s : L2CacheState) (addr : UInt32)
 
 /-! ## Structural Circuit -/
 
-/-- Build the L2 Cache structural circuit.
+/-- Build the L2 cache structural circuit for a geometry.
 
-    FSM states (3-bit):
-    - IDLE (000): Accept requests, tag lookup
+    FSM states:
+    - IDLE (000): Arbitrate requests, check hit
     - HIT_LATCH (001): Hit detected, latching data read (1-cycle delay)
     - HIT_RESP (010): Respond with stored data
     - MEM_REQ (011): Send read request to main memory
     - MEM_WAIT (100): Wait for memory response, then respond + install
+    - WRITEBACK (101): Write dirty victim back to memory
+    - WB_COMMIT (110): Complete an L1D writeback
 
     Ports:
     - Inputs: clock, reset,
               l1i_req_valid, l1i_req_addr[31:0],
-              l1d_req_valid, l1d_req_addr[31:0], l1d_req_we, l1d_req_data[255:0],
-              mem_resp_valid, mem_resp_data[255:0]
-    - Outputs: l1i_resp_valid, l1i_resp_data[255:0],
-               l1d_resp_valid, l1d_resp_data[255:0],
-               mem_req_valid, mem_req_addr[31:0], mem_req_we, mem_req_data[255:0],
+              l1d_req_valid, l1d_req_addr[31:0], l1d_req_we, l1d_req_data[lineBits-1:0],
+              mem_resp_valid, mem_resp_data[lineBits-1:0]
+    - Outputs: l1i_resp_valid, l1i_resp_data[lineBits-1:0],
+               l1d_resp_valid, l1d_resp_data[lineBits-1:0],
+               mem_req_valid, mem_req_addr[31:0], mem_req_we, mem_req_data[lineBits-1:0],
                stall_i, stall_d
+
+    Everything geometry-dependent (tag width, set and way counts, line width, set
+    decoders, tag muxes/comparators, the replacement policy) follows `CacheGeom`;
+    the default geometry keeps the historical shape and module name.
 -/
-def mkL2Cache : Circuit :=
+def mkL2Cache (g : CacheGeom := CacheGeom.default) : Circuit :=
+  -- === Geometry ===
+  let sets := g.l2Sets
+  let ways := g.l2Ways
+  let lineBits := g.lineBytes * 8
+  let offsetBits := log2Ceil g.lineBytes
+  let idxBits := log2Ceil sets
+  let tagBits := 32 - idxBits - offsetBits
+  let lines := ways * sets
+
   -- === Port Wires ===
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
   let l1i_req_valid := Wire.mk "l1i_req_valid"
   let l1i_req_addr := (List.range 32).map fun i => Wire.mk s!"l1i_req_addr_{i}"
   let l1i_resp_valid := Wire.mk "l1i_resp_valid"
-  let l1i_resp_data := (List.range 256).map fun i => Wire.mk s!"l1i_resp_data_{i}"
+  let l1i_resp_data := (List.range lineBits).map fun i => Wire.mk s!"l1i_resp_data_{i}"
   let l1d_req_valid := Wire.mk "l1d_req_valid"
   let l1d_req_addr := (List.range 32).map fun i => Wire.mk s!"l1d_req_addr_{i}"
   let l1d_req_we := Wire.mk "l1d_req_we"
-  let l1d_req_data := (List.range 256).map fun i => Wire.mk s!"l1d_req_data_{i}"
+  let l1d_req_data := (List.range lineBits).map fun i => Wire.mk s!"l1d_req_data_{i}"
   let l1d_resp_valid := Wire.mk "l1d_resp_valid"
-  let l1d_resp_data := (List.range 256).map fun i => Wire.mk s!"l1d_resp_data_{i}"
+  let l1d_resp_data := (List.range lineBits).map fun i => Wire.mk s!"l1d_resp_data_{i}"
   let mem_resp_valid := Wire.mk "mem_resp_valid"
-  let mem_resp_data := (List.range 256).map fun i => Wire.mk s!"mem_resp_data_{i}"
+  let mem_resp_data := (List.range lineBits).map fun i => Wire.mk s!"mem_resp_data_{i}"
   let mem_req_valid := Wire.mk "mem_req_valid"
   let mem_req_addr := (List.range 32).map fun i => Wire.mk s!"mem_req_addr_{i}"
   let mem_req_we := Wire.mk "mem_req_we"
-  let mem_req_data := (List.range 256).map fun i => Wire.mk s!"mem_req_data_{i}"
+  let mem_req_data := (List.range lineBits).map fun i => Wire.mk s!"mem_req_data_{i}"
   let stall_i := Wire.mk "stall_i"
   let stall_d := Wire.mk "stall_d"
 
   -- === State Registers ===
-  -- FSM: 3-bit (IDLE=000, HIT_LATCH=001, HIT_RESP=010, MEM_REQ=011, MEM_WAIT=100, WRITEBACK=101)
+  -- FSM: 3-bit (IDLE=000, HIT_LATCH=001, HIT_RESP=010, MEM_REQ=011, MEM_WAIT=100,
+  -- WRITEBACK=101, WB_COMMIT=110)
   let fsm_d := (List.range 3).map fun i => Wire.mk s!"l2_fsm_d_{i}"
   let fsm_q := (List.range 3).map fun i => Wire.mk s!"l2_fsm_q_{i}"
   let fsm_dffs := (List.range 3).map fun i => Gate.mkDFF fsm_d[i]! clock reset fsm_q[i]!
@@ -176,68 +193,67 @@ def mkL2Cache : Circuit :=
   let pend_q := (List.range 32).map fun i => Wire.mk s!"pend_q_{i}"
   let pend_dffs := (List.range 32).map fun i => Gate.mkDFF pend_d[i]! clock reset pend_q[i]!
 
-  -- Latched index: 3-bit (for hit data readback in HIT_LATCH/HIT_RESP)
-  let lat_idx_d := (List.range 3).map fun i => Wire.mk s!"lat_idx_d_{i}"
-  let lat_idx_q := (List.range 3).map fun i => Wire.mk s!"lat_idx_q_{i}"
-  let lat_idx_dffs := (List.range 3).map fun i => Gate.mkDFF lat_idx_d[i]! clock reset lat_idx_q[i]!
+  -- Latched index (for hit data readback in HIT_LATCH/HIT_RESP)
+  let lat_idx_d := (List.range idxBits).map fun i => Wire.mk s!"lat_idx_d_{i}"
+  let lat_idx_q := (List.range idxBits).map fun i => Wire.mk s!"lat_idx_q_{i}"
+  let lat_idx_dffs := (List.range idxBits).map fun i => Gate.mkDFF lat_idx_d[i]! clock reset lat_idx_q[i]!
 
-  -- Latched way: 1-bit (which way hit, for readback)
-  let lat_way_d := Wire.mk "lat_way_d"
-  let lat_way_q := Wire.mk "lat_way_q"
-  let lat_way_dff := Gate.mkDFF lat_way_d clock reset lat_way_q
+  -- Latched hit way: one-hot (which way hit, for readback)
+  let lat_way_d := (List.range ways).map fun w => Wire.mk s!"lat_way_d_{w}"
+  let lat_way_q := (List.range ways).map fun w => Wire.mk s!"lat_way_q_{w}"
+  let lat_way_dffs := (List.range ways).map fun w => Gate.mkDFF lat_way_d[w]! clock reset lat_way_q[w]!
 
   -- Pending-is-wb flag: tracks if WRITEBACK was triggered by L1D wb (vs read miss)
   let pend_is_wb_d := Wire.mk "l2_piwb_d"
   let pend_is_wb_q := Wire.mk "l2_piwb_q"
   let pend_is_wb_dff := Gate.mkDFF pend_is_wb_d clock reset pend_is_wb_q
 
-  -- Tag storage: 2 ways × 8 sets × 24 bits (Register24 instances)
-  let tag_instances := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
-      CircuitInstance.mk "Register24" s!"u_l2_tag_w{way}_s{set}"
-        ((List.range 24).map (fun b => (s!"d_{b}", Wire.mk s!"l2_tag_d_w{way}_s{set}_{b}")) ++
+  -- Tag storage: ways × sets × tagBits
+  let tag_instances := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range sets).map (fun set =>
+      CircuitInstance.mk s!"Register{tagBits}" s!"u_l2_tag_w{way}_s{set}"
+        ((List.range tagBits).map (fun b => (s!"d_{b}", Wire.mk s!"l2_tag_d_w{way}_s{set}_{b}")) ++
          [("clock", clock), ("reset", reset)] ++
-         (List.range 24).map (fun b => (s!"q_{b}", Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}"))))
+         (List.range tagBits).map (fun b => (s!"q_{b}", Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}"))))
   ) []
 
-  -- Valid bits: 2 ways × 8 sets = 16 DFFs
-  let valid_d := (List.range 16).map fun i => Wire.mk s!"l2_valid_d_{i}"
-  let valid_q := (List.range 16).map fun i => Wire.mk s!"l2_valid_q_{i}"
-  let valid_dffs := (List.range 16).map fun i => Gate.mkDFF valid_d[i]! clock reset valid_q[i]!
+  -- Valid bits: one per line (ways × sets)
+  let valid_d := (List.range lines).map fun i => Wire.mk s!"l2_valid_d_{i}"
+  let valid_q := (List.range lines).map fun i => Wire.mk s!"l2_valid_q_{i}"
+  let valid_dffs := (List.range lines).map fun i => Gate.mkDFF valid_d[i]! clock reset valid_q[i]!
 
-  -- Dirty bits: 2 ways × 8 sets = 16 DFFs
-  let dirty_d := (List.range 16).map fun i => Wire.mk s!"l2_dirty_d_{i}"
-  let dirty_q := (List.range 16).map fun i => Wire.mk s!"l2_dirty_q_{i}"
-  let dirty_dffs := (List.range 16).map fun i => Gate.mkDFF dirty_d[i]! clock reset dirty_q[i]!
+  -- Dirty bits: one per line
+  let dirty_d := (List.range lines).map fun i => Wire.mk s!"l2_dirty_d_{i}"
+  let dirty_q := (List.range lines).map fun i => Wire.mk s!"l2_dirty_q_{i}"
+  let dirty_dffs := (List.range lines).map fun i => Gate.mkDFF dirty_d[i]! clock reset dirty_q[i]!
 
-  -- LRU bits: 8 DFFs (one per set)
-  let lru_d := (List.range 8).map fun i => Wire.mk s!"l2_lru_d_{i}"
-  let lru_q := (List.range 8).map fun i => Wire.mk s!"l2_lru_q_{i}"
-  let lru_dffs := (List.range 8).map fun i => Gate.mkDFF lru_d[i]! clock reset lru_q[i]!
+  -- Replacement: one tree-PLRU per set (the old single LRU bit per set is exactly
+  -- its two-way case), plus the one-hot victim of the set being evicted
+  let pend_victim_d := (List.range ways).map fun w => Wire.mk s!"l2_pvict_d_{w}"
+  let pend_victim_q := (List.range ways).map fun w => Wire.mk s!"l2_pvict_q_{w}"
+  let pend_victim_dffs := (List.range ways).map fun w =>
+    Gate.mkDFF pend_victim_d[w]! clock reset pend_victim_q[w]!
 
-  -- Pending victim way: 1-bit DFF (captures cur_lru on miss_detect)
-  let pend_victim_d := Wire.mk "l2_pvict_d"
-  let pend_victim_q := Wire.mk "l2_pvict_q"
-  let pend_victim_dff := Gate.mkDFF pend_victim_d clock reset pend_victim_q
-
-  -- Pending victim tag: 24-bit DFFs (captures victim tag on miss_detect)
-  let pend_vtag_d := (List.range 24).map fun b => Wire.mk s!"l2_pvtag_d_{b}"
-  let pend_vtag_q := (List.range 24).map fun b => Wire.mk s!"l2_pvtag_q_{b}"
-  let pend_vtag_dffs := (List.range 24).map fun b => Gate.mkDFF pend_vtag_d[b]! clock reset pend_vtag_q[b]!
+  -- Pending victim tag: captures the victim's tag on evict_trigger
+  let pend_vtag_d := (List.range tagBits).map fun b => Wire.mk s!"l2_pvtag_d_{b}"
+  let pend_vtag_q := (List.range tagBits).map fun b => Wire.mk s!"l2_pvtag_q_{b}"
+  let pend_vtag_dffs := (List.range tagBits).map fun b =>
+    Gate.mkDFF pend_vtag_d[b]! clock reset pend_vtag_q[b]!
 
   -- Data RAM wire declarations (RAMs defined later after read_idx is available)
-  let l2_data_ram_rd := (List.range 2).map fun way =>
-    (List.range 256).map fun b => Wire.mk s!"drd{way}_{b}"
-  let l2_data_ram_wr_en := (List.range 2).map fun way => Wire.mk s!"l2_dwr_en_w{way}"
-  let l2_data_ram_wr_addr := (List.range 2).map fun way =>
-    (List.range 3).map fun i => Wire.mk s!"l2_dwr_addr_w{way}_{i}"
-  let l2_data_ram_wr_data := (List.range 2).map fun way =>
-    (List.range 256).map fun b => Wire.mk s!"l2_dwr_data_w{way}_{b}"
+  let l2_data_ram_rd := (List.range ways).map fun way =>
+    (List.range lineBits).map fun b => Wire.mk s!"drd{way}_{b}"
+  let l2_data_ram_wr_en := (List.range ways).map fun way => Wire.mk s!"l2_dwr_en_w{way}"
+  let l2_data_ram_wr_addr := (List.range ways).map fun way =>
+    (List.range idxBits).map fun i => Wire.mk s!"l2_dwr_addr_w{way}_{i}"
+  let l2_data_ram_wr_data := (List.range ways).map fun way =>
+    (List.range lineBits).map fun b => Wire.mk s!"l2_dwr_data_w{way}_{b}"
 
   -- === Constants ===
   let const_zero_gates := [
     Gate.mkNOT reset (Wire.mk "l2_not_reset"),
-    Gate.mkAND reset (Wire.mk "l2_not_reset") (Wire.mk "l2_const_zero")
+    Gate.mkAND reset (Wire.mk "l2_not_reset") (Wire.mk "l2_const_zero"),
+    Gate.mkNOT (Wire.mk "l2_const_zero") (Wire.mk "l2_const_one")
   ]
 
   -- === Request Arbitration ===
@@ -258,94 +274,126 @@ def mkL2Cache : Circuit :=
     Gate.mkMUX l1i_req_addr[i]! l1d_req_addr[i]! arb_sel_d arb_addr[i]!
 
   -- === Address Decomposition ===
-  -- Current request: idx = arb_addr[7:5], tag = arb_addr[31:8]
-  let cur_idx := [arb_addr[5]!, arb_addr[6]!, arb_addr[7]!]
-  let cur_tag := (List.range 24).map fun i => arb_addr[i + 8]!
-  -- Refill/pending: idx = pend_q[7:5], tag = pend_q[31:8]
-  let ref_idx := [pend_q[5]!, pend_q[6]!, pend_q[7]!]
-  let ref_tag := (List.range 24).map fun i => pend_q[i + 8]!
+  -- Current request: idx = arb_addr[offsetBits+idxBits-1:offsetBits], tag above it
+  let cur_idx := (List.range idxBits).map fun i => arb_addr[offsetBits + i]!
+  let cur_tag := (List.range tagBits).map fun i => arb_addr[offsetBits + idxBits + i]!
+  -- Refill/pending: the same slices of the pending address
+  let ref_idx := (List.range idxBits).map fun i => pend_q[offsetBits + i]!
+  let ref_tag := (List.range tagBits).map fun i => pend_q[offsetBits + idxBits + i]!
 
-  -- === Index Decoders (3-to-8) ===
-  -- Current request decoder
-  let not_cur_idx := (List.range 3).map fun i => Wire.mk s!"not_ci_{i}"
-  let not_cur_idx_gates := (List.range 3).map fun i => Gate.mkNOT cur_idx[i]! not_cur_idx[i]!
-  let cur_dec := (List.range 8).map fun i => Wire.mk s!"cd_{i}"
-  let cur_dec_gates := (List.range 8).foldl (fun acc i =>
-    let b0 := if i % 2 == 0 then not_cur_idx[0]! else cur_idx[0]!
-    let b1 := if (i / 2) % 2 == 0 then not_cur_idx[1]! else cur_idx[1]!
-    let b2 := if (i / 4) % 2 == 0 then not_cur_idx[2]! else cur_idx[2]!
-    acc ++ [Gate.mkAND b0 b1 (Wire.mk s!"cdt_{i}"), Gate.mkAND (Wire.mk s!"cdt_{i}") b2 cur_dec[i]!]
-  ) []
-  -- Refill decoder
-  let not_ref_idx := (List.range 3).map fun i => Wire.mk s!"not_ri_{i}"
-  let not_ref_idx_gates := (List.range 3).map fun i => Gate.mkNOT ref_idx[i]! not_ref_idx[i]!
-  let ref_dec := (List.range 8).map fun i => Wire.mk s!"rd_{i}"
-  let ref_dec_gates := (List.range 8).foldl (fun acc i =>
-    let b0 := if i % 2 == 0 then not_ref_idx[0]! else ref_idx[0]!
-    let b1 := if (i / 2) % 2 == 0 then not_ref_idx[1]! else ref_idx[1]!
-    let b2 := if (i / 4) % 2 == 0 then not_ref_idx[2]! else ref_idx[2]!
-    acc ++ [Gate.mkAND b0 b1 (Wire.mk s!"rdt_{i}"), Gate.mkAND (Wire.mk s!"rdt_{i}") b2 ref_dec[i]!]
-  ) []
+  -- === Index Decoders ===
+  let cur_dec := (List.range sets).map fun i => Wire.mk s!"cd_{i}"
+  let cur_dec_inst := CircuitInstance.mk s!"Decoder{idxBits}" "u_l2_cur_dec"
+    ((List.range idxBits).map (fun i => (s!"in_{i}", cur_idx[i]!)) ++
+     (List.range sets).map (fun i => (s!"out_{i}", cur_dec[i]!)))
+  let ref_dec := (List.range sets).map fun i => Wire.mk s!"rd_{i}"
+  let ref_dec_inst := CircuitInstance.mk s!"Decoder{idxBits}" "u_l2_ref_dec"
+    ((List.range idxBits).map (fun i => (s!"in_{i}", ref_idx[i]!)) ++
+     (List.range sets).map (fun i => (s!"out_{i}", ref_dec[i]!)))
 
   -- === Read Index Mux ===
   -- During IDLE: use cur_idx. During WRITEBACK: use ref_idx (for victim data read).
   -- Otherwise (HIT_LATCH/HIT_RESP): use lat_idx_q.
   let not_idle := Wire.mk "l2_not_idle"  -- computed in FSM decode below, declared here
   let is_writeback_fwd := Wire.mk "l2_is_wb"  -- forward ref, driven by FSM decode
-  let read_idx := (List.range 3).map fun i => Wire.mk s!"ridx_{i}"
-  let read_idx_inner := (List.range 3).map fun i => Wire.mk s!"ridx_i_{i}"
+  let read_idx := (List.range idxBits).map fun i => Wire.mk s!"ridx_{i}"
+  let read_idx_inner := (List.range idxBits).map fun i => Wire.mk s!"ridx_i_{i}"
   let read_idx_mux :=
-    (List.range 3).map (fun i =>
+    (List.range idxBits).map (fun i =>
       Gate.mkMUX lat_idx_q[i]! ref_idx[i]! is_writeback_fwd read_idx_inner[i]!) ++
-    (List.range 3).map (fun i =>
+    (List.range idxBits).map (fun i =>
       Gate.mkMUX cur_idx[i]! read_idx_inner[i]! not_idle read_idx[i]!)
-  let read_way1 := Wire.mk "rway1"
 
   -- === Tag Lookup ===
-  -- Per way: Mux8x24 to select tag from indexed set, then EqualityComparator24
-  let way_sel_tag := (List.range 2).map fun w => (List.range 24).map fun b => Wire.mk s!"wst{w}_{b}"
-  let tag_mux_instances := (List.range 2).map fun way =>
-    CircuitInstance.mk "Mux8x24" s!"u_l2_tag_mux_w{way}"
-      ((List.range 8).foldl (fun acc set =>
-        acc ++ (List.range 24).map (fun b =>
+  -- Per way: Mux{sets}x{tagBits} to select the tag of the indexed set, then compare
+  let way_sel_tag := (List.range ways).map fun w =>
+    (List.range tagBits).map fun b => Wire.mk s!"wst{w}_{b}"
+  let tag_mux_instances := (List.range ways).map fun way =>
+    CircuitInstance.mk s!"Mux{sets}x{tagBits}" s!"u_l2_tag_mux_w{way}"
+      ((List.range sets).foldl (fun acc set =>
+        acc ++ (List.range tagBits).map (fun b =>
           (s!"in{set}_{b}", Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}"))
       ) [] ++
-      (List.range 3).map (fun i => (s!"sel_{i}", cur_idx[i]!)) ++
-      (List.range 24).map (fun b => (s!"out_{b}", (way_sel_tag[way]!)[b]!)))
-  let way_tag_match := (List.range 2).map fun w => Wire.mk s!"wtm{w}"
-  let tag_cmp_instances := (List.range 2).map fun way =>
-    CircuitInstance.mk "EqualityComparator24" s!"u_l2_cmp_w{way}"
-      ((List.range 24).map (fun b => (s!"a_{b}", (way_sel_tag[way]!)[b]!)) ++
-       (List.range 24).map (fun b => (s!"b_{b}", cur_tag[b]!)) ++
+      (List.range idxBits).map (fun i => (s!"sel_{i}", cur_idx[i]!)) ++
+      (List.range tagBits).map (fun b => (s!"out_{b}", (way_sel_tag[way]!)[b]!)))
+  let way_tag_match := (List.range ways).map fun w => Wire.mk s!"wtm{w}"
+  let tag_cmp_instances := (List.range ways).map fun way =>
+    CircuitInstance.mk s!"EqualityComparator{tagBits}" s!"u_l2_cmp_w{way}"
+      ((List.range tagBits).map (fun b => (s!"a_{b}", (way_sel_tag[way]!)[b]!)) ++
+       (List.range tagBits).map (fun b => (s!"b_{b}", cur_tag[b]!)) ++
        [("eq", way_tag_match[way]!)])
 
   -- === Valid Bit Lookup ===
-  -- Per way: gate-based 8:1 mux of valid bits. Layout: valid_q[way*8+set]
-  let way_valid_sel := (List.range 2).map fun w => Wire.mk s!"wvs{w}"
-  let valid_mux_gates := (List.range 2).foldl (fun acc way =>
-    let base := way * 8
-    let va := (List.range 8).map fun i => Wire.mk s!"va{way}_{i}"
-    let vo := (List.range 6).map fun i => Wire.mk s!"vo{way}_{i}"
-    acc ++
-    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! valid_q[base + i]! va[i]!) ++
-    [Gate.mkOR va[0]! va[1]! vo[0]!, Gate.mkOR va[2]! va[3]! vo[1]!,
-     Gate.mkOR va[4]! va[5]! vo[2]!, Gate.mkOR va[6]! va[7]! vo[3]!,
-     Gate.mkOR vo[0]! vo[1]! vo[4]!, Gate.mkOR vo[2]! vo[3]! vo[5]!,
-     Gate.mkOR vo[4]! vo[5]! way_valid_sel[way]!]
-  ) []
+  -- Per way: OR over sets of (set select AND that line's valid). Layout: valid_q[way*sets+set]
+  let way_valid_sel := (List.range ways).map fun w => Wire.mk s!"wvs{w}"
+  let valid_mux_gates : List Gate := List.flatten ((List.range ways).map fun way =>
+    let t := (List.range sets).map (fun st => Wire.mk s!"va{way}_{st}")
+    List.flatten ((List.range sets).map fun st =>
+      [Gate.mkAND cur_dec[st]! valid_q[way * sets + st]! t[st]!])
+    ++ mkOrTree t way_valid_sel[way]!)
 
   -- === Hit Detection ===
-  let way_hit := (List.range 2).map fun w => Wire.mk s!"wh{w}"
+  let way_hit := (List.range ways).map fun w => Wire.mk s!"wh{w}"
   let hit := Wire.mk "l2_hit"
-  let hit_gates :=
-    (List.range 2).map (fun w => Gate.mkAND way_valid_sel[w]! way_tag_match[w]! way_hit[w]!) ++
-    [Gate.mkOR way_hit[0]! way_hit[1]! hit]
+  let hit_gates : List Gate :=
+    (List.range ways).map (fun w => Gate.mkAND way_valid_sel[w]! way_tag_match[w]! way_hit[w]!) ++
+    mkOrTree way_hit hit
+
+  -- === Replacement Victim Lookup ===
+  -- One tree-PLRU per set; the victim of the requested set and of the refill set
+  -- are one-hot selects muxed out of the per-set PLRUs.
+  let plru_victim := (List.range sets).map fun st =>
+    (List.range ways).map fun w => Wire.mk s!"l2_plru_victim_{st}_{w}"
+  let plru_upd_en := (List.range sets).map fun st => Wire.mk s!"l2_plru_en_{st}"
+  let plru_upd_way := (List.range sets).map fun st =>
+    (List.range ways).map fun w => Wire.mk s!"l2_plru_w_{st}_{w}"
+  let cur_victim := (List.range ways).map fun w => Wire.mk s!"cv{w}"
+  let ref_victim := (List.range ways).map fun w => Wire.mk s!"rv{w}"
+  let pickVictim (dec : List Wire) (out : List Wire) : List Gate :=
+    if ways == 1 then
+      [Gate.mkBUF (Wire.mk "l2_const_one") out[0]!]
+    else List.flatten ((List.range ways).map fun w =>
+      let t := (List.range sets).map (fun st => Wire.mk s!"{out[w]!.name}_and_{st}")
+      List.flatten ((List.range sets).map fun st =>
+        [Gate.mkAND dec[st]! plru_victim[st]![w]! t[st]!])
+      ++ mkOrTree t out[w]!)
+  -- Update source: the set is touched by a read hit or a writeback (current set)
+  -- and by a refill (refill set); the two never touch the same set at once.
+  let plru_gates : List Gate :=
+    (List.range sets).map (fun st => Gate.mkAND (Wire.mk "l2_access_evt") cur_dec[st]!
+      (Wire.mk s!"l2_plru_acc_{st}")) ++
+    (List.range sets).map (fun st => Gate.mkAND (Wire.mk "l2_rd") ref_dec[st]!
+      (Wire.mk s!"l2_plru_rf_{st}")) ++
+    (List.range sets).map (fun st =>
+      Gate.mkOR (Wire.mk s!"l2_plru_acc_{st}") (Wire.mk s!"l2_plru_rf_{st}") plru_upd_en[st]!) ++
+    List.flatten ((List.range sets).map (fun st =>
+      List.flatten ((List.range ways).map fun w =>
+        [Gate.mkAND (Wire.mk s!"l2_plru_acc_{st}") (Wire.mk s!"wbw{w}")
+           (Wire.mk s!"l2_plru_aw_{st}_{w}"),
+         Gate.mkAND (Wire.mk s!"l2_plru_rf_{st}") (Wire.mk s!"rv{w}")
+           (Wire.mk s!"l2_plru_rw_{st}_{w}"),
+         Gate.mkOR (Wire.mk s!"l2_plru_aw_{st}_{w}") (Wire.mk s!"l2_plru_rw_{st}_{w}")
+           plru_upd_way[st]![w]!])))
+  let plru_insts : List CircuitInstance :=
+    if ways < 2 then []
+    else (List.range sets).map (fun st =>
+      CircuitInstance.mk s!"PLRU{ways}" s!"u_l2_plru_s{st}"
+        ([("clock", clock), ("reset", reset), ("zero", Wire.mk "l2_const_zero"),
+          ("one", Wire.mk "l2_const_one"), ("upd_en", plru_upd_en[st]!)] ++
+         (List.range ways).map (fun w => (s!"upd_way_oh_{w}", plru_upd_way[st]![w]!)) ++
+         (List.range ways).map (fun w => (s!"victim_oh_{w}", plru_victim[st]![w]!))))
 
   -- === Data Read Path ===
-  -- RAM read ports provide drd{way}_{b} directly (replacing Mux8x32 instances)
-  -- Way select MUX: 256 gates, controlled by read_way1
-  let way_data_mux := (List.range 256).map fun b =>
-    Gate.mkMUX (Wire.mk s!"drd0_{b}") (Wire.mk s!"drd1_{b}") read_way1 (Wire.mk s!"wsd_{b}")
+  -- RAM read ports provide drd{way}_{b} directly.  Way select: the request's
+  -- victim way while idle, the latched hit way afterwards.
+  let read_way := (List.range ways).map fun w => Wire.mk s!"rway{w}"
+  let read_way_mux := (List.range ways).map fun w =>
+    Gate.mkMUX cur_victim[w]! lat_way_q[w]! not_idle read_way[w]!
+  let way_data_mux : List Gate := List.flatten ((List.range lineBits).map fun b =>
+    let t := (List.range ways).map (fun w => Wire.mk s!"wsd_a{w}_{b}")
+    List.flatten ((List.range ways).map fun w =>
+      [Gate.mkAND read_way[w]! (l2_data_ram_rd[w]!)[b]! t[w]!])
+    ++ mkOrTree t (Wire.mk s!"wsd_{b}"))
 
   -- === FSM Decode ===
   let not_fsm := (List.range 3).map fun i => Wire.mk s!"l2nf{i}"
@@ -372,9 +420,6 @@ def mkL2Cache : Circuit :=
      Gate.mkAND (Wire.mk "l2f01r") fsm_q[2]! is_wb_commit,      -- 110
      Gate.mkNOT is_idle not_idle]
 
-  -- Read way mux: idle ? way_hit[1] : lat_way_q
-  let read_way1_mux := Gate.mkMUX way_hit[1]! lat_way_q not_idle read_way1
-
   -- === Detection Logic ===
   let not_hit := Wire.mk "l2_nh"
   let not_write := Wire.mk "l2_nw"
@@ -394,9 +439,6 @@ def mkL2Cache : Circuit :=
     Gate.mkAND is_mem_wait mem_resp_valid refill_done
   ]
 
-  -- wb_miss_dirty / wb_direct / effective_wb_write are defined after victim_detect_gates
-  -- (Victim detection moved after cur_lru_gates — see below)
-
   -- === Response Logic ===
   -- resp_valid = (is_hit_resp OR refill_done) AND source_match
   let resp_any := Wire.mk "l2_ra"
@@ -409,30 +451,33 @@ def mkL2Cache : Circuit :=
   ]
   -- Response data: is_hit_resp ? way_sel_data : mem_resp_data
   -- Both outputs get the same data (only valid signal differs)
-  let resp_mux_i := (List.range 256).map fun b =>
-    Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! refill_done l1i_resp_data[b]!
-  let resp_mux_d := (List.range 256).map fun b =>
-    Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! refill_done l1d_resp_data[b]!
+  let resp_mux_i := (List.range lineBits).map fun b =>
+    Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! (Wire.mk "l2_rd") l1i_resp_data[b]!
+  let resp_mux_d := (List.range lineBits).map fun b =>
+    Gate.mkMUX (Wire.mk s!"wsd_{b}") mem_resp_data[b]! (Wire.mk "l2_rd") l1d_resp_data[b]!
 
   -- === Memory Request ===
   -- mem_req_valid = is_mem_req OR is_writeback
-  -- During WRITEBACK: we=1, addr={pend_vtag, ref_idx, 5'b0}, data=victim_data
+  -- During WRITEBACK: we=1, addr={pend_vtag, ref_idx, offset 0}, data=victim_data
   -- During MEM_REQ: we=0, addr=pend_q (line-aligned), data=0
-  let wb_victim_data := (List.range 256).map fun b => Wire.mk s!"l2_wbvd_{b}"
-  let wb_victim_data_mux := (List.range 256).map fun b =>
-    Gate.mkMUX (l2_data_ram_rd[0]!)[b]! (l2_data_ram_rd[1]!)[b]! pend_victim_q wb_victim_data[b]!
+  let wb_victim_data := (List.range lineBits).map fun b => Wire.mk s!"l2_wbvd_{b}"
+  let wb_victim_data_mux : List Gate := List.flatten ((List.range lineBits).map fun b =>
+    let t := (List.range ways).map (fun w => Wire.mk s!"l2_wbv_a{w}_{b}")
+    List.flatten ((List.range ways).map fun w =>
+      [Gate.mkAND pend_victim_q[w]! (l2_data_ram_rd[w]!)[b]! t[w]!])
+    ++ mkOrTree t wb_victim_data[b]!)
   let mem_req_gates :=
     [Gate.mkOR is_mem_req is_writeback mem_req_valid,
      Gate.mkBUF is_writeback mem_req_we] ++
-    -- addr: WRITEBACK ? {pend_vtag[23:0], ref_idx[2:0], 5'b0} : {pend_q line-aligned}
+    -- addr: WRITEBACK ? {pend_vtag, ref_idx, offset 0} : {pend_q line-aligned}
     (List.range 32).map (fun i =>
-      if i < 5 then Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_addr[i]!
-      else if i < 8 then
-        Gate.mkMUX pend_q[i]! ref_idx[i - 5]! is_writeback mem_req_addr[i]!
+      if i < offsetBits then Gate.mkBUF (Wire.mk "l2_const_zero") mem_req_addr[i]!
+      else if i < offsetBits + idxBits then
+        Gate.mkMUX pend_q[i]! ref_idx[i - offsetBits]! is_writeback mem_req_addr[i]!
       else
-        Gate.mkMUX pend_q[i]! pend_vtag_q[i - 8]! is_writeback mem_req_addr[i]!) ++
+        Gate.mkMUX pend_q[i]! pend_vtag_q[i - offsetBits - idxBits]! is_writeback mem_req_addr[i]!) ++
     -- data: WRITEBACK ? victim_data : 0
-    (List.range 256).map (fun i =>
+    (List.range lineBits).map (fun i =>
       Gate.mkMUX (Wire.mk "l2_const_zero") wb_victim_data[i]! is_writeback mem_req_data[i]!)
 
   -- === FSM Next State ===
@@ -461,7 +506,7 @@ def mkL2Cache : Circuit :=
     Gate.mkOR wb_direct is_wb_commit effective_wb_write
   ]
 
-  -- evict_trigger defined here (captures moved after cur_lru/victim_tag_raw)
+  -- evict_trigger captures the victim (miss_detect OR wb_miss_dirty)
   let evict_trigger := Wire.mk "l2_evtrig"
   let evict_trigger_gate := Gate.mkOR miss_detect wb_miss_dirty evict_trigger
 
@@ -504,148 +549,110 @@ def mkL2Cache : Circuit :=
     Gate.mkMUX src_q arb_sel_d capture_src src_d
   ]
   -- Latched index: capture on hit_detect
-  let lat_idx_next := (List.range 3).map fun i =>
+  let lat_idx_next := (List.range idxBits).map fun i =>
     Gate.mkMUX lat_idx_q[i]! cur_idx[i]! hit_detect lat_idx_d[i]!
-  -- Latched way: capture on hit_detect
-  let lat_way_next := Gate.mkMUX lat_way_q way_hit[1]! hit_detect lat_way_d
+  -- Latched way: capture the hitting way on hit_detect
+  let lat_way_next := (List.range ways).map fun w =>
+    Gate.mkMUX lat_way_q[w]! way_hit[w]! hit_detect lat_way_d[w]!
 
-  -- === LRU Lookup ===
-  -- Current set LRU: gate-based 8:1 mux of lru_q by cur_dec
-  let cur_lru := Wire.mk "clru"
-  let cur_lru_gates :=
-    let la := (List.range 8).map fun i => Wire.mk s!"cla_{i}"
-    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! lru_q[i]! la[i]!) ++
-    [Gate.mkOR la[0]! la[1]! (Wire.mk "clo01"), Gate.mkOR la[2]! la[3]! (Wire.mk "clo23"),
-     Gate.mkOR la[4]! la[5]! (Wire.mk "clo45"), Gate.mkOR la[6]! la[7]! (Wire.mk "clo67"),
-     Gate.mkOR (Wire.mk "clo01") (Wire.mk "clo23") (Wire.mk "clo03"),
-     Gate.mkOR (Wire.mk "clo45") (Wire.mk "clo67") (Wire.mk "clo47"),
-     Gate.mkOR (Wire.mk "clo03") (Wire.mk "clo47") cur_lru]
   -- === Victim Detection (for L2 writeback on eviction) ===
-  -- Victim dirty: 8:1 mux of dirty_q[way*8+set] by cur_dec, then 2:1 by cur_lru
+  -- Victim dirty/valid/tag: the requested set's victim way
   let victim_dirty := Wire.mk "l2_vdirty"
   let victim_valid := Wire.mk "l2_vvalid"
   let victim_needs_wb := Wire.mk "l2_vnwb"
-  let victim_detect_gates := (List.range 2).foldl (fun acc way =>
-    let base := way * 8
-    let da := (List.range 8).map fun i => Wire.mk s!"vda{way}_{i}"
-    acc ++
-    (List.range 8).map (fun i => Gate.mkAND cur_dec[i]! dirty_q[base + i]! da[i]!) ++
-    [Gate.mkOR da[0]! da[1]! (Wire.mk s!"vdo{way}_01"),
-     Gate.mkOR da[2]! da[3]! (Wire.mk s!"vdo{way}_23"),
-     Gate.mkOR da[4]! da[5]! (Wire.mk s!"vdo{way}_45"),
-     Gate.mkOR da[6]! da[7]! (Wire.mk s!"vdo{way}_67"),
-     Gate.mkOR (Wire.mk s!"vdo{way}_01") (Wire.mk s!"vdo{way}_23") (Wire.mk s!"vdo{way}_04"),
-     Gate.mkOR (Wire.mk s!"vdo{way}_45") (Wire.mk s!"vdo{way}_67") (Wire.mk s!"vdo{way}_48"),
-     Gate.mkOR (Wire.mk s!"vdo{way}_04") (Wire.mk s!"vdo{way}_48") (Wire.mk s!"vds{way}")]
-  ) [] ++ [
-    Gate.mkMUX (Wire.mk "vds0") (Wire.mk "vds1") cur_lru victim_dirty,
-    Gate.mkMUX way_valid_sel[0]! way_valid_sel[1]! cur_lru victim_valid,
-    Gate.mkAND victim_valid victim_dirty victim_needs_wb
-  ]
+  let victim_detect_gates : List Gate :=
+    List.flatten ((List.range ways).map fun way =>
+      let t := (List.range sets).map (fun st => Wire.mk s!"vda{way}_{st}")
+      List.flatten ((List.range sets).map fun st =>
+        [Gate.mkAND cur_dec[st]! dirty_q[way * sets + st]! t[st]!])
+      ++ mkOrTree t (Wire.mk s!"vds{way}")) ++
+    List.flatten ((List.range ways).map fun way =>
+      let t := (List.range sets).map (fun st => Wire.mk s!"vva{way}_{st}")
+      List.flatten ((List.range sets).map fun st =>
+        [Gate.mkAND cur_dec[st]! valid_q[way * sets + st]! t[st]!])
+      ++ mkOrTree t (Wire.mk s!"vvs{way}")) ++
+    (List.range ways).map (fun way =>
+      Gate.mkAND cur_victim[way]! (Wire.mk s!"vds{way}") (Wire.mk s!"vdm{way}")) ++
+    (List.range ways).map (fun way =>
+      Gate.mkAND cur_victim[way]! (Wire.mk s!"vvs{way}") (Wire.mk s!"vvm{way}")) ++
+    mkOrTree ((List.range ways).map fun way => Wire.mk s!"vdm{way}") victim_dirty ++
+    mkOrTree ((List.range ways).map fun way => Wire.mk s!"vvm{way}") victim_valid ++
+    [Gate.mkAND victim_valid victim_dirty victim_needs_wb]
 
-  -- Victim tag raw: MUX(way_sel_tag[0][b], way_sel_tag[1][b], cur_lru)
-  let victim_tag_raw := (List.range 24).map fun b => Wire.mk s!"vtraw_{b}"
-  let victim_tag_mux := (List.range 24).map fun b =>
-    Gate.mkMUX (way_sel_tag[0]!)[b]! (way_sel_tag[1]!)[b]! cur_lru victim_tag_raw[b]!
+  -- Victim tag: the victim way's selected tag
+  let victim_tag_raw := (List.range tagBits).map fun b => Wire.mk s!"vtraw_{b}"
+  let victim_tag_mux : List Gate := List.flatten ((List.range tagBits).map fun b =>
+    let t := (List.range ways).map (fun w => Wire.mk s!"vt_a{w}_{b}")
+    List.flatten ((List.range ways).map fun w =>
+      [Gate.mkAND cur_victim[w]! (way_sel_tag[w]!)[b]! t[w]!])
+    ++ mkOrTree t victim_tag_raw[b]!)
 
-  -- Capture victim way + tag on evict_trigger (miss_detect OR wb_miss_dirty)
-  let pend_victim_capture := Gate.mkMUX pend_victim_q cur_lru evict_trigger pend_victim_d
-  let pend_vtag_capture := (List.range 24).map fun b =>
+  -- Capture the victim way + tag on evict_trigger
+  let pend_victim_capture := (List.range ways).map fun w =>
+    Gate.mkMUX pend_victim_q[w]! cur_victim[w]! evict_trigger pend_victim_d[w]!
+  let pend_vtag_capture := (List.range tagBits).map fun b =>
     Gate.mkMUX pend_vtag_q[b]! victim_tag_raw[b]! evict_trigger pend_vtag_d[b]!
   -- pend_is_wb: 1 if triggered by wb_miss_dirty, 0 if by miss_detect
   let pend_is_wb_capture := Gate.mkMUX pend_is_wb_q wb_miss_dirty evict_trigger pend_is_wb_d
 
-  -- Refill set LRU
-  let ref_lru := Wire.mk "rlru"
-  let ref_lru_gates :=
-    let la := (List.range 8).map fun i => Wire.mk s!"rla_{i}"
-    (List.range 8).map (fun i => Gate.mkAND ref_dec[i]! lru_q[i]! la[i]!) ++
-    [Gate.mkOR la[0]! la[1]! (Wire.mk "rlo01"), Gate.mkOR la[2]! la[3]! (Wire.mk "rlo23"),
-     Gate.mkOR la[4]! la[5]! (Wire.mk "rlo45"), Gate.mkOR la[6]! la[7]! (Wire.mk "rlo67"),
-     Gate.mkOR (Wire.mk "rlo01") (Wire.mk "rlo23") (Wire.mk "rlo03"),
-     Gate.mkOR (Wire.mk "rlo45") (Wire.mk "rlo67") (Wire.mk "rlo47"),
-     Gate.mkOR (Wire.mk "rlo03") (Wire.mk "rlo47") ref_lru]
-
   -- === Write Way Selection ===
-  -- For writeback: hit ? hit_way : victim (cur_lru)
-  let wb_use_way1 := Wire.mk "wbw1"
-  let not_wb_w1 := Wire.mk "nwbw1"
-  let not_ref_lru := Wire.mk "nrlru"
-  let way_sel_gates := [
-    Gate.mkAND hit way_hit[1]! (Wire.mk "wbhw1"),
-    Gate.mkAND not_hit cur_lru (Wire.mk "wbml"),
-    Gate.mkOR (Wire.mk "wbhw1") (Wire.mk "wbml") wb_use_way1,
-    Gate.mkNOT wb_use_way1 not_wb_w1,
-    Gate.mkNOT ref_lru not_ref_lru
-  ]
+  -- For writeback: the hitting way, or the victim when the writeback missed
+  let wb_use_way := (List.range ways).map fun w => Wire.mk s!"wbw{w}"
+  let way_sel_gates : List Gate := List.flatten ((List.range ways).map fun w =>
+    [Gate.mkAND (Wire.mk "l2_hit") way_hit[w]! (Wire.mk s!"l2_wbhw{w}"),
+     Gate.mkAND (Wire.mk "l2_nh") cur_victim[w]! (Wire.mk s!"l2_wbml{w}"),
+     Gate.mkOR (Wire.mk s!"l2_wbhw{w}") (Wire.mk s!"l2_wbml{w}") wb_use_way[w]!])
 
   -- === Write Enables ===
   -- Per way/set: wb_we OR refill_we
-  let write_en_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).foldl (fun acc2 set =>
-      let wm := if way == 0 then not_wb_w1 else wb_use_way1
-      let rm := if way == 0 then not_ref_lru else ref_lru
-      acc2 ++ [
-        Gate.mkAND effective_wb_write cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
-        Gate.mkAND (Wire.mk s!"wbs_{way}_{set}") wm (Wire.mk s!"wbw_{way}_{set}"),
-        Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"rfs_{way}_{set}"),
-        Gate.mkAND (Wire.mk s!"rfs_{way}_{set}") rm (Wire.mk s!"rfw_{way}_{set}"),
-        Gate.mkOR (Wire.mk s!"wbw_{way}_{set}") (Wire.mk s!"rfw_{way}_{set}") (Wire.mk s!"wen_{way}_{set}")
-      ]
-    ) []
-  ) []
+  let write_en_gates : List Gate := List.flatten ((List.range ways).map fun way =>
+    List.flatten ((List.range sets).map fun set =>
+      [Gate.mkAND (Wire.mk "l2_eww") cur_dec[set]! (Wire.mk s!"wbs_{way}_{set}"),
+       Gate.mkAND (Wire.mk s!"wbs_{way}_{set}") wb_use_way[way]! (Wire.mk s!"wbw_{way}_{set}"),
+       Gate.mkAND (Wire.mk "l2_rd") ref_dec[set]! (Wire.mk s!"rfs_{way}_{set}"),
+       Gate.mkAND (Wire.mk s!"rfs_{way}_{set}") ref_victim[way]! (Wire.mk s!"rfw_{way}_{set}"),
+       Gate.mkOR (Wire.mk s!"wbw_{way}_{set}") (Wire.mk s!"rfw_{way}_{set}") (Wire.mk s!"wen_{way}_{set}")]))
 
   -- === Write Data Selection ===
   -- write_tag: refill_done ? ref_tag : cur_tag
-  let write_tag := (List.range 24).map fun b => Wire.mk s!"wt_{b}"
-  let write_tag_mux := (List.range 24).map fun b =>
-    Gate.mkMUX cur_tag[b]! ref_tag[b]! refill_done write_tag[b]!
+  let write_tag := (List.range tagBits).map fun b => Wire.mk s!"wt_{b}"
+  let write_tag_mux := (List.range tagBits).map fun b =>
+    Gate.mkMUX cur_tag[b]! ref_tag[b]! (Wire.mk "l2_rd") write_tag[b]!
   -- write_data: refill_done ? mem_resp_data : l1d_req_data
-  let write_data := (List.range 256).map fun b => Wire.mk s!"wdd_{b}"
-  let write_data_mux := (List.range 256).map fun b =>
-    Gate.mkMUX l1d_req_data[b]! mem_resp_data[b]! refill_done write_data[b]!
+  let write_data := (List.range lineBits).map fun b => Wire.mk s!"wdd_{b}"
+  let write_data_mux := (List.range lineBits).map fun b =>
+    Gate.mkMUX l1d_req_data[b]! mem_resp_data[b]! (Wire.mk "l2_rd") write_data[b]!
   -- write_dirty: wb → dirty, refill → clean
   let not_refill := Wire.mk "l2_nrf"
   let write_dirty := Wire.mk "wdty"
-  let write_dirty_gates := [Gate.mkNOT refill_done not_refill, Gate.mkBUF not_refill write_dirty]
+  let write_dirty_gates := [Gate.mkNOT (Wire.mk "l2_rd") not_refill, Gate.mkBUF not_refill write_dirty]
 
   -- === Storage Next State ===
   -- Tag: MUX(hold, write_tag, write_en)
-  let tag_next := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).foldl (fun acc2 set =>
-      acc2 ++ (List.range 24).map (fun b =>
+  let tag_next := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range sets).foldl (fun acc2 set =>
+      acc2 ++ (List.range tagBits).map (fun b =>
         Gate.mkMUX (Wire.mk s!"l2_tag_q_w{way}_s{set}_{b}") write_tag[b]!
           (Wire.mk s!"wen_{way}_{set}") (Wire.mk s!"l2_tag_d_w{way}_s{set}_{b}"))
     ) []
   ) []
   -- Data RAM write control: wen per way, addr, data
-  -- write_en = OR of wen_{way}_{set} for any set (same as any write_en_gates match for this way)
-  let data_ram_wen_gates := (List.range 2).foldl (fun acc way =>
-    -- OR-tree of wen_{way}_{set} for all 8 sets
-    let wen_wires := (List.range 8).map fun set => Wire.mk s!"wen_{way}_{set}"
-    acc ++ [
-      Gate.mkOR wen_wires[0]! wen_wires[1]! (Wire.mk s!"l2_dwen_01_w{way}"),
-      Gate.mkOR wen_wires[2]! wen_wires[3]! (Wire.mk s!"l2_dwen_23_w{way}"),
-      Gate.mkOR wen_wires[4]! wen_wires[5]! (Wire.mk s!"l2_dwen_45_w{way}"),
-      Gate.mkOR wen_wires[6]! wen_wires[7]! (Wire.mk s!"l2_dwen_67_w{way}"),
-      Gate.mkOR (Wire.mk s!"l2_dwen_01_w{way}") (Wire.mk s!"l2_dwen_23_w{way}") (Wire.mk s!"l2_dwen_03_w{way}"),
-      Gate.mkOR (Wire.mk s!"l2_dwen_45_w{way}") (Wire.mk s!"l2_dwen_67_w{way}") (Wire.mk s!"l2_dwen_47_w{way}"),
-      Gate.mkOR (Wire.mk s!"l2_dwen_03_w{way}") (Wire.mk s!"l2_dwen_47_w{way}") l2_data_ram_wr_en[way]!
-    ]
-  ) []
+  -- write_en = OR of wen_{way}_{set} over the sets
+  let data_ram_wen_gates : List Gate := List.flatten ((List.range ways).map fun way =>
+    mkOrTree ((List.range sets).map fun set => Wire.mk s!"wen_{way}_{set}") l2_data_ram_wr_en[way]!)
   -- Write addr: refill uses ref_idx, wb uses cur_idx; MUX on refill_done
-  let data_ram_waddr_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 3).map (fun i =>
-      Gate.mkMUX cur_idx[i]! ref_idx[i]! refill_done (l2_data_ram_wr_addr[way]!)[i]!)
+  let data_ram_waddr_gates := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range idxBits).map (fun i =>
+      Gate.mkMUX cur_idx[i]! ref_idx[i]! (Wire.mk "l2_rd") (l2_data_ram_wr_addr[way]!)[i]!)
   ) []
   -- Write data: already computed as write_data[b]
-  let data_ram_wdata_gates := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 256).map (fun b =>
+  let data_ram_wdata_gates := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range lineBits).map (fun b =>
       Gate.mkBUF write_data[b]! (l2_data_ram_wr_data[way]!)[b]!)
   ) []
   -- Define the actual RAM primitives (read_idx is now available)
-  let data_rams := (List.range 2).map fun way =>
-    RAMPrimitive.mk s!"l2_data_ram_w{way}" 8 256
+  let data_rams := (List.range ways).map fun way =>
+    RAMPrimitive.mk s!"l2_data_ram_w{way}" sets lineBits
       [{ en := l2_data_ram_wr_en[way]!
          addr := l2_data_ram_wr_addr[way]!
          data := l2_data_ram_wr_data[way]! }]
@@ -655,27 +662,15 @@ def mkL2Cache : Circuit :=
       -- 1R1W contract: separate read/write addresses, asynchronous read
       (portKind := .r1w1)
   -- Valid: OR(hold, write_en)
-  let valid_next := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
-      Gate.mkOR valid_q[way * 8 + set]! (Wire.mk s!"wen_{way}_{set}") valid_d[way * 8 + set]!)
+  let valid_next := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range sets).map (fun set =>
+      Gate.mkOR valid_q[way * sets + set]! (Wire.mk s!"wen_{way}_{set}") valid_d[way * sets + set]!)
   ) []
   -- Dirty: MUX(hold, write_dirty, write_en)
-  let dirty_next := (List.range 2).foldl (fun acc way =>
-    acc ++ (List.range 8).map (fun set =>
-      let idx := way * 8 + set
+  let dirty_next := (List.range ways).foldl (fun acc way =>
+    acc ++ (List.range sets).map (fun set =>
+      let idx := way * sets + set
       Gate.mkMUX dirty_q[idx]! write_dirty (Wire.mk s!"wen_{way}_{set}") dirty_d[idx]!)
-  ) []
-  -- LRU: update on hit, wb, or refill
-  let lru_next := (List.range 8).foldl (fun acc set =>
-    acc ++ [
-      Gate.mkOR hit_detect effective_wb_write (Wire.mk s!"lca_{set}"),
-      Gate.mkAND (Wire.mk s!"lca_{set}") cur_dec[set]! (Wire.mk s!"lcu_{set}"),
-      Gate.mkAND refill_done ref_dec[set]! (Wire.mk s!"lru_{set}"),
-      Gate.mkOR (Wire.mk s!"lcu_{set}") (Wire.mk s!"lru_{set}") (Wire.mk s!"lua_{set}"),
-      -- new_lru: refill_done ? NOT ref_lru : NOT wb_use_way1
-      Gate.mkMUX not_wb_w1 not_ref_lru refill_done (Wire.mk s!"lnv_{set}"),
-      Gate.mkMUX lru_q[set]! (Wire.mk s!"lnv_{set}") (Wire.mk s!"lua_{set}") lru_d[set]!
-    ]
   ) []
 
   -- === Stall Signals ===
@@ -691,8 +686,11 @@ def mkL2Cache : Circuit :=
     Gate.mkBUF not_idle stall_d
   ]
 
+  -- The set-touch event for the replacement policy (a read hit or a writeback)
+  let access_evt_gate := Gate.mkOR hit_detect effective_wb_write (Wire.mk "l2_access_evt")
+
   -- === Assemble ===
-  { name := "L2Cache"
+  { name := s!"L2Cache{g.nameSuffix}"
     inputs := [clock, reset, l1i_req_valid] ++ l1i_req_addr ++
               [l1d_req_valid] ++ l1d_req_addr ++ [l1d_req_we] ++ l1d_req_data ++
               [mem_resp_valid] ++ mem_resp_data
@@ -700,36 +698,38 @@ def mkL2Cache : Circuit :=
                [l1d_resp_valid] ++ l1d_resp_data ++
                [mem_req_valid] ++ mem_req_addr ++ [mem_req_we] ++ mem_req_data ++
                [l1d_wb_ack, stall_i, stall_d]
-    gates := fsm_dffs ++ [src_dff] ++ pend_dffs ++ lat_idx_dffs ++ [lat_way_dff] ++
-             [pend_victim_dff] ++ pend_vtag_dffs ++ [pend_is_wb_dff] ++
-             valid_dffs ++ dirty_dffs ++ lru_dffs ++
+    gates := fsm_dffs ++ [src_dff] ++ pend_dffs ++ lat_idx_dffs ++ lat_way_dffs ++
+             pend_victim_dffs ++ pend_vtag_dffs ++ [pend_is_wb_dff] ++
+             valid_dffs ++ dirty_dffs ++
              const_zero_gates ++ arb_gates ++ arb_addr_mux ++
-             not_cur_idx_gates ++ cur_dec_gates ++ not_ref_idx_gates ++ ref_dec_gates ++
-             read_idx_mux ++ valid_mux_gates ++ hit_gates ++ way_data_mux ++
-             fsm_decode_gates ++ [read_way1_mux] ++
+             read_idx_mux ++ valid_mux_gates ++ hit_gates ++
+             pickVictim cur_dec cur_victim ++ pickVictim ref_dec ref_victim ++
+             plru_gates ++ read_way_mux ++ way_data_mux ++
+             fsm_decode_gates ++
              detect_gates ++
              victim_detect_gates ++ victim_tag_mux ++
              wb_miss_dirty_gates ++ [evict_trigger_gate] ++
-             [pend_victim_capture] ++ pend_vtag_capture ++ [pend_is_wb_capture] ++
+             pend_victim_capture ++ pend_vtag_capture ++ [pend_is_wb_capture] ++
              resp_valid_gates ++ resp_mux_i ++ resp_mux_d ++
              wb_victim_data_mux ++ mem_req_gates ++
-             fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ [lat_way_next] ++
-             cur_lru_gates ++ ref_lru_gates ++ way_sel_gates ++ write_en_gates ++
+             fsm_next_gates ++ pend_next ++ src_next ++ lat_idx_next ++ lat_way_next ++
+             way_sel_gates ++ write_en_gates ++
              write_tag_mux ++ write_data_mux ++ write_dirty_gates ++
              tag_next ++ data_ram_wen_gates ++ data_ram_waddr_gates ++ data_ram_wdata_gates ++
-             valid_next ++ dirty_next ++ lru_next ++ [wb_ack_gate] ++ stall_gates
+             valid_next ++ dirty_next ++ [wb_ack_gate, access_evt_gate] ++ stall_gates
     instances := tag_instances ++
-                 tag_mux_instances ++ tag_cmp_instances
+                 [cur_dec_inst, ref_dec_inst] ++
+                 tag_mux_instances ++ tag_cmp_instances ++ plru_insts
     rams := data_rams
     signalGroups := [
       { name := "l1i_req_addr", width := 32, wires := l1i_req_addr },
       { name := "l1d_req_addr", width := 32, wires := l1d_req_addr },
-      { name := "l1d_req_data", width := 256, wires := l1d_req_data },
-      { name := "l1i_resp_data", width := 256, wires := l1i_resp_data },
-      { name := "l1d_resp_data", width := 256, wires := l1d_resp_data },
-      { name := "mem_resp_data", width := 256, wires := mem_resp_data },
+      { name := "l1d_req_data", width := lineBits, wires := l1d_req_data },
+      { name := "l1i_resp_data", width := lineBits, wires := l1i_resp_data },
+      { name := "l1d_resp_data", width := lineBits, wires := l1d_resp_data },
+      { name := "mem_resp_data", width := lineBits, wires := mem_resp_data },
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
-      { name := "mem_req_data", width := 256, wires := mem_req_data }
+      { name := "mem_req_data", width := lineBits, wires := mem_req_data }
     ]
   }
 
