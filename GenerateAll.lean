@@ -373,10 +373,22 @@ def baseCircuits : List Circuit := [
 /-- Every selectable adder the sites may resolve to, followed by the rest of
     the registry minus any adder already listed.  The adders are leaves, so
     putting them first keeps `allCircuits` in topological order and lets the
-    dependency-aware hash see them before the modules that instantiate them. -/
+    dependency-aware hash see them before the modules that instantiate them.
+
+    Deduplicated by module name (first occurrence wins): a name can
+    legitimately be built by more than one builder - the hierarchical 8:1 mux
+    (`mkMux8x32Hierarchical`) and the parametric `mkMuxTree 8 32` share the
+    module name `Mux8x32`, and the cache geometry derives a dword extract mux
+    that may collide again.  Emitting both would alias the incremental
+    codegen's per-name hash cache and the precomputed loaded-wire map, so the
+    module body would depend on list order - the hierarchical mux then lost its
+    instance output connections.  Keeping the first occurrence preserves the
+    hand-written variants (byte-identical default output) and the interface is
+    the same, so every instantiator still binds correctly. -/
 def allCircuits : List Circuit :=
-  allAdderCircuits ++ baseCircuits.filter
-    (fun c => !(allAdderCircuits.map (·.name)).contains c.name)
+  (allAdderCircuits ++ baseCircuits.filter
+    (fun c => !(allAdderCircuits.map (·.name)).contains c.name)).foldl
+    (fun acc c => if acc.any (fun c' => c'.name == c.name) then acc else acc ++ [c]) []
 
 /-- Everything this generator emits, by module name. -/
 def emittedModuleNames : List String :=
