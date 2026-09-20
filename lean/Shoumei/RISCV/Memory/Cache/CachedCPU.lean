@@ -40,6 +40,11 @@ private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
                rob_empty, RVVI trace signals
 -/
 def mkCachedCPU (config : CPUConfig) : Circuit :=
+  -- The cache geometry the hierarchy is built for; it sets the width of the
+  -- line-wide buses and the module names the hierarchy instantiates.
+  let g := config.cacheGeom
+  let lineBits := g.lineBytes * 8
+
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
@@ -47,11 +52,11 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
 
   -- External memory interface (L2 miss bus)
   let mem_resp_valid := Wire.mk "mem_resp_valid"
-  let mem_resp_data := makeIndexedWires "mem_resp_data" 256
+  let mem_resp_data := makeIndexedWires "mem_resp_data" lineBits
   let mem_req_valid := Wire.mk "mem_req_valid"
   let mem_req_addr := makeIndexedWires "mem_req_addr" 32
   let mem_req_we := Wire.mk "mem_req_we"
-  let mem_req_data := makeIndexedWires "mem_req_data" 256
+  let mem_req_data := makeIndexedWires "mem_req_data" lineBits
 
   -- Internal wires: CPU ↔ MemoryHierarchy
   let fetch_pc := makeIndexedWires "cpu_fetch_pc" 32
@@ -129,6 +134,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       ("fetch_stall_ext", ifetch_stall),
       ("ifetch_last_word", ifetch_last_word),
       ("dmem_stall_ext", dmem_stall),
+      -- L1D fence.i flush in progress: the fence.i drain waits for it
+      ("fence_i_busy", Wire.mk "cache_fence_i_busy"),
       ("mtip_in", mtip_in),
       ("msip_in", msip_in),
       ("meip_in", meip_in)] ++
@@ -149,6 +156,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range dmemDataWidth).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("rob_empty", rob_empty),
+      -- one-shot instruction-cache invalidate request (fence.i drain)
+      ("icache_fence_i", Wire.mk "cpu_fence_i"),
       ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
       ("rvvi_trapS0", rvvi_trap_0), ("rvvi_trapS1", rvvi_trap_1),
       ("rvvi_rd_validS0", rvvi_rd_valid_0), ("rvvi_rd_validS1", rvvi_rd_valid_1)] ++
@@ -175,8 +184,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 64).map (fun i => (s!"dmem_req_wdata_{i}", if i < dmemDataWidth then dmem_req_data[i]! else zero)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
-     (List.range 256).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
-     [("fence_i", zero)] ++  -- FENCE.I not yet implemented in W=2
+     (List.range lineBits).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
+     [("fence_i", Wire.mk "cpu_fence_i")] ++
      -- MemHierarchy outputs
      (List.range 32).map (fun i => (s!"ifetch_data_{i}", imem_resp_data[i]!)) ++
      (List.range 32).map (fun i => (s!"ifetch_data_1_{i}", imem_resp_data_1[i]!)) ++
@@ -188,7 +197,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       ("mem_req_valid", mem_req_valid)] ++
      (List.range 32).map (fun i => (s!"mem_req_addr_{i}", mem_req_addr[i]!)) ++
      [("mem_req_we", mem_req_we)] ++
-     (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
      [("fence_i_busy", Wire.mk "cache_fence_i_busy")])
 
   { name := s!"CPU_{config.isaString}_{config.cacheString}"
@@ -207,9 +216,9 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
              snoop_addr_gates ++ snoop_data_gates
     instances := [cpu_inst, memhier_inst]
     signalGroups := [
-      { name := "mem_resp_data", width := 256, wires := mem_resp_data },
+      { name := "mem_resp_data", width := lineBits, wires := mem_resp_data },
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
-      { name := "mem_req_data", width := 256, wires := mem_req_data },
+      { name := "mem_req_data", width := lineBits, wires := mem_req_data },
       { name := "store_snoop_addr", width := 32, wires := store_snoop_addr },
       { name := "store_snoop_data", width := dmemDataWidth, wires := store_snoop_data },
       -- RVVI trace buses

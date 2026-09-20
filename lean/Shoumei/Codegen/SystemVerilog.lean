@@ -1368,48 +1368,144 @@ private def portAddrExpr (ctx : Context) (c : Circuit) (wires : List Wire) : Str
   if refs.length == 1 then refs.head!
   else "{" ++ String.intercalate ", " refs ++ "}"
 
-/-- Emit the reg-array fallback model for a RAMPrimitive.
+/-- Widest RAM the caches build (64-byte cache line).  The DPI imports are
+    module-scoped and cannot be overloaded by width, so every module declares
+    them once at this width and a narrower RAM passes its data through a local
+    vector of the same width. -/
+def dpiMaxWidth : Nat := 512
 
-    This is the *simulation* model (Verilator-friendly) and the
-    no-macro synthesis fallback.  The primary synthesis intent is the
-    foundry/OpenRAM macro branch (SRAM ifdef), never an FF array. -/
+/-- DPI-C import declarations for the RAM simulation models.  Emitted once per
+    module (a duplicate declaration is a compile error) and only in the
+    non-macro branch: synthesis flows instantiate real macros instead.
+
+    The address is declared `int unsigned` and callers cast with `32'(...)`:
+    the address is a small non-negative index, and the explicit cast keeps both
+    the width-expand and the sign-conversion lint quiet. -/
+def dpiImportDecls : String := joinLines [
+  "  // DPI-C simulation models (physical/sim-dpi/sram_dpi.c).  The imports are",
+  "  // module-scoped, so they are declared once; the arrays are per-RAM.",
+  "`ifndef SHOUMEI_SRAM_MACROS",
+  s!"  import \"DPI-C\" function int  sram_dpi_resolve(input string path, input int depth, input int width_bytes);",
+  s!"  import \"DPI-C\" function void sram_dpi_write(input int id, input int unsigned addr, input bit [{dpiMaxWidth - 1}:0] data, input int width_bytes);",
+  s!"  import \"DPI-C\" function void sram_dpi_read(input int id, input int unsigned addr, input int width_bytes, output bit [{dpiMaxWidth - 1}:0] out);",
+  "`endif"
+]
+
+/-- Emit a DPI-C simulation model for a RAMPrimitive.
+
+    Replaces the old bit-expanded reg-array fallback.  A single C backing
+    store (`physical/sim-dpi/sram_dpi.c`) handles every geometry; the SV
+    wrapper is a fixed handful of lines regardless of width or depth.
+
+    Read is kept asynchronous (combinational from the last registered value)
+    to preserve the existing cache read-latency contract without changes to
+    the FSM: the DPI read fires on posedge, the assign below fans the result
+    out combinationally - functionally identical to the old reg array. -/
 def generateRAMFallback (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : String :=
-  let depthMinusOne := ram.depth - 1
-  let clkRef := wireRef ctx c ram.clock
-  -- RAM array declaration (block-style intent; hints rejected by some
-  -- Verilator builds, keep the plain reg array)
-  let arrayDecl := s!"  // reg-array fallback (SRAM macro branch above)"
-  let arrayDecl2 := s!"  reg [{ram.width - 1}:0] {ram.name} [0:{depthMinusOne}];"
-  let writePorts := ram.writePorts.enum.map (fun (_, wp) =>
-    let enRef := wireRef ctx c wp.en
+  let clkRef    := wireRef ctx c ram.clock
+  let widthBytes := (ram.width + 7) / 8
+  let rdTmp     := s!"{ram.name}_dpi_rdata"
+  let wrTmp     := s!"{ram.name}_dpi_wdata"
+  let idVar     := s!"{ram.name}_dpi_id"
+  let widthSlice := s!"[{ram.width - 1}:0]"
+  -- one write port (all our RAMs have exactly one)
+  let writeSV := ram.writePorts.enum.map (fun (_, wp) =>
+    let enRef    := wireRef ctx c wp.en
     let addrExpr := portAddrExpr ctx c wp.addr
+    -- the data bus is one concatenation, not one assign per bit
     let dataExpr := portAddrExpr ctx c wp.data
     joinLines [
+      s!"  assign {wrTmp}{widthSlice} = {dataExpr};",
       s!"  always @(posedge {clkRef})",
-      s!"    if ({enRef}) {ram.name}[{addrExpr}] <= {dataExpr};"
+      s!"    if ({enRef}) sram_dpi_write({idVar}, 32'({addrExpr}), {wrTmp}, {widthBytes});"
     ])
-  let readPorts := ram.readPorts.enum.map (fun (_, rp) =>
+  -- one read port: the array contract is a combinational read (the caches use
+  -- the data in the same cycle they present the address), so the DPI call sits
+  -- in an always_comb block and the result fans out combinationally.
+  let readSV := ram.readPorts.enum.map (fun (_, rp) =>
     let addrExpr := portAddrExpr ctx c rp.addr
-    let readDataWire := s!"{ram.name}[{addrExpr}]"
-    let assigns := rp.data.enum.map (fun (idx, w) =>
-      s!"  assign {wireRef ctx c w} = {readDataWire}[{idx}];")
-    joinLines assigns)
-  joinLines ([arrayDecl, arrayDecl2] ++ writePorts ++ readPorts)
+    let dataExpr := portAddrExpr ctx c rp.data
+    joinLines [
+      s!"  always_comb sram_dpi_read({idVar}, 32'({addrExpr}), {widthBytes}, {rdTmp});",
+      s!"  assign {dataExpr} = {rdTmp}{widthSlice};"
+    ])
+  joinLines ([
+    s!"  // DPI-C simulation model (physical/sim-dpi/sram_dpi.c)",
+    s!"  int          {idVar};",
+    s!"  bit [{dpiMaxWidth - 1}:0] {rdTmp};",
+    s!"  bit [{dpiMaxWidth - 1}:0] {wrTmp};",
+    s!"  initial {idVar} = sram_dpi_resolve($sformatf(\"%m.{ram.name}\"), {ram.depth}, {widthBytes});"]
+    ++ writeSV ++ readSV)
 
-/-- Emit a foundry/OpenRAM SRAM macro instantiation for a 1-write/1-read RAM.
+/-- Emit a foundry/OpenRAM SRAM macro instantiation for a RAM primitive.
 
-    Port contract (matches OpenRAM `sram_1r1w` and the GF180MCU
-    `gf180mcu_fd_ip_sram` family):
-    - .clk, .we, .waddr, .wdata  (write port)
-    - .raddr, .rdata             (read port)
+    Two contracts, selected by `ram.portKind` (the per-process binding layer
+    supplies the module; the RTL only names the shape):
 
-    The module name encodes geometry: `sram_1r1w_<width>x<depth>`.
-    Only exactly-one write + exactly-one read ports map to a macro; other
-    port count combinations keep the fallback (no invented ports). -/
+    `r1w1` — one write + one read port, asynchronous read:
+      `.clk, .we, .waddr, .wdata` / `.raddr, .rdata`
+      module `sram_1r1w_<width>x<depth>`
+
+    `rw1ByteMask` — one address, registered read, per-byte write mask:
+      `.clk, .en, .we, .addr, .wmask, .wdata, .rdata`
+      module `sram_rw1_<width>x<depth>`
+      The address is `we ? waddr : raddr` — sound exactly when the RTL never
+      reads and writes the same array in the same cycle, which is the
+      single-port data-path invariant the caches hold.
+
+    Any other port count keeps the fallback (no invented ports). -/
 def generateSRAMMacro (ctx : Context) (c : Circuit) (ram : RAMPrimitive)
     : Option String :=
-  match ram.writePorts, ram.readPorts with
-  | [wp], [rp] =>
+  match ram.portKind, ram.writePorts, ram.readPorts with
+  | .rw1ByteMask, [wp], [rp] =>
+      let clkRef := wireRef ctx c ram.clock
+      let width := ram.width
+      let depth := ram.depth
+      let bytes := (width + 7) / 8
+      let modName := s!"sram_rw1_{width}x{depth}"
+      let instName := s!"u_ram_{ram.name}"
+      let addrBus := s!"{ram.name}_sram_addr"
+      let wdataBus := s!"{ram.name}_sram_wdata"
+      let wmaskBus := s!"{ram.name}_sram_wmask"
+      let rdataBus := s!"{ram.name}_sram_rdata"
+      let enRef := wireRef ctx c wp.en
+      -- single-port: the write enable doubles as the array enable
+      let weRef := enRef
+      let raddrExpr := portAddrExpr ctx c rp.addr
+      -- Single address: the write address wins while the write is enabled.
+      let addrAssigns := wp.addr.enum.map (fun (idx, w) =>
+        s!"  assign {addrBus}[{idx}] = {enRef} ? {wireRef ctx c w} : {raddrExpr}[{idx}];")
+      let wdataAssigns := wp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wdataBus}[{idx}] = {wireRef ctx c w};")
+      let maskWires := if wp.mask.isEmpty then List.range bytes |>.map (fun _ => none)
+                       else wp.mask.map some
+      let wmaskAssigns := maskWires.enum.map (fun (idx, mw) =>
+        match mw with
+        | some m => s!"  assign {wmaskBus}[{idx}] = {wireRef ctx c m};"
+        | none   => s!"  assign {wmaskBus}[{idx}] = {enRef};")
+      let rdataAssigns := rp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wireRef ctx c w} = {rdataBus}[{idx}];")
+      some <| joinLines [
+        s!"  // Foundry/OpenRAM SRAM macro (single port, byte mask): {modName}",
+        s!"  wire [{wp.addr.length - 1}:0] {addrBus};",
+        s!"  wire [{width - 1}:0] {wdataBus};",
+        s!"  wire [{bytes - 1}:0] {wmaskBus};",
+        s!"  wire [{width - 1}:0] {rdataBus};",
+        joinLines addrAssigns,
+        joinLines wdataAssigns,
+        joinLines wmaskAssigns,
+        joinLines rdataAssigns,
+        s!"  {modName} {instName} (",
+        s!"    .clk  ({clkRef}),",
+        s!"    .en   ({enRef}),",
+        s!"    .we   ({weRef}),",
+        s!"    .addr ({addrBus}),",
+        s!"    .wmask({wmaskBus}),",
+        s!"    .wdata({wdataBus}),",
+        s!"    .rdata({rdataBus})",
+        s!"  );"
+      ]
+  | _, [wp], [rp] =>
       let clkRef := wireRef ctx c ram.clock
       let depth := ram.depth
       let width := ram.width
@@ -1440,7 +1536,7 @@ def generateSRAMMacro (ctx : Context) (c : Circuit) (ram : RAMPrimitive)
         s!"    .rdata({rdataBus})",
         s!"  );"
       ]
-  | _, _ => none
+  | _, _, _ => none
 
 /-- Generate SystemVerilog for a single RAMPrimitive.
 
@@ -1463,7 +1559,7 @@ def generateRAMs (ctx : Context) (c : Circuit) : String :=
   if c.rams.isEmpty then ""
   else
     let ramStrs := c.rams.map (generateRAM ctx c)
-    joinLines ramStrs
+    joinLines ([dpiImportDecls] ++ ramStrs)
 
 /-! ## Module Generation -/
 

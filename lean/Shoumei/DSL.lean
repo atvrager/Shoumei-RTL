@@ -123,11 +123,33 @@ structure InterfaceBundle where
   protocol : Option String := none       -- "decoupled" | "regport" | none
   deriving Repr, Hashable
 
-/-- RAM write port: enable + address + data wires. -/
+/-- Physical memory port contract a RAM primitive is written against.
+
+    The RTL does not know which macro a process offers; it declares the contract
+    it needs, and the per-process binding layer (`physical/sram-bind/<node>/`)
+    must satisfy it with whatever memory the PDK provides.
+
+    - `r1w1`         : separate read and write addresses, one word per port,
+                       asynchronous read (the simulation model).  Matches
+                       dual-port OpenRAM macros.
+    - `rw1ByteMask`  : a single address port, synchronous (registered) read, and
+                       writes selectable per byte.  Matches the GF180MCU vendor
+                       family (`gf180mcu_fd_ip_sram__sram<D>x8m8wm1`) and
+                       single-port OpenRAM macros; the byte mask is what makes
+                       a store hit a write instead of a read-modify-write.
+-/
+inductive SRAMPortKind where
+  | r1w1
+  | rw1ByteMask
+  deriving Repr, BEq, DecidableEq, Inhabited, Hashable
+
+/-- RAM write port: enable + address + data wires, plus an optional per-byte
+    write mask (required by, and only used for, `SRAMPortKind.rw1ByteMask`). -/
 structure RAMWritePort where
   en   : Wire
   addr : List Wire         -- log2(depth) wires
   data : List Wire         -- width wires
+  mask : List Wire := []   -- width/8 wires (one per byte); [] = write all bytes
   deriving Repr, Hashable
 
 /-- RAM read port: address wires (inputs) + data wires (outputs). -/
@@ -137,7 +159,12 @@ structure RAMReadPort where
   deriving Repr, Hashable
 
 /-- RAM primitive — opaque to proofs, known to codegen.
-    Multi-port: configurable write/read port lists. -/
+    Multi-port: configurable write/read port lists.
+
+    `portKind` states the physical contract the surrounding RTL is written
+    against (see `SRAMPortKind`); `syncRead` is the simulation-side read
+    timing for the fallback model.  Both default to today's behaviour, so a
+    primitive that says nothing is a 1R1W asynchronous-read array. -/
 structure RAMPrimitive where
   name       : String
   depth      : Nat         -- number of entries
@@ -146,6 +173,7 @@ structure RAMPrimitive where
   readPorts  : List RAMReadPort
   syncRead   : Bool := false  -- false → Mem (async), true → SyncReadMem (sync)
   clock      : Wire
+  portKind   : SRAMPortKind := .r1w1
   deriving Repr, Hashable
 
 /-- Syntactic property for SystemVerilog Assertion (SVA) emission.

@@ -475,8 +475,12 @@ Lean proofs alone do not watch cache semantics over time. Added suite:
   refill populate, LRU victim selection, dirty-writeback data integrity,
   FENCE.I drain, miss/hit-under-miss.
 - RISC-V system tests (`testbench/tests/`): store-to-load forwarding
-  (`store_fwd_test.c`), `fence.i` self-modifying code, cache-thrash stride
-  loops — run by the existing `run-all-tests` / cosim targets.
+  (`store_fwd_test.c`), the `fence.i` slot-1 predecessor regression
+  (`serialize_pair_test.S`), the `fence.i` self-modifying-code case
+  (`fence_i_test.c`: store code, fence, execute it — covers the L1D dirty
+  writeback + L1I invalidate ordering), cache-thrash stride loops — run by the
+  existing `run-all-tests` / cosim targets.  Design notes for the three
+  serialize defects live in `testbench/fence_i_regression/README.md`.
 - Hooked into `verification/smoke-test.sh` so CI keeps them alive.
 
 ## 16. Lint & synthesis acceptance (DC-NXT-friendly, Yosys-checked)

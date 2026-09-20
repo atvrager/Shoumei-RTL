@@ -21,9 +21,9 @@ static inline void fence_i(void) {
 }
 
 int main(void) {
-    unsigned char *src = (unsigned char *)(void *)prog_set_sink;
-    size_t srclen = ((unsigned char *)(void *)prog_clear_sink) - src;
-    if (srclen + 4 > sizeof(code_buf)) { fail(1); while (1) {} }
+    const unsigned char *src = (const unsigned char *)(const void *)prog_set_sink;
+    size_t srclen = ((const unsigned char *)(const void *)prog_clear_sink) - src;
+    if (srclen + 4 >= sizeof(code_buf)) { fail(1); while (1) {} }
 
     prog_clear_sink();
     for (size_t i = 0; i < srclen; i++) code_buf[i] = src[i];
@@ -43,8 +43,6 @@ int main(void) {
     while (1) {}
 }
 
-/* KNOWN-ISSUE: on the current CPU the fetched 32B line containing the
-   self-modified copy is not refreshed after fence.i, so this test hangs
-   (fetch executes stale bytes).  Kept as a documented regression for the
-   memory-system rework (I-flush on fence.i); excluded from the default
-   TESTS list until fixed. */
+/* fence.i here must: (1) drain the pipeline, (2) write the L1D's dirty lines
+   back to the L2, (3) invalidate the L1I, and only then let the core redirect -
+   otherwise the call below executes the stale bytes of the fetched line. */

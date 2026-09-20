@@ -54,23 +54,27 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
     without altering circuit structure, or when the set of emitted formats
     changes.  The cache key includes this version, so a bump invalidates every
     cached output and forces a full regeneration. -/
-def codegenVersion : String := "pdk-techmap-2026-09-20c"
+def codegenVersion : String := "geom64-dpi-2026-09-20g"
 
-/-- Check if circuit hash matches cached value (and the codegen version). -/
+-- Output paths (centralized configuration)
+def svOutputDir : String := "output/sv-from-lean"
+
+/-- Check if circuit hash matches cached value (and the codegen version).
+    Also requires the emitted module to still exist: deleting an output (or
+    cleaning the directory) must regenerate it, and the hash file alone would
+    otherwise report the circuit as up to date. -/
 def isUpToDate (name : String) (h : UInt64) : IO Bool := do
   let path := s!"{cacheDir}/{name}.hash"
-  if ← System.FilePath.pathExists path then
-    let stored ← IO.FS.readFile path
-    return stored.trimAscii.toString == s!"{codegenVersion}:{h}"
-  return false
+  unless (← System.FilePath.pathExists path) do return false
+  unless (← System.FilePath.pathExists s!"{svOutputDir}/{name}.sv") do return false
+  let stored ← IO.FS.readFile path
+  return stored.trimAscii.toString == s!"{codegenVersion}:{h}"
 
 /-- Write circuit hash to cache (tagged with the codegen version). -/
 def updateCache (name : String) (h : UInt64) : IO Unit := do
   IO.FS.createDirAll cacheDir
   IO.FS.writeFile s!"{cacheDir}/{name}.hash" s!"{codegenVersion}:{h}"
 
--- Output paths (centralized configuration)
-def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
 def cppSimOutputDir : String := "output/cpp_sim"
 def pdkOutputDir : PDK → String

@@ -2,7 +2,10 @@ RISCV_PREFIX ?= $(shell command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 && ec
 CC      = $(RISCV_PREFIX)gcc
 CFLAGS  = -march=rv64im_zicsr_zifencei -mabi=lp64 -O2 -nostdlib -nostartfiles -ffreestanding
 LDFLAGS = -T shoumei.ld -nostdlib -Wl,--no-relax
-TESTS   = store_fwd_stress pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test subword_store_test sltiu_test ipc_loop csr_test hello_test branch_flush_x0_test mepc_only_test trap_csr_test ecall_test mret_test wfi_test timer_irq_test ss_independent_test ss_dependent_test minstret_test jalr_a0_test jal_ret_flush_test jalr_a0_irq_test test_zba test_zbs test_zbb test_zbc test_illegal_fallback
+TESTS   = store_fwd_stress pass_test dep_test addi_test lui_auipc_test jal_jalr_test branch_test store_load_test subword_store_test sltiu_test ipc_loop csr_test hello_test branch_flush_x0_test mepc_only_test trap_csr_test ecall_test mret_test wfi_test timer_irq_test ss_independent_test ss_dependent_test minstret_test jalr_a0_test jal_ret_flush_test jalr_a0_irq_test test_zba test_zbs test_zbb test_zbc test_illegal_fallback serialize_pair_test fence_i_test
+
+# Self-contained assembly tests (own _start; no crt0.S)
+ASM_TESTS = serialize_pair_test
 
 # Generated assembly tests (self-contained, include their own _start)
 GEN_ASM    := $(wildcard generated/*.S)
@@ -42,6 +45,10 @@ all: $(TESTS:=.elf) nan_boxing.elf $(GEN_INT_ELFS) $(GEN_FP_ELFS) freertos_demo.
 %.elf: %.c crt0.S shoumei.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) crt0.S $< -o $@
 
+# Self-contained assembly tests bring their own _start (no crt0.S)
+$(ASM_TESTS:=.elf): %.elf: %.S shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
 nan_boxing.elf: nan_boxing.c crt0.S shoumei.ld
 	$(CC) $(CFLAGS_FP) $(LDFLAGS) crt0.S $< -o $@
 
@@ -52,6 +59,52 @@ generated/%.elf: generated/%.S shoumei.ld
 # Generated FP tests need rv32imf
 generated/fp_%.elf: generated/fp_%.S shoumei.ld
 	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
+
+# ==========================================================================
+# Benchmark programs (generated/bench/): three march variants.
+# - plain:  rv64im_zicsr_zifencei           (integer-only programs)
+# - fp_*:   rv64imafd_zicsr_zifencei        (F/D programs)
+# - amo_*:  AMO programs; IMAFD already includes A, so the same flags work
+#           (older riscv-gcc rejects the redundant 'a' in rv64imafda).
+# `bench` is NOT part of `all`: run-all-tests globs generated/*.elf
+# non-recursively, so the bench ELFs stay out of the regression suite.
+# ==========================================================================
+BENCH_ASM  := $(wildcard generated/bench/*.S)
+BENCH_ELFS := $(patsubst %.S,%.elf,$(BENCH_ASM))
+CFLAGS_AMO = $(CFLAGS_FP)
+CFLAGS_ZB  = -march=rv64im_zba_zbb_zbc_zbs_zicsr_zifencei -mabi=lp64 -O2 -nostdlib -nostartfiles -ffreestanding
+generated/bench/fp_%.elf: generated/bench/fp_%.S shoumei.ld
+	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
+
+generated/bench/amo_%.elf: generated/bench/amo_%.S shoumei.ld
+	$(CC) $(CFLAGS_AMO) $(LDFLAGS) $< -o $@
+
+generated/bench/zb_%.elf: generated/bench/zb_%.S shoumei.ld
+	$(CC) $(CFLAGS_ZB) $(LDFLAGS) $< -o $@
+generated/bench/%.elf: generated/bench/%.S shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
+bench: $(BENCH_ELFS)
+
+# Reduced-trip-count benchmarks for lock-step cosim (generated/bench-short/).
+# Same programs, 16 loop iterations instead of 256: the region body is
+# identical every iteration, so cosim gets the same instruction coverage for
+# ~1/16 of the simulated cycles.  The full set stays the sim CPI source.
+BENCH_SHORT_ASM  := $(wildcard generated/bench-short/*.S)
+BENCH_SHORT_ELFS := $(patsubst %.S,%.elf,$(BENCH_SHORT_ASM))
+
+generated/bench-short/fp_%.elf: generated/bench-short/fp_%.S shoumei.ld
+	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
+
+generated/bench-short/amo_%.elf: generated/bench-short/amo_%.S shoumei.ld
+	$(CC) $(CFLAGS_AMO) $(LDFLAGS) $< -o $@
+
+generated/bench-short/zb_%.elf: generated/bench-short/zb_%.S shoumei.ld
+	$(CC) $(CFLAGS_ZB) $(LDFLAGS) $< -o $@
+generated/bench-short/%.elf: generated/bench-short/%.S shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
+bench-short: $(BENCH_SHORT_ELFS)
 
 # FreeRTOS demo - special build
 freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld $(FREERTOS_SRCS) $(FREERTOS_PORT_DIR)/portASM.S
@@ -65,4 +118,4 @@ freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld 
 		-o $@
 
 clean:
-	rm -f *.elf *.o generated/*.elf
+	rm -f *.elf *.o generated/*.elf generated/bench/*.elf generated/bench-short/*.elf

@@ -99,6 +99,12 @@ export OUTPUT_DIR
 export TARGET_LIBRARY="$TARGET_LIB"
 export DFF_LIBRARY="$TARGET_LIB"
 export IGNORE_MISS_FUNC=1
+
+# Cache data arrays: SRAM_MACROS=1 binds them to real memory models from
+# the per-process binding layer (see physical/sram-bind/README.md); the
+# default library path is the OpenRAM output of `make sram-macros`.
+export SRAM_MACROS="${SRAM_MACROS:-0}"
+export SRAM_MACRO_LIB="${SRAM_MACRO_LIB:-$PROJECT_ROOT/third_party/sram-macros/gf180mcu}"
 export ABC_DRIVER_CELL="gf180mcu_fd_sc_mcu${TRACK_OPTION}${VOLTAGE_OPTION}__buf_4"
 export ABC_LOAD_IN_FF="13.43"
 

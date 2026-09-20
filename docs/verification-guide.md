@@ -240,6 +240,13 @@ make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-st
 ./verification/smoke-test.sh                              # CI smoke tests
 ```
 
+`run-cosim` sweeps the same ELF set as `run-all-tests` plus the generated
+benchmark programs (`testbench/tests/generated/bench/*.elf`, built by the
+`bench` dependency): the ISA suites, the hand-written custom tests, and every
+benchmark body, all compared retirement-by-retirement against Spike.  A
+benchmark that silently executes the wrong instruction stream therefore fails
+cosim even when its own region check still passes.
+
 ### Via Make
 
 ```bash

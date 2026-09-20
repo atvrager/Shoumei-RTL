@@ -32,11 +32,22 @@ LOG=$(mktemp); trap 'rm -f "$LOG"' EXIT
 
 echo "==> DC-NXT-style lint (Yosys proxy): $SV_DIR"
 
+# A synthesis flow never sees the DPI simulation models: it selects the
+# `SHOUMEI_SRAM_MACROS` branch and binds real macros.  Mirror that here -
+# define the macro and read behavioural stubs for exactly the geometries the
+# RTL instantiates - so the lint exercises the same RTL that is synthesised.
+# (Yosys cannot parse `import "DPI-C"`, which is simulation-only syntax.)
+STUB_DIR=$(mktemp -d); trap 'rm -rf "$STUB_DIR"' EXIT
+"$PROJECT_ROOT/scripts/gen-sram-macros.sh" --stub --out "$STUB_DIR" > /dev/null
+
 # Build the aggressive Yosys script
 SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
 {
-  find "$SV_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
+  find "$STUB_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
     echo "read_verilog -sv -nolatches \"$f\""
+  done
+  find "$SV_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
+    echo "read_verilog -sv -nolatches -DSHOUMEI_SRAM_MACROS \"$f\""
   done
   echo "hierarchy -auto-top -check"
   echo "proc; opt"

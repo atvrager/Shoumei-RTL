@@ -35,6 +35,7 @@ static uint64_t g_next_sample_time;
 static int g_clock_period = 2;
 static int g_when_idx = -1;
 static std::string g_when_val;
+static bool g_raw = false;
 
 static std::string format_value(const std::string& raw, uint32_t width) {
     if (width == 1) return raw;
@@ -51,6 +52,15 @@ static std::string format_value(const std::string& raw, uint32_t width) {
 
 static void emit_row() {
     if (g_when_idx >= 0 && g_signals[g_when_idx].value != g_when_val) return;
+    if (g_raw) {
+        // One line per signal: "<cycle> <name> <value>", value hex-formatted;
+        // machine-readable for scripts (python scripts/fst_probe.py).
+        for (size_t i = 0; i < g_signals.size(); i++) {
+            printf("%lu %s %s\n", g_current_cy, g_signals[i].name.c_str(),
+                   format_value(g_signals[i].value, g_signals[i].width).c_str());
+        }
+        return;
+    }
     printf("%6lu | ", g_current_cy);
     for (size_t i = 0; i < g_signals.size(); i++) {
         std::string fv = format_value(g_signals[i].value, g_signals[i].width);
@@ -82,7 +92,7 @@ static void value_change_cb2(void*, uint64_t time, fstHandle handle, const unsig
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file.fst> [--list [pattern]] [--cycles S-E --signals s1,s2 [--when sig=val]]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <file.fst> [--list [pattern]] [--cycles S-E --signals s1,s2 [--when sig=val]] [--raw]\n", argv[0]);
         return 1;
     }
 
@@ -98,6 +108,8 @@ int main(int argc, char** argv) {
         if (strcmp(argv[i], "--list") == 0) {
             do_list = true;
             if (i + 1 < argc && argv[i+1][0] != '-') list_pattern = argv[++i];
+        } else if (strcmp(argv[i], "--raw") == 0) {
+            g_raw = true;
         } else if (strcmp(argv[i], "--signals") == 0 && i + 1 < argc) {
             signals_str = argv[++i];
         } else if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc) {
@@ -227,16 +239,18 @@ int main(int argc, char** argv) {
 
     // Column widths + header
     for (auto& s : g_signals) g_col_widths.push_back(std::max((int)s.name.size(), 10));
-    printf("%6s | ", "cy");
-    for (size_t i = 0; i < g_signals.size(); i++) {
-        printf("%*s", g_col_widths[i], g_signals[i].name.c_str());
-        if (i + 1 < g_signals.size()) printf(" | ");
+    if (!g_raw) {
+      printf("%6s | ", "cy");
+      for (size_t i = 0; i < g_signals.size(); i++) {
+          printf("%*s", g_col_widths[i], g_signals[i].name.c_str());
+          if (i + 1 < g_signals.size()) printf(" | ");
+      }
+      printf("\n");
+      int hdr_len = 9;
+      for (size_t i = 0; i < g_signals.size(); i++) hdr_len += g_col_widths[i] + 3;
+      for (int i = 0; i < hdr_len; i++) putchar('-');
+      putchar('\n');
     }
-    printf("\n");
-    int hdr_len = 9;
-    for (size_t i = 0; i < g_signals.size(); i++) hdr_len += g_col_widths[i] + 3;
-    for (int i = 0; i < hdr_len; i++) putchar('-');
-    putchar('\n');
 
     // Set time range and iterate
     uint64_t t_start = g_cy_start * g_clock_period;

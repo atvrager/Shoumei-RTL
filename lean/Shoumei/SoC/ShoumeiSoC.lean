@@ -69,13 +69,15 @@ def mkShoumeiSoC (config : CPUConfig) : Circuit :=
   let gpio_oen := (List.range 8).map fun i => Wire.mk s!"gpio_oen_{i}"
   let gpio_irq := Wire.mk "gpio_irq"
 
-  -- Main Memory Interface (External DRAM / backing store)
+  -- Main Memory Interface (External DRAM / backing store): one cache line per
+  -- transaction, so the width follows the configured line size.
+  let lineBits := config.cacheGeom.lineBytes * 8
   let mem_resp_valid := Wire.mk "mem_resp_valid"
-  let mem_resp_data := (List.range 256).map fun i => Wire.mk s!"mem_resp_data_{i}"
+  let mem_resp_data := (List.range lineBits).map fun i => Wire.mk s!"mem_resp_data_{i}"
   let mem_req_valid := Wire.mk "mem_req_valid"
   let mem_req_addr := (List.range 32).map fun i => Wire.mk s!"mem_req_addr_{i}"
   let mem_req_we := Wire.mk "mem_req_we"
-  let mem_req_data := (List.range 256).map fun i => Wire.mk s!"mem_req_data_{i}"
+  let mem_req_data := (List.range lineBits).map fun i => Wire.mk s!"mem_req_data_{i}"
   let rob_empty := Wire.mk "rob_empty"
 
   -- Internal CPU store snoop (used to feed TileLink master Channel A)

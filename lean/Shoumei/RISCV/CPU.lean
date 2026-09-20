@@ -166,6 +166,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fence_i_start := Wire.mk "fence_i_start"
   let fence_i_drain_complete := Wire.mk "fence_i_drain_complete"
   let fence_i_suppress := Wire.mk "fence_i_suppress"
+  -- L1D flush-in-progress (from the memory hierarchy); blocks fence.i drain completion
+  let fence_i_busy := Wire.mk "fence_i_busy"
   let fence_i_detected_0 := Wire.mk "fi_det_s0"
   let fence_i_detected_1 := Wire.mk "fi_det_s1"
   let fence_i_detected := Wire.mk "fence_i_detected"
@@ -431,9 +433,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND csr_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "csr_sel_s0"),
      Gate.mkAND csr_detected_1 ser_slot_sel (Wire.mk "csr_sel_s1"),
      Gate.mkOR (Wire.mk "csr_sel_s0") (Wire.mk "csr_sel_s1") (Wire.mk "csr_selected"),
-     -- fence_i_selected (use raw match signals, valid gating already in ser_dv0/1)
-     Gate.mkAND fence_i_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "fi_sel_s0"),
-     Gate.mkAND fence_i_detected_1 ser_slot_sel (Wire.mk "fi_sel_s1"),
+     -- fence_i_selected (gated by ser_dv0/1 so stale L1I refill data can't start a drain)
+     Gate.mkAND (Wire.mk "fi_det_0_gated") (Wire.mk "not_ser_slot") (Wire.mk "fi_sel_s0"),
+     Gate.mkAND (Wire.mk "fi_det_1_gated") ser_slot_sel (Wire.mk "fi_sel_s1"),
      Gate.mkOR (Wire.mk "fi_sel_s0") (Wire.mk "fi_sel_s1") (Wire.mk "fi_selected"),
      -- wfi_selected
      Gate.mkAND wfi_detected_0 (Wire.mk "not_ser_slot") (Wire.mk "wfi_sel_s0"),
@@ -479,7 +481,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkAND (Wire.mk "hw_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "hw_dc_tmp2"),
        Gate.mkNOT (Wire.mk "fence_start_delayed") (Wire.mk "not_fsd"),
        Gate.mkAND (Wire.mk "hw_dc_tmp2") (Wire.mk "not_fsd") (Wire.mk "hw_dc_tmp3"),
-       Gate.mkAND (Wire.mk "hw_dc_tmp3") (Wire.mk "ser_not_flush") hw_drain_complete,
+       -- A fence.i drain also waits for the L1D to have written its dirty lines
+       -- back: the I-side may only re-fetch once the stored code is in the L2.
+       Gate.mkNOT fence_i_busy (Wire.mk "not_fi_busy"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp3") (Wire.mk "not_fi_busy") (Wire.mk "hw_dc_tmp4"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp4") (Wire.mk "ser_not_flush") hw_drain_complete,
        -- draining_next for hw path: set by hw_csr_fence_start, held by hw_draining_reg until hw_drain_complete
        Gate.mkOR hw_csr_fence_start hw_draining_reg (Wire.mk "hw_set_or"),
        Gate.mkNOT hw_drain_complete (Wire.mk "hw_not_dc"),
@@ -532,6 +538,35 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkBUF zero useq_mstatus_trap,
        Gate.mkBUF zero useq_mstatus_mret,
        Gate.mkBUF zero (Wire.mk "irq_inject")]
+
+  -- === INSTRUCTION-CACHE INVALIDATE (fence.i) ===
+  -- fence.i orders prior stores before subsequent fetches.  The I-side invalidate
+  -- (L1I valid clear + L1D dirty writeback, in the memory hierarchy) may only be
+  -- issued once the pipeline has drained (rob_empty) and every prior store has
+  -- reached the L1D (lsu_sb_empty) - otherwise a store still in flight would land
+  -- in the cache after the flush.  The request is a one-shot pulse; the drain then
+  -- waits for `fence_i_busy` to drop before redirecting (see hw_drain_complete).
+  let icache_fence_i := Wire.mk "icache_fence_i"
+  let fi_drain_q := Wire.mk "fi_drain_q"
+  let fi_drain_d := Wire.mk "fi_drain_d"
+  let fi_order_ok := Wire.mk "fi_order_ok"
+  let fi_sent_q := Wire.mk "fi_sent_q"
+  let fi_sent_d := Wire.mk "fi_sent_d"
+  let icache_fence_gates :=
+    [-- latch: the drain in progress (if any) is a fence.i drain
+     Gate.mkAND fence_i_start (Wire.mk "fi_selected") (Wire.mk "fi_drain_set"),
+     Gate.mkAND fence_i_draining fi_drain_q (Wire.mk "fi_drain_hold"),
+     Gate.mkOR (Wire.mk "fi_drain_hold") (Wire.mk "fi_drain_set") fi_drain_d,
+     -- ordering window: drained and stores are in the L1D
+     Gate.mkAND fi_drain_q rob_empty (Wire.mk "fi_ord_pre"),
+     Gate.mkAND (Wire.mk "fi_ord_pre") (Wire.mk "lsu_sb_empty") fi_order_ok,
+     -- one-shot request per drain; the "sent" bit clears with the drain
+     Gate.mkNOT fi_sent_q (Wire.mk "not_fi_sent"),
+     Gate.mkAND fi_order_ok (Wire.mk "not_fi_sent") icache_fence_i,
+     Gate.mkOR fi_sent_q fi_order_ok (Wire.mk "fi_sent_pre"),
+     Gate.mkAND fi_drain_q (Wire.mk "fi_sent_pre") fi_sent_d,
+     Gate.mkDFF fi_drain_d clock reset fi_drain_q,
+     Gate.mkDFF fi_sent_d clock reset fi_sent_q]
 
   -- PC+4 of serializing instruction (MUX between slot 0 PC and slot 1 PC, then add 4)
   let ser_pc_muxed := CPU.makeIndexedWires "ser_pc_muxed" 32
@@ -906,18 +941,30 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fetch_valid_1 := Wire.mk "fetch_valid_1"
   let d0_valid := Wire.mk "d0_valid_gated"
   let d1_valid := Wire.mk "d1_valid_gated"
+  -- During an L1I refill (`fetch_stall_ext` high), the cache presents the stale
+  -- contents of the set being refilled; the fetch stage keeps its PC frozen but
+  -- its instruction output is combinational from the cache.  Mask the decode
+  -- inputs so a stale line (e.g. leftover fence.i bytes) can never serialize or
+  -- trap mid-refill.  The L1I's req_valid path must stay ungated (its REFILL_DONE
+  -- state hands back on the request edge), which is why this masks decode only.
+  let not_fs_ext := Wire.mk "not_fs_ext"
+  let fetch_valid_0_mask := Wire.mk "fetch_valid_0_mask"
+  let fetch_valid_1_mask := Wire.mk "fetch_valid_1_mask"
   -- Gate slot 1 by NOT(ifetch_last_word): when PC is at last word of cache line,
   -- slot 1 data wraps around (invalid). Force slot 1 invalid so next cycle refetches.
   let fetch_valid_1_masked := Wire.mk "fetch_valid_1_masked"
   let fetch_valid_gates :=
-    [Gate.mkAND d0_valid_raw fetch_valid_0 d0_valid,
+    [Gate.mkNOT fetch_stall_ext not_fs_ext,
+     Gate.mkAND fetch_valid_0 not_fs_ext fetch_valid_0_mask,
+     Gate.mkAND d0_valid_raw fetch_valid_0_mask d0_valid,
      Gate.mkNOT d0_valid_raw (Wire.mk "not_d0_valid_raw"),
-     Gate.mkAND fetch_valid_0 (Wire.mk "not_d0_valid_raw") (Wire.mk "d0_unknown_raw"),
+     Gate.mkAND fetch_valid_0_mask (Wire.mk "not_d0_valid_raw") (Wire.mk "d0_unknown_raw"),
      Gate.mkNOT ifetch_last_word (Wire.mk "not_last_word"),
      Gate.mkAND fetch_valid_1 (Wire.mk "not_last_word") fetch_valid_1_masked,
-     Gate.mkAND d1_valid_raw fetch_valid_1_masked d1_valid,
+     Gate.mkAND fetch_valid_1_masked not_fs_ext fetch_valid_1_mask,
+     Gate.mkAND d1_valid_raw fetch_valid_1_mask d1_valid,
      Gate.mkNOT d1_valid_raw (Wire.mk "not_d1_valid_raw"),
-     Gate.mkAND fetch_valid_1_masked (Wire.mk "not_d1_valid_raw") (Wire.mk "d1_unknown_raw")]
+     Gate.mkAND fetch_valid_1_mask (Wire.mk "not_d1_valid_raw") (Wire.mk "d1_unknown_raw")]
 
   -- === PIPELINE CONTROL ===
   let rob_full := Wire.mk "rob_full"
@@ -1821,7 +1868,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                [("cdb_valid_1", cdb_valid_1), ("cdb_is_fp_1", cdb_is_fp_1)] ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++
                bundledPorts "cdb_data_1" (if config.xlen == 64 then cdb_data_1 else cdb_data32_1) ++
-               [("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
+               [("dispatch_en_0", Wire.mk "ib0_fifo_enq_ready"),
+                ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
                 ("suppress_cdb_s1_1", Wire.mk "busy_raw_s1_hit"),
                 ("suppress_cdb_s2_1", Wire.mk "busy_raw_s2_hit"),
                 ("alloc_avail_0", Wire.mk "rs_int_avail_0"),
@@ -4034,25 +4082,70 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      else [Gate.mkBUF zero rs_fp_issue_full])
 
   -- === STALL GENERATION ===
-  -- Cache line boundary: when fetch_pc word offset = 7 (bits [4:2] = 111),
-  -- the L1I can only return one valid word (slot 1 would wrap to wrong line).
-  -- Force half_step so only slot 0 dispatches and fetch advances by 4.
+  -- Cache line boundary: the L1I returns one line per request, so when the
+  -- fetch PC sits on the last word of a line, slot 1 would address the next
+  -- line, which the L1I did not fetch.  Force half_step so only slot 0
+  -- dispatches and the fetch PC advances by 4.
+  --
+  -- The boundary is word offset == lineWords-1, i.e. every bit of the word
+  -- index (PC bits [2 .. 2+log2(lineWords)-1]) set.  Derived from the
+  -- configured line so a wider line moves the boundary: the default 8-word
+  -- (32 B) line puts it at word 7 (bits [4:2]), a 16-word (64 B) line at
+  -- word 15 (bits [5:2]).
   let cache_line_boundary := Wire.mk "cache_line_boundary"
+  let clbBits := (List.range (log2Ceil config.cacheGeom.lineWords)).map (fun i => fetch_pc_0[2 + i]!)
   let clb_gates :=
-    [Gate.mkAND fetch_pc_0[2]! fetch_pc_0[3]! (Wire.mk "clb_23"),
-     Gate.mkAND (Wire.mk "clb_23") fetch_pc_0[4]! cache_line_boundary]
+    match clbBits with
+    | [] => [Gate.mkBUF zero cache_line_boundary]
+    | [b] => [Gate.mkBUF b cache_line_boundary]
+    | b0 :: rest =>
+        -- AND-reduce the index bits; the i-th partial result ANDs bits
+        -- (2+i) and (3+i), so the default geometry keeps the name `clb_23`.
+        let outs := (List.range (rest.length - 1)).map (fun i => Wire.mk s!"clb_{2 + i}{3 + i}") ++
+                    [cache_line_boundary]
+        let (gs, _) := (rest.zip outs).foldl
+          (fun (acc : List Gate × Wire) (bo : Wire × Wire) =>
+            (acc.1 ++ [Gate.mkAND acc.2 bo.1 bo.2], bo.2))
+          ([], b0)
+        gs
+
+  -- Serialize in slot 1 with a live slot-0 predecessor: defer the serialize one cycle
+  -- instead of suppressing both slots and redirecting past the predecessor.  The forced
+  -- half_step masks slot 1 and advances the fetch PC by 4, so the predecessor dispatches
+  -- alone and the serialize is re-presented in slot 0 next cycle, where the drain takes
+  -- its well-tested slot-0-selected path.
+  --
+  -- Only fence.i and WFI need this: their drain asserts fi_start_nocsr, which suppresses
+  -- slot 0 on the start cycle itself.  CSR and the trap-class ops (ECALL/MRET/illegal)
+  -- already let slot 0 dispatch, and for those the trap must keep mepc on the serializing
+  -- instruction, so deferring them would move mepc onto a predecessor that has retired.
+  -- An interrupt injection is likewise excluded: slot 0 retires before the sequencer
+  -- redirects, so mepc (slot-1 selected) is already the right resume point.
+  let ser_s1_defer := Wire.mk "ser_s1_defer"
+  let ser_defer_gates :=
+    [Gate.mkNOT (Wire.mk "ser_s0_any") (Wire.mk "ser_def_not_s0"),
+     Gate.mkOR fence_i_detected_1 (Wire.mk "wfi_match_1") (Wire.mk "ser_def_s1op"),
+     Gate.mkAND (Wire.mk "ser_def_not_s0") (Wire.mk "ser_def_s1op") (Wire.mk "ser_def_s1pred"),
+     Gate.mkAND (Wire.mk "ser_def_s1pred") d0_valid_raw (Wire.mk "ser_def_p0"),
+     Gate.mkNOT (Wire.mk "irq_inject") (Wire.mk "ser_def_no_irq"),
+     Gate.mkAND (Wire.mk "ser_def_p0") (Wire.mk "ser_def_no_irq") (Wire.mk "ser_def_p1"),
+     Gate.mkAND (Wire.mk "ser_def_p1") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_def_p2"),
+     Gate.mkAND (Wire.mk "ser_def_p2") (Wire.mk "ser_not_fse") (Wire.mk "ser_def_p3"),
+     Gate.mkAND (Wire.mk "ser_def_p3") (Wire.mk "ser_not_stall") (Wire.mk "ser_def_p4"),
+     Gate.mkAND (Wire.mk "ser_def_p4") fence_i_not_draining ser_s1_defer]
 
   -- any_dual_stall: suppress slot 1 dispatch + hold fetch, but don't block slot 0
   let any_dual_stall := Wire.mk "any_dual_stall"
   let not_dual_stall := Wire.mk "not_dual_stall"
-  let stall_gates :=
+  let stall_gates := ser_defer_gates ++
     if enableM then
       [Gate.mkOR br_dual_stall mem_dual_stall (Wire.mk "dual_stall_bm"),
        Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall (Wire.mk "dual_stall_bmm"),
        Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall (Wire.mk "dual_stall_bmmf"),
        Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfc") ser_s1_defer (Wire.mk "dual_stall_def"),
        -- One ROB slot left: a 2-wide alloc would overflow the 16-entry ROB.
-       Gate.mkOR (Wire.mk "dual_stall_bmmfc") rob_nearly_full any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
@@ -4064,7 +4157,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       [Gate.mkOR br_dual_stall cache_line_boundary (Wire.mk "dual_stall_xc"),
-       Gate.mkOR (Wire.mk "dual_stall_xc") rob_nearly_full any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_xc") ser_s1_defer (Wire.mk "dual_stall_def"),
+       Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
        Gate.mkOR rs_br_issue_full zero (Wire.mk "stall_L0_c"),
@@ -4107,6 +4201,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- CSR drain_complete: fires when pipeline fully drained AND the serialized op was a CSR
   let csr_drain_complete := Wire.mk "csr_drain_complete"
   let csr_drain_gate := [Gate.mkAND fence_i_drain_complete csr_flag_reg csr_drain_complete]
+  let all_drain_complete := Wire.mk "all_drain_complete"
+  let all_drain_gate := [Gate.mkOR csr_drain_complete fallback_cdb_inject all_drain_complete]
+  let csr_retire_valid_1 := Wire.mk "csr_retire_valid_1"
+  let csr_retire_valid_1_gate := [Gate.mkOR retire_valid_1 fallback_cdb_inject csr_retire_valid_1]
 
   let csrDataWidth := if config.xlen == 64 || config.enableD then 64 else 32
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
@@ -4143,7 +4241,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (useq_write_data.enum.map fun ⟨i, w⟩ => (s!"useq_write_data_{i}", w))
     else []) ++
     [("retire_valid_0", retire_valid_0),
-     ("retire_valid_1", retire_valid_1),
+     ("retire_valid_1", csr_retire_valid_1),
      ("mtip_in", Wire.mk "mtip_in"),
      ("msip_in", Wire.mk "msip_in"),
      ("meip_in", Wire.mk "meip_in")] ++
@@ -4235,7 +4333,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND pipeline_reset_misc not_csr_flush_suppress cdb_reset]
 
   -- Collect all CSR gates
-  let csr_all_gates := csr_drain_gate ++ all_cdb_inject_gate ++ cdb_inj_data_gates ++
+  let csr_all_gates := csr_drain_gate ++ all_drain_gate ++ csr_retire_valid_1_gate ++
+    all_cdb_inject_gate ++ cdb_inj_data_gates ++
     cdb_inj_tag_gates ++
     csr_commit_inject_gates ++ rename_buf_gates ++
     csr_cdb_channel_inject_gates ++ csr_cdb_reset_gates
@@ -4293,13 +4392,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- on the same cycle as drain_complete), emit the CSR RVVI on SLOT 1.
   -- At drain_complete, ROB is empty so retire_valid_1=0, no conflict.
   let csr_rd_nonzero_w := Wire.mk "csr_rd_nonzero"  -- already defined above
-  let all_drain_complete := Wire.mk "all_drain_complete"
-  let all_drain_gate := [Gate.mkOR csr_drain_complete fallback_cdb_inject all_drain_complete]
   let rvvi_gates :=
     (if config.enableZicsr then
-      all_drain_gate ++
       [Gate.mkBUF retire_valid_0 rvvi_valid_0,
-       -- rvvi_valid_1 = retire_valid_1 OR all_drain_complete
        Gate.mkOR retire_valid_1 all_drain_complete rvvi_valid_1,
        -- trap: CSR / fallback retires are not traps
        Gate.mkAND rob_head_exception_0 retire_valid_0 rvvi_trap_0,
@@ -4370,10 +4465,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     inputs := [clock, reset, zero, one, fetch_stall_ext, ifetch_last_word, dmem_stall_ext] ++
               imem_resp_data_0 ++ imem_resp_data_1 ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
-              [Wire.mk "mtip_in", Wire.mk "msip_in", Wire.mk "meip_in"]
+              [Wire.mk "mtip_in", Wire.mk "msip_in", Wire.mk "meip_in",
+               -- L1D fence.i writeback in progress (memory hierarchy)
+               fence_i_busy]
     outputs := fetch_pc_0 ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
-               [rob_empty] ++
+               [rob_empty, icache_fence_i] ++
                [rvvi_valid_0, rvvi_valid_1,
                 rvvi_trap_0, rvvi_trap_1,
                 rvvi_rd_valid_0, rvvi_rd_valid_1] ++
@@ -4382,6 +4479,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                rvvi_rd_0 ++ rvvi_rd_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ has_rd_int_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
+             icache_fence_gates ++
              dual_stall_gates ++ int_de1_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++

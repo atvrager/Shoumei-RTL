@@ -972,6 +972,22 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
                  '<p style="margin: 14px 0;"><a style="display:inline-block;padding:9px 18px;background:#1e293b;border:1px solid #4cc9f0;color:#4cc9f0;border-radius:6px;font-weight:600;text-decoration:none;" href="soc-diagram.html">Launch Interactive SoC Diagram &rarr;</a> &nbsp; <span style="font-size:13px;color:#8892b0;">Includes pad ring pinout, TileLink bus flow &amp; block inspector</span></p>'
                  '</div>')
 
+    # Instruction Performance Benchmarks
+    benchmarks_html = out_dir / "benchmarks.html"
+    if benchmarks_html.exists() or Path("output/bench/bench-metrics.csv").exists():
+        parts.append("<h2>Instruction Performance &amp; Benchmarks (CPI / Latency)</h2>")
+        parts.append('<div class="card">'
+                     '<h3>RV64G + Zb* Instruction Performance &mdash; Cycle-Accurate Measurements</h3>'
+                     '<div class="note">Measured cycle-accurate throughput and latency across all 171 instructions on Shoumei RTL</div>'
+                     '<p style="margin: 14px 0;"><a style="display:inline-block;padding:9px 18px;background:#1e293b;border:1px solid #4cc9f0;color:#4cc9f0;border-radius:6px;font-weight:600;text-decoration:none;" href="benchmarks.html">View Instruction Benchmark Results &rarr;</a> &nbsp; <span style="font-size:13px;color:#8892b0;">Interactive table with search, extension filters &amp; pipeline metrics</span></p>'
+                     '<div class="meta" style="font-size:12px;color:#94a3b8;line-height:1.6;margin-top:10px;padding-top:10px;border-top:1px solid #334155;">'
+                     '<strong style="color:#f59e0b;">Architectural Caveats:</strong><br/>'
+                     '&bull; <em>Microcoded Zb* bitmanip (sh1add, bset, clmul, etc.):</em> Emulated via microcode fallback (<code>FallbackSequencer</code>), serializing the pipeline (~5.9 CPI &mdash; <em>these are microcoded and thus suck</em> &#128521;). Dedicated single-cycle execution units planned for future revisions.<br/>'
+                     '&bull; <em>Atomic memory operations (AMO):</em> Serialized through the Store Buffer and memory hierarchy boundary.<br/>'
+                     '&bull; <em>CSR instructions:</em> Pipeline-serialized; execute via <code>CSRFile</code> and do not increment <code>minstret</code> in hardware.'
+                     '</div>'
+                     '</div>')
+
     for name, tree in trees.items():
         title = SOURCE_TITLE.get(name, name)
         note = f'{tree["size"]:,} {tree["unit"]} total · click a figure for full size'

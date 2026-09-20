@@ -108,6 +108,10 @@ codegen: lean opcodes
 	lake --no-ansi exe generate_all --export-certs > verification/compositional-certs.txt
 	@echo "    Phase 3: Generating architecture diagram..."
 	-python3 scripts/gen-architecture-diagram.py --png 2>/dev/null || true
+	@echo "    Phase 4: Generating benchmark programs (SV assembly + manifest)..."
+	lake --no-ansi exe gen_benchmarks
+	@echo "    Phase 5: Generating reduced-trip-count benchmarks (cosim)..."
+	lake --no-ansi exe gen_benchmarks --short
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # generate_all dynamically generates filelists for all physical/*_synth.sv wrappers
@@ -222,28 +226,30 @@ architecture-visuals:
 
 
 # Build debugging tools
-FST_INC := -I/usr/share/verilator/include/gtkwave '-DFST_CONFIG_INCLUDE="fstapi.h"'
-# Use system liblz4 if available, otherwise build from /tmp/lz4-src (clone from github.com/lz4/lz4)
+# fstapi.c is no longer shipped by Verilator 5; vendor it via the libfst
+# submodule (same revision gtkwave pins). fastlz ships with libfst; lz4
+# prefers the system library and falls back to libfst's own lz4.c.
+FSTAPI_DIR := third_party/libfst/src
+FST_INC := -I$(FSTAPI_DIR) '-DFST_CONFIG_INCLUDE="fstapi.h"'
 FST_LZ4_SYS := $(shell pkg-config --cflags --libs liblz4 2>/dev/null)
-FST_LZ4_LOCAL := $(wildcard /tmp/lz4-src/lib/lz4.c)
 ifdef FST_LZ4_SYS
-  FST_LZ4_CFLAGS :=
   FST_LZ4_OBJ :=
   FST_LZ4_LIBS := $(FST_LZ4_SYS)
-else ifdef FST_LZ4_LOCAL
-  FST_LZ4_CFLAGS := -I/tmp/lz4-src/lib
+else
   FST_LZ4_OBJ := /tmp/lz4.o
   FST_LZ4_LIBS :=
-else
-  $(error "liblz4-dev not found and /tmp/lz4-src missing. Install liblz4-dev or: git clone --depth 1 https://github.com/lz4/lz4 /tmp/lz4-src")
 endif
 
-scripts/fst_inspect: scripts/fst_inspect.cpp scripts/fst_stubs.c
+third_party/libfst/src/fstapi.c:
+	@echo "==> Fetching libfst submodule..."
+	@git submodule update --init third_party/libfst
+
+scripts/fst_inspect: scripts/fst_inspect.cpp third_party/libfst/src/fstapi.c
 	@echo "==> Building fst_inspect..."
-	@gcc -c -O2 $(FST_INC) $(FST_LZ4_CFLAGS) /usr/share/verilator/include/gtkwave/fstapi.c -o /tmp/fstapi.o
-	@gcc -c -O2 scripts/fst_stubs.c -o /tmp/fst_stubs.o
-	$(if $(FST_LZ4_OBJ),@gcc -c -O2 -I/tmp/lz4-src/lib /tmp/lz4-src/lib/lz4.c -o $(FST_LZ4_OBJ))
-	@g++ -O2 $(FST_INC) $(FST_LZ4_CFLAGS) -o $@ $< /tmp/fstapi.o /tmp/fst_stubs.o $(FST_LZ4_OBJ) -lz -lpthread $(FST_LZ4_LIBS)
+	@gcc -c -O2 $(FST_INC) third_party/libfst/src/fstapi.c -o /tmp/fstapi.o
+	@gcc -c -O2 -I$(FSTAPI_DIR) third_party/libfst/src/fastlz.c -o /tmp/fastlz.o
+	$(if $(FST_LZ4_OBJ),@gcc -c -O2 -I$(FSTAPI_DIR) third_party/libfst/src/lz4.c -o $(FST_LZ4_OBJ))
+	@g++ -O2 $(FST_INC) -o $@ $< /tmp/fstapi.o /tmp/fastlz.o $(FST_LZ4_OBJ) -lz -lpthread $(FST_LZ4_LIBS)
 	@echo "✓ Built $@"
 
 .PHONY: tools

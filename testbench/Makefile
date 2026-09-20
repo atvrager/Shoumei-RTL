@@ -54,8 +54,8 @@ export OPT_SLOW
 
 # Helper: disable precompiled headers then build (PCH can OOM on large designs)
 define verilator_build
-	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(1)/Vtb_cpu.mk
-	$(MAKE) -C $(1) -f Vtb_cpu.mk -j $(shell nproc) OBJCACHE=$(OBJCACHE) OPT_FAST="$(OPT_FAST)" OPT_SLOW="$(OPT_SLOW)"
+	@sed -i 's/VM_PCH = 1/VM_PCH = 0/' $(1)/V$(2).mk
+	$(MAKE) -C $(1) -f V$(2).mk -j $(shell nproc) OBJCACHE=$(OBJCACHE) OPT_FAST="$(OPT_FAST)" OPT_SLOW="$(OPT_SLOW)"
 endef
 
 # Source files: all SV from Lean + generated testbench
@@ -64,6 +64,12 @@ TB_SOURCES := $(wildcard $(TB_DIR)/generated/tb_*.sv)
 SIM_CPP    := $(TB_DIR)/generated/sim_main_tb_cpu.cpp
 COSIM_CPP  := $(TB_DIR)/generated/cosim_main_tb_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
               $(TB_DIR)/lib/elf_loader.cpp
+
+# DPI-C backing store for the SRAM simulation models (physical/sim-dpi/):
+# one generic byte array per RAMPrimitive, keyed by instance path.  Compiled
+# into every simulation binary; synthesis flows use the SRAM macro branch
+# (SHOUMEI_SRAM_MACROS) instead and never see this file.
+SRAM_DPI_C := $(PROJ_ROOT)/physical/sim-dpi/sram_dpi.c
 
 # Spike paths (override with SPIKE_PREFIX=...)
 SPIKE_PREFIX ?= $(HOME)/.local/spike
@@ -91,7 +97,8 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
 .PHONY: sim sim-trace sim-debug run-elf gen-tests tests riscv-tests run-riscv-tests run-all-tests \
         cosim run-cosim coremark run-coremark clean \
         sim-arc cosim-arc run-all-tests-arc run-cosim-arc \
-        sim-cov run-coverage run-kanata-traces
+        sim-cov run-coverage run-kanata-traces \
+        bench run-benchmarks bench-compare
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
@@ -105,7 +112,7 @@ ARC_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_arc
 
 # Arcilator compiles only the CPU design modules (not the SV testbench).
 # The C++ driver (sim_main_arc.cpp) replaces the SV testbench functionality.
-ARC_TOP_MODULE := CPU_$(CPU_NAME)_L1I256B_L1D256B_L2512B
+ARC_TOP_MODULE := CPU_$(CPU_NAME)_L1I8K_L1D16K_L232K
 
 # Step 0: Preprocess design SV to convert async resets to sync resets
 # circt-verilog emits LLHD (unsupported by arcilator) for async reset always_ff blocks
@@ -163,25 +170,26 @@ $(ARC_COSIM_BIN): $(BUILD_DIR)/arc/cpu.o $(BUILD_DIR)/arc/cpu_arc.h $(TB_DIR)/co
 # Run all tests with arcilator
 run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
-	@$(TB_DIR)/run-suite.sh --mode sim --bin $(ARC_SIM_BIN) --jobs $(shell nproc) --default-timeout 200000 \
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(ARC_SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
 	    --csv $(PROJ_ROOT)/output/test-results-arc.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 # Run cosim with arcilator
-run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests
+run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench-short
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(ARC_COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout-json $(PROJ_ROOT)/output/bench-short/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results-arc.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_SHORT_ELF_GLOBS)
 
 # ==========================================================================
 # Verilator targets
 # ==========================================================================
 
 sim: $(SIM_BIN)
-$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) --cc --exe \
@@ -190,10 +198,12 @@ $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
-	$(call verilator_build,$(BUILD_DIR)/verilator)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
+	$(call verilator_build,$(BUILD_DIR)/verilator,tb_cpu)
 	@echo "Built: $@"
 
+# The MCU-class geometry (64-byte lines, 8K/16K/32K caches) is emitted beside
+# the default one; simulate it with the same test suite.
 sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_trace
 	@mkdir -p $(BUILD_DIR)/verilator_trace
@@ -203,10 +213,11 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
-	$(call verilator_build,$(BUILD_DIR)/verilator_trace)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
+	$(call verilator_build,$(BUILD_DIR)/verilator_trace,tb_cpu)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
+# FST trace of the MCU-class geometry, for debugging it
 sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 	@rm -rf $(BUILD_DIR)/verilator_dbg
 	@mkdir -p $(BUILD_DIR)/verilator_dbg
@@ -217,12 +228,12 @@ sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		-CFLAGS "-std=c++17" \
 		-DTRACE_PIPELINE \
 		-o $(BUILD_DIR)/sim_shoumei_dbg \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_dbg)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_dbg (with pipeline trace)"
 
 sim-cov: $(SIM_COV_BIN)
-$(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+$(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator_cov
 	@mkdir -p $(BUILD_DIR)/verilator_cov
 	$(VERILATOR) --cc --exe \
@@ -232,7 +243,7 @@ $(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -DVM_COVERAGE=1" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_cov)
 	@echo "Built: $@ (with coverage)"
 
@@ -264,8 +275,8 @@ run-riscv-tests: $(SIM_BIN) riscv-tests
 run-all-tests: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -276,8 +287,8 @@ KANATA_DIR := $(PROJ_ROOT)/output/kanata-traces
 run-kanata-traces: $(SIM_BIN) tests riscv-tests
 	@mkdir -p $(KANATA_DIR)
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --csv /dev/null --kanata-dir $(KANATA_DIR) \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -286,14 +297,74 @@ run-coverage: $(SIM_COV_BIN) tests riscv-tests
 	@rm -f $(PROJ_ROOT)/output/coverage/*.dat $(PROJ_ROOT)/output/coverage/*.info
 	@rm -rf $(PROJ_ROOT)/output/coverage/annotated
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_COV_BIN) --jobs $(shell nproc) --default-timeout 5000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
 	    --coverage-dir $(PROJ_ROOT)/output/coverage \
 	    --csv $(PROJ_ROOT)/output/test-results-coverage.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
+# ==========================================================================
+# Instruction benchmark suite
+#
+# `bench`          generate + assemble the benchmark ELFs
+# `run-benchmarks` run every bench ELF on the RTL sim (parallel), emit
+#                  bench-results-rtl.csv + bench-metrics.csv
+# `bench-compare`  merge RTL CSV into bench-metrics.json and
+#                  output/cpp_sim/bench_metrics.h
+# ==========================================================================
+BENCH_ELF_GLOBS := $(TB_DIR)/tests/generated/bench/*.elf
+BENCH_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench/*.S)
+
+# Fallback budget for a bench ELF with no manifest entry; every generated
+# benchmark carries its own max_cycles (see BenchmarkSpecs.timeoutCycles), so
+# this only applies to a hand-written program dropped into the bench dir.
+BENCH_DEFAULT_TIMEOUT := 200000
+
+# Test budgets are the *measured* cycles plus headroom, not a round number:
+# wfi_test 62, timer_irq_test 226, jalr_a0_irq_test 693, lrsc 13.4k, freertos
+# 19.2k.  A hung test therefore fails in thousands of cycles, not hundreds of
+# thousands.  The default covers everything else (slowest is 2.3k).
+
+# Benchmark programs: the .S sources are generated from the Lean spec table by
+# the codegen artifact; regenerate them only when missing (so a job that only
+# has the artifact - e.g. cosim - does not need a Lean toolchain), then build
+# the ELFs.
+bench:
+	@if [ -z "$(BENCH_ASM_FILES)" ]; then \
+	    cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks; \
+	fi
+	$(MAKE) -C $(TB_DIR)/tests bench
+
+# Reduced-trip-count benchmark ELFs for lock-step cosim: same instruction
+# coverage, ~1/16 the simulated cycles.  The full-length programs stay the
+# source of the sim CPI metrics (run-benchmarks).
+BENCH_SHORT_ELF_GLOBS := $(TB_DIR)/tests/generated/bench-short/*.elf
+BENCH_SHORT_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench-short/*.S)
+
+bench-short:
+	@if [ -z "$(BENCH_SHORT_ASM_FILES)" ]; then \
+	    cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks --short; \
+	fi
+	$(MAKE) -C $(TB_DIR)/tests bench-short
+
+run-benchmarks: $(SIM_BIN) bench
+	@mkdir -p $(PROJ_ROOT)/output/bench
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
+	    --default-timeout $(BENCH_DEFAULT_TIMEOUT) \
+	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --csv $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
+	    --bench-csv $(PROJ_ROOT)/output/bench/bench-metrics.csv \
+	    $(BENCH_ELF_GLOBS)
+
+
+bench-compare: run-benchmarks
+	python3 $(PROJ_ROOT)/scripts/bench_compare.py \
+	    --rtl $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
+	    --programs $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --out $(PROJ_ROOT)/output/bench
+
 cosim: $(COSIM_BIN)
-$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
+$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) --cc --exe \
@@ -303,17 +374,19 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 		-CFLAGS "-std=c++20 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
-	$(call verilator_build,$(BUILD_DIR)/verilator_cosim)
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(SRAM_DPI_C)
+	$(call verilator_build,$(BUILD_DIR)/verilator_cosim,tb_cpu)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
-run-cosim: $(COSIM_BIN) tests riscv-tests
+# Lock-step comparison against Spike
+run-cosim: $(COSIM_BIN) tests riscv-tests bench-short
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
-	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
-	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
+	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout-json $(PROJ_ROOT)/output/bench-short/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_SHORT_ELF_GLOBS)
 
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark
@@ -330,22 +403,23 @@ CACHE_TEST_CPP := $(TB_DIR)/cache_model_test/cache_conformance.cpp
 CACHE_BUILD    := $(TB_DIR)/build/cache_l1d
 CACHE_TEST_BIN := $(TB_DIR)/build/cache_model_test
 
-cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv $(CACHE_TEST_CPP)
+cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Decoder6.sv $(SV_DIR)/EqualityComparator20.sv $(SV_DIR)/Mux64x20.sv $(SV_DIR)/Mux16x32.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv $(SV_DIR)/PLRU4.sv $(SV_DIR)/Register20.sv $(CACHE_TEST_CPP) $(SRAM_DPI_C)
 	@echo "==> Building cache conformance test (Verilator SV)..."
 	@mkdir -p $(TB_DIR)/build
 	@rm -rf $(CACHE_BUILD)
 	@verilator --cc --build -j $(shell nproc) --Mdir $(CACHE_BUILD) \
 	    -Wno-fatal -O3 \
 	    --top-module L1DCache --exe \
-	    $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv \
-	    $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv \
+	    $(SV_DIR)/L1DCache.sv $(SV_DIR)/Decoder6.sv $(SV_DIR)/EqualityComparator20.sv \
+	    $(SV_DIR)/Mux64x20.sv $(SV_DIR)/Mux16x32.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv \
+	    $(SV_DIR)/PLRU4.sv $(SV_DIR)/Register20.sv \
 	    -CFLAGS "-std=c++17 -O2" \
-	    -o $(CACHE_TEST_BIN) $(CACHE_TEST_CPP)
+	    -o $(CACHE_TEST_BIN) $(CACHE_TEST_CPP) $(SRAM_DPI_C)
 	@echo "==> Running cache conformance..."
 	@$(CACHE_TEST_BIN) --cycles 2000
 
 clean:
-	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
+	rm -rf $(BUILD_DIR)/verilator $(BUILD_DIR)/verilator_trace $(BUILD_DIR)/verilator_dbg $(BUILD_DIR)/verilator_cov $(BUILD_DIR)/verilator_cosim $(SIM_BIN) $(SIM_COV_BIN) $(LEANSIM_BIN) $(BUILD_DIR)/sim_shoumei_trace $(BUILD_DIR)/sim_shoumei_dbg $(COSIM_BIN)
 	rm -rf $(BUILD_DIR)/arc $(ARC_SIM_BIN) $(ARC_COSIM_BIN)
 	rm -rf $(PROJ_ROOT)/output/coverage
 	rm -f shoumei_cpu.fst

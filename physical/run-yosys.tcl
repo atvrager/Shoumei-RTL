@@ -116,6 +116,61 @@ if {[info exists env(EXTRA_LIBS)]} {
     }
 }
 
+# SRAM macro binding: SRAM_MACROS=1 makes the flow read real memory models
+# (the `ifdef SHOUMEI_SRAM_MACROS` branch) from SRAM_MACRO_LIB, and turns the
+# absence of that library into a hard error - a synthesis run that silently
+# falls back to register arrays is worse than no run at all.
+set sram_macros 0
+if {[info exists env(SRAM_MACROS)]} {
+    set sram_macros $env(SRAM_MACROS)
+}
+set sram_lib ""
+if {[info exists env(SRAM_MACRO_LIB)]} {
+    set sram_lib $env(SRAM_MACRO_LIB)
+}
+set sram_files {}
+if {$sram_macros} {
+    if {$sram_lib eq "" || ![file exists $sram_lib]} {
+        puts "ERROR: SRAM_MACROS=1 but SRAM_MACRO_LIB ('$sram_lib') does not exist."
+        puts "       Generate a binding layer: make sram-macros"
+        puts "       or: scripts/gen-sram-macros.sh --stub"
+        exit 1
+    }
+    if {[file isdirectory $sram_lib]} {
+        set sram_files [lsort [concat \
+            [glob -nocomplain "${sram_lib}/*.sv"] \
+            [glob -nocomplain "${sram_lib}/*.v"] \
+            [glob -nocomplain "${sram_lib}/vendor/*.sv"] \
+            [glob -nocomplain "${sram_lib}/vendor/*.v"]]]
+    } else {
+        set sram_files [list $sram_lib]
+    }
+    if {[llength $sram_files] == 0} {
+        puts "ERROR: SRAM_MACROS=1 but no macro models found under '$sram_lib'."
+        exit 1
+    }
+    set sram_libs [concat \
+        [glob -nocomplain "${sram_lib}/*.lib"] \
+        [glob -nocomplain "${sram_lib}/lib/*.lib"]]
+    foreach lib $sram_libs {
+        puts "INFO: Reading SRAM liberty: $lib"
+        read_liberty {*}$read_lib_opts $lib
+    }
+    puts "INFO: SRAM macros:      [llength $sram_files] model file(s) from $sram_lib"
+} else {
+    # No real macros: auto-generate behavioural stubs so Yosys can elaborate
+    # the SHOUMEI_SRAM_MACROS branch without a process library.  The DPI-C
+    # simulation path (the ifndef branch) cannot be parsed by Yosys at all.
+    set stub_dir [exec mktemp -d]
+    exec bash ${project_root}/scripts/gen-sram-macros.sh --stub --out $stub_dir \
+        >@stdout 2>@stderr
+    set sram_files [lsort [glob -nocomplain "${stub_dir}/*.sv"]]
+    puts "INFO: SRAM macros:      disabled -- auto-generated [llength $sram_files] stub(s) in $stub_dir"
+    foreach f $sram_files {
+        read_verilog -sv -lib $f
+    }
+}
+
 # Step 3: Read SystemVerilog sources
 set rtl_dir "${project_root}/output/sv-from-lean"
 if {[info exists env(RTL_DIR)]} {
@@ -128,12 +183,24 @@ if {[llength $sv_files] == 0} {
     exit 1
 }
 
+# Macro models first, as blackboxes (-lib): a memory macro must stay a macro
+# cell in the netlist, never be elaborated into logic or register arrays.
+if {[llength $sram_files] > 0} {
+    foreach f $sram_files {
+        read_verilog -sv -lib $f
+    }
+}
+
+# Always define SHOUMEI_SRAM_MACROS: the DPI-C simulation path is not
+# synthesisable and Yosys cannot parse import "DPI-C".
+set read_defines {-DSHOUMEI_SRAM_MACROS}
+
 puts "INFO: Reading [llength $sv_files] SystemVerilog files from $rtl_dir..."
 foreach f $sv_files {
     # -nolatches: inferred latches abort the flow (DC NXT LINT-1 mimic).
     # Elaboration warnings (width, multi-driver) remain fatal via set -e in
     # the calling script's post-check (see run-yosys-*.sh: lint-grep).
-    read_verilog -sv -nolatches $f
+    read_verilog -sv -nolatches {*}$read_defines $f
 }
 
 # Read optional top synthesis wrapper if present
