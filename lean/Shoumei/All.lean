@@ -204,6 +204,8 @@ import Shoumei.RISCV.Memory.Cache.L2CacheCodegen
 import Shoumei.RISCV.Memory.Cache.L2CacheProofs
 import Shoumei.RISCV.Memory.Cache.MemoryHierarchy
 import Shoumei.RISCV.Memory.Cache.MemoryHierarchyProofs
+import Shoumei.RISCV.Memory.Cache.PLRU
+import Shoumei.RISCV.Memory.Cache.PLRUProofs
 import Shoumei.RISCV.Memory.LSU
 import Shoumei.RISCV.Memory.LSUCodegen
 import Shoumei.RISCV.Memory.LSUProofs
