@@ -385,6 +385,19 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v6
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
       - name: Install Verilator
         run: |
           sudo apt-get update
@@ -403,6 +416,12 @@ jobs:
 
       - name: Fetch opcodes submodule
         run: git submodule update --init third_party/riscv-opcodes
+
+      # sim_shoumei links testbench/generated/sim_main_tb_cpu.cpp and the bench
+      # .S sources both come out of the Lean code generators, which this job
+      # must run itself (it does not consume the codegen job's artifact).
+      - name: Generate code
+        run: make codegen
 
       - name: Build simulation + benchmark ELFs
         run: |
