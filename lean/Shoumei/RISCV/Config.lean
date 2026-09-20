@@ -88,6 +88,13 @@ def totalBytes (g : CacheGeom) : Nat :=
 /-- True for the geometry the builders keep byte-identical. -/
 def isDefault (g : CacheGeom) : Bool := g == default
 
+/-- Short capacity label for module names: 8192 -> "8K", 1048576 -> "1M";
+    a value with no exact unit falls back to bytes. -/
+def sizeLabel (bytes : Nat) : String :=
+  if bytes % (1024 * 1024) == 0 then s!"{bytes / (1024 * 1024)}M"
+  else if bytes % 1024 == 0 then s!"{bytes / 1024}K"
+  else s!"{bytes}B"
+
 /-- Module-name suffix: empty for the default geometry (emitted module names,
     proofs and certificates unchanged), else the capacity, so two configured
     hierarchies can coexist in one build. -/
@@ -97,7 +104,7 @@ def nameSuffix (g : CacheGeom) : String :=
     let l1i := g.levelBytes g.l1iSets g.l1iWays
     let l1d := g.levelBytes g.l1dSets g.l1dWays
     let l2 := g.levelBytes g.l2Sets g.l2Ways
-    s!"_L1I{l1i}B_L1D{l1d}B_L2{l2}B"
+    s!"_L1I{sizeLabel l1i}_L1D{sizeLabel l1d}_L2{sizeLabel l2}"
 
 end CacheGeom
 
@@ -195,13 +202,14 @@ def CPUConfig.l1dTagBits (c : CPUConfig) : Nat :=
 def CPUConfig.l2TagBits (c : CPUConfig) : Nat :=
   c.xlen - log2Ceil c.cacheGeom.l2Sets - c.cacheOffsetBits
 
-/-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B") -/
+/-- Cache size string for module naming (e.g., "L1I256B_L1D256B_L2512B" for the
+    default geometry, "L1I8K_L1D16K_L232K" for the MCU preset) -/
 def CPUConfig.cacheString (c : CPUConfig) : String :=
   let g := c.cacheGeom
   let l1iBytes := g.levelBytes g.l1iSets g.l1iWays
   let l1dBytes := g.levelBytes g.l1dSets g.l1dWays
   let l2Bytes := g.levelBytes g.l2Sets g.l2Ways
-  s!"L1I{l1iBytes}B_L1D{l1dBytes}B_L2{l2Bytes}B"
+  s!"L1I{CacheGeom.sizeLabel l1iBytes}_L1D{CacheGeom.sizeLabel l1dBytes}_L2{CacheGeom.sizeLabel l2Bytes}"
 
 /-- Floating-point register width in bits (FLEN): 64 if D enabled or RV64, else 32.
     FLEN is a computed projection of the configuration, not a stored field. -/
