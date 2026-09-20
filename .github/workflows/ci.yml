@@ -342,6 +342,7 @@ jobs:
           path: |
             output/config.mk
             output/sv-asap7/
+            output/sv-gf180/
             output/sv-from-lean/
             output/sv-netlist/
             output/cpp_sim/
@@ -359,6 +360,7 @@ jobs:
           path: |
             output/sv-from-lean/
             output/sv-asap7/
+            output/sv-gf180/
             physical/*.sv
             physical/*.f
             physical/constraints.sdc
@@ -573,6 +575,9 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: codegen-output
+
+      - name: Fetch PDK Liberty (cell-table check)
+        run: git submodule update --init --depth 1 third_party/orfs
 
       - name: Install pyslang
         run: pip install --break-system-packages pyslang
