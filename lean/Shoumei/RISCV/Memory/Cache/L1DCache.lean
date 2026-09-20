@@ -164,9 +164,9 @@ def L1DCacheState.clearAllDirty (s : L1DCacheState) : L1DCacheState :=
 
     Ports:
     - Inputs: clock, reset, req_valid, req_we, req_addr[31:0], req_wdata[31:0], req_size[1:0],
-              refill_valid, refill_data[255:0], wb_ack, fence_i
+              refill_valid, refill_data[lineBits-1:0], wb_ack, fence_i
     - Outputs: resp_valid, resp_data[31:0], miss_valid, miss_addr[31:0],
-               wb_valid, wb_addr[31:0], wb_data[255:0], stall, fence_i_busy
+               wb_valid, wb_addr[31:0], wb_data[lineBits-1:0], stall, fence_i_busy
 -/
 def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   -- Geometry, derived once: the structure below is written in terms of these.
@@ -375,7 +375,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
 
   -- Data read mux: for each way, select the set, then select the word
   -- Then use hit way to select the final data
-  let way_word := (List.range 2).map fun way =>
+  let way_word := (List.range ways).map fun way =>
     (List.range 32).map fun b => Wire.mk s!"way{way}_word_{b}"
 
   -- Per-way word mux: select word from RAM-read 256-bit line (bits 0..31)
@@ -506,9 +506,9 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   ]
 
   -- miss_addr: line-aligned address, use pend_q when in REFILL_WAIT, else req_addr
-  -- MUX(req_addr, pend_q, is_refill_wait) per bit, with low 5 bits forced to 0
+  -- MUX(req_addr, pend_q, is_refill_wait) per bit, with the offset forced to 0
   let miss_addr_gates := (List.range 32).map fun i =>
-    if i < 5 then
+    if i < offsetBits then
       Gate.mkBUF (Wire.mk "const_zero_l1d") miss_addr[i]!
     else
       Gate.mkMUX req_addr[i]! pend_q[i]! (Wire.mk "is_refill_wait") miss_addr[i]!
@@ -523,7 +523,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   -- wb_valid = wb_active (eviction WRITEBACK or fence.i flush writeback)
   let wb_valid_gate := Gate.mkBUF wb_active wb_valid
 
-  -- wb_addr: {victim_tag[24:0], idx_bits[1:0], 5'b00000}
+  -- wb_addr: {victim_tag, index, offset 0}
   -- victim_tag = MUX(sel_tag_w0, sel_tag_w1, pend_victim_q)
   let wb_victim_tag := (List.range tagBits).map fun b => Wire.mk s!"wb_vtag_{b}"
   let wb_vtag_mux : List Gate :=
@@ -533,9 +533,10 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
         Gate.mkAND pend_victim_oh[w]! (Wire.mk s!"sel_tag_w{w}_{b}") t[w]!)
       ++ mkOrTree t wb_victim_tag[b]!))
   let wb_addr_gates := (List.range 32).map fun i =>
-    if i < 5 then Gate.mkBUF (Wire.mk "const_zero_l1d") wb_addr[i]!
-    else if i < 7 then Gate.mkBUF data_ram_rd_addr[i - 5]! wb_addr[i]!
-    else Gate.mkBUF wb_victim_tag[i - 7]! wb_addr[i]!
+    if i < offsetBits then Gate.mkBUF (Wire.mk "const_zero_l1d") wb_addr[i]!
+    else if i < offsetBits + idxBits then
+      Gate.mkBUF data_ram_rd_addr[i - offsetBits]! wb_addr[i]!
+    else Gate.mkBUF wb_victim_tag[i - offsetBits - idxBits]! wb_addr[i]!
 
   -- wb_data: MUX(data_ram_rd[0], data_ram_rd[1], pend_victim_q) per bit
   let wb_data_gates : List Gate :=
@@ -639,7 +640,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   ]
 
   -- === Set decoder for current req_addr (for hit detection + write-hit) ===
-  let set_dec := (List.range 4).map fun i => Wire.mk s!"valid_dec_w0_{i}"
+  let set_dec := (List.range sets).map fun i => Wire.mk s!"valid_dec_w0_{i}"
 
   -- === Pending set decoder (for refill install) ===
   let pend_idx := (List.range idxBits).map fun i => pend_q[offsetBits + i]!
@@ -949,11 +950,11 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
       { name := "req_addr", width := 32, wires := req_addr },
       { name := "req_wdata", width := 64, wires := req_wdata },
       { name := "req_size", width := 2, wires := req_size },
-      { name := "refill_data", width := 256, wires := refill_data },
+      { name := "refill_data", width := lineBits, wires := refill_data },
       { name := "resp_data", width := 64, wires := resp_data },
       { name := "miss_addr", width := 32, wires := miss_addr },
       { name := "wb_addr", width := 32, wires := wb_addr },
-      { name := "wb_data", width := 256, wires := wb_data }
+      { name := "wb_data", width := lineBits, wires := wb_data }
     ]
   }
 

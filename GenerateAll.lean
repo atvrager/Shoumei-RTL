@@ -314,6 +314,9 @@ def baseCircuits : List Circuit := [
   -- geometry (tag widths, set counts, word extract muxes, replacement blocks)
   -- so a different cache size does not silently reference missing modules.
   cacheGeomCircuits defaultCPUConfig.cacheGeom ++
+  -- The MCU-class geometry (see CacheGeom.mcu64 / mcu64CPUConfig): emitted
+  -- beside the default one, with suffixed module names so both coexist.
+  cacheGeomCircuits CacheGeom.mcu64 ++
   [
   -- Phase 7b: Cache Hierarchy Modules
   mkL1ICache,
@@ -347,6 +350,13 @@ def baseCircuits : List Circuit := [
   mkFPBusyTable,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
   Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig,
+
+  -- Phase 7c: MCU-class cache geometry
+  mkL1ICache CacheGeom.mcu64,
+  mkL1DCache CacheGeom.mcu64,
+  mkL2Cache CacheGeom.mcu64,
+  mkMemoryHierarchy CacheGeom.mcu64,
+  Shoumei.RISCV.Memory.Cache.mkCachedCPU mcu64CPUConfig,
 
   -- Phase 9: Shoumei SoC & Peripherals
   resetSyncCircuit,
@@ -431,6 +441,7 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+  writeTestbenches (cpuTestbenchConfigFor mcu64CPUConfig "tb_cpu_mcu64")
 
   -- Generate filelist.f for each output directory
   IO.println ""

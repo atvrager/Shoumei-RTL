@@ -36,14 +36,16 @@ structure MemoryPort where
   respDataSignal : Option String := none
   deriving Repr
 
-/-- A cache-line memory port for 256-bit (8-word) cache line transactions. -/
+/-- A cache-line memory port: one line-wide transaction per request.  The line
+    is `lineWords` 32-bit words (8 = 256 bits, the default geometry). -/
 structure CacheLineMemPort where
   reqValidSignal : String     -- "mem_req_valid"
   reqAddrSignal : String      -- "mem_req_addr" (32-bit)
   reqWeSignal : String        -- "mem_req_we"
-  reqDataSignal : String      -- "mem_req_data" (256-bit)
+  reqDataSignal : String      -- "mem_req_data" (lineWords × 32 bits)
   respValidSignal : String    -- "mem_resp_valid"
-  respDataSignal : String     -- "mem_resp_data" (256-bit)
+  respDataSignal : String     -- "mem_resp_data" (lineWords × 32 bits)
+  lineWords : Nat := 8
   deriving Repr
 
 /-- Configuration for testbench generation. -/
@@ -976,38 +978,26 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
 
   "  // --- Cache-line memory: 1-cycle read latency, combinational write ---\n" ++
   "  logic        mem_pending;\n" ++
-  "  logic [255:0] mem_read_line;\n\n" ++
+  s!"  logic [{clmp.lineWords * 32 - 1}:0] mem_read_line;\n\n" ++
   s!"  wire [31:0] mem_line_idx = addr_to_idx({clmp.reqAddrSignal});\n\n" ++
   s!"  always_ff @(posedge clk or posedge {resetName}) begin\n" ++
   s!"    if ({resetName}) begin\n" ++
   s!"      {clmp.respValidSignal} <= 1'b0;\n" ++
-  "      mem_read_line  <= 256'b0;\n" ++
+  s!"      mem_read_line  <= {clmp.lineWords * 32}'b0;\n" ++
   "      mem_pending    <= 1'b0;\n" ++
   "    end else begin\n" ++
   "      mem_pending    <= 1'b0;\n" ++
   s!"      {clmp.respValidSignal} <= 1'b0;\n\n" ++
   s!"      if ({clmp.reqValidSignal}) begin\n" ++
   s!"        if ({clmp.reqWeSignal}) begin\n" ++
-  "          // Write 8-word cache line (line-aligned address)\n" ++
-  s!"          mem[mem_line_idx + 0] <= {clmp.reqDataSignal}[31:0];\n" ++
-  s!"          mem[mem_line_idx + 1] <= {clmp.reqDataSignal}[63:32];\n" ++
-  s!"          mem[mem_line_idx + 2] <= {clmp.reqDataSignal}[95:64];\n" ++
-  s!"          mem[mem_line_idx + 3] <= {clmp.reqDataSignal}[127:96];\n" ++
-  s!"          mem[mem_line_idx + 4] <= {clmp.reqDataSignal}[159:128];\n" ++
-  s!"          mem[mem_line_idx + 5] <= {clmp.reqDataSignal}[191:160];\n" ++
-  s!"          mem[mem_line_idx + 6] <= {clmp.reqDataSignal}[223:192];\n" ++
-  s!"          mem[mem_line_idx + 7] <= {clmp.reqDataSignal}[255:224];\n" ++
+  s!"          // Write the whole cache line (line-aligned address)\n" ++
+  String.join ((List.range clmp.lineWords).map fun w =>
+    s!"          mem[mem_line_idx + {w}] <= {clmp.reqDataSignal}[{w * 32 + 31}:{w * 32}];\n") ++
   "        end else begin\n" ++
-  "          // Read 8-word cache line (line-aligned address)\n" ++
+  "          // Read the whole cache line (line-aligned address)\n" ++
   "          mem_read_line <= {\n" ++
-  "            mem[mem_line_idx + 7],\n" ++
-  "            mem[mem_line_idx + 6],\n" ++
-  "            mem[mem_line_idx + 5],\n" ++
-  "            mem[mem_line_idx + 4],\n" ++
-  "            mem[mem_line_idx + 3],\n" ++
-  "            mem[mem_line_idx + 2],\n" ++
-  "            mem[mem_line_idx + 1],\n" ++
-  "            mem[mem_line_idx + 0]\n" ++
+  String.join ((List.range clmp.lineWords).reverse.map fun w =>
+    s!"            mem[mem_line_idx + {w}]{if w == 0 then "\n" else ",\n"}") ++
   "          };\n" ++
   "          mem_pending <= 1'b1;\n" ++
   "        end\n" ++
