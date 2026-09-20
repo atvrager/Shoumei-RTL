@@ -252,7 +252,8 @@ def cacheGeomCircuits (g : CacheGeom) : List Circuit :=
   let words := g.lineBytes / 4
   let plru ways := if ways ≥ 2 then [mkPLRU ways] else []
   let mods :=
-    [mkRegisterN l1iTag, mkRegisterN l1dTag, mkRegisterN l2Tag,
+    [mkDecoder (log2Ceil g.l1iSets), mkDecoder (log2Ceil g.l1dSets), mkDecoder (log2Ceil g.l2Sets),
+     mkRegisterN l1iTag, mkRegisterN l1dTag, mkRegisterN l2Tag,
      mkEqualityComparatorN l1iTag, mkEqualityComparatorN l1dTag, mkEqualityComparatorN l2Tag,
      mkMuxTree g.l1iSets l1iTag, mkMuxTree g.l1dSets l1dTag, mkMuxTree g.l2Sets l2Tag,
      mkMuxTree words 32, mkMuxTree (words / 2) 32]

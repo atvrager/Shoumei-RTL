@@ -336,40 +336,25 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
 
   -- Valid mux per way: 4:1 mux of valid bits
   -- way 0: valid_q[0..3], way 1: valid_q[4..7]
-  let valid_mux_gates := (List.range 2).foldl (fun acc way =>
-    let base := way * 4
-    -- Simple 4:1 mux using decoder + AND + OR
-    let not_sel := (List.range 2).map fun i => Wire.mk s!"not_sel_w{way}_{i}"
-    let dec := (List.range 4).map fun i => Wire.mk s!"valid_dec_w{way}_{i}"
-    let dec_and := (List.range 4).map fun i => Wire.mk s!"valid_and_w{way}_{i}"
-    acc ++
-    [Gate.mkNOT idx_bits[0]! not_sel[0]!,
-     Gate.mkNOT idx_bits[1]! not_sel[1]!] ++
-    -- 2-to-4 decoder
-    [Gate.mkAND not_sel[0]! not_sel[1]! dec[0]!,
-     Gate.mkAND idx_bits[0]! not_sel[1]! dec[1]!,
-     Gate.mkAND not_sel[0]! idx_bits[1]! dec[2]!,
-     Gate.mkAND idx_bits[0]! idx_bits[1]! dec[3]!] ++
-    -- AND with valid bits
-    (List.range 4).map (fun i =>
-      Gate.mkAND dec[i]! valid_q[base + i]! dec_and[i]!) ++
-    -- OR tree
-    [Gate.mkOR dec_and[0]! dec_and[1]! (Wire.mk s!"valid_or01_w{way}"),
-     Gate.mkOR dec_and[2]! dec_and[3]! (Wire.mk s!"valid_or23_w{way}"),
-     Gate.mkOR (Wire.mk s!"valid_or01_w{way}") (Wire.mk s!"valid_or23_w{way}") way_valid_sel[way]!]
-  ) []
-
-  -- Dirty bit mux per way (same decoder as valid, reuse valid_dec_w{way} wires)
-  let dirty_mux_gates := (List.range 2).foldl (fun acc way =>
-    let base := way * 4
-    let dec := (List.range 4).map fun i => Wire.mk s!"valid_dec_w{way}_{i}"
-    let da := (List.range 4).map fun i => Wire.mk s!"dirty_and_w{way}_{i}"
-    acc ++
-    (List.range 4).map (fun i => Gate.mkAND dec[i]! dirty_q[base + i]! da[i]!) ++
-    [Gate.mkOR da[0]! da[1]! (Wire.mk s!"dirty_or01_w{way}"),
-     Gate.mkOR da[2]! da[3]! (Wire.mk s!"dirty_or23_w{way}"),
-     Gate.mkOR (Wire.mk s!"dirty_or01_w{way}") (Wire.mk s!"dirty_or23_w{way}") (Wire.mk s!"dirty_sel_w{way}")]
-  ) []
+  -- Per-way set select: the parametric Decoder builds the one-hot set select
+  -- the way muxes and the PLRU update need (idxBits -> sets: 2 -> 4 at the
+  -- default geometry, 6 -> 64 at the MCU one).
+  let valid_dec := (List.range ways).map (fun way =>
+    (List.range sets).map (fun st => Wire.mk s!"valid_dec_w{way}_{st}"))
+  let valid_dec_insts : List CircuitInstance := (List.range ways).map fun way =>
+    CircuitInstance.mk s!"Decoder{idxBits}" s!"u_valid_dec_w{way}"
+      ((List.range idxBits).map (fun i => (s!"in_{i}", idx_bits[i]!)) ++
+       (List.range sets).map (fun st => (s!"out_{st}", valid_dec[way]![st]!)))
+  -- Way select = OR over sets of (set select AND that set's bit)
+  let way_sel_gates (q : List Wire) (pfx : String) (out : List Wire) : List Gate :=
+    List.flatten ((List.range ways).map (fun way =>
+      let t := (List.range sets).map (fun st => Wire.mk s!"{pfx}_and_w{way}_{st}")
+      List.flatten ((List.range sets).map (fun st =>
+        [Gate.mkAND valid_dec[way]![st]! q[way * sets + st]! t[st]!]))
+      ++ mkOrTree t out[way]!))
+  let valid_mux_gates : List Gate := way_sel_gates valid_q "valid" way_valid_sel
+  let dirty_mux_gates : List Gate :=
+    way_sel_gates dirty_q "dirty" ((List.range ways).map fun w => Wire.mk s!"dirty_sel_w{w}")
 
   -- Victim dirty detection: victim_needs_wb = valid AND dirty of the victim way
   let victim_wb_gates : List Gate :=
@@ -950,7 +935,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
     tag_mux_instances ++ tag_cmp_instances ++
     data_word_mux_instances ++ data_dwhi_mux_instances ++
     [refill_word_mux_inst, refill_dwhi_mux_inst] ++
-    plru_insts
+    plru_insts ++ valid_dec_insts
 
   { name := s!"L1DCache{g.nameSuffix}"
     inputs := [clock, reset, req_valid, req_we] ++ req_addr ++ req_wdata ++ req_size ++
