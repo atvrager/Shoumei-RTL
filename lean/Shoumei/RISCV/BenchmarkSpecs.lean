@@ -58,10 +58,10 @@ def BENCH_TOHOST : Nat := 0x1000
 
 /-- Control/trap/privileged instructions never benchmarked.
     fence.i is excluded because the serialized drain does not increment
-    minstret, so a minstret-derived CPI is meaningless for it.  (Its
-    slot-0 predecessor drop is fixed -- see
-    testbench/tests/serialize_pair_test.S and
-    testbench/fence_i_regression/README.md.) -/
+    minstret, so a minstret-derived CPI is meaningless for it.  Its RTL
+    behaviour (slot-0 predecessor, L1D writeback ordering, L1I invalidate) is
+    fixed and covered by testbench/tests/serialize_pair_test.S and
+    testbench/tests/fence_i_test.c. -/
 def BENCH_SKIP : List String := ["ecall", "ebreak", "mret", "wfi", "sret", "uret", "sfence.vma", "fence_i"]
 
 -- ════════════════════════════════════════════════════════════════════════════

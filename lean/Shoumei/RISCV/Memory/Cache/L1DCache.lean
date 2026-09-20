@@ -252,7 +252,7 @@ def mkL1DCache : Circuit :=
   -- Write port: addr=MUX(pend_idx,idx_bits,is_refill), data=MUX(refill,merged), en=refill|write_hit
   let data_ram_rd_addr := (List.range 2).map fun i => Wire.mk s!"data_rd_addr_{i}"
   let data_ram_rd_addr_mux := (List.range 2).map fun i =>
-    Gate.mkMUX idx_bits[i]! pend_q[5 + i]! (Wire.mk "is_writeback") data_ram_rd_addr[i]!
+    Gate.mkMUX idx_bits[i]! pend_q[5 + i]! (Wire.mk "wb_active") data_ram_rd_addr[i]!
   let data_ram_rd := (List.range 2).map fun way =>
     (List.range 256).map fun b => Wire.mk s!"data_rd_w{way}_{b}"
   let data_ram_wr_en := (List.range 2).map fun way => Wire.mk s!"data_wr_en_w{way}"
@@ -417,6 +417,11 @@ def mkL1DCache : Circuit :=
   let not_fsm := (List.range 3).map fun i => Wire.mk s!"not_fsm_{i}"
   let is_idle := Wire.mk "is_idle"
   let is_writeback := Wire.mk "is_writeback"
+  -- fence.i flush states (fsm_q[2] was unused): FENCE_CHECK = 100, FENCE_WB = 101
+  let wb_active := Wire.mk "wb_active"
+  let is_flush_check := Wire.mk "is_flush_check"
+  let is_flush_wb := Wire.mk "is_flush_wb"
+  let is_flush := Wire.mk "is_flush"
   let fsm_decode_gates :=
     (List.range 3).map (fun i => Gate.mkNOT fsm_q[i]! not_fsm[i]!) ++
     [-- IDLE = 000
@@ -424,7 +429,14 @@ def mkL1DCache : Circuit :=
      Gate.mkAND (Wire.mk "idle_01") not_fsm[2]! is_idle,
      -- WRITEBACK = 010
      Gate.mkAND not_fsm[0]! fsm_q[1]! (Wire.mk "wb_01"),
-     Gate.mkAND (Wire.mk "wb_01") not_fsm[2]! is_writeback]
+     Gate.mkAND (Wire.mk "wb_01") not_fsm[2]! is_writeback,
+     -- FENCE.I flush (fsm_q[2] was unused): FENCE_CHECK = 100, FENCE_WB = 101
+     Gate.mkAND fsm_q[2]! not_fsm[0]! is_flush_check,
+     Gate.mkAND fsm_q[2]! fsm_q[0]! is_flush_wb,
+     Gate.mkOR is_flush_check is_flush_wb is_flush,
+     -- the writeback datapath (data RAM read, tag read, wb_addr/wb_data) serves both
+     -- the eviction writeback and the fence.i flush writeback
+     Gate.mkOR is_writeback is_flush_wb wb_active]
 
   -- resp_valid_comb = (read_hit AND is_idle) OR refill_done
   let not_we := Wire.mk "not_we"
@@ -476,8 +488,8 @@ def mkL1DCache : Circuit :=
     Gate.mkOR not_idle miss_detect stall
   ]
 
-  -- wb_valid = is_writeback (asserted during WRITEBACK state)
-  let wb_valid_gate := Gate.mkBUF is_writeback wb_valid
+  -- wb_valid = wb_active (eviction WRITEBACK or fence.i flush writeback)
+  let wb_valid_gate := Gate.mkBUF wb_active wb_valid
 
   -- wb_addr: {victim_tag[24:0], idx_bits[1:0], 5'b00000}
   -- victim_tag = MUX(sel_tag_w0, sel_tag_w1, pend_victim_q)
@@ -493,7 +505,89 @@ def mkL1DCache : Circuit :=
   let wb_data_gates := (List.range 256).map fun b =>
     Gate.mkMUX (data_ram_rd[0]!)[b]! (data_ram_rd[1]!)[b]! pend_victim_q wb_data[b]!
 
-  let fence_busy_gate := Gate.mkBUF (Wire.mk "const_zero_l1d") fence_i_busy
+  -- === FENCE.I FLUSH ===
+  -- fence.i must make stored code visible to instruction fetch.  The L1D is
+  -- write-back, so every dirty line has to reach the L2 (which the L1I refills
+  -- from) before the core fetches again.  All 8 lines are swept in order, one
+  -- line per visit: write the dirty ones back and drop their dirty bit.  The
+  -- sweep is deliberately dumb - 2 ways x 4 sets is small, and a fence is rare.
+  --
+  -- A fence.i that arrives while the D-side is busy (miss/eviction in flight) is
+  -- latched and served on the next IDLE, so the pulse can be one cycle wide.
+  let fence_pending_d := Wire.mk "fence_pending_d"
+  let fence_pending_q := Wire.mk "fence_pending_q"
+  let flush_start := Wire.mk "flush_start"
+  let flush_idx_d := (List.range 3).map fun i => Wire.mk s!"flush_idx_d_{i}"
+  let flush_idx_q := (List.range 3).map fun i => Wire.mk s!"flush_idx_q_{i}"
+  let flush_dec := (List.range 8).map fun i => Wire.mk s!"flush_dec_{i}"
+  let fl_write := Wire.mk "fl_write"
+  let fl_wb_ack := Wire.mk "fl_wb_ack"
+  let fl_skip := Wire.mk "fl_skip"
+  let fl_advance := Wire.mk "fl_advance"
+  let flush_finish := Wire.mk "flush_finish"
+  let flush_gates :=
+    [-- request latch / flush start
+     Gate.mkOR fence_i fence_pending_q (Wire.mk "fence_req"),
+     Gate.mkNOT miss_detect (Wire.mk "not_fl_miss"),
+     Gate.mkAND is_idle (Wire.mk "not_fl_miss") (Wire.mk "flush_can_start"),
+     Gate.mkAND (Wire.mk "fence_req") (Wire.mk "flush_can_start") flush_start,
+     Gate.mkNOT flush_start (Wire.mk "not_flush_start"),
+     Gate.mkAND (Wire.mk "fence_req") (Wire.mk "not_flush_start") fence_pending_d,
+     Gate.mkDFF fence_pending_d clock reset fence_pending_q] ++
+    -- sweep index decoder (one-hot over the 8 lines)
+    (List.range 3).map (fun j => Gate.mkNOT flush_idx_q[j]! (Wire.mk s!"flush_nq_{j}")) ++
+    ((List.range 8).map (fun i =>
+      [Gate.mkAND (if i % 2 == 1 then flush_idx_q[0]! else Wire.mk "flush_nq_0")
+                  (if i / 2 % 2 == 1 then flush_idx_q[1]! else Wire.mk "flush_nq_1")
+                  (Wire.mk s!"flush_dt_{i}"),
+       Gate.mkAND (Wire.mk s!"flush_dt_{i}")
+                  (if i / 4 % 2 == 1 then flush_idx_q[2]! else Wire.mk "flush_nq_2")
+                  flush_dec[i]!]) |>.flatten) ++
+    -- per-line scan: valid AND dirty means this line needs a writeback
+    (List.range 8).map (fun i => Gate.mkAND flush_dec[i]! valid_q[i]! (Wire.mk s!"fl_v_{i}")) ++
+    (List.range 8).map (fun i => Gate.mkAND flush_dec[i]! dirty_q[i]! (Wire.mk s!"fl_d_{i}")) ++
+    [Gate.mkOR (Wire.mk "fl_v_0") (Wire.mk "fl_v_1") (Wire.mk "fl_vor_01"),
+     Gate.mkOR (Wire.mk "fl_v_2") (Wire.mk "fl_v_3") (Wire.mk "fl_vor_23"),
+     Gate.mkOR (Wire.mk "fl_v_4") (Wire.mk "fl_v_5") (Wire.mk "fl_vor_45"),
+     Gate.mkOR (Wire.mk "fl_v_6") (Wire.mk "fl_v_7") (Wire.mk "fl_vor_67"),
+     Gate.mkOR (Wire.mk "fl_vor_01") (Wire.mk "fl_vor_23") (Wire.mk "fl_vor_0123"),
+     Gate.mkOR (Wire.mk "fl_vor_45") (Wire.mk "fl_vor_67") (Wire.mk "fl_vor_4567"),
+     Gate.mkOR (Wire.mk "fl_vor_0123") (Wire.mk "fl_vor_4567") (Wire.mk "fl_valid"),
+     Gate.mkOR (Wire.mk "fl_d_0") (Wire.mk "fl_d_1") (Wire.mk "fl_dor_01"),
+     Gate.mkOR (Wire.mk "fl_d_2") (Wire.mk "fl_d_3") (Wire.mk "fl_dor_23"),
+     Gate.mkOR (Wire.mk "fl_d_4") (Wire.mk "fl_d_5") (Wire.mk "fl_dor_45"),
+     Gate.mkOR (Wire.mk "fl_d_6") (Wire.mk "fl_d_7") (Wire.mk "fl_dor_67"),
+     Gate.mkOR (Wire.mk "fl_dor_01") (Wire.mk "fl_dor_23") (Wire.mk "fl_dor_0123"),
+     Gate.mkOR (Wire.mk "fl_dor_45") (Wire.mk "fl_dor_67") (Wire.mk "fl_dor_4567"),
+     Gate.mkOR (Wire.mk "fl_dor_0123") (Wire.mk "fl_dor_4567") (Wire.mk "fl_dirty"),
+     Gate.mkAND (Wire.mk "fl_valid") (Wire.mk "fl_dirty") fl_write] ++
+    -- advance: FENCE_CHECK skips clean lines, FENCE_WB advances on the ack
+    [Gate.mkAND is_flush_wb wb_ack fl_wb_ack,
+     Gate.mkNOT fl_write (Wire.mk "not_fl_write"),
+     Gate.mkAND is_flush_check (Wire.mk "not_fl_write") fl_skip,
+     Gate.mkOR fl_wb_ack fl_skip fl_advance,
+     Gate.mkAND fl_advance flush_dec[7]! flush_finish] ++
+    -- sweep index: hold, +1 on advance, wrap to 0 on the last line
+    [Gate.mkNOT flush_idx_q[0]! (Wire.mk "fl_inc0"),
+     Gate.mkAND flush_idx_q[0]! flush_idx_q[1]! (Wire.mk "fl_carry1"),
+     Gate.mkXOR flush_idx_q[1]! flush_idx_q[0]! (Wire.mk "fl_inc1"),
+     Gate.mkXOR flush_idx_q[2]! (Wire.mk "fl_carry1") (Wire.mk "fl_inc2"),
+     Gate.mkNOT flush_finish (Wire.mk "not_flush_finish"),
+     Gate.mkAND (Wire.mk "not_flush_finish") (Wire.mk "fl_inc0") (Wire.mk "fl_nxt0_t"),
+     Gate.mkAND (Wire.mk "not_flush_finish") (Wire.mk "fl_inc1") (Wire.mk "fl_nxt1_t"),
+     Gate.mkAND (Wire.mk "not_flush_finish") (Wire.mk "fl_inc2") (Wire.mk "fl_nxt2_t"),
+     Gate.mkMUX flush_idx_q[0]! (Wire.mk "fl_nxt0_t") fl_advance flush_idx_d[0]!,
+     Gate.mkMUX flush_idx_q[1]! (Wire.mk "fl_nxt1_t") fl_advance flush_idx_d[1]!,
+     Gate.mkMUX flush_idx_q[2]! (Wire.mk "fl_nxt2_t") fl_advance flush_idx_d[2]!,
+     Gate.mkDFF flush_idx_d[0]! clock reset flush_idx_q[0]!,
+     Gate.mkDFF flush_idx_d[1]! clock reset flush_idx_q[1]!,
+     Gate.mkDFF flush_idx_d[2]! clock reset flush_idx_q[2]!] ++
+    -- dirty clear for the line just written back
+    (List.range 8).map (fun i =>
+      Gate.mkAND fl_wb_ack flush_dec[i]! (Wire.mk s!"flush_clr_{i}")) ++
+    -- busy: the core must not redirect until the flush has finished
+    [Gate.mkOR fence_i fence_pending_q (Wire.mk "fl_busy_pre"),
+     Gate.mkOR (Wire.mk "fl_busy_pre") is_flush fence_i_busy]
 
   -- Const zero
   let const_zero_gates := [
@@ -663,20 +757,43 @@ def mkL1DCache : Circuit :=
     Gate.mkAND is_writeback not_wb_ack (Wire.mk "stay_wb"),
     -- fsm_d[0] = go_rw_direct OR stay_rw OR wb_to_rw
     Gate.mkOR (Wire.mk "go_rw_direct") (Wire.mk "stay_rw") (Wire.mk "fsm0_t1"),
-    Gate.mkOR (Wire.mk "fsm0_t1") (Wire.mk "wb_to_rw") fsm_d[0]!,
+    Gate.mkOR (Wire.mk "fsm0_t1") (Wire.mk "wb_to_rw") (Wire.mk "fsm0_base"),
+    -- fence.i flush: FENCE_CHECK → FENCE_WB when the line needs a writeback,
+    -- FENCE_WB stays until wb_ack
+    Gate.mkAND is_flush_check fl_write (Wire.mk "fl_to_wb"),
+    Gate.mkNOT fl_advance (Wire.mk "not_fl_advance"),
+    Gate.mkAND is_flush_wb (Wire.mk "not_fl_advance") (Wire.mk "fl_stay_wb"),
+    Gate.mkOR (Wire.mk "fsm0_base") (Wire.mk "fl_to_wb") (Wire.mk "fsm0_t2"),
+    Gate.mkOR (Wire.mk "fsm0_t2") (Wire.mk "fl_stay_wb") fsm_d[0]!,
     -- fsm_d[1] = go_wb OR stay_wb
     Gate.mkOR (Wire.mk "go_wb") (Wire.mk "stay_wb") fsm_d[1]!,
-    -- fsm_d[2] = 0 (unused)
-    Gate.mkBUF (Wire.mk "const_zero_l1d") fsm_d[2]!
+    -- fsm_d[2] = fence.i flush in progress (enter FENCE_CHECK, leave on the last line)
+    Gate.mkOR flush_start is_flush (Wire.mk "fsm2_t1"),
+    Gate.mkNOT flush_finish (Wire.mk "not_flush_finish2"),
+    Gate.mkAND (Wire.mk "fsm2_t1") (Wire.mk "not_flush_finish2") fsm_d[2]!
   ]
   -- Note: NOT gates for fsm_q[1], fsm_q[2] already exist in fsm_decode_gates
 
   -- === Pending address capture: MUX(hold, req_addr, miss_detect) ===
-  let pend_capture_gates := (List.range 32).map fun i =>
-    Gate.mkMUX pend_q[i]! req_addr[i]! miss_detect pend_d[i]!
+  -- During the flush sweep, pend_q[6:5] carries the line index being flushed
+  -- (the tag read and the data RAM read are addressed from it, exactly as the
+  -- eviction writeback uses the miss index).
+  let pend_capture_gates : List Gate := ((List.range 32).map (fun i =>
+    if i == 5 then
+      [Gate.mkMUX pend_q[i]! req_addr[i]! miss_detect (Wire.mk s!"pend_dx_{i}"),
+       Gate.mkMUX (Wire.mk s!"pend_dx_{i}") flush_idx_q[0]! is_flush pend_d[i]!]
+    else if i == 6 then
+      [Gate.mkMUX pend_q[i]! req_addr[i]! miss_detect (Wire.mk s!"pend_dx_{i}"),
+       Gate.mkMUX (Wire.mk s!"pend_dx_{i}") flush_idx_q[1]! is_flush pend_d[i]!]
+    else
+      [Gate.mkMUX pend_q[i]! req_addr[i]! miss_detect pend_d[i]!])) |>.flatten
 
   -- === Pending victim capture: MUX(hold, victim_lru, miss_detect) ===
-  let pend_victim_capture := Gate.mkMUX pend_victim_q victim_lru miss_detect pend_victim_d
+  -- the flush sweep selects its way through the same register
+  let pend_victim_capture := Wire.mk "pend_victim_d"
+  let pend_victim_gates :=
+    [Gate.mkMUX pend_victim_q victim_lru miss_detect (Wire.mk "pend_victim_dx"),
+     Gate.mkMUX (Wire.mk "pend_victim_dx") flush_idx_q[2]! is_flush pend_victim_capture]
 
   -- === Tag next: MUX(hold, pend_tag, refill_en) ===
   -- Use pend_tag (from pending address) for refill tag installation
@@ -748,7 +865,10 @@ def mkL1DCache : Circuit :=
       acc2 ++ [
         Gate.mkNOT (Wire.mk s!"rfe_{way}_{set}") (Wire.mk s!"nrfe_{way}_{set}"),
         Gate.mkAND dirty_q[idx]! (Wire.mk s!"nrfe_{way}_{set}") (Wire.mk s!"dh_{way}_{set}"),
-        Gate.mkOR (Wire.mk s!"dh_{way}_{set}") (Wire.mk s!"whe_{way}_{set}") dirty_d[idx]!
+        Gate.mkOR (Wire.mk s!"dh_{way}_{set}") (Wire.mk s!"whe_{way}_{set}") (Wire.mk s!"dirty_pre_{idx}"),
+        -- a fence.i writeback clears the line's dirty bit
+        Gate.mkNOT (Wire.mk s!"flush_clr_{idx}") (Wire.mk s!"nflush_clr_{idx}"),
+        Gate.mkAND (Wire.mk s!"dirty_pre_{idx}") (Wire.mk s!"nflush_clr_{idx}") dirty_d[idx]!
       ]
     ) []
   ) []
@@ -773,12 +893,12 @@ def mkL1DCache : Circuit :=
     hit_gates ++ [hit_gate] ++
     hit_data_mux_gates ++ resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++ resp_reg_gates ++
     miss_gates ++ miss_valid_gates ++ miss_addr_gates ++ stall_gates ++
-    [wb_valid_gate] ++ wb_vtag_mux ++ wb_addr_gates ++ wb_data_gates ++ [fence_busy_gate] ++
+    [wb_valid_gate] ++ wb_vtag_mux ++ wb_addr_gates ++ wb_data_gates ++ flush_gates ++
     const_zero_gates ++
     pend_dec_gates ++ lru_mux_gates ++ [pend_victim_not_gate] ++
     write_hit_gates ++ not_ws_gates ++ word_dec_gates ++ dword_dec_gates ++
     [not_way1_hit_gate] ++ refill_wh_gates ++ byte_en_gates ++ wdata_shift_gates ++
-    fsm_next_gates ++ pend_capture_gates ++ [pend_victim_capture] ++
+    fsm_next_gates ++ pend_capture_gates ++ pend_victim_gates ++
     tag_next_gates ++ data_ram_ctl_gates ++ data_ram_addr_gates ++ data_ram_merge_gates ++
     valid_next_gates ++ dirty_next_gates ++ lru_next_gates
 

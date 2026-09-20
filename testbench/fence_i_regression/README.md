@@ -1,23 +1,47 @@
 # Zifencei serialization regressions
 
-Three distinct gaps in the `fence.i` / serialize path, found while bringing up
-the benchmark suite.  `fence.i` is excluded from the benchmark suite itself
-(`BENCH_SKIP` in `lean/Shoumei/RISCV/BenchmarkSpecs.lean`) because the drain
-does not increment `minstret`, so a minstret-derived CPI is meaningless for it;
-the RTL defect below is fixed.
+Three distinct `fence.i` / serialize-path defects found while bringing up the
+benchmark suite, all now fixed.  Kept as a record of what was wrong and why the
+fix looks the way it does.
 
-## 1. Self-modifying code (OPEN)
+`fence.i` remains in `BENCH_SKIP` (`lean/Shoumei/RISCV/BenchmarkSpecs.lean`)
+for one reason only: the serialized drain does not increment `minstret`, so a
+minstret-derived CPI is meaningless for it.  The RTL defects below are fixed and
+covered by the default suites.
 
-`fence_i_test.c` reproduces a real gap: a fetched 32B line containing freshly
-stored code is not refreshed after `fence.i`.  The cached CPU ties the L1I
-`fence_i` invalidate input to zero ("FENCE.I not yet implemented in W=2",
-`lean/Shoumei/RISCV/Memory/Cache/CachedCPU.lean`).  The `MemoryHierarchy`
-`fence_i` port and the L1I invalidate + `fence_i_busy` handshake exist; only the
-CPU -> hierarchy wiring (drive `fence_i` from the serialize start and gate the
-drain on `fence_i_busy`) is missing.  Kept OUT of the buildable
-`testbench/tests` list (and cppcheck scope) until that lands; run manually:
+## 1. Self-modifying code (FIXED)
 
-    make -C testbench/tests fence_i_test.elf   # after moving back
+`fence_i_test.c` (now `testbench/tests/fence_i_test.c`, in the default
+`run-all-tests` / `run-cosim` suites) executes freshly stored code after
+`fence.i`.  It used to hang: the fetched line containing the copy was never
+refreshed.
+
+Three things had to line up, and two were missing:
+
+- the L1D ignored `fence_i` entirely (`fence_i_busy` was tied to 0) — a
+  write-back cache, so freshly stored code sat dirty in the L1D and the L2 that
+  the L1I refills from never saw it;
+- the L1I cleared its valid bits on `fence_i` but left its FSM running, so a
+  refill already in flight could install a stale line *after* the invalidate;
+- the CPU never asserted `fence_i` at all (`CachedCPU.lean` tied the port to
+  zero).
+
+Now:
+
+- **L1D flush** (`L1DCache.lean`): a request latches, and on IDLE the FSM sweeps
+  all 8 lines (2 ways × 4 sets) in order, writing each valid+dirty line back to
+  the L2 through the existing eviction datapath and dropping its dirty bit.
+  `fence_i_busy` is high from the request until the sweep ends.  A `fence.i`
+  arriving while the D-side is busy (miss/eviction in flight) is latched and
+  served at the next IDLE, so the CPU can pulse.
+- **L1I invalidate** (`L1ICache.lean`): `fence_i` now also forces the FSM to
+  IDLE, so a response arriving after the invalidate cannot reinstall a line.
+- **CPU wiring** (`CPU.lean`, `CachedCPU.lean`): the CPU exposes a one-shot
+  `icache_fence_i` pulse, issued only once the pipeline has drained
+  (`rob_empty`) and every prior store has reached the L1D (`lsu_sb_empty`) —
+  otherwise a store still in flight would land after the flush — and the drain
+  completes only after `fence_i_busy` drops.  Ordering is therefore
+  stores → writeback → invalidate → redirect → fetch.
 
 ## 2. Stale L1I line decodes during refill (FIXED)
 
@@ -64,3 +88,12 @@ Regression test: `testbench/tests/serialize_pair_test.S` (in the default
 dependent slot-0 predecessor in a loop that re-enters at the pair, so both the
 counter and a data-carrying predecessor must have executed: pre-fix the test
 hangs (never writes `tohost`), post-fix it passes in ~480 cycles.
+
+Note on the alternative: letting slot 0 dispatch *during* the start cycle of a
+slot-1 serialize (which is what the CSR/trap paths do) also fixes the drop, but
+it exercises a latent free-list hazard - a speculatively allocated physical
+register released on that path came back to the speculative bitmap and was
+re-allocated (observed as `p0` reaching a rename and the ROB head never
+completing).  The defer keeps every drain start on the slot-0-selected path and
+never introduces that overlap, so it avoids the hazard rather than fixing it.
+The free-list bug is not otherwise reachable by the current tests.

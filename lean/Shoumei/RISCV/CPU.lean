@@ -166,6 +166,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fence_i_start := Wire.mk "fence_i_start"
   let fence_i_drain_complete := Wire.mk "fence_i_drain_complete"
   let fence_i_suppress := Wire.mk "fence_i_suppress"
+  -- L1D flush-in-progress (from the memory hierarchy); blocks fence.i drain completion
+  let fence_i_busy := Wire.mk "fence_i_busy"
   let fence_i_detected_0 := Wire.mk "fi_det_s0"
   let fence_i_detected_1 := Wire.mk "fi_det_s1"
   let fence_i_detected := Wire.mk "fence_i_detected"
@@ -479,7 +481,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkAND (Wire.mk "hw_dc_tmp") (Wire.mk "lsu_sb_empty") (Wire.mk "hw_dc_tmp2"),
        Gate.mkNOT (Wire.mk "fence_start_delayed") (Wire.mk "not_fsd"),
        Gate.mkAND (Wire.mk "hw_dc_tmp2") (Wire.mk "not_fsd") (Wire.mk "hw_dc_tmp3"),
-       Gate.mkAND (Wire.mk "hw_dc_tmp3") (Wire.mk "ser_not_flush") hw_drain_complete,
+       -- A fence.i drain also waits for the L1D to have written its dirty lines
+       -- back: the I-side may only re-fetch once the stored code is in the L2.
+       Gate.mkNOT fence_i_busy (Wire.mk "not_fi_busy"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp3") (Wire.mk "not_fi_busy") (Wire.mk "hw_dc_tmp4"),
+       Gate.mkAND (Wire.mk "hw_dc_tmp4") (Wire.mk "ser_not_flush") hw_drain_complete,
        -- draining_next for hw path: set by hw_csr_fence_start, held by hw_draining_reg until hw_drain_complete
        Gate.mkOR hw_csr_fence_start hw_draining_reg (Wire.mk "hw_set_or"),
        Gate.mkNOT hw_drain_complete (Wire.mk "hw_not_dc"),
@@ -532,6 +538,35 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkBUF zero useq_mstatus_trap,
        Gate.mkBUF zero useq_mstatus_mret,
        Gate.mkBUF zero (Wire.mk "irq_inject")]
+
+  -- === INSTRUCTION-CACHE INVALIDATE (fence.i) ===
+  -- fence.i orders prior stores before subsequent fetches.  The I-side invalidate
+  -- (L1I valid clear + L1D dirty writeback, in the memory hierarchy) may only be
+  -- issued once the pipeline has drained (rob_empty) and every prior store has
+  -- reached the L1D (lsu_sb_empty) - otherwise a store still in flight would land
+  -- in the cache after the flush.  The request is a one-shot pulse; the drain then
+  -- waits for `fence_i_busy` to drop before redirecting (see hw_drain_complete).
+  let icache_fence_i := Wire.mk "icache_fence_i"
+  let fi_drain_q := Wire.mk "fi_drain_q"
+  let fi_drain_d := Wire.mk "fi_drain_d"
+  let fi_order_ok := Wire.mk "fi_order_ok"
+  let fi_sent_q := Wire.mk "fi_sent_q"
+  let fi_sent_d := Wire.mk "fi_sent_d"
+  let icache_fence_gates :=
+    [-- latch: the drain in progress (if any) is a fence.i drain
+     Gate.mkAND fence_i_start (Wire.mk "fi_selected") (Wire.mk "fi_drain_set"),
+     Gate.mkAND fence_i_draining fi_drain_q (Wire.mk "fi_drain_hold"),
+     Gate.mkOR (Wire.mk "fi_drain_hold") (Wire.mk "fi_drain_set") fi_drain_d,
+     -- ordering window: drained and stores are in the L1D
+     Gate.mkAND fi_drain_q rob_empty (Wire.mk "fi_ord_pre"),
+     Gate.mkAND (Wire.mk "fi_ord_pre") (Wire.mk "lsu_sb_empty") fi_order_ok,
+     -- one-shot request per drain; the "sent" bit clears with the drain
+     Gate.mkNOT fi_sent_q (Wire.mk "not_fi_sent"),
+     Gate.mkAND fi_order_ok (Wire.mk "not_fi_sent") icache_fence_i,
+     Gate.mkOR fi_sent_q fi_order_ok (Wire.mk "fi_sent_pre"),
+     Gate.mkAND fi_drain_q (Wire.mk "fi_sent_pre") fi_sent_d,
+     Gate.mkDFF fi_drain_d clock reset fi_drain_q,
+     Gate.mkDFF fi_sent_d clock reset fi_sent_q]
 
   -- PC+4 of serializing instruction (MUX between slot 0 PC and slot 1 PC, then add 4)
   let ser_pc_muxed := CPU.makeIndexedWires "ser_pc_muxed" 32
@@ -4410,10 +4445,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     inputs := [clock, reset, zero, one, fetch_stall_ext, ifetch_last_word, dmem_stall_ext] ++
               imem_resp_data_0 ++ imem_resp_data_1 ++
               [dmem_req_ready, dmem_resp_valid] ++ dmem_resp_data ++
-              [Wire.mk "mtip_in", Wire.mk "msip_in", Wire.mk "meip_in"]
+              [Wire.mk "mtip_in", Wire.mk "msip_in", Wire.mk "meip_in",
+               -- L1D fence.i writeback in progress (memory hierarchy)
+               fence_i_busy]
     outputs := fetch_pc_0 ++ [fetch_stalled, global_stall_out] ++
                [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_data ++ dmem_req_size ++
-               [rob_empty] ++
+               [rob_empty, icache_fence_i] ++
                [rvvi_valid_0, rvvi_valid_1,
                 rvvi_trap_0, rvvi_trap_1,
                 rvvi_rd_valid_0, rvvi_rd_valid_1] ++
@@ -4422,6 +4459,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                rvvi_rd_0 ++ rvvi_rd_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ has_rd_int_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
+             icache_fence_gates ++
              dual_stall_gates ++ int_de1_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++

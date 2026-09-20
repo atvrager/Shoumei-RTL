@@ -129,6 +129,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
       ("fetch_stall_ext", ifetch_stall),
       ("ifetch_last_word", ifetch_last_word),
       ("dmem_stall_ext", dmem_stall),
+      -- L1D fence.i flush in progress: the fence.i drain waits for it
+      ("fence_i_busy", Wire.mk "cache_fence_i_busy"),
       ("mtip_in", mtip_in),
       ("msip_in", msip_in),
       ("meip_in", meip_in)] ++
@@ -149,6 +151,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range dmemDataWidth).map (fun i => (s!"dmem_req_data_{i}", dmem_req_data[i]!)) ++
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("rob_empty", rob_empty),
+      -- one-shot instruction-cache invalidate request (fence.i drain)
+      ("icache_fence_i", Wire.mk "cpu_fence_i"),
       ("rvvi_validS0", rvvi_valid_0), ("rvvi_validS1", rvvi_valid_1),
       ("rvvi_trapS0", rvvi_trap_0), ("rvvi_trapS1", rvvi_trap_1),
       ("rvvi_rd_validS0", rvvi_rd_valid_0), ("rvvi_rd_validS1", rvvi_rd_valid_1)] ++
@@ -176,7 +180,7 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (List.range 2).map (fun i => (s!"dmem_req_size_{i}", dmem_req_size[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
      (List.range 256).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
-     [("fence_i", zero)] ++  -- FENCE.I not yet implemented in W=2
+     [("fence_i", Wire.mk "cpu_fence_i")] ++
      -- MemHierarchy outputs
      (List.range 32).map (fun i => (s!"ifetch_data_{i}", imem_resp_data[i]!)) ++
      (List.range 32).map (fun i => (s!"ifetch_data_1_{i}", imem_resp_data_1[i]!)) ++

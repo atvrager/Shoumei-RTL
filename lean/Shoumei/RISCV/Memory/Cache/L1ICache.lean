@@ -392,7 +392,11 @@ def mkL1ICache : Circuit :=
     --            OR refill_done (REFILL_WAIT→REFILL_DONE)
     --            OR stay_done (REFILL_DONE stays until req_valid)
     Gate.mkOR miss_detect refill_done (Wire.mk "fsm_d0_tmp"),
-    Gate.mkOR (Wire.mk "fsm_d0_tmp") stay_done fsm_d[0]!,
+    Gate.mkOR (Wire.mk "fsm_d0_tmp") stay_done (Wire.mk "fsm_d0_raw"),
+    -- FENCE.I restarts the FSM: drop any in-flight refill, so a response that
+    -- arrives after the invalidate can never (re)install a stale line.
+    -- (fsm_d0_raw is 0 on the fence cycle anyway unless a miss is coincident.)
+    Gate.mkAND (Wire.mk "fsm_d0_raw") (Wire.mk "not_fence_i") fsm_d[0]!,
     -- fsm_d[1] = is_refill_req (REFILL_REQ→REFILL_WAIT)
     --            OR (is_refill_wait AND NOT refill_valid) (stay in REFILL_WAIT)
     --            OR refill_done (REFILL_WAIT→REFILL_DONE)
@@ -401,7 +405,8 @@ def mkL1ICache : Circuit :=
     Gate.mkAND is_refill_wait (Wire.mk "not_refill_valid") (Wire.mk "stay_wait"),
     Gate.mkOR is_refill_req (Wire.mk "stay_wait") (Wire.mk "fsm_d1_tmp"),
     Gate.mkOR (Wire.mk "fsm_d1_tmp") refill_done (Wire.mk "fsm_d1_tmp2"),
-    Gate.mkOR (Wire.mk "fsm_d1_tmp2") stay_done fsm_d[1]!
+    Gate.mkOR (Wire.mk "fsm_d1_tmp2") stay_done (Wire.mk "fsm_d1_raw"),
+    Gate.mkAND (Wire.mk "fsm_d1_raw") (Wire.mk "not_fence_i") fsm_d[1]!
   ]
 
   -- MAR capture: save req_addr on miss_detect, hold otherwise

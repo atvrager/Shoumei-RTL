@@ -13,7 +13,7 @@ Complete out-of-order processor defined in Lean 4, with dependent-type proofs of
 - **A Extension**: Atomic memory operations (`LR.W`/`SC.W`, `LR.D`/`SC.D`, and `AMO*.W`/`AMO*.D` swap, add, xor, and, or, min, max).
 - **F & D Extensions**: Single- and double-precision IEEE 754 floating-point execution, fused multiply-add, and FP-integer conversions.
 - **Zicsr**: Full CSR access (`CSRRW`, `CSRRS`, `CSRRC`, immediate forms) and machine-mode status registers.
-- **Zifencei**: Instruction fetch barrier with pipeline serialization.
+- **Zifencei**: Instruction fetch barrier.  The `fence.i` drain drains the pipeline, waits for the store queue to reach the L1D, has the L1D write its dirty lines back to the L2, invalidates the L1I (dropping any in-flight refill), and only then redirects — so freshly stored code is visible to the next fetch.  The serializing instruction never drops its slot-0 predecessor (it is re-fetched).
 
 ### Microarchitecture Pipeline Stages
 
