@@ -308,16 +308,13 @@ def baseCircuits : List Circuit := [
 
   -- Phase 7: Memory
   mkStoreBuffer8,
-  mkLSU,
-
-  -- Phase 7b: Cache Hierarchy Building Blocks
-  mkRegisterN 24,   -- L1I/L2 tag storage (24-bit tags)
-  mkRegisterN 25,   -- L1D tag storage (25-bit tags)
-  mkEqualityComparatorN 24,     -- L1I/L2 tag comparison
-  mkEqualityComparatorN 25,     -- L1D tag comparison
-  mkMuxTree 4 25,    -- L1D tag set mux (4 sets × 25-bit tags)
-  mkMuxTree 8 24,    -- L1I/L2 tag set mux (8 sets × 24-bit tags)
-
+  mkLSU
+  ] ++
+  -- Phase 7b: Cache Hierarchy Building Blocks, derived from the configured
+  -- geometry (tag widths, set counts, word extract muxes, replacement blocks)
+  -- so a different cache size does not silently reference missing modules.
+  cacheGeomCircuits defaultCPUConfig.cacheGeom ++
+  [
   -- Phase 7b: Cache Hierarchy Modules
   mkL1ICache,
   mkL1DCache,

@@ -95,20 +95,21 @@ private def rightLeaves (ways i : Nat) : List Nat :=
 /-- Tree-PLRU circuit.
 
     Ports:
-    - inputs : clock, reset, zero, one, upd_en, upd_way[wayBits-1:0]
-    - outputs: victim_oh[ways-1:0]   (one-hot way select)
+    - inputs : clock, reset, zero, one, upd_en, upd_way_oh[ways-1:0]
+    - outputs: victim_oh[ways-1:0]
 
-    The victim is available combinationally; `upd_en` with `upd_way` marks a
-    way most-recently used at the clock edge. -/
+    Both way selects are one-hot, which is what the caches already have (way
+    hit vectors, victim selects), so no encoder sits in between.  The victim is
+    available combinationally; `upd_en` with `upd_way_oh` marks a way
+    most-recently used at the clock edge. -/
 def mkPLRU (ways : Nat) : Circuit :=
-  let wayBits := if ways ≤ 2 then 1 else Nat.log2 (ways - 1) + 1
   let depth := PLRUState.depth ways
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
   let upd_en := Wire.mk "upd_en"
-  let upd_way := (List.range wayBits).map fun i => Wire.mk s!"upd_way_{i}"
+  let upd_way_oh := (List.range ways).map fun i => Wire.mk s!"upd_way_oh_{i}"
   let victim_oh := (List.range ways).map fun i => Wire.mk s!"victim_oh_{i}"
 
   -- Tree bits: one DFF per internal node.
@@ -117,15 +118,10 @@ def mkPLRU (ways : Nat) : Circuit :=
   let bit_gates := (List.range (ways - 1)).map fun i =>
     Gate.mkDFF bit_d[i]! clock reset bit_q[i]!
 
-  -- Updated way → one-hot leaf select (reuse the parametric Decoder module).
-  let way_dec := (List.range ways).map fun i => Wire.mk s!"way_dec_{i}"
+  -- The updated way *is* the one-hot leaf select (gated by the update enable).
   let leaf_oh := (List.range ways).map fun i => Wire.mk s!"leaf_oh_{i}"
-  let upd_dec_inst : CircuitInstance :=
-    CircuitInstance.mk s!"Decoder{wayBits}" "u_way_dec"
-      ((List.range wayBits).map (fun i => (s!"in_{i}", upd_way[i]!)) ++
-       (List.range ways).map (fun i => (s!"out_{i}", way_dec[i]!)))
   let leaf_gates := (List.range ways).map fun w =>
-    Gate.mkAND way_dec[w]! upd_en leaf_oh[w]!
+    Gate.mkAND upd_way_oh[w]! upd_en leaf_oh[w]!
 
   -- is_right[i] = the updated way is in node i's right subtree.
   let in_right := (List.range (ways - 1)).map fun i => Wire.mk s!"in_right_{i}"
@@ -158,13 +154,13 @@ def mkPLRU (ways : Nat) : Circuit :=
     Gate.mkBUF sel[ways - 1 + w]! victim_oh[w]!
 
   { name := s!"PLRU{ways}"
-    inputs := [clock, reset, zero, one, upd_en] ++ upd_way
+    inputs := [clock, reset, zero, one, upd_en] ++ upd_way_oh
     outputs := victim_oh
     gates := bit_gates ++ leaf_gates ++ ascend_gates ++ bit_next_gates ++
              descend_gates ++ victim_gates
-    instances := [upd_dec_inst]
+    instances := []
     signalGroups := [
-      { name := "upd_way", width := wayBits, wires := upd_way },
+      { name := "upd_way_oh", width := ways, wires := upd_way_oh },
       { name := "victim_oh", width := ways, wires := victim_oh }
     ]
   }

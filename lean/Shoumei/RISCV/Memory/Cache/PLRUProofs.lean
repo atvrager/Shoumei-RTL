@@ -95,9 +95,9 @@ theorem plru_victim_width_4 : (mkPLRU 4).outputs.length = 4 := by native_decide
 
 theorem plru_victim_width_8 : (mkPLRU 8).outputs.length = 8 := by native_decide
 
-/-- The update way is a binary index: `log2 ways` bits. -/
-theorem plru_upd_way_width_4 : (mkPLRU 4).inputs.length = 5 + 2 := by native_decide
+/-- The update way is a one-hot select: `ways` bits (what the caches have). -/
+theorem plru_upd_way_width_4 : (mkPLRU 4).inputs.length = 5 + 4 := by native_decide
 
-theorem plru_upd_way_width_8 : (mkPLRU 8).inputs.length = 5 + 3 := by native_decide
+theorem plru_upd_way_width_8 : (mkPLRU 8).inputs.length = 5 + 8 := by native_decide
 
 end Shoumei.RISCV.Memory.Cache

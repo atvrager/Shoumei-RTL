@@ -12,6 +12,7 @@ import Shoumei.RISCV.Memory.Cache.CacheTypes
 import Shoumei.RISCV.Memory.Cache.L1ICache
 import Shoumei.RISCV.Memory.Cache.L1DCache
 import Shoumei.RISCV.Memory.Cache.L2Cache
+import Shoumei.RISCV.Memory.Cache.PLRU
 
 namespace Shoumei.RISCV.Memory.Cache
 
@@ -226,5 +227,37 @@ def mkMemoryHierarchy : Circuit :=
     ]
     keepHierarchy := true
   }
+
+end Shoumei.RISCV.Memory.Cache
+
+namespace Shoumei.RISCV.Memory.Cache
+
+open Shoumei
+open Shoumei.Circuits.Sequential
+open Shoumei.Circuits.Combinational
+
+/-- Circuits the cache hierarchy instantiates for a geometry: per-level tag
+    storage and comparators at that level's tag width, the set muxes, the word
+    and doubleword extract muxes, and the replacement policy block.
+
+    The tag width is `32 - indexBits - offsetBits` (the levels address 32-bit
+    addresses), so it follows the geometry the same way the builders do.  This
+    is what keeps the codegen list in step with a configured hierarchy instead
+    of hardcoding one geometry's modules. -/
+def cacheGeomCircuits (g : CacheGeom) : List Circuit :=
+  let off := log2Ceil g.lineBytes
+  let l1iTag := 32 - log2Ceil g.l1iSets - off
+  let l1dTag := 32 - log2Ceil g.l1dSets - off
+  let l2Tag := 32 - log2Ceil g.l2Sets - off
+  let words := g.lineBytes / 4
+  let plru ways := if ways ≥ 2 then [mkPLRU ways] else []
+  let mods :=
+    [mkRegisterN l1iTag, mkRegisterN l1dTag, mkRegisterN l2Tag,
+     mkEqualityComparatorN l1iTag, mkEqualityComparatorN l1dTag, mkEqualityComparatorN l2Tag,
+     mkMuxTree g.l1iSets l1iTag, mkMuxTree g.l1dSets l1dTag, mkMuxTree g.l2Sets l2Tag,
+     mkMuxTree words 32, mkMuxTree (words / 2) 32]
+    ++ plru g.l1iWays ++ plru g.l1dWays ++ plru g.l2Ways
+  -- deduplicate by module name (levels can share a tag width or way count)
+  mods.foldl (fun acc c => if acc.any (fun c' => c'.name == c.name) then acc else acc ++ [c]) []
 
 end Shoumei.RISCV.Memory.Cache
