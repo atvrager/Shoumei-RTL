@@ -89,6 +89,8 @@ else
 fi
 
 export PLATFORM="gf180"
+# config.mk picks output/sv-gf180 for the OpenROAD/DC flows.
+export PDK_DIR="gf180"
 export DESIGN_NAME
 export CLK_PERIOD_NS
 export TRACK_OPTION

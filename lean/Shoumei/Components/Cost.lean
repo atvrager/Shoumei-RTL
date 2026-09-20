@@ -48,7 +48,19 @@ def cellArea (pdk : PDK) (t : GateType) : Float :=
       | .MUX           => 36.6912   -- mux2_1
       | .DFF | .DFF_SET => 60.0
 
-/-- Per-cell propagation delay in ps, from the PDK Liberty typical tables. -/
+/-- Per-cell propagation delay in ps, from the PDK Liberty typical tables.
+
+    `scripts/calibrate-adders.py` (over all 87 selectable adders) measures the
+    factor these seeds need to match synthesized critical delay:
+
+      ASAP7  cellArea x0.85  cellDelay x2.86
+      GF180  cellArea x0.92  cellDelay x0.98
+
+    GF180 is within the 25% band.  ASAP7's delay factor reflects ABC's loaded
+    critical path (driver `BUFx2_ASAP7_75t_R`, 3.898 fF load), not intrinsic
+    gate delay, so the unloaded Liberty seed is kept: the model only has to
+    rank structures within a PDK and set a plausible timing-filter scale, and
+    re-seeding would change every selection input for no ranking gain. -/
 def cellDelay (pdk : PDK) (t : GateType) : Float :=
   match pdk with
   | .asap7 =>

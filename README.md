@@ -223,6 +223,7 @@ fails if the certificate names a module the generator does not emit.
 | [docs/ooo-plan.md](docs/ooo-plan.md) | Implementation phase ledger and milestone history |
 | [docs/physical-design.md](docs/physical-design.md) | OpenROAD, ASAP7 (1.0 GHz), GF180MCU (64 MHz), Synopsys DC |
 | [docs/cosimulation.md](docs/cosimulation.md) | Lock-step cosimulation via RVVI and Spike |
+| [docs/component-selection.md](docs/component-selection.md) | Adder/component selection and PDK technology mapping |
 | [docs/adding-a-module.md](docs/adding-a-module.md) | Step-by-step guide for new modules |
 | [docs/adding-an-extension.md](docs/adding-an-extension.md) | Step-by-step guide for adding ISA extensions |
 | [docs/verification-guide.md](docs/verification-guide.md) | Proofs, certificates, elaboration, sim and cosim |
