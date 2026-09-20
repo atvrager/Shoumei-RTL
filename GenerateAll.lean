@@ -363,11 +363,13 @@ def baseCircuits : List Circuit := [
   shoumeiSoCCircuit
 ]
 
-/-- The registry plus every selectable adder the sites may resolve to, minus
-    any adder already emitted under the same name. -/
+/-- Every selectable adder the sites may resolve to, followed by the rest of
+    the registry minus any adder already listed.  The adders are leaves, so
+    putting them first keeps `allCircuits` in topological order and lets the
+    dependency-aware hash see them before the modules that instantiate them. -/
 def allCircuits : List Circuit :=
-  baseCircuits ++ allAdderCircuits.filter
-    (fun c => !(baseCircuits.map (·.name)).contains c.name)
+  allAdderCircuits ++ baseCircuits.filter
+    (fun c => !(allAdderCircuits.map (·.name)).contains c.name)
 
 /-- Everything this generator emits, by module name. -/
 def emittedModuleNames : List String :=
