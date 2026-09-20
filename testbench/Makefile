@@ -170,13 +170,14 @@ run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 # Run cosim with arcilator
-run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests
+run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(ARC_COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
 	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
 	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*bench*=3000000' \
 	    --csv $(PROJ_ROOT)/output/cosim-results-arc.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
 
 # ==========================================================================
 # Verilator targets
@@ -399,13 +400,14 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 	$(call verilator_build,$(BUILD_DIR)/verilator_cosim)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
-run-cosim: $(COSIM_BIN) tests riscv-tests
+run-cosim: $(COSIM_BIN) tests riscv-tests bench
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
 	    --timeout '*freertos*=200000' --timeout '*irq*=200000' \
 	    --timeout '*timer*=200000' --timeout '*wfi*=200000' --timeout '*lrsc*=60000' \
+	    --timeout '*bench*=3000000' \
 	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
 
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark

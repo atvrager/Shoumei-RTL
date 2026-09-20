@@ -46,13 +46,15 @@ if [[ -z "$BIN" || ${#ELFS[@]} -eq 0 ]]; then
     exit 2
 fi
 
-# Per-test timeout: last matching --timeout glob wins.
+# Per-test timeout: last matching --timeout glob wins.  A glob is matched against
+# both the basename and the full path, so a suite sub-directory carries its own
+# budget without listing every program (e.g. --timeout '*bench*=3000000').
 timeout_for() {
-    local name="$1" t="$DEFAULT_TIMEOUT"
+    local name="$1" path="$2" t="$DEFAULT_TIMEOUT"
     local ov
     for ov in "${OVERRIDES[@]}"; do
         # shellcheck disable=SC2053
-        if [[ "$name" == ${ov%%=*} ]]; then t="${ov##*=}"; fi
+        if [[ "$name" == ${ov%%=*} || "$path" == ${ov%%=*} ]]; then t="${ov##*=}"; fi
     done
     echo "$t"
 }
@@ -103,7 +105,7 @@ JOBS_FILE="$OUT_DIR/jobs.txt"
 : > "$JOBS_FILE"
 for elf in "${ELFS[@]}"; do
     [[ -f "$elf" ]] || continue
-    echo "$(timeout_for "$(basename "$elf")") $elf" >> "$JOBS_FILE"
+    echo "$(timeout_for "$(basename "$elf")" "$elf") $elf" >> "$JOBS_FILE"
 done
 
 if [[ -n "$COV_DIR" ]]; then
