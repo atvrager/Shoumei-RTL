@@ -18,11 +18,13 @@ import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.CppSim
 import Shoumei.Codegen.Testbench
-import Shoumei.Codegen.ASAP7
+import Shoumei.Codegen.TechMap
+import Shoumei.Codegen.CellNetlist
 
 namespace Shoumei.Codegen.Unified
 
 open Shoumei
+open Shoumei.Components
 open Shoumei.Codegen
 
 -- Incremental codegen: content-hash circuits, skip unchanged ones
@@ -52,7 +54,7 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
     without altering circuit structure, or when the set of emitted formats
     changes.  The cache key includes this version, so a bump invalidates every
     cached output and forces a full regeneration. -/
-def codegenVersion : String := "sram-ifdef-macros-2026-09-19c"
+def codegenVersion : String := "pdk-techmap-2026-09-20c"
 
 /-- Check if circuit hash matches cached value (and the codegen version). -/
 def isUpToDate (name : String) (h : UInt64) : IO Bool := do
@@ -71,7 +73,12 @@ def updateCache (name : String) (h : UInt64) : IO Unit := do
 def svOutputDir : String := "output/sv-from-lean"
 def svNetlistOutputDir : String := "output/sv-netlist"
 def cppSimOutputDir : String := "output/cpp_sim"
-def asap7OutputDir : String := "output/sv-asap7"
+def pdkOutputDir : PDK → String
+  | .asap7    => "output/sv-asap7"
+  | .gf180mcu => "output/sv-gf180"
+
+/-- Every PDK the codegen emits tech-mapped SV for. -/
+def allPdks : List PDK := [.asap7, .gf180mcu]
 
 -- Write SystemVerilog (hierarchical) for a circuit
 -- Pass allCircuits for sub-module port structure lookup in hierarchical modules
@@ -96,12 +103,12 @@ def writeCircuitCppSim (c : Circuit) (allCircuits : List Circuit := []) : IO Uni
   IO.FS.writeFile hPath header
   IO.FS.writeFile cppPath impl
 
--- Write ASAP7 tech-mapped SystemVerilog for a circuit (only if keepHierarchy)
-def writeCircuitASAP7 (c : Circuit) (allCircuits : List Circuit := [])
+-- Write PDK tech-mapped SystemVerilog for a circuit (only if keepHierarchy)
+def writeCircuitPDK (pdk : PDK) (c : Circuit) (allCircuits : List Circuit := [])
     (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : IO Unit := do
   if c.keepHierarchy then
-    let sv := ASAP7.toASAP7SystemVerilog c allCircuits precomputedLoaded
-    let path := s!"{asap7OutputDir}/{c.name}.sv"
+    let sv := CellNetlist.toSV (techMap pdk c) allCircuits precomputedLoaded
+    let path := s!"{pdkOutputDir pdk}/{c.name}.sv"
     IO.FS.writeFile path sv
 
 -- Write all output formats for a circuit
@@ -119,12 +126,13 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
   writeCircuitSV c allCircuits precomputedLoaded
   writeCircuitNetlist c
   writeCircuitCppSim c allCircuits
-  writeCircuitASAP7 c allCircuits precomputedLoaded
+  for pdk in allPdks do
+    writeCircuitPDK pdk c allCircuits precomputedLoaded
   -- Update cache after successful generation
   if let some h := lookupHash hashMap c.name then
     updateCache c.name h
-  let asap7Tag := if c.keepHierarchy then " +ASAP7" else ""
-  IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{asap7Tag}"
+  let pdkTag := if c.keepHierarchy then " +techmap" else ""
+  IO.println s!"✓ Generated {c.name}: {c.gates.length} gates, {c.instances.length} instances{pdkTag}"
 
 -- Verbose version with individual file confirmation
 def writeCircuitVerbose (c : Circuit) (allCircuits : List Circuit := []) : IO Unit := do
@@ -150,20 +158,19 @@ def writeFilelist (dir : String) (ext : String) : IO Unit := do
 def physicalOutputDir : String := "physical"
 
 /-- Write a physical synthesis filelist (.f) for a given synth wrapper.
-    Prioritizes ASAP7 tech-mapped modules over generic sv-from-lean modules. -/
-def writePhysicalFilelist (wrapperName : String) : IO Unit := do
-  -- Collect ASAP7 tech-mapped SV files
-  let asap7Entries ← System.FilePath.readDir asap7OutputDir
-  let asap7Files := asap7Entries.filter (fun e => e.fileName.endsWith ".sv")
-  let asap7Names := asap7Files.toList.map (fun e => e.fileName) |>.toArray
-  -- Collect generic SV files, excluding those overridden by ASAP7
+    Prefers the target PDK's tech-mapped modules over the generic sv-from-lean
+    modules, so a mapped module is never shadowed by its gate-level form. -/
+def writePhysicalFilelist (wrapperName : String) (pdk : PDK := .asap7) : IO Unit := do
+  let dir := pdkOutputDir pdk
+  let mappedEntries ← System.FilePath.readDir dir
+  let mappedFiles := mappedEntries.filter (fun e => e.fileName.endsWith ".sv")
+  let mappedNames := mappedFiles.toList.map (fun e => e.fileName) |>.toArray
   let leanEntries ← System.FilePath.readDir svOutputDir
   let leanFiles := leanEntries.filter (fun e =>
-    e.fileName.endsWith ".sv" && !asap7Names.contains e.fileName)
-  -- Build sorted filelist: ASAP7 first, then generic, then wrapper
-  let asap7Paths := asap7Files.toList.map (fun e => s!"{asap7OutputDir}/{e.fileName}")
+    e.fileName.endsWith ".sv" && !mappedNames.contains e.fileName)
+  let mappedPaths := mappedFiles.toList.map (fun e => s!"{dir}/{e.fileName}")
   let leanPaths := leanFiles.toList.map (fun e => s!"{svOutputDir}/{e.fileName}")
-  let allPaths := (asap7Paths ++ leanPaths).mergeSort (· < ·)
+  let allPaths := (mappedPaths ++ leanPaths).mergeSort (· < ·)
     |>.append [s!"{physicalOutputDir}/{wrapperName}.sv"]
   let content := String.intercalate "\n" allPaths ++ "\n"
   IO.FS.writeFile s!"{physicalOutputDir}/{wrapperName}.f" content
@@ -179,7 +186,7 @@ def pruneStaleOutputs (keepNames : List String) : IO Unit := do
   -- Match case-insensitively: generators emit "Generated by", "Auto-generated", etc.
   let markers := ["generated by", "auto-generated", "do not edit", "generated from",
                   "generated systemverilog", "generated risc-v", "eval_comb_all", "comb_logic"]
-  let dirs := [svOutputDir, svNetlistOutputDir, cppSimOutputDir, asap7OutputDir]
+  let dirs := [svOutputDir, svNetlistOutputDir, cppSimOutputDir] ++ allPdks.map pdkOutputDir
   for dir in dirs do
     let entries ← System.FilePath.readDir dir
     for e in entries do
@@ -204,7 +211,8 @@ def initOutputDirs : IO Unit := do
   IO.FS.createDirAll svOutputDir
   IO.FS.createDirAll svNetlistOutputDir
   IO.FS.createDirAll cppSimOutputDir
-  IO.FS.createDirAll asap7OutputDir
+  for pdk in allPdks do
+    IO.FS.createDirAll (pdkOutputDir pdk)
 
 -- Write SystemVerilog testbench for a TestbenchConfig
 def writeTestbenchSV (cfg : Testbench.TestbenchConfig) : IO Unit :=

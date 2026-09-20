@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **244**
+- Lean files: **259**
 - Circuits with a literal `name :=` (graph nodes): **98**
 - Compositional certificates (Lean registry): **103**
-- Proof files: **70**
+- Proof files: **74**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by
@@ -58,8 +58,8 @@ graph TD
 | Circuit | Subsystem | Inst. | Cert | Proofs | Doc |
 | :--- | :--- | ---: | :---: | :---: | :---: |
 | `ACLINT` | Shoumei/Peripherals | 0 |  | yes | yes |
-| `ALU32` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
-| `ALU64` | Shoumei/Circuits/Combinational | 8 |  | yes | yes |
+| `ALU32` | Shoumei/Circuits/Combinational | 6 |  | yes | yes |
+| `ALU64` | Shoumei/Circuits/Combinational | 6 |  | yes | yes |
 | `APLIC` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `BitmapFreeList_64_W1` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
 | `BitmapFreeList_64_W2` | Shoumei/RISCV/Renaming | 2 | yes |  | yes |
@@ -111,10 +111,10 @@ graph TD
 | `GPIO` | Shoumei/Peripherals | 0 |  | yes | yes |
 | `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
-| `KoggeStoneAdder32NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
-| `KoggeStoneAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
-| `KoggeStoneAdder64NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
-| `KoggeStoneAdder64WithCin1` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
+| `KoggeStoneAdder32NoCin` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `KoggeStoneAdder64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `KoggeStoneAdder64NoCin` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `KoggeStoneAdder64WithCin1` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `L1DCache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `L1ICache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `L2Cache` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
@@ -124,15 +124,15 @@ graph TD
 | `MemoryHierarchy` | Shoumei/RISCV/Memory/Cache | 0 | yes | yes | yes |
 | `MicrocodeDecoder` | Shoumei/RISCV/Microcode | 0 |  |  | yes |
 | `MicrocodeSequencer` | Shoumei/RISCV/Microcode | 1 | yes | yes | yes |
-| `Mul32x32To64` | Shoumei/Circuits/Combinational | 7 |  |  | yes |
+| `Mul32x32To64` | Shoumei/Circuits/Combinational | 3 |  |  | yes |
 | `MulDivExecUnit` | Shoumei/RISCV/Execution | 2 | yes | yes | yes |
 | `MulFinalAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Mux0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `MyModule` | Shoumei/DSL | 0 |  |  | yes |
 | `OneHotEncoder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `Pipeline` | Shoumei/DSL | 0 |  | yes | yes |
-| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 8 | yes | yes | yes |
-| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 8 | yes |  | yes |
+| `PipelinedMultiplier` | Shoumei/Circuits/Combinational | 4 | yes | yes | yes |
+| `PipelinedMultiplier64` | Shoumei/Circuits/Combinational | 4 | yes |  | yes |
 | `Popcount8` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `PriorityArbiter0` | Shoumei/Circuits/Combinational | 0 |  |  | yes |
 | `PriorityArbiter64` | Shoumei/Circuits/Combinational | 0 | yes |  | yes |
@@ -150,8 +150,8 @@ graph TD
 | `Shifter64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `Shoumei_SoC` | Shoumei/SoC | 8 | yes |  | yes |
 | `StoreBuffer8` | Shoumei/RISCV/Memory | 2 | yes | yes | yes |
-| `Subtractor32` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
-| `Subtractor64` | Shoumei/Circuits/Combinational | 2 |  | yes | yes |
+| `Subtractor32` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
+| `Subtractor64` | Shoumei/Circuits/Combinational | 0 |  | yes | yes |
 | `TLXbar8` | Shoumei/Interconnect/TileLink | 0 |  | yes | yes |
 | `TrapSequencer` | Shoumei/RISCV/Microcode | 0 | yes | yes | yes |
 | `UART` | Shoumei/Peripherals | 0 |  | yes | yes |
@@ -159,9 +159,9 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **27** circuits with no `*Proofs.lean` mentioning them
-- **55** circuits that instantiate nothing (leaves)
-- **39** circuits nothing else instantiates (tops)
+- **23** circuits with no `*Proofs.lean` mentioning them
+- **57** circuits that instantiate nothing (leaves)
+- **43** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

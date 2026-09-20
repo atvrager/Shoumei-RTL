@@ -7,12 +7,15 @@ export PLATFORM    = asap7
 
 # CPU requires all submodule SV files (using Lean-generated SV for hierarchical design)
 # ASAP7 tech-mapped modules override generic versions to preserve gate topology
-ASAP7_SV   := $(wildcard $(PROJECT_ROOT)/output/sv-asap7/*.sv)
-ASAP7_NAMES := $(notdir $(ASAP7_SV))
-GENERIC_SV := $(filter-out $(addprefix $(PROJECT_ROOT)/output/sv-from-lean/,$(ASAP7_NAMES)), \
+# Target PDK tech-mapped directory (asap7 or gf180).  run-yosys-gf180.sh
+# exports PDK_DIR=gf180 for the GF180MCU flow.
+PDK_DIR ?= asap7
+MAPPED_SV   := $(wildcard $(PROJECT_ROOT)/output/sv-$(PDK_DIR)/*.sv)
+MAPPED_NAMES := $(notdir $(MAPPED_SV))
+GENERIC_SV := $(filter-out $(addprefix $(PROJECT_ROOT)/output/sv-from-lean/,$(MAPPED_NAMES)), \
                 $(wildcard $(PROJECT_ROOT)/output/sv-from-lean/*.sv))
 export VERILOG_FILES = $(PROJECT_ROOT)/physical/$(DESIGN_NAME).sv \
-                       $(ASAP7_SV) $(GENERIC_SV)
+                       $(MAPPED_SV) $(GENERIC_SV)
 export SDC_FILE      = $(PROJECT_ROOT)/physical/constraints.sdc
 
 # Frequency targets (ASAP7 time unit = picoseconds)

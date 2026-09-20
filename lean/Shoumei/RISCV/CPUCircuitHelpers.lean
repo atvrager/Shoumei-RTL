@@ -8,6 +8,7 @@
   mkCDBForwardInt, mkCDBForwardFP, mkSidecarRegFile4x32.
 -/
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.RISCV.Config
 import Shoumei.Circuits.Combinational.Decoder
 import Shoumei.Circuits.Sequential.Register
@@ -15,6 +16,7 @@ import Shoumei.Circuits.Sequential.Register
 namespace Shoumei.RISCV.CPU
 
 open Shoumei
+open Shoumei.Components
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
 
@@ -463,7 +465,7 @@ def mkBranchResolve
   -- === BRANCH TARGET + PC REDIRECT ===
   let branch_target := makeIndexedWires "branch_target" 32
   let branch_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := adderModule (AdderSpec.minDelay 32 .input)
     instName := "u_branch_target"
     portMap :=
       (br_captured_pc.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++
@@ -477,7 +479,7 @@ def mkBranchResolve
   let jalr_target_raw := makeIndexedWires "jalr_target_raw" 32
   let jalr_target := makeIndexedWires "jalr_target" 32
   let jalr_target_adder_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := adderModule (AdderSpec.minDelay 32 .input)
     instName := "u_jalr_target"
     portMap :=
       (rs_branch_dispatch_src1.enum.map (fun ⟨i, w⟩ => (s!"a_{i}", w))) ++

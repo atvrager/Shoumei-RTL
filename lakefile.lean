@@ -28,6 +28,11 @@ lean_exe generate_all where
   root := `GenerateAll
   supportInterpreter := true
 
+-- Executable target for emitting the adder calibration matrix (Step 8 tooling)
+lean_exe generate_adder_matrix where
+  root := `GenerateAdderMatrix
+  supportInterpreter := true
+
 -- Executable target for generating OpType enum from riscv-opcodes JSON
 lean_exe generate_optype where
   root := `GenerateOpType

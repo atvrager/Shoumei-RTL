@@ -23,6 +23,7 @@ Outputs:
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
@@ -30,6 +31,7 @@ namespace Shoumei.Circuits.Combinational
 set_option maxRecDepth 8192
 
 open Shoumei
+open Shoumei.Components
 
 /-- OR-reduce: returns (wire, gates) where wire = OR of all input wires.
     Requires inputs.length >= 1. -/
@@ -730,7 +732,7 @@ def fpCvtIntCircuit : Circuit :=
   let fcvt_neg := makeIndexedWires "fcvt_neg" 32
   let zeros32 := (List.range 32).map fun _ => zero
   let (fcvt_neg_gates, _fcvt_neg_cout) :=
-    mkKoggeStoneAdd fcvt_inv zeros32 one fcvt_neg "fcvt_neg"
+    mkAddFor (AdderSpec.minArea fcvt_inv.length .one) fcvt_inv zeros32 one fcvt_neg "fcvt_neg"
 
   let fcvt_normal := makeIndexedWires "fcvt_normal" 32
   let fcvt_sel_gates := (List.range 32).map fun i =>
@@ -868,7 +870,7 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtsw_neg := makeIndexedWires "fcvtsw_neg" 32
   let fcvtsw_zeros32 := (List.range 32).map fun _ => zero
   let (fcvtsw_neg_gates, _fcvtsw_neg_cout) :=
-    mkKoggeStoneAdd fcvtsw_inv fcvtsw_zeros32 one fcvtsw_neg "fcvtsw_neg"
+    mkAddFor (AdderSpec.minArea fcvtsw_inv.length .one) fcvtsw_inv fcvtsw_zeros32 one fcvtsw_neg "fcvtsw_neg"
 
   let fcvtsw_mag := makeIndexedWires "fcvtsw_mag" 32
   let fcvtsw_mag_gates := (List.range 32).map fun i =>
@@ -914,7 +916,7 @@ def fpCvtIntCircuit : Circuit :=
     [zero, zero, zero]
   let fcvtsw_exp := makeIndexedWires "fcvtsw_exp" 8
   let (fcvtsw_exp_gates, _fcvtsw_exp_cout) :=
-    mkKoggeStoneAdd const127 fcvtsw_lpos8 zero fcvtsw_exp "fcvtsw_exp"
+    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtsw_lpos8 zero fcvtsw_exp "fcvtsw_exp"
 
   let fcvtsw_round_bit := fcvtsw_shifted[7]!
   let fcvtsw_guard_bit := fcvtsw_shifted[8]!
@@ -936,7 +938,7 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtsw_zeros31 := (List.range 31).map fun _ => zero
   let fcvtsw_rounded := makeIndexedWires "fcvtsw_rnded" 31
   let (fcvtsw_rnd_add_gates, _fcvtsw_rnd_cout) :=
-    mkKoggeStoneAdd fcvtsw_unrounded fcvtsw_zeros31 fcvtsw_round_up fcvtsw_rounded "fcvtsw_rnd"
+    mkAddFor (AdderSpec.minArea fcvtsw_unrounded.length .input) fcvtsw_unrounded fcvtsw_zeros31 fcvtsw_round_up fcvtsw_rounded "fcvtsw_rnd"
 
   let fcvtsw_not_zero := Wire.mk "fcvtsw_not_zero"
   let g_fcvtsw_nz := Gate.mkNOT fcvtsw_is_zero fcvtsw_not_zero
@@ -990,7 +992,7 @@ def fpCvtIntCircuit : Circuit :=
     [zero, zero, zero]
   let fcvtswu_exp := makeIndexedWires "fcvtswu_exp" 8
   let (fcvtswu_exp_gates, _fcvtswu_exp_cout) :=
-    mkKoggeStoneAdd const127 fcvtswu_lpos8 zero fcvtswu_exp "fcvtswu_exp"
+    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtswu_lpos8 zero fcvtswu_exp "fcvtswu_exp"
 
   let fcvtswu_round_bit := fcvtswu_shifted[7]!
   let fcvtswu_guard_bit := fcvtswu_shifted[8]!
@@ -1012,7 +1014,7 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtswu_zeros31 := (List.range 31).map fun _ => zero
   let fcvtswu_rounded := makeIndexedWires "fcvtswu_rnded" 31
   let (fcvtswu_rnd_add_gates, _fcvtswu_rnd_cout) :=
-    mkKoggeStoneAdd fcvtswu_unrounded fcvtswu_zeros31 fcvtswu_round_up fcvtswu_rounded "fcvtswu_rnd"
+    mkAddFor (AdderSpec.minArea fcvtswu_unrounded.length .input) fcvtswu_unrounded fcvtswu_zeros31 fcvtswu_round_up fcvtswu_rounded "fcvtswu_rnd"
 
   let fcvtswu_res := makeIndexedWires "fcvtswu_res" 32
   let fcvtswu_pack_gates := (List.range 32).map fun i =>

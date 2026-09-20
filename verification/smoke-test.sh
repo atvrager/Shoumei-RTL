@@ -191,6 +191,53 @@ else
     tail -20 /tmp/cache-conformance.log || true
 fi
 
+# --- PDK technology mapping ---
+echo ""
+echo "==> PDK technology mapping"
+
+for pdk_dir in output/sv-asap7 output/sv-gf180; do
+    mapped_count=$(find "$pdk_dir" -maxdepth 1 -name '*.sv' 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$mapped_count" -gt 0 ]; then
+        pass "Tech-mapped SV present: $pdk_dir ($mapped_count modules)"
+    else
+        fail "Tech-mapped SV missing: $pdk_dir"
+    fi
+done
+
+# Prefix merge cell: AO21 on ASAP7, AOI21+INV on GF180.
+if grep -q "AO21x1_ASAP7_75t_R" output/sv-asap7/KoggeStoneAdder64NoCin.sv 2>/dev/null; then
+    pass "ASAP7 prefix merge maps to AO21x1_ASAP7_75t_R"
+else
+    fail "ASAP7 prefix merge did not use AO21"
+fi
+
+if grep -q "gf180mcu_fd_sc_mcu9t5v0__aoi21_1" output/sv-gf180/KoggeStoneAdder64NoCin.sv 2>/dev/null; then
+    pass "GF180 prefix merge maps to aoi21_1 + inv"
+else
+    fail "GF180 prefix merge did not use aoi21"
+fi
+
+# ASAP7 has no mux cell: the mapper must fall back to `assign`.  GF180 has one.
+if grep -qE "^  assign .* \? .* : .*;" output/sv-asap7/CarrySelectAdder32.sv 2>/dev/null \
+   && ! grep -qE "MUX[0-9]?x[0-9]_ASAP7" output/sv-asap7/CarrySelectAdder32.sv 2>/dev/null; then
+    pass "ASAP7 mux falls back to assign (no mux cell in library)"
+else
+    fail "ASAP7 mux emission unexpected"
+fi
+
+if grep -q "gf180mcu_fd_sc_mcu9t5v0__mux2_" output/sv-gf180/CarrySelectAdder32.sv 2>/dev/null; then
+    pass "GF180 mux maps to a real mux2 cell"
+else
+    fail "GF180 mux did not map to a mux2 cell"
+fi
+
+if python3 scripts/check-cell-tables.py > /tmp/cell-tables.log 2>&1; then
+    pass "Cell tables match PDK Liberty functions"
+else
+    fail "Cell table / Liberty mismatch (see /tmp/cell-tables.log)"
+    tail -5 /tmp/cell-tables.log || true
+fi
+
 SORRY_COUNT=$(grep -rnE '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
 if [ "$SORRY_COUNT" -eq 0 ]; then
     pass "Zero sorry/admit occurrences in Lean proofs"

@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
 
 -- Phase 0: Foundation
@@ -122,6 +123,7 @@ import Shoumei.RISCV.CPUTestbench
 import Shoumei.RISCV.TraceSchema
 
 open Shoumei.Codegen.Unified
+open Shoumei.Components
 open Shoumei.Examples
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
@@ -145,7 +147,7 @@ def riscvDecoderModules : List String :=
   ["RV64GDecoder"]
 
 -- Registry: Add circuits here for automatic generation
-def allCircuits : List Circuit := [
+def baseCircuits : List Circuit := [
   -- Phase 0: Foundation
   dff,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
@@ -361,6 +363,14 @@ def allCircuits : List Circuit := [
   shoumeiSoCCircuit
 ]
 
+/-- Every selectable adder the sites may resolve to, followed by the rest of
+    the registry minus any adder already listed.  The adders are leaves, so
+    putting them first keeps `allCircuits` in topological order and lets the
+    dependency-aware hash see them before the modules that instantiate them. -/
+def allCircuits : List Circuit :=
+  allAdderCircuits ++ baseCircuits.filter
+    (fun c => !(allAdderCircuits.map (·.name)).contains c.name)
+
 /-- Everything this generator emits, by module name. -/
 def emittedModuleNames : List String :=
   allCircuits.map (·.name) ++ riscvDecoderModules
@@ -431,10 +441,11 @@ def main (args : List String) : IO Unit := do
   writeFilelist svOutputDir ".sv"
   writeFilelist svNetlistOutputDir ".sv"
   writeFilelist cppSimOutputDir ".h"
-  writeFilelist asap7OutputDir ".sv"
+  for pdk in allPdks do
+    writeFilelist (pdkOutputDir pdk) ".sv"
   IO.println "✓ Generated filelist.f in each output directory"
 
-  -- Generate physical synthesis filelists (ASAP7-priority merge)
+  -- Generate physical synthesis filelists (target-PDK-priority merge)
   IO.println ""
   IO.println "Generating physical synthesis filelists..."
   let physEntries ← System.FilePath.readDir physicalOutputDir
@@ -480,4 +491,5 @@ def main (args : List String) : IO Unit := do
   IO.println "  Netlist: output/sv-netlist/"
   IO.println "  C++ Sim: output/cpp_sim/"
   IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
+  IO.println "  GF180:   output/sv-gf180/ (tech-mapped modules)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

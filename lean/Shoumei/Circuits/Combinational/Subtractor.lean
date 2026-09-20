@@ -19,12 +19,14 @@ This demonstrates compositional reuse: building on proven RippleCarryAdder!
 -/
 
 import Shoumei.DSL
+import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.RippleCarryAdder
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.Components
 
 -- Helper: Build N-bit subtractor by composing NOT gates + RippleCarryAdder
 -- Uses 2's complement: A - B = A + (~B) + 1
@@ -99,9 +101,10 @@ def mkSubtractor32 : Circuit :=
   -- but kept as output for interface compatibility). Tie borrow to zero via BUF.
   let ksa_sum := makeIndexedWires "ksa_sum" n
 
-  -- KoggeStoneAdder32 instance: computes A + ~B + 1 (cin=one=1)
+  -- Adder instance: computes A + ~B + 1 (cin=one=1); the selector resolves to
+  -- KoggeStoneAdder32.
   let ksa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder32"
+    moduleName := adderModule (AdderSpec.minDelay 32 .input)
     instName := "u_ksa_sub"
     portMap :=
       (List.range n |>.flatMap (fun i =>
@@ -164,7 +167,7 @@ def mkSubtractor64 : Circuit :=
 
   let ksa_sum := makeIndexedWires "ksa_sum" n
   let ksa_inst : CircuitInstance := {
-    moduleName := "KoggeStoneAdder64WithCin1"
+    moduleName := adderModule (AdderSpec.minDelay 64 .one)
     instName := "u_ksa_sub"
     portMap :=
       (List.range n |>.flatMap (fun i =>
