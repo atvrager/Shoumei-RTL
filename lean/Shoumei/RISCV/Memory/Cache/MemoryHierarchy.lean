@@ -89,7 +89,11 @@ def MemHierarchyState.fetchFromL1I (s : MemHierarchyState) (addr : UInt32)
     Control:
     - fence_i, fence_i_busy
 -/
-def mkMemoryHierarchy : Circuit :=
+def mkMemoryHierarchy (g : CacheGeom := CacheGeom.default) : Circuit :=
+  -- A cache line is the unit every level moves, so the geometry sets the width
+  -- of the refill, writeback and external-memory buses.
+  let lineBits := g.lineBytes * 8
+
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
 
@@ -115,9 +119,9 @@ def mkMemoryHierarchy : Circuit :=
   let mem_req_valid := Wire.mk "mem_req_valid"
   let mem_req_addr := (List.range 32).map fun i => Wire.mk s!"mem_req_addr_{i}"
   let mem_req_we := Wire.mk "mem_req_we"
-  let mem_req_data := (List.range 256).map fun i => Wire.mk s!"mem_req_data_{i}"
+  let mem_req_data := (List.range lineBits).map fun i => Wire.mk s!"mem_req_data_{i}"
   let mem_resp_valid := Wire.mk "mem_resp_valid"
-  let mem_resp_data := (List.range 256).map fun i => Wire.mk s!"mem_resp_data_{i}"
+  let mem_resp_data := (List.range lineBits).map fun i => Wire.mk s!"mem_resp_data_{i}"
 
   let fence_i := Wire.mk "fence_i"
   let fence_i_busy := Wire.mk "fence_i_busy"
@@ -126,24 +130,24 @@ def mkMemoryHierarchy : Circuit :=
   let l1i_miss_valid := Wire.mk "l1i_miss_valid"
   let l1i_miss_addr := (List.range 32).map fun i => Wire.mk s!"l1i_miss_addr_{i}"
   let l1i_refill_valid := Wire.mk "l1i_refill_valid"
-  let l1i_refill_data := (List.range 256).map fun i => Wire.mk s!"l1i_refill_data_{i}"
+  let l1i_refill_data := (List.range lineBits).map fun i => Wire.mk s!"l1i_refill_data_{i}"
 
   -- Internal wires: L1D ↔ L2
   let l1d_miss_valid := Wire.mk "l1d_miss_valid"
   let l1d_miss_addr := (List.range 32).map fun i => Wire.mk s!"l1d_miss_addr_{i}"
   let l1d_refill_valid := Wire.mk "l1d_refill_valid"
-  let l1d_refill_data := (List.range 256).map fun i => Wire.mk s!"l1d_refill_data_{i}"
+  let l1d_refill_data := (List.range lineBits).map fun i => Wire.mk s!"l1d_refill_data_{i}"
   let l1d_wb_valid := Wire.mk "l1d_wb_valid"
   let l1d_wb_addr := (List.range 32).map fun i => Wire.mk s!"l1d_wb_addr_{i}"
-  let l1d_wb_data := (List.range 256).map fun i => Wire.mk s!"l1d_wb_data_{i}"
+  let l1d_wb_data := (List.range lineBits).map fun i => Wire.mk s!"l1d_wb_data_{i}"
   let l1d_wb_ack := Wire.mk "l1d_wb_ack"
 
   -- L1I Cache instance
-  let l1i_inst := CircuitInstance.mk "L1ICache" "u_l1i"
+  let l1i_inst := CircuitInstance.mk s!"L1ICache{g.nameSuffix}" "u_l1i"
     ([("clock", clock), ("reset", reset), ("req_valid", ifetch_valid)] ++
      (List.range 32).map (fun i => (s!"req_addr_{i}", ifetch_addr[i]!)) ++
      [("refill_valid", l1i_refill_valid)] ++
-     (List.range 256).map (fun i => (s!"refill_data_{i}", l1i_refill_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"refill_data_{i}", l1i_refill_data[i]!)) ++
      [("fence_i", fence_i),
       ("resp_valid", Wire.mk "l1i_resp_valid")] ++
      (List.range 32).map (fun i => (s!"resp_data_{i}", ifetch_data[i]!)) ++
@@ -153,14 +157,14 @@ def mkMemoryHierarchy : Circuit :=
      [("stall", ifetch_stall), ("last_word", ifetch_last_word)])
 
   -- L1D Cache instance
-  let l1d_inst := CircuitInstance.mk "L1DCache" "u_l1d"
+  let l1d_inst := CircuitInstance.mk s!"L1DCache{g.nameSuffix}" "u_l1d"
     ([("clock", clock), ("reset", reset),
       ("req_valid", dmem_req_valid), ("req_we", dmem_req_we)] ++
      (List.range 32).map (fun i => (s!"req_addr_{i}", dmem_req_addr[i]!)) ++
      (List.range 64).map (fun i => (s!"req_wdata_{i}", dmem_req_wdata[i]!)) ++
      (List.range 2).map (fun i => (s!"req_size_{i}", dmem_req_size[i]!)) ++
      [("refill_valid", l1d_refill_valid)] ++
-     (List.range 256).map (fun i => (s!"refill_data_{i}", l1d_refill_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"refill_data_{i}", l1d_refill_data[i]!)) ++
      [("wb_ack", l1d_wb_ack), ("fence_i", fence_i),
       ("resp_valid", dmem_resp_valid)] ++
      (List.range 64).map (fun i => (s!"resp_data_{i}", dmem_resp_data[i]!)) ++
@@ -168,7 +172,7 @@ def mkMemoryHierarchy : Circuit :=
      (List.range 32).map (fun i => (s!"miss_addr_{i}", l1d_miss_addr[i]!)) ++
      [("wb_valid", l1d_wb_valid)] ++
      (List.range 32).map (fun i => (s!"wb_addr_{i}", l1d_wb_addr[i]!)) ++
-     (List.range 256).map (fun i => (s!"wb_data_{i}", l1d_wb_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"wb_data_{i}", l1d_wb_data[i]!)) ++
      [("stall", dmem_stall), ("fence_i_busy", fence_i_busy)])
 
   -- MUX: L2 D-side address = wb_addr when wb_valid, else miss_addr
@@ -181,29 +185,29 @@ def mkMemoryHierarchy : Circuit :=
   let l1d_l2_req_valid_gate := Gate.mkOR l1d_miss_valid l1d_wb_valid l1d_l2_req_valid
 
   -- L2 Cache instance
-  let l2_inst := CircuitInstance.mk "L2Cache" "u_l2"
+  let l2_inst := CircuitInstance.mk s!"L2Cache{g.nameSuffix}" "u_l2"
     ([("clock", clock), ("reset", reset),
       ("l1i_req_valid", l1i_miss_valid)] ++
      (List.range 32).map (fun i => (s!"l1i_req_addr_{i}", l1i_miss_addr[i]!)) ++
      [("l1d_req_valid", l1d_l2_req_valid)] ++
      (List.range 32).map (fun i => (s!"l1d_req_addr_{i}", l1d_l2_addr[i]!)) ++
      [("l1d_req_we", l1d_wb_valid)] ++
-     (List.range 256).map (fun i => (s!"l1d_req_data_{i}", l1d_wb_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"l1d_req_data_{i}", l1d_wb_data[i]!)) ++
      [("mem_resp_valid", mem_resp_valid)] ++
-     (List.range 256).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"mem_resp_data_{i}", mem_resp_data[i]!)) ++
      [("l1i_resp_valid", l1i_refill_valid)] ++
-     (List.range 256).map (fun i => (s!"l1i_resp_data_{i}", l1i_refill_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"l1i_resp_data_{i}", l1i_refill_data[i]!)) ++
      [("l1d_resp_valid", l1d_refill_valid)] ++
-     (List.range 256).map (fun i => (s!"l1d_resp_data_{i}", l1d_refill_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"l1d_resp_data_{i}", l1d_refill_data[i]!)) ++
      [("mem_req_valid", mem_req_valid)] ++
      (List.range 32).map (fun i => (s!"mem_req_addr_{i}", mem_req_addr[i]!)) ++
      [("mem_req_we", mem_req_we)] ++
-     (List.range 256).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
+     (List.range lineBits).map (fun i => (s!"mem_req_data_{i}", mem_req_data[i]!)) ++
      [("l1d_wb_ack", l1d_wb_ack),
       ("stall_i", Wire.mk "l2_stall_i"),
       ("stall_d", Wire.mk "l2_stall_d")])
 
-  { name := "MemoryHierarchy"
+  { name := s!"MemoryHierarchy{g.nameSuffix}"
     inputs := [clock, reset, ifetch_valid] ++ ifetch_addr ++
               [dmem_req_valid, dmem_req_we] ++ dmem_req_addr ++ dmem_req_wdata ++ dmem_req_size ++
               [mem_resp_valid] ++ mem_resp_data ++ [fence_i]
@@ -222,8 +226,8 @@ def mkMemoryHierarchy : Circuit :=
       { name := "dmem_req_size", width := 2, wires := dmem_req_size },
       { name := "dmem_resp_data", width := 64, wires := dmem_resp_data },
       { name := "mem_req_addr", width := 32, wires := mem_req_addr },
-      { name := "mem_req_data", width := 256, wires := mem_req_data },
-      { name := "mem_resp_data", width := 256, wires := mem_resp_data }
+      { name := "mem_req_data", width := lineBits, wires := mem_req_data },
+      { name := "mem_resp_data", width := lineBits, wires := mem_resp_data }
     ]
     keepHierarchy := true
   }

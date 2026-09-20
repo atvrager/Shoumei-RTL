@@ -257,6 +257,11 @@ def defaultCPUConfig : CPUConfig := {
   commitWidth := 2
 }
 
+/-- The MCU-class part: the default RV64IMAFD_Zicsr_Zifencei CPU with the
+    `CacheGeom.mcu64` hierarchy (L1I 8 KiB 2-way, L1D 16 KiB 4-way, L2 32 KiB
+    8-way, 64-byte lines, single-port byte-mask data arrays). -/
+def mcu64CPUConfig : CPUConfig := { defaultCPUConfig with cacheGeom := CacheGeom.mcu64 }
+
 /-- Default RV32I configuration (no extensions) -/
 def rv32iConfig : CPUConfig := { xlen := 32 }
 
