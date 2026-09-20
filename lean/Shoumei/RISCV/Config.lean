@@ -165,8 +165,9 @@ structure CPUConfig where
 
 /-! ## Derived Helpers -/
 
-/-- Helper: compute log2 of a power of 2 (or ceiling for non-powers) -/
-private def log2Ceil (n : Nat) : Nat :=
+/-- Ceiling log2 of a power of two (0 for n ≤ 1); the cache builders derive
+    index/tag widths from geometry with it. -/
+def log2Ceil (n : Nat) : Nat :=
   if n <= 1 then 0
   else Nat.log2 n + (if 2^(Nat.log2 n) < n then 1 else 0)
 
