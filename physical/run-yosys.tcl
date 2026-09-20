@@ -158,7 +158,17 @@ if {$sram_macros} {
     }
     puts "INFO: SRAM macros:      [llength $sram_files] model file(s) from $sram_lib"
 } else {
-    puts "INFO: SRAM macros:      disabled (register-array fallback)"
+    # No real macros: auto-generate behavioural stubs so Yosys can elaborate
+    # the SHOUMEI_SRAM_MACROS branch without a process library.  The DPI-C
+    # simulation path (the ifndef branch) cannot be parsed by Yosys at all.
+    set stub_dir [exec mktemp -d]
+    exec bash ${project_root}/scripts/gen-sram-macros.sh --stub --out $stub_dir \
+        >@stdout 2>@stderr
+    set sram_files [lsort [glob -nocomplain "${stub_dir}/*.sv"]]
+    puts "INFO: SRAM macros:      disabled -- auto-generated [llength $sram_files] stub(s) in $stub_dir"
+    foreach f $sram_files {
+        read_verilog -sv -lib $f
+    }
 }
 
 # Step 3: Read SystemVerilog sources
@@ -181,10 +191,9 @@ if {[llength $sram_files] > 0} {
     }
 }
 
-set read_defines {}
-if {$sram_macros} {
-    lappend read_defines -DSHOUMEI_SRAM_MACROS
-}
+# Always define SHOUMEI_SRAM_MACROS: the DPI-C simulation path is not
+# synthesisable and Yosys cannot parse import "DPI-C".
+set read_defines {-DSHOUMEI_SRAM_MACROS}
 
 puts "INFO: Reading [llength $sv_files] SystemVerilog files from $rtl_dir..."
 foreach f $sv_files {

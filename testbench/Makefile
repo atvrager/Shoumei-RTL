@@ -391,17 +391,18 @@ CACHE_TEST_CPP := $(TB_DIR)/cache_model_test/cache_conformance.cpp
 CACHE_BUILD    := $(TB_DIR)/build/cache_l1d
 CACHE_TEST_BIN := $(TB_DIR)/build/cache_model_test
 
-cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv $(CACHE_TEST_CPP)
+cache-model-test: $(SV_DIR)/L1DCache.sv $(SV_DIR)/Decoder6.sv $(SV_DIR)/EqualityComparator20.sv $(SV_DIR)/Mux64x20.sv $(SV_DIR)/Mux16x32.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv $(SV_DIR)/PLRU4.sv $(SV_DIR)/Register20.sv $(CACHE_TEST_CPP) $(SRAM_DPI_C)
 	@echo "==> Building cache conformance test (Verilator SV)..."
 	@mkdir -p $(TB_DIR)/build
 	@rm -rf $(CACHE_BUILD)
 	@verilator --cc --build -j $(shell nproc) --Mdir $(CACHE_BUILD) \
 	    -Wno-fatal -O3 \
 	    --top-module L1DCache --exe \
-	    $(SV_DIR)/L1DCache.sv $(SV_DIR)/Register25.sv $(SV_DIR)/Mux4x25.sv \
-	    $(SV_DIR)/EqualityComparator25.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv \
+	    $(SV_DIR)/L1DCache.sv $(SV_DIR)/Decoder6.sv $(SV_DIR)/EqualityComparator20.sv \
+	    $(SV_DIR)/Mux64x20.sv $(SV_DIR)/Mux16x32.sv $(SV_DIR)/Mux8x32.sv $(SV_DIR)/Mux4x32.sv \
+	    $(SV_DIR)/PLRU4.sv $(SV_DIR)/Register20.sv \
 	    -CFLAGS "-std=c++17 -O2" \
-	    -o $(CACHE_TEST_BIN) $(CACHE_TEST_CPP)
+	    -o $(CACHE_TEST_BIN) $(CACHE_TEST_CPP) $(SRAM_DPI_C)
 	@echo "==> Running cache conformance..."
 	@$(CACHE_TEST_BIN) --cycles 2000
 

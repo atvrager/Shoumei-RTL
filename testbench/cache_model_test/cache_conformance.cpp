@@ -7,7 +7,7 @@
 //
 // Reference models the L1D contract (verified against the SV with an
 // internal-signal probe):
-//   - 2-way x 4-set, 32 B lines, write-back, write-allocate-off
+//   - 4-way x 64-set, 64 B lines, write-back, write-allocate-off
 //   - request = 1-cycle pulse; hit read -> resp_valid on the NEXT cycle
 //   - miss -> miss_valid + stall; refill_valid installs; refill_done
 //     produces resp on the following cycle for loads
@@ -30,19 +30,22 @@
 // ---------------------------------------------------------------------------
 // Reference cache + backing memory (independent implementation)
 // ---------------------------------------------------------------------------
-static const uint32_t NSET = 4, NWAY = 2, MEM_BYTES = 1 << 20;
+static const uint32_t NSET = 64, NWAY = 4, LINE_BYTES = 64, MEM_BYTES = 1 << 20;
 
 struct RefCache {
-  struct Line { bool valid = false, dirty = false; uint32_t tag = 0; uint8_t d[32] = {0}; };
+  struct Line { bool valid = false, dirty = false; uint32_t tag = 0; uint8_t d[64] = {0}; };
   Line ways[NWAY][NSET];
-  bool lru[NSET] = {false, false, false, false};
+  uint32_t next[NSET] = {};   // round-robin replacement index per set
   std::vector<uint8_t> mem;
 
-  RefCache() : mem(MEM_BYTES + 32, 0) {}
-  static uint32_t idx(uint32_t a) { return (a >> 5) & 3; }
-  static uint32_t tag(uint32_t a) { return a >> 7; }
-  static uint32_t dwOff(uint32_t a) { return ((a >> 2) & 7) & ~1u; }
-  uint32_t victim(uint32_t s) const { return lru[s] ? 1 : 0; }
+  RefCache() : mem(MEM_BYTES + 64, 0) {}
+  static uint32_t idx(uint32_t a) { return (a >> 6) & 63; }
+  static uint32_t tag(uint32_t a) { return a >> 12; }
+  static uint32_t dwOff(uint32_t a) { return ((a >> 2) & 15) & ~1u; }
+  uint32_t victim(uint32_t s) const {
+    for (uint32_t w = 0; w < NWAY; w++) if (!ways[w][s].valid) return w;
+    return next[s];
+  }
 
   // NB: mirrors the DUT exactly — LRU updates on refill and write-hit only,
   // NOT on read hits (lru_en = refill_done || write_hit).
@@ -52,20 +55,17 @@ struct RefCache {
       if (ways[w][s].valid && ways[w][s].tag == t) return &ways[w][s];
     return nullptr;
   }
-  void refill(uint32_t a, const uint8_t line[32]) {
+  void refill(uint32_t a, const uint8_t line[64]) {
     uint32_t s = idx(a), v = victim(s);
     ways[v][s].valid = true; ways[v][s].dirty = false; ways[v][s].tag = tag(a);
-    memcpy(ways[v][s].d, line, 32);
-    lru[s] = (v == 0);
+    memcpy(ways[v][s].d, line, 64);
+    next[s] = (v + 1) % NWAY;
   }
   void writeHit(uint32_t a, uint64_t wdata, uint32_t szb) {
     Line* ln = find(a);
     if (!ln) return;
-    uint32_t w = 0;   // which way holds the line
-    for (; w < NWAY; w++) if (&ways[w][idx(a)] == ln) break;
-    lru[idx(a)] = (w == 0);   // NOT way1-hit -> lru_nv
-    uint32_t base = (a & ~(szb - 1)) & 31;
-    for (uint32_t b = 0; b < szb; b++) ln->d[base + (b & 7)] = (wdata >> (8 * b)) & 0xFF;
+    uint32_t base = (a & ~(szb - 1)) & 63;
+    for (uint32_t b = 0; b < szb; b++) ln->d[base + b] = (wdata >> (8 * b)) & 0xFF;
     ln->dirty = true;
   }
   uint64_t readDword(uint32_t a) {
@@ -76,8 +76,8 @@ struct RefCache {
     for (uint32_t i = 0; i < 8; i++) v |= (uint64_t)ln->d[off + i] << (8 * i);
     return v;
   }
-  void memLine(uint32_t la, uint8_t out[32]) const {
-    memcpy(out, &mem[la & (MEM_BYTES - 1)], 32);
+  void memLine(uint32_t la, uint8_t out[64]) const {
+    memcpy(out, &mem[la & (MEM_BYTES - 1)], 64);
   }
 };
 
@@ -95,7 +95,7 @@ struct Dut {
     d->req_addr = 0;
     d->req_wdata = 0;
     d->req_size = 0;
-    for (int i = 0; i < 8; i++) { d->refill_data[i] = 0; }
+    for (int i = 0; i < 16; i++) { d->refill_data[i] = 0; }
     for (int i = 0; i < 4; i++) tick();
     d->reset = 0;
     for (int i = 0; i < 2; i++) tick();
@@ -112,10 +112,10 @@ struct Dut {
     d->req_wdata = wd;
     d->req_size = szb == 8 ? 3 : szb == 4 ? 2 : szb == 2 ? 1 : 0;
   }
-  void setRefill(const uint8_t line[32]) {  // 256-bit line -> 8x CData
-    for (int i = 0; i < 8; i++) {
-      CData w = 0;
-      for (int b = 0; b < 4; b++) w |= (CData)line[i * 4 + b] << (8 * b);
+  void setRefill(const uint8_t line[64]) {  // 512-bit line -> 16x uint32_t
+    for (int i = 0; i < 16; i++) {
+      uint32_t w = 0;
+      for (int b = 0; b < 4; b++) w |= (uint32_t)line[i * 4 + b] << (8 * b);
       d->refill_data[i] = w;
     }
   }
@@ -179,15 +179,15 @@ struct Tester {
       uint32_t s = RefCache::idx(a), v = ref.victim(s);
       auto& ln = ref.ways[v][s];
       if (ln.valid && ln.dirty) {
-        std::vector<uint8_t> got(32);
-        for (int b = 0; b < 32; b++) {
+        std::vector<uint8_t> got(64);
+        for (int b = 0; b < 64; b++) {
           uint8_t x = 0;
           for (int k = 0; k < 8; k++)
             x |= ((dut.d->wb_data[(8 * b + k) >> 5] >> ((8 * b + k) & 31)) & 1) << k;
           got[b] = x;
         }
-        check(memcmp(got.data(), ln.d, 32) == 0, "writeback data = reference victim line");
-        memcpy(&ref.mem[a & (MEM_BYTES - 1)], ln.d, 32);
+        check(memcmp(got.data(), ln.d, 64) == 0, "writeback data = reference victim line");
+        memcpy(&ref.mem[a & (MEM_BYTES - 1)], ln.d, 64);
         ln.valid = false; ln.dirty = false;
       }
     }
@@ -200,9 +200,9 @@ struct Tester {
       respAddr = a;
       if (we) {
         if (ref.find(a)) { ref.writeHit(a, dut.d->req_wdata, 1u << dut.d->req_size); expectResp = false; }
-        else { missLine = a & ~31u; m = M::REQ; }   // KNOWN-GAP: store dropped
+        else { missLine = a & ~63u; m = M::REQ; }   // KNOWN-GAP: store dropped
       } else {
-        if (!ref.find(a)) { missLine = a & ~31u; m = M::REQ; }
+        if (!ref.find(a)) { missLine = a & ~63u; m = M::REQ; }
       }
     }
 
@@ -213,7 +213,7 @@ struct Tester {
 
     // --- post-tick: refill installed into both DUT (done) and reference ---
     if (presented) {
-      uint8_t line[32];
+      uint8_t line[64];
       ref.memLine(missLine, line);
       ref.refill(missLine, line);
       m = M::IDLE;
@@ -243,7 +243,7 @@ struct Tester {
   }
 
   void presentRefill() {
-    uint8_t line[32];
+    uint8_t line[64];
     ref.memLine(missLine, line);
     dut.setRefill(line);
     dut.d->refill_valid = 1;
