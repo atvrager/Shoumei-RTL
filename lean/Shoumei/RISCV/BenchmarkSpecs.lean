@@ -57,9 +57,11 @@ def BENCH_MMIO : Nat := 0x1004  -- putchar MMIO address (matches cpuTestbenchCon
 def BENCH_TOHOST : Nat := 0x1000
 
 /-- Control/trap/privileged instructions never benchmarked.
-    fence.i is excluded: the serialized drain does not increment minstret in
-    this CPU (so a minstret-derived CPI is meaningless) and the serialize path
-    still needs the memory rework (see testbench/fence_i_regression/). -/
+    fence.i is excluded because the serialized drain does not increment
+    minstret, so a minstret-derived CPI is meaningless for it.  (Its
+    slot-0 predecessor drop is fixed -- see
+    testbench/tests/serialize_pair_test.S and
+    testbench/fence_i_regression/README.md.) -/
 def BENCH_SKIP : List String := ["ecall", "ebreak", "mret", "wfi", "sret", "uret", "sfence.vma", "fence_i"]
 
 -- ════════════════════════════════════════════════════════════════════════════

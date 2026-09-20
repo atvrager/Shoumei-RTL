@@ -4054,17 +4054,43 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [Gate.mkAND fetch_pc_0[2]! fetch_pc_0[3]! (Wire.mk "clb_23"),
      Gate.mkAND (Wire.mk "clb_23") fetch_pc_0[4]! cache_line_boundary]
 
+  -- Serialize in slot 1 with a live slot-0 predecessor: defer the serialize one cycle
+  -- instead of suppressing both slots and redirecting past the predecessor.  The forced
+  -- half_step masks slot 1 and advances the fetch PC by 4, so the predecessor dispatches
+  -- alone and the serialize is re-presented in slot 0 next cycle, where the drain takes
+  -- its well-tested slot-0-selected path.
+  --
+  -- Only fence.i and WFI need this: their drain asserts fi_start_nocsr, which suppresses
+  -- slot 0 on the start cycle itself.  CSR and the trap-class ops (ECALL/MRET/illegal)
+  -- already let slot 0 dispatch, and for those the trap must keep mepc on the serializing
+  -- instruction, so deferring them would move mepc onto a predecessor that has retired.
+  -- An interrupt injection is likewise excluded: slot 0 retires before the sequencer
+  -- redirects, so mepc (slot-1 selected) is already the right resume point.
+  let ser_s1_defer := Wire.mk "ser_s1_defer"
+  let ser_defer_gates :=
+    [Gate.mkNOT (Wire.mk "ser_s0_any") (Wire.mk "ser_def_not_s0"),
+     Gate.mkOR fence_i_detected_1 (Wire.mk "wfi_match_1") (Wire.mk "ser_def_s1op"),
+     Gate.mkAND (Wire.mk "ser_def_not_s0") (Wire.mk "ser_def_s1op") (Wire.mk "ser_def_s1pred"),
+     Gate.mkAND (Wire.mk "ser_def_s1pred") d0_valid_raw (Wire.mk "ser_def_p0"),
+     Gate.mkNOT (Wire.mk "irq_inject") (Wire.mk "ser_def_no_irq"),
+     Gate.mkAND (Wire.mk "ser_def_p0") (Wire.mk "ser_def_no_irq") (Wire.mk "ser_def_p1"),
+     Gate.mkAND (Wire.mk "ser_def_p1") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_def_p2"),
+     Gate.mkAND (Wire.mk "ser_def_p2") (Wire.mk "ser_not_fse") (Wire.mk "ser_def_p3"),
+     Gate.mkAND (Wire.mk "ser_def_p3") (Wire.mk "ser_not_stall") (Wire.mk "ser_def_p4"),
+     Gate.mkAND (Wire.mk "ser_def_p4") fence_i_not_draining ser_s1_defer]
+
   -- any_dual_stall: suppress slot 1 dispatch + hold fetch, but don't block slot 0
   let any_dual_stall := Wire.mk "any_dual_stall"
   let not_dual_stall := Wire.mk "not_dual_stall"
-  let stall_gates :=
+  let stall_gates := ser_defer_gates ++
     if enableM then
       [Gate.mkOR br_dual_stall mem_dual_stall (Wire.mk "dual_stall_bm"),
        Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall (Wire.mk "dual_stall_bmm"),
        Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall (Wire.mk "dual_stall_bmmf"),
        Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfc") ser_s1_defer (Wire.mk "dual_stall_def"),
        -- One ROB slot left: a 2-wide alloc would overflow the 16-entry ROB.
-       Gate.mkOR (Wire.mk "dual_stall_bmmfc") rob_nearly_full any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
@@ -4076,7 +4102,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
       [Gate.mkOR br_dual_stall cache_line_boundary (Wire.mk "dual_stall_xc"),
-       Gate.mkOR (Wire.mk "dual_stall_xc") rob_nearly_full any_dual_stall,
+       Gate.mkOR (Wire.mk "dual_stall_xc") ser_s1_defer (Wire.mk "dual_stall_def"),
+       Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
        Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
        Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
        Gate.mkOR rs_br_issue_full zero (Wire.mk "stall_L0_c"),
