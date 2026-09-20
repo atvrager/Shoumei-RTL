@@ -110,6 +110,8 @@ codegen: lean opcodes
 	-python3 scripts/gen-architecture-diagram.py --png 2>/dev/null || true
 	@echo "    Phase 4: Generating benchmark programs (SV assembly + manifest)..."
 	lake --no-ansi exe gen_benchmarks
+	@echo "    Phase 5: Generating reduced-trip-count benchmarks (cosim)..."
+	lake --no-ansi exe gen_benchmarks --short
 
 # Generate per-synth-target filelists (physical/<design>.f)
 # generate_all dynamically generates filelists for all physical/*_synth.sv wrappers

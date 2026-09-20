@@ -175,14 +175,14 @@ run-all-tests-arc: $(ARC_SIM_BIN) tests riscv-tests
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
 # Run cosim with arcilator
-run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench
+run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench-short
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(ARC_COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
 	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
 	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
-	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --timeout-json $(PROJ_ROOT)/output/bench-short/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results-arc.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_SHORT_ELF_GLOBS)
 
 # ==========================================================================
 # Verilator targets
@@ -335,6 +335,18 @@ bench:
 	fi
 	$(MAKE) -C $(TB_DIR)/tests bench
 
+# Reduced-trip-count benchmark ELFs for lock-step cosim: same instruction
+# coverage, ~1/16 the simulated cycles.  The full-length programs stay the
+# source of the sim CPI metrics (run-benchmarks).
+BENCH_SHORT_ELF_GLOBS := $(TB_DIR)/tests/generated/bench-short/*.elf
+BENCH_SHORT_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench-short/*.S)
+
+bench-short:
+	@if [ -z "$(BENCH_SHORT_ASM_FILES)" ]; then \
+	    cd $(PROJ_ROOT) && lake --no-ansi exe gen_benchmarks --short; \
+	fi
+	$(MAKE) -C $(TB_DIR)/tests bench-short
+
 run-benchmarks: $(SIM_BIN) bench
 	@mkdir -p $(PROJ_ROOT)/output/bench
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
@@ -367,14 +379,14 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_
 	@echo "Built: $@ (RTL + Spike cosim)"
 
 # Lock-step comparison against Spike
-run-cosim: $(COSIM_BIN) tests riscv-tests bench
+run-cosim: $(COSIM_BIN) tests riscv-tests bench-short
 	@mkdir -p $(PROJ_ROOT)/output
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
 	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
 	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
-	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --timeout-json $(PROJ_ROOT)/output/bench-short/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
-	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_ELF_GLOBS)
+	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_SHORT_ELF_GLOBS)
 
 coremark:
 	$(MAKE) -C $(TB_DIR)/coremark

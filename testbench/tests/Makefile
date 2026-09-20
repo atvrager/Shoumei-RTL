@@ -86,6 +86,26 @@ generated/bench/%.elf: generated/bench/%.S shoumei.ld
 
 bench: $(BENCH_ELFS)
 
+# Reduced-trip-count benchmarks for lock-step cosim (generated/bench-short/).
+# Same programs, 16 loop iterations instead of 256: the region body is
+# identical every iteration, so cosim gets the same instruction coverage for
+# ~1/16 of the simulated cycles.  The full set stays the sim CPI source.
+BENCH_SHORT_ASM  := $(wildcard generated/bench-short/*.S)
+BENCH_SHORT_ELFS := $(patsubst %.S,%.elf,$(BENCH_SHORT_ASM))
+
+generated/bench-short/fp_%.elf: generated/bench-short/fp_%.S shoumei.ld
+	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
+
+generated/bench-short/amo_%.elf: generated/bench-short/amo_%.S shoumei.ld
+	$(CC) $(CFLAGS_AMO) $(LDFLAGS) $< -o $@
+
+generated/bench-short/zb_%.elf: generated/bench-short/zb_%.S shoumei.ld
+	$(CC) $(CFLAGS_ZB) $(LDFLAGS) $< -o $@
+generated/bench-short/%.elf: generated/bench-short/%.S shoumei.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
+bench-short: $(BENCH_SHORT_ELFS)
+
 # FreeRTOS demo - special build
 freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld $(FREERTOS_SRCS) $(FREERTOS_PORT_DIR)/portASM.S
 	$(CC) $(FREERTOS_CFLAGS) $(FREERTOS_LDFLAGS) \
@@ -98,4 +118,4 @@ freertos_demo.elf: freertos_demo.c freertos_boot.S FreeRTOSConfig.h freertos.ld 
 		-o $@
 
 clean:
-	rm -f *.elf *.o generated/*.elf generated/bench/*.elf
+	rm -f *.elf *.o generated/*.elf generated/bench/*.elf generated/bench-short/*.elf

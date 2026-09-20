@@ -271,10 +271,10 @@ def thruCpiBound (spec : BenchmarkSpec) : Nat :=
     bounded separately (the latency chain dominates) plus a small epilogue
     allowance, so a hung program fails in ~10x fewer cycles than a suite-wide
     cap while a correct run always finishes inside its own budget. -/
-def timeoutCycles (spec : BenchmarkSpec) : Nat :=
-  let thr := BENCH_ITERS * thrPerIter spec * thruCpiBound spec
+def timeoutCycles (spec : BenchmarkSpec) (iters : Nat := BENCH_ITERS) : Nat :=
+  let thr := iters * thrPerIter spec * thruCpiBound spec
   let lat := if spec.kind == .latencyAndThroughput
-             then BENCH_ITERS * latPerIter spec * chainCpiBound spec
+             then iters * latPerIter spec * chainCpiBound spec
              else 0
   thr + lat + 1000
 
@@ -479,9 +479,9 @@ def regionAsm (d : InstructionDef) (lat : Bool) : String :=
 /-- Compute cpi_milli for the region just measured (x24=Δcycle, x25=Δretired,
     checked against the exact retired count) and stash it in x6 (throughput) or
     x7 (latency). -/
-def regionCheck (spec : BenchmarkSpec) (lat : Bool) : String :=
+def regionCheck (spec : BenchmarkSpec) (lat : Bool) (iters : Nat) : String :=
   let perIter := if lat then latPerIter spec else thrPerIter spec
-  let expected := BENCH_ITERS * perIter
+  let expected := iters * perIter
   let dst := if lat then "x7" else "x6"
   "  # validate minstret delta == expected, then compute cpi_milli\n" ++
   "  sub x24, x24, x26\n" ++
@@ -607,7 +607,7 @@ def printLine (hasLatRegion : Bool) : String :=
   "  call putstr\n"
 
 /-- Preamble: stack, scratch base, constants, chain-register setup. -/
-def preamble (d : InstructionDef) : String :=
+def preamble (d : InstructionDef) (iters : Nat) : String :=
   let isDbl := d.extension.any (fun e => e == "rv_d" || e == "rv64_d")
   let fpLoad := if isDbl then "fld" else "flw"
   let fpInit :=
@@ -637,13 +637,13 @@ def preamble (d : InstructionDef) : String :=
   "  la sp, _stack_top\n" ++
   "  la x28, bench_scratch\n" ++
   "  li x12, 8\n" ++
-  "  li x29, 256\n" ++
+  s!"  li x29, {iters}\n" ++
   (if d.opType.isFpGroup then fpInit else "") ++
   chainInit ++
   fpReinit
 
 /-- Branch latency region re-arms the taken-loop registers. -/
-def latPreamble (d : InstructionDef) : String :=
+def latPreamble (d : InstructionDef) (iters : Nat) : String :=
   let fpReinit :=
     if latencyEligible d && d.opType.hasFpRd then
       let isDbl := d.extension.any (fun e => e == "rv_d" || e == "rv64_d")
@@ -653,7 +653,7 @@ def latPreamble (d : InstructionDef) : String :=
       ""
   let branchInit :=
     if isBranch d then "  li x8, 8\n  li x9, 9\n" else ""
-  "  li x29, 256\n" ++ branchInit ++ fpReinit
+  s!"  li x29, {iters}\n" ++ branchInit ++ fpReinit
 
 /-- Data: scratch buffer + rodata constants + strings. -/
 def dataSection (spec : BenchmarkSpec) (d : InstructionDef) : String :=
@@ -681,7 +681,8 @@ def dataSection (spec : BenchmarkSpec) (d : InstructionDef) : String :=
   "  .string \"\\n\"\n"
 
 /-- One self-contained benchmark program (`.S`). -/
-def programAsm (spec : BenchmarkSpec) (rawDefs : List InstructionDef) : String :=
+def programAsm (spec : BenchmarkSpec) (rawDefs : List InstructionDef)
+    (iters : Nat) : String :=
   let defOpt := match rawDefs.find? (fun d => d.name == spec.name) with
     | some d => some d
     | none => if spec.needsZbMarch then some (zbInstructionDef spec.name spec.sample) else none
@@ -689,23 +690,23 @@ def programAsm (spec : BenchmarkSpec) (rawDefs : List InstructionDef) : String :
   | none => "!ERROR: unknown instruction " ++ spec.name
   | some d =>
     let lat := spec.kind == .latencyAndThroughput || isBranch d
-    let latPre := if lat then latPreamble d else ""
+    let latPre := if lat then latPreamble d iters else ""
     "# Auto-generated benchmark program. DO NOT EDIT. Regenerate with: lake exe gen_benchmarks\n" ++
     s!"# {spec.name} ({if lat then "throughput + chain" else "throughput"})\n" ++
     ".section .text\n" ++
     ".globl _start\n" ++
     "_start:\n" ++
-    preamble d ++
+    preamble d iters ++
     "\n" ++
     "# --- throughput region ---\n" ++
     regionAsm d false ++ "\n\n" ++
-    regionCheck spec false ++
+    regionCheck spec false iters ++
     "\n" ++
     (if lat then
       "# --- latency region ---\n" ++
       latPre ++
       regionAsm d true ++ "\n\n" ++
-      regionCheck spec true ++ "\n"
+      regionCheck spec true iters ++ "\n"
      else "") ++
     "# --- epilogue: print and halt ---\n" ++
     printLine lat ++
@@ -742,8 +743,16 @@ def marchPrefix (spec : BenchmarkSpec) : String :=
   else ""
 
 /-- Emit all benchmark programs + bench-programs.json; hard-fails on any
-    sample that does not decode back to its own opType. -/
-def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
+    sample that does not decode back to its own opType.
+
+    `iters` sets the measured-region trip count and `asmDir`/`outDir` where the
+    programs and manifest land, so a reduced-trip-count set can be emitted
+    alongside the full one (cosim only needs the instruction executed a handful
+    of times, while the sim CPI metrics want the long loop). -/
+def emitAll (config : CPUConfig := defaultCPUConfig)
+    (iters : Nat := BENCH_ITERS)
+    (asmDir : String := benchAsmDir)
+    (outDir : String := benchOutDir) : IO Unit := do
   let opcodesPath := Shoumei.RISCV.instrDictPath
   unless (← opcodesPath.pathExists) do
     IO.println "  instr_dict.json not found, running 'make opcodes'..."
@@ -766,13 +775,13 @@ def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
       | none =>
           throw (IO.userError s!"bench sample for {spec.name} does not decode")
     | none => pure ()
-  IO.FS.createDirAll benchAsmDir
-  IO.FS.createDirAll benchOutDir
+  IO.FS.createDirAll asmDir
+  IO.FS.createDirAll outDir
 
   let mut count := 0
   for spec in specs do
-    let asm := programAsm spec rawDefs
-    let path := s!"{benchAsmDir}/{marchPrefix spec}{spec.name}.S"
+    let asm := programAsm spec rawDefs iters
+    let path := s!"{asmDir}/{marchPrefix spec}{spec.name}.S"
     IO.FS.writeFile path asm
     count := count + 1
 
@@ -784,9 +793,9 @@ def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
     "\", \"kind\": \"" ++ spec.kind.toString ++
     "\", \"sample\": " ++ toString spec.sample.toNat.repr ++
     ", \"march\": \"" ++ marchPrefix spec ++
-    "\", \"max_cycles\": " ++ toString (timeoutCycles spec) ++ " }"
+    "\", \"max_cycles\": " ++ toString (timeoutCycles spec iters) ++ " }"
   let json := "[\n" ++ String.intercalate ",\n" entries ++ "\n]\n"
-  IO.FS.writeFile s!"{benchOutDir}/bench-programs.json" json
+  IO.FS.writeFile s!"{outDir}/bench-programs.json" json
 
   IO.println s!"Generated {count} benchmark programs ({specs.length} specs)"
   for spec in specs do
