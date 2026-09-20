@@ -1249,6 +1249,10 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
   let cdb_data_1 := makeIndexedWires "cdb_data_1" dataWidth
 
   let dispatch_en_1 := Wire.mk "dispatch_en_1"
+  -- Bank 0 enqueues into the INT lane-0 CDB FIFO, so its dispatch must be gated
+  -- by the FIFO's enq_ready: freeing the entry while the FIFO is full would drop
+  -- the result and leave dependents waiting on a tag that never broadcasts.
+  let dispatch_en_0 := Wire.mk "dispatch_en_0"
   let suppress_cdb_s1_1 := Wire.mk "suppress_cdb_s1_1"
   let suppress_cdb_s2_1 := Wire.mk "suppress_cdb_s2_1"
 
@@ -1313,14 +1317,14 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
       issue_src2_ready_0 issue_src2_tag_0 issue_src2_data_0
       cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
       cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
-      none none none arb0_gr0 clock reset
+      none none (some dispatch_en_0) arb0_gr0 clock reset
   let (eg1, ei1, ev1, er1, e1_s1bp, e1_s2bp) :=
     buildRSEntry 1 opcodeWidth tagWidth tagWidth tagWidth dataWidth
       issue_we_0_1 issue_opcode_0 issue_dest_tag_0 issue_src1_ready_0 issue_src1_tag_0 issue_src1_data_0
       issue_src2_ready_0 issue_src2_tag_0 issue_src2_data_0
       cdb_tag_0 cdb_valid_int_0 cdb_data_0 cdb_tag_1 cdb_valid_int_1 cdb_data_1
       cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
-      none none none arb0_gr1 clock reset
+      none none (some dispatch_en_0) arb0_gr1 clock reset
   let (eg2, ei2, ev2, er2, e2_s1bp, e2_s2bp) :=
     buildRSEntry 2 opcodeWidth tagWidth tagWidth tagWidth dataWidth
       issue_we_1_0 issue_opcode_1 issue_dest_tag_1 issue_src1_ready_1 issue_src1_tag_1 issue_src1_data_1
@@ -1375,7 +1379,7 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
       [issue_src2_ready_1] ++ issue_src2_tag_1 ++ issue_src2_data_1 ++
       [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++
       [cdb_valid_1, cdb_is_fp_1] ++ cdb_tag_1 ++ cdb_data_1 ++
-      [dispatch_en_1, suppress_cdb_s1_1, suppress_cdb_s2_1]
+      [dispatch_en_0, dispatch_en_1, suppress_cdb_s1_1, suppress_cdb_s2_1]
     outputs :=
       [alloc_avail_0, alloc_avail_1, dispatch_valid_0, dispatch_valid_1,
        alloc_ptr_0, alloc_ptr_1,

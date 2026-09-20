@@ -1868,7 +1868,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                [("cdb_valid_1", cdb_valid_1), ("cdb_is_fp_1", cdb_is_fp_1)] ++
                bundledPorts "cdb_tag_1" cdb_tag_1 ++
                bundledPorts "cdb_data_1" (if config.xlen == 64 then cdb_data_1 else cdb_data32_1) ++
-               [("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
+               [("dispatch_en_0", Wire.mk "ib0_fifo_enq_ready"),
+                ("dispatch_en_1", Wire.mk "ib1_fifo_enq_ready"),
                 ("suppress_cdb_s1_1", Wire.mk "busy_raw_s1_hit"),
                 ("suppress_cdb_s2_1", Wire.mk "busy_raw_s2_hit"),
                 ("alloc_avail_0", Wire.mk "rs_int_avail_0"),
