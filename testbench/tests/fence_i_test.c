@@ -21,9 +21,9 @@ static inline void fence_i(void) {
 }
 
 int main(void) {
-    unsigned char *src = (unsigned char *)(void *)prog_set_sink;
-    size_t srclen = ((unsigned char *)(void *)prog_clear_sink) - src;
-    if (srclen + 4 > sizeof(code_buf)) { fail(1); while (1) {} }
+    const unsigned char *src = (const unsigned char *)(const void *)prog_set_sink;
+    size_t srclen = ((const unsigned char *)(const void *)prog_clear_sink) - src;
+    if (srclen + 4 >= sizeof(code_buf)) { fail(1); while (1) {} }
 
     prog_clear_sink();
     for (size_t i = 0; i < srclen; i++) code_buf[i] = src[i];
