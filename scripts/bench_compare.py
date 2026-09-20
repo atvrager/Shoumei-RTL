@@ -1,25 +1,16 @@
 #!/usr/bin/env python3
-"""bench_compare.py - merge RTL + LeanSim benchmark CSVs.
+"""bench_compare.py - emit bench-metrics.json and bench_metrics.h from RTL results.
 
 Consumes:
-  --rtl      output/bench/bench-results-rtl.csv    (per-ELF status/cycles/retired)
-  --cpp      output/bench/bench-results-cppsim.csv (per-ELF status/cycles/retired)
-  --programs output/bench/bench-programs.json      (spec manifest, in decoder order)
-  --out      output/bench                          (also holds bench-metrics.csv,
-                                                   the RTL per-bench CPI rows)
+  --rtl      output/bench/bench-results-rtl.csv  (per-ELF status/cycles/retired)
+  --programs output/bench/bench-programs.json    (spec manifest, in decoder order)
+  --out      output/bench                        (also holds bench-metrics.csv)
 
 Emits:
-  output/bench/bench-metrics.json    machine-readable merge
-  output/cpp_sim/bench_metrics.h     C++ header for the generated LeanSim model
-                                     (regenerate with `make run-benchmarks
-                                     bench-cppsim bench-compare`)
+  output/bench/bench-metrics.json    machine-readable per-benchmark CPI data
+  output/cpp_sim/bench_metrics.h     C++ header (regenerate with `make bench-compare`)
 
-The RTL throughput/latency CPI numbers (cpi_milli = CPI * 1000) come from the
-bench-metrics.csv the runner exports; the LeanSim model has no equivalent
-region instrumentation, so its whole-program CPI (cycles/retired * 1000) is
-reported as `cppsim_throughput_cpi_milli` for model-fidelity comparison.
-
-Exit status is always 0: cross-model CPI deltas are findings, not failures.
+Exit status is always 0.
 """
 
 from __future__ import annotations
@@ -96,7 +87,7 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
     cpp_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "// Auto-generated from measured benchmark data. DO NOT EDIT.",
-        "// Regenerate with: make run-benchmarks bench-cppsim bench-compare",
+        "// Regenerate with: make run-benchmarks bench-compare",
         "//",
         "// cpi_milli is cycles-per-instruction * 1000 (1000 == 1.0 CPI).",
         "// latency_cpi_milli is 0 for benchmarks without a dependency chain.",
@@ -113,8 +104,8 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
         "static constexpr BenchMetric kBENCH_METRICS[] = {",
     ]
     for b in benchmarks:
-        thr = b["throughput_cpi_milli"] or 0
-        lat = b["latency_cpi_milli"] or 0
+        thr = min(b["throughput_cpi_milli"] or 0, MAX_CPI_MILLI)
+        lat = min(b["latency_cpi_milli"] or 0, MAX_CPI_MILLI)
         lines.append(f'    {{"{b["name"]}", {thr}, {lat}}},')
     lines.append("};")
     lines.append("")
@@ -124,14 +115,12 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rtl", type=Path, required=True)
-    ap.add_argument("--cpp", type=Path, default=None)
     ap.add_argument("--programs", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=Path("output/bench"))
     args = ap.parse_args()
 
     programs = json.loads(args.programs.read_text())
     rtl_run = parse_run_csv(args.rtl)
-    cpp_run = parse_run_csv(args.cpp) if args.cpp and args.cpp.exists() else {}
     rtl_metrics = parse_bench_csv(args.out / "bench-metrics.csv")
 
     cpu_name = "unknown"
@@ -148,8 +137,6 @@ def main() -> int:
         thr_milli, lat_milli = rtl_metrics.get(name, (None, None))
         key = f"{p.get('march', '')}{name}"
         rtl = rtl_run.get(key, {})
-        cpp = cpp_run.get(key, {})
-        cpp_thr = unit_cpi_milli(cpp.get("cycles", 0), cpp.get("retired", 0))
         benchmarks.append({
             "name": name,
             "kind": kind,
@@ -157,8 +144,6 @@ def main() -> int:
             "latency_cpi_milli": lat_milli,
             "rtl_cycles": rtl.get("cycles"),
             "rtl_retired": rtl.get("retired"),
-            "cppsim_throughput_cpi_milli": cpp_thr,
-            "cppsim_retired": cpp.get("retired"),
         })
 
     merged = {
@@ -169,24 +154,12 @@ def main() -> int:
     (args.out / "bench-metrics.json").write_text(json.dumps(merged, indent=2) + "\n")
     emit_header(benchmarks, args.out)
 
-    # Informational delta table (no failures: model fidelity, not correctness).
-    print(f"benchmark deltas vs LeanSim (cpu={cpu_name})")
-    print(f"{'name':<18}{'rtl_thr':>9}{'rtl_lat':>9}{'cpp_thr':>9}{'delta':>9}")
-    n_with_cpp = 0
-    sum_delta = 0.0
+    print(f"bench-compare: {len(benchmarks)} benchmarks (cpu={cpu_name})")
+    print(f"{'name':<18}{'thr_cpi':>9}{'lat_cpi':>9}")
     for b in benchmarks:
-        thr = b["throughput_cpi_milli"]
-        cpp = b["cppsim_throughput_cpi_milli"]
-        delta = ""
-        if thr is not None and cpp is not None:
-            d = cpp - thr
-            delta = f"{d:+d}"
-            n_with_cpp += 1
-            sum_delta += abs(d)
-        print(f'{b["name"]:<18}{str(thr or "-"):>9}{str(b["latency_cpi_milli"] or "-"):>9}'
-              f'{str(cpp or "-"):>9}{delta:>9}')
-    if n_with_cpp:
-        print(f"\nmean |delta| over {n_with_cpp} instrs: {sum_delta / n_with_cpp:.1f} cpi_milli")
+        thr = str(b["throughput_cpi_milli"]) if b["throughput_cpi_milli"] is not None else "-"
+        lat = str(b["latency_cpi_milli"]) if b["latency_cpi_milli"] is not None else "-"
+        print(f'{b["name"]:<18}{thr:>9}{lat:>9}')
     return 0
 
 
