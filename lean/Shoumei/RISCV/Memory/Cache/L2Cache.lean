@@ -652,6 +652,8 @@ def mkL2Cache : Circuit :=
       [{ addr := read_idx
          data := l2_data_ram_rd[way]! }]
       false clock
+      -- 1R1W contract: separate read/write addresses, asynchronous read
+      (portKind := .r1w1)
   -- Valid: OR(hold, write_en)
   let valid_next := (List.range 2).foldl (fun acc way =>
     acc ++ (List.range 8).map (fun set =>

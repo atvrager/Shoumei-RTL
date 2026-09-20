@@ -191,6 +191,8 @@ def mkL1ICache : Circuit :=
     [{ addr := idx_bits
        data := data_ram_rd }]
     false clock
+    -- 1R1W contract: separate read/write addresses, asynchronous read
+    (portKind := .r1w1)
 
   -- Refill decoder: 3-to-8 from MAR index bits (for refill writes)
   let not_refill_idx := (List.range 3).map fun i => Wire.mk s!"not_ridx_{i}"

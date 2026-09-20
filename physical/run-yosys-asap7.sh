@@ -129,6 +129,12 @@ export OUTPUT_DIR
 export TARGET_LIBRARY="$MERGED_COMB_LIB"
 export DFF_LIBRARY="$DFF_LIB"
 export IGNORE_MISS_FUNC=0
+
+# Cache data arrays: SRAM_MACROS=1 binds them to real memory models from
+# the per-process binding layer (see physical/sram-bind/README.md); the
+# default library path is the OpenRAM output of `make sram-macros`.
+export SRAM_MACROS="${SRAM_MACROS:-0}"
+export SRAM_MACRO_LIB="${SRAM_MACRO_LIB:-$PROJECT_ROOT/third_party/sram-macros/asap7}"
 export ABC_DRIVER_CELL="BUFx2_ASAP7_75t_R"
 export ABC_LOAD_IN_FF="3.898"
 

@@ -268,6 +268,8 @@ def mkL1DCache : Circuit :=
       [{ addr := data_ram_rd_addr
          data := data_ram_rd[way]! }]
       false clock
+      -- 1R1W contract: separate read/write addresses, asynchronous read
+      (portKind := .r1w1)
 
   -- Tag comparators: 2 ways, each comparing stored tag with request tag
   let way_hit := (List.range 2).map fun w => Wire.mk s!"way{w}_hit"

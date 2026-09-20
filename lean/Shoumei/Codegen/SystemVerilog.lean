@@ -1396,20 +1396,75 @@ def generateRAMFallback (ctx : Context) (c : Circuit) (ram : RAMPrimitive) : Str
     joinLines assigns)
   joinLines ([arrayDecl, arrayDecl2] ++ writePorts ++ readPorts)
 
-/-- Emit a foundry/OpenRAM SRAM macro instantiation for a 1-write/1-read RAM.
+/-- Emit a foundry/OpenRAM SRAM macro instantiation for a RAM primitive.
 
-    Port contract (matches OpenRAM `sram_1r1w` and the GF180MCU
-    `gf180mcu_fd_ip_sram` family):
-    - .clk, .we, .waddr, .wdata  (write port)
-    - .raddr, .rdata             (read port)
+    Two contracts, selected by `ram.portKind` (the per-process binding layer
+    supplies the module; the RTL only names the shape):
 
-    The module name encodes geometry: `sram_1r1w_<width>x<depth>`.
-    Only exactly-one write + exactly-one read ports map to a macro; other
-    port count combinations keep the fallback (no invented ports). -/
+    `r1w1` — one write + one read port, asynchronous read:
+      `.clk, .we, .waddr, .wdata` / `.raddr, .rdata`
+      module `sram_1r1w_<width>x<depth>`
+
+    `rw1ByteMask` — one address, registered read, per-byte write mask:
+      `.clk, .en, .we, .addr, .wmask, .wdata, .rdata`
+      module `sram_rw1_<width>x<depth>`
+      The address is `we ? waddr : raddr` — sound exactly when the RTL never
+      reads and writes the same array in the same cycle, which is the
+      single-port data-path invariant the caches hold.
+
+    Any other port count keeps the fallback (no invented ports). -/
 def generateSRAMMacro (ctx : Context) (c : Circuit) (ram : RAMPrimitive)
     : Option String :=
-  match ram.writePorts, ram.readPorts with
-  | [wp], [rp] =>
+  match ram.portKind, ram.writePorts, ram.readPorts with
+  | .rw1ByteMask, [wp], [rp] =>
+      let clkRef := wireRef ctx c ram.clock
+      let width := ram.width
+      let depth := ram.depth
+      let bytes := (width + 7) / 8
+      let modName := s!"sram_rw1_{width}x{depth}"
+      let instName := s!"u_ram_{ram.name}"
+      let addrBus := s!"{ram.name}_sram_addr"
+      let wdataBus := s!"{ram.name}_sram_wdata"
+      let wmaskBus := s!"{ram.name}_sram_wmask"
+      let rdataBus := s!"{ram.name}_sram_rdata"
+      let enRef := wireRef ctx c wp.en
+      -- single-port: the write enable doubles as the array enable
+      let weRef := enRef
+      let raddrExpr := portAddrExpr ctx c rp.addr
+      -- Single address: the write address wins while the write is enabled.
+      let addrAssigns := wp.addr.enum.map (fun (idx, w) =>
+        s!"  assign {addrBus}[{idx}] = {enRef} ? {wireRef ctx c w} : {raddrExpr}[{idx}];")
+      let wdataAssigns := wp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wdataBus}[{idx}] = {wireRef ctx c w};")
+      let maskWires := if wp.mask.isEmpty then List.range bytes |>.map (fun _ => none)
+                       else wp.mask.map some
+      let wmaskAssigns := maskWires.enum.map (fun (idx, mw) =>
+        match mw with
+        | some m => s!"  assign {wmaskBus}[{idx}] = {wireRef ctx c m};"
+        | none   => s!"  assign {wmaskBus}[{idx}] = {enRef};")
+      let rdataAssigns := rp.data.enum.map (fun (idx, w) =>
+        s!"  assign {wireRef ctx c w} = {rdataBus}[{idx}];")
+      some <| joinLines [
+        s!"  // Foundry/OpenRAM SRAM macro (single port, byte mask): {modName}",
+        s!"  wire [{wp.addr.length - 1}:0] {addrBus};",
+        s!"  wire [{width - 1}:0] {wdataBus};",
+        s!"  wire [{bytes - 1}:0] {wmaskBus};",
+        s!"  wire [{width - 1}:0] {rdataBus};",
+        joinLines addrAssigns,
+        joinLines wdataAssigns,
+        joinLines wmaskAssigns,
+        joinLines rdataAssigns,
+        s!"  {modName} {instName} (",
+        s!"    .clk  ({clkRef}),",
+        s!"    .en   ({enRef}),",
+        s!"    .we   ({weRef}),",
+        s!"    .addr ({addrBus}),",
+        s!"    .wmask({wmaskBus}),",
+        s!"    .wdata({wdataBus}),",
+        s!"    .rdata({rdataBus})",
+        s!"  );"
+      ]
+  | _, [wp], [rp] =>
       let clkRef := wireRef ctx c ram.clock
       let depth := ram.depth
       let width := ram.width
@@ -1440,7 +1495,7 @@ def generateSRAMMacro (ctx : Context) (c : Circuit) (ram : RAMPrimitive)
         s!"    .rdata({rdataBus})",
         s!"  );"
       ]
-  | _, _ => none
+  | _, _, _ => none
 
 /-- Generate SystemVerilog for a single RAMPrimitive.
 
