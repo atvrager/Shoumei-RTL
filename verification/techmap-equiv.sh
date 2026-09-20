@@ -38,6 +38,14 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# The gold RTL selects the `SHOUMEI_SRAM_MACROS` branch and binds real macros
+# in a synthesis flow; Yosys cannot parse the DPI-C simulation branch.  Define
+# the macro and read behavioural stubs for exactly the geometries the RTL
+# instantiates, as the DC-NXT-style lint does.
+STUB_DIR="$TMP/sram-stubs"
+mkdir -p "$STUB_DIR"
+"$ROOT/scripts/gen-sram-macros.sh" --stub --out "$STUB_DIR" > /dev/null
+
 # Gold copies with keep_hierarchy stripped (so the miter can flatten).
 mkdir -p "$TMP/gold"
 for f in "$GOLD_DIR"/*.sv; do
@@ -45,13 +53,15 @@ for f in "$GOLD_DIR"/*.sv; do
 done
 
 # Modules that (transitively) contain a RAM primitive cannot be flattened:
-# Yosys keeps memory-bearing modules as cells, and SAT has no model for $memrd.
-# Their RAMs are copied verbatim by the emitter (same definition on both sides),
-# so the equivalence there rests on the gate part, which the other modules cover.
+# Yosys keeps memory-bearing modules as cells, and SAT has no model for $memrd
+# (nor for an SRAM macro cell).  Their RAMs are copied verbatim by the emitter
+# (same definition on both sides), so the equivalence there rests on the gate
+# part, which the other modules cover.  A RAM is either a register array in the
+# gold body or an SRAM macro instantiated in the `SHOUMEI_SRAM_MACROS` branch.
 ram_bearing() {
     local all=""
     for f in "$GOLD_DIR"/*.sv; do
-        if grep -q "\[0:" "$f"; then
+        if grep -q "\[0:" "$f" || grep -qE "sram_(1r1w|rw1)_[0-9]+x[0-9]+ +u_" "$f"; then
             all="$all $(basename "$f" .sv)"
         fi
     done
@@ -106,8 +116,11 @@ run_pdk() {
     {
         echo "yosys -import"
         echo "read_verilog -sv $CELL_MODELS"
+        for f in "$STUB_DIR"/*.sv; do
+            echo "read_verilog -sv -lib $f"
+        done
         for f in "$TMP/gold"/*.sv; do
-            echo "read_verilog -sv $f"
+            echo "read_verilog -sv -DSHOUMEI_SRAM_MACROS $f"
         done
         for m in $modules; do
             sed -e "/keep_hierarchy/d" -e "s/^module $m (/module ${m}__mapped (/" \
