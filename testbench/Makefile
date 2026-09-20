@@ -65,6 +65,12 @@ SIM_CPP    := $(TB_DIR)/generated/sim_main_tb_cpu.cpp
 COSIM_CPP  := $(TB_DIR)/generated/cosim_main_tb_cpu.cpp $(TB_DIR)/lib/spike_oracle.cpp \
               $(TB_DIR)/lib/elf_loader.cpp
 
+# DPI-C backing store for the SRAM simulation models (physical/sim-dpi/):
+# one generic byte array per RAMPrimitive, keyed by instance path.  Compiled
+# into every simulation binary; synthesis flows use the SRAM macro branch
+# (SHOUMEI_SRAM_MACROS) instead and never see this file.
+SRAM_DPI_C := $(PROJ_ROOT)/physical/sim-dpi/sram_dpi.c
+
 # Spike paths (override with SPIKE_PREFIX=...)
 SPIKE_PREFIX ?= $(HOME)/.local/spike
 SPIKE_INC    := $(SPIKE_PREFIX)/include
@@ -185,7 +191,7 @@ run-cosim-arc: $(ARC_COSIM_BIN) tests riscv-tests bench
 # ==========================================================================
 
 sim: $(SIM_BIN)
-$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+$(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator
 	@mkdir -p $(BUILD_DIR)/verilator
 	$(VERILATOR) --cc --exe \
@@ -194,14 +200,14 @@ $(SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator,tb_cpu)
 	@echo "Built: $@"
 
 # The MCU-class geometry (64-byte lines, 8K/16K/32K caches) is emitted beside
 # the default one; simulate it with the same test suite.
 sim-mcu64: $(MCU64_SIM_BIN)
-$(MCU64_SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP)
+$(MCU64_SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator-mcu64
 	@mkdir -p $(BUILD_DIR)/verilator-mcu64
 	$(VERILATOR) --cc --exe \
@@ -210,7 +216,7 @@ $(MCU64_SIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator-mcu64,tb_cpu_mcu64)
 	@echo "Built: $@"
 
@@ -231,7 +237,7 @@ sim-trace: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_trace,tb_cpu)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_trace (with FST trace)"
 
@@ -245,7 +251,7 @@ sim-mcu64-trace: $(SV_SOURCES) $(TB_SOURCES) $(MCU64_SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -DVM_TRACE=1" \
 		-o $(BUILD_DIR)/sim_shoumei_mcu64_trace \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_trace-mcu64,tb_cpu_mcu64)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_mcu64_trace (with FST trace)"
 
@@ -259,12 +265,12 @@ sim-debug: $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		-CFLAGS "-std=c++17" \
 		-DTRACE_PIPELINE \
 		-o $(BUILD_DIR)/sim_shoumei_dbg \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_dbg)
 	@echo "Built: $(BUILD_DIR)/sim_shoumei_dbg (with pipeline trace)"
 
 sim-cov: $(SIM_COV_BIN)
-$(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
+$(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator_cov
 	@mkdir -p $(BUILD_DIR)/verilator_cov
 	$(VERILATOR) --cc --exe \
@@ -274,7 +280,7 @@ $(SIM_COV_BIN): $(SV_SOURCES) $(TB_SOURCES) $(SIM_CPP)
 		--x-assign unique --x-initial unique \
 		-CFLAGS "-std=c++17 -DVM_COVERAGE=1" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(SIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_cov)
 	@echo "Built: $@ (with coverage)"
 
@@ -346,6 +352,11 @@ run-coverage: $(SIM_COV_BIN) tests riscv-tests
 BENCH_ELF_GLOBS := $(TB_DIR)/tests/generated/bench/*.elf
 BENCH_ASM_FILES := $(wildcard $(TB_DIR)/tests/generated/bench/*.S)
 
+# Fallback budget for a bench ELF with no manifest entry; every generated
+# benchmark carries its own max_cycles (see BenchmarkSpecs.timeoutCycles), so
+# this only applies to a hand-written program dropped into the bench dir.
+BENCH_DEFAULT_TIMEOUT := 200000
+
 # Benchmark programs: the .S sources are generated from the Lean spec table by
 # the codegen artifact; regenerate them only when missing (so a job that only
 # has the artifact - e.g. cosim - does not need a Lean toolchain), then build
@@ -359,7 +370,8 @@ bench:
 run-benchmarks: $(SIM_BIN) bench
 	@mkdir -p $(PROJ_ROOT)/output/bench
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
-	    --default-timeout 2500000 \
+	    --default-timeout $(BENCH_DEFAULT_TIMEOUT) \
+	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
 	    --bench-csv $(PROJ_ROOT)/output/bench/bench-metrics.csv \
 	    $(BENCH_ELF_GLOBS)
@@ -372,7 +384,7 @@ bench-compare: run-benchmarks
 	    --out $(PROJ_ROOT)/output/bench
 
 cosim: $(COSIM_BIN)
-$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
+$(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator_cosim
 	@mkdir -p $(BUILD_DIR)/verilator_cosim
 	$(VERILATOR) --cc --exe \
@@ -382,7 +394,7 @@ $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE)
 		-CFLAGS "-std=c++20 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(COSIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_cosim,tb_cpu)
 	@echo "Built: $@ (RTL + Spike cosim)"
 
@@ -391,7 +403,7 @@ MCU64_COSIM_BIN := $(BUILD_DIR)/cosim_shoumei_mcu64
 MCU64_COSIM_CPP := $(TB_DIR)/generated/cosim_main_tb_cpu_mcu64.cpp $(TB_DIR)/lib/spike_oracle.cpp \
                    $(TB_DIR)/lib/elf_loader.cpp
 cosim-mcu64: $(MCU64_COSIM_BIN)
-$(MCU64_COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_COSIM_CPP) $(SPIKE_LIB_FILE)
+$(MCU64_COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_DPI_C)
 	@rm -rf $(BUILD_DIR)/verilator_cosim-mcu64
 	@mkdir -p $(BUILD_DIR)/verilator_cosim-mcu64
 	$(VERILATOR) --cc --exe \
@@ -401,7 +413,7 @@ $(MCU64_COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(MCU64_COSIM_CPP) $(SPIKE_LIB_F
 		-CFLAGS "-std=c++20 -I$(SPIKE_INC) -I$(TB_DIR)/lib -I$(TB_DIR)/generated -I$(TB_DIR)" \
 		-LDFLAGS "-L$(SPIKE_LIB) -lriscv -lsoftfloat -ldisasm -lfesvr -Wl,-rpath,$(SPIKE_LIB)" \
 		-o $@ \
-		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_COSIM_CPP)
+		$(TB_SOURCES) $(SV_SOURCES) $(MCU64_COSIM_CPP) $(SRAM_DPI_C)
 	$(call verilator_build,$(BUILD_DIR)/verilator_cosim-mcu64,tb_cpu_mcu64)
 	@echo "Built: $@ (RTL + Spike cosim, MCU-class geometry)"
 
