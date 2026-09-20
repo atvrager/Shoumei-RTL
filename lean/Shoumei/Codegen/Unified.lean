@@ -54,7 +54,7 @@ def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
     without altering circuit structure, or when the set of emitted formats
     changes.  The cache key includes this version, so a bump invalidates every
     cached output and forces a full regeneration. -/
-def codegenVersion : String := "pdk-techmap-2026-09-20c"
+def codegenVersion : String := "geom64-dpi-2026-09-20g"
 
 -- Output paths (centralized configuration)
 def svOutputDir : String := "output/sv-from-lean"
