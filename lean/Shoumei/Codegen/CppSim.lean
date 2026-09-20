@@ -72,7 +72,7 @@ def wireReadExpr (inputToIndex : List (Wire × Nat))
   else if !isPort && w.name == "one" then "true"
   else
     let ref := wireRef inputToIndex outputToIndex w portNames implPrefix portSet
-    if isPort then s!"*{ref}"
+    if isPort then s!"({ref} ? *{ref} : false)"
     else ref
 
 -- Write statement for a wire: dereference for pointers, direct assignment for plain bool
@@ -80,7 +80,7 @@ def wireWriteStmt (inputToIndex : List (Wire × Nat))
     (outputToIndex : List (Wire × Nat)) (w : Wire) (expr : String)
     (portNames : List String := []) (implPrefix : String := "") (portSet : Std.HashSet String := {}) : String :=
   let ref := wireRef inputToIndex outputToIndex w portNames implPrefix portSet
-  if isPointerWire inputToIndex outputToIndex portNames w portSet then s!"  *{ref} = {expr};"
+  if isPointerWire inputToIndex outputToIndex portNames w portSet then s!"  if ({ref}) *{ref} = {expr};"
   else s!"  {ref} = {expr};"
 
 -- Helper: find all internal wires (gate outputs and instance wires that are not circuit I/O)
@@ -579,7 +579,7 @@ def generateDFFResetInit (inputToIndex : List (Wire × Nat)) (outputToIndex : Li
   let resetVal := if g.gateType == GateType.DFF_SET then "true" else "false"
   -- DFF output is always internal (plain bool), direct assignment
   if isPointerWire inputToIndex outputToIndex portNames g.output then
-    s!"    *{qRef} = {resetVal};"
+    s!"    if ({qRef}) *{qRef} = {resetVal};"
   else
     s!"    {qRef} = {resetVal};"
 
@@ -598,7 +598,7 @@ def generateDFFLatch (inputToIndex : List (Wire × Nat)) (outputToIndex : List (
   let qRef := wireRef inputToIndex outputToIndex g.output portNames implPrefix
   let savedRef := s!"{implPrefix}d_saved_{g.output.name}"
   if isPointerWire inputToIndex outputToIndex portNames g.output then
-    s!"      *{qRef} = {savedRef};"
+    s!"      if ({qRef}) *{qRef} = {savedRef};"
   else
     s!"      {qRef} = {savedRef};"
 
@@ -615,7 +615,7 @@ def generateSeqTickMethod (c : Circuit) (_useBundledIO : Bool)
     let resetName := match resets.head? with
       | some r => r.name
       | none => "reset"
-    let resetExpr := if portNames.contains resetName then s!"*{resetName}"
+    let resetExpr := if portNames.contains resetName then s!"({resetName} ? *{resetName} : false)"
       else implPrefix ++ resetName
     let resetInits := dffGates.map (fun g =>
       generateDFFResetInit inputToIndex outputToIndex g portNames implPrefix)

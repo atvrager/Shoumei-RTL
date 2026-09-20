@@ -348,6 +348,7 @@ jobs:
             output/cpp_sim/
             output/architecture-treemap.svg
             output/architecture-treemap.png
+            output/bench/bench-programs.json
             testbench/generated/
             testbench/tests/generated/
             verification/compositional-certs.txt
@@ -371,9 +372,57 @@ jobs:
   # visualization suite (treemaps, sunbursts, gate cities, pipeline-traces
   # viewer) to GitHub Pages (free, public repo). Deliberately NOT in
   # ci-pass: publishing is not validation.
+  # Built on push-to-main and manual dispatch so main Pages always carries
+  # current CPI numbers; PRs keep relying on verilator-sim (the running of the
+  # bench ELFs is a publish-time measurement, not a gate).
+  benchmarks:
+    name: Instruction Benchmarks
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/riscv64-elf
+          key: riscv64-elf-2026.01.23
+
+      - name: Setup RISC-V toolchain
+        run: |
+          ./scripts/setup-riscv-toolchain.sh
+          echo "$HOME/.local/riscv64-elf/bin" >> $GITHUB_PATH
+
+      - name: Fetch opcodes submodule
+        run: git submodule update --init third_party/riscv-opcodes
+
+      - name: Build simulation + benchmark ELFs
+        run: |
+          make -C testbench/tests bench
+          make -C testbench sim
+
+      - name: Run benchmark suite
+        run: make -C testbench run-benchmarks
+
+      - name: Upload benchmark data
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: bench-data
+          path: output/bench/
+          retention-days: 30
+
   visuals:
     name: Visuals & Pages
     runs-on: ubuntu-24.04
+    needs: [benchmarks]
     if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
     permissions:
       pages: write
@@ -385,6 +434,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - name: Download benchmark data
+        uses: actions/download-artifact@v7
+        with:
+          name: bench-data
+          path: output/bench/
+          if-no-files-found: ignore
 
       - name: Install elan
         run: |

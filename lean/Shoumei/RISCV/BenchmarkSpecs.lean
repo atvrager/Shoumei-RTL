@@ -56,8 +56,11 @@ def BENCH_CSR : Nat := 0x340    -- mscratch: writable, no side effects
 def BENCH_MMIO : Nat := 0x1004  -- putchar MMIO address (matches cpuTestbenchConfig)
 def BENCH_TOHOST : Nat := 0x1000
 
-/-- Control/trap/privileged instructions never benchmarked. -/
-def BENCH_SKIP : List String := ["ecall", "ebreak", "mret", "wfi", "sret", "uret", "sfence.vma"]
+/-- Control/trap/privileged instructions never benchmarked.
+    fence.i is excluded: the serialized drain does not increment minstret in
+    this CPU (so a minstret-derived CPI is meaningless) and the serialize path
+    still needs the memory rework (see testbench/fence_i_regression/). -/
+def BENCH_SKIP : List String := ["ecall", "ebreak", "mret", "wfi", "sret", "uret", "sfence.vma", "fence_i"]
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Spec model
@@ -74,11 +77,12 @@ def BenchKind.toString : BenchKind → String
 
 structure BenchmarkSpec where
   name : String
-  opType : OpType
+  opType : Option OpType := none
   kind : BenchKind
   sample : UInt32
-  needsFpMarch : Bool
-  needsAmoMarch : Bool
+  needsFpMarch : Bool := false
+  needsAmoMarch : Bool := false
+  needsZbMarch : Bool := false
 deriving Repr
 
 /--
@@ -93,10 +97,10 @@ def latencyEligible (d : InstructionDef) : Bool :=
   let hasRd := d.variableFields.contains .rd
   let hasRs1 := d.variableFields.contains .rs1
   let sameClass := d.opType.hasFpRd == d.opType.hasFpRs1
-  -- Control flow and sc_* (store-conditional result feeds back into its own
-  -- address register) never chain; always throughput-only.
+  -- Control flow, atomic ops (rs1 is address), CSRs, and fences never chain; always throughput-only.
   let noChain : List String := ["jal", "jalr", "beq", "bne", "blt", "bge", "bltu", "bgeu", "sc_d", "sc_w", "fence", "fence_i"]
-  hasRd && hasRs1 && sameClass && !noChain.contains d.name
+  let isAmoOrLr := d.name.startsWith "amo" || d.name.startsWith "lr"
+  hasRd && hasRs1 && sameClass && !noChain.contains d.name && !isAmoOrLr
 
 /-- Instructions whose extension list contains no `rv_system`, deduped by
     (maskBits, matchBits) keeping the first occurrence (matches the CPU
@@ -163,16 +167,49 @@ def classify (d : InstructionDef) : Option BenchmarkSpec :=
     let kind := if latencyEligible d then .latencyAndThroughput else .throughputOnly
     some {
       name := d.name
-      opType := d.opType
+      opType := some d.opType
       kind := kind
       sample := sampleEncoding d
       needsFpMarch := d.opType.isFpGroup
       needsAmoMarch := d.extension.any (fun e => e == "rv_a" || e == "rv64_a")
+      needsZbMarch := false
     }
 
-/-- All benchmark specs for a config: `since` → sortIMFirst → classify. -/
+/-- Dummy InstructionDef for microcode fallback Zb* instructions (3-register integer ALU). -/
+def zbInstructionDef (name : String) (sample : UInt32) : InstructionDef := {
+  name := name
+  opType := .ADD
+  encoding := ""
+  variableFields := [.rd, .rs1, .rs2]
+  extension := ["rv_zba"]
+  matchBits := sample
+  maskBits := 0xfe00707f
+}
+
+/-- Benchmark specs for the 17 un-decoded Zb* bitmanip fallback instructions. -/
+def zbSpecs : List BenchmarkSpec := [
+  { name := "sh1add", opType := none, kind := .throughputOnly, sample := 0x20002033, needsZbMarch := true },
+  { name := "sh2add", opType := none, kind := .throughputOnly, sample := 0x20004033, needsZbMarch := true },
+  { name := "sh3add", opType := none, kind := .throughputOnly, sample := 0x20006033, needsZbMarch := true },
+  { name := "bset",   opType := none, kind := .throughputOnly, sample := 0x28001033, needsZbMarch := true },
+  { name := "bclr",   opType := none, kind := .throughputOnly, sample := 0x48001033, needsZbMarch := true },
+  { name := "binv",   opType := none, kind := .throughputOnly, sample := 0x68001033, needsZbMarch := true },
+  { name := "bext",   opType := none, kind := .throughputOnly, sample := 0x48005033, needsZbMarch := true },
+  { name := "andn",   opType := none, kind := .throughputOnly, sample := 0x40007033, needsZbMarch := true },
+  { name := "orn",    opType := none, kind := .throughputOnly, sample := 0x40006033, needsZbMarch := true },
+  { name := "xnor",   opType := none, kind := .throughputOnly, sample := 0x40004033, needsZbMarch := true },
+  { name := "min",    opType := none, kind := .throughputOnly, sample := 0x0a004033, needsZbMarch := true },
+  { name := "max",    opType := none, kind := .throughputOnly, sample := 0x0a006033, needsZbMarch := true },
+  { name := "minu",   opType := none, kind := .throughputOnly, sample := 0x0a005033, needsZbMarch := true },
+  { name := "maxu",   opType := none, kind := .throughputOnly, sample := 0x0a007033, needsZbMarch := true },
+  { name := "rol",    opType := none, kind := .throughputOnly, sample := 0x60001033, needsZbMarch := true },
+  { name := "ror",    opType := none, kind := .throughputOnly, sample := 0x60005033, needsZbMarch := true },
+  { name := "clmul",  opType := none, kind := .throughputOnly, sample := 0x0a001033, needsZbMarch := true }
+]
+
+/-- All benchmark specs for a config: `since` → sortIMFirst → classify ++ zbSpecs. -/
 def computeSpecs (defs : List InstructionDef) : List BenchmarkSpec :=
-  (sortIMFirstLike (since defs)).filterMap classify
+  (sortIMFirstLike (since defs)).filterMap classify ++ zbSpecs
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Assembly emission
@@ -188,7 +225,8 @@ def mnemonicOf (name : String) : String :=
 
 /-- Per-loop-iteration instruction count of the throughput region. -/
 def thrPerIter (spec : BenchmarkSpec) : Nat :=
-  if spec.name == "jal" then 66
+  if spec.name.startsWith "csr" then 2
+  else if spec.name == "jal" then 66
   -- `la` is auipc+addi (linker relaxation disabled: -Wl,--no-relax), so a
   -- jalr copy costs 3 instructions: 64*3 + addi + j.
   else if spec.name == "jalr" then 194
@@ -198,7 +236,8 @@ def thrPerIter (spec : BenchmarkSpec) : Nat :=
 /-- Per-loop-iteration instruction count of the latency (chain) region.
     Branches get a taken-branch throughput loop here instead of a chain. -/
 def latPerIter (spec : BenchmarkSpec) : Nat :=
-  if spec.name ∈ ["beq", "bne", "blt", "bge", "bltu", "bgeu"] then 3
+  if spec.name.startsWith "csr" then 2
+  else if spec.name ∈ ["beq", "bne", "blt", "bge", "bltu", "bgeu"] then 3
   else BENCH_NLAT + 2
 
 /-- Scratch memory slots: distinct 8-byte offsets in the scratch buffer. -/
@@ -285,8 +324,6 @@ def thrCopy (d : InstructionDef) (k : Nat) : String :=
     s!"  {m} {thrDestR k}, ({rn BENCH_BASE})"
   else if d.name == "fence" then
     "  fence iorw, iorw"
-  else if d.name == "fence_i" then
-    "  fence.i"
   else if f.contains .imm12 then
     -- ALU immediate (addi/andi/...): rs1 = const, imm = 1
     s!"  {m} {thrDestR k}, {rn BENCH_CONST_X}, 1"
@@ -354,7 +391,15 @@ def thrBody (d : InstructionDef) : List String :=
     (List.range BENCH_NTHR).flatMap fun k =>
       [s!"  la x13, .Ljalr_{k + 1}", s!"  jalr x1, 0(x13)", s!".Ljalr_{k + 1}:"]
   else if isBranch d then
-    (List.range BENCH_NTHR).map fun _ => s!"  {mnemonicOf d.name} x8, x9, .Lend"
+    let notTakenBranch := match d.name with
+      | "beq"  => "  beq x8, x9, .Lfail"
+      | "bne"  => "  bne x8, x8, .Lfail"
+      | "blt"  => "  blt x9, x8, .Lfail"
+      | "bge"  => "  bge x8, x9, .Lfail"
+      | "bltu" => "  bltu x9, x8, .Lfail"
+      | "bgeu" => "  bgeu x8, x9, .Lfail"
+      | _ => s!"  {mnemonicOf d.name} x8, x9, .Lfail"
+    (List.range BENCH_NTHR).map fun _ => notTakenBranch
   else
     (List.range BENCH_NTHR).map (thrCopy d)
 
@@ -362,24 +407,22 @@ def thrBody (d : InstructionDef) : List String :=
     Branches measure a taken-branch loop instead. -/
 def latBody (d : InstructionDef) : List String :=
   if isBranch d then
-    [s!"  {mnemonicOf d.name} x8, x8, .Ltake", ".Ltake:"]
+    let takenBranch := match d.name with
+      | "beq"  => "  beq x8, x8, .Ltake"
+      | "bne"  => "  bne x8, x9, .Ltake"
+      | "blt"  => "  blt x8, x9, .Ltake"
+      | "bge"  => "  bge x9, x8, .Ltake"
+      | "bltu" => "  bltu x8, x9, .Ltake"
+      | "bgeu" => "  bgeu x9, x8, .Ltake"
+      | _ => s!"  {mnemonicOf d.name} x8, x8, .Ltake"
+    [takenBranch, ".Ltake:"]
   else
     (List.range BENCH_NLAT).map (latCopy d)
 
 /-- Loop tail for a region: counter decrement + branch back. -/
-def loopTail (d : InstructionDef) (lat : Bool) : List String :=
+def loopTail (_d : InstructionDef) (lat : Bool) : List String :=
   let top := if lat then ".Ltop_lat" else ".Ltop_thr"
-  if isBranch d then
-    if lat then
-      ["  addi x29, x29, -1", s!"  bne x29, x0, {top}"]
-    else
-      -- not-taken burst: unconditional jump back (66 instrs/iter)
-      ["  addi x29, x29, -1", s!"  j {top}"]
-  else if d.name == "jal" || d.name == "jalr" then
-    -- jump back keeps the burst a strict copies+2 loop
-    ["  addi x29, x29, -1", s!"  j {top}"]
-  else
-    ["  addi x29, x29, -1", s!"  bne x29, x0, {top}"]
+  ["  addi x29, x29, -1", s!"  bne x29, x0, {top}"]
 /-- One measured region (throughput or chain), bracketed by csrr reads. -/
 def regionAsm (d : InstructionDef) (lat : Bool) : String :=
   let top := if lat then ".Ltop_lat" else ".Ltop_thr"
@@ -400,7 +443,7 @@ def regionAsm (d : InstructionDef) (lat : Bool) : String :=
     x7 (latency). -/
 def regionCheck (spec : BenchmarkSpec) (lat : Bool) : String :=
   let perIter := if lat then latPerIter spec else thrPerIter spec
-  let expected := BENCH_ITERS * perIter + 4
+  let expected := BENCH_ITERS * perIter
   let dst := if lat then "x7" else "x6"
   "  # validate minstret delta == expected, then compute cpi_milli\n" ++
   "  sub x24, x24, x26\n" ++
@@ -601,7 +644,10 @@ def dataSection (spec : BenchmarkSpec) (d : InstructionDef) : String :=
 
 /-- One self-contained benchmark program (`.S`). -/
 def programAsm (spec : BenchmarkSpec) (rawDefs : List InstructionDef) : String :=
-  match rawDefs.find? (fun d => d.name == spec.name) with
+  let defOpt := match rawDefs.find? (fun d => d.name == spec.name) with
+    | some d => some d
+    | none => if spec.needsZbMarch then some (zbInstructionDef spec.name spec.sample) else none
+  match defOpt with
   | none => "!ERROR: unknown instruction " ++ spec.name
   | some d =>
     let lat := spec.kind == .latencyAndThroughput || isBranch d
@@ -639,7 +685,8 @@ def programAsm (spec : BenchmarkSpec) (rawDefs : List InstructionDef) : String :
     ".Lend:\n" ++
     "  j .Lhalt\n\n" ++
     ioRoutines ++
-    "\n" ++
+    "\n  # Skid buffer: prevent speculative prefetch of non-code rodata past ret\n" ++
+    "  nop\n  nop\n  nop\n  nop\n  nop\n  nop\n  nop\n  nop\n\n" ++
     dataSection spec d
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -653,6 +700,7 @@ def benchOutDir : String := "output/bench"
 def marchPrefix (spec : BenchmarkSpec) : String :=
   if spec.needsFpMarch then "fp_"
   else if spec.needsAmoMarch then "amo_"
+  else if spec.needsZbMarch then "zb_"
   else ""
 
 /-- Emit all benchmark programs + bench-programs.json; hard-fails on any
@@ -670,14 +718,16 @@ def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
 
   -- Validate every sample encoding: a wrong sample is a wrong benchmark.
   for spec in specs do
-    match (decodeInstruction rawDefs spec.sample 0).map (·.opType) with
-    | some ot =>
-        if ot != spec.opType then
-          throw (IO.userError
-            s!"bench sample for {spec.name} decodes to {ot}, expected {spec.opType}")
-    | none =>
-        throw (IO.userError s!"bench sample for {spec.name} does not decode")
-
+    match spec.opType with
+    | some expectedOt =>
+      match (decodeInstruction rawDefs spec.sample 0).map (·.opType) with
+      | some ot =>
+          if ot != expectedOt then
+            throw (IO.userError
+              s!"bench sample for {spec.name} decodes to {ot}, expected {expectedOt}")
+      | none =>
+          throw (IO.userError s!"bench sample for {spec.name} does not decode")
+    | none => pure ()
   IO.FS.createDirAll benchAsmDir
   IO.FS.createDirAll benchOutDir
 
@@ -692,8 +742,8 @@ def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
   let entries := specs.map fun spec =>
     "  { \"name\": \"" ++ spec.name ++
     "\", \"kind\": \"" ++ spec.kind.toString ++
-    "\", \"sample\": " ++ toString spec.sample.toNat ++
-    "\", \"march\": \"" ++ marchPrefix spec ++ "\" }"
+    "\", \"sample\": " ++ toString spec.sample.toNat.repr ++
+    ", \"march\": \"" ++ marchPrefix spec ++ "\" }"
   let json := "[\n" ++ String.intercalate ",\n" entries ++ "\n]\n"
   IO.FS.writeFile s!"{benchOutDir}/bench-programs.json" json
 

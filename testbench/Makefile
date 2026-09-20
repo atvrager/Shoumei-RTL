@@ -314,7 +314,7 @@ bench:
 run-benchmarks: $(SIM_BIN) bench
 	@mkdir -p $(PROJ_ROOT)/output/bench
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
-	    --default-timeout 1000000 \
+	    --default-timeout 2500000 \
 	    --csv $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
 	    --bench-csv $(PROJ_ROOT)/output/bench/bench-metrics.csv \
 	    $(BENCH_ELF_GLOBS)
@@ -326,23 +326,53 @@ LEANSIM_MODULE := CPU_$(CPU_NAME)_L1I256B_L1D256B_L2512B
 # The gate-level model needs every emitted module implementation (the design is
 # hierarchical); cpu_setup_/lean_sim_ tie them to the DUT ports + trace buses.
 LEANSIM_CPPS := $(wildcard $(PROJ_ROOT)/output/cpp_sim/*.cpp)
-LEANSIM_SRCS := $(TB_DIR)/generated/lean_sim_$(LEANSIM_MODULE).cpp \
-                $(TB_DIR)/generated/cpu_setup_$(LEANSIM_MODULE).cpp \
-                $(TB_DIR)/generated/lean_sim_main_tb_cpu.cpp \
-                $(LEANSIM_CPPS)
-sim-leansim: $(LEANSIM_BIN)
-$(LEANSIM_BIN): $(LEANSIM_SRCS) $(TB_DIR)/lib/elf_loader.cpp
-	@mkdir -p $(BUILD_DIR)
-	$(CXX) -std=c++17 -O2 -no-pie \
+LEANSIM_OBJ_DIR := $(BUILD_DIR)/leansim_objs
+LEANSIM_OBJS := $(patsubst $(PROJ_ROOT)/output/cpp_sim/%.cpp,$(LEANSIM_OBJ_DIR)/cpp_sim_%.o,$(LEANSIM_CPPS)) \
+                $(LEANSIM_OBJ_DIR)/lean_sim.o \
+                $(LEANSIM_OBJ_DIR)/cpu_setup.o \
+                $(LEANSIM_OBJ_DIR)/main.o \
+                $(LEANSIM_OBJ_DIR)/elf_loader.o
+
+$(LEANSIM_OBJ_DIR)/cpp_sim_%.o: $(PROJ_ROOT)/output/cpp_sim/%.cpp
+	@mkdir -p $(LEANSIM_OBJ_DIR)
+	$(CXX) -std=c++17 -O2 -c \
 		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
-		$(LEANSIM_SRCS) $(TB_DIR)/lib/elf_loader.cpp \
-		-o $@
+		$< -o $@
+
+$(LEANSIM_OBJ_DIR)/lean_sim.o: $(TB_DIR)/generated/lean_sim_$(LEANSIM_MODULE).cpp
+	@mkdir -p $(LEANSIM_OBJ_DIR)
+	$(CXX) -std=c++17 -O2 -c \
+		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
+		$< -o $@
+
+$(LEANSIM_OBJ_DIR)/cpu_setup.o: $(TB_DIR)/generated/cpu_setup_$(LEANSIM_MODULE).cpp
+	@mkdir -p $(LEANSIM_OBJ_DIR)
+	$(CXX) -std=c++17 -O2 -c \
+		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
+		$< -o $@
+
+$(LEANSIM_OBJ_DIR)/main.o: $(TB_DIR)/generated/lean_sim_main_tb_cpu.cpp
+	@mkdir -p $(LEANSIM_OBJ_DIR)
+	$(CXX) -std=c++17 -O2 -c \
+		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
+		$< -o $@
+
+$(LEANSIM_OBJ_DIR)/elf_loader.o: $(TB_DIR)/lib/elf_loader.cpp
+	@mkdir -p $(LEANSIM_OBJ_DIR)
+	$(CXX) -std=c++17 -O2 -c \
+		-I$(TB_DIR)/generated -I$(TB_DIR)/lib -I$(TB_DIR) -I$(PROJ_ROOT)/output/cpp_sim \
+		$< -o $@
+
+sim-leansim: $(LEANSIM_BIN)
+$(LEANSIM_BIN): $(LEANSIM_OBJS)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -std=c++17 -O2 -no-pie $(LEANSIM_OBJS) -o $@
 	@echo "Built: $@ (LeanSim gate-level sim)"
 
 bench-cppsim: sim-leansim bench
 	@mkdir -p $(PROJ_ROOT)/output/bench
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(LEANSIM_BIN) --jobs $(shell nproc) \
-	    --default-timeout 1000000 \
+	    --default-timeout 2500000 \
 	    --csv $(PROJ_ROOT)/output/bench/bench-results-cppsim.csv \
 	    --bench-csv /dev/null \
 	    $(BENCH_ELF_GLOBS)

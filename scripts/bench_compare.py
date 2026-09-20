@@ -79,7 +79,7 @@ def _int_or_none(s: str | None) -> int | None:
 
 def strip_march(name: str) -> str:
     """ELF basename -> spec name: fp_fadd_s -> fadd_s, amo_amoadd_w -> amoadd_w."""
-    for prefix in ("fp_", "amo_"):
+    for prefix in ("fp_", "amo_", "zb_"):
         if name.startswith(prefix):
             return name[len(prefix):]
     return name
@@ -124,14 +124,14 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rtl", type=Path, required=True)
-    ap.add_argument("--cpp", type=Path, required=True)
+    ap.add_argument("--cpp", type=Path, default=None)
     ap.add_argument("--programs", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=Path("output/bench"))
     args = ap.parse_args()
 
     programs = json.loads(args.programs.read_text())
     rtl_run = parse_run_csv(args.rtl)
-    cpp_run = parse_run_csv(args.cpp)
+    cpp_run = parse_run_csv(args.cpp) if args.cpp and args.cpp.exists() else {}
     rtl_metrics = parse_bench_csv(args.out / "bench-metrics.csv")
 
     cpu_name = "unknown"

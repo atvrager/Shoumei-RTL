@@ -65,13 +65,15 @@ generated/fp_%.elf: generated/fp_%.S shoumei.ld
 BENCH_ASM  := $(wildcard generated/bench/*.S)
 BENCH_ELFS := $(patsubst %.S,%.elf,$(BENCH_ASM))
 CFLAGS_AMO = $(CFLAGS_FP)
-
+CFLAGS_ZB  = -march=rv64im_zba_zbb_zbc_zbs_zicsr_zifencei -mabi=lp64 -O2 -nostdlib -nostartfiles -ffreestanding
 generated/bench/fp_%.elf: generated/bench/fp_%.S shoumei.ld
 	$(CC) $(CFLAGS_FP) $(LDFLAGS) $< -o $@
 
 generated/bench/amo_%.elf: generated/bench/amo_%.S shoumei.ld
 	$(CC) $(CFLAGS_AMO) $(LDFLAGS) $< -o $@
 
+generated/bench/zb_%.elf: generated/bench/zb_%.S shoumei.ld
+	$(CC) $(CFLAGS_ZB) $(LDFLAGS) $< -o $@
 generated/bench/%.elf: generated/bench/%.S shoumei.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
 

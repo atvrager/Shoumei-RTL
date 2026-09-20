@@ -1468,7 +1468,7 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "        if (trace) trace->dump(sim_time++);\n" ++
   "#endif\n" ++
   "        cycle++;\n" ++
-  "        if (cycle % 10000 == 0)\n" ++
+  "        if (verbose && cycle % 10000 == 0)\n" ++
   "            printf(\"  [%u cycles]\\n\", cycle);\n" ++
   "    " ++ rb ++ "\n\n" ++
   "    if (!done) " ++ lb ++ "\n" ++
@@ -1744,7 +1744,7 @@ def toLeanSimCpp (cfg : TestbenchConfig) : String :=
     "    " ++ rb ++ "\n" ++
     s!"{rb}\n\n" ++
     s!"void LeanSim::settle() {lb}\n" ++
-    "    for (int i = 0; i < 10; i++) " ++ lb ++ "\n" ++
+    "    for (int i = 0; i < 3; i++) " ++ lb ++ "\n" ++
     "        imem_update();\n" ++
     "        cpu_eval_comb_all(ctx_);\n" ++
     "    " ++ rb ++ "\n" ++
@@ -1784,7 +1784,7 @@ def toLeanSimCpp (cfg : TestbenchConfig) : String :=
     "    " ++ rb ++ "\n" ++
     s!"{rb}\n\n" ++
     s!"void LeanSim::settle() {lb}\n" ++
-    "    for (int i = 0; i < 10; i++)\n" ++
+    "    for (int i = 0; i < 3; i++)\n" ++
     "        cpu_eval_comb_all(ctx_);\n" ++
     s!"{rb}\n\n") ++
 
