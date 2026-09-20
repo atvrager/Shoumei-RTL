@@ -9,7 +9,7 @@
 # Usage:
 #   run-suite.sh --mode sim|cosim --bin <binary> [--jobs N]
 #                [--default-timeout N] [--csv <path>] [--timeout <glob>=<sec>]...
-#                [--kanata-dir <dir>]
+#                [--timeout-json <manifest>] [--kanata-dir <dir>]
 #                <elf> [<elf> ...]
 
 set -uo pipefail
@@ -22,6 +22,7 @@ CSV="/dev/null"
 COV_DIR=""
 KANATA_DIR=""
 BENCH_CSV=""
+TIMEOUT_JSON=""
 declare -a OVERRIDES=()
 declare -a ELFS=()
 
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --bin)             BIN="$2"; shift 2 ;;
         --jobs)            JOBS="$2"; shift 2 ;;
         --default-timeout) DEFAULT_TIMEOUT="$2"; shift 2 ;;
+        --timeout-json)    TIMEOUT_JSON="$2"; shift 2 ;;
         --csv)             CSV="$2"; shift 2 ;;
         --bench-csv)       BENCH_CSV="$2"; shift 2 ;;
         --coverage-dir)    COV_DIR="$2"; shift 2 ;;
@@ -49,8 +51,35 @@ fi
 # Per-test timeout: last matching --timeout glob wins.  A glob is matched against
 # both the basename and the full path, so a suite sub-directory carries its own
 # budget without listing every program (e.g. --timeout '*bench*=3000000').
+#
+# --timeout-json supplies a per-test budget from a benchmark manifest
+# ({name, march, max_cycles}).  It is consulted first and the globs act as an
+# override, so a hung benchmark fails inside its own bound rather than a
+# suite-wide cap.  ELF basename -> spec name strips the .elf suffix and the
+# march prefix (fp_/amo_/zb_), matching how the emitter names the programs.
+json_timeout_for() {
+    local name="$1"
+    [[ -n "$TIMEOUT_JSON" && -f "$TIMEOUT_JSON" ]] || return 1
+    python3 - "$TIMEOUT_JSON" "$name" <<'PY'
+import json, sys
+manifest, name = sys.argv[1], sys.argv[2]
+spec = name[:-4] if name.endswith(".elf") else name
+for prefix in ("fp_", "amo_", "zb_"):
+    if spec.startswith(prefix):
+        spec = spec[len(prefix):]
+        break
+for entry in json.load(open(manifest)):
+    if entry.get("name") == spec:
+        print(entry.get("max_cycles", ""))
+        break
+PY
+}
+
 timeout_for() {
     local name="$1" path="$2" t="$DEFAULT_TIMEOUT"
+    local jt
+    jt="$(json_timeout_for "$name")"
+    if [[ -n "$jt" ]]; then t="$jt"; fi
     local ov
     for ov in "${OVERRIDES[@]}"; do
         # shellcheck disable=SC2053

@@ -242,6 +242,42 @@ def latPerIter (spec : BenchmarkSpec) : Nat :=
   else if spec.name ∈ ["beq", "bne", "blt", "bge", "bltu", "bgeu"] then 3
   else BENCH_NLAT + 2
 
+/-- Worst-case cycles-per-instruction bound for the *chained* (latency) region.
+    The chain serialises on the instruction's own latency, so the bound is the
+    instruction's latency class.  Calibrated against measured runs with ~1.5-4x
+    headroom: fdiv/fsqrt ~400 CPI, div/rem ~469, csrrw ~190. -/
+def chainCpiBound (spec : BenchmarkSpec) : Nat :=
+  let n := spec.name
+  if n.startsWith "fdiv" || n.startsWith "fsqrt" then 768
+  else if n.startsWith "div" || n.startsWith "rem" then 768
+  else if n.startsWith "csr" then 384
+  else if n.startsWith "amo" || n.startsWith "lr" || n.startsWith "sc" then 64
+  else if n ∈ ["lb", "lbu", "lh", "lhu", "lw", "lwu", "ld", "flw", "fld"] then 48
+  else if n.startsWith "f" then 32
+  else 12
+
+/-- Worst-case CPI bound for the *back-to-back* (throughput) region: independent
+    copies pipeline, so even a slow instruction sustains a small CPI - except
+    the CSR ops, which serialise at the CSR file even with distinct operands
+    (measured ~170 CPI), and the dividers, which do not pipeline at all. -/
+def thruCpiBound (spec : BenchmarkSpec) : Nat :=
+  let n := spec.name
+  if n.startsWith "csr" then 384
+  else if n.startsWith "fdiv" || n.startsWith "fsqrt" then 24
+  else if n.startsWith "div" || n.startsWith "rem" then 12
+  else 8
+
+/-- Per-test cycle budget for a whole benchmark program.  Both regions are
+    bounded separately (the latency chain dominates) plus a small epilogue
+    allowance, so a hung program fails in ~10x fewer cycles than a suite-wide
+    cap while a correct run always finishes inside its own budget. -/
+def timeoutCycles (spec : BenchmarkSpec) : Nat :=
+  let thr := BENCH_ITERS * thrPerIter spec * thruCpiBound spec
+  let lat := if spec.kind == .latencyAndThroughput
+             then BENCH_ITERS * latPerIter spec * chainCpiBound spec
+             else 0
+  thr + lat + 1000
+
 /-- Scratch memory slots: distinct 8-byte offsets in the scratch buffer. -/
 def slotOff (k : Nat) : Nat := (k % BENCH_SLOTS) * 8
 
@@ -740,12 +776,15 @@ def emitAll (config : CPUConfig := defaultCPUConfig) : IO Unit := do
     IO.FS.writeFile path asm
     count := count + 1
 
-  -- JSON manifest {name, kind, sample, march}
+  -- JSON manifest {name, kind, sample, march, max_cycles}
+  -- max_cycles is the per-test cycle budget the runner enforces, so a hung
+  -- program fails fast instead of burning a suite-wide timeout.
   let entries := specs.map fun spec =>
     "  { \"name\": \"" ++ spec.name ++
     "\", \"kind\": \"" ++ spec.kind.toString ++
     "\", \"sample\": " ++ toString spec.sample.toNat.repr ++
-    ", \"march\": \"" ++ marchPrefix spec ++ "\" }"
+    ", \"march\": \"" ++ marchPrefix spec ++
+    "\", \"max_cycles\": " ++ toString (timeoutCycles spec) ++ " }"
   let json := "[\n" ++ String.intercalate ",\n" entries ++ "\n]\n"
   IO.FS.writeFile s!"{benchOutDir}/bench-programs.json" json
 
