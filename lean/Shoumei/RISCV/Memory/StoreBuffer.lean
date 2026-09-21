@@ -594,8 +594,18 @@ def mkStoreBuffer8 : Circuit :=
   -- New tail = head + popcount (mod 8, only low 3 bits matter)
 
   let surviving := (List.range 8).map (fun i => Wire.mk s!"surviving_{i}")
-  let surviving_gates := (List.range 8).map (fun i =>
-    Gate.mkAND valid[i]! committed[i]! surviving[i]!)
+  -- An entry dequeued on the same cycle as the flush is gone: `head_ptr` advances
+  -- past it at the clock edge, so it must not be counted as surviving either.
+  -- Counting it leaves count > 0 with an empty [head, tail) range, and the buffer
+  -- never reports empty again -- any drain waiting on sb_empty then wedges.
+  let surviving_gates := (List.range 8).flatMap (fun i =>
+    let surv_vc := Wire.mk s!"surv_vc_{i}"
+    let surv_deq := Wire.mk s!"surv_deq_{i}"
+    let surv_not_deq := Wire.mk s!"surv_not_deq_{i}"
+    [Gate.mkAND valid[i]! committed[i]! surv_vc,
+     Gate.mkAND deq_fire head_decode[i]! surv_deq,
+     Gate.mkNOT surv_deq surv_not_deq,
+     Gate.mkAND surv_vc surv_not_deq surviving[i]!])
 
   let pop_count := mkWires "pop_count_" 4
   let pop_inst : CircuitInstance := {
@@ -610,18 +620,33 @@ def mkStoreBuffer8 : Circuit :=
   let flush_count_gates := (List.range 4).map (fun i =>
     Gate.mkBUF pop_count[i]! flush_count_load[i]!)
 
-  -- flush_tail_load = head_ptr + pop_count[2:0] (mod 8, wrapping 3-bit add)
-  -- Simple 3-bit ripple-carry adder
+  -- flush_tail_load = (head_ptr + deq_fire) + pop_count[2:0] (mod 8, wrapping add)
+  -- The +deq_fire is what keeps head and tail consistent: a store dequeued on the
+  -- flush cycle has already advanced head_ptr at the clock edge, and it is no
+  -- longer in `surviving`, so tail must be measured from the advanced head.
+  let hn_xor := (List.range 3).map (fun i => Wire.mk s!"hn_xor_b{i}")
+  let hn_carry := (List.range 3).map (fun i => Wire.mk s!"hn_carry_b{i}")
+  let head_next := (List.range 3).map (fun i => Wire.mk s!"hn_b{i}")
+  let head_next_gates := [
+    Gate.mkXOR head_ptr[0]! deq_fire hn_xor[0]!,
+    Gate.mkBUF hn_xor[0]! head_next[0]!,
+    Gate.mkAND head_ptr[0]! deq_fire hn_carry[0]!,
+    Gate.mkXOR head_ptr[1]! hn_carry[0]! hn_xor[1]!,
+    Gate.mkBUF hn_xor[1]! head_next[1]!,
+    Gate.mkAND head_ptr[1]! hn_carry[0]! hn_carry[1]!,
+    Gate.mkXOR head_ptr[2]! hn_carry[1]! hn_xor[2]!,
+    Gate.mkBUF hn_xor[2]! head_next[2]!]
+
   let ft_xor := (List.range 3).map (fun i => Wire.mk s!"ft_xor_b{i}")
   let ft_carry := (List.range 4).map (fun i => Wire.mk s!"ft_carry_b{i}")
   let ft_and1 := (List.range 3).map (fun i => Wire.mk s!"ft_and1_b{i}")
   let ft_and2 := (List.range 3).map (fun i => Wire.mk s!"ft_and2_b{i}")
-  let flush_tail_gates := [
+  let flush_tail_gates := head_next_gates ++ [
     Gate.mkBUF zero ft_carry[0]!
   ] ++ ((List.range 3).map (fun i =>
-    [Gate.mkXOR head_ptr[i]! pop_count[i]! ft_xor[i]!,
+    [Gate.mkXOR head_next[i]! pop_count[i]! ft_xor[i]!,
      Gate.mkXOR ft_xor[i]! ft_carry[i]! flush_tail_load[i]!,
-     Gate.mkAND head_ptr[i]! pop_count[i]! ft_and1[i]!,
+     Gate.mkAND head_next[i]! pop_count[i]! ft_and1[i]!,
      Gate.mkAND ft_xor[i]! ft_carry[i]! ft_and2[i]!,
      Gate.mkOR ft_and1[i]! ft_and2[i]! ft_carry[i+1]!]
   )).flatten
