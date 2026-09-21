@@ -81,7 +81,7 @@ if [[ "$BACKEND" == "vc-formal" || ( "$BACKEND" == "auto" && -n "$REMOTE_HOST" )
       name="$(basename "$script" .tcl)"
       echo -n "Checking $name (Synopsys VC Formal on $REMOTE_HOST)... "
       # shellcheck disable=SC2029
-      if ssh "$REMOTE_HOST" "cd '$TMP_REMOTE' && rm -rf vcst_rtdb && { [ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1 || true; } && unset VCS_HOME && unset VERDI_HOME && export VC_STATIC_HOME=\"\$(dirname \"\$(dirname '${VCF_BIN}')\")\" && ${VCF_BIN} -fmode FPV -batch -no_restore -f '$tcl_name' < /dev/null" >/dev/null 2>&1; then
+      if ssh "$REMOTE_HOST" "cd '$TMP_REMOTE' && rm -rf vcst_rtdb && { [ -f ~/.profile ] && source ~/.profile >/dev/null 2>&1 || true; } && { [ -f ~/.bashrc ] && source ~/.bashrc >/dev/null 2>&1 || true; } && { [ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1 || true; } && if [[ '${VCF_BIN}' == */* ]]; then export VC_STATIC_HOME=\"\$(dirname \"\$(dirname '${VCF_BIN}')\")\"; unset VCS_HOME; unset VERDI_HOME; fi && ${VCF_BIN} -fmode FPV -batch -no_restore -f '$tcl_name' < /dev/null" >/dev/null 2>&1; then
         echo "PASS (PROVEN)"
         PASS_COUNT=$((PASS_COUNT + 1))
       else

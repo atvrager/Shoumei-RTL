@@ -170,7 +170,7 @@ Run against a compute server equipped with Synopsys VC Formal:
 
 #### Toolchain Invocations & Optimization
 1. **Atomic File Transfer:** All 230+ SystemVerilog files and generated TCL scripts are piped via `tar -cf - ... | ssh ... "tar -xf - ..."` in < 1.5 seconds, bypassing `scp` command-line expansion limits.
-2. **Environment Scoping:** In non-interactive SSH sessions, `.zshrc` or `.bashrc` must be sourced without subshell isolation (`{ [ -f ~/.zshrc ] && source ~/.zshrc; }`) so license pointers (`LM_LICENSE_FILE`) persist into the parent process.
+2. **Environment Scoping:** In non-interactive SSH sessions, remote shell startup files (`.profile`, `.bashrc`, or `.zshrc`) must be sourced without subshell isolation (`{ [ -f ~/.profile ] && source ~/.profile; }`) so license environment variables persist into the parent process.
 3. **Compiler Unification:** Standalone `VCS_HOME` and `VERDI_HOME` environment variables are unset so `vcf` invokes its own bundled Simon/SVAC front-end.
 4. **FPV Script Execution:**
 ```tcl

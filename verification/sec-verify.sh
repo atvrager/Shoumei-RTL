@@ -94,7 +94,7 @@ elif [[ "$BACKEND" == "formality" ]]; then
       name="$(basename "$script" _formality.tcl)"
       echo -n "Checking $name (Synopsys Formality on $REMOTE_HOST)... "
       # shellcheck disable=SC2029
-      if ssh "$REMOTE_HOST" "cd '$TMP_REMOTE' && ${FM_BIN} -f '$tcl_name' < /dev/null" >/dev/null 2>&1; then
+      if ssh "$REMOTE_HOST" "cd '$TMP_REMOTE' && { [ -f ~/.profile ] && source ~/.profile >/dev/null 2>&1 || true; } && { [ -f ~/.bashrc ] && source ~/.bashrc >/dev/null 2>&1 || true; } && { [ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1 || true; } && ${FM_BIN} -f '$tcl_name' < /dev/null" >/dev/null 2>&1; then
         echo "PASS"
         PASS_COUNT=$((PASS_COUNT + 1))
       else
