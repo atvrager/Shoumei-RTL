@@ -1027,7 +1027,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkOR rob_redirect_valid branch_redirect_valid_reg redirect_or,
      Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
      -- rename_ext_stall = dispatch_stall OR redirect_or_flush (suppress rename during redirect/flush)
-     Gate.mkOR (Wire.mk "dispatch_stall") redirect_or_flush (Wire.mk "rename_ext_stall"),
+     -- fence_i_suppress also blocks dispatch (drain, fallback, illegal/ecall/mret).  The
+     -- rename must stall with it: otherwise the free list dequeues a fresh tag every cycle
+     -- the held instruction waits, only the last tag is written into the RAT, and the rest
+     -- are never freed at retire, draining the free list until rename wedges.
+     -- csr_rename_en is exempt: a CSR passes through rename and frees its tag on its own path.
+     Gate.mkOR (Wire.mk "dispatch_stall") redirect_or_flush (Wire.mk "rename_ext_stall_pre"),
+     Gate.mkNOT csr_rename_en (Wire.mk "no_csr_ren_w2"),
+     Gate.mkAND fence_i_suppress (Wire.mk "no_csr_ren_w2") (Wire.mk "rename_supp_stall"),
+     Gate.mkOR (Wire.mk "rename_ext_stall_pre") (Wire.mk "rename_supp_stall")
+       (Wire.mk "rename_ext_stall"),
      Gate.mkNOT redirect_or_flush not_redirecting,
      Gate.mkNOT fence_i_suppress not_fence_i_suppress,
      -- Slot 0 base valid (gated by fence_i_suppress)
