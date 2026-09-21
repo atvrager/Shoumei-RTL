@@ -28,6 +28,11 @@ inductive AsmInstr where
   | pseudo (text : String)
   | comment (text : String)
   | blank
+  -- Raw encoded word with the comment the generator wants beside it.  The
+  -- random generator's alphabet is the decoder's own dictionary, and mnemonics
+  -- would push that onto the assembler, which needs a matching -march per
+  -- extension and does not know the Zb* encodings at all.
+  | word (w : UInt32) (cmt : String)
   -- F extension: FP register names use f0..f31
   | frtype (mnem : String) (fd fs1 fs2 : Fin 32)       -- fadd.s fd, fs1, fs2
   | fr4type (mnem : String) (fd fs1 fs2 fs3 : Fin 32)  -- fmadd.s fd, fs1, fs2, fs3
@@ -54,6 +59,11 @@ private def toHex (n : Nat) : String :=
     decreasing_by simp_all; omega
     go n ""
 
+/-- Eight lower-case hex digits, no prefix. -/
+def hex8 (w : UInt32) : String :=
+  let s := toHex w.toNat
+  String.ofList (List.replicate (8 - s.length) '0') ++ s
+
 /-- Render a single instruction to assembly text -/
 def AsmInstr.toAsm : AsmInstr → String
   | .rtype mnem rd rs1 rs2 => s!"    {mnem} {regName rd}, {regName rs1}, {regName rs2}"
@@ -67,6 +77,7 @@ def AsmInstr.toAsm : AsmInstr → String
   | .pseudo text => s!"    {text}"
   | .comment text => s!"    # {text}"
   | .blank => ""
+  | .word w cmt => s!"    .word 0x{hex8 w}   # {cmt}"
   | .frtype mnem fd fs1 fs2 => s!"    {mnem} {fregName fd}, {fregName fs1}, {fregName fs2}"
   | .fr4type mnem fd fs1 fs2 fs3 => s!"    {mnem} {fregName fd}, {fregName fs1}, {fregName fs2}, {fregName fs3}"
   | .flw fd rs1 off => s!"    flw {fregName fd}, {off}({regName rs1})"
