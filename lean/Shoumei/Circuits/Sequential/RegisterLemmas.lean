@@ -127,7 +127,7 @@ theorem register_filterMap_all_false (n : Nat) (env : Env) (hrst : env (Wire.mk 
 theorem register_nextState_under_reset (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") = true)
     (i : Nat) (_ : i < n) :
     let (nextState, _) := evalCycleSequential (mkRegisterN n) initState env
-    nextState (Wire.mk s!"q{i}") = false := by
+    nextState (Wire.mk s!"q_{i}") = false := by
   simp [evalCycleSequential]
   -- Step 1: env' preserves reset=true
   have henv' : mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) (Wire.mk "reset") = true :=
@@ -153,6 +153,34 @@ theorem register_nextState_under_reset (n : Nat) (env : Env) (hrst : env (Wire.m
   -- Step 4: updateState with all false
   apply updateState_all_false
   · rfl  -- initState returns false
+  · exact hall
+
+-- Backwards compatibility alias for non-indexed format
+theorem register_nextState_under_reset_compat (n : Nat) (env : Env) (hrst : env (Wire.mk "reset") = true)
+    (i : Nat) (_ : i < n) :
+    let (nextState, _) := evalCycleSequential (mkRegisterN n) initState env
+    nextState (Wire.mk s!"q{i}") = false := by
+  simp [evalCycleSequential]
+  have henv' : mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) (Wire.mk "reset") = true :=
+    register_env_reset n env hrst
+  have henv'' : (mkRegisterN n).gates.foldl (fun env gate =>
+      if gate.gateType.isCombinational then
+        updateEnv env gate.output (evalGate gate env)
+      else env) (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n))) =
+    mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)) := by
+    have := register_comb_foldl_is_id n
+      (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n)))
+    simp only [evalCombGate] at this
+    exact this
+  rw [henv'']
+  have hall : ∀ p ∈ (mkRegisterN n).gates.filterMap (fun g =>
+      if g.gateType.isDFF then
+        some (g.output, evalDFF g (mergeStateIntoEnv initState env (getDFFOutputs (mkRegisterN n))))
+      else none),
+    p.2 = false :=
+    register_filterMap_all_false n _ henv'
+  apply updateState_all_false
+  · rfl
   · exact hall
 
 end Shoumei.Circuits.Sequential

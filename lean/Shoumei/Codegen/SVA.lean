@@ -100,6 +100,21 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_conservation_{idx}: assert property (p_conservation_{idx});\n"
 
+  | .ResetClears qBus =>
+      s!"  // Formal Property: Synchronous reset clears register\n" ++
+      s!"  property p_reset_clears_{idx};\n" ++
+      s!"    {clkExpr} {rst} |=> ({qBus} == '0);\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_reset_clears_{idx}: assert property (p_reset_clears_{idx});\n"
+
+  | .DataCapture dBus qBus =>
+      s!"  // Formal Property: Active clock edge latches data\n" ++
+      s!"  property p_data_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    1'b1 |=> ({qBus} == $past({dBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_data_capture_{idx}: assert property (p_data_capture_{idx});\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""

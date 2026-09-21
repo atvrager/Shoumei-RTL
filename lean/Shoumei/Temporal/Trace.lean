@@ -118,6 +118,12 @@ inductive TemporalProp where
   /-- FIFO Empty Invariant:
       When queue is empty (count equals 0), dequeue valid must be low. -/
   | EmptyNotValid (countWires : List Wire) (deqValid : Wire)
+  /-- Register Reset Invariant:
+      When reset is asserted at cycle t, all qWires bits are low at cycle t + 1. -/
+  | RegisterResetZero (resetWire : Wire) (qWires : List Wire)
+  /-- Register Data Capture Invariant:
+      When reset is not asserted at cycle t, qWires at cycle t + 1 equals dWires at cycle t. -/
+  | RegisterDataCapture (resetWire : Wire) (dWires qWires : List Wire)
   deriving Repr, Inhabited
 
 /-- Semantic evaluation: whether a `Trace` satisfies a `TemporalProp`. -/
@@ -140,6 +146,14 @@ def satisfiesTrace (tr : Trace) : TemporalProp → Prop
       ∀ t : Nat,
         -- When count is all zeroes, deqValid is false
         (tr.busAt countWires t = countWires.map (fun _ => false)) → tr.wireAt deqValid t = false
+  | .RegisterResetZero resetWire qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = true →
+          tr.busAt qWires (t + 1) = qWires.map (fun _ => false)
+  | .RegisterDataCapture resetWire dWires qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+          tr.busAt qWires (t + 1) = tr.busAt dWires t
 
 /-- Circuit satisfies a temporal property under valid reset initialization. -/
 def CircuitSatisfies (c : Circuit) (s0 : State) (prop : TemporalProp) : Prop :=

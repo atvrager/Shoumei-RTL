@@ -95,6 +95,7 @@ import Shoumei.Circuits.Sequential.QueueTemporalProofs
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Sequential.RegisterLemmas
 import Shoumei.Circuits.Sequential.RegisterProofs
+import Shoumei.Circuits.Sequential.RegisterTemporalProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
 import Shoumei.Codegen.CellLibrary

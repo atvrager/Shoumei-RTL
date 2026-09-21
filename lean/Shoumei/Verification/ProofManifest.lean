@@ -74,6 +74,7 @@ def moduleToComponent (modStr : String) (nameStr : String) : String :=
 def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
   if typeStr.contains "TraceSpec" || typeStr.contains "Refines" ||
      typeStr.contains "satisfiesTrace" || typeStr.contains "dual_compositional_refinement" ||
+     typeStr.contains "RegisterSpec" ||
      nameStr.contains "refinement" || nameStr.contains "temporal" || nameStr.contains "Trace" then
     .L3_Refinement
   else if typeStr.contains "never_exceeds" || typeStr.contains "QueueInvariant" ||
@@ -83,7 +84,8 @@ def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
           typeStr.contains "FreeListState" || typeStr.contains "RATState" ||
           nameStr.contains "arbiter_" || nameStr.contains "onehot" ||
           nameStr.contains "rs_" || nameStr.contains "queue_fifo" ||
-          nameStr.contains "invariant" ||
+          nameStr.contains "invariant" || nameStr.contains "cover_all_bits" ||
+          nameStr.contains "_synchronized" ||
           (typeStr.contains "preserves" && !typeStr.contains "length") then
     .L2_Invariant
   else if typeStr.contains "evalCircuit" || typeStr.contains "compileCircuit" ||

@@ -42,6 +42,10 @@ def mkRegisterN (n : Nat) : Circuit :=
       { name := "d", width := n, wires := d_wires },
       { name := "q", width := n, wires := q_wires }
     ]
+    svaProperties := [
+      .ResetClears "q",
+      .DataCapture "d" "q"
+    ]
   }
 
 /-! ## Hierarchical Register Construction (for arbitrary sizes) -/
@@ -102,6 +106,10 @@ def mkRegisterNHierarchical (n : Nat) : Circuit :=
     signalGroups := [
       { name := "d", width := n, wires := d_wires },
       { name := "q", width := n, wires := q_wires }
+    ]
+    svaProperties := [
+      .ResetClears "q",
+      .DataCapture "d" "q"
     ]
   }
 

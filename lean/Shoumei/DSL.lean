@@ -187,6 +187,8 @@ inductive SVAProperty where
   | EmptyNotValid (countBus : String) (deqValid : String)
   | CapacityBound (countBus : String) (cap : Nat)
   | Conservation (enqValid enqReady deqValid deqReady countBus : String)
+  | ResetClears (qBus : String)
+  | DataCapture (dBus qBus : String)
   deriving Repr, BEq, Inhabited, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules
