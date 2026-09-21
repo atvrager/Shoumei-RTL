@@ -124,6 +124,12 @@ inductive TemporalProp where
   /-- Register Data Capture Invariant:
       When reset is not asserted at cycle t, qWires at cycle t + 1 equals dWires at cycle t. -/
   | RegisterDataCapture (resetWire : Wire) (dWires qWires : List Wire)
+  /-- Register Enable Hold Invariant:
+      When reset is low and enable is low at cycle t, qWires at cycle t + 1 retains qWires at cycle t. -/
+  | RegisterEnableHolds (resetWire : Wire) (enWire : Wire) (qWires : List Wire)
+  /-- Register Enable Capture Invariant:
+      When reset is low and enable is high at cycle t, qWires at cycle t + 1 latches dWires at cycle t. -/
+  | RegisterEnableCapture (resetWire : Wire) (enWire : Wire) (dWires qWires : List Wire)
   deriving Repr, Inhabited
 
 /-- Semantic evaluation: whether a `Trace` satisfies a `TemporalProp`. -/
@@ -153,6 +159,16 @@ def satisfiesTrace (tr : Trace) : TemporalProp → Prop
   | .RegisterDataCapture resetWire dWires qWires =>
       ∀ t : Nat,
         tr.wireAt resetWire t = false →
+          tr.busAt qWires (t + 1) = tr.busAt dWires t
+  | .RegisterEnableHolds resetWire enWire qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+        tr.wireAt enWire t = false →
+          tr.busAt qWires (t + 1) = tr.busAt qWires t
+  | .RegisterEnableCapture resetWire enWire dWires qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+        tr.wireAt enWire t = true →
           tr.busAt qWires (t + 1) = tr.busAt dWires t
 
 /-- Circuit satisfies a temporal property under valid reset initialization. -/

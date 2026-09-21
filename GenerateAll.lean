@@ -216,6 +216,14 @@ def baseCircuits : List Circuit := [
   mkRegisterN 24,  -- ROB16_W2 PC array
   mkRegisterN 32,
   mkRegisterN 64,
+  -- Clock-enabled registers
+  mkRegisterEnN 1,
+  mkRegisterEnN 2,
+  mkRegisterEnN 4,
+  mkRegisterEnN 8,
+  mkRegisterEnN 16,
+  mkRegisterEnN 32,
+  mkRegisterEnN 64,
   -- Hierarchical registers (compositional verification)
   mkRegisterNHierarchical 96,  -- RS entry: 8-bit opcode + 7-bit tags (1+8+7+1+7+32+1+7+32)
   mkRegisterNHierarchical 98,  -- Store buffer entry payload (32+64+2)

@@ -131,11 +131,21 @@ run_mutant \
     "Gate.mkDFF d clock reset q" \
     "Gate.mkDFF d clock clock q"
 
+# Mutant 6: Enable MUX Input Swap in RegisterEn
+# Inverts enable polarity: holds on en=1 and latches on en=0, preserves exact gate count (2n gates)
+run_mutant \
+    "M6_REGEN_MUX_INPUT_SWAP" \
+    "Swap MUX in0 and in1 in RegisterEn enable multiplexer" \
+    "lean/Shoumei/Circuits/Sequential/Register.lean" \
+    "Shoumei.Circuits.Sequential.RegisterTemporalProofs" \
+    "Gate.mkMUX q_wires[i]! d_wires[i]! en" \
+    "Gate.mkMUX d_wires[i]! q_wires[i]! en"
+
 # ─── Mutation Score Summary ─────────────────────────────────
 
 SEM_SCORE=$(( (SEMANTIC_KILLED * 100) / TOTAL_MUTANTS ))
-# L0 structural proofs check gate count only. Because all 5 mutations preserve
-# gate count (44 gates, 20 gates, and n gates), 0% of mutants are killed by L0.
+# L0 structural proofs check gate count only. Because all 6 mutations preserve
+# gate count (44, 20, n, and 2n gates), 0% of mutants are killed by L0.
 L0_SCORE=$(( (L0_KILLED * 100) / TOTAL_MUTANTS ))
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

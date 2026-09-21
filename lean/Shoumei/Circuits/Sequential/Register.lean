@@ -140,4 +140,44 @@ def mkRegister160Hierarchical : Circuit := mkRegisterNHierarchical 160
 def registerWidth (c : Circuit) : Nat :=
   c.gates.filter (fun g => g.gateType.isDFF) |>.length
 
+/-! ## Clock-Enabled Registers (Strobe / Retention Support) -/
+
+/-- Build an N-bit register with clock enable (strobe).
+    Each bit combines a 2-to-1 MUX and a DFF: next_d = en ? d : q. -/
+def mkRegisterEnN (n : Nat) : Circuit :=
+  let d_wires := makeIndexedWires "d" n
+  let q_wires := makeIndexedWires "q" n
+  let next_d_wires := makeIndexedWires "next_d" n
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let en := Wire.mk "en"
+
+  let mux_gates := (List.range n).map (fun i => Gate.mkMUX q_wires[i]! d_wires[i]! en next_d_wires[i]!)
+  let dff_gates := (List.range n).map (fun i => Gate.mkDFF next_d_wires[i]! clock reset q_wires[i]!)
+  let gates := mux_gates ++ dff_gates
+
+  { name := s!"RegisterEn{n}"
+    inputs := d_wires ++ [clock, reset, en]
+    outputs := q_wires
+    gates := gates
+    instances := []
+    signalGroups := [
+      { name := "d", width := n, wires := d_wires },
+      { name := "q", width := n, wires := q_wires }
+    ]
+    svaProperties := [
+      .ResetClears "q",
+      .EnableHolds "en" "q",
+      .EnableCapture "en" "d" "q"
+    ]
+  }
+
+def mkRegisterEn1 : Circuit := mkRegisterEnN 1
+def mkRegisterEn2 : Circuit := mkRegisterEnN 2
+def mkRegisterEn4 : Circuit := mkRegisterEnN 4
+def mkRegisterEn8 : Circuit := mkRegisterEnN 8
+def mkRegisterEn16 : Circuit := mkRegisterEnN 16
+def mkRegisterEn32 : Circuit := mkRegisterEnN 32
+def mkRegisterEn64 : Circuit := mkRegisterEnN 64
+
 end Shoumei.Circuits.Sequential

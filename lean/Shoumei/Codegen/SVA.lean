@@ -115,6 +115,22 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_data_capture_{idx}: assert property (p_data_capture_{idx});\n"
 
+  | .EnableHolds enWire qBus =>
+      s!"  // Formal Property: Clock enable low holds data\n" ++
+      s!"  property p_enable_holds_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    !{enWire} |=> ({qBus} == $past({qBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_enable_holds_{idx}: assert property (p_enable_holds_{idx});\n"
+
+  | .EnableCapture enWire dBus qBus =>
+      s!"  // Formal Property: Clock enable high latches data\n" ++
+      s!"  property p_enable_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    {enWire} |=> ({qBus} == $past({dBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_enable_capture_{idx}: assert property (p_enable_capture_{idx});\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""

@@ -131,3 +131,50 @@ These assertions are:
 - Elaborated and type-checked by `slang` (IEEE 1800-2017).
 - Verified during cycle-accurate Verilator simulation.
 - Usable directly in formal property checking tools (SymbiYosys, JasperGold).
+
+---
+
+## 7. Strict Bit-Slice Non-Interference (Information Flow Security)
+
+In secure hardware architectures, register slices must guarantee complete cross-lane isolation:
+- **Functional Non-Interference (`register_slice_non_interference`):** The single-step evaluation of slice $i$ depends strictly on $d_i$, clock, and reset. Changing any input wire $d_j$ ($j \neq i$) produces zero change on $q_i$.
+- **Trace Non-Interference (`register_slice_trace_non_interference`):** Given two independent execution traces $tr_1$ and $tr_2$, if they agree on bit $i$ at cycle $t$, their next-cycle outputs on bit $i$ are guaranteed identical, regardless of all other $N-1$ data lanes.
+- **Reset Isolation (`register_slice_trace_reset_isolation`):** Under synchronous reset, the cleared state of slice $i$ is identically false across all traces.
+
+---
+
+## 8. Multi-Cycle Pipeline Latency ($Z^{-k}$ Delay Functor)
+
+Chaining sequential registers forms discrete-time delay lines:
+- **2-Stage Delay ($Z^{-2}$):** Theorem `register_pipeline_2stage_delay` proves that over consecutive active cycles $t$ and $t+1$ without reset, $Q[t+2] = D[t]$.
+- **3-Stage Delay ($Z^{-3}$):** Theorem `register_pipeline_3stage_delay` proves $Q[t+3] = D[t]$ across 3 active stages.
+- **Reset Propagation:** Theorem `register_pipeline_reset_propagation` proves that asserting reset at cycle $t$ clears stage 1 at $t+1$ and flushes zero into stage 2 at $t+2$.
+
+---
+
+## 9. Clock-Enabled Registers (`mkRegisterEnN` & Strobe Refinement)
+
+For pipeline stall logic, clock gating, and retention registers:
+1. **Structural MUX Refinement:**
+   Each bit pairs a 2-to-1 MUX and a DFF:
+   $$\text{next\_d}_i = \text{en} \,?\, d_i : q_i, \quad q_i \gets \text{DFF}(\text{next\_d}_i)$$
+   Theorems `evalMUX_enable_false_selects_q` and `evalMUX_enable_true_selects_d` prove that the MUX strictly implements the retention and update functions.
+2. **L1 Cycle Truth:**
+   Exhaustively proven for 1-bit (`registerEn1`) and 2-bit (`registerEn2`):
+   - `registerEn1_functional_reset_zeroes`: Reset clears output to false regardless of enable.
+   - `registerEn1_functional_enable_holds`: `en = false` holds prior state $q_0$.
+   - `registerEn1_functional_enable_latches`: `en = true` captures input $d_0$.
+3. **SVA Emission:**
+   Generates bus-level assertions for clock enable:
+   - `assert_enable_holds`: `!en |=> (q == $past(q))`
+   - `assert_enable_capture`: `en |=> (q == $past(d))`
+
+---
+
+## 10. Sequential Equivalence Checking (SEC Bisimulation)
+
+To guarantee that hierarchical decomposition introduces zero behavioral divergence:
+- **I/O Congruence:** Theorems `register*_sec_inputs_identical` and `register*_sec_outputs_identical` verify bit-for-bit identity between `mkRegisterN` and `mkRegisterNHierarchical` port lists across all widths (91, 96, 98, 130, 157, 158, 159, 160).
+- **Trace Bisimulation:** Theorem `register_hierarchical_bisim_flat` formally equates the trace contracts:
+  $$\text{CircuitTrace}(\text{mkRegisterNHierarchical } n) \iff \text{CircuitTrace}(\text{mkRegisterN } n)$$
+This allows downstream proofs to substitute hierarchical composite registers with flat arrays transparently.

@@ -180,4 +180,59 @@ theorem register160_clock_synchronized :
 theorem register160_reset_synchronized :
     mkRegister160Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
+/-! ## SEC Sequential Equivalence: Flat vs Hierarchical Interface Congruence -/
+
+theorem register91_sec_inputs_identical :
+    (mkRegister91Hierarchical.inputs == (mkRegisterN 91).inputs) = true := by native_decide
+theorem register91_sec_outputs_identical :
+    (mkRegister91Hierarchical.outputs == (mkRegisterN 91).outputs) = true := by native_decide
+
+theorem register96_sec_inputs_identical :
+    (mkRegister96Hierarchical.inputs == (mkRegisterN 96).inputs) = true := by native_decide
+theorem register96_sec_outputs_identical :
+    (mkRegister96Hierarchical.outputs == (mkRegisterN 96).outputs) = true := by native_decide
+
+theorem register98_sec_inputs_identical :
+    (mkRegister98Hierarchical.inputs == (mkRegisterN 98).inputs) = true := by native_decide
+theorem register98_sec_outputs_identical :
+    (mkRegister98Hierarchical.outputs == (mkRegisterN 98).outputs) = true := by native_decide
+
+theorem register130_sec_inputs_identical :
+    (mkRegister130Hierarchical.inputs == (mkRegisterN 130).inputs) = true := by native_decide
+theorem register130_sec_outputs_identical :
+    (mkRegister130Hierarchical.outputs == (mkRegisterN 130).outputs) = true := by native_decide
+
+theorem register157_sec_inputs_identical :
+    (mkRegister157Hierarchical.inputs == (mkRegisterN 157).inputs) = true := by native_decide
+theorem register157_sec_outputs_identical :
+    (mkRegister157Hierarchical.outputs == (mkRegisterN 157).outputs) = true := by native_decide
+
+theorem register158_sec_inputs_identical :
+    (mkRegister158Hierarchical.inputs == (mkRegisterN 158).inputs) = true := by native_decide
+theorem register158_sec_outputs_identical :
+    (mkRegister158Hierarchical.outputs == (mkRegisterN 158).outputs) = true := by native_decide
+
+theorem register159_sec_inputs_identical :
+    (mkRegister159Hierarchical.inputs == (mkRegisterN 159).inputs) = true := by native_decide
+theorem register159_sec_outputs_identical :
+    (mkRegister159Hierarchical.outputs == (mkRegisterN 159).outputs) = true := by native_decide
+
+theorem register160_sec_inputs_identical :
+    (mkRegister160Hierarchical.inputs == (mkRegisterN 160).inputs) = true := by native_decide
+theorem register160_sec_outputs_identical :
+    (mkRegister160Hierarchical.outputs == (mkRegisterN 160).outputs) = true := by native_decide
+
+/-! ## RegisterEn Structural Proofs -/
+theorem registerEn1_gate_count : mkRegisterEn1.gates.length = 2 := by native_decide
+theorem registerEn2_gate_count : mkRegisterEn2.gates.length = 4 := by native_decide
+theorem registerEn4_gate_count : mkRegisterEn4.gates.length = 8 := by native_decide
+theorem registerEn8_gate_count : mkRegisterEn8.gates.length = 16 := by native_decide
+theorem registerEn16_gate_count : mkRegisterEn16.gates.length = 32 := by native_decide
+theorem registerEn32_gate_count : mkRegisterEn32.gates.length = 64 := by native_decide
+theorem registerEn64_gate_count : mkRegisterEn64.gates.length = 128 := by native_decide
+
+theorem registerEn1_ports : mkRegisterEn1.inputs.length = 4 ∧ mkRegisterEn1.outputs.length = 1 := by native_decide
+theorem registerEn32_ports : mkRegisterEn32.inputs.length = 35 ∧ mkRegisterEn32.outputs.length = 32 := by native_decide
+theorem registerEn64_ports : mkRegisterEn64.inputs.length = 67 ∧ mkRegisterEn64.outputs.length = 64 := by native_decide
+
 end Shoumei.Circuits.Sequential.RegisterProofs

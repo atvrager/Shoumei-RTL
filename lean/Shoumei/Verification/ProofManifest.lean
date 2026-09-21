@@ -74,8 +74,9 @@ def moduleToComponent (modStr : String) (nameStr : String) : String :=
 def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
   if typeStr.contains "TraceSpec" || typeStr.contains "Refines" ||
      typeStr.contains "satisfiesTrace" || typeStr.contains "dual_compositional_refinement" ||
-     typeStr.contains "RegisterSpec" ||
-     nameStr.contains "refinement" || nameStr.contains "temporal" || nameStr.contains "Trace" then
+     typeStr.contains "RegisterSpec" || typeStr.contains "RegisterEnSpec" ||
+     nameStr.contains "refinement" || nameStr.contains "temporal" || nameStr.contains "Trace" ||
+     nameStr.contains "non_interference" || nameStr.contains "pipeline" || nameStr.contains "bisim" then
     .L3_Refinement
   else if typeStr.contains "never_exceeds" || typeStr.contains "QueueInvariant" ||
           typeStr.contains "queue_fifo" || typeStr.contains "preserves_order" ||
@@ -85,7 +86,8 @@ def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
           nameStr.contains "arbiter_" || nameStr.contains "onehot" ||
           nameStr.contains "rs_" || nameStr.contains "queue_fifo" ||
           nameStr.contains "invariant" || nameStr.contains "cover_all_bits" ||
-          nameStr.contains "_synchronized" ||
+          nameStr.contains "_synchronized" || nameStr.contains "_sec_" ||
+          nameStr.contains "isolation" ||
           (typeStr.contains "preserves" && !typeStr.contains "length") then
     .L2_Invariant
   else if typeStr.contains "evalCircuit" || typeStr.contains "compileCircuit" ||
@@ -95,7 +97,8 @@ def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
           typeStr.contains "truth_table" || typeStr.contains "arithmetic_correct" ||
           typeStr.contains "functional_correct" || nameStr.contains "_correct" ||
           nameStr.contains "_arithmetic" || nameStr.contains "truthTable" ||
-          nameStr.contains "truth_table" || nameStr.contains "semantics" then
+          nameStr.contains "truth_table" || nameStr.contains "semantics" ||
+          nameStr.contains "registerEn" || nameStr.contains "evalMUX" then
     .L1_Functional
   else if typeStr.contains "Circuit.gates" || typeStr.contains "Circuit.inputs" ||
           typeStr.contains "Circuit.outputs" || typeStr.contains "Circuit.instances" ||
