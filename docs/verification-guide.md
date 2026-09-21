@@ -14,6 +14,7 @@ against; what is checked is that the translation elaborates and runs.
 | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | Lean theorem (`native_decide`, `simp`) |
 | Composition | parent correct given children | Lean `CompositionalCert` |
+| Equivalence (SEC) | alternative implementations preserve trace semantics | Trace bisimulation ([SEC Guide](proof-strategies/sequential-equivalence-checking.md)) |
 | Registry | every certificate matches an emitted circuit | `lake exe generate_all --export-certs` |
 | Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `python3 verification/slang-lint.py`, `make systemverilog` (Yosys read/hierarchy) |
 | Integration | the design runs correctly | Verilator simulation, Spike cosimulation |

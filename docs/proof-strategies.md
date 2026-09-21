@@ -12,7 +12,14 @@ Our DSL proofs fall into two categories:
    `native_decide` cannot handle these because it needs to evaluate symbolic
    expressions. These are the proofs currently deferred with `sorry` or axioms.
 
-This doc describes two approaches for closing the gap.
+This doc describes core foundational techniques for parameterized circuits, arithmetic bridges, and sequential verification.
+
+### Specialized Proof Strategy Guides
+
+- [Sequential Equivalence Checking (SEC)](proof-strategies/sequential-equivalence-checking.md) — Mechanized trace bisimulation in Lean 4, hierarchical decomposition equivalence, clock-enable loopback refinement, and pipeline latency functors ($Z^{-k}$).
+- [Register Refinement & Invariants](proof-strategies/register-refinement.md) — Multi-tier register proof hierarchy (L0-L3), bit-slice non-interference, structural composition, and SVA AST emission.
+- [Queue Refinement](proof-strategies/queue-refinement.md) — State abstraction, FIFO ordering, and push/pop refinement.
+- [QueueN Inductive Invariants](proof-strategies/queuen-invariants.md) — Inductive invariants for parameterized circular queues.
 
 ---
 
@@ -580,6 +587,24 @@ is critical for carry chains. For shifts, put control bits first:
 - `Nat.div_div_eq_div_mul` gives `n / (m * 2)` not `n / (2 * m)` — append `Nat.mul_comm`.
 - `Nat.div_add_mod` gives `m * (n / m) + n % m = n` — multiplication is `m * q`, not `q * m`.
 - `BitVec.slt_eq_decide`: converts `a.slt b` to `decide (a.toInt < b.toInt)`.
+
+---
+
+## Sequential Equivalence Checking (SEC)
+
+While Combinational Equivalence Checking (CEC) assumes identical flop-to-flop boundaries, **Sequential Equivalence Checking (SEC)** proves equivalence across distinct state representations, hierarchical partitioning, retiming, or clock-gating refinements.
+
+In Shoumei, SEC is mechanized constructively in Lean 4 via **trace bisimulation**:
+$$\forall tr \in \text{Traces}, \quad tr \models \text{Spec}(C_1) \iff tr \models \text{Spec}(C_2)$$
+
+### Key SEC Paradigms in Shoumei
+
+1. **Hierarchical Register Decomposition:** Proving that wide flat registers (`mkRegisterN N`) and hierarchical tree registers (`mkRegisterNHierarchical N`, e.g. $160 = 64 + 64 + 32$) have identical observable behavior over infinite execution traces, backed by structural port congruence and instance bit-coverage invariants.
+2. **Clock-Enable Refinement:** Proving that integrated clock-enabled registers (`mkRegisterEnN`) strictly refine external loopback MUX configurations.
+3. **Pipeline Latency Functors ($Z^{-k}$):** Proving that multi-stage register pipelines are bisimilar to ideal discrete-time delay operators with reset-flush propagation.
+4. **SVA Assertion Co-Generation:** Emitting temporal invariants (`p_reset_clears`, `p_enable_holds`, `p_enable_capture`) into synthesizable SystemVerilog AST to bridge formal theorems with dynamic simulation and hardware mutation testing.
+
+For full theoretical formulation, code examples, and recipes, see [Sequential Equivalence Checking (SEC)](proof-strategies/sequential-equivalence-checking.md).
 
 ---
 
