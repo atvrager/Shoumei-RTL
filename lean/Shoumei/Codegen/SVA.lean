@@ -135,7 +135,7 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  // Formal Property: Multi-cycle pipeline latency (Z^-{cycles})\n" ++
       s!"  property p_latency_capture_{idx};\n" ++
       s!"    {clkExpr} {disableExpr}\n" ++
-      s!"    1'b1 |=> ({qBus} == $past({dBus}, {cycles}));\n" ++
+      s!"    (!{rst} [* {cycles}]) |-> ({qBus} == $past({dBus}, {cycles}));\n" ++
       s!"  endproperty\n" ++
       s!"  assert_latency_capture_{idx}: assert property (p_latency_capture_{idx});\n"
 

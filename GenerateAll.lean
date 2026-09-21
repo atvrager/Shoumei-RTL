@@ -473,6 +473,8 @@ def main (args : List String) : IO Unit := do
   IO.FS.writeFile (secOutputDir / "Register160_yosys.tcl") yosys160
   let vcFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160_sec_miter" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv", "output/sv-sec/Register160_sec_miter.sv"]
   IO.FS.writeFile (secOutputDir / "Register160_vc_formal.tcl") vcFormal160
+  let svaFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160" ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_sva_formal.tcl") svaFormal160
   IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
 
   -- Generate filelist.f for each output directory
