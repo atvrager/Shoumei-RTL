@@ -1619,11 +1619,16 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
   let nat0 := Wire.mk "slo_nat0"; let nat1 := Wire.mk "slo_nat1"
   let ps0 := Wire.mk "slo_ps0"; let ps1 := Wire.mk "slo_ps1"
   let pst0 := Wire.mk "slo_pst0"; let pst1 := Wire.mk "slo_pst1"
+  -- `pending_store` answers "is an OLDER plain store still in this RS?", which
+  -- is what an SC/AMO waits for before its read-modify-write.  Only the older of
+  -- the two entries can be that store: `alloc_ptr` marks which entry was
+  -- allocated first (see the age model in `slo_check_gates` below).  ORing both
+  -- entries let a *younger* store block an atomic forever.
   let pending_store_gates := [
     Gate.mkNOT is_atomic_cur_0 nat0, Gate.mkNOT is_atomic_cur_1 nat1,
     Gate.mkAND is_store_cur_0 nat0 ps0, Gate.mkAND is_store_cur_1 nat1 ps1,
     Gate.mkAND ev0 ps0 pst0, Gate.mkAND ev1 ps1 pst1,
-    Gate.mkOR pst0 pst1 pending_store
+    Gate.mkMUX pst0 pst1 alloc_ptr pending_store
   ]
   let vs0 := Wire.mk "slo_vs0"; let vs1 := Wire.mk "slo_vs1"
   let hos0 := Wire.mk "slo_hos0"; let hos1 := Wire.mk "slo_hos1"
@@ -1631,6 +1636,16 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
   let not_ap := Wire.mk "slo_not_ap"
   let ok0 := Wire.mk "slo_ok0"; let ok1 := Wire.mk "slo_ok1"
   let ar0 := Wire.mk "slo_ar0"; let ar1 := Wire.mk "slo_ar1"
+  -- A plain store is normally free to overtake an older *plain* store: the
+  -- store buffer preserves their order.  It must not overtake an older
+  -- *atomic*: an SC/AMO performs its own read-modify-write and only dispatches
+  -- while the store buffer is empty, so a store that slips past it lands in the
+  -- buffer and can never be released - it waits for the atomic to retire, and
+  -- the atomic waits for the buffer to drain.
+  let at0 := Wire.mk "slo_at0"; let at1 := Wire.mk "slo_at1"
+  let hosat0 := Wire.mk "slo_hosat0"; let hosat1 := Wire.mk "slo_hosat1"
+  let not_hosat0 := Wire.mk "slo_not_hosat0"; let not_hosat1 := Wire.mk "slo_not_hosat1"
+  let ps0_ok := Wire.mk "slo_ps0_ok"; let ps1_ok := Wire.mk "slo_ps1_ok"
   let slo_check_gates := [
     Gate.mkAND ev0 is_store_cur_0 vs0,
     Gate.mkAND ev1 is_store_cur_1 vs1,
@@ -1638,10 +1653,18 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
     Gate.mkAND vs1 alloc_ptr hos0,
     Gate.mkAND vs0 not_ap hos1,
     Gate.mkNOT hos0 not_hos0,
-    Gate.mkOR ps0 not_hos0 ok0,
+    Gate.mkAND ev0 is_atomic_cur_0 at0,
+    Gate.mkAND ev1 is_atomic_cur_1 at1,
+    Gate.mkAND at1 alloc_ptr hosat0,
+    Gate.mkAND at0 not_ap hosat1,
+    Gate.mkNOT hosat0 not_hosat0,
+    Gate.mkNOT hosat1 not_hosat1,
+    Gate.mkAND ps0 not_hosat0 ps0_ok,
+    Gate.mkAND ps1 not_hosat1 ps1_ok,
+    Gate.mkOR ps0_ok not_hos0 ok0,
     Gate.mkAND er0 ok0 ar0,
     Gate.mkNOT hos1 not_hos1,
-    Gate.mkOR ps1 not_hos1 ok1,
+    Gate.mkOR ps1_ok not_hos1 ok1,
     Gate.mkAND er1 ok1 ar1
   ]
 

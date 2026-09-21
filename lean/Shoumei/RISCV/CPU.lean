@@ -3309,7 +3309,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkNOT is_sc not_is_sc,
     Gate.mkAND rs_mem_dispatch_valid not_is_load (Wire.mk "sb_enq_ungated0"),
     Gate.mkAND (Wire.mk "sb_enq_ungated0") not_is_sc (Wire.mk "sb_enq_ungated"),
-    Gate.mkAND (Wire.mk "sb_enq_ungated") (Wire.mk "mem_store_dispatch_en") (Wire.mk "sb_enq_dispatched"),
+    Gate.mkAND (Wire.mk "sb_enq_ungated") (Wire.mk "mem_store_dispatch_en") (Wire.mk "sb_enq_dispatched_t"),
+    -- A store may only enter the store buffer on the cycle it actually
+    -- dispatches.  `mem_store_dispatch_en` deliberately omits the DMEM-port
+    -- gate, so without `atom_disp_ok` here a store enqueues while an SC/AMO is
+    -- in flight; the atomic then waits for the buffer to drain, and that entry
+    -- cannot be released because it is ordered behind the atomic.
+    Gate.mkAND (Wire.mk "sb_enq_dispatched_t") (Wire.mk "atom_disp_ok") (Wire.mk "sb_enq_dispatched"),
     Gate.mkNOT pipeline_flush_comb (Wire.mk "not_flush_comb"),
     Gate.mkAND (Wire.mk "sb_enq_dispatched") (Wire.mk "not_flush_comb") sb_enq_en
   ]
