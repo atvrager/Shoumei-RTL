@@ -1,8 +1,11 @@
 /-
-  RISC-V Encoder Round-Trip Proofs
+  RISC-V Encoder Round-Trip Tests
 
-  Proves decode(encode(op, fields)) recovers the original fields
-  for concrete instruction examples (one per format).
+  Proves decode(encode(op, fields)) recovers the original fields for concrete
+  instruction examples, one per format, in both directions of the immediate
+  range.  A failure throws: `lake exe gen_tests` runs this before generating
+  anything, so a broken encoder stops the generator rather than emitting a
+  corpus of silently mis-encoded programs.
 -/
 
 import Shoumei.RISCV.Encoder
@@ -11,90 +14,72 @@ import Shoumei.RISCV.OpcodeParser
 
 namespace Shoumei.RISCV
 
-/-- Test round-trip for R-type: ADD x1, x2, x3
-    Encode then decode should recover the same fields. -/
-def testRoundTripR (defs : List InstructionDef) : IO Unit := do
-  match encodeR defs .ADD ⟨1, by omega⟩ ⟨2, by omega⟩ ⟨3, by omega⟩ with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .ADD && decoded.rd == some ⟨1, by omega⟩ &&
-         decoded.rs1 == some ⟨2, by omega⟩ && decoded.rs2 == some ⟨3, by omega⟩ then
-        IO.println "✓ R-type round-trip (ADD x1, x2, x3)"
-      else
-        IO.println s!"✗ R-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ R-type decode failed"
-  | none => IO.println "✗ R-type encode failed"
+/-- Encode, decode and check one case; throws with the decoded fields on
+    mismatch. -/
+def checkRoundTrip (defs : List InstructionDef) (what : String) (enc : Option UInt32)
+    (ok : DecodedInstruction → Bool) : IO Unit := do
+  match enc with
+  | none => throw (IO.userError s!"{what}: encode failed")
+  | some w =>
+    match decodeInstruction defs w 0 with
+    | none => throw (IO.userError s!"{what}: decode failed (word {w})")
+    | some d =>
+      unless ok d do
+        throw (IO.userError s!"{what}: decoded {repr d}")
+      IO.println s!"✓ {what}"
 
-/-- Test round-trip for I-type: ADDI x5, x0, 42 -/
+/-- R-type: ADD x1, x2, x3 -/
+def testRoundTripR (defs : List InstructionDef) : IO Unit :=
+  checkRoundTrip defs "R-type ADD x1, x2, x3"
+    (encodeR defs .ADD ⟨1, by omega⟩ ⟨2, by omega⟩ ⟨3, by omega⟩)
+    (fun d => d.opType == .ADD && d.rd == some ⟨1, by omega⟩ &&
+              d.rs1 == some ⟨2, by omega⟩ && d.rs2 == some ⟨3, by omega⟩)
+
+/-- I-type: ADDI x5, x0, 42 and its negative twin -/
 def testRoundTripI (defs : List InstructionDef) : IO Unit := do
-  match encodeI defs .ADDI ⟨5, by omega⟩ ⟨0, by omega⟩ 42 with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .ADDI && decoded.rd == some ⟨5, by omega⟩ &&
-         decoded.rs1 == some ⟨0, by omega⟩ && decoded.imm == some 42 then
-        IO.println "✓ I-type round-trip (ADDI x5, x0, 42)"
-      else
-        IO.println s!"✗ I-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ I-type decode failed"
-  | none => IO.println "✗ I-type encode failed"
+  checkRoundTrip defs "I-type ADDI x5, x0, 42"
+    (encodeI defs .ADDI ⟨5, by omega⟩ ⟨0, by omega⟩ 42)
+    (fun d => d.opType == .ADDI && d.rd == some ⟨5, by omega⟩ &&
+              d.rs1 == some ⟨0, by omega⟩ && d.imm == some 42)
+  checkRoundTrip defs "I-type ADDI x5, x0, -1"
+    (encodeI defs .ADDI ⟨5, by omega⟩ ⟨0, by omega⟩ (-1))
+    (fun d => d.opType == .ADDI && d.imm == some (-1))
 
-/-- Test round-trip for S-type: SW x5, 12(x2) -/
+/-- S-type: SW x5, 12(x2) and its negative twin -/
 def testRoundTripS (defs : List InstructionDef) : IO Unit := do
-  match encodeS defs .SW ⟨2, by omega⟩ ⟨5, by omega⟩ 12 with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .SW && decoded.rs1 == some ⟨2, by omega⟩ &&
-         decoded.rs2 == some ⟨5, by omega⟩ && decoded.imm == some 12 then
-        IO.println "✓ S-type round-trip (SW x5, 12(x2))"
-      else
-        IO.println s!"✗ S-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ S-type decode failed"
-  | none => IO.println "✗ S-type encode failed"
+  checkRoundTrip defs "S-type SW x5, 12(x2)"
+    (encodeS defs .SW ⟨2, by omega⟩ ⟨5, by omega⟩ 12)
+    (fun d => d.opType == .SW && d.rs1 == some ⟨2, by omega⟩ &&
+              d.rs2 == some ⟨5, by omega⟩ && d.imm == some 12)
+  checkRoundTrip defs "S-type SW x5, -4(x2)"
+    (encodeS defs .SW ⟨2, by omega⟩ ⟨5, by omega⟩ (-4))
+    (fun d => d.opType == .SW && d.imm == some (-4))
 
-/-- Test round-trip for B-type: BEQ x1, x2, 16 -/
+/-- B-type: BEQ x1, x2, 16 and its negative twin -/
 def testRoundTripB (defs : List InstructionDef) : IO Unit := do
-  match encodeB defs .BEQ ⟨1, by omega⟩ ⟨2, by omega⟩ 16 with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .BEQ && decoded.rs1 == some ⟨1, by omega⟩ &&
-         decoded.rs2 == some ⟨2, by omega⟩ && decoded.imm == some 16 then
-        IO.println "✓ B-type round-trip (BEQ x1, x2, 16)"
-      else
-        IO.println s!"✗ B-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ B-type decode failed"
-  | none => IO.println "✗ B-type encode failed"
+  checkRoundTrip defs "B-type BEQ x1, x2, 16"
+    (encodeB defs .BEQ ⟨1, by omega⟩ ⟨2, by omega⟩ 16)
+    (fun d => d.opType == .BEQ && d.rs1 == some ⟨1, by omega⟩ &&
+              d.rs2 == some ⟨2, by omega⟩ && d.imm == some 16)
+  checkRoundTrip defs "B-type BEQ x1, x2, -16"
+    (encodeB defs .BEQ ⟨1, by omega⟩ ⟨2, by omega⟩ (-16))
+    (fun d => d.opType == .BEQ && d.imm == some (-16))
 
-/-- Test round-trip for U-type: LUI x5, 0x12345000 -/
-def testRoundTripU (defs : List InstructionDef) : IO Unit := do
-  match encodeU defs .LUI ⟨5, by omega⟩ 0x12345000 with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .LUI && decoded.rd == some ⟨5, by omega⟩ &&
-         decoded.imm == some 0x12345000 then
-        IO.println "✓ U-type round-trip (LUI x5, 0x12345000)"
-      else
-        IO.println s!"✗ U-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ U-type decode failed"
-  | none => IO.println "✗ U-type encode failed"
+/-- U-type: LUI x5, 0x12345000 -/
+def testRoundTripU (defs : List InstructionDef) : IO Unit :=
+  checkRoundTrip defs "U-type LUI x5, 0x12345000"
+    (encodeU defs .LUI ⟨5, by omega⟩ 0x12345000)
+    (fun d => d.opType == .LUI && d.rd == some ⟨5, by omega⟩ &&
+              d.imm == some 0x12345000)
 
-/-- Test round-trip for J-type: JAL x1, 20 -/
+/-- J-type: JAL x1, 20 and its negative twin -/
 def testRoundTripJ (defs : List InstructionDef) : IO Unit := do
-  match encodeJ defs .JAL ⟨1, by omega⟩ 20 with
-  | some encoded =>
-    match decodeInstruction defs encoded 0 with
-    | some decoded =>
-      if decoded.opType == .JAL && decoded.rd == some ⟨1, by omega⟩ &&
-         decoded.imm == some 20 then
-        IO.println "✓ J-type round-trip (JAL x1, 20)"
-      else
-        IO.println s!"✗ J-type decode mismatch: {repr decoded}"
-    | none => IO.println "✗ J-type decode failed"
-  | none => IO.println "✗ J-type encode failed"
+  checkRoundTrip defs "J-type JAL x1, 20"
+    (encodeJ defs .JAL ⟨1, by omega⟩ 20)
+    (fun d => d.opType == .JAL && d.rd == some ⟨1, by omega⟩ && d.imm == some 20)
+  checkRoundTrip defs "J-type JAL x1, -20"
+    (encodeJ defs .JAL ⟨1, by omega⟩ (-20))
+    (fun d => d.opType == .JAL && d.imm == some (-20))
 
 /-- Run all round-trip tests -/
 def runEncoderTests (defs : List InstructionDef) : IO Unit := do

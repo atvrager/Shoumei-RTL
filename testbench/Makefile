@@ -277,6 +277,7 @@ run-all-tests: $(SIM_BIN) tests riscv-tests
 	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) --default-timeout 5000 \
 	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
 	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout '*rand_*=20000' \
 	    --csv $(PROJ_ROOT)/output/test-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS)
 
@@ -384,6 +385,7 @@ run-cosim: $(COSIM_BIN) tests riscv-tests bench-short
 	@$(TB_DIR)/run-suite.sh --mode cosim --bin $(COSIM_BIN) --jobs $(shell nproc) --default-timeout 3000 \
 	    --timeout '*freertos*=60000' --timeout '*irq*=10000' \
 	    --timeout '*timer*=10000' --timeout '*wfi*=10000' --timeout '*lrsc*=40000' \
+	    --timeout '*rand_*=20000' \
 	    --timeout-json $(PROJ_ROOT)/output/bench-short/bench-programs.json \
 	    --csv $(PROJ_ROOT)/output/cosim-results.csv \
 	    $(CUSTOM_TEST_GLOBS) $(RISCV_TEST_GLOBS) $(BENCH_SHORT_ELF_GLOBS)

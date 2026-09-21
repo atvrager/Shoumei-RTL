@@ -156,6 +156,10 @@ def baseCircuits : List Circuit := [
   mkQueue1FlowStructural 72,     -- INT/Branch CDB FIFO (39 + 32 redirect_target + 1 mispredicted)
   mkQueue1FlowStructural 103,    -- 64-bit Branch CDB FIFO (tag6 + data64 + 32 redir + 1 mispred)
   mkQueue1FlowStructural 104,    -- 64-bit CDB FIFO (IB0 / IB_BR)
+  mkQueue1FlowStructural 43,     -- FP writeback merge queue, SP (tag6 + data32 + exc5)
+  mkQueue1FlowStructural 44,     -- FP writeback merge queue, SP (tag6 + data32 + exc5 + int-domain)
+  mkQueue1FlowStructural 75,     -- FP writeback merge queue, DP (tag6 + data64 + exc5)
+  mkQueue1FlowStructural 76,     -- FP writeback merge queue, DP (tag6 + data64 + exc5 + int-domain)
 
   -- Phase 1: Arithmetic
   pcIncrementer4Circuit,

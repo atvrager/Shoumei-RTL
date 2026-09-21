@@ -818,16 +818,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
           (List.range 6).map (fun i => (s!"rd_tag_in_{i}", Wire.mk s!"ser_ophrd_{i}")) ++
           [("rob_empty", rob_empty),
            ("sb_empty", Wire.mk "lsu_sb_empty"),
-           ("wcs_write_en", zero)] ++
-          (List.range 8).map (fun i => (s!"wcs_write_addr_{i}", zero)) ++
-          (List.range 32).map (fun i => (s!"wcs_write_data_{i}", zero)) ++
-          [("wcs_enable", zero),
-           ("wcs_lock", zero),
            ("active", fallback_active),
            ("cdb_inject", fallback_cdb_inject),
            ("redir_valid", fallback_redir_valid),
-           ("trap_active", fallback_trap_active),
-           ("wcs_busy", Wire.mk "fallback_wcs_busy")] ++
+           ("trap_active", fallback_trap_active)] ++
           (List.range 6).map (fun i => (s!"cdb_tag_{i}", fallback_cdb_tag[i]!)) ++
           (List.range 64).map (fun i => (s!"cdb_data_{i}", fallback_cdb_data[i]!)) ++
           (List.range 64).map (fun i => (s!"redir_pc_{i}", fallback_redir_pc[i]!)) ++
@@ -1033,7 +1027,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkOR rob_redirect_valid branch_redirect_valid_reg redirect_or,
      Gate.mkOR redirect_or pipeline_flush redirect_or_flush,
      -- rename_ext_stall = dispatch_stall OR redirect_or_flush (suppress rename during redirect/flush)
-     Gate.mkOR (Wire.mk "dispatch_stall") redirect_or_flush (Wire.mk "rename_ext_stall"),
+     -- fence_i_suppress also blocks dispatch (drain, fallback, illegal/ecall/mret).  The
+     -- rename must stall with it: otherwise the free list dequeues a fresh tag every cycle
+     -- the held instruction waits, only the last tag is written into the RAT, and the rest
+     -- are never freed at retire, draining the free list until rename wedges.
+     -- csr_rename_en is exempt: a CSR passes through rename and frees its tag on its own path.
+     Gate.mkOR (Wire.mk "dispatch_stall") redirect_or_flush (Wire.mk "rename_ext_stall_pre"),
+     Gate.mkNOT csr_rename_en (Wire.mk "no_csr_ren_w2"),
+     Gate.mkAND fence_i_suppress (Wire.mk "no_csr_ren_w2") (Wire.mk "rename_supp_stall"),
+     Gate.mkOR (Wire.mk "rename_ext_stall_pre") (Wire.mk "rename_supp_stall")
+       (Wire.mk "rename_ext_stall"),
      Gate.mkNOT redirect_or_flush not_redirecting,
      Gate.mkNOT fence_i_suppress not_fence_i_suppress,
      -- Slot 0 base valid (gated by fence_i_suppress)
@@ -2788,7 +2791,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "dest_tag" (rs_fp_dispatch_tag.take 6) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
        ("clock", clock), ("reset", reset),
-       ("zero", zero), ("one", one)] ++
+       ("zero", zero), ("one", one),
+       ("out_ready", fp_fifo_enq_ready)] ++
       bundledPorts "result" fp_result ++
       bundledPorts "tag_out" fp_tag_out ++
       bundledPorts "exceptions" fp_exceptions ++
@@ -3092,6 +3096,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "op" muldiv_op ++
       bundledPorts "dest_tag" (rs_muldiv_dispatch_tag.take 6) ++
       [("valid_in", rs_muldiv_dispatch_valid),
+       ("out_ready", Wire.mk "muldiv_fifo_enq_ready"),
        ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
        ("zero", zero), ("one", one)] ++
       bundledPorts "result" muldiv_result ++
@@ -3315,7 +3320,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkNOT is_sc not_is_sc,
     Gate.mkAND rs_mem_dispatch_valid not_is_load (Wire.mk "sb_enq_ungated0"),
     Gate.mkAND (Wire.mk "sb_enq_ungated0") not_is_sc (Wire.mk "sb_enq_ungated"),
-    Gate.mkAND (Wire.mk "sb_enq_ungated") (Wire.mk "mem_store_dispatch_en") (Wire.mk "sb_enq_dispatched"),
+    Gate.mkAND (Wire.mk "sb_enq_ungated") (Wire.mk "mem_store_dispatch_en") (Wire.mk "sb_enq_dispatched_t"),
+    -- A store may only enter the store buffer on the cycle it actually
+    -- dispatches.  `mem_store_dispatch_en` deliberately omits the DMEM-port
+    -- gate, so without `atom_disp_ok` here a store enqueues while an SC/AMO is
+    -- in flight; the atomic then waits for the buffer to drain, and that entry
+    -- cannot be released because it is ordered behind the atomic.
+    Gate.mkAND (Wire.mk "sb_enq_dispatched_t") (Wire.mk "atom_disp_ok") (Wire.mk "sb_enq_dispatched"),
     Gate.mkNOT pipeline_flush_comb (Wire.mk "not_flush_comb"),
     Gate.mkAND (Wire.mk "sb_enq_dispatched") (Wire.mk "not_flush_comb") sb_enq_en
   ]

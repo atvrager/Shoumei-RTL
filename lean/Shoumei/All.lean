@@ -264,6 +264,9 @@ import Shoumei.SoC.ShoumeiSoCProofs
 import Shoumei.Temporal.Trace
 import Shoumei.TestGen.AsmEmitter
 import Shoumei.TestGen.Patterns
+import Shoumei.TestGen.RandAlphabet
+import Shoumei.TestGen.RandProgram
+import Shoumei.TestGen.Rng
 import Shoumei.Theorems
 import Shoumei.Verification
 import Shoumei.Verification.Compositional

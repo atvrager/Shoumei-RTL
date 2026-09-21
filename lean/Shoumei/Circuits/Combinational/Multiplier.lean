@@ -189,6 +189,15 @@ private def mkPipelineRegister
     (d_wires q_wires : List Wire) (clock reset : Wire) : List Gate :=
   List.zipWith (fun d q => Gate.mkDFF d clock reset q) d_wires q_wires
 
+/-- Pipeline register with a clock enable: holds `q` while `en` is low.
+    Used to freeze a stage when its result cannot be accepted downstream, so a
+    result is never overwritten before it has been consumed. -/
+private def mkPipelineRegisterEn
+    (d_wires q_wires : List Wire) (en clock reset : Wire) : List Gate :=
+  (List.zipWith (fun d q =>
+    let held := Wire.mk s!"{q.name}_hold"
+    [Gate.mkMUX q d en held, Gate.mkDFF held clock reset q]) d_wires q_wires).flatten
+
 /-- Build a CSA reduction tree using flat full-adder gates.
     Takes a list of width-bit row wire lists and returns:
     - The two final rows (sum, carry) as wire lists
@@ -647,6 +656,19 @@ def mkPipelinedMultiplier64 : Circuit :=
   let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
+  let out_ready := Wire.mk "out_ready"
+
+  -- Back-pressure: when the last stage holds a result the consumer has not taken,
+  -- both stages freeze.  Without this a pipelined multiplier overwrites a result
+  -- that the (1-deep) CDB queue is still holding, silently losing a writeback.
+  let stall := Wire.mk "m64_stall"
+  let pipe_en := Wire.mk "m64_pipe_en"
+  let not_out_ready := Wire.mk "m64_not_out_ready"
+  let stall_gates := [
+    Gate.mkNOT out_ready not_out_ready,
+    Gate.mkAND (Wire.mk "s2_valid64") not_out_ready stall,
+    Gate.mkNOT stall pipe_en
+  ]
 
   let result := makeIndexedWires "result" 64
   let tag_out := makeIndexedWires "tag_out" 6
@@ -699,15 +721,16 @@ def mkPipelinedMultiplier64 : Circuit :=
   let s1_valid := Wire.mk "s1_valid64"
 
   let s1_reg_gates :=
-    mkPipelineRegister p_ll s1_p_ll clock reset ++
-    mkPipelineRegister p_lh s1_p_lh clock reset ++
-    mkPipelineRegister p_hl s1_p_hl clock reset ++
-    mkPipelineRegister p_hh s1_p_hh clock reset ++
-    mkPipelineRegister a s1_a clock reset ++
-    mkPipelineRegister b s1_b clock reset ++
-    mkPipelineRegister op s1_op clock reset ++
-    mkPipelineRegister dest_tag s1_tag clock reset ++
-    [Gate.mkDFF valid_in clock reset s1_valid]
+    mkPipelineRegisterEn p_ll s1_p_ll pipe_en clock reset ++
+    mkPipelineRegisterEn p_lh s1_p_lh pipe_en clock reset ++
+    mkPipelineRegisterEn p_hl s1_p_hl pipe_en clock reset ++
+    mkPipelineRegisterEn p_hh s1_p_hh pipe_en clock reset ++
+    mkPipelineRegisterEn a s1_a pipe_en clock reset ++
+    mkPipelineRegisterEn b s1_b pipe_en clock reset ++
+    mkPipelineRegisterEn op s1_op pipe_en clock reset ++
+    mkPipelineRegisterEn dest_tag s1_tag pipe_en clock reset ++
+    [Gate.mkMUX s1_valid valid_in pipe_en (Wire.mk "s1_v_next"),
+     Gate.mkDFF (Wire.mk "s1_v_next") clock reset s1_valid]
 
   -- Stage 2 registers (DFFs)
   let s2_p_ll := makeIndexedWires "s2_p_ll" 64
@@ -721,15 +744,16 @@ def mkPipelinedMultiplier64 : Circuit :=
   let s2_valid := Wire.mk "s2_valid64"
 
   let s2_reg_gates :=
-    mkPipelineRegister s1_p_ll s2_p_ll clock reset ++
-    mkPipelineRegister s1_p_lh s2_p_lh clock reset ++
-    mkPipelineRegister s1_p_hl s2_p_hl clock reset ++
-    mkPipelineRegister s1_p_hh s2_p_hh clock reset ++
-    mkPipelineRegister s1_a s2_a clock reset ++
-    mkPipelineRegister s1_b s2_b clock reset ++
-    mkPipelineRegister s1_op s2_op clock reset ++
-    mkPipelineRegister s1_tag s2_tag clock reset ++
-    [Gate.mkDFF s1_valid clock reset s2_valid]
+    mkPipelineRegisterEn s1_p_ll s2_p_ll pipe_en clock reset ++
+    mkPipelineRegisterEn s1_p_lh s2_p_lh pipe_en clock reset ++
+    mkPipelineRegisterEn s1_p_hl s2_p_hl pipe_en clock reset ++
+    mkPipelineRegisterEn s1_p_hh s2_p_hh pipe_en clock reset ++
+    mkPipelineRegisterEn s1_a s2_a pipe_en clock reset ++
+    mkPipelineRegisterEn s1_b s2_b pipe_en clock reset ++
+    mkPipelineRegisterEn s1_op s2_op pipe_en clock reset ++
+    mkPipelineRegisterEn s1_tag s2_tag pipe_en clock reset ++
+    [Gate.mkMUX s2_valid s1_valid pipe_en (Wire.mk "s2_v_next"),
+     Gate.mkDFF (Wire.mk "s2_v_next") clock reset s2_valid]
 
   -- Stage 3: Combination & Sign Correction
   let mid_sum := makeIndexedWires "m64_mid_sum" 64
@@ -934,10 +958,11 @@ def mkPipelinedMultiplier64 : Circuit :=
     sel_ctrl_gates ++
     out_mux_gates ++
     tag_passthrough ++
-    valid_passthrough
+    valid_passthrough ++
+    stall_gates
 
   { name := "PipelinedMultiplier64"
-    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero, one]
+    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, out_ready, clock, reset, zero, one]
     outputs := result ++ tag_out ++ [valid_out]
     gates := all_gates
     instances := mul_instances ++ [ksa_mid, ksa_low, ksa_high, sub1_inst, sub2_inst]

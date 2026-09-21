@@ -393,6 +393,28 @@ def mkStoreBuffer8 : Circuit :=
   -- Valid and committed bitmaps
   let valid := (List.range 8).map (fun i => Wire.mk s!"valid_e{i}")
   let committed := (List.range 8).map (fun i => Wire.mk s!"committed_e{i}")
+
+  -- Pending-commit counter, driven by commit_gate_gates further down.  Declared
+  -- here because the flush gating below needs it.
+  let pc_nz := Wire.mk "pending_commit_nz"
+
+  -- === Flush qualification ===
+  -- A commit can be owed while its entry is still being written: the ROB retires
+  -- a store out of the memory pipeline register, so `committed` can lag the
+  -- retire.  Flushing in that window clears an entry the ROB has already
+  -- accounted for and loses the store, because `head_ptr` stays put while
+  -- `count`/`tail_ptr`/`commit_ptr` are all reloaded from the survivors.
+  -- Every owed commit belongs to a store that already dispatched, so its entry
+  -- always appears and the commit always lands; holding the flush until the
+  -- accounting drains therefore cannot wedge.  This is the "drain committed
+  -- stores before flushing" requirement stated at the top of this file.
+  let flush_apply := Wire.mk "flush_apply"
+  let flush_apply_gates := [
+    Gate.mkNOT pc_nz (Wire.mk "not_pc_nz"),
+    Gate.mkNOT commit_en (Wire.mk "not_commit_en_for_flush"),
+    Gate.mkAND (Wire.mk "not_pc_nz") (Wire.mk "not_commit_en_for_flush") (Wire.mk "flush_quiescent"),
+    Gate.mkAND flush_en (Wire.mk "flush_quiescent") flush_apply
+  ]
   let valid_next := (List.range 8).map (fun i => Wire.mk s!"valid_next_e{i}")
   let committed_next := (List.range 8).map (fun i => Wire.mk s!"committed_next_e{i}")
 
@@ -449,7 +471,7 @@ def mkStoreBuffer8 : Circuit :=
     instName := "u_tail"
     portMap :=
       [("clock", clock), ("reset", reset), ("en", enq_en),
-       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+       ("load_en", flush_apply), ("one", one), ("zero", zero)] ++
       (flush_tail_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
       (tail_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -461,7 +483,7 @@ def mkStoreBuffer8 : Circuit :=
     instName := "u_count"
     portMap :=
       [("clock", clock), ("reset", reset), ("inc", enq_en),
-       ("dec", deq_fire), ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+       ("dec", deq_fire), ("load_en", flush_apply), ("one", one), ("zero", zero)] ++
       (flush_count_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
       (count.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -497,7 +519,6 @@ def mkStoreBuffer8 : Circuit :=
   -- Pending commit counter (3-bit): tracks commits that arrived before SB entry
   let pc := (List.range 3).map (fun i => Wire.mk s!"pending_commit_{i}")
   let pc_next := (List.range 3).map (fun i => Wire.mk s!"pending_commit_next_{i}")
-  let pc_nz := Wire.mk "pending_commit_nz"
   let pc_inc := Wire.mk "pending_commit_inc"
   let pc_dec := Wire.mk "pending_commit_dec"
 
@@ -555,7 +576,7 @@ def mkStoreBuffer8 : Circuit :=
     instName := "u_commit_ptr"
     portMap :=
       [("clock", clock), ("reset", reset), ("en", commit_en_gated),
-       ("load_en", flush_en), ("one", one), ("zero", zero)] ++
+       ("load_en", flush_apply), ("one", one), ("zero", zero)] ++
       (flush_tail_load.enum.map (fun ⟨i, w⟩ => (s!"load_value_{i}", w))) ++
       (commit_ptr.enum.map (fun ⟨i, w⟩ => (s!"count_{i}", w)))
   }
@@ -573,8 +594,18 @@ def mkStoreBuffer8 : Circuit :=
   -- New tail = head + popcount (mod 8, only low 3 bits matter)
 
   let surviving := (List.range 8).map (fun i => Wire.mk s!"surviving_{i}")
-  let surviving_gates := (List.range 8).map (fun i =>
-    Gate.mkAND valid[i]! committed[i]! surviving[i]!)
+  -- An entry dequeued on the same cycle as the flush is gone: `head_ptr` advances
+  -- past it at the clock edge, so it must not be counted as surviving either.
+  -- Counting it leaves count > 0 with an empty [head, tail) range, and the buffer
+  -- never reports empty again -- any drain waiting on sb_empty then wedges.
+  let surviving_gates := (List.range 8).flatMap (fun i =>
+    let surv_vc := Wire.mk s!"surv_vc_{i}"
+    let surv_deq := Wire.mk s!"surv_deq_{i}"
+    let surv_not_deq := Wire.mk s!"surv_not_deq_{i}"
+    [Gate.mkAND valid[i]! committed[i]! surv_vc,
+     Gate.mkAND deq_fire head_decode[i]! surv_deq,
+     Gate.mkNOT surv_deq surv_not_deq,
+     Gate.mkAND surv_vc surv_not_deq surviving[i]!])
 
   let pop_count := mkWires "pop_count_" 4
   let pop_inst : CircuitInstance := {
@@ -589,18 +620,33 @@ def mkStoreBuffer8 : Circuit :=
   let flush_count_gates := (List.range 4).map (fun i =>
     Gate.mkBUF pop_count[i]! flush_count_load[i]!)
 
-  -- flush_tail_load = head_ptr + pop_count[2:0] (mod 8, wrapping 3-bit add)
-  -- Simple 3-bit ripple-carry adder
+  -- flush_tail_load = (head_ptr + deq_fire) + pop_count[2:0] (mod 8, wrapping add)
+  -- The +deq_fire is what keeps head and tail consistent: a store dequeued on the
+  -- flush cycle has already advanced head_ptr at the clock edge, and it is no
+  -- longer in `surviving`, so tail must be measured from the advanced head.
+  let hn_xor := (List.range 3).map (fun i => Wire.mk s!"hn_xor_b{i}")
+  let hn_carry := (List.range 3).map (fun i => Wire.mk s!"hn_carry_b{i}")
+  let head_next := (List.range 3).map (fun i => Wire.mk s!"hn_b{i}")
+  let head_next_gates := [
+    Gate.mkXOR head_ptr[0]! deq_fire hn_xor[0]!,
+    Gate.mkBUF hn_xor[0]! head_next[0]!,
+    Gate.mkAND head_ptr[0]! deq_fire hn_carry[0]!,
+    Gate.mkXOR head_ptr[1]! hn_carry[0]! hn_xor[1]!,
+    Gate.mkBUF hn_xor[1]! head_next[1]!,
+    Gate.mkAND head_ptr[1]! hn_carry[0]! hn_carry[1]!,
+    Gate.mkXOR head_ptr[2]! hn_carry[1]! hn_xor[2]!,
+    Gate.mkBUF hn_xor[2]! head_next[2]!]
+
   let ft_xor := (List.range 3).map (fun i => Wire.mk s!"ft_xor_b{i}")
   let ft_carry := (List.range 4).map (fun i => Wire.mk s!"ft_carry_b{i}")
   let ft_and1 := (List.range 3).map (fun i => Wire.mk s!"ft_and1_b{i}")
   let ft_and2 := (List.range 3).map (fun i => Wire.mk s!"ft_and2_b{i}")
-  let flush_tail_gates := [
+  let flush_tail_gates := head_next_gates ++ [
     Gate.mkBUF zero ft_carry[0]!
   ] ++ ((List.range 3).map (fun i =>
-    [Gate.mkXOR head_ptr[i]! pop_count[i]! ft_xor[i]!,
+    [Gate.mkXOR head_next[i]! pop_count[i]! ft_xor[i]!,
      Gate.mkXOR ft_xor[i]! ft_carry[i]! flush_tail_load[i]!,
-     Gate.mkAND head_ptr[i]! pop_count[i]! ft_and1[i]!,
+     Gate.mkAND head_next[i]! pop_count[i]! ft_and1[i]!,
      Gate.mkAND ft_xor[i]! ft_carry[i]! ft_and2[i]!,
      Gate.mkOR ft_and1[i]! ft_and2[i]! ft_carry[i+1]!]
   )).flatten
@@ -641,7 +687,7 @@ def mkStoreBuffer8 : Circuit :=
       Gate.mkAND v_enq not_deq_clr v_deq,             -- deq clears valid
       -- Flush: valid_next = valid AND (NOT flush OR committed)
       Gate.mkAND v_deq committed[i]! v_flush,          -- surviving = valid AND committed
-      Gate.mkNOT flush_en not_flush,
+      Gate.mkNOT flush_apply not_flush,
       Gate.mkMUX v_flush v_deq not_flush v_after_flush, -- flush ? surviving : normal
       Gate.mkBUF v_after_flush valid_next[i]!
     ]
@@ -675,7 +721,7 @@ def mkStoreBuffer8 : Circuit :=
 
   -- DFFs for pending commit counter (reset on global reset OR flush)
   let pc_reset := Wire.mk "pc_reset"
-  let pc_reset_gate := Gate.mkOR reset flush_en pc_reset
+  let pc_reset_gate := Gate.mkOR reset flush_apply pc_reset
   let pc_dff_insts := (List.range 3).map (fun i =>
     { moduleName := "DFlipFlop", instName := s!"u_pending_commit_{i}",
       portMap := [("d", pc_next[i]!), ("q", pc[i]!),
@@ -1115,6 +1161,7 @@ def mkStoreBuffer8 : Circuit :=
     reset_buf_gates ++
     [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
+    flush_apply_gates ++
     commit_gate_gates ++ [pc_reset_gate] ++
     bitmap_gates ++ surviving_gates ++
     flush_count_gates ++ flush_tail_gates ++ flush_tail_out_gates ++
