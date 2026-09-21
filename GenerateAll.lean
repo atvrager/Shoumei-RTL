@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Codegen.SECMiter
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
 
@@ -232,6 +233,7 @@ def baseCircuits : List Circuit := [
   mkRegisterNHierarchical 158,
   mkRegisterNHierarchical 159,
   mkRegisterNHierarchical 160, -- RS 64-bit entry (1+8+7+1+7+64+1+7+64)
+  mkRegister160Flat,
 
   -- Phase 4: RISC-V Components
   mkRAT64,
@@ -457,6 +459,21 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+
+  -- Generate SEC (Sequential Equivalence Checking) miters and scripts
+  IO.println ""
+  IO.println "Generating SEC miters and verification scripts..."
+  let secOutputDir : System.FilePath := "output/sv-sec"
+  IO.FS.createDirAll secOutputDir
+  let miter160 := Shoumei.Codegen.SECMiter.generateSECMiter mkRegister160Flat mkRegister160Hierarchical "Register160_sec_miter"
+  IO.FS.writeFile (secOutputDir / "Register160_sec_miter.sv") miter160
+  let formality160 := Shoumei.Codegen.SECMiter.generateFormalityTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv"] ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_formality.tcl") formality160
+  let yosys160 := Shoumei.Codegen.SECMiter.generateYosysTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_yosys.tcl") yosys160
+  let vcFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160_sec_miter" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv", "output/sv-sec/Register160_sec_miter.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_vc_formal.tcl") vcFormal160
+  IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
 
   -- Generate filelist.f for each output directory
   IO.println ""

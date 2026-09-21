@@ -191,6 +191,8 @@ inductive SVAProperty where
   | DataCapture (dBus qBus : String)
   | EnableHolds (enWire qBus : String)
   | EnableCapture (enWire dBus qBus : String)
+  | LatencyCapture (dBus qBus : String) (cycles : Nat)
+  | DecoupledEquiv (valA rdyA dataA valB rdyB dataB : String)
   deriving Repr, BEq, Inhabited, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules

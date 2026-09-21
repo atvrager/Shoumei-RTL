@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv cell-models
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv sec-equiv sec cell-models
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -203,6 +203,13 @@ techmap-equiv: cell-models
 	@echo "==> Running techmap LEC (Yosys miter)..."
 	@./verification/techmap-equiv.sh
 	@echo "✓ Techmap LEC clean"
+
+# Sequential equivalence check (SEC): verifies equivalence between flat and
+# hierarchical register implementations (Yosys SAT miter).
+sec-equiv: codegen
+	@./verification/sec-verify.sh
+
+sec: sec-equiv
 
 # Re-derive the PDK cell models used by slang and the LEC from Liberty.
 cell-models:

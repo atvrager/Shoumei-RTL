@@ -131,6 +131,22 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_enable_capture_{idx}: assert property (p_enable_capture_{idx});\n"
 
+  | .LatencyCapture dBus qBus cycles =>
+      s!"  // Formal Property: Multi-cycle pipeline latency (Z^-{cycles})\n" ++
+      s!"  property p_latency_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    1'b1 |=> ({qBus} == $past({dBus}, {cycles}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_latency_capture_{idx}: assert property (p_latency_capture_{idx});\n"
+
+  | .DecoupledEquiv valA rdyA dataA valB rdyB dataB =>
+      s!"  // Formal Property: Decoupled transaction equivalence\n" ++
+      s!"  property p_decoupled_equiv_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    ({valA} && {rdyA} && {valB} && {rdyB}) |-> ({dataA} == {dataB});\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_decoupled_equiv_{idx}: assert property (p_decoupled_equiv_{idx});\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""

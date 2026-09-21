@@ -135,6 +135,10 @@ def mkRegister158Hierarchical : Circuit := mkRegisterNHierarchical 158
 def mkRegister159Hierarchical : Circuit := mkRegisterNHierarchical 159
 def mkRegister160Hierarchical : Circuit := mkRegisterNHierarchical 160
 
+-- Flat counterparts for Sequential Equivalence Checking (SEC) miters
+def mkRegisterFlat (n : Nat) : Circuit := { mkRegisterN n with name := s!"Register{n}Flat" }
+def mkRegister160Flat : Circuit := mkRegisterFlat 160
+
 
 -- Helper: Extract the number of DFFs in a register circuit
 def registerWidth (c : Circuit) : Nat :=
