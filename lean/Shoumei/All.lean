@@ -105,6 +105,7 @@ import Shoumei.Codegen.CellLibs.Library
 import Shoumei.Codegen.CellNetlist
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.CppSim
+import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.SVA
 import Shoumei.Codegen.ShoumeiEmit
 import Shoumei.Codegen.ShoumeiParse
