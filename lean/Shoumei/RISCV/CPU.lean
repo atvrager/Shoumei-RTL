@@ -3096,6 +3096,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "op" muldiv_op ++
       bundledPorts "dest_tag" (rs_muldiv_dispatch_tag.take 6) ++
       [("valid_in", rs_muldiv_dispatch_valid),
+       ("out_ready", Wire.mk "muldiv_fifo_enq_ready"),
        ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
        ("zero", zero), ("one", one)] ++
       bundledPorts "result" muldiv_result ++

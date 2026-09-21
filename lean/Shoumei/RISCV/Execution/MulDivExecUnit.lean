@@ -128,6 +128,7 @@ def mkMulDivExecUnit : Circuit :=
   let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
+  let out_ready := Wire.mk "out_ready"
 
   -- Outputs
   let result := makeIndexedWires "result" 64
@@ -165,6 +166,7 @@ def mkMulDivExecUnit : Circuit :=
       (op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
       (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", mul_valid),
+       ("out_ready", out_ready),
        ("clock", clock),
        ("reset", reset),
        ("zero", zero),
@@ -229,7 +231,7 @@ def mkMulDivExecUnit : Circuit :=
     busy_gate
 
   { name := "MulDivExecUnit"
-    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, clock, reset, zero, one]
+    inputs := a ++ b ++ op ++ dest_tag ++ [valid_in, out_ready, clock, reset, zero, one]
     outputs := result ++ tag_out ++ [valid_out, busy]
     gates := all_gates
     instances := [mul_inst, div_inst]
