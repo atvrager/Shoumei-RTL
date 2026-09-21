@@ -82,11 +82,17 @@ else:
 # modules also instantiate gate-level sub-modules, so pull in the sv-from-lean
 # files the PDK directory does not override (mirrors the physical filelist).
 _cells = os.path.join(os.path.dirname(__file__), "pdk-cells-model.sv")
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+lean_dir = os.path.join(_root, "output/sv-from-lean")
+
 if os.path.isfile(_cells) and ("sv-asap7" in sv_dir or "sv-gf180" in sv_dir):
     sv_files.append(_cells)
     mapped = {os.path.basename(f) for f in sv_files}
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    lean_dir = os.path.join(_root, "output/sv-from-lean")
+    for f in sorted(glob.glob(os.path.join(lean_dir, "*.sv"))):
+        if os.path.basename(f) not in mapped:
+            sv_files.append(f)
+elif "sv-sec" in sv_dir:
+    mapped = {os.path.basename(f) for f in sv_files}
     for f in sorted(glob.glob(os.path.join(lean_dir, "*.sv"))):
         if os.path.basename(f) not in mapped:
             sv_files.append(f)

@@ -14,23 +14,45 @@ against; what is checked is that the translation elaborates and runs.
 | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | Lean theorem (`native_decide`, `simp`) |
 | Composition | parent correct given children | Lean `CompositionalCert` |
+| Equivalence (SEC) | alternative implementations preserve trace semantics | Lean bisimulation & SAT/LEC miters ([SEC Guide](proof-strategies/sequential-equivalence-checking.md)) |
+| Formal Properties (SVA) | temporal assertion contracts hold on RTL | IEEE 1800 SVA FPV ([SVA Guide](proof-strategies/sva-formal-verification.md)) |
 | Registry | every certificate matches an emitted circuit | `lake exe generate_all --export-certs` |
 | Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `python3 verification/slang-lint.py`, `make systemverilog` (Yosys read/hierarchy) |
-| Integration | the design runs correctly | Verilator simulation, Spike cosimulation |
+| Dynamic Simulation | RTL executes cycles correctly & assertions active | Verilator `--assert`, C++ cycle-accurate model |
+| Co-simulation | retired instruction trace matches Spike reference | Spike lock-step cosimulation (`make -C testbench cosim`) |
+| Compliance | RISC-V architectural compliance | 107/107 `riscv-arch-test` pass |
 
 ```
-                        Lean proofs
-                   (leaf + composition)
-                            |
-                  certificate registry
-              (validated by generate_all)
-                            |
-                 emitted SystemVerilog
-                            |
-              +-------------+-------------+
-              |                           |
-      slang / Yosys                 Verilator / Spike
-       elaboration                sim + lock-step cosim
+                      ┌──────────────────────────────────────┐
+                      │    Lean 4 Mathematical Proofs        │
+                      │  - L0 Structural Pinning             │
+                      │  - L1 Functional Step Theorems       │
+                      │  - L2 Inductive State Invariants     │
+                      │  - L3 Temporal Refinement (Bisim)    │
+                      └──────────────────┬───────────────────┘
+                                         │ lake exe generate_all
+                                         ▼
+                      ┌──────────────────────────────────────┐
+                      │      Emitted Hardware Artifacts      │
+                      │  - Hierarchical SystemVerilog        │
+                      │  - Flat Netlist SystemVerilog        │
+                      │  - ASAP7 / GF180 Tech-Mapped Gates   │
+                      │  - Cycle-Accurate C++ Simulation     │
+                      │  - Embedded SVA Formal Assertions    │
+                      │  - Auto-Generated SEC Miters         │
+                      └──────────────────┬───────────────────┘
+                                         │
+         ┌───────────────────────────────┼───────────────────────────────┐
+         │                               │                               │
+         ▼                               ▼                               ▼
+ ┌───────────────┐               ┌───────────────┐               ┌───────────────┐
+ │ Static Lint & │               │ Dynamic Sim & │               │ Formal Verification│
+ │  Elaboration  │               │   Cosim       │               │   & Equivalence │
+ ├───────────────┤               ├───────────────┤               ├───────────────┤
+ │ slang (IEEE)  │               │ Verilator sim │               │ SVA FPV (vcf) │
+ │ Yosys read    │               │ Spike cosim   │               │ Formality LEC │
+ │ Netlist check │               │ C++ cycle-sim │               │ Yosys SAT SEC │
+ └───────────────┘               └───────────────┘               └───────────────┘
 ```
 
 ## Work at the netlist level
@@ -235,6 +257,10 @@ lake build                                                # Lean proofs
 lake exe generate_all --export-certs                      # Validate + print the certificate registry
 python3 verification/slang-lint.py output/sv-from-lean    # slang elaboration
 make systemverilog                                        # Yosys read/hierarchy check
+make sva                                                  # SVA formal/simulation checks (slang + Verilator)
+make sec                                                  # Sequential Equivalence Checking (Yosys SAT)
+./verification/sva-verify.sh --remote <host>              # Synopsys VC Formal FPV (industrial model checking)
+./verification/sec-verify.sh --remote <host>              # Synopsys Formality LEC (industrial equivalence)
 make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
 make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
 ./verification/smoke-test.sh                              # CI smoke tests
@@ -252,6 +278,8 @@ cosim even when its own region check still passes.
 ```bash
 make lean             # Lean build
 make codegen          # generate_all + certificate registry export
+make sva              # SVA verification (slang + Verilator --assert)
+make sec              # Sequential Equivalence Checking (Yosys SAT miter)
 make systemverilog    # Yosys read/hierarchy check
 make cppsim           # compile the C++ simulation
 make smoke-test       # codegen + smoke tests

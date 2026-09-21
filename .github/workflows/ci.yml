@@ -345,6 +345,7 @@ jobs:
             output/sv-gf180/
             output/sv-from-lean/
             output/sv-netlist/
+            output/sv-sec/
             output/cpp_sim/
             output/architecture-treemap.svg
             output/architecture-treemap.png
@@ -605,6 +606,9 @@ jobs:
       - name: Cache behavior conformance (L1D SV vs reference model)
         run: make -C testbench cache-model-test
 
+      - name: SVA dynamic assertion compilation (Verilator)
+        run: ./verification/sva-verify.sh --verilator
+
       - name: Upload test results
         uses: actions/upload-artifact@v6
         if: always()
@@ -671,6 +675,9 @@ jobs:
           python3 verification/slang-lint.py output/sv-asap7
           python3 verification/slang-lint.py output/sv-gf180
 
+      - name: Lint SEC miters & SVA (slang)
+        run: python3 verification/slang-lint.py output/sv-sec
+
   techmap-equiv:
     name: Techmap LEC
     runs-on: ubuntu-24.04
@@ -694,6 +701,9 @@ jobs:
 
       - name: Tech-mapped vs gate-level equivalence
         run: make techmap-equiv
+
+      - name: Sequential Equivalence Checking (SEC)
+        run: ./verification/sec-verify.sh --yosys
 
   cosim:
     name: Cosimulation (RTL vs Spike)

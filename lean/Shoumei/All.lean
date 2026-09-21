@@ -95,6 +95,7 @@ import Shoumei.Circuits.Sequential.QueueTemporalProofs
 import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Sequential.RegisterLemmas
 import Shoumei.Circuits.Sequential.RegisterProofs
+import Shoumei.Circuits.Sequential.RegisterTemporalProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
 import Shoumei.Codegen.CellLibrary
@@ -104,6 +105,7 @@ import Shoumei.Codegen.CellLibs.Library
 import Shoumei.Codegen.CellNetlist
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.CppSim
+import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.SVA
 import Shoumei.Codegen.ShoumeiEmit
 import Shoumei.Codegen.ShoumeiParse

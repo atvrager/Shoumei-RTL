@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv cell-models
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv sec-equiv sec sva-verify sva cell-models
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -193,6 +193,7 @@ lint: systemverilog techmap-equiv
 	@python3 verification/slang-lint.py --sram output/sv-from-lean
 	@python3 verification/slang-lint.py output/sv-asap7
 	@python3 verification/slang-lint.py output/sv-gf180
+	@python3 verification/slang-lint.py output/sv-sec
 	@echo "==> Running DC-NXT-style lint (Yosys proxy)..."
 	@./verification/dc-lint.sh output/sv-from-lean
 	@echo "✓ Lint clean"
@@ -203,6 +204,19 @@ techmap-equiv: cell-models
 	@echo "==> Running techmap LEC (Yosys miter)..."
 	@./verification/techmap-equiv.sh
 	@echo "✓ Techmap LEC clean"
+
+# Sequential equivalence check (SEC): verifies equivalence between flat and
+# hierarchical register implementations (Yosys SAT miter).
+sec-equiv:
+	@./verification/sec-verify.sh --yosys
+
+sec: sec-equiv
+
+# SystemVerilog Assertion (SVA) formal property verification (FPV)
+sva-verify:
+	@./verification/sva-verify.sh
+
+sva: sva-verify
 
 # Re-derive the PDK cell models used by slang and the LEC from Liberty.
 cell-models:
@@ -264,6 +278,7 @@ ifdef HAS_LAKE
 endif
 	@# Always clean output directories (doesn't require tools)
 	@find output/sv-from-lean -type f ! -name '.gitkeep' -delete 2>/dev/null || true
+	@find output/sv-sec -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@find output/cpp_sim -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	@# Clean codegen hash cache
 	@rm -rf .codegen-cache 2>/dev/null || true

@@ -37,9 +37,14 @@ TOTAL_MUTANTS=0
 L0_KILLED=0
 SEMANTIC_KILLED=0
 
+cp lean/Shoumei/Circuits/Sequential/Register.lean lean/Shoumei/Circuits/Sequential/Register.lean.bak 2>/dev/null || true
+
 # Backup modified files
 cleanup() {
     echo -e "${DIM}Cleaning up mutations and restoring tree...${NC}"
+    if [ -f lean/Shoumei/Circuits/Sequential/Register.lean.bak ]; then
+        mv lean/Shoumei/Circuits/Sequential/Register.lean.bak lean/Shoumei/Circuits/Sequential/Register.lean
+    fi
     git checkout -- \
         lean/Shoumei/Circuits/Combinational/RippleCarryAdder.lean \
         lean/Shoumei/Circuits/Combinational/Comparator.lean \
@@ -116,11 +121,31 @@ run_mutant \
     "fullAdderCircuit.inline wireMap" \
     "{ fullAdderCircuit with gates := fullAdderCircuit.gates.map (fun g => if g.output.name == \"ab_and\" then { g with gateType := GateType.XOR } else g) }.inline wireMap"
 
+# Mutant 5: Pin Swap in Register (reset tied to clock)
+# Breaks reset zeroing and data latching, preserves exact gate count (n gates)
+run_mutant \
+    "M5_REG_DFF_RESET_TO_CLOCK" \
+    "Replace DFF reset input with clock in Register DFF array" \
+    "lean/Shoumei/Circuits/Sequential/Register.lean" \
+    "Shoumei.Circuits.Sequential.RegisterTemporalProofs" \
+    "Gate.mkDFF d clock reset q" \
+    "Gate.mkDFF d clock clock q"
+
+# Mutant 6: Enable MUX Input Swap in RegisterEn
+# Inverts enable polarity: holds on en=1 and latches on en=0, preserves exact gate count (2n gates)
+run_mutant \
+    "M6_REGEN_MUX_INPUT_SWAP" \
+    "Swap MUX in0 and in1 in RegisterEn enable multiplexer" \
+    "lean/Shoumei/Circuits/Sequential/Register.lean" \
+    "Shoumei.Circuits.Sequential.RegisterTemporalProofs" \
+    "Gate.mkMUX q_wires[i]! d_wires[i]! en" \
+    "Gate.mkMUX d_wires[i]! q_wires[i]! en"
+
 # ─── Mutation Score Summary ─────────────────────────────────
 
 SEM_SCORE=$(( (SEMANTIC_KILLED * 100) / TOTAL_MUTANTS ))
-# L0 structural proofs check gate count only. Because all 4 mutations preserve
-# gate count (44 gates and 20 gates), 0% of mutants are killed by L0.
+# L0 structural proofs check gate count only. Because all 6 mutations preserve
+# gate count (44, 20, n, and 2n gates), 0% of mutants are killed by L0.
 L0_SCORE=$(( (L0_KILLED * 100) / TOTAL_MUTANTS ))
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

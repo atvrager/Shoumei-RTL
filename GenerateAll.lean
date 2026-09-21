@@ -8,6 +8,7 @@ Usage: lake exe generate_all
 -/
 
 import Shoumei.Codegen.Unified
+import Shoumei.Codegen.SECMiter
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
 
@@ -216,6 +217,14 @@ def baseCircuits : List Circuit := [
   mkRegisterN 24,  -- ROB16_W2 PC array
   mkRegisterN 32,
   mkRegisterN 64,
+  -- Clock-enabled registers
+  mkRegisterEnN 1,
+  mkRegisterEnN 2,
+  mkRegisterEnN 4,
+  mkRegisterEnN 8,
+  mkRegisterEnN 16,
+  mkRegisterEnN 32,
+  mkRegisterEnN 64,
   -- Hierarchical registers (compositional verification)
   mkRegisterNHierarchical 96,  -- RS entry: 8-bit opcode + 7-bit tags (1+8+7+1+7+32+1+7+32)
   mkRegisterNHierarchical 98,  -- Store buffer entry payload (32+64+2)
@@ -224,6 +233,7 @@ def baseCircuits : List Circuit := [
   mkRegisterNHierarchical 158,
   mkRegisterNHierarchical 159,
   mkRegisterNHierarchical 160, -- RS 64-bit entry (1+8+7+1+7+64+1+7+64)
+  mkRegister160Flat,
 
   -- Phase 4: RISC-V Components
   mkRAT64,
@@ -449,6 +459,25 @@ def main (args : List String) : IO Unit := do
   IO.println ""
   IO.println "Generating testbenches..."
   writeTestbenches cpuTestbenchConfig
+
+  -- Generate SEC (Sequential Equivalence Checking) miters and scripts
+  IO.println ""
+  IO.println "Generating SEC miters and verification scripts..."
+  let secOutputDir : System.FilePath := "output/sv-sec"
+  IO.FS.createDirAll secOutputDir
+  let miter160 := Shoumei.Codegen.SECMiter.generateSECMiter mkRegister160Flat mkRegister160Hierarchical "Register160_sec_miter"
+  IO.FS.writeFile (secOutputDir / "Register160_sec_miter.sv") miter160
+  let formality160 := Shoumei.Codegen.SECMiter.generateFormalityTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv"] ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_formality.tcl") formality160
+  let yosys160 := Shoumei.Codegen.SECMiter.generateYosysTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_yosys.tcl") yosys160
+  let vcFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160_sec_miter" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv", "output/sv-sec/Register160_sec_miter.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_vc_formal.tcl") vcFormal160
+  let svaFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160" ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
+  IO.FS.writeFile (secOutputDir / "Register160_sva_formal.tcl") svaFormal160
+  let svaFormalEn64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "RegisterEn64" ["output/sv-from-lean/RegisterEn64.sv"]
+  IO.FS.writeFile (secOutputDir / "RegisterEn64_sva_formal.tcl") svaFormalEn64
+  IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
 
   -- Generate filelist.f for each output directory
   IO.println ""

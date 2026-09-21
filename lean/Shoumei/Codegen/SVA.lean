@@ -100,6 +100,53 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_conservation_{idx}: assert property (p_conservation_{idx});\n"
 
+  | .ResetClears qBus =>
+      s!"  // Formal Property: Synchronous reset clears register\n" ++
+      s!"  property p_reset_clears_{idx};\n" ++
+      s!"    {clkExpr} {rst} |=> ({qBus} == '0);\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_reset_clears_{idx}: assert property (p_reset_clears_{idx});\n"
+
+  | .DataCapture dBus qBus =>
+      s!"  // Formal Property: Active clock edge latches data\n" ++
+      s!"  property p_data_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    1'b1 |=> ({qBus} == $past({dBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_data_capture_{idx}: assert property (p_data_capture_{idx});\n"
+
+  | .EnableHolds enWire qBus =>
+      s!"  // Formal Property: Clock enable low holds data\n" ++
+      s!"  property p_enable_holds_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    !{enWire} |=> ({qBus} == $past({qBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_enable_holds_{idx}: assert property (p_enable_holds_{idx});\n"
+
+  | .EnableCapture enWire dBus qBus =>
+      s!"  // Formal Property: Clock enable high latches data\n" ++
+      s!"  property p_enable_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    {enWire} |=> ({qBus} == $past({dBus}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_enable_capture_{idx}: assert property (p_enable_capture_{idx});\n"
+
+  | .LatencyCapture dBus qBus cycles =>
+      s!"  // Formal Property: Multi-cycle pipeline latency (Z^-{cycles})\n" ++
+      s!"  property p_latency_capture_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    (!{rst} [* {cycles}]) |-> ({qBus} == $past({dBus}, {cycles}));\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_latency_capture_{idx}: assert property (p_latency_capture_{idx});\n"
+
+  | .DecoupledEquiv valA rdyA dataA valB rdyB dataB =>
+      s!"  // Formal Property: Decoupled transaction equivalence\n" ++
+      s!"  property p_decoupled_equiv_{idx};\n" ++
+      s!"    {clkExpr} {disableExpr}\n" ++
+      s!"    ({valA} && {rdyA} && {valB} && {rdyB}) |-> ({dataA} == {dataB});\n" ++
+      s!"  endproperty\n" ++
+      s!"  assert_decoupled_equiv_{idx}: assert property (p_decoupled_equiv_{idx});\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""
@@ -108,11 +155,19 @@ def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
     let rst := resetWires.head?.map (·.name) |>.getD "reset"
     let props := c.svaProperties.enum.map (fun (idx, p) => generateProperty clk rst p idx)
     let body := String.intercalate "\n" props
-    s!"`ifndef SYNTHESIS\n" ++
+    s!"`ifdef FORMAL\n" ++
+    s!"  `define SHOUMEI_FORMAL_ASSERT\n" ++
+    s!"`elsif SYNTHESIS\n" ++
+    s!"  // Synthesis without FORMAL: exclude assertions\n" ++
+    s!"`else\n" ++
+    s!"  `define SHOUMEI_FORMAL_ASSERT\n" ++
+    s!"`endif\n\n" ++
+    s!"`ifdef SHOUMEI_FORMAL_ASSERT\n" ++
     s!"  // --------------------------------------------------------------------------\n" ++
     s!"  // Formal Properties (proven in Lean theorem prover)\n" ++
     s!"  // --------------------------------------------------------------------------\n" ++
     body ++ "\n" ++
+    s!"  `undef SHOUMEI_FORMAL_ASSERT\n" ++
     s!"`endif\n"
 
 end Shoumei.Codegen.SVA

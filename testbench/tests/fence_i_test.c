@@ -6,8 +6,8 @@
 
 static volatile uint32_t sink;
 
-__attribute__((noinline)) static void prog_set_sink(void) {
-    sink = 0xCAFE0123;
+__attribute__((noinline)) static uint32_t prog_set_sink(void) {
+    return 0xCAFE0123;
 }
 
 __attribute__((noinline)) static void prog_clear_sink(void) {
@@ -34,7 +34,7 @@ int main(void) {
     code_buf[srclen + 3] = 0x00;
     fence_i();
 
-    ((void (*)(void))(void *)code_buf)();
+    sink = ((uint32_t (*)(void))(void *)code_buf)();
 
     if (sink == 0xCAFE0123)
         pass();

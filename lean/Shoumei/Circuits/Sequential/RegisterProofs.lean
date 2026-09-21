@@ -64,90 +64,175 @@ def register160_cert : CompositionalCert := {
   proofReference := "Shoumei.Circuits.Sequential.RegisterProofs"
 }
 
-/-! ## Structural Proofs -/
+/-! ## Hierarchical Interconnect Verification Helpers -/
 
-/-- Register91 uses 5 hierarchical instances (64+16+8+2+1) -/
+/-- Extract output wires driven by a child register instance. -/
+def instanceOutputWires (inst : CircuitInstance) : List Wire :=
+  inst.portMap.filterMap (fun (port, w) => if port.startsWith "q_" then some w else none)
+
+/-- Extract input wires received by a child register instance. -/
+def instanceInputWires (inst : CircuitInstance) : List Wire :=
+  inst.portMap.filterMap (fun (port, w) => if port.startsWith "d_" then some w else none)
+
+/-- Extract clock connection of an instance. -/
+def instanceClock (inst : CircuitInstance) : Option Wire :=
+  inst.portMap.find? (fun (port, _) => port == "clock") |>.map (·.2)
+
+/-- Extract reset connection of an instance. -/
+def instanceReset (inst : CircuitInstance) : Option Wire :=
+  inst.portMap.find? (fun (port, _) => port == "reset") |>.map (·.2)
+
+/-! ## L2 Compositional Invariants: Bit Coverage & Signal Continuity -/
+
+-- ── Register91 ──
 theorem register91_instance_count : mkRegister91Hierarchical.instances.length = 5 := by native_decide
-
-/-- Register91 has no gates (hierarchical, not flat) -/
-theorem register91_no_gates : mkRegister91Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register91 decomposition correctness: 64+16+8+2+1 = 91 -/
 theorem register91_decomposition : decomposeToPowersOf2 91 = [64, 16, 8, 2, 1] := by native_decide
+theorem register91_outputs_cover_all_bits :
+    (mkRegister91Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 91) = true := by native_decide
+theorem register91_inputs_cover_all_bits :
+    (mkRegister91Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 91) = true := by native_decide
+theorem register91_clock_synchronized :
+    mkRegister91Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register91_reset_synchronized :
+    mkRegister91Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register96 uses 2 hierarchical instances (64+32) -/
+-- ── Register96 ──
 theorem register96_instance_count : mkRegister96Hierarchical.instances.length = 2 := by native_decide
-
-/-- Register96 has no gates (hierarchical, not flat) -/
-theorem register96_no_gates : mkRegister96Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register96 decomposition correctness: 64+32 = 96 -/
 theorem register96_decomposition : decomposeToPowersOf2 96 = [64, 32] := by native_decide
+theorem register96_outputs_cover_all_bits :
+    (mkRegister96Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 96) = true := by native_decide
+theorem register96_inputs_cover_all_bits :
+    (mkRegister96Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 96) = true := by native_decide
+theorem register96_clock_synchronized :
+    mkRegister96Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register96_reset_synchronized :
+    mkRegister96Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register98 uses 3 hierarchical instances (64+32+2) -/
+-- ── Register98 ──
 theorem register98_instance_count : mkRegister98Hierarchical.instances.length = 3 := by native_decide
-
-/-- Register98 has no gates (hierarchical, not flat) -/
-theorem register98_no_gates : mkRegister98Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register98 decomposition correctness: 64+32+2 = 98 -/
 theorem register98_decomposition : decomposeToPowersOf2 98 = [64, 32, 2] := by native_decide
+theorem register98_outputs_cover_all_bits :
+    (mkRegister98Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 98) = true := by native_decide
+theorem register98_inputs_cover_all_bits :
+    (mkRegister98Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 98) = true := by native_decide
+theorem register98_clock_synchronized :
+    mkRegister98Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register98_reset_synchronized :
+    mkRegister98Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register130 uses 3 hierarchical instances (64+64+2) -/
+-- ── Register130 ──
 theorem register130_instance_count : mkRegister130Hierarchical.instances.length = 3 := by native_decide
-
-/-- Register130 has no gates (hierarchical, not flat) -/
-theorem register130_no_gates : mkRegister130Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register130 decomposition correctness: 64+64+2 = 130 -/
 theorem register130_decomposition : decomposeToPowersOf2 130 = [64, 64, 2] := by native_decide
+theorem register130_outputs_cover_all_bits :
+    (mkRegister130Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 130) = true := by native_decide
+theorem register130_inputs_cover_all_bits :
+    (mkRegister130Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 130) = true := by native_decide
+theorem register130_clock_synchronized :
+    mkRegister130Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register130_reset_synchronized :
+    mkRegister130Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register157 uses 6 hierarchical instances (64+64+16+8+4+1) -/
+-- ── Register157 ──
 theorem register157_instance_count : mkRegister157Hierarchical.instances.length = 6 := by native_decide
-
-/-- Register157 has no gates (hierarchical, not flat) -/
-theorem register157_no_gates : mkRegister157Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register157 decomposition correctness: 64+64+16+8+4+1 = 157 -/
 theorem register157_decomposition : decomposeToPowersOf2 157 = [64, 64, 16, 8, 4, 1] := by native_decide
+theorem register157_outputs_cover_all_bits :
+    (mkRegister157Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 157) = true := by native_decide
+theorem register157_inputs_cover_all_bits :
+    (mkRegister157Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 157) = true := by native_decide
+theorem register157_clock_synchronized :
+    mkRegister157Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register157_reset_synchronized :
+    mkRegister157Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register158 uses 6 hierarchical instances (64+64+16+8+4+2) -/
+-- ── Register158 ──
 theorem register158_instance_count : mkRegister158Hierarchical.instances.length = 6 := by native_decide
-
-/-- Register158 has no gates (hierarchical, not flat) -/
-theorem register158_no_gates : mkRegister158Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register158 decomposition correctness: 64+64+16+8+4+2 = 158 -/
 theorem register158_decomposition : decomposeToPowersOf2 158 = [64, 64, 16, 8, 4, 2] := by native_decide
+theorem register158_outputs_cover_all_bits :
+    (mkRegister158Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 158) = true := by native_decide
+theorem register158_inputs_cover_all_bits :
+    (mkRegister158Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 158) = true := by native_decide
+theorem register158_clock_synchronized :
+    mkRegister158Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register158_reset_synchronized :
+    mkRegister158Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register159 uses 7 hierarchical instances (64+64+16+8+4+2+1) -/
+-- ── Register159 ──
 theorem register159_instance_count : mkRegister159Hierarchical.instances.length = 7 := by native_decide
-
-/-- Register159 has no gates (hierarchical, not flat) -/
-theorem register159_no_gates : mkRegister159Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register159 decomposition correctness: 64+64+16+8+4+2+1 = 159 -/
 theorem register159_decomposition : decomposeToPowersOf2 159 = [64, 64, 16, 8, 4, 2, 1] := by native_decide
+theorem register159_outputs_cover_all_bits :
+    (mkRegister159Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 159) = true := by native_decide
+theorem register159_inputs_cover_all_bits :
+    (mkRegister159Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 159) = true := by native_decide
+theorem register159_clock_synchronized :
+    mkRegister159Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register159_reset_synchronized :
+    mkRegister159Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
-/-- Register160 uses 3 hierarchical instances (64+64+32) -/
+-- ── Register160 ──
 theorem register160_instance_count : mkRegister160Hierarchical.instances.length = 3 := by native_decide
-
-/-- Register160 has no gates (hierarchical, not flat) -/
-theorem register160_no_gates : mkRegister160Hierarchical.gates.length = 0 := by native_decide
-
-/-- Register160 decomposition correctness: 64+64+32 = 160 -/
 theorem register160_decomposition : decomposeToPowersOf2 160 = [64, 64, 32] := by native_decide
+theorem register160_outputs_cover_all_bits :
+    (mkRegister160Hierarchical.instances.flatMap instanceOutputWires == makeIndexedWires "q" 160) = true := by native_decide
+theorem register160_inputs_cover_all_bits :
+    (mkRegister160Hierarchical.instances.flatMap instanceInputWires == makeIndexedWires "d" 160) = true := by native_decide
+theorem register160_clock_synchronized :
+    mkRegister160Hierarchical.instances.all (fun inst => instanceClock inst == some (Wire.mk "clock")) = true := by native_decide
+theorem register160_reset_synchronized :
+    mkRegister160Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 
+/-! ## SEC Sequential Equivalence: Flat vs Hierarchical Interface Congruence -/
 
-/-! ## Verification Strategy
+theorem register91_sec_inputs_identical :
+    (mkRegister91Hierarchical.inputs == (mkRegisterN 91).inputs) = true := by native_decide
+theorem register91_sec_outputs_identical :
+    (mkRegister91Hierarchical.outputs == (mkRegisterN 91).outputs) = true := by native_decide
 
-Register91 correctness follows from:
-1. LEC verification of power-of-2 building blocks (Register1, 2, 4, 8, 16, 32, 64)
-2. Hierarchical composition with correct port wiring
-3. Structural proof that 64+16+8+2+1 = 91
+theorem register96_sec_inputs_identical :
+    (mkRegister96Hierarchical.inputs == (mkRegisterN 96).inputs) = true := by native_decide
+theorem register96_sec_outputs_identical :
+    (mkRegister96Hierarchical.outputs == (mkRegisterN 96).outputs) = true := by native_decide
 
-This avoids the SEC structural mismatch issue entirely by using verified instances
-instead of monolithic register arrays.
--/
+theorem register98_sec_inputs_identical :
+    (mkRegister98Hierarchical.inputs == (mkRegisterN 98).inputs) = true := by native_decide
+theorem register98_sec_outputs_identical :
+    (mkRegister98Hierarchical.outputs == (mkRegisterN 98).outputs) = true := by native_decide
+
+theorem register130_sec_inputs_identical :
+    (mkRegister130Hierarchical.inputs == (mkRegisterN 130).inputs) = true := by native_decide
+theorem register130_sec_outputs_identical :
+    (mkRegister130Hierarchical.outputs == (mkRegisterN 130).outputs) = true := by native_decide
+
+theorem register157_sec_inputs_identical :
+    (mkRegister157Hierarchical.inputs == (mkRegisterN 157).inputs) = true := by native_decide
+theorem register157_sec_outputs_identical :
+    (mkRegister157Hierarchical.outputs == (mkRegisterN 157).outputs) = true := by native_decide
+
+theorem register158_sec_inputs_identical :
+    (mkRegister158Hierarchical.inputs == (mkRegisterN 158).inputs) = true := by native_decide
+theorem register158_sec_outputs_identical :
+    (mkRegister158Hierarchical.outputs == (mkRegisterN 158).outputs) = true := by native_decide
+
+theorem register159_sec_inputs_identical :
+    (mkRegister159Hierarchical.inputs == (mkRegisterN 159).inputs) = true := by native_decide
+theorem register159_sec_outputs_identical :
+    (mkRegister159Hierarchical.outputs == (mkRegisterN 159).outputs) = true := by native_decide
+
+theorem register160_sec_inputs_identical :
+    (mkRegister160Hierarchical.inputs == (mkRegisterN 160).inputs) = true := by native_decide
+theorem register160_sec_outputs_identical :
+    (mkRegister160Hierarchical.outputs == (mkRegisterN 160).outputs) = true := by native_decide
+
+/-! ## RegisterEn Structural Proofs -/
+theorem registerEn1_gate_count : mkRegisterEn1.gates.length = 2 := by native_decide
+theorem registerEn2_gate_count : mkRegisterEn2.gates.length = 4 := by native_decide
+theorem registerEn4_gate_count : mkRegisterEn4.gates.length = 8 := by native_decide
+theorem registerEn8_gate_count : mkRegisterEn8.gates.length = 16 := by native_decide
+theorem registerEn16_gate_count : mkRegisterEn16.gates.length = 32 := by native_decide
+theorem registerEn32_gate_count : mkRegisterEn32.gates.length = 64 := by native_decide
+theorem registerEn64_gate_count : mkRegisterEn64.gates.length = 128 := by native_decide
+
+theorem registerEn1_ports : mkRegisterEn1.inputs.length = 4 ∧ mkRegisterEn1.outputs.length = 1 := by native_decide
+theorem registerEn32_ports : mkRegisterEn32.inputs.length = 35 ∧ mkRegisterEn32.outputs.length = 32 := by native_decide
+theorem registerEn64_ports : mkRegisterEn64.inputs.length = 67 ∧ mkRegisterEn64.outputs.length = 64 := by native_decide
 
 end Shoumei.Circuits.Sequential.RegisterProofs

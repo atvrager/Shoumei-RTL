@@ -5,10 +5,10 @@ not edit by hand; re-run it.  Composition edges come from
 `moduleName :=` references between circuits, certificates from the
 Lean registry, docs from each file's leading comment block.
 
-- Lean files: **265**
+- Lean files: **267**
 - Circuits with a literal `name :=` (graph nodes): **98**
 - Compositional certificates (Lean registry): **103**
-- Proof files: **75**
+- Proof files: **76**
 
 Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,
 `mkMuxTree`, `mkDecoder`, ...) construct their circuit names by

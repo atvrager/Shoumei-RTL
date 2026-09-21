@@ -118,6 +118,24 @@ inductive TemporalProp where
   /-- FIFO Empty Invariant:
       When queue is empty (count equals 0), dequeue valid must be low. -/
   | EmptyNotValid (countWires : List Wire) (deqValid : Wire)
+  /-- Register Reset Invariant:
+      When reset is asserted at cycle t, all qWires bits are low at cycle t + 1. -/
+  | RegisterResetZero (resetWire : Wire) (qWires : List Wire)
+  /-- Register Data Capture Invariant:
+      When reset is not asserted at cycle t, qWires at cycle t + 1 equals dWires at cycle t. -/
+  | RegisterDataCapture (resetWire : Wire) (dWires qWires : List Wire)
+  /-- Register Enable Hold Invariant:
+      When reset is low and enable is low at cycle t, qWires at cycle t + 1 retains qWires at cycle t. -/
+  | RegisterEnableHolds (resetWire : Wire) (enWire : Wire) (qWires : List Wire)
+  /-- Register Enable Capture Invariant:
+      When reset is low and enable is high at cycle t, qWires at cycle t + 1 latches dWires at cycle t. -/
+  | RegisterEnableCapture (resetWire : Wire) (enWire : Wire) (dWires qWires : List Wire)
+  /-- Multi-cycle Pipeline Latency Invariant (Z^-k):
+      When reset remains low for k consecutive cycles from cycle t, qWires at cycle t + k equals dWires at cycle t. -/
+  | RegisterLatencyCapture (resetWire : Wire) (dWires qWires : List Wire) (cycles : Nat)
+  /-- Decoupled Transaction Equivalence:
+      When both channels handshake simultaneously at cycle t, output payload data matches. -/
+  | DecoupledEquiv (valA rdyA : Wire) (dataA : List Wire) (valB rdyB : Wire) (dataB : List Wire)
   deriving Repr, Inhabited
 
 /-- Semantic evaluation: whether a `Trace` satisfies a `TemporalProp`. -/
@@ -140,6 +158,33 @@ def satisfiesTrace (tr : Trace) : TemporalProp → Prop
       ∀ t : Nat,
         -- When count is all zeroes, deqValid is false
         (tr.busAt countWires t = countWires.map (fun _ => false)) → tr.wireAt deqValid t = false
+  | .RegisterResetZero resetWire qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = true →
+          tr.busAt qWires (t + 1) = qWires.map (fun _ => false)
+  | .RegisterDataCapture resetWire dWires qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+          tr.busAt qWires (t + 1) = tr.busAt dWires t
+  | .RegisterEnableHolds resetWire enWire qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+        tr.wireAt enWire t = false →
+          tr.busAt qWires (t + 1) = tr.busAt qWires t
+  | .RegisterEnableCapture resetWire enWire dWires qWires =>
+      ∀ t : Nat,
+        tr.wireAt resetWire t = false →
+        tr.wireAt enWire t = true →
+          tr.busAt qWires (t + 1) = tr.busAt dWires t
+  | .RegisterLatencyCapture resetWire dWires qWires cycles =>
+      ∀ t : Nat,
+        (∀ i, i < cycles → tr.wireAt resetWire (t + i) = false) →
+          tr.busAt qWires (t + cycles) = tr.busAt dWires t
+  | .DecoupledEquiv valA rdyA dataA valB rdyB dataB =>
+      ∀ t : Nat,
+        (tr.wireAt valA t = true ∧ tr.wireAt rdyA t = true ∧
+         tr.wireAt valB t = true ∧ tr.wireAt rdyB t = true) →
+          tr.busAt dataA t = tr.busAt dataB t
 
 /-- Circuit satisfies a temporal property under valid reset initialization. -/
 def CircuitSatisfies (c : Circuit) (s0 : State) (prop : TemporalProp) : Prop :=
