@@ -155,11 +155,19 @@ def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
     let rst := resetWires.head?.map (·.name) |>.getD "reset"
     let props := c.svaProperties.enum.map (fun (idx, p) => generateProperty clk rst p idx)
     let body := String.intercalate "\n" props
-    s!"`ifndef SYNTHESIS\n" ++
+    s!"`ifdef FORMAL\n" ++
+    s!"  `define SHOUMEI_FORMAL_ASSERT\n" ++
+    s!"`elsif SYNTHESIS\n" ++
+    s!"  // Synthesis without FORMAL: exclude assertions\n" ++
+    s!"`else\n" ++
+    s!"  `define SHOUMEI_FORMAL_ASSERT\n" ++
+    s!"`endif\n\n" ++
+    s!"`ifdef SHOUMEI_FORMAL_ASSERT\n" ++
     s!"  // --------------------------------------------------------------------------\n" ++
     s!"  // Formal Properties (proven in Lean theorem prover)\n" ++
     s!"  // --------------------------------------------------------------------------\n" ++
     body ++ "\n" ++
+    s!"  `undef SHOUMEI_FORMAL_ASSERT\n" ++
     s!"`endif\n"
 
 end Shoumei.Codegen.SVA

@@ -85,7 +85,8 @@ elif [[ "$BACKEND" == "formality" ]]; then
     TMP_REMOTE="sec_run_$(date +%s)"
     # shellcheck disable=SC2029
     ssh "$REMOTE_HOST" "mkdir -p '$TMP_REMOTE'"
-    scp -q output/sv-from-lean/*.sv "$SEC_DIR"/*_formality.tcl "$REMOTE_HOST:$TMP_REMOTE/"
+    # shellcheck disable=SC2029
+    tar -cf - -C "$ROOT/output/sv-from-lean" . -C "$ROOT/$SEC_DIR" . | ssh "$REMOTE_HOST" "tar -xf - -C '$TMP_REMOTE'"
 
     for script in "$SEC_DIR"/*_formality.tcl; do
       [[ -f "$script" ]] || continue

@@ -20,6 +20,7 @@ This doc describes core foundational techniques for parameterized circuits, arit
 - [Register Refinement & Invariants](proof-strategies/register-refinement.md) — Multi-tier register proof hierarchy (L0-L3), bit-slice non-interference, structural composition, and SVA AST emission.
 - [Queue Refinement](proof-strategies/queue-refinement.md) — State abstraction, FIFO ordering, and push/pop refinement.
 - [QueueN Inductive Invariants](proof-strategies/queuen-invariants.md) — Inductive invariants for parameterized circular queues.
+- [SVA Formal Property Verification](proof-strategies/sva-formal-verification.md) — SVA FPV flows, temporal latency horizons ($Z^{-k}$), reset freedom, and multi-backend verification (Synopsys VC Formal & Verilator).
 
 ---
 
