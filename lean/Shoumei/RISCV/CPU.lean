@@ -2782,7 +2782,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "dest_tag" (rs_fp_dispatch_tag.take 6) ++
       [("valid_in", Wire.mk "fp_eu_valid_in"),
        ("clock", clock), ("reset", reset),
-       ("zero", zero), ("one", one)] ++
+       ("zero", zero), ("one", one),
+       ("out_ready", fp_fifo_enq_ready)] ++
       bundledPorts "result" fp_result ++
       bundledPorts "tag_out" fp_tag_out ++
       bundledPorts "exceptions" fp_exceptions ++
