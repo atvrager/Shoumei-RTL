@@ -38,11 +38,11 @@ RV64UD_TESTS := fadd fclass fcmp fcvt fcvt_w fdiv fmadd fmin ldst recoding struc
 RV64UA_TESTS := amoadd_w amoand_w amomax_w amomaxu_w amomin_w amominu_w amoor_w amoswap_w amoxor_w \
   amoadd_d amoand_d amomax_d amomaxu_d amomin_d amominu_d amoor_d amoswap_d amoxor_d lrsc
 
-# RV64UZB microcoded Zb* tests (executed combinationally by FallbackSequencer)
-RV64UZBA_TESTS := sh1add sh2add sh3add
-RV64UZBB_TESTS := andn orn xnor min max minu maxu rol ror
-RV64UZBC_TESTS := clmul
-RV64UZBS_TESTS := bset bclr binv bext
+# RV64UZB microcoded Zb* tests (all 43 upstream rv64uzb* programs)
+RV64UZBA_TESTS := add_uw sh1add sh1add_uw sh2add sh2add_uw sh3add sh3add_uw slli_uw
+RV64UZBB_TESTS := andn clz clzw cpop cpopw ctz ctzw max maxu min minu orc_b orn rev8 rol rolw ror rori roriw rorw sext_b sext_h xnor zext_h
+RV64UZBC_TESTS := clmul clmulh clmulr
+RV64UZBS_TESTS := bclr bclri bext bexti binv binvi bset bseti
 
 ELFS := $(addprefix rv64ui-p-,$(addsuffix .elf,$(RV64UI_TESTS))) \
         $(addprefix rv64um-p-,$(addsuffix .elf,$(RV64UM_TESTS))) \

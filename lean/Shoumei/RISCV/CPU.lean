@@ -818,16 +818,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
           (List.range 6).map (fun i => (s!"rd_tag_in_{i}", Wire.mk s!"ser_ophrd_{i}")) ++
           [("rob_empty", rob_empty),
            ("sb_empty", Wire.mk "lsu_sb_empty"),
-           ("wcs_write_en", zero)] ++
-          (List.range 8).map (fun i => (s!"wcs_write_addr_{i}", zero)) ++
-          (List.range 32).map (fun i => (s!"wcs_write_data_{i}", zero)) ++
-          [("wcs_enable", zero),
-           ("wcs_lock", zero),
            ("active", fallback_active),
            ("cdb_inject", fallback_cdb_inject),
            ("redir_valid", fallback_redir_valid),
-           ("trap_active", fallback_trap_active),
-           ("wcs_busy", Wire.mk "fallback_wcs_busy")] ++
+           ("trap_active", fallback_trap_active)] ++
           (List.range 6).map (fun i => (s!"cdb_tag_{i}", fallback_cdb_tag[i]!)) ++
           (List.range 64).map (fun i => (s!"cdb_data_{i}", fallback_cdb_data[i]!)) ++
           (List.range 64).map (fun i => (s!"redir_pc_{i}", fallback_redir_pc[i]!)) ++

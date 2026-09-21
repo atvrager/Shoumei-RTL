@@ -28,6 +28,7 @@ import Shoumei.RISCV.OpcodeParser
 import Shoumei.RISCV.Decoder
 import Shoumei.RISCV.Encoder
 import Shoumei.RISCV.Config
+import Shoumei.RISCV.Microcode.ZbEmulationLibrary
 import Lean.Data.Json
 import Lean.Elab.Command
 
@@ -177,37 +178,37 @@ def classify (d : InstructionDef) : Option BenchmarkSpec :=
       needsZbMarch := false
     }
 
-/-- Dummy InstructionDef for microcode fallback Zb* instructions (3-register integer ALU). -/
-def zbInstructionDef (name : String) (sample : UInt32) : InstructionDef := {
-  name := name
-  opType := .ADD
-  encoding := ""
-  variableFields := [.rd, .rs1, .rs2]
-  extension := ["rv_zba"]
-  matchBits := sample
-  maskBits := 0xfe00707f
-}
+/-- Dummy InstructionDef for a microcode fallback Zb* instruction.  The operand
+    fields come from the routine's own shape, so the emitter writes a form the
+    assembler accepts (`clz rd, rs1`, not `clz rd, rs1, rs2`). -/
+def zbInstructionDef (name : String) (sample : UInt32) : InstructionDef :=
+  let shape := match (List.finRange Microcode.routineCount).find?
+      (fun r => Microcode.zbRoutineName r == name) with
+    | some r => Microcode.zbRoutineShape r
+    | none => Microcode.ZbShape.binary
+  { name := name
+    opType := .ADD
+    encoding := ""
+    variableFields := match shape with
+      | .binary => [.rd, .rs1, .rs2]
+      | .shift  => [.rd, .rs1, .shamtd]
+      | .unary  => [.rd, .rs1]
+    extension := ["rv_zba"]
+    matchBits := sample
+    maskBits := 0xfe00707f
+  }
 
-/-- Benchmark specs for the 17 un-decoded Zb* bitmanip fallback instructions. -/
-def zbSpecs : List BenchmarkSpec := [
-  { name := "sh1add", opType := none, kind := .throughputOnly, sample := 0x20002033, needsZbMarch := true },
-  { name := "sh2add", opType := none, kind := .throughputOnly, sample := 0x20004033, needsZbMarch := true },
-  { name := "sh3add", opType := none, kind := .throughputOnly, sample := 0x20006033, needsZbMarch := true },
-  { name := "bset",   opType := none, kind := .throughputOnly, sample := 0x28001033, needsZbMarch := true },
-  { name := "bclr",   opType := none, kind := .throughputOnly, sample := 0x48001033, needsZbMarch := true },
-  { name := "binv",   opType := none, kind := .throughputOnly, sample := 0x68001033, needsZbMarch := true },
-  { name := "bext",   opType := none, kind := .throughputOnly, sample := 0x48005033, needsZbMarch := true },
-  { name := "andn",   opType := none, kind := .throughputOnly, sample := 0x40007033, needsZbMarch := true },
-  { name := "orn",    opType := none, kind := .throughputOnly, sample := 0x40006033, needsZbMarch := true },
-  { name := "xnor",   opType := none, kind := .throughputOnly, sample := 0x40004033, needsZbMarch := true },
-  { name := "min",    opType := none, kind := .throughputOnly, sample := 0x0a004033, needsZbMarch := true },
-  { name := "max",    opType := none, kind := .throughputOnly, sample := 0x0a006033, needsZbMarch := true },
-  { name := "minu",   opType := none, kind := .throughputOnly, sample := 0x0a005033, needsZbMarch := true },
-  { name := "maxu",   opType := none, kind := .throughputOnly, sample := 0x0a007033, needsZbMarch := true },
-  { name := "rol",    opType := none, kind := .throughputOnly, sample := 0x60001033, needsZbMarch := true },
-  { name := "ror",    opType := none, kind := .throughputOnly, sample := 0x60005033, needsZbMarch := true },
-  { name := "clmul",  opType := none, kind := .throughputOnly, sample := 0x0a001033, needsZbMarch := true }
-]
+/-- Benchmark specs for every emulated Zb* encoding, in routine order.
+
+    Derived from `Microcode.zbTable` so the benchmark set, the decoder and the
+    equivalence proofs all name one list of 43 encodings and cannot drift. -/
+def zbSpecs : List BenchmarkSpec :=
+  (List.finRange Microcode.routineCount).map fun r =>
+    { name := Microcode.zbRoutineName r
+      opType := none
+      kind := .throughputOnly
+      sample := Microcode.zbRoutineSample r
+      needsZbMarch := true }
 
 /-- All benchmark specs for a config: `since` → sortIMFirst → classify ++ zbSpecs. -/
 def computeSpecs (defs : List InstructionDef) : List BenchmarkSpec :=
@@ -263,6 +264,10 @@ def chainCpiBound (spec : BenchmarkSpec) : Nat :=
 def thruCpiBound (spec : BenchmarkSpec) : Nat :=
   let n := spec.name
   if n.startsWith "csr" then 384
+  -- Microcoded Zb*: the fallback sequencer retires one micro-op per cycle, so
+  -- an emulated instruction costs its routine's length plus the drain.  The
+  -- slowest routine (clzw, 8 micro-ops) measures ~12.6 CPI.
+  else if spec.needsZbMarch then 16
   else if n.startsWith "fdiv" || n.startsWith "fsqrt" then 24
   else if n.startsWith "div" || n.startsWith "rem" then 12
   else 8
@@ -383,11 +388,13 @@ def thrCopy (d : InstructionDef) (k : Nat) : String :=
     else
       s!"  {m} {thrDestR k}, {frn BENCH_CONST_F}"
   else if f.contains .rs1 then
-    -- fclass / fmv (rd, rs1 only, no rm): dest class decides the operand
+    -- rd, rs1 only, no rm: the source class follows the op, not the dest class
     if d.opType.hasFpRd then
       s!"  {m} {thrDestF k}, {rn BENCH_CONST_X}"
-    else
+    else if d.opType.hasFpRs1 then
       s!"  {m} {thrDestR k}, {frn BENCH_CONST_F}"
+    else
+      s!"  {m} {thrDestR k}, {rn BENCH_CONST_X}"
   else
     "  " ++ m
 

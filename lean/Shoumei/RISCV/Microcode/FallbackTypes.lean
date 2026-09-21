@@ -26,6 +26,7 @@ inductive FallbackOp where
   | LOAD_INSN     -- 0x0A: temp[dst] := zext(raw_insn)
   | LOAD_PC       -- 0x0B: temp[dst] := pcVal
   | MOV_TO_RD     -- 0x0C: PRF[rdTag] := temp[src1] via CDB
+  | LOAD_SHAMT    -- 0x31: temp[dst] := zext(insn[25:20]), range 0..63
 
   -- Micro-ALU: Basic Arithmetic & Logic
   | ALU_ADD       -- 0x0D: temp[dst] := temp[src1] + temp[src2]
@@ -74,6 +75,9 @@ inductive FallbackOp where
   -- 32-bit word variants (W-instructions in RV64)
   | ALU_SEXT_W    -- 0x2F: sign-extend 32-bit to 64-bit
   | ALU_ZEXT_W    -- 0x30: zero-extend 32-bit to 64-bit
+  | ALU_ROLW      -- 0x32: temp[dst] := sext32(rol(temp[src1][31:0], temp[src2][4:0]))
+  | ALU_RORW      -- 0x33: temp[dst] := sext32(ror(temp[src1][31:0], temp[src2][4:0]))
+  | ALU_CTZW      -- 0x34: temp[dst] := (temp[src1][31:0] == 0) ? 32 : ctz32(temp[src1][31:0])
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- Convert FallbackOp to 6-bit natural encoding -/
@@ -91,6 +95,7 @@ def FallbackOp.toNat : FallbackOp → Nat
   | .LOAD_INSN    => 10
   | .LOAD_PC      => 11
   | .MOV_TO_RD    => 12
+  | .LOAD_SHAMT   => 49
   | .ALU_ADD      => 13
   | .ALU_SUB      => 14
   | .ALU_AND      => 15
@@ -127,6 +132,9 @@ def FallbackOp.toNat : FallbackOp → Nat
   | .ALU_BEXT     => 46
   | .ALU_SEXT_W   => 47
   | .ALU_ZEXT_W   => 48
+  | .ALU_ROLW     => 50
+  | .ALU_RORW     => 51
+  | .ALU_CTZW     => 52
 
 /-- Decode 6-bit natural to FallbackOp -/
 def FallbackOp.fromNat : Nat → FallbackOp
@@ -143,6 +151,7 @@ def FallbackOp.fromNat : Nat → FallbackOp
   | 10 => .LOAD_INSN
   | 11 => .LOAD_PC
   | 12 => .MOV_TO_RD
+  | 49 => .LOAD_SHAMT
   | 13 => .ALU_ADD
   | 14 => .ALU_SUB
   | 15 => .ALU_AND
@@ -179,6 +188,9 @@ def FallbackOp.fromNat : Nat → FallbackOp
   | 46 => .ALU_BEXT
   | 47 => .ALU_SEXT_W
   | 48 => .ALU_ZEXT_W
+  | 50 => .ALU_ROLW
+  | 51 => .ALU_RORW
+  | 52 => .ALU_CTZW
   | _  => .DONE
 
 theorem FallbackOp.roundtrip (op : FallbackOp) : FallbackOp.fromNat op.toNat = op := by
@@ -219,7 +231,7 @@ def FallbackEntry.decode (n : Nat) : FallbackEntry :=
 /-- State of the Fallback Emulation Sequencer -/
 structure FallbackState where
   active    : Bool       -- Sequencer running
-  upc       : Fin 256    -- Micro-PC (256 entries in control store)
+  upc       : Fin 512    -- Micro-PC (512-entry control store)
   temp0     : UInt64     -- Scratchpad register 0
   temp1     : UInt64     -- Scratchpad register 1
   temp2     : UInt64     -- Scratchpad register 2
