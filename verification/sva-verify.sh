@@ -110,17 +110,7 @@ if [[ "$BACKEND" == "vc-formal" || ( "$BACKEND" == "auto" && -n "$REMOTE_HOST" )
     done
   fi
 
-else
-  # Default open-source flow: Verilator SVA compilation + assertion linting
-  echo -n "Checking SVA elaboration with slang... "
-  if python3 verification/slang-lint.py output/sv-from-lean >/dev/null 2>&1; then
-    echo "PASS (SYNTACTIC QED)"
-    PASS_COUNT=$((PASS_COUNT + 1))
-  else
-    echo "FAIL"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-  fi
-
+elif [[ "$BACKEND" == "verilator" ]]; then
   echo -n "Checking SVA dynamic simulation compilation (Verilator --assert)... "
   if verilator --assert --lint-only \
       output/sv-from-lean/Register64.sv \
@@ -132,6 +122,34 @@ else
   else
     echo "FAIL"
     FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+
+else
+  # Default open-source flow: Verilator SVA compilation + assertion linting
+  if command -v slang >/dev/null 2>&1 || python3 -c "import pyslang" >/dev/null 2>&1; then
+    echo -n "Checking SVA elaboration with slang... "
+    if python3 verification/slang-lint.py output/sv-sec >/dev/null 2>&1; then
+      echo "PASS (SYNTACTIC QED)"
+      PASS_COUNT=$((PASS_COUNT + 1))
+    else
+      echo "FAIL"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+  fi
+
+  if command -v verilator >/dev/null 2>&1; then
+    echo -n "Checking SVA dynamic simulation compilation (Verilator --assert)... "
+    if verilator --assert --lint-only \
+        output/sv-from-lean/Register64.sv \
+        output/sv-from-lean/Register32.sv \
+        output/sv-from-lean/Register160.sv \
+        --top-module Register160 >/dev/null 2>&1; then
+      echo "PASS (ASSERTIONS ACTIVE)"
+      PASS_COUNT=$((PASS_COUNT + 1))
+    else
+      echo "FAIL"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
   fi
 fi
 

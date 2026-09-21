@@ -246,6 +246,43 @@ else
 fi
 echo ""
 
+# --- SEC & SVA Formal Verification ---
+echo "==> SEC & SVA Verification"
+
+for sec_artifact in output/sv-sec/Register160_sec_miter.sv \
+                    output/sv-sec/Register160_yosys.tcl \
+                    output/sv-sec/Register160_sva_formal.tcl \
+                    output/sv-sec/RegisterEn64_sva_formal.tcl; do
+    if [ -f "$sec_artifact" ]; then
+        pass "SEC/SVA artifact: $(basename "$sec_artifact")"
+    else
+        fail "SEC/SVA artifact missing: $sec_artifact"
+    fi
+done
+
+if command -v yosys >/dev/null 2>&1; then
+    if ./verification/sec-verify.sh --yosys > /tmp/sec-smoke.log 2>&1; then
+        pass "Sequential Equivalence Checking (Yosys SAT miter)"
+    else
+        fail "Sequential Equivalence Checking failed (see /tmp/sec-smoke.log)"
+        tail -20 /tmp/sec-smoke.log || true
+    fi
+else
+    echo "(skipped: yosys not installed)"
+fi
+
+if command -v slang >/dev/null 2>&1 || python3 -c "import pyslang" >/dev/null 2>&1; then
+    if python3 verification/slang-lint.py output/sv-sec > /tmp/sva-slang.log 2>&1; then
+        pass "SVA miter elaboration (slang)"
+    else
+        fail "SVA miter elaboration failed (see /tmp/sva-slang.log)"
+        tail -20 /tmp/sva-slang.log || true
+    fi
+else
+    echo "(skipped: slang/pyslang not installed)"
+fi
+echo ""
+
 # --- Summary ---
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 TOTAL=$((PASS + FAIL))

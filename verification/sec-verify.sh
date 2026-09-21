@@ -27,6 +27,10 @@ FM_BIN="${FM_BIN:-fm_shell}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --yosys)
+      BACKEND="yosys"
+      shift
+      ;;
     --formality)
       BACKEND="formality"
       shift
