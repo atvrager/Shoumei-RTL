@@ -273,6 +273,10 @@ structure ResultHold where
   tag : List Wire
   /-- Exception flags presented to the mux. -/
   exc : List Wire
+  /-- Destination domain, captured with the result: high when the held result
+      must be written back to the integer register file.  Capturing it with the
+      result keeps it aligned with whatever the mux actually selects. -/
+  intf : Wire
   /-- Queue occupancy; feeds `busy` so no second result can arrive. -/
   heldValid : Wire
 
@@ -294,8 +298,8 @@ structure ResultHold where
     Invariant: every accepted operation appears on `valid_out` exactly once. -/
 def mkResultHold (u : String) (width : Nat) (zero : Wire) (liveV : Wire)
     (liveRes liveTag liveExc : List Wire) (higher : List Wire)
-    (outReady clock reset : Wire) : ResultHold :=
-  let dataWidth := 6 + width + 5
+    (outReady clock reset : Wire) (liveInt : Wire := zero) : ResultHold :=
+  let dataWidth := 6 + width + 5 + 1
   let enqData := (List.range dataWidth).map fun i => Wire.mk s!"{u}_enq_{i}"
   let deqData := (List.range dataWidth).map fun i => Wire.mk s!"{u}_deq_{i}"
   let enqReady := Wire.mk s!"{u}_enq_ready"
@@ -303,11 +307,12 @@ def mkResultHold (u : String) (width : Nat) (zero : Wire) (liveV : Wire)
   let deqValid := Wire.mk s!"{u}_deq_valid"
   let noOthers := Wire.mk s!"{u}_no_others"
   let taken := Wire.mk s!"{u}_taken"
-  -- Pack tag, result and exception flags into one queue payload.
+  -- Pack tag, result, exception flags and destination domain into one payload.
   let enqGates :=
     (List.range 6).map (fun i => Gate.mkBUF (liveTag[i]!) enqData[i]!) ++
     (List.range width).map (fun i => Gate.mkBUF (liveRes[i]!) enqData[6 + i]!) ++
-    (List.range 5).map (fun i => Gate.mkBUF (liveExc[i]!) enqData[6 + width + i]!)
+    (List.range 5).map (fun i => Gate.mkBUF (liveExc[i]!) enqData[6 + width + i]!) ++
+    [Gate.mkBUF liveInt enqData[6 + width + 5]!]
   -- OR-reduce the higher-priority valids into one wire.
   let rec orChain (acc : Wire) (rest : List Wire) (i : Nat) : List Gate × Wire :=
     match rest with
@@ -341,6 +346,7 @@ def mkResultHold (u : String) (width : Nat) (zero : Wire) (liveV : Wire)
     res := (List.range width).map fun i => deqData[6 + i]!
     tag := (List.range 6).map fun i => deqData[i]!
     exc := (List.range 5).map fun i => deqData[6 + width + i]!
+    intf := deqData[6 + width + 5]!
     heldValid := deqValid }
 
 /-- Build FP Execution Unit structural circuit.
@@ -697,6 +703,7 @@ def mkFPExecUnit : Circuit :=
     [hSqrt.v, hDiv.v, hFma.v, hAdd.v] out_ready clock reset_mul
   let hMisc := mkResultHold "misc" 32 zero misc_valid misc_result dest_tag misc_exc
     [hSqrt.v, hDiv.v, hFma.v, hAdd.v, hMul.v] out_ready clock reset_misc
+    (Wire.mk "op_writes_int")
   let hold_gates :=
     hSqrt.gates ++ hDiv.gates ++ hFma.gates ++ hMul.gates ++ hAdd.gates ++ hMisc.gates
   let hold_insts :=
@@ -864,15 +871,17 @@ def mkFPExecUnit : Circuit :=
     Gate.mkAND (Wire.mk "g16_t1") (Wire.mk "g16_t2") grp_16_18,
     -- Combine
     Gate.mkOR grp_8_15_filt grp_16_18 op_writes_int,
-    -- result_is_int = misc_valid AND no higher-priority AND op_writes_int
-    -- Since misc is lowest priority: if any other valid, misc result is overridden
-    Gate.mkOR mul_valid add_valid (Wire.mk "rint_t1"),
-    Gate.mkOR fma_valid div_valid (Wire.mk "rint_t2"),
-    Gate.mkOR sqrt_valid (Wire.mk "rint_t1") (Wire.mk "rint_t3"),
+    -- result_is_int = misc wins the mux AND its captured domain says INT.
+    -- Selection must use the *held* valids: the mux picks on those, so an
+    -- instruction merely accepted at the input this cycle must not suppress the
+    -- domain flag of the result actually being presented.
+    Gate.mkOR hMul.v hAdd.v (Wire.mk "rint_t1"),
+    Gate.mkOR hFma.v hDiv.v (Wire.mk "rint_t2"),
+    Gate.mkOR hSqrt.v (Wire.mk "rint_t1") (Wire.mk "rint_t3"),
     Gate.mkOR (Wire.mk "rint_t2") (Wire.mk "rint_t3") (Wire.mk "rint_t4"),
     Gate.mkNOT (Wire.mk "rint_t4") (Wire.mk "no_override"),
-    Gate.mkAND misc_valid (Wire.mk "no_override") (Wire.mk "rint_t5"),
-    Gate.mkAND (Wire.mk "rint_t5") op_writes_int result_is_int
+    Gate.mkAND hMisc.v (Wire.mk "no_override") (Wire.mk "rint_t5"),
+    Gate.mkAND (Wire.mk "rint_t5") hMisc.intf result_is_int
   ]
 
   { name := "FPExecUnit"
@@ -1587,7 +1596,8 @@ def mkFPExecUnitD : Circuit :=
   let hAdd := mkResultHold "add" 64 zero add_valid add_result add_tag add_exc
     [hSqrt.v, hDiv.v, hFma.v, hMul.v] out_ready clock reset_add_dp
   let hMisc := mkResultHold "misc" 64 zero misc_reg_valid misc_reg_result misc_reg_tag misc_reg_exc
-    [hSqrt.v, hDiv.v, hFma.v, hMul.v, hAdd.v] out_ready clock reset_misc_dp
+    [hSqrt.v, hDiv.v, hFma.v, hAdd.v, hMul.v] out_ready clock reset_misc_dp
+    misc_reg_writes_int
   let hold_gates :=
     hSqrt.gates ++ hDiv.gates ++ hFma.gates ++ hMul.gates ++ hAdd.gates ++ hMisc.gates
   let hold_insts :=
@@ -1705,13 +1715,15 @@ def mkFPExecUnitD : Circuit :=
     Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
     Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp active_writes_int_pre,
     Gate.mkMUX active_writes_int_pre conv_long_rint is_long_conv (Wire.mk "active_writes_int"),
-    Gate.mkOR mul_valid add_valid (Wire.mk "rint_d_t1"),
-    Gate.mkOR fma_valid div_valid (Wire.mk "rint_d_t2"),
-    Gate.mkOR sqrt_valid (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
+    -- Same rule as the SP builder: select on the held valids, and take the
+    -- domain flag captured with the held result.
+    Gate.mkOR hMul.v hAdd.v (Wire.mk "rint_d_t1"),
+    Gate.mkOR hFma.v hDiv.v (Wire.mk "rint_d_t2"),
+    Gate.mkOR hSqrt.v (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
     Gate.mkOR (Wire.mk "rint_d_t2") (Wire.mk "rint_d_t3") (Wire.mk "rint_d_t4"),
     Gate.mkNOT (Wire.mk "rint_d_t4") (Wire.mk "no_override_d"),
-    Gate.mkAND misc_reg_valid (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
-    Gate.mkAND (Wire.mk "rint_d_t5") misc_reg_writes_int result_is_int
+    Gate.mkAND hMisc.v (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
+    Gate.mkAND (Wire.mk "rint_d_t5") hMisc.intf result_is_int
   ]
 
   let all_gates :=
