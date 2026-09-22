@@ -19,6 +19,22 @@ namespace Shoumei.Circuits.Combinational
 
 open Shoumei
 
+/-- Pure reference mathematical specification of 8-bit population count.
+    Counts the number of 1-bits among 8 boolean inputs (result in 0..8). -/
+def popcount8Spec (in0 in1 in2 in3 in4 in5 in6 in7 : Bool) : Nat :=
+  (if in0 then 1 else 0) +
+  (if in1 then 1 else 0) +
+  (if in2 then 1 else 0) +
+  (if in3 then 1 else 0) +
+  (if in4 then 1 else 0) +
+  (if in5 then 1 else 0) +
+  (if in6 then 1 else 0) +
+  (if in7 then 1 else 0)
+
+/-- Pure reference list specification of population count. -/
+def popcountListSpec (bits : List Bool) : Nat :=
+  (bits.filter (· == true)).length
+
 /-- 8-bit population count circuit.
     Inputs: in_0..in_7
     Outputs: count_0..count_3 (4-bit result, 0..8)
@@ -117,6 +133,7 @@ def mkPopcount8 : Circuit :=
       { name := "in", width := 8, wires := inputs },
       { name := "count", width := 4, wires := count }
     ]
+    svaProperties := [.Popcount "in" "count" 4]
   }
 
 end Shoumei.Circuits.Combinational

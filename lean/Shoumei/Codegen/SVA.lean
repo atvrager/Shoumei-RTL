@@ -194,6 +194,20 @@ def generateProperty (clk rst : String) (hasClock : Bool) (prop : SVAProperty) (
         String.join asserts ++
         s!"  end\n"
 
+  | .Popcount inBus outBus outWidth =>
+      if hasClock then
+        s!"  // Formal Property: Popcount correctness (clocked)\n" ++
+        s!"  property p_popcount_{idx};\n" ++
+        s!"    {clkExpr} {disableExpr}\n" ++
+        s!"    1'b1 |-> ({outBus} == {outWidth}'($unsigned($countones({inBus}))));\n" ++
+        s!"  endproperty\n" ++
+        s!"  assert_popcount_{idx}: assert property (p_popcount_{idx});\n"
+      else
+        s!"  // Formal Property: Popcount correctness (combinational)\n" ++
+        s!"  always_comb begin\n" ++
+        s!"    assert_popcount_{idx}: assert ({outBus} == {outWidth}'($unsigned($countones({inBus}))));\n" ++
+        s!"  end\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""

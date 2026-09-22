@@ -62,7 +62,16 @@ run_mutant() {
 
     # 1. Backup and apply mutation
     cp "$file" "$file.mutbak"
-    sed -i "s/$sed_from/$sed_to/" "$file"
+    python3 -c '
+import sys
+path, s_from, s_to = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r") as f:
+    content = f.read()
+if s_from not in content:
+    sys.exit(f"ERROR: mutant pattern not found in {path}: {s_from}")
+with open(path, "w") as f:
+    f.write(content.replace(s_from, s_to, 1))
+' "$file" "$sed_from" "$sed_to"
 
     # 2. Test semantic / L1-L3 proof
     if ! lake --no-ansi build "$target" > /dev/null 2>&1; then
@@ -206,6 +215,56 @@ run_mutant \
     "Shoumei.Circuits.Combinational.MuxTreeProofs" \
     "leftOut rightOut topSel output" \
     "rightOut leftOut topSel output"
+
+# Mutant 14: Gate Swap in Popcount8 (Level 0 HA XOR changed to OR)
+# Mutates sum logic in half adders, preserves exact gate count (34 gates)
+run_mutant \
+    "M14_POPCOUNT_L0_XOR_TO_OR" \
+    "Replace XOR gate with OR gate in Popcount8 Level 0 half adders" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkXOR inputs[2*i]! inputs[2*i+1]! l0_s[i]!" \
+    "Gate.mkOR inputs[2*i]! inputs[2*i+1]! l0_s[i]!"
+
+# Mutant 15: Gate Swap in Popcount8 (Level 0 HA AND changed to XOR)
+# Mutates carry logic in half adders, preserves exact gate count (34 gates)
+run_mutant \
+    "M15_POPCOUNT_L0_CARRY_AND_TO_XOR" \
+    "Replace AND gate with XOR gate in Popcount8 Level 0 carry generation" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkAND inputs[2*i]! inputs[2*i+1]! l0_c[i]!" \
+    "Gate.mkXOR inputs[2*i]! inputs[2*i+1]! l0_c[i]!"
+
+# Mutant 16: Gate Swap in Popcount8 (Level 1 2-bit adder OR changed to AND)
+# Mutates carry merge in Level 1 adder, preserves exact gate count (34 gates)
+run_mutant \
+    "M16_POPCOUNT_L1_OR_TO_AND" \
+    "Replace OR gate with AND gate in Popcount8 Level 1 carry merge" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkOR l1_t0_0 l1_t0_1 l1_0[2]!" \
+    "Gate.mkAND l1_t0_0 l1_t0_1 l1_0[2]!"
+
+# Mutant 17: Gate Swap in Popcount8 (Level 2 3-bit adder MSB OR changed to AND)
+# Mutates MSB carry in final Level 2 adder, preserves exact gate count (34 gates)
+run_mutant \
+    "M17_POPCOUNT_L2_OR_TO_AND" \
+    "Replace OR gate with AND gate in Popcount8 Level 2 MSB carry" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkOR l2_t2_0 l2_t2_1 count[3]!" \
+    "Gate.mkAND l2_t2_0 l2_t2_1 count[3]!"
+
+# Mutant 18: Wire Swap in Popcount8 (Level 2 adder input wire swap)
+# Swaps bit 0 and bit 1 sum inputs to Level 2 XOR tree, preserves exact gate count (34 gates)
+run_mutant \
+    "M18_POPCOUNT_WIRING_SWAP" \
+    "Swap Level 1 sum outputs at Level 2 adder input in Popcount8" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkXOR l1_0[0]! l1_1[0]! count[0]!" \
+    "Gate.mkXOR l1_0[1]! l1_1[0]! count[0]!"
 
 # ─── Mutation Score Summary ─────────────────────────────────
 

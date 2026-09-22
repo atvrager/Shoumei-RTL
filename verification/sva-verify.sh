@@ -123,7 +123,10 @@ elif [[ "$BACKEND" == "verilator" ]]; then
      verilator -Ioutput/sv-from-lean --assert --lint-only \
       output/sv-from-lean/Mux4x32.sv \
       output/sv-from-lean/Mux8x32.sv \
-      --top-module Mux8x32 >/dev/null 2>&1; then
+      --top-module Mux8x32 >/dev/null 2>&1 && \
+     verilator --assert --lint-only \
+      output/sv-from-lean/Popcount8.sv \
+      --top-module Popcount8 >/dev/null 2>&1; then
     echo "PASS (ASSERTIONS ACTIVE)"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -157,7 +160,10 @@ else
        verilator -Ioutput/sv-from-lean --assert --lint-only \
         output/sv-from-lean/Mux4x32.sv \
         output/sv-from-lean/Mux8x32.sv \
-        --top-module Mux8x32 >/dev/null 2>&1; then
+        --top-module Mux8x32 >/dev/null 2>&1 && \
+       verilator --assert --lint-only \
+        output/sv-from-lean/Popcount8.sv \
+        --top-module Popcount8 >/dev/null 2>&1; then
       echo "PASS (ASSERTIONS ACTIVE)"
       PASS_COUNT=$((PASS_COUNT + 1))
     else

@@ -67,6 +67,7 @@ file_to_component() {
         Circuits/Combinational/ALU*.lean)              echo "ALU32" ;;
         Circuits/Combinational/Decoder*.lean)          echo "Decoder" ;;
         Circuits/Combinational/MuxTree*.lean)          echo "MuxTree" ;;
+        Circuits/Combinational/Popcount*.lean)         echo "Popcount" ;;
         Circuits/Combinational/Arbiter*.lean)          echo "Arbiter" ;;
         Circuits/Sequential/DFF*.lean)                 echo "DFlipFlop" ;;
         Circuits/Sequential/Register*.lean)            echo "Register" ;;

@@ -195,6 +195,7 @@ inductive SVAProperty where
   | DecoupledEquiv (valA rdyA dataA valB rdyB dataB : String)
   | LogicOp (aBus bBus opBus resBus : String)
   | MuxSelect (inPrefix : String) (numInputs : Nat) (selBus outBus : String)
+  | Popcount (inBus outBus : String) (outWidth : Nat)
   deriving Repr, BEq, Inhabited, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules

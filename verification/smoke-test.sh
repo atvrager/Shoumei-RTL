@@ -256,7 +256,8 @@ for sec_artifact in output/sv-sec/Register160_sec_miter.sv \
                     output/sv-sec/LogicUnit32_sva_formal.tcl \
                     output/sv-sec/LogicUnit64_sva_formal.tcl \
                     output/sv-sec/Mux4x32_sva_formal.tcl \
-                    output/sv-sec/Mux8x32_sva_formal.tcl; do
+                    output/sv-sec/Mux8x32_sva_formal.tcl \
+                    output/sv-sec/Popcount8_sva_formal.tcl; do
     if [ -f "$sec_artifact" ]; then
         pass "SEC/SVA artifact: $(basename "$sec_artifact")"
     else

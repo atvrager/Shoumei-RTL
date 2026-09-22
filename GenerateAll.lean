@@ -485,6 +485,8 @@ def main (args : List String) : IO Unit := do
   IO.FS.writeFile (secOutputDir / "Mux4x32_sva_formal.tcl") svaFormalMux4x32
   let svaFormalMux8x32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Mux8x32" ["output/sv-from-lean/Mux4x32.sv", "output/sv-from-lean/Mux8x32.sv"] "clock" "reset" (hasClock := false)
   IO.FS.writeFile (secOutputDir / "Mux8x32_sva_formal.tcl") svaFormalMux8x32
+  let svaFormalPopcount8 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Popcount8" ["output/sv-from-lean/Popcount8.sv"] "clock" "reset" (hasClock := false)
+  IO.FS.writeFile (secOutputDir / "Popcount8_sva_formal.tcl") svaFormalPopcount8
   IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
 
   -- Generate filelist.f for each output directory

@@ -55,6 +55,7 @@ def moduleToComponent (modStr : String) (nameStr : String) : String :=
   else if s.contains "Decoder" && s.contains "RISCV" then "RV32I-Decoder"
   else if s.contains "Decoder" then "Decoder"
   else if s.contains "MuxTree" then "MuxTree"
+  else if s.contains "Popcount" then "Popcount"
   else if s.contains "Arbiter" then "Arbiter"
   else if s.contains "DFF" then "DFlipFlop"
   else if s.contains "Register" then "Register"
