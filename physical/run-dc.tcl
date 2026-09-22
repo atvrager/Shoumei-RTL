@@ -70,13 +70,18 @@ file mkdir .WORK
 define_design_lib work -path .WORK
 
 # Read RTL via directory or filelist
+set analyze_defines [list SHOUMEI_SRAM_MACROS=1]
+if {[info exists env(RTL_DEFINES)]} {
+    set analyze_defines $env(RTL_DEFINES)
+}
+
 if {[info exists env(RTL_DIR)]} {
     set sv_files [lsort [glob -nocomplain $env(RTL_DIR)/*.sv]]
     puts "INFO: Analyzing [llength $sv_files] SystemVerilog files from $env(RTL_DIR)..."
-    analyze -format sverilog -work work $sv_files
+    analyze -format sverilog -define $analyze_defines -work work $sv_files
 } elseif {[file exists $rtl_dotf]} {
     puts "INFO: Reading RTL via filelist: $rtl_dotf"
-    analyze -format sverilog -work work -vcs "-f $rtl_dotf"
+    analyze -format sverilog -define $analyze_defines -work work -vcs "-f $rtl_dotf"
 } else {
     puts "ERROR: No RTL source found (neither RTL_DIR nor $rtl_dotf exists)"
     exit 1
