@@ -20,7 +20,7 @@ def List.enum (l : List α) : List (Nat × α) :=
 -- Uses String identifier for simplicity
 structure Wire where
   name : String
-  deriving Repr, BEq, Hashable, Inhabited
+  deriving Repr, BEq, Hashable, Inhabited, DecidableEq
 
 namespace Wire
 
@@ -193,6 +193,9 @@ inductive SVAProperty where
   | EnableCapture (enWire dBus qBus : String)
   | LatencyCapture (dBus qBus : String) (cycles : Nat)
   | DecoupledEquiv (valA rdyA dataA valB rdyB dataB : String)
+  | LogicOp (aBus bBus opBus resBus : String)
+  | MuxSelect (inPrefix : String) (numInputs : Nat) (selBus outBus : String)
+  | Popcount (inBus outBus : String) (outWidth : Nat)
   deriving Repr, BEq, Inhabited, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules

@@ -129,17 +129,17 @@ Synthesized with Synopsys DC NXT using GlobalFoundries 12LPP+ 7.5T RVT standard 
 | Metric | 200 MHz Baseline | 750 MHz Pipelined |
 |---|---|---|
 | **Design** | `CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth` | `CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth` |
-| **Architecture** | Dual-dispatch ($W=2$) RV64IMAFD | Dual-dispatch ($W=2$) RV64IMAFD |
+| **Architecture** | Dual-dispatch ($W=2$) RV64IMAFD | Dual-dispatch ($W=2$) RV64IMAFD + Zb* |
 | **Clock Target** | 5.00 ns (200 MHz) | 1.333 ns (750 MHz) |
 | **Timing Status** | **Met** (WNS = 0.00 ns, 0 violations) | **Met** (WNS = 0.00 ns, 0 violations) |
-| **Critical Path Delay** | 4.85 ns | **1.27 ns** ($F_{\max} \approx 787.4\text{ MHz}$) |
-| **Max Logic Levels (Clock)** | 161 levels | **62 levels** |
-| **Total Cell Area** | $55,499.8\,\mu\text{m}^2$ ($0.0555\text{ mm}^2$) | **$57,269.8\,\mu\text{m}^2$** ($0.0573\text{ mm}^2$, +3.2%) |
-| **Combinational Area** | $35,449.5\,\mu\text{m}^2$ (63.9%) | $36,776.6\,\mu\text{m}^2$ (64.2%) |
-| **Sequential Area** | $20,050.4\,\mu\text{m}^2$ (36.1%) | $20,493.2\,\mu\text{m}^2$ (35.8%) |
-| **Leaf Cell Count** | 168,140 | 184,285 |
-| **Dynamic Power** | 3.90 mW | 14.97 mW |
-| **Leakage Power** | 12.2 µW | 13.2 µW |
+| **Critical Path Delay** | 4.85 ns | **1.29 ns** ($F_{\max} \approx 775.2\text{ MHz}$) |
+| **Max Logic Levels (Clock)** | 161 levels | **55 levels** |
+| **Total Cell Area** | $55,499.8\,\mu\text{m}^2$ ($0.0555\text{ mm}^2$) | **$61,335.7\,\mu\text{m}^2$** ($0.0613\text{ mm}^2$) |
+| **Combinational Area** | $35,449.5\,\mu\text{m}^2$ (63.9%) | $39,793.6\,\mu\text{m}^2$ (64.9%) |
+| **Sequential Area** | $20,050.4\,\mu\text{m}^2$ (36.1%) | $21,542.1\,\mu\text{m}^2$ (35.1%) |
+| **Leaf Cell Count** | 168,140 | 201,319 |
+| **Dynamic Power** | 3.90 mW | 16.11 mW |
+| **Leakage Power** | 12.2 µW | 14.4 µW |
 
 #### Pipeline Timing Cuts (750 MHz Target)
 
@@ -153,18 +153,19 @@ To eliminate long timing paths without regressing architectural correctness:
 
 | Subsystem | Area ($\mu\text{m}^2$) | Share | Notes |
 |---|---|---|---|
-| DP FP Execution Unit | 13,347.0 | 23.3% | Pipelined `FPAdderD`, `FPMulD`, `FPFMAD`, `FPDivD`, `FPSqrtD`, `FPLongConverter` |
-| Integer Rename & PRF | 12,971.8 | 22.7% | $64\times 64$-bit Integer Physical Register File + rename logic (`IntRenameStage_W2_64`) |
-| FP Rename & PRF | 9,088.9 | 15.9% | $64\times 64$-bit FP Physical Register File + rename logic (`FPRenameStage_W1_64`) |
-| Integer Mul/Div Unit | 5,758.1 | 10.1% | 64-bit Pipelined multiplier & radix-4 divider |
-| Reservation Stations | 3,717.5 | 6.5% | FP, Memory, Integer, Mul/Div, Branch (modular RS subcircuits) |
-| Load-Store Unit | 2,282.2 | 4.0% | 64-bit LSU datapath & 8-entry store buffer |
-| Queues & ROB | 2,790.1 | 4.9% | 16-entry dual-retire ROB, instruction & PC queues |
-| Integer ALU & Branch | 1,238.3 | 2.2% | Dual-issue 64-bit integer execution units & branch comparator |
-| CSR File | 534.7 | 0.9% | Modular `CSRFile_RV64IMAFD_Zicsr_Zifencei_Microcoded` |
-| Scoreboard Busy Tables | 397.1 | 0.7% | Modular `BusyTable_W2` and `FPBusyTable` |
-| Microcode & Control | 309.7 | 0.5% | Modular `TrapSequencer` and `FetchStage_W2` |
-| Glue & Clock Gating | 4,834.4 | 8.4% | CDB muxes, bypass FIFOs, comparators, ICG clock gating cells |
+| DP FP Execution Unit | 13,933.0 | 22.7% | Pipelined `FPAdderD`, `FPMulD`, `FPFMAD`, `FPDivD`, `FPSqrtD`, `FPLongConverter` |
+| Integer Rename & PRF | 12,984.8 | 21.2% | $64\times 64$-bit Integer Physical Register File + rename logic (`IntRenameStage_W2_64`) |
+| FP Rename & PRF | 9,107.2 | 14.8% | $64\times 64$-bit FP Physical Register File + rename logic (`FPRenameStage_W1_64`) |
+| Integer Mul/Div Unit | 5,767.3 | 9.4% | 64-bit Pipelined multiplier & radix-4 divider |
+| Reservation Stations | 3,778.3 | 6.2% | FP, Memory, Integer, Mul/Div, Branch (modular RS subcircuits) |
+| Microcode Zb* Sequencer | 3,063.1 | 5.0% | Microcoded sequencer for Zb* bitmanip operations (`FallbackSequencer`) |
+| Queues & ROB | 2,788.2 | 4.5% | 16-entry dual-retire ROB, instruction & PC queues |
+| Load-Store Unit | 2,417.1 | 3.9% | 64-bit LSU datapath & 8-entry store buffer |
+| Integer ALU & Branch | 1,232.6 | 2.0% | Dual-issue 64-bit integer execution units & branch comparator |
+| CSR File | 535.2 | 0.9% | Modular `CSRFile_RV64IMAFD_Zicsr_Zifencei_Microcoded` |
+| Scoreboard Busy Tables | 397.7 | 0.6% | Modular `BusyTable_W2` and `FPBusyTable` |
+| Microcode & Control | 459.0 | 0.7% | Modular `TrapSequencer`, `FetchStage_W2`, decoders |
+| Glue & Clock Gating | 4,869.3 | 7.9% | CDB muxes, bypass FIFOs, comparators, ICG clock gating cells |
 
 ---
 

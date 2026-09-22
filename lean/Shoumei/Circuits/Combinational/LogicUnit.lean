@@ -39,6 +39,12 @@ open Shoumei
 private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
   (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
+/-- Reference specification for logic unit bitwise operation. -/
+def logicOp (op1 op0 a b : Bool) : Bool :=
+  if op1 then xor a b
+  else if op0 then a || b
+  else a && b
+
 -- Helper: Build logic unit for one bit position
 -- Inputs: a_i, b_i, op0, op1
 -- Output: result_i
@@ -86,6 +92,9 @@ def mkLogicUnitN (n : Nat) : Circuit :=
       { name := "b", width := n, wires := b },
       { name := "result", width := n, wires := result },
       { name := "op", width := 2, wires := [op0, op1] }
+    ]
+    svaProperties := [
+      .LogicOp "a" "b" "op" "result"
     ]
     keepHierarchy := Nat.ble 32 n  -- Only for 32-bit variant used in ALU
   }

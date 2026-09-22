@@ -52,6 +52,7 @@ import Shoumei.Circuits.Combinational.OneHotEncoder
 import Shoumei.Circuits.Combinational.PCIncrementer
 import Shoumei.Circuits.Combinational.PCIncrementerProofs
 import Shoumei.Circuits.Combinational.Popcount
+import Shoumei.Circuits.Combinational.PopcountProofs
 import Shoumei.Circuits.Combinational.PrefixAdder
 import Shoumei.Circuits.Combinational.PrefixAdderProofs
 import Shoumei.Circuits.Combinational.RippleCarryAdder

@@ -55,6 +55,7 @@ def moduleToComponent (modStr : String) (nameStr : String) : String :=
   else if s.contains "Decoder" && s.contains "RISCV" then "RV32I-Decoder"
   else if s.contains "Decoder" then "Decoder"
   else if s.contains "MuxTree" then "MuxTree"
+  else if s.contains "Popcount" then "Popcount"
   else if s.contains "Arbiter" then "Arbiter"
   else if s.contains "DFF" then "DFlipFlop"
   else if s.contains "Register" then "Register"
@@ -87,7 +88,8 @@ def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
           nameStr.contains "rs_" || nameStr.contains "queue_fifo" ||
           nameStr.contains "invariant" || nameStr.contains "cover_all_bits" ||
           nameStr.contains "_synchronized" || nameStr.contains "_sec_" ||
-          nameStr.contains "isolation" ||
+          nameStr.contains "isolation" || nameStr.contains "nodup" ||
+          typeStr.contains "Nodup" ||
           (typeStr.contains "preserves" && !typeStr.contains "length") then
     .L2_Invariant
   else if typeStr.contains "evalCircuit" || typeStr.contains "compileCircuit" ||

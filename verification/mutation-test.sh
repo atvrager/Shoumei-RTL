@@ -37,18 +37,13 @@ TOTAL_MUTANTS=0
 L0_KILLED=0
 SEMANTIC_KILLED=0
 
-cp lean/Shoumei/Circuits/Sequential/Register.lean lean/Shoumei/Circuits/Sequential/Register.lean.bak 2>/dev/null || true
-
-# Backup modified files
+# Backup and cleanup for mutations
 cleanup() {
     echo -e "${DIM}Cleaning up mutations and restoring tree...${NC}"
-    if [ -f lean/Shoumei/Circuits/Sequential/Register.lean.bak ]; then
-        mv lean/Shoumei/Circuits/Sequential/Register.lean.bak lean/Shoumei/Circuits/Sequential/Register.lean
-    fi
-    git checkout -- \
-        lean/Shoumei/Circuits/Combinational/RippleCarryAdder.lean \
-        lean/Shoumei/Circuits/Combinational/Comparator.lean \
-        lean/Shoumei/Circuits/Sequential/Queue.lean 2>/dev/null || true
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        mv "$f" "${f%.mutbak}" 2>/dev/null || true
+    done < <(find lean -name "*.mutbak" 2>/dev/null)
 }
 trap cleanup EXIT
 
@@ -65,8 +60,18 @@ run_mutant() {
     TOTAL_MUTANTS=$((TOTAL_MUTANTS + 1))
     echo -e "${BOLD}Mutant $TOTAL_MUTANTS: $name${NC} ($desc)"
 
-    # 1. Apply mutation
-    sed -i "s/$sed_from/$sed_to/" "$file"
+    # 1. Backup and apply mutation
+    cp "$file" "$file.mutbak"
+    python3 -c '
+import sys
+path, s_from, s_to = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r") as f:
+    content = f.read()
+if s_from not in content:
+    sys.exit(f"ERROR: mutant pattern not found in {path}: {s_from}")
+with open(path, "w") as f:
+    f.write(content.replace(s_from, s_to, 1))
+' "$file" "$sed_from" "$sed_to"
 
     # 2. Test semantic / L1-L3 proof
     if ! lake --no-ansi build "$target" > /dev/null 2>&1; then
@@ -76,8 +81,8 @@ run_mutant() {
         echo -e "  Semantic Proof (L1-L3): ${RED}SURVIVED${NC} (Proof failed to catch mutation)"
     fi
 
-    # 3. Restore for clean baseline
-    git checkout -- "$file" 2>/dev/null
+    # 3. Restore from backup for clean baseline
+    mv "$file.mutbak" "$file"
     echo ""
 }
 
@@ -141,11 +146,131 @@ run_mutant \
     "Gate.mkMUX q_wires[i]! d_wires[i]! en" \
     "Gate.mkMUX d_wires[i]! q_wires[i]! en"
 
+# Mutant 7: Gate Swap in LogicUnit (AND gate changed to OR gate)
+# Breaks bitwise AND operation, preserves exact gate count (5n gates)
+run_mutant \
+    "M7_LU_AND_TO_OR" \
+    "Replace AND gate with OR gate in LogicUnit bit slice" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkAND a b and_result" \
+    "Gate.mkOR a b and_result"
+
+# Mutant 8: MUX Input Swap in LogicUnit (first-stage MUX inverts op0)
+# Swaps AND and OR in first-stage MUX, preserves exact gate count (5n gates)
+run_mutant \
+    "M8_LU_MUX_INPUT_SWAP" \
+    "Swap AND and OR inputs in LogicUnit first-stage MUX" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkMUX and_result or_result op0 mux1" \
+    "Gate.mkMUX or_result and_result op0 mux1"
+
+# Mutant 9: Stuck-At Control Line in LogicUnit (op1 tied to op0)
+# Bypasses XOR selection when op1=1, op0=0, preserves exact gate count (5n gates)
+run_mutant \
+    "M9_LU_STUCK_AT_OP0" \
+    "Tie op1 select to op0 in LogicUnit second-stage MUX" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkMUX mux1 xor_result op1 result" \
+    "Gate.mkMUX mux1 xor_result op0 result"
+
+# Mutant 10: Gate Swap in MuxTree (OR gate changed to AND gate in mkMux2Bit)
+# Collapses multiplexer output to 0, preserves exact gate count (4w gates)
+run_mutant \
+    "M10_MUX_OR_TO_AND" \
+    "Replace OR gate with AND gate in mkMux2Bit output stage" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkOR and0 and1 out" \
+    "Gate.mkAND and0 and1 out"
+
+# Mutant 11: Gate Swap in MuxTree (NOT gate on select changed to BUF)
+# Inverts select condition for in0 path, preserves exact gate count (4w gates)
+run_mutant \
+    "M11_MUX_NOT_TO_BUF" \
+    "Replace NOT gate with BUF on select line in mkMux2Bit" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkNOT sel notSel" \
+    "Gate.mkBUF sel notSel"
+
+# Mutant 12: Input Wiring Swap in MuxTree (in0 and in1 swapped in mkMux2Bit)
+# Routes wrong input port, preserves exact gate count (4w gates)
+run_mutant \
+    "M12_MUX_INPUT_SWAP" \
+    "Swap in0 and in1 connections in mkMux2Bit data AND gates" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkAND notSel in0 and0" \
+    "Gate.mkAND notSel in1 and0"
+
+# Mutant 13: Subtree Routing Swap in MuxTree (leftOut and rightOut swapped in recursive tree)
+# Swaps upper and lower half inputs across multi-level tree, preserves exact gate count
+run_mutant \
+    "M13_MUX_TREE_SWAP" \
+    "Swap left and right subtree connections in mkMuxTreeGates" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "leftOut rightOut topSel output" \
+    "rightOut leftOut topSel output"
+
+# Mutant 14: Gate Swap in Popcount8 (Level 0 HA XOR changed to OR)
+# Mutates sum logic in half adders, preserves exact gate count (34 gates)
+run_mutant \
+    "M14_POPCOUNT_L0_XOR_TO_OR" \
+    "Replace XOR gate with OR gate in Popcount8 Level 0 half adders" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkXOR inputs[2*i]! inputs[2*i+1]! l0_s[i]!" \
+    "Gate.mkOR inputs[2*i]! inputs[2*i+1]! l0_s[i]!"
+
+# Mutant 15: Gate Swap in Popcount8 (Level 0 HA AND changed to XOR)
+# Mutates carry logic in half adders, preserves exact gate count (34 gates)
+run_mutant \
+    "M15_POPCOUNT_L0_CARRY_AND_TO_XOR" \
+    "Replace AND gate with XOR gate in Popcount8 Level 0 carry generation" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkAND inputs[2*i]! inputs[2*i+1]! l0_c[i]!" \
+    "Gate.mkXOR inputs[2*i]! inputs[2*i+1]! l0_c[i]!"
+
+# Mutant 16: Gate Swap in Popcount8 (Level 1 2-bit adder OR changed to AND)
+# Mutates carry merge in Level 1 adder, preserves exact gate count (34 gates)
+run_mutant \
+    "M16_POPCOUNT_L1_OR_TO_AND" \
+    "Replace OR gate with AND gate in Popcount8 Level 1 carry merge" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkOR l1_t0_0 l1_t0_1 l1_0[2]!" \
+    "Gate.mkAND l1_t0_0 l1_t0_1 l1_0[2]!"
+
+# Mutant 17: Gate Swap in Popcount8 (Level 2 3-bit adder MSB OR changed to AND)
+# Mutates MSB carry in final Level 2 adder, preserves exact gate count (34 gates)
+run_mutant \
+    "M17_POPCOUNT_L2_OR_TO_AND" \
+    "Replace OR gate with AND gate in Popcount8 Level 2 MSB carry" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkOR l2_t2_0 l2_t2_1 count[3]!" \
+    "Gate.mkAND l2_t2_0 l2_t2_1 count[3]!"
+
+# Mutant 18: Wire Swap in Popcount8 (Level 2 adder input wire swap)
+# Swaps bit 0 and bit 1 sum inputs to Level 2 XOR tree, preserves exact gate count (34 gates)
+run_mutant \
+    "M18_POPCOUNT_WIRING_SWAP" \
+    "Swap Level 1 sum outputs at Level 2 adder input in Popcount8" \
+    "lean/Shoumei/Circuits/Combinational/Popcount.lean" \
+    "Shoumei.Circuits.Combinational.PopcountProofs" \
+    "Gate.mkXOR l1_0[0]! l1_1[0]! count[0]!" \
+    "Gate.mkXOR l1_0[1]! l1_1[0]! count[0]!"
+
 # ─── Mutation Score Summary ─────────────────────────────────
 
 SEM_SCORE=$(( (SEMANTIC_KILLED * 100) / TOTAL_MUTANTS ))
-# L0 structural proofs check gate count only. Because all 6 mutations preserve
-# gate count (44, 20, n, and 2n gates), 0% of mutants are killed by L0.
+# L0 structural proofs check gate count only. Because all mutations preserve
+# gate count, 0% of mutants are killed by L0.
 L0_SCORE=$(( (L0_KILLED * 100) / TOTAL_MUTANTS ))
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

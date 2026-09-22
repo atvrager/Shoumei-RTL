@@ -38,6 +38,7 @@ module CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth (
     .mtip_in(mtip_in),
     .msip_in(msip_in),
     .meip_in(meip_in),
+    .fence_i_busy(1'b0),
     .imem_resp_data_0(imem_resp_data_0),
     .imem_resp_data_1(imem_resp_data_1),
     .dmem_req_ready(dmem_req_ready),
