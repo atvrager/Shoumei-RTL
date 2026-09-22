@@ -167,11 +167,51 @@ run_mutant \
     "Gate.mkMUX mux1 xor_result op1 result" \
     "Gate.mkMUX mux1 xor_result op0 result"
 
+# Mutant 10: Gate Swap in MuxTree (OR gate changed to AND gate in mkMux2Bit)
+# Collapses multiplexer output to 0, preserves exact gate count (4w gates)
+run_mutant \
+    "M10_MUX_OR_TO_AND" \
+    "Replace OR gate with AND gate in mkMux2Bit output stage" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkOR and0 and1 out" \
+    "Gate.mkAND and0 and1 out"
+
+# Mutant 11: Gate Swap in MuxTree (NOT gate on select changed to BUF)
+# Inverts select condition for in0 path, preserves exact gate count (4w gates)
+run_mutant \
+    "M11_MUX_NOT_TO_BUF" \
+    "Replace NOT gate with BUF on select line in mkMux2Bit" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkNOT sel notSel" \
+    "Gate.mkBUF sel notSel"
+
+# Mutant 12: Input Wiring Swap in MuxTree (in0 and in1 swapped in mkMux2Bit)
+# Routes wrong input port, preserves exact gate count (4w gates)
+run_mutant \
+    "M12_MUX_INPUT_SWAP" \
+    "Swap in0 and in1 connections in mkMux2Bit data AND gates" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "Gate.mkAND notSel in0 and0" \
+    "Gate.mkAND notSel in1 and0"
+
+# Mutant 13: Subtree Routing Swap in MuxTree (leftOut and rightOut swapped in recursive tree)
+# Swaps upper and lower half inputs across multi-level tree, preserves exact gate count
+run_mutant \
+    "M13_MUX_TREE_SWAP" \
+    "Swap left and right subtree connections in mkMuxTreeGates" \
+    "lean/Shoumei/Circuits/Combinational/MuxTree.lean" \
+    "Shoumei.Circuits.Combinational.MuxTreeProofs" \
+    "leftOut rightOut topSel output" \
+    "rightOut leftOut topSel output"
+
 # ─── Mutation Score Summary ─────────────────────────────────
 
 SEM_SCORE=$(( (SEMANTIC_KILLED * 100) / TOTAL_MUTANTS ))
 # L0 structural proofs check gate count only. Because all mutations preserve
-# gate count (44, 20, 5n, n, and 2n gates), 0% of mutants are killed by L0.
+# gate count, 0% of mutants are killed by L0.
 L0_SCORE=$(( (L0_KILLED * 100) / TOTAL_MUTANTS ))
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

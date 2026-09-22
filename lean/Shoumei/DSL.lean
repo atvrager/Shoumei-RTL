@@ -194,6 +194,7 @@ inductive SVAProperty where
   | LatencyCapture (dBus qBus : String) (cycles : Nat)
   | DecoupledEquiv (valA rdyA dataA valB rdyB dataB : String)
   | LogicOp (aBus bBus opBus resBus : String)
+  | MuxSelect (inPrefix : String) (numInputs : Nat) (selBus outBus : String)
   deriving Repr, BEq, Inhabited, Hashable
 
 -- Circuit: a complete circuit with inputs, outputs, gates, and submodules

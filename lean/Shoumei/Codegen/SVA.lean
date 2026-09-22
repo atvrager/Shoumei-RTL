@@ -173,6 +173,27 @@ def generateProperty (clk rst : String) (hasClock : Bool) (prop : SVAProperty) (
         s!"    if ({opBus}[1] == 1'b1) assert_logic_xor_{idx}: assert ({resBus} == ({aBus} ^ {bBus}));\n" ++
         s!"  end\n"
 
+  | .MuxSelect inPrefix numInputs selBus outBus =>
+      let selWidth := if numInputs <= 1 then 1 else Nat.log2 numInputs + (if 2^(Nat.log2 numInputs) < numInputs then 1 else 0)
+      if hasClock then
+        let props := (List.range numInputs).map (fun k =>
+          s!"  // Formal Property: Mux select input {k} (clocked)\n" ++
+          s!"  property p_mux_sel_{k}_{idx};\n" ++
+          s!"    {clkExpr} {disableExpr}\n" ++
+          s!"    ({selBus} == {selWidth}'d{k}) |-> ({outBus} == {inPrefix}{k});\n" ++
+          s!"  endproperty\n" ++
+          s!"  assert_mux_sel_{k}_{idx}: assert property (p_mux_sel_{k}_{idx});\n"
+        )
+        String.intercalate "\n" props
+      else
+        let asserts := (List.range numInputs).map (fun k =>
+          s!"    if ({selBus} == {selWidth}'d{k}) assert_mux_sel_{k}_{idx}: assert ({outBus} == {inPrefix}{k});\n"
+        )
+        s!"  // Formal Property: Mux selection truth table (combinational)\n" ++
+        s!"  always_comb begin\n" ++
+        String.join asserts ++
+        s!"  end\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""

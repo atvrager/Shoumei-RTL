@@ -53,6 +53,14 @@ def MuxTreeState.mk' {n width : Nat} (inputs : Fin n → List Bool) (select : Fi
 def muxSelect {n width : Nat} (inputs : Fin n → List Bool) (select : Fin n) : MuxTreeState n width :=
   MuxTreeState.mk' inputs select
 
+/-- Reference specification for 2:1 multiplexer bit-level selection. -/
+def mux2 (sel in0 in1 : Bool) : Bool :=
+  if sel then in1 else in0
+
+/-- Reference specification for N-to-1 multiplexer bit-level selection with bounded index. -/
+def muxTreeBitSpec (inputs : List Bool) (sel : Nat) : Bool :=
+  inputs.getD sel false
+
 /-! ## Structural Circuit Helpers -/
 
 -- Helper: Create indexed wires
@@ -218,6 +226,9 @@ def mkMuxTree (n width : Nat) : Circuit :=
         { name := "sel", width := numSelBits, wires := selWires },
         { name := "out", width := width, wires := outputWires }
       ]
+      svaProperties := [
+        .MuxSelect "in" n "sel" "out"
+      ]
     }
 
 /-! ## Concrete Examples -/
@@ -318,6 +329,9 @@ def mkMux8xNHierarchical (width : Nat) : Circuit :=
       { name := "sel", width := 3, wires := selWires },
       { name := "out", width := width, wires := outputWires }
     ]
+    svaProperties := [
+      .MuxSelect "in" 8 "sel" "out"
+    ]
     keepHierarchy := true
   }
 
@@ -413,6 +427,9 @@ def mkMux64xNHierarchical (width : Nat) : Circuit :=
     signalGroups := inputGroups ++ [
       { name := "sel", width := 6, wires := selWires },
       { name := "out", width := width, wires := outputWires }
+    ]
+    svaProperties := [
+      .MuxSelect "in" 64 "sel" "out"
     ]
     keepHierarchy := true  -- Prevent Yosys from flattening (high-fanout select lines)
   }

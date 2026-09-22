@@ -119,7 +119,11 @@ elif [[ "$BACKEND" == "verilator" ]]; then
       --top-module Register160 >/dev/null 2>&1 && \
      verilator --assert --lint-only \
       output/sv-from-lean/LogicUnit32.sv \
-      --top-module LogicUnit32 >/dev/null 2>&1; then
+      --top-module LogicUnit32 >/dev/null 2>&1 && \
+     verilator -Ioutput/sv-from-lean --assert --lint-only \
+      output/sv-from-lean/Mux4x32.sv \
+      output/sv-from-lean/Mux8x32.sv \
+      --top-module Mux8x32 >/dev/null 2>&1; then
     echo "PASS (ASSERTIONS ACTIVE)"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -149,7 +153,11 @@ else
         --top-module Register160 >/dev/null 2>&1 && \
        verilator --assert --lint-only \
         output/sv-from-lean/LogicUnit32.sv \
-        --top-module LogicUnit32 >/dev/null 2>&1; then
+        --top-module LogicUnit32 >/dev/null 2>&1 && \
+       verilator -Ioutput/sv-from-lean --assert --lint-only \
+        output/sv-from-lean/Mux4x32.sv \
+        output/sv-from-lean/Mux8x32.sv \
+        --top-module Mux8x32 >/dev/null 2>&1; then
       echo "PASS (ASSERTIONS ACTIVE)"
       PASS_COUNT=$((PASS_COUNT + 1))
     else
