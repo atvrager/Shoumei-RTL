@@ -252,7 +252,9 @@ echo "==> SEC & SVA Verification"
 for sec_artifact in output/sv-sec/Register160_sec_miter.sv \
                     output/sv-sec/Register160_yosys.tcl \
                     output/sv-sec/Register160_sva_formal.tcl \
-                    output/sv-sec/RegisterEn64_sva_formal.tcl; do
+                    output/sv-sec/RegisterEn64_sva_formal.tcl \
+                    output/sv-sec/LogicUnit32_sva_formal.tcl \
+                    output/sv-sec/LogicUnit64_sva_formal.tcl; do
     if [ -f "$sec_artifact" ]; then
         pass "SEC/SVA artifact: $(basename "$sec_artifact")"
     else

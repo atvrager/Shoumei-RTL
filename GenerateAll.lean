@@ -477,6 +477,10 @@ def main (args : List String) : IO Unit := do
   IO.FS.writeFile (secOutputDir / "Register160_sva_formal.tcl") svaFormal160
   let svaFormalEn64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "RegisterEn64" ["output/sv-from-lean/RegisterEn64.sv"]
   IO.FS.writeFile (secOutputDir / "RegisterEn64_sva_formal.tcl") svaFormalEn64
+  let svaFormalLogicUnit32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit32" ["output/sv-from-lean/LogicUnit32.sv"] "clock" "reset" (hasClock := false)
+  IO.FS.writeFile (secOutputDir / "LogicUnit32_sva_formal.tcl") svaFormalLogicUnit32
+  let svaFormalLogicUnit64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit64" ["output/sv-from-lean/LogicUnit64.sv"] "clock" "reset" (hasClock := false)
+  IO.FS.writeFile (secOutputDir / "LogicUnit64_sva_formal.tcl") svaFormalLogicUnit64
   IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
 
   -- Generate filelist.f for each output directory

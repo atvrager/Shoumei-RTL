@@ -87,7 +87,8 @@ def classifyProof (nameStr : String) (typeStr : String) : ProofLevel :=
           nameStr.contains "rs_" || nameStr.contains "queue_fifo" ||
           nameStr.contains "invariant" || nameStr.contains "cover_all_bits" ||
           nameStr.contains "_synchronized" || nameStr.contains "_sec_" ||
-          nameStr.contains "isolation" ||
+          nameStr.contains "isolation" || nameStr.contains "nodup" ||
+          typeStr.contains "Nodup" ||
           (typeStr.contains "preserves" && !typeStr.contains "length") then
     .L2_Invariant
   else if typeStr.contains "evalCircuit" || typeStr.contains "compileCircuit" ||

@@ -16,7 +16,7 @@ namespace Shoumei.Codegen.SVA
 open Shoumei
 
 /-- Generate a single SVA property string. -/
-def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : String :=
+def generateProperty (clk rst : String) (hasClock : Bool) (prop : SVAProperty) (idx : Nat) : String :=
   let clkExpr := s!"@(posedge {clk})"
   let disableExpr := s!"disable iff ({rst})"
   match prop with
@@ -147,13 +147,40 @@ def generateProperty (clk rst : String) (prop : SVAProperty) (idx : Nat) : Strin
       s!"  endproperty\n" ++
       s!"  assert_decoupled_equiv_{idx}: assert property (p_decoupled_equiv_{idx});\n"
 
+  | .LogicOp aBus bBus opBus resBus =>
+      if hasClock then
+        s!"  // Formal Property: LogicUnit functional truth table (clocked)\n" ++
+        s!"  property p_logic_and_{idx};\n" ++
+        s!"    {clkExpr} {disableExpr}\n" ++
+        s!"    ({opBus} == 2'b00) |-> ({resBus} == ({aBus} & {bBus}));\n" ++
+        s!"  endproperty\n" ++
+        s!"  assert_logic_and_{idx}: assert property (p_logic_and_{idx});\n\n" ++
+        s!"  property p_logic_or_{idx};\n" ++
+        s!"    {clkExpr} {disableExpr}\n" ++
+        s!"    ({opBus} == 2'b01) |-> ({resBus} == ({aBus} | {bBus}));\n" ++
+        s!"  endproperty\n" ++
+        s!"  assert_logic_or_{idx}: assert property (p_logic_or_{idx});\n\n" ++
+        s!"  property p_logic_xor_{idx};\n" ++
+        s!"    {clkExpr} {disableExpr}\n" ++
+        s!"    ({opBus}[1] == 1'b1) |-> ({resBus} == ({aBus} ^ {bBus}));\n" ++
+        s!"  endproperty\n" ++
+        s!"  assert_logic_xor_{idx}: assert property (p_logic_xor_{idx});\n"
+      else
+        s!"  // Formal Property: LogicUnit functional truth table (combinational)\n" ++
+        s!"  always_comb begin\n" ++
+        s!"    if ({opBus} == 2'b00) assert_logic_and_{idx}: assert ({resBus} == ({aBus} & {bBus}));\n" ++
+        s!"    if ({opBus} == 2'b01) assert_logic_or_{idx}: assert ({resBus} == ({aBus} | {bBus}));\n" ++
+        s!"    if ({opBus}[1] == 1'b1) assert_logic_xor_{idx}: assert ({resBus} == ({aBus} ^ {bBus}));\n" ++
+        s!"  end\n"
+
 /-- Emit all formal SVA assertions for a circuit if any exist. -/
 def emitSVA (c : Circuit) (clockWires resetWires : List Wire) : String :=
   if c.svaProperties.isEmpty then ""
   else
+    let hasClock := !clockWires.isEmpty
     let clk := clockWires.head?.map (·.name) |>.getD "clock"
     let rst := resetWires.head?.map (·.name) |>.getD "reset"
-    let props := c.svaProperties.enum.map (fun (idx, p) => generateProperty clk rst p idx)
+    let props := c.svaProperties.enum.map (fun (idx, p) => generateProperty clk rst hasClock p idx)
     let body := String.intercalate "\n" props
     s!"`ifdef FORMAL\n" ++
     s!"  `define SHOUMEI_FORMAL_ASSERT\n" ++

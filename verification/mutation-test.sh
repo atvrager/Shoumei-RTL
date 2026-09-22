@@ -37,18 +37,13 @@ TOTAL_MUTANTS=0
 L0_KILLED=0
 SEMANTIC_KILLED=0
 
-cp lean/Shoumei/Circuits/Sequential/Register.lean lean/Shoumei/Circuits/Sequential/Register.lean.bak 2>/dev/null || true
-
-# Backup modified files
+# Backup and cleanup for mutations
 cleanup() {
     echo -e "${DIM}Cleaning up mutations and restoring tree...${NC}"
-    if [ -f lean/Shoumei/Circuits/Sequential/Register.lean.bak ]; then
-        mv lean/Shoumei/Circuits/Sequential/Register.lean.bak lean/Shoumei/Circuits/Sequential/Register.lean
-    fi
-    git checkout -- \
-        lean/Shoumei/Circuits/Combinational/RippleCarryAdder.lean \
-        lean/Shoumei/Circuits/Combinational/Comparator.lean \
-        lean/Shoumei/Circuits/Sequential/Queue.lean 2>/dev/null || true
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        mv "$f" "${f%.mutbak}" 2>/dev/null || true
+    done < <(find lean -name "*.mutbak" 2>/dev/null)
 }
 trap cleanup EXIT
 
@@ -65,7 +60,8 @@ run_mutant() {
     TOTAL_MUTANTS=$((TOTAL_MUTANTS + 1))
     echo -e "${BOLD}Mutant $TOTAL_MUTANTS: $name${NC} ($desc)"
 
-    # 1. Apply mutation
+    # 1. Backup and apply mutation
+    cp "$file" "$file.mutbak"
     sed -i "s/$sed_from/$sed_to/" "$file"
 
     # 2. Test semantic / L1-L3 proof
@@ -76,8 +72,8 @@ run_mutant() {
         echo -e "  Semantic Proof (L1-L3): ${RED}SURVIVED${NC} (Proof failed to catch mutation)"
     fi
 
-    # 3. Restore for clean baseline
-    git checkout -- "$file" 2>/dev/null
+    # 3. Restore from backup for clean baseline
+    mv "$file.mutbak" "$file"
     echo ""
 }
 
@@ -141,11 +137,41 @@ run_mutant \
     "Gate.mkMUX q_wires[i]! d_wires[i]! en" \
     "Gate.mkMUX d_wires[i]! q_wires[i]! en"
 
+# Mutant 7: Gate Swap in LogicUnit (AND gate changed to OR gate)
+# Breaks bitwise AND operation, preserves exact gate count (5n gates)
+run_mutant \
+    "M7_LU_AND_TO_OR" \
+    "Replace AND gate with OR gate in LogicUnit bit slice" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkAND a b and_result" \
+    "Gate.mkOR a b and_result"
+
+# Mutant 8: MUX Input Swap in LogicUnit (first-stage MUX inverts op0)
+# Swaps AND and OR in first-stage MUX, preserves exact gate count (5n gates)
+run_mutant \
+    "M8_LU_MUX_INPUT_SWAP" \
+    "Swap AND and OR inputs in LogicUnit first-stage MUX" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkMUX and_result or_result op0 mux1" \
+    "Gate.mkMUX or_result and_result op0 mux1"
+
+# Mutant 9: Stuck-At Control Line in LogicUnit (op1 tied to op0)
+# Bypasses XOR selection when op1=1, op0=0, preserves exact gate count (5n gates)
+run_mutant \
+    "M9_LU_STUCK_AT_OP0" \
+    "Tie op1 select to op0 in LogicUnit second-stage MUX" \
+    "lean/Shoumei/Circuits/Combinational/LogicUnit.lean" \
+    "Shoumei.Circuits.Combinational.LogicUnitProofs" \
+    "Gate.mkMUX mux1 xor_result op1 result" \
+    "Gate.mkMUX mux1 xor_result op0 result"
+
 # ─── Mutation Score Summary ─────────────────────────────────
 
 SEM_SCORE=$(( (SEMANTIC_KILLED * 100) / TOTAL_MUTANTS ))
-# L0 structural proofs check gate count only. Because all 6 mutations preserve
-# gate count (44, 20, n, and 2n gates), 0% of mutants are killed by L0.
+# L0 structural proofs check gate count only. Because all mutations preserve
+# gate count (44, 20, 5n, n, and 2n gates), 0% of mutants are killed by L0.
 L0_SCORE=$(( (L0_KILLED * 100) / TOTAL_MUTANTS ))
 
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
