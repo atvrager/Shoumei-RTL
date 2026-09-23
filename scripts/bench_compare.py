@@ -44,7 +44,7 @@ def parse_run_csv(path: Path) -> dict[str, dict]:
 
 
 def parse_bench_csv(path: Path) -> dict[str, tuple[int | None, int | None]]:
-    """bench-metrics.csv: name,throughput_cpi_milli,latency_cpi_milli."""
+    """bench-metrics.csv: name,peak_ipc_milli,dependent_ipc_milli (or legacy cpi)."""
     rows: dict[str, tuple[int | None, int | None]] = {}
     if not path.exists():
         return rows
@@ -53,8 +53,8 @@ def parse_bench_csv(path: Path) -> dict[str, tuple[int | None, int | None]]:
             names = row.get("name", "").strip()
             if not names or names.startswith("name"):
                 continue
-            thr = _int_or_none(row.get("throughput_cpi_milli"))
-            lat = _int_or_none(row.get("latency_cpi_milli"))
+            thr = _int_or_none(row.get("peak_ipc_milli") or row.get("throughput_ipc_milli") or row.get("throughput_cpi_milli"))
+            lat = _int_or_none(row.get("dependent_ipc_milli") or row.get("latency_ipc_milli") or row.get("latency_cpi_milli"))
             rows[names] = (thr, lat)
     return rows
 
@@ -89,23 +89,26 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
         "// Auto-generated from measured benchmark data. DO NOT EDIT.",
         "// Regenerate with: make run-benchmarks bench-compare",
         "//",
-        "// cpi_milli is cycles-per-instruction * 1000 (1000 == 1.0 CPI).",
-        "// latency_cpi_milli is 0 for benchmarks without a dependency chain.",
+        "// peak_ipc_milli is instructions-per-cycle * 1000 (1000 == 1.0 IPC).",
+        "// dependent_ipc_milli is 0 for benchmarks without a dependency chain.",
         "#pragma once",
         "",
         "#include <cstdint>",
         "",
         "struct BenchMetric {",
         "    const char* name;",
-        "    uint16_t cpi_milli;",
-        "    uint16_t latency_cpi_milli;",
+        "    uint16_t peak_ipc_milli;",
+        "    uint16_t dependent_ipc_milli;",
+        "    // Backwards-compatible aliases",
+        "    uint16_t cpi_milli() const { return peak_ipc_milli ? 1000000 / peak_ipc_milli : 0; }",
+        "    uint16_t latency_cpi_milli() const { return dependent_ipc_milli ? 1000000 / dependent_ipc_milli : 0; }",
         "};",
         "",
         "static constexpr BenchMetric kBENCH_METRICS[] = {",
     ]
     for b in benchmarks:
-        thr = min(b["throughput_cpi_milli"] or 0, MAX_CPI_MILLI)
-        lat = min(b["latency_cpi_milli"] or 0, MAX_CPI_MILLI)
+        thr = min(b["peak_ipc_milli"] or 0, MAX_CPI_MILLI)
+        lat = min(b["dependent_ipc_milli"] or 0, MAX_CPI_MILLI)
         lines.append(f'    {{"{b["name"]}", {thr}, {lat}}},')
     lines.append("};")
     lines.append("")
@@ -140,6 +143,8 @@ def main() -> int:
         benchmarks.append({
             "name": name,
             "kind": kind,
+            "peak_ipc_milli": thr_milli,
+            "dependent_ipc_milli": lat_milli,
             "throughput_cpi_milli": thr_milli,
             "latency_cpi_milli": lat_milli,
             "rtl_cycles": rtl.get("cycles"),
@@ -155,10 +160,10 @@ def main() -> int:
     emit_header(benchmarks, args.out)
 
     print(f"bench-compare: {len(benchmarks)} benchmarks (cpu={cpu_name})")
-    print(f"{'name':<18}{'thr_cpi':>9}{'lat_cpi':>9}")
+    print(f"{'name':<18}{'peak_ipc':>9}{'dep_ipc':>9}")
     for b in benchmarks:
-        thr = str(b["throughput_cpi_milli"]) if b["throughput_cpi_milli"] is not None else "-"
-        lat = str(b["latency_cpi_milli"]) if b["latency_cpi_milli"] is not None else "-"
+        thr = str(b["peak_ipc_milli"]) if b["peak_ipc_milli"] is not None else "-"
+        lat = str(b["dependent_ipc_milli"]) if b["dependent_ipc_milli"] is not None else "-"
         print(f'{b["name"]:<18}{thr:>9}{lat:>9}')
     return 0
 

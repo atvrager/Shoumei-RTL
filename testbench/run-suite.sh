@@ -185,10 +185,10 @@ while read -r _timeout elf; do
     echo "$name,$status,$cycles,$retired,$ipc" >> "$CSV"
 done < "$JOBS_FILE"
 
-# Aggregate per-benchmark CPI rows into the suite bench CSV (input order):
-# name,throughput_cpi_milli,latency_cpi_milli
+# Aggregate per-benchmark IPC rows into the suite bench CSV (input order):
+# name,peak_ipc_milli,dependent_ipc_milli
 if [[ -n "$BENCH_CSV" && "$BENCH_CSV" != "/dev/null" ]]; then
-    printf 'name,throughput_cpi_milli,latency_cpi_milli\n' > "$BENCH_CSV"
+    printf 'name,peak_ipc_milli,dependent_ipc_milli\n' > "$BENCH_CSV"
     while read -r _t elf; do
         name="$(basename "$elf")"
         rec="$OUT_DIR/bench_$name"

@@ -64,7 +64,7 @@ def classify_instruction(name: str) -> tuple[str, str]:
     return ("RV64I (Base)", "ALU0 / ALU1")
 
 
-def format_cpi(milli_str: str | None) -> str:
+def format_ipc(milli_str: str | None) -> str:
     if not milli_str or milli_str.strip() in ("", "-"):
         return "—"
     try:
@@ -230,28 +230,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="header">
   <a href="index.html" class="back-link">&larr; Back to Architecture Visualizer Hub</a>
   <h1>Shoumei RV64G CPU — Instruction Performance &amp; Benchmark Suite</h1>
-  <div class="sub">Cycle-accurate performance (CPI &amp; Latency) measured across all 171 RV64G + Zb* instructions in Verilator RTL simulation</div>
+  <div class="sub">Cycle-accurate performance (Instructions Per Cycle — IPC) measured across all 171 RV64G + Zb* instructions in Verilator RTL simulation (higher is better)</div>
 </div>
 
 <div class="stats-grid">
-<div class="stat-card">
-      <div class="stat-val">__COUNT__</div>
-      <div class="stat-label">Instructions Benchmarked</div>
-    </div>
   <div class="stat-card">
-    <div class="stat-val">0.639 CPI</div>
-    <div class="stat-label">Peak Throughput (1.56 IPC Dual-Issue ALU)</div>
+    <div class="stat-val">__COUNT__</div>
+    <div class="stat-label">Instructions Benchmarked</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val">1.000 CPI</div>
-    <div class="stat-label">Pipelined FPU (FADD / FMUL)</div>
+    <div class="stat-val">__STAT_PEAK_IPC__</div>
+    <div class="stat-label">Peak Dual-Issue ALU (IPC)</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val">52–63 CPI</div>
+    <div class="stat-val">__STAT_FPU_IPC__</div>
+    <div class="stat-label">Pipelined FPU Peak (IPC)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val">__STAT_DIV_IPC__</div>
     <div class="stat-label">Iterative Integer / FP SRT Divide</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val">5.895 CPI</div>
+    <div class="stat-val">__STAT_ZB_IPC__</div>
     <div class="stat-label">Zb* Microcode Fallback (Serialized)</div>
   </div>
 </div>
@@ -259,7 +259,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="caveat-box">
   <h3><span>&#9888;</span> Architectural Caveats &amp; Performance Notes</h3>
   <ul>
-    <li><strong>Microcoded Zb* Bitmanip Instructions:</strong> Un-decoded Zb* bitmanip operations (<code>sh1add</code>, <code>bset</code>, <code>bclr</code>, <code>binv</code>, <code>clmul</code>, <code>min</code>, <code>max</code>, <code>rol</code>, <code>ror</code>, etc.) are emulated via microcode fallback in <code>FallbackSequencer</code>. Each fallback instruction completely drains and serializes the pipeline, flushes stale fetches, and executes sequentially (<strong>~5.895 CPI &mdash; <em>these are microcoded and thus suck</em></strong> &#128521;). Dedicated single-cycle hardware execution units are planned for future revisions.</li>
+    <li><strong>Microcoded Zb* Bitmanip Instructions:</strong> Un-decoded Zb* bitmanip operations (<code>sh1add</code>, <code>bset</code>, <code>bclr</code>, <code>binv</code>, <code>clmul</code>, <code>min</code>, <code>max</code>, <code>rol</code>, <code>ror</code>, etc.) are emulated via microcode fallback in <code>FallbackSequencer</code>. Each fallback instruction completely drains and serializes the pipeline, flushes stale fetches, and executes sequentially (<strong>~0.170 IPC &mdash; <em>these are microcoded and thus suck</em></strong> &#128521;). Dedicated single-cycle hardware execution units are planned for future revisions.</li>
     <li><strong>Atomic Memory Operations (AMO):</strong> All AMOs serialize at the Store Buffer and memory hierarchy boundary to guarantee sequential consistency.</li>
     <li><strong>CSR Instructions:</strong> Control and status register instructions (<code>csrrw</code>, <code>csrrs</code>, etc.) serialize the pipeline and execute via <code>CSRFile</code>, bypassing the standard ROB integer retirement path (and do not increment <code>minstret</code> in hardware).</li>
   </ul>
@@ -281,8 +281,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <tr>
       <th style="width: 180px;">Instruction</th>
       <th style="width: 140px;">Extension</th>
-      <th style="width: 130px;">Throughput CPI</th>
-      <th style="width: 130px;">Latency CPI</th>
+      <th style="width: 150px;">Peak IPC (Throughput)</th>
+      <th style="width: 160px;">Dependent IPC (Latency)</th>
       <th>Pipeline Unit / Execution Path</th>
     </tr>
   </thead>
@@ -361,8 +361,22 @@ def main(argv: list[str] | None = None) -> int:
                 name = row.get("name", "").strip()
                 if not name or name.startswith("name"):
                     continue
-                metrics[name] = (row.get("throughput_cpi_milli", ""),
-                                 row.get("latency_cpi_milli", ""))
+                is_ipc = bool(row.get("peak_ipc_milli") or row.get("throughput_ipc_milli"))
+                thr = (row.get("peak_ipc_milli") or row.get("throughput_ipc_milli") or row.get("throughput_cpi_milli", "")).strip()
+                lat = (row.get("dependent_ipc_milli") or row.get("latency_ipc_milli") or row.get("latency_cpi_milli", "")).strip()
+                if not is_ipc and thr and thr != "-":
+                    try:
+                        cpi = int(thr)
+                        thr = str(1000000 // cpi) if cpi > 0 else "-"
+                    except ValueError:
+                        pass
+                if not is_ipc and lat and lat != "-":
+                    try:
+                        cpi = int(lat)
+                        lat = str(1000000 // cpi) if cpi > 0 else "-"
+                    except ValueError:
+                        pass
+                metrics[name] = (thr, lat)
 
     for p in programs:
         name = p.get("name", "")
@@ -375,11 +389,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Warning: neither {metrics_csv} nor {programs_json} found; skipping benchmarks.html")
         return 0
 
+    # Compute dynamic summary stat cards
+    alu_ipcs = []
+    fpu_ipcs = []
+    div_ipcs = []
+    zb_ipcs = []
+
     table_rows: list[str] = []
     for name, thr_raw, lat_raw in sorted(items, key=lambda x: x[0]):
         ext, unit = classify_instruction(name)
-        thr_cpi = format_cpi(thr_raw)
-        lat_cpi = format_cpi(lat_raw)
+        thr_ipc = format_ipc(thr_raw)
+        lat_ipc = format_ipc(lat_raw)
+
+        try:
+            thr_val = int(thr_raw) / 1000.0 if thr_raw and thr_raw != "-" else None
+        except ValueError:
+            thr_val = None
+
+        if thr_val is not None:
+            if "ALU0 / ALU1" in unit:
+                alu_ipcs.append(thr_val)
+            elif "FPExecUnit" in unit:
+                fpu_ipcs.append(thr_val)
+            elif "Divider" in unit or "div" in name:
+                div_ipcs.append(thr_val)
+            elif ext.startswith("Zb"):
+                zb_ipcs.append(thr_val)
 
         badge_cls = "badge"
         if ext.startswith("Zb"):
@@ -393,15 +428,26 @@ def main(argv: list[str] | None = None) -> int:
             f'<tr data-name="{name}" data-ext="{ext}">'
             f'<td class="mnemonic">{name}</td>'
             f'<td><span class="{badge_cls}">{ext}</span></td>'
-            f'<td class="num">{thr_cpi}</td>'
-            f'<td class="num">{lat_cpi}</td>'
+            f'<td class="num">{thr_ipc}</td>'
+            f'<td class="num">{lat_ipc}</td>'
             f'<td>{unit}</td>'
             f'</tr>'
         )
         table_rows.append(tr)
 
+    peak_alu_str = f"{max(alu_ipcs):.3f} IPC" if alu_ipcs else "1.934 IPC"
+    fpu_peak_str = f"{max(fpu_ipcs):.3f} IPC" if fpu_ipcs else "1.000 IPC"
+    div_str = f"{min(div_ipcs):.3f}–{max(div_ipcs):.3f} IPC" if div_ipcs else "0.015–0.019 IPC"
+    zb_avg_str = f"{sum(zb_ipcs)/len(zb_ipcs):.3f} IPC" if zb_ipcs else "0.170 IPC"
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    html = HTML_TEMPLATE.replace("__ROWS__", "\n".join(table_rows)).replace("__COUNT__", str(len(items)))
+    html = (HTML_TEMPLATE
+            .replace("__ROWS__", "\n".join(table_rows))
+            .replace("__COUNT__", str(len(items)))
+            .replace("__STAT_PEAK_IPC__", peak_alu_str)
+            .replace("__STAT_FPU_IPC__", fpu_peak_str)
+            .replace("__STAT_DIV_IPC__", div_str)
+            .replace("__STAT_ZB_IPC__", zb_avg_str))
     out_file = out_dir / "benchmarks.html"
     out_file.write_text(html)
     print(f"✓ Generated {out_file} ({len(items)} instructions)")

@@ -1258,8 +1258,8 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
 
   let alloc_avail_0 := Wire.mk "alloc_avail_0"; let alloc_avail_1 := Wire.mk "alloc_avail_1"
   let dispatch_valid_0 := Wire.mk "dispatch_valid_0"; let dispatch_valid_1 := Wire.mk "dispatch_valid_1"
-  let alloc_ptr_0 := Wire.mk "alloc_ptr_0"; let alloc_ptr_next_0 := Wire.mk "alloc_ptr_next_0"
-  let alloc_ptr_1 := Wire.mk "alloc_ptr_1"; let alloc_ptr_next_1 := Wire.mk "alloc_ptr_next_1"
+  let alloc_ptr_0 := Wire.mk "alloc_ptr_0"
+  let alloc_ptr_1 := Wire.mk "alloc_ptr_1"
   let arb0_gr0 := Wire.mk "dispatch_grant_0"; let arb0_gr1 := Wire.mk "dispatch_grant_1"
   let arb1_gr0 := Wire.mk "dispatch_grant_2"; let arb1_gr1 := Wire.mk "dispatch_grant_3"
 
@@ -1285,31 +1285,8 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
     Gate.mkAND cdb_valid_1 not_cdb_fp_1 cdb_valid_int_1
   ]
 
-  let ptr_gates := [Gate.mkXOR alloc_ptr_0 issue_en_0 alloc_ptr_next_0,
-                    Gate.mkXOR alloc_ptr_1 issue_en_1 alloc_ptr_next_1]
-  let ptr_inst_0 : CircuitInstance := {
-    moduleName := "Register1", instName := "u_alloc_ptr_0",
-    portMap := [("d_0", alloc_ptr_next_0), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr_0)]
-  }
-  let ptr_inst_1 : CircuitInstance := {
-    moduleName := "Register1", instName := "u_alloc_ptr_1",
-    portMap := [("d_0", alloc_ptr_next_1), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr_1)]
-  }
-
   let issue_we_0_0 := Wire.mk "issue_we_0_0"; let issue_we_0_1 := Wire.mk "issue_we_0_1"
-  let not_ptr_0 := Wire.mk "not_ptr_0"
-  let base_issue_gates_0 := [
-    Gate.mkNOT alloc_ptr_0 not_ptr_0,
-    Gate.mkAND issue_en_0 not_ptr_0 issue_we_0_0,
-    Gate.mkAND issue_en_0 alloc_ptr_0 issue_we_0_1
-  ]
   let issue_we_1_0 := Wire.mk "issue_we_1_0"; let issue_we_1_1 := Wire.mk "issue_we_1_1"
-  let not_ptr_1 := Wire.mk "not_ptr_1"
-  let base_issue_gates_1 := [
-    Gate.mkNOT alloc_ptr_1 not_ptr_1,
-    Gate.mkAND issue_en_1 not_ptr_1 issue_we_1_0,
-    Gate.mkAND issue_en_1 alloc_ptr_1 issue_we_1_1
-  ]
 
   let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
     buildRSEntry 0 opcodeWidth tagWidth tagWidth tagWidth dataWidth
@@ -1340,10 +1317,27 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
       cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
       (some suppress_cdb_s1_1) (some suppress_cdb_s2_1) (some dispatch_en_1) arb1_gr1 clock reset
 
-  let v01_mux := Wire.mk "v_01_mux"
-  let alloc_avail_g_0 := [Gate.mkMUX ev0 ev1 alloc_ptr_0 v01_mux, Gate.mkNOT v01_mux alloc_avail_0]
-  let v23_mux := Wire.mk "v_23_mux"
-  let alloc_avail_g_1 := [Gate.mkMUX ev2 ev3 alloc_ptr_1 v23_mux, Gate.mkNOT v23_mux alloc_avail_1]
+  -- Bank 0: dynamic free-entry selection (entries 0, 1)
+  let free_0 := Wire.mk "free_0"; let free_1 := Wire.mk "free_1"
+  let base_issue_gates_0 := [
+    Gate.mkNOT ev0 free_0,
+    Gate.mkNOT ev1 free_1,
+    Gate.mkOR free_0 free_1 alloc_avail_0,
+    Gate.mkBUF ev0 alloc_ptr_0,
+    Gate.mkAND issue_en_0 free_0 issue_we_0_0,
+    Gate.mkAND issue_en_0 alloc_ptr_0 issue_we_0_1
+  ]
+
+  -- Bank 1: dynamic free-entry selection (entries 2, 3)
+  let free_2 := Wire.mk "free_2"; let free_3 := Wire.mk "free_3"
+  let base_issue_gates_1 := [
+    Gate.mkNOT ev2 free_2,
+    Gate.mkNOT ev3 free_3,
+    Gate.mkOR free_2 free_3 alloc_avail_1,
+    Gate.mkBUF ev2 alloc_ptr_1,
+    Gate.mkAND issue_en_1 free_2 issue_we_1_0,
+    Gate.mkAND issue_en_1 alloc_ptr_1 issue_we_1_1
+  ]
 
   let arb0_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb0",
@@ -1387,12 +1381,11 @@ def mkIntReservationStation4_W2 (dataWidth : Nat := 64) : Circuit :=
       dispatch_opcode_0 ++ dispatch_src1_data_0 ++ dispatch_src2_data_0 ++ dispatch_dest_tag_0 ++
       dispatch_opcode_1 ++ dispatch_src1_data_1 ++ dispatch_src2_data_1 ++ dispatch_dest_tag_1
     gates :=
-      cdb_valid_gates ++ ptr_gates ++ base_issue_gates_0 ++ base_issue_gates_1 ++
+      cdb_valid_gates ++ base_issue_gates_0 ++ base_issue_gates_1 ++
       eg0 ++ eg1 ++ eg2 ++ eg3 ++
-      alloc_avail_g_0 ++ alloc_avail_g_1 ++
       b0_mux_op ++ b0_mux_dst ++ b0_mux_s1d ++ b0_mux_s2d ++
       b1_mux_op ++ b1_mux_dst ++ b1_mux_s1d ++ b1_mux_s2d
-    instances := [ptr_inst_0, ptr_inst_1, arb0_inst, arb1_inst] ++ ei0 ++ ei1 ++ ei2 ++ ei3 }
+    instances := [arb0_inst, arb1_inst] ++ ei0 ++ ei1 ++ ei2 ++ ei3 }
 
 /-- Specialized Single-Issue Reservation Station (W=1, 2 entries, 6-bit tags).
     Used for Branch and MulDiv execution units. -/
@@ -1425,7 +1418,7 @@ def mkReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
 
   let alloc_avail := Wire.mk "alloc_avail"
   let dispatch_valid := Wire.mk "dispatch_valid"
-  let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
+  let alloc_ptr := Wire.mk "alloc_ptr"
   let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
 
   let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
@@ -1444,19 +1437,7 @@ def mkReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
     Gate.mkAND cdb_valid_1 not_cdb_fp_1 cdb_valid_int_1
   ]
 
-  let ptr_gates := [Gate.mkXOR alloc_ptr issue_en alloc_ptr_next]
-  let ptr_inst : CircuitInstance := {
-    moduleName := "Register1", instName := "u_alloc_ptr",
-    portMap := [("d_0", alloc_ptr_next), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr)]
-  }
-
   let issue_we_0 := Wire.mk "issue_we_0"; let issue_we_1 := Wire.mk "issue_we_1"
-  let not_ptr := Wire.mk "not_ptr"
-  let issue_gates := [
-    Gate.mkNOT alloc_ptr not_ptr,
-    Gate.mkAND issue_en not_ptr issue_we_0,
-    Gate.mkAND issue_en alloc_ptr issue_we_1
-  ]
 
   let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
     buildRSEntry 0 opcodeWidth tagWidth tagWidth tagWidth dataWidth
@@ -1473,8 +1454,15 @@ def mkReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
       cdb_tag_0 cdb_valid_int_0 cdb_tag_1 cdb_valid_int_1
       (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_1 clock reset
 
-  let v01_mux := Wire.mk "v_01_mux"
-  let alloc_avail_g := [Gate.mkMUX ev0 ev1 alloc_ptr v01_mux, Gate.mkNOT v01_mux alloc_avail]
+  let free_0 := Wire.mk "free_0"; let free_1 := Wire.mk "free_1"
+  let issue_gates := [
+    Gate.mkNOT ev0 free_0,
+    Gate.mkNOT ev1 free_1,
+    Gate.mkOR free_0 free_1 alloc_avail,
+    Gate.mkBUF ev0 alloc_ptr,
+    Gate.mkAND issue_en free_0 issue_we_0,
+    Gate.mkAND issue_en alloc_ptr issue_we_1
+  ]
 
   let arb_inst : CircuitInstance := {
     moduleName := "PriorityArbiter2", instName := "u_arb",
@@ -1502,10 +1490,10 @@ def mkReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
        dispatch_grant_0, dispatch_grant_1] ++
       dispatch_opcode ++ dispatch_src1_data ++ dispatch_src2_data ++ dispatch_dest_tag
     gates :=
-      cdb_valid_gates ++ ptr_gates ++ issue_gates ++
-      eg0 ++ eg1 ++ alloc_avail_g ++
+      cdb_valid_gates ++ issue_gates ++
+      eg0 ++ eg1 ++
       mux_op ++ mux_dst ++ mux_s1d ++ mux_s2d
-    instances := [ptr_inst, arb_inst] ++ ei0 ++ ei1 }
+    instances := [arb_inst] ++ ei0 ++ ei1 }
 
 /-- Specialized Single-Issue Memory Reservation Station (W=1, 2 entries, SLO tracking).
     dest_tag is 7-bit (is_fp_load), src1_tag is 6-bit (base addr), src2_tag is 7-bit (is_fp_store). -/
@@ -1733,7 +1721,7 @@ def mkFPReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
 
   let alloc_avail := Wire.mk "alloc_avail"
   let dispatch_valid := Wire.mk "dispatch_valid"
-  let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
+  let alloc_ptr := Wire.mk "alloc_ptr"
   let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
 
   let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
@@ -1744,19 +1732,7 @@ def mkFPReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
   let cdb_tag7_0 := cdb_tag_0 ++ [cdb_is_fp_0]
   let cdb_tag7_1 := cdb_tag_1 ++ [cdb_is_fp_1]
 
-  let ptr_gates := [Gate.mkXOR alloc_ptr issue_en alloc_ptr_next]
-  let ptr_inst : CircuitInstance := {
-    moduleName := "Register1", instName := "u_alloc_ptr",
-    portMap := [("d_0", alloc_ptr_next), ("clock", clock), ("reset", reset), ("q_0", alloc_ptr)]
-  }
-
   let issue_we_0 := Wire.mk "issue_we_0"; let issue_we_1 := Wire.mk "issue_we_1"
-  let not_ptr := Wire.mk "not_ptr"
-  let issue_gates := [
-    Gate.mkNOT alloc_ptr not_ptr,
-    Gate.mkAND issue_en not_ptr issue_we_0,
-    Gate.mkAND issue_en alloc_ptr issue_we_1
-  ]
 
   let (eg0, ei0, ev0, er0, e0_s1bp, e0_s2bp) :=
     buildRSEntry 0 opcodeWidth destTagWidth src1TagWidth src2TagWidth dataWidth
@@ -1773,8 +1749,15 @@ def mkFPReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
       cdb_tag7_0 cdb_valid_0 cdb_tag7_1 cdb_valid_1
       (some suppress_cdb_s1) (some suppress_cdb_s2) (some dispatch_en) dispatch_grant_1 clock reset
 
-  let v01_mux := Wire.mk "v_01_mux"
-  let alloc_avail_g := [Gate.mkMUX ev0 ev1 alloc_ptr v01_mux, Gate.mkNOT v01_mux alloc_avail]
+  let free_0 := Wire.mk "free_0"; let free_1 := Wire.mk "free_1"
+  let issue_gates := [
+    Gate.mkNOT ev0 free_0,
+    Gate.mkNOT ev1 free_1,
+    Gate.mkOR free_0 free_1 alloc_avail,
+    Gate.mkBUF ev0 alloc_ptr,
+    Gate.mkAND issue_en free_0 issue_we_0,
+    Gate.mkAND issue_en alloc_ptr issue_we_1
+  ]
 
   let ar0 := Wire.mk "ar0"; let ar1 := Wire.mk "ar1"
   let ready_mask_gates := [
@@ -1809,10 +1792,10 @@ def mkFPReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
        dispatch_grant_0, dispatch_grant_1] ++
       dispatch_opcode ++ dispatch_src1_data ++ dispatch_src2_data ++ dispatch_dest_tag
     gates :=
-      ptr_gates ++ issue_gates ++
-      eg0 ++ eg1 ++ alloc_avail_g ++ ready_mask_gates ++
+      issue_gates ++
+      eg0 ++ eg1 ++ ready_mask_gates ++
       mux_op ++ mux_dst ++ mux_s1d ++ mux_s2d
-    instances := [ptr_inst, arb_inst] ++ ei0 ++ ei1 }
+    instances := [arb_inst] ++ ei0 ++ ei1 }
 
 end Shoumei.RISCV.Execution
 

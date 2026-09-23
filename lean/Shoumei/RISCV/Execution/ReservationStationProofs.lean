@@ -133,15 +133,15 @@ def rs2W1_64 := mkReservationStation2_W1 64
 def memRs2W1_64 := mkMemoryReservationStation2_W1 64
 def fpRs2W1_64 := mkFPReservationStation2_W1 64
 
-theorem intRs4w2_64_instance_count : intRs4W2_64.instances.length = 8 := by native_decide
-theorem rs2w1_64_instance_count : rs2W1_64.instances.length = 4 := by native_decide
+theorem intRs4w2_64_instance_count : intRs4W2_64.instances.length = 6 := by native_decide
+theorem rs2w1_64_instance_count : rs2W1_64.instances.length = 3 := by native_decide
 theorem memRs2w1_64_instance_count : memRs2W1_64.instances.length = 8 := by native_decide
-theorem fpRs2w1_64_instance_count : fpRs2W1_64.instances.length = 4 := by native_decide
+theorem fpRs2w1_64_instance_count : fpRs2W1_64.instances.length = 3 := by native_decide
 
-def intRs4w2_64_dependencies : List String := ["Register1", "Register157", "PriorityArbiter2"]
-def rs2w1_64_dependencies : List String := ["Register1", "Register157", "PriorityArbiter2"]
+def intRs4w2_64_dependencies : List String := ["Register157", "PriorityArbiter2"]
+def rs2w1_64_dependencies : List String := ["Register157", "PriorityArbiter2"]
 def memRs2w1_64_dependencies : List String := ["Register1", "Register157", "PriorityArbiter2"]
-def fpRs2w1_64_dependencies : List String := ["Register1", "Register157", "PriorityArbiter2"]
+def fpRs2w1_64_dependencies : List String := ["Register157", "PriorityArbiter2"]
 
 theorem intRs4w2_64_uses_verified_blocks :
   ∀ inst ∈ intRs4W2_64.instances, intRs4w2_64_dependencies.contains inst.moduleName := by native_decide

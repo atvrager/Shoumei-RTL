@@ -6,7 +6,7 @@
   For every instruction one self-contained .S program is emitted that measures
   cycles-per-instruction over a region bracketed by mcycle/minstret reads:
 
-      CPI = delta(mcycle) / delta(minstret)   (scaled by 1000, "cpi_milli")
+      IPC = delta(minstret) / delta(mcycle)   (scaled by 1000, "ipc_milli")
 
   Two region shapes exist:
     - throughput: BENCH_NTHR independent copies per loop iteration, destinations
@@ -483,22 +483,22 @@ def regionAsm (d : InstructionDef) (lat : Bool) : String :=
   "  csrr x24, mcycle\n" ++
   "  csrr x25, minstret"
 
-/-- Compute cpi_milli for the region just measured (x24=Δcycle, x25=Δretired,
-    checked against the exact retired count) and stash it in x6 (throughput) or
-    x7 (latency). -/
+/-- Compute ipc_milli for the region just measured (x24=Δcycle, x25=Δretired,
+    checked against the exact retired count) and stash it in x6 (Peak IPC) or
+    x7 (Dependent IPC). -/
 def regionCheck (spec : BenchmarkSpec) (lat : Bool) (iters : Nat) : String :=
   let perIter := if lat then latPerIter spec else thrPerIter spec
   let expected := iters * perIter
   let dst := if lat then "x7" else "x6"
-  "  # validate minstret delta == expected, then compute cpi_milli\n" ++
+  "  # validate minstret delta == expected, then compute ipc_milli\n" ++
   "  sub x24, x24, x26\n" ++
   "  sub x25, x25, x27\n" ++
   s!"  li x30, {expected}\n" ++
   "  bne x25, x30, .Lfail\n" ++
   "  li x30, 1000\n" ++
-  "  mul x24, x24, x30\n" ++
-  "  divu x24, x24, x25\n" ++
-  s!"  mv {dst}, x24\n"
+  "  mul x25, x25, x30\n" ++
+  "  divu x25, x25, x24\n" ++
+  s!"  mv {dst}, x25\n"
 
 /-- Shared putstr / putdec routines (MMIO 0x1004, preserve x5..x31). -/
 def ioRoutines : String :=

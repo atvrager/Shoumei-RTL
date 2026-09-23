@@ -1146,37 +1146,143 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_dual_stall := Wire.mk "mem_dual_stall"
   let muldiv_dual_stall := Wire.mk "muldiv_dual_stall"
   let fp_dual_stall := Wire.mk "fp_dual_stall"
-  let dual_stall_gates :=
-    [Gate.mkAND (Wire.mk "d0_no_ser") rename_valid_0 pre_valid_0,
-     Gate.mkAND (Wire.mk "d1_no_ser") rename_valid_1 pre_valid_1,
-     -- Branch dual stall: both slots are branch AND both decoder-valid (raw, not fetch-gated)
-     -- Uses d0/d1_valid_raw to avoid combinational loop through fetch valid_1 / half_step
-     Gate.mkAND d0_valid_raw d0_is_br (Wire.mk "pre_br_0"),
-     Gate.mkAND d1_valid_raw d1_is_br (Wire.mk "pre_br_1"),
-     Gate.mkAND (Wire.mk "pre_br_0") (Wire.mk "pre_br_1") br_dual_stall,
-     -- Memory dual stall: only 1 memory RS issue port, stall if both slots are memory
-    Gate.mkAND d0_valid_raw d0_is_mem (Wire.mk "pre_mem_0"),
-    Gate.mkAND d1_valid_raw d1_is_mem (Wire.mk "pre_mem_1"),
-    Gate.mkAND (Wire.mk "pre_mem_0") (Wire.mk "pre_mem_1") mem_dual_stall] ++
-    (if enableM then
-      [Gate.mkAND d0_valid_raw d0_is_muldiv (Wire.mk "pre_md_0"),
-       Gate.mkAND d1_valid_raw d1_is_muldiv (Wire.mk "pre_md_1"),
-       Gate.mkAND (Wire.mk "pre_md_0") (Wire.mk "pre_md_1") muldiv_dual_stall]
-    else [Gate.mkBUF zero muldiv_dual_stall]) ++
-    (if enableF then
+
+  -- INT demand & cross-lane steering:
+  let d0_needs_int := Wire.mk "d0_needs_int"
+  let d1_needs_int := Wire.mk "d1_needs_int"
+  let not_d0_needs_int := Wire.mk "not_d0_needs_int"
+  let slot1_wants_bank0 := Wire.mk "slot1_wants_bank0"
+  let slot1_to_bank0 := Wire.mk "slot1_to_bank0"
+  let not_slot1_to_bank0 := Wire.mk "not_slot1_to_bank0"
+  let d1_to_bank1 := Wire.mk "d1_to_bank1"
+  let not_rs_int_avail_1 := Wire.mk "not_rs_int_avail_1"
+  let int_dual_stall := Wire.mk "int_dual_stall"
+  let not_rs_int_avail_0 := Wire.mk "not_rs_int_avail_0"
+  let int_stall_req_0 := Wire.mk "int_stall_req_0"
+
+  let int_stall_gates := [
+    Gate.mkAND d0_valid_raw d0_is_int d0_needs_int,
+    Gate.mkAND d1_valid_raw d1_is_int d1_needs_int,
+    Gate.mkNOT d0_needs_int not_d0_needs_int,
+    Gate.mkAND not_d0_needs_int d1_needs_int slot1_wants_bank0,
+    Gate.mkAND slot1_wants_bank0 (Wire.mk "rs_int_avail_0") slot1_to_bank0,
+    Gate.mkNOT slot1_to_bank0 not_slot1_to_bank0,
+    Gate.mkAND d1_needs_int not_slot1_to_bank0 d1_to_bank1,
+    Gate.mkNOT (Wire.mk "rs_int_avail_1") not_rs_int_avail_1,
+    Gate.mkAND d1_to_bank1 not_rs_int_avail_1 int_dual_stall,
+    Gate.mkNOT (Wire.mk "rs_int_avail_0") not_rs_int_avail_0,
+    Gate.mkAND d0_needs_int not_rs_int_avail_0 int_stall_req_0
+  ]
+
+  -- Memory demand & stalls:
+  let d0_needs_mem := Wire.mk "d0_needs_mem"
+  let d1_needs_mem := Wire.mk "d1_needs_mem"
+  let not_rs_mem_avail_0 := Wire.mk "not_rs_mem_avail_0"
+  let mem_stall_req_0 := Wire.mk "mem_stall_req_0"
+  let mem_dual_stall_1 := Wire.mk "mem_dual_stall_1"
+  let mem_dual_stall_total := Wire.mk "mem_dual_stall_total"
+  let mem_stall_gates := [
+    Gate.mkAND d0_valid_raw d0_is_mem d0_needs_mem,
+    Gate.mkAND d1_valid_raw d1_is_mem d1_needs_mem,
+    Gate.mkNOT (Wire.mk "rs_mem_avail_0") not_rs_mem_avail_0,
+    Gate.mkAND d0_needs_mem not_rs_mem_avail_0 mem_stall_req_0,
+    Gate.mkAND d1_needs_mem not_rs_mem_avail_0 mem_dual_stall_1,
+    Gate.mkAND d0_needs_mem d1_needs_mem mem_dual_stall,
+    Gate.mkOR mem_dual_stall mem_dual_stall_1 mem_dual_stall_total
+  ]
+
+  -- Branch demand & stalls:
+  let d0_needs_br := Wire.mk "d0_needs_br"
+  let d1_needs_br := Wire.mk "d1_needs_br"
+  let not_rs_br_avail_0 := Wire.mk "not_rs_br_avail_0"
+  let br_stall_req_0 := Wire.mk "br_stall_req_0"
+  let br_dual_stall_1 := Wire.mk "br_dual_stall_1"
+  let br_dual_stall_total := Wire.mk "br_dual_stall_total"
+  let br_stall_gates := [
+    Gate.mkAND d0_valid_raw d0_is_br d0_needs_br,
+    Gate.mkAND d1_valid_raw d1_is_br d1_needs_br,
+    Gate.mkNOT (Wire.mk "rs_br_avail_0") not_rs_br_avail_0,
+    Gate.mkAND d0_needs_br not_rs_br_avail_0 br_stall_req_0,
+    Gate.mkAND d1_needs_br not_rs_br_avail_0 br_dual_stall_1,
+    Gate.mkAND d0_needs_br d1_needs_br br_dual_stall,
+    Gate.mkOR br_dual_stall br_dual_stall_1 br_dual_stall_total
+  ]
+
+  -- MulDiv demand & stalls:
+  let d0_needs_md := Wire.mk "d0_needs_md"
+  let d1_needs_md := Wire.mk "d1_needs_md"
+  let not_rs_md_avail_0 := Wire.mk "not_rs_md_avail_0"
+  let md_stall_req_0 := Wire.mk "md_stall_req_0"
+  let md_dual_stall_1 := Wire.mk "md_dual_stall_1"
+  let muldiv_dual_stall_total := Wire.mk "muldiv_dual_stall_total"
+  let md_stall_gates :=
+    if enableM then
+      [Gate.mkAND d0_valid_raw d0_is_muldiv d0_needs_md,
+       Gate.mkAND d1_valid_raw d1_is_muldiv d1_needs_md,
+       Gate.mkNOT (Wire.mk "rs_md_avail_0") not_rs_md_avail_0,
+       Gate.mkAND d0_needs_md not_rs_md_avail_0 md_stall_req_0,
+       Gate.mkAND d1_needs_md not_rs_md_avail_0 md_dual_stall_1,
+       Gate.mkAND d0_needs_md d1_needs_md muldiv_dual_stall,
+       Gate.mkOR muldiv_dual_stall md_dual_stall_1 muldiv_dual_stall_total]
+    else
+      [Gate.mkBUF zero muldiv_dual_stall,
+       Gate.mkBUF zero md_stall_req_0,
+       Gate.mkBUF zero muldiv_dual_stall_total]
+
+  -- FP demand & stalls:
+  let not_rs_fp_avail_0 := Wire.mk "not_rs_fp_avail_0"
+  let fp_stall_req_0 := Wire.mk "fp_stall_req_0"
+  let fp_dual_stall_1 := Wire.mk "fp_dual_stall_1"
+  let fp_dual_stall_total := Wire.mk "fp_dual_stall_total"
+  let fp_stall_gates :=
+    if enableF then
       let d0_fp_res := Wire.mk "d0_fp_res"
       let d1_fp_res := Wire.mk "d1_fp_res"
       let d0_needs_fp := Wire.mk "d0_needs_fp_ren_pre"
       let d1_needs_fp := Wire.mk "d1_needs_fp_ren_pre"
-      [-- Stall when both slots need FP resources (is_fp OR has_fp_rd OR is_fp_store covers FP exec + FLW + FSW)
-       Gate.mkOR d0_is_fp d0_has_fp_rd d0_fp_res,
+      [Gate.mkOR d0_is_fp d0_has_fp_rd d0_fp_res,
        Gate.mkOR d0_fp_res d0_is_fp_store d0_needs_fp,
        Gate.mkAND d0_valid_raw d0_needs_fp (Wire.mk "pre_fp_0"),
        Gate.mkOR d1_is_fp d1_has_fp_rd d1_fp_res,
        Gate.mkOR d1_fp_res d1_is_fp_store d1_needs_fp,
        Gate.mkAND d1_valid_raw d1_needs_fp (Wire.mk "pre_fp_1"),
-       Gate.mkAND (Wire.mk "pre_fp_0") (Wire.mk "pre_fp_1") fp_dual_stall]
-    else [Gate.mkBUF zero fp_dual_stall])
+       Gate.mkAND (Wire.mk "pre_fp_0") (Wire.mk "pre_fp_1") fp_dual_stall,
+       Gate.mkNOT (Wire.mk "rs_fp_avail_0") not_rs_fp_avail_0,
+       Gate.mkAND (Wire.mk "pre_fp_0") not_rs_fp_avail_0 fp_stall_req_0,
+       Gate.mkAND (Wire.mk "pre_fp_1") not_rs_fp_avail_0 fp_dual_stall_1,
+       Gate.mkOR fp_dual_stall fp_dual_stall_1 fp_dual_stall_total]
+    else
+      [Gate.mkBUF zero fp_dual_stall,
+       Gate.mkBUF zero fp_stall_req_0,
+       Gate.mkBUF zero fp_dual_stall_total]
+
+  -- Store buffer demand & stalls:
+  let d0_store_any := Wire.mk "d0_store_any"
+  let d1_store_any := Wire.mk "d1_store_any"
+  let store_detect_gates :=
+    if enableF then
+      [Gate.mkOR d0_is_st d0_is_fp_store d0_store_any,
+       Gate.mkOR d1_is_st d1_is_fp_store d1_store_any]
+    else
+      [Gate.mkBUF d0_is_st d0_store_any,
+       Gate.mkBUF d1_is_st d1_store_any]
+
+  let d0_needs_sb := Wire.mk "d0_needs_sb"
+  let d1_needs_sb := Wire.mk "d1_needs_sb"
+  let sb_stall_req_0 := Wire.mk "sb_stall_req_0"
+  let sb_dual_stall_1 := Wire.mk "sb_dual_stall_1"
+  let sb_stall_gates := store_detect_gates ++ [
+    Gate.mkAND d0_valid_raw d0_store_any d0_needs_sb,
+    Gate.mkAND d1_valid_raw d1_store_any d1_needs_sb,
+    Gate.mkAND d0_needs_sb (Wire.mk "lsu_sb_full") sb_stall_req_0,
+    Gate.mkAND d1_needs_sb (Wire.mk "lsu_sb_full") sb_dual_stall_1
+  ]
+
+  let dual_stall_gates :=
+    [Gate.mkAND (Wire.mk "d0_no_ser") rename_valid_0 pre_valid_0,
+     Gate.mkAND (Wire.mk "d1_no_ser") rename_valid_1 pre_valid_1] ++
+    int_stall_gates ++ mem_stall_gates ++ br_stall_gates ++
+    md_stall_gates ++ fp_stall_gates ++ sb_stall_gates
 
   -- Branch routing MUX: slot 0 has priority
   let br_route_sel := Wire.mk "br_route_sel"  -- 1 = use slot 1
@@ -1844,19 +1950,62 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rs_int_alloc_ptr := CPU.makeIndexedWires "rs_int_alloc_ptr" 2
   let rs_int_grant := CPU.makeIndexedWires "rs_int_grant" 4
 
+  -- Bank 0 Cross-Lane Steering (Slot 1 INT steered to Bank 0 when Slot 0 is non-INT)
+  let int_xlen := if config.xlen == 64 then 64 else 32
+  let b0_issue_en := Wire.mk "b0_issue_en"
+  let b1_issue_en := Wire.mk "b1_issue_en"
+  let b0_op := CPU.makeIndexedWires "b0_op" opcodeWidth
+  let b0_dest_tag := CPU.makeIndexedWires "b0_dest_tag" 6
+  let b0_src1_ready := Wire.mk "b0_src1_ready"
+  let b0_src1_tag := CPU.makeIndexedWires "b0_src1_tag" 6
+  let b0_src1_data := CPU.makeIndexedWires "b0_src1_data" int_xlen
+  let b0_src2_ready := Wire.mk "b0_src2_ready"
+  let b0_src2_tag := CPU.makeIndexedWires "b0_src2_tag" 6
+  let b0_src2_data := CPU.makeIndexedWires "b0_src2_data" int_xlen
+  let b0_pc := CPU.makeIndexedWires "b0_pc" 32
+  let b0_imm := CPU.makeIndexedWires "b0_imm" 32
+
+  let slot1_steer_en := Wire.mk "slot1_steer_en"
+  let not_slot1_to_bank0 := Wire.mk "not_slot1_to_bank0"
+  let b0_steer_ctrl_gates := [
+    Gate.mkAND dispatch_int_1 slot1_to_bank0 slot1_steer_en,
+    Gate.mkOR dispatch_int_0 slot1_steer_en b0_issue_en,
+    Gate.mkNOT slot1_to_bank0 not_slot1_to_bank0,
+    Gate.mkAND dispatch_int_1 not_slot1_to_bank0 b1_issue_en,
+    Gate.mkMUX src1_ready_0 src1_ready_1 slot1_to_bank0 b0_src1_ready,
+    Gate.mkMUX src2_ready_0 src2_ready_1 slot1_to_bank0 b0_src2_ready
+  ]
+  let b0_steer_data_gates :=
+    (List.range opcodeWidth).map (fun i =>
+      Gate.mkMUX (d0_op.take opcodeWidth)[i]! (d1_op.take opcodeWidth)[i]! slot1_to_bank0 b0_op[i]!) ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX int_dest_tag_masked_0[i]! int_dest_tag_masked_1[i]! slot1_to_bank0 b0_dest_tag[i]!) ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX rs1_phys_0[i]! rs1_phys_1[i]! slot1_to_bank0 b0_src1_tag[i]!) ++
+    (List.range int_xlen).map (fun i =>
+      Gate.mkMUX rs1_data_0[i]! rs1_data_1[i]! slot1_to_bank0 b0_src1_data[i]!) ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX rs2_phys_0[i]! rs2_phys_1[i]! slot1_to_bank0 b0_src2_tag[i]!) ++
+    (List.range int_xlen).map (fun i =>
+      Gate.mkMUX src2_muxed_0[i]! src2_muxed_1[i]! slot1_to_bank0 b0_src2_data[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX fetch_pc_0[i]! fetch_pc_1[i]! slot1_to_bank0 b0_pc[i]!) ++
+    (List.range 32).map (fun i =>
+      Gate.mkMUX d0_imm[i]! d1_imm[i]! slot1_to_bank0 b0_imm[i]!)
+
   let rs_int_inst : CircuitInstance := {
     moduleName := if config.xlen == 64 then "IntReservationStation4_W2_64" else "IntReservationStation4_W2"
     instName := "u_rs_int"
     portMap := [("clock", clock), ("reset", pipeline_reset_rs_int),
-                ("issue_en_0", dispatch_int_0), ("issue_en_1", dispatch_int_1)] ++
-               bundledPorts "issue_opcode_0" (d0_op.take opcodeWidth) ++
-               bundledPorts "issue_dest_tag_0" int_dest_tag_masked_0 ++
-               [("issue_src1_ready_0", src1_ready_0)] ++
-               bundledPorts "issue_src1_tag_0" rs1_phys_0 ++
-               bundledPorts "issue_src1_data_0" rs1_data_0 ++
-               [("issue_src2_ready_0", src2_ready_0)] ++
-               bundledPorts "issue_src2_tag_0" rs2_phys_0 ++
-               bundledPorts "issue_src2_data_0" src2_muxed_0 ++
+                ("issue_en_0", b0_issue_en), ("issue_en_1", b1_issue_en)] ++
+               bundledPorts "issue_opcode_0" b0_op ++
+               bundledPorts "issue_dest_tag_0" b0_dest_tag ++
+               [("issue_src1_ready_0", b0_src1_ready)] ++
+               bundledPorts "issue_src1_tag_0" b0_src1_tag ++
+               bundledPorts "issue_src1_data_0" b0_src1_data ++
+               [("issue_src2_ready_0", b0_src2_ready)] ++
+               bundledPorts "issue_src2_tag_0" b0_src2_tag ++
+               bundledPorts "issue_src2_data_0" b0_src2_data ++
                bundledPorts "issue_opcode_1" (d1_op.take opcodeWidth) ++
                bundledPorts "issue_dest_tag_1" int_dest_tag_masked_1 ++
                [("issue_src1_ready_1", src1_ready_1)] ++
@@ -2829,15 +2978,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let int_captured_pc_1 := CPU.makeIndexedWires "int_captured_pc_1" 32
   let (int_pc_rf_gates, _int_pc_rf_entries) :=
     mkSidecarRegFile4x32_W2 "int_pc_rf" clock reset
-      rs_int_alloc_ptr[0]! dispatch_int_0 fetch_pc_0
-      rs_int_alloc_ptr[1]! dispatch_int_1 fetch_pc_1
+      rs_int_alloc_ptr[0]! b0_issue_en b0_pc
+      rs_int_alloc_ptr[1]! b1_issue_en fetch_pc_1
       rs_int_grant int_captured_pc_0 int_captured_pc_1
   let int_captured_imm_0 := CPU.makeIndexedWires "int_captured_imm_0" 32
   let int_captured_imm_1 := CPU.makeIndexedWires "int_captured_imm_1" 32
   let (int_imm_rf_gates, _int_imm_rf_entries) :=
     mkSidecarRegFile4x32_W2 "int_imm_rf" clock reset
-      rs_int_alloc_ptr[0]! dispatch_int_0 d0_imm
-      rs_int_alloc_ptr[1]! dispatch_int_1 d1_imm
+      rs_int_alloc_ptr[0]! b0_issue_en b0_imm
+      rs_int_alloc_ptr[1]! b1_issue_en d1_imm
       rs_int_grant int_captured_imm_0 int_captured_imm_1
 
   -- Branch RS: captured PC, IMM, and predicted_taken (2 entries)
@@ -3488,8 +3637,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     -- Cross-size detection: SB hit but size insufficient → stall
     Gate.mkNOT fwd_size_ok (Wire.mk "not_fwd_size_ok"),
     Gate.mkAND (Wire.mk "load_fwd_tmp2") (Wire.mk "not_fwd_size_ok") (Wire.mk "cross_size_any"),
-    Gate.mkAND (Wire.mk "lsu_sb_fwd_word_only_hit") rs_mem_dispatch_valid (Wire.mk "wovlp_tmp1"),
-    Gate.mkAND (Wire.mk "wovlp_tmp1") is_load (Wire.mk "word_overlap_stall"),
+    Gate.mkAND (Wire.mk "lsu_sb_fwd_word_only_hit") (Wire.mk "load_valid_tmp") (Wire.mk "word_overlap_stall"),
     Gate.mkOR (Wire.mk "cross_size_any") (Wire.mk "word_overlap_stall") cross_size_stall,
     -- Store completion: mem_valid_r AND NOT is_load_r
     Gate.mkNOT is_load_r not_is_load_r,
@@ -4150,31 +4298,36 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let not_dual_stall := Wire.mk "not_dual_stall"
   let stall_gates := ser_defer_gates ++
     if enableM then
-      [Gate.mkOR br_dual_stall mem_dual_stall (Wire.mk "dual_stall_bm"),
-       Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall (Wire.mk "dual_stall_bmm"),
-       Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall (Wire.mk "dual_stall_bmmf"),
-       Gate.mkOR (Wire.mk "dual_stall_bmmf") cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
+      [Gate.mkOR br_dual_stall_total mem_dual_stall_total (Wire.mk "dual_stall_bm"),
+       Gate.mkOR (Wire.mk "dual_stall_bm") muldiv_dual_stall_total (Wire.mk "dual_stall_bmm"),
+       Gate.mkOR (Wire.mk "dual_stall_bmm") fp_dual_stall_total (Wire.mk "dual_stall_bmmf"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmf") int_dual_stall (Wire.mk "dual_stall_bmmfi"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfi") sb_dual_stall_1 (Wire.mk "dual_stall_bmmfis"),
+       Gate.mkOR (Wire.mk "dual_stall_bmmfis") cache_line_boundary (Wire.mk "dual_stall_bmmfc"),
        Gate.mkOR (Wire.mk "dual_stall_bmmfc") ser_s1_defer (Wire.mk "dual_stall_def"),
-       -- One ROB slot left: a 2-wide alloc would overflow the 16-entry ROB.
        Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
        Gate.mkNOT any_dual_stall not_dual_stall,
-       Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
-       Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
-       Gate.mkOR rs_br_issue_full rs_muldiv_issue_full (Wire.mk "stall_L0_c"),
-       Gate.mkOR (Wire.mk "stall_L0_a") (Wire.mk "stall_L0_b") (Wire.mk "stall_L1_a"),
-       Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "stall_L1_b"),
-       Gate.mkOR (Wire.mk "stall_L1_b") rs_fp_issue_full (Wire.mk "stall_L1_c"),
-       Gate.mkOR (Wire.mk "stall_L1_c") lsu_sb_full (Wire.mk "global_stall_int"),
+       Gate.mkOR int_stall_req_0 mem_stall_req_0 (Wire.mk "stall_req_im"),
+       Gate.mkOR br_stall_req_0 md_stall_req_0 (Wire.mk "stall_req_bm"),
+       Gate.mkOR fp_stall_req_0 sb_stall_req_0 (Wire.mk "stall_req_fs"),
+       Gate.mkOR (Wire.mk "stall_req_im") (Wire.mk "stall_req_bm") (Wire.mk "stall_req_imbm"),
+       Gate.mkOR (Wire.mk "stall_req_imbm") (Wire.mk "stall_req_fs") (Wire.mk "stall_req_rs0"),
+       Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_rr"),
+       Gate.mkOR (Wire.mk "stall_rr") (Wire.mk "stall_req_rs0") (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
     else
-      [Gate.mkOR br_dual_stall cache_line_boundary (Wire.mk "dual_stall_xc"),
+      [Gate.mkOR br_dual_stall_total mem_dual_stall_total (Wire.mk "dual_stall_bm"),
+       Gate.mkOR (Wire.mk "dual_stall_bm") int_dual_stall (Wire.mk "dual_stall_bmi"),
+       Gate.mkOR (Wire.mk "dual_stall_bmi") sb_dual_stall_1 (Wire.mk "dual_stall_bmis"),
+       Gate.mkOR (Wire.mk "dual_stall_bmis") cache_line_boundary (Wire.mk "dual_stall_xc"),
        Gate.mkOR (Wire.mk "dual_stall_xc") ser_s1_defer (Wire.mk "dual_stall_def"),
        Gate.mkOR (Wire.mk "dual_stall_def") rob_nearly_full any_dual_stall,
-       Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_L0_a"),
-       Gate.mkOR rs_int_issue_full rs_mem_issue_full (Wire.mk "stall_L0_b"),
-       Gate.mkOR rs_br_issue_full zero (Wire.mk "stall_L0_c"),
-       Gate.mkOR (Wire.mk "stall_L0_a") (Wire.mk "stall_L0_b") (Wire.mk "stall_L1_a"),
-       Gate.mkOR (Wire.mk "stall_L1_a") (Wire.mk "stall_L0_c") (Wire.mk "global_stall_int"),
+       Gate.mkNOT any_dual_stall not_dual_stall,
+       Gate.mkOR int_stall_req_0 mem_stall_req_0 (Wire.mk "stall_req_im"),
+       Gate.mkOR br_stall_req_0 sb_stall_req_0 (Wire.mk "stall_req_bs"),
+       Gate.mkOR (Wire.mk "stall_req_im") (Wire.mk "stall_req_bs") (Wire.mk "stall_req_rs0"),
+       Gate.mkOR (Wire.mk "rename_stall_0") rob_full (Wire.mk "stall_rr"),
+       Gate.mkOR (Wire.mk "stall_rr") (Wire.mk "stall_req_rs0") (Wire.mk "global_stall_int"),
        Gate.mkOR (Wire.mk "global_stall_int") dmem_stall_ext global_stall]
 
   -- === DMEM INTERFACE ===
@@ -4491,7 +4644,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ has_rd_int_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
              icache_fence_gates ++
-             dual_stall_gates ++ int_de1_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
+             dual_stall_gates ++ int_de1_gates ++ b0_steer_ctrl_gates ++ b0_steer_data_gates ++ br_route_gates ++ mem_route_gates ++ muldiv_route_gates ++
              src2_imm_mux_gates ++
              rob_physRd_mux_gates ++ rob_old_phys_mux_gates ++ fp_route_gates ++ fp_mux_data_gates ++
              br_mux_data_gates ++ mem_mux_data_gates ++ md_mux_data_gates ++
