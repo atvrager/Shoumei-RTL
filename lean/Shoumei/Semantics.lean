@@ -80,22 +80,20 @@ def evalDFF (g : Gate) (env : Env) : Bool :=
 def updateEnv (env : Env) (w : Wire) (v : Bool) : Env :=
   fun w' => if w' == w then v else env w'
 
+-- Evaluate a list of gates in topological order over an environment
+def evalGates (gates : List Gate) (env : Env) : Env :=
+  gates.foldl (fun env gate => updateEnv env gate.output (evalGate gate env)) env
+
+theorem evalGates_nil (env : Env) : evalGates [] env = env := rfl
+
 -- Evaluate a purely combinational circuit
 -- Given input values (as an environment), compute output values
 -- Note: For sequential circuits, use evalCycleSequential or evalSequential instead
 def evalCircuit (c : Circuit) (inputEnv : Env) : Env :=
-  -- Strategy:
-  -- 1. Start with inputEnv for circuit inputs
-  -- 2. For each gate in topological order:
-  --    - Evaluate gate using current environment
-  --    - Update environment with gate output
-  -- 3. Return final environment
-  --
-  -- Note: Assumes gates are in topological order and circuit is purely combinational
-  c.gates.foldl (fun env gate =>
-    let result := evalGate gate env
-    updateEnv env gate.output result
-  ) inputEnv
+  evalGates c.gates inputEnv
+
+theorem evalGates_eq_evalCircuit (c : Circuit) (env : Env) :
+    evalGates c.gates env = evalCircuit c env := rfl
 
 -- Helper: evaluate circuit and extract specific output wire
 def evalCircuitOutput (c : Circuit) (inputEnv : Env) (out : Wire) : Bool :=
