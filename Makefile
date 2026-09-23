@@ -106,6 +106,8 @@ codegen: lean opcodes
 	@echo "    Phase 2: Exporting compositional verification certificates..."
 	@mkdir -p verification
 	lake --no-ansi exe generate_all --export-certs > verification/compositional-certs.txt
+	@echo "    Phase 2b: Checking circuit wiring completeness..."
+	lake --no-ansi exe generate_all --check-wiring
 	@echo "    Phase 3: Generating architecture diagram..."
 	-python3 scripts/gen-architecture-diagram.py --png 2>/dev/null || true
 	@echo "    Phase 4: Generating benchmark programs (SV assembly + manifest)..."

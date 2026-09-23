@@ -126,6 +126,7 @@ import Shoumei.DSL.AutoCodegen
 import Shoumei.DSL.Decoupled
 import Shoumei.DSL.DecoupledProofs
 import Shoumei.DSL.Interfaces
+import Shoumei.DSL.PortResolve
 import Shoumei.Examples.Adder
 import Shoumei.Examples.AdderProofs
 import Shoumei.Examples.QueueExample
