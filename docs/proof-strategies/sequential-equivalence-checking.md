@@ -32,7 +32,7 @@ Rather than relying on automated black-box model checkers that timeout, Shoumei 
 
 ## 2. Theoretical Framework: Trace Bisimulation
 
-In Shoumei's temporal framework ([`lean/Shoumei/Temporal/Trace.lean`](file:///usr/local/google/home/atv/src/Shoumei-RTL/lean/Shoumei/Temporal/Trace.lean)), a sequential circuit's execution is formalized over infinite discrete time:
+In Shoumei's temporal framework ([`lean/Shoumei/Temporal/Trace.lean`](../../lean/Shoumei/Temporal/Trace.lean)), a sequential circuit's execution is formalized over infinite discrete time:
 
 ```lean
 structure Trace where
@@ -182,7 +182,7 @@ $$\forall t, \quad \text{rst}_t = \text{false} \land \text{en}_t = \text{true} \
 When transforming a combinational datapath into a pipelined datapath, SEC requires proving that a chain of $k$ registers behaves identically to an ideal discrete-time delay operator $Z^{-k}$.
 
 ### Multi-Stage Latency Functor
-In [`lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean`](file:///usr/local/google/home/atv/src/Shoumei-RTL/lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean):
+In [`lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean`](../../lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean):
 
 ```lean
 theorem register_pipeline_2stage_delay
