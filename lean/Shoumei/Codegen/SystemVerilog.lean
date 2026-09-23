@@ -18,6 +18,7 @@ Requires: a SystemVerilog frontend that understands struct types (e.g. yosys-sla
 
 import Shoumei.DSL
 import Shoumei.DSL.Interfaces
+import Shoumei.DSL.PortResolve
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.SVA
 import Std.Data.HashMap
@@ -206,37 +207,7 @@ private def extractBaseName (wireName : String) : String :=
   else
     wireName
 
-/-- Parse a port name that may contain indexing in various formats.
-    Bracket:    "alloc_physRd[0]" → some ("alloc_physRd", 0)
-    Underscore: "data_3"          → some ("data", 3)
-    Bare:       "in0"             → some ("in", 0)
-    Non-indexed:"enq_valid"       → none -/
-def parsePortIndex (portName : String) : Option (String × Nat) :=
-  -- Try bracket indexing first: portName[N]
-  match portName.splitOn "[" with
-  | [base, idxPart] =>
-      let idxStr := String.ofList (idxPart.toList.takeWhile (· != ']'))
-      match idxStr.toNat? with
-      | some idx => some (base, idx)
-      | none => none
-  | _ =>
-      -- Try underscore or bare suffix: extract trailing digits
-      let chars := portName.toList
-      let digitSuffix := chars.reverse.takeWhile Char.isDigit |>.reverse
-      if digitSuffix.isEmpty then
-        none
-      else
-        let idxStr := String.ofList digitSuffix
-        let baseStr := String.ofList (chars.take (chars.length - digitSuffix.length))
-        match idxStr.toNat? with
-        | some idx =>
-            -- Strip trailing underscores from base if present (underscore indexing)
-            let baseChars := (baseStr.toList.reverse.dropWhile (· == '_')).reverse
-            let base := String.ofList baseChars
-            -- Don't parse if base is empty
-            if base.isEmpty then none
-            else some (base, idx)
-        | none => none
+export Shoumei.DSL.PortResolve (PortKey parsePortIndex normalizePortKey)
 
 /-- Build a HashSet of wire names and their base port names for O(1) port matching. -/
 def buildPortBaseSet (wires : List Wire) : Std.HashSet String :=

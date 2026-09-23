@@ -11,6 +11,7 @@ import Shoumei.Codegen.Unified
 import Shoumei.Codegen.SECMiter
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
+import Shoumei.DSL.PortResolve
 
 -- Phase 0: Foundation
 import Shoumei.Examples.Adder
@@ -408,6 +409,16 @@ def main (args : List String) : IO Unit := do
   if args.contains "--export-certs" then
     Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
     return
+  if args.contains "--check-wiring" then
+    let missing := Shoumei.DSL.PortResolve.checkRegistryWiring allCircuits
+    if missing.isEmpty then
+      IO.println s!"✓ All {allCircuits.length} circuits are WellWired (0 unconnected instance inputs)"
+      return
+    else
+      IO.eprintln s!"✗ Wiring check failed: {missing.length} unconnected instance inputs found:"
+      for m in missing do
+        IO.eprintln s!"  {m.parentModule} / {m.childModule} {m.instName}: {m.portWire.name}"
+      IO.Process.exit 1
   let force := args.contains "--force"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
