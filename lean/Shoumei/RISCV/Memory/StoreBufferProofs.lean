@@ -35,9 +35,9 @@ theorem storebuffer8_input_count : mkStoreBuffer8.inputs.length = 205 := by nati
     deq_valid(1) + deq_bits(130) +
     fwd_hit(1) + fwd_committed_hit(1) + fwd_word_hit(1) + fwd_word_only_hit(1) +
     fwd_data(64) + fwd_size(2) = 209 -/
-theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 210 := by native_decide
+theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 212 := by native_decide
 
-/-- StoreBuffer8 uses 49 verified submodule instances:
+/-- StoreBuffer8 uses 50 verified submodule instances:
     - 8 x Register130 (entry storage)
     - 1 x QueuePointer_3 (head pointer)
     - 2 x QueuePointerLoadable_3 (tail/commit pointers)
@@ -45,14 +45,14 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 210 := by na
     - 3 x Decoder3 (enqueue/head/commit one-hot decode)
     - 8 x EqualityComparator64 (address matching for forwarding)
     - 1 x Popcount8 (flush recovery)
-    - 19 x DFlipFlop (16 valid/committed + 3 pending commit)
+    - 20 x DFlipFlop (16 valid/committed + 3 pending commit + 1 flush pending)
     - 3 x Mux8x64 (fwd data, deq address, deq data)
     - 2 x Mux8x2 (fwd size, deq size)
     - 1 x PriorityArbiter8 (youngest-match selection) -/
-theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 49 := by native_decide
+theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 50 := by native_decide
 
-/-- StoreBuffer8 gate count: 3085 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3086 := by native_decide
+/-- StoreBuffer8 gate count: 3089 combinational gates -/
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3089 := by native_decide
 
 /-! ## Building Block Verification -/
 

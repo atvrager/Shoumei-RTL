@@ -305,6 +305,9 @@ jobs:
       - name: Generate code
         run: make codegen
 
+      - name: Verify output stability
+        run: git diff --exit-code -- output/ testbench/generated/
+
       - name: Generate test assembly
         run: lake exe gen_tests
 

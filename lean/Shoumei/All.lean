@@ -263,6 +263,7 @@ import Shoumei.Reflection.SequentialCompile
 import Shoumei.Reflection.SymbolicCompile
 import Shoumei.Reflection.WireMap
 import Shoumei.Semantics
+import Shoumei.Semantics.Hierarchical
 import Shoumei.SoC.ShoumeiSoC
 import Shoumei.SoC.ShoumeiSoCProofs
 import Shoumei.Temporal.Trace
@@ -276,4 +277,5 @@ import Shoumei.Verification
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts
 import Shoumei.Verification.ExportCerts
+import Shoumei.Verification.Implements
 import Shoumei.Verification.ProofManifest

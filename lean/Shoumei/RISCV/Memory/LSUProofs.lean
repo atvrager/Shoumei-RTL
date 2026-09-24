@@ -31,7 +31,7 @@ theorem lsu_input_count :
     279 legacy + stage1(64 addr + 6 tag) + stage2(64 data + hit) +
     replay_needed = 279 + 136 = 415 -/
 theorem lsu_output_count :
-    mkLSU.outputs.length = 415 := by
+    mkLSU.outputs.length = 417 := by
   native_decide
 
 /-- LSU has 2 instances (MemoryExecUnit + StoreBuffer8). -/
