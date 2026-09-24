@@ -274,6 +274,7 @@ import Shoumei.TestGen.RandProgram
 import Shoumei.TestGen.Rng
 import Shoumei.Theorems
 import Shoumei.Verification
+import Shoumei.Verification.CompositionDemos
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts
 import Shoumei.Verification.ExportCerts

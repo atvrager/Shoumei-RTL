@@ -129,6 +129,222 @@ theorem implementsComb_of_flat
   rw [evalHier_no_instances reg fuel c h_inst]
   exact h_eval i
 
+/-! ## Composition (Phase 3: `implements_compose`)
+
+A parent assembled from instances implements the composed behaviour, given an
+atom for every child module and a proof that the parent's own gates plus
+wiring carry the children's outputs to the parent's behaviour.
+
+Child correctness is stated with a per-module spec dispatch
+(`childSpec : Circuit → ...`), so one lemma covers heterogeneous children
+without existential types: the spec assembly reuses `applyInst` /
+`hierStepFold` with the spec in place of recursion, i.e. the exact schedule
+`evalHier` / `stepHier` use. The demos in `Verification/CompositionDemos.lean`
+instantiate these lemmas on the two plan-nominated hierarchies (`Mux8x32`,
+`Register160`). -/
+
+/-- Child atom (combinational): hierarchical evaluation of the submodule
+    agrees with its spec on every wired input environment. -/
+def ChildCombAtom (reg : ModuleRegistry) (fuel : Nat) (inst : CircuitInstance)
+    (childSpec : Circuit → Env → Env) : Prop :=
+  ∀ (nm : String) (sub : Circuit),
+    reg.find? (fun p => p.1 == inst.moduleName) = some (nm, sub) →
+    ∀ inEnv, evalHier reg fuel sub inEnv = childSpec sub inEnv
+
+/-- Spec-assembled parent evaluation: pre-gates, then spec instances, then
+    post-gates — the same schedule `evalHier` uses. -/
+def specParentEval (childSpec : Circuit → Env → Env)
+    (reg : ModuleRegistry) (parent : Circuit) (env : Env) : Env :=
+  let env₁ := evalGates (preGates reg parent) env
+  let env₂ := parent.instances.foldl (applyInst reg childSpec) env₁
+  evalGates (postGates reg parent) env₂
+
+/-- Glue obligation (combinational): the spec-assembled environment decodes to
+    the parent behaviour. -/
+def GlueCombCommutes (reg : ModuleRegistry) (parent : Circuit)
+    (B : CombBehavior ι ω) (encI : ι → Env) (decO : Env → ω)
+    (childSpec : Circuit → Env → Env) : Prop :=
+  ∀ i, decO (specParentEval childSpec reg parent (encI i)) = B.eval i
+
+/-- Fold congruence: pointwise-equal step functions give equal folds. -/
+theorem foldl_apply_congr {f g : Env → CircuitInstance → Env}
+    {insts : List CircuitInstance}
+    (h : ∀ inst ∈ insts, ∀ env, f env inst = g env inst) :
+    ∀ init, insts.foldl f init = insts.foldl g init := by
+  induction insts with
+  | nil => intro init; rfl
+  | cons hd tl ih =>
+    intro init
+    simp only [List.foldl_cons]
+    have h_hd : ∀ env, f env hd = g env hd :=
+      fun env => h hd List.mem_cons_self env
+    have h_tl : ∀ inst ∈ tl, ∀ env, f env inst = g env inst :=
+      fun inst h_mem env => h inst (List.Mem.tail _ h_mem) env
+    rw [h_hd init]
+    exact ih h_tl _
+
+/-- Parent hierarchical evaluation equals spec-assembled evaluation when every
+    child atom holds. -/
+theorem evalHier_eq_specParentEval
+    (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (childSpec : Circuit → Env → Env)
+    (h_children : ∀ inst ∈ parent.instances,
+      ChildCombAtom reg fuel inst childSpec) :
+    ∀ env, evalHier reg (fuel + 1) parent env =
+             specParentEval childSpec reg parent env := by
+  intro env
+  have h_fold : parent.instances.foldl (applyInst reg (evalHier reg fuel))
+      (evalGates (preGates reg parent) env)
+      = parent.instances.foldl (applyInst reg childSpec)
+        (evalGates (preGates reg parent) env) := by
+    apply foldl_apply_congr
+    intro inst h_mem acc
+    have h_atom := h_children inst h_mem
+    match h_sub : reg.find? (fun p => p.1 == inst.moduleName) with
+    | none => simp only [applyInst, h_sub]
+    | some (nm, sub) =>
+      have h_eq : ∀ inEnv, evalHier reg fuel sub inEnv = childSpec sub inEnv :=
+        fun inEnv => h_atom nm sub h_sub inEnv
+      simp only [applyInst, h_sub, h_eq]
+  dsimp only [evalHier, specParentEval]
+  rw [h_fold]
+
+/-- Given an atom for every module the parent instantiates, and a proof that
+    the parent's own gates plus wiring carry the children's outputs to the
+    parent's behaviour, the parent implements its behaviour. -/
+theorem implementsComb_compose
+    (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (h_wired : WellWired reg parent = true)
+    (B : CombBehavior ι ω) (encI : ι → Env) (decO : Env → ω)
+    (childSpec : Circuit → Env → Env)
+    (h_children : ∀ inst ∈ parent.instances,
+      ChildCombAtom reg fuel inst childSpec)
+    (h_glue : GlueCombCommutes reg parent B encI decO childSpec) :
+    ImplementsComb reg (fuel + 1) parent B encI decO := by
+  have _ := h_wired
+  intro i
+  have h_eq := evalHier_eq_specParentEval reg fuel parent childSpec h_children (encI i)
+  rw [h_eq]
+  exact h_glue i
+
+/-! ## Sequential composition -/
+
+/-- Child atom (sequential): hierarchical stepping of the submodule agrees
+    with its spec from every sub-state and wired input environment. -/
+def ChildAtom (reg : ModuleRegistry) (fuel : Nat) (inst : CircuitInstance)
+    (childSpec : Circuit → State → Env → State × Env) : Prop :=
+  ∀ (nm : String) (sub : Circuit),
+    reg.find? (fun p => p.1 == inst.moduleName) = some (nm, sub) →
+    ∀ sSub inEnv, stepHier reg fuel sub sSub inEnv = childSpec sub sSub inEnv
+
+/-- Spec-assembled parent cycle: same schedule as `stepHier` (pre-gates,
+    spec instances via `hierStepFold`, post-gates, top DFF updates). -/
+def specParentStep (childSpec : Circuit → State → Env → State × Env)
+    (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (s : State) (inputEnv : Env) : State × Env :=
+  let dffOutputs := getDFFOutputs parent
+  let envWithState := mergeStateIntoEnv s inputEnv dffOutputs
+  let env₁ := evalCombGates (preGates reg parent) envWithState
+  let (subUpdates, env₂) :=
+    parent.instances.foldl
+      (hierStepFold (fun _ sub => childSpec sub) reg fuel s) ([], env₁)
+  let combEnv := evalCombGates (postGates reg parent) env₂
+  let topUpdates := parent.gates.filterMap fun gate =>
+    if gate.gateType.isDFF then
+      some (gate.output, evalDFF gate combEnv)
+    else none
+  (updateState s (topUpdates ++ subUpdates), combEnv)
+
+/-- Glue obligation (sequential): the spec-assembled cycle preserves the
+    invariant and commutes with the parent behaviour. -/
+structure GlueCommutes (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (B : Behavior σ ι ω)
+    (absS : State → σ) (encI : ι → Env) (decO : Env → ω)
+    (inv : State → Prop)
+    (childSpec : Circuit → State → Env → State × Env) : Prop where
+  step_inv : ∀ s i, inv s → inv (specParentStep childSpec reg fuel parent s (encI i)).1
+  step_ok : ∀ s i, inv s →
+    absS (specParentStep childSpec reg fuel parent s (encI i)).1 = B.step (absS s) i
+  out_ok : ∀ s i, inv s →
+    decO (specParentStep childSpec reg fuel parent s (encI i)).2 = B.out (absS s) i
+
+/-- Fold congruence for the sequential accumulator. -/
+theorem foldl_step_congr
+    {f g : (List (Wire × Bool) × Env) → CircuitInstance → (List (Wire × Bool) × Env)}
+    {insts : List CircuitInstance}
+    (h : ∀ inst ∈ insts, ∀ acc, f acc inst = g acc inst) :
+    ∀ init, insts.foldl f init = insts.foldl g init := by
+  induction insts with
+  | nil => intro init; rfl
+  | cons hd tl ih =>
+    intro init
+    simp only [List.foldl_cons]
+    have h_hd : ∀ acc, f acc hd = g acc hd :=
+      fun acc => h hd List.mem_cons_self acc
+    have h_tl : ∀ inst ∈ tl, ∀ acc, f acc inst = g acc inst :=
+      fun inst h_mem acc => h inst (List.Mem.tail _ h_mem) acc
+    rw [h_hd init]
+    exact ih h_tl _
+
+/-- Parent hierarchical stepping equals spec-assembled stepping when every
+    child atom holds. -/
+theorem stepHier_eq_specParentStep
+    (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (childSpec : Circuit → State → Env → State × Env)
+    (h_children : ∀ inst ∈ parent.instances,
+      ChildAtom reg fuel inst childSpec) :
+    ∀ s inputEnv, stepHier reg (fuel + 1) parent s inputEnv =
+                   specParentStep childSpec reg fuel parent s inputEnv := by
+  intro s inputEnv
+  have h_fold : parent.instances.foldl
+        (hierStepFold (fun _ sub => stepHier reg fuel sub) reg fuel s)
+        ([], evalCombGates (preGates reg parent)
+          (mergeStateIntoEnv s inputEnv (getDFFOutputs parent)))
+      = parent.instances.foldl
+        (hierStepFold (fun _ sub => childSpec sub) reg fuel s)
+        ([], evalCombGates (preGates reg parent)
+          (mergeStateIntoEnv s inputEnv (getDFFOutputs parent))) := by
+    apply foldl_step_congr
+    intro inst h_mem acc
+    have h_atom := h_children inst h_mem
+    match h_sub : reg.find? (fun p => p.1 == inst.moduleName) with
+    | none => simp only [hierStepFold, h_sub]
+    | some (nm, sub) =>
+      have h_eq : ∀ sSub inEnv,
+          stepHier reg fuel sub sSub inEnv = childSpec sub sSub inEnv :=
+        fun sSub inEnv => h_atom nm sub h_sub sSub inEnv
+      simp only [hierStepFold, h_sub, h_eq]
+  dsimp only [stepHier, specParentStep]
+  rw [h_fold]
+
+/-- Given an atom for every module the parent instantiates, and a proof that
+    the parent's own gates plus wiring carry the children's outputs to the
+    parent's behaviour, the parent implements its behaviour. -/
+theorem implements_compose
+    (reg : ModuleRegistry) (fuel : Nat) (parent : Circuit)
+    (h_wired : WellWired reg parent = true)
+    (B : Behavior σ ι ω)
+    (absS : State → σ) (encI : ι → Env) (decO : Env → ω)
+    (inv : State → Prop)
+    (h_init_inv : inv initState)
+    (h_init : absS initState = B.init)
+    (childSpec : Circuit → State → Env → State × Env)
+    (h_children : ∀ inst ∈ parent.instances,
+      ChildAtom reg fuel inst childSpec)
+    (h_glue : GlueCommutes reg fuel parent B absS encI decO inv childSpec) :
+    Implements reg (fuel + 1) parent B absS encI decO inv := by
+  have _ := h_wired
+  have h_eq : ∀ s i, stepHier reg (fuel + 1) parent s (encI i) =
+                   specParentStep childSpec reg fuel parent s (encI i) :=
+    fun s i => stepHier_eq_specParentStep reg fuel parent childSpec h_children s (encI i)
+  refine ⟨h_init_inv, fun s i h_inv => ?_, h_init, fun s i h_inv => ?_, fun s i h_inv => ?_⟩
+  · rw [h_eq s i]
+    exact h_glue.step_inv s i h_inv
+  · rw [h_eq s i]
+    exact h_glue.step_ok s i h_inv
+  · rw [h_eq s i]
+    exact h_glue.out_ok s i h_inv
+
 /-! ## Trace-Level Refinement -/
 
 /-- Every execution of `runHierTrace` matches the behavior state step and output. -/

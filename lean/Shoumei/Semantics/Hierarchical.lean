@@ -4,6 +4,8 @@ Semantics/Hierarchical.lean - Hierarchical Circuit Operational Semantics
 Extends flat circuit semantics to hierarchical circuits containing CircuitInstances:
 - `evalHier`: Combinational evaluation with recursive submodule instance elaboration
 - `stepHier`: Sequential evaluation threading scoped instance states
+  (`hierStepFold` is the shared single-instance fold step, parameterized by
+  the sub-evaluation function so proofs can substitute specs for recursion)
 - Soundness theorems:
   - `evalHier_no_instances`: Flat circuits match `evalCircuit`
   - `stepHier_no_instances`: Flat sequential circuits match `evalCycleSequential`
@@ -102,6 +104,33 @@ def allDFFWiresAux (reg : ModuleRegistry) : Nat → Circuit → List Wire
 def allDFFWires (reg : ModuleRegistry) (fuel : Nat) (c : Circuit) : List Wire :=
   allDFFWiresAux reg fuel c
 
+/-- Single-instance sequential fold step, parameterized by the sub-evaluation
+    function so hierarchical stepping and spec assembly share one schedule.
+    `recurse inst sub` evaluates the submodule from its scoped sub-state and
+    wired input environment; hierarchical stepping passes
+    `fun _ sub => stepHier reg fuel sub`, while composition proofs substitute
+    a verified child spec. -/
+def hierStepFold (recurse : CircuitInstance → Circuit → State → Env → State × Env)
+    (reg : ModuleRegistry) (fuel : Nat) (s : State)
+    (acc : List (Wire × Bool) × Env) (inst : CircuitInstance) :
+    List (Wire × Bool) × Env :=
+  match reg.find? (fun p => p.1 == inst.moduleName) with
+  | none => acc
+  | some (_, sub) =>
+    let (accUpdates, accEnv) := acc
+    let inEnv := subInputEnv sub inst accEnv
+    let subState : State := fun w => s (instScope inst.instName w)
+    let (subNextState, subOutEnv) := recurse inst sub subState inEnv
+    let subDffs := allDFFWires reg fuel sub
+    let scopedUpdates := subDffs.map fun w =>
+      (instScope inst.instName w, subNextState w)
+    let updatedEnv := sub.outputs.foldl (fun e outWire =>
+      match resolvePort sub inst outWire with
+      | some pw => updateEnv e pw (subOutEnv outWire)
+      | none => e
+    ) accEnv
+    (accUpdates ++ scopedUpdates, updatedEnv)
+
 /-- Evaluate one clock cycle of a hierarchical circuit.
     Instance states are threaded via `instScope`. -/
 def stepHier (reg : ModuleRegistry) : Nat → Circuit → State → Env → State × Env
@@ -110,23 +139,8 @@ def stepHier (reg : ModuleRegistry) : Nat → Circuit → State → Env → Stat
     let dffOutputs := getDFFOutputs c
     let envWithState := mergeStateIntoEnv s inputEnv dffOutputs
     let env₁ := evalCombGates (preGates reg c) envWithState
-    let (subNextStates, env₂) := c.instances.foldl (fun (accStateUpdates, accEnv) inst =>
-      match reg.find? (fun p => p.1 == inst.moduleName) with
-      | none => (accStateUpdates, accEnv)
-      | some (_, sub) =>
-        let inEnv := subInputEnv sub inst accEnv
-        let subState : State := fun w => s (instScope inst.instName w)
-        let (subNextState, subOutEnv) := stepHier reg fuel sub subState inEnv
-        let subDffs := allDFFWires reg fuel sub
-        let scopedUpdates := subDffs.map fun w =>
-          (instScope inst.instName w, subNextState w)
-        let updatedEnv := sub.outputs.foldl (fun e outWire =>
-          match resolvePort sub inst outWire with
-          | some pw => updateEnv e pw (subOutEnv outWire)
-          | none => e
-        ) accEnv
-        (accStateUpdates ++ scopedUpdates, updatedEnv)
-    ) ([], env₁)
+    let (subNextStates, env₂) := c.instances.foldl
+      (hierStepFold (fun _ sub => stepHier reg fuel sub) reg fuel s) ([], env₁)
     let combEnv := evalCombGates (postGates reg c) env₂
     let topDFFUpdates := c.gates.filterMap fun gate =>
       if gate.gateType.isDFF then
