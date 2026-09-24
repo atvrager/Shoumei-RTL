@@ -273,6 +273,40 @@ benchmark body, all compared retirement-by-retirement against Spike.  A
 benchmark that silently executes the wrong instruction stream therefore fails
 cosim even when its own region check still passes.
 
+### Benchmark numbers: peak vs whole-program IPC
+
+Two different IPC numbers are reported per benchmark; do not compare them
+with each other:
+
+- **Peak IPC** (`BENCH <name> <thr> <lat>` lines, `output/bench/bench-metrics.csv`,
+  published on the Pages `benchmarks.html`): in-program `1000*minstret/mcycle`
+  over the throughput region only (e.g. `add` = 1.933).
+- **Whole-program IPC** (`PASS add.elf (cycles, retired, IPC)` lines,
+  `output/bench/bench-results-rtl.csv`): total retired over total cycles for
+  the whole ELF, including the latency region, setup and IO (e.g. `add` = 1.578).
+
+### Performance regression gate
+
+`scripts/bench_regression.py` compares fresh metrics against the checked-in
+`verification/bench-baseline.csv` (like with like: peak vs peak, dependent vs
+dependent) and fails on any drop beyond 5% relative + 10 milli absolute. The
+simulator is deterministic, so a failure is always a real RTL or benchmark
+program change:
+
+```bash
+make -C testbench run-benchmarks   # full suite (main-branch benchmarks job)
+make -C testbench bench-regression # 8-instr subset, one per execution path (PRs)
+python3 scripts/bench_regression.py --metrics output/bench/bench-metrics.csv
+```
+
+To affirm an intended delta, merge the new numbers into the baseline and
+commit it in the same PR that changes the microarchitecture:
+
+```bash
+python3 scripts/bench_regression.py --metrics output/bench/bench-metrics.csv \
+    --baseline verification/bench-baseline.csv --update-baseline
+```
+
 ### Via Make
 
 ```bash

@@ -435,6 +435,13 @@ jobs:
       - name: Run benchmark suite
         run: make -C testbench run-benchmarks
 
+      # Perf gate: like-with-like IPC comparison against the checked-in
+      # baseline (verification/bench-baseline.csv). Failing here blocks the
+      # visuals deploy, so regressed numbers never reach the Pages site
+      # until the delta is affirmed via --update-baseline in a PR.
+      - name: Benchmark regression gate
+        run: python3 scripts/bench_regression.py --metrics output/bench/bench-metrics.csv
+
       - name: Upload benchmark data
         uses: actions/upload-artifact@v6
         if: always()
@@ -605,6 +612,12 @@ jobs:
 
       - name: Run all ELF tests
         run: make -C testbench run-all-tests
+
+      # PR-side perf gate: one benchmark per execution path. The sim is
+      # deterministic, so any drop vs verification/bench-baseline.csv is a
+      # real RTL/program change: affirm it with --update-baseline in the PR.
+      - name: Benchmark subset regression gate
+        run: make -C testbench bench-regression
 
       - name: Cache behavior conformance (L1D SV vs reference model)
         run: make -C testbench cache-model-test
