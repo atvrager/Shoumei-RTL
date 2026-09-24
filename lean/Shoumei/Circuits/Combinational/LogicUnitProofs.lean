@@ -9,6 +9,7 @@ Comprehensive 4-level formal verification hierarchy (L0-L3):
 -/
 
 import Shoumei.DSL
+import Shoumei.DSL.Interfaces
 import Shoumei.Semantics
 import Shoumei.Reflection.CompileCircuit
 import Shoumei.Temporal.Trace
@@ -17,6 +18,7 @@ import Shoumei.Circuits.Combinational.LogicUnit
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
+open Shoumei.DSL.Interfaces
 open Shoumei.Reflection
 open Shoumei.Temporal
 
@@ -40,24 +42,24 @@ theorem logicunitN_gates_length (n : Nat) :
   dsimp [mkLogicUnitN]
   have h := length_flatten_map_five (List.range n)
     (fun i => mkLogicUnitBit
-      (((List.range n).map (fun j => Wire.mk s!"a_{j}"))[i]!)
-      (((List.range n).map (fun j => Wire.mk s!"b_{j}"))[i]!)
+      ((makeIndexedWires "a" n)[i]!)
+      ((makeIndexedWires "b" n)[i]!)
       (Wire.mk "op0") (Wire.mk "op1")
-      (((List.range n).map (fun j => Wire.mk s!"result_{j}"))[i]!) i)
+      ((makeIndexedWires "result" n)[i]!) i)
     (fun _ => rfl)
   rw [h, List.length_range]
 
 /-- Theorem: Input port count of mkLogicUnitN is 2 * n + 2 (a[n] + b[n] + op0 + op1). -/
 theorem logicunitN_inputs_length (n : Nat) :
     (mkLogicUnitN n).inputs.length = 2 * n + 2 := by
-  dsimp [mkLogicUnitN]
+  dsimp [mkLogicUnitN, makeIndexedWires]
   simp [List.length_append, List.length_map, List.length_range]
   omega
 
 /-- Theorem: Output port count of mkLogicUnitN is exactly n. -/
 theorem logicunitN_outputs_length (n : Nat) :
     (mkLogicUnitN n).outputs.length = n := by
-  dsimp [mkLogicUnitN]
+  dsimp [mkLogicUnitN, makeIndexedWires]
   simp [List.length_map, List.length_range]
 
 -- Concrete structural properties (L0 backwards compatibility)
@@ -213,7 +215,7 @@ theorem logicunit8_nodup_drivers :
     Every gate drives a distinct, unique output wire (no multi-driver short circuits). -/
 theorem logicunit32_nodup_drivers :
     ((mkLogicUnit32).gates.map Gate.output).Nodup := by
-  decide
+  native_decide
 
 /-- **Theorem (L2 Stateless / Zero DFF Invariant - 4-bit)**:
     mkLogicUnit4 contains zero sequential flip-flops. -/

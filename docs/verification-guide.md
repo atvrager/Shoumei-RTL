@@ -115,30 +115,28 @@ and the *join* between behaviour and structure is asserted in prose.
 that the named module is emitted, so a certificate can name a proof that does not exist
 or no longer holds.
 
-In order of leverage, the missing atoms are:
+The verification ladder builds from verified leaf atoms to composed pipelines:
 
-1. **`Circuit` satisfies `Behavior` (per module).** There is no circuit semantics in
-   Lean, so nothing connects the structural `Circuit` to the behavioural model
-   (`CPUBehavioral.cpuStep` and friends); the theorems talk about the model and the
-   emitted RTL about the structure, and the two never meet. Add an evaluator
-   (`eval : Circuit -> Wire -> Value`, gate by gate) and one refinement theorem per
-   leaf. This is the atom that closes the gap.
-2. **One generic composition lemma.** Given `eval child = childBehavior` for every
-   child, a parent built from `CircuitInstance`s satisfies
-   `eval parent = parentBehavior`. Prove this *once* over the hierarchical evaluator;
-   afterwards every parent's atom is a one-line instantiation of its children's atoms.
-   This is what makes an external equivalence check unnecessary.
+1. **`Circuit` satisfies `Behavior` (per module).** Circuit semantics (`Semantics.lean`,
+   `Semantics/Hierarchical.lean`) and refinement relations (`Verification/Implements.lean`)
+   connect structural `Circuit`s to behavioural models. The typed refinement registry
+   (`Verification/Refinements.lean`) records `RefinementAtom` entries (pilot atoms cover
+   `FullAdder`, `LogicUnit4`, `Mux4x1`, `Mux4x32`, `Mux8x32`, `RippleCarryAdder4`,
+   `Comparator4`, `Popcount8`, `ALU32`, `DFlipFlop`, `Register160`, and `Queue1_1`).
+2. **Generic composition lemmas.** Proven via `implements_compose` and
+   `implementsComb_compose` in `Verification/Implements.lean`: given refinements for every
+   child, a parent built from `CircuitInstance`s inherits its refinement without
+   re-flattening or re-verifying from scratch (demonstrated on `Mux8x32` and `Register160`).
 3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`, `mkMuxTree k w`,
-   `mkRegisterN n`, `mkComparatorN n` should each carry a semantic lemma
-   (`eval (rca n) a b = a + b`). Then adder -> ALU -> datapath is a chain of one-liners
-   instead of a per-instance decision procedure.
-4. **Machine-checked certificates.** Generate `CompositionalCert` entries *from* the
-   composition-lemma instantiations, so a certificate exists only if its theorem
-   type-checks and the registry cannot emit a dangling reference.
-5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap; add
-   one semantic atom per opcode (`decode w = .X -> exec X s = spec X s`). An extension
-   then arrives as N small atoms -- exactly the shape wanted for reviewing a new
-   extension quickly.
+   `mkRegisterN n`, `mkComparatorN n` carry semantic evaluation lemmas
+   (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, etc.), allowing composition
+   chains instead of per-instance decision procedures.
+4. **Machine-checked refinement registry.** `RefinementAtom` entries require proof
+   terms at construction time (`lake exe generate_all --export-refinements`), preventing
+   dangling references or unproven claims.
+5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap; the
+   `ALU32` atom covers all 10 RV32I opcodes over all inputs. Expanding to remaining
+   instruction classes connects execution units directly to the ISA specification.
 
 Antipattern:
 

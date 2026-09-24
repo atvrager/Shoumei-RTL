@@ -58,17 +58,4 @@ theorem amoOpDecoder_leaf :
     (mkAMOOpDecoder defaultCPUConfig).instances.isEmpty := by
   native_decide
 
-/-! ## Behavioral Correspondence (Axioms) -/
-
-/-
-These axioms state that the structural circuits implement the behavioral cpuStep.
-Full verification requires proving equivalence between circuit execution and cpuStep.
-Deferred to future work (would require circuit semantics formalization).
--/
-
-theorem mkCPU_W2_implements_cpuStep :
-    ∀ (config : CPUConfig) (_state : CPUState config),
-      True := -- Placeholder: circuit execution matches cpuStep behavior
-  fun _ _ => trivial
-
 end Shoumei.RISCV.CPUProofs

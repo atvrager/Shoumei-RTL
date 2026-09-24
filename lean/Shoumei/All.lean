@@ -280,3 +280,4 @@ import Shoumei.Verification.CompositionalCerts
 import Shoumei.Verification.ExportCerts
 import Shoumei.Verification.Implements
 import Shoumei.Verification.ProofManifest
+import Shoumei.Verification.Refinements
