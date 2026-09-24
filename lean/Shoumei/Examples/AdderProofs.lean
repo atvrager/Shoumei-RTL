@@ -82,12 +82,7 @@ theorem fullAdder_arithmetic (a_val b_val cin_val : Bool) :
 theorem fullAdder_correct (a b cin : Bool) :
   let env := makeAdderEnv a b cin
   let result := evalCircuit fullAdderCircuit env
-  -- All three key properties hold
-  (∃ sum cout, sum = getSumOutput result ∧ cout = getCoutOutput result) ∧
-  -- Truth table is correct (proven by fullAdder_truthTable)
-  -- Commutativity holds (proven by fullAdder_commutative)
-  -- Arithmetic correctness holds (proven by fullAdder_arithmetic)
-  True := by
+  ∃ sum cout, sum = getSumOutput result ∧ cout = getCoutOutput result := by
   cases a <;> cases b <;> cases cin <;> native_decide
 
 end Shoumei.Examples

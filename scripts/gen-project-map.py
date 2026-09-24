@@ -28,6 +28,7 @@ LEAN = ROOT / "lean"
 # export is untracked and generated, so reading it would make the map depend on
 # whether codegen has run.
 CERT_REGISTRY = LEAN / "Shoumei" / "Verification" / "CompositionalCerts.lean"
+REFINEMENT_REGISTRY = LEAN / "Shoumei" / "Verification" / "Refinements.lean"
 GENERATE_ALL = ROOT / "GenerateAll.lean"
 
 RE_INSTANCE = re.compile(r'moduleName\s*:=\s*"([A-Za-z0-9_]+)"')
@@ -44,10 +45,9 @@ RE_HEADER = re.compile(r"^/\-(.*?)-/", re.S | re.M)
 
 # Hand-maintained: knowledge that is not extractable from the tree.  Keep short.
 KNOWN_GAPS = [
-    "No `Circuit satisfies Behavior` refinement atom: LEC relates the two "
-    "emitted artifacts, the theorems talk about the behavioural models, and "
-    "nothing joins the two.  This is the missing link that would let "
-    "composition be mechanical.",
+    "The `Circuit satisfies Behavior` atom exists (`Verification/Implements.lean`) "
+    "and composes (`implements_compose`), but coverage is partial -- see the "
+    "Refines column.  No RISC-V module carries one yet.",
     "Certificates are unverified pointers: `CompositionalCert.proofReference` is "
     "a `String` and the LEC script only checks that dependencies were verified.",
     "Widths are fixed to 64-bit for the RV64G core: `CPUConfig.xlen = 64` and "
@@ -91,6 +91,20 @@ def load_certs() -> dict[str, list[str]]:
     return certs
 
 
+def load_refinements() -> dict[str, str]:
+    """moduleName -> specName, read from the Lean refinement registry."""
+    refinements: dict[str, str] = {}
+    if not REFINEMENT_REGISTRY.exists():
+        return refinements
+    text = REFINEMENT_REGISTRY.read_text()
+    for m in re.finditer(
+        r'\.(?:combinational|sequential)\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_]+)"',
+        text,
+    ):
+        refinements[m.group(1)] = m.group(2)
+    return refinements
+
+
 def registry_order() -> list[str]:
     """Circuit names in GenerateAll order (best-effort)."""
     if not GENERATE_ALL.exists():
@@ -123,6 +137,7 @@ def main() -> int:
 
     known = set(circuit_file)
     certs = load_certs()
+    refinements = load_refinements()
 
     # Composition edges, restricted to real circuits.
     edges: dict[str, set[str]] = {}
@@ -173,6 +188,7 @@ def main() -> int:
     out.append(f"- Circuits with a literal `name :=` (graph nodes): "
                f"**{len(circuit_file)}**")
     out.append(f"- Compositional certificates (Lean registry): **{len(certs)}**")
+    out.append(f"- Refinement atoms (Lean registry): **{len(refinements)}**")
     out.append(f"- Proof files: **{len(list(LEAN.rglob('*Proofs.lean')))}**")
     out.append("")
     out.append("Parameterised builders (`mkQueueNStructural`, `mkRegisterN`,")
@@ -200,17 +216,18 @@ def main() -> int:
 
     out.append("## Coverage")
     out.append("")
-    out.append("| Circuit | Subsystem | Inst. | Cert | Proofs | Doc |")
-    out.append("| :--- | :--- | ---: | :---: | :---: | :---: |")
+    out.append("| Circuit | Subsystem | Inst. | Cert | Refines | Proofs | Doc |")
+    out.append("| :--- | :--- | ---: | :---: | :---: | :---: | :---: |")
     for name in sorted(circuit_file):
         f = circuit_file[name]
         hdr = first_doc_header(file_text[f])
         out.append(
-            "| `{n}` | {s} | {i} | {c} | {p} | {d} |".format(
+            "| `{n}` | {s} | {i} | {c} | {r} | {p} | {d} |".format(
                 n=name,
                 s=subsys_of[name],
                 i=len(edges[name]),
                 c="yes" if name in certs else "",
+                r="yes" if name in refinements else "",
                 p="yes" if has_proofs(name) else "",
                 d="yes" if hdr else "",
             )
@@ -220,10 +237,12 @@ def main() -> int:
     out.append("## Mechanical gaps")
     out.append("")
     no_doc = [n for n in circuit_file if not first_doc_header(file_text[circuit_file[n]])]
+    no_refine = [n for n in circuit_file if n not in refinements]
     no_proofs = [n for n in circuit_file if not has_proofs(n)]
     leaves = [n for n in circuit_file if not edges[n]]
     root_like = [n for n in circuit_file if not any(n in kids for kids in edges.values())]
     out.append(f"- **{len(no_doc)}** circuit files without a leading doc comment")
+    out.append(f"- **{len(no_refine)}** circuits with no `Circuit satisfies Behavior` atom")
     out.append(f"- **{len(no_proofs)}** circuits with no `*Proofs.lean` mentioning them")
     out.append(f"- **{len(leaves)}** circuits that instantiate nothing (leaves)")
     out.append(f"- **{len(root_like)}** circuits nothing else instantiates (tops)")
