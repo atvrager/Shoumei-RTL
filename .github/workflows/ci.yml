@@ -311,22 +311,17 @@ jobs:
       - name: Generate test assembly
         run: lake exe gen_tests
 
-      - name: Generate architecture diagram
-        run: |
-          pip install --quiet matplotlib==3.11.2
-          make architecture-diagram
-
-      # The treemap is generated from emitted SV and embedded in the README,
-      # so the committed PNG must not drift from the Lean sources (same rule
+      # The treemap is generated natively in Lean 4 and embedded in the README,
+      # so the committed SVG must not drift from the Lean sources (same rule
       # as docs/project-map.md in the lint job).
       - name: Treemap is current
-        run: git diff --exit-code -- docs/architecture-treemap.png
+        run: git diff --exit-code -- docs/architecture-treemap.svg
 
       - name: Treemap summary
         run: |
           if [ -f output/architecture-treemap.svg ]; then
             echo "### Microarchitecture Gate Treemap" >> $GITHUB_STEP_SUMMARY
-            echo "Generated XKCD-style microarchitecture treemap (\`output/architecture-treemap.svg\` and \`output/architecture-treemap.png\`)." >> $GITHUB_STEP_SUMMARY
+            echo "Generated microarchitecture treemap (\`output/architecture-treemap.svg\`)." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload architecture diagram
@@ -335,7 +330,6 @@ jobs:
           name: architecture-treemap
           path: |
             output/architecture-treemap.svg
-            output/architecture-treemap.png
           retention-days: 30
 
       - name: Upload codegen artifact
@@ -351,7 +345,7 @@ jobs:
             output/sv-sec/
             output/cpp_sim/
             output/architecture-treemap.svg
-            output/architecture-treemap.png
+            output/architecture-hierarchy.json
             output/bench/bench-programs.json
             output/bench-short/
             testbench/generated/

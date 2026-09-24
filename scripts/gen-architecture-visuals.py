@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import colorsys
-import importlib.util
 import json
 import math
 import random
@@ -36,8 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "output" / "architecture-visuals"
 
 LEAN_DIR = ROOT / "output" / "sv-from-lean"
+HIER_JSON = ROOT / "output" / "architecture-hierarchy.json"  # from generate_all
 FLAT_DIR = ROOT / "output" / "sv-netlist"
-TOP_DEFAULT = "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded"
 
 # Order matters: the hub lists sources in this order. `kind` selects the parser.
 SOURCES = [
@@ -69,65 +68,23 @@ CITY_W, CITY_H = 100.0, 62.0
 CITY_HEIGHT_MAX = 22.0
 
 
-def load_gen():
-    """Import gen-architecture-diagram.py (hyphenated filename: importlib)."""
-    path = Path(__file__).parent / "gen-architecture-diagram.py"
-    spec = importlib.util.spec_from_file_location("gen_architecture_diagram", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 # ------------------------------------------------------------- tree builders
 
-def module_children(gen, analyzer, mod: str) -> list[dict]:
-    """One level of instance children plus the module's own direct gates.
-
-    A module's size is direct gates + its instances; without a synthetic
-    "direct logic" node every ring under the module would show a gap.
-    """
-    direct, insts = analyzer.get_module(mod)
-    kids = []
-    for sub, _inst in insts:
-        sz = analyzer.hier_gates(sub)
-        if sz > 0:
-            kids.append({"name": sub, "size": sz})
-    covered = sum(k["size"] for k in kids)
-    left = analyzer.hier_gates(mod) - covered
-    if left > 0:
-        kids.append({"name": f"direct logic ({left:,}g)", "size": left})
-    kids.sort(key=lambda c: -c["size"])
-    return kids
+def tree_hier() -> dict:
+    """Subsystem tree exported by `lake exe generate_all` (Lean registry)."""
+    return json.loads(HIER_JSON.read_text())
 
 
-def tree_hier(gen, top: str) -> dict:
-    """Subsystem tree: same 100% hierarchical accounting as the treemap."""
-    analyzer = gen.ModuleAnalyzer(LEAN_DIR)
-    subs = gen.build_cpu_hierarchy(analyzer, top)
-    total = analyzer.hier_gates(top)
-
-    children = []
-    for group, items in subs.items():
-        leaves = [{
-            "name": item["name"],
-            "size": item["size"],
-            "children": module_children(gen, analyzer, item["name"]),
-        } for item in items]
-        children.append({
-            "name": group,
-            "size": sum(i["size"] for i in leaves),
-            "children": leaves,
-        })
-
-    return {"name": f"{top} — Lean RTL", "short": "Lean RTL", "size": total, "unit": "gates", "children": children}
+ASSIGN_RE = re.compile(r"^\s*assign\s+", re.MULTILINE)
+ALWAYS_FF_RE = re.compile(r"^\s*always_ff\s+@", re.MULTILINE)
 
 
-def tree_flatmod(gen) -> dict:
+def tree_flatmod() -> dict:
     """Per-module flat accounting: each flat module file is one leaf."""
-    analyzer = gen.ModuleAnalyzer(FLAT_DIR)
     leaves = []
     for path in sorted(FLAT_DIR.glob("*.sv")):
-        direct, _ = analyzer.get_module(path.stem)
+        text = path.read_text()
+        direct = len(ASSIGN_RE.findall(text)) + len(ALWAYS_FF_RE.findall(text))
         if direct > 0:
             leaves.append({"name": path.stem, "size": direct})
 
@@ -252,18 +209,20 @@ def prune_zero(node: dict) -> dict:
     return node
 
 
-def build_trees(gen) -> dict:
+def build_trees() -> dict:
     """Build a tree per source dir that exists; warn and skip missing dirs."""
     trees = {}
     for name, kind, dir_str in SOURCES:
         d = Path(dir_str)
+        if kind == "hier":
+            d = HIER_JSON
         if not d.exists():
             print(f"WARN: skipping {name}: {d} does not exist", file=sys.stderr)
             continue
         if kind == "hier":
-            tree = tree_hier(gen, TOP_DEFAULT)
+            tree = tree_hier()
         elif kind == "flatmod":
-            tree = tree_flatmod(gen)
+            tree = tree_flatmod()
         else:
             tree = tree_cells_hier(d)
         trees[name] = prune_zero(tree)
@@ -299,10 +258,11 @@ def style_ctx(plt, style: str, *, scale: float = 0.85, length: float = 90,
     return contextlib.nullcontext()
 
 
-def pal_color(gen, key: str, shade: int) -> str:
-    """Stable pastel per group: PALETTE bg when known, else deterministic HSV."""
-    if key in gen.PALETTE:
-        return gen.PALETTE[key]["bg"]
+def pal_color(node: dict, shade: int) -> str:
+    """Stable pastel per node: Lean subsystem colour when set, else deterministic HSV."""
+    if "color" in node:
+        return node["color"]
+    key = node["name"]
     h = (sum(ord(c) for c in key) * 47) % 360
     sat = 0.55 if shade == 1 else 0.60
     lum = 0.82 if shade == 1 else 0.90
@@ -315,9 +275,81 @@ def json_safe(data: dict) -> str:
     return json.dumps(data).replace("</", "<\\/")
 
 
+def squarify(values: list[dict], x: float, y: float, width: float,
+             height: float) -> list[tuple[dict, float, float, float, float]]:
+    """Squarified treemap (Bruls, Huizing, van Wijk): (item, x, y, w, h)."""
+    total = sum(v["size"] for v in values)
+    if not values or width <= 0 or height <= 0 or total <= 0:
+        return []
+
+    scale = width * height / total
+    todo = [(v, v["size"] * scale) for v in values]
+    rects: list[tuple[dict, float, float, float, float]] = []
+
+    def worst(row: list[tuple[dict, float]], side: float) -> float:
+        s = sum(a for _, a in row)
+        amax = max(a for _, a in row)
+        amin = min(a for _, a in row)
+        if s <= 0 or amin <= 0:
+            return float("inf")
+        return max(side * side * amax / (s * s), s * s / (side * side * amin))
+
+    while todo:
+        side = min(width, height)
+        if side <= 1e-9:
+            rects.extend((v, x, y, 0.0, 0.0) for v, _ in todo)
+            break
+        row = [todo[0]]
+        for cand in todo[1:]:
+            if worst(row + [cand], side) > worst(row, side):
+                break
+            row.append(cand)
+        todo = todo[len(row):]
+
+        thick = sum(a for _, a in row) / side
+        off = 0.0
+        for v, a in row:
+            length = a / thick if thick > 0 else 0.0
+            if width < height:
+                rects.append((v, x + off, y, length, thick))
+            else:
+                rects.append((v, x, y + off, thick, length))
+            off += length
+        if width < height:
+            y, height = y + thick, height - thick
+        else:
+            x, width = x + thick, width - thick
+    return rects
+
+
+XKCD_FONT = Path.home() / ".local" / "share" / "fonts" / "xkcd.otf"
+XKCD_URL = "https://github.com/ipython/xkcd-font/raw/master/xkcd/build/xkcd.otf"
+
+
+def ensure_xkcd_font() -> bool:
+    """Fetch and register the xkcd font; True when matplotlib can use it."""
+    import matplotlib.font_manager as fm
+    import matplotlib.pyplot as plt
+
+    if not XKCD_FONT.exists():
+        try:
+            import urllib.request
+
+            XKCD_FONT.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(XKCD_URL, XKCD_FONT)
+        except OSError:
+            return False
+    try:
+        fm.fontManager.addfont(str(XKCD_FONT))
+    except (OSError, RuntimeError):
+        return False
+    plt.rcParams["font.family"] = "xkcd"
+    return True
+
+
 # ----------------------------------------------------------------- treemap
 
-def draw_treemap(gen, tree: dict, out: Path) -> None:
+def draw_treemap(tree: dict, out: Path) -> None:
     """Two-level squarified treemap; xkcd PNG plus clean vector SVG twin."""
     import matplotlib.pyplot as plt
     import matplotlib.patches as mp
@@ -332,11 +364,11 @@ def draw_treemap(gen, tree: dict, out: Path) -> None:
             fig.patch.set_facecolor("#101418")
             ax.set_facecolor("#101418")
             groups = tree["children"] if tree.get("children") else [tree]
-            rects = gen.squarify([{"name": g["name"], "size": g["size"]} for g in groups],
+            rects = squarify([{"name": g["name"], "size": g["size"]} for g in groups],
                                  0, 0, TREEMAP_W, TREEMAP_H)
 
             for g, gx, gy, gw, gh in rects:
-                gc = pal_color(gen, g["name"], 0)
+                gc = pal_color(g, 0)
                 ax.add_patch(mp.FancyBboxPatch((gx + 0.05, gy + 0.05), gw - 0.1, gh - 0.1,
                              boxstyle="round,pad=0.01", facecolor=gc, edgecolor="#555555", linewidth=1.0))
                 pct = g["size"] / tree["size"] * 100
@@ -345,11 +377,11 @@ def draw_treemap(gen, tree: dict, out: Path) -> None:
                             fontsize=10.5, fontweight="bold", color="#222222", va="top")
 
                 if g.get("children"):
-                    rects_in = gen.squarify(g["children"], gx + 0.15, gy + 0.5, gw - 0.3, gh - 0.65)
+                    rects_in = squarify(g["children"], gx + 0.15, gy + 0.5, gw - 0.3, gh - 0.65)
                     for c, cx, cy, cw, ch in rects_in:
                         if cw * ch < 0.12 or cw < 0.45 or ch < 0.3:
                             continue
-                        cc = pal_color(gen, c["name"], 1)
+                        cc = pal_color(c, 1)
                         ax.add_patch(mp.FancyBboxPatch((cx + 0.03, cy + 0.03), cw - 0.06, ch - 0.06,
                                      boxstyle="round,pad=0.01", facecolor=cc, edgecolor="#444444", linewidth=0.6))
                     cpct = c["size"] / tree["size"] * 100
@@ -385,7 +417,7 @@ def draw_treemap(gen, tree: dict, out: Path) -> None:
 
 # ---------------------------------------------------------------- sunburst
 
-def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
+def draw_sunburst(tree: dict, out_svg: Path, out_png: Path) -> None:
     """Baobab rings, one ring per tree level; xkcd PNG plus clean SVG twin."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Wedge
@@ -405,7 +437,7 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
                 continue
             r1 = r0 + ring_w
             ax.add_patch(Wedge((0, 0), r1, np.degrees(a), np.degrees(a + span),
-                         width=ring_w, facecolor=pal_color(gen, it["name"], depth & 1),
+                         width=ring_w, facecolor=pal_color(it, depth & 1),
                          edgecolor="#101418", linewidth=0.8))
             deg = np.degrees(span)
             if depth < len(label_min) and deg > label_min[depth]:
@@ -467,19 +499,19 @@ def draw_sunburst(gen, tree: dict, out_svg: Path, out_png: Path) -> None:
             plt.close(fig)
 
 
-def flatten_city(tree: dict, gen) -> tuple[list[dict], list[dict]]:
+def flatten_city(tree: dict) -> tuple[list[dict], list[dict]]:
     """Leaves for the 3D city: (leaf list, group legend). Each leaf carries color."""
     leaves, legend = [], []
     for g in tree.get("children") or [tree]:
-        color = pal_color(gen, g["name"], 0)
+        color = pal_color(g, 0)
         legend.append({"name": g["name"], "size": g["size"], "color": color})
         if g.get("children"):
             for c in g["children"]:
                 leaves.append({"name": c["name"], "size": c["size"], "group": g["name"],
-                               "color": pal_color(gen, c["name"], 0)})
+                               "color": pal_color(c, 0)})
         else:
             leaves.append({"name": g["name"], "size": g["size"], "group": g["name"],
-                           "color": pal_color(gen, g["name"], 0)})
+                           "color": pal_color(g, 0)})
     return leaves, legend
 
 
@@ -607,14 +639,14 @@ addEventListener("resize", () => {
 """
 
 
-def draw_city(gen, tree: dict, out: Path) -> None:
+def draw_city(tree: dict, out: Path) -> None:
     """Gate-city HTML: squarified footprint, box height ~ sqrt(gate count)."""
-    leaves, legend = flatten_city(tree, gen)
+    leaves, legend = flatten_city(tree)
     if not leaves:
         raise ValueError("city needs at least one leaf")
 
     total = tree["size"]
-    rects = gen.squarify(leaves, 0, 0, CITY_W, CITY_H)
+    rects = squarify(leaves, 0, 0, CITY_W, CITY_H)
     max_size = max(c["size"] for c in leaves)
 
     city_leaves = []
@@ -642,7 +674,7 @@ def draw_city(gen, tree: dict, out: Path) -> None:
 
 # ---------------------------------------------------------- 3D hierarchy
 
-def layout_tree3d(tree: dict, gen) -> dict:
+def layout_tree3d(tree: dict) -> dict:
     """Cone layout: depth layers, angular span proportional to share.
 
     Layout done here (sunburst angle math on the client would duplicate it);
@@ -667,7 +699,7 @@ def layout_tree3d(tree: dict, gen) -> dict:
             "y": round(-depth * 3.2, 3),
             "z": round(math.cos(mid) * ring_r, 3),
             "r": round(min(rad, 3.0), 3),
-            "color": pal_color(gen, node["name"], depth % 2),
+            "color": pal_color(node, depth % 2),
             "group": group,
         })
         if parent is not None:
@@ -681,7 +713,7 @@ def layout_tree3d(tree: dict, gen) -> dict:
             a += kspan
 
     walk(tree, 0, 0.0, 2 * math.pi, None, tree["name"])
-    legend = [{"name": c["name"], "size": c["size"], "color": pal_color(gen, c["name"], 0)}
+    legend = [{"name": c["name"], "size": c["size"], "color": pal_color(c, 0)}
               for c in tree.get("children") or [tree]]
     return {"nodes": nodes, "edges": edges, "legend": legend, "total": total}
 
@@ -868,9 +900,9 @@ addEventListener("resize", () => {
 """
 
 
-def draw_tree3d(gen, tree: dict, out: Path) -> None:
+def draw_tree3d(tree: dict, out: Path) -> None:
     """3D hierarchy HTML: cone layout, spheres sized by share, parent edges."""
-    data = layout_tree3d(tree, gen)
+    data = layout_tree3d(tree)
     if not data["nodes"]:
         raise ValueError("tree needs at least one node")
 
@@ -951,18 +983,18 @@ def source_card(title: str, tm_svg: str, tm_png: str, sb_svg: str, sb_png: str,
             f'{fig_tm}{fig_sb}<div class="meta">{links}</div></div>')
 
 
-def draw_hub(trees: dict, out_dir: Path, gen) -> None:
+def draw_hub(trees: dict, out_dir: Path) -> None:
     parts: list[str] = []
 
-    # Hero: the detailed CPU treemap regenerated by gen-architecture-diagram.py
+    # Hero: the CPU treemap drawn by `lake exe generate_all`
     hero = out_dir / "architecture-treemap.svg"
     if hero.exists():
-        parts.append("<h2>Detailed CPU gate treemap (XKCD)</h2>")
+        parts.append("<h2>Detailed CPU gate treemap</h2>")
         parts.append(source_card(
             "RV64G OoO CPU — subsystem + leaf labels",
-            "architecture-treemap.svg", "architecture-treemap.png",
+            "architecture-treemap.svg", "architecture-treemap.svg",
             "", "", "city-lean.html", "tree-lean.html",
-            "click a figure for full size · labels readable at any zoom"))
+            "click the figure for full size · vector, readable at any zoom"))
 
     # Shoumei SoC Interactive Architecture
     parts.append("<h2>Shoumei System-on-Chip (SoC) Interactive Architecture</h2>")
@@ -1019,24 +1051,6 @@ def draw_hub(trees: dict, out_dir: Path, gen) -> None:
 
 # --------------------------------------------------------------------- main
 
-def draw_hero_svg(gen, out_svg: Path) -> None:
-    """Clean vector twin of the detailed CPU treemap (house text, small file)."""
-    import contextlib
-    import matplotlib.pyplot as plt
-
-    analyzer = gen.ModuleAnalyzer(LEAN_DIR)
-    subsystems = gen.build_cpu_hierarchy(analyzer, TOP_DEFAULT)
-    total = analyzer.hier_gates(TOP_DEFAULT)
-
-    real_xkcd = plt.xkcd
-    plt.rcParams["svg.fonttype"] = "none"
-    plt.xkcd = lambda *_a, **_k: contextlib.nullcontext()
-    try:
-        gen.draw_treemap(subsystems, total, out_svg)
-    finally:
-        plt.xkcd = real_xkcd
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate architecture visualizations for Pages.")
     p.add_argument("--out", type=Path, default=DEFAULT_OUT,
@@ -1049,11 +1063,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
-    gen = load_gen()
-    if not gen.ensure_xkcd_font():
+    if not ensure_xkcd_font():
         print("WARN: xkcd font unavailable; falling back to default font", file=sys.stderr)
 
-    tree = build_trees(gen)
+    tree = build_trees()
     if not tree:
         print("Error: no sources available (run 'make codegen' and the Yosys synths).",
               file=sys.stderr)
@@ -1067,21 +1080,18 @@ def main(argv: list[str] | None = None) -> int:
         if only and name not in only:
             continue
         t = tree[name]
-        draw_treemap(gen, t, out_dir / f"treemap-{name}.png")
-        draw_sunburst(gen, t, out_dir / f"sunburst-{name}.svg", out_dir / f"sunburst-{name}.png")
-        draw_city(gen, t, out_dir / f"city-{name}.html")
-        draw_tree3d(gen, t, out_dir / f"tree-{name}.html")
+        draw_treemap(t, out_dir / f"treemap-{name}.png")
+        draw_sunburst(t, out_dir / f"sunburst-{name}.svg", out_dir / f"sunburst-{name}.png")
+        draw_city(t, out_dir / f"city-{name}.html")
+        draw_tree3d(t, out_dir / f"tree-{name}.html")
         print(f"rendered {name}: treemap, sunburst, city, tree")
 
-    # Hero: reuse the detailed treemap painter, but patch plt.xkcd away so
-    # the SVG keeps real <text> (the xkcd stroke effect forces glyph paths,
-    # which would bloat the hub copy past 13 MB). PNG stays the xkcd one.
-    hero_png = ROOT / "output" / "architecture-treemap.png"
-    if hero_png.exists():
-        shutil.copyfile(hero_png, out_dir / "architecture-treemap.png")
-        draw_hero_svg(gen, out_dir / "architecture-treemap.svg")
+    # Hero: the Lean-drawn treemap (committed copy in docs/)
+    hero_svg = ROOT / "docs" / "architecture-treemap.svg"
+    if hero_svg.exists():
+        shutil.copyfile(hero_svg, out_dir / "architecture-treemap.svg")
 
-    draw_hub(tree, out_dir, gen)
+    draw_hub(tree, out_dir)
     print(f"hub: {out_dir / 'index.html'}")
     return 0
 

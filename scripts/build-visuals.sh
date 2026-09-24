@@ -19,7 +19,6 @@ FLATTEN=0 OUTPUT_DIR=syn_out_asap7_hier ./physical/run-yosys-asap7.sh
 
 npx -y -p typescript@5.5.4 tsc -p viewer/tsconfig.json
 
-make architecture-diagram
 mkdir -p output/architecture-visuals
 cp viewer/viewer.html viewer/dist/viewer.js viewer/dist/schema.gen.js output/architecture-visuals/
 python3 scripts/gen-architecture-visuals.py

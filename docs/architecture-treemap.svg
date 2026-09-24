@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600.0 1000.0" width="1600.0" height="1000.0">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff0f6"/><stop offset="0.5" stop-color="#fdf8ff"/><stop offset="1" stop-color="#eef6ff"/></linearGradient>
+<filter id="soft" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#c2255c" flood-opacity="0.10"/></filter>
+<style>
+text { font-family: 'Nunito','Quicksand','Varela Round','Segoe UI','Helvetica Neue',sans-serif; }
+.title { font-size: 26px; font-weight: 800; fill: #3d2c3e; }
+.subtitle { font-size: 13px; font-weight: 600; fill: #8a6f86; }
+.pill { font-size: 12px; font-weight: 800; }
+.sparkle { font-size: 15px; }
+.head { font-size: 14px; font-weight: 800; }
+.leaf { font-size: 11px; font-weight: 800; fill: #3d2c3e; }
+.leaf-s { font-size: 9.5px; font-weight: 700; fill: #3d2c3e; }
+.stats { font-size: 9.5px; font-weight: 700; }
+.legend { font-size: 10.5px; font-weight: 600; fill: #6b5a69; }
+.foot { font-size: 11px; font-weight: 600; fill: #a8949f; }
+</style>
+</defs>
+<rect x="0.0" y="0.0" width="1600.0" height="1000.0" rx="18.0" fill="url(#bg)" stroke="#f3d9e6" stroke-width="1.5"/>
+<text x="24.0" y="42.0" class="title">証明 Shoumei ✿ RV64G out-of-order core</text>
+<text x="24.0" y="66.0" class="subtitle">gate treemap · every box is a Lean Circuit · area ∝ hierarchical gate count · (ﾉ◕ヮ◕)ﾉ*:・ﾟ✧</text>
+<rect x="1178.7" y="22.0" width="130.4" height="28.0" rx="14.0" fill="#fff0f6" stroke="#f783ac" stroke-width="1.5"/>
+<text x="1243.9" y="41.0" class="pill" fill="#c2255c" text-anchor="middle">🌸 588,258 gates</text>
+<rect x="1319.1" y="22.0" width="130.4" height="28.0" rx="14.0" fill="#f3f0ff" stroke="#b197fc" stroke-width="1.5"/>
+<text x="1384.3" y="41.0" class="pill" fill="#6741d9" text-anchor="middle">🧩 503 instances</text>
+<rect x="1459.5" y="22.0" width="116.5" height="28.0" rx="14.0" fill="#e7f5ff" stroke="#74c0fc" stroke-width="1.5"/>
+<text x="1517.8" y="41.0" class="pill" fill="#1971c2" text-anchor="middle">📦 236 modules</text>
+<text x="648.0" y="30.0" class="sparkle" fill="#f783ac">✦</text>
+<text x="676.0" y="52.0" class="sparkle" fill="#b197fc">✧</text>
+<text x="700.0" y="26.0" class="sparkle" fill="#ffa8a8">✿</text>
+<text x="1560.0" y="78.0" class="sparkle" fill="#74c0fc">✧</text>
+<text x="18.0" y="84.0" class="sparkle" fill="#ffd43b">✦</text>
+<rect x="28.0" y="100.0" width="779.5" height="802.0" rx="14.0" fill="#fff4e0" stroke="#f08c00" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="33.0" y="105.0" width="769.5" height="26.0" rx="10.0" fill="#ffffff" stroke="#f08c00" stroke-width="1.0"/>
+<text x="42.0" y="124.0" class="head" fill="#d9480f">⚡ Execution</text>
+<text x="793.5" y="124.0" class="head" fill="#f08c00" text-anchor="end">298,469 · 50.7%</text>
+<rect x="36.5" y="138.5" width="359.8" height="433.8" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="216.4" y="349.9" class="leaf" text-anchor="middle" style="font-size:22.0px">Int multiplier</text>
+<text x="216.4" y="378.5" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:18.7px">81,910 · 13.9%</text>
+<rect x="36.5" y="577.3" width="359.8" height="316.2" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="216.4" y="729.9" class="leaf" text-anchor="middle" style="font-size:22.0px">FMA·D</text>
+<text x="216.4" y="758.5" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:18.7px">59,972 · 10.2%</text>
+<rect x="401.3" y="138.5" width="397.6" height="253.3" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="600.1" y="259.6" class="leaf" text-anchor="middle" style="font-size:22.0px">FMul·D</text>
+<text x="600.1" y="288.2" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:18.7px">53,215 · 9.0%</text>
+<rect x="401.3" y="396.8" width="216.7" height="156.0" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="509.7" y="469.3" class="leaf" text-anchor="middle" style="font-size:22.0px">FMA·S</text>
+<text x="509.7" y="497.9" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:18.7px">18,269 · 3.1%</text>
+<rect x="623.0" y="396.8" width="175.9" height="156.0" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="711.0" y="469.3" class="leaf" text-anchor="middle" style="font-size:22.0px">FMul·S</text>
+<text x="711.0" y="497.9" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:18.7px">14,911 · 2.5%</text>
+<rect x="401.3" y="557.8" width="115.7" height="203.2" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="459.2" y="655.4" class="leaf" text-anchor="middle" style="font-size:16.2px">Dual ALU</text>
+<text x="459.2" y="676.4" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:13.7px">12,858 · 2.2%</text>
+<rect x="401.3" y="766.1" width="115.7" height="127.4" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="459.2" y="825.4" class="leaf" text-anchor="middle" style="font-size:17.5px">FCvt·L</text>
+<text x="459.2" y="848.2" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:14.9px">8,178 · 1.4%</text>
+<rect x="522.0" y="557.8" width="94.5" height="131.7" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="569.3" y="620.2" class="leaf" text-anchor="middle" style="font-size:14.0px">+11 more</text>
+<text x="569.3" y="638.3" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:11.9px">6,964 · 1.2%</text>
+<rect x="621.5" y="557.8" width="86.7" height="131.7" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="664.9" y="620.5" class="leaf" text-anchor="middle" style="font-size:12.6px">FDiv·D</text>
+<text x="664.9" y="636.9" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.7px">6,418 · 1.1%</text>
+<rect x="713.3" y="557.8" width="85.7" height="131.7" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="756.1" y="620.6" class="leaf" text-anchor="middle" style="font-size:12.5px">FAdd·D</text>
+<text x="756.1" y="636.8" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.6px">6,345 · 1.1%</text>
+<rect x="522.0" y="694.5" width="84.8" height="114.0" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="564.4" y="748.4" class="leaf" text-anchor="middle" style="font-size:12.3px">FMisc·S</text>
+<text x="564.4" y="764.4" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.5px">5,466 · 0.9%</text>
+<rect x="522.0" y="813.5" width="84.8" height="80.0" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="564.4" y="850.4" class="leaf" text-anchor="middle" style="font-size:12.3px">FSqrt·D</text>
+<text x="564.4" y="866.4" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.5px">3,906 · 0.7%</text>
+<rect x="611.8" y="694.5" width="98.9" height="66.9" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="661.2" y="724.6" class="leaf" text-anchor="middle" style="font-size:13.6px">Int divider</text>
+<text x="661.2" y="742.3" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:11.6px">3,824 · 0.7%</text>
+<rect x="715.6" y="694.5" width="83.3" height="66.9" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="757.3" y="725.0" class="leaf" text-anchor="middle" style="font-size:12.1px">FAdd·S</text>
+<text x="757.3" y="740.7" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.2px">3,251 · 0.6%</text>
+<rect x="611.8" y="766.5" width="85.6" height="62.6" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="654.6" y="794.7" class="leaf" text-anchor="middle" style="font-size:12.4px">FCvt·D</text>
+<text x="654.6" y="810.9" class="stats" fill="#d9480f" text-anchor="middle" style="font-size:10.6px">3,136 · 0.5%</text>
+<rect x="611.8" y="834.1" width="85.6" height="59.4" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="654.6" y="867.3" class="leaf-s" text-anchor="middle">AMO compare ×2</text>
+<rect x="702.4" y="766.5" width="48.1" height="66.6" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="726.4" y="803.3" class="stats" fill="#d9480f" text-anchor="middle">1</text>
+<rect x="755.5" y="766.5" width="43.5" height="66.6" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="777.2" y="803.3" class="stats" fill="#d9480f" text-anchor="middle">2</text>
+<rect x="702.4" y="838.1" width="48.3" height="55.4" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="726.5" y="869.3" class="leaf-s" text-anchor="middle">FDiv·S</text>
+<rect x="755.7" y="838.1" width="43.2" height="55.4" rx="7.0" fill="#ffffff" stroke="#d9480f" stroke-width="1.2"/>
+<text x="777.3" y="869.3" class="stats" fill="#d9480f" text-anchor="middle">3</text>
+<rect x="815.5" y="100.0" width="756.5" height="491.1" rx="14.0" fill="#ffeef3" stroke="#f06595" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="820.5" y="105.0" width="746.5" height="26.0" rx="10.0" fill="#ffffff" stroke="#f06595" stroke-width="1.0"/>
+<text x="829.5" y="124.0" class="head" fill="#c2255c">🌸 Renaming</text>
+<text x="1558.0" y="124.0" class="head" fill="#f06595" text-anchor="end">178,570 · 30.4%</text>
+<rect x="824.0" y="138.5" width="413.4" height="444.1" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1030.6" y="355.1" class="leaf" text-anchor="middle" style="font-size:22.0px">Int PRF 64×64</text>
+<text x="1030.6" y="383.7" class="stats" fill="#c2255c" text-anchor="middle" style="font-size:18.7px">100,344 · 17.1%</text>
+<rect x="1242.3" y="138.5" width="321.2" height="294.9" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1402.9" y="280.4" class="leaf" text-anchor="middle" style="font-size:22.0px">FP PRF 64×64</text>
+<text x="1402.9" y="309.0" class="stats" fill="#c2255c" text-anchor="middle" style="font-size:18.7px">52,228 · 8.9%</text>
+<rect x="1242.3" y="438.4" width="72.0" height="144.3" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1278.3" y="514.0" class="leaf-s" text-anchor="middle">Int RAT ×2</text>
+<rect x="1319.3" y="438.4" width="112.3" height="83.4" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1375.5" y="476.7" class="leaf" text-anchor="middle" style="font-size:13.3px">Int free list</text>
+<text x="1375.5" y="494.0" class="stats" fill="#c2255c" text-anchor="middle" style="font-size:11.3px">5,539 · 0.9%</text>
+<rect x="1319.3" y="526.8" width="112.3" height="55.8" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1375.5" y="551.2" class="leaf" text-anchor="middle" style="font-size:14.0px">FP RAT</text>
+<text x="1375.5" y="569.4" class="stats" fill="#c2255c" text-anchor="middle" style="font-size:11.9px">3,812 · 0.6%</text>
+<rect x="1436.6" y="438.4" width="62.1" height="76.9" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1467.7" y="480.3" class="stats" fill="#c2255c" text-anchor="middle">4</text>
+<rect x="1503.7" y="438.4" width="59.8" height="76.9" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1533.6" y="480.3" class="stats" fill="#c2255c" text-anchor="middle">5</text>
+<rect x="1436.6" y="520.2" width="45.7" height="62.4" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1459.5" y="554.9" class="stats" fill="#c2255c" text-anchor="middle">6</text>
+<rect x="1487.3" y="520.2" width="37.9" height="62.4" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1506.3" y="554.9" class="stats" fill="#c2255c" text-anchor="middle">7</text>
+<rect x="1530.2" y="520.2" width="33.3" height="62.4" rx="7.0" fill="#ffffff" stroke="#c2255c" stroke-width="1.2"/>
+<text x="1546.9" y="554.9" class="stats" fill="#c2255c" text-anchor="middle">8</text>
+<rect x="815.5" y="599.1" width="293.8" height="302.9" rx="14.0" fill="#f3f0ff" stroke="#845ef7" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="820.5" y="604.1" width="283.8" height="26.0" rx="10.0" fill="#ffffff" stroke="#845ef7" stroke-width="1.0"/>
+<text x="829.5" y="623.1" class="head" fill="#5f3dc4">🔮 Microcode</text>
+<text x="1095.2" y="623.1" class="head" fill="#845ef7" text-anchor="end">43,900 · 7.5%</text>
+<rect x="824.0" y="637.6" width="272.5" height="255.9" rx="7.0" fill="#ffffff" stroke="#5f3dc4" stroke-width="1.2"/>
+<text x="960.2" y="760.1" class="leaf" text-anchor="middle" style="font-size:22.0px">Zb* fallback logic</text>
+<text x="960.2" y="788.7" class="stats" fill="#5f3dc4" text-anchor="middle" style="font-size:18.7px">43,240 · 7.4%</text>
+<rect x="1117.2" y="599.1" width="192.7" height="157.5" rx="14.0" fill="#f1f3f5" stroke="#adb5bd" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1122.2" y="604.1" width="182.7" height="26.0" rx="10.0" fill="#ffffff" stroke="#adb5bd" stroke-width="1.0"/>
+<text x="1131.2" y="623.1" class="head" fill="#495057">💫 Glue &amp; CDB</text>
+<rect x="1125.7" y="637.6" width="140.2" height="110.5" rx="7.0" fill="#ffffff" stroke="#495057" stroke-width="1.2"/>
+<text x="1195.8" y="688.9" class="leaf" text-anchor="middle" style="font-size:15.8px">Top-level glue</text>
+<text x="1195.8" y="709.5" class="stats" fill="#495057" text-anchor="middle" style="font-size:13.4px">12,493 · 2.1%</text>
+<rect x="1271.0" y="637.6" width="30.4" height="110.5" rx="7.0" fill="#ffffff" stroke="#495057" stroke-width="1.2"/>
+<text x="1286.2" y="696.4" class="stats" fill="#495057" text-anchor="middle">10</text>
+<rect x="1117.2" y="764.6" width="192.7" height="137.4" rx="14.0" fill="#e6fcf5" stroke="#20c997" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1122.2" y="769.6" width="182.7" height="26.0" rx="10.0" fill="#ffffff" stroke="#20c997" stroke-width="1.0"/>
+<text x="1131.2" y="788.6" class="head" fill="#087f5b">🌊 Memory</text>
+<rect x="1125.7" y="803.1" width="155.5" height="90.4" rx="7.0" fill="#ffffff" stroke="#087f5b" stroke-width="1.2"/>
+<text x="1203.5" y="842.8" class="leaf" text-anchor="middle" style="font-size:22.0px">LSU</text>
+<text x="1203.5" y="871.4" class="stats" fill="#087f5b" text-anchor="middle" style="font-size:18.7px">12,127 · 2.1%</text>
+<rect x="1286.2" y="803.1" width="15.2" height="90.4" rx="7.0" fill="#ffffff" stroke="#087f5b" stroke-width="1.2"/>
+<text x="1293.8" y="851.8" class="stats" fill="#087f5b" text-anchor="middle">11</text>
+<rect x="1317.9" y="599.1" width="124.0" height="202.8" rx="14.0" fill="#e7f5ff" stroke="#4dabf7" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1322.9" y="604.1" width="114.0" height="26.0" rx="10.0" fill="#ffffff" stroke="#4dabf7" stroke-width="1.0"/>
+<text x="1331.9" y="623.1" class="head" fill="#1971c2">💎</text>
+<rect x="1326.4" y="637.6" width="68.9" height="75.5" rx="7.0" fill="#ffffff" stroke="#1971c2" stroke-width="1.2"/>
+<text x="1360.8" y="678.9" class="leaf-s" text-anchor="middle">RS int</text>
+<rect x="1400.3" y="637.6" width="33.1" height="75.5" rx="7.0" fill="#ffffff" stroke="#1971c2" stroke-width="1.2"/>
+<text x="1416.9" y="678.9" class="stats" fill="#1971c2" text-anchor="middle">12</text>
+<rect x="1326.4" y="718.1" width="69.9" height="35.6" rx="7.0" fill="#ffffff" stroke="#1971c2" stroke-width="1.2"/>
+<text x="1361.4" y="739.4" class="leaf-s" text-anchor="middle">RS FP</text>
+<rect x="1326.4" y="758.7" width="69.9" height="34.8" rx="7.0" fill="#ffffff" stroke="#1971c2" stroke-width="1.2"/>
+<text x="1361.4" y="779.6" class="leaf-s" text-anchor="middle">RS mul/div</text>
+<rect x="1401.3" y="718.1" width="32.1" height="75.4" rx="7.0" fill="#ffffff" stroke="#1971c2" stroke-width="1.2"/>
+<text x="1417.4" y="759.3" class="stats" fill="#1971c2" text-anchor="middle">13</text>
+<rect x="1449.9" y="599.1" width="122.1" height="202.8" rx="14.0" fill="#fff9db" stroke="#fcc419" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1454.9" y="604.1" width="112.1" height="26.0" rx="10.0" fill="#ffffff" stroke="#fcc419" stroke-width="1.0"/>
+<text x="1463.9" y="623.1" class="head" fill="#e67700">⭐ Fetch</text>
+<rect x="1458.4" y="637.6" width="105.1" height="65.0" rx="7.0" fill="#ffffff" stroke="#e67700" stroke-width="1.2"/>
+<text x="1511.0" y="666.2" class="leaf" text-anchor="middle" style="font-size:15.7px">PC queue</text>
+<text x="1511.0" y="686.6" class="stats" fill="#e67700" text-anchor="middle" style="font-size:13.4px">5,584 · 0.9%</text>
+<rect x="1458.4" y="707.6" width="79.8" height="85.9" rx="7.0" fill="#ffffff" stroke="#e67700" stroke-width="1.2"/>
+<text x="1498.3" y="747.7" class="leaf" text-anchor="middle" style="font-size:11.5px">Insn queue</text>
+<text x="1498.3" y="762.6" class="stats" fill="#e67700" text-anchor="middle" style="font-size:9.7px">5,584 · 0.9%</text>
+<rect x="1543.2" y="707.6" width="20.3" height="85.9" rx="7.0" fill="#ffffff" stroke="#e67700" stroke-width="1.2"/>
+<text x="1553.4" y="754.0" class="stats" fill="#e67700" text-anchor="middle">14</text>
+<rect x="1317.9" y="810.0" width="199.4" height="92.0" rx="14.0" fill="#f8f0fc" stroke="#cc5de8" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1322.9" y="815.0" width="189.4" height="26.0" rx="10.0" fill="#ffffff" stroke="#cc5de8" stroke-width="1.0"/>
+<text x="1331.9" y="834.0" class="head" fill="#862e9c">🎀 Retire &amp; CSRs</text>
+<rect x="1326.4" y="848.5" width="121.8" height="45.0" rx="7.0" fill="#ffffff" stroke="#862e9c" stroke-width="1.2"/>
+<text x="1387.3" y="868.2" class="leaf" text-anchor="middle" style="font-size:11.3px">ROB</text>
+<text x="1387.3" y="882.8" class="stats" fill="#862e9c" text-anchor="middle" style="font-size:9.6px">6,570 · 1.1%</text>
+<rect x="1453.2" y="848.5" width="51.3" height="45.0" rx="7.0" fill="#ffffff" stroke="#862e9c" stroke-width="1.2"/>
+<text x="1478.9" y="874.5" class="leaf-s" text-anchor="middle">CSR file</text>
+<rect x="1525.3" y="810.0" width="46.7" height="92.0" rx="14.0" fill="#ebfbee" stroke="#51cf66" stroke-width="2.0" filter="url(#soft)"/>
+<rect x="1530.3" y="815.0" width="36.7" height="26.0" rx="10.0" fill="#ffffff" stroke="#51cf66" stroke-width="1.0"/>
+<text x="1539.3" y="834.0" class="head" fill="#2b8a3e">🍃</text>
+<rect x="1533.8" y="848.5" width="29.7" height="45.0" rx="7.0" fill="#ffffff" stroke="#2b8a3e" stroke-width="1.2"/>
+<text x="1548.7" y="874.5" class="stats" fill="#2b8a3e" text-anchor="middle">16</text>
+<rect x="24.0" y="914.0" width="1552.0" height="62.0" rx="10.0" fill="#ffffff" stroke="#f3d9e6" stroke-width="1.0"/>
+<text x="36.0" y="932.0" class="legend">(◕ᴗ◕✿) tiny units: [1] FPU logic 1,946   ·   [2] FSqrt·S 1,775   ·   [3] Branch compare 1,492   ·   [4] Int busy table 2,932   ·   [5] FP free list 2,834   ·   [6] Int rename logic 1,823   ·   [7] FP busy table 1,545</text>
+<text x="36.0" y="948.0" class="legend">[8] +2 more 1,377   ·   [9] +4 more 660   ·   [10] +7 more 3,048   ·   [11] AGU 1,523   ·   [12] RS mem 2,218   ·   [13] RS branch 2,155   ·   [14] Fetch stage 1,666   ·   [15] +4 more 220</text>
+<text x="36.0" y="964.0" class="legend">[16] +4 more 2,560</text>
+<text x="24.0" y="986.0" class="foot">area ∝ DSL gates of the module and everything it instantiates · not counted (behavioural, not a gate netlist): RV64GDecoder</text>
+<text x="1576.0" y="986.0" class="foot" text-anchor="end">drawn by Lean ✿ same bytes on every machine ✿ ayaya~</text>
+</svg>

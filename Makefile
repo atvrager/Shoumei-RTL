@@ -41,7 +41,7 @@ help:
 	@echo "  make smoke-test     - Run comprehensive CI smoke tests"
 	@echo ""
 	@echo "Utility Targets:"
-	@echo "  make architecture-diagram - Generate XKCD-style gate treemap (SVG + PNG)"
+	@echo "  make architecture-diagram - Generate architecture gate treemap (SVG)"
 	@echo "  make clean      - Remove all generated files"
 	@echo "  make help       - Show this help message"
 	@echo ""
@@ -110,11 +110,9 @@ codegen: lean opcodes
 	lake --no-ansi exe generate_all --check-wiring
 	@echo "    Phase 2c: Exporting refinement registry..."
 	lake --no-ansi exe generate_all --export-refinements > verification/refinements.txt
-	@echo "    Phase 3: Generating architecture diagram..."
-	-python3 scripts/gen-architecture-diagram.py --png 2>/dev/null || true
-	@echo "    Phase 4: Generating benchmark programs (SV assembly + manifest)..."
+	@echo "    Phase 3: Generating benchmark programs (SV assembly + manifest)..."
 	lake --no-ansi exe gen_benchmarks
-	@echo "    Phase 5: Generating reduced-trip-count benchmarks (cosim)..."
+	@echo "    Phase 4: Generating reduced-trip-count benchmarks (cosim)..."
 	lake --no-ansi exe gen_benchmarks --short
 
 # Generate per-synth-target filelists (physical/<design>.f)
@@ -232,10 +230,10 @@ cell-models:
 sram-macros:
 	@./scripts/gen-sram-macros.sh
 
-# Generate XKCD-style hierarchical architecture treemap
+# Generate architecture treemap (native Lean 4 SVG)
 architecture-diagram:
-	@echo "==> Generating architecture treemap..."
-	python3 scripts/gen-architecture-diagram.py --png
+	@echo "==> Generating architecture treemap (Lean 4 SVG)..."
+	lake --no-ansi exe generate_all --treemap
 
 # Sunburst/treemap/gate-city views for every netlist source + Pages hub
 architecture-visuals:

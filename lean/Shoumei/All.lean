@@ -99,6 +99,7 @@ import Shoumei.Circuits.Sequential.RegisterProofs
 import Shoumei.Circuits.Sequential.RegisterTemporalProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
+import Shoumei.Codegen.ArchitectureDiagram
 import Shoumei.Codegen.CellLibrary
 import Shoumei.Codegen.CellLibs.ASAP7
 import Shoumei.Codegen.CellLibs.GF180
