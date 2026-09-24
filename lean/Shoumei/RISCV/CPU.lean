@@ -1267,15 +1267,19 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       [Gate.mkBUF d0_is_st d0_store_any,
        Gate.mkBUF d1_is_st d1_store_any]
 
+  let lsu_sb_flush_applied := Wire.mk "lsu_sb_flush_applied"
+  let lsu_sb_flush_pending := Wire.mk "lsu_sb_flush_pending"
+  let sb_not_ready := Wire.mk "sb_not_ready"
   let d0_needs_sb := Wire.mk "d0_needs_sb"
   let d1_needs_sb := Wire.mk "d1_needs_sb"
   let sb_stall_req_0 := Wire.mk "sb_stall_req_0"
   let sb_dual_stall_1 := Wire.mk "sb_dual_stall_1"
   let sb_stall_gates := store_detect_gates ++ [
+    Gate.mkOR (Wire.mk "lsu_sb_full") lsu_sb_flush_pending sb_not_ready,
     Gate.mkAND d0_valid_raw d0_store_any d0_needs_sb,
     Gate.mkAND d1_valid_raw d1_store_any d1_needs_sb,
-    Gate.mkAND d0_needs_sb (Wire.mk "lsu_sb_full") sb_stall_req_0,
-    Gate.mkAND d1_needs_sb (Wire.mk "lsu_sb_full") sb_dual_stall_1
+    Gate.mkAND d0_needs_sb sb_not_ready sb_stall_req_0,
+    Gate.mkAND d1_needs_sb sb_not_ready sb_dual_stall_1
   ]
 
   let dual_stall_gates :=
@@ -2173,9 +2177,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let sb_alloc_mux_gates := (List.range 3).map (fun i =>
     Gate.mkMUX sb_alloc_ctr[i]! sb_alloc_inc_val[i]! sb_alloc_inc sb_alloc_hold_or_inc[i]!)
   -- On flush, reload from SB's combinational flush_tail (head + popcount(surviving))
+  -- Reload when flush actually applies in StoreBuffer8, so sb_alloc_ctr matches
+  -- StoreBuffer8's tail_ptr reload timing.
   let lsu_sb_flush_tail := CPU.makeIndexedWires "lsu_sb_flush_tail" 3
   let sb_alloc_next_gates := (List.range 3).map (fun i =>
-    Gate.mkMUX sb_alloc_hold_or_inc[i]! lsu_sb_flush_tail[i]! pipeline_flush_comb sb_alloc_ctr_next[i]!)
+    Gate.mkMUX sb_alloc_hold_or_inc[i]! lsu_sb_flush_tail[i]! lsu_sb_flush_applied sb_alloc_ctr_next[i]!)
   -- DFFs for sb_alloc_ctr
   let sb_alloc_ctr_dffs : List CircuitInstance := (List.range 3).map (fun i => {
     moduleName := "DFlipFlop", instName := s!"u_sb_alloc_ctr_{i}",
@@ -2218,11 +2224,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let muldiv_busy := Wire.mk "muldiv_busy"
   let muldiv_dispatch_en := Wire.mk "muldiv_dispatch_en"
   let not_muldiv_busy := Wire.mk "not_muldiv_busy"
+  let muldiv_eu_valid_in := Wire.mk "muldiv_eu_valid_in"
   let muldiv_dispatch_gate :=
     if enableM then
       [Gate.mkNOT muldiv_busy not_muldiv_busy,
-       Gate.mkBUF not_muldiv_busy muldiv_dispatch_en]
-    else [Gate.mkBUF one muldiv_dispatch_en]
+       Gate.mkBUF not_muldiv_busy muldiv_dispatch_en,
+       Gate.mkAND rs_muldiv_dispatch_valid muldiv_dispatch_en muldiv_eu_valid_in]
+    else [Gate.mkBUF one muldiv_dispatch_en, Gate.mkBUF zero muldiv_eu_valid_in]
 
   let rs_muldiv_inst : CircuitInstance := {
     moduleName := if config.xlen == 64 then "ReservationStation2_W1_64" else "ReservationStation2_W1"
@@ -3244,7 +3252,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "b" (if config.xlen == 64 then rs_muldiv_dispatch_src2.take 64 else rs_muldiv_dispatch_src2) ++
       bundledPorts "op" muldiv_op ++
       bundledPorts "dest_tag" (rs_muldiv_dispatch_tag.take 6) ++
-      [("valid_in", rs_muldiv_dispatch_valid),
+      [("valid_in", muldiv_eu_valid_in),
        ("out_ready", Wire.mk "muldiv_fifo_enq_ready"),
        ("clock", clock), ("reset", pipeline_reset_rs_muldiv),
        ("zero", zero), ("one", one)] ++
@@ -3278,6 +3286,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("flush_en", pipeline_flush_comb),
                 ("sb_enq_en", sb_enq_en),
                 ("sb_full", lsu_sb_full), ("sb_empty", lsu_sb_empty),
+                ("sb_flush_applied", lsu_sb_flush_applied),
+                ("sb_flush_pending", lsu_sb_flush_pending),
                 ("sb_fwd_hit", lsu_sb_fwd_hit),
                 ("sb_fwd_committed_hit", Wire.mk "lsu_sb_fwd_committed_hit"),
                 ("sb_fwd_word_hit", Wire.mk "lsu_sb_fwd_word_hit"),
@@ -3486,8 +3496,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let mem_store_dispatch_en_gates := [
     Gate.mkNOT (Wire.mk "dmem_load_pending") (Wire.mk "not_dmem_load_pend_for_st"),
     Gate.mkNOT (Wire.mk "pipe_valid_hold") (Wire.mk "not_pipe_hold_for_st"),
-    -- Block store dispatch when SB is full
-    Gate.mkAND (Wire.mk "not_is_load") lsu_sb_full (Wire.mk "store_sb_full_block"),
+    -- Block store dispatch when SB is full or flush is pending
+    Gate.mkOR lsu_sb_full lsu_sb_flush_pending (Wire.mk "store_sb_blocked"),
+    Gate.mkAND (Wire.mk "not_is_load") (Wire.mk "store_sb_blocked") (Wire.mk "store_sb_full_block"),
     Gate.mkNOT (Wire.mk "store_sb_full_block") (Wire.mk "not_store_sb_full"),
     Gate.mkAND (Wire.mk "not_dmem_load_pend_for_st") (Wire.mk "not_store_sb_full") (Wire.mk "mem_st_de_tmp1"),
     Gate.mkAND (Wire.mk "mem_st_de_tmp1") (Wire.mk "not_pipe_hold_for_st") (Wire.mk "mem_st_de_tmp1b"),

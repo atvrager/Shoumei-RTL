@@ -379,6 +379,8 @@ def mkStoreBuffer8 : Circuit :=
   let empty := Wire.mk "empty"
   let enq_idx := mkWires "enq_idx_" 3
   let flush_tail := mkWires "flush_tail_" 3  -- combinational flush-recovered tail for CPU
+  let flush_applied := Wire.mk "flush_applied"
+  let flush_pending := Wire.mk "flush_pending"
   -- Replay output: partial word overlap in the forwarding set.  The LSU
   -- replays/stalls instead of byte-merging in the critical path.
   let replay_needed := Wire.mk "replay_needed"
@@ -408,13 +410,26 @@ def mkStoreBuffer8 : Circuit :=
   -- always appears and the commit always lands; holding the flush until the
   -- accounting drains therefore cannot wedge.  This is the "drain committed
   -- stores before flushing" requirement stated at the top of this file.
-  let flush_apply := Wire.mk "flush_apply"
+  let flush_apply := flush_applied
+  let flush_pending_next := Wire.mk "flush_pending_next"
+  let flush_req := Wire.mk "flush_req"
+  let flush_quiescent := Wire.mk "flush_quiescent"
+  let not_flush_apply := Wire.mk "not_flush_apply"
   let flush_apply_gates := [
     Gate.mkNOT pc_nz (Wire.mk "not_pc_nz"),
     Gate.mkNOT commit_en (Wire.mk "not_commit_en_for_flush"),
-    Gate.mkAND (Wire.mk "not_pc_nz") (Wire.mk "not_commit_en_for_flush") (Wire.mk "flush_quiescent"),
-    Gate.mkAND flush_en (Wire.mk "flush_quiescent") flush_apply
+    Gate.mkAND (Wire.mk "not_pc_nz") (Wire.mk "not_commit_en_for_flush") flush_quiescent,
+    Gate.mkOR flush_en flush_pending flush_req,
+    Gate.mkAND flush_req flush_quiescent flush_apply,
+    Gate.mkNOT flush_apply not_flush_apply,
+    Gate.mkAND flush_req not_flush_apply flush_pending_next
   ]
+  let flush_pending_inst : CircuitInstance := {
+    moduleName := "DFlipFlop"
+    instName := "u_flush_pending"
+    portMap := [("d", flush_pending_next), ("q", flush_pending),
+                ("clock", clock), ("reset", reset)]
+  }
   let valid_next := (List.range 8).map (fun i => Wire.mk s!"valid_next_e{i}")
   let committed_next := (List.range 8).map (fun i => Wire.mk s!"committed_next_e{i}")
 
@@ -1153,6 +1168,7 @@ def mkStoreBuffer8 : Circuit :=
 
   let all_outputs :=
     [full, empty] ++ enq_idx ++ flush_tail ++
+    [flush_applied, flush_pending] ++
     [deq_valid] ++ deq_bits ++
     [fwd_hit, fwd_committed_hit, fwd_word_hit, fwd_word_only_hit] ++ fwd_data ++ fwd_size ++
     [replay_needed]
@@ -1173,7 +1189,7 @@ def mkStoreBuffer8 : Circuit :=
     head_valid_gates ++ head_committed_gates
 
   let all_instances :=
-    [head_inst, tail_inst, count_inst, commit_ptr_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst] ++
+    [head_inst, tail_inst, count_inst, commit_ptr_inst, enq_dec_inst, head_dec_inst, commit_dec_inst, pop_inst, flush_pending_inst] ++
     valid_dff_insts ++ committed_dff_insts ++ pc_dff_insts ++
     all_entry_instances ++
     [arb_inst, fwd_mux_inst, fwd_size_mux_inst] ++

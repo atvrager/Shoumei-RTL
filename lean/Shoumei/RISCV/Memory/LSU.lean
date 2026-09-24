@@ -521,6 +521,9 @@ def mkLSU : Circuit :=
     Gate.mkBUF src dst
   ) agu_address sb_enq_address
 
+  let sb_flush_applied := Wire.mk "sb_flush_applied"
+  let sb_flush_pending := Wire.mk "sb_flush_pending"
+
   -- === StoreBuffer8 Instance ===
   let sb_inst : CircuitInstance := {
     moduleName := "StoreBuffer8"
@@ -528,7 +531,8 @@ def mkLSU : Circuit :=
     portMap :=
       [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
        ("enq_en", sb_enq_en), ("commit_en", commit_store_en), ("deq_ready", deq_ready),
-       ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty)] ++
+       ("flush_en", flush_en), ("full", sb_full), ("empty", sb_empty),
+       ("flush_applied", sb_flush_applied), ("flush_pending", sb_flush_pending)] ++
       (sb_enq_idx_in.enum.map (fun ⟨i, w⟩ => (s!"enq_idx_in_[{i}]", w))) ++
       [
        ("fwd_hit", sb_fwd_hit), ("fwd_committed_hit", sb_fwd_committed_hit),
@@ -569,6 +573,7 @@ def mkLSU : Circuit :=
     sb_deq_bits ++
     sb_enq_idx ++
     sb_flush_tail ++
+    [sb_flush_applied, sb_flush_pending] ++
     lsu_stage1_addr_q ++ lsu_stage1_tag_q ++
     lsu_stage2_fwd_q ++ [lsu_stage2_hit_q, lsu_replay_needed]
 

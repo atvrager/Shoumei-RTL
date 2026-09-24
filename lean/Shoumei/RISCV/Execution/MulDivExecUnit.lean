@@ -151,6 +151,22 @@ def mkMulDivExecUnit : Circuit :=
   ]
 
   -- ========================================================================
+  -- Divider64 wires (needed for multiplier out_ready arbitration)
+  -- ========================================================================
+  let div_result := makeIndexedWires "div_result" 64
+  let div_tag_out := makeIndexedWires "div_tag_out" 6
+  let div_valid_out := Wire.mk "div_valid_out"
+  let div_busy := Wire.mk "div_busy"
+
+  -- Multiplier out_ready: back-pressure if downstream is not ready OR divider produces a result
+  let not_div_valid_out := Wire.mk "not_div_valid_out"
+  let mul_out_ready := Wire.mk "mul_out_ready"
+  let mul_ready_gates := [
+    Gate.mkNOT div_valid_out not_div_valid_out,
+    Gate.mkAND out_ready not_div_valid_out mul_out_ready
+  ]
+
+  -- ========================================================================
   -- PipelinedMultiplier64 instance
   -- ========================================================================
   let mul_result := makeIndexedWires "mul_result" 64
@@ -166,7 +182,7 @@ def mkMulDivExecUnit : Circuit :=
       (op.enum.map (fun ⟨i, w⟩ => (s!"op_{i}", w))) ++
       (dest_tag.enum.map (fun ⟨i, w⟩ => (s!"dest_tag_{i}", w))) ++
       [("valid_in", mul_valid),
-       ("out_ready", out_ready),
+       ("out_ready", mul_out_ready),
        ("clock", clock),
        ("reset", reset),
        ("zero", zero),
@@ -179,10 +195,6 @@ def mkMulDivExecUnit : Circuit :=
   -- ========================================================================
   -- Divider64 instance
   -- ========================================================================
-  let div_result := makeIndexedWires "div_result" 64
-  let div_tag_out := makeIndexedWires "div_tag_out" 6
-  let div_valid_out := Wire.mk "div_valid_out"
-  let div_busy := Wire.mk "div_busy"
 
   let div_inst : CircuitInstance := {
     moduleName := "Divider64"
@@ -225,6 +237,7 @@ def mkMulDivExecUnit : Circuit :=
   -- ========================================================================
   let all_gates :=
     route_gates ++
+    mul_ready_gates ++
     result_mux_gates ++
     tag_mux_gates ++
     valid_gate ++
