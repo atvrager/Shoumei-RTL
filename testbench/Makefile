@@ -98,7 +98,7 @@ $(SPIKE_LIB)/libriscv.so $(SPIKE_LIB)/libriscv.a:
         cosim run-cosim coremark run-coremark clean \
         sim-arc cosim-arc run-all-tests-arc run-cosim-arc \
         sim-cov run-coverage run-kanata-traces \
-        bench run-benchmarks bench-compare
+        bench run-benchmarks bench-compare bench-regression
 
 SIM_BIN      := $(BUILD_DIR)/sim_shoumei
 COSIM_BIN    := $(BUILD_DIR)/cosim_shoumei
@@ -363,6 +363,32 @@ bench-compare: run-benchmarks
 	    --rtl $(PROJ_ROOT)/output/bench/bench-results-rtl.csv \
 	    --programs $(PROJ_ROOT)/output/bench/bench-programs.json \
 	    --out $(PROJ_ROOT)/output/bench
+
+# Fast PR-side perf gate: one benchmark per execution path (ALU dual-issue,
+# multiplier, FPU, load, store, branch, jump). FP ELFs carry the fp_ march
+# prefix; the metric names checked are the bare instruction names.
+BENCH_REGRESSION_ELFS := $(TB_DIR)/tests/generated/bench/add.elf \
+                         $(TB_DIR)/tests/generated/bench/mul.elf \
+                         $(TB_DIR)/tests/generated/bench/fp_fadd_s.elf \
+                         $(TB_DIR)/tests/generated/bench/fp_fmul_s.elf \
+                         $(TB_DIR)/tests/generated/bench/ld.elf \
+                         $(TB_DIR)/tests/generated/bench/sd.elf \
+                         $(TB_DIR)/tests/generated/bench/beq.elf \
+                         $(TB_DIR)/tests/generated/bench/jal.elf
+BENCH_REGRESSION_NAMES := add,mul,fadd_s,fmul_s,ld,sd,beq,jal
+
+bench-regression: $(SIM_BIN) bench
+	@mkdir -p $(PROJ_ROOT)/output/bench
+	@$(TB_DIR)/run-suite.sh --mode sim --bin $(SIM_BIN) --jobs $(shell nproc) \
+	    --default-timeout $(BENCH_DEFAULT_TIMEOUT) \
+	    --timeout-json $(PROJ_ROOT)/output/bench/bench-programs.json \
+	    --csv $(PROJ_ROOT)/output/bench/bench-regression-results.csv \
+	    --bench-csv $(PROJ_ROOT)/output/bench/bench-regression-metrics.csv \
+	    $(BENCH_REGRESSION_ELFS)
+	python3 $(PROJ_ROOT)/scripts/bench_regression.py \
+	    --metrics $(PROJ_ROOT)/output/bench/bench-regression-metrics.csv \
+	    --baseline $(PROJ_ROOT)/verification/bench-baseline.csv \
+	    --only $(BENCH_REGRESSION_NAMES)
 
 cosim: $(COSIM_BIN)
 $(COSIM_BIN): $(SV_SOURCES) $(TB_SOURCES) $(COSIM_CPP) $(SPIKE_LIB_FILE) $(SRAM_DPI_C)
