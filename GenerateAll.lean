@@ -37,6 +37,7 @@ import Shoumei.Circuits.Combinational.OneHotEncoder
 -- Phase 3: Sequential Components
 import Shoumei.Circuits.Sequential.QueueN
 import Shoumei.Circuits.Sequential.QueueComponents
+import Shoumei.Circuits.Sequential.Queue1Bridge
 import Shoumei.Circuits.Sequential.Register
 
 -- Phase 4: RISC-V Components
@@ -150,8 +151,14 @@ def riscvDecoderModules : List String :=
 
 -- Registry: Add circuits here for automatic generation
 def baseCircuits : List Circuit := [
-  -- Phase 0: Foundation
+  -- Phase 0: Foundation & Pilot Atoms
   dff,
+  fullAdderCircuit,
+  mkRippleCarryAdder4,
+  mkLogicUnit4,
+  mkMux4x1,
+  mkComparator4,
+  q1w1,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
   mkQueue1FlowStructural 70,     -- 64-bit result FIFOs (tag6 + data64)
   mkQueue1FlowStructural 71,     -- FP result FIFO (tag6 + data64 + is_fp)
@@ -408,6 +415,9 @@ def main (args : List String) : IO Unit := do
   -- exits without generating anything.
   if args.contains "--export-certs" then
     Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
+    return
+  if args.contains "--export-refinements" then
+    Shoumei.Verification.ExportCerts.printRefinements allCircuits riscvDecoderModules
     return
   if args.contains "--check-wiring" then
     let missing := Shoumei.DSL.PortResolve.checkRegistryWiring allCircuits

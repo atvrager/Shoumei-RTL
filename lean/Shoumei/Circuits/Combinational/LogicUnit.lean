@@ -30,14 +30,12 @@ MUX tree per bit:
 -/
 
 import Shoumei.DSL
+import Shoumei.DSL.Interfaces
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
-
--- Helper: Create a list of wires with indexed names (private to this module)
-private def makeIndexedWires (name : String) (n : Nat) : List Wire :=
-  (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
+open Shoumei.DSL.Interfaces
 
 /-- Reference specification for logic unit bitwise operation. -/
 def logicOp (op1 op0 a b : Bool) : Bool :=

@@ -322,7 +322,7 @@ def mkQueue1StructuralComplete (width : Nat) : Circuit :=
         protocol := some "decoupled" }
     ]
     svaProperties := [
-      .HandshakeStable "valid" "deq_ready" (if width == 1 then "data_reg_0" else "data_reg")
+      .HandshakeStable "valid" "deq_ready" "data_reg"
     ]
   }
 

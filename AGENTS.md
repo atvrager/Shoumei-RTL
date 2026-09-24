@@ -253,7 +253,6 @@ Adapted from [Fabien Sanglard's agent.md](https://fabiensanglard.net/agent.md/):
 - **Type safety:** Use enums/inductives instead of booleans for function parameters.
 - **Readability:** Let the reader of the code breathe. Add empty lines between logical blocks of code.
 - **Intentional comments:** Add small, to-the-point comments explaining *what* the block does and *why*. Use examples when possible. Propose ASCII drawings to explain complex systems.
-- **Encapsulation:** Treat member visibility changes as a breaking design shift. Keep all fields and functions private unless external access is strictly required by the design. Prompt the user for explicit approval before changing any access modifier from private to internal or public.
 - **Levels of abstraction:** Lower-level mechanics (e.g., raw hardware I/O, sector parsing, direct socket streams) must be encapsulated in a dedicated driver/abstraction layer. Expose clean, high-level APIs to the rest of the application so calling code works with domain concepts, not raw implementation details.
 - **Layered boundaries:** Strictly adhere to the layered boundary hierarchy: each layer may only communicate with its immediate neighbor directly below it. Never "punch holes" through layers (e.g., controllers or UI components must never directly call database queries, raw hardware drivers, or low-level network clients; always route through the intermediate service/abstraction layer).
 - **Minimal diffs:** Don't touch blocks of code unrelated to the feature you implement. Minimize changed lines.

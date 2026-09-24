@@ -23,11 +23,13 @@ ModuleName|Dependency1,Dependency2,...|ProofReference
 
 import Shoumei.DSL
 import Shoumei.Verification.CompositionalCerts
+import Shoumei.Verification.Refinements
 
 namespace Shoumei.Verification.ExportCerts
 
 open Shoumei.Verification
 open Shoumei.Verification.CompositionalCerts
+open Shoumei.Verification.Refinements
 
 /-- The sub-modules a circuit's correctness rests on: the modules it
     instantiates, deduplicated, excluding itself. -/
@@ -77,6 +79,40 @@ def printCertificates (circuits : List Circuit) (extraEmitted : List String) : I
     IO.eprintln ""
     IO.eprintln "  A certificate must name an emitted circuit, and every module that"
     IO.eprintln "  circuit instantiates must be emitted too.  Delete the entry, or point"
+    IO.eprintln "  it at the circuit's current name."
+    IO.Process.exit 1
+  | .ok lines =>
+    for line in lines do
+      IO.println line
+
+/-- One export line for one refinement atom, or the reason it cannot be exported. -/
+def refinementLine (emitted : List Circuit) (extraEmitted : List String)
+    (atom : RefinementAtom) : Except String String :=
+  let emittedNames := emitted.map (·.name) ++ extraEmitted
+  if emittedNames.contains atom.moduleName then
+    .ok s!"{atom.moduleName}|{atom.specName}"
+  else
+    .error s!"{atom.moduleName}: refinement atom names a module that is not emitted"
+
+/-- The refinement registry for a given circuit registry, or every
+    inconsistency found in it. -/
+def exportRefinements (circuits : List Circuit) (extraEmitted : List String) :
+    Except String (List String) :=
+  let results := allRefinements.map (refinementLine circuits extraEmitted)
+  let errors := results.filterMap fun r => match r with | .error e => some e | .ok _ => none
+  if errors.isEmpty then
+    .ok (results.filterMap fun r => match r with | .ok l => some l | .error _ => none)
+  else
+    .error ("refinement registry is inconsistent with the circuits:\n  "
+            ++ String.intercalate "\n  " errors)
+
+/-- Print the refinement registry, or explain what is wrong and exit non-zero. -/
+def printRefinements (circuits : List Circuit) (extraEmitted : List String) : IO Unit := do
+  match exportRefinements circuits extraEmitted with
+  | .error msg =>
+    IO.eprintln s!"✗ {msg}"
+    IO.eprintln ""
+    IO.eprintln "  A refinement atom must name an emitted circuit. Delete the entry, or point"
     IO.eprintln "  it at the circuit's current name."
     IO.Process.exit 1
   | .ok lines =>

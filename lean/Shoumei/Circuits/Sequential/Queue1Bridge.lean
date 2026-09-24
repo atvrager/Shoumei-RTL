@@ -67,11 +67,11 @@ def queue1StepBool (q : QueueState Bool) (enq_valid deq_ready enq_data : Bool) :
 
 /-! ## Width=1 Bisimulation (9 gates, 32 input combinations) -/
 
-private def q1w1 := mkQueue1StructuralComplete 1
+def q1w1 := mkQueue1StructuralComplete 1
 
 theorem q1w1_gate_count : q1w1.gates.length = 9 := by native_decide
 
-private def evalQ1W1 (valid_st data0_st enq_valid enq_data0 deq_ready : Bool) :
+def evalQ1W1 (valid_st data0_st enq_valid enq_data0 deq_ready : Bool) :
     State × Env :=
   let state : State := fun w =>
     if w == Wire.mk "valid" then valid_st
@@ -144,7 +144,7 @@ theorem queue1_w1_enqueue_dequeue :
 
 /-! ## Width=2 Bisimulation (11 gates, 128 input combinations) -/
 
-private def q1w2 := mkQueue1StructuralComplete 2
+def q1w2 := mkQueue1StructuralComplete 2
 
 theorem q1w2_gate_count : q1w2.gates.length = 11 := by native_decide
 
@@ -170,7 +170,7 @@ def queue1Step2bit (q : QueueState (Bool × Bool)) (enq_valid deq_ready : Bool)
   if valid_next then { entries := [data_next], capacity := 1 }
   else { entries := [], capacity := 1 }
 
-private def evalQ1W2 (valid_st d0 d1 enq_valid ed0 ed1 deq_ready : Bool) :
+def evalQ1W2 (valid_st d0 d1 enq_valid ed0 ed1 deq_ready : Bool) :
     State × Env :=
   let state : State := fun w =>
     if w == Wire.mk "valid" then valid_st
