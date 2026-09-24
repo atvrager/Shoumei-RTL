@@ -24,7 +24,8 @@ open Shoumei.Circuits.Combinational
 /-! ## Circuit definitions -/
 
 def aluSubCircuitMap : List (String × Circuit) :=
-  [("KoggeStoneAdder32", mkKoggeStoneAdder32),
+  [("KoggeStoneAdder32NoCin", mkKoggeStoneAdder32NoCin),
+   ("KoggeStoneAdder32", mkKoggeStoneAdder32),
    ("Subtractor32", mkSubtractor32),
    ("Comparator32", mkComparator32),
    ("LogicUnit32", mkLogicUnit32),
@@ -32,6 +33,9 @@ def aluSubCircuitMap : List (String × Circuit) :=
 
 def mkALU32Flat : Circuit :=
   flattenAllFuel aluSubCircuitMap mkALU32 3
+
+theorem alu32_flat_gate_count : mkALU32Flat.gates.length = 2796 := by
+  native_decide
 
 def mkALUInitMap (a b : BitVec 32) (op : BitVec 4) : WireMap :=
   bitVecToBindings "a" 32 a ++
