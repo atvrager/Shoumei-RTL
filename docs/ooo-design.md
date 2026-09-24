@@ -9,7 +9,7 @@
 
 ### Hierarchical Gate Distribution
 
-![Shoumei RV64G OoO CPU Microarchitecture Gate Treemap](architecture-treemap.png)
+![Shoumei RV64G OoO CPU Microarchitecture Gate Treemap](architecture-treemap.svg)
 
 ### Pipeline Organization
 

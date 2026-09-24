@@ -141,7 +141,7 @@ make synth-asap7   # Synthesize to ASAP7 7nm at 1.0 GHz (1.000 ns)
 # Run the CI smoke tests
 make smoke-test
 
-# Generate XKCD-style hierarchical architecture treemap (SVG + PNG)
+# Regenerate the architecture treemap (docs/architecture-treemap.svg)
 make architecture-diagram
 
 # Run entire pipeline (checks all tools first)
@@ -165,7 +165,7 @@ make clean all
 | `make cppsim` | Compiles the generated C++ simulation with CMake |
 | `make synth-gf180` | Synthesizes RV64 core to GF180MCU via Yosys + ABC |
 | `make synth-asap7` | Synthesizes RV64 core to ASAP7 7nm via Yosys + ABC |
-| `make architecture-diagram` | Runs `scripts/gen-architecture-diagram.py --png` to generate gate treemap |
+| `make architecture-diagram` | Runs `lake exe generate_all --treemap`; `make codegen` also emits it |
 | `make smoke-test` | `make codegen` followed by `verification/smoke-test.sh` |
 | `make all` | Runs `check-tools lean codegen systemverilog cppsim` |
 | `make clean` | Removes generated files (graceful if tools missing) |
