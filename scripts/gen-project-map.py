@@ -11,6 +11,15 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def main() -> int:
+    import shutil
+
+    if not shutil.which("lake"):
+        print(
+            "gen-project-map: lake not found in PATH; Lean 4 toolchain is required",
+            file=sys.stderr,
+        )
+        return 1
+
     cmd = ["lake", "--no-ansi", "exe", "generate_all", "--project-map"]
     i = 1
     while i < len(sys.argv):
