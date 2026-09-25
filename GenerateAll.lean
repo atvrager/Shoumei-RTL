@@ -13,6 +13,7 @@ import Shoumei.Codegen.ArchitectureDiagram
 import Shoumei.Codegen.ArchitectureVisuals
 import Shoumei.Codegen.BenchmarkVisual
 import Shoumei.Codegen.LeanRoot
+import Shoumei.Codegen.ProjectMap
 import Shoumei.Codegen.SoCDiagram
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
@@ -455,6 +456,11 @@ def main (args : List String) : IO Unit := do
   if args.contains "--lint-structural" then
     let svDir := args.findSome? (fun a => if a.startsWith "--sv-dir=" then some (System.FilePath.mk (a.drop 9).toString) else none) |>.getD (System.FilePath.mk "output/sv-from-lean")
     let rc ← Shoumei.Verification.StructuralLint.run svDir
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--project-map" then
+    let outPath := args.findSome? (fun a => if a.startsWith "--out=" then some (System.FilePath.mk (a.drop 6).toString) else none) |>.getD (System.FilePath.mk "docs/project-map.md")
+    let rc ← Shoumei.Codegen.ProjectMap.generate outPath
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--visuals" || args.contains "--architecture-visuals" then

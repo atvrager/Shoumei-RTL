@@ -110,6 +110,7 @@ import Shoumei.Codegen.CellNetlist
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.CppSim
 import Shoumei.Codegen.LeanRoot
+import Shoumei.Codegen.ProjectMap
 import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.SVA
 import Shoumei.Codegen.ShoumeiEmit
