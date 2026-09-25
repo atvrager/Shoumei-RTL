@@ -131,9 +131,11 @@ The verification ladder builds from verified leaf atoms to composed pipelines:
    `mkRegisterN n`, `mkComparatorN n` carry semantic evaluation lemmas
    (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, etc.), allowing composition
    chains instead of per-instance decision procedures.
-4. **Machine-checked refinement registry.** `RefinementAtom` entries require proof
-   terms at construction time (`lake exe generate_all --export-refinements`), preventing
-   dangling references or unproven claims.
+4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof
+   term and a *non-vacuity* proof at construction time (`lake exe generate_all
+   --export-refinements`) — a `NonVacuousBehavior` / `NonVacuousCombBehavior` witness that
+   the behavioural model produces distinct outputs. This prevents dangling references,
+   unproven claims, and tautological/constant specifications from registering.
 5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap; the
    `ALU32` atom covers all 10 RV32I opcodes over all inputs. Expanding to remaining
    instruction classes connects execution units directly to the ISA specification.

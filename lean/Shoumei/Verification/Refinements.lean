@@ -59,28 +59,29 @@ open Shoumei.Reflection.ALUSymbolic
     behavioral specification via an inductive `Implements` proof. -/
 inductive RefinementAtom where
   | sequential {σ ι ω : Type}
-      (moduleName : String)
-      (specName   : String)
-      (circuit    : Circuit)
-      (reg        : ModuleRegistry)
-      (fuel       : Nat)
-      (behavior   : Behavior σ ι ω)
-      (absS       : State → σ)
-      (encI       : ι → Env)
-      (decO       : Env → ω)
-      (inv        : State → Prop)
-      (proof      : Implements reg fuel circuit behavior absS encI decO inv) : RefinementAtom
+      (moduleName  : String)
+      (specName    : String)
+      (circuit     : Circuit)
+      (reg         : ModuleRegistry)
+      (fuel        : Nat)
+      (behavior    : Behavior σ ι ω)
+      (absS        : State → σ)
+      (encI        : ι → Env)
+      (decO        : Env → ω)
+      (inv         : State → Prop)
+      (non_vacuous : NonVacuousBehavior behavior)
+      (proof       : Implements reg fuel circuit behavior absS encI decO inv) : RefinementAtom
   | combinational {ι ω : Type}
-      (moduleName : String)
-      (specName   : String)
-      (circuit    : Circuit)
-      (reg        : ModuleRegistry)
-      (fuel       : Nat)
-      (behavior   : CombBehavior ι ω)
-      (encI       : ι → Env)
-      (decO       : Env → ω)
-      (proof      : ImplementsComb reg fuel circuit behavior encI decO) : RefinementAtom
-
+      (moduleName  : String)
+      (specName    : String)
+      (circuit     : Circuit)
+      (reg         : ModuleRegistry)
+      (fuel        : Nat)
+      (behavior    : CombBehavior ι ω)
+      (encI        : ι → Env)
+      (decO        : Env → ω)
+      (non_vacuous : NonVacuousCombBehavior behavior)
+      (proof       : ImplementsComb reg fuel circuit behavior encI decO) : RefinementAtom
 def RefinementAtom.moduleName : RefinementAtom → String
   | .sequential nm .. => nm
   | .combinational nm .. => nm
@@ -116,6 +117,9 @@ theorem fullAdder_eval_agree (i : Bool × Bool × Bool) :
   obtain ⟨a, b, cin⟩ := i
   cases a <;> cases b <;> cases cin <;> rfl
 
+theorem fullAdder_non_vacuous : NonVacuousCombBehavior fullAdderCombBehavior := by
+  refine ⟨(false, false, false), (true, false, false), by decide⟩
+
 def fullAdder_atom : RefinementAtom :=
   .combinational
     "FullAdder"
@@ -125,6 +129,7 @@ def fullAdder_atom : RefinementAtom :=
     fullAdderCombBehavior
     (fun (a, b, cin) => makeAdderEnv a b cin)
     (fun env => (getSumOutput env, getCoutOutput env))
+    fullAdder_non_vacuous
     (implementsComb_of_flat [] 0 fullAdderCircuit rfl
       fullAdderCombBehavior
       (fun (a, b, cin) => makeAdderEnv a b cin)
@@ -179,6 +184,10 @@ theorem logicUnit4_eval_agree (i : Bool × Bool × Bool × Bool × Bool × Bool 
       ← h_comp (Wire.mk "result_3")]
   exact h_tup
 
+theorem logicUnit4_non_vacuous : NonVacuousCombBehavior logicUnit4CombBehavior := by
+  refine ⟨(false, false, false, false, false, false, false, false, false, false),
+          (true, true, true, true, true, true, true, true, false, false), by decide⟩
+
 def logicUnit4_atom : RefinementAtom :=
   .combinational
     "LogicUnit4"
@@ -188,6 +197,7 @@ def logicUnit4_atom : RefinementAtom :=
     logicUnit4CombBehavior
     logicUnit4EncI
     logicUnit4DecO
+    logicUnit4_non_vacuous
     (implementsComb_of_flat [] 0 mkLogicUnit4 rfl
       logicUnit4CombBehavior
       logicUnit4EncI
@@ -227,6 +237,9 @@ theorem mux4x1_eval_agree (i : Bool × Bool × Bool × Bool × Bool × Bool) :
   rw [← h_comp]
   exact h_tup
 
+theorem mux4x1_non_vacuous : NonVacuousCombBehavior mux4x1CombBehavior := by
+  refine ⟨(false, false, false, false, false, false), (true, false, false, false, false, false), by decide⟩
+
 def mux4x1_atom : RefinementAtom :=
   .combinational
     "Mux4x1"
@@ -236,16 +249,50 @@ def mux4x1_atom : RefinementAtom :=
     mux4x1CombBehavior
     mux4x1EncI
     mux4x1DecO
+    mux4x1_non_vacuous
     (implementsComb_of_flat [] 0 mkMux4x1 rfl
       mux4x1CombBehavior
       mux4x1EncI
       mux4x1DecO
       mux4x1_eval_agree)
 
+-- ── BitVec Result Decoding (Shared between Mux4x32 and ALU32) ──
+
+private theorem readWiresAsNat_agree (c : Circuit) (m : WireMap) (env : Env)
+    (h_comp : ∀ w, (compileCircuit c m).lookup w = evalCircuit c env w)
+    (name : String) :
+    ∀ k : Nat, readWiresAsNat (evalCircuit c env) name k = readWiresAsNatMap (compileCircuit c m) name k
+  | 0 => rfl
+  | k + 1 => by
+    dsimp [readWiresAsNat, readWiresAsNatMap]
+    rw [← h_comp (Wire.mk s!"{name}_{k}")]
+    rw [readWiresAsNat_agree c m env h_comp name k]
+
 -- ── 4. Mux4x32 (Combinational, 4:1 32-bit multiplexer building block) ──
 
-def mux4x32CombBehavior : CombBehavior Env Env where
-  eval := fun env => evalCircuit mkMux4x32 env
+def mux4x32CombBehavior : CombBehavior (BitVec 32 × BitVec 32 × BitVec 32 × BitVec 32 × Bool × Bool) (BitVec 32) where
+  eval := fun (in0, in1, in2, in3, sel0, sel1) => mux4x32Spec in0 in1 in2 in3 sel0 sel1
+
+def mux4x32EncI (i : BitVec 32 × BitVec 32 × BitVec 32 × BitVec 32 × Bool × Bool) : Env :=
+  let (in0, in1, in2, in3, sel0, sel1) := i
+  (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1).lookup
+
+def mux4x32DecO (env : Env) : BitVec 32 :=
+  readResultBitVec "out" 32 env
+
+theorem mux4x32_eval_agree (i : BitVec 32 × BitVec 32 × BitVec 32 × BitVec 32 × Bool × Bool) :
+    mux4x32DecO (evalCircuit mkMux4x32 (mux4x32EncI i)) = mux4x32CombBehavior.eval i := by
+  obtain ⟨in0, in1, in2, in3, sel0, sel1⟩ := i
+  have h_comp := compileCircuit_correct mkMux4x32 (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1)
+    (mux4x32EncI (in0, in1, in2, in3, sel0, sel1)) (fun _ => rfl)
+  dsimp [mux4x32DecO, readResultBitVec, mux4x32CombBehavior]
+  have h_nat := readWiresAsNat_agree mkMux4x32 (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1)
+    (mux4x32EncI (in0, in1, in2, in3, sel0, sel1)) h_comp "out" 32
+  rw [h_nat]
+  exact evalMux4x32_correct in0 in1 in2 in3 sel0 sel1
+
+theorem mux4x32_non_vacuous : NonVacuousCombBehavior mux4x32CombBehavior := by
+  refine ⟨(0, 0, 0, 0, false, false), (1, 0, 0, 0, false, false), by decide⟩
 
 def mux4x32_atom : RefinementAtom :=
   .combinational
@@ -254,26 +301,43 @@ def mux4x32_atom : RefinementAtom :=
     mkMux4x32
     [] 1
     mux4x32CombBehavior
-    id
-    id
+    mux4x32EncI
+    mux4x32DecO
+    mux4x32_non_vacuous
     (implementsComb_of_flat [] 0 mkMux4x32 rfl
       mux4x32CombBehavior
-      id
-      id
-      (fun _ => rfl))
+      mux4x32EncI
+      mux4x32DecO
+      mux4x32_eval_agree)
 
--- ── 5. Mux8x32 (Combinational, Hierarchical 8:1 MUX composed from Mux4x32) ──
+-- ── 5. Mux8x32 (Combinational, Flat 8:1 MUX with word-level routing spec) ──
+
+theorem mux8x32_eval_agree (i : (Fin 8 → BitVec 32) × (Bool × Bool × Bool)) :
+    mux8x32DecO (evalCircuit mkMux8x32 (mux8x32EncI i)) = mux8x32CombBehavior.eval i := by
+  obtain ⟨inputs, sel0, sel1, sel2⟩ := i
+  have h_comp := compileCircuit_correct mkMux8x32 (makeMux8x32InitMap inputs sel0 sel1 sel2)
+    (mux8x32EncI (inputs, sel0, sel1, sel2)) (fun _ => rfl)
+  dsimp [mux8x32DecO, readResultBitVec, mux8x32CombBehavior]
+  have h_nat := readWiresAsNat_agree mkMux8x32 (makeMux8x32InitMap inputs sel0 sel1 sel2)
+    (mux8x32EncI (inputs, sel0, sel1, sel2)) h_comp "out" 32
+  rw [h_nat]
+  exact evalMux8x32_correct inputs sel0 sel1 sel2
 
 def mux8x32_atom : RefinementAtom :=
   .combinational
     "Mux8x32"
-    "Mux8x32ComposedSpec"
-    parentMux
-    regMux 2
-    muxParentBeh
-    id
-    muxParentOut
-    mux8x32hier_implements
+    "Mux8x32Spec"
+    mkMux8x32
+    [] 1
+    mux8x32CombBehavior
+    mux8x32EncI
+    mux8x32DecO
+    mux8x32_non_vacuous
+    (implementsComb_of_flat [] 0 mkMux8x32 rfl
+      mux8x32CombBehavior
+      mux8x32EncI
+      mux8x32DecO
+      mux8x32_eval_agree)
 
 -- ── 6. RippleCarryAdder4 (Combinational, 4-bit addition with carry) ──
 
@@ -328,6 +392,10 @@ theorem rca4_eval_agree (i : Bool × Bool × Bool × Bool × Bool × Bool × Boo
       ← h_comp (Wire.mk "cout")]
   exact h_tup
 
+theorem rca4_non_vacuous : NonVacuousCombBehavior rca4CombBehavior := by
+  refine ⟨(false, false, false, false, false, false, false, false, false),
+          (true, false, false, false, false, false, false, false, false), by decide⟩
+
 def rca4_atom : RefinementAtom :=
   .combinational
     "RippleCarryAdder4"
@@ -337,6 +405,7 @@ def rca4_atom : RefinementAtom :=
     rca4CombBehavior
     rca4EncI
     rca4DecO
+    rca4_non_vacuous
     (implementsComb_of_flat [] 0 mkRippleCarryAdder4 rfl
       rca4CombBehavior
       rca4EncI
@@ -395,6 +464,10 @@ theorem cmp4_eval_agree (i : Bool × Bool × Bool × Bool × Bool × Bool × Boo
       ← h_comp (Wire.mk "gt")]
   exact h_tup
 
+theorem comparator4_non_vacuous : NonVacuousCombBehavior cmp4CombBehavior := by
+  refine ⟨(false, false, false, false, false, false, false, false),
+          (true, false, false, false, false, false, false, false), by decide⟩
+
 def comparator4_atom : RefinementAtom :=
   .combinational
     "Comparator4"
@@ -404,6 +477,7 @@ def comparator4_atom : RefinementAtom :=
     cmp4CombBehavior
     cmp4EncI
     cmp4DecO
+    comparator4_non_vacuous
     (implementsComb_of_flat [] 0 mkComparator4 rfl
       cmp4CombBehavior
       cmp4EncI
@@ -456,6 +530,10 @@ theorem popcount8_eval_agree (i : Bool × Bool × Bool × Bool × Bool × Bool �
       ← h_comp (Wire.mk "count_3")]
   exact h_tup
 
+theorem popcount8_non_vacuous : NonVacuousCombBehavior popcount8CombBehavior := by
+  refine ⟨(false, false, false, false, false, false, false, false),
+          (true, false, false, false, false, false, false, false), by decide⟩
+
 def popcount8_atom : RefinementAtom :=
   .combinational
     "Popcount8"
@@ -465,6 +543,7 @@ def popcount8_atom : RefinementAtom :=
     popcount8CombBehavior
     popcount8EncI
     popcount8DecO
+    popcount8_non_vacuous
     (implementsComb_of_flat [] 0 mkPopcount8 rfl
       popcount8CombBehavior
       popcount8EncI
@@ -482,27 +561,8 @@ def alu32EncI (i : ALUOp × BitVec 32 × BitVec 32) : Env :=
     let map := mkALUInitMap a b op.toOpcode
     map.lookup w
 
-def readWiresAsNat (env : Env) (name : String) : Nat → Nat
-  | 0 => 0
-  | n + 1 =>
-    let bit := if env (Wire.mk s!"{name}_{n}") then 1 else 0
-    bit * (2 ^ n) + readWiresAsNat env name n
-
-def readResultBitVec (name : String) (width : Nat) (env : Env) : BitVec width :=
-  BitVec.ofNat width (readWiresAsNat env name width)
-
 def alu32DecO (env : Env) : BitVec 32 :=
   readResultBitVec "result" 32 env
-
-private theorem readWiresAsNat_agree (c : Circuit) (m : WireMap) (env : Env)
-    (h_comp : ∀ w, (compileCircuit c m).lookup w = evalCircuit c env w)
-    (name : String) :
-    ∀ k : Nat, readWiresAsNat (evalCircuit c env) name k = readWiresAsNatMap (compileCircuit c m) name k
-  | 0 => rfl
-  | k + 1 => by
-    dsimp [readWiresAsNat, readWiresAsNatMap]
-    rw [← h_comp (Wire.mk s!"{name}_{k}")]
-    rw [readWiresAsNat_agree c m env h_comp name k]
 
 theorem alu32_eval_agree (i : ALUOp × BitVec 32 × BitVec 32) :
     alu32DecO (evalCircuit mkALU32Flat (alu32EncI i)) = alu32CombBehavior.eval i := by
@@ -518,6 +578,9 @@ theorem alu32_eval_agree (i : ALUOp × BitVec 32 × BitVec 32) :
     (fun w => (mkALUInitMap a b op.toOpcode).lookup w) h_comp "result" 32
   rw [h_nat]
 
+theorem alu32_non_vacuous : NonVacuousCombBehavior alu32CombBehavior := by
+  refine ⟨(.ADD, 0, 0), (.ADD, 1, 0), by decide⟩
+
 def alu32_atom : RefinementAtom :=
   .combinational
     "ALU32"
@@ -527,6 +590,7 @@ def alu32_atom : RefinementAtom :=
     alu32CombBehavior
     alu32EncI
     alu32DecO
+    alu32_non_vacuous
     (implementsComb_of_flat [] 0 mkALU32Flat rfl
       alu32CombBehavior
       alu32EncI
@@ -556,6 +620,9 @@ theorem dff_step_agree (s : State) (i : Bool × Bool) :
 theorem dff_out_agree (s : State) (i : Bool × Bool) :
     dffDecO (evalCycleSequential mkDFlipFlop s (dffEncI i)).2 = dffBehavior.out (dffAbsS s) i := rfl
 
+theorem dff_non_vacuous : NonVacuousBehavior dffBehavior := by
+  refine ⟨false, true, (false, false), (false, false), by decide⟩
+
 def dff_atom : RefinementAtom :=
   .sequential
     "DFlipFlop"
@@ -567,6 +634,7 @@ def dff_atom : RefinementAtom :=
     dffEncI
     dffDecO
     (fun _ => True)
+    dff_non_vacuous
     (implements_of_flat_trivial [] 0 mkDFlipFlop rfl
       dffBehavior
       dffAbsS
@@ -589,6 +657,7 @@ def register160_atom : RefinementAtom :=
     id
     id
     (fun _ => True)
+    regParentBeh_non_vacuous
     register160hier_implements
 
 -- ── 12. Queue1 (Width=1, Sequential FIFO queue) ──
@@ -635,6 +704,8 @@ theorem queue1W1_out_agree (s : State) (i : Bool × Bool × Bool) :
   dsimp [queue1W1Behavior, circuitToQueue1, circuitValid, QueueState.isFull, QueueState.isEmpty]
   cases s (Wire.mk "valid") <;> rfl
 
+theorem queue1W1_non_vacuous : NonVacuousBehavior queue1W1Behavior := by
+  refine ⟨QueueState.empty 1, ⟨[true], 1⟩, (false, false, false), (false, false, false), by decide⟩
 def queue1W1_atom : RefinementAtom :=
   .sequential
     "Queue1_1"
@@ -646,6 +717,7 @@ def queue1W1_atom : RefinementAtom :=
     queue1W1EncI
     queue1W1DecO
     (fun _ => True)
+    queue1W1_non_vacuous
     (implements_of_flat_trivial [] 0 q1w1 rfl
       queue1W1Behavior
       circuitToQueue1

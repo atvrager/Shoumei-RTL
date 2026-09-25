@@ -2,7 +2,7 @@ FullAdder|FullAdderArithSpec
 LogicUnit4|LogicUnit4BitwiseSpec
 Mux4x1|Mux4x1RoutingSpec
 Mux4x32|Mux4x32SliceSpec
-Mux8x32|Mux8x32ComposedSpec
+Mux8x32|Mux8x32Spec
 RippleCarryAdder4|RCA4ArithmeticSpec
 Comparator4|Comparator4PredicateSpec
 Popcount8|Popcount8HammingWeightSpec
