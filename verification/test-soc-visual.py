@@ -32,10 +32,10 @@ REQUIRED_PHRASES = [
 
 
 def main() -> int:
-    cmd = [sys.executable, str(ROOT / "scripts" / "gen-soc-visual.py")]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    cmd = ["lake", "--no-ansi", "exe", "generate_all", "--soc-diagram"]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
     if res.returncode != 0:
-        print(f"Error running gen-soc-visual.py:\n{res.stderr}", file=sys.stderr)
+        print(f"Error running generate_all --soc-diagram:\n{res.stderr}", file=sys.stderr)
         return 1
 
     content = SOC_HTML.read_text(encoding="utf-8")

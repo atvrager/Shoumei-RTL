@@ -1,28 +1,60 @@
-#!/usr/bin/env python3
-"""gen-soc-visual.py - Generate interactive Shoumei SoC architecture diagram for GitHub Pages.
+/-
+Codegen/SoCDiagram.lean - Native Lean interactive SoC architecture diagram
 
-Emits a standalone, interactive HTML/SVG visualization of the complete Shoumei SoC:
-- Outer pad ring with pinout (clock, reset_n, UART, GPIO, external DRAM bus)
-- AASD Reset Synchronizer
-- RV64G 2-Way OoO Core with L1I, L1D, and L2 caches
-- TileLink TL-UH 1-to-8 Interconnect Crossbar
-- Peripheral Suite: BootROM, ACLINT, APLIC, UART, GPIO, SRAM
-- Interactive module inspection panel with register maps, gate/area stats, and Lean certificates.
+Emits an interactive HTML/SVG visualization of the complete Shoumei SoC:
+- Outer silicon die pad ring with pinout (clock, reset_n, UART, GPIO, DRAM bus)
+- 2-Stage AASD Reset Synchronizer
+- Out-of-Order CPU Core Complex
+- Coherent Multi-Level Cache Hierarchy (L1I, L1D, L2) derived from CPUConfig
+- TileLink TL-UH 1-to-8 Crossbar Interconnect
+- Peripherals: BootROM, ACLINT, APLIC, UART, GPIO, SRAM
+- Interactive sidebar inspector with register maps, gate/area stats, and Lean certificates
+-/
 
-Usage:
-  python3 scripts/gen-soc-visual.py [--out output/architecture-visuals/soc-diagram.html]
-"""
+import Shoumei.DSL
+import Shoumei.RISCV.Config
 
-from __future__ import annotations
+namespace Shoumei.Codegen.SoCDiagram
 
-import argparse
-import sys
-from pathlib import Path
+open Shoumei
+open Shoumei.RISCV
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = ROOT / "output" / "architecture-visuals" / "soc-diagram.html"
+/-- Format capacity in bytes to human-readable string (e.g. 512 B, 8 KB, 16 KB, 1 MB). -/
+def formatBytes (bytes : Nat) : String :=
+  if bytes % (1024 * 1024) == 0 then s!"{bytes / (1024 * 1024)} MB"
+  else if bytes % 1024 == 0 then s!"{bytes / 1024} KB"
+  else s!"{bytes} B"
 
-HTML_TEMPLATE = """<!DOCTYPE html>
+/-- Format cache way count for diagram labels (e.g. "Direct-Mapped", "2-Way Set-Assoc"). -/
+def formatWays (ways : Nat) : String :=
+  if ways == 1 then "Direct-Mapped"
+  else s!"{ways}-Way Set-Assoc"
+
+/-- Format cache way count for narrative descriptions (e.g. "direct-mapped", "2-way set-associative"). -/
+def formatWaysDesc (ways : Nat) : String :=
+  if ways == 1 then "direct-mapped"
+  else s!"{ways}-way set-associative"
+
+/-- Default output destination for the interactive diagram. -/
+def defaultOutPath : System.FilePath := "output/architecture-visuals/soc-diagram.html"
+
+/-- Render the complete HTML/SVG interactive SoC visualizer. -/
+def renderHtml (config : CPUConfig) : String :=
+  let g := config.cacheGeom
+  let l1iBytes := g.levelBytes g.l1iSets g.l1iWays
+  let l1dBytes := g.levelBytes g.l1dSets g.l1dWays
+  let l2Bytes := g.levelBytes g.l2Sets g.l2Ways
+  let lineBytes := g.lineBytes
+  let lineBits := lineBytes * 8
+
+  let l1iLabel := s!"{formatBytes l1iBytes} {formatWays g.l1iWays}"
+  let l1dLabel := s!"{formatBytes l1dBytes} {formatWays g.l1dWays}"
+  let l2Label := s!"{formatBytes l2Bytes} {formatWays g.l2Ways} • Tree-PLRU"
+  let cacheLineSub := s!"{lineBytes}B Cache Lines • Write-Back • Tree-PLRU"
+
+  let cacheDesc := s!"High-performance cache hierarchy comprising an {formatBytes l1iBytes} {formatWaysDesc g.l1iWays} L1I instruction cache, {formatBytes l1dBytes} {formatWaysDesc g.l1dWays} write-back L1D data cache, and a {formatBytes l2Bytes} {formatWaysDesc g.l2Ways} unified L2 cache with {lineBytes}B lines. Features Tree-PLRU replacement, single-cycle hit latency, and connects to external DRAM via a {lineBits}-bit line-refill bus."
+
+  let headStyles := r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -122,7 +154,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     filter: drop-shadow(0 12px 32px rgba(0,0,0,0.6));
     user-select: none;
   }
-  /* Module styles */
   .block {
     cursor: pointer;
     transition: transform 0.15s ease, filter 0.15s ease;
@@ -135,7 +166,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     stroke: #ffffff !important;
     filter: drop-shadow(0 0 10px rgba(255,255,255,0.4));
   }
-  /* Side inspector panel */
   .inspector {
     width: 380px;
     background: var(--card-bg);
@@ -223,12 +253,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 
 <header>
-  <h1>証明 Shoumei SoC <span class="badge">RV64G • TileLink TL-UH • 2-Way OoO</span></h1>
-  <div class="controls">
+"##
+
+  let headerBar :=
+    s!"  <h1>証明 Shoumei SoC <span class=\"badge\">{config.isaString} • TileLink TL-UH • {config.dispatchWidth}-Way OoO</span></h1>\n" ++
+    r##"  <div class="controls">
     <button class="btn active" id="btn-all" onclick="filterView('all')">Full Chip</button>
     <button class="btn" id="btn-bus" onclick="filterView('bus')">TileLink Interconnect</button>
     <button class="btn" id="btn-irq" onclick="filterView('irq')">Interrupt Matrix</button>
-    <a class="btn" href="index.html">← Architecture Hub</a>
+    <a class="btn" href="index.html">&larr; Architecture Hub</a>
   </div>
 </header>
 
@@ -266,7 +299,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <!-- Outer Silicon Die / Pad Ring -->
       <rect x="20" y="20" width="1020" height="800" rx="16" fill="#0d1117" stroke="#30363d" stroke-width="2" />
-      <text x="40" y="46" fill="#8b949e" font-family="monospace" font-size="12" font-weight="600">SHMIC_ASIC_DIE_TOP // 8.46 mm² (GF180) • 0.033 mm² (ASAP7)</text>
+      <text x="40" y="46" fill="#8b949e" font-family="monospace" font-size="12" font-weight="600">SHMIC_ASIC_DIE_TOP // 8.46 mm&sup2; (GF180) &bull; 0.033 mm&sup2; (ASAP7)</text>
 
       <!-- NORTH PADS -->
       <g id="north-pads">
@@ -294,16 +327,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <text x="170" y="94" fill="#fff" font-size="13" font-weight="700" text-anchor="middle">ResetSync</text>
         <text x="170" y="110" fill="#8892b0" font-size="10" text-anchor="middle">2-Stage AASD Synchronizer</text>
       </g>
+"##
 
-      <!-- 2. CPU Core Complex (CPU_W2) -->
-      <g class="block" id="blk-cpu" onclick="selectBlock('cpu')">
+  let cpuAndCaches :=
+    s!"      <!-- 2. CPU Core Complex (CPU_W{config.dispatchWidth}) -->\n" ++
+    r##"      <g class="block" id="blk-cpu" onclick="selectBlock('cpu')">
         <rect x="60" y="150" width="560" height="340" rx="12" fill="url(#cpuGrad)" stroke="#ff4d6d" stroke-width="2" />
-        <text x="80" y="180" fill="#ff4d6d" font-size="16" font-weight="800">CPU_W2 Core (RV64G OoO)</text>
-        <text x="80" y="198" fill="#a0aec0" font-size="11">Dual-Dispatch • 2-Way Commit • 64 Physical Registers</text>
-
+"## ++
+    s!"        <text x=\"80\" y=\"180\" fill=\"#ff4d6d\" font-size=\"16\" font-weight=\"800\">CPU_W{config.dispatchWidth} Core ({config.isaString} OoO)</text>\n" ++
+    s!"        <text x=\"80\" y=\"198\" fill=\"#a0aec0\" font-size=\"11\">{config.dispatchWidth}-Way Dispatch • {config.commitWidth}-Way Commit • 64 Physical Registers</text>\n" ++
+    r##"
         <!-- Sub-units in CPU -->
         <rect x="80" y="220" width="155" height="60" rx="6" fill="#3b1525" stroke="#ff758f" stroke-width="1" />
-        <text x="157" y="246" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Fetch & Rename</text>
+        <text x="157" y="246" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">Fetch &amp; Rename</text>
         <text x="157" y="264" fill="#ffb3c6" font-size="10" text-anchor="middle">64-Tag RAT + FreeList</text>
 
         <rect x="250" y="220" width="180" height="60" rx="6" fill="#3b1525" stroke="#ff758f" stroke-width="1" />
@@ -311,46 +347,47 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <text x="340" y="264" fill="#ffb3c6" font-size="10" text-anchor="middle">Dual ALU • MulDiv • FPU(D)</text>
 
         <rect x="445" y="220" width="155" height="60" rx="6" fill="#3b1525" stroke="#ff758f" stroke-width="1" />
-        <text x="522" y="246" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">ROB & Retirement</text>
+        <text x="522" y="246" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">ROB &amp; Retirement</text>
         <text x="522" y="264" fill="#ffb3c6" font-size="10" text-anchor="middle">16-Entry Dual-Retire</text>
 
         <rect x="80" y="300" width="235" height="60" rx="6" fill="#3b1525" stroke="#ff758f" stroke-width="1" />
-        <text x="197" y="326" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">LSU & Store Buffer</text>
+        <text x="197" y="326" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">LSU &amp; Store Buffer</text>
         <text x="197" y="344" fill="#ffb3c6" font-size="10" text-anchor="middle">8-Entry SB • 1-Cycle Snoop</text>
 
         <rect x="330" y="300" width="270" height="60" rx="6" fill="#3b1525" stroke="#ff758f" stroke-width="1" />
-        <text x="465" y="326" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">CSR & Trap Sequencer</text>
-        <text x="465" y="344" fill="#ffb3c6" font-size="10" text-anchor="middle">Microcoded Trap Entry & MRET</text>
+        <text x="465" y="326" fill="#fff" font-size="12" font-weight="600" text-anchor="middle">CSR &amp; Trap Sequencer</text>
+        <text x="465" y="344" fill="#ffb3c6" font-size="10" text-anchor="middle">Microcoded Trap Entry &amp; MRET</text>
 
         <!-- PRF file indicator -->
         <rect x="80" y="380" width="520" height="40" rx="6" fill="#240c18" stroke="#ff758f" stroke-width="1" stroke-dasharray="4 2" />
-        <text x="340" y="405" fill="#ffccd5" font-size="11" text-anchor="middle">Unified PhysRegFile (64×64-bit Int + 64×64-bit FP)</text>
+        <text x="340" y="405" fill="#ffccd5" font-size="11" text-anchor="middle">Unified PhysRegFile (64&times;64-bit Int + 64&times;64-bit FP)</text>
       </g>
 
       <!-- 3. Memory Hierarchy (Caches) -->
       <g class="block" id="blk-caches" onclick="selectBlock('caches')">
         <rect x="650" y="150" width="350" height="180" rx="12" fill="url(#cacheGrad)" stroke="#ff85a1" stroke-width="1.5" />
         <text x="670" y="180" fill="#ff85a1" font-size="15" font-weight="700">MemoryHierarchy</text>
-        <text x="670" y="196" fill="#a0aec0" font-size="11">64B Cache Lines • Write-Back • Tree-PLRU</text>
-
-        <rect x="670" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
+"## ++
+    s!"        <text x=\"670\" y=\"196\" fill=\"#a0aec0\" font-size=\"11\">{cacheLineSub}</text>\n\n" ++
+    r##"        <rect x="670" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="742" y="236" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L1I Cache</text>
-        <text x="742" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">8 KB 2-Way Set-Assoc</text>
-
-        <rect x="835" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
+"## ++
+    s!"        <text x=\"742\" y=\"250\" fill=\"#ffb3c6\" font-size=\"9\" text-anchor=\"middle\">{l1iLabel}</text>\n\n" ++
+    r##"        <rect x="835" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="907" y="236" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L1D Cache</text>
-        <text x="907" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">16 KB 4-Way Set-Assoc</text>
-
-        <rect x="670" y="270" width="310" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
+"## ++
+    s!"        <text x=\"907\" y=\"250\" fill=\"#ffb3c6\" font-size=\"9\" text-anchor=\"middle\">{l1dLabel}</text>\n\n" ++
+    r##"        <rect x="670" y="270" width="310" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="825" y="291" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L2 Unified Cache</text>
-        <text x="825" y="305" fill="#ffb3c6" font-size="9" text-anchor="middle">32 KB 8-Way Set-Assoc • Tree-PLRU</text>
-      </g>
+"## ++
+    s!"        <text x=\"825\" y=\"305\" fill=\"#ffb3c6\" font-size=\"9\" text-anchor=\"middle\">{l2Label}</text>\n" ++
+    r##"      </g>
 
       <!-- Interconnect Bus (TileLink TL-UH Crossbar) -->
       <g class="block" id="blk-xbar" onclick="selectBlock('xbar')">
         <rect x="60" y="520" width="940" height="70" rx="10" fill="url(#busGrad)" stroke="#4cc9f0" stroke-width="2" />
         <text x="530" y="550" fill="#4cc9f0" font-size="16" font-weight="800" text-anchor="middle">TileLink TL-UH 1-to-8 Crossbar (TLXbar8)</text>
-        <text x="530" y="570" fill="#a0c4ff" font-size="11" text-anchor="middle">Channel A (Request/Data) • Channel D (Response/Ack) • Zero Combinational Loops</text>
+        <text x="530" y="570" fill="#a0c4ff" font-size="11" text-anchor="middle">Channel A (Request/Data) &bull; Channel D (Response/Ack) &bull; Zero Combinational Loops</text>
       </g>
 
       <!-- Bus lines connecting CPU/Snoop to Crossbar -->
@@ -364,7 +401,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-bootrom" onclick="selectBlock('bootrom')">
         <rect x="60" y="630" width="130" height="85" rx="8" fill="url(#periphGrad)" stroke="#06d6a0" stroke-width="1.5" />
         <text x="125" y="655" fill="#06d6a0" font-size="13" font-weight="700" text-anchor="middle">BootROM</text>
-        <text x="125" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 0 • 512 B</text>
+        <text x="125" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 0 &bull; 512 B</text>
         <text x="125" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x0001_0000</text>
         <line x1="125" y1="590" x2="125" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -373,7 +410,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-aclint" onclick="selectBlock('aclint')">
         <rect x="210" y="630" width="150" height="85" rx="8" fill="url(#periphGrad)" stroke="#06d6a0" stroke-width="1.5" />
         <text x="285" y="655" fill="#06d6a0" font-size="13" font-weight="700" text-anchor="middle">ACLINT</text>
-        <text x="285" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 1 • MTIMER/MSWI</text>
+        <text x="285" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 1 &bull; MTIMER/MSWI</text>
         <text x="285" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x0200_0000</text>
         <line x1="285" y1="590" x2="285" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -382,7 +419,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-aplic" onclick="selectBlock('aplic')">
         <rect x="380" y="630" width="150" height="85" rx="8" fill="url(#periphGrad)" stroke="#06d6a0" stroke-width="1.5" />
         <text x="455" y="655" fill="#06d6a0" font-size="13" font-weight="700" text-anchor="middle">APLIC</text>
-        <text x="455" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 4 • AIA Direct</text>
+        <text x="455" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 4 &bull; AIA Direct</text>
         <text x="455" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x0C00_0000</text>
         <line x1="455" y1="590" x2="455" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -391,7 +428,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-uart" onclick="selectBlock('uart')">
         <rect x="550" y="630" width="140" height="85" rx="8" fill="url(#periphGrad)" stroke="#06d6a0" stroke-width="1.5" />
         <text x="620" y="655" fill="#06d6a0" font-size="13" font-weight="700" text-anchor="middle">UART (8-N-1)</text>
-        <text x="620" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 5 • 115.2k Baud</text>
+        <text x="620" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 5 &bull; 115.2k Baud</text>
         <text x="620" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x1000_0000</text>
         <line x1="620" y1="590" x2="620" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -400,7 +437,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-gpio" onclick="selectBlock('gpio')">
         <rect x="710" y="630" width="130" height="85" rx="8" fill="url(#periphGrad)" stroke="#06d6a0" stroke-width="1.5" />
         <text x="775" y="655" fill="#06d6a0" font-size="13" font-weight="700" text-anchor="middle">GPIO (8-Bit)</text>
-        <text x="775" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 6 • Bi-Dir</text>
+        <text x="775" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 6 &bull; Bi-Dir</text>
         <text x="775" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x1001_0000</text>
         <line x1="775" y1="590" x2="775" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -409,7 +446,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-sram" onclick="selectBlock('sram')">
         <rect x="860" y="630" width="140" height="85" rx="8" fill="url(#sramGrad)" stroke="#ffd166" stroke-width="1.5" />
         <text x="930" y="655" fill="#ffd166" font-size="13" font-weight="700" text-anchor="middle">Scratchpad SRAM</text>
-        <text x="930" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 7 • 4 KB</text>
+        <text x="930" y="673" fill="#8892b0" font-size="10" text-anchor="middle">Port 7 &bull; 4 KB</text>
         <text x="930" y="695" fill="#fff" font-family="monospace" font-size="9" text-anchor="middle">0x8000_0000</text>
         <line x1="930" y1="590" x2="930" y2="630" stroke="#4cc9f0" stroke-width="2" marker-end="url(#arrow-bus)" />
       </g>
@@ -440,7 +477,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <line x1="775" y1="715" x2="775" y2="800" stroke="#06d6a0" stroke-width="2" />
 
         <rect x="250" y="800" width="320" height="25" rx="4" fill="#1f242c" stroke="#ffd166" stroke-width="1.5" />
-        <text x="410" y="817" fill="#ffd166" font-family="monospace" font-size="11" text-anchor="middle">mem_req_* & mem_resp_* (L2 Refill/DRAM)</text>
+        <text x="410" y="817" fill="#ffd166" font-family="monospace" font-size="11" text-anchor="middle">mem_req_* &amp; mem_resp_* (L2 Refill/DRAM)</text>
         <path d="M 825,330 L 825,480 L 410,480 L 410,800" fill="none" stroke="#ffd166" stroke-width="2.5" stroke-dasharray="5 3" marker-end="url(#arrow-bus)" />
       </g>
     </svg>
@@ -453,11 +490,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="metric-pill-grid">
       <div class="metric-pill">
         <div class="label">GF180 Cell Area</div>
-        <div class="value" id="ins-gf180">8.46 mm²</div>
+        <div class="value" id="ins-gf180">8.46 mm&sup2;</div>
       </div>
       <div class="metric-pill">
         <div class="label">ASAP7 Cell Area</div>
-        <div class="value" id="ins-asap7">32,785 µm²</div>
+        <div class="value" id="ins-asap7">32,785 &micro;m&sup2;</div>
       </div>
       <div class="metric-pill">
         <div class="label">Sequential FFs</div>
@@ -474,7 +511,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       Select any block or pad in the SoC diagram to inspect its interface, TileLink port assignment, register mappings, and verification proofs.
     </div>
 
-    <div class="section-title">Key Ports & Interfaces</div>
+    <div class="section-title">Key Ports &amp; Interfaces</div>
     <ul class="port-list" id="ins-ports">
       <li><span class="port-in">clock</span> <span class="port-dir">INPUT (1b)</span></li>
       <li><span class="port-in">reset_n</span> <span class="port-dir">INPUT (1b)</span></li>
@@ -486,7 +523,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <li><span class="port-in">mem_resp_valid</span> <span class="port-dir">INPUT (1b)</span></li>
     </ul>
 
-    <div class="section-title">Formal Verification & Provenance</div>
+    <div class="section-title">Formal Verification &amp; Provenance</div>
     <div class="desc-box" id="ins-proof">
       <b>Lean 4 DSL:</b> <code>lean/Shoumei/SoC/ShoumeiSoC.lean</code><br>
       <b>Proofs:</b> <code>ShoumeiSoCProofs.lean</code> (5 structural theorems, 100% discharge)<br>
@@ -504,8 +541,11 @@ const BLOCKS = {
     asap7: "32,240 µm²",
     ffs: "29,180",
     clock: "64 MHz / 1.0 GHz",
-    desc: "Out-of-Order execution engine implementing RV64IMAFD_Zicsr_Zifencei (RV64G). Features 64-entry physical register files (Int & FP), 16-entry dual-retire ROB, speculative store buffer with 1-cycle dequeue-fire snoop, branch predictor, microcoded trap sequencer, and pipelined double-precision FPU.",
-    ports: [
+"##
+
+  let cpuDesc :=
+    s!"    desc: \"Out-of-Order execution engine implementing {config.isaString}. Features 64-entry physical register files (Int & FP), 16-entry dual-retire ROB, speculative store buffer with 1-cycle dequeue-fire snoop, branch predictor, microcoded trap sequencer, and pipelined double-precision FPU.\",\n" ++
+    r##"    ports: [
       { name: "clock", dir: "INPUT", cls: "port-in" },
       { name: "sync_reset", dir: "INPUT", cls: "port-in" },
       { name: "mtip_in / msip_in", dir: "INPUT", cls: "port-in" },
@@ -515,7 +555,7 @@ const BLOCKS = {
       { name: "store_snoop_data[63:0]", dir: "OUTPUT", cls: "port-out" },
       { name: "rob_empty", dir: "OUTPUT", cls: "port-out" }
     ],
-    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/CPU.lean</code><br><b>Verification:</b> RAT & FreeList invariants proven, ROB FIFO order preserved, 0 axioms, 0 sorry."
+    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/CPU.lean</code><br><b>Verification:</b> RAT & FreeList invariants proven, ROB FIFO order preserved, 0 axioms, 100% discharged."
   },
   caches: {
     name: "MemoryHierarchy",
@@ -524,16 +564,20 @@ const BLOCKS = {
     asap7: "473 µm²",
     ffs: "280",
     clock: "64 MHz / 1.0 GHz",
-    desc: "High-performance cache hierarchy comprising an 8 KB 2-way set-associative L1I instruction cache, 16 KB 4-way set-associative write-back L1D data cache, and a 32 KB 8-way set-associative unified L2 cache with 64B lines. Features Tree-PLRU replacement, single-cycle hit latency, and connects to external DRAM via a 512-bit line-refill bus.",
-    ports: [
+"##
+
+  let cachesSection :=
+    s!"    desc: \"{cacheDesc}\",\n" ++
+    r##"    ports: [
       { name: "ifetch_addr[31:0]", dir: "INPUT", cls: "port-in" },
       { name: "ifetch_data[31:0]", dir: "OUTPUT", cls: "port-out" },
       { name: "dmem_req_*", dir: "INPUT", cls: "port-in" },
       { name: "dmem_resp_*", dir: "OUTPUT", cls: "port-out" },
-      { name: "mem_req_* (512b line)", dir: "OUTPUT", cls: "port-out" },
-      { name: "mem_resp_* (512b line)", dir: "INPUT", cls: "port-in" }
-    ],
-    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/Memory/Cache/MemoryHierarchy.lean</code><br><b>Theorems:</b> <code>fence_i_invalidates_l1i</code>, <code>fence_i_clears_l1d_dirty</code>, <code>memoryHierarchy_cert</code> (0 sorry)."
+"## ++
+    s!"      \{ name: \"mem_req_* ({lineBits}b line)\", dir: \"OUTPUT\", cls: \"port-out\" },\n" ++
+    s!"      \{ name: \"mem_resp_* ({lineBits}b line)\", dir: \"INPUT\", cls: \"port-in\" }\n" ++
+    r##"    ],
+    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/Memory/Cache/MemoryHierarchy.lean</code><br><b>Theorems:</b> <code>fence_i_invalidates_l1i</code>, <code>fence_i_clears_l1d_dirty</code>, <code>memoryHierarchy_cert</code> (100% discharged)."
   },
   xbar: {
     name: "TLXbar8",
@@ -704,20 +748,16 @@ function filterView(mode) {
 </script>
 </body>
 </html>
-"""
+"##
 
+  headStyles ++ headerBar ++ cpuAndCaches ++ cpuDesc ++ cachesSection
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate interactive SoC visualization.")
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"Output HTML path (default: {DEFAULT_OUT})")
-    args = parser.parse_args()
+/-- Generate the interactive SoC diagram HTML file. -/
+def generate (config : CPUConfig := defaultCPUConfig)
+    (outPath : System.FilePath := defaultOutPath) : IO Unit := do
+  if let some parentDir := outPath.parent then
+    IO.FS.createDirAll parentDir
+  IO.FS.writeFile outPath (renderHtml config)
+  IO.println s!"✓ Generated interactive SoC visualization: {outPath}"
 
-    out_file = args.out.resolve()
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(HTML_TEMPLATE, encoding="utf-8")
-    print(f"✓ Generated interactive SoC visualization: {out_file}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+end Shoumei.Codegen.SoCDiagram

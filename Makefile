@@ -1,7 +1,7 @@
 # Shoumei RTL - Build System Makefile
 # Orchestrates the LEAN build, code generation and validation pipeline
 
-.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram architecture-visuals techmap-equiv sec-equiv sec sva-verify sva cell-models
+.PHONY: all clean lean codegen systemverilog synth-gf180 synth-gf180-cpu synth-gf180-soc synth-asap7 synth-asap7-cpu synth-asap7-soc synth-cached-gf180 synth-cached-asap7 synth-quad synth-stats cppsim smoke-test help setup check-tools opcodes opcodes-rv32i opcodes-rv32im filelists generate-optype proof-coverage mutation-test presubmit coverage architecture-diagram soc-diagram architecture-visuals techmap-equiv sec-equiv sec sva-verify sva cell-models
 
 # Add tool directories to PATH
 # This ensures lake (from elan) is available
@@ -42,6 +42,7 @@ help:
 	@echo ""
 	@echo "Utility Targets:"
 	@echo "  make architecture-diagram - Generate architecture gate treemap (SVG)"
+	@echo "  make soc-diagram    - Generate interactive SoC diagram (HTML/SVG)"
 	@echo "  make clean      - Remove all generated files"
 	@echo "  make help       - Show this help message"
 	@echo ""
@@ -234,6 +235,11 @@ sram-macros:
 architecture-diagram:
 	@echo "==> Generating architecture treemap (Lean 4 SVG)..."
 	lake --no-ansi exe generate_all --treemap
+
+# Interactive SoC architecture block diagram (Lean 4 HTML/SVG)
+soc-diagram:
+	@echo "==> Generating SoC diagram (Lean 4 HTML/SVG)..."
+	lake --no-ansi exe generate_all --soc-diagram
 
 # Sunburst/treemap/gate-city views for every netlist source + Pages hub
 architecture-visuals:

@@ -111,6 +111,7 @@ import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.SVA
 import Shoumei.Codegen.ShoumeiEmit
 import Shoumei.Codegen.ShoumeiParse
+import Shoumei.Codegen.SoCDiagram
 import Shoumei.Codegen.SystemVerilog
 import Shoumei.Codegen.SystemVerilogNetlist
 import Shoumei.Codegen.TechMap
