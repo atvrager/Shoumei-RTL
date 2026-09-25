@@ -488,7 +488,6 @@ jobs:
 
       - name: Generate code
         run: |
-          pip install --quiet matplotlib==3.11.2
           make codegen
 
       - name: Setup OSS CAD Suite (Yosys)
@@ -549,7 +548,6 @@ jobs:
 
       - name: Build visualization suite
         run: |
-          pip install --quiet matplotlib==3.11.2
           ./scripts/build-visuals.sh
 
       - name: Upload visualization suite

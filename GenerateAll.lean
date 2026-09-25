@@ -10,6 +10,7 @@ Usage: lake exe generate_all
 import Shoumei.Codegen.Unified
 import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.ArchitectureDiagram
+import Shoumei.Codegen.ArchitectureVisuals
 import Shoumei.Codegen.SoCDiagram
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
@@ -437,6 +438,10 @@ def main (args : List String) : IO Unit := do
   if args.contains "--soc-diagram" then
     Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
     return
+  if args.contains "--visuals" || args.contains "--architecture-visuals" then
+    Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
+    Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
+    return
   let force := args.contains "--force"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
@@ -564,11 +569,12 @@ def main (args : List String) : IO Unit := do
   IO.FS.writeFile "viewer/src/schema.gen.ts" Shoumei.TraceSchema.renderTsSchema
   IO.println "✓ Generated trace schema (C++ header + TS module)"
 
-  -- Architecture treemap, sized from the same registry the SV came from
+  -- Architecture treemap & visuals, sized from the same registry the SV came from
   IO.println ""
-  IO.println "Generating architecture treemap..."
+  IO.println "Generating architecture treemap and visual suite..."
   Shoumei.Codegen.ArchitectureDiagram.generate allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
   Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
+  Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
