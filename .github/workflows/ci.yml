@@ -346,6 +346,7 @@ jobs:
             output/cpp_sim/
             output/architecture-treemap.svg
             output/architecture-hierarchy.json
+            output/architecture-visuals/
             output/bench/bench-programs.json
             output/bench-short/
             testbench/generated/

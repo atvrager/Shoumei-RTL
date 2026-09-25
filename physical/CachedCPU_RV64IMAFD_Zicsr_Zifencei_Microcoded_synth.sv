@@ -1,5 +1,5 @@
 // Synthesis wrapper for CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_L1I8K_L1D16K_L232K
-// W=2 superscalar CPU + L1I (256B) + L1D (256B) + L2 (512B) with microcode trap support
+// W=2 superscalar CPU + L1I (8KB) + L1D (16KB) + L2 (32KB) with microcode trap support
 // Ties off constant zero/one and mtip ports, exposing only the main memory interface.
 // RVVI/store_snoop debug ports are left unconnected (optimized away).
 

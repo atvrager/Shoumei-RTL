@@ -238,6 +238,13 @@ else
     tail -5 /tmp/cell-tables.log || true
 fi
 
+if python3 verification/test-soc-visual.py > /tmp/soc-visual.log 2>&1; then
+    pass "SoC diagram visualization memory hierarchy verified"
+else
+    fail "SoC diagram visualization check failed (see /tmp/soc-visual.log)"
+    cat /tmp/soc-visual.log || true
+fi
+
 SORRY_COUNT=$(grep -rnE '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
 if [ "$SORRY_COUNT" -eq 0 ]; then
     pass "Zero sorry/admit occurrences in Lean proofs"
