@@ -25,6 +25,6 @@ lake --no-ansi exe generate_all --visuals
 # Benchmarks page is self-contained; falls back to a no-CPI table when the
 # bench data artifacts (output/bench) are absent, so PR-side visuals-check
 # does not need the RISC-V toolchain or a Verilator run.
-python3 scripts/gen-benchmark-visual.py || true
+lake --no-ansi exe generate_all --benchmarks || true
 
 echo "✓ visual suite ready in output/architecture-visuals"
