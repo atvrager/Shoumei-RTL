@@ -101,6 +101,7 @@ import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
 import Shoumei.Codegen.ArchitectureDiagram
 import Shoumei.Codegen.ArchitectureVisuals
+import Shoumei.Codegen.BenchmarkVisual
 import Shoumei.Codegen.CellLibrary
 import Shoumei.Codegen.CellLibs.ASAP7
 import Shoumei.Codegen.CellLibs.GF180
