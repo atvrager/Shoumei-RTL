@@ -331,19 +331,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <g class="block" id="blk-caches" onclick="selectBlock('caches')">
         <rect x="650" y="150" width="350" height="180" rx="12" fill="url(#cacheGrad)" stroke="#ff85a1" stroke-width="1.5" />
         <text x="670" y="180" fill="#ff85a1" font-size="15" font-weight="700">MemoryHierarchy</text>
-        <text x="670" y="196" fill="#a0aec0" font-size="11">Non-blocking Multi-Level Caches</text>
+        <text x="670" y="196" fill="#a0aec0" font-size="11">64B Cache Lines • Write-Back • Tree-PLRU</text>
 
         <rect x="670" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="742" y="236" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L1I Cache</text>
-        <text x="742" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">256B Direct Mapped</text>
+        <text x="742" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">8 KB 2-Way Set-Assoc</text>
 
         <rect x="835" y="215" width="145" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="907" y="236" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L1D Cache</text>
-        <text x="907" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">256B 2-Way Set-Assoc</text>
+        <text x="907" y="250" fill="#ffb3c6" font-size="9" text-anchor="middle">16 KB 4-Way Set-Assoc</text>
 
         <rect x="670" y="270" width="310" height="45" rx="6" fill="#3d1e44" stroke="#f72585" stroke-width="1" />
         <text x="825" y="291" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">L2 Unified Cache</text>
-        <text x="825" y="305" fill="#ffb3c6" font-size="9" text-anchor="middle">512B 2-Way Set-Assoc • Miss Queue</text>
+        <text x="825" y="305" fill="#ffb3c6" font-size="9" text-anchor="middle">32 KB 8-Way Set-Assoc • Tree-PLRU</text>
       </g>
 
       <!-- Interconnect Bus (TileLink TL-UH Crossbar) -->
@@ -524,16 +524,16 @@ const BLOCKS = {
     asap7: "473 µm²",
     ffs: "280",
     clock: "64 MHz / 1.0 GHz",
-    desc: "High-performance cache hierarchy comprising a 256B direct-mapped L1I instruction cache, 256B 2-way set-associative write-through L1D data cache, and a 512B 2-way set-associative unified L2 cache. Provides single-cycle hit latency and connects to external DRAM via a 256-bit line-refill bus.",
+    desc: "High-performance cache hierarchy comprising an 8 KB 2-way set-associative L1I instruction cache, 16 KB 4-way set-associative write-back L1D data cache, and a 32 KB 8-way set-associative unified L2 cache with 64B lines. Features Tree-PLRU replacement, single-cycle hit latency, and connects to external DRAM via a 512-bit line-refill bus.",
     ports: [
       { name: "ifetch_addr[31:0]", dir: "INPUT", cls: "port-in" },
       { name: "ifetch_data[31:0]", dir: "OUTPUT", cls: "port-out" },
       { name: "dmem_req_*", dir: "INPUT", cls: "port-in" },
       { name: "dmem_resp_*", dir: "OUTPUT", cls: "port-out" },
-      { name: "mem_req_*", dir: "OUTPUT", cls: "port-out" },
-      { name: "mem_resp_*", dir: "INPUT", cls: "port-in" }
+      { name: "mem_req_* (512b line)", dir: "OUTPUT", cls: "port-out" },
+      { name: "mem_resp_* (512b line)", dir: "INPUT", cls: "port-in" }
     ],
-    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/Memory/Cache/MemoryHierarchy.lean</code><br><b>Conformity:</b> Tested with direct-mapped & associative formal cache models."
+    proof: "<b>File:</b> <code>lean/Shoumei/RISCV/Memory/Cache/MemoryHierarchy.lean</code><br><b>Theorems:</b> <code>fence_i_invalidates_l1i</code>, <code>fence_i_clears_l1d_dirty</code>, <code>memoryHierarchy_cert</code> (0 sorry)."
   },
   xbar: {
     name: "TLXbar8",
