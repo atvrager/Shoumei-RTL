@@ -43,14 +43,14 @@ inductive GateType where
   -- Sequential elements
   | DFF       -- D Flip-Flop (inputs: [d, clk, reset], output: q) — resets to 0
   | DFF_SET   -- D Flip-Flop with preset (inputs: [d, clk, reset], output: q) — resets to 1
-  deriving Repr, BEq, Hashable, Inhabited
+  deriving Repr, BEq, Hashable, Inhabited, DecidableEq
 
 -- Gate: represents a logic gate with inputs and output
 structure Gate where
   gateType : GateType
   inputs : List Wire
   output : Wire
-  deriving Repr, Hashable, Inhabited
+  deriving Repr, BEq, Hashable, Inhabited, DecidableEq
 
 namespace Gate
 
@@ -92,7 +92,7 @@ structure CircuitInstance where
   moduleName : String     -- Name of the module being instantiated (e.g., "Ram64x32")
   instName : String       -- Name of this instance (e.g., "u_ram")
   portMap : List (String × Wire) -- Mapping from submodule port names to local wires
-  deriving Repr, Hashable
+  deriving Repr, BEq, Hashable, DecidableEq
 
 /-! ## Codegen V2: Signal Annotations
 

@@ -46,6 +46,7 @@ import Shoumei.Circuits.Combinational.LogicUnitCodegen
 import Shoumei.Circuits.Combinational.LogicUnitProofs
 import Shoumei.Circuits.Combinational.Multiplier
 import Shoumei.Circuits.Combinational.MultiplierProofs
+import Shoumei.Circuits.Combinational.Mux8x32HierProofs
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Combinational.MuxTreeProofs
 import Shoumei.Circuits.Combinational.OneHotEncoder
@@ -97,6 +98,7 @@ import Shoumei.Circuits.Sequential.Register
 import Shoumei.Circuits.Sequential.RegisterLemmas
 import Shoumei.Circuits.Sequential.RegisterProofs
 import Shoumei.Circuits.Sequential.RegisterTemporalProofs
+import Shoumei.Circuits.Sequential.RegisterWordProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
 import Shoumei.Codegen.ArchitectureDiagram
@@ -265,6 +267,7 @@ import Shoumei.Reflection.BitVecPacking
 import Shoumei.Reflection.BoolExpr
 import Shoumei.Reflection.CompileCircuit
 import Shoumei.Reflection.CompileGate
+import Shoumei.Reflection.FlattenSoundness
 import Shoumei.Reflection.SequentialCompile
 import Shoumei.Reflection.SymbolicCompile
 import Shoumei.Reflection.WireMap
@@ -280,6 +283,7 @@ import Shoumei.TestGen.RandProgram
 import Shoumei.TestGen.Rng
 import Shoumei.Theorems
 import Shoumei.Verification
+import Shoumei.Verification.ALU32HierBridge
 import Shoumei.Verification.CompositionDemos
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts

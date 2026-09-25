@@ -133,17 +133,29 @@ def RemapInj (sub : Circuit) (inst : CircuitInstance) : Prop :=
   ∀ w₁ ∈ subWires sub, ∀ w₂ ∈ subWires sub,
     flattenRemap sub inst w₁ = flattenRemap sub inst w₂ → w₁ = w₂
 
-/-- Boolean check backing `RemapInj`. -/
+theorem all_map_iff {α β : Type} (l : List α) (f : α → β) (p : β → Bool) :
+    (l.map f).all p = l.all (fun x => p (f x)) := by
+  induction l with
+  | nil => rfl
+  | cons hd tl ih =>
+    simp only [List.map_cons, List.all_cons, ih]
+
+/-- Boolean check backing `RemapInj`: precomputes `flattenRemap` once per wire
+    before checking pairwise injectivity. -/
 def remapInjCheck (sub : Circuit) (inst : CircuitInstance) : Bool :=
-  (subWires sub).all fun w₁ =>
-    (subWires sub).all fun w₂ =>
-      decide (flattenRemap sub inst w₁ ≠ flattenRemap sub inst w₂ ∨ w₁ = w₂)
+  let pairs := (subWires sub).map (fun w => (w, flattenRemap sub inst w))
+  pairs.all fun p₁ =>
+    pairs.all fun p₂ =>
+      decide (p₁.2 ≠ p₂.2 ∨ p₁.1 = p₂.1)
 
 /-- `remapInjCheck` implies `RemapInj`. -/
 theorem RemapInj_of_check (sub : Circuit) (inst : CircuitInstance)
     (h : remapInjCheck sub inst = true) : RemapInj sub inst := by
   intro w₁ h₁ w₂ h₂ h_eq
+  dsimp [remapInjCheck] at h
+  rw [all_map_iff] at h
   have h1 := (List.all_eq_true.mp h) w₁ h₁
+  rw [all_map_iff] at h1
   have h2 := (List.all_eq_true.mp h1) w₂ h₂
   exact (of_decide_eq_true h2).resolve_left (fun h_ne => absurd h_eq h_ne)
 
@@ -165,15 +177,16 @@ structure SubWf (sub : Circuit) : Prop where
 
 /-- Boolean check backing `SubWf`. -/
 def subWfCheck (sub : Circuit) : Bool :=
+  let gateOuts := sub.gates.map (fun g => g.output)
   (sub.gates.all fun g =>
     g.inputs.all fun w =>
       decide ((sub.inputs.any (· == w)) = true ∨
-              ((sub.gates.map (fun g => g.output)).any (· == w)) = true))
+              (gateOuts.any (· == w)) = true))
   && (sub.outputs.all fun w =>
       decide ((sub.inputs.any (· == w)) = true ∨
-              ((sub.gates.map (fun g => g.output)).any (· == w)) = true))
+              (gateOuts.any (· == w)) = true))
   && (sub.inputs.all fun w =>
-      decide (((sub.gates.map (fun g => g.output)).any (· == w)) = false))
+      decide ((gateOuts.any (· == w)) = false))
 
 /-- `subWfCheck` implies `SubWf`. -/
 theorem SubWf_of_check (sub : Circuit) (h : subWfCheck sub = true) : SubWf sub := by
@@ -290,15 +303,15 @@ theorem TopoOrdered_of_check (sub : Circuit)
       exact Or.inr h_mem
 
 /-- Per-instance flattening obligations bundled: flat child, well-formed
-    reads, topological ordering, injective remap, bound wires in parent, ports only
-    inputs/outputs. (Freshness comes from parent-level `FlattenFresh`.) -/
+    reads, topological ordering, injective remap, bound input wires in parent,
+    ports only inputs/outputs. (Freshness comes from parent-level `FlattenFresh`.) -/
 structure ChildFlatOK (reg : ModuleRegistry) (parent : Circuit)
     (inst : CircuitInstance) (sub : Circuit) : Prop where
   flat : sub.instances = []
   wf : SubWf sub
   topo : TopoOrdered sub
   inj : RemapInj sub inst
-  bound : ∀ w ∈ sub.inputs ++ sub.outputs, ∀ pw,
+  bound : ∀ w ∈ sub.inputs, ∀ pw,
     resolvePort sub inst w = some pw → pw ∈ parentWires parent
   ports : ∀ w ∈ subWires sub, ∀ pw,
     resolvePort sub inst w = some pw → w ∈ sub.inputs ∨ w ∈ sub.outputs
@@ -306,6 +319,7 @@ structure ChildFlatOK (reg : ModuleRegistry) (parent : Circuit)
 
 /-- Boolean check backing per-instance obligations across a parent. -/
 def childrenOKCheck (reg : ModuleRegistry) (parent : Circuit) : Bool :=
+  let pws := parentWires parent
   parent.instances.all fun inst =>
     match reg.find? (fun p => p.1 == inst.moduleName) with
     | none => true
@@ -314,10 +328,10 @@ def childrenOKCheck (reg : ModuleRegistry) (parent : Circuit) : Bool :=
       && subWfCheck sub
       && topoCheck sub
       && remapInjCheck sub inst
-      && ((sub.inputs ++ sub.outputs).all fun w =>
+      && (sub.inputs.all fun w =>
         match resolvePort sub inst w with
         | none => true
-        | some pw => parentWires parent |>.any (· == pw))
+        | some pw => pws.any (· == pw))
       && ((subWires sub).all fun w =>
         match resolvePort sub inst w with
         | none => true
@@ -623,14 +637,16 @@ theorem evalGates_preserve (gates : List Gate) (env : Env) (w : Wire)
 /-- Boolean check backing `FlattenFresh`, discharged by `native_decide` per
     concrete hierarchy. -/
 def flattenFreshCheck (reg : ModuleRegistry) (c : Circuit) : Bool :=
+  let pws := parentWires c
   c.instances.all fun inst =>
     match reg.find? (fun p => p.1 == inst.moduleName) with
     | none => true
     | some (_, sub) =>
       (subWires sub).all fun w =>
-        (parentWires c).all fun pw =>
-          decide (flattenRemap sub inst w ≠ pw ∨
-            resolvePort sub inst w = some pw)
+        let r := flattenRemap sub inst w
+        let res := resolvePort sub inst w
+        pws.all fun pw =>
+          decide (r ≠ pw ∨ res = some pw)
 
 /-- `flattenFreshCheck` implies `FlattenFresh`. -/
 theorem FlattenFresh_of_check (reg : ModuleRegistry) (c : Circuit)
@@ -860,7 +876,7 @@ theorem applyInst_inline_agree
     have h_sub_env : subInputEnv sub inst eH w = eH ipw := by
       dsimp [subInputEnv]; rw [h_ipw]
     have h_ipw_parent : ipw ∈ parentWires parent :=
-      h_ok.bound w (List.mem_append.mpr (Or.inl hw)) ipw h_ipw
+      h_ok.bound w hw ipw h_ipw
     have h_agree_ipw : eH ipw = eF ipw := h_agree ipw h_ipw_parent
     rw [h_remap, h_sub_env, ← h_agree_ipw]
   match h_find : sub.outputs.find? (fun w' => match resolvePort sub inst w' with | some p => p == pw | none => false) with

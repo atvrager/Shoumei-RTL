@@ -17,6 +17,7 @@ import Shoumei.Temporal.Trace
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.Implements
 import Shoumei.Verification.CompositionDemos
+import Shoumei.Verification.ALU32HierBridge
 
 -- Pilot atom circuits and proofs
 import Shoumei.Examples.Adder
@@ -38,6 +39,7 @@ import Shoumei.Reflection.ALUSymbolic
 import Shoumei.Circuits.Sequential.DFF
 import Shoumei.Circuits.Sequential.DFFProofs
 import Shoumei.Circuits.Sequential.Register
+import Shoumei.Circuits.Sequential.RegisterWordProofs
 import Shoumei.Circuits.Sequential.Queue
 import Shoumei.Circuits.Sequential.Queue1Bridge
 
@@ -310,7 +312,7 @@ def mux4x32_atom : RefinementAtom :=
       mux4x32DecO
       mux4x32_eval_agree)
 
--- ── 5. Mux8x32 (Combinational, Flat 8:1 MUX with word-level routing spec) ──
+-- ── 5. Mux8x32 (Combinational, Hierarchical 8:1 MUX with word-level routing spec) ──
 
 theorem mux8x32_eval_agree (i : (Fin 8 → BitVec 32) × (Bool × Bool × Bool)) :
     mux8x32DecO (evalCircuit mkMux8x32 (mux8x32EncI i)) = mux8x32CombBehavior.eval i := by
@@ -327,17 +329,13 @@ def mux8x32_atom : RefinementAtom :=
   .combinational
     "Mux8x32"
     "Mux8x32Spec"
-    mkMux8x32
-    [] 1
+    parentMux
+    regMux 2
     mux8x32CombBehavior
     mux8x32EncI
     mux8x32DecO
     mux8x32_non_vacuous
-    (implementsComb_of_flat [] 0 mkMux8x32 rfl
-      mux8x32CombBehavior
-      mux8x32EncI
-      mux8x32DecO
-      mux8x32_eval_agree)
+    mux8x32hier_implements
 
 -- ── 6. RippleCarryAdder4 (Combinational, 4-bit addition with carry) ──
 
@@ -412,7 +410,7 @@ def rca4_atom : RefinementAtom :=
       rca4DecO
       rca4_eval_agree)
 
--- ── 6. Comparator4 (Combinational, 4-bit unsigned/signed comparison) ──
+-- ── 7. Comparator4 (Combinational, 4-bit unsigned/signed comparison) ──
 
 def cmp4CombBehavior :
     CombBehavior (Bool × Bool × Bool × Bool × Bool × Bool × Bool × Bool)
@@ -484,7 +482,7 @@ def comparator4_atom : RefinementAtom :=
       cmp4DecO
       cmp4_eval_agree)
 
--- ── 7. Popcount8 (Combinational, 8-bit population count) ──
+-- ── 8. Popcount8 (Combinational, 8-bit population count) ──
 
 def popcount8CombBehavior :
     CombBehavior (Bool × Bool × Bool × Bool × Bool × Bool × Bool × Bool) Nat where
@@ -550,19 +548,7 @@ def popcount8_atom : RefinementAtom :=
       popcount8DecO
       popcount8_eval_agree)
 
--- ── 8. ALU32 (Combinational, 32-bit ALU with 10 RV32I arithmetic & logic opcodes) ──
-
-def alu32CombBehavior : CombBehavior (ALUOp × BitVec 32 × BitVec 32) (BitVec 32) where
-  eval := fun (op, a, b) => aluSemantics op a b
-
-def alu32EncI (i : ALUOp × BitVec 32 × BitVec 32) : Env :=
-  let (op, a, b) := i
-  fun w =>
-    let map := mkALUInitMap a b op.toOpcode
-    map.lookup w
-
-def alu32DecO (env : Env) : BitVec 32 :=
-  readResultBitVec "result" 32 env
+-- ── 9. ALU32 (Combinational, Hierarchical 32-bit ALU with 10 RV32I arithmetic & logic opcodes) ──
 
 theorem alu32_eval_agree (i : ALUOp × BitVec 32 × BitVec 32) :
     alu32DecO (evalCircuit mkALU32Flat (alu32EncI i)) = alu32CombBehavior.eval i := by
@@ -585,19 +571,15 @@ def alu32_atom : RefinementAtom :=
   .combinational
     "ALU32"
     "ALU32CompleteRV32ISpec"
-    mkALU32Flat
-    [] 1
+    mkALU32
+    aluSubCircuitMap 4
     alu32CombBehavior
     alu32EncI
     alu32DecO
     alu32_non_vacuous
-    (implementsComb_of_flat [] 0 mkALU32Flat rfl
-      alu32CombBehavior
-      alu32EncI
-      alu32DecO
-      alu32_eval_agree)
+    alu32_hier_implements
 
--- ── 9. DFlipFlop (Sequential, synchronous single-bit D flip-flop) ──
+-- ── 10. DFlipFlop (Sequential, synchronous single-bit D flip-flop) ──
 
 def dffBehavior : Behavior Bool (Bool × Bool) Bool where
   init := false
@@ -644,7 +626,23 @@ def dff_atom : RefinementAtom :=
       dff_step_agree
       dff_out_agree)
 
--- ── 10. Register160 (Sequential, Hierarchical 160-bit register composed of 64+64+32) ──
+-- ── 11. Register8 (Sequential, 8-bit synchronous register) ──
+
+def register8_atom : RefinementAtom :=
+  .sequential
+    "Register8"
+    "Register8WordSpec"
+    mkRegister8
+    [] 1
+    (registerNBehavior 8)
+    (regNAbsS 8)
+    registerNEncI
+    (regNDecO 8)
+    (fun _ => True)
+    (registerN_non_vacuous 8 (by decide))
+    register8_implements
+
+-- ── 12. Register160 (Sequential, Hierarchical 160-bit register composed of 64+64+32) ──
 
 def register160_atom : RefinementAtom :=
   .sequential
@@ -652,15 +650,15 @@ def register160_atom : RefinementAtom :=
     "Register160ComposedSpec"
     parentReg
     regReg 2
-    regParentBeh
-    id
-    id
-    id
+    (registerNBehavior 160)
+    reg160HierAbsS
+    registerNEncI
+    (regNDecO 160)
     (fun _ => True)
-    regParentBeh_non_vacuous
+    (registerN_non_vacuous 160 (by decide))
     register160hier_implements
 
--- ── 12. Queue1 (Width=1, Sequential FIFO queue) ──
+-- ── 13. Queue1 (Width=1, Sequential FIFO queue) ──
 
 def queue1W1Behavior : Behavior (QueueState Bool) (Bool × Bool × Bool) (Bool × Bool) where
   init := QueueState.empty 1
@@ -727,7 +725,7 @@ def queue1W1_atom : RefinementAtom :=
       queue1W1_step_agree
       queue1W1_out_agree)
 
-/-- The comprehensive registry of all 12 verified refinement atoms. -/
+/-- The comprehensive registry of all 13 verified refinement atoms. -/
 def allRefinements : List RefinementAtom := [
   fullAdder_atom,
   logicUnit4_atom,
@@ -739,6 +737,7 @@ def allRefinements : List RefinementAtom := [
   popcount8_atom,
   alu32_atom,
   dff_atom,
+  register8_atom,
   register160_atom,
   queue1W1_atom
 ]

@@ -52,7 +52,7 @@ def mkRegisterN (n : Nat) : Circuit :=
 
 -- Decompose N into powers of 2 for hierarchical building
 -- E.g., 91 = 64 + 16 + 8 + 2 + 1
-partial def decomposeToPowersOf2 (n : Nat) : List Nat :=
+def decomposeToPowersOf2 (n : Nat) : List Nat :=
   if n == 0 then []
   else if n >= 64 then 64 :: decomposeToPowersOf2 (n - 64)
   else if n >= 32 then 32 :: decomposeToPowersOf2 (n - 32)
