@@ -63,45 +63,53 @@ def normalizePortKey (s : String) : PortKey :=
   | some (base, idx) => ⟨base, some idx⟩
   | none => ⟨s, none⟩
 
-/-- Pre-indexed instance port map for fast O(1) port resolution. -/
+/-- Pre-indexed instance port map for kernel-reducible port resolution.
+    Stores reversed port bindings so the last binding for a key wins,
+    matching `HashMap.insert` semantics while remaining kernel-reducible. -/
 structure InstancePortMapIndex where
-  exactMap : Std.HashMap String Wire := {}
-  keyMap   : Std.HashMap PortKey Wire := {}
-  deriving Inhabited
+  bindings : List (String × Wire) := []
+  deriving Repr, Inhabited
 
-/-- Build fast O(1) lookup index for an instance's port map. -/
-def buildInstanceIndex (inst : CircuitInstance) : InstancePortMapIndex := Id.run do
-  let mut em : Std.HashMap String Wire := {}
-  let mut km : Std.HashMap PortKey Wire := {}
-  for (pname, parentWire) in inst.portMap do
-    em := em.insert pname parentWire
-    km := km.insert (normalizePortKey pname) parentWire
-  return { exactMap := em, keyMap := km }
+/-- Exact string lookup in port bindings. -/
+def lookupExact (bindings : List (String × Wire)) (k : String) : Option Wire :=
+  match bindings.find? (fun p => p.1 == k) with
+  | some (_, pw) => some pw
+  | none => none
+
+/-- Normalized PortKey lookup in port bindings. -/
+def lookupPortKey (bindings : List (String × Wire)) (k : PortKey) : Option Wire :=
+  match bindings.find? (fun p => normalizePortKey p.1 == k) with
+  | some (_, pw) => some pw
+  | none => none
+
+/-- Build lookup index for an instance's port map. -/
+def buildInstanceIndex (inst : CircuitInstance) : InstancePortMapIndex :=
+  { bindings := inst.portMap.reverse }
 
 /-- Resolve a submodule wire using a precomputed instance index. -/
 def resolvePortWithIndex (sub : Circuit) (idx : InstancePortMapIndex) (w : Wire) : Option Wire :=
   -- 1. Exact string match
-  match idx.exactMap.get? w.name with
+  match lookupExact idx.bindings w.name with
   | some parentWire => some parentWire
   | none =>
       -- 2. Direct normalized PortKey match
-      match idx.keyMap.get? (normalizePortKey w.name) with
+      match lookupPortKey idx.bindings (normalizePortKey w.name) with
       | some parentWire => some parentWire
       | none =>
           -- 3. SignalGroup match
           let sgWire := sub.signalGroups.findSome? fun (sg : SignalGroup) =>
             match sg.wires.findIdx? (· == w) with
-            | some i => idx.keyMap.get? (PortKey.mk sg.name (some i))
+            | some i => lookupPortKey idx.bindings (PortKey.mk sg.name (some i))
             | none => none
           match sgWire with
           | some parentWire => some parentWire
           | none =>
               -- 4. Clock alias
               if w.name == "clk" || w.name == "clock" then
-                idx.exactMap.get? "clock" <|> idx.exactMap.get? "clk"
+                lookupExact idx.bindings "clock" <|> lookupExact idx.bindings "clk"
               -- 5. Reset alias
               else if w.name == "rst" || w.name == "reset" then
-                idx.exactMap.get? "reset" <|> idx.exactMap.get? "rst"
+                lookupExact idx.bindings "reset" <|> lookupExact idx.bindings "rst"
               -- 6. Tied constants
               else if w.name == "zero" || w.name == "one" then
                 some w

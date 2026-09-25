@@ -45,15 +45,26 @@ def instanceInputWires (reg : ModuleRegistry) (c : Circuit) : List Wire :=
     | some (_, sub) => sub.inputs.filterMap (resolvePort sub inst)
     | none => []
 
-/-- Top-level gates whose output drives an instance input wire. -/
-def preGates (reg : ModuleRegistry) (c : Circuit) : List Gate :=
-  let inWires := instanceInputWires reg c
-  c.gates.filter fun g => inWires.contains g.output
+/-- Compute the backwards combinational fan-in cone of `seed` wires across
+    `gates` via a right-to-left pass. For topologically ordered `gates`, a
+    single reverse pass collects every transitive upstream wire feeding `seed`. -/
+def faninConeWires (gates : List Gate) (seed : List Wire) : List Wire :=
+  gates.foldr (fun g needed =>
+    if needed.contains g.output then
+      g.inputs ++ needed
+    else
+      needed
+  ) seed
 
-/-- Top-level gates whose output does not drive an instance input wire. -/
+/-- Top-level gates in the transitive fan-in cone of any instance input wire. -/
+def preGates (reg : ModuleRegistry) (c : Circuit) : List Gate :=
+  let preWires := faninConeWires c.gates (instanceInputWires reg c)
+  c.gates.filter fun g => preWires.contains g.output
+
+/-- Top-level gates outside the transitive fan-in cone of instance inputs. -/
 def postGates (reg : ModuleRegistry) (c : Circuit) : List Gate :=
-  let inWires := instanceInputWires reg c
-  c.gates.filter fun g => !inWires.contains g.output
+  let preWires := faninConeWires c.gates (instanceInputWires reg c)
+  c.gates.filter fun g => !preWires.contains g.output
 
 /-- Construct the submodule input environment from the parent environment. -/
 def subInputEnv (sub : Circuit) (inst : CircuitInstance) (env : Env) : Env :=
@@ -172,10 +183,35 @@ def instanceDepth (reg : ModuleRegistry) (c : Circuit) : Nat :=
   rw [h]
   rfl
 
+@[simp] theorem faninConeWires_nil_seed (gates : List Gate) :
+    faninConeWires gates [] = [] := by
+  induction gates with
+  | nil => rfl
+  | cons g rest ih =>
+    unfold faninConeWires at ih ⊢
+    simp only [List.foldr_cons, ih, List.contains_nil, Bool.false_eq_true, ↓reduceIte]
+
+/-- A 2-gate chain `g₁ → g₂ → inst_in` includes both `g₁.output` and `g₂.output`
+    in `faninConeWires`, so both gates are scheduled in `preGates` before any
+    submodule instance executes. -/
+theorem faninConeWires_two_hop (g₁ g₂ : Gate) (seed : List Wire)
+    (h_g₂ : seed.contains g₂.output = true)
+    (h_chain : g₂.inputs.contains g₁.output = true) :
+    let cone := faninConeWires [g₁, g₂] seed
+    cone.contains g₁.output = true ∧ cone.contains g₂.output = true := by
+  dsimp [faninConeWires]
+  rw [h_g₂]
+  simp only [ ↓reduceIte]
+  have h₁ : (g₂.inputs ++ seed).contains g₁.output = true := by
+    rw [List.contains_append, h_chain, Bool.true_or]
+  rw [h₁]
+  simp only [↓reduceIte, List.contains_append, Bool.or_eq_true]
+  exact ⟨Or.inr (Or.inl h_chain), Or.inr (Or.inr h_g₂)⟩
+
 @[simp] theorem preGates_nil (reg : ModuleRegistry) (c : Circuit) (h : c.instances = []) :
     preGates reg c = [] := by
   dsimp [preGates]
-  rw [instanceInputWires_nil reg c h]
+  rw [instanceInputWires_nil reg c h, faninConeWires_nil_seed]
   dsimp [List.contains]
   generalize c.gates = gs
   induction gs with
@@ -187,7 +223,7 @@ def instanceDepth (reg : ModuleRegistry) (c : Circuit) : Nat :=
 @[simp] theorem postGates_nil (reg : ModuleRegistry) (c : Circuit) (h : c.instances = []) :
     postGates reg c = c.gates := by
   dsimp [postGates]
-  rw [instanceInputWires_nil reg c h]
+  rw [instanceInputWires_nil reg c h, faninConeWires_nil_seed]
   dsimp [List.contains]
   generalize c.gates = gs
   induction gs with

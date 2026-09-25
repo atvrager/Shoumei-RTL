@@ -8,5 +8,6 @@ Comparator4|Comparator4PredicateSpec
 Popcount8|Popcount8HammingWeightSpec
 ALU32|ALU32CompleteRV32ISpec
 DFlipFlop|DFFSynchronousSpec
+Register8|Register8WordSpec
 Register160|Register160ComposedSpec
 Queue1_1|Queue1BitFIFOSpec
