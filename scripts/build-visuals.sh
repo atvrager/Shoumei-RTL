@@ -21,13 +21,10 @@ npx -y -p typescript@5.5.4 tsc -p viewer/tsconfig.json
 
 mkdir -p output/architecture-visuals
 cp viewer/viewer.html viewer/dist/viewer.js viewer/dist/schema.gen.js output/architecture-visuals/
-python3 scripts/gen-architecture-visuals.py
-if [ ! -f "output/architecture-visuals/soc-diagram.html" ] && command -v lake >/dev/null 2>&1; then
-    lake --no-ansi exe generate_all --soc-diagram
-fi
+lake --no-ansi exe generate_all --visuals
 # Benchmarks page is self-contained; falls back to a no-CPI table when the
 # bench data artifacts (output/bench) are absent, so PR-side visuals-check
 # does not need the RISC-V toolchain or a Verilator run.
-python3 scripts/gen-benchmark-visual.py || true
+lake --no-ansi exe generate_all --benchmarks || true
 
 echo "✓ visual suite ready in output/architecture-visuals"

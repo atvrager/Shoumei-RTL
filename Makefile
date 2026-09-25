@@ -243,8 +243,8 @@ soc-diagram:
 
 # Sunburst/treemap/gate-city views for every netlist source + Pages hub
 architecture-visuals:
-	@echo "==> Generating architecture visualizations..."
-	python3 scripts/gen-architecture-visuals.py
+	@echo "==> Generating architecture visualizations (Lean AYAYA vector suite)..."
+	lake --no-ansi exe generate_all --visuals
 
 
 # Build debugging tools

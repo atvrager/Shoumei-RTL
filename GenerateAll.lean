@@ -10,9 +10,14 @@ Usage: lake exe generate_all
 import Shoumei.Codegen.Unified
 import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.ArchitectureDiagram
+import Shoumei.Codegen.ArchitectureVisuals
+import Shoumei.Codegen.BenchmarkVisual
+import Shoumei.Codegen.LeanRoot
+import Shoumei.Codegen.ProjectMap
 import Shoumei.Codegen.SoCDiagram
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
+import Shoumei.Verification.StructuralLint
 import Shoumei.DSL.PortResolve
 
 -- Phase 0: Foundation
@@ -437,6 +442,32 @@ def main (args : List String) : IO Unit := do
   if args.contains "--soc-diagram" then
     Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
     return
+  if args.contains "--benchmarks" || args.contains "--benchmark-visual" then
+    Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
+    return
+  if args.contains "--gen-lean-root" then
+    let rc ← Shoumei.Codegen.LeanRoot.run (checkOnly := false)
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--check-lean-root" then
+    let rc ← Shoumei.Codegen.LeanRoot.run (checkOnly := true)
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--lint-structural" then
+    let svDir := args.findSome? (fun a => if a.startsWith "--sv-dir=" then some (System.FilePath.mk (a.drop 9).toString) else none) |>.getD (System.FilePath.mk "output/sv-from-lean")
+    let rc ← Shoumei.Verification.StructuralLint.run svDir
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--project-map" then
+    let outPath := args.findSome? (fun a => if a.startsWith "--out=" then some (System.FilePath.mk (a.drop 6).toString) else none) |>.getD (System.FilePath.mk "docs/project-map.md")
+    let rc ← Shoumei.Codegen.ProjectMap.generate outPath
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--visuals" || args.contains "--architecture-visuals" then
+    Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
+    Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
+    Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
+    return
   let force := args.contains "--force"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   IO.println "  証明 Shoumei RTL - Generate All Circuits"
@@ -564,11 +595,13 @@ def main (args : List String) : IO Unit := do
   IO.FS.writeFile "viewer/src/schema.gen.ts" Shoumei.TraceSchema.renderTsSchema
   IO.println "✓ Generated trace schema (C++ header + TS module)"
 
-  -- Architecture treemap, sized from the same registry the SV came from
+  -- Architecture treemap & visuals, sized from the same registry the SV came from
   IO.println ""
-  IO.println "Generating architecture treemap..."
+  IO.println "Generating architecture treemap and visual suite..."
   Shoumei.Codegen.ArchitectureDiagram.generate allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
   Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
+  Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
+  Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

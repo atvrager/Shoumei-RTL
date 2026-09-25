@@ -100,6 +100,8 @@ import Shoumei.Circuits.Sequential.RegisterTemporalProofs
 import Shoumei.Circuits.Sequential.ResetSync
 import Shoumei.Circuits.Sequential.ResetSyncProofs
 import Shoumei.Codegen.ArchitectureDiagram
+import Shoumei.Codegen.ArchitectureVisuals
+import Shoumei.Codegen.BenchmarkVisual
 import Shoumei.Codegen.CellLibrary
 import Shoumei.Codegen.CellLibs.ASAP7
 import Shoumei.Codegen.CellLibs.GF180
@@ -107,6 +109,8 @@ import Shoumei.Codegen.CellLibs.Library
 import Shoumei.Codegen.CellNetlist
 import Shoumei.Codegen.Common
 import Shoumei.Codegen.CppSim
+import Shoumei.Codegen.LeanRoot
+import Shoumei.Codegen.ProjectMap
 import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.SVA
 import Shoumei.Codegen.ShoumeiEmit
@@ -283,3 +287,4 @@ import Shoumei.Verification.ExportCerts
 import Shoumei.Verification.Implements
 import Shoumei.Verification.ProofManifest
 import Shoumei.Verification.Refinements
+import Shoumei.Verification.StructuralLint

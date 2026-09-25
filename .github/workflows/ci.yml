@@ -39,7 +39,7 @@ jobs:
           if [ -n "$files" ]; then
             while IFS= read -r f; do
               case "$f" in
-                lean/*|Generate*.lean|lakefile*.lean|lake-manifest.json|lean-toolchain|Makefile) rtl=true ;;
+                lean/*|Generate*.lean|lakefile*.lean|lake-manifest.json|lean-toolchain|Makefile|docs/project-map.md) rtl=true ;;
                 testbench/*|verification/*) sim=true ;;
                 physical/*) synth=true ;;
                 scripts/*) scripts=true ;;
@@ -141,13 +141,6 @@ jobs:
           test -f docs/commands.md
           test -f LICENSE
 
-      # The project map is generated from `lean/` and is part of the review
-      # surface, so it must not drift from the source it describes.
-      - name: Project map is current
-        run: |
-          python3 scripts/gen-project-map.py
-          git diff --exit-code -- docs/project-map.md
-
   proof-coverage:
     needs: [changes, lean-build]
     if: needs.changes.outputs.code == 'true'
@@ -236,6 +229,13 @@ jobs:
           exes=$(sed -n 's/^lean_exe \([A-Za-z0-9_]*\).*/\1/p' lakefile.lean)
           # shellcheck disable=SC2086
           lake build $exes
+
+      # The project map is generated from `lean/` and is part of the review
+      # surface, so it must not drift from the source it describes.
+      - name: Project map is current
+        run: |
+          python3 scripts/gen-project-map.py
+          git diff --exit-code -- docs/project-map.md
 
       - name: Check for sorry
         run: |
@@ -488,7 +488,6 @@ jobs:
 
       - name: Generate code
         run: |
-          pip install --quiet matplotlib==3.11.2
           make codegen
 
       - name: Setup OSS CAD Suite (Yosys)
@@ -537,6 +536,19 @@ jobs:
         with:
           name: codegen-output
 
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v6
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -549,7 +561,6 @@ jobs:
 
       - name: Build visualization suite
         run: |
-          pip install --quiet matplotlib==3.11.2
           ./scripts/build-visuals.sh
 
       - name: Upload visualization suite
