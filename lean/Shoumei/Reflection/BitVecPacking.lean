@@ -33,4 +33,15 @@ def readWiresAsNatMap (m : WireMap) (name : String) : Nat → Nat
 def readResultBitVecMap (m : WireMap) (name : String) (width : Nat) : BitVec width :=
   BitVec.ofNat width (readWiresAsNatMap m name width)
 
+/-- Read N indexed wires from an `Env` as a Nat (LSB = wire index 0). -/
+def readWiresAsNat (env : Env) (name : String) : Nat → Nat
+  | 0 => 0
+  | n + 1 =>
+    let bit := if env (Wire.mk s!"{name}_{n}") then 1 else 0
+    bit * (2 ^ n) + readWiresAsNat env name n
+
+/-- Read N indexed wires from an `Env` as a BitVec. -/
+def readResultBitVec (name : String) (width : Nat) (env : Env) : BitVec width :=
+  BitVec.ofNat width (readWiresAsNat env name width)
+
 end Shoumei.Reflection

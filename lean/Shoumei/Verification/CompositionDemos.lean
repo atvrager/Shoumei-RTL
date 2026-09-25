@@ -22,6 +22,8 @@ import Shoumei.Semantics.Hierarchical
 import Shoumei.Verification.Implements
 import Shoumei.Circuits.Combinational.MuxTree
 import Shoumei.Circuits.Sequential.Register
+import Shoumei.Circuits.Combinational.MuxTreeProofs
+import Shoumei.Reflection.BitVecPacking
 
 namespace Shoumei.Verification.CompositionDemos
 
@@ -31,6 +33,7 @@ open Shoumei.Semantics
 open Shoumei.Semantics.Hierarchical
 open Shoumei.Circuits.Combinational
 open Shoumei.Circuits.Sequential
+open Shoumei.Reflection
 
 /-! ## Mux8x32 hierarchical composition (combinational) -/
 
@@ -39,6 +42,13 @@ def regMux : ModuleRegistry := [("Mux4x32", mkMux4x32)]
 
 /-- The hierarchical parent under composition. -/
 def parentMux : Circuit := mkMux8xNHierarchical 32
+
+/-- Word-level 8:1 Mux behaviour: route the selected input word to the output. -/
+def mux8x32CombBehavior : CombBehavior ((Fin 8 → BitVec 32) × (Bool × Bool × Bool)) (BitVec 32) where
+  eval := fun (inputs, (sel0, sel1, sel2)) => mux8x32Spec inputs sel0 sel1 sel2
+
+def muxParentOut (env : Env) : List Bool :=
+  parentMux.outputs.map env
 
 /-- Child spec: flat children evaluate as themselves. -/
 def childSpecMux : Circuit → Env → Env :=
@@ -59,10 +69,6 @@ theorem mux_child_atoms :
     exact evalHier_no_instances regMux 0 mkMux4x32 rfl inEnv
   · cases h_lookup
 
-/-- Compositional behaviour: children plus glue, decoded to output values. -/
-def muxParentOut (env : Env) : List Bool :=
-  parentMux.outputs.map env
-
 def muxParentBeh : CombBehavior Env (List Bool) where
   eval := fun inEnv => muxParentOut (specParentEval childSpecMux regMux parentMux inEnv)
 
@@ -74,6 +80,16 @@ theorem mux8x32hier_implements :
   intro i
   rfl
 
+def mux8x32EncI (i : (Fin 8 → BitVec 32) × (Bool × Bool × Bool)) : Env :=
+  let (inputs, (sel0, sel1, sel2)) := i
+  (makeMux8x32InitMap inputs sel0 sel1 sel2).lookup
+
+def mux8x32DecO (env : Env) : BitVec 32 :=
+  readResultBitVec "out" 32 env
+
+theorem mux8x32_non_vacuous : NonVacuousCombBehavior mux8x32CombBehavior := by
+  refine ⟨(fun _ => 0, (false, false, false)), (fun i => if i == 0 then 1 else 0, (false, false, false)), by decide⟩
+
 /-! ## Why no Mux evaluation spots
 
 `evalHier` over `updateEnv`-closure environments does not scale under
@@ -84,7 +100,6 @@ smoke therefore stays with the existing flat proofs
 here is the wiring gate, the child-atom rewriting, and the end-to-end
 composition above. `stepHier` over DFF-only hierarchies stays first-order
 (no `updateEnv` chains) and fast, so the Register smoke below evaluates. -/
-
 /-! ## Register160 hierarchical composition (sequential) -/
 
 /-- Minimal registry: flat power-of-2 building blocks. -/
@@ -121,6 +136,17 @@ def regParentBeh : Behavior State Env Env where
   init := initState
   step := fun s i => (specParentStep childSpecReg regReg 1 parentReg s i).1
   out := fun s i => (specParentStep childSpecReg regReg 1 parentReg s i).2
+
+/-- Compositional spec is non-constant: the parent output `q_0` tracks the
+    first slice's scoped state, so distinct states give distinct outputs. -/
+theorem regParentBeh_non_vacuous : NonVacuousBehavior regParentBeh := by
+  refine ⟨(fun _ => false), (fun w => w == Wire.mk "reg_0_to_63/q_0"),
+          (fun _ => false), (fun _ => false), ?_⟩
+  intro h
+  have h0 := congrFun h (Wire.mk "q_0")
+  simp only [regParentBeh] at h0
+  revert h0
+  native_decide
 
 /-- The parent implements its compositional spec, via `implements_compose`. -/
 theorem register160hier_implements :

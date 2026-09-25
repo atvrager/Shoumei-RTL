@@ -13,6 +13,8 @@ import Shoumei.Semantics
 import Shoumei.Reflection.CompileCircuit
 import Shoumei.Temporal.Trace
 import Shoumei.Circuits.Combinational.MuxTree
+import Shoumei.Reflection.SymbolicCompile
+import Shoumei.Reflection.BitVecPacking
 
 namespace Shoumei.Circuits.Combinational
 
@@ -183,6 +185,345 @@ theorem evalCircuit_mux4x1_agrees_compileCircuit (initMap : WireMap) (inputEnv :
     routes leftOut when MSB is false, and rightOut when MSB is true. -/
 theorem mux_subtree_composition (leftOut rightOut topSel : Bool) :
     mux2 topSel leftOut rightOut = (if topSel then rightOut else leftOut) := rfl
+
+def mux4x32SymInit (s0 s1 : Bool) : SymWireMap :=
+  (List.range 32).map (fun i => (Wire.mk s!"in0_{i}", BoolExpr.var i)) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in1_{i}", BoolExpr.var (32 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in2_{i}", BoolExpr.var (64 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in3_{i}", BoolExpr.var (96 + i))) ++
+  [(Wire.mk "sel_0", BoolExpr.lit s0), (Wire.mk "sel_1", BoolExpr.lit s1)]
+
+def mux4x32SymCompiled (s0 s1 : Bool) : SymWireMap :=
+  symCompileGates mkMux4x32.gates (mux4x32SymInit s0 s1)
+
+def mux4x32SymResult (s0 s1 : Bool) (i : Nat) : BoolExpr :=
+  SymWireMap.lookup (mux4x32SymCompiled s0 s1) (Wire.mk s!"out_{i}")
+
+theorem mux4x32_sym_00 :
+    ∀ i : Fin 32, (mux4x32SymResult false false i.val).constFold = .var i.val := by
+  native_decide
+
+theorem mux4x32_sym_10 :
+    ∀ i : Fin 32, (mux4x32SymResult true false i.val).constFold = .var (32 + i.val) := by
+  native_decide
+
+theorem mux4x32_sym_01 :
+    ∀ i : Fin 32, (mux4x32SymResult false true i.val).constFold = .var (64 + i.val) := by
+  native_decide
+
+theorem mux4x32_sym_11 :
+    ∀ i : Fin 32, (mux4x32SymResult true true i.val).constFold = .var (96 + i.val) := by
+  native_decide
+
+/-! ## Symbolic-to-Concrete Bridge for Mux4x32 -/
+
+def makeMux4x32InitMap (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) : WireMap :=
+  bitVecToBindings "in0" 32 in0 ++
+  bitVecToBindings "in1" 32 in1 ++
+  bitVecToBindings "in2" 32 in2 ++
+  bitVecToBindings "in3" 32 in3 ++
+  [(Wire.mk "sel_0", sel0), (Wire.mk "sel_1", sel1)]
+
+def mux4x32Assign (in0 in1 in2 in3 : BitVec 32) : Nat → Bool :=
+  fun i =>
+    if i < 32 then in0.getLsbD i
+    else if i < 64 then in1.getLsbD (i - 32)
+    else if i < 96 then in2.getLsbD (i - 64)
+    else in3.getLsbD (i - 96)
+
+private theorem sym_lookup_eval_list (xs : List (Wire × BoolExpr))
+    (assign : Nat → Bool) (w : Wire) :
+    (SymWireMap.lookup xs w).eval assign =
+    WireMap.lookup (xs.map (fun p => (p.1, p.2.eval assign))) w := by
+  induction xs with
+  | nil =>
+    simp [SymWireMap.lookup, WireMap.lookup, List.find?, BoolExpr.eval]
+  | cons hd tl ih =>
+    obtain ⟨w', e⟩ := hd
+    unfold SymWireMap.lookup WireMap.lookup
+    simp only [List.map, List.find?]
+    cases hbeq : (w' == w) with
+    | true => simp
+    | false =>
+      exact ih
+
+theorem mux4x32SymInit_correct (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) :
+    ∀ w, (SymWireMap.lookup (mux4x32SymInit sel0 sel1) w).eval (mux4x32Assign in0 in1 in2 in3) =
+         WireMap.lookup (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1) w := by
+  intro w
+  rw [sym_lookup_eval_list]
+  suffices h : (mux4x32SymInit sel0 sel1).map (fun p => (p.1, p.2.eval (mux4x32Assign in0 in1 in2 in3))) =
+               makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1 by rw [h]
+  rfl
+
+def readSymResultAsNat (assign : Nat → Bool) (getExpr : Nat → BoolExpr) : Nat → Nat
+  | 0 => 0
+  | n + 1 =>
+    let bit := if (getExpr n).eval assign then 1 else 0
+    bit * (2 ^ n) + readSymResultAsNat assign getExpr n
+
+theorem readSymResultAsNat_correct (assign : Nat → Bool) (m : WireMap)
+    (name : String) (getExpr : Nat → BoolExpr)
+    (h : ∀ i, (getExpr i).eval assign = m.lookup (Wire.mk s!"{name}_{i}"))
+    (n : Nat) :
+    readSymResultAsNat assign getExpr n = readWiresAsNatMap m name n := by
+  induction n with
+  | zero => simp [readSymResultAsNat, readWiresAsNatMap]
+  | succ k ih =>
+    simp only [readSymResultAsNat, readWiresAsNatMap]
+    rw [h k, ih]
+
+private theorem readSymResultAsNat_bound (assign : Nat → Bool) (f : Nat → BoolExpr) (n : Nat) :
+    readSymResultAsNat assign f n < 2 ^ n := by
+  induction n with
+  | zero => simp [readSymResultAsNat]
+  | succ k ih => simp only [readSymResultAsNat]; split <;> simp <;> omega
+
+private theorem readSymResultAsNat_testBit (assign : Nat → Bool) (f : Nat → BoolExpr)
+    (n i : Nat) (hi : i < n) :
+    (readSymResultAsNat assign f n).testBit i = (f i).eval assign := by
+  induction n with
+  | zero => omega
+  | succ k ih =>
+    simp only [readSymResultAsNat]
+    have hbound := readSymResultAsNat_bound assign f k
+    by_cases hik : i = k
+    · subst hik
+      split <;> rename_i heval <;> simp
+      · rw [Nat.testBit_two_pow_add_eq, Nat.testBit_lt_two_pow hbound]; simp [heval]
+      · rw [Nat.testBit_lt_two_pow hbound]; simp [heval]
+    · have hik' : i < k := by omega
+      split <;> simp
+      · rw [Nat.testBit_two_pow_add_gt (by omega)]; exact ih hik'
+      · exact ih hik'
+
+def evalMux4x32 (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) : BitVec 32 :=
+  readResultBitVecMap (compileCircuit mkMux4x32 (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1)) "out" 32
+
+def mux4x32Spec (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) : BitVec 32 :=
+  match sel1, sel0 with
+  | false, false => in0
+  | false, true  => in1
+  | true,  false => in2
+  | true,  true  => in3
+
+theorem symCompileCircuit_correct (c : Circuit) (sm : SymWireMap) (m : WireMap)
+    (assign : Nat → Bool)
+    (h : ∀ w, (sm.lookup w).eval assign = m.lookup w) :
+    ∀ w, ((symCompileGates c.gates sm).lookup w).eval assign =
+         (compileCircuit c m).lookup w := by
+  intro w
+  simp only [compileCircuit]
+  exact symCompileGates_correct c.gates sm m assign h w
+
+theorem evalMux4x32_eq_sym (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) :
+    evalMux4x32 in0 in1 in2 in3 sel0 sel1 =
+    BitVec.ofNat 32 (readSymResultAsNat (mux4x32Assign in0 in1 in2 in3) (fun i => mux4x32SymResult sel0 sel1 i) 32) := by
+  dsimp [evalMux4x32, readResultBitVecMap]
+  apply congrArg (BitVec.ofNat 32)
+  symm
+  apply readSymResultAsNat_correct
+  intro i
+  have h_comp := symCompileCircuit_correct mkMux4x32 (mux4x32SymInit sel0 sel1)
+    (makeMux4x32InitMap in0 in1 in2 in3 sel0 sel1) (mux4x32Assign in0 in1 in2 in3)
+    (mux4x32SymInit_correct in0 in1 in2 in3 sel0 sel1)
+    (Wire.mk s!"out_{i}")
+  exact h_comp
+
+theorem evalMux4x32_correct (in0 in1 in2 in3 : BitVec 32) (sel0 sel1 : Bool) :
+    evalMux4x32 in0 in1 in2 in3 sel0 sel1 = mux4x32Spec in0 in1 in2 in3 sel0 sel1 := by
+  rw [evalMux4x32_eq_sym]
+  apply BitVec.eq_of_getLsbD_eq
+  intro i hi
+  rw [BitVec.getLsbD_ofNat, readSymResultAsNat_testBit _ _ 32 i hi]
+  simp only [hi, decide_true, Bool.true_and]
+  dsimp [mux4x32Spec]
+  cases sel1 <;> cases sel0
+  · -- false, false -> in0
+    have hcf := mux4x32_sym_00 ⟨i, hi⟩
+    rw [← BoolExpr.constFold_correct, hcf]
+    simp [BoolExpr.eval, mux4x32Assign, hi]
+  · -- true, false -> in1 (sel0=true, sel1=false)
+    have hcf := mux4x32_sym_10 ⟨i, hi⟩
+    rw [← BoolExpr.constFold_correct, hcf]
+    simp [BoolExpr.eval, mux4x32Assign, hi,
+          show ¬(32 + i < 32) from by omega,
+          show 32 + i < 64 from by omega,
+          show 32 + i - 32 = i from by omega]
+  · -- false, true -> in2 (sel0=false, sel1=true)
+    have hcf := mux4x32_sym_01 ⟨i, hi⟩
+    rw [← BoolExpr.constFold_correct, hcf]
+    simp [BoolExpr.eval, mux4x32Assign, hi,
+          show ¬(64 + i < 32) from by omega,
+          show ¬(64 + i < 64) from by omega,
+          show 64 + i < 96 from by omega,
+          show 64 + i - 64 = i from by omega]
+  · -- true, true -> in3 (sel0=true, sel1=true)
+    have hcf := mux4x32_sym_11 ⟨i, hi⟩
+    rw [← BoolExpr.constFold_correct, hcf]
+    simp [BoolExpr.eval, mux4x32Assign, hi,
+          show ¬(96 + i < 32) from by omega,
+          show ¬(96 + i < 64) from by omega,
+          show ¬(96 + i < 96) from by omega,
+          show 96 + i - 96 = i from by omega]
+
+/-! ## Word-level Refinement for the Flat 8:1 Mux (Mux8x32) -/
+
+/-- Word-level reference specification for an 8:1 multiplexer. -/
+def mux8x32Spec (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) : BitVec 32 :=
+  match sel2, sel1, sel0 with
+  | false, false, false => inputs 0
+  | false, false, true  => inputs 1
+  | false, true,  false => inputs 2
+  | false, true,  true  => inputs 3
+  | true,  false, false => inputs 4
+  | true,  false, true  => inputs 5
+  | true,  true,  false => inputs 6
+  | true,  true,  true  => inputs 7
+
+def mux8x32SymInit (s0 s1 s2 : Bool) : SymWireMap :=
+  (List.range 32).map (fun i => (Wire.mk s!"in0_{i}", BoolExpr.var i)) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in1_{i}", BoolExpr.var (32 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in2_{i}", BoolExpr.var (64 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in3_{i}", BoolExpr.var (96 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in4_{i}", BoolExpr.var (128 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in5_{i}", BoolExpr.var (160 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in6_{i}", BoolExpr.var (192 + i))) ++
+  (List.range 32).map (fun i => (Wire.mk s!"in7_{i}", BoolExpr.var (224 + i))) ++
+  [(Wire.mk "sel_0", BoolExpr.lit s0), (Wire.mk "sel_1", BoolExpr.lit s1), (Wire.mk "sel_2", BoolExpr.lit s2)]
+
+def mux8x32SymCompiled (s0 s1 s2 : Bool) : SymWireMap :=
+  symCompileGates mkMux8x32.gates (mux8x32SymInit s0 s1 s2)
+
+def mux8x32SymResult (s0 s1 s2 : Bool) (i : Nat) : BoolExpr :=
+  SymWireMap.lookup (mux8x32SymCompiled s0 s1 s2) (Wire.mk s!"out_{i}")
+
+theorem mux8x32_sym_000 :
+    ∀ i : Fin 32, (mux8x32SymResult false false false i.val).constFold = .var i.val := by
+  native_decide
+
+theorem mux8x32_sym_100 :
+    ∀ i : Fin 32, (mux8x32SymResult true false false i.val).constFold = .var (32 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_010 :
+    ∀ i : Fin 32, (mux8x32SymResult false true false i.val).constFold = .var (64 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_110 :
+    ∀ i : Fin 32, (mux8x32SymResult true true false i.val).constFold = .var (96 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_001 :
+    ∀ i : Fin 32, (mux8x32SymResult false false true i.val).constFold = .var (128 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_101 :
+    ∀ i : Fin 32, (mux8x32SymResult true false true i.val).constFold = .var (160 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_011 :
+    ∀ i : Fin 32, (mux8x32SymResult false true true i.val).constFold = .var (192 + i.val) := by
+  native_decide
+
+theorem mux8x32_sym_111 :
+    ∀ i : Fin 32, (mux8x32SymResult true true true i.val).constFold = .var (224 + i.val) := by
+  native_decide
+
+def makeMux8x32InitMap (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) : WireMap :=
+  bitVecToBindings "in0" 32 (inputs 0) ++
+  bitVecToBindings "in1" 32 (inputs 1) ++
+  bitVecToBindings "in2" 32 (inputs 2) ++
+  bitVecToBindings "in3" 32 (inputs 3) ++
+  bitVecToBindings "in4" 32 (inputs 4) ++
+  bitVecToBindings "in5" 32 (inputs 5) ++
+  bitVecToBindings "in6" 32 (inputs 6) ++
+  bitVecToBindings "in7" 32 (inputs 7) ++
+  [(Wire.mk "sel_0", sel0), (Wire.mk "sel_1", sel1), (Wire.mk "sel_2", sel2)]
+
+def mux8x32Assign (inputs : Fin 8 → BitVec 32) : Nat → Bool :=
+  fun i =>
+    if i < 32 then (inputs 0).getLsbD i
+    else if i < 64 then (inputs 1).getLsbD (i - 32)
+    else if i < 96 then (inputs 2).getLsbD (i - 64)
+    else if i < 128 then (inputs 3).getLsbD (i - 96)
+    else if i < 160 then (inputs 4).getLsbD (i - 128)
+    else if i < 192 then (inputs 5).getLsbD (i - 160)
+    else if i < 224 then (inputs 6).getLsbD (i - 192)
+    else (inputs 7).getLsbD (i - 224)
+
+set_option maxRecDepth 16384 in
+theorem mux8x32SymInit_correct (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) :
+    ∀ w, (SymWireMap.lookup (mux8x32SymInit sel0 sel1 sel2) w).eval (mux8x32Assign inputs) =
+         WireMap.lookup (makeMux8x32InitMap inputs sel0 sel1 sel2) w := by
+  intro w
+  rw [sym_lookup_eval_list]
+  suffices h : (mux8x32SymInit sel0 sel1 sel2).map (fun p => (p.1, p.2.eval (mux8x32Assign inputs))) =
+               makeMux8x32InitMap inputs sel0 sel1 sel2 by rw [h]
+  rfl
+
+def evalMux8x32 (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) : BitVec 32 :=
+  readResultBitVecMap (compileCircuit mkMux8x32 (makeMux8x32InitMap inputs sel0 sel1 sel2)) "out" 32
+
+theorem evalMux8x32_eq_sym (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) :
+    evalMux8x32 inputs sel0 sel1 sel2 =
+    BitVec.ofNat 32 (readSymResultAsNat (mux8x32Assign inputs) (fun i => mux8x32SymResult sel0 sel1 sel2 i) 32) := by
+  dsimp [evalMux8x32, readResultBitVecMap]
+  apply congrArg (BitVec.ofNat 32)
+  symm
+  apply readSymResultAsNat_correct
+  intro i
+  exact symCompileCircuit_correct mkMux8x32 (mux8x32SymInit sel0 sel1 sel2)
+    (makeMux8x32InitMap inputs sel0 sel1 sel2) (mux8x32Assign inputs)
+    (mux8x32SymInit_correct inputs sel0 sel1 sel2) (Wire.mk s!"out_{i}")
+
+theorem evalMux8x32_correct (inputs : Fin 8 → BitVec 32) (sel0 sel1 sel2 : Bool) :
+    evalMux8x32 inputs sel0 sel1 sel2 = mux8x32Spec inputs sel0 sel1 sel2 := by
+  rw [evalMux8x32_eq_sym]
+  apply BitVec.eq_of_getLsbD_eq
+  intro i hi
+  rw [BitVec.getLsbD_ofNat, readSymResultAsNat_testBit _ _ 32 i hi]
+  simp only [hi, decide_true, Bool.true_and]
+  dsimp [mux8x32Spec]
+  cases sel2 <;> cases sel1 <;> cases sel0
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_000 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_100 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(32 + i < 32) from by omega, show 32 + i < 64 from by omega,
+      show 32 + i - 32 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_010 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(64 + i < 32) from by omega, show ¬(64 + i < 64) from by omega,
+      show 64 + i < 96 from by omega, show 64 + i - 64 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_110 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(96 + i < 32) from by omega, show ¬(96 + i < 64) from by omega,
+      show ¬(96 + i < 96) from by omega, show 96 + i < 128 from by omega,
+      show 96 + i - 96 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_001 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(128 + i < 32) from by omega, show ¬(128 + i < 64) from by omega,
+      show ¬(128 + i < 96) from by omega, show ¬(128 + i < 128) from by omega,
+      show 128 + i < 160 from by omega, show 128 + i - 128 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_101 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(160 + i < 32) from by omega, show ¬(160 + i < 64) from by omega,
+      show ¬(160 + i < 96) from by omega, show ¬(160 + i < 128) from by omega,
+      show ¬(160 + i < 160) from by omega, show 160 + i < 192 from by omega,
+      show 160 + i - 160 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_011 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(192 + i < 32) from by omega, show ¬(192 + i < 64) from by omega,
+      show ¬(192 + i < 96) from by omega, show ¬(192 + i < 128) from by omega,
+      show ¬(192 + i < 160) from by omega, show ¬(192 + i < 192) from by omega,
+      show 192 + i < 224 from by omega, show 192 + i - 192 = i from by omega]
+  · rw [← BoolExpr.constFold_correct, mux8x32_sym_111 ⟨i, hi⟩]
+    simp [BoolExpr.eval, mux8x32Assign, hi,
+      show ¬(224 + i < 32) from by omega, show ¬(224 + i < 64) from by omega,
+      show ¬(224 + i < 96) from by omega, show ¬(224 + i < 128) from by omega,
+      show ¬(224 + i < 160) from by omega, show ¬(224 + i < 192) from by omega,
+      show ¬(224 + i < 224) from by omega, show 224 + i - 224 = i from by omega]
 
 /-! ## L2: Inductive Invariants & Hardware Soundness -/
 
