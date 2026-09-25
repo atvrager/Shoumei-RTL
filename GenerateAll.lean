@@ -12,6 +12,7 @@ import Shoumei.Codegen.SECMiter
 import Shoumei.Codegen.ArchitectureDiagram
 import Shoumei.Codegen.ArchitectureVisuals
 import Shoumei.Codegen.BenchmarkVisual
+import Shoumei.Codegen.LeanRoot
 import Shoumei.Codegen.SoCDiagram
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
@@ -441,6 +442,14 @@ def main (args : List String) : IO Unit := do
     return
   if args.contains "--benchmarks" || args.contains "--benchmark-visual" then
     Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
+    return
+  if args.contains "--gen-lean-root" then
+    let rc ← Shoumei.Codegen.LeanRoot.run (checkOnly := false)
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--check-lean-root" then
+    let rc ← Shoumei.Codegen.LeanRoot.run (checkOnly := true)
+    if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--visuals" || args.contains "--architecture-visuals" then
     Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
