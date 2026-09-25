@@ -71,7 +71,7 @@ if [[ $RC -ne 0 ]] || [[ -n "$LINT_HITS" ]]; then
 fi
 
 echo "==> LINT-31/32/33 structural check (double-connects, undriven, ties)..."
-python3 "$SCRIPT_DIR/lint-structural.py" "$SV_DIR"
+lake --no-ansi exe generate_all --lint-structural --sv-dir="$SV_DIR"
 
 echo "✓ LINT clean (no latches, no comb loops, no width/undriven/multi-driver pops)"
 exit 0

@@ -16,6 +16,7 @@ import Shoumei.Codegen.LeanRoot
 import Shoumei.Codegen.SoCDiagram
 import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
+import Shoumei.Verification.StructuralLint
 import Shoumei.DSL.PortResolve
 
 -- Phase 0: Foundation
@@ -449,6 +450,11 @@ def main (args : List String) : IO Unit := do
     return
   if args.contains "--check-lean-root" then
     let rc ← Shoumei.Codegen.LeanRoot.run (checkOnly := true)
+    if rc != 0 then IO.Process.exit rc.toUInt8
+    return
+  if args.contains "--lint-structural" then
+    let svDir := args.findSome? (fun a => if a.startsWith "--sv-dir=" then some (System.FilePath.mk (a.drop 9).toString) else none) |>.getD (System.FilePath.mk "output/sv-from-lean")
+    let rc ← Shoumei.Verification.StructuralLint.run svDir
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--visuals" || args.contains "--architecture-visuals" then
