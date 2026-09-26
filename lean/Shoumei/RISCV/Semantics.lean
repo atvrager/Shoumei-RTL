@@ -231,8 +231,8 @@ def executeSc (state : ArchState) (addr data : UInt32) : Bool × ArchState :=
         (false, state.clearReservation)
   | none => (false, state.clearReservation)
 
+-- Full operational semantics across all 32-bit and 64-bit base integer and extension operations.
 /-! ## Instruction Execution -/
-
 /-- Execute a single decoded instruction -/
 def executeInstruction (state : ArchState) (decoded : DecodedInstruction) : ExecResult :=
   match decoded.opType with
