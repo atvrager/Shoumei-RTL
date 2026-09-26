@@ -43,8 +43,8 @@ def allSpecs : List DualRTLSpec := [
   },
   {
     circuitName := "EqualityComparator6"
-    specFile := "verification/specs/EqualityComparator6_spec.sv"
-    topModule := "EqualityComparator6_spec"
+    specFile := "verification/specs/EqualityComparator_spec.sv"
+    topModule := "EqualityComparator_spec"
     hasProof := true
     proofRef := "ShoumeiSec.BridgeEqualityComparator6.equalityComparator6_sec"
   },

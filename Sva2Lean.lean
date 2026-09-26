@@ -49,6 +49,8 @@ inductive E where
   | un (op : String) (a : E)
   /-- Constant bit select. -/
   | sel (a : E) (idx : Nat)
+  /-- Variable bit select (`out[in]`). -/
+  | selDyn (a : E) (idx : E)
   /-- `PARAM'(expr)`, resolved against the instantiated parameter map. -/
   | cast (param : String) (a : E)
   | past (a : E) (n : Nat)
@@ -208,6 +210,13 @@ where
     | some (e, s1) =>
       match s1.toks with
       | .lb :: .lit _ k _ :: .rb :: rest => some (.sel e k, ⟨rest⟩)
+      | .lb :: rest =>
+        match parseExpr ⟨rest⟩ with
+        | some (i, s2) =>
+          match s2.toks with
+          | .rb :: rest2 => some (.selDyn e i, ⟨rest2⟩)
+          | _ => none
+        | none => none
       | _ => some (e, s1)
   parsePrimary (s : S) : Option (E × S) :=
     match s.toks with
@@ -372,40 +381,50 @@ partial def stripPrefixGo (ts : List Tok) (dis : Option String) : List Tok × Op
 def stripPropertyPrefix (toks : List Tok) : List Tok × Option String :=
   stripPrefixGo toks none
 
-/-- The parenthesized argument of `assert ... (...)`. -/
-def assertBody (stmt : String) : Except String String := do
-  let cs := stmt.toList
-  let rec skip (cs : List Char) : List Char :=
-    match cs with
-    | '(' :: rest => rest
-    | _ :: rest => skip rest
-    | [] => []
-  let body := skip cs
-  let rec chop (cs : List Char) (depth : Nat) (acc : List Char) : List Char :=
-    match cs with
-    | [] => acc.reverse
-    | ')' :: rest => if depth == 0 then acc.reverse else chop rest (depth - 1) (')' :: acc)
-    | '(' :: rest => chop rest (depth + 1) ('(' :: acc)
-    | c :: rest => chop rest depth (c :: acc)
-  let inner := chop body 0 []
-  if inner.length == 0 then throw s!"cannot isolate assertion body in: {stmt}"
-  return String.ofList inner
+/-- Split an assertion statement into its `if` guard, if any, and the tokens of
+    the asserted expression.  Working on tokens matters: `if (c) assert (e)`
+    means `c -> e`, so the guard's parentheses must not be mistaken for the
+    argument of `assert`. -/
+def assertParts (toks : List Tok) : Except String (Option E × List Tok) := do
+  let idx := toks.findIdx? (fun t => t == .id "assert")
+  let i ← match idx with
+    | some i => pure i
+    | none => throw "statement carries no `assert`"
+  let pre := toks.take i
+  let guard ←
+    if pre.any (fun t => t == .id "if") then
+      match pre.findIdx? (fun t => t == .lp) with
+      | some j =>
+        let (inner, _) := takeParenBody (pre.drop (j + 1)) [] 0
+        match stripPropertyPrefix inner with
+        | (e, _) =>
+          match parseExpr ⟨e⟩ with
+          | some (g, _) => pure (some g)
+          | none => throw "cannot parse an `if` guard"
+      | none => throw "`if` without a parenthesized guard"
+    else pure none
+  let after := (toks.drop (i + 1)).dropWhile (fun t => t == .id "property")
+  match after with
+  | .lp :: rest =>
+    let (body, _) := takeParenBody rest [] 0
+    if body.isEmpty then throw "empty assertion body"
+    pure (guard, body)
+  | _ => throw "no parenthesized argument follows `assert`"
 
+/-- The label of `label: assert ...`, or a synthetic name. -/
 def assertName (stmt : String) (idx : Nat) : String :=
   match stmt.splitOn ":" with
   | label :: _ =>
     let l := label.trimAscii.toString
-    if l.all (fun c => c.isAlphanum || c == '_') && !l.isEmpty && !l.contains ' ' then l
-    else s!"prop_{idx}"
+    if !l.isEmpty && l.all (fun c => c.isAlphanum || c == '_') then l else s!"prop_{idx}"
   | [] => s!"prop_{idx}"
 
 /-- Parse one assertion statement into its name and temporal shape. -/
 def parseAssert (stmt : String) (idx : Nat) : Except String Assertion := do
   if !stmt.contains "assert" then
     throw s!"not an assertion: {stmt}"
-  let body ← assertBody stmt
-  let toks := tokenize body
-  let (toks, disableOverride) := stripPropertyPrefix toks
+  let (guard, rawBody) := ← assertParts (tokenize stmt)
+  let (toks, disableOverride) := stripPropertyPrefix rawBody
   -- Reject leftover tokens: dropping part of a property is exactly the
   -- failure this tool exists to prevent.
   let whole (what : String) (r : Option (E × S)) : Except String E :=
@@ -415,7 +434,7 @@ def parseAssert (stmt : String) (idx : Nat) : Except String Assertion := do
       if extra.isEmpty then pure e
       else throw s!"unparsed trailing tokens in {what} of {stmt}: {repr extra}"
     | none => throw s!"cannot parse {what} of {stmt}"
-  let shape ←
+  let base ←
     match splitTemporal toks with
     | some ("|=>", lhs, rhs) =>
       pure (.impliesNext (← whole "|=> antecedent" (parseExpr ⟨lhs⟩))
@@ -425,6 +444,13 @@ def parseAssert (stmt : String) (idx : Nat) : Except String Assertion := do
                          (← whole "|-> consequent" (parseExpr ⟨rhs⟩)))
     | _ =>
       pure (.invariant (← whole "expression" (parseExpr ⟨toks⟩)))
+  -- An immediate assertion under an `if` guard is a same-cycle implication.
+  let shape := match guard with
+    | some g =>
+      match base with
+      | .invariant e => .impliesSame g e
+      | other => other
+    | none => base
   return { name := assertName stmt idx, shape := shape, disable := disableOverride }
 
 /-! ## Model introspection -/
@@ -457,7 +483,12 @@ def parseModel (src : String) : Except String Model := do
           let ty := ty.trimAscii.toString
           if ty.startsWith "BitVec " then
             let n := (ty.drop 7).toString.trimAscii.toString
-            if let some w := n.toNat? then acc := acc ++ [(name.trimAscii.toString, w)]
+            if let some w := n.toNat? then
+              -- `smt2lean` quotes reserved words as `«in»`/«out»; hold the plain
+              -- name here and re-quote on emission via sanitizeIdent.
+              let raw := name.trimAscii.toString
+              let raw := (raw.dropWhile (· == '«')).dropEndWhile (· == '»')
+              acc := acc ++ [(raw.toString, w)]
         | _ => ()
     acc
   return { ns, inputs := fieldsOf "Inputs", outputs := fieldsOf "Outputs", state := fieldsOf "State" }
@@ -485,6 +516,7 @@ partial def wOf (ctx : Ctx) (e : E) : Option Nat :=
   | .lit _ (some w) => some w
   | .lit _ none => none
   | .sel _ _ => some 1
+  | .selDyn _ _ => some 1
   | .cast p a => (ctx.params.find? (·.1 == p) |>.map (·.2)) <|> wOf ctx a
   | .past a _ => wOf ctx a
   | .stable _ => some 1
@@ -532,6 +564,17 @@ partial def rend (ctx : Ctx) (c : Nat) (e : E) : Except String String := do
   | .sel a k =>
     let a' ← rend ctx c a
     return s!"(BitVec.extractLsb' {k} 1 {a'})"
+  | .selDyn a idx =>
+    let w := (wOf ctx a).getD 0
+    if w == 0 then throw "variable bit select of an operand of unknown width"
+    let a' ← rend ctx c a
+    let iw := (wOf ctx idx).getD 1
+    let idx' ← rendW ctx c idx iw
+    -- index outside the bus reads as a zero bit, as in SystemVerilog
+    let mut acc := "0#1"
+    for k in (List.range w).reverse do
+      acc := s!"(bif {idx'} == {k}#{iw} then (BitVec.extractLsb' {k} 1 {a'}) else {acc})"
+    return acc
   | .cast p a =>
     match ctx.params.find? (·.1 == p) with
     | some (_, w) => rendW ctx c a w
@@ -620,6 +663,7 @@ partial def occursPos (name : String) (e : E) : Bool :=
   | .un "!" _ => false                       -- negated, so not a positive use
   | .un _ a => occursPos name a
   | .sel a _ => occursPos name a
+  | .selDyn a i => occursPos name a || occursPos name i
   | .cast _ a => occursPos name a
   | .past a _ => occursPos name a
   | .stable a => occursPos name a

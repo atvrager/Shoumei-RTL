@@ -177,18 +177,26 @@ Two failure modes are hard errors rather than silent weakenings:
   `default disable iff (reset)`; both are now written with an explicit
   `disable iff (1'b0)`, which is what makes the claim mean something.
 
-Coverage today: 53 theorems across 21 generated modules, from `Queue1_spec`
-(4 assertions), `Register_spec` (2, at 12 widths) and `RegisterEn_spec`
-(3, at 7 widths).
+Coverage: every specification that declares an assertion is covered -- 107
+theorems across 47 generated modules, from 11 specs (`Adder_spec`,
+`AdderNoCin_spec`, `AdderWithCin1_spec`, `Comparator_spec`, `Decoder_spec`,
+`EqualityComparator_spec`, `Mux4_spec`, `Queue1_spec`, `Register_spec`,
+`RegisterEn_spec`, `Subtractor_spec`).
 
-Not yet covered: the 21 combinational assertions in the remaining 9 specs
-(adders, subtractor, comparators, equality comparators, decoders, muxes).
-They are written inside `always_comb` as `assert (e)` or `if (guard) assert (e)`,
-so two things are still needed -- locating the parenthesis group that follows
-the `assert` keyword (an `if (` guard is currently mistaken for it) and mapping
-a guard to a same-cycle implication.  Wiring is also per `(spec, width)` rather
-than per circuit, since six adder topologies share one `Adder_spec` instantiation
-and should not each emit a duplicate copy of its theorems.
+One module is emitted per `(spec, width)`, not per circuit: six adder topologies
+share a single `Adder_spec` instantiation, so the first circuit seen at a given
+`(spec, width)` supplies the model and the rest reuse its theorems.  Steps that
+made the remaining specs tractable:
+
+- the assertion is located by its `assert` token, so an `if (guard)` is read as
+  a same-cycle implication rather than mistaken for the argument of `assert`
+- variable bit selects (`out[in]`, used by `Decoder_spec`) render as a mux chain
+  over the bus width, with out-of-range indices reading as zero as in SV
+- model field names are unquoted on read (`smt2lean` writes reserved words as
+  `«out»`), so a spec identifier resolves to its field
+- `EqualityComparator6_spec.sv` was deleted: it was referenced only by the
+  registry, while the SEC proof for `EqualityComparator6` actually verifies
+  `EqualityComparator_spec.sv` at width 6.  The registry now names that spec.
 
 History note: this replaced a hand-transcribed file,
 `verification/specs/BridgeQueue1Properties.lean`, which carried three of

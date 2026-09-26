@@ -149,7 +149,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
-    emit_sva_props(mod, "Register_spec.sv", spec_lean)
+    note_spec_rep("Register_spec.sv", mod, w)
 
 def bridge_register_en(w):
     mod = f"RegisterEn{w}"
@@ -207,7 +207,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
-    emit_sva_props(mod, "RegisterEn_spec.sv", spec_lean)
+    note_spec_rep("RegisterEn_spec.sv", mod, w)
 
 def bridge_decoder(w):
     mod = f"Decoder{w}"
@@ -256,6 +256,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep("Decoder_spec.sv", mod, w)
 
 def bridge_comparator(w):
     mod = f"Comparator{w}"
@@ -312,6 +313,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep("Comparator_spec.sv", mod, w)
 def bridge_subtractor(w):
     mod = f"Subtractor{w}"
     spec_smt = f"verification/bridge/{mod}_spec.smt2"
@@ -360,6 +362,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep("Subtractor_spec.sv", mod, w)
 
 def bridge_adder(mod, spec_file, w, has_cin):
     spec_smt = f"verification/bridge/{mod}_spec.smt2"
@@ -420,6 +423,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep(spec_file, mod, w)
 
 def bridge_equality_comparator(w):
     mod = f"EqualityComparator{w}"
@@ -468,6 +472,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep("EqualityComparator_spec.sv", mod, w)
 
 def bridge_mux4(w):
     mod = f"Mux4x{w}"
@@ -519,6 +524,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    note_spec_rep("Mux4_spec.sv", mod, w)
 
 def bridge_mux8(w):
     mod = f"Mux8x{w}"
@@ -872,13 +878,31 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
-def emit_sva_props(mod, spec_file, model_lean, params=""):
-    """Translate a specification's SVA assertions into Lean theorems over the
-    Lean model of that same specification.  Fails loudly (sva2lean exits
-    non-zero) rather than dropping an assertion."""
-    out_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}Props.lean"
-    run(f'lake exe sva2lean verification/specs/{spec_file} {model_lean} {out_lean} {params}'.rstrip())
-    print(f"Generated {mod}Props")
+# A spec's assertions are properties of the specification, so one instance per
+# (spec, width) suffices: every circuit sharing an instantiation has an
+# identical spec model.  Six adder topologies therefore produce one module, not
+# six.  The first circuit seen at a given (spec, width) is the representative,
+# and its model is the one the props module imports.
+SPEC_SVA_REPS = {}
+
+def note_spec_rep(spec_file, mod, width):
+    SPEC_SVA_REPS.setdefault((spec_file, width), mod)
+
+def emit_spec_sva():
+    """Translate each spec's SVA assertions into Lean theorems over the Lean
+    model of that same specification.  sva2lean exits non-zero rather than
+    dropping an assertion."""
+    count = 0
+    for (spec_file, width), mod in sorted(SPEC_SVA_REPS.items()):
+        spec_path = ROOT / "verification" / "specs" / spec_file
+        if "assert" not in spec_path.read_text():
+            continue
+        model_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+        out_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}Props.lean"
+        run(f'lake exe sva2lean verification/specs/{spec_file} {model_lean} {out_lean}')
+        print(f"Generated {mod}Props ({spec_file} at width {width})")
+        count += 1
+    print(f"Generated {count} spec assertion module(s)")
 
 def bridge_queue1(w):
     mod = f"Queue1_{w}"
@@ -951,7 +975,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
-    emit_sva_props(mod, "Queue1_spec.sv", spec_lean)
+    note_spec_rep("Queue1_spec.sv", mod, w)
 
 def bridge_queue1_flow(w):
     mod = f"Queue1Flow_{w}"
@@ -1496,6 +1520,7 @@ def main():
         bridge_queue_counter_loadable(w)
     print("Generating Queue16x32_DualPort bridges...")
     bridge_dual_port_queue()
+    emit_spec_sva()
     proof_files = sorted((ROOT / "output" / "sec-bridge" / "ShoumeiSec").glob("Bridge*.lean"))
     lines = ["-- Generated root for ShoumeiSec bridge library", ""]
     for pf in proof_files:
