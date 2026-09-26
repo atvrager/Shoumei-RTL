@@ -574,6 +574,34 @@ def allSpecs : List DualRTLSpec := [
     proofRef := "ShoumeiSec.BridgeRippleCarryAdder32WithCin1.ripplecarryadder32withcin1_sec"
   },
   {
+    circuitName := "FullAdder"
+    specFile := "verification/specs/FullAdder_spec.sv"
+    topModule := "FullAdder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeFullAdder.fulladder_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder4"
+    specFile := "verification/specs/RippleCarryAdder4_spec.sv"
+    topModule := "RippleCarryAdder4_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder4.ripplecarryadder4_sec"
+  },
+  {
+    circuitName := "MulFinalAdder64"
+    specFile := "verification/specs/MulFinalAdder64_spec.sv"
+    topModule := "MulFinalAdder64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMulFinalAdder64.mulfinaladder64_sec"
+  },
+  {
+    circuitName := "BranchTargetAdder32"
+    specFile := "verification/specs/BranchTargetAdder32_spec.sv"
+    topModule := "BranchTargetAdder32_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBranchTargetAdder32.branchtargetadder32_sec"
+  },
+  {
     circuitName := "SklanskyAdder32"
     specFile := "verification/specs/Adder_spec.sv"
     topModule := "Adder_spec"

@@ -207,16 +207,15 @@ def mkMulFinalAdder64 : Circuit :=
     levels.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
       let (gates_acc, g_prev, p_prev) := acc
       let level_tag := s!"l{stride}"
-      let g_new := (List.range 64).map (fun i => Wire.mk s!"mfa_g{level_tag}_{i}")
-      let p_new := (List.range 64).map (fun i => Wire.mk s!"mfa_p{level_tag}_{i}")
-
+      let g_new := (List.range 64).map (fun i => Wire.mk s!"mfag{level_tag}x{i}")
+      let p_new := (List.range 64).map (fun i => Wire.mk s!"mfap{level_tag}x{i}")
       let level_gates := List.flatten <| (List.range 63).map fun i =>
         let idx := i + 1
         if idx <= stride then
           [ Gate.mkBUF (g_prev[idx]!) (g_new[idx]!),
             Gate.mkBUF (p_prev[idx]!) (p_new[idx]!) ]
         else
-          let pg := Wire.mk s!"mfa_pg_{level_tag}_{idx}"
+          let pg := Wire.mk s!"mfapg{level_tag}x{idx}"
           [ Gate.mkAND (p_prev[idx]!) (g_prev[idx - stride]!) pg,
             Gate.mkOR (g_prev[idx]!) pg (g_new[idx]!),
             Gate.mkAND (p_prev[idx]!) (p_prev[idx - stride]!) (p_new[idx]!) ]

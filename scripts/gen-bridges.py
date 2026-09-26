@@ -429,6 +429,206 @@ end ShoumeiSec.Bridge{mod}
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
     note_spec_rep(spec_file, mod, w)
+def bridge_full_adder():
+    mod = "FullAdder"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/FullAdder_spec.sv; hierarchy -top FullAdder_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} FullAdder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  a := i.a
+  b := i.b
+  cin := i.cin
+
+def absState (_ : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+
+/-- Equivalence: {mod} netlist refines FullAdder_spec. -/
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.sum = spc.1.sum ∧
+    imp.1.cout = spc.1.cout := by
+  obtain ⟨a, b, cin⟩ := i
+  obtain ⟨⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep("FullAdder_spec.sv", mod, 1)
+
+def bridge_ripple_carry_adder4():
+    mod = "RippleCarryAdder4"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/RippleCarryAdder4_spec.sv; hierarchy -top RippleCarryAdder4_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} RippleCarryAdder4_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  a := i.a
+  b := i.b
+  cin := i.cin
+
+def absState (_ : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+
+/-- Equivalence: {mod} netlist refines RippleCarryAdder4_spec. -/
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.sum = spc.1.sum ∧
+    imp.1.cout = spc.1.cout := by
+  obtain ⟨a, b, cin⟩ := i
+  obtain ⟨⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep("RippleCarryAdder4_spec.sv", mod, 4)
+
+def bridge_mul_final_adder64():
+    mod = "MulFinalAdder64"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/MulFinalAdder64_spec.sv; hierarchy -top MulFinalAdder64_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} MulFinalAdder64_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  a := i.a
+  b := i.b
+
+def absState (_ : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+
+/-- Equivalence: {mod} netlist refines MulFinalAdder64_spec. -/
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.sum = spc.1.sum := by
+  obtain ⟨a, b⟩ := i
+  obtain ⟨⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep("MulFinalAdder64_spec.sv", mod, 64)
+
+def bridge_branch_target_adder32():
+    mod = "BranchTargetAdder32"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/BranchTargetAdder32_spec.sv; hierarchy -top BranchTargetAdder32_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} BranchTargetAdder32_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  pc := i.pc
+  instr := i.instr
+  is_jal := i.is_jal
+
+def absState (_ : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+
+/-- Equivalence: {mod} netlist refines BranchTargetAdder32_spec. -/
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.target = spc.1.target := by
+  obtain ⟨pc, instr, is_jal⟩ := i
+  obtain ⟨⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep("BranchTargetAdder32_spec.sv", mod, 32)
 
 def bridge_equality_comparator(w):
     mod = f"EqualityComparator{w}"
@@ -1476,6 +1676,11 @@ def main():
     for t in ADDER_TREES_106:
         for v, spec_file, has_cin in ADDER_VARIANTS_106:
             bridge_adder(f"{t}Adder106{v}", spec_file, 106, has_cin)
+    print("Generating Small Adder bridges...")
+    bridge_full_adder()
+    bridge_ripple_carry_adder4()
+    bridge_mul_final_adder64()
+    bridge_branch_target_adder32()
     print("Generating EqualityComparator bridges...")
     for w in EQUALITY_COMPARATORS:
         bridge_equality_comparator(w)

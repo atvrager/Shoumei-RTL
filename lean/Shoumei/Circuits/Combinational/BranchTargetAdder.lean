@@ -82,8 +82,8 @@ def mkBranchTargetAdder32 : Circuit :=
     strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
       let (gates_acc, g_prev, p_prev) := acc
       let level_tag := s!"l{stride}"
-      let g_new := (List.range 32).map fun i => Wire.mk s!"bta_g_{level_tag}_{i}"
-      let p_new := (List.range 32).map fun i => Wire.mk s!"bta_p_{level_tag}_{i}"
+      let g_new := (List.range 32).map fun i => Wire.mk s!"btag{level_tag}x{i}"
+      let p_new := (List.range 32).map fun i => Wire.mk s!"btap{level_tag}x{i}"
 
       let level_gates : List Gate :=
         (List.range 31).flatMap fun i =>
@@ -92,10 +92,10 @@ def mkBranchTargetAdder32 : Circuit :=
             [ Gate.mkBUF g_prev[idx]! g_new[idx]!,
               Gate.mkBUF p_prev[idx]! p_new[idx]! ]
           else
-            let pg := Wire.mk s!"bta_pg_{level_tag}_{idx}"
-            [ Gate.mkAND p_prev[idx]! g_prev[idx - stride]! pg,
-              Gate.mkOR g_prev[idx]! pg g_new[idx]!,
-              Gate.mkAND p_prev[idx]! p_prev[idx - stride]! p_new[idx]! ]
+          let pg := Wire.mk s!"btapg{level_tag}x{idx}"
+          [ Gate.mkAND p_prev[idx]! g_prev[idx - stride]! pg,
+            Gate.mkOR g_prev[idx]! pg g_new[idx]!,
+            Gate.mkAND p_prev[idx]! p_prev[idx - stride]! p_new[idx]! ]
 
       (gates_acc ++ level_gates, g_new, p_new)
     )
