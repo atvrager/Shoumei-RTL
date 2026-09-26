@@ -39,7 +39,7 @@ def allSpecs : List DualRTLSpec := [
     specFile := "verification/specs/Queue1_spec.sv"
     topModule := "Queue1_spec"
     hasProof := true
-    proofRef := "ShoumeiSec.BridgeQueue1.queue1_sec"
+    proofRef := "ShoumeiSec.BridgeQueue1_8.queue1_8_sec"
   },
   {
     circuitName := "EqualityComparator6"

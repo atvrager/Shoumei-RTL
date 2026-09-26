@@ -221,13 +221,8 @@ sec-bridge:
 	@mkdir -p verification/bridge
 	@lake --no-ansi build smt2lean
 	@echo "==> Running Certified Dual-RTL Bridge (Yosys SMT2 -> pure Lean bv_decide)..."
-	@mkdir -p output/sec-bridge/ShoumeiSec/Bridge
-	@yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Queue1_spec.sv; hierarchy -top Queue1_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 verification/bridge/spec.smt2"
-	@yosys -q -p "read_verilog -sv -D SYNTHESIS output/sv-from-lean/Queue1_8.sv; hierarchy -top Queue1_8; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 verification/bridge/impl.smt2"
-	@lake exe smt2lean verification/bridge/spec.smt2 Queue1_spec ShoumeiSec.Bridge.Spec output/sec-bridge/ShoumeiSec/Bridge/Spec.lean
-	@lake exe smt2lean verification/bridge/impl.smt2 Queue1_8 ShoumeiSec.Bridge.Impl output/sec-bridge/ShoumeiSec/Bridge/Impl.lean
-	@cp verification/specs/BridgeQueue1.lean output/sec-bridge/ShoumeiSec/BridgeQueue1.lean
 	@python3 scripts/gen-bridges.py
+	@cp verification/specs/BridgeQueue1Properties.lean output/sec-bridge/ShoumeiSec/BridgeQueue1Properties.lean
 	@lake --no-ansi build ShoumeiSec
 	@echo "✓ Certified Dual-RTL SEC Bridge clean (121 circuits verified via bv_decide: 0 axioms)"
 

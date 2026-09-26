@@ -35,6 +35,7 @@ SHIFTERS = [(32, 5), (64, 6)]
 PC_INCREMENTERS = [4, 8]
 
 QUEUE1_FLOW = [39, 43, 44, 70, 71, 72, 75, 76, 103, 104]
+QUEUE1_WIDTHS = [1, 8]
 PRIORITY_ARBITERS = [2, 8, 64]
 QUEUE_POINTERS = [3]
 QUEUE_POINTERS_LOADABLE = [3]
@@ -1461,7 +1462,8 @@ def main():
     for inc in PC_INCREMENTERS:
         bridge_pcincrementer(inc)
     print("Generating Queue1 bridges...")
-    bridge_queue1(1)
+    for w in QUEUE1_WIDTHS:
+        bridge_queue1(w)
     print("Generating Queue1Flow bridges...")
     for w in QUEUE1_FLOW:
         bridge_queue1_flow(w)

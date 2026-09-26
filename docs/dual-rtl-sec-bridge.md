@@ -135,11 +135,20 @@ name those nets as scalars (`pxa_l{li}g{i}`, `ksag{stride}x{i}`, `pamask{i}x{j}`
 
 ### 4. SVA Property Lifting
 
-Any temporal assertion stated in `Queue1_spec.sv` is lifted directly to the compiled gate netlist `Bridge.Impl`:
+`verification/specs/BridgeQueue1Properties.lean` restates the temporal assertions
+of `Queue1_spec.sv` against the emitted `Queue1_8` netlist model:
 
 1. **Ready-Valid Contract**: `enq_ready = !valid`
 2. **Handshake Stability**: Data and valid signals hold invariant across stalled cycles (`valid && !deq_ready |=> valid && $stable(data_reg)`)
 3. **Enqueue Effect**: Enqueue into an empty queue stores the operand and asserts valid on the subsequent cycle (`!valid && enq_valid |=> valid && data_reg == $past(enq_data)`)
+
+This is the only hand-authored Lean in the bridge.  There is no SVA lifter in the
+toolchain (`smt2lean` translates SMT2 only), so the three properties are
+transcribed by hand onto the generated `Queue1_8Spec`/`Queue1_8Impl` step
+functions.  They are kept because the generated SEC theorem proves
+output/state agreement, not the multi-cycle contracts.  `Queue1_8`'s sequential
+equivalence itself is generated like every other circuit
+(`ShoumeiSec.BridgeQueue1_8.queue1_8_sec`), so no hand file restates it.
 
 ## Verification Commands
 
@@ -177,7 +186,7 @@ Tracked verification surface:
 | Path | Tracked | Role |
 |---|---|---|
 | `verification/specs/*.sv` | yes | human-authored reference models |
-| `verification/specs/BridgeQueue1.lean` | yes | SVA-lifted property statements on the emitted `Queue1_8` |
+| `verification/specs/BridgeQueue1Properties.lean` | yes | SVA-lifted property statements on the emitted `Queue1_8` |
 | `scripts/gen-bridges.py` | yes | per-family SEC recipes and state-correspondence tables |
 | `lean/Shoumei/Verification/DualRTL.lean` | yes | registry mapping circuit -> spec -> proof |
 | `output/sec-bridge/**` | no | generated `Spec`/`Impl` models and SEC proofs |
