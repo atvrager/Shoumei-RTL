@@ -71,7 +71,7 @@ theorem find?_map_fst {α β γ : Type} (xs : List (α × β)) (f : β → γ) (
   induction xs with
   | nil => rfl
   | cons hd tl ih =>
-    dsimp [List.find?]
+    simp only [List.map, List.find?_cons]
     cases p hd.1 with
     | true => rfl
     | false => exact ih
@@ -269,7 +269,7 @@ theorem evalCombGates_eq_evalGates (gs : List Gate)
     have h_tl : ∀ g ∈ tl, g.gateType.isCombinational = true :=
       fun g hg => h_comb g (List.Mem.tail _ hg)
     dsimp [evalCombGates, Shoumei.evalGates]
-    rw [h_hd, if_pos rfl]
+    rw [h_hd, ite_eq_left rfl]
     exact ih h_tl _
 
 theorem filter_isDFF_nil_of_comb (gs : List Gate)
@@ -303,7 +303,7 @@ theorem filterMap_dff_nil_of_comb (gs : List Gate) (env : Env)
     have h_tl : ∀ g ∈ tl, g.gateType.isCombinational = true :=
       fun g hg => h_comb g (List.Mem.tail _ hg)
     dsimp [List.filterMap]
-    rw [h_hd, if_neg Bool.false_ne_true]
+    rw [h_hd, ite_eq_right Bool.false_ne_true]
     exact ih h_tl
 
 theorem evalCycleSequential_of_comb (c : Circuit)

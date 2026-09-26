@@ -138,7 +138,7 @@ python3 verification/slang-lint.py output/sv-from-lean   # slang elaboration
 
 ### Prerequisites
 
-- **Lean 4** (v4.27.0) -- installed via elan by `make setup`
+- **Lean 4** (v4.34.1) -- installed via elan by `make setup`
 - **Yosys** (>= 0.66) -- SystemVerilog read/hierarchy checks and ASIC synthesis (`setup-oss-cad-suite` or modern package)
 - **slang** (`pyslang`) -- IEEE 1800-2017 elaboration of the emitted SV (`pip install pyslang`)
 - **Verilator** -- for RTL simulation (`apt install verilator`)
@@ -234,7 +234,7 @@ fails if the certificate names a module the generator does not emit.
 
 | Component | Tool | Version |
 |-----------|------|---------|
-| Theorem prover + DSL | Lean 4 | v4.27.0 |
+| Theorem prover + DSL | Lean 4 | v4.34.1 |
 | SV elaboration | Yosys + slang | system package / pip |
 | RTL simulation | Verilator | system package |
 | ISA reference | Spike (riscv-isa-sim) | built from source |

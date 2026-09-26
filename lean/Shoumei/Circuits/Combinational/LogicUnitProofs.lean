@@ -155,7 +155,7 @@ theorem evalGates_logicUnitBit_result (a b op0 op1 result : Wire) (idx : Nat) (e
     evalGates (mkLogicUnitBit a b op0 op1 result idx) env result =
     logicOp (env op1) (env op0) (env a) (env b) := by
   dsimp [mkLogicUnitBit, evalGates, evalGate, Gate.mkAND, Gate.mkOR, Gate.mkXOR, Gate.mkMUX, updateEnv, logicOp]
-  simp [h_a_and, h_a_or, h_b_and, h_b_or, h_op0_and, h_op0_or, h_op0_xor, h_op1_and, h_op1_or, h_op1_xor, h_op1_mux, h_and_or, h_and_xor, h_or_xor, h_xor_mux]
+  simp [-Nat.toString_eq_repr, h_a_and, h_a_or, h_b_and, h_b_or, h_op0_and, h_op0_or, h_op0_xor, h_op1_and, h_op1_or, h_op1_xor, h_op1_mux, h_and_or, h_and_xor, h_or_xor, h_xor_mux]
 
 /-! ## L2: Inductive Invariants & Hardware Soundness -/
 
@@ -169,7 +169,7 @@ theorem evalGates_logicUnitBit_preserves (a b op0 op1 result : Wire) (idx : Nat)
     (h_res : (w == result) = false) :
     evalGates (mkLogicUnitBit a b op0 op1 result idx) env w = env w := by
   dsimp [mkLogicUnitBit, evalGates, evalGate, Gate.mkAND, Gate.mkOR, Gate.mkXOR, Gate.mkMUX, updateEnv]
-  simp [h_and, h_or, h_xor, h_mux, h_res]
+  simp [-Nat.toString_eq_repr, h_and, h_or, h_xor, h_mux, h_res]
 
 /-- **Theorem (L2 Bit-Slice Isolation Invariant)**:
     Bit slice i depends purely on its local inputs and control lines.

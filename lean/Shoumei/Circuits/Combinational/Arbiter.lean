@@ -263,7 +263,7 @@ theorem arbiter_onehot (n : Nat) (requests : Fin n → Bool) :
   · contradiction
   · split at h_gi
     · rename_i idx heq h_lt
-      rw [if_pos h_lt]
+      rw [ite_eq_left h_lt]
       dsimp
       dsimp at h_gi
       cases h_gj : (j.val == idx)
@@ -296,7 +296,7 @@ theorem arbiter_priority (n : Nat) (requests : Fin n → Bool) :
       by_cases h_lt_i : i.val < idx
       · have h_not := hmin i.val h_lt_i
         simp only [List.getElem_range] at h_not
-        rw [dif_pos i.isLt] at h_not
+        rw [dite_eq_left i.isLt] at h_not
         exact False.elim (h_not h_req)
       · exact Nat.le_of_not_lt h_lt_i
     · contradiction
@@ -321,7 +321,7 @@ theorem arbiter_valid (n : Nat) (requests : Fin n → Bool) :
         rcases heq with ⟨hlen, hp, _⟩
         simp only [List.length_range] at hlen
         simp only [List.getElem_range] at hp
-        rw [dif_pos hlen] at hp
+        rw [dite_eq_left hlen] at hp
         exact ⟨⟨idx, hlen⟩, hp⟩
       · contradiction
   · rintro ⟨i, h_req⟩
@@ -330,13 +330,13 @@ theorem arbiter_valid (n : Nat) (requests : Fin n → Bool) :
       rw [List.findIdx?_eq_none_iff] at h_none
       have h_in : i.val ∈ List.range n := List.mem_range.mpr i.isLt
       have h_false := h_none i.val h_in
-      rw [dif_pos i.isLt] at h_false
+      rw [dite_eq_left i.isLt] at h_false
       simp [h_req] at h_false
     · rename_i idx heq
       rw [List.findIdx?_eq_some_iff_getElem] at heq
       rcases heq with ⟨hlen, _, _⟩
       simp only [List.length_range] at hlen
-      rw [if_pos hlen]
+      rw [ite_eq_left hlen]
 
 /-- Completeness: if any request, exactly one grant.
 
@@ -356,11 +356,11 @@ theorem arbiter_completeness (n : Nat) (requests : Fin n → Bool) :
     · rename_i h_lt
       refine ⟨⟨idx, h_lt⟩, ?_⟩
       constructor
-      · rw [if_pos h_lt]
+      · rw [ite_eq_left h_lt]
         dsimp
         exact beq_self_eq_true idx
       · intro j h_gj
-        rw [if_pos h_lt] at h_gj
+        rw [ite_eq_left h_lt] at h_gj
         dsimp at h_gj
         have hj : j.val = idx := beq_iff_eq.mp h_gj
         exact Fin.ext hj.symm
@@ -385,7 +385,7 @@ theorem arbiter_grant_implies_request (n : Nat) (requests : Fin n → Bool) :
       rcases heq with ⟨hlen, hp, _⟩
       simp only [List.length_range] at hlen
       simp only [List.getElem_range] at hp
-      rw [dif_pos hlen] at hp
+      rw [dite_eq_left hlen] at hp
       have hext : i = ⟨idx, hlen⟩ := Fin.ext hi
       rw [hext]
       exact hp

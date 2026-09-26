@@ -21,7 +21,7 @@ GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Key Toolchain Versions
 
-- **Lean 4:** v4.27.0 (controlled by `lean-toolchain`)
+- **Lean 4:** v4.34.1 (controlled by `lean-toolchain`)
 - **Yosys:** >= 0.66 (`YosysHQ/setup-oss-cad-suite` in CI or modern distribution package; avoid older releases like 0.33 which lack fine-grained bit-level loop analysis and produce thousands of false combinational loop warnings)
 - **slang:** `verification/slang-lint.py` elaborates every emitted SV file (IEEE 1800-2017)
 - **CIRCT/firtool:** 1.140.0 (for arcilator simulation backend; install via `scripts/install-circt.sh`)

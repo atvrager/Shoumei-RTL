@@ -700,7 +700,7 @@ theorem queue1W1_out_agree (s : State) (i : Bool × Bool × Bool) :
   obtain ⟨enq_v, enq_d, deq_r⟩ := i
   rw [queue1W1_decO_eval]
   dsimp [queue1W1Behavior, circuitToQueue1, circuitValid, QueueState.isFull, QueueState.isEmpty]
-  cases s (Wire.mk "valid") <;> rfl
+  by_cases h : s (Wire.mk "valid") = true <;> simp [h]
 
 theorem queue1W1_non_vacuous : NonVacuousBehavior queue1W1Behavior := by
   refine ⟨QueueState.empty 1, ⟨[true], 1⟩, (false, false, false), (false, false, false), by decide⟩

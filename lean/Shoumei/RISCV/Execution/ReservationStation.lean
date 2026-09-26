@@ -397,7 +397,7 @@ theorem rs_issue_full_stalls (n : Nat) (rs : RSState n) (instr : RenamedInstruct
   (rs.entries rs.next_alloc).valid = true → (rs.issue instr prf).2 = none := by
   intro h_val
   dsimp [RSState.issue]
-  rw [if_pos h_val]
+  rw [ite_eq_left h_val]
 
 /-- Successful issue allocates an entry. -/
 theorem rs_issue_success_valid (n : Nat) (rs : RSState n) (instr : RenamedInstruction)
@@ -409,9 +409,9 @@ theorem rs_issue_success_valid (n : Nat) (rs : RSState n) (instr : RenamedInstru
   intro res
   dsimp [res, RSState.issue]
   by_cases h : (rs.entries rs.next_alloc).valid
-  · rw [if_pos h]
+  · rw [ite_eq_left h]
     trivial
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     dsimp
     simp only [beq_self_eq_true, ↓reduceIte]
 
@@ -461,18 +461,18 @@ theorem rs_cdb_wakeup_correct (n : Nat) (rs : RSState n) (tag : Fin 64) (data : 
     cases (rs.entries idx).valid <;> intro h_wait
     · contradiction
     · rfl
-  rw [if_neg (by simp [h_val])]
+  rw [ite_eq_right (by simp [h_val])]
   dsimp
   constructor
   · rintro ⟨h1_not, h1_tag⟩
     have hm1 : (! (rs.entries idx).src1_ready && (rs.entries idx).src1_tag == tag) = true := by
       simp [h1_not, h1_tag]
-    rw [if_pos hm1, if_pos hm1]
+    rw [ite_eq_left hm1, ite_eq_left hm1]
     exact ⟨rfl, rfl⟩
   · rintro ⟨h2_not, h2_tag⟩
     have hm2 : (! (rs.entries idx).src2_ready && (rs.entries idx).src2_tag == tag) = true := by
       simp [h2_not, h2_tag]
-    rw [if_pos hm2, if_pos hm2]
+    rw [ite_eq_left hm2, ite_eq_left hm2]
     exact ⟨rfl, rfl⟩
 
 /-- Ready selection returns a ready entry (or proves all entries unready). -/
@@ -566,11 +566,11 @@ theorem rs_dispatch_clears_entry (n : Nat) (rs : RSState n) (idx : Fin n) :
   intro res
   dsimp [res, RSState.dispatch]
   by_cases h : (rs.entries idx).isReady
-  · rw [if_pos h]
+  · rw [ite_eq_left h]
     dsimp
     simp only [beq_self_eq_true, ↓reduceIte]
     rfl
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
 
 /-- Dispatch returns operands from the entry. -/
 theorem rs_dispatch_returns_operands (n : Nat) (rs : RSState n) (idx : Fin n) :
@@ -579,7 +579,7 @@ theorem rs_dispatch_returns_operands (n : Nat) (rs : RSState n) (idx : Fin n) :
     (rs.dispatch idx).2 = some (e.opcode, e.src1_data, e.src2_data, e.src3_data, e.dest_tag, e.immediate, e.pc) := by
   intro e h_rdy
   dsimp [RSState.dispatch]
-  rw [if_pos h_rdy]
+  rw [ite_eq_left h_rdy]
 
 /-! ## Structural Circuit (Hardware Implementation) -/
 

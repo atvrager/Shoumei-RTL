@@ -76,7 +76,7 @@ elan update
 elan show
 
 # Switch LEAN versions
-elan default leanprover/lean4:v4.27.0
+elan default leanprover/lean4:v4.34.1
 ```
 
 ### Common Lake Workflows
@@ -279,7 +279,7 @@ lake build
 
 # Problem: Wrong LEAN version
 # Solution: Use elan to reset
-elan default leanprover/lean4:v4.27.0
+elan default leanprover/lean4:v4.34.1
 elan toolchain list
 
 # Problem: Import errors

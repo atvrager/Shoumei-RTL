@@ -7,7 +7,7 @@
 FROM ubuntu:24.04
 
 # ── Version pins (update these when bumping toolchains) ──────────────
-ARG LEAN_VERSION=v4.27.0
+ARG LEAN_VERSION=v4.34.1
 ARG RISCV_TAG=2026.01.23
 
 # ── System packages ─────────────────────────────────────────────────

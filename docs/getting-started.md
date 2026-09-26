@@ -13,7 +13,7 @@ make setup
 ```
 
 This runs `python3 bootstrap.py` to install:
-- `elan` (Lean toolchain manager) and Lean 4 (v4.27.0 as pinned in `lean-toolchain`).
+- `elan` (Lean toolchain manager) and Lean 4 (v4.34.1 as pinned in `lean-toolchain`).
 - Python build dependencies (via `uv` or `pip`).
 
 Ensure your shell has the tools in `PATH`:

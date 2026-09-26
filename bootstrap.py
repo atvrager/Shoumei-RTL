@@ -6,7 +6,7 @@ Sets up the complete Shoumei RTL development environment:
 - Verifies Python 3.11+
 - Installs uv (fast Python package manager)
 - Installs elan (LEAN toolchain manager)
-- Installs LEAN 4 v4.27.0 (via lean-toolchain file)
+- Installs LEAN 4 v4.34.1 (via lean-toolchain file)
 - Installs Yosys (SystemVerilog validation)
 - Installs Verilator (RTL simulation)
 - Installs RISC-V GCC cross-compiler (test ELF compilation)

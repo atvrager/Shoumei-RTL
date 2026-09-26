@@ -130,7 +130,7 @@ theorem evalGates_mux2Bit_result (pfx : String) (idx : Nat) (in0 in1 sel out : W
     evalGates (mkMux2Bit pfx idx in0 in1 sel out) env out =
     mux2 (env sel) (env in0) (env in1) := by
   dsimp [mkMux2Bit, evalGates, evalGate, Gate.mkNOT, Gate.mkAND, Gate.mkOR, updateEnv, mux2]
-  simp [h_and0_and1, h_in0_not, h_in1_not, h_in1_and0, h_sel_not, h_sel_and0]
+  simp [-Nat.toString_eq_repr, h_and0_and1, h_in0_not, h_in1_not, h_in1_and0, h_sel_not, h_sel_and0]
   cases env sel <;> cases env in0 <;> cases env in1 <;> rfl
 
 /-- 4:1 1-bit Mux circuit instance for exhaustive verification. -/
@@ -637,7 +637,7 @@ theorem evalGates_mux2Bit_preserves (pfx : String) (idx : Nat) (in0 in1 sel out 
     (h_out : (w == out) = false) :
     evalGates (mkMux2Bit pfx idx in0 in1 sel out) env w = env w := by
   dsimp [mkMux2Bit, evalGates, evalGate, Gate.mkNOT, Gate.mkAND, Gate.mkOR, updateEnv]
-  simp [h_not, h_and0, h_and1, h_out]
+  simp [-Nat.toString_eq_repr, h_not, h_and0, h_and1, h_out]
 
 /-- **Theorem (L2 Combinational Purity Invariant)**:
     Every gate in mkMux2Bit is strictly combinational. -/
