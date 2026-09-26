@@ -93,6 +93,57 @@ def sv_deps(mod):
             if (SV_DIR / f"{inst}.sv").exists() and inst not in seen:
                 stack.append(inst)
     return " ".join(str(SV_DIR / f"{m}.sv") for m in sorted(seen))
+SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
+SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
+GEN_SCRIPT = Path(__file__).resolve()
+
+def sv_dep_paths(mod):
+    seen, stack = set(), [mod]
+    paths = []
+    while stack:
+        m = stack.pop()
+        if m in seen:
+            continue
+        seen.add(m)
+        f = SV_DIR / f"{m}.sv"
+        if not f.exists():
+            continue
+        paths.append(f)
+        for inst in re.findall(r"^\s*([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*\(", f.read_text(), re.M):
+            if (SV_DIR / f"{inst}.sv").exists() and inst not in seen:
+                stack.append(inst)
+    return paths
+
+def is_up_to_date(targets, sources):
+    for t in targets:
+        if not t.exists():
+            return False
+    valid_sources = [s for s in sources if s.exists()]
+    if not valid_sources:
+        return True
+    oldest_target = min(t.stat().st_mtime for t in targets)
+    newest_source = max(s.stat().st_mtime for s in valid_sources)
+    return oldest_target >= newest_source
+
+SPEC_SVA_REPS = {}
+
+def note_spec_rep(spec_file, mod, width):
+    SPEC_SVA_REPS.setdefault((spec_file, width), mod)
+
+def should_skip_bridge(mod, spec_file, note_w=None):
+    if note_w is not None and spec_file is not None:
+        note_spec_rep(spec_file, mod, note_w)
+    spec_sv = (ROOT / "verification" / "specs" / spec_file) if spec_file else None
+    targets = [
+        ROOT / f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean",
+        ROOT / f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean",
+        ROOT / f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean",
+    ]
+    sources = [SMT2LEAN_BIN, GEN_SCRIPT] + sv_dep_paths(mod)
+    if spec_sv and spec_sv.exists():
+        sources.append(spec_sv)
+    return is_up_to_date(targets, sources)
+
 
 def bridge_register(w, mod_name=None):
     mod = mod_name if mod_name is not None else f"Register{w}"
@@ -101,6 +152,8 @@ def bridge_register(w, mod_name=None):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Register_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Register_spec.sv; chparam -set WIDTH {w} Register_spec; hierarchy -top Register_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -163,6 +216,8 @@ def bridge_register_en(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "RegisterEn_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/RegisterEn_spec.sv; chparam -set WIDTH {w} RegisterEn_spec; hierarchy -top RegisterEn_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -222,6 +277,8 @@ def bridge_decoder(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Decoder_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Decoder_spec.sv; chparam -set IN_WIDTH {w} -set OUT_WIDTH {out_w} Decoder_spec; hierarchy -top Decoder_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -270,6 +327,8 @@ def bridge_comparator(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Comparator_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Comparator_spec.sv; chparam -set WIDTH {w} Comparator_spec; hierarchy -top Comparator_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     if w in (32, 64):
@@ -326,6 +385,8 @@ def bridge_subtractor(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Subtractor_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Subtractor_spec.sv; chparam -set WIDTH {w} Subtractor_spec; hierarchy -top Subtractor_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -375,6 +436,8 @@ def bridge_adder(mod, spec_file, w, has_cin):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, spec_file, w):
+        return
 
     spec_name = spec_file.replace(".sv", "")
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{spec_file}; chparam -set WIDTH {w} {spec_name}; hierarchy -top {spec_name}; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
@@ -436,6 +499,8 @@ def bridge_full_adder():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "FullAdder_spec.sv", 1):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/FullAdder_spec.sv; hierarchy -top FullAdder_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -487,6 +552,8 @@ def bridge_ripple_carry_adder4():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "RippleCarryAdder4_spec.sv", 4):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/RippleCarryAdder4_spec.sv; hierarchy -top RippleCarryAdder4_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -538,6 +605,8 @@ def bridge_mul_final_adder64():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "MulFinalAdder64_spec.sv", 64):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/MulFinalAdder64_spec.sv; hierarchy -top MulFinalAdder64_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -587,6 +656,8 @@ def bridge_branch_target_adder32():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "BranchTargetAdder32_spec.sv", 32):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/BranchTargetAdder32_spec.sv; hierarchy -top BranchTargetAdder32_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -636,6 +707,8 @@ def bridge_csa_compressor(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "CSACompressor_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/CSACompressor_spec.sv; chparam -set WIDTH {w} CSACompressor_spec; hierarchy -top CSACompressor_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -688,6 +761,8 @@ def bridge_alu(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -739,6 +814,8 @@ def bridge_equality_comparator(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "EqualityComparator_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/EqualityComparator_spec.sv; chparam -set WIDTH {w} EqualityComparator_spec; hierarchy -top EqualityComparator_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -788,6 +865,8 @@ def bridge_mux4(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Mux4_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux4_spec.sv; chparam -set WIDTH {w} Mux4_spec; hierarchy -top Mux4_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -840,6 +919,8 @@ def bridge_mux8(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Mux8_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux8_spec.sv; chparam -set WIDTH {w} Mux8_spec; hierarchy -top Mux8_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -895,6 +976,8 @@ def bridge_mux16(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Mux16_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux16_spec.sv; chparam -set WIDTH {w} Mux16_spec; hierarchy -top Mux16_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -946,6 +1029,8 @@ def bridge_mux32(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Mux32_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux32_spec.sv; chparam -set WIDTH {w} Mux32_spec; hierarchy -top Mux32_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -997,6 +1082,8 @@ def bridge_mux64(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Mux64_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux64_spec.sv; chparam -set WIDTH {w} Mux64_spec; hierarchy -top Mux64_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1048,6 +1135,8 @@ def bridge_logic_unit(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "LogicUnit_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/LogicUnit_spec.sv; chparam -set WIDTH {w} LogicUnit_spec; hierarchy -top LogicUnit_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1097,6 +1186,8 @@ def bridge_shifter(w, shamt_w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Shifter_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Shifter_spec.sv; chparam -set WIDTH {w} -set SHAMT_WIDTH {shamt_w} Shifter_spec; hierarchy -top Shifter_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1146,6 +1237,8 @@ def bridge_pcincrementer(inc):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "PCIncrementer_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PCIncrementer_spec.sv; chparam -set INC {inc} PCIncrementer_spec; hierarchy -top PCIncrementer_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1190,11 +1283,6 @@ end ShoumeiSec.Bridge{mod}
 # identical spec model.  Six adder topologies therefore produce one module, not
 # six.  The first circuit seen at a given (spec, width) is the representative,
 # and its model is the one the props module imports.
-SPEC_SVA_REPS = {}
-
-def note_spec_rep(spec_file, mod, width):
-    SPEC_SVA_REPS.setdefault((spec_file, width), mod)
-
 def emit_spec_sva():
     """Translate each spec's SVA assertions into Lean theorems over the Lean
     model of that same specification.  sva2lean exits non-zero rather than
@@ -1206,6 +1294,11 @@ def emit_spec_sva():
             continue
         model_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
         out_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}Props.lean"
+        targets = [ROOT / out_lean]
+        sources = [spec_path, ROOT / model_lean, SVA2LEAN_BIN, GEN_SCRIPT]
+        if is_up_to_date(targets, sources):
+            count += 1
+            continue
         run(f'lake exe sva2lean verification/specs/{spec_file} {model_lean} {out_lean}')
         print(f"Generated {mod}Props ({spec_file} at width {width})")
         count += 1
@@ -1218,6 +1311,8 @@ def bridge_queue1(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Queue1_spec.sv", w):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Queue1_spec.sv; chparam -set WIDTH {w} Queue1_spec; hierarchy -top Queue1_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1291,6 +1386,8 @@ def bridge_queue1_flow(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Queue1Flow_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Queue1Flow_spec.sv; chparam -set WIDTH {w} Queue1Flow_spec; hierarchy -top Queue1Flow_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1368,6 +1465,8 @@ def bridge_priority_arbiter(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "PriorityArbiter_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PriorityArbiter_spec.sv; chparam -set WIDTH {w} PriorityArbiter_spec; hierarchy -top PriorityArbiter_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
@@ -1416,6 +1515,8 @@ def bridge_one_hot_encoder():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "OneHotEncoder_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/OneHotEncoder_spec.sv; hierarchy -top OneHotEncoder_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
@@ -1463,6 +1564,8 @@ def bridge_popcount():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Popcount_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Popcount_spec.sv; hierarchy -top Popcount_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
@@ -1510,6 +1613,8 @@ def bridge_queue_pointer(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "QueuePointer_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueuePointer_spec.sv; chparam -set WIDTH {w} QueuePointer_spec; hierarchy -top QueuePointer_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1569,6 +1674,8 @@ def bridge_queue_pointer_loadable(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "QueuePointerLoadable_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueuePointerLoadable_spec.sv; chparam -set WIDTH {w} QueuePointerLoadable_spec; hierarchy -top QueuePointerLoadable_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1630,6 +1737,8 @@ def bridge_queue_counter_loadable(w):
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "QueueCounterLoadable_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueueCounterLoadable_spec.sv; chparam -set WIDTH {w} QueueCounterLoadable_spec; hierarchy -top QueueCounterLoadable_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
@@ -1692,6 +1801,8 @@ def bridge_dual_port_queue():
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
     impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
     proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "Queue16x32_DualPort_spec.sv", None):
+        return
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
