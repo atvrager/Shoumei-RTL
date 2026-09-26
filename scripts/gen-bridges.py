@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-REGISTERS = [1, 2, 3, 4, 6, 8, 12, 16, 20, 24, 32, 64]
+REGISTERS = [1, 2, 3, 4, 6, 8, 12, 16, 20, 24, 32, 64, 96, 98, 130, 157, 158, 159, 160]
 REGISTERS_EN = [1, 2, 4, 8, 16, 32, 64]
 DECODERS = [2, 3, 4, 5, 6]
 COMPARATORS = [4, 6, 32, 64]
@@ -94,8 +94,8 @@ def sv_deps(mod):
                 stack.append(inst)
     return " ".join(str(SV_DIR / f"{m}.sv") for m in sorted(seen))
 
-def bridge_register(w):
-    mod = f"Register{w}"
+def bridge_register(w, mod_name=None):
+    mod = mod_name if mod_name is not None else f"Register{w}"
     spec_smt = f"verification/bridge/{mod}_spec.smt2"
     impl_smt = f"verification/bridge/{mod}_impl.smt2"
     spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
@@ -111,7 +111,10 @@ def bridge_register(w):
     impl_code = (ROOT / impl_lean).read_text()
 
     s_field = re.search(r"structure State where\s*\n\s*(\w+)\s*:", spec_code).group(1)
-    i_field = re.search(r"structure State where\s*\n\s*(\w+)\s*:", impl_code).group(1)
+    impl_state_block = re.search(r"structure State where(.*?)(?:deriving|def)", impl_code, re.DOTALL).group(1)
+    i_fields = [m.group(1) for m in re.finditer(r"(\w+)\s*:\s*BitVec", impl_state_block)]
+    concat_expr = " ++ ".join(f"s.{f}" for f in i_fields)
+    st_pattern = ", ".join(f"s_{f}" for f in i_fields)
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -120,6 +123,7 @@ import Std.Tactic.BVDecide
 namespace ShoumeiSec.Bridge{mod}
 
 set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
 
 def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
     ShoumeiSec.Bridge.{mod}Spec.Inputs where
@@ -128,7 +132,7 @@ def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
   reset := i.reset
 def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
     ShoumeiSec.Bridge.{mod}Spec.State where
-  {s_field} := s.{i_field}
+  {s_field} := {concat_expr}
 
 /-- Equivalence: {mod} netlist refines parameterized Register_spec #({w}). -/
 theorem {mod.lower()}_sec
@@ -139,10 +143,11 @@ theorem {mod.lower()}_sec
     imp.1.q = spc.1.q ∧
     absState imp.2 = spc.2 := by
   obtain ⟨d, clk, rst⟩ := i
-  obtain ⟨st⟩ := s
+  obtain ⟨{st_pattern}⟩ := s
   simp only [ShoumeiSec.Bridge.{mod}Impl.step,
              ShoumeiSec.Bridge.{mod}Spec.step,
-             absInputs, absState]
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
   bv_decide
 
 end ShoumeiSec.Bridge{mod}
@@ -1449,6 +1454,8 @@ def main():
     print("Generating Register bridges...")
     for w in REGISTERS:
         bridge_register(w)
+    bridge_register(1, mod_name="DFlipFlop")
+    bridge_register(160, mod_name="Register160Flat")
     print("Generating RegisterEn bridges...")
     for w in REGISTERS_EN:
         bridge_register_en(w)

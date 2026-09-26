@@ -133,6 +133,69 @@ def allSpecs : List DualRTLSpec := [
     proofRef := "ShoumeiSec.BridgeRegister64.register64_sec"
   },
   {
+    circuitName := "Register96"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister96.register96_sec"
+  },
+  {
+    circuitName := "Register98"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister98.register98_sec"
+  },
+  {
+    circuitName := "Register130"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister130.register130_sec"
+  },
+  {
+    circuitName := "Register157"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister157.register157_sec"
+  },
+  {
+    circuitName := "Register158"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister158.register158_sec"
+  },
+  {
+    circuitName := "Register159"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister159.register159_sec"
+  },
+  {
+    circuitName := "Register160"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister160.register160_sec"
+  },
+  {
+    circuitName := "Register160Flat"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister160Flat.register160flat_sec"
+  },
+  {
+    circuitName := "DFlipFlop"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDFlipFlop.dflipflop_sec"
+  },
+  {
     circuitName := "Decoder2"
     specFile := "verification/specs/Decoder_spec.sv"
     topModule := "Decoder_spec"
