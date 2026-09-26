@@ -832,6 +832,41 @@ def allSpecs : List DualRTLSpec := [
     hasProof := true
     proofRef := "ShoumeiSec.BridgeSubtractor64.subtractor64_sec"
   },
+  {
+    circuitName := "CSACompressor48"
+    specFile := "verification/specs/CSACompressor_spec.sv"
+    topModule := "CSACompressor_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCSACompressor48.csacompressor48_sec"
+  },
+  {
+    circuitName := "CSACompressor64"
+    specFile := "verification/specs/CSACompressor_spec.sv"
+    topModule := "CSACompressor_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCSACompressor64.csacompressor64_sec"
+  },
+  {
+    circuitName := "CSACompressor106"
+    specFile := "verification/specs/CSACompressor_spec.sv"
+    topModule := "CSACompressor_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCSACompressor106.csacompressor106_sec"
+  },
+  {
+    circuitName := "ALU32"
+    specFile := "verification/specs/ALU32_spec.sv"
+    topModule := "ALU32_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeALU32.alu32_sec"
+  },
+  {
+    circuitName := "ALU64"
+    specFile := "verification/specs/ALU64_spec.sv"
+    topModule := "ALU64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeALU64.alu64_sec"
+  },
 
   {
     circuitName := "Queue1_1"

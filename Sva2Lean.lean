@@ -101,7 +101,12 @@ partial def lexNumber (cs : List Char) : Nat × Option Nat × List Char :=
         let (v, left) := digits rest 0
         (v, some 0, left)          -- width filled by caller from the leading digits
       else if b == 'b' then
-        let (v, left) := digits rest 0
+        let rec binDigits (cs : List Char) (v : Nat) : Nat × List Char :=
+          match cs with
+          | '0' :: rest => binDigits rest (v * 2)
+          | '1' :: rest => binDigits rest (v * 2 + 1)
+          | _ => (v, cs)
+        let (v, left) := binDigits rest 0
         (v, some 0, left)
       else if b == '0' then (0, none, rest)
       else if b == '1' then (1, none, rest)
