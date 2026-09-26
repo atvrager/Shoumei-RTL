@@ -200,13 +200,11 @@ theorem faninConeWires_two_hop (g₁ g₂ : Gate) (seed : List Wire)
     let cone := faninConeWires [g₁, g₂] seed
     cone.contains g₁.output = true ∧ cone.contains g₂.output = true := by
   dsimp [faninConeWires]
-  rw [h_g₂]
-  simp only [ ↓reduceIte]
+  simp only [h_g₂, ↓reduceIte]
   have h₁ : (g₂.inputs ++ seed).contains g₁.output = true := by
     rw [List.contains_append, h_chain, Bool.true_or]
-  rw [h₁]
-  simp only [↓reduceIte, List.contains_append, Bool.or_eq_true]
-  exact ⟨Or.inr (Or.inl h_chain), Or.inr (Or.inr h_g₂)⟩
+  simp only [h₁, ↓reduceIte, List.contains_append, Bool.or_eq_true]
+  simp [h_g₂]
 
 @[simp] theorem preGates_nil (reg : ModuleRegistry) (c : Circuit) (h : c.instances = []) :
     preGates reg c = [] := by

@@ -354,14 +354,14 @@ def cpuStep
         let rsBrEmpty := RSState.init 4
         let rsMulDivEmpty : if config.enableM then RSState 4 else Unit :=
           if h : config.enableM then
-            cast (by rw [if_pos h]) (RSState.init 4)
+            cast (by rw [ite_eq_left h]) (RSState.init 4)
           else
-            cast (by rw [if_neg h]) ()
+            cast (by rw [ite_eq_right h]) ()
         let rsFPExecEmpty : if config.enableF then RSState 4 else Unit :=
           if h : config.enableF then
-            cast (by rw [if_pos h]) (RSState.init 4)
+            cast (by rw [ite_eq_left h]) (RSState.init 4)
           else
-            cast (by rw [if_neg h]) ()
+            cast (by rw [ite_eq_right h]) ()
         let decodeEmpty := DecodeState.empty
         (robEmpty, renameRestored, rsIntEmpty, rsMemEmpty, rsBrEmpty, rsMulDivEmpty, rsFPExecEmpty, decodeEmpty, false)
     | none =>
@@ -373,8 +373,8 @@ def cpuStep
   -- MulDiv execution state update (only if M extension enabled)
   -- Must be computed before CDB broadcasts to be available for final state assembly
   let (mulDivExecState', mulDivBC) := if h : config.enableM then
-      let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
-      let execState : MulDivExecState := cast (by rw [if_pos h]) cpu.mulDivExecState
+      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsMulDiv_postFlush
+      let execState : MulDivExecState := cast (by rw [ite_eq_left h]) cpu.mulDivExecState
 
       -- Check if RS has ready instruction to dispatch
       match rs.selectReady with
@@ -388,29 +388,29 @@ def cpuStep
               let broadcast := match result with
                 | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
                 | none => []
-              (cast (by rw [if_pos h]) newExecState, broadcast)
+              (cast (by rw [ite_eq_left h]) newExecState, broadcast)
           | none =>
               -- No dispatch, but still step the exec state (to advance pipelines)
               let (newExecState, result) := Execution.mulDivStep execState 0 0 0 0 false
               let broadcast := match result with
                 | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
                 | none => []
-              (cast (by rw [if_pos h]) newExecState, broadcast)
+              (cast (by rw [ite_eq_left h]) newExecState, broadcast)
       | none =>
           -- No ready instruction, still step exec state
           let (newExecState, result) := Execution.mulDivStep execState 0 0 0 0 false
           let broadcast := match result with
             | some (tag, data) => [{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }]
             | none => []
-          (cast (by rw [if_pos h]) newExecState, broadcast)
+          (cast (by rw [ite_eq_left h]) newExecState, broadcast)
     else
       (cpu.mulDivExecState, [])
 
   -- FP execution state update (only if F extension enabled)
   -- Returns (newExecState, cdbBroadcasts, newFflags)
   let (fpExecState', fpBC, fflags') := if h : config.enableF then
-      let rs : RSState 4 := cast (by rw [if_pos h]) rsFPExec_postFlush
-      let execState : FPExecState := cast (by rw [if_pos h]) cpu.fpExecState
+      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsFPExec_postFlush
+      let execState : FPExecState := cast (by rw [ite_eq_left h]) cpu.fpExecState
       -- Decode frm CSR to RoundingMode
       let rm : Shoumei.Circuits.Combinational.FPU.RoundingMode :=
         match cpu.frm.toNat with
@@ -427,7 +427,7 @@ def cpuStep
                     ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
                      cpu.fflags ||| exceptions.toBits)
                 | none => ([], cpu.fflags)
-              (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+              (cast (by rw [ite_eq_left h]) newExecState, broadcast, newFflags)
           | none =>
               let (newExecState, result) := Execution.fpExecStep execState .ADD 0 0 0 .RNE 0 false
               let (broadcast, newFflags) := match result with
@@ -435,7 +435,7 @@ def cpuStep
                     ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
                      cpu.fflags ||| exceptions.toBits)
                 | none => ([], cpu.fflags)
-              (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+              (cast (by rw [ite_eq_left h]) newExecState, broadcast, newFflags)
       | none =>
           let (newExecState, result) := Execution.fpExecStep execState .ADD 0 0 0 .RNE 0 false
           let (broadcast, newFflags) := match result with
@@ -443,7 +443,7 @@ def cpuStep
                 ([{ valid := true, tag := tag, data := data, exception := false, mispredicted := false }],
                  cpu.fflags ||| exceptions.toBits)
             | none => ([], cpu.fflags)
-          (cast (by rw [if_pos h]) newExecState, broadcast, newFflags)
+          (cast (by rw [ite_eq_left h]) newExecState, broadcast, newFflags)
     else
       (cpu.fpExecState, [], cpu.fflags)
 
@@ -512,20 +512,20 @@ def cpuStep
     | none => rsBranch_postFlush
 
   let rsMulDiv_postExec := if h : config.enableM then
-      let rs : RSState 4 := cast (by rw [if_pos h]) rsMulDiv_postFlush
+      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsMulDiv_postFlush
       let rs' := match rs.selectReady with
         | some idx => rs.dispatch idx |>.1
         | none => rs
-      cast (by rw [if_pos h]) rs'
+      cast (by rw [ite_eq_left h]) rs'
     else
       rsMulDiv_postFlush
 
   let rsFPExec_postExec := if h : config.enableF then
-      let rs : RSState 4 := cast (by rw [if_pos h]) rsFPExec_postFlush
+      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsFPExec_postFlush
       let rs' := match rs.selectReady with
         | some idx => rs.dispatch idx |>.1
         | none => rs
-      cast (by rw [if_pos h]) rs'
+      cast (by rw [ite_eq_left h]) rs'
     else
       rsFPExec_postFlush
 
@@ -687,15 +687,15 @@ def cpuStep
                     let (rsMem', _) := rsMem.issue ri prf; (rob', rsInt, rsMem', rsBr, rsMD, rsFP)
                 | .MulDiv =>
                     if h : config.enableM then
-                      let rs : RSState 4 := cast (by rw [if_pos h]) rsMD
+                      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsMD
                       let (rs', _) := rs.issue ri prf
-                      (rob', rsInt, rsMem, rsBr, cast (by rw [if_pos h]) rs', rsFP)
+                      (rob', rsInt, rsMem, rsBr, cast (by rw [ite_eq_left h]) rs', rsFP)
                     else (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
                 | .FPExec =>
                     if h : config.enableF then
-                      let rs : RSState 4 := cast (by rw [if_pos h]) rsFP
+                      let rs : RSState 4 := cast (by rw [ite_eq_left h]) rsFP
                       let (rs', _) := rs.issue ri prf
-                      (rob', rsInt, rsMem, rsBr, rsMD, cast (by rw [if_pos h]) rs')
+                      (rob', rsInt, rsMem, rsBr, rsMD, cast (by rw [ite_eq_left h]) rs')
                     else (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
                 | .System | .Illegal => (rob', rsInt, rsMem, rsBr, rsMD, rsFP)
       )

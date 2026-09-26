@@ -127,8 +127,7 @@ theorem zipWith_map {α β γ δ : Type} (f : β → γ → δ) (g : α → β) 
   induction l with
   | nil => rfl
   | cons hd tl ih =>
-    dsimp [List.zipWith]
-    rw [ih]
+    simp [ih]
 
 theorem mkRegisterN_gates (n : Nat) :
     (mkRegisterN n).gates =
@@ -197,7 +196,7 @@ theorem updateState_map (l : List α) (s : State) (k : α → Wire) (v : α → 
   induction l with
   | nil => rfl
   | cons hd tl ih =>
-    dsimp [List.find?]
+    simp only [List.map, List.find?_cons]
     cases (k hd == w) with
     | true => rfl
     | false => exact ih
@@ -281,9 +280,7 @@ theorem regN_step_agree (n : Nat) (h_check : checkFlatRegWires n = true)
   have h_find_d : (List.range n).find? (fun j => Wire.mk s!"{"d"}_{j}" == Wire.mk s!"{"d"}_{idx.val}") = some idx.val :=
     h_idx.2
   rw [h_find_q]
-  dsimp only [mergeStateIntoEnv]
-  rw [h_rst_not_dff, h_d_not_dff]
-  dsimp only [Bool.false_eq_true, ↓reduceIte, registerNEncI]
+  simp only [mergeStateIntoEnv, h_rst_not_dff, h_d_not_dff, registerNEncI]
   have h_rst_self : (Wire.mk "reset" == Wire.mk "reset") = true := rfl
   rw [h_rst_self, h_d_not_rst, h_d_not_clk, h_find_d]
   cases rst <;> simp
@@ -450,8 +447,7 @@ theorem hierStepFold_mkRegisterN (reg : ModuleRegistry) (inst : CircuitInstance)
       h_j.1.2
     dsimp only [Function.comp]
     rw [updateState_map, h_find_q]
-    dsimp only [mergeStateIntoEnv]
-    rw [h_rst_not_dff, h_d_not_dff]
+    simp only [mergeStateIntoEnv, h_rst_not_dff, h_d_not_dff]
     rfl
   have h_env :
       (mkRegisterN n).outputs.foldl (fun e outWire =>
@@ -491,7 +487,7 @@ theorem hierStepFold_mkRegisterN (reg : ModuleRegistry) (inst : CircuitInstance)
         have h_q_in : (getDFFOutputs (mkRegisterN n)).contains (Wire.mk s!"{"q"}_{j}") = true :=
           h_j.1.1.1.1.1
         dsimp only [mergeStateIntoEnv]
-        rw [h_q_in, if_pos rfl]
+        rw [h_q_in, ite_eq_left rfl]
         exact ih h_tl _
     exact h_congr (List.range n) (fun _ h => h) accEnv
   exact Prod.ext (congrArg (accUpdates ++ ·) h_scoped) h_env
@@ -777,9 +773,7 @@ theorem reg160Hier_step_agree (s : State) (i : BitVec 160 × Bool) :
     simp only [Bool.and_eq_true] at h_st
     have h_st1 := opt_wire_beq_eq _ _ h_st.1
     have h_st2 := opt_wire_beq_eq _ _ h_st.2
-    dsimp [subInputEnv]
-    rw [h_st1, h_st2]
-    dsimp [registerNEncI]
+    simp only [subInputEnv, h_st1, h_st2, registerNEncI]
     rw [h_d_not_rst, h_d_not_clk, h_find_d]
     cases rst <;> simp
 

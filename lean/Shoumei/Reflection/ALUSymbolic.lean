@@ -603,9 +603,9 @@ private theorem buildShiftMux_eval (n : Nat) (f : Nat → BoolExpr) (base : Nat)
   | succ k ih =>
     unfold buildShiftMux decodeShift
     simp only [BoolExpr.eval]
-    split
-    · rw [ih]; congr 1; rw [Nat.add_assoc]
-    · rw [ih]; congr 1; rw [Nat.zero_add]
+    by_cases h : assign (32 + k) = true
+    · simp [h, ih, Nat.add_assoc]
+    · simp [h, ih]
 
 -- Key number-theoretic helper: n % 2^(k+1) = 2^k * (n/2^k % 2) + n % 2^k
 private theorem nat_mod_two_mul (n m : Nat) (_hm : 0 < m) :
@@ -758,12 +758,12 @@ private theorem sraRefBit_eval (a b : BitVec 32) (i : Nat) (hi : i < 32) :
   · -- i + s < 32: result is a.getLsbD (i + s)
     rename_i hlt
     simp only [BoolExpr.eval, aluAssign, hlt, ite_true]
-    rw [if_pos (show (b &&& 0x1F#32).toNat + i < 32 from by omega)]
+    rw [ite_eq_left (show (b &&& 0x1F#32).toNat + i < 32 from by omega)]
     congr 1; omega
   · -- i + s ≥ 32: result is a.getLsbD 31 (sign extension = msb)
     rename_i hge
     simp only [BoolExpr.eval, aluAssign, show (31 : Nat) < 32 from by omega, ite_true]
-    rw [if_neg (show ¬((b &&& 0x1F#32).toNat + i < 32) from by omega)]
+    rw [ite_eq_right (show ¬((b &&& 0x1F#32).toNat + i < 32) from by omega)]
     rw [BitVec.msb_eq_getLsbD_last]
 
 theorem alu32_bridge_sra (a b : BitVec 32) :
