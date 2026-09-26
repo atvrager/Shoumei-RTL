@@ -140,7 +140,7 @@ def mkQueuePointer (width : Nat) : Circuit :=
   -- next = en ? count + 1 : count
   -- Adder
   let inc := (List.range width).map (fun i => Wire.mk s!"inc_{i}")
-  let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"c_{i}")
+  let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"qpc{i}")
   let add_cin_gate := Gate.mkBUF zero (carries[0]!)  -- carry-in = 0
 
   -- Create constant 1 vector: [1, 0, 0...]
@@ -166,8 +166,7 @@ def mkQueuePointer (width : Nat) : Circuit :=
     signalGroups := [
       { name := "count", width := width, wires := count },
       { name := "inc", width := width, wires := inc },
-      { name := "next", width := width, wires := next },
-      { name := "c", width := width + 1, wires := carries }
+      { name := "next", width := width, wires := next }
     ]
   }
 
@@ -246,9 +245,7 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
       { name := "count", width := width, wires := count },
       { name := "plus", width := width, wires := val_plus },
       { name := "minus", width := width, wires := val_minus },
-      { name := "next", width := width, wires := next },
-      { name := "cp", width := width + 1, wires := c_plus },
-      { name := "cm", width := width + 1, wires := c_minus }
+      { name := "next", width := width, wires := next }
     ]
   }
 
@@ -329,9 +326,7 @@ def mkQueueCounterUpDownInit (width : Nat) (initVal : Nat) : Circuit :=
       { name := "count", width := width, wires := count },
       { name := "plus", width := width, wires := val_plus },
       { name := "minus", width := width, wires := val_minus },
-      { name := "next", width := width, wires := next },
-      { name := "cp", width := width + 1, wires := c_plus },
-      { name := "cm", width := width + 1, wires := c_minus }
+      { name := "next", width := width, wires := next }
     ]
   }
 
@@ -354,7 +349,7 @@ def mkQueuePointerLoadable (width : Nat) : Circuit :=
 
   -- Increment logic: count + 1
   let inc := (List.range width).map (fun i => Wire.mk s!"inc_{i}")
-  let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"c_{i}")
+  let carries := (List.range (width + 1)).map (fun i => Wire.mk s!"qpc{i}")
   let add_cin_gate := Gate.mkBUF zero (carries[0]!)
   let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
   let adder_gates := buildFullAdderChain count one_vec carries inc "add_"
@@ -404,7 +399,7 @@ def mkQueueCounterLoadable (width : Nat) : Circuit :=
 
   -- +1 Logic
   let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
-  let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
+  let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"qccp{i}")
   let one_vec := one :: (List.range (width - 1)).map (fun _ => zero)
   let add_cin_gate := Gate.mkBUF zero (c_plus[0]!)
   let add_gates := buildFullAdderChain count one_vec c_plus val_plus "add_"
@@ -412,7 +407,7 @@ def mkQueueCounterLoadable (width : Nat) : Circuit :=
   -- -1 Logic
   let all_ones := (List.range width).map (fun _ => one)
   let val_minus := (List.range width).map (fun i => Wire.mk s!"minus_{i}")
-  let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
+  let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"qccm{i}")
   let sub_cin_gate := Gate.mkBUF zero (c_minus[0]!)
   let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
 

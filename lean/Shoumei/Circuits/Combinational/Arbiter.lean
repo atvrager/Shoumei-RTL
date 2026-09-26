@@ -135,7 +135,7 @@ def mkPriorityArbiter (n : Nat) : Circuit :=
             -- First element: no gate needed yet
             (gates, request_n[0]!)
           else
-            let maskWire := Wire.mk s!"mask_{i}_{j}"
+            let maskWire := Wire.mk s!"pamask{i}x{j}"
             let andGate := Gate.mkAND prevWire request_n[j]! maskWire
             (gates ++ [andGate], maskWire)
         ) ([], request_n[0]!)
@@ -157,7 +157,7 @@ def mkPriorityArbiter (n : Nat) : Circuit :=
         -- Build linear OR chain: or_0 = req[0] OR req[1], or_1 = or_0 OR req[2], ...
         let (gates, _) := (List.range (n - 1)).foldl (fun (gates, prevWire) i =>
           let nextReq := request[i + 1]!
-          let orWire := if i == n - 2 then valid else Wire.mk s!"or_chain_{i}"
+          let orWire := if i == n - 2 then valid else Wire.mk s!"paorx{i}"
           let orGate := Gate.mkOR prevWire nextReq orWire
           (gates ++ [orGate], orWire)
         ) ([], request[0]!)

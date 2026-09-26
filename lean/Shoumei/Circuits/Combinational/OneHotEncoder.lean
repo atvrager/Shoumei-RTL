@@ -55,7 +55,7 @@ def mkOneHotEncoder64 : Circuit :=
         let inWire := input[i]!
         let orWire := if idx == indices.tail!.length - 1
                       then output[b]!
-                      else Wire.mk s!"enc_or_{b}_{idx}"
+                      else Wire.mk s!"encor{b}x{idx}"
         let g := Gate.mkOR prevWire inWire orWire
         (gates ++ [g], orWire)
       ) ([], initialWire)

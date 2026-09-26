@@ -742,6 +742,146 @@ def allSpecs : List DualRTLSpec := [
     proofRef := "ShoumeiSec.BridgeSubtractor64.subtractor64_sec"
   },
 
+  {
+    circuitName := "Queue1_1"
+    specFile := "verification/specs/Queue1_spec.sv"
+    topModule := "Queue1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1_1.queue1_1_sec"
+  },
+  {
+    circuitName := "Queue1Flow_39"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_39.queue1flow_39_sec"
+  },
+  {
+    circuitName := "Queue1Flow_43"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_43.queue1flow_43_sec"
+  },
+  {
+    circuitName := "Queue1Flow_44"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_44.queue1flow_44_sec"
+  },
+  {
+    circuitName := "Queue1Flow_70"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_70.queue1flow_70_sec"
+  },
+  {
+    circuitName := "Queue1Flow_71"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_71.queue1flow_71_sec"
+  },
+  {
+    circuitName := "Queue1Flow_72"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_72.queue1flow_72_sec"
+  },
+  {
+    circuitName := "Queue1Flow_75"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_75.queue1flow_75_sec"
+  },
+  {
+    circuitName := "Queue1Flow_76"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_76.queue1flow_76_sec"
+  },
+  {
+    circuitName := "Queue1Flow_103"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_103.queue1flow_103_sec"
+  },
+  {
+    circuitName := "Queue1Flow_104"
+    specFile := "verification/specs/Queue1Flow_spec.sv"
+    topModule := "Queue1Flow_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1Flow_104.queue1flow_104_sec"
+  },
+  {
+    circuitName := "PriorityArbiter2"
+    specFile := "verification/specs/PriorityArbiter_spec.sv"
+    topModule := "PriorityArbiter_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePriorityArbiter2.priorityarbiter2_sec"
+  },
+  {
+    circuitName := "PriorityArbiter8"
+    specFile := "verification/specs/PriorityArbiter_spec.sv"
+    topModule := "PriorityArbiter_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePriorityArbiter8.priorityarbiter8_sec"
+  },
+  {
+    circuitName := "PriorityArbiter64"
+    specFile := "verification/specs/PriorityArbiter_spec.sv"
+    topModule := "PriorityArbiter_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePriorityArbiter64.priorityarbiter64_sec"
+  },
+  {
+    circuitName := "OneHotEncoder64"
+    specFile := "verification/specs/OneHotEncoder_spec.sv"
+    topModule := "OneHotEncoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeOneHotEncoder64.onehotencoder64_sec"
+  },
+  {
+    circuitName := "Popcount8"
+    specFile := "verification/specs/Popcount_spec.sv"
+    topModule := "Popcount_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePopcount8.popcount8_sec"
+  },
+  {
+    circuitName := "QueuePointer_3"
+    specFile := "verification/specs/QueuePointer_spec.sv"
+    topModule := "QueuePointer_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueuePointer_3.queuepointer_3_sec"
+  },
+  {
+    circuitName := "QueuePointerLoadable_3"
+    specFile := "verification/specs/QueuePointerLoadable_spec.sv"
+    topModule := "QueuePointerLoadable_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueuePointerLoadable_3.queuepointerloadable_3_sec"
+  },
+  {
+    circuitName := "QueueCounterLoadable_4"
+    specFile := "verification/specs/QueueCounterLoadable_spec.sv"
+    topModule := "QueueCounterLoadable_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueueCounterLoadable_4.queuecounterloadable_4_sec"
+  },
+  {
+    circuitName := "Queue16x32_DualPort"
+    specFile := "verification/specs/Queue16x32_DualPort_spec.sv"
+    topModule := "Queue16x32_DualPort_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue16x32_DualPort.queue16x32_dualport_sec"
+  },
 ]
 
 /-- Look up a registered spec by circuit name. -/

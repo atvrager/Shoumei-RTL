@@ -7,8 +7,8 @@ namespace ShoumeiSec.BridgeQueue1
 set_option linter.unusedVariables false
 
 def absState (s : ShoumeiSec.Bridge.Impl.State) : ShoumeiSec.Bridge.Spec.State where
-  v_auto_ff_cc_337_slice_25 := s.v_procdff_14
-  v_auto_ff_cc_337_slice_28 := s.v_auto_ff_cc_337_slice_15
+  v_auto_ff_cc_337_slice_34 := s.v_auto_ff_cc_337_slice_15
+  v_procdff_30 := s.v_procdff_14
 
 def absInputs (i : ShoumeiSec.Bridge.Impl.Inputs) : ShoumeiSec.Bridge.Spec.Inputs where
   enq_data := i.enq_data

@@ -229,7 +229,7 @@ sec-bridge:
 	@cp verification/specs/BridgeQueue1.lean output/sec-bridge/ShoumeiSec/BridgeQueue1.lean
 	@python3 scripts/gen-bridges.py
 	@lake --no-ansi build ShoumeiSec
-	@echo "✓ Certified Dual-RTL SEC Bridge clean (101 circuits verified via bv_decide: 0 axioms)"
+	@echo "✓ Certified Dual-RTL SEC Bridge clean (121 circuits verified via bv_decide: 0 axioms)"
 
 # Export Dual-RTL SEC manifest and check specification coverage
 sec-manifest:
