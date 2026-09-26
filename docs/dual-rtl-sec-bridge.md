@@ -61,7 +61,8 @@ rebuilt on demand by `make sec-bridge` and never appear in `git status`.
 
 ### 1. Ingesting Without Python
 
-Previous translation pipelines relied on Python scripts (`smt2lean.py`, `sva2lean.py`). The bridge introduces a native, self-contained Lean 4 tool (`lake exe smt2lean`):
+The bridge introduces a native, self-contained Lean 4 tool (`lake exe smt2lean`,
+source `Smt2Lean.lean`); no Python is in the loop:
 
 - **Input**: SMT-LIB2 output from Yosys (`write_functional_smt2`).
 - **Parser**: Native recursive-descent S-expression parser written in pure Lean 4.
@@ -142,13 +143,16 @@ of `Queue1_spec.sv` against the emitted `Queue1_8` netlist model:
 2. **Handshake Stability**: Data and valid signals hold invariant across stalled cycles (`valid && !deq_ready |=> valid && $stable(data_reg)`)
 3. **Enqueue Effect**: Enqueue into an empty queue stores the operand and asserts valid on the subsequent cycle (`!valid && enq_valid |=> valid && data_reg == $past(enq_data)`)
 
-This is the only hand-authored Lean in the bridge.  There is no SVA lifter in the
-toolchain (`smt2lean` translates SMT2 only), so the three properties are
-transcribed by hand onto the generated `Queue1_8Spec`/`Queue1_8Impl` step
-functions.  They are kept because the generated SEC theorem proves
-output/state agreement, not the multi-cycle contracts.  `Queue1_8`'s sequential
-equivalence itself is generated like every other circuit
-(`ShoumeiSec.BridgeQueue1_8.queue1_8_sec`), so no hand file restates it.
+This is the only hand-authored Lean in the bridge.  There is no SVA-to-Lean
+translator in the toolchain: `smt2lean` consumes Yosys SMT2 only, and
+`lean/Shoumei/Codegen/SVA.lean` runs the other way, emitting SVA from Lean
+theorems for external FPV (`verification/sva-verify.sh` drives VC Formal or
+Verilator).  The three properties are therefore transcribed by hand onto the
+generated `Queue1_8Spec`/`Queue1_8Impl` step functions.  They are kept because
+the generated SEC theorem proves output/state agreement, not the multi-cycle
+contracts.  `Queue1_8`'s sequential equivalence itself is generated like every
+other circuit (`ShoumeiSec.BridgeQueue1_8.queue1_8_sec`), so no hand file
+restates it.
 
 ## Verification Commands
 
