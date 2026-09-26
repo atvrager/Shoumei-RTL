@@ -205,11 +205,38 @@ notice, and a later edit to the spec dropped its whole `` `ifdef FORMAL `` block
 Both losses were silent, which is the whole argument for translating instead of
 transcribing.
 
+### 5. Scaling Limits and Tiering (`bv_decide`)
+
+The BitVec solver (`bv_decide`) bit-blasts formulas into CNF and dispatches to an
+integrated CDCL/CaDiCaL SAT solver with LRAT proof checking. Performance scales
+differently across circuit topologies:
+
+- **Adders, MUX trees, Shifters, Decoders, Queues**: Scale cleanly up to 106 bits
+  (e.g. `KoggeStoneAdder106` proves in 2.8s; `Mux64x64` in 4.4s).
+- **Multiplier probe (`Mul32x32To64`)**: Evaluated against an expressive SV
+  spec (`assign product = 64'(a) * 64'(b)`).
+  - Spec-side SVA properties (`a_zero_mul`, `a_identity_mul`) prove in 0.67s via
+    `sva2lean` and `bv_decide`.
+  - Full netlist SEC (Wallace/Dadda tree with 32 partial products, 8 CSA stages,
+    and `MulFinalAdder64`) **times out in SAT solving** (>60s, 99% CPU, 824 MB RSS).
+
+#### Implications for Remaining Circuits
+
+1. **Arithmetic Datapaths (Multipliers, Dividers, FP)**: Monolithic `bv_decide`
+   cannot discharge non-linear arithmetic against pure bit-blasted products without
+   algebraic rewriting. Verification for these units follows two distinct paths:
+   - Compositional verification (proving partial products, CSA compressors via
+     lemmas, and the final adder independently).
+   - Lock-step architectural co-simulation against Spike (`make -C testbench cosim`).
+2. **Tiered Coverage Strategy**:
+   - **Tier A (Registers, Buffers, Gates)**: Direct SEC via parameterized specs (130 circuits verified).
+   - **Tier B/C (ALUs, PLRU, Small Core Sequencers)**: Tractable via `bv_decide`.
+   - **Tier D (Multipliers, Dividers, FP, OoO Core)**: Compositional certificates or cosimulation.
 ## Verification Commands
 
 ```bash
 # Run full dual-RTL bridge verification (generates output/sec-bridge/, then
-# builds the ShoumeiSec library: 121 circuits + 53 spec assertions, 0 axioms)
+# builds the ShoumeiSec library: 130 circuits + 107 spec assertions, 0 axioms)
 make sec-bridge
 
 # Coverage manifest: verified / spec-only / missing across all 237 circuits
@@ -231,10 +258,10 @@ python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
 | Metric | Count |
 |---|---|
 | Circuits in the emitted universe | 237 |
-| Families with a human-authored spec | 121 (51%) |
-| Verified with `bv_decide` (0 axioms) | 121 |
+| Families with a human-authored spec | 130 (54%) |
+| Verified with `bv_decide` (0 axioms) | 130 |
 | Spec-only (no proof yet) | 0 |
-| Missing | 116 |
+| Missing | 107 |
 
 Tracked verification surface:
 
