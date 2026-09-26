@@ -63,3 +63,8 @@ lean_exe gen_benchmarks where
 lean_exe smt2lean where
   root := `Smt2Lean
   supportInterpreter := true
+
+-- Executable target for SVA assertion to Lean theorem translation
+lean_exe sva2lean where
+  root := `Sva2Lean
+  supportInterpreter := true

@@ -21,7 +21,9 @@ module Register_spec #(
   default clocking @(posedge clock); endclocking
   default disable iff (reset);
 
-  a_reset_clears: assert property (reset |=> (q == '0));
+  // The subject of this claim is reset itself, so it must not inherit
+  // `disable iff (reset)`: that would make the property vacuously true.
+  a_reset_clears: assert property (@(posedge clock) disable iff (1'b0) reset |=> (q == '0));
   a_data_latch:   assert property (!reset |=> (q == $past(d)));
 `endif
 

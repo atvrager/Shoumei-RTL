@@ -149,6 +149,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    emit_sva_props(mod, "Register_spec.sv", spec_lean)
 
 def bridge_register_en(w):
     mod = f"RegisterEn{w}"
@@ -206,6 +207,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    emit_sva_props(mod, "RegisterEn_spec.sv", spec_lean)
 
 def bridge_decoder(w):
     mod = f"Decoder{w}"
@@ -870,6 +872,14 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+def emit_sva_props(mod, spec_file, model_lean, params=""):
+    """Translate a specification's SVA assertions into Lean theorems over the
+    Lean model of that same specification.  Fails loudly (sva2lean exits
+    non-zero) rather than dropping an assertion."""
+    out_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}Props.lean"
+    run(f'lake exe sva2lean verification/specs/{spec_file} {model_lean} {out_lean} {params}'.rstrip())
+    print(f"Generated {mod}Props")
+
 def bridge_queue1(w):
     mod = f"Queue1_{w}"
     spec_smt = f"verification/bridge/{mod}_spec.smt2"
@@ -941,6 +951,7 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+    emit_sva_props(mod, "Queue1_spec.sv", spec_lean)
 
 def bridge_queue1_flow(w):
     mod = f"Queue1Flow_{w}"

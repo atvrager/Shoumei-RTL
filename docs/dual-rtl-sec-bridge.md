@@ -108,7 +108,7 @@ correspondence.  Where a design flattens into several identical state fields
 (`Queue16x32_DualPort`'s 16 entries), the correspondence is derived by probing each
 field through a read port and is recorded as a table in the script.
 
-### Parameterized specification families
+#### Parameterized specification families
 
 One spec file covers every width/topology variant of a family; Yosys `chparam`
 instantiates it for each instance:
@@ -124,7 +124,7 @@ instantiates it for each instance:
 | `QueuePointer_spec.sv`, `QueuePointerLoadable_spec.sv`, `QueueCounterLoadable_spec.sv` | pointer/counter primitives |
 | `Queue16x32_DualPort_spec.sv` | 16x32 dual-write dual-read register file |
 
-### Combinational-loop hazard in the SMT functional backend
+#### Combinational-loop hazard in the SMT functional backend
 
 Yosys' `write_functional_smt2` rejects designs where its signal-group heuristics
 bundle unrelated scalar carry/prefix nets into a bus whose bit assignments then
@@ -134,31 +134,74 @@ name those nets as scalars (`pxa_l{li}g{i}`, `ksag{stride}x{i}`, `pamask{i}x{j}`
 `paorx{i}`, `encor{b}x{idx}`, `qpc{i}`, `qccp{i}`, `qccm{i}`) rather than
 `_<index>` buses.
 
-### 4. SVA Property Lifting
+### 4. SVA Property Translation (`sva2lean`)
 
-`verification/specs/BridgeQueue1Properties.lean` restates the temporal assertions
-of `Queue1_spec.sv` against the emitted `Queue1_8` netlist model:
+The assertions a specification writes about itself are translated into Lean
+theorems by `lake exe sva2lean` (source `Sva2Lean.lean`), which reads the spec's
+`` `ifdef FORMAL `` block together with the Lean model of that same
+specification:
 
-1. **Ready-Valid Contract**: `enq_ready = !valid`
-2. **Handshake Stability**: Data and valid signals hold invariant across stalled cycles (`valid && !deq_ready |=> valid && $stable(data_reg)`)
-3. **Enqueue Effect**: Enqueue into an empty queue stores the operand and asserts valid on the subsequent cycle (`!valid && enq_valid |=> valid && data_reg == $past(enq_data)`)
+```
+  spec.sv  --yosys + smt2lean-->  Model.step        the body
+  spec.sv  --sva2lean---------->  theorem          the claims
+  netlist  --SEC bridge-------->  netlist == Model  the lift
+```
 
-This is the only hand-authored Lean in the bridge.  There is no SVA-to-Lean
-translator in the toolchain: `smt2lean` consumes Yosys SMT2 only, and
-`lean/Shoumei/Codegen/SVA.lean` runs the other way, emitting SVA from Lean
-theorems for external FPV (`verification/sva-verify.sh` drives VC Formal or
-Verilator).  The three properties are therefore transcribed by hand onto the
-generated `Queue1_8Spec`/`Queue1_8Impl` step functions.  They are kept because
-the generated SEC theorem proves output/state agreement, not the multi-cycle
-contracts.  `Queue1_8`'s sequential equivalence itself is generated like every
-other circuit (`ShoumeiSec.BridgeQueue1_8.queue1_8_sec`), so no hand file
-restates it.
+So a claim proven of the specification body holds of the emitted netlist
+through the SEC theorem, and each specification becomes self-checking: its SV
+body must satisfy the SV properties it declares.
+
+Supported subset, and nothing outside it is accepted silently:
+
+| Form | Meaning |
+|---|---|
+| `assert (e);` | invariant over the model's combinational outputs |
+| `assert property (e);` | invariant |
+| `assert property (a \|-> c);` | same-cycle implication |
+| `assert property (a \|=> c);` | next-cycle implication |
+| `default clocking @(posedge clk);` | clocking (implied by the model) |
+| `default disable iff (r);` | hypotheses `i*.r = 0#1` on each sampled cycle |
+| `@(posedge clk) disable iff (1'b0)` | per-property opt-out of the default disable |
+| `$past(x[, n])`, `$stable(x)` | resampled against previous quantified cycles |
+| `$onehot(x)`, `x[k]`, `P'(e)`, `'0`, `4'd3` | power-of-two, constant bit select, parameter cast, literals |
+| `! ~ && \|\| == != < > <= >= + - & \| ^` | operators |
+
+Two failure modes are hard errors rather than silent weakenings:
+
+- **Unparsed trailing tokens.** An operand that fails to parse leaves the rest
+  of the property unconsumed; the tool refuses it. (The first draft of this
+  tool silently truncated `a_handshake_stable` to its first conjunct.)
+- **Vacuous assertions.** A property disabled on `r` whose antecedent assumes
+  `r` can never fail. `Register_spec.sv` and `RegisterEn_spec.sv` both declared
+  `a_reset_clears: assert property (reset |=> (q == '0))` under
+  `default disable iff (reset)`; both are now written with an explicit
+  `disable iff (1'b0)`, which is what makes the claim mean something.
+
+Coverage today: 53 theorems across 21 generated modules, from `Queue1_spec`
+(4 assertions), `Register_spec` (2, at 12 widths) and `RegisterEn_spec`
+(3, at 7 widths).
+
+Not yet covered: the 21 combinational assertions in the remaining 9 specs
+(adders, subtractor, comparators, equality comparators, decoders, muxes).
+They are written inside `always_comb` as `assert (e)` or `if (guard) assert (e)`,
+so two things are still needed -- locating the parenthesis group that follows
+the `assert` keyword (an `if (` guard is currently mistaken for it) and mapping
+a guard to a same-cycle implication.  Wiring is also per `(spec, width)` rather
+than per circuit, since six adder topologies share one `Adder_spec` instantiation
+and should not each emit a duplicate copy of its theorems.
+
+History note: this replaced a hand-transcribed file,
+`verification/specs/BridgeQueue1Properties.lean`, which carried three of
+`Queue1_spec`'s four properties -- `a_pop_effect` had been dropped without
+notice, and a later edit to the spec dropped its whole `` `ifdef FORMAL `` block.
+Both losses were silent, which is the whole argument for translating instead of
+transcribing.
 
 ## Verification Commands
 
 ```bash
 # Run full dual-RTL bridge verification (generates output/sec-bridge/, then
-# builds the ShoumeiSec library: 121 circuits, 0 axioms)
+# builds the ShoumeiSec library: 121 circuits + 53 spec assertions, 0 axioms)
 make sec-bridge
 
 # Coverage manifest: verified / spec-only / missing across all 237 circuits
@@ -190,7 +233,8 @@ Tracked verification surface:
 | Path | Tracked | Role |
 |---|---|---|
 | `verification/specs/*.sv` | yes | human-authored reference models |
-| `verification/specs/BridgeQueue1Properties.lean` | yes | SVA-lifted property statements on the emitted `Queue1_8` |
+| `Sva2Lean.lean` | yes | SVA assertion -> Lean theorem translator (`lake exe sva2lean`) |
+| `output/sec-bridge/ShoumeiSec/Bridge*Props.lean` | no | generated per-spec assertion theorems |
 | `scripts/gen-bridges.py` | yes | per-family SEC recipes and state-correspondence tables |
 | `lean/Shoumei/Verification/DualRTL.lean` | yes | registry mapping circuit -> spec -> proof |
 | `output/sec-bridge/**` | no | generated `Spec`/`Impl` models and SEC proofs |

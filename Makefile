@@ -215,16 +215,16 @@ sec-equiv:
 
 sec: sec-equiv
 
-# Certified Dual-RTL bridge: verifies Shoumei-emitted netlist against expressive
-# human-written SystemVerilog specs, lifting SVA properties via Lean 4 bv_decide.
+# Certified Dual-RTL bridge: verifies Shoumei-emitted netlists against human-written
+# SystemVerilog specs (SEC), and translates each spec's own SVA assertions into Lean
+# theorems over that spec's model (`lake exe sva2lean`).  Verdicts are bv_decide, 0 axioms.
 sec-bridge:
 	@mkdir -p verification/bridge
-	@lake --no-ansi build smt2lean
+	@lake --no-ansi build smt2lean sva2lean
 	@echo "==> Running Certified Dual-RTL Bridge (Yosys SMT2 -> pure Lean bv_decide)..."
 	@python3 scripts/gen-bridges.py
-	@cp verification/specs/BridgeQueue1Properties.lean output/sec-bridge/ShoumeiSec/BridgeQueue1Properties.lean
 	@lake --no-ansi build ShoumeiSec
-	@echo "✓ Certified Dual-RTL SEC Bridge clean (121 circuits verified via bv_decide: 0 axioms)"
+	@echo "✓ Certified Dual-RTL bridge clean (121 circuits SEC + 53 spec assertions, bv_decide, 0 axioms)"
 
 # Export Dual-RTL SEC manifest and check specification coverage
 sec-manifest:

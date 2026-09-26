@@ -54,4 +54,17 @@ module Queue1_spec #(
     end
   end
 
+`ifdef FORMAL
+  // ---- SVA Properties: what this specification claims about itself ----
+  // Checked against the Lean model of this module by `lake exe sva2lean`;
+  // the netlist inherits them through the SEC theorem.
+  default clocking @(posedge clock); endclocking
+  default disable iff (reset);
+
+  a_enq_ready_contract: assert property (enq_ready == !valid);
+  a_handshake_stable:   assert property (valid && !deq_ready |=> valid && $stable(data_reg));
+  a_push_effect:        assert property (!valid && enq_valid |=> valid && data_reg == $past(enq_data));
+  a_pop_effect:         assert property (valid && deq_ready && !enq_valid |=> !valid);
+`endif
+
 endmodule
