@@ -130,11 +130,11 @@ def validPrefixNetwork (levels : List (List (Nat × Nat))) (width : Nat) : Bool 
 def mkPrefixLevel (pfx : String) (li n : Nat) (lvl : List (Nat × Nat))
     (gPrev pPrev : List Wire) : List Gate × List Wire × List Wire :=
   let lt := pfx ++ "_l" ++ toString li
-  let gNew := makeIndexedWires (lt ++ "_g") n
-  let pNew := makeIndexedWires (lt ++ "_p") n
+  let gNew := (List.range n).map (fun i => Wire.mk (lt ++ "g" ++ toString i))
+  let pNew := (List.range n).map (fun i => Wire.mk (lt ++ "p" ++ toString i))
   let hiSet := lvl.map (·.1)
   let cellGates := lvl.flatMap fun (hi, lo) =>
-    let pg := Wire.mk (lt ++ "_pg_" ++ toString hi)
+    let pg := Wire.mk (lt ++ "pg" ++ toString hi)
     [ Gate.mkAND (pPrev[hi]!) (gPrev[lo]!) pg,
       Gate.mkOR (gPrev[hi]!) pg (gNew[hi]!),
       Gate.mkAND (pPrev[hi]!) (pPrev[lo]!) (pNew[hi]!) ]
@@ -151,8 +151,8 @@ def mkPrefixAdd (tree : PrefixTree) (a b : List Wire) (cin : Option Wire)
   let coutWire := Wire.mk (pfx ++ "_cout")
   if n == 0 then ([], coutWire)
   else
-  let g0 := makeIndexedWires (pfx ++ "_g0") n
-  let p0 := makeIndexedWires (pfx ++ "_p0") n
+  let g0 := (List.range n).map (fun i => Wire.mk (pfx ++ "g0" ++ toString i))
+  let p0 := (List.range n).map (fun i => Wire.mk (pfx ++ "p0" ++ toString i))
   let initGates := List.flatten <| (List.range n).map fun i =>
     [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
       Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
@@ -161,8 +161,8 @@ def mkPrefixAdd (tree : PrefixTree) (a b : List Wire) (cin : Option Wire)
   let (cinGates, gInit) :=
     match cin with
     | some c =>
-        let p0c := Wire.mk (pfx ++ "_p0cin")
-        let gm := Wire.mk (pfx ++ "_g0m")
+        let p0c := Wire.mk (pfx ++ "p0cin")
+        let gm := Wire.mk (pfx ++ "g0m")
         ([Gate.mkAND (p0[0]!) c p0c, Gate.mkOR (g0[0]!) p0c gm],
          [gm] ++ (List.range (n - 1)).map (fun i => g0[i + 1]!))
     | none => ([], (List.range n).map (fun i => g0[i]!))

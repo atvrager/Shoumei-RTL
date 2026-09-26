@@ -19,6 +19,7 @@ import Shoumei.Components.Select
 import Shoumei.Verification.ExportCerts
 import Shoumei.Verification.StructuralLint
 import Shoumei.DSL.PortResolve
+import Shoumei.Verification.DualRTL
 
 -- Phase 0: Foundation
 import Shoumei.Examples.Adder
@@ -166,6 +167,7 @@ def baseCircuits : List Circuit := [
   mkMux4x1,
   mkComparator4,
   q1w1,
+  mkQueue1StructuralComplete 8,
   mkQueue1FlowStructural 39,     -- CDB result FIFOs with flow-through bypass
   mkQueue1FlowStructural 70,     -- 64-bit result FIFOs (tag6 + data64)
   mkQueue1FlowStructural 71,     -- FP result FIFO (tag6 + data64 + is_fp)
@@ -425,6 +427,13 @@ def main (args : List String) : IO Unit := do
     return
   if args.contains "--export-refinements" then
     Shoumei.Verification.ExportCerts.printRefinements allCircuits riscvDecoderModules
+    return
+  if args.contains "--export-sec-manifest" || args.contains "--sec-manifest" then
+    Shoumei.Verification.DualRTL.printManifest allCircuits
+    return
+  if args.contains "--check-sec-specs" then
+    let rc ← Shoumei.Verification.DualRTL.checkSpecs allCircuits
+    if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--check-wiring" then
     let missing := Shoumei.DSL.PortResolve.checkRegistryWiring allCircuits

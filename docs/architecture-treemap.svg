@@ -24,7 +24,7 @@ text { font-family: 'Nunito','Quicksand','Varela Round','Segoe UI','Helvetica Ne
 <rect x="1319.1" y="22.0" width="130.4" height="28.0" rx="14.0" fill="#f3f0ff" stroke="#b197fc" stroke-width="1.5"/>
 <text x="1384.3" y="41.0" class="pill" fill="#6741d9" text-anchor="middle">🧩 503 instances</text>
 <rect x="1459.5" y="22.0" width="116.5" height="28.0" rx="14.0" fill="#e7f5ff" stroke="#74c0fc" stroke-width="1.5"/>
-<text x="1517.8" y="41.0" class="pill" fill="#1971c2" text-anchor="middle">📦 236 modules</text>
+<text x="1517.8" y="41.0" class="pill" fill="#1971c2" text-anchor="middle">📦 237 modules</text>
 <text x="648.0" y="30.0" class="sparkle" fill="#f783ac">✦</text>
 <text x="676.0" y="52.0" class="sparkle" fill="#b197fc">✧</text>
 <text x="700.0" y="26.0" class="sparkle" fill="#ffa8a8">✿</text>

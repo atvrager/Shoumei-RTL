@@ -287,6 +287,7 @@ import Shoumei.Verification.ALU32HierBridge
 import Shoumei.Verification.CompositionDemos
 import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts
+import Shoumei.Verification.DualRTL
 import Shoumei.Verification.ExportCerts
 import Shoumei.Verification.Implements
 import Shoumei.Verification.ProofManifest

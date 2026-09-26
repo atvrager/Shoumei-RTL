@@ -29,6 +29,17 @@ open Shoumei.Examples
 def makeIndexedWires (name : String) (n : Nat) : List Wire :=
   (List.range n).map (fun i => Wire.mk s!"{name}_{i}")
 
+-- Helper: Create a list of wires forming a *chain*, not a bus.
+-- Bit i of a chain is driven using bit i-1 (carries, borrows, priorities), so the
+-- bits are not independent lanes.  The names deliberately carry no `_<idx>`
+-- suffix: a `name_0`/`name_1`/... set is indistinguishable from a bus, so both
+-- the explicit group annotation and `autoDetectSignalGroups` would pack it, and
+-- the emitter would then fold the per-bit gates into one wide operator.  A wide
+-- `c` that both drives and reads its own bits is a cycle at cell granularity:
+-- Yosys' functional SMT backend rejects it as a combinational loop.
+def makeChainWires (name : String) (n : Nat) : List Wire :=
+  (List.range n).map (fun i => Wire.mk s!"{name}{i}")
+
 -- Helper: Create a FullAdder instance for a specific bit position
 -- Uses Circuit.inline to properly reuse the proven fullAdderCircuit
 -- This demonstrates hierarchical composition!
@@ -76,7 +87,7 @@ def mkRippleCarryAdder32 : Circuit :=
   -- Carry chain: cin → c0 → c1 → ... → c30 → c31 (final carry, internal)
   -- For 32 bits, need 32 internal carries (c0..c31)
   -- Note: Final carry (c31) is kept internal since address calculations don't need overflow detection
-  let internal_carries := makeIndexedWires "c" 32
+  let internal_carries := makeChainWires "c" 32
   let cin := Wire.mk "cin"
 
   -- Full carry chain: cin, c0, c1, ..., c31 (33 elements)
@@ -94,8 +105,7 @@ def mkRippleCarryAdder32 : Circuit :=
     signalGroups := [
       { name := "a", width := 32, wires := a },
       { name := "b", width := 32, wires := b },
-      { name := "sum", width := 32, wires := sum },
-      { name := "c", width := 32, wires := internal_carries }
+      { name := "sum", width := 32, wires := sum }
     ]
   }
 
@@ -105,7 +115,7 @@ def mkRippleCarryAdder8 : Circuit :=
   let b := makeIndexedWires "b" 8
   let sum := makeIndexedWires "sum" 8
   -- For 8 bits, need 7 internal carries (c0..c6)
-  let internal_carries := makeIndexedWires "c" 7
+  let internal_carries := makeChainWires "c" 7
   let cin := Wire.mk "cin"
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
@@ -121,8 +131,7 @@ def mkRippleCarryAdder8 : Circuit :=
     signalGroups := [
       { name := "a", width := 8, wires := a },
       { name := "b", width := 8, wires := b },
-      { name := "sum", width := 8, wires := sum },
-      { name := "c", width := 7, wires := internal_carries }
+      { name := "sum", width := 8, wires := sum }
     ]
   }
 
@@ -132,7 +141,7 @@ def mkRippleCarryAdder4 : Circuit :=
   let b := makeIndexedWires "b" 4
   let sum := makeIndexedWires "sum" 4
   -- For 4 bits, need 3 internal carries (c0..c2)
-  let internal_carries := makeIndexedWires "c" 3
+  let internal_carries := makeChainWires "c" 3
   let cin := Wire.mk "cin"
   let cout := Wire.mk "cout"
   let carries := cin :: internal_carries ++ [cout]
@@ -148,8 +157,7 @@ def mkRippleCarryAdder4 : Circuit :=
     signalGroups := [
       { name := "a", width := 4, wires := a },
       { name := "b", width := 4, wires := b },
-      { name := "sum", width := 4, wires := sum },
-      { name := "c", width := 3, wires := internal_carries }
+      { name := "sum", width := 4, wires := sum }
     ]
   }
 
@@ -161,7 +169,7 @@ def mkRippleCarryAdder64 : Circuit :=
   let sum := makeIndexedWires "sum" 64
 
   -- Carry chain: 64 internal carries
-  let internal_carries := makeIndexedWires "c" 64
+  let internal_carries := makeChainWires "c" 64
   let cin := Wire.mk "cin"
   let carries := cin :: internal_carries
 
@@ -176,8 +184,7 @@ def mkRippleCarryAdder64 : Circuit :=
     signalGroups := [
       { name := "a", width := 64, wires := a },
       { name := "b", width := 64, wires := b },
-      { name := "sum", width := 64, wires := sum },
-      { name := "c", width := 64, wires := internal_carries }
+      { name := "sum", width := 64, wires := sum }
     ]
   }
 

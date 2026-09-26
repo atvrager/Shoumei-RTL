@@ -21,10 +21,12 @@
 output/**/*
 !output/**/
 !output/**/.gitkeep
+output/sec-bridge/
 *.v
 *.sv
 !testbench/**/*.sv
 !physical/**/*.sv
+!verification/specs/**/*.sv
 *.fir
 *.anno.json
 
@@ -63,6 +65,7 @@ cpp_sim/build/
 verification/results/
 verification/logs/
 verification/compositional-certs.txt
+*.smt2
 
 # Generated testbenches (produced by lake exe generate_all)
 testbench/generated/**

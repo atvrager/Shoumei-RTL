@@ -20,6 +20,10 @@ lean_lib «Shoumei» where
   srcDir := "lean"
   roots := #[`Shoumei, `Shoumei.All]
 
+lean_lib «ShoumeiSec» where
+  srcDir := "output/sec-bridge"
+  roots := #[`ShoumeiSec]
+
 -- Executable target for CENTRALIZED code generation
 -- Generates ALL circuits in one command (SV + flat netlist + C++ Sim + testbenches)
 -- This is the recommended way to generate code
@@ -53,4 +57,9 @@ lean_exe gen_tests where
 -- and validates every sample encoding by decoding it back.
 lean_exe gen_benchmarks where
   root := `GenBenchmarks
+  supportInterpreter := true
+
+-- Executable target for pure Lean SMT-LIB2 to BitVec model translation
+lean_exe smt2lean where
+  root := `Smt2Lean
   supportInterpreter := true

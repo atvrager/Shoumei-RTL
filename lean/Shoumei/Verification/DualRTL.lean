@@ -1,0 +1,827 @@
+/-
+Verification/DualRTL.lean - Dual-RTL SEC Specification Registry and Manifest
+
+Tracks independent SystemVerilog reference models for emitted circuits and
+monitors formal equivalence coverage (via the Yosys SMT2 -> pure Lean bv_decide bridge).
+-/
+
+import Shoumei.DSL
+
+namespace Shoumei.Verification.DualRTL
+
+open Shoumei
+
+/-- Status of a circuit's Dual-RTL SystemVerilog specification and formal equivalence. -/
+inductive SpecStatus where
+  | missing      : SpecStatus
+  | specExists   : SpecStatus
+  | secVerified  : SpecStatus
+  deriving Repr, DecidableEq, Inhabited
+
+def SpecStatus.asString : SpecStatus → String
+  | .missing => "MISSING"
+  | .specExists => "SPEC_EXISTS"
+  | .secVerified => "VERIFIED"
+
+/-- An entry registering an independent SystemVerilog specification for a circuit. -/
+structure DualRTLSpec where
+  circuitName  : String
+  specFile     : String
+  topModule    : String
+  hasProof     : Bool := false
+  proofRef     : String := ""
+  deriving Repr, Inhabited
+
+/-- Registered independent SystemVerilog specifications. -/
+def allSpecs : List DualRTLSpec := [
+  {
+    circuitName := "Queue1_8"
+    specFile := "verification/specs/Queue1_spec.sv"
+    topModule := "Queue1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeQueue1.queue1_sec"
+  },
+  {
+    circuitName := "EqualityComparator6"
+    specFile := "verification/specs/EqualityComparator6_spec.sv"
+    topModule := "EqualityComparator6_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeEqualityComparator6.equalityComparator6_sec"
+  },
+  {
+    circuitName := "Register1"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister1.register1_sec"
+  },
+  {
+    circuitName := "Register2"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister2.register2_sec"
+  },
+  {
+    circuitName := "Register3"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister3.register3_sec"
+  },
+  {
+    circuitName := "Register4"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister4.register4_sec"
+  },
+  {
+    circuitName := "Register6"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister6.register6_sec"
+  },
+  {
+    circuitName := "Register8"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister8.register8_sec"
+  },
+  {
+    circuitName := "Register12"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister12.register12_sec"
+  },
+  {
+    circuitName := "Register16"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister16.register16_sec"
+  },
+  {
+    circuitName := "Register20"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister20.register20_sec"
+  },
+  {
+    circuitName := "Register24"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister24.register24_sec"
+  },
+  {
+    circuitName := "Register32"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister32.register32_sec"
+  },
+  {
+    circuitName := "Register64"
+    specFile := "verification/specs/Register_spec.sv"
+    topModule := "Register_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegister64.register64_sec"
+  },
+  {
+    circuitName := "Decoder2"
+    specFile := "verification/specs/Decoder_spec.sv"
+    topModule := "Decoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDecoder2.decoder2_sec"
+  },
+  {
+    circuitName := "Decoder3"
+    specFile := "verification/specs/Decoder_spec.sv"
+    topModule := "Decoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDecoder3.decoder3_sec"
+  },
+  {
+    circuitName := "Decoder4"
+    specFile := "verification/specs/Decoder_spec.sv"
+    topModule := "Decoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDecoder4.decoder4_sec"
+  },
+  {
+    circuitName := "Decoder5"
+    specFile := "verification/specs/Decoder_spec.sv"
+    topModule := "Decoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDecoder5.decoder5_sec"
+  },
+  {
+    circuitName := "Decoder6"
+    specFile := "verification/specs/Decoder_spec.sv"
+    topModule := "Decoder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeDecoder6.decoder6_sec"
+  },
+  {
+    circuitName := "RegisterEn1"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn1.registeren1_sec"
+  },
+  {
+    circuitName := "RegisterEn2"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn2.registeren2_sec"
+  },
+  {
+    circuitName := "RegisterEn4"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn4.registeren4_sec"
+  },
+  {
+    circuitName := "RegisterEn8"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn8.registeren8_sec"
+  },
+  {
+    circuitName := "RegisterEn16"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn16.registeren16_sec"
+  },
+  {
+    circuitName := "RegisterEn32"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn32.registeren32_sec"
+  },
+  {
+    circuitName := "RegisterEn64"
+    specFile := "verification/specs/RegisterEn_spec.sv"
+    topModule := "RegisterEn_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRegisterEn64.registeren64_sec"
+  },
+  {
+    circuitName := "EqualityComparator20"
+    specFile := "verification/specs/EqualityComparator_spec.sv"
+    topModule := "EqualityComparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeEqualityComparator20.equalitycomparator20_sec"
+  },
+  {
+    circuitName := "EqualityComparator32"
+    specFile := "verification/specs/EqualityComparator_spec.sv"
+    topModule := "EqualityComparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeEqualityComparator32.equalitycomparator32_sec"
+  },
+  {
+    circuitName := "EqualityComparator64"
+    specFile := "verification/specs/EqualityComparator_spec.sv"
+    topModule := "EqualityComparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeEqualityComparator64.equalitycomparator64_sec"
+  },
+  {
+    circuitName := "Mux4x1"
+    specFile := "verification/specs/Mux4_spec.sv"
+    topModule := "Mux4_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux4x1.mux4x1_sec"
+  },
+  {
+    circuitName := "Mux4x32"
+    specFile := "verification/specs/Mux4_spec.sv"
+    topModule := "Mux4_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux4x32.mux4x32_sec"
+  },
+  {
+    circuitName := "Mux4x64"
+    specFile := "verification/specs/Mux4_spec.sv"
+    topModule := "Mux4_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux4x64.mux4x64_sec"
+  },
+  {
+    circuitName := "Mux8x2"
+    specFile := "verification/specs/Mux8_spec.sv"
+    topModule := "Mux8_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux8x2.mux8x2_sec"
+  },
+  {
+    circuitName := "Mux8x32"
+    specFile := "verification/specs/Mux8_spec.sv"
+    topModule := "Mux8_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux8x32.mux8x32_sec"
+  },
+  {
+    circuitName := "Mux8x64"
+    specFile := "verification/specs/Mux8_spec.sv"
+    topModule := "Mux8_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux8x64.mux8x64_sec"
+  },
+  {
+    circuitName := "Mux16x5"
+    specFile := "verification/specs/Mux16_spec.sv"
+    topModule := "Mux16_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux16x5.mux16x5_sec"
+  },
+  {
+    circuitName := "Mux16x6"
+    specFile := "verification/specs/Mux16_spec.sv"
+    topModule := "Mux16_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux16x6.mux16x6_sec"
+  },
+  {
+    circuitName := "Mux16x32"
+    specFile := "verification/specs/Mux16_spec.sv"
+    topModule := "Mux16_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux16x32.mux16x32_sec"
+  },
+  {
+    circuitName := "Mux32x6"
+    specFile := "verification/specs/Mux32_spec.sv"
+    topModule := "Mux32_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux32x6.mux32x6_sec"
+  },
+  {
+    circuitName := "Mux64x20"
+    specFile := "verification/specs/Mux64_spec.sv"
+    topModule := "Mux64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux64x20.mux64x20_sec"
+  },
+  {
+    circuitName := "Mux64x32"
+    specFile := "verification/specs/Mux64_spec.sv"
+    topModule := "Mux64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux64x32.mux64x32_sec"
+  },
+  {
+    circuitName := "Mux64x64"
+    specFile := "verification/specs/Mux64_spec.sv"
+    topModule := "Mux64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMux64x64.mux64x64_sec"
+  },
+  {
+    circuitName := "LogicUnit4"
+    specFile := "verification/specs/LogicUnit_spec.sv"
+    topModule := "LogicUnit_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeLogicUnit4.logicunit4_sec"
+  },
+  {
+    circuitName := "LogicUnit32"
+    specFile := "verification/specs/LogicUnit_spec.sv"
+    topModule := "LogicUnit_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeLogicUnit32.logicunit32_sec"
+  },
+  {
+    circuitName := "LogicUnit64"
+    specFile := "verification/specs/LogicUnit_spec.sv"
+    topModule := "LogicUnit_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeLogicUnit64.logicunit64_sec"
+  },
+  {
+    circuitName := "Shifter32"
+    specFile := "verification/specs/Shifter_spec.sv"
+    topModule := "Shifter_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeShifter32.shifter32_sec"
+  },
+  {
+    circuitName := "Shifter64"
+    specFile := "verification/specs/Shifter_spec.sv"
+    topModule := "Shifter_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeShifter64.shifter64_sec"
+  },
+  {
+    circuitName := "PCIncrementer4"
+    specFile := "verification/specs/PCIncrementer_spec.sv"
+    topModule := "PCIncrementer_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePCIncrementer4.pcincrementer4_sec"
+  },
+  {
+    circuitName := "PCIncrementer8"
+    specFile := "verification/specs/PCIncrementer_spec.sv"
+    topModule := "PCIncrementer_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePCIncrementer8.pcincrementer8_sec"
+  },
+  {
+    circuitName := "Comparator4"
+    specFile := "verification/specs/Comparator_spec.sv"
+    topModule := "Comparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeComparator4.comparator4_sec"
+  },
+  {
+    circuitName := "Comparator6"
+    specFile := "verification/specs/Comparator_spec.sv"
+    topModule := "Comparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeComparator6.comparator6_sec"
+  },
+  {
+    circuitName := "Comparator32"
+    specFile := "verification/specs/Comparator_spec.sv"
+    topModule := "Comparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeComparator32.comparator32_sec"
+  },
+  {
+    circuitName := "Comparator64"
+    specFile := "verification/specs/Comparator_spec.sv"
+    topModule := "Comparator_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeComparator64.comparator64_sec"
+  },
+  {
+    circuitName := "BrentKungAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder32.brentkungadder32_sec"
+  },
+  {
+    circuitName := "BrentKungAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder32NoCin.brentkungadder32nocin_sec"
+  },
+  {
+    circuitName := "BrentKungAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder32WithCin1.brentkungadder32withcin1_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder32.carryselectadder32_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder32NoCin.carryselectadder32nocin_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder32WithCin1.carryselectadder32withcin1_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder32.hancarlsonadder32_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder32NoCin.hancarlsonadder32nocin_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder32WithCin1.hancarlsonadder32withcin1_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder32.koggestoneadder32_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder32NoCin.koggestoneadder32nocin_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder32WithCin1.koggestoneadder32withcin1_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder32.ripplecarryadder32_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder32NoCin.ripplecarryadder32nocin_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder32WithCin1.ripplecarryadder32withcin1_sec"
+  },
+  {
+    circuitName := "SklanskyAdder32"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder32.sklanskyadder32_sec"
+  },
+  {
+    circuitName := "SklanskyAdder32NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder32NoCin.sklanskyadder32nocin_sec"
+  },
+  {
+    circuitName := "SklanskyAdder32WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder32WithCin1.sklanskyadder32withcin1_sec"
+  },
+  {
+    circuitName := "BrentKungAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder64.brentkungadder64_sec"
+  },
+  {
+    circuitName := "BrentKungAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder64NoCin.brentkungadder64nocin_sec"
+  },
+  {
+    circuitName := "BrentKungAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBrentKungAdder64WithCin1.brentkungadder64withcin1_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder64.carryselectadder64_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder64NoCin.carryselectadder64nocin_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder64WithCin1.carryselectadder64withcin1_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder64.hancarlsonadder64_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder64NoCin.hancarlsonadder64nocin_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder64WithCin1.hancarlsonadder64withcin1_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder64.koggestoneadder64_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder64NoCin.koggestoneadder64nocin_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder64WithCin1.koggestoneadder64withcin1_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder64.ripplecarryadder64_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder64NoCin.ripplecarryadder64nocin_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder64WithCin1.ripplecarryadder64withcin1_sec"
+  },
+  {
+    circuitName := "SklanskyAdder64"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder64.sklanskyadder64_sec"
+  },
+  {
+    circuitName := "SklanskyAdder64NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder64NoCin.sklanskyadder64nocin_sec"
+  },
+  {
+    circuitName := "SklanskyAdder64WithCin1"
+    specFile := "verification/specs/AdderWithCin1_spec.sv"
+    topModule := "AdderWithCin1_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder64WithCin1.sklanskyadder64withcin1_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder106"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder106.carryselectadder106_sec"
+  },
+  {
+    circuitName := "CarrySelectAdder106NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCarrySelectAdder106NoCin.carryselectadder106nocin_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder106"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder106.hancarlsonadder106_sec"
+  },
+  {
+    circuitName := "HanCarlsonAdder106NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeHanCarlsonAdder106NoCin.hancarlsonadder106nocin_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder106"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder106.koggestoneadder106_sec"
+  },
+  {
+    circuitName := "KoggeStoneAdder106NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeKoggeStoneAdder106NoCin.koggestoneadder106nocin_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder106"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder106.ripplecarryadder106_sec"
+  },
+  {
+    circuitName := "RippleCarryAdder106NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRippleCarryAdder106NoCin.ripplecarryadder106nocin_sec"
+  },
+  {
+    circuitName := "SklanskyAdder106"
+    specFile := "verification/specs/Adder_spec.sv"
+    topModule := "Adder_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder106.sklanskyadder106_sec"
+  },
+  {
+    circuitName := "SklanskyAdder106NoCin"
+    specFile := "verification/specs/AdderNoCin_spec.sv"
+    topModule := "AdderNoCin_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSklanskyAdder106NoCin.sklanskyadder106nocin_sec"
+  },
+  {
+    circuitName := "Subtractor32"
+    specFile := "verification/specs/Subtractor_spec.sv"
+    topModule := "Subtractor_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSubtractor32.subtractor32_sec"
+  },
+  {
+    circuitName := "Subtractor64"
+    specFile := "verification/specs/Subtractor_spec.sv"
+    topModule := "Subtractor_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeSubtractor64.subtractor64_sec"
+  },
+
+]
+
+/-- Look up a registered spec by circuit name. -/
+def findSpec (name : String) : Option DualRTLSpec :=
+  allSpecs.find? (·.circuitName == name)
+
+/-- Compute the status of a circuit given the filesystem presence of its spec file. -/
+def computeStatus (circuitName : String) (specFileExists : Bool) : SpecStatus :=
+  match findSpec circuitName with
+  | none => if specFileExists then .specExists else .missing
+  | some spec =>
+    if spec.hasProof then
+      .secVerified
+    else if specFileExists then
+      .specExists
+    else
+      .missing
+
+/-- Manifest entry for reporting. -/
+structure ManifestEntry where
+  circuitName : String
+  status      : SpecStatus
+  specFile    : String
+  proofRef    : String
+  deriving Repr
+
+/-- Generate the manifest for a list of circuits. -/
+def generateManifest (circuits : List Circuit) : IO (List ManifestEntry) := do
+  circuits.mapM fun c => do
+    let specOpt := findSpec c.name
+    let defaultPath := s!"verification/specs/{c.name}_spec.sv"
+    let specPath := specOpt.map (·.specFile) |>.getD defaultPath
+    let fileExists ← (System.FilePath.mk specPath).pathExists
+    let status := computeStatus c.name fileExists
+    let proofRef := specOpt.map (·.proofRef) |>.getD ""
+    pure {
+      circuitName := c.name
+      status := status
+      specFile := specPath
+      proofRef := proofRef
+    }
+
+/-- Print the Dual-RTL specification manifest and coverage summary. -/
+def printManifest (circuits : List Circuit) : IO Unit := do
+  let entries ← generateManifest circuits
+  let verified := entries.filter (·.status == .secVerified) |>.length
+    let specOnly := entries.filter (·.status == .specExists) |>.length
+  let missing  := entries.filter (·.status == .missing) |>.length
+  let total    := entries.length
+
+  IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  IO.println "  証明 Shoumei RTL - Dual-RTL SystemVerilog Specification Manifest"
+  IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  IO.println ""
+  IO.println "STATUS       | CIRCUIT                          | SPEC FILE"
+  IO.println "-------------+----------------------------------+-------------------------------------"
+  for e in entries do
+    let statusStr := match e.status with
+      | .secVerified => "✓ VERIFIED  "
+      | .specExists  => "○ SPEC_ONLY "
+      | .missing     => "✗ MISSING   "
+    let padLen := if e.circuitName.length < 32 then 32 - e.circuitName.length else 0
+    let circPadded := e.circuitName ++ String.ofList (List.replicate padLen ' ')
+    IO.println s!"{statusStr} | {circPadded} | {e.specFile}"
+
+  IO.println "-------------+----------------------------------+-------------------------------------"
+  IO.println s!"Summary: {verified} verified, {specOnly} spec-only, {missing} missing (Total: {total})"
+  let pct := if total > 0 then (verified * 100) / total else 0
+  IO.println s!"Dual-RTL SEC Bridge Coverage: {verified}/{total} ({pct}%)"
+  IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+/-- Check if all circuits have specs or report missing count. -/
+def checkSpecs (circuits : List Circuit) : IO UInt32 := do
+  let entries ← generateManifest circuits
+  let missing := entries.filter (·.status == .missing)
+  if missing.isEmpty then
+    IO.println s!"✓ All {entries.length} circuits have dual-RTL SystemVerilog specifications."
+    pure 0
+  else
+    IO.println s!"Notice: {missing.length}/{entries.length} circuits without dual-RTL specifications."
+    pure 0
+
+end Shoumei.Verification.DualRTL

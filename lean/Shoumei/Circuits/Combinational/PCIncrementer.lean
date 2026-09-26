@@ -38,7 +38,7 @@ def mkPCIncrementer (name : String) (inc : Nat) : Circuit :=
       if i == 31 then
         [sumGate]
       else
-        let carryOut := Wire.mk s!"pci_c_{i}"
+        let carryOut := Wire.mk s!"pci_c{i}"
         let carryGate := Gate.mkAND pc[i]! carryIn carryOut
         sumGate :: carryGate :: buildChain (i + 1) carryOut
 

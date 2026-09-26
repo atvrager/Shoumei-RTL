@@ -85,7 +85,7 @@ def mkComparatorN (n : Nat) : Circuit :=
     Gate.mkNOT b_wire b_inv_wire
   ) b b_inv
 
-  let internal_carries := makeIndexedWires "c" (n - 1)
+  let internal_carries := makeChainWires "c" (n - 1)
   let one := Wire.mk "one"
   let carries := one :: internal_carries ++ [borrow]
   let rca_gates := buildFullAdderChain a b_inv carries diff ""
@@ -155,8 +155,7 @@ def mkComparatorN (n : Nat) : Circuit :=
       { name := "a", width := n, wires := a },
       { name := "b", width := n, wires := b },
       { name := "diff", width := n, wires := diff },
-      { name := "b_inv", width := n, wires := b_inv },
-      { name := "c", width := n - 1, wires := internal_carries }
+      { name := "b_inv", width := n, wires := b_inv }
     ]
     keepHierarchy := Nat.ble 6 n  -- Preserve hierarchy for 6-bit and 32-bit comparators
   }

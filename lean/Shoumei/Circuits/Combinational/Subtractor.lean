@@ -47,7 +47,7 @@ def mkSubtractorN (n : Nat) : Circuit :=
 
   -- RippleCarryAdder structure (reuse our proven implementation!)
   -- For N bits, need N-1 internal carries
-  let internal_carries := makeIndexedWires "c" (n - 1)
+  let internal_carries := makeChainWires "c" (n - 1)
   let cin := Wire.mk "one"  -- cin=1 for 2's complement
 
   -- Carry chain: cin (=1), c0, c1, ..., c(n-2), borrow
@@ -70,8 +70,7 @@ def mkSubtractorN (n : Nat) : Circuit :=
       { name := "a", width := n, wires := a },
       { name := "b", width := n, wires := b },
       { name := "diff", width := n, wires := diff },
-      { name := "b_inv", width := n, wires := b_inv },
-      { name := "c", width := n - 1, wires := internal_carries }
+      { name := "b_inv", width := n, wires := b_inv }
     ]
   }
 
