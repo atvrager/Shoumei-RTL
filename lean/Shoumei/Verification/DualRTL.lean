@@ -954,6 +954,35 @@ def allSpecs : List DualRTLSpec := [
   },
 
   {
+    circuitName := "BranchExecUnit"
+    specFile := "verification/specs/BranchExecUnit_spec.sv"
+    topModule := "BranchExecUnit_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBranchExecUnit.branchexecunit_sec"
+  },
+  {
+    circuitName := "MemoryExecUnit"
+    specFile := "verification/specs/MemoryExecUnit_spec.sv"
+    topModule := "MemoryExecUnit_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMemoryExecUnit.memoryexecunit_sec"
+  },
+  {
+    circuitName := "MemoryExecUnitDecoupled"
+    specFile := "verification/specs/MemoryExecUnitDecoupled_spec.sv"
+    topModule := "MemoryExecUnitDecoupled_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeMemoryExecUnitDecoupled.memoryexecunitdecoupled_sec"
+  },
+  {
+    circuitName := "CDBMux_FD_W2"
+    specFile := "verification/specs/CDBMux_FD_W2_spec.sv"
+    topModule := "CDBMux_FD_W2_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCDBMux_FD_W2.cdbmux_fd_w2_sec"
+  },
+
+  {
     circuitName := "Queue1_1"
     specFile := "verification/specs/Queue1_spec.sv"
     topModule := "Queue1_spec"

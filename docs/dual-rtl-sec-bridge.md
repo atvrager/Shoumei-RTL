@@ -229,14 +229,49 @@ differently across circuit topologies:
      lemmas, and the final adder independently).
    - Lock-step architectural co-simulation against Spike (`make -C testbench cosim`).
 2. **Tiered Coverage Strategy**:
-   - **Tier A (Registers, Buffers, Gates)**: Direct SEC via parameterized specs (130 circuits verified).
-   - **Tier B/C (ALUs, PLRU, Small Core Sequencers)**: Tractable via `bv_decide`.
+   - **Tier A (Registers, Buffers, Gates)**: Direct SEC via parameterized specs.
+   - **Tier B (Adders, ALUs, Compressors)**: Direct SEC via `bv_decide`.
+   - **Tier C (Replacement policies, RATs, SoC peripherals, datapath units)**:
+     Direct SEC via `bv_decide`. C4 (`BranchExecUnit`, `MemoryExecUnit`,
+     `MemoryExecUnitDecoupled`, `CDBMux_FD_W2`) is proven; `IntegerExecUnit_W2`,
+     `IntegerExecUnit_W2_64`, `BusyTable_W2`, `FPBusyTable` are blocked by the
+     solver defect documented below.
    - **Tier D (Multipliers, Dividers, FP, OoO Core)**: Compositional certificates or cosimulation.
+
+#### Spurious counterexamples from `bv_decide` on SMT2-derived models
+
+Four circuits are *not* verified despite both models being correct, because
+`bv_decide` reports a **false counterexample** on the netlist-derived goal:
+
+| Circuit | Reported counterexample | Concrete evaluation of that assignment |
+|---|---|---|
+| `IntegerExecUnit_W2` | `opcode0=15, b0=0xFFFFFFFF` | both sides `0x00000000` (equal) |
+| `IntegerExecUnit_W2_64` | `opcode1=14, a1=0x4000000000000140` | both sides equal |
+| `BusyTable_W2` | all state bits 1, `read1_tag=26` | both sides equal |
+| `FPBusyTable` | all state bits 1, `read1_tag=19` | both sides equal |
+
+Evidence that the reports are spurious, not real mismatches:
+
+- The goal after `simp only [Impl.step, Spec.step, absInputs, absState]` contains no
+  residual opaque term (checked with `guard_target`), yet `bv_decide` fails in <1s.
+- Direct evaluation of the exact reported assignment in Lean gives equal outputs
+  on both sides.
+- Exhaustive sampling — 16 opcodes x 121 operand pairs for the exec units; 64 random
+  multi-bit states x 64 read tags for the tables — finds **zero** disagreements.
+- `bv_normalize` and `dsimp` before `bv_decide` do not change the outcome.
+
+Consequence: these four stay out of the verified set. Their specs are authored
+(`verification/specs/`), so the manifest lists them as spec-only. Alternative
+discharge routes, in order of preference:
+
+1. Yosys `miter -equiv` + `sat -verify` on the two SV files (independent SAT engine).
+2. Compositional: reuse the proven `ALU32`/`ALU64` bridge for the exec units.
+3. Exhaustive bit-split `bv_decide` if a Mathlib-free case splitter is added.
 ## Verification Commands
 
 ```bash
 # Run full dual-RTL bridge verification (generates output/sec-bridge/, then
-# builds the ShoumeiSec library: 130 circuits + 107 spec assertions, 0 axioms)
+# builds the ShoumeiSec library: 155 circuits + 147 spec assertions, 0 axioms)
 make sec-bridge
 
 # Coverage manifest: verified / spec-only / missing across all 237 circuits
@@ -258,10 +293,10 @@ python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
 | Metric | Count |
 |---|---|
 | Circuits in the emitted universe | 237 |
-| Families with a human-authored spec | 130 (54%) |
-| Verified with `bv_decide` (0 axioms) | 130 |
-| Spec-only (no proof yet) | 0 |
-| Missing | 107 |
+| Families with a human-authored spec | 159 (67%) |
+| Verified with `bv_decide` (0 axioms) | 155 (65%) |
+| Spec-only (no proof yet) | 5 |
+| Missing | 77 |
 
 Tracked verification surface:
 

@@ -41,6 +41,16 @@ QUEUE_POINTERS = [3]
 QUEUE_POINTERS_LOADABLE = [3]
 QUEUE_COUNTERS_LOADABLE = [4]
 
+# Purely combinational datapath units (no state): outputs compared directly.
+# IntegerExecUnit_W2 / _64 are excluded: bv_decide returns a spurious
+# counterexample on their SMT2-derived models (see docs/dual-rtl-sec-bridge.md).
+DATAPATH_UNITS = [
+    "BranchExecUnit",
+    "MemoryExecUnit",
+    "MemoryExecUnitDecoupled",
+    "CDBMux_FD_W2",
+]
+
 # Queue16x32_DualPort: both designs hold the same 16 entries but flatten them
 # into state fields in a different order.  The mapping below was derived by
 # probing each state field through rd_data_0 (field -> entry index), so it is
@@ -2468,6 +2478,66 @@ end ShoumeiSec.Bridge{mod}
     print(f"Generated {mod}")
 
 
+def bridge_datapath(mod):
+    """Stateless (purely combinational) datapath unit: no state, outputs only.
+
+    Both models are single-cycle functions, so the proof compares every output
+    for an arbitrary input vector (no state abstraction needed)."""
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    s_text = (ROOT / spec_lean).read_text()
+    i_text = (ROOT / impl_lean).read_text()
+    in_block = re.search(r"structure Inputs where(.*?)(?:deriving|structure)", s_text, re.DOTALL).group(1)
+    in_fields = [m.group(1) for m in re.finditer(r"(\w+)\s*:\s*BitVec", in_block)]
+    out_block = re.search(r"structure Outputs where(.*?)(?:deriving|structure)", s_text, re.DOTALL).group(1)
+    out_fields = [m.group(1) for m in re.finditer(r"(\w+)\s*:\s*BitVec", out_block)]
+    out_conj = " ∧\n    ".join(f"imp.1.{f} = spc.1.{f}" for f in out_fields)
+    in_pattern = ", ".join(f"i_{f}" for f in in_fields)
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+{chr(10).join(f"  {f} := i.{f}" for f in in_fields)}
+
+/-- Equivalence: {mod} is purely combinational, so every output must agree on
+    every input vector (no state to abstract). -/
+theorem {mod.lower()}_sec (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i default
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) default
+    {out_conj} := by
+  obtain ⟨{in_pattern}⟩ := i
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
 def main():
     print("Generating Register bridges...")
     for w in REGISTERS:
@@ -2569,6 +2639,9 @@ def main():
     bridge_uart()
     bridge_aclint()
     bridge_aplic()
+    print("Generating Datapath bridges...")
+    for mod in DATAPATH_UNITS:
+        bridge_datapath(mod)
     emit_spec_sva()
     proof_files = sorted((ROOT / "output" / "sec-bridge" / "ShoumeiSec").glob("Bridge*.lean"))
     lines = ["-- Generated root for ShoumeiSec bridge library", ""]
