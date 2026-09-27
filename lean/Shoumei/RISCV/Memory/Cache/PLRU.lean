@@ -136,8 +136,8 @@ def mkPLRU (ways : Nat) : Circuit :=
     Gate.mkMUX bit_q[i]! in_right[i]! upd_en bit_d[i]!
 
   -- Victim: one-hot descent.  `sel` is one-hot over all 2*ways-1 nodes.
-  let sel := (List.range (2 * ways - 1)).map fun i => Wire.mk s!"sel_{i}"
-  let not_bit := (List.range (ways - 1)).map fun i => Wire.mk s!"nbit_{i}"
+  let sel := (List.range (2 * ways - 1)).map fun i => Wire.mk s!"plruselx{i}"
+  let not_bit := (List.range (ways - 1)).map fun i => Wire.mk s!"plrunbitx{i}"
   let levelGates := (List.range depth).map (fun d =>
     let first := 2 ^ d - 1
     let count := 2 ^ d

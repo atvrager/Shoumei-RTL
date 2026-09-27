@@ -806,6 +806,162 @@ end ShoumeiSec.Bridge{mod}
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
     note_spec_rep(f"{mod}_spec.sv", mod, w)
+def bridge_plru(ways):
+    mod = f"PLRU{ways}"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, "PLRU_spec.sv", ways):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PLRU_spec.sv; chparam -set WAYS {ways} PLRU_spec; hierarchy -top PLRU_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} PLRU_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    spec_code = (ROOT / spec_lean).read_text()
+    impl_code = (ROOT / impl_lean).read_text()
+    s_field = re.search(r"structure State where\s*\n\s*(\w+)\s*:", spec_code).group(1)
+    i_field = re.search(r"structure State where\s*\n\s*(\w+)\s*:", impl_code).group(1)
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  clock := i.clock
+  reset := i.reset
+  upd_en := i.upd_en
+  upd_way_oh := i.upd_way_oh
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  {s_field} := s.{i_field}
+
+/-- Equivalence: {mod} netlist refines parameterized PLRU_spec #({ways}). -/
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.victim_oh = spc.1.victim_oh ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨clk, rst, upd_en, upd_way_oh⟩ := i
+  obtain ⟨st⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep("PLRU_spec.sv", mod, ways)
+
+def bridge_rat(mod):
+    spec = f"{mod}_spec"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{spec}.sv", 32):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{spec}.sv; hierarchy -top {spec}; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {spec} ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    for p in [ROOT / spec_lean, ROOT / impl_lean]:
+        t = p.read_text()
+        if "maxHeartbeats" not in t:
+            t = t.replace("set_option maxRecDepth 262144\n", "set_option maxRecDepth 262144\nset_option maxHeartbeats 1000000\n")
+            p.write_text(t)
+
+    def get_entry_to_state_field(code):
+        state_block = re.search(r'structure State where(.*?)(?:deriving|def)', code, re.DOTALL).group(1)
+        state_fields = [m.group(1) for m in re.finditer(r'(\w+)\s*:\s*BitVec\s*6', state_block)]
+        ret_match = re.search(r'\(\⟨.*?\⟩,\s*\⟨(.*?)⟩\)', code, re.DOTALL)
+        next_syms = [x.strip() for x in ret_match.group(1).split(',')]
+        sym_to_field = dict(zip(next_syms, state_fields))
+        entry_to_field = {}
+        for entry in range(32):
+            bin_val = f"{entry:06b}"
+            m = re.search(rf'let (\w+) := \(bif.*?0b{bin_val}#6.*?restore_data_{entry}', code)
+            if not m:
+                m = re.search(rf'let (\w+) := \(bif.*?restore_data_{entry}.*?0b{bin_val}#6', code)
+            entry_to_field[entry] = sym_to_field[m.group(1)]
+        return entry_to_field
+
+    s_text = (ROOT / spec_lean).read_text()
+    i_text = (ROOT / impl_lean).read_text()
+    s_map = get_entry_to_state_field(s_text)
+    i_map = get_entry_to_state_field(i_text)
+
+    i_in_block = re.search(r'structure Inputs where(.*?)(?:deriving|structure)', i_text, re.DOTALL).group(1)
+    in_fields = [m.group(1) for m in re.finditer(r'(\w+)\s*:\s*BitVec', i_in_block)]
+    abs_inputs_body = "\n".join(f"  {f} := i.{f}" for f in in_fields)
+    abs_state_body = "\n".join(f"  {s_map[e]} := s.{i_map[e]}" for e in range(32))
+
+    i_state_block = re.search(r'structure State where(.*?)(?:deriving|def)', i_text, re.DOTALL).group(1)
+    i_state_fields = [m.group(1) for m in re.finditer(r'(\w+)\s*:\s*BitVec', i_state_block)]
+    st_pattern = ", ".join(f"s_{f}" for f in i_state_fields)
+    in_pattern = ", ".join(f"i_{f}" for f in in_fields)
+
+    out_block = re.search(r'structure Outputs where(.*?)(?:deriving|structure)', s_text, re.DOTALL).group(1)
+    out_fields = [m.group(1) for m in re.finditer(r'(\w+)\s*:\s*BitVec', out_block)]
+    out_conj = " ∧\n    ".join(f"imp.1.{f} = spc.1.{f}" for f in out_fields)
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+set_option maxHeartbeats 2000000
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+{abs_inputs_body}
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+{abs_state_body}
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    {out_conj} ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨{in_pattern}⟩ := i
+  obtain ⟨{st_pattern}⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    print(f"Generated {mod}")
+    note_spec_rep(f"{spec}.sv", mod, 32)
 
 def bridge_equality_comparator(w):
     mod = f"EqualityComparator{w}"
@@ -1900,6 +2056,12 @@ def main():
     print("Generating ALU bridges...")
     bridge_alu(32)
     bridge_alu(64)
+    print("Generating PLRU bridges...")
+    for w in [2, 4, 8]:
+        bridge_plru(w)
+    print("Generating RAT bridges...")
+    for mod in ["CRAT_32x6", "IntRAT_32x6", "RAT_32x6"]:
+        bridge_rat(mod)
     print("Generating EqualityComparator bridges...")
     for w in EQUALITY_COMPARATORS:
         bridge_equality_comparator(w)

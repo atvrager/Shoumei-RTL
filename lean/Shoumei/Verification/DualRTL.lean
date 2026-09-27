@@ -867,6 +867,48 @@ def allSpecs : List DualRTLSpec := [
     hasProof := true
     proofRef := "ShoumeiSec.BridgeALU64.alu64_sec"
   },
+  {
+    circuitName := "PLRU2"
+    specFile := "verification/specs/PLRU_spec.sv"
+    topModule := "PLRU_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePLRU2.plru2_sec"
+  },
+  {
+    circuitName := "PLRU4"
+    specFile := "verification/specs/PLRU_spec.sv"
+    topModule := "PLRU_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePLRU4.plru4_sec"
+  },
+  {
+    circuitName := "PLRU8"
+    specFile := "verification/specs/PLRU_spec.sv"
+    topModule := "PLRU_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgePLRU8.plru8_sec"
+  },
+  {
+    circuitName := "CRAT_32x6"
+    specFile := "verification/specs/CRAT_32x6_spec.sv"
+    topModule := "CRAT_32x6_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeCRAT_32x6.crat_32x6_sec"
+  },
+  {
+    circuitName := "IntRAT_32x6"
+    specFile := "verification/specs/IntRAT_32x6_spec.sv"
+    topModule := "IntRAT_32x6_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeIntRAT_32x6.intrat_32x6_sec"
+  },
+  {
+    circuitName := "RAT_32x6"
+    specFile := "verification/specs/RAT_32x6_spec.sv"
+    topModule := "RAT_32x6_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeRAT_32x6.rat_32x6_sec"
+  },
 
   {
     circuitName := "Queue1_1"
