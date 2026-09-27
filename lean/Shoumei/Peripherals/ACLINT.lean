@@ -40,7 +40,7 @@ def mkACLINT : Circuit :=
   let mtime_q := (List.range 64).map fun i => Wire.mk s!"mtime_q_{i}"
   let mtime_d := (List.range 64).map fun i => Wire.mk s!"mtime_d_{i}"
   let mtime_inc := (List.range 64).map fun i => Wire.mk s!"mtime_inc_{i}"
-  let mtime_carries := (List.range 63).map fun i => Wire.mk s!"mtime_c_{i}"
+  let mtime_carries := (List.range 63).map fun i => Wire.mk s!"mtimecx{i}"
 
   -- mtimecmp (64-bit comparison register)
   let mtimecmp_q := (List.range 64).map fun i => Wire.mk s!"mtimecmp_q_{i}"
@@ -154,7 +154,7 @@ def mkACLINT : Circuit :=
 
   -- Comparator: mtime >= mtimecmp (64-bit comparator)
   -- Simplified MSB check + equality comparator
-  let diff_carries := (List.range 64).map fun i => Wire.mk s!"cmp_c_{i}"
+  let diff_carries := (List.range 64).map fun i => Wire.mk s!"cmpcx{i}"
   let cmp_gates : List Gate :=
     [Gate.mkBUF one diff_carries[0]!] ++
     ((List.range 63).map fun i =>

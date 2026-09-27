@@ -2017,6 +2017,455 @@ end ShoumeiSec.Bridge{mod}
 """
     (ROOT / proof_lean).write_text(proof_content)
     print(f"Generated {mod}")
+def bridge_resetsync():
+    mod = "ResetSync"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_procdff_5 := s.v_procdff_5
+  v_procdff_8 := s.v_procdff_8
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.sync_reset = spc.1.sync_reset ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨clk, rst⟩ := i
+  obtain ⟨s0, s1⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
+def bridge_bootrom():
+    mod = "BootROM"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  bootrom_a_valid := i.bootrom_a_valid
+  bootrom_a_opcode := i.bootrom_a_opcode
+  bootrom_a_param := i.bootrom_a_param
+  bootrom_a_size := i.bootrom_a_size
+  bootrom_a_source := i.bootrom_a_source
+  bootrom_a_address := i.bootrom_a_address
+  bootrom_a_mask := i.bootrom_a_mask
+  bootrom_a_data := i.bootrom_a_data
+  bootrom_d_ready := i.bootrom_d_ready
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_procdff_6 := s.v_procdff_6
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.bootrom_a_ready = spc.1.bootrom_a_ready ∧
+    imp.1.bootrom_d_valid = spc.1.bootrom_d_valid ∧
+    imp.1.bootrom_d_opcode = spc.1.bootrom_d_opcode ∧
+    imp.1.bootrom_d_param = spc.1.bootrom_d_param ∧
+    imp.1.bootrom_d_size = spc.1.bootrom_d_size ∧
+    imp.1.bootrom_d_source = spc.1.bootrom_d_source ∧
+    imp.1.bootrom_d_sink = spc.1.bootrom_d_sink ∧
+    imp.1.bootrom_d_data = spc.1.bootrom_d_data ∧
+    imp.1.bootrom_d_denied = spc.1.bootrom_d_denied ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨bav, bao, bap, bas, basrc, baa, bam, bad, bdr, clk, rst⟩ := i
+  obtain ⟨s0⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
+def bridge_gpio():
+    mod = "GPIO"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  gpio_a_valid := i.gpio_a_valid
+  gpio_a_opcode := i.gpio_a_opcode
+  gpio_a_param := i.gpio_a_param
+  gpio_a_size := i.gpio_a_size
+  gpio_a_source := i.gpio_a_source
+  gpio_a_address := i.gpio_a_address
+  gpio_a_mask := i.gpio_a_mask
+  gpio_a_data := i.gpio_a_data
+  gpio_d_ready := i.gpio_d_ready
+  gpio_i := i.gpio_i
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_auto_ff_cc_337_slice_55 := s.v_auto_ff_cc_337_slice_53
+  v_procdff_53 := s.v_procdff_52
+  v_auto_ff_cc_337_slice_54 := s.v_auto_ff_cc_337_slice_56
+  v_auto_ff_cc_337_slice_56 := s.v_auto_ff_cc_337_slice_59
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.gpio_a_ready = spc.1.gpio_a_ready ∧
+    imp.1.gpio_d_valid = spc.1.gpio_d_valid ∧
+    imp.1.gpio_d_opcode = spc.1.gpio_d_opcode ∧
+    imp.1.gpio_d_param = spc.1.gpio_d_param ∧
+    imp.1.gpio_d_size = spc.1.gpio_d_size ∧
+    imp.1.gpio_d_source = spc.1.gpio_d_source ∧
+    imp.1.gpio_d_sink = spc.1.gpio_d_sink ∧
+    imp.1.gpio_d_data = spc.1.gpio_d_data ∧
+    imp.1.gpio_d_denied = spc.1.gpio_d_denied ∧
+    imp.1.gpio_irq = spc.1.gpio_irq ∧
+    imp.1.gpio_o = spc.1.gpio_o ∧
+    imp.1.gpio_oen = spc.1.gpio_oen ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨gav, gao, gap, gas, gasrc, gaa, gam, gad, gdr, gi, clk, rst⟩ := i
+  obtain ⟨s0, s1, s2, s3⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
+def bridge_uart():
+    mod = "UART"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  uart_a_valid := i.uart_a_valid
+  uart_a_opcode := i.uart_a_opcode
+  uart_a_param := i.uart_a_param
+  uart_a_size := i.uart_a_size
+  uart_a_source := i.uart_a_source
+  uart_a_address := i.uart_a_address
+  uart_a_mask := i.uart_a_mask
+  uart_a_data := i.uart_a_data
+  uart_d_ready := i.uart_d_ready
+  uart_rx := i.uart_rx
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_auto_ff_cc_337_slice_55 := s.v_auto_ff_cc_337_slice_76
+  v_auto_ff_cc_337_slice_54 := s.v_auto_ff_cc_337_slice_70
+  v_procdff_37 := s.v_auto_ff_cc_337_slice_69
+  v_procdff_43 := s.v_procdff_50
+  v_auto_ff_cc_337_slice_53 := s.v_auto_ff_cc_337_slice_73
+  v_auto_ff_cc_337_slice_56 := s.v_auto_ff_cc_337_slice_60
+  v_procdff_52 := s.v_procdff_59
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.uart_a_ready = spc.1.uart_a_ready ∧
+    imp.1.uart_d_valid = spc.1.uart_d_valid ∧
+    imp.1.uart_d_opcode = spc.1.uart_d_opcode ∧
+    imp.1.uart_d_param = spc.1.uart_d_param ∧
+    imp.1.uart_d_size = spc.1.uart_d_size ∧
+    imp.1.uart_d_source = spc.1.uart_d_source ∧
+    imp.1.uart_d_sink = spc.1.uart_d_sink ∧
+    imp.1.uart_d_data = spc.1.uart_d_data ∧
+    imp.1.uart_d_denied = spc.1.uart_d_denied ∧
+    imp.1.uart_tx = spc.1.uart_tx ∧
+    imp.1.uart_irq = spc.1.uart_irq ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨uav, uao, uap, uas, uasrc, uaa, uam, uad, udr, urx, clk, rst⟩ := i
+  obtain ⟨s0, s1, s2, s3, s4, s5, s6⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
+def bridge_aclint():
+    mod = "ACLINT"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  aclint_a_valid := i.aclint_a_valid
+  aclint_a_opcode := i.aclint_a_opcode
+  aclint_a_param := i.aclint_a_param
+  aclint_a_size := i.aclint_a_size
+  aclint_a_source := i.aclint_a_source
+  aclint_a_address := i.aclint_a_address
+  aclint_a_mask := i.aclint_a_mask
+  aclint_a_data := i.aclint_a_data
+  aclint_d_ready := i.aclint_d_ready
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_procdff_30 := s.v_procdff_172 ++ s.v_procdff_175
+  v_auto_ff_cc_337_slice_44 := s.v_auto_ff_cc_337_slice_188 ++ s.v_auto_ff_cc_337_slice_179
+  v_auto_ff_cc_337_slice_43 := s.v_auto_ff_cc_337_slice_185
+  v_auto_ff_cc_337_slice_45 := s.v_auto_ff_cc_337_slice_182
+  v_procdff_42 := s.v_procdff_178
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.aclint_a_ready = spc.1.aclint_a_ready ∧
+    imp.1.aclint_d_valid = spc.1.aclint_d_valid ∧
+    imp.1.aclint_d_opcode = spc.1.aclint_d_opcode ∧
+    imp.1.aclint_d_param = spc.1.aclint_d_param ∧
+    imp.1.aclint_d_size = spc.1.aclint_d_size ∧
+    imp.1.aclint_d_source = spc.1.aclint_d_source ∧
+    imp.1.aclint_d_sink = spc.1.aclint_d_sink ∧
+    imp.1.aclint_d_data = spc.1.aclint_d_data ∧
+    imp.1.aclint_d_denied = spc.1.aclint_d_denied ∧
+    imp.1.mtip_out = spc.1.mtip_out ∧
+    imp.1.msip_out = spc.1.msip_out ∧
+    imp.1.ssip_out = spc.1.ssip_out ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨aav, aao, aap, aas, aasrc, aaa, aam, aad, adr, clk, rst⟩ := i
+  obtain ⟨s0, s1, s2, s3, s4, s5, s6⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
+
+
+def bridge_aplic():
+    mod = "APLIC"
+    spec_smt = f"verification/bridge/{mod}_spec.smt2"
+    impl_smt = f"verification/bridge/{mod}_impl.smt2"
+    spec_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Spec.lean"
+    impl_lean = f"output/sec-bridge/ShoumeiSec/Bridge/{mod}Impl.lean"
+    proof_lean = f"output/sec-bridge/ShoumeiSec/Bridge{mod}.lean"
+    if should_skip_bridge(mod, f"{mod}_spec.sv", None):
+        return
+
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
+    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
+import ShoumeiSec.Bridge.{mod}Impl
+import Std.Tactic.BVDecide
+
+namespace ShoumeiSec.Bridge{mod}
+
+set_option linter.unusedVariables false
+set_option linter.unusedSimpArgs false
+set_option maxRecDepth 262144
+
+def absInputs (i : ShoumeiSec.Bridge.{mod}Impl.Inputs) :
+    ShoumeiSec.Bridge.{mod}Spec.Inputs where
+  aplic_a_valid := i.aplic_a_valid
+  aplic_a_opcode := i.aplic_a_opcode
+  aplic_a_param := i.aplic_a_param
+  aplic_a_size := i.aplic_a_size
+  aplic_a_source := i.aplic_a_source
+  aplic_a_address := i.aplic_a_address
+  aplic_a_mask := i.aplic_a_mask
+  aplic_a_data := i.aplic_a_data
+  aplic_d_ready := i.aplic_d_ready
+  irq_src := i.irq_src
+  clock := i.clock
+  reset := i.reset
+
+def absState (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    ShoumeiSec.Bridge.{mod}Spec.State where
+  v_auto_ff_cc_337_slice_40 := s.v_auto_ff_cc_337_slice_60
+  v_auto_ff_cc_337_slice_36 := s.v_auto_ff_cc_337_slice_51
+  v_auto_ff_cc_337_slice_35 := s.v_auto_ff_cc_337_slice_54
+  v_procdff_34 := s.v_procdff_50
+
+theorem {mod.lower()}_sec
+    (i : ShoumeiSec.Bridge.{mod}Impl.Inputs)
+    (s : ShoumeiSec.Bridge.{mod}Impl.State) :
+    let imp := ShoumeiSec.Bridge.{mod}Impl.step i s
+    let spc := ShoumeiSec.Bridge.{mod}Spec.step (absInputs i) (absState s)
+    imp.1.aplic_a_ready = spc.1.aplic_a_ready ∧
+    imp.1.aplic_d_valid = spc.1.aplic_d_valid ∧
+    imp.1.aplic_d_opcode = spc.1.aplic_d_opcode ∧
+    imp.1.aplic_d_param = spc.1.aplic_d_param ∧
+    imp.1.aplic_d_size = spc.1.aplic_d_size ∧
+    imp.1.aplic_d_source = spc.1.aplic_d_source ∧
+    imp.1.aplic_d_sink = spc.1.aplic_d_sink ∧
+    imp.1.aplic_d_data = spc.1.aplic_d_data ∧
+    imp.1.aplic_d_denied = spc.1.aplic_d_denied ∧
+    imp.1.meip_out = spc.1.meip_out ∧
+    imp.1.seip_out = spc.1.seip_out ∧
+    absState imp.2 = spc.2 := by
+  obtain ⟨aav, aao, aap, aas, aasrc, aaa, aam, aad, adr, isrc, clk, rst⟩ := i
+  obtain ⟨s0, s1, s2, s3⟩ := s
+  simp only [ShoumeiSec.Bridge.{mod}Impl.step,
+             ShoumeiSec.Bridge.{mod}Spec.step,
+             absInputs, absState,
+             ShoumeiSec.Bridge.{mod}Spec.State.mk.injEq]
+  bv_decide
+
+end ShoumeiSec.Bridge{mod}
+"""
+    (ROOT / proof_lean).write_text(proof_content)
+    note_spec_rep(f"{mod}_spec.sv", mod, None)
+    print(f"Generated {mod}")
 
 
 def main():
@@ -2113,6 +2562,13 @@ def main():
         bridge_queue_counter_loadable(w)
     print("Generating Queue16x32_DualPort bridges...")
     bridge_dual_port_queue()
+    print("Generating Peripheral bridges...")
+    bridge_resetsync()
+    bridge_bootrom()
+    bridge_gpio()
+    bridge_uart()
+    bridge_aclint()
+    bridge_aplic()
     emit_spec_sva()
     proof_files = sorted((ROOT / "output" / "sec-bridge" / "ShoumeiSec").glob("Bridge*.lean"))
     lines = ["-- Generated root for ShoumeiSec bridge library", ""]

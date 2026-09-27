@@ -224,7 +224,7 @@ sec-bridge:
 	@echo "==> Running Certified Dual-RTL Bridge (Yosys SMT2 -> pure Lean bv_decide)..."
 	@python3 scripts/gen-bridges.py
 	@lake --no-ansi build ShoumeiSec
-	@echo "✓ Certified Dual-RTL bridge clean (145 circuits SEC + 137 spec assertions, bv_decide, 0 axioms)"
+	@echo "✓ Certified Dual-RTL bridge clean (151 circuits SEC + 143 spec assertions, bv_decide, 0 axioms)"
 
 # Export Dual-RTL SEC manifest and check specification coverage
 sec-manifest:

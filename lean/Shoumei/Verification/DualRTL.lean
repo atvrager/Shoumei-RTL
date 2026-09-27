@@ -911,6 +911,49 @@ def allSpecs : List DualRTLSpec := [
   },
 
   {
+    circuitName := "ResetSync"
+    specFile := "verification/specs/ResetSync_spec.sv"
+    topModule := "ResetSync_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeResetSync.resetsync_sec"
+  },
+  {
+    circuitName := "BootROM"
+    specFile := "verification/specs/BootROM_spec.sv"
+    topModule := "BootROM_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeBootROM.bootrom_sec"
+  },
+  {
+    circuitName := "GPIO"
+    specFile := "verification/specs/GPIO_spec.sv"
+    topModule := "GPIO_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeGPIO.gpio_sec"
+  },
+  {
+    circuitName := "UART"
+    specFile := "verification/specs/UART_spec.sv"
+    topModule := "UART_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeUART.uart_sec"
+  },
+  {
+    circuitName := "ACLINT"
+    specFile := "verification/specs/ACLINT_spec.sv"
+    topModule := "ACLINT_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeACLINT.aclint_sec"
+  },
+  {
+    circuitName := "APLIC"
+    specFile := "verification/specs/APLIC_spec.sv"
+    topModule := "APLIC_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeAPLIC.aplic_sec"
+  },
+
+  {
     circuitName := "Queue1_1"
     specFile := "verification/specs/Queue1_spec.sv"
     topModule := "Queue1_spec"

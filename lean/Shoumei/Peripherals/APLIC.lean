@@ -123,7 +123,7 @@ def mkAPLIC : Circuit :=
 
   -- OR reduction across sources 1..15
   let any_active_irq := Wire.mk "any_active_irq"
-  let or_trees := (List.range 14).map fun i => Wire.mk s!"irq_or_tree_{i}"
+  let or_trees := (List.range 14).map fun i => Wire.mk s!"aplinctreex{i}"
   let or_tree_gates : List Gate := [
     Gate.mkOR active_irqs[1]! active_irqs[2]! or_trees[0]!,
     Gate.mkOR active_irqs[3]! active_irqs[4]! or_trees[1]!,

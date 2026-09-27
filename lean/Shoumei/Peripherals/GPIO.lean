@@ -123,7 +123,7 @@ def mkGPIO : Circuit :=
   let irq_bit_gates := (List.range 8).map fun i =>
     Gate.mkAND gpio_i[i]! int_en_q[i]! irq_bits[i]!
 
-  let irq_trees := (List.range 6).map fun i => Wire.mk s!"irq_tree_{i}"
+  let irq_trees := (List.range 6).map fun i => Wire.mk s!"gpiotreex{i}"
   let irq_tree_gates : List Gate := [
     Gate.mkOR irq_bits[0]! irq_bits[1]! irq_trees[0]!,
     Gate.mkOR irq_bits[2]! irq_bits[3]! irq_trees[1]!,
