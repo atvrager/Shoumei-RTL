@@ -49,6 +49,8 @@ inductive E where
   | un (op : String) (a : E)
   /-- Constant bit select. -/
   | sel (a : E) (idx : Nat)
+  /-- Constant part select `a[hi:lo]` (inclusive, `hi >= lo`). -/
+  | partSel (a : E) (hi lo : Nat)
   /-- Variable bit select (`out[in]`). -/
   | selDyn (a : E) (idx : E)
   /-- `PARAM'(expr)`, resolved against the instantiated parameter map. -/
@@ -79,7 +81,7 @@ inductive Tok where
   | id (s : String)
   | lit (text : String) (value : Nat) (width : Option Nat)
   | op (s : String)
-  | lp | rp | lb | rb | comma | apos
+  | lp | rp | lb | rb | comma | apos | colon
   deriving Repr, Inhabited, DecidableEq
 
 /-- Longest match first; the temporal operators must precede `|`. -/
@@ -126,6 +128,7 @@ partial def tokenize (s : String) : List Tok :=
       else if c == '[' then go rest (.lb :: acc)
       else if c == ']' then go rest (.rb :: acc)
       else if c == ',' then go rest (.comma :: acc)
+      else if c == ':' then go rest (.colon :: acc)
       else if c == '\'' && rest.head? == some '0' then
         go rest.tail! (.lit "'0" 0 none :: acc)
       else if c == '\'' && rest.head? == some '1' then
@@ -141,9 +144,13 @@ partial def tokenize (s : String) : List Tok :=
         let _ := lead
         let afterDigits := cs.dropWhile (·.isDigit)
         let (value, w, left) := lexNumber afterDigits
-        let w := match w with
-          | some 0 => some width
-          | other => other
+        -- A based literal (`4'd3`) takes its width from the leading digits and
+        -- its value from `lexNumber`.  A plain decimal (`17`) has no base marker,
+        -- so `lexNumber` reports value 0 and the leading digits ARE the value.
+        let (value, w) := match w with
+          | some 0 => (value, some width)
+          | none => (width, none)
+          | other => (value, other)
         let text := String.ofList (cs.take (cs.length - left.length))
         go left (.lit text value w :: acc)
       else if isWordChar c then
@@ -214,6 +221,8 @@ where
     | none => none
     | some (e, s1) =>
       match s1.toks with
+      | .lb :: .lit _ hi _ :: .colon :: .lit _ lo _ :: .rb :: rest =>
+        if lo <= hi then some (.partSel e hi lo, ⟨rest⟩) else none
       | .lb :: .lit _ k _ :: .rb :: rest => some (.sel e k, ⟨rest⟩)
       | .lb :: rest =>
         match parseExpr ⟨rest⟩ with
@@ -521,6 +530,7 @@ partial def wOf (ctx : Ctx) (e : E) : Option Nat :=
   | .lit _ (some w) => some w
   | .lit _ none => none
   | .sel _ _ => some 1
+  | .partSel _ hi lo => some (hi - lo + 1)
   | .selDyn _ _ => some 1
   | .cast p a => (ctx.params.find? (·.1 == p) |>.map (·.2)) <|> wOf ctx a
   | .past a _ => wOf ctx a
@@ -569,6 +579,9 @@ partial def rend (ctx : Ctx) (c : Nat) (e : E) : Except String String := do
   | .sel a k =>
     let a' ← rend ctx c a
     return s!"(BitVec.extractLsb' {k} 1 {a'})"
+  | .partSel a hi lo =>
+    let a' ← rend ctx c a
+    return s!"(BitVec.extractLsb' {lo} {hi - lo + 1} {a'})"
   | .selDyn a idx =>
     let w := (wOf ctx a).getD 0
     if w == 0 then throw "variable bit select of an operand of unknown width"
@@ -668,6 +681,7 @@ partial def occursPos (name : String) (e : E) : Bool :=
   | .un "!" _ => false                       -- negated, so not a positive use
   | .un _ a => occursPos name a
   | .sel a _ => occursPos name a
+  | .partSel a _ _ => occursPos name a
   | .selDyn a i => occursPos name a || occursPos name i
   | .cast _ a => occursPos name a
   | .past a _ => occursPos name a

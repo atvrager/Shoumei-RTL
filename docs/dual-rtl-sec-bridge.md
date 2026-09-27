@@ -232,41 +232,85 @@ differently across circuit topologies:
    - **Tier A (Registers, Buffers, Gates)**: Direct SEC via parameterized specs.
    - **Tier B (Adders, ALUs, Compressors)**: Direct SEC via `bv_decide`.
    - **Tier C (Replacement policies, RATs, SoC peripherals, datapath units)**:
-     Direct SEC via `bv_decide`. C4 (`BranchExecUnit`, `MemoryExecUnit`,
-     `MemoryExecUnitDecoupled`, `CDBMux_FD_W2`) is proven; `IntegerExecUnit_W2`,
-     `IntegerExecUnit_W2_64`, `BusyTable_W2`, `FPBusyTable` are blocked by the
-     solver defect documented below.
+     Direct SEC via `bv_decide`. C4 covers `BranchExecUnit`, `MemoryExecUnit`,
+     `MemoryExecUnitDecoupled`, `CDBMux_FD_W2` and — once written compositionally —
+     `IntegerExecUnit_W2`, `IntegerExecUnit_W2_64`. `BusyTable_W2` and
+     `FPBusyTable` are spec-only (see below).
    - **Tier D (Multipliers, Dividers, FP, OoO Core)**: Compositional certificates or cosimulation.
 
-#### Spurious counterexamples from `bv_decide` on SMT2-derived models
+#### A real spec bug initially misread as a solver defect
 
-Four circuits are *not* verified despite both models being correct, because
-`bv_decide` reports a **false counterexample** on the netlist-derived goal:
+`IntegerExecUnit_W2` / `IntegerExecUnit_W2_64` were first written as flat specs that
+re-implemented the ALU inline. `bv_decide` reported a counterexample; direct
+evaluation of the reported assignment appeared to refute it, so the failure was
+briefly attributed to a solver defect. That was wrong — `bv_decide` was correct.
 
-| Circuit | Reported counterexample | Concrete evaluation of that assignment |
-|---|---|---|
-| `IntegerExecUnit_W2` | `opcode0=15, b0=0xFFFFFFFF` | both sides `0x00000000` (equal) |
-| `IntegerExecUnit_W2_64` | `opcode1=14, a1=0x4000000000000140` | both sides equal |
-| `BusyTable_W2` | all state bits 1, `read1_tag=26` | both sides equal |
-| `FPBusyTable` | all state bits 1, `read1_tag=19` | both sides equal |
+The inline ALU had a swapped category multiplexer:
 
-Evidence that the reports are spurious, not real mismatches:
+    raw = op[3] ? (op[2] ? shift_r : 64'b0) : (op[2] ? logic_r : arith);
 
-- The goal after `simp only [Impl.step, Spec.step, absInputs, absState]` contains no
-  residual opaque term (checked with `guard_target`), yet `bv_decide` fails in <1s.
-- Direct evaluation of the exact reported assignment in Lean gives equal outputs
-  on both sides.
-- Exhaustive sampling — 16 opcodes x 121 operand pairs for the exec units; 64 random
-  multi-bit states x 64 read tags for the tables — finds **zero** disagreements.
-- `bv_normalize` and `dsimp` before `bv_decide` do not change the outcome.
+so `op[3:2] == 2'b10` (shift) produced 0 and `op[3:2] == 2'b11` produced shift. The
+emitted RTL and `ALU64_spec` use `10 -> shift, 11 -> zero`. The refutation probe
+missed it because it evaluated with `a = 0`, where both branches return 0; the
+121-operand-pair sample missed it too. The RISC-V ELF suite caught it
+(`test_zbs`, `test_zbb`, `nan_boxing`, `timer_irq_test` failed).
 
-Consequence: these four stay out of the verified set. Their specs are authored
-(`verification/specs/`), so the manifest lists them as spec-only. Alternative
-discharge routes, in order of preference:
+Both specs now instantiate `ALU32_spec` / `ALU64_spec`, mirroring the emitted
+structure (two ALU instances), and discharge in ~3 s each. Lesson: a spec that
+re-implements a verified sub-block inline can drift from it; compose instead.
 
-1. Yosys `miter -equiv` + `sat -verify` on the two SV files (independent SAT engine).
-2. Compositional: reuse the proven `ALU32`/`ALU64` bridge for the exec units.
-3. Exhaustive bit-split `bv_decide` if a Mathlib-free case splitter is added.
+`BusyTable_W2` and `FPBusyTable` remain spec-only. Their specs are behaviourally
+correct on the ELF suite (they are substituted in the spec-side simulation, see
+below), but the stateful SEC goal is still open.
+
+#### `sva2lean` gaps found while regenerating assertions
+
+- **Part-selects** (`sig[hi:lo]`) were unsupported: the lexer silently dropped `:`.
+  Added a `partSel` case to the AST, parser and renderer.
+- **Plain decimal literals** lexed to value 0 (only based literals such as `4'd3`
+  carried a value). This made `pre_valid[1]` translate to bit 0. Fixed; three
+  assertions in `BusyTable_W2_spec.sv` / `CDBMux_FD_W2_spec.sv` were affected.
+
+Both were latent because `gen-bridges.py` caches generated assertions by mtime.
+### 6. Spec-Side Simulation Harness
+
+The specs are a second, hand-written implementation of the same microarchitecture.
+`scripts/gen-spec-shims.py` turns them into a simulatable RTL tree, so the ELF test
+suite can be run against the spec side with no SMT, no Yosys and no proofs:
+
+```
+verification/specs/<Mod>_spec.sv          hand-written reference model
+        │
+        │  gen-spec-shims.py: emit a shim per module that has a spec
+        ▼
+output/sv-spec/<Mod>.sv                   module <Mod> = thin wrapper around
+                                          <Mod>_spec #(<params>)   (bit-level
+                                          port mapping; handles scalar/bus splits)
+        │
+        │  make -C testbench sim SV_DIR=output/sv-spec
+        ▼
+240/240 ELF tests pass
+```
+
+Modules without a spec keep their emitted RTL, so the harness is usable at any
+coverage level and improves as specs are written. `make spec-shims` prints the
+missing list, grouped by subsystem.
+
+Port-shape handling: the emitted SV sometimes exposes an N-bit bus as N scalar
+ports (`sum_0..sum_31`) while the spec uses `sum[31:0]`. The shim connects
+bit-by-bit in that case and directly otherwise. Parameters are inferred from port
+widths; params that affect only behaviour (`INC` in `PCIncrementer`) are listed in
+`PARAM_OVERRIDES`.
+
+Coverage of the CPU closure (136 modules reachable from
+`CPU_..._L1I8K_L1D16K_L232K`):
+
+| Category | Count |
+|---|---|
+| Spec-backed shim, ELF suite green | 75 |
+| No spec yet | 59 |
+| No circuit entry (`RV64GDecoder`, `sram_1r1w_512x64`) | 2 |
+
 ## Verification Commands
 
 ```bash
@@ -279,6 +323,11 @@ make sec-manifest
 
 # Regenerate only the generated models and proofs
 python3 scripts/gen-bridges.py
+
+# Spec-side simulation: run the hand-written specs as an RTL implementation
+make spec-shims                 # build output/sv-spec/ (+ list specs still missing)
+make spec-sim                   # build the Verilator sim from the spec tree
+make run-spec-tests             # run the full ELF suite against the spec tree
 
 # Build standalone Lean SMT ingester
 lake build smt2lean
@@ -293,10 +342,11 @@ python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
 | Metric | Count |
 |---|---|
 | Circuits in the emitted universe | 237 |
-| Families with a human-authored spec | 159 (67%) |
-| Verified with `bv_decide` (0 axioms) | 155 (65%) |
-| Spec-only (no proof yet) | 5 |
+| Families with a human-authored spec | 160 (68%) |
+| Verified with `bv_decide` (0 axioms) | 157 (66%) |
+| Spec-only (no proof yet) | 3 |
 | Missing | 77 |
+| Spec-side ELF suite | 240/240 pass |
 
 Tracked verification surface:
 

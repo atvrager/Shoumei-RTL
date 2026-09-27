@@ -42,14 +42,24 @@ QUEUE_POINTERS_LOADABLE = [3]
 QUEUE_COUNTERS_LOADABLE = [4]
 
 # Purely combinational datapath units (no state): outputs compared directly.
-# IntegerExecUnit_W2 / _64 are excluded: bv_decide returns a spurious
-# counterexample on their SMT2-derived models (see docs/dual-rtl-sec-bridge.md).
+# The IntegerExecUnits are compositional specs (two ALU32/ALU64 instances each);
+# their spec-side dependencies are declared in SPEC_DEPS.
 DATAPATH_UNITS = [
     "BranchExecUnit",
     "MemoryExecUnit",
     "MemoryExecUnitDecoupled",
     "CDBMux_FD_W2",
+    "IntegerExecUnit_W2",
+    "IntegerExecUnit_W2_64",
 ]
+
+# Spec-side dependencies: specs that instantiate other specs need those
+# sub-specs present when the spec is elaborated, otherwise Yosys leaves the
+# submodule as a black box and the SMT2 model is self-referential.
+SPEC_DEPS = {
+    "IntegerExecUnit_W2": ["ALU32_spec.sv"],
+    "IntegerExecUnit_W2_64": ["ALU64_spec.sv"],
+}
 
 # Queue16x32_DualPort: both designs hold the same 16 entries but flatten them
 # into state fields in a different order.  The mapping below was derived by
@@ -774,7 +784,9 @@ def bridge_alu(w):
     if should_skip_bridge(mod, f"{mod}_spec.sv", w):
         return
 
-    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    spec_srcs = " ".join([f"verification/specs/{mod}_spec.sv"]
+                          + [f"verification/specs/{d}" for d in SPEC_DEPS.get(mod, [])])
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {spec_srcs}; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
     run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
     run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
@@ -2491,10 +2503,21 @@ def bridge_datapath(mod):
     if should_skip_bridge(mod, f"{mod}_spec.sv", None):
         return
 
-    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
+    spec_srcs = " ".join([f"verification/specs/{mod}_spec.sv"]
+                          + [f"verification/specs/{d}" for d in SPEC_DEPS.get(mod, [])])
+    run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {spec_srcs}; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
     run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
     run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+
+    # Composed models (e.g. an exec unit flattening two ALUs) need a deeper
+    # definitional-equality budget than the smt2lean default.
+    for gen_lean in (spec_lean, impl_lean):
+        gp = ROOT / gen_lean
+        gt = gp.read_text()
+        if "maxHeartbeats" not in gt:
+            gp.write_text(gt.replace("set_option maxRecDepth 262144",
+                                     "set_option maxRecDepth 262144\nset_option maxHeartbeats 4000000", 1))
 
     s_text = (ROOT / spec_lean).read_text()
     i_text = (ROOT / impl_lean).read_text()

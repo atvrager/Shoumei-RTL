@@ -224,7 +224,7 @@ sec-bridge:
 	@echo "==> Running Certified Dual-RTL Bridge (Yosys SMT2 -> pure Lean bv_decide)..."
 	@python3 scripts/gen-bridges.py
 	@lake --no-ansi build ShoumeiSec
-	@echo "✓ Certified Dual-RTL bridge clean (155 circuits SEC + 147 spec assertions, bv_decide, 0 axioms)"
+	@echo "✓ Certified Dual-RTL bridge clean (157 circuits SEC + 147 spec assertions, bv_decide, 0 axioms)"
 
 # Export Dual-RTL SEC manifest and check specification coverage
 sec-manifest:
@@ -235,6 +235,30 @@ sva-verify:
 	@./verification/sva-verify.sh
 
 sva: sva-verify
+
+# Spec-side simulation: run the hand-written SV specs (verification/specs/)
+# as a standalone simulation target.  The shim generator produces
+# output/sv-spec/ where each verified module is replaced by a thin wrapper
+# instantiating its spec; modules without a spec are left as-is (emitted RTL).
+# Once a spec is written and added to DualRTL.lean, it is picked up
+# automatically on the next `make spec-shims`.
+#
+# Usage:
+#   make spec-shims        # (re)generate output/sv-spec/
+#   make spec-sim          # spec-shims + build Verilator sim from specs
+#   make run-spec-tests    # spec-sim + run full ELF test suite
+spec-shims:
+	@mkdir -p output/sv-spec
+	@python3 scripts/gen-spec-shims.py
+
+SV_SPEC_DIR := $(abspath output/sv-spec)
+
+spec-sim: spec-shims
+	$(MAKE) -C testbench sim SV_DIR=$(SV_SPEC_DIR)
+
+run-spec-tests: spec-sim
+	$(MAKE) -C testbench run-all-tests SV_DIR=$(SV_SPEC_DIR)
+
 
 # Re-derive the PDK cell models used by slang and the LEC from Liberty.
 cell-models:

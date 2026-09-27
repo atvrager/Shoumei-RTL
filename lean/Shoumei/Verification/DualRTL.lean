@@ -954,6 +954,20 @@ def allSpecs : List DualRTLSpec := [
   },
 
   {
+    circuitName := "IntegerExecUnit_W2"
+    specFile := "verification/specs/IntegerExecUnit_W2_spec.sv"
+    topModule := "IntegerExecUnit_W2_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeIntegerExecUnit_W2.integerexecunit_w2_sec"
+  },
+  {
+    circuitName := "IntegerExecUnit_W2_64"
+    specFile := "verification/specs/IntegerExecUnit_W2_64_spec.sv"
+    topModule := "IntegerExecUnit_W2_64_spec"
+    hasProof := true
+    proofRef := "ShoumeiSec.BridgeIntegerExecUnit_W2_64.integerexecunit_w2_64_sec"
+  },
+  {
     circuitName := "BranchExecUnit"
     specFile := "verification/specs/BranchExecUnit_spec.sv"
     topModule := "BranchExecUnit_spec"

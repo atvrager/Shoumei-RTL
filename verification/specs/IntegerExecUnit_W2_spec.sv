@@ -1,10 +1,8 @@
-// Expressive, human-readable specification of 32-bit Dual-Issue Integer Execution Unit.
+// Reference spec: Dual-Issue 32-bit Integer Execution Unit.
+// Two independent ALU32 slots; each result is the ALU32 output, and each
+// destination tag passes through unmodified.
 //
-// Opcode encoding (mirrors ALU32, 4 bits):
-//   [3]=0,[2]=0 -> arith  : [1]=0,[0]=1 ADD, [0]=0 SUB ; [1]=1,[0]=1 SLTU, [0]=0 SLT
-//   [3]=0,[2]=1 -> logic  : [1]=1 XOR ; [0]=1 OR ; [0]=0 AND
-//   [3]=1,[2]=1 -> shift  : [1]=1 SRA ; [0]=1 SRL ; [0]=0 SLL   (shamt = b[4:0])
-//   [3]=1,[2]=0 -> zero
+// Structure mirrors the emitted netlist exactly: two ALU32 instances.
 
 module IntegerExecUnit_W2_spec (
   input  logic [31:0] a0,
@@ -21,22 +19,21 @@ module IntegerExecUnit_W2_spec (
   output logic [5:0]  tag_out1
 );
 
-  function automatic [31:0] alu32 (input [31:0] a, input [31:0] b, input [3:0] op);
-    logic [31:0] arith;
-    logic [31:0] logic_r;
-    logic [31:0] shift_r;
-    arith   = op[1] ? (op[0] ? {31'b0, a < b} : {31'b0, $signed(a) < $signed(b)})
-                    : (op[0] ? a - b : a + b);
-    logic_r = op[1] ? (a ^ b) : (op[0] ? (a | b) : (a & b));
-    shift_r = op[1] ? ($signed(a) >>> b[4:0])
-                    : (op[0] ? (a >> b[4:0]) : (a << b[4:0]));
-    alu32   = op[3] ? (op[2] ? shift_r : 32'b0)
-                    : (op[2] ? logic_r : arith);
-  endfunction
+  ALU32_spec u_alu0 (
+    .a(a0),
+    .b(b0),
+    .op(opcode0),
+    .result(result0)
+  );
 
-  assign result0  = alu32(a0, b0, opcode0);
+  ALU32_spec u_alu1 (
+    .a(a1),
+    .b(b1),
+    .op(opcode1),
+    .result(result1)
+  );
+
   assign tag_out0 = dest_tag0;
-  assign result1  = alu32(a1, b1, opcode1);
   assign tag_out1 = dest_tag1;
 
 `ifdef FORMAL
