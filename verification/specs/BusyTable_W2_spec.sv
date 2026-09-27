@@ -25,6 +25,18 @@ module BusyTable_W2_spec (
 
   logic [63:0] busy_table;
   logic [63:0] busy_next;
+  logic [63:0] busy_eff;
+
+  // The emitted netlist wires `flush_groups` into each flop's asynchronous
+  // reset, so a flushed entry reads free in the same cycle the flush is
+  // asserted (not one cycle later).  `busy_eff` models that: the read path
+  // sees flushed entries as clear immediately, and the flop reloads only at
+  // the next clock edge.
+  always_comb begin
+    for (int i = 0; i < 64; i++) begin
+      busy_eff[i] = flush_groups[i / 8] ? 1'b0 : busy_table[i];
+    end
+  end
 
   // Next-state vector: flush beats set, set beats clear, otherwise hold.
   always_comb begin
@@ -53,12 +65,12 @@ module BusyTable_W2_spec (
   assign busy_raw_s1_hit = raw_s1;
   assign busy_raw_s2_hit = raw_s2;
 
-  assign src1_ready[0]   = ~busy_table[read1_tag_0];
-  assign src2_ready0_reg = ~busy_table[read2_tag_0];
+  assign src1_ready[0]   = ~busy_eff[read1_tag_0];
+  assign src2_ready0_reg = ~busy_eff[read2_tag_0];
   assign src2_ready[0]   = use_imm[0] | src2_ready0_reg;
 
-  assign src1_ready[1]   = ~busy_table[read1_tag_1] & ~raw_s1;
-  assign src2_ready1_reg = ~busy_table[read2_tag_1] & ~raw_s2;
+  assign src1_ready[1]   = ~busy_eff[read1_tag_1] & ~raw_s1;
+  assign src2_ready1_reg = ~busy_eff[read2_tag_1] & ~raw_s2;
   assign src2_ready[1]   = use_imm[1] | src2_ready1_reg;
 
 `ifdef FORMAL

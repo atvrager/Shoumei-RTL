@@ -18,6 +18,16 @@ module FPBusyTable_spec (
 
   logic [63:0] fp_busy_table;
   logic [63:0] fp_busy_next;
+  logic [63:0] fp_busy_eff;
+
+  // The emitted netlist wires `flush_groups` into each flop's asynchronous
+  // reset, so a flushed entry reads free in the same cycle the flush is
+  // asserted (not one cycle later).  `fp_busy_eff` models that.
+  always_comb begin
+    for (int i = 0; i < 64; i++) begin
+      fp_busy_eff[i] = flush_groups[i / 8] ? 1'b0 : fp_busy_table[i];
+    end
+  end
 
   // Next-state vector: flush beats set, set beats clear, otherwise hold.
   always_comb begin
@@ -37,18 +47,20 @@ module FPBusyTable_spec (
     end
   end
 
-  assign src1_ready     = ~fp_busy_table[read1_tag];
-  assign src2_ready     = ~fp_busy_table[read2_tag];
-  assign src3_busy_raw  = fp_busy_table[read3_tag];
+  assign src1_ready     = ~fp_busy_eff[read1_tag];
+  assign src2_ready     = ~fp_busy_eff[read2_tag];
+  assign src3_busy_raw  = fp_busy_eff[read3_tag];
 
 `ifdef FORMAL
-  // SVA assertions
-  a_src1_inverted: assert property (
-    src1_ready == ~fp_busy_table[read1_tag]
+  // SVA assertions: the three read ports must agree on a shared tag.
+  // (The previous assertions compared readiness against the raw table, which
+  // is false while a flush is forcing the entry clear asynchronously.)
+  a_ports_agree_12: assert property (
+    (read1_tag == read2_tag) |-> (src1_ready == src2_ready)
   );
 
-  a_src2_inverted: assert property (
-    src2_ready == ~fp_busy_table[read2_tag]
+  a_ports_agree_13: assert property (
+    (read1_tag == read3_tag) |-> (src1_ready == ~src3_busy_raw)
   );
 `endif
 

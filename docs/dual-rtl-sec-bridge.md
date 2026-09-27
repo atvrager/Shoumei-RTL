@@ -238,30 +238,50 @@ differently across circuit topologies:
      `FPBusyTable` are spec-only (see below).
    - **Tier D (Multipliers, Dividers, FP, OoO Core)**: Compositional certificates or cosimulation.
 
-#### A real spec bug initially misread as a solver defect
+#### Four real spec bugs initially misread as a solver defect
 
-`IntegerExecUnit_W2` / `IntegerExecUnit_W2_64` were first written as flat specs that
-re-implemented the ALU inline. `bv_decide` reported a counterexample; direct
-evaluation of the reported assignment appeared to refute it, so the failure was
-briefly attributed to a solver defect. That was wrong — `bv_decide` was correct.
+Four circuits were reported as `bv_decide` failures and briefly attributed to a
+solver bug, because direct evaluation of the reported counterexamples appeared to
+refute them. All four were **real spec bugs**. In every case my refutation probe
+was the flawed part, not the solver.
 
-The inline ALU had a swapped category multiplexer:
+| Circuit | Defect | Fix |
+|---|---|---|
+| `IntegerExecUnit_W2` | inline ALU, category mux swapped: `op[3:2]==2'b10` (shift) returned 0, `2'b11` returned shift | instantiate `ALU32_spec` |
+| `IntegerExecUnit_W2_64` | same swap in the 64-bit inline ALU | instantiate `ALU64_spec` |
+| `BusyTable_W2` | flush modelled as synchronous | model the asynchronous flush |
+| `FPBusyTable` | flush modelled as synchronous | model the asynchronous flush |
 
-    raw = op[3] ? (op[2] ? shift_r : 64'b0) : (op[2] ? logic_r : arith);
+Why the probes failed:
 
-so `op[3:2] == 2'b10` (shift) produced 0 and `op[3:2] == 2'b11` produced shift. The
-emitted RTL and `ALU64_spec` use `10 -> shift, 11 -> zero`. The refutation probe
-missed it because it evaluated with `a = 0`, where both branches return 0; the
-121-operand-pair sample missed it too. The RISC-V ELF suite caught it
-(`test_zbs`, `test_zbb`, `nan_boxing`, `timer_irq_test` failed).
+- The exec-unit probe evaluated the reported assignment with `a = 0`, where the
+  buggy and correct branches both return 0. A 121-operand-pair sample also missed
+  it. The ELF suite caught it (`test_zbs`, `test_zbb`, `nan_boxing`,
+  `timer_irq_test`).
+- The busy-table probes recovered state through a read-port sweep whose delay was
+  too short to let the continuous assignments settle, so the sweep reported the
+  pre-latch state and appeared to agree.
 
-Both specs now instantiate `ALU32_spec` / `ALU64_spec`, mirroring the emitted
-structure (two ALU instances), and discharge in ~3 s each. Lesson: a spec that
-re-implements a verified sub-block inline can drift from it; compose instead.
+The busy tables needed a step back from SMT entirely. `verification/specs/` had
+modelled flush as a next-state term, but the RTL wires it into each flop's
+asynchronous reset:
 
-`BusyTable_W2` and `FPBusyTable` remain spec-only. Their specs are behaviourally
-correct on the ELF suite (they are substituted in the spec-side simulation, see
-below), but the stateful SEC goal is still open.
+    assign fp_busy_reset_g0 = reset | flush_groups[0];
+    DFlipFlop u_fp_busy_bit_0 (.d(d[0]), .q(q[0]), .clock(clock), .reset(fp_busy_reset_g0));
+
+(see `lean/Shoumei/RISCV/CPU/BusyBitTable.lean`: `Gate.mkOR global_reset
+flush_groups[g]!`, "Replicated reset OR gates"). So a flushed entry reads free in
+the *same* cycle the flush is asserted, and the flop reloads at the next edge. The
+specs now expose that as a combinational mask (`busy_eff[i] = flush_groups[i/8] ? 0
+: busy_table[i]`) used by the read path, with the edge behaviour unchanged.
+
+Both models now match the RTL over 400k (`BusyTable_W2`) and 300k (`FPBusyTable`)
+cycles of randomised co-simulation, and `make spec-equiv` covers the whole spec
+set.
+
+Lesson: when a counterexample looks spurious, distrust the probe before the
+solver. A probe that reproduces the solver's reasoning is evidence; one that
+reuses the same misreading of the semantics is not.
 
 #### `sva2lean` gaps found while regenerating assertions
 
@@ -311,6 +331,66 @@ Coverage of the CPU closure (136 modules reachable from
 | No spec yet | 59 |
 | No circuit entry (`RV64GDecoder`, `sram_1r1w_512x64`) | 2 |
 
+#### Per-module equivalence: `make spec-equiv`
+
+The co-simulation behind the two busy-table fixes is generalised in
+`scripts/spec-equiv.py`.  For every spec-backed module it generates a
+self-checking testbench that instantiates the emitted netlist and the spec side
+by side, drives all inputs from an LFSR, and compares every output on every clock
+edge, then builds and runs it with Verilator:
+
+```bash
+make spec-equiv                      # all spec-backed modules
+python3 scripts/spec-equiv.py BusyTable_W2 FPBusyTable --cycles 200000
+```
+
+Current result: **160/160 match** over 5000 cycles each, ~2 min wall on 12 cores.
+Sequential it was ~16 min; the two levers were `-O0` for the generated C++ (the
+simulation itself takes ~0 s) and one Verilator build per module fanned out
+across cores.
+
+Two details that matter:
+
+- **`-DSYNTHESIS` is required.** The emitted SV carries SVA properties guarded by
+  `` `ifdef FORMAL `` / `` `elsif SYNTHESIS `` / `` `else `` — so they are *enabled*
+  when neither is defined. Those properties are sampled as if reset were
+  synchronous (`reset |=> q == 0`), while the RTL's reset is asynchronous, so they
+  misfire under randomised stimulus (`Register32.sv:43` was the first to trip).
+- **Port mapping is shared with the shim generator**, not reimplemented:
+  `gen-spec-shims.py` owns `spec_pins()`, which handles the cases where the
+  emitted netlist exposes a bus as scalar ports (`sum_0..sum_31` vs `sum[31:0]`)
+  and where the spec has an output the netlist does not (`Subtractor64.borrow`).
+
+This is a *witness*, not a proof: it samples the input and state space. It
+complements SEC rather than replacing it, and it is the whole story for modules
+where the SMT route does not scale.
+
+#### Evidence levels
+
+`make sec-manifest` distinguishes four states, because "has a spec" and "has
+evidence" are different claims:
+
+| Status | Meaning |
+|---|---|
+| `✓ VERIFIED` | equivalence proved by `bv_decide` over the SMT2 models |
+| `≈ CO-SIM` | equivalence demonstrated by randomised differential co-simulation |
+| `○ SPEC_ONLY` | a spec file exists with no equivalence evidence |
+| `✗ MISSING` | no spec |
+
+`lake exe generate_all --check-sec-specs` gates on `SPEC_ONLY`: a spec that
+carries no evidence fails the build (the `MISSING` set is an agreed
+out-of-scope boundary and is reported, not fatal).
+
+### 7. CI
+
+Both paths run in `.github/workflows/ci.yml` and are required by `ci-pass`:
+
+- **`sec-bridge`** — OSS CAD Suite (Yosys, for `write_functional_smt2`) plus Lean:
+  `make sec-bridge`, then the evidence gate, then the manifest.
+- **`spec-sim`** — Verilator plus the RISC-V toolchain: builds the ELF tests, runs
+  the full suite against the spec implementation (`make run-spec-tests`), then the
+  per-module equivalence audit (`make spec-equiv`).
+
 ## Verification Commands
 
 ```bash
@@ -328,6 +408,8 @@ python3 scripts/gen-bridges.py
 make spec-shims                 # build output/sv-spec/ (+ list specs still missing)
 make spec-sim                   # build the Verilator sim from the spec tree
 make run-spec-tests             # run the full ELF suite against the spec tree
+make spec-equiv                 # randomised RTL-vs-spec co-simulation, per module
+lake exe generate_all --check-sec-specs   # gate: no spec without evidence
 
 # Build standalone Lean SMT ingester
 lake build smt2lean
@@ -344,9 +426,12 @@ python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
 | Circuits in the emitted universe | 237 |
 | Families with a human-authored spec | 160 (68%) |
 | Verified with `bv_decide` (0 axioms) | 157 (66%) |
-| Spec-only (no proof yet) | 3 |
+| Co-sim verified (`make spec-equiv`) | 3 |
+| Spec-only (spec, no evidence) | 0 |
 | Missing | 77 |
+| Equivalence evidence (SEC or co-sim) | 160/237 (67%) |
 | Spec-side ELF suite | 240/240 pass |
+| Per-module RTL-vs-spec co-simulation | 160/160 match |
 
 Tracked verification surface:
 

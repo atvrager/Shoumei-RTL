@@ -166,8 +166,10 @@ def infer_params(
                     except Exception:
                         pass
 
+    # Sorted so the emitted parameter list is reproducible across runs
+    # (a set's iteration order varies with string hash randomisation).
     resolved: dict[str, int] = {}
-    for k in param_names:
+    for k in sorted(param_names):
         v = vals.get(k, set())
         if len(v) == 1:
             resolved[k] = next(iter(v))
@@ -187,14 +189,18 @@ def infer_params(
 
 # ── shim generation ───────────────────────────────────────────────────────────
 
-def build_shim(
-    mod: str,
+def spec_pins(
     spec_mod: str,
     param_vals: dict[str, int],
     em_ports: list[tuple[str, str, int]],
     sp_ports: list[tuple[str, str, int]],
-) -> str | None:
-    """Return the shim SV text, or None if bit-maps are incompatible."""
+) -> list[str] | None:
+    """Port connections for instantiating `spec_mod` from the emitted port set.
+
+    Returns `["    .port(expr)", ...]`, or None when an emitted input has no
+    spec counterpart (a real interface mismatch).  Spec outputs with no emitted
+    counterpart are left unconnected, which is valid: no parent reads them.
+    """
     e_bm = bit_map(em_ports)
     s_bm = bit_map(sp_ports)
 
@@ -251,6 +257,21 @@ def build_shim(
                 parts.append(en if ei is None else f"{en}[{ei}]")
             expr = parts[0] if width == 1 else "{" + ", ".join(parts) + "}"
             pins.append(f"    .{n}({expr})")
+
+    return pins
+
+
+def build_shim(
+    mod: str,
+    spec_mod: str,
+    param_vals: dict[str, int],
+    em_ports: list[tuple[str, str, int]],
+    sp_ports: list[tuple[str, str, int]],
+) -> str | None:
+    """Return the shim SV text, or None if bit-maps are incompatible."""
+    pins = spec_pins(spec_mod, param_vals, em_ports, sp_ports)
+    if pins is None:
+        return None
 
     decl = ",\n".join(
         f"  {d} logic {(w_str + ' ') if (w_str := f'[{w - 1}:0]' if w > 1 else '') else ''}{n}"

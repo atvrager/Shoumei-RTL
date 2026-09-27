@@ -259,6 +259,15 @@ spec-sim: spec-shims
 run-spec-tests: spec-sim
 	$(MAKE) -C testbench run-all-tests SV_DIR=$(SV_SPEC_DIR)
 
+# Randomised differential co-simulation: each spec is instantiated beside its
+# emitted netlist and driven with LFSR stimulus, comparing every output on every
+# clock edge.  This is the equivalence evidence for modules where the SMT route
+# does not scale, and it catches specs that lag the RTL by a cycle — invisible to
+# a functional test suite.
+SPEC_EQUIV_CYCLES ?= 5000
+spec-equiv:
+	@python3 scripts/spec-equiv.py --cycles $(SPEC_EQUIV_CYCLES)
+
 
 # Re-derive the PDK cell models used by slang and the LEC from Liberty.
 cell-models:

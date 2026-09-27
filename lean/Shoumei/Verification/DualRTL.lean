@@ -14,14 +14,21 @@ open Shoumei
 /-- Status of a circuit's Dual-RTL SystemVerilog specification and formal equivalence. -/
 inductive SpecStatus where
   | missing      : SpecStatus
+  /-- A spec file is present, but no equivalence evidence has been recorded. -/
   | specExists   : SpecStatus
+  /-- Equivalence established by `bv_decide` over the SMT2 models (a proof). -/
   | secVerified  : SpecStatus
+  /-- Equivalence established by randomised differential co-simulation against the
+      emitted netlist (`make spec-equiv`).  Not a proof: it samples the input and
+      state space, so it is a weaker, independent witness. -/
+  | coSimVerified : SpecStatus
   deriving Repr, DecidableEq, Inhabited
 
 def SpecStatus.asString : SpecStatus → String
   | .missing => "MISSING"
   | .specExists => "SPEC_EXISTS"
   | .secVerified => "VERIFIED"
+  | .coSimVerified => "CO-SIM"
 
 /-- An entry registering an independent SystemVerilog specification for a circuit. -/
 structure DualRTLSpec where
@@ -29,6 +36,8 @@ structure DualRTLSpec where
   specFile     : String
   topModule    : String
   hasProof     : Bool := false
+  /-- Covered by `make spec-equiv` (randomised differential co-simulation). -/
+  coSimulated  : Bool := false
   proofRef     : String := ""
   deriving Repr, Inhabited
 
@@ -967,6 +976,26 @@ def allSpecs : List DualRTLSpec := [
     hasProof := true
     proofRef := "ShoumeiSec.BridgeIntegerExecUnit_W2_64.integerexecunit_w2_64_sec"
   },
+  -- Equivalence established by randomised differential co-simulation
+  -- (`make spec-equiv`); these carry no bv_decide proof.
+  {
+    circuitName := "BusyTable_W2"
+    specFile := "verification/specs/BusyTable_W2_spec.sv"
+    topModule := "BusyTable_W2_spec"
+    coSimulated := true
+  },
+  {
+    circuitName := "FPBusyTable"
+    specFile := "verification/specs/FPBusyTable_spec.sv"
+    topModule := "FPBusyTable_spec"
+    coSimulated := true
+  },
+  {
+    circuitName := "Mul32x32To64"
+    specFile := "verification/specs/Mul32x32To64_spec.sv"
+    topModule := "Mul32x32To64_spec"
+    coSimulated := true
+  },
   {
     circuitName := "BranchExecUnit"
     specFile := "verification/specs/BranchExecUnit_spec.sv"
@@ -1149,6 +1178,8 @@ def computeStatus (circuitName : String) (specFileExists : Bool) : SpecStatus :=
   | some spec =>
     if spec.hasProof then
       .secVerified
+    else if spec.coSimulated && specFileExists then
+      .coSimVerified
     else if specFileExists then
       .specExists
     else
@@ -1182,7 +1213,8 @@ def generateManifest (circuits : List Circuit) : IO (List ManifestEntry) := do
 def printManifest (circuits : List Circuit) : IO Unit := do
   let entries ← generateManifest circuits
   let verified := entries.filter (·.status == .secVerified) |>.length
-    let specOnly := entries.filter (·.status == .specExists) |>.length
+  let coSim    := entries.filter (·.status == .coSimVerified) |>.length
+  let specOnly := entries.filter (·.status == .specExists) |>.length
   let missing  := entries.filter (·.status == .missing) |>.length
   let total    := entries.length
 
@@ -1194,28 +1226,46 @@ def printManifest (circuits : List Circuit) : IO Unit := do
   IO.println "-------------+----------------------------------+-------------------------------------"
   for e in entries do
     let statusStr := match e.status with
-      | .secVerified => "✓ VERIFIED  "
-      | .specExists  => "○ SPEC_ONLY "
-      | .missing     => "✗ MISSING   "
+      | .secVerified   => "✓ VERIFIED  "
+      | .coSimVerified => "≈ CO-SIM    "
+      | .specExists    => "○ SPEC_ONLY "
+      | .missing       => "✗ MISSING   "
     let padLen := if e.circuitName.length < 32 then 32 - e.circuitName.length else 0
     let circPadded := e.circuitName ++ String.ofList (List.replicate padLen ' ')
     IO.println s!"{statusStr} | {circPadded} | {e.specFile}"
 
   IO.println "-------------+----------------------------------+-------------------------------------"
-  IO.println s!"Summary: {verified} verified, {specOnly} spec-only, {missing} missing (Total: {total})"
+  IO.println s!"Summary: {verified} SEC-verified, {coSim} co-sim-verified, {specOnly} spec-only, {missing} missing (Total: {total})"
   let pct := if total > 0 then (verified * 100) / total else 0
   IO.println s!"Dual-RTL SEC Bridge Coverage: {verified}/{total} ({pct}%)"
+  let withEvidence := verified + coSim
+  let epct := if total > 0 then (withEvidence * 100) / total else 0
+  IO.println s!"Dual-RTL equivalence evidence (SEC or co-sim): {withEvidence}/{total} ({epct}%)"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-/-- Check if all circuits have specs or report missing count. -/
+/-- Gate on specification evidence.
+
+Circuits with no spec at all are reported but not fatal — the missing set is an
+agreed out-of-scope boundary (Tier D).  A spec that exists with no equivalence
+evidence *is* fatal: writing a spec without securing evidence for it is the
+regression this check exists to catch, and the recorded statuses move only in
+one direction (`make sec-bridge` / `make spec-equiv`). -/
 def checkSpecs (circuits : List Circuit) : IO UInt32 := do
   let entries ← generateManifest circuits
-  let missing := entries.filter (·.status == .missing)
-  if missing.isEmpty then
-    IO.println s!"✓ All {entries.length} circuits have dual-RTL SystemVerilog specifications."
+  let unbacked := entries.filter (·.status == .specExists)
+  let missing  := entries.filter (·.status == .missing)
+  let verified := entries.filter (·.status == .secVerified) |>.length
+  let cosim    := entries.filter (·.status == .coSimVerified) |>.length
+  IO.println s!"{verified} SEC-verified, {cosim} co-sim-verified, {unbacked.length} spec-only, {missing.length} without a spec (of {entries.length})"
+  if unbacked.isEmpty then
+    IO.println s!"✓ Every registered specification carries equivalence evidence."
     pure 0
   else
-    IO.println s!"Notice: {missing.length}/{entries.length} circuits without dual-RTL specifications."
-    pure 0
+    IO.eprintln s!"✗ {unbacked.length} specification(s) have no equivalence evidence (neither SEC nor co-simulation):"
+    for e in unbacked do
+      IO.eprintln s!"  {e.circuitName} ({e.specFile})"
+    IO.eprintln "  Add an SEC bridge in scripts/gen-bridges.py, or list the module under"
+    IO.eprintln "  EXTRA_SPEC_ONLY in scripts/spec-equiv.py and mark it coSimulated := true."
+    pure 1
 
 end Shoumei.Verification.DualRTL

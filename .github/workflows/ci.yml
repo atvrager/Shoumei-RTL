@@ -875,6 +875,104 @@ jobs:
             ${{ matrix.out_dir }}/abc.constr
           retention-days: 14
 
+  sec-bridge:
+    name: Dual-RTL SEC Bridge
+    runs-on: ubuntu-24.04
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: codegen-output
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache .lake
+        uses: actions/cache@v6
+        with:
+          path: |
+            .lake
+            lake-packages
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+
+      # write_functional_smt2 needs a current Yosys; the distro package is too old.
+      - name: Setup OSS CAD Suite (Yosys)
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Each spec's own SVA assertions are translated into Lean theorems over
+      # that spec's model, so this covers both the netlist-vs-spec equivalence
+      # and the properties the spec claims about itself.
+      - name: Sequential equivalence (SMT2 -> bv_decide)
+        run: make sec-bridge
+
+      # Fails if a registered spec has no proof and no co-simulation evidence.
+      - name: Specification coverage gate
+        run: lake exe generate_all --check-sec-specs
+
+      - name: Specification manifest
+        run: make sec-manifest
+
+  spec-sim:
+    name: Spec-Side Simulation
+    runs-on: ubuntu-24.04
+    needs: [changes, codegen]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download codegen artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: codegen-output
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Cache RISC-V toolchain
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/riscv64-elf
+          key: riscv64-elf-2026.01.23
+
+      - name: Setup RISC-V toolchain
+        run: |
+          ./scripts/setup-riscv-toolchain.sh
+          echo "$HOME/.local/riscv64-elf/bin" >> $GITHUB_PATH
+
+      - name: Fetch submodules
+        run: |
+          git submodule update --init third_party/riscv-tests
+          git submodule update --init third_party/FreeRTOS-Kernel
+
+      - name: Build test ELFs
+        run: |
+          make -C testbench/tests
+          make -C testbench/riscv-tests
+
+      # The hand-written specs are a second implementation of the same
+      # microarchitecture.  `make spec-shims` builds output/sv-spec/ with every
+      # spec-backed module swapped for its spec, and the ELF suite then runs
+      # against that tree.
+      - name: Run ELF suite against the spec implementation
+        run: make run-spec-tests
+
+      # Per-module randomised differential co-simulation of each spec against
+      # its emitted netlist.  This is the evidence that counts for modules the
+      # SMT route cannot reach, and it catches a spec that lags the RTL by a
+      # cycle (invisible to a functional test suite).
+      - name: Spec vs emitted netlist equivalence
+        run: make spec-equiv
+
   ci-pass:
     name: CI Pass
     if: always()
@@ -893,6 +991,8 @@ jobs:
       - techmap-equiv
       - cosim
       - smoke-test
+      - sec-bridge
+      - spec-sim
     steps:
       - name: Check all jobs passed
         run: |
@@ -921,6 +1021,8 @@ jobs:
             "techmap-equiv:${{ needs.techmap-equiv.result }}" \
             "cosim:${{ needs.cosim.result }}" \
             "smoke-test:${{ needs.smoke-test.result }}" \
+            "sec-bridge:${{ needs.sec-bridge.result }}" \
+            "spec-sim:${{ needs.spec-sim.result }}" \
           )
 
           failed=0
