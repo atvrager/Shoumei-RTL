@@ -7,6 +7,9 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 - **Lean Toolchain**: Pinned to Lean `v4.34.1` via `lean-toolchain`.
 - **Core Library (`//lean:shoumei`)**: All 285 Lean modules compile in parallel across individual sandboxed Bazel actions.
 - **Code Generator (`//:generate_all`)**: Compiles to a 136 MB static ELF binary via `lean_binary`.
+- **Hermetic RTL Generation (`//:rtl`, `//:sv`)**: Sandboxed Bazel rule executes `generate_all` inside the build sandbox, emitting declared artifacts into `bazel-out/` without polluting the source workspace.
+- **Structural Linter Test (`//:lint_structural_test`)**: Sandboxed test target validating all 238 emitted SystemVerilog modules against Synopsys DC NXT LINT-31/32 rules.
+- **RISC-V Opcode Parsing (`//:instr_dict`)**: Hermetically built via Bazel from `third_party/riscv-opcodes` definitions.
 - **Co-enhancement**: Identified and fixed import parsing in `rules_lean` ([commit 2cf9d00](https://github.com/atvrager/rules_lean/commit/2cf9d00)), ignoring block comments (`/- ... -/`) and string literals.
 
 ## Commands
@@ -15,37 +18,37 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 # Build the entire Lean library (285 modules in parallel)
 bazel build //lean:shoumei
 
-# Build the native code generation binary
-bazel build //:generate_all
+# Generate primary SystemVerilog RTL (output lands in bazel-bin/rtl_raw_sv)
+bazel build //:sv
 
-# Run code generator
-./bazel-bin/generate_all
+# Generate all output formats (SV, netlist, techmaps, C++ sim, testbenches)
+bazel build //:rtl
+
+# Run native structural linting on generated SystemVerilog
+bazel test //:lint_structural_test
 ```
 
 ## Generated Artifacts
 
-Executing `generate_all` emits hardware designs:
+Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 
-| Directory | File Count | Content |
-| --- | --- | --- |
-| `output/sv-from-lean/` | 237 `.sv` files | Hierarchical SystemVerilog modules |
-| `output/sv-netlist/` | 237 `.sv` files | Flat gate-level netlists |
-| `output/sv-asap7/` | 81 `.sv` files | ASAP7 cell library mappings |
-| `output/sv-gf180/` | 81 `.sv` files | GF180MCU cell library mappings |
-| `output/cpp_sim/` | 237 `.h` files | Cycle-accurate C++ simulation models |
+| Target | Output Artifact | Count | Description |
+| --- | --- | --- | --- |
+| `//:sv` | `bazel-bin/rtl_raw_sv/` | 239 files | Hierarchical SystemVerilog modules + `filelist.f` |
+| `//:sv_netlist` | `bazel-bin/rtl_raw_netlist/` | 238 files | Flat gate-level netlists + `filelist.f` |
+| `//:sv_asap7` | `bazel-bin/rtl_raw_asap7/` | 82 files | ASAP7 cell library mappings + `filelist.f` |
+| `//:sv_gf180` | `bazel-bin/rtl_raw_gf180/` | 82 files | GF180MCU cell library mappings + `filelist.f` |
+| `//:sv_sec` | `bazel-bin/rtl_raw_sec/` | 11 files | SEC miters and TCL scripts |
+| `//:cpp_sim` | `bazel-bin/rtl_raw_cpp_sim/` | 477 files | Cycle-accurate C++ simulation models (`.h` / `.cpp`) |
+| `//:testbench` | `bazel-bin/rtl_raw_testbench/` | 9 files | Emitted testbenches, drivers, and setups |
 
 ## Open Work
 
-1. **Hermetic RTL Generation**:
-   - `generate_all` currently writes directly to in-tree `output/`.
-   - Goal: Wrap code generation in a Bazel rule (or `genrule`) that emits declared output files into `bazel-out/`.
-   - Prevent side effects in the source workspace.
-
-2. **Simulation and Lint Targets**:
+1. **Simulation and Synthesis Targets**:
    - Slang lint: Declare a test target running `slang` on the emitted SystemVerilog.
-   - Verilator: Declare `cc_test` or `sh_test` targets compiling and running emitted C++ simulation against testbench ELFs.
-   - Arcilator / CIRCT flow: Package CIRCT/firtool dependencies into Bazel toolchains.
+   - Verilator: Declare `cc_test` targets compiling and running emitted C++ simulation against testbench ELFs.
+   - Yosys synthesis: Declare actions targeting GF180 and ASAP7 cell synthesis.
 
-3. **Proof Audits**:
+2. **Proof Audits**:
    - Add `lean_axiom_test` targets for key correctness theorems (e.g., `fullAdder_correct`, `alu_correct`, `shoumei_soc_correct`).
-   - Gate builds on zero axioms (`allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]`).
+   - Gate builds on zero unapproved axioms (`allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]`).
