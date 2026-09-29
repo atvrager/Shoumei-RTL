@@ -49,6 +49,13 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//verification:sec_manifest_test`: Export and validation of Dual-RTL SEC manifest.
   - `//verification:check_wiring_test`: Circuit input port wiring completeness gate across all 237 registered circuits.
   - `//verification:formal`: Aggregates all 7 formal and structural verification targets.
+- **Extended Equivalence, Conformance & Smoke Gates (Tier 5)**:
+  - `//verification:pdk_cells_model`: Hermetically generates behavioral PDK cells from Liberty files via Python genrule.
+  - `//verification:techmap_equiv_test`: Yosys SAT miter logical equivalence checking (LEC) proving mapped cells in ASAP7 and GF180 match gold RTL.
+  - `//testbench:cache_conformance_test`: Verilates L1DCache with C++ driver to verify replacement, refill, and dirty writeback protocols.
+  - `//verification:spec_equiv_test`: Differential co-simulation of hand-written SystemVerilog specs against emitted netlists under LFSR stimulus.
+  - `//verification:smoke_test`: Structural regression test validating outputs, port lists, instance bindings, cell tables, and proof integrity (74 checks).
+  - `//verification:extended`: Aggregates all 4 Tier 5 verification targets.
 - **Generator Optimization**:
   - `//:generate_all` configured with `extra_link_flags = ["-O3", "-DNDEBUG"]`, accelerating execution by ~8x (e.g. `check_wiring` from 619s to 78s).
 
@@ -75,6 +82,9 @@ bazel test //:audits
 
 # Run formal verification, equivalence, and wiring gates (Yosys, SVA, SEC, check_wiring)
 bazel test //verification:formal
+
+# Run extended equivalence, cache conformance, and smoke gates (Tier 5)
+bazel test //verification:extended
 
 # Build Spike simulator library
 bazel build //third_party:spike_lib

@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="${SMOKE_ROOT:-$(dirname "$SCRIPT_DIR")}"
 
 cd "$PROJECT_ROOT"
 
@@ -54,7 +54,7 @@ echo "==> Test 2: C++ Simulation Output"
 
 SC_H_COUNT=0
 if [ -d "output/cpp_sim" ]; then
-    SC_H_COUNT=$(find output/cpp_sim -name "*.h" 2>/dev/null | wc -l)
+    SC_H_COUNT=$(find -L output/cpp_sim -name "*.h" 2>/dev/null | wc -l)
 fi
 
 if [ "$SC_H_COUNT" -gt 0 ]; then
@@ -184,6 +184,8 @@ echo ""
 echo "==> Cache behavior conformance"
 if ! command -v verilator > /dev/null 2>&1; then
     echo "(skipped: verilator not installed; CI runs it in verilator-sim)"
+elif [ -n "${SKIP_CACHE_CONFORMANCE:-}" ]; then
+    echo "(skipped: verified via testbench:cache_conformance_test)"
 elif make -C testbench cache-model-test > /tmp/cache-conformance.log 2>&1; then
     pass "Cache conformance (L1D SV vs reference)"
 else
@@ -196,7 +198,7 @@ echo ""
 echo "==> PDK technology mapping"
 
 for pdk_dir in output/sv-asap7 output/sv-gf180; do
-    mapped_count=$(find "$pdk_dir" -maxdepth 1 -name '*.sv' 2>/dev/null | wc -l | tr -d ' ')
+    mapped_count=$(find -L "$pdk_dir" -maxdepth 1 -name '*.sv' 2>/dev/null | wc -l | tr -d ' ')
     if [ "$mapped_count" -gt 0 ]; then
         pass "Tech-mapped SV present: $pdk_dir ($mapped_count modules)"
     else
@@ -245,7 +247,7 @@ else
     cat /tmp/soc-visual.log || true
 fi
 
-SORRY_COUNT=$(grep -rnE '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
+SORRY_COUNT=$(grep -rnE --include="*.lean" '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
 if [ "$SORRY_COUNT" -eq 0 ]; then
     pass "Zero sorry/admit occurrences in Lean proofs"
 else

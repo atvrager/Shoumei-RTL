@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("//testbench:verilog_tree.bzl", "verilog_tree_library")
 
@@ -127,4 +128,19 @@ filegroup(
 filegroup(
     name = "testbench_scripts",
     srcs = glob(["*.sh"]),
+)
+
+sh_test(
+    name = "cache_conformance_test",
+    srcs = ["run_cache_conformance.sh"],
+    args = [
+        "$(location //:sv)",
+        "$(location cache_model_test/cache_conformance.cpp)",
+        "$(location //physical/sim-dpi:sram_dpi.c)",
+    ],
+    data = [
+        "cache_model_test/cache_conformance.cpp",
+        "//:sv",
+        "//physical/sim-dpi:sram_dpi.c",
+    ],
 )

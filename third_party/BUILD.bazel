@@ -15,6 +15,17 @@ filegroup(
     ),
 )
 
+filegroup(
+    name = "orfs_liberty",
+    srcs = glob(
+        [
+            "orfs/flow/platforms/asap7/lib/NLDM/*.lib.gz",
+            "orfs/flow/platforms/gf180/lib/*.lib.gz",
+        ],
+        allow_empty = True,
+    ),
+)
+
 configure_make(
     name = "spike_lib",
     configure_options = [

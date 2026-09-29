@@ -30,10 +30,10 @@ import shutil
 import subprocess
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(".").resolve() if pathlib.Path("verification/specs").exists() else pathlib.Path(__file__).resolve().parent.parent
 SV_SRC = ROOT / "output" / "sv-from-lean"
 SPEC_SRC = ROOT / "verification" / "specs"
-OUT = ROOT / "output" / "spec-equiv"
+OUT = pathlib.Path(os.environ["TEST_TMPDIR"]) / "spec-equiv" if "TEST_TMPDIR" in os.environ else ROOT / "output" / "spec-equiv"
 DUAL_RTL = ROOT / "lean" / "Shoumei" / "Verification" / "DualRTL.lean"
 
 # Specs that are real but whose SEC proof is not registered yet.
@@ -313,12 +313,17 @@ def run_one(mod, reg, cycles: int, keep: bool, build_jobs: int = 1) -> tuple[str
 
 
 def main() -> int:
+    global SV_SRC
     ap = argparse.ArgumentParser()
     ap.add_argument("modules", nargs="*")
     ap.add_argument("--cycles", type=int, default=DEFAULT_CYCLES)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--jobs", type=int, default=0, help="parallel module builds (default: nproc)")
+    ap.add_argument("--sv-dir", type=pathlib.Path, default=SV_SRC, help="Path to emitted SV directory")
     args = ap.parse_args()
+
+    if args.sv_dir:
+        SV_SRC = args.sv_dir.resolve()
 
     OUT.mkdir(parents=True, exist_ok=True)
     reg = load_registry()

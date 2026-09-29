@@ -32,8 +32,13 @@ REQUIRED_PHRASES = [
 
 
 def main() -> int:
+    import os
     if not SOC_HTML.exists():
-        cmd = ["lake", "--no-ansi", "exe", "generate_all", "--soc-diagram"]
+        gen = os.environ.get("GENERATOR")
+        if gen:
+            cmd = [gen, "--soc-diagram"]
+        else:
+            cmd = ["lake", "--no-ansi", "exe", "generate_all", "--soc-diagram"]
         res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
         if res.returncode != 0:
             print(f"Error running generate_all --soc-diagram:\n{res.stderr}", file=sys.stderr)

@@ -83,6 +83,7 @@ sh_test(
     data = [
         "//:root_python_scripts",
         "//lean:shoumei_srcs",
+        "//third_party:orfs_liberty",
     ],
 )
 
@@ -175,6 +176,95 @@ sh_test(
     ],
 )
 
+filegroup(
+    name = "specs",
+    srcs = glob(["specs/*.sv"]),
+)
+
+genrule(
+    name = "pdk_cells_model",
+    srcs = [
+        "//lean:shoumei_srcs",
+        "//third_party:orfs_liberty",
+    ],
+    outs = ["pdk-cells-model.sv"],
+    cmd = "python3 scripts/gen-pdk-cell-models.py --out $@",
+    tools = ["//:root_python_scripts"],
+)
+
+sh_test(
+    name = "techmap_equiv_test",
+    size = "medium",
+    srcs = ["run_techmap_equiv.sh"],
+    args = [
+        "$(location //:sv)",
+        "$(location //:sv_asap7)",
+        "$(location //:sv_gf180)",
+        "$(location :pdk_cells_model)",
+        # Representative modules across adders and logic
+        "ALU32",
+        "KoggeStoneAdder64NoCin",
+        "BrentKungAdder32",
+        "CarrySelectAdder32",
+    ],
+    data = [
+        "techmap-equiv.sh",
+        ":pdk_cells_model",
+        "//:root_shell_scripts",
+        "//:sv",
+        "//:sv_asap7",
+        "//:sv_gf180",
+    ],
+)
+
+sh_test(
+    name = "spec_equiv_test",
+    srcs = ["run_spec_equiv.sh"],
+    args = [
+        "$(location //:sv)",
+        "--cycles",
+        "500",
+        "BusyTable_W2",
+        "FPBusyTable",
+    ],
+    data = [
+        ":specs",
+        "//:root_python_scripts",
+        "//:sv",
+        "//lean:shoumei_srcs",
+    ],
+)
+
+sh_test(
+    name = "smoke_test",
+    srcs = ["run_smoke_test.sh"],
+    args = [
+        "$(location //:sv)",
+        "$(location //:sv_asap7)",
+        "$(location //:sv_gf180)",
+        "$(location //:sv_sec)",
+        "$(location //:cpp_sim)",
+        "$(location //:generate_all)",
+    ],
+    data = [
+        ":pdk_cells_model",
+        ":specs",
+        ":verification_python_scripts",
+        ":verification_scripts",
+        "//:cpp_sim",
+        "//:generate_all",
+        "//:physical_srcs",
+        "//:root_python_scripts",
+        "//:root_shell_scripts",
+        "//:sv",
+        "//:sv_asap7",
+        "//:sv_gf180",
+        "//:sv_sec",
+        "//lean:shoumei_srcs",
+        "//third_party:orfs_liberty",
+    ],
+)
+
 test_suite(
     name = "formal",
     tests = [
@@ -185,5 +275,15 @@ test_suite(
         ":sva_verilator_test",
         ":yosys_dc_lint_test",
         ":yosys_validate_test",
+    ],
+)
+
+test_suite(
+    name = "extended",
+    tests = [
+        ":smoke_test",
+        ":spec_equiv_test",
+        ":techmap_equiv_test",
+        "//testbench:cache_conformance_test",
     ],
 )

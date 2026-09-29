@@ -100,6 +100,12 @@ def liberty_present() -> bool:
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", type=Path, default=OUT, help="Output path for pdk-cells-model.sv")
+    args = ap.parse_args()
+    out_file = args.out
+
     if not liberty_present():
         print("SKIP: PDK Liberty not found (init third_party/orfs); "
               "not regenerating cell models")
@@ -139,8 +145,9 @@ def main() -> int:
         print(f"ERROR: cells not found in Liberty: {missing}")
         return 1
 
-    OUT.write_text("\n".join(lines))
-    print(f"wrote {OUT} ({count} cells)")
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text("\n".join(lines))
+    print(f"wrote {out_file} ({count} cells)")
     return 0
 
 

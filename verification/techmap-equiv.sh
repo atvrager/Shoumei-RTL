@@ -24,7 +24,20 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 GOLD_DIR="output/sv-from-lean"
+ASAP7_DIR="output/sv-asap7"
+GF180_DIR="output/sv-gf180"
 CELL_MODELS="verification/pdk-cells-model.sv"
+MODULES=()
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --gold-dir) GOLD_DIR="$2"; shift 2 ;;
+        --asap7-dir) ASAP7_DIR="$2"; shift 2 ;;
+        --gf180-dir) GF180_DIR="$2"; shift 2 ;;
+        --cell-models) CELL_MODELS="$2"; shift 2 ;;
+        *) MODULES+=("$1"); shift ;;
+    esac
+done
 
 if [ ! -d "$GOLD_DIR" ]; then
     echo "ERROR: $GOLD_DIR not found. Run: make codegen"
@@ -44,7 +57,7 @@ trap 'rm -rf "$TMP"' EXIT
 # instantiates, as the DC-NXT-style lint does.
 STUB_DIR="$TMP/sram-stubs"
 mkdir -p "$STUB_DIR"
-"$ROOT/scripts/gen-sram-macros.sh" --stub --out "$STUB_DIR" > /dev/null
+"$ROOT/scripts/gen-sram-macros.sh" --stub --out "$STUB_DIR" --sv-dir "$GOLD_DIR" > /dev/null
 
 # Gold copies with keep_hierarchy stripped (so the miter can flatten).
 mkdir -p "$TMP/gold"
@@ -86,7 +99,11 @@ ram_bearing() {
 select_modules() {
     local pdk_dir="$1"; shift
     if [ "$#" -gt 0 ]; then
-        printf '%s\n' "$@"
+        for m in "$@"; do
+            if [ -f "$pdk_dir/$m.sv" ]; then
+                echo "$m"
+            fi
+        done
         return
     fi
     local skip
@@ -155,7 +172,7 @@ run_pdk() {
     echo "   $pdk: all $count modules equivalent"
 }
 
-run_pdk asap7   output/sv-asap7   "$@"
-run_pdk gf180   output/sv-gf180   "$@"
+run_pdk asap7 "$ASAP7_DIR" "${MODULES[@]}"
+run_pdk gf180 "$GF180_DIR" "${MODULES[@]}"
 
 echo "techmap LEC: PASS"

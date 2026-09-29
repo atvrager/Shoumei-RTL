@@ -102,6 +102,11 @@ filegroup(
 )
 
 filegroup(
+    name = "physical_srcs",
+    srcs = glob(["physical/**"]),
+)
+
+filegroup(
     name = "root_shell_scripts",
     srcs = glob([
         "physical/*.sh",
