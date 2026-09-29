@@ -6,8 +6,8 @@ module(
 bazel_dep(name = "rules_lean")
 git_override(
     module_name = "rules_lean",
-    remote = "https://github.com/atvrager/rules_lean.git",
     commit = "2cf9d007003ff73374e0082a82342e3f4723fc65",
+    remote = "https://github.com/atvrager/rules_lean.git",
 )
 
 lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
@@ -15,3 +15,10 @@ lean.toolchain(toolchain_file = "//:lean-toolchain")
 use_repo(lean, "lean_toolchains")
 
 register_toolchains("@lean_toolchains//:all")
+
+bazel_dep(name = "rules_foreign_cc", version = "0.16.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "rules_verilator", version = "1.1.2")
+bazel_dep(name = "rules_verilog", version = "1.4.3")
+
+register_toolchains("//toolchains/verilator:host_verilator_toolchain")

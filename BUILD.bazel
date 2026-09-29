@@ -5,10 +5,7 @@ package(default_visibility = ["//visibility:public"])
 
 genrule(
     name = "instr_dict",
-    srcs = glob(
-        ["third_party/riscv-opcodes/**"],
-        allow_empty = True,
-    ),
+    srcs = ["//third_party:riscv_opcodes_srcs"],
     outs = ["instr_dict.json"],
     cmd = """
         if [ -f third_party/riscv-opcodes/instr_dict.json ]; then

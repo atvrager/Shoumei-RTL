@@ -1,0 +1,34 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "spike_srcs",
+    srcs = glob(["riscv-isa-sim/**"]),
+)
+
+filegroup(
+    name = "riscv_opcodes_srcs",
+    srcs = glob(
+        ["riscv-opcodes/**"],
+        allow_empty = True,
+    ),
+)
+
+configure_make(
+    name = "spike_lib",
+    configure_options = [
+        "CFLAGS=-O2",
+        "CXXFLAGS=-O2",
+    ],
+    lib_source = ":spike_srcs",
+    out_shared_libs = [
+        "libriscv.so",
+        "libcustomext.so",
+        "libsoftfloat.so",
+    ],
+    out_static_libs = [
+        "libfesvr.a",
+        "libdisasm.a",
+    ],
+)
