@@ -306,7 +306,7 @@ sh_test(
     srcs = ["run_mutation_test.sh"],
     data = [
         "mutation-test.sh",
-        "//:lake_files",
+        "//:lean_toolchain_file",
         "//lean:shoumei_srcs",
     ],
 )
@@ -325,7 +325,7 @@ sh_test(
     ],
     data = [
         ":specs",
-        "//:lake_files",
+        "//:lean_toolchain_file",
         "//:root_python_scripts",
         "//:smt2lean",
         "//:sv",

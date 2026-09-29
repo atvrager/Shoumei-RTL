@@ -24,16 +24,15 @@ fi
 WS="${TEST_TMPDIR:-/tmp}/mutation_ws"
 mkdir -p "$WS"
 cp -rL "$ROOT/lean" "$WS/"
-cp -L "$ROOT/lakefile.lean" "$WS/"
-cp -L "$ROOT/lean-toolchain" "$WS/"
-if [ -f "$ROOT/lake-manifest.json" ]; then
-    cp -L "$ROOT/lake-manifest.json" "$WS/"
+if [ -f "$ROOT/lean-toolchain" ]; then
+    cp -L "$ROOT/lean-toolchain" "$WS/"
 fi
 mkdir -p "$WS/verification"
 cp -L "$ROOT/verification/mutation-test.sh" "$WS/verification/"
 
 export PROJECT_ROOT="$WS"
 export REPORT_DIR="${TEST_TMPDIR:-$WS/output/mutation-test}"
+export LEAN_PATH="${ROOT}/bazel-bin/lean"
 
 cd "$WS"
 exec bash "$WS/verification/mutation-test.sh"

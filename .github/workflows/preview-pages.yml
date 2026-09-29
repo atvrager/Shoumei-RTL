@@ -1,9 +1,5 @@
 name: Preview Pages
 
-# Manual preview of the visualization suite from any branch, deployed to the
-# real Pages URL. The main-branch `visuals` job in ci.yml publishes the
-# authoritative build on merge; keep these steps in sync with it.
-
 on:
   workflow_dispatch:
 
@@ -18,60 +14,37 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install elan
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            yosys \
+            build-essential
+
+      - name: Install Elan (Lean 4)
         run: |
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Cache .lake
-        uses: actions/cache@v6
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@v0.8.5
         with:
-          path: |
-            .lake
-            lake-packages
-          key: ${{ runner.os }}-lean-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json', 'lean/**/*.lean', 'GenerateAll.lean') }}
+          bazelisk-version: '1.20.0'
+          disk-cache: true
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
-      - name: Generate code
+      - name: Build Publication Bundle
         run: |
-          make codegen
+          bazel build //viewer:pages_bundle
 
-      - name: Setup OSS CAD Suite (Yosys)
-        uses: YosysHQ/setup-oss-cad-suite@v4
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Synthesize netlists
+      - name: Unpack Pages Bundle
         run: |
-          make synth-gf180
-          make synth-asap7
-          FLATTEN=0 OUTPUT_DIR=syn_out_gf180_hier ./physical/run-yosys-gf180.sh
-          FLATTEN=0 OUTPUT_DIR=syn_out_asap7_hier ./physical/run-yosys-asap7.sh
-
-      - name: Compile pipeline viewer
-        run: |
-          npx -y -p typescript@5.5.4 tsc -p viewer/tsconfig.json
-
-      - name: Generate visualization suite
-        run: |
-          mkdir -p output/architecture-visuals
-          cp viewer/viewer.html viewer/dist/viewer.js viewer/dist/schema.gen.js output/architecture-visuals/
-          lake --no-ansi exe generate_all --visuals
-
-      - name: Upload visualization suite
-        uses: actions/upload-artifact@v6
-        with:
-          name: visuals-preview
-          path: output/architecture-visuals/
-          retention-days: 30
+          mkdir -p pages
+          tar -xzf bazel-bin/viewer/pages_bundle.tar.gz -C pages/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -81,7 +54,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: output/architecture-visuals/
+          path: pages/
 
       - name: Deploy to GitHub Pages
         id: deployment

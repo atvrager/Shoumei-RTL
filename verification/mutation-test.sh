@@ -74,7 +74,22 @@ with open(path, "w") as f:
 ' "$file" "$sed_from" "$sed_to"
 
     # 2. Test semantic / L1-L3 proof
-    if ! lake --no-ansi build "$target" > /dev/null 2>&1; then
+    local target_file="lean/${target//.//}.lean"
+    local killed=false
+    if command -v lean > /dev/null 2>&1 && [ -f "$target_file" ]; then
+        if ! lean -R lean "$target_file" > /dev/null 2>&1; then
+            killed=true
+        fi
+    elif command -v lake > /dev/null 2>&1; then
+        if ! lake --no-ansi build "$target" > /dev/null 2>&1; then
+            killed=true
+        fi
+    else
+        echo "ERROR: Neither lean nor lake found in PATH" >&2
+        exit 1
+    fi
+
+    if [ "$killed" = true ]; then
         SEMANTIC_KILLED=$((SEMANTIC_KILLED + 1))
         echo -e "  Semantic Proof (L1-L3): ${GREEN}KILLED${NC} (Type checker caught mutation)"
     else

@@ -96,12 +96,8 @@ lean_binary(
 )
 
 filegroup(
-    name = "lake_files",
-    srcs = glob([
-        "lakefile.lean",
-        "lean-toolchain",
-        "lake-manifest.json",
-    ]),
+    name = "lean_toolchain_file",
+    srcs = ["lean-toolchain"],
 )
 
 filegroup(
@@ -160,6 +156,7 @@ test_suite(
         ":audits",
         "//cpp_sim:cpp_sim_compile_test",
         "//testbench:all_tests",
+        "//testbench:coverage_test",
         "//testbench/benchmarks",
         "//tools:fst_inspect_test",
         "//verification:extended",
@@ -169,5 +166,6 @@ test_suite(
         "//verification:spec_shims_test",
         "//verification:synthesis",
         "//verification:visuals_test",
+        "//viewer:viewer_bundle_test",
     ],
 )
