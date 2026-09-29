@@ -1,0 +1,17 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "cpp_sim_srcs",
+    srcs = glob(["**"]),
+)
+
+sh_test(
+    name = "cpp_sim_compile_test",
+    srcs = ["run_cpp_sim_compile.sh"],
+    args = ["$(location //:cpp_sim)"],
+    data = [
+        "//:cpp_sim",
+    ],
+)

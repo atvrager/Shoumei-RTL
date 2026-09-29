@@ -146,3 +146,19 @@ test_suite(
         "//lean:integrity_tests",
     ],
 )
+
+test_suite(
+    name = "presubmit",
+    tests = [
+        ":audits",
+        "//cpp_sim:cpp_sim_compile_test",
+        "//testbench:all_tests",
+        "//verification:extended",
+        "//verification:formal",
+        "//verification:formal_proofs",
+        "//verification:linters",
+        "//verification:spec_shims_test",
+        "//verification:synthesis",
+        "//verification:visuals_test",
+    ],
+)

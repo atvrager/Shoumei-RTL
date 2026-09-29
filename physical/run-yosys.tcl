@@ -116,6 +116,11 @@ if {[info exists env(EXTRA_LIBS)]} {
     }
 }
 
+set rtl_dir "${project_root}/output/sv-from-lean"
+if {[info exists env(RTL_DIR)]} {
+    set rtl_dir $env(RTL_DIR)
+}
+
 # SRAM macro binding: SRAM_MACROS=1 makes the flow read real memory models
 # (the `ifdef SHOUMEI_SRAM_MACROS` branch) from SRAM_MACRO_LIB, and turns the
 # absence of that library into a hard error - a synthesis run that silently
@@ -162,7 +167,7 @@ if {$sram_macros} {
     # the SHOUMEI_SRAM_MACROS branch without a process library.  The DPI-C
     # simulation path (the ifndef branch) cannot be parsed by Yosys at all.
     set stub_dir [exec mktemp -d]
-    exec bash ${project_root}/scripts/gen-sram-macros.sh --stub --out $stub_dir \
+    exec bash ${project_root}/scripts/gen-sram-macros.sh --stub --out $stub_dir --sv-dir $rtl_dir \
         >@stdout 2>@stderr
     set sram_files [lsort [glob -nocomplain "${stub_dir}/*.sv"]]
     puts "INFO: SRAM macros:      disabled -- auto-generated [llength $sram_files] stub(s) in $stub_dir"
@@ -172,11 +177,6 @@ if {$sram_macros} {
 }
 
 # Step 3: Read SystemVerilog sources
-set rtl_dir "${project_root}/output/sv-from-lean"
-if {[info exists env(RTL_DIR)]} {
-    set rtl_dir $env(RTL_DIR)
-}
-
 set sv_files [lsort [glob -nocomplain "${rtl_dir}/*.sv"]]
 if {[llength $sv_files] == 0} {
     puts "ERROR: No SystemVerilog files found in $rtl_dir"

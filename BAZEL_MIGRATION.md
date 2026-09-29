@@ -98,6 +98,12 @@ bazel test //verification:extended
 # Run Tier 6 formal proofs, mutation tests, SEC bridge, and axiom gates
 bazel test //verification:formal_proofs
 
+# Run Tier 7 physical synthesis flow (GF180MCU & ASAP7) and stats
+bazel test //verification:synthesis
+
+# Run Tier 7 architecture visuals suite, spec shims, and C++ simulation tests
+bazel test //verification:visuals_test //verification:spec_shims_test //cpp_sim:cpp_sim_compile_test
+
 # Build Spike simulator library
 bazel build //third_party:spike_lib
 
@@ -110,8 +116,11 @@ bazel test //testbench:sim_tests
 # Run all 91 Spike lockstep cosimulation tests in parallel
 bazel test //testbench:cosim_tests
 
-# Run the complete test suite (182 tests)
+# Run the complete simulation test suite (182 tests)
 bazel test //testbench:all_tests
+
+# Run the complete top-level presubmit suite (216 tests across all tiers)
+bazel test //:presubmit
 ```
 
 ## Generated Artifacts
@@ -131,10 +140,13 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 | `//:cosim_main` | `bazel-bin/rtl_raw_cosim_main_tb_cpu.cpp` | 1 file | Generated cosimulation testbench driver |
 | `//:sim_main` | `bazel-bin/rtl_raw_sim_main_tb_cpu.cpp` | 1 file | Generated direct simulation testbench driver |
 
-## Open Work
+## Migration Status
 
-1. **Synthesis Targets**:
-   - Yosys full flow: Declare synthesis actions targeting GF180 and ASAP7 cell synthesis macros.
-
-2. **Full CI Pipeline Aggregator**:
-   - Aggregate all verification suites (`linters`, `audits`, `formal`, `extended`, `formal_proofs`, and `all_tests`) into a unified presubmit test suite.
+All 7 Tiers of Bazel migration are complete:
+- **Tier 1**: Foundational toolchains, Lean compiler, code generator `//:generate_all`, RTL generator `//:rtl`.
+- **Tier 2**: Direct Verilator C++ simulation harness and 91 assembly/baremetal tests (`//testbench:sim_tests`).
+- **Tier 3**: Hermetic Spike C++ simulator build via `rules_foreign_cc` and lockstep cosimulation test suite (`//testbench:cosim_tests`).
+- **Tier 4**: Code quality, linters (`slang`, `shellcheck`, `cppcheck`, `py_compile`), and Lean roundtrip audits (`//verification:linters`, `//:audits`).
+- **Tier 5**: Formal verification and equivalence checking (`//verification:formal`, `//verification:extended`).
+- **Tier 6**: Proof coverage, mutation testing, dual-RTL SEC SMT2 bridge (`smt2lean`/`sva2lean`/`bv_decide`), and Lean axiom gates (`//verification:formal_proofs`).
+- **Tier 7**: Physical synthesis (GF180MCU & ASAP7), PPA stats, visuals suite, spec shims, C++ simulation library, and unified presubmit aggregator (`//:presubmit`).

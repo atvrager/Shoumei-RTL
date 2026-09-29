@@ -243,6 +243,19 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//:pdk.bzl%pdk_ext": {
+      "general": {
+        "bzlTransitiveDigest": "B0RcW9kRZhAdkRmAYLPcD+bwmaHmfyefm0yQ6RFnMbI=",
+        "usagesDigest": "es0EK/dpD3TcYA1MqpuO3GvNuhQCGdNqDV0zqbRl2Cw=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "orfs_pdk": {
+            "repoRuleId": "@@//:pdk.bzl%orfs_pdk_repo",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "@@pybind11_bazel+//:internal_configure.bzl%internal_configure_extension": {
       "general": {
         "bzlTransitiveDigest": "NRXra7941UfmNUyIxnLt82V5hULluVGL2nBsijTl4j4=",

@@ -23,3 +23,6 @@ bazel_dep(name = "rules_verilog", version = "1.4.3")
 bazel_dep(name = "rules_shell", version = "0.7.1")
 
 register_toolchains("//toolchains/verilator:host_verilator_toolchain")
+
+pdk = use_extension("//:pdk.bzl", "pdk_ext")
+use_repo(pdk, "orfs_pdk")

@@ -341,3 +341,75 @@ test_suite(
         "//lean:axiom_gates",
     ],
 )
+
+sh_test(
+    name = "synth_gf180_test",
+    size = "medium",
+    srcs = ["run_yosys_synth.sh"],
+    args = [
+        "gf180",
+        "ALU64",
+        "10.0",
+        "$(location //:sv)",
+    ],
+    data = [
+        "//:physical_srcs",
+        "//:root_shell_scripts",
+        "//:sv",
+        "//third_party:orfs_liberty",
+    ],
+)
+
+sh_test(
+    name = "synth_asap7_test",
+    size = "medium",
+    srcs = ["run_yosys_synth.sh"],
+    args = [
+        "asap7",
+        "ALU64",
+        "1.0",
+        "$(location //:sv)",
+    ],
+    data = [
+        "//:physical_srcs",
+        "//:root_shell_scripts",
+        "//:sv",
+        "//third_party:orfs_liberty",
+    ],
+)
+
+sh_test(
+    name = "synth_stats_test",
+    srcs = ["run_synth_stats.sh"],
+    data = [
+        "//:root_python_scripts",
+    ],
+)
+
+test_suite(
+    name = "synthesis",
+    tests = [
+        ":synth_asap7_test",
+        ":synth_gf180_test",
+        ":synth_stats_test",
+    ],
+)
+
+sh_test(
+    name = "visuals_test",
+    size = "medium",
+    srcs = ["run_visuals.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        "//:generate_all",
+    ],
+)
+
+sh_test(
+    name = "spec_shims_test",
+    srcs = ["run_spec_shims.sh"],
+    data = [
+        "//:root_python_scripts",
+        "//lean:shoumei_srcs",
+    ],
+)

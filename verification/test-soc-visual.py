@@ -7,7 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+import os
+
+ROOT = Path(os.environ["SMOKE_ROOT"]).resolve() if "SMOKE_ROOT" in os.environ else Path(__file__).resolve().parent.parent
 SOC_HTML = ROOT / "output" / "architecture-visuals" / "soc-diagram.html"
 
 FORBIDDEN_PHRASES = [
@@ -32,8 +34,8 @@ REQUIRED_PHRASES = [
 
 
 def main() -> int:
-    import os
     if not SOC_HTML.exists():
+        SOC_HTML.parent.mkdir(parents=True, exist_ok=True)
         gen = os.environ.get("GENERATOR")
         if gen:
             cmd = [gen, "--soc-diagram"]
