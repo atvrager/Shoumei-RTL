@@ -1,0 +1,124 @@
+load("//testbench/tests:riscv.bzl", "riscv_elf", "shoumei_cosim_test", "shoumei_elf_test", "shoumei_sim_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "crt0.S",
+    "shoumei.ld",
+    "shoumei.h",
+])
+
+# --------------------------------------------------------------------------
+# Hand-written C tests (integer pipeline)
+# --------------------------------------------------------------------------
+
+INT_C_TESTS = [
+    "pass_test",
+    "addi_test",
+    "lui_auipc_test",
+    "jal_jalr_test",
+    "branch_test",
+    "dep_test",
+    "store_load_test",
+    "subword_store_test",
+    "sltiu_test",
+    "ipc_loop",
+    "csr_test",
+    "hello_test",
+    "branch_flush_x0_test",
+    "mepc_only_test",
+    "trap_csr_test",
+    "ecall_test",
+    "mret_test",
+    "wfi_test",
+    "timer_irq_test",
+    "ss_independent_test",
+    "ss_dependent_test",
+    "minstret_test",
+    "jalr_a0_test",
+    "jal_ret_flush_test",
+    "jalr_a0_irq_test",
+    "test_zba",
+    "test_zbs",
+    "test_zbb",
+    "test_zbc",
+    "test_illegal_fallback",
+    "fence_i_test",
+    "store_fwd_stress",
+]
+
+[
+    shoumei_elf_test(
+        name = t,
+        src = t + ".c",
+    )
+    for t in INT_C_TESTS
+]
+
+# --------------------------------------------------------------------------
+# Hand-written C tests (floating point)
+# --------------------------------------------------------------------------
+
+shoumei_elf_test(
+    name = "nan_boxing",
+    src = "nan_boxing.c",
+    is_fp = True,
+)
+
+# --------------------------------------------------------------------------
+# Hand-written assembly tests (self-contained, no crt0.S)
+# --------------------------------------------------------------------------
+
+ASM_INT_TESTS = [
+    "amo_sb_order_test",
+    "rand_0027_seed_test",
+    "serialize_pair_test",
+]
+
+[
+    shoumei_elf_test(
+        name = t,
+        src = t + ".S",
+        is_asm = True,
+    )
+    for t in ASM_INT_TESTS
+]
+
+ASM_FP_TESTS = [
+    "fp_result_collision_test",
+    "fp_wb_backpressure_test",
+]
+
+[
+    shoumei_elf_test(
+        name = t,
+        src = t + ".S",
+        is_asm = True,
+        is_fp = True,
+    )
+    for t in ASM_FP_TESTS
+]
+
+# --------------------------------------------------------------------------
+# Aggregated test suites
+# --------------------------------------------------------------------------
+
+ALL_TEST_NAMES = INT_C_TESTS + ["nan_boxing"] + ASM_INT_TESTS + ASM_FP_TESTS
+
+test_suite(
+    name = "sim_tests",
+    tests = [":" + t + "_sim" for t in ALL_TEST_NAMES],
+)
+
+test_suite(
+    name = "cosim_tests",
+    tests = [":" + t + "_cosim" for t in ALL_TEST_NAMES],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [
+        ":cosim_tests",
+        ":sim_tests",
+    ],
+)

@@ -18,6 +18,12 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 - **Verilator RTL Compilation (`//testbench:vtb_cpu`)**: Flat compilation of all 239 generated SystemVerilog modules and `tb_cpu.sv` via `rules_verilator`.
 - **Cosimulation Executable (`//testbench:cosim_shoumei`)**: Full lockstep cosimulation binary comparing RTL vs Spike via RVVI-TRACE interface.
 - **Direct Simulation Executable (`//testbench:sim_shoumei`)**: Standalone RTL Verilator simulation binary.
+- **Automated RISC-V Test Suites (Phase 1 / Tier 2)**:
+  - `//testbench/tests:riscv.bzl`: Starlark rules `riscv_elf`, `shoumei_sim_test`, and `shoumei_cosim_test`.
+  - `//testbench/tests/...`: 38 hand-written tests (32 C integer, 1 C FP, 3 asm integer, 2 asm FP), generating 76 test targets.
+  - `//testbench/tests/generated/...`: 53 generated tests (13 integer patterns, 8 FP patterns, 32 random instruction streams), generating 106 test targets.
+  - `//testbench:all_tests`: 182 automated tests executing natively under `bazel test`.
+  - `//testbench/coremark:coremark_sim`: CoreMark standalone simulation target.
 
 ## Commands
 
@@ -40,8 +46,14 @@ bazel build //third_party:spike_lib
 # Build Verilator simulation binaries
 bazel build //testbench:sim_shoumei //testbench:cosim_shoumei
 
-# Run lockstep cosimulation on a test ELF
-bazel run //testbench:cosim_shoumei -- +elf=$(pwd)/testbench/tests/pass_test.elf
+# Run all 91 simulation tests in parallel
+bazel test //testbench:sim_tests
+
+# Run all 91 Spike lockstep cosimulation tests in parallel
+bazel test //testbench:cosim_tests
+
+# Run the complete test suite (182 tests)
+bazel test //testbench:all_tests
 ```
 
 ## Generated Artifacts
@@ -63,14 +75,10 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 
 ## Open Work
 
-1. **Test Automation**:
-   - Wrap assembly and C test ELF compilation (`testbench/tests/*.c`) in hermetic Bazel rules with a RISC-V GCC toolchain.
-   - Declare automated `bazel test` targets running cosimulation suites.
-
-2. **Synthesis Targets**:
+1. **Synthesis Targets**:
    - Slang lint: Declare a test target running `slang` on emitted SystemVerilog.
    - Yosys synthesis: Declare actions targeting GF180 and ASAP7 cell synthesis.
 
-3. **Proof Audits**:
+2. **Proof Audits**:
    - Add `lean_axiom_test` targets for key correctness theorems (e.g., `fullAdder_correct`, `alu_correct`, `shoumei_soc_correct`).
    - Gate builds on zero unapproved axioms (`allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]`).

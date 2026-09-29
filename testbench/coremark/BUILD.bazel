@@ -1,0 +1,12 @@
+load("//testbench/tests:riscv.bzl", "shoumei_sim_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["coremark.elf"])
+
+shoumei_sim_test(
+    name = "coremark_sim",
+    elf = ":coremark.elf",
+    tags = ["manual"],
+    timeout_cycles = 10000000,
+)

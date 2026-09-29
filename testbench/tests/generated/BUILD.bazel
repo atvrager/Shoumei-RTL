@@ -1,0 +1,67 @@
+load("//testbench/tests:riscv.bzl", "pad4", "shoumei_elf_test")
+
+package(default_visibility = ["//visibility:public"])
+
+GEN_INT_PATTERNS = [
+    "smoke",
+    "rob_fill",
+    "store_load_fwd",
+    "raw_mul_nop0",
+] + ["raw_add_nop%d" % i for i in range(9)]
+
+GEN_FP_PATTERNS = [
+    "fp_smoke",
+    "fp_memory",
+    "fp_double_memory",
+] + ["fp_raw_nop%d" % i for i in range(5)]
+
+GEN_RAND_TESTS = ["rand_" + pad4(i) for i in range(32)]
+
+ALL_GEN_TESTS = GEN_INT_PATTERNS + GEN_FP_PATTERNS + GEN_RAND_TESTS
+
+genrule(
+    name = "generate_asm_tests",
+    srcs = ["//:instr_dict"],
+    outs = [t + ".S" for t in ALL_GEN_TESTS],
+    cmd = """
+        $(location //:gen_tests) --seed=42 --instr-dict=$(location //:instr_dict) --out=$(RULEDIR)
+    """,
+    tools = ["//:gen_tests"],
+)
+
+[
+    shoumei_elf_test(
+        name = t,
+        src = ":" + t + ".S",
+        is_asm = True,
+    )
+    for t in GEN_INT_PATTERNS + GEN_RAND_TESTS
+]
+
+[
+    shoumei_elf_test(
+        name = t,
+        src = ":" + t + ".S",
+        is_asm = True,
+        is_fp = True,
+    )
+    for t in GEN_FP_PATTERNS
+]
+
+test_suite(
+    name = "sim_tests",
+    tests = [":" + t + "_sim" for t in ALL_GEN_TESTS],
+)
+
+test_suite(
+    name = "cosim_tests",
+    tests = [":" + t + "_cosim" for t in ALL_GEN_TESTS],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [
+        ":cosim_tests",
+        ":sim_tests",
+    ],
+)
