@@ -4,9 +4,10 @@ module(
 )
 
 bazel_dep(name = "rules_lean")
-local_path_override(
+git_override(
     module_name = "rules_lean",
-    path = "../rules_lean",
+    remote = "https://github.com/atvrager/rules_lean.git",
+    commit = "2cf9d007003ff73374e0082a82342e3f4723fc65",
 )
 
 lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
