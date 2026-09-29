@@ -9,6 +9,9 @@ def _shoumei_rtl_impl(ctx):
     cpp_sim_dir = ctx.actions.declare_directory(ctx.attr.name + "_cpp_sim")
     testbench_dir = ctx.actions.declare_directory(ctx.attr.name + "_testbench")
     config_mk = ctx.actions.declare_file(ctx.attr.name + "_config.mk")
+    cosim_main = ctx.actions.declare_file(ctx.attr.name + "_cosim_main_tb_cpu.cpp")
+    sim_main = ctx.actions.declare_file(ctx.attr.name + "_sim_main_tb_cpu.cpp")
+    tb_cpu_sv = ctx.actions.declare_file(ctx.attr.name + "_tb_cpu.sv")
 
     script = ctx.actions.declare_file(ctx.attr.name + "_run.sh")
     script_content = """#!/usr/bin/env bash
@@ -37,6 +40,9 @@ cp -a output/sv-sec/. "{sec_dir}/"
 cp -a output/cpp_sim/. "{cpp_sim_dir}/"
 cp -a testbench/generated/. "{testbench_dir}/"
 cp output/config.mk "{config_mk}"
+cp testbench/generated/cosim_main_tb_cpu.cpp "{cosim_main}"
+cp testbench/generated/sim_main_tb_cpu.cpp "{sim_main}"
+cp testbench/generated/tb_cpu.sv "{tb_cpu_sv}"
 """.format(
         instr_dict = ctx.file.instr_dict.path,
         synth_wrappers = " ".join([f.path for f in ctx.files.synth_wrappers]),
@@ -49,6 +55,9 @@ cp output/config.mk "{config_mk}"
         cpp_sim_dir = cpp_sim_dir.path,
         testbench_dir = testbench_dir.path,
         config_mk = config_mk.path,
+        cosim_main = cosim_main.path,
+        sim_main = sim_main.path,
+        tb_cpu_sv = tb_cpu_sv.path,
     )
 
     ctx.actions.write(
@@ -70,6 +79,9 @@ cp output/config.mk "{config_mk}"
         cpp_sim_dir,
         testbench_dir,
         config_mk,
+        cosim_main,
+        sim_main,
+        tb_cpu_sv,
     ]
 
     ctx.actions.run(
@@ -95,6 +107,9 @@ cp output/config.mk "{config_mk}"
             cpp_sim = depset([cpp_sim_dir]),
             testbench = depset([testbench_dir]),
             config_mk = depset([config_mk]),
+            cosim_main = depset([cosim_main]),
+            sim_main = depset([sim_main]),
+            tb_cpu_sv = depset([tb_cpu_sv]),
             all = depset(outputs),
         ),
     ]
@@ -186,6 +201,21 @@ def shoumei_rtl(name, generator = "//:generate_all", instr_dict = "//:instr_dict
         name = "testbench",
         target = ":" + raw_name,
         group = "testbench",
+    )
+    _output_group_target(
+        name = "cosim_main",
+        target = ":" + raw_name,
+        group = "cosim_main",
+    )
+    _output_group_target(
+        name = "sim_main",
+        target = ":" + raw_name,
+        group = "sim_main",
+    )
+    _output_group_target(
+        name = "tb_cpu_sv",
+        target = ":" + raw_name,
+        group = "tb_cpu_sv",
     )
     _output_group_target(
         name = name,

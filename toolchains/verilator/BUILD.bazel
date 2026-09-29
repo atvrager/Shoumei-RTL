@@ -1,0 +1,20 @@
+load("@rules_verilator//verilator:defs.bzl", "verilator_toolchain")
+load("//toolchains/verilator:host_binary.bzl", "host_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+host_binary(
+    name = "verilator_bin",
+    src = "verilator_wrapper.sh",
+)
+
+verilator_toolchain(
+    name = "host_verilator_impl",
+    verilator = ":verilator_bin",
+)
+
+toolchain(
+    name = "host_verilator_toolchain",
+    toolchain = ":host_verilator_impl",
+    toolchain_type = "@rules_verilator//verilator:toolchain_type",
+)

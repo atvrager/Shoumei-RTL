@@ -1,0 +1,85 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("//testbench:verilog_tree.bzl", "verilog_tree_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "elf_loader",
+    srcs = ["lib/elf_loader.cpp"],
+    hdrs = ["lib/elf_loader.h"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "spike_oracle",
+    srcs = ["lib/spike_oracle.cpp"],
+    hdrs = ["lib/spike_oracle.h"],
+    includes = ["."],
+    deps = [
+        ":elf_loader",
+        "//third_party:spike_lib",
+    ],
+)
+
+verilog_tree_library(
+    name = "tb_verilog",
+    srcs = [
+        "//:sv",
+        "//:tb_cpu_sv",
+    ],
+    top_module = "tb_cpu",
+)
+
+verilator_cc_library(
+    name = "vtb_cpu",
+    module = ":tb_verilog",
+    vopts = [
+        "-Wno-UNOPTFLAT",
+        "-Wno-PINMISSING",
+        "-Wno-WIDTHEXPAND",
+        "-Wno-WIDTHTRUNC",
+        "-Wno-CASEOVERLAP",
+        "-Wno-UNUSEDSIGNAL",
+        "-Wno-UNUSEDPARAM",
+        "-Wno-NULLPORT",
+        "-Wno-MULTIDRIVEN",
+        "--output-split",
+        "5000",
+        "--output-split-cfuncs",
+        "5000",
+        "+define+COSIM_DEBUG",
+    ],
+)
+
+cc_binary(
+    name = "cosim_shoumei",
+    srcs = [
+        "//:cosim_main",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    deps = [
+        ":elf_loader",
+        ":spike_oracle",
+        ":vtb_cpu",
+        "//physical/sim-dpi:sram_dpi",
+        "//third_party:spike_lib",
+    ],
+)
+
+cc_binary(
+    name = "sim_shoumei",
+    srcs = [
+        "//:sim_main",
+    ],
+    copts = [
+        "-std=c++17",
+    ],
+    deps = [
+        ":elf_loader",
+        ":vtb_cpu",
+        "//physical/sim-dpi:sram_dpi",
+    ],
+)

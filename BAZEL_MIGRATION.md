@@ -10,7 +10,14 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 - **Hermetic RTL Generation (`//:rtl`, `//:sv`)**: Sandboxed Bazel rule executes `generate_all` inside the build sandbox, emitting declared artifacts into `bazel-out/` without polluting the source workspace.
 - **Structural Linter Test (`//:lint_structural_test`)**: Sandboxed test target validating all 238 emitted SystemVerilog modules against Synopsys DC NXT LINT-31/32 rules.
 - **RISC-V Opcode Parsing (`//:instr_dict`)**: Hermetically built via Bazel from `third_party/riscv-opcodes` definitions.
-- **Co-enhancement**: Identified and fixed import parsing in `rules_lean` ([commit 2cf9d00](https://github.com/atvrager/rules_lean/commit/2cf9d00)), ignoring block comments (`/- ... -/`) and string literals.
+- **Spike Simulator (`//third_party:spike_lib`)**: Hermetically compiled via `rules_foreign_cc`, emitting `libriscv.so`, `libfesvr.a`, `libdisasm.a`, and headers.
+- **Support C++ Libraries**:
+  - `//testbench:elf_loader`: ELF binary loader.
+  - `//testbench:spike_oracle`: Spike ISA golden reference driver.
+  - `//physical/sim-dpi:sram_dpi`: DPI-C backing store for SRAM models.
+- **Verilator RTL Compilation (`//testbench:vtb_cpu`)**: Flat compilation of all 239 generated SystemVerilog modules and `tb_cpu.sv` via `rules_verilator`.
+- **Cosimulation Executable (`//testbench:cosim_shoumei`)**: Full lockstep cosimulation binary comparing RTL vs Spike via RVVI-TRACE interface.
+- **Direct Simulation Executable (`//testbench:sim_shoumei`)**: Standalone RTL Verilator simulation binary.
 
 ## Commands
 
@@ -26,6 +33,15 @@ bazel build //:rtl
 
 # Run native structural linting on generated SystemVerilog
 bazel test //:lint_structural_test
+
+# Build Spike simulator library
+bazel build //third_party:spike_lib
+
+# Build Verilator simulation binaries
+bazel build //testbench:sim_shoumei //testbench:cosim_shoumei
+
+# Run lockstep cosimulation on a test ELF
+bazel run //testbench:cosim_shoumei -- +elf=$(pwd)/testbench/tests/pass_test.elf
 ```
 
 ## Generated Artifacts
@@ -41,14 +57,20 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 | `//:sv_sec` | `bazel-bin/rtl_raw_sec/` | 11 files | SEC miters and TCL scripts |
 | `//:cpp_sim` | `bazel-bin/rtl_raw_cpp_sim/` | 477 files | Cycle-accurate C++ simulation models (`.h` / `.cpp`) |
 | `//:testbench` | `bazel-bin/rtl_raw_testbench/` | 9 files | Emitted testbenches, drivers, and setups |
+| `//:tb_cpu_sv` | `bazel-bin/rtl_raw_tb_cpu.sv` | 1 file | Generated top-level testbench SystemVerilog |
+| `//:cosim_main` | `bazel-bin/rtl_raw_cosim_main_tb_cpu.cpp` | 1 file | Generated cosimulation testbench driver |
+| `//:sim_main` | `bazel-bin/rtl_raw_sim_main_tb_cpu.cpp` | 1 file | Generated direct simulation testbench driver |
 
 ## Open Work
 
-1. **Simulation and Synthesis Targets**:
-   - Slang lint: Declare a test target running `slang` on the emitted SystemVerilog.
-   - Verilator: Declare `cc_test` targets compiling and running emitted C++ simulation against testbench ELFs.
+1. **Test Automation**:
+   - Wrap assembly and C test ELF compilation (`testbench/tests/*.c`) in hermetic Bazel rules with a RISC-V GCC toolchain.
+   - Declare automated `bazel test` targets running cosimulation suites.
+
+2. **Synthesis Targets**:
+   - Slang lint: Declare a test target running `slang` on emitted SystemVerilog.
    - Yosys synthesis: Declare actions targeting GF180 and ASAP7 cell synthesis.
 
-2. **Proof Audits**:
+3. **Proof Audits**:
    - Add `lean_axiom_test` targets for key correctness theorems (e.g., `fullAdder_correct`, `alu_correct`, `shoumei_soc_correct`).
    - Gate builds on zero unapproved axioms (`allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]`).
