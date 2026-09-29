@@ -40,6 +40,17 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//lean:project_map_test`: Asserts `docs/project-map.md` matches Lean circuit and proof declarations.
   - `//:shoumei_roundtrip_test`: Generates 124 `.shoumei` files, parses them back, and verifies SV emission round-trip.
   - `//:audits`: Aggregates all 4 integrity audit tests.
+- **Hardware Verification & Formal Gates (Phase 3 / Tier 4)**:
+  - `//verification:yosys_validate_test`: Syntax and hierarchy verification of all 239 emitted SV modules via Yosys.
+  - `//verification:yosys_dc_lint_test`: Synopsys DC-NXT style linting (comb loops, latch inference, width mismatch) using Yosys proxy.
+  - `//verification:sec_yosys_test`: Sequential Equivalence Checking (SEC) between flat and hierarchical RTL via Yosys SAT miter.
+  - `//verification:sva_verilator_test`: SystemVerilog Assertions (SVA) compilation and verification via Verilator (`--assert --lint-only`).
+  - `//verification:check_sec_specs_test`: Dual-RTL specification coverage gate asserting 100% proof or co-simulation coverage.
+  - `//verification:sec_manifest_test`: Export and validation of Dual-RTL SEC manifest.
+  - `//verification:check_wiring_test`: Circuit input port wiring completeness gate across all 237 registered circuits.
+  - `//verification:formal`: Aggregates all 7 formal and structural verification targets.
+- **Generator Optimization**:
+  - `//:generate_all` configured with `extra_link_flags = ["-O3", "-DNDEBUG"]`, accelerating execution by ~8x (e.g. `check_wiring` from 619s to 78s).
 
 ## Commands
 
@@ -61,6 +72,9 @@ bazel test //verification:linters
 
 # Run all Lean integrity and project audits (no sorry, lean root, project map, roundtrip)
 bazel test //:audits
+
+# Run formal verification, equivalence, and wiring gates (Yosys, SVA, SEC, check_wiring)
+bazel test //verification:formal
 
 # Build Spike simulator library
 bazel build //third_party:spike_lib

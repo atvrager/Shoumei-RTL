@@ -38,7 +38,7 @@ echo "==> DC-NXT-style lint (Yosys proxy): $SV_DIR"
 # RTL instantiates - so the lint exercises the same RTL that is synthesised.
 # (Yosys cannot parse `import "DPI-C"`, which is simulation-only syntax.)
 STUB_DIR=$(mktemp -d); trap 'rm -rf "$STUB_DIR"' EXIT
-"$PROJECT_ROOT/scripts/gen-sram-macros.sh" --stub --out "$STUB_DIR" > /dev/null
+"$PROJECT_ROOT/scripts/gen-sram-macros.sh" --stub --sv-dir "$SV_DIR" --out "$STUB_DIR" > /dev/null
 
 # Build the aggressive Yosys script
 SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
@@ -71,7 +71,11 @@ if [[ $RC -ne 0 ]] || [[ -n "$LINT_HITS" ]]; then
 fi
 
 echo "==> LINT-31/32/33 structural check (double-connects, undriven, ties)..."
-lake --no-ansi exe generate_all --lint-structural --sv-dir="$SV_DIR"
+if [[ -n "${GENERATOR:-}" ]]; then
+    "$GENERATOR" --lint-structural --sv-dir="$SV_DIR"
+elif command -v lake >/dev/null 2>&1 && [[ -f "$PROJECT_ROOT/lakefile.lean" ]]; then
+    lake --no-ansi exe generate_all --lint-structural --sv-dir="$SV_DIR"
+fi
 
 echo "✓ LINT clean (no latches, no comb loops, no width/undriven/multi-driver pops)"
 exit 0

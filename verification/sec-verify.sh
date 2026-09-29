@@ -21,6 +21,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 SEC_DIR="output/sv-sec"
+SV_DIR="output/sv-from-lean"
 BACKEND="yosys"
 REMOTE_HOST=""
 FM_BIN="${FM_BIN:-fm_shell}"
@@ -40,8 +41,16 @@ while [[ $# -gt 0 ]]; do
       BACKEND="formality"
       shift 2
       ;;
+    --sec-dir)
+      SEC_DIR="$2"
+      shift 2
+      ;;
+    --sv-dir)
+      SV_DIR="$2"
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: $0 [--formality] [--remote <host>]"
+      echo "Usage: $0 [--yosys] [--formality] [--sec-dir <dir>] [--sv-dir <dir>]"
       exit 0
       ;;
     *)
@@ -74,13 +83,18 @@ if [[ "$BACKEND" == "yosys" ]]; then
     [[ -f "$script" ]] || continue
     name="$(basename "$script" _yosys.tcl)"
     echo -n "Checking $name (Yosys SAT)... "
-    if yosys -q -s "$script" >/dev/null 2>&1; then
+    TMP_RUN="$(mktemp -d)"
+    mkdir -p "$TMP_RUN/output"
+    ln -s "$(cd "$SV_DIR" && pwd)" "$TMP_RUN/output/sv-from-lean"
+    ABS_SCRIPT="$(cd "$(dirname "$script")" && pwd)/$(basename "$script")"
+    if (cd "$TMP_RUN" && yosys -q -s "$ABS_SCRIPT" >/dev/null 2>&1); then
       echo "PASS (QED)"
       PASS_COUNT=$((PASS_COUNT + 1))
     else
       echo "FAIL"
       FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
+    rm -rf "$TMP_RUN"
   done
 
 elif [[ "$BACKEND" == "formality" ]]; then

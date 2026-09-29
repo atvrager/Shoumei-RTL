@@ -25,6 +25,10 @@ lean_binary(
     name = "generate_all",
     srcs = ["GenerateAll.lean"],
     data = [":instr_dict"],
+    extra_link_flags = [
+        "-O3",
+        "-DNDEBUG",
+    ],
     main = "GenerateAll",
     deps = ["//lean:shoumei"],
 )

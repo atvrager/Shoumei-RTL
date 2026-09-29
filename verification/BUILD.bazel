@@ -98,3 +98,92 @@ test_suite(
         ":slang_sram_lint_test",
     ],
 )
+
+sh_test(
+    name = "yosys_validate_test",
+    srcs = ["run_yosys_validate.sh"],
+    args = ["$(location //:sv)"],
+    data = [
+        "validate-sv.sh",
+        "//:sv",
+    ],
+)
+
+sh_test(
+    name = "yosys_dc_lint_test",
+    srcs = ["run_yosys_dc_lint.sh"],
+    args = [
+        "$(location //:sv)",
+        "$(location //:generate_all)",
+    ],
+    data = [
+        "dc-lint.sh",
+        "//:generate_all",
+        "//:root_shell_scripts",
+        "//:sv",
+    ],
+)
+
+sh_test(
+    name = "sec_yosys_test",
+    srcs = ["run_sec_yosys.sh"],
+    args = [
+        "$(location //:sv_sec)",
+        "$(location //:sv)",
+    ],
+    data = [
+        "sec-verify.sh",
+        "//:sv",
+        "//:sv_sec",
+    ],
+)
+
+sh_test(
+    name = "sva_verilator_test",
+    srcs = ["run_sva_verilator.sh"],
+    args = ["$(location //:sv)"],
+    data = [
+        "//:sv",
+    ],
+)
+
+sh_test(
+    name = "check_sec_specs_test",
+    srcs = ["run_check_sec_specs.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        "//:generate_all",
+    ],
+)
+
+sh_test(
+    name = "sec_manifest_test",
+    srcs = ["run_sec_manifest.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        "//:generate_all",
+    ],
+)
+
+sh_test(
+    name = "check_wiring_test",
+    size = "medium",
+    srcs = ["run_check_wiring.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        "//:generate_all",
+    ],
+)
+
+test_suite(
+    name = "formal",
+    tests = [
+        ":check_sec_specs_test",
+        ":check_wiring_test",
+        ":sec_manifest_test",
+        ":sec_yosys_test",
+        ":sva_verilator_test",
+        ":yosys_dc_lint_test",
+        ":yosys_validate_test",
+    ],
+)

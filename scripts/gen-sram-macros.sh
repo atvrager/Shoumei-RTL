@@ -30,6 +30,7 @@ while [[ $# -gt 0 ]]; do
     --stub) STUB=1; shift ;;
     --node) NODE="$2"; shift 2 ;;
     --out)  OUT="$2"; shift 2 ;;
+    --sv-dir) SV_DIR="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "error: unknown argument '$1'" >&2; exit 2 ;;
   esac
@@ -58,15 +59,15 @@ fi
 if [[ -n "${SRAM_GEOMS:-}" ]]; then
   GEOMS="$SRAM_GEOMS"
 else
-  SV_DIR="$PROJECT_ROOT/output/sv-from-lean"
+  SV_DIR="${SV_DIR:-$PROJECT_ROOT/output/sv-from-lean}"
   if [[ ! -d "$SV_DIR" ]]; then
     echo "error: $SV_DIR not found - run 'make codegen' first." >&2
     exit 1
   fi
   # grep -o over the emitted SV: `sram_1r1w_256x8` / `sram_rw1_256x64`
-  GEOMS="$(grep -rhoE 'sram_(1r1w|rw1)_[0-9]+x[0-9]+' "$SV_DIR" \
+  GEOMS="$(grep -RhoE 'sram_(1r1w|rw1)_[0-9]+x[0-9]+' "$SV_DIR" 2>/dev/null \
     | sort -u \
-    | sed -E 's/^sram_([0-9a-z]+)_([0-9]+)x([0-9]+)$/\1 \2 \3/')"
+    | sed -E 's/^sram_([0-9a-z]+)_([0-9]+)x([0-9]+)$/\1 \2 \3/' || true)"
 fi
 
 if [[ -z "$GEOMS" ]]; then
