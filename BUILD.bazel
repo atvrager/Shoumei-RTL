@@ -1,4 +1,5 @@
 load("@rules_lean//lean:defs.bzl", "lean_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//:rtl.bzl", "shoumei_rtl")
 
 package(default_visibility = ["//visibility:public"])
@@ -81,4 +82,49 @@ lean_binary(
     srcs = ["Sva2Lean.lean"],
     main = "Sva2Lean",
     deps = ["//lean:shoumei"],
+)
+
+filegroup(
+    name = "known_unbuilt_modules",
+    srcs = ["known-unbuilt-modules.txt"],
+)
+
+filegroup(
+    name = "docs",
+    srcs = glob([
+        "docs/**/*",
+        "*.md",
+    ]),
+)
+
+filegroup(
+    name = "root_shell_scripts",
+    srcs = glob([
+        "physical/*.sh",
+        "scripts/*.sh",
+    ]),
+)
+
+filegroup(
+    name = "root_python_scripts",
+    srcs = glob([
+        "*.py",
+        "physical/*.py",
+        "scripts/*.py",
+    ]),
+)
+
+sh_test(
+    name = "shoumei_roundtrip_test",
+    srcs = ["shoumei_roundtrip_test.sh"],
+    args = ["$(location :generate_shoumei)"],
+    data = [":generate_shoumei"],
+)
+
+test_suite(
+    name = "audits",
+    tests = [
+        ":shoumei_roundtrip_test",
+        "//lean:integrity_tests",
+    ],
 )

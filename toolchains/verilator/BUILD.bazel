@@ -18,3 +18,8 @@ toolchain(
     toolchain = ":host_verilator_impl",
     toolchain_type = "@rules_verilator//verilator:toolchain_type",
 )
+
+filegroup(
+    name = "scripts",
+    srcs = ["verilator_wrapper.sh"],
+)

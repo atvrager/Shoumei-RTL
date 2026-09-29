@@ -1,0 +1,100 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//verification:slang.bzl", "slang_lint_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "slang-lint.py",
+])
+
+filegroup(
+    name = "verification_scripts",
+    srcs = glob(["*.sh"]),
+)
+
+filegroup(
+    name = "verification_python_scripts",
+    srcs = glob(["*.py"]),
+)
+
+slang_lint_test(
+    name = "slang_lint_test",
+    sv = "//:sv",
+)
+
+slang_lint_test(
+    name = "slang_sram_lint_test",
+    sram = True,
+    sv = "//:sv",
+)
+
+slang_lint_test(
+    name = "slang_sec_lint_test",
+    lean_sv = "//:sv",
+    sv = "//:sv_sec",
+)
+
+sh_test(
+    name = "shellcheck_test",
+    srcs = ["run_shellcheck.sh"],
+    args = [
+        "$(locations //:root_shell_scripts)",
+        "$(locations //testbench:testbench_scripts)",
+        "$(locations //toolchains/verilator:scripts)",
+        "$(locations :verification_scripts)",
+    ],
+    data = [
+        ":verification_scripts",
+        "//:root_shell_scripts",
+        "//testbench:testbench_scripts",
+        "//toolchains/verilator:scripts",
+    ],
+)
+
+sh_test(
+    name = "py_compile_test",
+    srcs = ["run_py_compile.sh"],
+    args = [
+        "$(locations //:root_python_scripts)",
+        "$(locations :verification_python_scripts)",
+    ],
+    data = [
+        ":verification_python_scripts",
+        "//:root_python_scripts",
+    ],
+)
+
+sh_test(
+    name = "cppcheck_test",
+    srcs = ["run_cppcheck.sh"],
+    args = [
+        "$(locations //testbench:testbench_cpp_srcs)",
+        "$(locations //testbench/tests:test_c_srcs)",
+    ],
+    data = [
+        "//testbench:testbench_cpp_srcs",
+        "//testbench/tests:test_c_srcs",
+    ],
+)
+
+sh_test(
+    name = "cell_tables_test",
+    srcs = ["run_cell_tables.sh"],
+    data = [
+        "//:root_python_scripts",
+        "//lean:shoumei_srcs",
+    ],
+)
+
+test_suite(
+    name = "linters",
+    tests = [
+        ":cell_tables_test",
+        ":cppcheck_test",
+        ":py_compile_test",
+        ":shellcheck_test",
+        ":slang_lint_test",
+        ":slang_sec_lint_test",
+        ":slang_sram_lint_test",
+    ],
+)

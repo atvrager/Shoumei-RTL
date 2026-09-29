@@ -1,4 +1,5 @@
 load("@rules_lean//lean:defs.bzl", "lean_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,4 +13,46 @@ lean_library(
     name = "shoumei",
     srcs = glob(["**/*.lean"]),
     extra_flags = ["-DwarningAsError=true"],
+)
+
+filegroup(
+    name = "shoumei_srcs",
+    srcs = glob(["**/*.lean"]),
+)
+
+sh_test(
+    name = "no_sorry_test",
+    srcs = ["no_sorry_test.sh"],
+    data = [":shoumei_srcs"],
+)
+
+sh_test(
+    name = "lean_root_test",
+    srcs = ["lean_root_test.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        ":shoumei_srcs",
+        "//:generate_all",
+        "//:known_unbuilt_modules",
+    ],
+)
+
+sh_test(
+    name = "project_map_test",
+    srcs = ["project_map_test.sh"],
+    args = ["$(location //:generate_all)"],
+    data = [
+        ":shoumei_srcs",
+        "//:docs",
+        "//:generate_all",
+    ],
+)
+
+test_suite(
+    name = "integrity_tests",
+    tests = [
+        ":lean_root_test",
+        ":no_sorry_test",
+        ":project_map_test",
+    ],
 )

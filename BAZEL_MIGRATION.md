@@ -24,6 +24,22 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//testbench/tests/generated/...`: 53 generated tests (13 integer patterns, 8 FP patterns, 32 random instruction streams), generating 106 test targets.
   - `//testbench:all_tests`: 182 automated tests executing natively under `bazel test`.
   - `//testbench/coremark:coremark_sim`: CoreMark standalone simulation target.
+- **Static Analysis & Linters (Phase 2 / Tier 3)**:
+  - `//verification:slang.bzl`: Rule `slang_lint_test` for IEEE 1800-2017 SystemVerilog elaboration linting.
+  - `//verification:slang_lint_test`: Validates 238 emitted RTL modules with pyslang.
+  - `//verification:slang_sram_lint_test`: Validates `SHOUMEI_SRAM_MACROS` branch against behavioral macro stubs.
+  - `//verification:slang_sec_lint_test`: Validates SEC miter modules against base RTL.
+  - `//verification:shellcheck_test`: Shellcheck analysis across all repository shell scripts.
+  - `//verification:py_compile_test`: Bytecode compiler analysis across all Python scripts.
+  - `//verification:cppcheck_test`: Static code analysis across C and C++ testbench files.
+  - `//verification:cell_tables_test`: PDK cell table function verification against Liberty models.
+  - `//verification:linters`: Aggregates all 7 static analysis tests.
+- **Lean Codebase & Project Audits (Phase 2 / Tier 1 Part 2)**:
+  - `//lean:no_sorry_test`: Asserts zero incomplete `sorry` proofs across `lean/`.
+  - `//lean:lean_root_test`: Asserts `lean/Shoumei/All.lean` is up to date with all source modules.
+  - `//lean:project_map_test`: Asserts `docs/project-map.md` matches Lean circuit and proof declarations.
+  - `//:shoumei_roundtrip_test`: Generates 124 `.shoumei` files, parses them back, and verifies SV emission round-trip.
+  - `//:audits`: Aggregates all 4 integrity audit tests.
 
 ## Commands
 
@@ -39,6 +55,12 @@ bazel build //:rtl
 
 # Run native structural linting on generated SystemVerilog
 bazel test //:lint_structural_test
+
+# Run all static analysis linters (pyslang, shellcheck, py_compile, cppcheck, cell tables)
+bazel test //verification:linters
+
+# Run all Lean integrity and project audits (no sorry, lean root, project map, roundtrip)
+bazel test //:audits
 
 # Build Spike simulator library
 bazel build //third_party:spike_lib
@@ -76,8 +98,8 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 ## Open Work
 
 1. **Synthesis Targets**:
-   - Slang lint: Declare a test target running `slang` on emitted SystemVerilog.
    - Yosys synthesis: Declare actions targeting GF180 and ASAP7 cell synthesis.
+   - Techmap LEC: Yosys logical equivalence miter check between gate-level and mapped netlists.
 
 2. **Proof Audits**:
    - Add `lean_axiom_test` targets for key correctness theorems (e.g., `fullAdder_correct`, `alu_correct`, `shoumei_soc_correct`).

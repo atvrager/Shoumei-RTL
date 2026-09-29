@@ -287,3 +287,5 @@ def main : IO Unit := do
   IO.println s!"✓ Round-trip: {parseOk} OK, {parseFail} failed"
   IO.println "  Output: output/shoumei/, output/sv-roundtrip/"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if parseFail > 0 then
+    IO.Process.exit 1

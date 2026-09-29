@@ -107,3 +107,24 @@ test_suite(
         ":sim_tests",
     ],
 )
+
+filegroup(
+    name = "testbench_cpp_srcs",
+    srcs = glob(
+        [
+            "*.cpp",
+            "cache_model_test/*.cpp",
+            "coremark/*.c",
+            "coremark/*.h",
+            "lib/*.cpp",
+            "lib/*.h",
+            "riscv-tests/*.h",
+        ],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "testbench_scripts",
+    srcs = glob(["*.sh"]),
+)

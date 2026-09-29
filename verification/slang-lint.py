@@ -18,7 +18,8 @@ except ImportError:
     print("ERROR: pyslang not installed. Run: pip install pyslang")
     sys.exit(1)
 
-args = [a for a in sys.argv[1:] if a != "--sram"]
+lean_dir_arg = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--lean-dir=")), None)
+args = [a for a in sys.argv[1:] if a != "--sram" and not a.startswith("--lean-dir=")]
 sv_dir = args[0] if args else "output/sv-from-lean"
 sram_mode = "--sram" in sys.argv
 
@@ -83,15 +84,15 @@ else:
 # files the PDK directory does not override (mirrors the physical filelist).
 _cells = os.path.join(os.path.dirname(__file__), "pdk-cells-model.sv")
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-lean_dir = os.path.join(_root, "output/sv-from-lean")
+lean_dir = lean_dir_arg if lean_dir_arg else os.path.join(_root, "output/sv-from-lean")
 
-if os.path.isfile(_cells) and ("sv-asap7" in sv_dir or "sv-gf180" in sv_dir):
+if os.path.isfile(_cells) and any(x in sv_dir for x in ["sv-asap7", "_asap7", "sv-gf180", "_gf180"]):
     sv_files.append(_cells)
     mapped = {os.path.basename(f) for f in sv_files}
     for f in sorted(glob.glob(os.path.join(lean_dir, "*.sv"))):
         if os.path.basename(f) not in mapped:
             sv_files.append(f)
-elif "sv-sec" in sv_dir:
+elif "sv-sec" in sv_dir or "_sec" in sv_dir:
     mapped = {os.path.basename(f) for f in sv_files}
     for f in sorted(glob.glob(os.path.join(lean_dir, "*.sv"))):
         if os.path.basename(f) not in mapped:
