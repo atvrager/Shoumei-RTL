@@ -1,0 +1,83 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//testbench/tests:riscv.bzl", "riscv_elf")
+
+package(default_visibility = ["//visibility:public"])
+
+BENCH_INT_NAMES = [
+    "add",
+    "mul",
+    "ld",
+    "sd",
+    "beq",
+    "jal",
+]
+
+BENCH_FP_NAMES = [
+    "fp_fadd_s",
+    "fp_fmul_s",
+]
+
+ALL_BENCH_NAMES = BENCH_INT_NAMES + BENCH_FP_NAMES
+
+genrule(
+    name = "gen_benchmarks_regression",
+    srcs = ["//:instr_dict"],
+    outs = [t + ".S" for t in ALL_BENCH_NAMES] + ["bench-programs.json"],
+    cmd = """
+        TMP_DIR=$$(mktemp -d)
+        trap 'rm -rf "$$TMP_DIR"' EXIT
+        $(location //:gen_benchmarks) --instr-dict=$(location //:instr_dict) --asm-dir=$$TMP_DIR --out-dir=$$TMP_DIR
+        for t in {bench_names}; do
+            cp "$$TMP_DIR/$${{t}}.S" $(RULEDIR)/
+        done
+        cp "$$TMP_DIR/bench-programs.json" $(RULEDIR)/
+    """.format(bench_names = " ".join(ALL_BENCH_NAMES)),
+    tools = ["//:gen_benchmarks"],
+)
+
+[
+    riscv_elf(
+        name = t + "_elf",
+        srcs = [":" + t + ".S"],
+        linker_script = "//testbench/tests:shoumei.ld",
+        mabi = "lp64",
+        march = "rv64im_zicsr_zifencei",
+    )
+    for t in BENCH_INT_NAMES
+]
+
+[
+    riscv_elf(
+        name = t + "_elf",
+        srcs = [":" + t + ".S"],
+        linker_script = "//testbench/tests:shoumei.ld",
+        mabi = "lp64d",
+        march = "rv64imafd_zicsr_zifencei",
+    )
+    for t in BENCH_FP_NAMES
+]
+
+sh_test(
+    name = "bench_regression_test",
+    size = "medium",
+    srcs = ["run_bench_regression.sh"],
+    args = [
+        "$(location //testbench:sim_shoumei)",
+        "$(location //:scripts/bench_regression.py)",
+        "$(location //verification:bench-baseline.csv)",
+        "$(location :bench-programs.json)",
+    ] + ["$(location :" + t + "_elf)" for t in ALL_BENCH_NAMES],
+    data = [
+        ":bench-programs.json",
+        "//:scripts/bench_regression.py",
+        "//testbench:sim_shoumei",
+        "//verification:bench-baseline.csv",
+    ] + [":" + t + "_elf" for t in ALL_BENCH_NAMES],
+)
+
+test_suite(
+    name = "benchmarks",
+    tests = [
+        ":bench_regression_test",
+    ],
+)

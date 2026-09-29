@@ -116,10 +116,19 @@ bazel test //testbench:sim_tests
 # Run all 91 Spike lockstep cosimulation tests in parallel
 bazel test //testbench:cosim_tests
 
-# Run the complete simulation test suite (182 tests)
+# Run Tier 8 spec-side simulation tests in parallel
+bazel test //testbench:spec_tests
+
+# Run Tier 8 native FST inspection tool test
+bazel test //tools:fst_inspect_test
+
+# Run Tier 8 instruction benchmark regression suite
+bazel test //testbench/benchmarks:bench_regression_test
+
+# Run the complete simulation test suite (273 tests across sim, cosim, spec)
 bazel test //testbench:all_tests
 
-# Run the complete top-level presubmit suite (216 tests across all tiers)
+# Run the complete top-level presubmit suite (309 tests across all tiers)
 bazel test //:presubmit
 ```
 
@@ -130,6 +139,7 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 | Target | Output Artifact | Count | Description |
 | --- | --- | --- | --- |
 | `//:sv` | `bazel-bin/rtl_raw_sv/` | 239 files | Hierarchical SystemVerilog modules + `filelist.f` |
+| `//verification:sv_spec` | `bazel-bin/verification/sv_spec/` | 239 files | Spec-backed SystemVerilog tree with contract shims |
 | `//:sv_netlist` | `bazel-bin/rtl_raw_netlist/` | 238 files | Flat gate-level netlists + `filelist.f` |
 | `//:sv_asap7` | `bazel-bin/rtl_raw_asap7/` | 82 files | ASAP7 cell library mappings + `filelist.f` |
 | `//:sv_gf180` | `bazel-bin/rtl_raw_gf180/` | 82 files | GF180MCU cell library mappings + `filelist.f` |
@@ -142,7 +152,7 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 
 ## Migration Status
 
-All 7 Tiers of Bazel migration are complete:
+All 8 Tiers of Bazel migration are complete:
 - **Tier 1**: Foundational toolchains, Lean compiler, code generator `//:generate_all`, RTL generator `//:rtl`.
 - **Tier 2**: Direct Verilator C++ simulation harness and 91 assembly/baremetal tests (`//testbench:sim_tests`).
 - **Tier 3**: Hermetic Spike C++ simulator build via `rules_foreign_cc` and lockstep cosimulation test suite (`//testbench:cosim_tests`).
@@ -150,3 +160,4 @@ All 7 Tiers of Bazel migration are complete:
 - **Tier 5**: Formal verification and equivalence checking (`//verification:formal`, `//verification:extended`).
 - **Tier 6**: Proof coverage, mutation testing, dual-RTL SEC SMT2 bridge (`smt2lean`/`sva2lean`/`bv_decide`), and Lean axiom gates (`//verification:formal_proofs`).
 - **Tier 7**: Physical synthesis (GF180MCU & ASAP7), PPA stats, visuals suite, spec shims, C++ simulation library, and unified presubmit aggregator (`//:presubmit`).
+- **Tier 8**: Spec-side hardware simulation (`//testbench:sim_spec_shoumei`, `//testbench:spec_tests`), native waveform inspection debugging tools (`//tools:fst_inspect`), instruction benchmarking regression gate (`//testbench/benchmarks:bench_regression_test`), and elimination of in-tree `output/` directory in favor of hermetic Bazel build outputs.

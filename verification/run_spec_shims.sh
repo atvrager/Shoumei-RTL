@@ -7,5 +7,11 @@ if [ -z "${TEST_SRCDIR:-}" ] || [ ! -d "$ROOT/scripts" ]; then
     ROOT="."
 fi
 
-python3 "$ROOT/scripts/gen-spec-shims.py" --dry
+SV_DIR="${1:-$ROOT/output/sv-from-lean}"
+
+python3 "$ROOT/scripts/gen-spec-shims.py" \
+    --sv-dir="$SV_DIR" \
+    --spec-dir="$ROOT/verification/specs" \
+    --dual-rtl="$ROOT/lean/Shoumei/Verification/DualRTL.lean" \
+    --dry
 echo "✓ Spec shims validation passed"

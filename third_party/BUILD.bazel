@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
 package(default_visibility = ["//visibility:public"])
@@ -36,4 +37,26 @@ configure_make(
         "libfesvr.a",
         "libdisasm.a",
     ],
+)
+
+cc_library(
+    name = "libfst",
+    srcs = [
+        "libfst/src/fastlz.c",
+        "libfst/src/fstapi.c",
+        "libfst/src/lz4.c",
+    ],
+    hdrs = [
+        "libfst/src/fastlz.h",
+        "libfst/src/fst_win_unistd.h",
+        "libfst/src/fstapi.h",
+        "libfst/src/lz4.h",
+    ],
+    copts = ["-O2"],
+    includes = ["libfst/src"],
+    linkopts = [
+        "-lz",
+        "-lpthread",
+    ],
+    local_defines = ['FST_CONFIG_INCLUDE=\\"fstapi.h\\"'],
 )

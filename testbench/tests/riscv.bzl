@@ -212,6 +212,7 @@ def shoumei_elf_test(
     elf_target = name + "_elf"
     sim_target = name + "_sim"
     cosim_target = name + "_cosim"
+    spec_target = name + "_spec"
 
     if crt0 == None:
         crt0 = None if is_asm else "//testbench/tests:crt0.S"
@@ -249,11 +250,20 @@ def shoumei_elf_test(
         tags = tags or [],
     )
 
+    shoumei_sim_test(
+        name = spec_target,
+        elf = ":" + elf_target,
+        sim_binary = "//testbench:sim_spec_shoumei",
+        timeout_cycles = timeout_cycles,
+        tags = tags or [],
+    )
+
     native.test_suite(
         name = name,
         tests = [
             ":" + sim_target,
             ":" + cosim_target,
+            ":" + spec_target,
         ],
         tags = tags or [],
     )

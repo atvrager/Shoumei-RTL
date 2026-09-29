@@ -4,6 +4,13 @@ load("//:rtl.bzl", "shoumei_rtl")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "scripts/bench_compare.py",
+    "scripts/bench_regression.py",
+    "scripts/fst_inspect.cpp",
+    "scripts/gen-spec-shims.py",
+])
+
 genrule(
     name = "instr_dict",
     srcs = ["//third_party:riscv_opcodes_srcs"],
@@ -153,6 +160,8 @@ test_suite(
         ":audits",
         "//cpp_sim:cpp_sim_compile_test",
         "//testbench:all_tests",
+        "//testbench/benchmarks",
+        "//tools:fst_inspect_test",
         "//verification:extended",
         "//verification:formal",
         "//verification:formal_proofs",

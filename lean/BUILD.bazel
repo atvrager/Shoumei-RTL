@@ -3,6 +3,10 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "Shoumei/Verification/DualRTL.lean",
+])
+
 lean_library(
     name = "dsl",
     srcs = ["Shoumei/DSL.lean"],

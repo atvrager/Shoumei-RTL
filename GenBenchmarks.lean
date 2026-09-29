@@ -21,10 +21,33 @@ import Shoumei.RISCV.BenchmarkSpecs
     simulated cycles to ~1.2M with no loss of instruction coverage. -/
 def cosimIters : Nat := 16
 
+structure Options where
+  isShort : Bool := false
+  iters : Option Nat := none
+  asmDir : String := "testbench/tests/generated/bench"
+  outDir : String := "output/bench"
+  dictPath : System.FilePath := Shoumei.RISCV.instrDictPath
+
+def parseArgs (args : List String) (o : Options := {}) : Options :=
+  match args with
+  | [] => o
+  | a :: rest =>
+    let o := parseArgs rest o
+    if a == "--short" then { o with isShort := true }
+    else if a.startsWith "--iters=" then { o with iters := some (a.drop 8).toNat! }
+    else if a.startsWith "--asm-dir=" then { o with asmDir := (a.drop 10).toString }
+    else if a.startsWith "--out-dir=" then { o with outDir := (a.drop 10).toString }
+    else if a.startsWith "--out=" then { o with outDir := (a.drop 6).toString }
+    else if a.startsWith "--instr-dict=" then { o with dictPath := (a.drop 13).toString }
+    else o
+
 def main (args : List String) : IO Unit := do
-  if args.contains "--short" then
-    Shoumei.RISCV.emitAll (iters := cosimIters)
-      (asmDir := "testbench/tests/generated/bench-short")
-      (outDir := "output/bench-short")
-  else
-    Shoumei.RISCV.emitAll
+  let opts := parseArgs args
+  let iters := match opts.iters with
+    | some n => n
+    | none => if opts.isShort then cosimIters else Shoumei.RISCV.BENCH_ITERS
+  let defaultAsmDir := if opts.isShort then "testbench/tests/generated/bench-short" else "testbench/tests/generated/bench"
+  let defaultOutDir := if opts.isShort then "output/bench-short" else "output/bench"
+  let asmDir := if opts.asmDir != "testbench/tests/generated/bench" || !opts.isShort then opts.asmDir else defaultAsmDir
+  let outDir := if opts.outDir != "output/bench" || !opts.isShort then opts.outDir else defaultOutDir
+  Shoumei.RISCV.emitAll (iters := iters) (asmDir := asmDir) (outDir := outDir) (dictPath := opts.dictPath)

@@ -59,9 +59,15 @@ test_suite(
 )
 
 test_suite(
+    name = "spec_tests",
+    tests = [":" + t + "_spec" for t in ALL_GEN_TESTS],
+)
+
+test_suite(
     name = "all_tests",
     tests = [
         ":cosim_tests",
         ":sim_tests",
+        ":spec_tests",
     ],
 )

@@ -30,8 +30,9 @@ Usage
     python3 scripts/gen-spec-shims.py --dry  # list shimmable / missing, no write
 """
 
-import re
+import argparse
 import pathlib
+import re
 import shutil
 import sys
 
@@ -289,9 +290,9 @@ def build_shim(
 
 # ── registry loading ──────────────────────────────────────────────────────────
 
-def load_registry() -> dict[str, tuple[str, str]]:
+def load_registry(dual_rtl_path: pathlib.Path = DUAL_RTL) -> dict[str, tuple[str, str]]:
     """Load {circuitName: (specFile, topModule)} from DualRTL.lean."""
-    src = DUAL_RTL.read_text()
+    src = dual_rtl_path.read_text()
     rows = re.findall(
         r'circuitName\s*:=\s*"([^"]+)"\s*\n'
         r'\s*specFile\s*:=\s*"([^"]+)"\s*\n'
@@ -303,12 +304,18 @@ def load_registry() -> dict[str, tuple[str, str]]:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main(dry: bool = False) -> None:
-    registry = load_registry()
+def main(
+    sv_dir: pathlib.Path = SV_SRC,
+    spec_dir: pathlib.Path = SPEC_SRC,
+    dual_rtl: pathlib.Path = DUAL_RTL,
+    out_dir: pathlib.Path = OUT_DIR,
+    dry: bool = False,
+) -> None:
+    registry = load_registry(dual_rtl)
 
     # Add extra spec-only entries (proofs blocked, but specs are real).
     for fname in EXTRA_SPEC_ONLY:
-        sf = SPEC_SRC / fname
+        sf = spec_dir / fname
         if not sf.exists():
             continue
         t = sf.read_text()
@@ -319,7 +326,7 @@ def main(dry: bool = False) -> None:
         # circuit name = spec module name minus trailing _spec
         circuit = re.sub(r'_spec$', '', spec_mod)
         if circuit not in registry:
-            registry[circuit] = (str(sf.relative_to(ROOT)), spec_mod)
+            registry[circuit] = (str(sf.name), spec_mod)
 
     shimmed: list[str] = []
     missing: list[str]  = []
@@ -328,15 +335,17 @@ def main(dry: bool = False) -> None:
 
     if not dry:
         # Clear stale files before regenerating so removed shims can't persist.
-        if OUT_DIR.exists():
-            shutil.rmtree(OUT_DIR)
-        OUT_DIR.mkdir(parents=True)
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
         # Start with all emitted SV files; shims overwrite the entries they cover.
-        for f in SV_SRC.glob("*.sv"):
-            shutil.copy(f, OUT_DIR / f.name)
+        for f in sv_dir.glob("*.sv"):
+            dest = out_dir / f.name
+            shutil.copyfile(f, dest)
+            dest.chmod(0o644)
 
     # Determine which emitted modules exist
-    emitted_names = {f.stem for f in SV_SRC.glob("*.sv")}
+    emitted_names = {f.stem for f in sv_dir.glob("*.sv")}
 
     for mod in sorted(emitted_names):
         if mod not in registry:
@@ -344,13 +353,15 @@ def main(dry: bool = False) -> None:
             continue
 
         sf_rel, spec_mod = registry[mod]
-        sf = ROOT / sf_rel
+        sf = spec_dir / pathlib.Path(sf_rel).name
+        if not sf.exists():
+            sf = ROOT / sf_rel
         if not sf.exists():
             missing.append(mod)
             continue
 
         spec_text  = sf.read_text()
-        em_text    = (SV_SRC / f"{mod}.sv").read_text()
+        em_text    = (sv_dir / f"{mod}.sv").read_text()
 
         # Apply default params first for port-width parsing
         em_ports   = parse_ports(em_text, {})
@@ -368,13 +379,21 @@ def main(dry: bool = False) -> None:
             continue
 
         if not dry:
-            (OUT_DIR / f"{mod}.sv").write_text(shim)
+            dest = out_dir / f"{mod}.sv"
+            if dest.exists():
+                dest.unlink()
+            dest.write_text(shim)
+            dest.chmod(0o644)
         spec_files_used.add(sf)
         shimmed.append(mod)
 
     if not dry:
         for sf in spec_files_used:
-            shutil.copy(sf, OUT_DIR / sf.name)
+            dest = out_dir / sf.name
+            if dest.exists():
+                dest.unlink()
+            shutil.copyfile(sf, dest)
+            dest.chmod(0o644)
 
     # ── report ───────────────────────────────────────────────────────────────
 
@@ -409,9 +428,22 @@ def main(dry: bool = False) -> None:
             print(f"  [{cat}]  {' '.join(mods)}")
 
     if not dry:
-        print(f"\nOutput: {OUT_DIR}")
+        print(f"\nOutput: {out_dir}")
         print(f"Spec files copied: {len(spec_files_used)}")
 
 
 if __name__ == "__main__":
-    main(dry="--dry" in sys.argv)
+    parser = argparse.ArgumentParser(description="Generate spec shims for Shoumei.")
+    parser.add_argument("--sv-dir", type=pathlib.Path, default=SV_SRC, help="Path to emitted SV directory")
+    parser.add_argument("--spec-dir", type=pathlib.Path, default=SPEC_SRC, help="Path to verification specs directory")
+    parser.add_argument("--dual-rtl", type=pathlib.Path, default=DUAL_RTL, help="Path to DualRTL.lean")
+    parser.add_argument("--out-dir", type=pathlib.Path, default=OUT_DIR, help="Output directory for sv-spec")
+    parser.add_argument("--dry", action="store_true", help="Dry run without writing files")
+    parsed_args = parser.parse_args()
+    main(
+        sv_dir=parsed_args.sv_dir,
+        spec_dir=parsed_args.spec_dir,
+        dual_rtl=parsed_args.dual_rtl,
+        out_dir=parsed_args.out_dir,
+        dry=parsed_args.dry,
+    )

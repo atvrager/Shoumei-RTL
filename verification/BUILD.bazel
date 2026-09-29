@@ -1,9 +1,11 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//verification:slang.bzl", "slang_lint_test")
+load("//verification:spec_rtl.bzl", "shoumei_spec_rtl")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "bench-baseline.csv",
     "slang-lint.py",
 ])
 
@@ -405,11 +407,21 @@ sh_test(
     ],
 )
 
+shoumei_spec_rtl(
+    name = "sv_spec",
+    dual_rtl = "//lean:Shoumei/Verification/DualRTL.lean",
+    specs = [":specs"],
+    sv = "//:sv",
+)
+
 sh_test(
     name = "spec_shims_test",
     srcs = ["run_spec_shims.sh"],
+    args = ["$(location //:sv)"],
     data = [
+        ":specs",
         "//:root_python_scripts",
+        "//:sv",
         "//lean:shoumei_srcs",
     ],
 )

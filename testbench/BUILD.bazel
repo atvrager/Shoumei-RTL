@@ -85,6 +85,50 @@ cc_binary(
     ],
 )
 
+verilog_tree_library(
+    name = "tb_spec_verilog",
+    srcs = [
+        "//:tb_cpu_sv",
+        "//verification:sv_spec",
+    ],
+    top_module = "tb_cpu",
+)
+
+verilator_cc_library(
+    name = "vtb_spec_cpu",
+    module = ":tb_spec_verilog",
+    vopts = [
+        "-Wno-UNOPTFLAT",
+        "-Wno-PINMISSING",
+        "-Wno-WIDTHEXPAND",
+        "-Wno-WIDTHTRUNC",
+        "-Wno-CASEOVERLAP",
+        "-Wno-UNUSEDSIGNAL",
+        "-Wno-UNUSEDPARAM",
+        "-Wno-NULLPORT",
+        "-Wno-MULTIDRIVEN",
+        "--output-split",
+        "5000",
+        "--output-split-cfuncs",
+        "5000",
+    ],
+)
+
+cc_binary(
+    name = "sim_spec_shoumei",
+    srcs = [
+        "//:sim_main",
+    ],
+    copts = [
+        "-std=c++17",
+    ],
+    deps = [
+        ":elf_loader",
+        ":vtb_spec_cpu",
+        "//physical/sim-dpi:sram_dpi",
+    ],
+)
+
 test_suite(
     name = "sim_tests",
     tests = [
@@ -102,10 +146,19 @@ test_suite(
 )
 
 test_suite(
+    name = "spec_tests",
+    tests = [
+        "//testbench/tests:spec_tests",
+        "//testbench/tests/generated:spec_tests",
+    ],
+)
+
+test_suite(
     name = "all_tests",
     tests = [
         ":cosim_tests",
         ":sim_tests",
+        ":spec_tests",
     ],
 )
 

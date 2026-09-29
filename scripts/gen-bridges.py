@@ -97,8 +97,6 @@ def run(cmd):
         raise RuntimeError(res.stderr)
 
 SV_DIR = Path(os.environ.get("SV_DIR", ROOT / "output" / "sv-from-lean"))
-(ROOT / "verification" / "bridge").mkdir(parents=True, exist_ok=True)
-(ROOT / "output" / "sec-bridge" / "ShoumeiSec" / "Bridge").mkdir(parents=True, exist_ok=True)
 
 
 def sv_deps(mod):
@@ -2593,6 +2591,8 @@ end ShoumeiSec.Bridge{mod}
 
 
 def main():
+    (ROOT / "verification" / "bridge").mkdir(parents=True, exist_ok=True)
+    (ROOT / "output" / "sec-bridge" / "ShoumeiSec" / "Bridge").mkdir(parents=True, exist_ok=True)
     print("Generating Register bridges...")
     for w in REGISTERS:
         bridge_register(w)

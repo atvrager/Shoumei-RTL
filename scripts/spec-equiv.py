@@ -166,6 +166,7 @@ def _gb():
 def deps_of(mod: str) -> list[str]:
     """Emitted-netlist dependencies, plus any spec the spec itself instantiates."""
     gb = _gb()
+    gb.SV_DIR = SV_SRC
     return gb.sv_deps(mod).split() + [str(SPEC_SRC / d) for d in gb.SPEC_DEPS.get(mod, [])]
 
 
@@ -324,6 +325,7 @@ def main() -> int:
 
     if args.sv_dir:
         SV_SRC = args.sv_dir.resolve()
+        os.environ["SV_DIR"] = str(SV_SRC)
 
     OUT.mkdir(parents=True, exist_ok=True)
     reg = load_registry()
