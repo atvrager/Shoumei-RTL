@@ -33,3 +33,52 @@ shoumei_rtl(
     generator = ":generate_all",
     instr_dict = ":instr_dict",
 )
+
+lean_binary(
+    name = "generate_adder_matrix",
+    srcs = ["GenerateAdderMatrix.lean"],
+    main = "GenerateAdderMatrix",
+    deps = ["//lean:shoumei"],
+)
+
+lean_binary(
+    name = "generate_optype",
+    srcs = ["GenerateOpType.lean"],
+    main = "GenerateOpType",
+)
+
+lean_binary(
+    name = "generate_shoumei",
+    srcs = ["GenerateShoumei.lean"],
+    main = "GenerateShoumei",
+    deps = ["//lean:shoumei"],
+)
+
+lean_binary(
+    name = "gen_tests",
+    srcs = ["GenTests.lean"],
+    data = [":instr_dict"],
+    main = "GenTests",
+    deps = ["//lean:shoumei"],
+)
+
+lean_binary(
+    name = "gen_benchmarks",
+    srcs = ["GenBenchmarks.lean"],
+    data = [":instr_dict"],
+    main = "GenBenchmarks",
+    deps = ["//lean:shoumei"],
+)
+
+lean_binary(
+    name = "smt2lean",
+    srcs = ["Smt2Lean.lean"],
+    main = "Smt2Lean",
+)
+
+lean_binary(
+    name = "sva2lean",
+    srcs = ["Sva2Lean.lean"],
+    main = "Sva2Lean",
+    deps = ["//lean:shoumei"],
+)
