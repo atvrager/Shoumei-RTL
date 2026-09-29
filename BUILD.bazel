@@ -89,6 +89,15 @@ lean_binary(
 )
 
 filegroup(
+    name = "lake_files",
+    srcs = glob([
+        "lakefile.lean",
+        "lean-toolchain",
+        "lake-manifest.json",
+    ]),
+)
+
+filegroup(
     name = "known_unbuilt_modules",
     srcs = ["known-unbuilt-modules.txt"],
 )

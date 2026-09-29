@@ -56,6 +56,15 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//verification:spec_equiv_test`: Differential co-simulation of hand-written SystemVerilog specs against emitted netlists under LFSR stimulus.
   - `//verification:smoke_test`: Structural regression test validating outputs, port lists, instance bindings, cell tables, and proof integrity (74 checks).
   - `//verification:extended`: Aggregates all 4 Tier 5 verification targets.
+- **Formal Proof Coverage, Mutation Testing, Dual-RTL Bridge & Axiom Gates (Tier 6)**:
+  - `//verification:proof_coverage_test`: Comprehensive proof coverage analysis over 284 Lean files and 1,773 declarations (100% proof coverage, 0 sorry, 0 admit, 0 unproven axioms).
+  - `//verification:mutation_test`: Hardware mutation testing suite systematically evaluating 18 gate, pin, and mux mutations; confirms 0% L0 structural kill rate and 100% L1-L3 semantic kill rate.
+  - `//verification:sec_bridge_test`: Certified Dual-RTL bridge compiling Yosys SMT2 to pure Lean bitvector models and verifying equivalence via `bv_decide` with zero unapproved axioms.
+  - `//lean:core_theorems_axiom_test`: `lean_axiom_test` verifying core gate commutativity and involution theorems depend only on `["propext", "Classical.choice", "Quot.sound"]`.
+  - `//lean:logicunit_axiom_test`: `lean_axiom_test` verifying parametric LogicUnit gate, input, and output count theorems depend strictly on `["propext", "Quot.sound"]`.
+  - `//lean:queue_invariants_axiom_test`: `lean_axiom_test` verifying inductive queue invariants (`never_exceeds_capacity`, `fifo_single`, etc.) depend strictly on `["propext", "Quot.sound"]`.
+  - `//lean:axiom_gates`: Aggregates all theorem axiom gate tests.
+  - `//verification:formal_proofs`: Aggregates mutation tests, proof coverage, certified SEC bridge tests, and Lean axiom gates.
 - **Generator Optimization**:
   - `//:generate_all` configured with `extra_link_flags = ["-O3", "-DNDEBUG"]`, accelerating execution by ~8x (e.g. `check_wiring` from 619s to 78s).
 
@@ -85,6 +94,9 @@ bazel test //verification:formal
 
 # Run extended equivalence, cache conformance, and smoke gates (Tier 5)
 bazel test //verification:extended
+
+# Run Tier 6 formal proofs, mutation tests, SEC bridge, and axiom gates
+bazel test //verification:formal_proofs
 
 # Build Spike simulator library
 bazel build //third_party:spike_lib
@@ -122,9 +134,7 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 ## Open Work
 
 1. **Synthesis Targets**:
-   - Yosys synthesis: Declare actions targeting GF180 and ASAP7 cell synthesis.
-   - Techmap LEC: Yosys logical equivalence miter check between gate-level and mapped netlists.
+   - Yosys full flow: Declare synthesis actions targeting GF180 and ASAP7 cell synthesis macros.
 
-2. **Proof Audits**:
-   - Add `lean_axiom_test` targets for key correctness theorems (e.g., `fullAdder_correct`, `alu_correct`, `shoumei_soc_correct`).
-   - Gate builds on zero unapproved axioms (`allowed_axioms = ["propext", "Classical.choice", "Quot.sound"]`).
+2. **Full CI Pipeline Aggregator**:
+   - Aggregate all verification suites (`linters`, `audits`, `formal`, `extended`, `formal_proofs`, and `all_tests`) into a unified presubmit test suite.

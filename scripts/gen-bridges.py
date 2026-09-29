@@ -3,6 +3,8 @@
 
 import subprocess
 import re
+import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -94,7 +96,7 @@ def run(cmd):
         print(f"FAILED: {cmd}\n{res.stderr}")
         raise RuntimeError(res.stderr)
 
-SV_DIR = ROOT / "output" / "sv-from-lean"
+SV_DIR = Path(os.environ.get("SV_DIR", ROOT / "output" / "sv-from-lean"))
 (ROOT / "verification" / "bridge").mkdir(parents=True, exist_ok=True)
 (ROOT / "output" / "sec-bridge" / "ShoumeiSec" / "Bridge").mkdir(parents=True, exist_ok=True)
 
@@ -113,8 +115,35 @@ def sv_deps(mod):
             if (SV_DIR / f"{inst}.sv").exists() and inst not in seen:
                 stack.append(inst)
     return " ".join(str(SV_DIR / f"{m}.sv") for m in sorted(seen))
-SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
-SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
+TARGET_MODULES = set(sys.argv[1:]) if len(sys.argv) > 1 else None
+
+SMT2LEAN_PATH = os.environ.get("SMT2LEAN")
+if SMT2LEAN_PATH:
+    SMT2LEAN_BIN = Path(SMT2LEAN_PATH).resolve()
+    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
+elif (ROOT / "bazel-bin" / "smt2lean").exists():
+    SMT2LEAN_BIN = ROOT / "bazel-bin" / "smt2lean"
+    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
+elif (ROOT / ".lake" / "build" / "bin" / "smt2lean").exists():
+    SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
+    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
+else:
+    SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
+    SMT2LEAN_CMD = "lake exe smt2lean"
+
+SVA2LEAN_PATH = os.environ.get("SVA2LEAN")
+if SVA2LEAN_PATH:
+    SVA2LEAN_BIN = Path(SVA2LEAN_PATH).resolve()
+    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
+elif (ROOT / "bazel-bin" / "sva2lean").exists():
+    SVA2LEAN_BIN = ROOT / "bazel-bin" / "sva2lean"
+    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
+elif (ROOT / ".lake" / "build" / "bin" / "sva2lean").exists():
+    SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
+    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
+else:
+    SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
+    SVA2LEAN_CMD = "lake exe sva2lean" 
 GEN_SCRIPT = Path(__file__).resolve()
 
 def sv_dep_paths(mod):
@@ -151,6 +180,8 @@ def note_spec_rep(spec_file, mod, width):
     SPEC_SVA_REPS.setdefault((spec_file, width), mod)
 
 def should_skip_bridge(mod, spec_file, note_w=None):
+    if TARGET_MODULES and mod not in TARGET_MODULES:
+        return True
     if note_w is not None and spec_file is not None:
         note_spec_rep(spec_file, mod, note_w)
     spec_sv = (ROOT / "verification" / "specs" / spec_file) if spec_file else None
@@ -177,8 +208,8 @@ def bridge_register(w, mod_name=None):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Register_spec.sv; chparam -set WIDTH {w} Register_spec; hierarchy -top Register_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Register_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Register_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -241,8 +272,8 @@ def bridge_register_en(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/RegisterEn_spec.sv; chparam -set WIDTH {w} RegisterEn_spec; hierarchy -top RegisterEn_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} RegisterEn_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} RegisterEn_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -302,8 +333,8 @@ def bridge_decoder(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Decoder_spec.sv; chparam -set IN_WIDTH {w} -set OUT_WIDTH {out_w} Decoder_spec; hierarchy -top Decoder_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Decoder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Decoder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -356,8 +387,8 @@ def bridge_comparator(w):
         run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS /tmp/flat_{mod}.sv; hierarchy -top {mod}; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
     else:
         run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Comparator_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Comparator_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -410,8 +441,8 @@ def bridge_subtractor(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Subtractor_spec.sv; chparam -set WIDTH {w} Subtractor_spec; hierarchy -top Subtractor_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Subtractor_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Subtractor_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -462,8 +493,8 @@ def bridge_adder(mod, spec_file, w, has_cin):
     spec_name = spec_file.replace(".sv", "")
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{spec_file}; chparam -set WIDTH {w} {spec_name}; hierarchy -top {spec_name}; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {spec_name} ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {spec_name} ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     impl_text = (ROOT / impl_lean).read_text()
     has_individual_sum = "sum_0 :" in impl_text
@@ -524,8 +555,8 @@ def bridge_full_adder():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/FullAdder_spec.sv; hierarchy -top FullAdder_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} FullAdder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} FullAdder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -577,8 +608,8 @@ def bridge_ripple_carry_adder4():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/RippleCarryAdder4_spec.sv; hierarchy -top RippleCarryAdder4_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} RippleCarryAdder4_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} RippleCarryAdder4_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -630,8 +661,8 @@ def bridge_mul_final_adder64():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/MulFinalAdder64_spec.sv; hierarchy -top MulFinalAdder64_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} MulFinalAdder64_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} MulFinalAdder64_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -681,8 +712,8 @@ def bridge_branch_target_adder32():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/BranchTargetAdder32_spec.sv; hierarchy -top BranchTargetAdder32_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} BranchTargetAdder32_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} BranchTargetAdder32_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -732,8 +763,8 @@ def bridge_csa_compressor(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/CSACompressor_spec.sv; chparam -set WIDTH {w} CSACompressor_spec; hierarchy -top CSACompressor_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} CSACompressor_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} CSACompressor_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -788,8 +819,8 @@ def bridge_alu(w):
                           + [f"verification/specs/{d}" for d in SPEC_DEPS.get(mod, [])])
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {spec_srcs}; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -840,8 +871,8 @@ def bridge_plru(ways):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PLRU_spec.sv; chparam -set WAYS {ways} PLRU_spec; hierarchy -top PLRU_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} PLRU_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} PLRU_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -902,8 +933,8 @@ def bridge_rat(mod):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{spec}.sv; hierarchy -top {spec}; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {spec} ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {spec} ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     for p in [ROOT / spec_lean, ROOT / impl_lean]:
         t = p.read_text()
@@ -997,8 +1028,8 @@ def bridge_equality_comparator(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/EqualityComparator_spec.sv; chparam -set WIDTH {w} EqualityComparator_spec; hierarchy -top EqualityComparator_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} EqualityComparator_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} EqualityComparator_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1048,8 +1079,8 @@ def bridge_mux4(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux4_spec.sv; chparam -set WIDTH {w} Mux4_spec; hierarchy -top Mux4_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Mux4_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Mux4_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1102,8 +1133,8 @@ def bridge_mux8(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux8_spec.sv; chparam -set WIDTH {w} Mux8_spec; hierarchy -top Mux8_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Mux8_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Mux8_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1159,8 +1190,8 @@ def bridge_mux16(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux16_spec.sv; chparam -set WIDTH {w} Mux16_spec; hierarchy -top Mux16_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Mux16_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Mux16_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     fields = "\n".join(f"  in{k} := i.in{k}" for k in range(16))
     bindings = ", ".join(f"i{k}" for k in range(16)) + ", s_sel"
@@ -1212,8 +1243,8 @@ def bridge_mux32(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux32_spec.sv; chparam -set WIDTH {w} Mux32_spec; hierarchy -top Mux32_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Mux32_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Mux32_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     fields = "\n".join(f"  in{k} := i.in{k}" for k in range(32))
     bindings = ", ".join(f"i{k}" for k in range(32)) + ", s_sel"
@@ -1265,8 +1296,8 @@ def bridge_mux64(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Mux64_spec.sv; chparam -set WIDTH {w} Mux64_spec; hierarchy -top Mux64_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Mux64_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Mux64_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     fields = "\n".join(f"  in{k} := i.in{k}" for k in range(64))
     bindings = ", ".join(f"i{k}" for k in range(64)) + ", s_sel"
@@ -1318,8 +1349,8 @@ def bridge_logic_unit(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/LogicUnit_spec.sv; chparam -set WIDTH {w} LogicUnit_spec; hierarchy -top LogicUnit_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} LogicUnit_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} LogicUnit_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1369,8 +1400,8 @@ def bridge_shifter(w, shamt_w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Shifter_spec.sv; chparam -set WIDTH {w} -set SHAMT_WIDTH {shamt_w} Shifter_spec; hierarchy -top Shifter_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Shifter_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Shifter_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1420,8 +1451,8 @@ def bridge_pcincrementer(inc):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PCIncrementer_spec.sv; chparam -set INC {inc} PCIncrementer_spec; hierarchy -top PCIncrementer_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} PCIncrementer_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} PCIncrementer_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1477,7 +1508,7 @@ def emit_spec_sva():
         if is_up_to_date(targets, sources):
             count += 1
             continue
-        run(f'lake exe sva2lean verification/specs/{spec_file} {model_lean} {out_lean}')
+        run(f'{SVA2LEAN_CMD} verification/specs/{spec_file} {model_lean} {out_lean}')
         print(f"Generated {mod}Props ({spec_file} at width {width})")
         count += 1
     print(f"Generated {count} spec assertion module(s)")
@@ -1494,8 +1525,8 @@ def bridge_queue1(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Queue1_spec.sv; chparam -set WIDTH {w} Queue1_spec; hierarchy -top Queue1_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Queue1_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Queue1_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -1569,8 +1600,8 @@ def bridge_queue1_flow(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Queue1Flow_spec.sv; chparam -set WIDTH {w} Queue1Flow_spec; hierarchy -top Queue1Flow_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Queue1Flow_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Queue1Flow_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -1648,8 +1679,8 @@ def bridge_priority_arbiter(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/PriorityArbiter_spec.sv; chparam -set WIDTH {w} PriorityArbiter_spec; hierarchy -top PriorityArbiter_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} PriorityArbiter_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} PriorityArbiter_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1698,8 +1729,8 @@ def bridge_one_hot_encoder():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/OneHotEncoder_spec.sv; hierarchy -top OneHotEncoder_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} OneHotEncoder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} OneHotEncoder_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1747,8 +1778,8 @@ def bridge_popcount():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/Popcount_spec.sv; hierarchy -top Popcount_spec; flatten; proc; opt; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} Popcount_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} Popcount_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -1796,8 +1827,8 @@ def bridge_queue_pointer(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueuePointer_spec.sv; chparam -set WIDTH {w} QueuePointer_spec; hierarchy -top QueuePointer_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} QueuePointer_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} QueuePointer_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -1857,8 +1888,8 @@ def bridge_queue_pointer_loadable(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueuePointerLoadable_spec.sv; chparam -set WIDTH {w} QueuePointerLoadable_spec; hierarchy -top QueuePointerLoadable_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} QueuePointerLoadable_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} QueuePointerLoadable_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -1920,8 +1951,8 @@ def bridge_queue_counter_loadable(w):
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/QueueCounterLoadable_spec.sv; chparam -set WIDTH {w} QueueCounterLoadable_spec; hierarchy -top QueueCounterLoadable_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} QueueCounterLoadable_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} QueueCounterLoadable_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_code = (ROOT / spec_lean).read_text()
     impl_code = (ROOT / impl_lean).read_text()
@@ -1984,8 +2015,8 @@ def bridge_dual_port_queue():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     spec_state_body = "\n".join(
         f"  {DUALPORT_SPEC_FIELDS[j]} := s.{DUALPORT_IMPL_FIELDS[DUALPORT_ENTRY_TO_IMPL[j]]}"
@@ -2051,8 +2082,8 @@ def bridge_resetsync():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2108,8 +2139,8 @@ def bridge_bootrom():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2181,8 +2212,8 @@ def bridge_gpio():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2261,8 +2292,8 @@ def bridge_uart():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2343,8 +2374,8 @@ def bridge_aclint():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2423,8 +2454,8 @@ def bridge_aplic():
 
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS verification/specs/{mod}_spec.sv; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     proof_content = f"""import ShoumeiSec.Bridge.{mod}Spec
 import ShoumeiSec.Bridge.{mod}Impl
@@ -2507,8 +2538,8 @@ def bridge_datapath(mod):
                           + [f"verification/specs/{d}" for d in SPEC_DEPS.get(mod, [])])
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {spec_srcs}; hierarchy -top {mod}_spec; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {spec_smt}"')
     run(f'yosys -q -p "read_verilog -sv -D SYNTHESIS {sv_deps(mod)}; hierarchy -top {mod}; setattr -mod -unset keep_hierarchy; flatten; proc; opt; async2sync; dffunmap; formalff -clk2ff; opt_clean; write_functional_smt2 {impl_smt}"')
-    run(f'lake exe smt2lean {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
-    run(f'lake exe smt2lean {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
+    run(f'{SMT2LEAN_CMD} {spec_smt} {mod}_spec ShoumeiSec.Bridge.{mod}Spec {spec_lean}')
+    run(f'{SMT2LEAN_CMD} {impl_smt} {mod} ShoumeiSec.Bridge.{mod}Impl {impl_lean}')
 
     # Composed models (e.g. an exec unit flattening two ALUs) need a deeper
     # definitional-equality budget than the smt2lean default.

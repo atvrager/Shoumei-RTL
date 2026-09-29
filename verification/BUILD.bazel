@@ -287,3 +287,57 @@ test_suite(
         "//testbench:cache_conformance_test",
     ],
 )
+
+sh_test(
+    name = "proof_coverage_test",
+    size = "medium",
+    srcs = ["run_proof_coverage.sh"],
+    data = [
+        "proof-coverage.sh",
+        "//lean:shoumei_srcs",
+    ],
+)
+
+sh_test(
+    name = "mutation_test",
+    size = "large",
+    srcs = ["run_mutation_test.sh"],
+    data = [
+        "mutation-test.sh",
+        "//:lake_files",
+        "//lean:shoumei_srcs",
+    ],
+)
+
+sh_test(
+    name = "sec_bridge_test",
+    size = "medium",
+    srcs = ["run_sec_bridge.sh"],
+    args = [
+        "$(location //:smt2lean)",
+        "$(location //:sva2lean)",
+        "$(location //:sv)",
+        # Representative modules:
+        "FullAdder",
+        "ALU32",
+    ],
+    data = [
+        ":specs",
+        "//:lake_files",
+        "//:root_python_scripts",
+        "//:smt2lean",
+        "//:sv",
+        "//:sva2lean",
+        "//lean:shoumei",
+    ],
+)
+
+test_suite(
+    name = "formal_proofs",
+    tests = [
+        ":mutation_test",
+        ":proof_coverage_test",
+        ":sec_bridge_test",
+        "//lean:axiom_gates",
+    ],
+)

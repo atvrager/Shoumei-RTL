@@ -1,4 +1,4 @@
-load("@rules_lean//lean:defs.bzl", "lean_library")
+load("@rules_lean//lean:defs.bzl", "lean_axiom_test", "lean_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -48,9 +48,65 @@ sh_test(
     ],
 )
 
+lean_axiom_test(
+    name = "core_theorems_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Classical.choice",
+        "Quot.sound",
+    ],
+    theorems = [
+        "Shoumei.and_commutative",
+        "Shoumei.or_commutative",
+        "Shoumei.xor_commutative",
+        "Shoumei.not_involution",
+    ],
+    deps = [":shoumei"],
+)
+
+lean_axiom_test(
+    name = "logicunit_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Quot.sound",
+    ],
+    theorems = [
+        "Shoumei.Circuits.Combinational.logicunitN_gates_length",
+        "Shoumei.Circuits.Combinational.logicunitN_inputs_length",
+        "Shoumei.Circuits.Combinational.logicunitN_outputs_length",
+    ],
+    deps = [":shoumei"],
+)
+
+lean_axiom_test(
+    name = "queue_invariants_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Quot.sound",
+    ],
+    theorems = [
+        "Shoumei.Circuits.Sequential.never_exceeds_capacity",
+        "Shoumei.Circuits.Sequential.fifo_single",
+        "Shoumei.Circuits.Sequential.empty_has_zero_count",
+        "Shoumei.Circuits.Sequential.empty_is_empty",
+        "Shoumei.Circuits.Sequential.empty_not_full",
+    ],
+    deps = [":shoumei"],
+)
+
+test_suite(
+    name = "axiom_gates",
+    tests = [
+        ":core_theorems_axiom_test",
+        ":logicunit_axiom_test",
+        ":queue_invariants_axiom_test",
+    ],
+)
+
 test_suite(
     name = "integrity_tests",
     tests = [
+        ":axiom_gates",
         ":lean_root_test",
         ":no_sorry_test",
         ":project_map_test",

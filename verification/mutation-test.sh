@@ -11,8 +11,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-REPORT_DIR="$PROJECT_ROOT/output/mutation-test"
+PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$SCRIPT_DIR")}"
+REPORT_DIR="${REPORT_DIR:-${TEST_TMPDIR:-$PROJECT_ROOT/output/mutation-test}}"
 
 mkdir -p "$REPORT_DIR"
 
@@ -286,7 +286,8 @@ if [ "$SEM_SCORE" -eq 100 ]; then
     echo -e "  ${GREEN}✓ All mutants successfully killed by semantic proofs (100% Mutation Score)${NC}"
     echo -e "  ${DIM}Structural proofs alone had 0% mutation score, proving the necessity of L1-L3 semantic coverage.${NC}"
 else
-    echo -e "  ${RED}✗ Some mutants survived semantic proofs!${NC}"
+    echo -e "  ${RED}✗ Some mutants survived semantic proofs!${NC}" >&2
+    exit 1
 fi
 echo ""
 

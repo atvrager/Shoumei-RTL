@@ -13,9 +13,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-LEAN_DIR="$PROJECT_ROOT/lean/Shoumei"
-REPORT_DIR="$PROJECT_ROOT/output/proof-coverage"
+PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$SCRIPT_DIR")}"
+LEAN_DIR="${LEAN_DIR:-$PROJECT_ROOT/lean/Shoumei}"
+REPORT_DIR="${REPORT_DIR:-${TEST_TMPDIR:-$PROJECT_ROOT/output/proof-coverage}}"
 
 # Colors (disabled if not a terminal or if NO_COLOR is set)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -102,7 +102,7 @@ echo ""
 LEAN_FILES=()
 while IFS= read -r -d '' f; do
     LEAN_FILES+=("$f")
-done < <(find "$LEAN_DIR" -name "*.lean" -type f -print0 | sort -z)
+done < <(find -L "$LEAN_DIR" -name "*.lean" -type f -print0 | sort -z)
 
 TOTAL_FILES=${#LEAN_FILES[@]}
 
@@ -231,9 +231,11 @@ else
     echo -e "  ${YELLOW}Coverage: ${COVERAGE_PCT}%${NC}"
 fi
 
-MANIFEST="$PROJECT_ROOT/output/proof-manifest.json"
+MANIFEST="${PROOF_MANIFEST:-$PROJECT_ROOT/output/proof-manifest.json}"
 if [ ! -f "$MANIFEST" ]; then
-    lake env lean --run "$PROJECT_ROOT/scripts/export-proof-manifest.lean" "$MANIFEST" > /dev/null 2>&1 || true
+    if command -v lake >/dev/null 2>&1; then
+        lake env lean --run "$PROJECT_ROOT/scripts/export-proof-manifest.lean" "$MANIFEST" > /dev/null 2>&1 || true
+    fi
 fi
 
 if [ -f "$MANIFEST" ]; then
@@ -541,5 +543,10 @@ fi
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-# Always exit 0 -- this is informational only
+# Exit status: fail if STRICT=1 and any incomplete proofs remain
+if [ "${STRICT:-0}" = "1" ] && { [ "$TOTAL_SORRY" -gt 0 ] || [ "$TOTAL_ADMIT" -gt 0 ] || [ "$TOTAL_VACUOUS" -gt 0 ]; }; then
+    echo -e "${RED}ERROR: Incomplete proofs found in strict mode!${NC}" >&2
+    exit 1
+fi
+
 exit 0
