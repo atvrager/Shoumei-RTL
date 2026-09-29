@@ -1,0 +1,16 @@
+module(
+    name = "shoumei",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_lean")
+local_path_override(
+    module_name = "rules_lean",
+    path = "../rules_lean",
+)
+
+lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
+lean.toolchain(toolchain_file = "//:lean-toolchain")
+use_repo(lean, "lean_toolchains")
+
+register_toolchains("@lean_toolchains//:all")

@@ -1,3 +1,6 @@
+# Bazel
+/bazel-*
+
 # LEAN4 / Lake
 /.lake/
 /build/

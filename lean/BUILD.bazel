@@ -1,0 +1,15 @@
+load("@rules_lean//lean:defs.bzl", "lean_library")
+
+package(default_visibility = ["//visibility:public"])
+
+lean_library(
+    name = "dsl",
+    srcs = ["Shoumei/DSL.lean"],
+    extra_flags = ["-DwarningAsError=true"],
+)
+
+lean_library(
+    name = "shoumei",
+    srcs = glob(["**/*.lean"]),
+    extra_flags = ["-DwarningAsError=true"],
+)

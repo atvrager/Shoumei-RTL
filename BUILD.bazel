@@ -1,0 +1,10 @@
+load("@rules_lean//lean:defs.bzl", "lean_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+lean_binary(
+    name = "generate_all",
+    srcs = ["GenerateAll.lean"],
+    main = "GenerateAll",
+    deps = ["//lean:shoumei"],
+)
