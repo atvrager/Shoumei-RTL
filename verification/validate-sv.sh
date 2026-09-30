@@ -29,7 +29,7 @@ if [[ ! -d "$SV_DIR" ]]; then
 fi
 
 # Count SV files
-SV_COUNT=$(find "$SV_DIR" -maxdepth 1 -name "*.sv" -type f 2>/dev/null | wc -l)
+SV_COUNT=$(find -L "$SV_DIR" -maxdepth 1 -name "*.sv" -type f 2>/dev/null | wc -l)
 
 if [[ "$SV_COUNT" -eq 0 ]]; then
     echo -e "${YELLOW}Warning: No .sv files found in $SV_DIR${NC}"
@@ -51,7 +51,7 @@ trap 'rm -f "$YOSYS_SCRIPT"' EXIT
 echo "# Auto-generated Yosys validation script" > "$YOSYS_SCRIPT"
 
 # Find all SV files and add read commands
-find "$SV_DIR" -maxdepth 1 -name "*.sv" -type f | sort | while read -r sv_file; do
+find -L "$SV_DIR" -maxdepth 1 -name "*.sv" -type f | sort | while read -r sv_file; do
     echo "read_verilog -sv \"$sv_file\"" >> "$YOSYS_SCRIPT"
 done
 

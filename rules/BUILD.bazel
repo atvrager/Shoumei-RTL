@@ -8,7 +8,6 @@ package(default_visibility = ["//visibility:public"])
 lean_tool(name = "lean")
 
 exports_files([
-    "host_binary.bzl",
     "lean_tool.bzl",
     "pdk.bzl",
     "riscv.bzl",

@@ -1,0 +1,34 @@
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -30,7 +30,6 @@
+ 
+ COMMON_DEFINES = [
+     "_YOSYS_",
+-    "YOSYS_ENABLE_READLINE",
+     "YOSYS_ENABLE_PLUGINS",
+     "YOSYS_ENABLE_GLOB",
+     "YOSYS_ENABLE_ZLIB",
+@@ -71,7 +70,6 @@
+         "#define YOSYS_ENABLE_ZLIB",
+         "#define YOSYS_ENABLE_LIBFFI",
+         "#define YOSYS_ENABLE_PLUGINS",
+-        "#define YOSYS_ENABLE_READLINE",
+         "#define YOSYS_ENABLE_TCL",
+         "#endif",
+     ],
+@@ -264,7 +262,6 @@
+         ":sha1",
+         "@abc",
+         "@libffi",
+-        "@readline",
+         "@tcl_lang//:tcl",
+         "@zlib",
+     ],
+@@ -1208,7 +1205,6 @@
+         "@abc",
+         "@cxxopts",
+         "@libffi",
+-        "@readline",
+         "@tcl_lang//:tcl",
+         "@zlib",
+     ],

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SV_DIR="$1"
+VERILATOR="$1"
+SV_DIR="$2"
+
+# The pinned verilator, not the one on the host.
+source verification/tool_path.sh
+tool_path "$VERILATOR"
 
 verilator --assert --lint-only \
     "$SV_DIR/Register64.sv" \

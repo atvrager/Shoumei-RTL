@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SV_DIR="$1"
-ASAP7_DIR="$2"
-GF180_DIR="$3"
-SEC_DIR="$4"
-CPP_SIM_DIR="$5"
-GEN_ARG="$6"
+YOSYS="$1"
+VERILATOR="$2"
+SV_DIR="$3"
+ASAP7_DIR="$4"
+GF180_DIR="$5"
+SEC_DIR="$6"
+CPP_SIM_DIR="$7"
+GEN_ARG="$8"
+
+# The pinned tools, not the ones on the host.
+source verification/tool_path.sh
+tool_path "$YOSYS"
+tool_path "$VERILATOR"
 
 ROOT="$(pwd)"
 GEN="$(cd "$(dirname "$GEN_ARG")" && pwd)/$(basename "$GEN_ARG")"

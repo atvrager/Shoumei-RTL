@@ -1,25 +1,16 @@
 load("@rules_verilator//verilator:defs.bzl", "verilator_toolchain")
-load("//rules:host_binary.bzl", "host_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-host_binary(
-    name = "verilator_bin",
-    src = "verilator_wrapper.sh",
-)
-
+# The `verilator` module builds the pinned release from source in the sandbox.
+# The generated model and the runtime headers therefore come from one version.
 verilator_toolchain(
-    name = "host_verilator_impl",
-    verilator = ":verilator_bin",
+    name = "verilator_impl",
+    verilator = "@verilator//:verilator_executable",
 )
 
 toolchain(
-    name = "host_verilator_toolchain",
-    toolchain = ":host_verilator_impl",
+    name = "verilator_toolchain",
+    toolchain = ":verilator_impl",
     toolchain_type = "@rules_verilator//verilator:toolchain_type",
-)
-
-filegroup(
-    name = "scripts",
-    srcs = ["verilator_wrapper.sh"],
 )

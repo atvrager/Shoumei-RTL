@@ -177,14 +177,9 @@ else
 fi
 
 # Cache behavior conformance (emitted SV vs reference model).
-# Needs Verilator, which the general smoke job does not install (the
-# verilator-sim CI job runs the conformance suite instead); skip cleanly
-# when the model can't be built.
 echo ""
 echo "==> Cache behavior conformance"
-if ! command -v verilator > /dev/null 2>&1; then
-    echo "(skipped: verilator not installed; CI runs it in verilator-sim)"
-elif [ -n "${SKIP_CACHE_CONFORMANCE:-}" ]; then
+if [ -n "${SKIP_CACHE_CONFORMANCE:-}" ]; then
     echo "(skipped: verified via testbench:cache_conformance_test)"
 elif bazel test //testbench:cache_conformance_test > /tmp/cache-conformance.log 2>&1; then
     pass "Cache conformance (L1D SV vs reference)"
@@ -281,27 +276,14 @@ for sec_artifact in output/sv-sec/Register160_sec_miter.sv \
     fi
 done
 
-if command -v yosys >/dev/null 2>&1; then
-    if ./verification/sec-verify.sh --yosys > /tmp/sec-smoke.log 2>&1; then
-        pass "Sequential Equivalence Checking (Yosys SAT miter)"
-    else
-        fail "Sequential Equivalence Checking failed (see /tmp/sec-smoke.log)"
-        tail -20 /tmp/sec-smoke.log || true
-    fi
+if ./verification/sec-verify.sh --yosys > /tmp/sec-smoke.log 2>&1; then
+    pass "Sequential Equivalence Checking (Yosys SAT miter)"
 else
-    echo "(skipped: yosys not installed)"
+    fail "Sequential Equivalence Checking failed (see /tmp/sec-smoke.log)"
+    tail -20 /tmp/sec-smoke.log || true
 fi
 
-if command -v slang >/dev/null 2>&1 || python3 -c "import pyslang" >/dev/null 2>&1; then
-    if python3 verification/slang-lint.py output/sv-sec > /tmp/sva-slang.log 2>&1; then
-        pass "SVA miter elaboration (slang)"
-    else
-        fail "SVA miter elaboration failed (see /tmp/sva-slang.log)"
-        tail -20 /tmp/sva-slang.log || true
-    fi
-else
-    echo "(skipped: slang/pyslang not installed)"
-fi
+# The slang elaboration of the SEC miter runs in //verification:slang_sec_lint_test.
 echo ""
 
 # --- Summary ---

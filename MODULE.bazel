@@ -22,10 +22,34 @@ bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "buildifier_prebuilt", version = "10.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.18")
 bazel_dep(name = "rules_verilator", version = "1.1.2")
+bazel_dep(name = "verilator", version = "5.046.bcr.5")
+bazel_dep(name = "flex", version = "2.6.4.bcr.5")
+bazel_dep(name = "bison", version = "3.8.2.bcr.8")
+bazel_dep(name = "m4", version = "1.4.21.bcr.4")
+
+# Hermetic external tools for the synthesis and lint steps.
+bazel_dep(name = "yosys", version = "0.68.bcr.1")
+
+# Yosys and ABC keep a readline shell.  That shell drags in ncurses and the
+# `sed` module, which does not build here.  The scripts run both tools in batch
+# mode only.
+single_version_override(
+    module_name = "yosys",
+    patch_strip = 1,
+    patches = ["//third_party/patches:yosys-no-readline.patch"],
+    version = "0.68.bcr.1",
+)
+
+single_version_override(
+    module_name = "abc",
+    patch_strip = 1,
+    patches = ["//third_party/patches:abc-no-readline.patch"],
+)
+
 bazel_dep(name = "rules_verilog", version = "1.4.3")
 bazel_dep(name = "rules_shell", version = "0.7.1")
 
-register_toolchains("//toolchains/verilator:host_verilator_toolchain")
+register_toolchains("//toolchains/verilator:verilator_toolchain")
 
 pdk = use_extension("//rules:pdk.bzl", "pdk_ext")
 use_repo(pdk, "orfs_pdk")

@@ -43,10 +43,10 @@ STUB_DIR=$(mktemp -d); trap 'rm -rf "$STUB_DIR"' EXIT
 # Build the aggressive Yosys script
 SCRIPT=$(mktemp); trap 'rm -f "$SCRIPT"' EXIT
 {
-  find "$STUB_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
+  find -L "$STUB_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
     echo "read_verilog -sv -nolatches \"$f\""
   done
-  find "$SV_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
+  find -L "$SV_DIR" -maxdepth 1 -name '*.sv' -type f | sort | while read -r f; do
     echo "read_verilog -sv -nolatches -DSHOUMEI_SRAM_MACROS \"$f\""
   done
   echo "hierarchy -auto-top -check"

@@ -1,0 +1,22 @@
+package(default_visibility = ["//visibility:public"])
+
+# Pinned tools.  Bazel fetches and builds them, so no script probes the host.
+alias(
+    name = "verilator",
+    actual = "@verilator//:verilator_executable",
+)
+
+alias(
+    name = "verilator_include",
+    actual = "@verilator//:verilated",
+)
+
+alias(
+    name = "yosys",
+    actual = "@yosys//:yosys",
+)
+
+alias(
+    name = "yosys_share",
+    actual = "@yosys//:yosys_share",
+)

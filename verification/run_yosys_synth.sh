@@ -2,15 +2,20 @@
 # verification/run_yosys_synth.sh - Hermetic physical synthesis test under Bazel
 set -euo pipefail
 
-if [ $# -lt 4 ]; then
-    echo "Usage: $0 <platform> <design_name> <clk_period_ns> <sv_dir>" >&2
+if [ $# -lt 5 ]; then
+    echo "Usage: $0 <yosys> <platform> <design_name> <clk_period_ns> <sv_dir>" >&2
     exit 1
 fi
 
-PLATFORM="$1"
-DESIGN_NAME="$2"
-CLK_PERIOD_NS="$3"
-SV_DIR_ARG="$(cd "$4" && pwd)"
+YOSYS="$1"
+PLATFORM="$2"
+DESIGN_NAME="$3"
+CLK_PERIOD_NS="$4"
+SV_DIR_ARG="$(cd "$5" && pwd)"
+
+# The pinned yosys, not the one on the host.
+source verification/tool_path.sh
+tool_path "$YOSYS"
 
 ROOT="${TEST_SRCDIR:-}/${TEST_WORKSPACE:-}"
 if [ -z "${TEST_SRCDIR:-}" ] || [ ! -d "$ROOT/physical" ]; then
