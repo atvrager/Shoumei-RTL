@@ -42,8 +42,8 @@ bazel test //testbench:sim_tests         # Verilator standalone simulations
 bazel test //testbench:cosim_tests       # RTL vs Spike lockstep cosimulations
 bazel test //testbench:spec_tests        # Specification reference simulations
 bazel test //testbench:all_tests         # All simulation suites combined
-bazel test //testbench:coverage_test     # Hardware line coverage test
-bazel test //verification:linters        # Slang, shellcheck, python, cppcheck
+bazel test //testbench/coverage_test     # Hardware line coverage test
+bazel test //verification:linters        # Slang, shellcheck, python, cppcheck, buildifier, prose
 bazel test //verification:formal         # Formal verification & SEC
 bazel test //verification:synthesis      # Yosys ASAP7 & GF180MCU synthesis
 bazel test //testbench/benchmarks        # Benchmark IPC regression test
@@ -61,7 +61,7 @@ see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 1. **Behavioral model:** Define state type + operations in Lean
 2. **Structural circuit:** Build `Circuit` from gates and/or `CircuitInstance` submodules
 3. **Proofs:** Structural (`native_decide`) and behavioral (`simp`, manual tactics)
-4. **Code generation:** Add to `GenerateAll.lean` circuit list, then `bazel build //:rtl`
+4. **Code generation:** Add to the `generators/GenerateAll.lean` circuit list, then `bazel build //:rtl`
 5. **Compositional cert** (if needed): Add to `CompositionalCerts.lean`. `bazel run //generators:generate_all -- --export-certs` checks the registry
 6. **Simulation:** `bazel test //testbench/tests:all_sim`, or `bazel test //testbench/tests:all_cosim` for CPU-level changes
 
@@ -116,7 +116,7 @@ one step. Codegen validates the registry.
 ### Running verification
 
 ```bash
-bazel test //verification:linters        # Slang elaboration, shellcheck, python, cppcheck
+bazel test //verification:linters        # Slang, shellcheck, python, cppcheck, buildifier, prose
 bazel test //verification:formal         # Formal proofs and SEC
 bazel test //testbench:all_tests         # Verilator simulation, cosim, and spec tests
 bazel test //verification:synthesis      # Yosys ASAP7 and GF180MCU synthesis
@@ -148,6 +148,21 @@ wordy phrases, praise and filler, passive voice, long paragraphs, and
 lints the message. Both install with `scripts/install-githooks.sh`. Set
 `STE_LINT_DISABLE=1` to skip them. Write `ste-lint: ignore` in a line to
 exclude text that is data, not prose.
+
+`bazel test //verification:ste_lint_test` runs the rule tests and lints the
+Markdown tree.
+
+### Bazel file format
+
+`buildifier` checks every BUILD and .bzl file.
+
+```bash
+bazel run //:buildifier       # Format the tree in place
+bazel test //:buildifier_test # Fail on an unformatted file
+```
+
+The pre-commit hook runs the same check on the staged Bazel files. Rule files
+live in `rules/`.
 
 ## DSL core types
 
@@ -185,7 +200,7 @@ Shared utilities in `Common.lean`:
 
 ### Adding a circuit to code generation
 
-In `GenerateAll.lean`, add to the `allCircuits` list:
+In `generators/GenerateAll.lean`, add to the `allCircuits` list:
 
 ```lean
 def allCircuits : List Circuit := [
@@ -255,7 +270,7 @@ Build large sequential modules (Register91, Queue64, PhysRegFile) from verified 
 
 ### Module ordering
 
-`allCircuits` in `GenerateAll.lean` is in topological order (leaves first), so the generator can compute dependency-aware hashes in a single pass.
+`allCircuits` in `generators/GenerateAll.lean` is in topological order (leaves first), so the generator can compute dependency-aware hashes in a single pass.
 
 ## Agent guidance and code quality rules
 

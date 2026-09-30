@@ -89,6 +89,20 @@ if [ "${STE_LINT_DISABLE:-0}" != "1" ]; then
     fi
 fi
 
+# 6. Bazel file formatting on the staged BUILD and .bzl files
+bzl_files=$(staged | grep -E '(^|/)(BUILD|BUILD\.bazel|MODULE\.bazel|WORKSPACE|WORKSPACE\.bzlmod)$|\.bzl$' || true)
+if [ -n "$bzl_files" ]; then
+    if command -v buildifier > /dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        if ! buildifier -mode=check -lint=warn --warnings=-make-location $bzl_files; then
+            echo "pre-commit: format the files above (buildifier -mode=fix), or bazel run //:buildifier" >&2
+            failed=1
+        fi
+    else
+        echo "pre-commit: buildifier not on PATH, skip the Bazel format check" >&2
+    fi
+fi
+
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi

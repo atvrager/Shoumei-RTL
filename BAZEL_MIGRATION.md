@@ -19,13 +19,13 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 - **Cosimulation Executable (`//testbench:cosim_shoumei`)**: Full lockstep cosimulation binary comparing RTL against Spike through the RVVI-TRACE interface.
 - **Direct Simulation Executable (`//testbench:sim_shoumei`)**: Standalone RTL Verilator simulation binary.
 - **Automated RISC-V Test Suites (Phase 1 / Tier 2)**:
-  - `//testbench/tests:riscv.bzl`: Starlark rules `riscv_elf`, `shoumei_sim_test`, and `shoumei_cosim_test`.
+  - `//rules:riscv.bzl`: Starlark rules `riscv_elf`, `shoumei_sim_test`, and `shoumei_cosim_test`.
   - `//testbench/tests/...`: 38 hand-written tests (32 C integer, 1 C FP, 3 asm integer, 2 asm FP), generating 76 test targets.
   - `//testbench/tests/generated/...`: 53 generated tests (13 integer patterns, 8 FP patterns, 32 random instruction streams), generating 106 test targets.
   - `//testbench:all_tests`: 182 automated tests executing natively under `bazel test`.
   - `//testbench/coremark:coremark_sim`: CoreMark standalone simulation target.
 - **Static Analysis & Linters (Phase 2 / Tier 3)**:
-  - `//verification:slang.bzl`: Rule `slang_lint_test` for IEEE 1800-2017 SystemVerilog elaboration linting.
+  - `//rules:slang.bzl`: Rule `slang_lint_test` for IEEE 1800-2017 SystemVerilog elaboration linting.
   - `//verification:slang_lint_test`: Validates 238 emitted RTL modules with pyslang.
   - `//verification:slang_sram_lint_test`: Validates `SHOUMEI_SRAM_MACROS` branch against behavioral macro stubs.
   - `//verification:slang_sec_lint_test`: Validates SEC miter modules against base RTL.

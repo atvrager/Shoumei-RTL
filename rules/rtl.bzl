@@ -155,7 +155,14 @@ _output_group_target = rule(
 )
 
 def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//generators:instr_dict", synth_wrappers = None):
-    """Macro providing the RTL generation suite with convenient subtargets."""
+    """Macro providing the RTL generation suite with convenient subtargets.
+
+    Args:
+      name: name of the generation target.
+      generator: the `lean_binary` code generator to run.
+      instr_dict: the RISC-V instruction dictionary the generator reads.
+      synth_wrappers: extra SystemVerilog files to pass to the generator.
+    """
     if synth_wrappers == None:
         synth_wrappers = native.glob(["physical/*_synth.sv"])
 

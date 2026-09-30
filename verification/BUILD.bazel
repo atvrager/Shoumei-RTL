@@ -1,6 +1,6 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//verification:slang.bzl", "slang_lint_test")
-load("//verification:spec_rtl.bzl", "shoumei_spec_rtl")
+load("//rules:slang.bzl", "slang_lint_test")
+load("//rules:spec_rtl.bzl", "shoumei_spec_rtl")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -99,6 +99,23 @@ test_suite(
         ":slang_lint_test",
         ":slang_sec_lint_test",
         ":slang_sram_lint_test",
+        ":ste_lint_test",
+        "//:buildifier_test",
+    ],
+)
+
+sh_test(
+    name = "ste_lint_test",
+    size = "small",
+    srcs = ["run_ste_lint.sh"],
+    args = [
+        "$(location ste-lint.py)",
+        "$(location test-ste-lint.py)",
+    ],
+    data = [
+        "ste-lint.py",
+        "test-ste-lint.py",
+        "//:docs",
     ],
 )
 
@@ -121,9 +138,9 @@ sh_test(
     ],
     data = [
         "dc-lint.sh",
-        "//generators:generate_all",
         "//:root_shell_scripts",
         "//:sv",
+        "//generators:generate_all",
     ],
 )
 
@@ -254,7 +271,6 @@ sh_test(
         ":verification_python_scripts",
         ":verification_scripts",
         "//:cpp_sim",
-        "//generators:generate_all",
         "//:physical_srcs",
         "//:root_python_scripts",
         "//:root_shell_scripts",
@@ -262,6 +278,7 @@ sh_test(
         "//:sv_asap7",
         "//:sv_gf180",
         "//:sv_sec",
+        "//generators:generate_all",
         "//lean:shoumei_srcs",
         "//third_party:orfs_liberty",
     ],
@@ -327,8 +344,8 @@ sh_test(
         ":specs",
         "//:lean_toolchain_file",
         "//:root_python_scripts",
-        "//generators:smt2lean",
         "//:sv",
+        "//generators:smt2lean",
         "//generators:sva2lean",
         "//lean:shoumei",
     ],

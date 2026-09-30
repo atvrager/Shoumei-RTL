@@ -1,5 +1,5 @@
 load("@rules_verilator//verilator:defs.bzl", "verilator_toolchain")
-load("//toolchains/verilator:host_binary.bzl", "host_binary")
+load("//rules:host_binary.bzl", "host_binary")
 
 package(default_visibility = ["//visibility:public"])
 

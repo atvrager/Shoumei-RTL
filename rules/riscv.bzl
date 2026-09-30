@@ -207,8 +207,25 @@ def shoumei_elf_test(
         copts = None,
         linkopts = None,
         tags = None,
-        **kwargs):
-    """Defines an ELF target, a sim test, a cosim test, and a combined test suite."""
+        **_kwargs):
+    """Defines an ELF target, a sim test, a cosim test, and a combined test suite.
+
+    Args:
+      name: base name of the generated targets.
+      src: the test source file.
+      is_asm: True for a hand-written assembly test with no crt0.
+      is_fp: True for a floating-point test.
+      timeout_cycles: cycle budget passed to the simulation.
+      crt0: startup object, when the test needs one.
+      linker_script: linker script for the ELF.
+      hdrs: extra headers the test includes.
+      march: `-march` value for the compiler.
+      mabi: `-mabi` value for the compiler.
+      copts: extra compiler options.
+      linkopts: extra linker options.
+      tags: Bazel tags for the generated tests.
+      **_kwargs: unused extra attributes.
+    """
     elf_target = name + "_elf"
     sim_target = name + "_sim"
     cosim_target = name + "_cosim"

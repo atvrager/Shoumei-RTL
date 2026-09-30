@@ -36,8 +36,8 @@ sh_test(
     args = ["$(location //generators:generate_all)"],
     data = [
         ":shoumei_srcs",
-        "//generators:generate_all",
         "//:known_unbuilt_modules",
+        "//generators:generate_all",
     ],
 )
 

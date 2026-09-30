@@ -1,4 +1,4 @@
-load("//testbench/tests:riscv.bzl", "pad4", "shoumei_elf_test")
+load("//rules:riscv.bzl", "pad4", "shoumei_elf_test")
 
 package(default_visibility = ["//visibility:public"])
 

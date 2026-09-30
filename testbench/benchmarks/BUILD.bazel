@@ -1,5 +1,5 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//testbench/tests:riscv.bzl", "riscv_elf")
+load("//rules:riscv.bzl", "riscv_elf")
 
 package(default_visibility = ["//visibility:public"])
 

@@ -20,7 +20,7 @@ orfs_pdk_repo = repository_rule(
     implementation = _orfs_pdk_impl,
 )
 
-def _pdk_ext_impl(ctx):
+def _pdk_ext_impl(_ctx):
     orfs_pdk_repo(name = "orfs_pdk")
 
 pdk_ext = module_extension(

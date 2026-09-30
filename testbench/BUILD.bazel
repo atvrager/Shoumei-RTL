@@ -1,7 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
-load("//testbench:verilog_tree.bzl", "verilog_tree_library")
+load("//rules:verilog_tree.bzl", "verilog_tree_library")
 
 package(default_visibility = ["//visibility:public"])
 

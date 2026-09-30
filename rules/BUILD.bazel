@@ -1,0 +1,13 @@
+"""Rule and macro definitions shared across the workspace."""
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "host_binary.bzl",
+    "pdk.bzl",
+    "riscv.bzl",
+    "rtl.bzl",
+    "slang.bzl",
+    "spec_rtl.bzl",
+    "verilog_tree.bzl",
+])

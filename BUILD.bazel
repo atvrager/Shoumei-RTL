@@ -1,5 +1,5 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//:rtl.bzl", "shoumei_rtl")
+load("@buildifier_prebuilt//:rules.bzl", "buildifier", "buildifier_test")
+load("//rules:rtl.bzl", "shoumei_rtl")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -64,6 +64,40 @@ test_suite(
         "//generators:shoumei_roundtrip_test",
         "//lean:integrity_tests",
     ],
+)
+
+# `bazel run //:buildifier` formats every BUILD and .bzl file in place.
+buildifier(
+    name = "buildifier",
+    exclude_patterns = [
+        "./.git/*",
+        "./bazel-*/*",
+        "./third_party/*",
+    ],
+    lint_mode = "fix",
+    mode = "fix",
+)
+
+# `bazel test //:buildifier_test` fails on an unformatted BUILD or .bzl file.
+# no_sandbox lets the rule scan the workspace, so a new package needs no edit
+# here.  lint_mode=warn reports the lint findings without failing the test.
+buildifier_test(
+    name = "buildifier_test",
+    size = "small",
+    exclude_patterns = [
+        "./.git/*",
+        "./bazel-*/*",
+        "./third_party/*",
+    ],
+    lint_mode = "warn",
+    # `-make-location` covers `$(location ...)` in rule arguments.  Converting
+    # those to `$(rootpath ...)` touches most BUILD files, so it stays a
+    # separate change and the check reports the rest today.
+    lint_warnings = ["-make-location"],
+    mode = "diff",
+    no_sandbox = True,
+    verbose = True,
+    workspace = "//:MODULE.bazel",
 )
 
 test_suite(
