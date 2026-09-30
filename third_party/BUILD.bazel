@@ -37,6 +37,8 @@ configure_make(
         "libfesvr.a",
         "libdisasm.a",
     ],
+    # Without a resource size the build tool runs `make` with one job.
+    resource_size = "large",
 )
 
 cc_library(
