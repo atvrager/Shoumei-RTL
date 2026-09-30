@@ -66,6 +66,8 @@ run_mutant() {
 
     # 1. Backup and apply mutation
     cp "$file" "$file.mutbak"
+    local olean="${file%.lean}.olean"
+    [ -f "$olean" ] && cp "$olean" "$olean.mutbak"
     python3 -c '
 import sys
 path, s_from, s_to = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -91,8 +93,9 @@ with open(path, "w") as f:
         exit 1
     fi
 
-    # Recompile the mutated module first, so its olean reflects the mutation.
-    if ! lean -R lean "$file"; then
+    # Recompile the mutated module into its olean.  A plain `lean <file>` run
+    # only checks the file, so the proof would read the unmutated olean.
+    if ! lean -R lean -o "$olean" "$file"; then
         echo "ERROR: the mutated module does not compile: $file" >&2
         exit 1
     fi
@@ -110,6 +113,7 @@ with open(path, "w") as f:
 
     # 3. Restore from backup for clean baseline
     mv "$file.mutbak" "$file"
+    [ -f "$olean.mutbak" ] && mv "$olean.mutbak" "$olean"
     echo ""
 }
 
@@ -121,7 +125,7 @@ run_mutant \
     "lean/Shoumei/Circuits/Combinational/RippleCarryAdder.lean" \
     "Shoumei.Circuits.Combinational.RippleCarryAdderProofs" \
     "fullAdderCircuit.inline wireMap" \
-    "{ fullAdderCircuit with gates := fullAdderCircuit.gates.map (fun g => if g.output.name == \"ab_xor\" then { g with gateType := GateType.OR } else g) }.inline wireMap"
+    "{ fullAdderCircuit with gates := fullAdderCircuit.gates.map (fun (g : Gate) => if g.output.name == \"ab_xor\" then { g with gateType := GateType.OR } else g) }.inline wireMap"
 
 # Mutant 2: Gate Swap in Comparator (diff OR tree changed to AND)
 # Inverts equality condition, preserves exact gate count (44 gates)
@@ -151,7 +155,7 @@ run_mutant \
     "lean/Shoumei/Circuits/Combinational/RippleCarryAdder.lean" \
     "Shoumei.Circuits.Combinational.RippleCarryAdderProofs" \
     "fullAdderCircuit.inline wireMap" \
-    "{ fullAdderCircuit with gates := fullAdderCircuit.gates.map (fun g => if g.output.name == \"ab_and\" then { g with gateType := GateType.XOR } else g) }.inline wireMap"
+    "{ fullAdderCircuit with gates := fullAdderCircuit.gates.map (fun (g : Gate) => if g.output.name == \"ab_and\" then { g with gateType := GateType.XOR } else g) }.inline wireMap"
 
 # Mutant 5: Pin Swap in Register (reset tied to clock)
 # Breaks reset zeroing and data latching, preserves exact gate count (n gates)
