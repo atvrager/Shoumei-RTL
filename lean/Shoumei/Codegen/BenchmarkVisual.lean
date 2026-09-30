@@ -164,7 +164,7 @@ def htmlTemplate : String := r##"<!DOCTYPE html>
   }
   h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
   .sub { font-size: 15px; color: var(--muted); }
-  
+
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

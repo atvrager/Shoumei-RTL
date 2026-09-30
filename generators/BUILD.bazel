@@ -83,6 +83,19 @@ lean_binary(
     deps = ["//lean:shoumei"],
 )
 
+lean_binary(
+    name = "lean_lint",
+    srcs = ["LeanLint.lean"],
+    main = "LeanLint",
+    deps = ["//lean:shoumei"],
+)
+
+# The generator sources, for the tests that read the tree.
+filegroup(
+    name = "srcs",
+    srcs = glob(["*.lean"]),
+)
+
 sh_test(
     name = "shoumei_roundtrip_test",
     srcs = ["shoumei_roundtrip_test.sh"],

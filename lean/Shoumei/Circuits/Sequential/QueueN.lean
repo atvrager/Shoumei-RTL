@@ -234,14 +234,14 @@ def mkQueueNStructural (depth width : Nat) : Circuit :=
   ]
 
   -- Submodules Instantiation
-  
+
   -- RAM
   -- Inputs: clock, reset, write_en, write_addr, write_data, read_addr
   -- Outputs: read_data
   let ram_inst : CircuitInstance := {
     moduleName := s!"QueueRAM_{depth}x{width}"
     instName := "u_ram"
-    portMap := 
+    portMap :=
       [("clock", clock), ("reset", reset), ("write_en", enq_fire)] ++
       (tail.enum.map (fun ⟨i, w⟩ => (s!"write_addr_{i}", w))) ++
       (enq_data.enum.map (fun ⟨i, w⟩ => (s!"write_data_{i}", w))) ++

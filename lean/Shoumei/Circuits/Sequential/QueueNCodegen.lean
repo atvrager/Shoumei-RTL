@@ -34,19 +34,19 @@ def writeCircuit (c : Circuit) : IO Unit := do
 def generateQueueN (depth width : Nat) : IO Unit := do
   -- Generate top level
   let circuit := mkQueueNStructural depth width
-  
+
   -- Generate submodules
   let ptrWidth := log2Ceil depth
   let countWidth := log2Ceil (depth + 1)
-  
+
   let ram := mkQueueRAM depth width
   let ptr := mkQueuePointer ptrWidth
   let cnt := mkQueueCounterUpDown countWidth
-  
+
   -- QueueRAM submodules
   let dec := mkDecoder ptrWidth
   let mux := mkMuxTree depth width
-  
+
   writeCircuit circuit
   writeCircuit ram
   writeCircuit ptr

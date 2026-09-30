@@ -24,7 +24,7 @@ private def log2Ceil (n : Nat) : Nat :=
 -- Outputs: read_data
 def mkQueueRAM (depth width : Nat) : Circuit :=
   let addrWidth := log2Ceil depth
-  
+
   -- Inputs
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
@@ -32,7 +32,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   let write_addr := (List.range addrWidth).map (fun i => Wire.mk s!"write_addr_{i}")
   let write_data := (List.range width).map (fun i => Wire.mk s!"write_data_{i}")
   let read_addr := (List.range addrWidth).map (fun i => Wire.mk s!"read_addr_{i}")
-  
+
   -- Outputs
   let read_data := (List.range width).map (fun i => Wire.mk s!"read_data_{i}")
 
@@ -40,7 +40,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   -- 1. Write Decoder Instance
   let write_sel := (List.range depth).map (fun i => Wire.mk s!"write_sel_{i}")
   let decoderName := s!"Decoder{addrWidth}"
-  
+
   let decoder_inst : CircuitInstance := {
     moduleName := decoderName
     instName := "u_dec"
@@ -100,7 +100,7 @@ def mkQueueRAM (depth width : Nat) : Circuit :=
   let mux_sel_map := read_addr.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w))
 
   let mux_out_map := read_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
-  
+
   let mux_inst : CircuitInstance := {
     moduleName := muxTreeName
     instName := "u_mux"
@@ -131,11 +131,11 @@ def mkQueuePointer (width : Nat) : Circuit :=
   let reset := Wire.mk "reset"
   let en := Wire.mk "en"
   let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
-  
+
   -- Constants
   let one := Wire.mk "one"
   let zero := Wire.mk "zero"
-  
+
   -- Logic
   -- next = en ? count + 1 : count
   -- Adder
@@ -184,11 +184,11 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   let inc_en := Wire.mk "inc"
   let dec_en := Wire.mk "dec"
   let count := (List.range width).map (fun i => Wire.mk s!"count_{i}")
-  
+
   -- Constants
   let one := Wire.mk "one"
   let zero := Wire.mk "zero"
-  
+
   -- +1 Logic (cin=0: count + 1 via ripple-carry)
   let val_plus := (List.range width).map (fun i => Wire.mk s!"plus_{i}")
   let c_plus := (List.range (width + 1)).map (fun i => Wire.mk s!"cp_{i}")
@@ -202,23 +202,23 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
   let c_minus := (List.range (width + 1)).map (fun i => Wire.mk s!"cm_{i}")
   let sub_cin_gate := Gate.mkBUF zero (c_minus[0]!)  -- carry-in = 0
   let sub_gates := buildFullAdderChain count all_ones c_minus val_minus "sub_"
-  
+
   -- Mux Logic
   -- next = (inc & !dec) ? val_plus : ((dec & !inc) ? val_minus : val)
-  
+
   let next := (List.range width).map (fun i => Wire.mk s!"next_{i}")
   let do_inc := Wire.mk "do_inc"
   let do_dec := Wire.mk "do_dec"
   let not_dec := Wire.mk "not_dec"
   let not_inc := Wire.mk "not_inc"
-  
+
   let ctrl_gates := [
     Gate.mkNOT dec_en not_dec,
     Gate.mkAND inc_en not_dec do_inc, -- inc & !dec
     Gate.mkNOT inc_en not_inc,
     Gate.mkAND dec_en not_inc do_dec  -- dec & !inc
   ]
-  
+
   -- Mux tree:
   -- m1 = do_dec ? val_minus : val
   -- next = do_inc ? val_plus : m1
@@ -229,11 +229,11 @@ def mkQueueCounterUpDown (width : Nat) : Circuit :=
       Gate.mkMUX m1 (val_plus[i]!) do_inc (next[i]!)
     ]
   ) |>.flatten
-  
+
   -- DFFs
   let dff_gates := (List.range width).map (fun i =>
     Gate.mkDFF (next[i]!) clock reset (count[i]!))
-    
+
   { name := s!"QueueCounterUpDown_{width}"
     inputs := [clock, reset, inc_en, dec_en, one, zero]
     outputs := count

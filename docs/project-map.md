@@ -6,7 +6,7 @@ Run the generator again after a source change.  Composition edges come
 from `moduleName :=` references between circuits, certificates from the
 Lean registry, and docs from each file's leading comment block.
 
-- Lean files: **285**
+- Lean files: **286**
 - Circuits with a literal `name :=` (graph nodes): **98**
 - Compositional certificates (Lean registry): **103**
 - Refinement atoms (Lean registry): **13**

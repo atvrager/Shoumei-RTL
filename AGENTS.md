@@ -43,7 +43,7 @@ bazel test //testbench:cosim_tests       # RTL vs Spike lockstep cosimulations
 bazel test //testbench:spec_tests        # Specification reference simulations
 bazel test //testbench:all_tests         # All simulation suites combined
 bazel test //testbench/coverage_test     # Hardware line coverage test
-bazel test //verification:linters        # Slang, shellcheck, python, cppcheck, buildifier, prose
+bazel test //verification:linters        # Slang, shellcheck, python, types, buildifier, prose, lean lint
 bazel test //verification:formal         # Formal verification & SEC
 bazel test //verification:synthesis      # Yosys ASAP7 & GF180MCU synthesis
 bazel test //testbench/benchmarks        # Benchmark IPC regression test
@@ -116,7 +116,7 @@ one step. Codegen validates the registry.
 ### Running verification
 
 ```bash
-bazel test //verification:linters        # Slang, shellcheck, python, cppcheck, buildifier, prose
+bazel test //verification:linters        # Slang, shellcheck, python, types, buildifier, prose, lean lint
 bazel test //verification:formal         # Formal proofs and SEC
 bazel test //testbench:all_tests         # Verilator simulation, cosim, and spec tests
 bazel test //verification:synthesis      # Yosys ASAP7 and GF180MCU synthesis
@@ -314,6 +314,25 @@ When writing a commit message, follow these 7 rules.
 - No `sorry` in production code (treat as a bug)
 - Use `native_decide` for concrete proofs, `simp` + tactics for generic proofs
 - Keep circuits and proofs in separate files (`Foo.lean` + `FooProofs.lean`)
+
+`bazel test //verification:lean_lint_test` runs the style linter
+(`lean/Shoumei/Lint/Style.lean`). It reports an error for `sorry` or `admit`
+in the code, an `axiom` or `constant` declaration, a `#eval`/`#check`/`#print`
+or `#reduce` command left in the source, trailing whitespace, and a tab
+character. A line over 100 columns is a warning.
+
+### Python
+
+`ruff` checks lint and format. `ty` checks types.
+
+```bash
+bazel test //tools:ruff_test   # ruff check and ruff format --check
+bazel test //tools:ty_test     # ty check
+```
+
+Both tools are pinned prebuilt binaries (`rules/lint_tools.bzl`), so nothing
+is installed on the host. Annotate every function, arguments and return type.
+Line length is 100 and the formatter owns it.
 
 ### Shell scripts
 

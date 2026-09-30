@@ -94,6 +94,7 @@ test_suite(
     tests = [
         ":cell_tables_test",
         ":cppcheck_test",
+        ":lean_lint_test",
         ":py_compile_test",
         ":shellcheck_test",
         ":slang_lint_test",
@@ -101,6 +102,20 @@ test_suite(
         ":slang_sram_lint_test",
         ":ste_lint_test",
         "//:buildifier_test",
+        "//tools:ruff_test",
+        "//tools:ty_test",
+    ],
+)
+
+sh_test(
+    name = "lean_lint_test",
+    size = "small",
+    srcs = ["run_lean_lint.sh"],
+    args = ["$(location //generators:lean_lint)"],
+    data = [
+        "//generators:lean_lint",
+        "//generators:srcs",
+        "//lean:shoumei_srcs",
     ],
 )
 
