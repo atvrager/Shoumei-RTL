@@ -538,6 +538,7 @@ def lint_text(path: str, segments: list[tuple[int, str]], strict: bool) -> list[
         paragraph.clear()
 
     carries_on = False
+    previous = 0
     for lineno, text in segments:
         if IGNORE.search(text):
             continue
@@ -545,6 +546,13 @@ def lint_text(path: str, segments: list[tuple[int, str]], strict: bool) -> list[
         # A line joins the paragraph only when the line before it stops in the
         # middle of a sentence.  This keeps a run of short label comments from
         # reading as one long sentence.
+        #
+        # A gap in the line numbers also breaks the paragraph.  `--diff` keeps
+        # only the added lines, so two added lines that are far apart would
+        # otherwise merge into a sentence that exists nowhere.
+        if previous and lineno != previous + 1:
+            flush()
+
         if not text.strip() or not carries_on:
             flush()
 
@@ -553,6 +561,7 @@ def lint_text(path: str, segments: list[tuple[int, str]], strict: bool) -> list[
 
         paragraph.append((lineno, text))
         carries_on = ends_open(text)
+        previous = lineno
         add_line_findings(path, lineno, text, warnings_block, findings)
 
     flush()

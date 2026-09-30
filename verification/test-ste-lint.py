@@ -168,6 +168,17 @@ LABELS = (
 )
 check("short label comments stay apart", ste.Rule.SENTENCE not in rules(lint(LABELS, "t.py")))
 
+# `--diff` keeps only the added lines, so two added lines that sit far apart
+# must not merge into one sentence.
+GAPPED = [
+    (1, "The linter joins two added lines when the first one ends with the"),
+    (9, "word and, so a long sentence appears that the file does not hold."),
+]
+check(
+    "a line-number gap breaks the paragraph",
+    ste.Rule.SENTENCE not in rules(ste.lint_text("t.md", GAPPED, False)),
+)
+
 print(f"ste-lint tests: {CHECKS - len(FAILURES)}/{CHECKS} passed")
 for failure in FAILURES:
     print(f"  FAIL {failure}")
