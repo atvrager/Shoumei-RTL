@@ -94,16 +94,16 @@
 
 ### 2.2 Decode & Instruction Classification
 Decodes all 32-bit instructions into microarchitectural control fields:
-- **RV64I**: Full 64-bit integer instructions (`LD`, `SD`, `ADDI`, etc.) and 32-bit word arithmetic (`ADDW`, `SUBW`, `SLLW`, `SRLW`, `SRAW`).
-- **M Extension**: 64-bit integer multiply (`MUL`, `MULH`, `MULHSU`, `MULHU`, `MULW`) and divide/remainder (`DIV`, `DIVU`, `REM`, `REMU`, `DIVW`, etc.).
+- **RV64I**: Full 64-bit integer instructions (`LD`, `SD`, `ADDI`, and more) and 32-bit word arithmetic (`ADDW`, `SUBW`, `SLLW`, `SRLW`, `SRAW`).
+- **M Extension**: 64-bit integer multiply (`MUL`, `MULH`, `MULHSU`, `MULHU`, `MULW`) and divide/remainder (`DIV`, `DIVU`, `REM`, `REMU`, `DIVW`, and more).
 - **A Extension**: Atomic memory operations (`LR.W`/`SC.W`, `LR.D`/`SC.D`, `AMO*.W`, `AMO*.D`).
 - **F & D Extensions**: Single- and double-precision floating-point instructions (arithmetic, comparisons, conversions, and sign injection).
 - **Zicsr / Zifencei**: CSR manipulation (`CSRRW`, `CSRRS`, `CSRRC`) and instruction memory barrier synchronization.
 
 ### 2.3 Register Renaming
-Eliminates WAR and WAW hazards dynamically:
+Renaming eliminates WAR and WAW hazards dynamically.
 - **Dual Register Alias Tables (RATs)**:
-  - Integer RAT: Maps 32 architectural integer registers (`x0`–`x31`) to 64 physical registers (`p0`–`p63`). `x0` is permanently mapped to `p0` (hardwired zero).
+  - Integer RAT: Maps 32 architectural integer registers (`x0`–`x31`) to 64 physical registers (`p0`–`p63`). `x0` permanently maps to `p0` (hardwired zero).
   - Floating-Point RAT: Maps 32 architectural FP registers (`f0`–`f31`) to 64 physical FP registers.
 - **Physical Register File (`PhysRegFile64`)**: 64 entries of 64-bit registers with multi-port write snooping from the CDB.
 - **Free List**: 64-entry bitmap allocator tracking unallocated physical registers.
@@ -114,8 +114,8 @@ Eliminates WAR and WAW hazards dynamically:
 - Each entry tracks:
   - Instruction opcode, immediate value, and assigned ROB tag.
   - Operand 1 / Operand 2: Ready bit, physical tag (if waiting), and captured 64-bit value.
-- **CDB Snooping**: Automatically snoops CDB broadcasts; if a broadcast tag matches a waiting operand, captures the value and marks the operand ready.
-- **Decoupled Handshake**: Operates via `DecoupledSource` / `DecoupledSink` ready/valid interfaces.
+- **CDB Snooping**: The entry snoops CDB broadcasts automatically. When a broadcast tag matches a waiting operand, the entry captures the value and marks the operand ready.
+- **Decoupled Handshake**: Operates through `DecoupledSource` / `DecoupledSink` ready/valid interfaces.
 
 ### 2.5 Execution Units
 1. **ALU64**: Single-cycle 64-bit arithmetic, logic, shift, compare, and branch condition evaluation.
@@ -133,7 +133,7 @@ Eliminates WAR and WAW hazards dynamically:
 ### 2.6 Memory Subsystem & TSO Store Buffer
 - **StoreBuffer8**: 8-entry FIFO store buffer decoupling store execution from memory write completion.
 - **Total Store Order (TSO)**: Stores commit strictly in program order from the ROB head.
-- **Store-to-Load Forwarding**: Younger loads match their address against uncommitted store buffer entries; youngest matching store forwards its data with byte-mask merging.
+- **Store-to-Load Forwarding**: Younger loads match their address against uncommitted store buffer entries. The youngest matching store forwards its data with byte-mask merging.
 
 ### 2.7 Reorder Buffer (`ROB16_W2`) & Retirement
 - 16-entry circular buffer supporting up to 2-wide retirement per cycle.
@@ -153,18 +153,18 @@ The CDB broadcasts completed results across the core:
 
 ## 4. Formal Verification & Correctness
 
-Correctness is established directly in Lean 4:
-1. **Structural Theorems**: Port counts, gate counts, and submodule instance counts verified via `native_decide`.
+Shoumei establishes correctness directly in Lean 4:
+1. **Structural Theorems**: Port counts, gate counts, and submodule instance counts verified through `native_decide`.
 2. **Behavioral Theorems**: State machine transitions, order preservation, and queue invariants proven using dependent types.
 3. **Zero Axioms**: All production modules contain zero unproven axioms and zero `sorry` statements.
 4. **Compositional Certificates**: Verified sequential subcircuits carry `CompositionalCert` declarations validated by `bazel run //:generate_all -- --export-certs`.
-5. **Mutation Testing**: Proof robustness verified via `bazel test //verification:mutation_test`.
+5. **Mutation Testing**: Proof robustness verified through `bazel test //verification:mutation_test`.
 
 ---
 
 ## 5. Physical Design & ASIC Realization
 
-The microarchitecture is synthesized to both open-source and commercial ASIC targets:
-- **GF180MCU**: Canonical target of 64 MHz (15.625 ns period), 6.4 mm² core area via open-source Yosys + ABC.
-- **ASAP7 7nm FinFET**: Canonical target of 1.0 GHz (1.000 ns period), 0.0248 mm² core area via open-source Yosys + ABC.
+Shoumei synthesizes the microarchitecture to open-source and commercial ASIC targets.
+- **GF180MCU**: 64 MHz target (15.625 ns period), 6.4 mm² core area through open-source Yosys + ABC.
+- **ASAP7 7nm FinFET**: 1.0 GHz target (1.000 ns period), 0.0248 mm² core area through open-source Yosys + ABC.
 - **Synopsys Design Compiler**: Target synthesis flow configured in `physical/run-dc.tcl`.

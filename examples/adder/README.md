@@ -1,19 +1,19 @@
-# Full Adder Example
+# Full adder example
 
 This example demonstrates a 1-bit full adder circuit implemented in the Shoumei RTL DSL.
 
-## Circuit Description
+## Circuit description
 
 A full adder adds three single-bit inputs:
 - `a`: First input bit
 - `b`: Second input bit
 - `cin`: Carry input bit
 
-And produces two outputs:
+It produces two outputs:
 - `sum`: Sum output bit
 - `cout`: Carry output bit
 
-## Truth Table
+## Truth table
 
 | a | b | cin | sum | cout |
 |---|---|-----|-----|------|
@@ -26,24 +26,24 @@ And produces two outputs:
 | 1 | 1 | 0   | 0   | 1    |
 | 1 | 1 | 1   | 1   | 1    |
 
-## Logic Equations
+## Logic equations
 
 ```
 sum  = a ⊕ b ⊕ cin
 cout = (a ∧ b) ∨ (cin ∧ (a ⊕ b))
 ```
 
-## Circuit Implementation
+## Circuit implementation
 
-The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the following gates:
+The implementation lives in `lean/Shoumei/Examples/Adder.lean` and uses the following gates:
 
-1. `ab_xor = a ⊕ b` - XOR gate for first two inputs
-2. `sum = ab_xor ⊕ cin` - XOR gate for final sum
-3. `ab_and = a ∧ b` - AND gate for first two inputs
-4. `cin_ab = cin ∧ ab_xor` - AND gate for carry propagation
-5. `cout = ab_and ∨ cin_ab` - OR gate for final carry
+1. `ab_xor = a ⊕ b`: XOR gate for first two inputs
+2. `sum = ab_xor ⊕ cin`: XOR gate for final sum
+3. `ab_and = a ∧ b`: AND gate for first two inputs
+4. `cin_ab = cin ∧ ab_xor`: AND gate for carry propagation
+5. `cout = ab_and ∨ cin_ab`: OR gate for final carry
 
-## Gate-Level Diagram
+## Gate-level diagram
 
 ```
        a ─┬─────────┐
@@ -67,7 +67,7 @@ The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the fo
        cin ─────┴───────────────────┘
 ```
 
-## Generated Outputs
+## Generated outputs
 
 `bazel build //:rtl` emits, among others, for this circuit:
 
@@ -78,9 +78,9 @@ The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the fo
 ## Verification
 
 `lean/Shoumei/Examples/AdderProofs.lean` proves the full adder's truth table,
-commutativity and arithmetic correctness in Lean. The emitted SystemVerilog is
-elaborated by slang, and its ports and gate expressions are checked by
-`bazel test //verification:smoke_test`.
+commutativity and arithmetic correctness in Lean. slang elaborates the emitted
+SystemVerilog, and `bazel test //verification:smoke_test` checks its ports and
+gate expressions.
 
 ## Building
 
@@ -92,6 +92,6 @@ bazel build //:rtl
 bazel test //:presubmit
 ```
 
-## Next Steps
+## Next steps
 
-1. Add more complex examples (ripple carry adder, etc.)
+1. Add more complex examples (ripple carry adder, and more)

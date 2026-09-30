@@ -1,15 +1,15 @@
-# SystemVerilog Assertion (SVA) Formal Property Verification
+# SystemVerilog assertion (SVA) formal property verification
 
-This document establishes the architecture, temporal semantics, macro guarding, and multi-backend verification flows for SystemVerilog Assertions (SVA) emitted from Shoumei's Lean 4 circuit definitions.
+This document covers SystemVerilog Assertions (SVA) emitted from Shoumei's Lean 4 circuit definitions. It establishes the architecture, temporal semantics, macro guarding, and multi-backend verification flows.
 
 ---
 
-## 1. Motivation & Architecture
+## 1. Motivation and architecture
 
-Formal proofs in Lean 4 establish mathematical correctness by construction (dependent type checking, inductive invariants, and bisimulation). However, translating verified circuits into synthesizable SystemVerilog introduces an semantic boundary: downstream tools (simulators, linters, ASIC synthesis, and industrial model checkers) execute on emitted RTL text.
+Formal proofs in Lean 4 establish mathematical correctness by construction (dependent type checking, inductive invariants, and bisimulation). However, translating verified circuits into synthesizable SystemVerilog introduces a semantic boundary. Downstream tools (simulators, linters, ASIC synthesis, and industrial model checkers) execute on emitted RTL text.
 
-Shoumei bridges this boundary through **SVA Formal Property Verification (FPV)**:
-1. Formal properties are declared directly within circuit records in Lean (`svaProperties : List SVAProperty`).
+Shoumei bridges this boundary through **SVA Formal Property Verification (FPV)**.
+1. Circuit records in Lean declare the formal properties directly (`svaProperties : List SVAProperty`).
 2. The code generator (`lean/Shoumei/Codegen/SVA.lean`) translates these contracts into IEEE 1800-2017 SystemVerilog assertions, sequences, and auxiliary ghost monitors.
 3. Automated runners (`verification/sva-verify.sh`) validate the properties across both open-source tools (`slang`, `verilator --assert`) and industrial formal property verification engines (Synopsys VC Formal FPV).
 
@@ -37,11 +37,11 @@ Shoumei bridges this boundary through **SVA Formal Property Verification (FPV)**
 
 ---
 
-## 2. Temporal Property Semantics & Boundary Conditions
+## 2. Temporal property semantics and boundary conditions
 
 Temporal assertions reason across multiple clock cycles ($Z^{-k}$). Without explicit boundary handling, naive SVA assertions produce false counterexamples in formal tools and spurious runtime errors in simulation.
 
-### 2.1 Multi-Cycle Flight & Reset Freedom ($Z^{-k}$)
+### 2.1 Multi-cycle flight and reset freedom ($Z^{-k}$)
 
 For a pipeline register or execution unit with latency $k$:
 ```systemverilog
@@ -51,9 +51,9 @@ property p_latency_naive;
   1'b1 |=> (q == $past(d, k));
 endproperty
 ```
-**Failure Mode:** `disable iff (reset)` only evaluates `reset` at the *current* evaluation cycle. If `reset` asserted 2 cycles ago within a $k=4$ window, the pipeline was flushed and `q` holds the reset value rather than the data in flight 4 cycles ago. The naive assertion fails falsely.
+**Failure mode:** `disable iff (reset)` only evaluates `reset` at the *current* evaluation cycle. Suppose `reset` asserted 2 cycles ago within a $k=4$ window. The pipeline has already flushed, so `q` holds the reset value rather than the data in flight 4 cycles ago. The naive assertion fails falsely.
 
-**Corrected Formulation:**
+**Corrected formulation:**
 The antecedent must enforce **reset freedom across the entire transit horizon**:
 ```systemverilog
 property p_latency_capture;
@@ -64,15 +64,15 @@ assert property (p_latency_capture);
 ```
 Here, consecutive non-reset cycles `(!reset [* k])` ensure that no asynchronous or synchronous flush corrupted the data in transit.
 
-### 2.2 Past Validity Horizon ($past Initialization)
+### 2.2 Past validity horizon ($past initialization)
 
-In both formal model checking and dynamic simulation, `$past(sig, k)` is mathematically undefined for initial cycles $t < k$.
+In both formal model checking and dynamic simulation, `$past(sig, k)` has no defined value for initial cycles $t < k$.
 - In simulation, evaluating uninitialized past horizons can produce `'x` mismatches.
-- In formal tools (VC Formal), `create_reset -sense high` holds the design in reset during phase 0, but an unconstrained property could evaluate at cycle 1 while referencing cycle $1 - k < 0$.
+- In formal tools (VC Formal), `create_reset -sense high` holds the design in reset. That hold spans phase 0. An unconstrained property could evaluate at cycle 1 while referencing cycle $1 - k < 0$.
 
-**Solution:** The sequence `(!reset [* k])` inherently acts as a past-validity guard. Because `reset` was asserted at cycle 0, `(!reset [* k])` cannot match until cycle $t \ge k + 1$, guaranteeing that the past buffer contains valid, post-reset states.
+**Solution:** The sequence `(!reset [* k])` inherently acts as a past-validity guard. Because the design asserts `reset` at cycle 0, `(!reset [* k])` cannot match until cycle $t \ge k + 1$. This guard guarantees that the past buffer contains valid, post-reset states.
 
-### 2.3 Clock Enable Retention
+### 2.3 Clock enable retention
 
 For strobe-enabled registers (`RegisterEnN`), the contract separates latching from holding:
 ```systemverilog
@@ -90,9 +90,9 @@ endproperty
 ```
 In VC Formal, both properties converge to `proven` (non-vacuous) under multi-engine solving.
 
-### 2.4 Decoupled Transaction Equivalence & Elastic Latency Skew
+### 2.4 Decoupled transaction equivalence and elastic latency skew
 
-In streaming interfaces (e.g. `DecoupledSink` / `DecoupledSource`), transactions between reference and revised implementations may arrive at different cycles due to variable backpressure or pipeline bubble insertion.
+In streaming interfaces (for example, `DecoupledSink` / `DecoupledSource`), transactions between reference and revised implementations may arrive at different cycles. Variable backpressure or pipeline bubble insertion causes this skew.
 
 Cycle-by-cycle equality `dataA == dataB` fails under elastic skew. Shoumei handles this using **auxiliary ghost transaction counters**:
 ```systemverilog
@@ -118,11 +118,11 @@ endproperty
 
 ---
 
-## 3. Preprocessor Guarding Pattern
+## 3. Preprocessor guarding pattern
 
 ASIC synthesis tools (Synopsys Design Compiler, Cadence Genus, Yosys) must never map verification assertions into silicon gates. Conversely, formal property verification tools (Synopsys VC Formal, Cadence JasperGold) must compile assertions even during formal synthesis.
 
-Standard SystemVerilog (IEEE 1800) does not support C-style `` `if defined(...) `` expressions; it only provides `` `ifdef `` and `` `ifndef ``. Furthermore, formal tools often define `SYNTHESIS` internally.
+Standard SystemVerilog (IEEE 1800) does not support C-style `` `if defined(...) `` expressions. It only provides `` `ifdef `` and `` `ifndef ``. Furthermore, formal tools often define `SYNTHESIS` internally.
 
 To avoid assertion erasure in formal verification while preventing silicon overhead in ASIC builds, Shoumei uses a three-tier preprocessor guard:
 
@@ -149,11 +149,11 @@ To avoid assertion erasure in formal verification while preventing silicon overh
 
 ---
 
-## 4. Verification Execution Flows
+## 4. Verification execution flows
 
-### 4.1 Local Open-Source Flow
+### 4.1 Local open-source flow
 
-Run locally via Bazel:
+Run locally through Bazel:
 ```bash
 bazel test //verification:sva_verilator_test //verification:slang_lint_test
 ```
@@ -161,18 +161,18 @@ This executes:
 1. `//verification:slang_lint_test`: Validates syntax and IEEE 1800 AST elaboration across all 230+ emitted files.
 2. `//verification:sva_verilator_test`: Checks that SVA properties compile into active simulation assertions.
 
-### 4.2 Synopsys VC Formal FPV (Remote / Industrial)
+### 4.2 Synopsys VC Formal FPV (remote / industrial)
 
 Run against a compute server equipped with Synopsys VC Formal:
 ```bash
 ./verification/sva-verify.sh --remote <hostname>
 ```
 
-#### Toolchain Invocations & Optimization
-1. **Atomic File Transfer:** All 230+ SystemVerilog files and generated TCL scripts are piped via `tar -cf - ... | ssh ... "tar -xf - ..."` in < 1.5 seconds, bypassing `scp` command-line expansion limits.
-2. **Environment Scoping:** In non-interactive SSH sessions, remote shell startup files (`.profile`, `.bashrc`, or `.zshrc`) must be sourced without subshell isolation (`{ [ -f ~/.profile ] && source ~/.profile; }`) so license environment variables persist into the parent process.
-3. **Compiler Unification:** Standalone `VCS_HOME` and `VERDI_HOME` environment variables are unset so `vcf` invokes its own bundled Simon/SVAC front-end.
-4. **FPV Script Execution:**
+#### Toolchain invocations and optimization
+1. **Atomic file transfer:** Shoumei pipes all 230+ SystemVerilog files and generated TCL scripts through `tar -cf - ... | ssh ... "tar -xf - ..."` in < 1.5 seconds. This bypasses `scp` command-line expansion limits.
+2. **Environment scoping:** In non-interactive SSH sessions, the script must source remote shell startup files (`.profile`, `.bashrc`, or `.zshrc`) without subshell isolation (`{ [ -f ~/.profile ] && source ~/.profile; }`). This keeps license environment variables in the parent process.
+3. **Compiler unification:** Shoumei unsets the standalone `VCS_HOME` and `VERDI_HOME` environment variables so `vcf` invokes its own bundled Simon/SVAC front-end.
+4. **FPV script execution:**
 ```tcl
 set_fml_appmode FPV
 read_file -format sverilog -vcs { +define+FORMAL Register64.sv Register32.sv Register160.sv }
@@ -186,7 +186,7 @@ exit
 
 ---
 
-## 5. Verification Matrix & Results
+## 5. Verification matrix and results
 
 | Module | Property ID | Type | Temporal Horizon | VC Formal Result | Slang / Verilator |
 |---|---|---|---|---|---|

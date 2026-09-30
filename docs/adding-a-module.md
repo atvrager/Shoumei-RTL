@@ -1,4 +1,4 @@
-# Adding a New Module
+# Adding a new module
 
 Step-by-step guide for building a new verified circuit in Shoumei RTL. This covers the full lifecycle from behavioral model to code generation, elaboration and simulation.
 
@@ -12,13 +12,13 @@ Behavioral Model -> Structural Circuit -> Proofs -> Codegen -> Sim / Cosim
 
 The behavioral model is optional for simple combinational circuits, but required for anything with state (sequential circuits, RISC-V components).
 
-## Step 1: Behavioral Model
+## Step 1: Behavioral model
 
 Define the state and operations in pure Lean. This is the "specification" that proofs verify against.
 
-**File location:** Same directory as the structural circuit (e.g., `lean/Shoumei/Circuits/Sequential/MyModule.lean`)
+**File location:** Same directory as the structural circuit (for example, `lean/Shoumei/Circuits/Sequential/MyModule.lean`)
 
-### Example: A simple counter
+### Example: a simple counter
 
 ```lean
 -- Behavioral model: what the counter should do
@@ -42,11 +42,11 @@ def CounterState.reset : CounterState w :=
 | Register file | `RISCV/Renaming/PhysRegFile.lean` | Read/write with Fin indexing |
 | Rename mapping | `RISCV/Renaming/RAT.lean` | Lookup/allocate operations |
 
-## Step 2: Structural Circuit
+## Step 2: Structural circuit
 
 Build the actual hardware circuit using the DSL types from `DSL.lean`.
 
-### Small combinational circuits: Direct gate list
+### Small combinational circuits: direct gate list
 
 ```lean
 def mkMyAdder : Circuit :=
@@ -65,7 +65,7 @@ def mkMyAdder : Circuit :=
     instances := [] }
 ```
 
-### Large or sequential circuits: Hierarchical instances
+### Large or sequential circuits: hierarchical instances
 
 For circuits with registers, or circuits large enough that direct SEC would fail, use `CircuitInstance` to reference verified building blocks:
 
@@ -102,13 +102,13 @@ def mkMyModule : Circuit :=
 
 ### Port mapping conventions
 
-- Clock and reset wires: named `"clock"` and `"reset"` -- `findClockWires`/`findResetWires` detect them from DFF gates and instance connections, so keep the names consistent
+- Clock and reset wires: name them `"clock"` and `"reset"`. `findClockWires`/`findResetWires` detect them from DFF gates and instance connections, so keep the names consistent
 - Instance port names must match the target module's port names exactly
 - Use consistent naming: `u_` prefix for instance names, numbered suffixes for arrays
 
 ### Available building blocks
 
-All of these are emitted as modules and ready to use as instances:
+The generator emits all of these as modules, ready for use as instances:
 
 | Module | Purpose | Key ports |
 |--------|---------|-----------|
@@ -122,10 +122,10 @@ All of these are emitted as modules and ready to use as instances:
 | `QueuePointer_N` | Queue head/tail pointer | clock, reset, en, count bits |
 | `QueueCounterUpDown_N` | Up/down counter | clock, reset, up, down, count bits |
 
-### When to use hierarchical vs flat
+### When to use hierarchical or flat
 
 - **Flat (gates only):** Combinational circuits under ~500 gates.
-- **Hierarchical (instances):** Sequential circuits, anything with registers, anything over ~1000 gates, or anything whose composition you want to justify with a `CompositionalCert`.
+- **Hierarchical (instances):** Sequential circuits, anything with registers, and anything over ~1000 gates. Use it also when you want to justify the composition with a `CompositionalCert`.
 
 ## Step 3: Proofs
 
@@ -133,7 +133,7 @@ Create a separate proofs file. Convention: `MyModuleProofs.lean` next to `MyModu
 
 ### Structural proofs
 
-These verify the circuit was constructed correctly:
+These verify correct construction of the circuit:
 
 ```lean
 import Shoumei.Circuits.Sequential.MyModule
@@ -180,7 +180,7 @@ theorem prf_read_after_write (state : PhysRegFileState n) (tag : Fin n) (val : U
 | `bv_decide` | BitVec arithmetic (with bridge) | ALU correctness |
 | Axiom + TODO | Complex proofs deferred | Mark with clear comment |
 
-## Step 4: Code Generation
+## Step 4: Code generation
 
 ### Option A: Centralized (recommended)
 
@@ -208,7 +208,7 @@ This emits all outputs in one command:
 
 ### Option B: Dedicated codegen file
 
-For circuits that need special codegen handling (e.g., RISC-V decoder with custom SV generation), create a `MyModuleCodegen.lean`:
+For circuits that need special codegen handling (for example, a RISC-V decoder with custom SV generation), create a `MyModuleCodegen.lean`:
 
 ```lean
 import Shoumei.Circuits.Sequential.MyModule
@@ -230,14 +230,14 @@ lean_binary(
 )
 ```
 
-## Step 5: Check the Emitted RTL
+## Step 5: Check the emitted RTL
 
 ```bash
 bazel test //verification:slang_lint_test     # parse + elaborate every emitted SV file
 bazel test //verification:yosys_validate_test # Yosys read/hierarchy check
 ```
 
-Both read the emitted files only; there is no second RTL design to compare against.
+Both read the emitted files only. No second RTL design exists to compare against.
 The emitted SV then gets exercised by the simulation tests:
 
 ```bash
@@ -245,9 +245,9 @@ bazel test //testbench/tests:...
 ```
 
 If a module's clock or reset is mis-detected, check `findClockWires`/`findResetWires`
-in `Common.lean` -- they look for DFF gates and instance connections.
+in `Common.lean`. They look for DFF gates and instance connections.
 
-## Step 6: Compositional Certificate (if needed)
+## Step 6: Compositional certificate (if needed)
 
 If a hierarchical module is too large to discharge in one step:
 
@@ -278,10 +278,10 @@ bazel build //lean:shoumei
 bazel run //:generate_all -- --export-certs
 ```
 
-A certificate fails the export if it names a module the generator does not emit, or
-if the circuit instantiates a module that is not emitted.
+A certificate fails the export if it names a module the generator does not emit.
+It also fails if the circuit instantiates a module that is not emitted.
 
-## Complete Example: Adding a 4-bit Counter
+## Complete example: adding a 4-bit counter
 
 ```
 lean/Shoumei/Circuits/Sequential/Counter.lean      # Behavioral + structural

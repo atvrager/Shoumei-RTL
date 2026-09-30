@@ -1,10 +1,10 @@
-# Hazard Pattern Catalog
+# Hazard pattern catalog
 
-Catalog of microarchitecture-targeted test patterns for the Shoumei RV64G out-of-order CPU. Each pattern is designed to exercise a specific pipeline hazard or corner case, guided by the Lean behavioral models.
+Catalog of microarchitecture-targeted test patterns for the Shoumei RV64G out-of-order CPU. Each pattern exercises a specific pipeline hazard or corner case, guided by the Lean behavioral models.
 
 For the overall test generation architecture, see [test-generation.md](test-generation.md). For the cosimulation flow, see [cosimulation.md](cosimulation.md).
 
-## Pattern Index
+## Pattern index
 
 | ID | Pattern | Target | Exercises |
 |----|---------|--------|-----------|
@@ -31,9 +31,9 @@ For the overall test generation architecture, see [test-generation.md](test-gene
 
 ---
 
-## Smoke Tests
+## Smoke tests
 
-### S1: Instruction Smoke
+### S1: Instruction smoke
 
 **Goal:** Execute one instance of every instruction type in the RV32IM ISA.
 
@@ -89,13 +89,13 @@ def smokeTest : TestProgram :=
 
 ---
 
-## Data Hazard Patterns
+## Data hazard patterns
 
-### D1: RAW Chain Sweep
+### D1: RAW chain sweep
 
 **Goal:** Exercise read-after-write forwarding at every pipeline depth from 0 to N.
 
-**What it tests:** CDB forwarding to reservation stations (short distances), register file read after commit (long distances), and the transition boundary between the two paths.
+**What it tests:** CDB forwarding to reservation stations (short distances) and register file read after commit (long distances). The sweep also covers the transition boundary between the two paths.
 
 ```lean
 def rawChainTest (producer consumer : OpType) (distance : Nat) : TestProgram :=
@@ -120,11 +120,11 @@ def rawChainTest (producer consumer : OpType) (distance : Nat) : TestProgram :=
 
 **Expected test count:** 3 producers x 2 consumers x 21 distances = 126 ELFs.
 
-### D2: WAW Chain
+### D2: WAW chain
 
 **Goal:** Stress register renaming and free list recycling by repeatedly writing to the same architectural register.
 
-**What it tests:** RAT update correctness (each write gets a new physical register), `oldPhysRd` tracking in the ROB, free list deallocation at commit time.
+**What it tests:** RAT update correctness, so each write gets a new physical register. The pattern also checks `oldPhysRd` tracking in the ROB and free list deallocation at commit time.
 
 ```lean
 def wawChainTest (length : Nat) : TestProgram :=
@@ -139,7 +139,7 @@ def wawChainTest (length : Nat) : TestProgram :=
 
 **Coverage points:** `robCommitDeallocatesPhysReg`, `freeListEmpty` (at extreme lengths).
 
-### D3: CDB Dual Wakeup
+### D3: CDB dual wakeup
 
 **Goal:** Both source operands of an RS entry wait for the same tag, and one CDB broadcast wakes both.
 
@@ -156,11 +156,11 @@ def cdbDualWakeupTest : TestProgram :=
 
 **Coverage points:** `cdbWakesBothOperands`.
 
-### D4: x0 Sink
+### D4: x0 sink
 
 **Goal:** Every instruction type with `rd = x0` must be a no-op on the register file.
 
-**What it tests:** The rename stage must not allocate a physical register for x0. The ROB must not attempt writeback. Spike confirms all register values are unchanged.
+**What it tests:** The rename stage must not allocate a physical register for x0. The ROB must not attempt writeback. Spike confirms that all register values stay unchanged.
 
 ```lean
 def x0SinkTest : TestProgram :=
@@ -186,9 +186,9 @@ def x0SinkTest : TestProgram :=
 
 ---
 
-## Structural Hazard Patterns
+## Structural hazard patterns
 
-### H1: RS Exhaustion
+### H1: RS exhaustion
 
 **Goal:** Fill the reservation station beyond its capacity to trigger issue stalls.
 
@@ -212,7 +212,7 @@ def rsExhaustionTest (unit : ExecUnit) (depth : Nat) : TestProgram :=
 
 **Coverage points:** `rsFullStall unit`.
 
-### H2: ROB Fill
+### H2: ROB fill
 
 **Goal:** Fill the 16-entry ROB to trigger rename stalls.
 
@@ -232,7 +232,7 @@ def robFillTest (depth : Nat) : TestProgram :=
 
 **Coverage points:** `robFullStall`, `dividerBusy32Cycles`.
 
-### H3: Free List Exhaustion
+### H3: Free list exhaustion
 
 **Goal:** Drain the 64-entry physical register free list.
 
@@ -253,9 +253,9 @@ def freeListExhaustionTest : TestProgram :=
 
 ---
 
-## Control Hazard Patterns
+## Control hazard patterns
 
-### C1: Branch Misprediction
+### C1: Branch misprediction
 
 **Goal:** Force a branch misprediction and verify the flush/recovery path.
 
@@ -284,7 +284,7 @@ def branchMispredictTest (specDepth : Nat) : TestProgram :=
 
 **Coverage points:** `branchFlushROBNonEmpty specDepth`, `branchFlushWithPendingStores` (if stores are on wrong path).
 
-### C2: Branch Type Coverage
+### C2: Branch type coverage
 
 **Goal:** Exercise all 6 branch types with both taken and not-taken outcomes.
 
@@ -307,7 +307,7 @@ def branchTypeCoverageTest : TestProgram :=
 
 **Expected test count:** 12 cases (6 branch types x 2 outcomes).
 
-### C3: JAL/JALR Link Register
+### C3: JAL/JALR link register
 
 **Goal:** Verify jump-and-link saves the correct return address and reaches the correct target.
 
@@ -326,9 +326,9 @@ def jalTest : TestProgram :=
 
 ---
 
-## Memory Hazard Patterns
+## Memory hazard patterns
 
-### M1: Store-to-Load Forwarding
+### M1: Store-to-load forwarding
 
 **Goal:** Exercise the store buffer's forwarding path for exact address matches.
 
@@ -350,7 +350,7 @@ def storeForwardTest (storeOp loadOp : OpType) (offset : Int) : TestProgram :=
 
 **Coverage points:** `storeBufferForwardHit`.
 
-### M2: Store Buffer Full
+### M2: Store buffer full
 
 **Goal:** Fill the 8-entry store buffer to trigger store stalls.
 
@@ -370,7 +370,7 @@ def storeBufferFullTest : TestProgram :=
     description := "store buffer full: 10 stores to 8-entry buffer" }
 ```
 
-### M3: Load/Store Width Matrix
+### M3: Load/store width matrix
 
 **Goal:** Exercise all combinations of store width and load width at the same address.
 
@@ -398,7 +398,7 @@ def widthMatrixTest : List TestProgram :=
 
 **Expected test count:** 3 store widths x 5 load widths = 15 ELFs.
 
-### M4: Store Buffer Ordering
+### M4: Store buffer ordering
 
 **Goal:** When multiple stores target the same address, the load must see the youngest (most recent) store's data.
 
@@ -422,13 +422,13 @@ def storeBufferOrderingTest : TestProgram :=
     description := "store buffer ordering: youngest match wins" }
 ```
 
-**Coverage points:** Store buffer youngest-match priority via barrel rotation + arbiter.
+**Coverage points:** Store buffer youngest-match priority through barrel rotation and the arbiter.
 
 ---
 
-## Execution Unit Patterns
+## Execution unit patterns
 
-### E1: Divider Occupancy
+### E1: Divider occupancy
 
 **Goal:** Occupy the 32-cycle divider with back-to-back divisions.
 
@@ -447,7 +447,7 @@ def dividerOccupancyTest (count : Nat) : TestProgram :=
 
 **Coverage points:** `dividerBusy32Cycles`.
 
-### E2: Multiplier Pipeline Fill
+### E2: Multiplier pipeline fill
 
 **Goal:** Issue 3+ MULs back-to-back to fill all 3 pipeline stages simultaneously.
 
@@ -462,7 +462,7 @@ def multiplierPipelineTest : TestProgram :=
 
 **Coverage points:** `multiplierPipelineFull`.
 
-### E3: M-Extension Corner Cases
+### E3: M-extension corner cases
 
 **Goal:** Exercise spec-defined edge cases in multiply/divide.
 
@@ -506,13 +506,13 @@ def mExtCornerCaseTest : TestProgram :=
 
 ---
 
-## Combined Patterns
+## Combined patterns
 
-### X1: Multi-Hazard Combo
+### X1: Multi-hazard combo
 
 **Goal:** Exercise multiple hazards simultaneously in a single program.
 
-**What it tests:** Interaction between store forwarding, branch misprediction, RS pressure, and CDB broadcasting -- the states that random generation rarely reaches.
+**What it tests:** Interaction between store forwarding, branch misprediction, RS pressure, and CDB broadcasting. Random generation rarely reaches these combined states.
 
 ```lean
 def comboHazardTest : TestProgram :=
@@ -541,7 +541,7 @@ def comboHazardTest : TestProgram :=
 
 **Coverage points:** `storeBufferForwardHit`, `branchFlushROBNonEmpty`, `rsFullStall`, `cdbForwardToRS`.
 
-### X2: Pipeline Drain
+### X2: Pipeline drain
 
 **Goal:** Fill the pipeline completely, drain it, and verify clean restart.
 
@@ -569,7 +569,7 @@ def pipelineDrainTest : TestProgram :=
 
 ---
 
-## Generation Summary
+## Generation summary
 
 ### Test counts by category
 
@@ -588,7 +588,7 @@ Each ELF is small (typically 40-200 instructions of payload plus bootstrap). The
 
 ### Relationship to Lean models
 
-Each pattern is informed by a specific Lean behavioral model:
+Each pattern takes guidance from a specific Lean behavioral model:
 
 | Pattern | Lean model used for guidance |
 |---------|------------------------------|

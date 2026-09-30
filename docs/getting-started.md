@@ -1,10 +1,10 @@
-# Getting Started with Shoumei RTL
+# Getting started with Shoumei RTL
 
-This guide walks through setting up the environment, compiling Lean proofs, generating synthesizable RTL, running simulations, and verifying tests through Bazel.
+This guide covers environment setup, Lean proof compilation, RTL generation, simulation, and Bazel test verification.
 
 ---
 
-## Prerequisites & Environment Setup
+## Prerequisites and environment setup
 
 ### Prerequisites
 
@@ -15,9 +15,9 @@ All user workflows start through Bazel:
 - **Yosys** (>= 0.66)
 - **slang** (`pip install pyslang`)
 - **Verilator** (`sudo apt install verilator`)
-- **RISC-V GCC** (`riscv64-unknown-elf-gcc` or via `scripts/setup-riscv-toolchain.sh`)
+- **RISC-V GCC** (`riscv64-unknown-elf-gcc` or through `scripts/setup-riscv-toolchain.sh`)
 
-### Verification of Prerequisites
+### Verification of prerequisites
 
 ```bash
 python3 bootstrap.py --check-only
@@ -25,9 +25,9 @@ python3 bootstrap.py --check-only
 
 ---
 
-## Build & Verification Workflow
+## Build and verification workflow
 
-### 1. Build Lean Proofs
+### 1. Build Lean proofs
 
 ```bash
 bazel build //lean:shoumei
@@ -35,7 +35,7 @@ bazel build //lean:shoumei
 
 Compiles all hardware modules, behavioral models, and formal correctness proofs with zero warnings and zero axioms.
 
-### 2. Generate RTL, Netlists, and C++ Simulation
+### 2. Generate RTL, netlists, and C++ simulation
 
 ```bash
 bazel build //:rtl
@@ -49,7 +49,7 @@ Emits all target artifacts from the proven Lean source:
 - Cycle-accurate C++ simulation model (`output/cpp_sim/*`)
 - Testbench scaffolding (`testbench/generated/*`)
 
-### 3. Run Presubmit Test Suite
+### 3. Run presubmit test suite
 
 ```bash
 bazel test //:presubmit
@@ -57,7 +57,7 @@ bazel test //:presubmit
 
 Runs all 311 presubmit tests across proof validation, linting, formal verification, RTL simulation, Spike lockstep cosimulation, and packaging.
 
-### 4. Run Targeted Test Suites
+### 4. Run targeted test suites
 
 ```bash
 # Linting & elaboration
@@ -81,7 +81,7 @@ bazel test //testbench/benchmarks
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
 Shoumei-RTL/
@@ -100,7 +100,7 @@ Shoumei-RTL/
 
 ---
 
-## Where to Go Next
+## Where to go next
 
 - [project-map.md](project-map.md): Subsystem composition graph and proof coverage matrix.
 - [commands.md](commands.md): Comprehensive Bazel command and target reference.

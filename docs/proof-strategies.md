@@ -1,39 +1,40 @@
-# Proof Strategies for Parameterized Circuits
+# Proof strategies for parameterized circuits
 
-## Problem Statement
+## Problem statement
 
 Our DSL proofs fall into two categories:
 
-1. **Concrete proofs** — fixed parameters (e.g., `mkRegister4`). These work with
-   `native_decide` because LEAN can evaluate the entire circuit into a known
-   boolean expression and brute-force check it.
+1. **Concrete proofs**: these have fixed parameters (for example `mkRegister4`).
+   They work with `native_decide` because Lean can evaluate the entire circuit
+   into a known boolean expression and brute-force check it.
 
-2. **General proofs** — arbitrary parameters (e.g., `mkRegisterN n` for all `n`).
-   `native_decide` cannot handle these because it needs to evaluate symbolic
-   expressions. These are the proofs currently deferred with `sorry` or axioms.
+2. **General proofs**: these have arbitrary parameters (for example
+   `mkRegisterN n` for all `n`). `native_decide` cannot handle them because it
+   must evaluate symbolic expressions. The project currently defers these proofs
+   with `sorry` or axioms.
 
 This doc describes core foundational techniques for parameterized circuits, arithmetic bridges, and sequential verification.
 
-### Specialized Proof Strategy Guides
+### Specialized proof strategy guides
 
-- [Sequential Equivalence Checking (SEC)](proof-strategies/sequential-equivalence-checking.md) — Mechanized trace bisimulation in Lean 4, hierarchical decomposition equivalence, clock-enable loopback refinement, and pipeline latency functors ($Z^{-k}$).
-- [Register Refinement & Invariants](proof-strategies/register-refinement.md) — Multi-tier register proof hierarchy (L0-L3), bit-slice non-interference, structural composition, and SVA AST emission.
-- [Queue Refinement](proof-strategies/queue-refinement.md) — State abstraction, FIFO ordering, and push/pop refinement.
-- [QueueN Inductive Invariants](proof-strategies/queuen-invariants.md) — Inductive invariants for parameterized circular queues.
-- [SVA Formal Property Verification](proof-strategies/sva-formal-verification.md) — SVA FPV flows, temporal latency horizons ($Z^{-k}$), reset freedom, and multi-backend verification (Synopsys VC Formal & Verilator).
+- [Sequential Equivalence Checking (SEC)](proof-strategies/sequential-equivalence-checking.md): mechanized trace bisimulation in Lean 4, hierarchical decomposition equivalence, clock-enable refinement, and pipeline latency functors ($Z^{-k}$).
+- [Register Refinement & Invariants](proof-strategies/register-refinement.md): multi-tier register proof hierarchy (L0-L3), bit-slice non-interference, structural composition, and SVA AST emission.
+- [Queue Refinement](proof-strategies/queue-refinement.md): state abstraction, FIFO ordering, and push/pop refinement.
+- [QueueN Inductive Invariants](proof-strategies/queuen-invariants.md): inductive invariants for parameterized circular queues.
+- [SVA Formal Property Verification](proof-strategies/sva-formal-verification.md): SVA FPV flows, temporal latency horizons ($Z^{-k}$), reset freedom, and multi-backend verification (Synopsys VC Formal & Verilator).
 
 ---
 
-## Approach 1: Structural Induction + List Lemmas
+## Approach 1: structural induction + list lemmas
 
 ### Idea
 
 The register is N parallel DFFs built with `List.zipWith`. The evaluator
 (`evalCycleSequential`) processes them with `foldl`, `filterMap`, and `find?`.
 All of these are recursive list operations, so their properties follow by
-induction on the list structure — no special solver needed.
+induction on the list structure. The proof needs no special solver.
 
-### What Needs Proving
+### What needs proving
 
 Take `registerN_reset` as the running example: "when reset is high, all output
 bits become false."
@@ -51,10 +52,10 @@ mkRegisterN n
       5. updateState → folds (wire, value) pairs into next state
 ```
 
-To prove the final state has `q_i = false` for all `i < n`, we need a chain of
-lemmas about how data flows through these list operations.
+To prove the final state has `q_i = false` for all `i < n`, a chain of
+lemmas is needed. These lemmas describe how data flows through these list operations.
 
-### Required Lemmas
+### Required lemmas
 
 #### L1: `makeIndexedWires` produces distinct wires
 
@@ -83,8 +84,8 @@ lemma in Lean 4 or Mathlib. Options:
 - **Prove it directly.** `Nat.repr` produces decimal digit strings. Injectivity
   follows from the uniqueness of decimal representation. This is ~20-30 lines
   of proof about `Nat.toDigits`.
-- **Use `Decidable` + `native_decide` for bounded cases.** If we only need
-  `n ≤ 1024` or similar, we can sidestep full generality.
+- **Use `Decidable` + `native_decide` for bounded cases.** A bound such as
+  `n ≤ 1024` sidesteps full generality.
 - **Assume it as an axiom** and move on (pragmatic, low risk).
 
 #### L2: `zipWith` preserves length and element access
@@ -125,7 +126,7 @@ lemma evalDFF_reset (g : Gate) (env : Env) (h : g.gateType = GateType.DFF)
   simp [evalDFF, h, hinp, hrst]
 ```
 
-This is trivial — it's just unfolding the `if env reset then false else env d`
+This lemma is trivial: it just unfolds the `if env reset then false else env d`
 branch.
 
 #### L5: `updateState` with matching key returns the value
@@ -142,11 +143,11 @@ lemma updateState_not_found (state : State) (updates : List (Wire × Bool))
   simp [updateState, h]
 ```
 
-The harder part: proving that `find?` *does* find `q_i` in the update list.
-This connects back to `Nodup` — since the wire names are distinct, each `q_i`
-appears exactly once in the filterMap output, so `find?` succeeds.
+The harder part is proving that `find?` does find `q_i` in the update list.
+This connects back to `Nodup`: the wire names are distinct, so each `q_i`
+appears exactly once in the filterMap output. Therefore `find?` succeeds.
 
-### Putting It Together
+### Putting it together
 
 ```lean
 theorem registerN_reset (n : Nat) (d_vals : List Bool) (h : d_vals.length = n) :
@@ -163,7 +164,7 @@ theorem registerN_reset (n : Nat) (d_vals : List Bool) (h : d_vals.length = n) :
   sorry -- placeholder for the assembled proof
 ```
 
-### Effort Estimate
+### Effort estimate
 
 | Lemma | Difficulty | Lines (approx) |
 |-------|-----------|----------------|
@@ -182,49 +183,49 @@ theorem registerN_reset (n : Nat) (d_vals : List Bool) (h : d_vals.length = n) :
 The `makeIndexedWires_nodup` lemma (String/Nat injectivity) is the single
 hardest piece. Everything else is standard list induction.
 
-### What This Unlocks
+### Further theorems
 
 Once the lemma library is in place, the same infrastructure proves:
 
-- `registerN_reset` — reset zeroes all bits
-- `registerN_capture` — each `q_i` captures `d_i` when reset is low
-- `registerN_bit_independence` — changing `d_i` only affects `q_i`
-- `registerWidth_correct` — `registerWidth (mkRegisterN n) = n`
+- `registerN_reset`: reset zeroes all bits
+- `registerN_capture`: each `q_i` captures `d_i` when reset is low
+- `registerN_bit_independence`: changing `d_i` only affects `q_i`
+- `registerWidth_correct`: `registerWidth (mkRegisterN n) = n`
 
 And generalizes to other parameterized circuits built with `makeIndexedWires`
-(QueueN, RAT, FreeList, etc.).
+(QueueN, RAT, FreeList, and others).
 
-### Applicability to Other Deferred Proofs
+### Applicability to other deferred proofs
 
-The RenameStage axioms (`stall_proof`, `rat_forwarding_proof`, etc.) hit
+The RenameStage axioms (`stall_proof`, `rat_forwarding_proof`, and others) hit
 recursion depth limits rather than the "arbitrary N" problem. Those are more
 likely solvable by:
 
 1. Manually unfolding the evaluation with `simp` + `split` instead of
    `native_decide`
-2. Breaking the circuit into sub-lemmas (e.g., prove the free list check
+2. Breaking the circuit into sub-lemmas (for example, prove the free list check
    independently, then compose)
 3. Increasing `maxRecDepth` further (brute force, but sometimes sufficient)
 
-The list lemma library from this approach still helps — the same `updateState`,
+The list lemma library from this approach still helps. The same `updateState`,
 `filterMap`, and `find?` reasoning appears everywhere.
 
 ---
 
-## Approach 2: BitVec Semantic Bridge
+## Approach 2: BitVec semantic bridge
 
 ### Idea
 
-Lean 4 has built-in `BitVec n` types and two powerful decision procedures:
+Lean 4 has built-in `BitVec n` types and two decision procedures:
 
-- **`bv_decide`** — a SAT-based bitblasting tactic that decides quantifier-free
-  bitvector formulas. Handles arithmetic, bitwise ops, shifts, comparisons.
-- **`bv_omega`** — linear arithmetic over bitvectors (extension of `omega` to
+- **`bv_decide`**: a SAT-based bitblasting tactic that decides quantifier-free
+  bitvector formulas. It handles arithmetic, bitwise ops, shifts, comparisons.
+- **`bv_omega`**: linear arithmetic over bitvectors (an extension of `omega` to
   fixed-width integers).
 
 Our DSL currently represents everything as `Bool` and `List Bool`. A `BitVec`
-bridge layer would let us state and prove theorems at the word level instead of
-reasoning bit-by-bit.
+bridge layer would let a proof state and prove theorems at the word level
+instead of reasoning bit-by-bit.
 
 ### Architecture
 
@@ -236,10 +237,10 @@ List Bool (values)        →  BitVec n conversion      →  bv_omega proofs
 Gate-level evaluation     →  Word-level semantics     →  Word-level properties
 ```
 
-The bridge doesn't replace the gate-level DSL — it provides an alternative
+The bridge does not replace the gate-level DSL. It provides an alternative
 semantic domain for stating and proving properties.
 
-### Core Definitions
+### Core definitions
 
 ```lean
 import Mathlib.Data.BitVec
@@ -257,11 +258,11 @@ def registerSemantics (d : BitVec n) (reset : Bool) : BitVec n :=
   if reset then 0#n else d
 ```
 
-### Proof Structure
+### Proof structure
 
 The proof works in two layers:
 
-**Layer 1: Bridge correctness** — prove that the `BitVec` interpretation
+**Layer 1: Bridge correctness**: prove that the `BitVec` interpretation
 faithfully reflects the gate-level evaluation.
 
 ```lean
@@ -278,7 +279,7 @@ theorem register_bitVec_correct (n : Nat) (d_vals : List Bool)
   sorry
 ```
 
-**Layer 2: Word-level properties** — once in `BitVec` land, properties become
+**Layer 2: Word-level properties**: once in `BitVec` land, properties become
 trivial for `bv_decide`.
 
 ```lean
@@ -303,12 +304,12 @@ theorem sll_correct (a : BitVec 32) (shamt : BitVec 5) :
   bv_omega
 ```
 
-### Honest Assessment
+### Honest assessment
 
 The bridge correctness proof (Layer 1) **still requires the list induction from
-Approach 1**. You can't avoid reasoning about `filterMap`, `updateState`, and
+Approach 1**. You cannot avoid reasoning about `filterMap`, `updateState`, and
 `find?` to connect gate-level evaluation to the `BitVec` interpretation. The
-bridge doesn't eliminate that work — it moves the payoff to Layer 2.
+bridge does not eliminate that work. It moves the payoff to Layer 2.
 
 Where the BitVec approach pays for itself:
 
@@ -326,26 +327,26 @@ reset/capture properties on registers, the bridge adds overhead without much
 benefit. For proving that a 32-bit adder circuit actually computes `a + b`,
 the bridge is dramatically easier.
 
-### Required Infrastructure
+### Required infrastructure
 
-1. **`BitVec.ofFn`** — construct a `BitVec n` from a function `Fin n → Bool`.
+1. **`BitVec.ofFn`**: construct a `BitVec n` from a function `Fin n → Bool`.
    Available in Mathlib.
 
-2. **Interpretation functions** — `registerState_toBitVec`, `aluOutput_toBitVec`,
-   etc. One per circuit type. Small definitions (~5 lines each).
+2. **Interpretation functions**: `registerState_toBitVec`, `aluOutput_toBitVec`,
+   and others. One per circuit type. Small definitions (~5 lines each).
 
-3. **Bridge correctness theorems** — one per circuit type, connecting gate-level
+3. **Bridge correctness theorems**: one per circuit type, connecting gate-level
    eval to word-level semantics. These are the hard proofs (requiring Approach 1
    lemmas).
 
-4. **Word-level semantics** — `registerSemantics`, `aluSemantics`, etc.
+4. **Word-level semantics**: `registerSemantics`, `aluSemantics`, and others.
    Clean functional definitions of what each circuit should do.
 
-5. **Mathlib dependency** — `BitVec` and `bv_decide` are in Lean 4 core, but
+5. **Mathlib dependency**: `BitVec` and `bv_decide` are in Lean 4 core, but
    some convenience lemmas are in Mathlib. Adding Mathlib as a dependency
    increases build times significantly.
 
-### Effort Estimate
+### Effort estimate
 
 | Component | Lines (approx) |
 |-----------|----------------|
@@ -356,35 +357,35 @@ the bridge is dramatically easier.
 | Word-level property proofs | 5-10 each (often one-liners) |
 | **Total for register + ALU** | **~200-300 lines** |
 
-### What This Unlocks
+### What the bridge enables
 
 Once the bridge exists for a circuit type, *all* word-level properties become
-almost free. For ALU32 with 10 operations, that's potentially 10+ theorems
+almost free. For ALU32 with 10 operations, that is potentially 10+ theorems
 discharged by `bv_decide` with no manual proof effort.
 
-The bridge also enables **compositional reasoning at the word level**: if the
+The bridge also enables compositional reasoning at the word level. If the
 register correctly captures a `BitVec 32`, and the ALU correctly computes
 `a + b` as `BitVec 32`, then the datapath correctly computes
-`reg_out = alu(reg_in_a, reg_in_b)` — all at the `BitVec` level without
-touching individual bits.
+`reg_out = alu(reg_in_a, reg_in_b)` at the `BitVec` level. The proof needs no
+individual bit reasoning.
 
 ---
 
 ## Recommendation
 
-**Do Approach 1 first.** The list lemma library is needed regardless — even the
-BitVec bridge depends on it. It unblocks the immediate `sorry` proofs in
-`RegisterProofs.lean` and generalizes to QueueN, RAT, and other parameterized
-circuits.
+**Do Approach 1 first.** The project needs the list lemma library regardless.
+Even the BitVec bridge depends on it. It unblocks the immediate `sorry` proofs
+in `RegisterProofs.lean` and generalizes to QueueN, RAT, and other
+parameterized circuits.
 
 **Add the BitVec bridge later**, when tackling ALU/arithmetic correctness proofs
-where `bv_decide` provides the most leverage. The register is not the best
-motivating example for BitVec — the ALU is.
+where `bv_decide` helps most. The register is not the best
+motivating example for BitVec. The ALU is a better one.
 
-### Priority Order
+### Priority order
 
 1. `makeIndexedWires` lemmas (length, get, nodup)
-2. `registerN_reset` and `registerN_capture` via induction
+2. `registerN_reset` and `registerN_capture` through induction
 3. `registerWidth_correct` (easy corollary)
 4. Apply same lemmas to QueueN proofs
 5. BitVec bridge for ALU32 (where `bv_decide` saves the most work)
@@ -392,14 +393,14 @@ motivating example for BitVec — the ALU is.
 
 ---
 
-## Approach 3: Verified Symbolic Circuit Evaluator
+## Approach 3: verified symbolic circuit evaluator
 
 ### Idea
 
 Build a `BoolExpr` (symbolic Boolean expression tree) type and a symbolic
 gate compiler (`symCompileGates`) that mirrors `compileGates` but produces
 expression trees instead of concrete Boolean values. A correctness theorem
-(`symCompileGates_correct`) connects the two. This lets us fix the opcode
+(`symCompileGates_correct`) connects the two. This fixes the opcode
 (a small input) while keeping data inputs symbolic, reducing universal
 quantification from 68 bits to 64 bits and enabling per-opcode proofs.
 
@@ -411,7 +412,7 @@ SymbolicCompile.lean  — symCompileGate/symCompileGates + correctness proofs
 ALUSymbolic.lean      — ALU-specific: init map, sym compilation, bridge theorem
 ```
 
-### Proof Chain
+### Proof chain
 
 ```
 evalALU32 a b op
@@ -422,9 +423,9 @@ evalALU32 a b op
   = aluSemantics op a b    [per-opcode axiom, to be proved]
 ```
 
-### Current Status: COMPLETE
+### Current status: complete
 
-**All 10 per-opcode bridge theorems are proven. Zero axioms remain in the
+**Lean proves all 10 per-opcode bridge theorems. Zero axioms remain in the
 Reflection module.** The master theorem `alu32_bridge` dispatches to per-opcode
 proofs:
 
@@ -446,12 +447,12 @@ theorem alu32_bridge (op : ALUOp) (a b : BitVec 32) :
 
 The proofs use three distinct techniques, described in the subsections below.
 
-### Critical Pitfall: Kernel Reduction of Large Circuits
+### Critical pitfall: kernel reduction of large circuits
 
 **Never reference `mkALU32Flat.gates` (or any large circuit's `.gates`)
 explicitly in proof terms or tactic goals.** The `.gates` struct projection
 forces Lean's kernel to reduce `mkALU32Flat`, which evaluates
-`flattenAllFuel aluSubCircuitMap mkALU32 3` — a massive computation that
+`flattenAllFuel aluSubCircuitMap mkALU32 3`, a massive computation that
 produces ~2800 gates. This causes a stack overflow during proof checking.
 
 **Do this:**
@@ -479,14 +480,14 @@ private theorem evalALU32_as_circuit (a b op) :
 -- Then: rw [evalALU32_as_circuit]
 ```
 
-### Per-Opcode Proof Techniques
+### Per-opcode proof techniques
 
 The 10 operations fall into four categories, each with a distinct proof pattern.
 
 #### Bitwise (AND/OR/XOR): `constFold` + direct eval
 
 Simplest case. After symbolic compilation, each output bit reduces to a single
-two-input BoolExpr node (e.g., `.and (.var i) (.var (32+i))`). The `constFold`
+two-input BoolExpr node (for example `.and (.var i) (.var (32+i))`). The `constFold`
 pass eliminates all MUX tree overhead, and `native_decide` confirms structural
 equality. The eval step is a one-line `simp`.
 
@@ -496,27 +497,27 @@ The most complex proofs. The KSA/subtractor circuit uses a parallel-prefix
 carry tree, while BitVec.add uses ripple carry semantics. A 3-layer bridge
 connects them:
 
-1. **Layer 1: KSA BoolExpr = Ripple-carry BoolExpr** — verified per bit via
+1. **Layer 1: KSA BoolExpr = Ripple-carry BoolExpr**: verified per bit through
    `beqSem` + `native_decide`. The variable ordering is critical: interleave
    `[a_0, b_0, a_1, b_1, ...]` so the carry chain collapses early in Shannon
    expansion.
 
-2. **Layer 2: Ripple-carry BoolExpr = Bool functions** — proven by induction
+2. **Layer 2: Ripple-carry BoolExpr = Bool functions**: proven by induction
    on the bit position. Define `carryBit`/`sumBit` (for ADD) or
    `subCarryBit`/`subSumBit` (for SUB) as recursive Bool functions, then prove
    `adderSum_eval` by structural induction.
 
-3. **Layer 3: Bool functions = BitVec stdlib** — proven per-bit (32 branches)
-   via `bv_decide`. Each branch is a small SAT problem (~64 variables). The
-   key stdlib lemma is `BitVec.carry` which connects `Bool.atLeastTwo` to
+3. **Layer 3: Bool functions = BitVec stdlib**: proven per-bit (32 branches)
+   through `bv_decide`. Each branch is a small SAT problem (~64 variables). The
+   key stdlib lemma is `BitVec.carry`, which connects `Bool.atLeastTwo` to
    `BitVec.getLsbD (a + b)`.
 
 For SUB, the carry functions use `!b.getLsbD k` (2's complement) with
 carry-in = 1. The simplification `a ^^ !b ^^ 1 = a ^^ b` is non-obvious.
 
-#### Comparisons (SLT/SLTU): Subtraction MSB + `bv_decide`
+#### Comparisons (SLT/SLTU): subtraction MSB + `bv_decide`
 
-Bits 1-31 of the result are always 0 — verified by `constFold` reducing each
+Bits 1-31 of the result are always 0. The `constFold` pass reduces each
 to `.lit false`. Bit 0 depends on the subtraction MSB and the sign bits:
 
 ```
@@ -524,23 +525,23 @@ SLT bit 0:  (a_31 && !b_31) || (!(a_31 ^^ b_31) && (a-b)_31)
 SLTU bit 0: (!a_31 && b_31) || (!(a_31 ^^ b_31) && (a-b)_31)
 ```
 
-Proven equivalent to `decide (a.toInt < b.toInt)` (signed) or
-`decide (a < b)` (unsigned) via `bv_decide`. The key trick:
-**`bv_decide` can't handle `a.toInt`** (it abstracts `toInt` as opaque).
-Rewrite via `← BitVec.slt_eq_decide` to get `a.slt b`, which `bv_decide`
+These are equivalent to `decide (a.toInt < b.toInt)` (signed) or
+`decide (a < b)` (unsigned) through `bv_decide`. The key trick:
+**`bv_decide` cannot handle `a.toInt`** (it abstracts `toInt` as opaque).
+Rewrite through `← BitVec.slt_eq_decide` to get `a.slt b`, which `bv_decide`
 understands natively.
 
 #### Shifts (SLL/SRL/SRA): MUX tree + barrel shifter reference
 
 The shifter circuit is a 5-stage barrel shifter. The proof builds a matching
-MUX-tree BoolExpr (`buildShiftMux`) and verifies equivalence via `beqSem`:
+MUX-tree BoolExpr (`buildShiftMux`) and verifies equivalence through `beqSem`:
 
 ```lean
 buildShiftMux 5 (fun s => if i ≥ s then .var (i - s) else .lit false) 0
 ```
 
 The eval proof connects `decodeShift` (binary decoding of shift amount from
-5 control bits) to `(b &&& 0x1F).toNat` via number-theoretic lemmas:
+5 control bits) to `(b &&& 0x1F).toNat` through number-theoretic lemmas:
 
 - `nat_mod_two_mul`: `n % (2*m) = m * (n/m % 2) + n % m`
 - `decodeShift_eq_mod`: decoding k control bits = `b.toNat % 2^k`
@@ -549,9 +550,9 @@ The eval proof connects `decodeShift` (binary decoding of shift amount from
 The final step uses stdlib shift lemmas (`getLsbD_shiftLeft`,
 `getLsbD_ushiftRight`, `getLsbD_sshiftRight`).
 
-### Practical Advice for Adding New Proofs
+### Practical advice for adding new proofs
 
-**Number theory without `ring`:** The project doesn't import `ring`. For Nat
+**Number theory without `ring`:** The project does not import `ring`. For Nat
 arithmetic rewrites, use manual lemmas:
 
 ```lean
@@ -568,7 +569,7 @@ Use explicit `Nat.add_assoc`, `Nat.pow_succ`, or case-split on small ranges.
 
 **`bv_decide` limitations:**
 - Cannot unfold `List.foldl` over large gate lists
-- Cannot handle `toInt` — rewrite to native BitVec operations first
+- Cannot handle `toInt`: rewrite to native BitVec operations first
 - Works well for per-bit proofs with ~64 variables
 
 **`native_decide` limitations:**
@@ -579,31 +580,31 @@ Use explicit `Nat.add_assoc`, `Nat.pow_succ`, or case-split on small ranges.
 is critical for carry chains. For shifts, put control bits first:
 `[32, 33, 34, 35, 36] ++ List.range 32`.
 
-### Lean 4 API Notes
+### Lean 4 API notes
 
 - `List.map_congr` does not exist in Lean 4.27.0. Use `List.map_eq_map_iff` instead.
-- `Bool.xor` must be qualified (bare `xor` can be ambiguous with `BoolExpr` in scope).
-- The linter `unusedSimpArgs` is active under `-DwarningAsError=true` — remove
+- `Bool.xor` needs qualification (bare `xor` can be ambiguous with `BoolExpr` in scope).
+- The linter `unusedSimpArgs` is active under `-DwarningAsError=true`. Remove
   any simp arg the linter flags.
-- `Nat.div_div_eq_div_mul` gives `n / (m * 2)` not `n / (2 * m)` — append `Nat.mul_comm`.
-- `Nat.div_add_mod` gives `m * (n / m) + n % m = n` — multiplication is `m * q`, not `q * m`.
+- `Nat.div_div_eq_div_mul` gives `n / (m * 2)` not `n / (2 * m)`, so append `Nat.mul_comm`.
+- `Nat.div_add_mod` gives `m * (n / m) + n % m = n`, where multiplication is `m * q`, not `q * m`.
 - `BitVec.slt_eq_decide`: converts `a.slt b` to `decide (a.toInt < b.toInt)`.
 
 ---
 
 ## Sequential Equivalence Checking (SEC)
 
-While Combinational Equivalence Checking (CEC) assumes identical flop-to-flop boundaries, **Sequential Equivalence Checking (SEC)** proves equivalence across distinct state representations, hierarchical partitioning, retiming, or clock-gating refinements.
+Combinational Equivalence Checking (CEC) assumes identical flop-to-flop boundaries. Sequential Equivalence Checking (SEC) instead proves equivalence across distinct state representations, hierarchical partitioning, retiming, or clock-gating refinements.
 
-In Shoumei, SEC is mechanized constructively in Lean 4 via **trace bisimulation**:
+Shoumei mechanizes SEC in Lean 4 through trace bisimulation.
 $$\forall tr \in \text{Traces}, \quad tr \models \text{Spec}(C_1) \iff tr \models \text{Spec}(C_2)$$
 
-### Key SEC Paradigms in Shoumei
+### SEC patterns in Shoumei
 
-1. **Hierarchical Register Decomposition:** Proving that wide flat registers (`mkRegisterN N`) and hierarchical tree registers (`mkRegisterNHierarchical N`, e.g. $160 = 64 + 64 + 32$) have identical observable behavior over infinite execution traces, backed by structural port congruence and instance bit-coverage invariants.
-2. **Clock-Enable Refinement:** Proving that integrated clock-enabled registers (`mkRegisterEnN`) strictly refine external loopback MUX configurations.
-3. **Pipeline Latency Functors ($Z^{-k}$):** Proving that multi-stage register pipelines are bisimilar to ideal discrete-time delay operators with reset-flush propagation.
-4. **SVA Assertion Co-Generation:** Emitting temporal invariants (`p_reset_clears`, `p_enable_holds`, `p_enable_capture`) into synthesizable SystemVerilog AST to bridge formal theorems with dynamic simulation and hardware mutation testing.
+1. **Hierarchical register decomposition**: this covers wide flat registers (`mkRegisterN N`) and hierarchical tree registers (`mkRegisterNHierarchical N`, for example $160 = 64 + 64 + 32$). Both forms have identical observable behavior over infinite execution traces. Structural port congruence and instance bit-coverage invariants back this result.
+2. **Clock-enable refinement**: integrated clock-enabled registers (`mkRegisterEnN`) strictly refine external loopback MUX configurations.
+3. **Pipeline latency functors ($Z^{-k}$)**: multi-stage register pipelines are bisimilar to ideal discrete-time delay operators with reset-flush propagation.
+4. **SVA assertion co-generation**: this emits temporal invariants (`p_reset_clears`, `p_enable_holds`, `p_enable_capture`) into a synthesizable SystemVerilog AST. It bridges formal theorems with dynamic simulation and hardware mutation testing.
 
 For full theoretical formulation, code examples, and recipes, see [Sequential Equivalence Checking (SEC)](proof-strategies/sequential-equivalence-checking.md).
 
@@ -612,6 +613,6 @@ For full theoretical formulation, code examples, and recipes, see [Sequential Eq
 ## References
 
 - [Lean 4 `BitVec` docs](https://leanprover-community.github.io/mathlib4_docs/Init/Data/BitVec/Basic.html)
-- [`bv_decide` RFC and implementation](https://github.com/leanprover/lean4/pull/4along) — SAT-based bitblasting
+- [`bv_decide` RFC and implementation](https://github.com/leanprover/lean4/pull/4along): SAT-based bitblasting
 - [`omega` and `bv_omega` in Lean 4](https://leanprover-community.github.io/mathlib4_docs/Mathlib/Tactic/Omega.html)
 - [Mathlib `BitVec` extensions](https://leanprover-community.github.io/mathlib4_docs/Mathlib/Data/BitVec.html)

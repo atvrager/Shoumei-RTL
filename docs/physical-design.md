@@ -1,11 +1,11 @@
 # Physical Design Flow (OpenROAD)
 
-This document describes how to run the physical design flow for Shoumei RTL using OpenROAD Flow Scripts (ORFS) via Docker.
+This document describes how to run the physical design flow for Shoumei RTL using OpenROAD Flow Scripts (ORFS) through Docker.
 
 ## Prerequisites
 
-1.  **Docker**: Ensure Docker is installed and running.
-2.  **ORFS Submodule**: The `third_party/orfs` submodule must be initialized.
+1.  **Docker**: Install Docker and start it.
+2.  **ORFS Submodule**: Initialize the `third_party/orfs` submodule.
     ```bash
     git submodule update --init --recursive
     ```
@@ -16,7 +16,7 @@ This document describes how to run the physical design flow for Shoumei RTL usin
 
 ## Configuration
 
-The physical design flow is configured using two files in the `physical/` directory:
+Two files in the `physical/` directory configure the physical design flow:
 
 ### 1. `physical/config.mk`
 Defines the design parameters, source files, and target platform.
@@ -80,7 +80,7 @@ docker run --rm \
 
 ## Results
 
-After a successful run, artifacts are generated in `third_party/orfs/flow/results/asap7/RV32IDecoder/base/`.
+After a successful run, the flow generates artifacts in `third_party/orfs/flow/results/asap7/RV32IDecoder/base/`.
 
 Key files:
 *   **GDSII Layout**: `6_final.gds`
@@ -90,22 +90,22 @@ Key files:
 *   **Reports**: `third_party/orfs/flow/reports/asap7/RV32IDecoder/base/`
 
 ### A Note on ASAP7 Scaling ("The 4x Problem")
-Standard ASAP7 PDK releases often use a 4x coordinate scaling (to mimic 28nm dimensions) to avoid precision issues in older tools. **This ORFS flow uses 1x scaled (true physical dimension) views.**
+Standard ASAP7 PDK releases often use a 4x coordinate scaling (to mimic 28nm dimensions). This avoids precision issues in older tools. **This ORFS flow uses 1x scaled (true physical dimension) views.**
 *   The generated GDSII is in **true 7nm dimensions**.
-*   **Do not** scale the GDSII down by 4x; it is already correct.
-*   The database units are set to 4000 DBU/micron (0.25nm precision) to handle the fine grid.
+*   **Do not** scale the GDSII down by 4x. It is already correct.
+*   The flow sets the database units to 4000 DBU/micron (0.25nm precision) to handle the fine grid.
 
 ## Troubleshooting
 
 *   **Permissions**: If you get permission errors, ensure your user is in the `docker` group or run with `sudo` (and `sg docker` if needed).
-*   **Missing Variables**: If Yosys fails with "no such variable", ensure variables in `config.mk` are exported (e.g., `export VERILOG_FILES = ...`).
+*   **Missing Variables**: If Yosys fails with "no such variable", ensure you export the variables in `config.mk` (for example, `export VERILOG_FILES = ...`).
 *   **Floorplan Errors**: If floorplanning fails, check `CORE_UTILIZATION` or `DIE_AREA` settings in `config.mk`.
 
 ---
 
 ## ASIC Synthesis Flow (Synopsys DC / DC NXT)
 
-In addition to OpenROAD, the CPU can be synthesized with commercial ASIC tools using the parameterizable script `physical/run-dc.tcl` and the generated filelists in `physical/`.
+Shoumei also synthesizes the CPU with commercial ASIC tools. The parameterizable script `physical/run-dc.tcl` and the generated filelists in `physical/` drive that flow.
 
 ### Running Synthesis
 
@@ -118,7 +118,7 @@ export DESIGN_NAME=CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth
 dcnxt_shell -f physical/run-dc.tcl | tee syn.log
 ```
 
-Generated outputs are placed in `syn_out/`:
+The flow places generated outputs in `syn_out/`:
 *   `syn_out/reports/`: `qor.rpt`, `area.rpt`, `timing.rpt`, `power.rpt`, `clock_gate.rpt`, `violators.rpt`
 *   `syn_out/netlist/`: Gate-level netlist (`.v`), timing constraints (`.sdc`), and database (`.ddc`)
 
@@ -143,11 +143,10 @@ Synthesized with Synopsys DC NXT using GlobalFoundries 12LPP+ 7.5T RVT standard 
 
 #### Pipeline Timing Cuts (750 MHz Target)
 
-To eliminate long timing paths without regressing architectural correctness:
-1. **FPExecUnit Misc/Converter Pipeline Register**: Added 1-cycle pipeline register decoupling RS issue and long converter from CDB writeback, breaking the 174-level CDB loop.
-2. **FPMultiplierD 3-Stage Split**: Pipelined 106-bit Kogge-Stone CPA across Stage 2 and Stage 3 (norm/round/pack), eliminating the critical multiplier CPA bottleneck.
-3. **FPFMAD 4-Stage Delay Matching**: Inter-unit pipeline registers between multiplier and adder with 4-stage control delay lines, eliminating the 216-level composite path.
-4. **Balanced Priority Encoder & Reductions**: Replaced serial linear chains in `Int64ToFP` and `FPToInt64` with an 8x8 parallel tree priority encoder and balanced logarithmic OR/AND trees.
+1. **FPExecUnit Misc/Converter Pipeline Register**: Added 1-cycle pipeline register decoupling RS issue and long converter from CDB writeback. This breaks the 174-level CDB loop.
+2. **FPMultiplierD 3-Stage Split**: The design pipelines the 106-bit Kogge-Stone CPA across Stage 2 and Stage 3 (norm/round/pack). This removes the critical multiplier CPA bottleneck.
+3. **FPFMAD 4-Stage Delay Matching**: Inter-unit pipeline registers sit between the multiplier and adder, with 4-stage control delay lines. This removes the 216-level composite path.
+4. **Balanced Priority Encoder & Reductions**: `Int64ToFP` and `FPToInt64` dropped their serial linear chains. An 8x8 parallel tree priority encoder and balanced logarithmic OR/AND trees replace them.
 
 #### Subsystem Area Breakdown (750 MHz)
 
@@ -171,13 +170,13 @@ To eliminate long timing paths without regressing architectural correctness:
 
 ## Open-Source Synthesis Flow: GF180MCU & ASAP7 (Yosys)
 
-In addition to commercial DC NXT and full OpenROAD PnR flows, Shoumei provides a lightweight, native open-source synthesis flow targeting both **GlobalFoundries 180nm MCU (GF180MCU)** and **ASAP7 7nm Predictive FinFET** using host-native Yosys and ABC.
+Shoumei also provides a lightweight, native open-source synthesis flow. It targets both **GlobalFoundries 180nm MCU (GF180MCU)** and **ASAP7 7nm Predictive FinFET**, and uses host-native Yosys and ABC.
 
-No Docker containers, OpenROAD PnR engines, or commercial licenses are required to generate mapped gate-level netlists and area reports.
+You do not need Docker containers, OpenROAD PnR engines, or commercial licenses to generate mapped gate-level netlists and area reports.
 
 ### Architecture of the Flow
 
-The flow is driven by a shared, parameterizable TCL engine (`physical/run-yosys.tcl`) with dedicated platform frontends:
+A shared, parameterizable TCL engine (`physical/run-yosys.tcl`) drives the flow, with dedicated platform frontends:
 *   `physical/run-yosys-gf180.sh`: Targets GF180MCU 9-track 5.0V standard cells (`gf180mcu_fd_sc_mcu9t5v0__tt_025C_5v00.lib.gz`).
 *   `physical/run-yosys-asap7.sh`: Targets ASAP7 7.5-track RVT standard cells, automatically merging multi-category combinational libraries (`INVBUF`, `SIMPLE`, `OA`, `AO`) into an ABC-compatible library.
 
@@ -194,11 +193,11 @@ bazel test //verification:synth_stats_test
 ./physical/run-yosys-asap7.sh ALU64 1.0
 ```
 
-Generated outputs are placed in `syn_out_gf180_cpu/`, `syn_out_gf180_soc/`, `syn_out_asap7_cpu/`, or `syn_out_asap7_soc/`:
+The flow places generated outputs in `syn_out_gf180_cpu/`, `syn_out_gf180_soc/`, `syn_out_asap7_cpu/`, or `syn_out_asap7_soc/`:
 *   `netlist/`: Gate-level netlist (`.v`) and timing constraints (`.sdc`)
 *   `reports/`: `area.rpt` (`stat -liberty`) and `check_design.rpt` (design integrity checks)
 
-### Quad-Target Synthesis Results: Cached CPU vs. Shoumei SoC
+### Quad-Target Synthesis Results: Cached CPU against Shoumei SoC
 
 Synthesized with Yosys 0.66 comparing the canonical cached RV64G OoO core (`CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth`) against the complete SoC (`Shoumei_SoC_synth`):
 
@@ -215,9 +214,9 @@ Synthesized with Yosys 0.66 comparing the canonical cached RV64G OoO core (`Cach
 
 ### What the Numbers Mean
 
-1. **GF180MCU MPW Silicon Fit**: At 180nm, the complete cached RV64G OoO SoC (CPU + L1/L2 caches + TileLink crossbar + ACLINT + APLIC + UART + GPIO + BootROM + SRAM + AASD ResetSync) occupies **$8.455\,\text{mm}^2$**. On a standard Google/Efabless GF180 shuttle with a $3.0\times 3.0\text{ mm}$ ($9.0\,\text{mm}^2$) die cavity, the full SoC fits comfortably within the pad ring (~94% raw core utilization).
-2. **ASAP7 7nm High-Density Scaling**: At 7nm Predictive FinFET, standard cell area shrinks to **$0.0328\,\text{mm}^2$** (a square of only $\approx 181\,\mu\text{m} \times 181\,\mu\text{m}$), operating at 1.0 GHz.
-3. **Verified Peripheral Overhead**: The peripheral subsystem and interconnect crossbar are remarkably compact and verified: across both 180nm and 7nm nodes, adding TileLink TL-UH routing, timer counters, interrupt controllers, and UART/GPIO buffers adds **exactly 128 flip-flops** and merely **+0.2% total area overhead** over the cached CPU core.
+1. **GF180MCU MPW Silicon Fit**: At 180nm, the complete cached RV64G OoO SoC occupies **$8.455\,\text{mm}^2$**. That area covers CPU + L1/L2 caches + TileLink crossbar + ACLINT + APLIC + UART + GPIO + BootROM + SRAM + AASD ResetSync. A standard Google/Efabless GF180 shuttle provides a $3.0\times 3.0\text{ mm}$ ($9.0\,\text{mm}^2$) die cavity. The full SoC fits comfortably within the pad ring, and the core uses ~94% of the raw die area.
+2. **ASAP7 7nm High-Density Scaling**: At 7nm Predictive FinFET, standard cell area shrinks to **$0.0328\,\text{mm}^2$**. That square measures only $\approx 181\,\mu\text{m} \times 181\,\mu\text{m}$, and the design operates at 1.0 GHz.
+3. **Verified Peripheral Overhead**: The peripheral subsystem and interconnect crossbar are compact and verified. Across both 180nm and 7nm nodes, TileLink TL-UH routing, timer counters, interrupt controllers, and UART/GPIO buffers add **exactly 128 flip-flops**. The total area overhead over the cached CPU core is **+0.2%**.
 
 ---
 
@@ -226,20 +225,20 @@ Synthesized with Yosys 0.66 comparing the canonical cached RV64G OoO core (`Cach
 Open-source and academic PDKs exhibit scaling conventions that differ from legacy tool assumptions:
 
 ### 1. The ASAP7 "4x Scaling Problem"
-*   **Historical Context**: When ASU released ASAP7 in 2016, commercial physical design tools enforced a minimum database/manufacturing grid (typically 1nm) and had fixed 32-bit integer database units (DBU). True 7nm dimensions (CPP = 54nm, M2 pitch = 36nm, min wire width = 18nm, grid = 0.25nm) caused severe grid-snapping errors, false DRC violations, and router crashes in legacy tools.
-*   **Original 4x Workaround**: ASU scaled up the original PDK layouts by **4x linearly** in LEF/DEF/GDS (CPP became 216nm, cell height became $1.080\,\mu\text{m}$). Consequently, layout area reported by tools was **16x ($4^2$) larger** than physical reality. Standard cell delay and capacitance tables were adjusted so timing remained realistic.
+*   **Historical Context**: When ASU released ASAP7 in 2016, commercial physical design tools enforced a minimum database/manufacturing grid (typically 1nm). These tools also had fixed 32-bit integer database units (DBU). True 7nm dimensions (CPP = 54nm, M2 pitch = 36nm, min wire width = 18nm, grid = 0.25nm) stressed legacy tools. Those tools reported severe grid-snapping errors, false DRC violations, and router crashes.
+*   **Original 4x Workaround**: ASU scaled up the original PDK layouts by **4x linearly** in LEF/DEF/GDS. CPP became 216nm, and cell height became $1.080\,\mu\text{m}$. Consequently, layout area reported by tools was **16x ($4^2$) larger** than physical reality. ASU adjusted standard cell delay and capacitance tables so timing remained realistic.
 *   **Modern 1x Adoption**: Modern OpenROAD and the flow platform files under `third_party/orfs/flow/platforms/asap7` use true **1x views** (`asap7_tech_1x_201209.lef`, `asap7sc7p5t_28_R_1x_220121a.lef`, $4000\text{ DBU}/\mu\text{m}$). Our synthesis flow operates directly on true 1x dimensions ($0.0248\,\text{mm}^2$).
 
 ### 2. Liberty Timing and Capacitance Units
 *   **GF180MCU / Legacy Nodes**:
     *   `time_unit : 1ns;`
     *   `capacitive_load_unit(1, pf);`
-    *   Typical gate delay: 0.2–1.5 ns; pin cap: 10–50 fF (0.01–0.05 pF).
+    *   Typical gate delay: 0.2–1.5 ns. Pin cap: 10–50 fF (0.01–0.05 pF).
 *   **ASAP7 / Advanced FinFET**:
     *   `time_unit : "1ps";` (1,000× smaller)
     *   `capacitive_load_unit(1, ff);` (1,000× smaller, femtofarads)
-    *   Typical gate delay: 4–15 ps; pin cap: 0.2–1.5 fF.
-*   **Tool Implications**: Tools or scripts assuming hardcoded `ns` or `pF` units can miscalculate timing constraints by $10^3$ to $10^6$. In `physical/run-yosys.tcl`, driver cell instances and standard load equivalents (`ABC_DRIVER_CELL`, `ABC_LOAD_IN_FF`) are passed explicitly to match each platform's native units.
+    *   Typical gate delay: 4–15 ps. Pin cap: 0.2–1.5 fF.
+*   **Tool Implications**: Tools or scripts assuming hardcoded `ns` or `pF` units can miscalculate timing constraints by $10^3$ to $10^6$. In `physical/run-yosys.tcl`, the flow passes driver cell instances and standard load equivalents (`ABC_DRIVER_CELL`, `ABC_LOAD_IN_FF`) explicitly to match each platform's native units.
 
 
 ---
@@ -260,23 +259,23 @@ process-explicit SRAM hook.  Every RAM emits as:
 
 - **Port contract**: `clk/we/waddr/wdata/raddr/rdata` matches the
   GF180MCU vendor family (`gf180mcu_fd_ip_sram`) and OpenRAM 1R1W macros.
-  RAMPrimitives with exactly one write + one read port map to the macro;
-  other configurations keep the fallback.
+  RAMPrimitives with exactly one write + one read port map to the macro.
+  Other configurations keep the fallback.
 - **Generation**:
   `scripts/gen-sram-macros.sh` (OpenRAM, `--pdk gf180mcuD`/`asap7`,
   1R1W), emitting a shim with the canonical module name so the codegen
   contract is immune to OpenRAM's internal naming.  Sizes per node follow
   the heuristic in `docs/lsu-architecture.md` §13 (GF180: 8 KB ITCM /
-  16 KB DTCM; FinFET-class: 16 / 64).
+  16 KB DTCM, FinFET-class: 16 / 64).
 - **Verification of the macro branch without real IP**:
   `verification/sram-macro-stub.sv` provides behavioral stubs
   (synchronous read) so slang lint checks the `ifdef` path in CI
   (`bazel test //verification:slang_sram_lint_test`).
-- **Simulation**: the `else` reg-array fallback is the Verilator path —
-  intentionally a plain memory, never an FF array in synthesis.  If a
-  macro-accurate sim model is needed, the fallback can be replaced by a
-  DPI-backed model of the same `1w1r` contract without touching RTL.
-- **Measured impact (FF-array caches)**: GF180MCU CachedCPU 8.40 mm²
-  @ 20 ns vs 6.40 mm² core — the ~2 mm² delta is exactly what the
-  foundry SRAM macros (≈3 µm²/bit, ≈0.5 mm² for 24 KB) recover.
+- **Simulation**: the `else` reg-array fallback is the Verilator path. It is
+  intentionally a plain memory, never an FF array in synthesis. If you need a
+  macro-accurate sim model, you can replace the fallback with a DPI-backed
+  model of the same `1w1r` contract without touching RTL.
+- **Measured impact (FF-array caches)**: GF180MCU CachedCPU measures
+  8.40 mm² @ 20 ns against a 6.40 mm² core. That ~2 mm² delta is exactly what
+  the foundry SRAM macros (≈3 µm²/bit, ≈0.5 mm² for 24 KB) recover.
   ASAP7 CachedCPU synthesizes clean at 1.0 GHz (32.5 kµm²).

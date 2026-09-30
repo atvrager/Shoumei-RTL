@@ -1,12 +1,12 @@
-# Compiler Integration
+# Compiler integration
 
 How to make LLVM generate good code for the Shoumei microarchitecture, iteratively from "works today" to "fully optimized."
 
 ## Background
 
-LLVM already has a mature RISC-V backend. We don't need a new backend -- we need to tell the existing one what our pipeline looks like. LLVM uses this information for instruction scheduling, register allocation heuristics, and cost-based optimization decisions (inlining, unrolling, vectorization thresholds).
+LLVM already has a mature RISC-V backend. The work is to tell the existing backend what the pipeline looks like. LLVM uses this information for instruction scheduling, register allocation heuristics, and cost-based optimization decisions (inlining, unrolling, vectorization thresholds).
 
-There are three tiers of integration, each building on the last:
+Three tiers of integration exist, each building on the last:
 
 | Tier | What | Effort | Requires LLVM rebuild? |
 |------|------|--------|----------------------|
@@ -14,9 +14,9 @@ There are three tiers of integration, each building on the last:
 | 2 | `llvm-mca` model for profiling | Days | No (uses existing infra) |
 | 3 | Full TableGen scheduling model | Weeks | Yes (one-time RISC-V-only build) |
 
-Start with Tier 1. It's useful immediately and the work feeds forward into the later tiers.
+Start with Tier 1. It is useful immediately and the work feeds forward into the later tiers.
 
-## Tier 1: Compiler Wrapper (no LLVM rebuild)
+## Tier 1: compiler wrapper (no LLVM rebuild)
 
 ### What this does
 
@@ -26,13 +26,13 @@ Generates a `shoumei-clang` shell script that passes microarchitecture-aware fla
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| ROB depth | 16 | `RISCV/Retirement/ROB.lean:87` — `entries : Fin 16` |
-| RS entries | 4 | `RISCV/Execution/ReservationStation.lean` — `RSState 4` |
+| ROB depth | 16 | `RISCV/Retirement/ROB.lean:87`: `entries : Fin 16` |
+| RS entries | 4 | `RISCV/Execution/ReservationStation.lean`: `RSState 4` |
 | Issue width | 1 | RS single-dispatch design |
-| Physical registers | 64 | `RISCV/Renaming/PhysRegFile.lean` — `PhysRegFileState 64` |
-| Architectural registers | 32 | `RISCV/Renaming/RAT.lean` — `Fin 32` |
-| ALU latency | 1 cycle | `RISCV/Execution/IntegerExecUnit.lean` — combinational |
-| Load latency | 2 cycles | `RISCV/Execution/MemoryExecUnit.lean` — AGU + mem access |
+| Physical registers | 64 | `RISCV/Renaming/PhysRegFile.lean`: `PhysRegFileState 64` |
+| Architectural registers | 32 | `RISCV/Renaming/RAT.lean`: `Fin 32` |
+| ALU latency | 1 cycle | `RISCV/Execution/IntegerExecUnit.lean`: combinational |
+| Load latency | 2 cycles | `RISCV/Execution/MemoryExecUnit.lean`: AGU + mem access |
 
 ### The wrapper script
 
@@ -62,7 +62,7 @@ exec clang --target=riscv32 \
 
 **Why these values:**
 
-- **`-unroll-threshold=50`** (default 150): A 16-entry ROB with 4 RS entries can't keep a heavily unrolled loop in flight. Over-unrolling bloats code and wastes ROB capacity on loop overhead.
+- **`-unroll-threshold=50`** (default 150): A 16-entry ROB with 4 RS entries cannot keep a heavily unrolled loop in flight. Over-unrolling bloats code and wastes ROB capacity on loop overhead.
 - **`-unroll-count=2`** (default varies): At most 2x unroll. More than that exceeds the useful OoO window.
 - **`-inline-threshold=225`** (default 225): Default is fine. Inlining helps a narrow OoO machine by removing call/ret overhead that would eat ROB entries.
 - **`-bonus-inst-threshold=2`**: Conservative speculation. With only 4 RS entries, speculative instructions compete for limited dispatch slots.
@@ -89,7 +89,7 @@ exec clang --target=riscv32 \\
   \"$@\""
 ```
 
-This is intentionally simple. The point is that when you deepen the ROB to 32 or widen issue to 2, you re-run the generator and the thresholds update.
+This is intentionally simple. When you deepen the ROB to 32 or widen issue to 2, you re-run the generator and the thresholds update.
 
 ### Validation
 
@@ -111,11 +111,11 @@ What to look for:
 - Loads hoisted above consumers (hide 2-cycle latency)
 - Fewer register spills (64 physical regs is generous)
 
-## Tier 2: llvm-mca Performance Model
+## Tier 2: llvm-mca performance model
 
 ### What this does
 
-`llvm-mca` is LLVM's static pipeline simulator. It reads assembly, simulates scheduling on a modeled pipeline, and reports throughput/bottleneck analysis. It uses the same scheduling models as the compiler but can be driven without recompilation using a stock RISC-V generic model as a baseline.
+`llvm-mca` is LLVM's static pipeline simulator. It reads assembly, simulates scheduling on a modeled pipeline, and reports throughput/bottleneck analysis. It uses the same scheduling models as the compiler. You can drive it without recompilation using a stock RISC-V generic model as a baseline.
 
 ### Usage with stock llvm-mca
 
@@ -130,7 +130,7 @@ llvm-mca -mcpu=generic-rv32 \
   kernel.s
 ```
 
-The output shows per-instruction resource usage, pipeline stalls, and bottleneck identification. With `generic-rv32` the latency numbers won't match your hardware, but the dependency analysis and structural hazard detection are still useful.
+The output shows per-instruction resource usage, pipeline stalls, and bottleneck identification. With `generic-rv32` the latency numbers will not match your hardware, but the dependency analysis and structural hazard detection are still useful.
 
 ### Interpreting results for Shoumei
 
@@ -149,7 +149,7 @@ This gives you a "good enough" profiling tool before investing in a custom model
 
 `llvm-mca` models are the same TableGen `.td` files used by the compiler. Building a full model (Tier 3) automatically gives you accurate `llvm-mca` output. This is the main reason to eventually do Tier 3.
 
-## Tier 3: Full TableGen Scheduling Model
+## Tier 3: full TableGen scheduling model
 
 ### What this does
 
@@ -285,7 +285,7 @@ The instruction groupings come directly from `IntegerExecUnit.opTypeToALUOpcode`
 
 ### Building LLVM with the model
 
-Only the RISC-V target is needed, which keeps build scope small:
+You only need the RISC-V target, which keeps build scope small:
 
 ```bash
 git clone --depth 1 https://github.com/llvm/llvm-project.git
@@ -377,7 +377,7 @@ Wire into `GenerateAll.lean` so `bazel run //:generate_all` produces the `.td` f
 8. Write `LLVMSched.lean` generator (Tier 3)
 9. Generate `RISCVSchedShoumei.td`
 10. One-time LLVM RISC-V build
-11. Validate: `llvm-mca -mcpu=shoumei` predictions vs. RTL simulation IPC
+11. Validate: `llvm-mca -mcpu=shoumei` predictions against RTL simulation IPC
 
 ### After Phase 9 (compliance)
 
@@ -390,8 +390,8 @@ Wire into `GenerateAll.lean` so `bazel run //:generate_all` produces the `.td` f
 
 | Hardware change | What to update | Tier affected |
 |-----------------|---------------|---------------|
-| Deepen ROB (16 → 32) | `robDepth`, unroll threshold | 1, 3 |
-| Widen issue (1 → 2) | `issueWidth`, all thresholds | 1, 3 |
+| Deepen ROB (16 to 32) | `robDepth`, unroll threshold | 1, 3 |
+| Widen issue (1 to 2) | `issueWidth`, all thresholds | 1, 3 |
 | Add second ALU | `ProcResource<2>` | 3 |
 | Add M-extension | Multiply/divide WriteRes entries | 3 |
 | Add store buffer (Phase 7) | Store latency, forwarding | 1, 3 |
@@ -410,9 +410,9 @@ If the generator reads these from the Lean model, re-running `bazel run //:gener
 
 ## References
 
-- [LLVM RISC-V scheduling models](https://github.com/llvm/llvm-project/tree/main/llvm/lib/Target/RISCV) — existing `.td` files to use as templates
-- [LLVM Machine Code Analyzer](https://llvm.org/docs/CommandGuide/llvm-mca.html) — pipeline simulation tool
-- [TableGen Programmer's Reference](https://llvm.org/docs/TableGen/ProgRef.html) — `.td` file syntax
-- `RISCV/Execution/IntegerExecUnit.lean:55-73` — canonical opcode-to-unit mapping
-- `RISCV/Retirement/ROB.lean:85-95` — ROB parameters
-- `RISCV/Execution/ReservationStation.lean` — RS sizing and dispatch model
+- [LLVM RISC-V scheduling models](https://github.com/llvm/llvm-project/tree/main/llvm/lib/Target/RISCV): existing `.td` files to use as templates
+- [LLVM Machine Code Analyzer](https://llvm.org/docs/CommandGuide/llvm-mca.html): pipeline simulation tool
+- [TableGen Programmer's Reference](https://llvm.org/docs/TableGen/ProgRef.html): `.td` file syntax
+- `RISCV/Execution/IntegerExecUnit.lean:55-73`: canonical opcode-to-unit mapping
+- `RISCV/Retirement/ROB.lean:85-95`: ROB parameters
+- `RISCV/Execution/ReservationStation.lean`: RS sizing and dispatch model

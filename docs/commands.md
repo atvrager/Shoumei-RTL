@@ -1,11 +1,11 @@
-# Command Reference Guide
+# Command reference guide
 
 This guide lists commands and Bazel targets for Shoumei RTL.
 All commands run from the project root directory.
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
 # Verify prerequisites
@@ -23,9 +23,9 @@ bazel test //:presubmit
 
 ---
 
-## Key Bazel Targets
+## Key Bazel targets
 
-### Core Build Targets
+### Core build targets
 
 | Target | Description | Output |
 |--------|-------------|--------|
@@ -35,7 +35,7 @@ bazel test //:presubmit
 | `//:instr_dict` | RISC-V opcode definitions dictionary | `bazel-bin/instr_dict.json` |
 | `//viewer:pages_bundle` | Web visualization bundle and SVGs | `bazel-bin/viewer/pages_bundle.tar.gz` |
 
-### Test Suites
+### Test suites
 
 | Target | Description | Size |
 |--------|-------------|------|
@@ -54,9 +54,9 @@ bazel test //:presubmit
 
 ---
 
-## Simulator Execution
+## Simulator execution
 
-### Running Standalone Verilator Simulation
+### Running standalone Verilator simulation
 
 ```bash
 # Run a specific test ELF
@@ -66,7 +66,7 @@ bazel run //testbench:sim_shoumei -- +elf=path/to/test.elf +timeout=100000
 bazel run //testbench:sim_shoumei -- +elf=path/to/test.elf +trace
 ```
 
-### Running Spike Lock-step Cosimulation
+### Running Spike lock-step cosimulation
 
 ```bash
 # Cosimulate RTL execution against Spike golden model
@@ -75,9 +75,9 @@ bazel run //testbench:cosim_shoumei -- +elf=path/to/test.elf +timeout=100000
 
 ---
 
-## Generator Subcommands
+## Generator subcommands
 
-The native Lean generator supports targeted tasks via `bazel run`:
+The native Lean generator supports targeted tasks through `bazel run`:
 
 ```bash
 # Export the compositional certificate registry
@@ -101,7 +101,7 @@ bazel run //:generate_all -- --project-map
 
 ---
 
-## Git and Repository Maintenance
+## Git and repository maintenance
 
 ```bash
 # Install Git hooks (fast pre-commit guards)

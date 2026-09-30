@@ -1,24 +1,24 @@
-# Lean LSP Guide
+# Lean LSP guide
 
-This guide covers the Lean Language Server Protocol (LSP) tools available via the MCP (Model Context Protocol) server for interactive development and proof exploration.
+This guide covers the Lean Language Server Protocol (LSP) tools available through the MCP (Model Context Protocol) server. These tools support interactive development and proof exploration.
 
 ## Overview
 
-The Lean LSP MCP server provides programmatic access to Lean 4's language server capabilities, enabling:
+The Lean LSP MCP server provides programmatic access to Lean 4's language server capabilities. It enables:
 - Interactive proof exploration without editing files
 - Type information and documentation lookup
 - Code completion and symbol search
 - Performance profiling of proofs
 - Diagnostic checking (errors/warnings)
-- Mathlib lemma search via multiple backends
+- Mathlib lemma search through multiple backends
 
 All line and column numbers are **1-indexed**.
 
-## Core Tools
+## Core tools
 
-### 1. `lean_goal` - Proof State Inspection
+### 1. `lean_goal`: proof state inspection
 
-Get the proof goals at a specific position in a proof. **Most important tool - use often!**
+Get the proof goals at a specific position in a proof. This is the most important tool, so use it often.
 
 ```bash
 # Omit column to see goals_before (start of line) and goals_after (end of line)
@@ -39,13 +39,13 @@ goals_after: []  # Empty = proof complete!
 
 **Use cases:**
 - Check if a proof step closes all goals
-- Understand what remains to be proven
+- Understand what still needs proof
 - Debug why a tactic failed
 - See how tactics transform the goal state
 
-### 2. `lean_hover_info` - Type Signatures and Documentation
+### 2. `lean_hover_info`: type signatures and documentation
 
-Get type signature and docs for a symbol. Column must be at the **START** of the identifier.
+Get the type signature and docs for a symbol. The column must be at the start of the identifier.
 
 ```bash
 lean_hover_info file_path line column
@@ -61,30 +61,30 @@ Import: Shoumei.Circuits.Sequential.Queue
 **Use cases:**
 - Understand function signatures
 - Check type parameters
-- Find where symbols are defined
+- Find symbol definitions
 - Read inline documentation
 
-### 3. `lean_diagnostic_messages` - Compiler Errors/Warnings
+### 3. `lean_diagnostic_messages`: compiler errors and warnings
 
-Get all diagnostics (errors, warnings, infos) for a file. Optionally filter by line range or declaration.
+Get all diagnostics (errors, warnings, infos) for a file. You can filter by line range or declaration.
 
 ```bash
 lean_diagnostic_messages file_path [start_line] [end_line] [declaration_name]
 ```
 
 **Example outputs:**
-- ✅ `{"success": true, "items": []}` - No errors
-- ⚠️ `{"severity": "warning", "message": "declaration uses 'sorry'", "line": 42}`
-- ❌ `{"severity": "error", "message": "Tactic rfl failed: ...", "line": 78}`
+- Success: `{"success": true, "items": []}` - No errors
+- Warning: `{"severity": "warning", "message": "declaration uses 'sorry'", "line": 42}`
+- Error: `{"severity": "error", "message": "Tactic rfl failed: ...", "line": 78}`
 
 **Common messages:**
-- "no goals to be solved" → Remove unnecessary tactics
-- "Expected type must not contain free variables" → Can't use `native_decide` with parameters
-- "declaration uses 'sorry'" → Incomplete proof
+- "no goals to be solved": remove unnecessary tactics.
+- "Expected type must not contain free variables": you cannot use `native_decide` with parameters.
+- "declaration uses 'sorry'": the proof is incomplete.
 
-### 4. `lean_multi_attempt` - Test Tactics Without Editing
+### 4. `lean_multi_attempt`: test tactics without editing
 
-**THE MOST POWERFUL FEATURE**: Try multiple tactics at a position without modifying the file. Returns goal state and diagnostics for each.
+Try multiple tactics at a position without modifying the file. The tool returns the goal state and diagnostics for each.
 
 ```bash
 lean_multi_attempt file_path line snippets:["tactic1", "tactic2", "tactic3"]
@@ -113,11 +113,11 @@ lean_multi_attempt file_path line snippets:["tactic1", "tactic2", "tactic3"]
 - `decide` - Decidable propositions
 - `constructor` - Construct proofs
 
-**Best practice:** Try 3-5 tactics at once to quickly find what works.
+**Best practice:** Try 3-5 tactics at once to find what works quickly.
 
-### 5. `lean_file_outline` - File Structure
+### 5. `lean_file_outline`: file structure
 
-Get imports and declarations with type signatures. **Token-efficient** way to understand file contents.
+Get imports and declarations with type signatures. This is a token-efficient way to understand file contents.
 
 ```bash
 lean_file_outline file_path
@@ -133,9 +133,9 @@ lean_file_outline file_path
 - Find theorem names and locations
 - Understand file dependencies
 
-### 6. `lean_completions` - IDE Autocompletion
+### 6. `lean_completions`: IDE autocompletion
 
-Get IDE autocompletions at a position. Use on **INCOMPLETE** code (after `.` or partial name).
+Get IDE autocompletions at a position. Use it on incomplete code (after `.` or a partial name).
 
 ```bash
 lean_completions file_path line column [max_completions:32]
@@ -151,9 +151,9 @@ QueueState.  |← cursor here gets completions for QueueState members
 - Find field names in structures
 - Discover tactics and keywords
 
-### 7. `lean_run_code` - Execute Standalone Snippets
+### 7. `lean_run_code`: execute standalone snippets
 
-Run a code snippet and return diagnostics. **Must include all imports.**
+Run a code snippet and return diagnostics. The code must include all imports.
 
 ```bash
 lean_run_code code:"import statements\n\ndefinitions\n\n#eval expressions"
@@ -187,9 +187,9 @@ def typeMismatch : Nat := "string"
 - Prototype definitions
 - Debug type errors in isolation
 
-### 8. `lean_profile_proof` - Performance Analysis
+### 8. `lean_profile_proof`: performance analysis
 
-Run `lean --profile` on a theorem. Returns per-line timing and category breakdown. **SLOW - use sparingly!**
+Run `lean --profile` on a theorem. The tool returns per-line timing and a category breakdown. This command is slow, so use it sparingly.
 
 ```bash
 lean_profile_proof file_path line [top_n:5] [timeout:60]
@@ -218,13 +218,13 @@ lean_profile_proof file_path line [top_n:5] [timeout:60]
 - Debug timeouts
 - Compare tactic efficiency
 
-## Search Tools
+## Search tools
 
-All search tools have **rate limits** - use judiciously!
+All search tools have rate limits. Use them with care.
 
-### 9. `lean_local_search` - Fast Local Symbol Search
+### 9. `lean_local_search`: fast local symbol search
 
-Search for declarations in your project. **FAST - use before trying lemma names!**
+Search for declarations in your project. This tool is fast, so use it before you try lemma names.
 
 ```bash
 lean_local_search query [limit:10] [project_root]
@@ -241,12 +241,12 @@ lean_local_search "Queue"
 
 **Use cases:**
 - Verify declarations exist before using them
-- Find where symbols are defined
+- Find symbol definitions
 - Explore project structure
 
-### 10. `lean_leansearch` - Natural Language Search (3 req/30s)
+### 10. `lean_leansearch`: natural language search (3 req/30s)
 
-Search Mathlib via leansearch.net using natural language or Lean terms.
+Search Mathlib through leansearch.net using natural language or Lean terms.
 
 ```bash
 lean_leansearch query [num_results:5]
@@ -271,9 +271,9 @@ lean_leansearch query [num_results:5]
 }
 ```
 
-### 11. `lean_loogle` - Type Signature Search (3 req/30s)
+### 11. `lean_loogle`: type signature search (3 req/30s)
 
-Search Mathlib by type signature via loogle.lean-lang.org.
+Search Mathlib by type signature through loogle.lean-lang.org.
 
 ```bash
 lean_loogle query [num_results:8]
@@ -291,9 +291,9 @@ lean_loogle query [num_results:8]
 - Discover relevant theorems
 - Type-driven search
 
-### 12. `lean_leanfinder` - Semantic Search (10 req/30s)
+### 12. `lean_leanfinder`: semantic search (10 req/30s)
 
-Semantic search by mathematical meaning via Lean Finder.
+Semantic search by mathematical meaning through Lean Finder.
 
 ```bash
 lean_leanfinder query [num_results:5]
@@ -309,7 +309,7 @@ lean_leanfinder query [num_results:5]
 - Find lemmas matching proof context
 - Natural language theorem discovery
 
-### 13. `lean_state_search` - Goal-Based Search (3 req/30s)
+### 13. `lean_state_search`: goal-based search (3 req/30s)
 
 Find lemmas to close the goal at a position. Searches premise-search.com.
 
@@ -322,7 +322,7 @@ lean_state_search file_path line column [num_results:5]
 - Discover relevant lemmas automatically
 - Automated proof assistance
 
-### 14. `lean_hammer_premise` - Automation Hints (3 req/30s)
+### 14. `lean_hammer_premise`: automation hints (3 req/30s)
 
 Get premise suggestions for automation tactics at a goal position.
 
@@ -335,11 +335,11 @@ lean_hammer_premise file_path line column [num_results:32]
 - `aesop`
 - As hints to other tactics
 
-## Utility Tools
+## Utility tools
 
-### 15. `lean_declaration_file` - Find Symbol Source
+### 15. `lean_declaration_file`: find symbol source
 
-Get the file where a symbol is declared. **Symbol must be present in the file first.**
+Find the file that declares a symbol. The symbol must be present in the file first.
 
 ```bash
 lean_declaration_file file_path symbol
@@ -351,7 +351,7 @@ lean_declaration_file "AdderProofs.lean" "QueueState"
 → "lean/Shoumei/Circuits/Sequential/Queue.lean"
 ```
 
-### 16. `lean_term_goal` - Expected Type at Position
+### 16. `lean_term_goal`: expected type at position
 
 Get the expected type at a position (for incomplete terms).
 
@@ -360,13 +360,13 @@ lean_term_goal file_path line [column]
 ```
 
 **Use cases:**
-- Understand what type is expected
+- Know which type Lean expects here
 - Debug type errors
 - Fill in `_` placeholders
 
-### 17. `lean_build` - Rebuild Project (SLOW!)
+### 17. `lean_build`: rebuild project (slow)
 
-Build the Lean project and restart LSP. **Only use if needed** (e.g., new imports).
+Build the Lean project and restart LSP. Use it only when needed, for example after new imports.
 
 ```bash
 lean_build [lean_project_path] [clean:false] [output_lines:20]
@@ -382,24 +382,24 @@ lean_build [lean_project_path] [clean:false] [output_lines:20]
 - After editing proof files
 - Multiple times in succession
 
-## Search Decision Tree
+## Search decision tree
 
 When looking for lemmas, follow this priority:
 
-1. **"Does X exist locally?"** → `lean_local_search`
-2. **"I need a lemma that says X"** → `lean_leansearch`
-3. **"Find lemma with type pattern"** → `lean_loogle`
-4. **"What's the Lean name for concept X?"** → `lean_leanfinder`
-5. **"What closes this goal?"** → `lean_state_search`
-6. **"What to feed simp/aesop?"** → `lean_hammer_premise`
+1. "Does X exist locally?": use `lean_local_search`.
+2. "I need a lemma that says X": use `lean_leansearch`.
+3. "Find a lemma with a type pattern": use `lean_loogle`.
+4. "What is the Lean name for concept X?": use `lean_leanfinder`.
+5. "What closes this goal?": use `lean_state_search`.
+6. "What do I feed simp or aesop?": use `lean_hammer_premise`.
 
 After finding a name:
 1. `lean_local_search` to verify it exists
 2. `lean_hover_info` for full signature
 
-## Common Workflows
+## Common workflows
 
-### Debugging a Failed Proof
+### Debugging a failed proof
 
 ```bash
 # 1. Check the goal state
@@ -415,7 +415,7 @@ lean_leansearch "describe what you need"
 lean_diagnostic_messages file_path
 ```
 
-### Exploring a New File
+### Exploring a new file
 
 ```bash
 # 1. Get file structure
@@ -431,7 +431,7 @@ lean_local_search "keyword"
 lean_goal file_path proof_line
 ```
 
-### Optimizing a Slow Proof
+### Optimizing a slow proof
 
 ```bash
 # 1. Profile the proof
@@ -447,7 +447,7 @@ lean_multi_attempt file_path slow_line ["alternative1", "alternative2"]
 lean_profile_proof file_path theorem_line
 ```
 
-### Testing Hypotheses
+### Testing hypotheses
 
 ```bash
 # 1. Write standalone code snippet
@@ -467,40 +467,40 @@ theorem my_hypothesis : ... := by
 # 4. Once working, copy to main file
 ```
 
-## Error Handling
+## Error handling
 
-### Understanding Return Values
+### Understanding return values
 
-- **`isError: true`** → Tool failed (timeout, LSP error)
-- **`isError: false, items: []`** → Success, but no results found
-- **Empty goals `[]`** → Proof complete / no goals to solve
-- **Diagnostics with severity "error"** → Compilation/tactic failures
+- `isError: true`: the tool failed (timeout, LSP error).
+- `isError: false, items: []`: success, but no results found.
+- Empty goals `[]`: the proof is complete, with no goals to solve.
+- Diagnostics with severity "error": compilation or tactic failures.
 
-### Common Error Messages
+### Common error messages
 
 | Message | Meaning | Solution |
 |---------|---------|----------|
 | `"simp made no progress"` | Simp has nothing to simplify | Add lemma hints: `simp [lemma1]` |
-| `"Expected type must not contain free variables"` | Can't use `native_decide` with parameters | Use case analysis first or different tactic |
+| `"Expected type must not contain free variables"` | Cannot use `native_decide` with parameters | Use case analysis first or different tactic |
 | `"declaration uses 'sorry'"` | Proof is incomplete | Replace `sorry` with actual proof |
 | `"no goals to be solved"` | Extra tactic after proof done | Remove the tactic |
 | `"omega could not prove the goal"` | Goal is beyond omega's scope | Try different tactic or add lemmas |
 | `"Tactic rfl failed"` | Not definitionally equal | Use `simp`, case analysis, or manual rewriting |
 
-## Best Practices
+## Best practices
 
-1. **Use `lean_multi_attempt` generously** - It's faster than trial-and-error editing
-2. **Search locally first** - `lean_local_search` before external searches
-3. **Check goals often** - Understand proof state at each step
-4. **Profile only when needed** - It's slow and usually unnecessary
-5. **Respect rate limits** - External searches are limited (3-10 req/30s)
-6. **Hover for context** - Type signatures clarify usage
-7. **Test in isolation** - `lean_run_code` for experiments
-8. **Don't over-build** - LSP handles incremental builds automatically
+1. **Use `lean_multi_attempt` generously**: it is faster than trial-and-error editing.
+2. **Search locally first**: run `lean_local_search` before external searches.
+3. **Check goals often**: understand the proof state at each step.
+4. **Profile only when needed**: it is slow and usually unnecessary.
+5. **Respect rate limits**: external searches have a limit (3-10 req/30s).
+6. **Hover for context**: type signatures clarify usage.
+7. **Test in isolation**: use `lean_run_code` for experiments.
+8. **Do not over-build**: LSP handles incremental builds automatically.
 
-## Tips for Hardware Verification (Shoumei)
+## Tips for hardware verification (Shoumei)
 
-### Structural Properties
+### Structural properties
 
 Use `native_decide` for concrete circuits:
 ```lean
@@ -508,7 +508,7 @@ theorem circuit_gate_count : myCircuit.gates.length = 42 := by native_decide
 theorem circuit_ports : myCircuit.inputs.length = 8 := by native_decide
 ```
 
-### Behavioral Properties
+### Behavioral properties
 
 Use `simp` for generic proofs:
 ```lean
@@ -524,11 +524,11 @@ theorem queue_fifo (a b : Bool) :
   cases a <;> cases b <;> native_decide
 ```
 
-### Checking Tool Results
+### Checking tool results
 
 After using `multi_attempt`, the tactic that closes all goals (`"goals": []`) is the one to use.
 
-### Circuit Exploration
+### Circuit exploration
 
 ```bash
 # 1. Find circuit definition
@@ -544,18 +544,18 @@ lean_hover_info path line column  # on circuit name
 lean_goal path proof_line  # see what's being proven
 ```
 
-## Comparison with Other Tools
+## Comparison with other tools
 
 | Task | Lean LSP MCP | Direct Lean 4 | VSCode Extension |
 |------|--------------|---------------|------------------|
-| Goal inspection | ✅ Programmatic | 👁️ Visual only | 👁️ Visual only |
-| Try tactics | ✅ `multi_attempt` | ❌ Must edit | ❌ Must edit |
-| Run snippets | ✅ `run_code` | ✅ REPL | ⚠️ Must create file |
-| Search Mathlib | ✅ All 4 backends | ❌ Manual web | ⚠️ Limited |
-| Batch operations | ✅ Scriptable | ❌ Interactive | ❌ Interactive |
-| Profile proofs | ✅ Built-in | ✅ CLI flag | ❌ No |
+| Goal inspection | Yes, programmatic | Visual only | Visual only |
+| Try tactics | Yes, `multi_attempt` | No, must edit | No, must edit |
+| Run snippets | Yes, `run_code` | Yes, REPL | Partial, must create file |
+| Search Mathlib | Yes, all 4 backends | No, manual web | Partial, limited |
+| Batch operations | Yes, scriptable | No, interactive | No, interactive |
+| Profile proofs | Yes, built-in | Yes, CLI flag | No |
 
-## Further Reading
+## Further reading
 
 - [Lean 4 Manual](https://lean-lang.org/lean4/doc/)
 - [Lean 4 Theorem Proving](https://lean-lang.org/theorem_proving_in_lean4/)

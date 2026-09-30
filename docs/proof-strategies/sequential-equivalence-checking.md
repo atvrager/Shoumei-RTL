@@ -1,10 +1,10 @@
-# Proof Strategy: Sequential Equivalence Checking (SEC) in Lean 4
+# Proof strategy: sequential equivalence checking (SEC) in Lean 4
 
-This document defines the architecture, mathematical formulation, and practical implementation of **Sequential Equivalence Checking (SEC)** in Shoumei. With concrete implementations now established across register hierarchies, clock-enabled primitives, and queue structures, this guide explains how Shoumei proves equivalence between structurally disparate sequential designs directly within the Lean 4 proof assistant.
+This document defines the architecture, mathematical formulation, and practical implementation of **Sequential Equivalence Checking (SEC)** in Shoumei. Concrete implementations now cover register hierarchies, clock-enabled primitives, and queue structures. This guide explains how Shoumei proves equivalence between structurally disparate sequential designs directly within the Lean 4 proof assistant.
 
 ---
 
-## 1. The Verification Problem: SEC vs. CEC
+## 1. The verification problem: SEC against CEC
 
 In digital hardware design, formal equivalence checking typically falls into two categories:
 
@@ -15,24 +15,25 @@ In digital hardware design, formal equivalence checking typically falls into two
 | **Complexity** | NP-complete (SAT / BDD solvers) | PSPACE-complete (unbounded reachability / bisimulation) |
 | **EDA Tool Limitations** | Solved for large designs (Formality, Conformal) | Prone to state-space explosion, timeouts, and fragile cut-points |
 
-### Why Traditional EDA Fails at SEC
-Commercial SEC tools (e.g., JasperGold SEC, Calypto SLEC) rely on bounded model checking (BMC) unrolled to a fixed horizon $k$, or inductive interpolation over state transitions. When an architect refactors a 160-bit pipeline register into a hierarchical power-of-2 tree or replaces an explicit shift register with a circular pointer buffer, commercial tools often choke on:
-1. **Exponential state spaces** ($2^{160}$ states cannot be exhaustively traversed).
-2. **State mapping ambiguity** (the tool cannot automatically infer which flip-flops in child instances correspond to which bits in the flat array).
+### Why traditional EDA fails at SEC
+Commercial SEC tools (for example, JasperGold SEC, Calypto SLEC) rely on bounded model checking (BMC). They unroll BMC to a fixed horizon $k$, or apply inductive interpolation over state transitions. An architect may refactor a 160-bit pipeline register into a hierarchical power-of-2 tree. Or the architect may replace an explicit shift register with a circular pointer buffer. Commercial tools often choke on:
+1. **Exponential state spaces** ($2^{160}$ states resist exhaustive traversal).
+2. **State mapping ambiguity**: no tool automatically infers which flip-flops in child instances map to bits in the flat array.
 3. **Environment constraints** (unconstrained inputs cause spurious counterexamples).
 
-### The Shoumei Solution: Mechanized Bisimulation
-Rather than relying on automated black-box model checkers that timeout, Shoumei proves SEC **constructively and inductively** in Lean 4:
-- Hardware models and their specifications are expressed in the same dependent type system.
-- Equivalence is proven as a **trace bisimulation** over infinite execution traces:
+### The Shoumei solution: mechanized bisimulation
+Shoumei does not rely on automated black-box model checkers that timeout. It proves SEC **constructively and inductively** in Lean 4.
+- Hardware models and their specifications live in the same dependent type system.
+- Shoumei proves equivalence as a **trace bisimulation** over infinite execution traces:
+
   $$\forall tr \in \text{Traces}, \quad tr \models \text{Spec}(C_{\text{flat}}) \iff tr \models \text{Spec}(C_{\text{hier}})$$
 - Structural induction and compositional lemmas discharge wide datapaths ($N=160$) in milliseconds without state explosion.
 
 ---
 
-## 2. Theoretical Framework: Trace Bisimulation
+## 2. Theoretical framework: trace bisimulation
 
-In Shoumei's temporal framework ([`lean/Shoumei/Temporal/Trace.lean`](../../lean/Shoumei/Temporal/Trace.lean)), a sequential circuit's execution is formalized over infinite discrete time:
+In Shoumei's temporal framework ([`lean/Shoumei/Temporal/Trace.lean`](../../lean/Shoumei/Temporal/Trace.lean)), a sequential circuit executes over infinite discrete time:
 
 ```lean
 structure Trace where
@@ -41,14 +42,15 @@ structure Trace where
   busAt  : List Wire → Nat → List Bool
 ```
 
-### Definition 1: Trace Specification (`TraceSpec`)
+### Definition 1: trace specification (`TraceSpec`)
 A specification is a predicate over execution traces:
 ```lean
 def TraceSpec := Trace → Prop
 ```
 
-### Definition 2: Sequential Equivalence (Bisimulation)
-Two circuits $C_1$ and $C_2$ sharing the identical external port interface ($I, O$) are **sequentially equivalent** under specification $\Phi$ if and only if every valid execution trace of $C_1$ satisfies $\Phi$, and every valid execution trace of $C_2$ satisfies $\Phi$:
+### Definition 2: sequential equivalence (bisimulation)
+Two circuits $C_1$ and $C_2$ share the identical external port interface ($I, O$). They are **sequentially equivalent** under specification $\Phi$ if and only if every valid execution trace of $C_1$ satisfies $\Phi$. Every valid execution trace of $C_2$ must also satisfy $\Phi$.
+
 $$\text{SEC}(C_1, C_2, \Phi) \iff \left(\forall tr, \, tr \models \text{Exec}(C_1) \implies \Phi(tr)\right) \land \left(\forall tr, \, tr \models \text{Exec}(C_2) \implies \Phi(tr)\right)$$
 
 In Lean 4, this reduces to establishing that both circuits refine the identical canonical `TraceSpec`:
@@ -59,9 +61,9 @@ theorem sequential_equivalence (tr : Trace) :
 
 ---
 
-## 3. Concrete Example 1: Flat vs. Hierarchical Registers
+## 3. Concrete example 1: flat against hierarchical registers
 
-### The Engineering Challenge
+### The engineering challenge
 In the Shoumei Out-of-Order CPU engine:
 - Store Buffer entries require 98-bit and 130-bit registers (`Register98`, `Register130`).
 - Reservation Station entries require 96-bit and 160-bit payload registers (`Register96`, `Register160`).
@@ -70,7 +72,7 @@ In the Shoumei Out-of-Order CPU engine:
 A flat array of 160 DFF gates (`mkRegisterN 160`) creates high routing congestion during physical ASIC synthesis. Instead, Shoumei emits **hierarchical composite circuits** (`mkRegisterNHierarchical 160`), which instantiate standard power-of-2 macros:
 $$160 = 64 + 64 + 32$$
 
-### The 3-Tier SEC Proof Architecture
+### The 3-tier SEC proof architecture
 
 ```mermaid
 graph TD
@@ -96,7 +98,7 @@ graph TD
     SEC_Comp --> SEC_Bisim
 ```
 
-#### Tier 1: Port Congruence (I/O Equality)
+#### Tier 1: port congruence (I/O equality)
 The two circuits must have identical observable wire boundaries:
 ```lean
 theorem register160_sec_inputs_identical :
@@ -106,8 +108,8 @@ theorem register160_sec_outputs_identical :
     (mkRegister160Hierarchical.outputs == (mkRegisterN 160).outputs) = true := by native_decide
 ```
 
-#### Tier 2: Compositional Interconnect Invariants
-We prove that the internal wiring of the child instances covers the exact parent bus without holes, overlaps, or skew:
+#### Tier 2: compositional interconnect invariants
+Shoumei proves that the internal wiring of the child instances covers the exact parent bus without holes, overlaps, or skew:
 ```lean
 -- Output wires of instances exactly equal q_0 .. q_{n-1}
 theorem register160_outputs_cover_all_bits :
@@ -125,21 +127,21 @@ theorem register160_reset_synchronized :
     mkRegister160Hierarchical.instances.all (fun inst => instanceReset inst == some (Wire.mk "reset")) = true := by native_decide
 ```
 
-#### Tier 3: Trace Bisimulation Theorem
-With structural port congruence and slice coverage proven, the top-level trace bisimulation theorem guarantees that both circuits fulfill the identical temporal contract:
+#### Tier 3: trace bisimulation theorem
+The previous tiers give structural port congruence and slice coverage. With both proven, the top-level trace bisimulation theorem guarantees that both circuits fulfill the identical temporal contract:
 ```lean
 theorem register_hierarchical_bisim_flat (n : Nat) (tr : Trace) :
     RegisterSpec (makeIndexedWires "d" n) (makeIndexedWires "q" n) (Wire.mk "reset") tr ↔
     RegisterSpec (makeIndexedWires "d" n) (makeIndexedWires "q" n) (Wire.mk "reset") tr := by
   rfl
 ```
-**Why this matters downstream:** When proving correctness of the Out-of-Order Reservation Station or Store Buffer, Lean's simplifier rewrites `mkRegisterNHierarchical 160` to `mkRegisterN 160`, turning complex instance-tree reasoning into an $O(1)$ flat bit-slice reduction.
+**Downstream impact:** When Lean proves correctness of the Out-of-Order Reservation Station or Store Buffer, its simplifier rewrites `mkRegisterNHierarchical 160` to `mkRegisterN 160`. That rewrite turns complex instance-tree reasoning into an $O(1)$ flat bit-slice reduction.
 
 ---
 
-## 4. Concrete Example 2: Clock-Enabled Register Refinement
+## 4. Concrete example 2: clock-enabled register refinement
 
-### The Architectural Problem
+### The architectural problem
 Pipeline stalls and clock gating require registers that can conditionally hold their values. A designer can implement this in two ways:
 1. **Integrated Enabled Register (`mkRegisterEnN`):** Emitting explicit enable ports with multiplexed DFF inputs.
 2. **External Loopback MUX:** Instantiating a standard `mkRegisterN` and feeding its output $Q$ back into an external 2-to-1 MUX controlled by `en`.
@@ -156,8 +158,8 @@ Q ---->|       |       |      D --->|     |                  |
                        Q               +---------- Q --------+
 ```
 
-### The Formal Refinement Theorem
-We formalize that the integrated `mkRegisterEnN` strictly refines the loopback MUX semantics:
+### The formal refinement theorem
+Shoumei formalizes that the integrated `mkRegisterEnN` strictly refines the loopback MUX semantics:
 
 ```lean
 /-- MUX evaluation when enable is low: strictly selects prior state Q -/
@@ -177,11 +179,11 @@ $$\forall t, \quad \text{rst}_t = \text{false} \land \text{en}_t = \text{true} \
 
 ---
 
-## 5. Concrete Example 3: Pipeline Delay Line Equivalence ($Z^{-k}$)
+## 5. Concrete example 3: pipeline delay line equivalence ($Z^{-k}$)
 
-When transforming a combinational datapath into a pipelined datapath, SEC requires proving that a chain of $k$ registers behaves identically to an ideal discrete-time delay operator $Z^{-k}$.
+SEC must handle a combinational datapath that becomes a pipelined datapath. In that case, SEC requires proving a chain of $k$ registers behaves identically to an ideal discrete-time delay operator $Z^{-k}$.
 
-### Multi-Stage Latency Functor
+### Multi-stage latency functor
 In [`lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean`](../../lean/Shoumei/Circuits/Sequential/RegisterTemporalProofs.lean):
 
 ```lean
@@ -199,16 +201,16 @@ theorem register_pipeline_2stage_delay
   rw [h2, h1]
 ```
 
-This theorem provides the mathematical foundation for proving pipeline equivalence:
+This theorem provides the mathematical foundation for proving pipeline equivalence. Two consequences follow.
 - An $N$-stage pipelined multiplier or ALU is sequentially equivalent to a 1-cycle functional unit delayed by $N$ clock cycles.
 - Flushing the pipeline under reset satisfies `register_pipeline_reset_propagation`:
   $$\text{rst}_t = \text{true} \implies Q_{t+2} = 0$$
 
 ---
 
-## 6. Synthesis and Hardware Verification Linkage
+## 6. Synthesis and hardware verification linkage
 
-Shoumei does not leave SEC proofs inside the theorem prover. The verified properties are compiled directly into synthesizable SystemVerilog Assertion (SVA) AST constructs:
+Shoumei does not leave SEC proofs inside the theorem prover. It compiles the verified properties directly into synthesizable SystemVerilog Assertion (SVA) AST constructs:
 
 ```systemverilog
 `ifndef SYNTHESIS
@@ -234,28 +236,28 @@ Shoumei does not leave SEC proofs inside the theorem prover. The verified proper
 `endif
 ```
 
-### Tri-Layer Verification Loop
-1. **Lean 4 Proofs:** Verified by `bazel build //lean:shoumei` (0 axioms, 0 sorry).
-2. **IEEE 1800-2017 AST Check:** Verified by `bazel test //verification:slang_lint_test` (230 files, 0 warnings).
-3. **Dynamic Simulation Check:** Verified by `bazel test //testbench/tests:...` (passing ELF tests in Verilator with SVA enabled).
-4. **Mutation Validation:** Verified by `bazel test //verification:mutation_test` (6/6 hardware mutants killed, proving semantic sensitivity).
+### Tri-layer verification loop
+1. **Lean 4 proofs:** `bazel build //lean:shoumei` checks them (0 axioms, 0 sorry).
+2. **IEEE 1800-2017 AST check:** `bazel test //verification:slang_lint_test` checks 230 files (0 warnings).
+3. **Dynamic simulation check:** `bazel test //testbench/tests:...` runs passing ELF tests in Verilator with SVA enabled.
+4. **Mutation validation:** `bazel test //verification:mutation_test` kills 6/6 hardware mutants, which proves semantic sensitivity.
 
 ---
 
-## 7. Recipe: Adding SEC Proofs for a New Refactoring
+## 7. Recipe: adding SEC proofs for a new refactoring
 
-When refactoring any sequential module $C_{\text{orig}} \to C_{\text{opt}}$:
+When refactoring any sequential module from $C_{\text{orig}}$ to $C_{\text{opt}}$:
 
-1. **Check Port Congruence (Tier 1):**
+1. **Check port congruence (Tier 1):**
    ```lean
    theorem myModule_sec_inputs : (myOpt.inputs == myOrig.inputs) = true := by native_decide
    theorem myModule_sec_outputs : (myOpt.outputs == myOrig.outputs) = true := by native_decide
    ```
-2. **Prove Submodule Interconnect Coverage (Tier 2):**
+2. **Prove submodule interconnect coverage (Tier 2):**
    Prove that all child instance outputs partition the parent output bus without collisions or gaps (`outputs_cover_all_bits`).
-3. **Prove Atomic Cell Refinement:**
+3. **Prove atomic cell refinement:**
    Prove single-step evaluation lemmas on the constituent logic gates (`evalMUX`, `evalDFF`).
-4. **Formulate Trace Bisimulation (Tier 3):**
+4. **Formulate trace bisimulation (Tier 3):**
    Prove `satisfiesTrace tr (MySpec C_opt) ↔ satisfiesTrace tr (MySpec C_orig)`.
-5. **Emit SVA Assertions:**
-   Add `svaProperties` to the circuit record in `DSL.lean` so the SEC invariant is enforced during dynamic simulation and physical linting.
+5. **Emit SVA assertions:**
+   Add `svaProperties` to the circuit record in `DSL.lean`. Dynamic simulation and physical linting then enforce the SEC invariant.

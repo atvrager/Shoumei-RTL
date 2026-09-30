@@ -1,4 +1,4 @@
-# Test Generation from Lean CPU Definition
+# Test generation from Lean CPU definition
 
 Design document for generating RV32IM test binaries directly from the Lean microarchitectural models, using Spike as the ISA-level oracle.
 
@@ -6,11 +6,11 @@ Design document for generating RV32IM test binaries directly from the Lean micro
 
 Standard CPU verification approaches have a gap:
 
-- **Random instruction generation** (riscv-dv) has no awareness of the microarchitecture. It may take millions of programs to reach corner cases like "ROB full + branch misprediction + store buffer forwarding in the same cycle."
-- **Directed tests** are manually written, tedious, and incomplete.
-- **Formal verification** (bounded model checking on RTL) is powerful but doesn't produce reusable regression binaries.
+- **Random instruction generation** (riscv-dv) has no awareness of the microarchitecture. Corner cases like "ROB full + branch misprediction + store buffer forwarding in the same cycle" are hard to reach. They may need millions of programs.
+- **Directed tests** require manual writing, which is tedious and incomplete.
+- **Formal verification** (bounded model checking on RTL) is capable but does not produce reusable regression binaries.
 
-Shoumei has a unique advantage: the ISA semantics, the decoder, and the full microarchitectural behavioral models (reservation stations, ROB, rename stage, store buffer, dispatch routing) all live in the same Lean codebase. The models are executable and proven correct. Using them to guide test generation means tests can target specific pipeline states that are hard to reach randomly, and coverage is measured against the actual microarchitectural model.
+Shoumei has a unique advantage. The ISA semantics, the decoder, and the full microarchitectural behavioral models all live in the same Lean codebase. These models cover reservation stations, ROB, rename stage, store buffer, and dispatch routing. The models are executable and proven correct. They can guide test generation toward specific pipeline states that random tests rarely reach. The flow then measures coverage against the actual microarchitectural model.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ Shoumei has a unique advantage: the ISA semantics, the decoder, and the full mic
                            PASS / FAIL
 ```
 
-**Lean** generates the programs and emits valid ELF binaries. Two implementations execute the same binary: **RTL** (Verilator, from Lean SV codegen) and **Spike** (libriscv, the ISA oracle). Both are linked into the same testbench process. On each RVVI retirement event, the testbench steps Spike and compares against the RTL. Mismatches are detected at the exact cycle they occur. See [Lock-Step Cosimulation via RVVI](cosimulation.md) for the full integration architecture.
+**Lean** generates the programs and emits valid ELF binaries. Two implementations execute the same binary: **RTL** (Verilator, from Lean SV codegen) and **Spike** (libriscv, the ISA oracle). The testbench links both into the same process. On each RVVI retirement event, the testbench steps Spike and compares against the RTL. The testbench reports mismatches at the exact cycle they occur. See [Lock-Step Cosimulation through RVVI](cosimulation.md) for the full integration architecture.
 
 ### Role of each component
 
@@ -57,21 +57,21 @@ Spike is the canonical RISC-V ISA reference simulator. Using it as the oracle me
 - Spike is already validated against the riscv-arch-test compliance suite
 - Standard tooling (riscv-dv, riscof) already speaks Spike
 
-The Lean `executeInstruction` model remains useful for fast pre-filtering during generation and for cross-checking that the Lean proofs are grounded in reality (see [Lean semantics cross-check](#lean-semantics-cross-check)).
+The Lean `executeInstruction` model still helps with fast pre-filtering during generation. It also cross-checks that the Lean proofs match reality (see [Lean semantics cross-check](#lean-semantics-cross-check)).
 
 ### Why RVVI?
 
 The RVVI (RISC-V Verification Interface) is the standard trace port for RISC-V processor verification. By adopting RVVI-TRACE as the retirement interface:
 
-- Spike is stepped lock-step on each RVVI retirement event -- no offline trace files
-- Mismatches are caught at the exact cycle, with full Spike and RTL state available for debugging
+- Spike steps lock-step on each RVVI retirement event, with no offline trace files
+- The testbench catches mismatches at the exact cycle, with full Spike and RTL state available for debugging
 - The `intr` signal provides a clean path for future async interrupt cosimulation
 - The interface is compatible with ImperasDV and the broader RVVI ecosystem if needed later
 - Standard signal names (`pc_rdata`, `x_wb`, `x_wdata`, `mem_wmask`) replace ad-hoc conventions
 
-## ELF Generation
+## ELF generation
 
-All test binaries are emitted as ELF32. No flat binaries -- ELF provides metadata, symbols, section info, and compatibility with standard tooling (`objdump`, `gdb`, `readelf`).
+The generator emits all test binaries as ELF32. No flat binaries. ELF provides metadata, symbols, section info, and compatibility with standard tooling (`objdump`, `gdb`, `readelf`).
 
 ### ELF structure
 
@@ -105,7 +105,7 @@ Section Headers + Symbol Table
   tohost, fromhost, _start, test_body, test_end
 ```
 
-### Termination via HTIF
+### Termination through HTIF
 
 Spike uses the Host-Target Interface for program termination. The program writes to the `tohost` symbol to signal completion. Convention from riscv-tests:
 
@@ -162,7 +162,7 @@ def ELF32.serialize (elf : ELF32) : ByteArray   -- emit valid ELF32 bytes
 | Coverage model | `lean/Shoumei/TestGen/Coverage.lean` |
 | Generated ELFs | `tests/generated/*.elf` |
 
-## Instruction Encoder
+## Instruction encoder
 
 Inverse of `Decoder.lean`. Built from the existing `InstructionDef` with `matchBits`/`maskBits` and `variableFields`.
 
@@ -195,11 +195,11 @@ theorem decode_encode_roundtrip (instr : DecodedInstruction) :
     decode (encode instr) = some instr
 ```
 
-This is verified with `native_decide` for concrete instruction types. If the encoder is wrong, every generated test is suspect. The proof eliminates that risk.
+The build verifies this with `native_decide` for concrete instruction types. If the encoder is wrong, every generated test is suspect. The proof eliminates that risk.
 
-## Test Pattern Library
+## Test pattern library
 
-Test patterns are defined as a Lean inductive type. Each pattern has a `generate` function that emits instruction words and a `coverage` function that predicts which microarchitectural coverage points the pattern exercises.
+The library defines test patterns as a Lean inductive type. Each pattern has a `generate` function that emits instruction words. A `coverage` function predicts which microarchitectural coverage points the pattern exercises.
 
 ```lean
 inductive TestPattern where
@@ -219,11 +219,11 @@ def TestPattern.generate : TestPattern → List UInt32
 def TestPattern.expectedCoverage : TestPattern → List CoveragePoint
 ```
 
-See [Hazard Pattern Catalog](hazard-patterns.md) for detailed descriptions of each pattern.
+See [Hazard pattern catalog](hazard-patterns.md) for detailed descriptions of each pattern.
 
-## Coverage Model
+## Coverage model
 
-Coverage is measured against the Lean microarchitectural model, not just instruction-level metrics.
+The flow measures coverage against the Lean microarchitectural model, not just instruction-level metrics.
 
 ```lean
 inductive CoveragePoint where
@@ -268,9 +268,9 @@ def coverageLoop (maxIters : Nat) : IO (List TestProgram) := do
   return tests
 ```
 
-Coverage is measured against the Lean microarchitectural model. Correctness is checked by Spike. These are separate concerns.
+The flow measures coverage against the Lean microarchitectural model. Spike checks correctness. These are separate concerns.
 
-## Lean Semantics Cross-Check
+## Lean semantics cross-check
 
 As a secondary benefit, the same ELFs can validate the Lean `executeInstruction` model against Spike:
 
@@ -285,9 +285,9 @@ def crosscheck (elf : ELF32) (spikeTrace : List TraceEntry) : IO Unit := do
   IO.println "Lean semantics matches Spike"
 ```
 
-This is not part of the RTL verification flow. It validates that the Lean proofs are grounded in reality. Any divergence means the Lean semantics model has a bug, which matters for the formal proofs even though Spike is the runtime oracle.
+This is not part of the RTL verification flow. It validates that the Lean proofs match reality. Any divergence means the Lean semantics model has a bug. That matters for the formal proofs even though Spike is the runtime oracle.
 
-## Implementation Phases
+## Implementation phases
 
 | Phase | Deliverable | Dependencies |
 |-------|-------------|--------------|
@@ -299,4 +299,4 @@ This is not part of the RTL verification flow. It validates that the Lean proofs
 | F: Coverage model | `Coverage.lean` + microarch simulator | Existing behavioral models |
 | G: Coverage-guided fuzzer | Generation loop with coverage feedback | Phases C + F |
 
-Phases A-C can proceed before the CPU is integrated (Phase 8). The generated ELFs are validated by standalone Spike runs and stockpiled for when lock-step cosimulation becomes available in phase E.
+Phases A-C can proceed before CPU integration in Phase 8. Standalone Spike runs validate the generated ELFs. The flow stockpiles them for when lock-step cosimulation becomes available in phase E.

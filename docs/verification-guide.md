@@ -1,14 +1,14 @@
-# Verification Guide
+# Verification guide
 
 How Shoumei RTL convinces itself the design is correct: Lean proofs, the compositional
 certificate registry, and the elaboration and simulation checks that run on the emitted
 SystemVerilog.
 
-## Verification Architecture
+## Verification architecture
 
 Design correctness comes from the Lean proofs. The emitted SystemVerilog is one
-translation of the proven `Circuit`, so there is no second RTL design to compare
-against; what is checked is that the translation elaborates and runs.
+translation of the proven `Circuit`, so no second RTL design exists to compare
+against. The checks only confirm that the translation elaborates and runs.
 
 | Layer | What it establishes | Mechanism |
 | :--- | :--- | :--- |
@@ -62,24 +62,24 @@ work at that level. Slang and Yosys do not reason about intent: they parse the e
 text, build a netlist of cells and wires, and report on *that* structure.
 
 - **Prefer structural checks to semantic ones.** "Same instance tree, same cell types,
-  same connectivity" is O(size) and exact; a simulation that only sometimes catches a
+  same connectivity" is O(size) and exact. A simulation that only sometimes catches a
   mismatch is weaker evidence than a structural check that always does.
 - **Compare hierarchies as trees, not as flattened blobs.** Flattening converts a
-  linear structure into a quadratic one; keep module boundaries, because they *are*
+  linear structure into a quadratic one. Keep module boundaries, because they *are*
   the composition boundaries.
 - **Treat routine escalation as a structural smell.** If an elaboration or a simulation
-  needs special handling for one module, its structure has drifted; fix the structure,
+  needs special handling for one module, its structure has drifted. Fix the structure,
   not the tool invocation.
 
 ## The proof ladder
 
-**Every proof must be small and finish fast; bigger results come from composing
-them.** A single long-running proof is a liability: it hides regressions behind a
-timeout, cannot be parallelised, and sits on the critical path of every commit. Treat
+**Every proof must be small and finish fast. Bigger results come from composing
+them.** A single long-running proof is a liability. It hides regressions behind a
+timeout, cannot run in parallel, and sits on the critical path of every commit. Treat
 sub-modules as already-proven theorems and prove only the few new facts each level
 adds.
 
-| Level | What is proven | Cost | Mechanism |
+| Level | What it proves | Cost | Mechanism |
 | :--- | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
 | Composition | parent correct given children | seconds | Lean `CompositionalCert` |
@@ -88,16 +88,16 @@ adds.
 
 Rules that keep the ladder intact:
 
-1. **Prove against the spec, not against another implementation.** A proof that
-   inspects emitted RTL is a translation check masquerading as a theorem; it will be
+1. **Prove against the spec.** Do not prove against another implementation. A proof
+   that inspects emitted RTL is a translation check, not a theorem. It will be
    re-run forever and never composes.
-2. **Compose, do not re-flatten.** A composite module is discharged by a **Lean
-   composition proof**: the parent's spec follows from the children's theorems plus
-   glue reasoning (`CompositionalCert`; see
+2. **Compose, do not re-flatten.** A **Lean composition proof** discharges a composite
+   module: the parent's spec follows from the children's theorems plus
+   glue reasoning (`CompositionalCert`, see
    [Compositional Verification](#compositional-verification)). This is the
    axiom/theorem ladder, and the leaf theorems are the axioms.
 3. **Keep the registry honest.** A `CompositionalCert` is only meaningful for a
-   circuit that is actually emitted; `bazel run //:generate_all -- --export-certs` derives the
+   circuit that the generator actually emits. `bazel run //:generate_all -- --export-certs` derives the
    dependencies from the circuit's instances and rejects a certificate that names a
    module the generator does not emit.
 4. **Tier the work.** Commit and PR gates run the proofs, the registry check and a
@@ -109,11 +109,11 @@ Rules that keep the ladder intact:
 ### Shredding further: what atoms are still missing
 
 The ladder is only as granular as its atoms. Today a module contributes a behavioural
-model, a structural `Circuit`, and a handful of `native_decide` structural facts --
-and the *join* between behaviour and structure is asserted in prose.
+model, a structural `Circuit`, and a handful of `native_decide` structural facts, and
+the *join* between behaviour and structure rests only on prose.
 `CompositionalCert.proofReference` is a `String`, and the registry export checks only
-that the named module is emitted, so a certificate can name a proof that does not exist
-or no longer holds.
+that the generator emits the named module. A certificate can therefore name a proof
+that does not exist or no longer holds.
 
 The verification ladder builds from verified leaf atoms to composed pipelines:
 
@@ -123,20 +123,17 @@ The verification ladder builds from verified leaf atoms to composed pipelines:
    (`Verification/Refinements.lean`) records `RefinementAtom` entries (pilot atoms cover
    `FullAdder`, `LogicUnit4`, `Mux4x1`, `Mux4x32`, `Mux8x32`, `RippleCarryAdder4`,
    `Comparator4`, `Popcount8`, `ALU32`, `DFlipFlop`, `Register160`, and `Queue1_1`).
-2. **Generic composition lemmas.** Proven via `implements_compose` and
-   `implementsComb_compose` in `Verification/Implements.lean`: given refinements for every
-   child, a parent built from `CircuitInstance`s inherits its refinement without
-   re-flattening or re-verifying from scratch (demonstrated on `Mux8x32` and `Register160`).
+2. **Generic composition lemmas.** `implements_compose` and
+   `implementsComb_compose` in `Verification/Implements.lean` prove these. Given
+   refinements for every child, a parent built from `CircuitInstance`s inherits its
+   refinement. It needs no re-flattening or re-verification from scratch (demonstrated
+   on `Mux8x32` and `Register160`).
 3. **Per-building-block semantic lemmas.** `mkRippleCarryAdder n`, `mkMuxTree k w`,
    `mkRegisterN n`, `mkComparatorN n` carry semantic evaluation lemmas
-   (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, etc.), allowing composition
+   (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, and more), allowing composition
    chains instead of per-instance decision procedures.
-4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof
-   term and a *non-vacuity* proof at construction time (`bazel run //:generate_all --
-   --export-refinements`) — a `NonVacuousBehavior` / `NonVacuousCombBehavior` witness that
-   the behavioural model produces distinct outputs. This prevents dangling references,
-   unproven claims, and tautological/constant specifications from registering.
-5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap; the
+4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof term and a *non-vacuity* proof at construction time (`bazel run //:generate_all -- --export-refinements`). That witness is a `NonVacuousBehavior` / `NonVacuousCombBehavior` proof that the behavioural model produces distinct outputs. This prevents dangling references, unproven claims, and tautological/constant specifications from registering.
+5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap. The
    `ALU32` atom covers all 10 RV32I opcodes over all inputs. Expanding to remaining
    instruction classes connects execution units directly to the ISA specification.
 
@@ -148,13 +145,14 @@ Antipattern:
 
 ## The Chisel cross-check: removed
 
-There is no cross-check any more. The Chisel backend and the Lean-vs-Chisel logical
-equivalence check were removed, so there is no second RTL artifact to compare against.
-What compensates is the Lean proofs (leaf behaviour and composition, per the ladder
-above) plus the checks that run on the one emitted design: slang and Yosys elaboration,
-Verilator simulation, and lock-step cosimulation against Spike.
+No cross-check remains. This repository dropped the Chisel backend and the
+Lean-against-Chisel logical equivalence check, so no second RTL artifact exists
+to compare against.
+The Lean proofs compensate (leaf behaviour and composition, per the ladder above).
+The checks that run on the one emitted design compensate too: slang and Yosys
+elaboration, Verilator simulation, and lock-step cosimulation against Spike.
 
-## Compositional Verification
+## Compositional verification
 
 ### When to use
 
@@ -168,15 +166,15 @@ sub-modules than in one step:
 ### How it works
 
 1. Leaves carry their own Lean theorems.
-2. The parent's spec is proven from the children's theorems plus glue reasoning, and
-   the Lean namespace holding that proof is recorded in the certificate.
+2. The children's theorems plus glue reasoning prove the parent's spec. The
+   certificate records the Lean namespace holding that proof.
 3. `bazel run //:generate_all -- --export-certs` derives the certificate's dependencies from
    the circuit's `instances` and rejects the registry if it is inconsistent with the
    emitted circuits.
 
 ### Certificate structure
 
-Defined in `lean/Shoumei/Verification/Compositional.lean`:
+`lean/Shoumei/Verification/Compositional.lean` defines it:
 
 ```lean
 structure CompositionalCert where
@@ -204,7 +202,7 @@ def allCerts : List CompositionalCert := [
 ### Export mechanism
 
 `ExportCerts.lean` prints one `module|deps|proofReference` line per certificate.
-The dependency list is derived from the circuit's instances, not written by hand:
+The tool derives the dependency list from the circuit's instances, not by hand:
 
 ```bash
 $ bazel run //:generate_all -- --export-certs
@@ -216,23 +214,23 @@ Register24|Register16,Register8|Shoumei.Circuits.Sequential.RegisterProofs
 instead of degrading verification quietly. The lines are also written to
 `verification/compositional-certs.txt`.
 
-## Module Ordering
+## Module ordering
 
-`allCircuits` in `GenerateAll.lean` is in topological order (leaves first), so
-dependency-aware hashes can be computed in a single pass and every sub-module is
-emitted before the module that instantiates it.
+`allCircuits` in `GenerateAll.lean` is in topological order (leaves first). The
+generator can therefore compute dependency-aware hashes in a single pass. It emits
+every sub-module before the module that instantiates it.
 
 ## Troubleshooting
 
 ### slang reports errors on the emitted SV
 
 The emitted text is not legal SystemVerilog. Fix the generator
-(`lean/Shoumei/Codegen/`), not the emitted file -- `output/` is regenerated on every
+(`lean/Shoumei/Codegen/`), not the emitted file. The build regenerates `output/` on every
 run.
 
 ### Yosys `bazel test //verification:yosys_validate_test` fails
 
-- A module is instantiated but absent from `allCircuits` in `GenerateAll.lean`
+- The design instantiates a module that `allCircuits` in `GenerateAll.lean` does not list
 - Instance port names do not match the target module's ports exactly
 - Clock/reset are not detected: check `findClockWires`/`findResetWires` in
   `Common.lean`, which look at DFF gates and instance connections
@@ -240,16 +238,16 @@ run.
 ### The certificate registry fails to validate
 
 The message names the module. Either delete the stale certificate or point it at the
-circuit's current name; a certificate must name an emitted circuit, and every module
-that circuit instantiates must be emitted too.
+circuit's current name. A certificate must name an emitted circuit, and the generator
+must emit every module that circuit instantiates too.
 
 ### Simulation diverges from Spike
 
-Start with the cosimulation trace (see *Debugging RTL* in [AGENTS.md](../AGENTS.md)):
-`MISMATCH` lines give the first diverging instruction, and `bazel run //testbench:sim_shoumei_trace`
+Start with the cosimulation trace (see *Debugging RTL* in [AGENTS.md](../AGENTS.md)).
+`MISMATCH` lines give the first diverging instruction. `bazel run //testbench:sim_shoumei_trace`
 plus `bazel run //tools:fst_inspect` show the signal path that produced the wrong value.
 
-## Running Verification
+## Running verification
 
 ```bash
 bazel build //lean:shoumei                                # Lean proofs
@@ -264,12 +262,11 @@ bazel test //:presubmit                                   # Full presubmit suite
 
 ### Benchmark numbers: peak vs whole-program IPC
 
-Two different IPC numbers are reported per benchmark; do not compare them
-with each other:
+Benchmarks report two different IPC numbers. Do not compare them with each other:
 
 - **Peak IPC** (`BENCH <name> <thr> <lat>` lines,
   published on the Pages `benchmarks.html`): in-program `1000*minstret/mcycle`
-  over the throughput region only (e.g. `add` = 1.933).
+  over the throughput region only (for example `add` = 1.933).
 - **Whole-program IPC** (`PASS add.elf (cycles, retired, IPC)` lines):
   total retired over total cycles for the whole ELF, including latency region,
   setup, and IO.
@@ -282,7 +279,7 @@ with each other:
 bazel test //testbench/benchmarks
 ```
 
-## Adding a New Compositional Certificate
+## Adding a new compositional certificate
 
 1. Write the composition proof in Lean (or point at existing proofs)
 2. Add the `CompositionalCert` to `CompositionalCerts.lean`

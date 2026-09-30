@@ -1,13 +1,13 @@
-# Lock-Step Cosimulation via RVVI
+# Lock-step cosimulation through RVVI
 
-Architecture and integration guide for lock-step cosimulation of the Shoumei RTL and Spike, driven by the RVVI (RISC-V Verification Interface) trace port.
+Architecture and integration guide for lock-step cosimulation of the Shoumei RTL and Spike. The RVVI (RISC-V Verification Interface) trace port drives the comparison.
 
 ## Overview
 
-Two independently generated implementations execute the same ELF and are compared at every retirement point:
+Two independently generated implementations execute the same ELF, and the testbench compares them at every retirement point:
 
-1. **RTL** (Verilator) -- generated SystemVerilog, the primary DUT
-2. **Spike** (libriscv) -- canonical ISA reference, the oracle
+1. **RTL** (Verilator): generated SystemVerilog, the primary DUT
+2. **Spike** (libriscv): canonical ISA reference, the oracle
 
 ```
                               ELF binary
@@ -33,24 +33,24 @@ When the RTL retires an instruction (RVVI `valid` asserted), the testbench:
 2. Steps Spike one instruction and reads its state
 3. Compares both
 
-Both are linked into the same Verilator testbench process. No trace files, no offline comparison -- mismatches are caught at the exact cycle they occur.
+The build links both into the same Verilator testbench process. No trace files, no offline comparison: the check catches mismatches at the exact cycle they occur.
 
 ### Relationship to the verification stack
 
-There is no second RTL artifact any more: the Lean definition is the single
+No second RTL artifact exists any more: the Lean definition is the single
 source for the emitted SystemVerilog, so correctness rests on the Lean proofs
-(checked by `bazel build //lean:shoumei`) and the RTL is validated by running it — slang
+(checked by `bazel build //lean:shoumei`), and running the RTL validates it: slang
 elaboration, Verilator simulation, and this lock-step cosimulation against
 Spike. Cosimulation catches behavioural bugs in the Lean model by comparing
 every retirement against the ISA reference on actual test programs.
 
-## RVVI-TRACE Interface
+## RVVI-TRACE interface
 
 The RVVI-TRACE interface is a set of output-only signals from the RTL, sampled on the positive clock edge. It reports retirement and trap events along with all architectural state changes.
 
 ### Parameters derived from Lean model
 
-RVVI-TRACE parameters are not hardcoded -- they are derived from the Lean CPU definition at code generation time. The Lean model is the single source of truth for the microarchitecture, and the RVVI interface must be consistent with it.
+The code generator derives RVVI-TRACE parameters from the Lean CPU definition at code generation time, not hardcoded values. The Lean model is the single source of truth for the microarchitecture, so the RVVI interface must match it.
 
 | RVVI parameter | Lean source | Current value | Notes |
 |----------------|-------------|:---:|-------|
@@ -87,7 +87,7 @@ def CPUConfig.rvviConfig (cfg : CPUConfig) : RVVIConfig :=
     nhart := cfg.numHarts }
 ```
 
-The SystemVerilog code generator uses `RVVIConfig` to emit the interface with correct widths. If someone later widens the ROB commit port to retire 2 instructions per cycle, the RVVI interface updates automatically -- no manual sync required.
+The SystemVerilog code generator uses `RVVIConfig` to emit the interface with correct widths. If someone later widens the ROB commit port to retire 2 instructions per cycle, the RVVI interface updates automatically. That update needs no manual sync.
 
 ### Signal definitions
 
@@ -136,17 +136,17 @@ For the current Shoumei config (`NHART=1, NRET=1`), the `[0:0][0:0]` array dimen
 
 **Retirement event:** When `valid` is high and `trap` is low, exactly one instruction has retired. The testbench reads all other signals and steps Spike.
 
-**Trap event:** When `valid` is high and `trap` is high, an instruction trapped (ECALL, EBREAK, illegal instruction, misaligned access). The instruction did not retire. Spike must also be stepped to the same trap so that CSR state (mepc, mcause, mtval) stays in sync.
+**Trap event:** When `valid` is high and `trap` is high, an instruction trapped (ECALL, EBREAK, illegal instruction, misaligned access). The instruction did not retire. Spike must also step to the same trap so that CSR state (mepc, mcause, mtval) stays in sync.
 
-**Register writeback:** `x_wb` is a bitmask. If bit N is set, register xN was written with `x_wdata[N]`. For instructions that don't write a register (branches, stores), `x_wb` is zero. Writes to x0 must report `x_wdata[0] = 0`.
+**Register writeback:** `x_wb` is a bitmask. A set bit N means the instruction wrote register xN with `x_wdata[N]`. For instructions that do not write a register (branches, stores), `x_wb` is zero. Writes to x0 must report `x_wdata[0] = 0`.
 
-**Memory access:** `mem_wmask` indicates which bytes were written. For a `SW`, `mem_wmask = 4'b1111`. For `SH`, `mem_wmask = 4'b0011` or `4'b1100` depending on alignment. `mem_rmask` is analogous for loads.
+**Memory access:** `mem_wmask` indicates which bytes the store wrote. For a `SW`, `mem_wmask = 4'b1111`. For `SH`, `mem_wmask = 4'b0011` or `4'b1100` depending on alignment. `mem_rmask` is analogous for loads.
 
 **Ordering:** `order` is a 64-bit monotonically increasing counter. It increments on every `valid` event (both retirements and traps). The ROB guarantees in-order commit, so the order field should match Spike's instruction count.
 
 ### Mapping from ROBEntry to RVVI signals
 
-The existing `ROBEntry` structure (24 bits) provides most RVVI fields. Two additions are needed: a PC queue and an instruction word queue, piggybacked on ROB allocation.
+The existing `ROBEntry` structure (24 bits) provides most RVVI fields. The design needs two additions: a PC queue and an instruction word queue, piggybacked on ROB allocation.
 
 ```
 RVVI signal        Source                                  Notes
@@ -174,7 +174,7 @@ mem_wmask          derived from store_buffer: size [66:67]
 
 Both are simple register files indexed by ROB slot, allocated and freed in lockstep with the ROB.
 
-## Lock-Step Comparison Loop
+## Lock-step comparison loop
 
 The core of the testbench: on every RVVI retirement event, step Spike and compare.
 
@@ -226,7 +226,7 @@ private:
 };
 ```
 
-## Spike Integration
+## Spike integration
 
 ### Linking Spike as a library
 
@@ -318,7 +318,7 @@ public:
 };
 ```
 
-## Suite Coverage
+## Suite coverage
 
 `bazel test //testbench/tests:all_cosim` sweeps every ELF the simulation suite runs, plus
 the generated benchmark programs:
@@ -327,32 +327,33 @@ the generated benchmark programs:
 | :--- | :--- | :--- |
 | ISA suites | `testbench/riscv-tests/rv64{u,m,f,d,a,uzb}-p-*.elf` | golden architectural tests, `tohost`-terminated |
 | Custom tests | `testbench/tests/*.elf`, `testbench/tests/generated/*.elf` | traps, interrupts, FreeRTOS, serialize/fence.i pairing |
-| Benchmarks | `//testbench/benchmarks:...` | generated from `//:instr_dict`; executed via `bazel test //testbench/benchmarks:bench_regression_test` |
+| Benchmarks | `//testbench/benchmarks:...` | generated from `//:instr_dict`, executed through `bazel test //testbench/benchmarks:bench_regression_test` |
 
 The benchmark programs are ordinary bare-metal ELFs: they read `mcycle` /
 `minstret` (handled by the unsyncable-CSR-read path below) and print a result
-line through the `0x1004` MMIO byte, so no special harness support is needed.
-Their timeouts are governed by Bazel test size attributes.
+line through the `0x1004` MMIO byte, so the harness needs no special support.
+Bazel test size attributes govern their timeouts.
 
-Cosim is the stronger check for these programs: a benchmark that measures a
+Cosim is the stronger check for these programs. A benchmark can measure a
 plausible-looking CPI while the pipeline silently drops or mis-executes part of
-its body still fails, because every retirement is compared against Spike.
+its body. Cosim still fails such a benchmark, because it compares every
+retirement against Spike.
 
-## Trap Synchronization
+## Trap synchronization
 
 Traps require special handling because the instruction does not retire.
 
 When RVVI reports `valid=1, trap=1`:
 
-1. **Step Spike** -- Spike will also trap on the same instruction
-2. **Compare trap cause** -- Check `mcause` CSR matches (illegal instruction, misaligned access, ecall, ebreak)
-3. **Compare mepc** -- The trapped PC must match
-4. **Sync privilege state** -- Both Spike and RTL enter the trap handler
+1. **Step Spike**: Spike will also trap on the same instruction
+2. **Compare trap cause**: Check `mcause` CSR matches (illegal instruction, misaligned access, ecall, ebreak)
+3. **Compare mepc**: The trapped PC must match
+4. **Sync privilege state**: Both Spike and RTL enter the trap handler
 
 For Shoumei's current scope (M-mode only, no interrupts), traps are synchronous and deterministic. The only expected traps are:
 - ECALL (used for HTIF termination)
 - Illegal instruction (test for exception handling)
-- Misaligned access (if the pipeline doesn't mask them)
+- Misaligned access (if the pipeline does not mask them)
 
 ### HTIF termination
 
@@ -371,11 +372,11 @@ if (rvvi.mem_wmask != 0 && rvvi.mem_addr == tohost_addr) {
 }
 ```
 
-## Handling Asynchronous Events (Future)
+## Handling asynchronous events (future)
 
 When Shoumei adds interrupt support, the cosimulation must handle asynchronous events. This is where RVVI's design pays off over simpler interfaces.
 
-**Problem:** An interrupt arrives between two instructions. The RTL takes the interrupt and vectors to the trap handler. Spike must be told about the interrupt so it follows the same path.
+**Problem:** An interrupt arrives between two instructions. The RTL takes the interrupt and vectors to the trap handler. The testbench must tell Spike about the interrupt so it follows the same path.
 
 **RVVI solution:** The testbench observes the RTL's RVVI `intr` signal (first instruction of trap handler). Before stepping Spike, it injects the same interrupt:
 
@@ -389,13 +390,13 @@ spike.step(1);
 // Now both are in the trap handler, state should match
 ```
 
-This is not needed for the current M-mode bare-metal scope but is the reason to adopt RVVI rather than a simpler ad-hoc interface. The migration path to interrupts, privilege modes, and multi-hart is built into the interface.
+The current M-mode bare-metal scope does not need this. Even so, it justifies adopting RVVI over a simpler ad-hoc interface. The interface already builds in the migration path to interrupts, privilege modes, and multi-hart.
 
-## RTL Implementation
+## RTL implementation
 
 ### Adding the RVVI port to the CPU
 
-The Lean circuit definition for the top-level CPU module adds the RVVI signals as outputs. These are driven from ROB commit logic and the new PC/instruction queues.
+The Lean circuit definition for the top-level CPU module adds the RVVI signals as outputs. ROB commit logic and the new PC/instruction queues drive these outputs.
 
 **New Lean structures for RVVI support:**
 
@@ -428,11 +429,11 @@ structure RVVIOutput where
   mem_wdata : UInt32
 ```
 
-**Wire budget:** The RVVI port adds approximately `NRET * (2*XLEN + ILEN + 32*XLEN + 64 + 8)` output bits to the top-level module. For the current config (NRET=1, XLEN=32, ILEN=32), that is ~1200 bits / ~250 wires. This is observation-only -- it does not affect the datapath or timing.
+**Wire budget:** The RVVI port adds approximately `NRET * (2*XLEN + ILEN + 32*XLEN + 64 + 8)` output bits to the top-level module. For the current config (NRET=1, XLEN=32, ILEN=32), that is ~1200 bits / ~250 wires. This is observation-only: it does not affect the datapath or timing.
 
 ### Generating the RVVI SystemVerilog
 
-The code generator reads `CPUConfig.rvviConfig` and emits the RVVI interface with correct parameterization. The generator also handles the scalar-vs-array distinction: when `NRET=1` and `NHART=1`, signals are emitted as plain wires rather than arrays for cleaner RTL and easier Verilator access.
+The code generator reads `CPUConfig.rvviConfig` and emits the RVVI interface with correct parameterization. The generator also handles the scalar-vs-array distinction. When `NRET=1` and `NHART=1`, it emits plain wires rather than arrays for cleaner RTL and easier Verilator access.
 
 For Verilator, the RVVI signals are accessible directly on the top-level module:
 
@@ -453,7 +454,7 @@ RVVISignals capture_rvvi(VShoumeiCPU* dut) {
 }
 ```
 
-## CI Integration
+## CI integration
 
 ```yaml
 # .github/workflows/cosim.yml
@@ -481,7 +482,7 @@ jobs:
           bazel test //testbench/tests:all_cosim
 ```
 
-## Debugging Failures
+## Debugging failures
 
 When the lock-step checker reports a mismatch, simulation stops at the exact failing cycle.
 
@@ -534,15 +535,15 @@ Register file at mismatch (instruction #17):
   ...
 ```
 
-## Comparison with Other Approaches
+## Comparison with other approaches
 
 | | riscv-dv + Spike log | ImperasDV + RVVI | Shoumei (Lean + RVVI + Spike) |
 |---|---|---|---|
 | Comparison mode | Offline trace diff | Lock-step (2-way) | Lock-step (2-way) |
 | Microarch-aware generation | No | No | Yes (Lean models) |
-| Fault isolation | No (1 DUT) | Limited | Via Spike validation |
+| Fault isolation | No (1 DUT) | Limited | Through Spike validation |
 | Detection latency | Post-mortem | Immediate (cycle) | Immediate (cycle) |
-| Async event handling | Manual | Built-in | Via RVVI `intr` signal |
+| Async event handling | Manual | Built-in | Through RVVI `intr` signal |
 | License | Open source | Commercial | Open source |
 | Provable test encoder | No | No | Yes (Lean proof) |
 | Trace interface | Ad-hoc | RVVI-TRACE | RVVI-TRACE |

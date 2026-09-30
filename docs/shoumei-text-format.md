@@ -1,16 +1,16 @@
-# Design: Shoumei Text Format (`.shoumei`)
+# Design: Shoumei text format (`.shoumei`)
 
-## Status: Draft
+## Status: draft
 ## Date: 2025-02
 
 ---
 
 ## 1. Motivation
 
-Today, every circuit in the project is defined as a Lean 4 expression that builds a
-`Circuit` value. This works well for formal verification — proofs attach directly to
-these values — but it creates a barrier for hardware engineers who want to read, write,
-or modify circuits without learning Lean.
+Today, the project defines every circuit as a Lean 4 expression that builds a
+`Circuit` value. This works well for formal verification, because proofs attach
+directly to these values. It creates a barrier, though, for hardware engineers who
+want to read, write, or modify circuits without learning Lean.
 
 The core DSL data model is simple: wires, gates, instances. A text format can expose
 that structure directly, making circuit definitions accessible to anyone who has seen a
@@ -22,15 +22,15 @@ netlist or a structural Verilog file.
 2. A pretty printer (`Circuit → String`) that emits `.shoumei` files
 3. A parser (`String → Except String Circuit`) that reads them back
 4. Round-trip validation (planned): parse a `.shoumei` file, generate SystemVerilog, and
-   check the result with the surviving tooling — slang elaboration of
+   check the result with the surviving tooling. That tooling is slang elaboration of
    `output/sv-roundtrip/` and simulation of the round-tripped SV
-5. Eventually, large modules (including the CPU) can be authored and maintained as
-   `.shoumei` files while proofs remain in Lean
+5. Eventually, large modules (including the CPU) can live as `.shoumei` files
+   while the proofs remain in Lean
 
 **Non-goals:**
 
 - Behavioral semantics (no `always` blocks, no expressions beyond gate application)
-- Replacing Lean for proofs — the text format is a circuit *description*, not a proof language
+- Replacing Lean for proofs: the text format is a circuit *description*, not a proof language
 - Synthesis pragmas, timing constraints, or other backend concerns
 
 ---
@@ -53,14 +53,14 @@ Circuit
 └── keepHierarchy : Bool                  -- codegen hint
 ```
 
-Every field has a representation in the text format. The core (name, inputs, outputs,
-gates, instances) is expressed in the main syntax. The codegen annotations
-(signalGroups, bundles, rams, keepHierarchy) are expressed as `@`-prefixed annotations,
-since they don't affect circuit semantics and many circuits omit them entirely.
+Every field has a representation in the text format. The main syntax expresses the core
+(name, inputs, outputs, gates, instances). The `@`-prefixed annotations express the
+codegen fields (signalGroups, bundles, rams, keepHierarchy). They do not affect circuit
+semantics, and many circuits omit them entirely.
 
 ---
 
-## 3. Text Format Specification
+## 3. Text format specification
 
 ### 3.1 Module header
 
@@ -89,10 +89,10 @@ module Register32(d[32], clock, reset -> q[32])
 ```
 
 **Mapping:**
-- `a[32]` → `makeIndexedWires "a" 32` → `[Wire.mk "a_0", ..., Wire.mk "a_31"]`
+- `a[32]` maps to `makeIndexedWires "a" 32`, which yields `[Wire.mk "a_0", ..., Wire.mk "a_31"]`
 - `a[32]` also generates `SignalGroup { name := "a", width := 32, wires := ... }`
-- `cin` → `[Wire.mk "cin"]` (single wire, no signal group)
-- Everything left of `->` is an input; everything right is an output
+- `cin` maps to `[Wire.mk "cin"]` (single wire, no signal group)
+- Everything left of `->` is an input. Everything right is an output
 
 ### 3.2 Gate statements
 
@@ -112,9 +112,9 @@ The eight gate types and their arities:
 | `NOT` | 1 | `x = NOT(a)` |
 | `XOR` | 2 | `x = XOR(a, b)` |
 | `BUF` | 1 | `x = BUF(a)` |
-| `MUX` | 3 | `x = MUX(in0, in1, sel)` — sel ? in1 : in0 |
-| `DFF` | 3 | `q = DFF(d, clock, reset)` — async reset to 0 |
-| `DFF_SET` | 3 | `q = DFF_SET(d, clock, reset)` — async reset to 1 |
+| `MUX` | 3 | `x = MUX(in0, in1, sel)`, sel ? in1 : in0 |
+| `DFF` | 3 | `q = DFF(d, clock, reset)`, async reset to 0 |
+| `DFF_SET` | 3 | `q = DFF_SET(d, clock, reset)`, async reset to 1 |
 
 Bus indexing in gate statements:
 
@@ -123,7 +123,7 @@ result[3] = AND(a[3], b[3])
 ```
 
 Here `a[3]` refers to the wire `Wire.mk "a_3"` (the 4th wire of bus `a`).
-This is indexing, not declaration — the bus must be declared in the module header
+This is indexing, not declaration. You must declare the bus in the module header
 or as an internal bus.
 
 ### 3.3 Loop expansion
@@ -146,16 +146,16 @@ result[31] = XOR(a[31], b[31])
 The range `0..N` means `[0, 1, ..., N-1]` (exclusive upper bound, matching
 `List.range N` in Lean).
 
-Loops can appear on any gate statement. The index variable can be used in any
+Loops can appear on any gate statement. You can use the index variable in any
 wire reference within the statement.
 
-Multiple loops are allowed (each on its own line). Nested loops are not supported —
-if you need 2D indexing, flatten it.
+The format allows multiple loops (each on its own line). The format does not support
+nested loops. If you need 2D indexing, flatten it.
 
 ### 3.4 Internal bus declarations
 
-Wires that appear only inside the body (not in the header) are internal. Single
-wires are inferred from usage — no declaration needed. Buses must be declared
+Wires that appear only inside the body (not in the header) are internal. The parser
+infers single wires from usage, and they need no declaration. You must declare buses
 explicitly so the parser knows their width:
 
 ```
@@ -177,8 +177,8 @@ module Subtractor32(a[32], b[32], one -> diff[32], borrow) {
 ```
 
 **Mapping:** `wire b_inv[32]` creates `makeIndexedWires "b_inv" 32` and an internal
-`SignalGroup`. Scalar internal wires (like `zero_internal` above) need no declaration;
-they are created as `Wire.mk "zero_internal"` when first encountered.
+`SignalGroup`. Scalar internal wires (like `zero_internal` above) need no declaration.
+The parser creates them as `Wire.mk "zero_internal"` when first encountered.
 
 ### 3.5 Instance statements
 
@@ -204,15 +204,16 @@ inst KoggeStoneAdder32 u_ksa(
 )
 ```
 
-When `a` is a bus (declared as `a[32]` in the header or as `wire a[32]`), and the
-target module has ports `a0, a1, ..., a31`, the connection `a = a` expands to:
+When `a` is a bus, the connection `a = a` expands to the following form. The header
+declares the bus as `a[32]`, or the body declares it as `wire a[32]`. The target module
+has ports `a0, a1, ..., a31`:
 
 ```
 ("a0", Wire.mk "a_0"), ("a1", Wire.mk "a_1"), ..., ("a31", Wire.mk "a_31")
 ```
 
 This expansion requires knowing the submodule's port naming convention. The pretty
-printer can always emit the expanded form; the parser supports both compressed and
+printer can always emit the expanded form. The parser supports both compressed and
 expanded forms.
 
 **Explicit per-bit mapping** (always valid, never ambiguous):
@@ -232,7 +233,7 @@ Optional `@`-prefixed directives placed between the module header and the openin
 brace. These map to codegen-only fields on `Circuit` and have no effect on circuit
 semantics or on the emitted RTL.
 
-**`@keepHierarchy`** — sets `Circuit.keepHierarchy := true`:
+**`@keepHierarchy`** sets `Circuit.keepHierarchy := true`:
 
 ```
 module PhysRegFile(...)
@@ -242,7 +243,7 @@ module PhysRegFile(...)
 }
 ```
 
-**`@ram`** — declares a `RAMPrimitive`:
+**`@ram`** declares a `RAMPrimitive`:
 
 ```
 module PhysRegFile(
@@ -279,7 +280,7 @@ RAMPrimitive {
 }
 ```
 
-**`@bundle`** — declares an `InterfaceBundle` on an input or output group:
+**`@bundle`** declares an `InterfaceBundle` on an input or output group:
 
 ```
 module Queue1_32(
@@ -304,11 +305,11 @@ Line comments with `//`:
 b_inv[i] = NOT(b[i])  for i in 0..32
 ```
 
-Comments are discarded by the parser and not preserved in round-trips.
+The parser discards comments, and round-trips do not preserve them.
 
 ---
 
-## 4. Full Example: Subtractor32
+## 4. Full example: Subtractor32
 
 ### As Lean today
 
@@ -379,14 +380,14 @@ module Subtractor32(a[32], b[32], one -> diff[32], borrow)
 }
 ```
 
-20 lines of Lean → 16 lines of `.shoumei`. More importantly, the `.shoumei` version
+20 lines of Lean becomes 16 lines of `.shoumei`. The `.shoumei` version
 requires no knowledge of Lean, list comprehensions, or the `Circuit` structure type.
 
 ---
 
-## 5. Full Example: Queue1_32
+## 5. Full example: Queue1_32
 
-A 1-entry decoupled FIFO — sequential, with DFFs and combinational control logic.
+A 1-entry decoupled FIFO, sequential, with DFFs and combinational control logic.
 
 ```
 module Queue1_32(
@@ -420,7 +421,7 @@ module Queue1_32(
 
 ---
 
-## 6. Implementation Plan
+## 6. Implementation plan
 
 ### 6.1 Architecture
 
@@ -439,7 +440,7 @@ Plus an executable entry point:
 GenerateAllShoumei.lean   -- bazel run //:generate_all_shoumei
 ```
 
-### 6.2 Pretty Printer (`Emit.lean`)
+### 6.2 Pretty printer (`Emit.lean`)
 
 **Input:** `Circuit` value + optional `allCircuits` list (for submodule port direction lookup)
 
@@ -462,8 +463,8 @@ GenerateAllShoumei.lean   -- bazel run //:generate_all_shoumei
    `a[3]` instead of `a_3`.
 
 5. **Loop compression** (optional, best-effort). Detect sequences of gates that differ
-   only by index (e.g., 32 consecutive `XOR` gates on `a_0..a_31`). Emit as a single
-   `for i in 0..32` line. If detection fails, emit individual lines — correctness is
+   only by index (for example, 32 consecutive `XOR` gates on `a_0..a_31`). Emit as a single
+   `for i in 0..32` line. If detection fails, emit individual lines. Correctness is
    not affected.
 
 6. **Instance emission.** For each `CircuitInstance`, emit `inst ModuleName instName(...)`.
@@ -475,7 +476,7 @@ GenerateAllShoumei.lean   -- bazel run //:generate_all_shoumei
 
 **Input:** `.shoumei` text string
 
-**Output:** `Except String (List Circuit)` — one `Circuit` per `module` block
+**Output:** `Except String (List Circuit)`, one `Circuit` per `module` block
 
 **Parsing strategy:** Hand-rolled recursive descent using `String.Iterator` or
 `Lean.Parsec`. The grammar is small enough that a parser combinator library is
@@ -504,45 +505,45 @@ GATE        = 'AND' | 'OR' | 'NOT' | 'XOR' | 'BUF' | 'MUX' | 'DFF' | 'DFF_SET'
 
 **Wire expansion rules:**
 
-- `a[32]` in header → `makeIndexedWires "a" 32`
-- `a[3]` in body → `Wire.mk "a_3"` (index lookup)
-- `a[i]` in a `for` loop → `Wire.mk "a_{i}"` for each iteration value
-- `cin` (no brackets) → `Wire.mk "cin"`
+- `a[32]` in header maps to `makeIndexedWires "a" 32`
+- `a[3]` in body maps to `Wire.mk "a_3"` (index lookup)
+- `a[i]` in a `for` loop maps to `Wire.mk "a_{i}"` for each iteration value
+- `cin` (no brackets) maps to `Wire.mk "cin"`
 
 **Instance port expansion:**
 
 When `a = a` appears in an `inst` block and `a` is a known bus of width 32, expand to:
 `("a0", Wire.mk "a_0"), ("a1", Wire.mk "a_1"), ..., ("a31", Wire.mk "a_31")`
 
-The port naming convention on the submodule side (e.g., `a0` vs `a_0`) must match
+The port naming convention on the submodule side (for example, `a0` against `a_0`) must match
 what the submodule's `Circuit` definition uses. The pretty printer will always emit
-the expanded form if there's any ambiguity.
+the expanded form if any ambiguity remains.
 
 **Estimated size:** ~300–400 lines of Lean.
 
-### 6.4 Round-Trip Test (`RoundTrip.lean`)
+### 6.4 Round-trip test (`RoundTrip.lean`)
 
 For each circuit in `allCircuits`:
 
-1. Pretty-print to `.shoumei` text via `Emit`
-2. Parse the text back via `Parse`
+1. Pretty-print to `.shoumei` text through `Emit`
+2. Parse the text back through `Parse`
 3. Generate SystemVerilog from the parsed `Circuit`
 4. Write to `output/sv-roundtrip/<Name>.sv`
 
 The planned validation harness uses the surviving tooling rather than an
-equivalence checker: elaborate every file in `output/sv-roundtrip/` with
-`python3 verification/slang-lint.py`, and (planned) simulate the round-tripped SV
-under Verilator to confirm it behaves identically to the Lean-generated RTL.
+equivalence checker. It elaborates every file in `output/sv-roundtrip/` with
+`python3 verification/slang-lint.py`, and (planned) simulates the round-tripped SV
+under Verilator. That simulation confirms it behaves identically to the Lean-generated RTL.
 
 **What this validates:**
-- The pretty printer doesn't lose information
+- The pretty printer does not lose information
 - The parser reconstructs the circuit correctly
 - Wire names, gate connectivity, and instance port maps survive the round-trip
 
 **What this does NOT validate:**
 - Comments (discarded by design)
 - Whitespace and formatting (cosmetic)
-- Signal group ordering (doesn't affect semantics)
+- Signal group ordering (does not affect semantics)
 
 ### 6.5 Executable (`GenerateAllShoumei.lean`)
 
@@ -584,32 +585,32 @@ instead of `output/sv-from-lean/`:
 python3 verification/slang-lint.py output/sv-roundtrip   # elaborate round-tripped SV
 ```
 
-This reuses the existing elaboration and simulation tooling; no new verification
-logic is needed.
+This reuses the existing elaboration and simulation tooling. It needs no new
+verification logic.
 
 ---
 
-## 7. Implementation Phases
+## 7. Implementation phases
 
 | Phase | Scope | Modules covered | Validates |
 |-------|-------|-----------------|-----------|
-| 1 | Flat combinational: gate emit/parse, scalars + buses, `for` loops | FullAdder, RippleCarryAdder32, LogicUnit32, XorArray, etc. | Basic round-trip, slang elaboration of the round-tripped SV |
-| 2 | Hierarchical combinational: `inst` emit/parse, bus port compression | Subtractor32, Comparator32, ALU32, MuxTree, etc. | Instance port maps survive round-trip |
-| 3 | Sequential circuits: DFF/DFF_SET, clock/reset handling | Register32, Queue1_32, Counter, ShiftRegister, etc. | Sequential round-trip (DFF state survives) |
-| 4 | Annotations: `@keepHierarchy`, `@ram`, `@bundle` | PhysRegFile, QueueRAM, FreeList, etc. | Codegen metadata round-trips |
+| 1 | Flat combinational: gate emit/parse, scalars + buses, `for` loops | FullAdder, RippleCarryAdder32, LogicUnit32, XorArray, and more | Basic round-trip. Slang elaboration of the round-tripped SV |
+| 2 | Hierarchical combinational: `inst` emit/parse, bus port compression | Subtractor32, Comparator32, ALU32, MuxTree, and more | Instance port maps survive round-trip |
+| 3 | Sequential circuits: DFF/DFF_SET, clock/reset handling | Register32, Queue1_32, Counter, ShiftRegister, and more | Sequential round-trip (DFF state survives) |
+| 4 | Annotations: `@keepHierarchy`, `@ram`, `@bundle` | PhysRegFile, QueueRAM, FreeList, and more | Codegen metadata round-trips |
 | 5 | Full coverage: all 89 modules | Everything including CPU_RV32IM | Round-trip coverage for all 89 modules |
 
-Phase 1 is the critical path — it forces all syntax decisions to become concrete and
+Phase 1 is the critical path. It forces all syntax decisions to become concrete and
 proves the pipeline works end-to-end. Phases 2–4 are incremental extensions. Phase 5
 is the payoff.
 
 ---
 
-## 8. Future Directions
+## 8. Future directions
 
 ### 8.1 `.shoumei` as source of truth
 
-Once the round-trip is validated for all modules, `.shoumei` files can become the
+Once the round-trip passes for all modules, `.shoumei` files can become the
 primary authoring format:
 
 ```
@@ -620,7 +621,7 @@ hardware engineer writes .shoumei
   → Lean proofs attach to the Circuit value
 ```
 
-The Lean definitions (`mkSubtractor32`, etc.) become generated artifacts rather than
+The Lean definitions (`mkSubtractor32`, and more) become generated artifacts rather than
 hand-written code. Circuit authoring moves to a format that requires no Lean knowledge.
 
 ### 8.2 The CPU in `.shoumei`
@@ -660,7 +661,7 @@ module CPU_RV32IM(clock, reset, imem_addr[32], ... -> ...)
 ```
 
 A hardware engineer can read this, understand the pipeline structure, and modify
-wiring — without touching Lean. The formal proofs remain in Lean, attached to the
+wiring, without touching Lean. The formal proofs remain in Lean, attached to the
 `Circuit` value that the parser produces from this file.
 
 ### 8.3 Parameterized modules
@@ -675,8 +676,8 @@ module Register<N>(d[N], clock, reset -> q[N]) {
 ```
 
 This would require the parser to handle symbolic width parameters and deferred
-expansion. For now, each concrete instantiation (Register32, Register64, etc.) is
-its own module — matching how the Lean definitions work today.
+expansion. For now, each concrete instantiation (Register32, Register64, and more) is
+its own module, matching how the Lean definitions work today.
 
 ### 8.4 IDE support
 
@@ -695,25 +696,25 @@ The text format could also serve as an interchange format:
 
 ---
 
-## 9. Design Decisions
+## 9. Design decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Output on the left | `x = AND(a, b)` | Reads like assignment. Familiar from Verilog `assign`. |
-| Explicit gate types | `AND`, `OR`, etc. | 1:1 with `GateType`. No ambiguity, no operator precedence. |
+| Explicit gate types | `AND`, `OR`, and more | 1:1 with `GateType`. No ambiguity, no operator precedence. |
 | `for` as suffix | `... for i in 0..N` | Python-inspired. Reads naturally. Trivially expandable. |
 | `->` in module header | inputs `->` outputs | Clear I/O separation. Avoids `input`/`output` keywords per signal. |
 | `->` in `inst` block | input ports `->` output ports | Same convention. Cosmetic only (both become `portMap` entries). |
-| `@` annotations | Between header and `{` | Separates semantics from metadata. Can be ignored entirely. |
+| `@` annotations | Between header and `{` | Separates semantics from metadata. Tooling can ignore them entirely. |
 | No `wire` for scalars | Inferred from usage | Reduces boilerplate. Only buses need explicit `wire` declarations. |
 | Bus naming: `a_0` not `a[0]` | Wire names use underscore | Matches existing `makeIndexedWires` convention. `a[0]` in text is sugar for `Wire.mk "a_0"`. |
-| Comments not preserved | `//` comments are discarded | Simplifies round-trip. Comments can be re-added by humans. |
+| Comments not preserved | The parser discards `//` comments | Simplifies round-trip. Comments can be re-added by humans. |
 | No behavioral constructs | Structural only | Behavioral semantics live in Lean proofs. The text format is a netlist, not an HDL. |
 | Implementation in Lean | Not Python/external | Stays in the build system. Parser output is a real `Circuit` value. Proofs can reference it directly. |
 
 ---
 
-## 10. Grammar (Formal)
+## 10. Grammar (formal)
 
 For reference, the complete grammar in approximate EBNF:
 
