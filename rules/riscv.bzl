@@ -1,10 +1,12 @@
 """Rules for compiling RISC-V ELFs and executing Shoumei simulation tests."""
 
 def _riscv_elf_impl(ctx):
+    toolchain = ctx.toolchains["//rules:riscv_toolchain_type"]
+
     out_name = ctx.label.name if ctx.label.name.endswith(".elf") else ctx.label.name + ".elf"
     out = ctx.actions.declare_file(out_name)
 
-    inputs = list(ctx.files.srcs)
+    inputs = list(toolchain.files.to_list()) + list(ctx.files.srcs)
     if ctx.file.crt0:
         inputs.append(ctx.file.crt0)
     if ctx.file.linker_script:
@@ -13,7 +15,7 @@ def _riscv_elf_impl(ctx):
 
     cmd = """#!/usr/bin/env bash
 set -euo pipefail
-CC="$(command -v riscv64-unknown-elf-gcc 2>/dev/null || command -v riscv64-elf-gcc 2>/dev/null || echo riscv64-unknown-elf-gcc)"
+CC="{cc}"
 "$CC" -march={march} -mabi={mabi} -O2 -nostdlib -nostartfiles -ffreestanding \
   {extra_copts} \
   {linker_flag} \
@@ -23,6 +25,7 @@ CC="$(command -v riscv64-unknown-elf-gcc 2>/dev/null || command -v riscv64-elf-g
   {srcs} \
   -o "{out}"
 """.format(
+        cc = toolchain.gcc.path,
         march = ctx.attr.march,
         mabi = ctx.attr.mabi,
         extra_copts = " ".join(ctx.attr.copts),
@@ -46,6 +49,7 @@ CC="$(command -v riscv64-unknown-elf-gcc 2>/dev/null || command -v riscv64-elf-g
 
 riscv_elf = rule(
     implementation = _riscv_elf_impl,
+    toolchains = ["//rules:riscv_toolchain_type"],
     attrs = {
         "srcs": attr.label_list(
             allow_files = [".c", ".S", ".s"],

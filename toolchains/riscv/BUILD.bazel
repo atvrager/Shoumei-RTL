@@ -1,0 +1,15 @@
+load("//rules:riscv_gcc.bzl", "riscv_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+riscv_toolchain(
+    name = "riscv_gcc_impl",
+    files = "@riscv_gcc//:files",
+    gcc = "@riscv_gcc//:gcc",
+)
+
+toolchain(
+    name = "riscv_gcc",
+    toolchain = ":riscv_gcc_impl",
+    toolchain_type = "//rules:riscv_toolchain_type",
+)

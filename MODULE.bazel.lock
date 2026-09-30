@@ -313,6 +313,19 @@
         }
       }
     },
+    "//rules:riscv_gcc.bzl%riscv_gcc_ext": {
+      "general": {
+        "bzlTransitiveDigest": "cD5yJ57PpQqpH/jebZ/16kxRdOgOGyByNDCmjHSb7/o=",
+        "usagesDigest": "BszMmh7JA9NbcKImmm30cNeii8tzOxFr2J0riGruvBo=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "riscv_gcc": {
+            "repoRuleId": "@@//rules:riscv_gcc.bzl%riscv_gcc_repo",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "@@pybind11_bazel+//:internal_configure.bzl%internal_configure_extension": {
       "general": {
         "bzlTransitiveDigest": "NRXra7941UfmNUyIxnLt82V5hULluVGL2nBsijTl4j4=",
