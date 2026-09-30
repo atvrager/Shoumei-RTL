@@ -193,6 +193,23 @@ check(
     ste.Rule.SENTENCE not in rules(ste.lint_text("t.md", GAPPED, False)),
 )
 
+# ------------------------------------------------------- commit messages
+
+BAD_COMMIT = "add a thing.\nbody with no blank line after the subject\n"
+bad = ste.commit_findings(BAD_COMMIT)
+check("COMMIT002 lowercase subject", ste.Rule.SUBJECT_CASE in rules(bad))
+check("COMMIT003 subject period", ste.Rule.SUBJECT_PERIOD in rules(bad))
+check("COMMIT004 blank line", ste.Rule.BLANK_LINE in rules(bad))
+
+LONG_SUBJECT = "Add a subject that runs well past the fifty character target here\n"
+check("COMMIT001 long subject", ste.Rule.SUBJECT_LONG in rules(ste.commit_findings(LONG_SUBJECT)))
+
+GOOD_COMMIT = "Add a rule\n\nIt explains why.\n"
+check("a good commit message is silent", ste.commit_findings(GOOD_COMMIT) == [])
+
+FIXUP_COMMIT = "fixup! Add a rule\n"
+check("COMMIT006 fixup subject", ste.Rule.FIXUP in rules(ste.commit_findings(FIXUP_COMMIT)))
+
 print(f"ste-lint tests: {CHECKS - len(FAILURES)}/{CHECKS} passed")
 for failure in FAILURES:
     print(f"  FAIL {failure}")

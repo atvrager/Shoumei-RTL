@@ -103,6 +103,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           packages: shellcheck cppcheck python3-yaml
@@ -112,6 +114,11 @@ jobs:
           cache-save: 'false'
       - name: Run the linters
         run: bazel test //verification:linters
+
+      - name: Lint the commit messages
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          python3 verification/ste-lint.py --commit-log "$base..HEAD"
 
   lean-build:
     name: Lean build and integrity

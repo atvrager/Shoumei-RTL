@@ -77,6 +77,15 @@ class Rule:
     PARAGRAPH = "STE008"  # more than 6 sentences in one paragraph
     EXPLETIVE = "STE009"  # name the subject after "there"
 
+    # Commit message rules, checked on the message itself.
+    SUBJECT_LONG = "COMMIT001"  # subject over the length limit
+    SUBJECT_CASE = "COMMIT002"  # subject does not start with a capital
+    SUBJECT_PERIOD = "COMMIT003"  # subject ends with a period
+    BLANK_LINE = "COMMIT004"  # no blank line after the subject
+    BODY_WRAP = "COMMIT005"  # body line over the length limit
+    FIXUP = "COMMIT006"  # a fixup, squash or WIP subject
+    TRAILING_WS = "COMMIT007"  # trailing whitespace in the message
+
 
 RULE_HELP = {
     Rule.SENTENCE: f"sentence longer than {SENTENCE_FAIL_WORDS - 1} words",
@@ -88,7 +97,20 @@ RULE_HELP = {
     Rule.PASSIVE: "prefer active voice",
     Rule.PARAGRAPH: f"split a paragraph longer than {PARAGRAPH_MAX_SENTENCES} sentences",
     Rule.EXPLETIVE: "name the subject",
+    Rule.SUBJECT_LONG: "shorten the subject",
+    Rule.SUBJECT_CASE: "capitalize the subject",
+    Rule.SUBJECT_PERIOD: "drop the final period",
+    Rule.BLANK_LINE: "put a blank line after the subject",
+    Rule.BODY_WRAP: "wrap the body",
+    Rule.FIXUP: "squash the fixup before it lands",
+    Rule.TRAILING_WS: "delete the trailing whitespace",
 }
+
+# Commit message lengths.  The subject target is 50 characters and the hard
+# limit 72.  The body wraps at 72.
+SUBJECT_MAX = 50
+SUBJECT_HARD = 72
+BODY_MAX = 72
 
 
 # ---------------------------------------------------------------- word lists
@@ -826,9 +848,119 @@ def staged_added_lines() -> dict[str, set[int]]:
     return added
 
 
-def read_stdin() -> list[tuple[int, str]]:
+def commit_findings(text: str, name: str = "<commit>") -> list[Finding]:
+    """The mechanical rules of one commit message."""
+    out: list[Finding] = []
+    lines = text.splitlines()
+    subject_index = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if subject_index is None:
+        return [
+            Finding(name, 1, 1, Severity.ERROR, Rule.SUBJECT_CASE, "the message has no subject", "")
+        ]
+
+    subject = lines[subject_index].rstrip()
+    lineno = subject_index + 1
+    if len(subject) > SUBJECT_HARD:
+        out.append(
+            Finding(
+                name,
+                lineno,
+                SUBJECT_HARD + 1,
+                Severity.ERROR,
+                Rule.SUBJECT_LONG,
+                f"subject is {len(subject)} characters (limit {SUBJECT_HARD})",
+                subject,
+            )
+        )
+    elif len(subject) > SUBJECT_MAX:
+        out.append(
+            Finding(
+                name,
+                lineno,
+                SUBJECT_MAX + 1,
+                Severity.WARNING,
+                Rule.SUBJECT_LONG,
+                f"subject is {len(subject)} characters (target {SUBJECT_MAX})",
+                subject,
+            )
+        )
+
+    if subject[:1].islower():
+        out.append(
+            Finding(name, lineno, 1, Severity.ERROR, Rule.SUBJECT_CASE, "capitalize the subject", subject)
+        )
+    if subject.endswith("."):
+        out.append(
+            Finding(
+                name,
+                lineno,
+                len(subject),
+                Severity.ERROR,
+                Rule.SUBJECT_PERIOD,
+                "the subject ends with a period",
+                subject,
+            )
+        )
+    if subject.startswith(("fixup!", "squash!", "WIP", "wip")):
+        out.append(
+            Finding(
+                name,
+                lineno,
+                1,
+                Severity.ERROR,
+                Rule.FIXUP,
+                "a fixup, squash or WIP commit must not land",
+                subject,
+            )
+        )
+
+    body = lines[subject_index + 1 :]
+    if any(line.strip() for line in body) and body and body[0].strip():
+        out.append(
+            Finding(
+                name,
+                subject_index + 2,
+                1,
+                Severity.ERROR,
+                Rule.BLANK_LINE,
+                "put a blank line after the subject",
+                body[0],
+            )
+        )
+
+    for offset, line in enumerate(lines, 1):
+        stripped = line.rstrip()
+        if stripped != line:
+            out.append(
+                Finding(
+                    name,
+                    offset,
+                    len(stripped) + 1,
+                    Severity.ERROR,
+                    Rule.TRAILING_WS,
+                    "trailing whitespace",
+                    stripped[-40:],
+                )
+            )
+        if offset > subject_index + 1 and len(line) > BODY_MAX and not line.lstrip().startswith("http"):
+            out.append(
+                Finding(
+                    name,
+                    offset,
+                    BODY_MAX + 1,
+                    Severity.WARNING,
+                    Rule.BODY_WRAP,
+                    f"body line is {len(line)} characters (limit {BODY_MAX})",
+                    line[:40],
+                )
+            )
+    return out
+
+
+def read_stdin(text: str | None = None) -> list[tuple[int, str]]:
     """Read a commit message.  Drop comment lines and the scissors block."""
-    text = sys.stdin.read()
+    if text is None:
+        text = sys.stdin.read()
     cut = text.find("# ------------------------ >8 ------------------------")
     if cut >= 0:
         text = text[:cut]
@@ -849,6 +981,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("paths", nargs="*", help="files or directories to lint")
     parser.add_argument("--stdin", action="store_true", help="lint a commit message on stdin")
+    parser.add_argument(
+        "--commit-log",
+        help="lint every commit message in the given git range, for example origin/main..HEAD",
+    )
     parser.add_argument("--all", action="store_true", help="lint every tracked prose file")
     parser.add_argument(
         "--diff", action="store_true", help="lint only the lines added in the staged diff"
@@ -876,7 +1012,26 @@ def main(argv: list[str]) -> int:
 
     findings: list[Finding] = []
     if args.stdin:
-        findings += lint_text("<stdin>", read_stdin(), args.strict)
+        message = sys.stdin.read()
+        findings += commit_findings(message)
+        findings += lint_text("<stdin>", read_stdin(message), args.strict)
+    elif args.commit_log:
+        log = subprocess.run(
+            ["git", "log", "--no-merges", "--format=%H%x00%B%x00", args.commit_log],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        parts = log.split("\x00")
+        for index in range(0, len(parts) - 1, 2):
+            sha = parts[index].strip()
+            if not sha:
+                continue
+            message = parts[index + 1]
+            name = sha[:12]
+            findings += commit_findings(message, name)
+            findings += lint_text(name, read_stdin(message), args.strict)
     else:
         if not (args.paths or args.all or args.diff):
             print("ste-lint: give paths, or --stdin/--all/--diff", file=sys.stderr)
