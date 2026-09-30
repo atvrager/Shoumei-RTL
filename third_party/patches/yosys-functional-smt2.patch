@@ -1,0 +1,29 @@
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -1125,6 +1125,18 @@
+     alwayslink = True,
+ )
+ 
++# write_functional_smt2 emits a design as a pure SMT-LIB step function.
++cc_library(
++    name = "backend_functional_smt2",
++    srcs = ["backends/functional/smtlib.cc"],
++    conlyopts = COMMON_COPTS,
++    cxxopts = COMMON_CXXOPTS,
++    local_defines = COMMON_DEFINES,
++    visibility = ["//visibility:public"],
++    deps = [":kernel"],
++    alwayslink = True,
++)
++
+ # Techlib libraries
+ cc_library(
+     name = "techlib_common",
+@@ -1173,6 +1185,7 @@
+     deps = [
+         ":backend_aiger",
+         ":backend_aiger2",
++        ":backend_functional_smt2",
+         ":backend_json",
+         ":backend_rtlil",
+         ":backend_verilog",

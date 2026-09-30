@@ -42,11 +42,15 @@ bazel_dep(name = "yosys", version = "0.68.bcr.1")
 
 # Yosys and ABC keep a readline shell.  That shell drags in ncurses and the
 # `sed` module, which does not build here.  The scripts run both tools in batch
-# mode only.
+# mode only.  The second patch links the functional SMT-LIB backend
+# (`write_functional_smt2`), which the bridge proofs use.
 single_version_override(
     module_name = "yosys",
     patch_strip = 1,
-    patches = ["//third_party/patches:yosys-no-readline.patch"],
+    patches = [
+        "//third_party/patches:yosys-no-readline.patch",
+        "//third_party/patches:yosys-functional-smt2.patch",
+    ],
     version = "0.68.bcr.1",
 )
 
