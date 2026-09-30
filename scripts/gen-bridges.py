@@ -151,25 +151,13 @@ def sv_deps(mod: str) -> str:
 
 TARGET_MODULES = set(sys.argv[1:]) if len(sys.argv) > 1 else None
 
-SMT2LEAN_PATH = os.environ.get("SMT2LEAN")
-if SMT2LEAN_PATH:
-    SMT2LEAN_BIN = Path(SMT2LEAN_PATH).resolve()
-    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
-else:
-    SMT2LEAN_BIN = ROOT / "bazel-bin" / "smt2lean"
-    if not SMT2LEAN_BIN.exists():
-        subprocess.run(["bazel", "build", "//generators:smt2lean"], cwd=ROOT, check=True)
-    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
-
-SVA2LEAN_PATH = os.environ.get("SVA2LEAN")
-if SVA2LEAN_PATH:
-    SVA2LEAN_BIN = Path(SVA2LEAN_PATH).resolve()
-    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
-else:
-    SVA2LEAN_BIN = ROOT / "bazel-bin" / "sva2lean"
-    if not SVA2LEAN_BIN.exists():
-        subprocess.run(["bazel", "build", "//generators:sva2lean"], cwd=ROOT, check=True)
-    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
+# //verification:sec_bridge_test passes both converters through the
+# environment.  An import that only reads sv_deps or SPEC_DEPS
+# (scripts/spec-equiv.py) needs neither; main() checks them.
+SMT2LEAN_BIN = Path(os.environ.get("SMT2LEAN", "smt2lean-unset")).resolve()
+SMT2LEAN_CMD = str(SMT2LEAN_BIN)
+SVA2LEAN_BIN = Path(os.environ.get("SVA2LEAN", "sva2lean-unset")).resolve()
+SVA2LEAN_CMD = str(SVA2LEAN_BIN)
 GEN_SCRIPT = Path(__file__).resolve()
 
 
@@ -2875,6 +2863,9 @@ end ShoumeiSec.Bridge{mod}
 
 
 def main() -> None:
+    for env in ("SMT2LEAN", "SVA2LEAN"):
+        if env not in os.environ:
+            sys.exit(f"gen-bridges.py: {env} is not set; use //verification:sec_bridge_test")
     (ROOT / "verification" / "bridge").mkdir(parents=True, exist_ok=True)
     (ROOT / "output" / "sec-bridge" / "ShoumeiSec" / "Bridge").mkdir(parents=True, exist_ok=True)
     print("Generating Register bridges...")
