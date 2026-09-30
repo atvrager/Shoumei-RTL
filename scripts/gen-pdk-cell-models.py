@@ -58,21 +58,22 @@ def match_brace(txt: str, start: int) -> tuple[int, int] | None:
 
 
 def load_lib(path: str) -> dict[str, dict[str, str]]:
-    txt = gzip.open(path, "rt").read()
+    with gzip.open(path, "rt") as f:
+        txt = f.read()
     out: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"cell\s*\(\s*([^)]+?)\s*\)", txt):
         name = m.group(1)
         b = match_brace(txt, m.end())
         if not b:
             continue
-        body = txt[b[0]:b[1]]
+        body = txt[b[0] : b[1]]
         pins: dict[str, str] = {}
         for pm in re.finditer(r"pin\s*\(\s*([^)]+?)\s*\)", body):
             pn = pm.group(1)
             pb = match_brace(body, pm.end())
             if not pb:
                 continue
-            pbody = body[pb[0]:pb[1]]
+            pbody = body[pb[0] : pb[1]]
             if not re.search(r"direction\s*:\s*output", pbody):
                 continue
             f = re.search(r'function\s*:\s*"([^"]*)"', pbody)
@@ -85,9 +86,8 @@ def load_lib(path: str) -> dict[str, dict[str, str]]:
 def to_verilog(expr: str) -> str:
     """Liberty boolean function -> Verilog expression."""
     s = expr
-    s = re.sub(r"([A-Za-z_][A-Za-z0-9_]*)'", r"~\1", s)   # postfix inversion
-    s = s.replace("!", "~").replace("*", "&").replace("+", "|")
-    return s
+    s = re.sub(r"([A-Za-z_][A-Za-z0-9_]*)'", r"~\1", s)  # postfix inversion
+    return s.replace("!", "~").replace("*", "&").replace("+", "|")
 
 
 def pins(group: str) -> list[str]:
@@ -96,19 +96,19 @@ def pins(group: str) -> list[str]:
 
 def liberty_present() -> bool:
     """The PDK Liberty lives in the third_party/orfs submodule."""
-    return all((ROOT / p).exists() for p in ASAP7_LIBS + [GF180_LIB])
+    return all((ROOT / p).exists() for p in [*ASAP7_LIBS, GF180_LIB])
 
 
 def main() -> int:
     import argparse
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=OUT, help="Output path for pdk-cells-model.sv")
     args = ap.parse_args()
     out_file = args.out
 
     if not liberty_present():
-        print("SKIP: PDK Liberty not found (init third_party/orfs); "
-              "not regenerating cell models")
+        print("SKIP: PDK Liberty not found (init third_party/orfs); not regenerating cell models")
         return 0
 
     libs: dict[str, dict[str, str]] = {}
@@ -131,10 +131,8 @@ def main() -> int:
             if funcs is None:
                 missing.append(sv)
                 continue
-            ports = [f"input logic {p}" for p in pin_list] + \
-                    [f"output logic {p}" for p in out_list]
-            body = [f"  assign {p} = {to_verilog(funcs[p])};"
-                    for p in out_list if p in funcs]
+            ports = [f"input logic {p}" for p in pin_list] + [f"output logic {p}" for p in out_list]
+            body = [f"  assign {p} = {to_verilog(funcs[p])};" for p in out_list if p in funcs]
             lines.append(f"module {sv} ({', '.join(ports)});")
             lines += body
             lines.append("endmodule")

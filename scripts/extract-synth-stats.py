@@ -38,8 +38,12 @@ class SynthMetrics:
     report_found: bool = False
 
 
-def parse_area_report(report_path: Path, target_name: str, platform: str, design: str, freq: float) -> SynthMetrics:
-    metrics = SynthMetrics(target_name=target_name, platform=platform, design=design, clock_freq_mhz=freq)
+def parse_area_report(
+    report_path: Path, target_name: str, platform: str, design: str, freq: float
+) -> SynthMetrics:
+    metrics = SynthMetrics(
+        target_name=target_name, platform=platform, design=design, clock_freq_mhz=freq
+    )
     if not report_path.exists():
         return metrics
 
@@ -79,7 +83,10 @@ def parse_area_report(report_path: Path, target_name: str, platform: str, design
     if m_area:
         metrics.chip_area_um2 = float(m_area[-1])
 
-    m_seq_area = re.findall(r"of which (?:used for sequential elements:\s+|([0-9.]+)\s+is used for sequential elements)([0-9.]+)?", content)
+    m_seq_area = re.findall(
+        r"of which (?:used for sequential elements:\s+|([0-9.]+)\s+is used for sequential elements)([0-9.]+)?",
+        content,
+    )
     if m_seq_area:
         # group 0 or group 1
         last = m_seq_area[-1]
@@ -89,7 +96,11 @@ def parse_area_report(report_path: Path, target_name: str, platform: str, design
             metrics.comb_area_um2 = metrics.chip_area_um2 - metrics.seq_area_um2
 
     # Parse cell breakdown from the top-module section to count sequential cells
-    top_section = content.split("Count including submodules")[-1] if "Count including submodules" in content else content
+    top_section = (
+        content.split("Count including submodules")[-1]
+        if "Count including submodules" in content
+        else content
+    )
     cell_lines = re.findall(r"^\s*(\d+)\s+[0-9.eE+-]+\s+([a-zA-Z0-9_]+)\s*$", top_section, re.M)
     if not cell_lines:
         cell_lines = re.findall(r"^\s*(\d+)\s+([a-zA-Z0-9_]+)\s*$", top_section, re.M)
@@ -164,28 +175,66 @@ def generate_markdown_table(results: dict[str, SynthMetrics]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Extract synthesis statistics across quad-target matrix.")
+    parser = argparse.ArgumentParser(
+        description="Extract synthesis statistics across quad-target matrix."
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON format")
     parser.add_argument("--markdown", action="store_true", help="Output Markdown table")
-    parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
+    parser.add_argument("--root", type=Path, default=Path(), help="Project root directory")
     args = parser.parse_args()
 
     root = args.root.resolve()
 
     # Target directories
     targets = {
-        "T1": (root / "syn_out_gf180_cpu" / "reports" / "area.rpt", "GF180MCU", "CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth", 64.0),
-        "T2": (root / "syn_out_asap7_cpu" / "reports" / "area.rpt", "ASAP7", "CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth", 1000.0),
-        "T3": (root / "syn_out_gf180_soc" / "reports" / "area.rpt", "GF180MCU", "Shoumei_SoC_synth", 64.0),
-        "T4": (root / "syn_out_asap7_soc" / "reports" / "area.rpt", "ASAP7", "Shoumei_SoC_synth", 1000.0),
+        "T1": (
+            root / "syn_out_gf180_cpu" / "reports" / "area.rpt",
+            "GF180MCU",
+            "CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth",
+            64.0,
+        ),
+        "T2": (
+            root / "syn_out_asap7_cpu" / "reports" / "area.rpt",
+            "ASAP7",
+            "CachedCPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth",
+            1000.0,
+        ),
+        "T3": (
+            root / "syn_out_gf180_soc" / "reports" / "area.rpt",
+            "GF180MCU",
+            "Shoumei_SoC_synth",
+            64.0,
+        ),
+        "T4": (
+            root / "syn_out_asap7_soc" / "reports" / "area.rpt",
+            "ASAP7",
+            "Shoumei_SoC_synth",
+            1000.0,
+        ),
     }
 
     # Fallback to default directory names if specific ones do not exist
-    if not (root / "syn_out_gf180_cpu" / "reports" / "area.rpt").exists() and (root / "syn_out_gf180" / "reports" / "area.rpt").exists():
-        targets["T1"] = (root / "syn_out_gf180" / "reports" / "area.rpt", "GF180MCU", "CPU_synth", 64.0)
+    if (
+        not (root / "syn_out_gf180_cpu" / "reports" / "area.rpt").exists()
+        and (root / "syn_out_gf180" / "reports" / "area.rpt").exists()
+    ):
+        targets["T1"] = (
+            root / "syn_out_gf180" / "reports" / "area.rpt",
+            "GF180MCU",
+            "CPU_synth",
+            64.0,
+        )
 
-    if not (root / "syn_out_asap7_cpu" / "reports" / "area.rpt").exists() and (root / "syn_out_asap7" / "reports" / "area.rpt").exists():
-        targets["T2"] = (root / "syn_out_asap7" / "reports" / "area.rpt", "ASAP7", "CPU_synth", 1000.0)
+    if (
+        not (root / "syn_out_asap7_cpu" / "reports" / "area.rpt").exists()
+        and (root / "syn_out_asap7" / "reports" / "area.rpt").exists()
+    ):
+        targets["T2"] = (
+            root / "syn_out_asap7" / "reports" / "area.rpt",
+            "ASAP7",
+            "CPU_synth",
+            1000.0,
+        )
 
     results: dict[str, SynthMetrics] = {}
     for tid, (path, platform, design, freq) in targets.items():
@@ -207,19 +256,29 @@ def main() -> int:
     for tid in ("T1", "T2", "T3", "T4"):
         m = results[tid]
         status = "FOUND" if m.report_found else "NOT RUN YET"
-        freq_str = f"{m.clock_freq_mhz / 1000.0:.1f} GHz" if m.clock_freq_mhz >= 1000.0 else f"{m.clock_freq_mhz:.0f} MHz"
+        freq_str = (
+            f"{m.clock_freq_mhz / 1000.0:.1f} GHz"
+            if m.clock_freq_mhz >= 1000.0
+            else f"{m.clock_freq_mhz:.0f} MHz"
+        )
         print(f"[{tid}] {m.platform} - {m.design} ({freq_str}): {status}")
         if m.report_found:
-            print(f"     Cells: {m.num_cells:,} (Seq: {m.num_seq_cells:,}, Comb: {m.num_comb_cells:,})")
+            print(
+                f"     Cells: {m.num_cells:,} (Seq: {m.num_seq_cells:,}, Comb: {m.num_comb_cells:,})"
+            )
             print(f"     Area:  {m.chip_area_um2:,.2f} µm² (Seq: {m.seq_area_um2:,.2f} µm²)")
             print(f"     Wires: {m.num_wires:,} ({m.num_wire_bits:,} bits)")
     print("-" * 70)
     t1, t3 = results.get("T1"), results.get("T3")
     t2, t4 = results.get("T2"), results.get("T4")
     if t1 and t3 and t1.report_found and t3.report_found:
-        print(f"GF180MCU Overhead (SoC vs CPU): {format_delta(t3.chip_area_um2, t1.chip_area_um2)} area, {format_delta(t3.num_cells, t1.num_cells, False)} cells, {format_delta(t3.num_seq_cells, t1.num_seq_cells, False)} FFs")
+        print(
+            f"GF180MCU Overhead (SoC vs CPU): {format_delta(t3.chip_area_um2, t1.chip_area_um2)} area, {format_delta(t3.num_cells, t1.num_cells, False)} cells, {format_delta(t3.num_seq_cells, t1.num_seq_cells, False)} FFs"
+        )
     if t2 and t4 and t2.report_found and t4.report_found:
-        print(f"ASAP7 Overhead (SoC vs CPU):    {format_delta(t4.chip_area_um2, t2.chip_area_um2)} area, {format_delta(t4.num_cells, t2.num_cells, False)} cells, {format_delta(t4.num_seq_cells, t2.num_seq_cells, False)} FFs")
+        print(
+            f"ASAP7 Overhead (SoC vs CPU):    {format_delta(t4.chip_area_um2, t2.chip_area_um2)} area, {format_delta(t4.num_cells, t2.num_cells, False)} cells, {format_delta(t4.num_seq_cells, t2.num_seq_cells, False)} FFs"
+        )
     print("=" * 70)
 
     return 0

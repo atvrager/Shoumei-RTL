@@ -51,10 +51,17 @@ def read_manifest() -> list[tuple[str, dict[str, float]]]:
         if len(parts) < 7:
             continue
         module, _width, _cin, a_a, a_d, g_a, g_d = parts[:7]
-        out.append((module, {
-            "asap7_area": float(a_a), "asap7_delay": float(a_d),
-            "gf180_area": float(g_a), "gf180_delay": float(g_d),
-        }))
+        out.append(
+            (
+                module,
+                {
+                    "asap7_area": float(a_a),
+                    "asap7_delay": float(a_d),
+                    "gf180_area": float(g_a),
+                    "gf180_delay": float(g_d),
+                },
+            )
+        )
     return out
 
 
@@ -76,8 +83,10 @@ def measure(module: str, pdk: str) -> dict[str, float] | None:
         }
         proc = subprocess.run(
             [str(ROOT / script), f"{module}_synth", period],
-            cwd=ROOT, env={**__import__("os").environ, **env},
-            capture_output=True, text=True,
+            cwd=ROOT,
+            env={**__import__("os").environ, **env},
+            capture_output=True,
+            text=True,
         )
         if proc.returncode != 0:
             print(f"  FAIL {module} [{pdk}]", file=sys.stderr)
@@ -95,8 +104,7 @@ def measure(module: str, pdk: str) -> dict[str, float] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--refit", action="store_true",
-                    help="print suggested Cost.lean constants")
+    ap.add_argument("--refit", action="store_true", help="print suggested Cost.lean constants")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("modules", nargs="*")
     args = ap.parse_args()
@@ -133,11 +141,15 @@ def main() -> int:
             if not delay_ratios:
                 continue
             med = lambda xs: sorted(xs)[len(xs) // 2]  # noqa: E731
-            print(f"-- {pdk}: scale cellArea by {med(area_ratios):.2f}x, "
-                  f"cellDelay by {med(delay_ratios):.2f}x "
-                  f"({len(delay_ratios)} adders)")
-            print("   (Cost.lean seeds assume 1.0x; a factor outside 0.75-1.25 is a"
-                  " signal to update them)")
+            print(
+                f"-- {pdk}: scale cellArea by {med(area_ratios):.2f}x, "
+                f"cellDelay by {med(delay_ratios):.2f}x "
+                f"({len(delay_ratios)} adders)"
+            )
+            print(
+                "   (Cost.lean seeds assume 1.0x; a factor outside 0.75-1.25 is a"
+                " signal to update them)"
+            )
     return 0
 
 

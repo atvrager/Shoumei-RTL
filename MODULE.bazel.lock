@@ -246,6 +246,33 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//rules:lint_tools.bzl%lint_tools": {
+      "general": {
+        "bzlTransitiveDigest": "8uNSOlX1AKaJtwuWrVjBIfIUZTUPyGRRHCXCCr5mL9g=",
+        "usagesDigest": "G78kzez1NU1tDq6KegdO3fTck8WniGiu4kcrxTAvvMY=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "ruff": {
+            "repoRuleId": "@@//rules:lint_tools.bzl%tool_repository",
+            "attributes": {
+              "tool": "ruff",
+              "url": "https://github.com/astral-sh/ruff/releases/download/0.16.9/ruff-x86_64-unknown-linux-musl.tar.gz",
+              "sha256": "6a561ed4bc860472f7833dfb0f0b8285d3969fa627188c5678ea4ac2c462bbee",
+              "strip_prefix": "ruff-x86_64-unknown-linux-musl"
+            }
+          },
+          "ty": {
+            "repoRuleId": "@@//rules:lint_tools.bzl%tool_repository",
+            "attributes": {
+              "tool": "ty",
+              "url": "https://github.com/astral-sh/ty/releases/download/0.0.84/ty-x86_64-unknown-linux-musl.tar.gz",
+              "sha256": "da32bd4cbfe124f1df974e78cc163037c5d4b12ceec532b7ed785b5b74a76cd1",
+              "strip_prefix": "ty-x86_64-unknown-linux-musl"
+            }
+          }
+        }
+      }
+    },
     "//rules:pdk.bzl%pdk_ext": {
       "general": {
         "bzlTransitiveDigest": "aklCa5HawFdXueAoPKrlSGt+fDKBFXRYeF02S/AvAtw=",

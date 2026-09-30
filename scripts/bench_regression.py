@@ -62,7 +62,7 @@ def parse_milli(s: str | None) -> int | None:
 def load_csv(path: Path) -> dict[str, tuple[int | None, int | None]]:
     rows: dict[str, tuple[int | None, int | None]] = {}
     with path.open() as f:
-        for row in csv.DictReader(l for l in f if not l.startswith("#")):
+        for row in csv.DictReader(line for line in f if not line.startswith("#")):
             name = (row.get("name") or "").strip()
             if not name or name == "name":
                 continue
@@ -124,16 +124,29 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Gate benchmark IPC against the baseline.")
     ap.add_argument("--metrics", type=Path, default=DEFAULT_METRICS)
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    ap.add_argument("--tolerance", type=float, default=0.05,
-                    help="Relative drop allowed before flagging (default 0.05).")
-    ap.add_argument("--min-milli", type=int, default=10,
-                    help="Absolute drop (ipc*1000) required to flag (default 10).")
-    ap.add_argument("--only", default="",
-                    help="Comma-separated subset of benchmark names to check.")
-    ap.add_argument("--update-baseline", action="store_true",
-                    help="Merge --metrics rows into --baseline and exit 0.")
-    ap.add_argument("--report", type=Path, default=None,
-                    help="Write a markdown report to this path.")
+    ap.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.05,
+        help="Relative drop allowed before flagging (default 0.05).",
+    )
+    ap.add_argument(
+        "--min-milli",
+        type=int,
+        default=10,
+        help="Absolute drop (ipc*1000) required to flag (default 10).",
+    )
+    ap.add_argument(
+        "--only", default="", help="Comma-separated subset of benchmark names to check."
+    )
+    ap.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Merge --metrics rows into --baseline and exit 0.",
+    )
+    ap.add_argument(
+        "--report", type=Path, default=None, help="Write a markdown report to this path."
+    )
     args = ap.parse_args(argv)
 
     if not args.metrics.exists():
@@ -149,39 +162,56 @@ def main(argv: list[str] | None = None) -> int:
     if args.update_baseline:
         merged = load_csv(args.baseline)
         merged.update(current if only is None else {n: current[n] for n in only if n in current})
-        header = [l for l in args.baseline.read_text().splitlines() if l.startswith("#")]
+        header = [line for line in args.baseline.read_text().splitlines() if line.startswith("#")]
         with args.baseline.open("w") as f:
             f.write("\n".join(header) + "\n")
             f.write("name,peak_ipc_milli,dependent_ipc_milli\n")
             for name in sorted(merged):
                 peak, dep = merged[name]
-                f.write(f"{name},{peak if peak is not None else '-'},"
-                        f"{dep if dep is not None else '-'}\n")
+                f.write(
+                    f"{name},{peak if peak is not None else '-'},"
+                    f"{dep if dep is not None else '-'}\n"
+                )
         print(f"bench_regression: baseline updated ({len(merged)} rows): {args.baseline}")
         return 0
 
     baseline = load_csv(args.baseline)
     regressions, missing, added, improvements = check(
-        current, baseline, only, args.tolerance, args.min_milli)
+        current, baseline, only, args.tolerance, args.min_milli
+    )
 
-    lines = ["## Benchmark regression check",
-             f"metrics: `{args.metrics}` baseline: `{args.baseline}`",
-             f"tolerance: {args.tolerance * 100:.0f}% + {args.min_milli} milli floor",
-             ""]
+    lines = [
+        "## Benchmark regression check",
+        f"metrics: `{args.metrics}` baseline: `{args.baseline}`",
+        f"tolerance: {args.tolerance * 100:.0f}% + {args.min_milli} milli floor",
+        "",
+    ]
     if regressions:
-        lines += ["### Regressions (FAIL)",
-                  "| instr | region | baseline IPC | current IPC | delta |",
-                  "|---|---|---|---|---|"] + regressions + [""]
+        lines += [
+            "### Regressions (FAIL)",
+            "| instr | region | baseline IPC | current IPC | delta |",
+            "|---|---|---|---|---|",
+            *regressions,
+            "",
+        ]
     if missing:
         lines += ["### Missing from run (FAIL)", ", ".join(sorted(missing)), ""]
     if improvements:
-        lines += ["### Improvements (info)",
-                  "| instr | region | baseline IPC | current IPC |",
-                  "|---|---|---|---|"] + improvements + [""]
+        lines += [
+            "### Improvements (info)",
+            "| instr | region | baseline IPC | current IPC |",
+            "|---|---|---|---|",
+            *improvements,
+            "",
+        ]
     if added:
-        lines += ["### New instructions, no baseline (info)",
-                  "| instr | note | - | - |",
-                  "|---|---|---|---|"] + added + [""]
+        lines += [
+            "### New instructions, no baseline (info)",
+            "| instr | note | - | - |",
+            "|---|---|---|---|",
+            *added,
+            "",
+        ]
     if not regressions and not missing:
         scope = f"{len(only)}-instr subset" if only else f"{len(current)} instrs"
         lines += [f"PASS: no regression over baseline ({scope})."]
@@ -191,12 +221,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         args.report.write_text(report + "\n")
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(summary, "a") as f:
+        with Path(summary).open("a") as f:
             f.write(report + "\n")
 
     if regressions or missing:
-        print(f"bench_regression: FAIL ({len(regressions)} regressions, "
-              f"{len(missing)} missing)", file=sys.stderr)
+        print(
+            f"bench_regression: FAIL ({len(regressions)} regressions, {len(missing)} missing)",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

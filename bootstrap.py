@@ -17,53 +17,52 @@ Requirements: Python 3.11+
 Usage: python3 bootstrap.py [--check-only]
 """
 
-import sys
-import os
-import subprocess
-import shutil
 import argparse
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
+
 
 # ANSI color codes for pretty output
 class Color:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BLUE = '\033[94m'
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    BLUE = "\033[94m"
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
 
-def print_step(msg):
+
+def print_step(msg: str) -> None:
     """Print a step header"""
     print(f"\n{Color.BLUE}{Color.BOLD}==> {msg}{Color.RESET}")
 
-def print_success(msg):
+
+def print_success(msg: str) -> None:
     """Print a success message"""
     print(f"{Color.GREEN}✓ {msg}{Color.RESET}")
 
-def print_warning(msg):
+
+def print_warning(msg: str) -> None:
     """Print a warning message"""
     print(f"{Color.YELLOW}⚠ {msg}{Color.RESET}")
 
-def print_error(msg):
+
+def print_error(msg: str) -> None:
     """Print an error message"""
     print(f"{Color.RED}✗ {msg}{Color.RESET}")
 
-def run_command(cmd, check=True, capture=False):
+
+def run_command(cmd: str, check: bool = True, capture: bool = False) -> str | None:
     """Run a shell command"""
     try:
         if capture:
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                check=check,
-                capture_output=True,
-                text=True
-            )
+            result = subprocess.run(cmd, shell=True, check=check, capture_output=True, text=True)
             return result.stdout.strip()
-        else:
-            subprocess.run(cmd, shell=True, check=check)
-            return None
+        subprocess.run(cmd, shell=True, check=check)
+        return None
     except subprocess.CalledProcessError as e:
         if check:
             print_error(f"Command failed: {cmd}")
@@ -72,11 +71,13 @@ def run_command(cmd, check=True, capture=False):
             raise
         return None
 
-def command_exists(cmd):
+
+def command_exists(cmd: str) -> bool:
     """Check if a command exists in PATH"""
     return shutil.which(cmd) is not None
 
-def check_python_version():
+
+def check_python_version() -> None:
     """Verify Python 3.11+"""
     print_step("Checking Python version")
     version = sys.version_info
@@ -85,7 +86,8 @@ def check_python_version():
         sys.exit(1)
     print_success(f"Python {version.major}.{version.minor}.{version.micro}")
 
-def install_uv():
+
+def install_uv() -> None:
     """Install uv if not present"""
     print_step("Checking uv installation")
 
@@ -103,7 +105,8 @@ def install_uv():
     print_success("uv installed")
     print_warning("You may need to restart your shell or run: source ~/.bashrc (or ~/.zshrc)")
 
-def install_elan():
+
+def install_elan() -> None:
     """Install elan (LEAN toolchain manager) if not present"""
     print_step("Checking elan installation")
 
@@ -125,7 +128,8 @@ def install_elan():
 
     print_success("elan installed")
 
-def setup_lean():
+
+def setup_lean() -> None:
     """Set up LEAN via elan using lean-toolchain"""
     print_step("Setting up LEAN 4")
 
@@ -134,7 +138,7 @@ def setup_lean():
         print_error("lean-toolchain file not found!")
         sys.exit(1)
 
-    with open(toolchain_file) as f:
+    with toolchain_file.open() as f:
         toolchain = f.read().strip()
     print(f"Target toolchain: {toolchain}")
 
@@ -155,7 +159,8 @@ def setup_lean():
         print_error("elan not found; install elan first")
         sys.exit(1)
 
-def install_bazel():
+
+def install_bazel() -> None:
     """Verify Bazel / Bazelisk installation"""
     print_step("Checking Bazel installation")
 
@@ -176,7 +181,8 @@ def install_bazel():
     print("  Arch Linux:     sudo pacman -S bazel")
     print("  GitHub release: https://github.com/bazelbuild/bazelisk/releases")
 
-def install_yosys():
+
+def install_yosys() -> None:
     """Install Yosys (used for SystemVerilog validation)"""
     print_step("Checking Yosys installation")
 
@@ -191,7 +197,8 @@ def install_yosys():
     print("  Arch Linux:     sudo pacman -S yosys")
     print("  macOS:          brew install yosys")
 
-def install_verilator():
+
+def install_verilator() -> None:
     """Install Verilator (used for RTL simulation)"""
     print_step("Checking Verilator installation")
 
@@ -206,7 +213,8 @@ def install_verilator():
     print("  Arch Linux:     sudo pacman -S verilator")
     print("  macOS:          brew install verilator")
 
-def install_riscv_gcc():
+
+def install_riscv_gcc() -> None:
     """Install RISC-V GCC cross-compiler"""
     print_step("Checking RISC-V GCC cross-compiler")
 
@@ -214,7 +222,12 @@ def install_riscv_gcc():
     riscv_dir = home / ".local" / "riscv32-elf"
     riscv_gcc = riscv_dir / "bin" / "riscv32-unknown-elf-gcc"
 
-    if riscv_gcc.exists() or command_exists("riscv32-unknown-elf-gcc") or command_exists("riscv64-unknown-elf-gcc") or command_exists("riscv64-elf-gcc"):
+    if (
+        riscv_gcc.exists()
+        or command_exists("riscv32-unknown-elf-gcc")
+        or command_exists("riscv64-unknown-elf-gcc")
+        or command_exists("riscv64-elf-gcc")
+    ):
         print_success("RISC-V GCC already installed")
         return
 
@@ -227,9 +240,12 @@ def install_riscv_gcc():
         print_success(f"RISC-V GCC installed to {riscv_dir}")
     else:
         print_error("scripts/setup-riscv-toolchain.sh not found")
-        print("Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases")
+        print(
+            "Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases"
+        )
 
-def verify_build():
+
+def verify_build() -> None:
     """Verify the installation by running bazel build //lean:shoumei"""
     print_step("Verifying installation with 'bazel build //lean:shoumei'")
 
@@ -241,20 +257,21 @@ def verify_build():
         print("This is expected if there are compilation errors in LEAN code")
         print("The toolchain is installed correctly.")
 
-def check_all_tools():
+
+def check_all_tools() -> bool:
     """Check-only mode: verify all tools are present and print a summary."""
     print(f"{Color.BOLD}Shoumei RTL - Tool Check{Color.RESET}")
     print("=" * 50)
 
     tools = [
-        ("python3",                  "Python 3.11+"),
-        ("bazel",                    "Bazel / Bazelisk"),
-        ("lean",                     "Lean 4"),
-        ("yosys",                    "Yosys (SystemVerilog validation)"),
-        ("verilator",                "Verilator (RTL sim)"),
-        ("riscv-gcc",                "RISC-V GCC"),
-        ("uv",                       "uv (Python)"),
-        ("gh",                       "GitHub CLI"),
+        ("python3", "Python 3.11+"),
+        ("bazel", "Bazel / Bazelisk"),
+        ("lean", "Lean 4"),
+        ("yosys", "Yosys (SystemVerilog validation)"),
+        ("verilator", "Verilator (RTL sim)"),
+        ("riscv-gcc", "RISC-V GCC"),
+        ("uv", "uv (Python)"),
+        ("gh", "GitHub CLI"),
     ]
 
     home = Path.home()
@@ -288,15 +305,18 @@ def check_all_tools():
         print_error(f"{len(missing)} tool(s) missing: {', '.join(missing)}")
         print("Run: python3 bootstrap.py  (without --check-only) to install")
         return False
-    else:
-        print_success("All tools present")
-        return True
+    print_success("All tools present")
+    return True
 
-def main():
+
+def main() -> None:
     """Main bootstrap process"""
     parser = argparse.ArgumentParser(description="Shoumei RTL development environment setup")
-    parser.add_argument("--check-only", action="store_true",
-                        help="Only verify tools are present; do not install anything")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Only verify tools are present; do not install anything",
+    )
     args = parser.parse_args()
 
     if args.check_only:
@@ -344,6 +364,7 @@ def main():
     print("     bazel test //:presubmit")
     print("  5. See README.md for detailed Bazel workflow")
 
+
 if __name__ == "__main__":
     try:
         main()
@@ -353,5 +374,6 @@ if __name__ == "__main__":
     except Exception as e:
         print_error(f"Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

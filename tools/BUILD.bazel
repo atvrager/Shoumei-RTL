@@ -18,3 +18,39 @@ sh_test(
     args = ["$(location :fst_inspect)"],
     data = [":fst_inspect"],
 )
+
+# Every Python file in the workspace, for the ruff and ty checks.
+filegroup(
+    name = "python_srcs",
+    srcs = [
+        "//:root_python_scripts",
+        "//verification:verification_python_scripts",
+    ],
+)
+
+sh_test(
+    name = "ruff_test",
+    size = "small",
+    srcs = ["run_ruff.sh"],
+    args = [
+        "$(rootpath @ruff//:bin)",
+        "$(rootpath //:ruff.toml)",
+    ],
+    data = [
+        "//:ruff.toml",
+        "//tools:python_srcs",
+        "@ruff//:bin",
+    ],
+)
+
+sh_test(
+    name = "ty_test",
+    size = "small",
+    srcs = ["run_ty.sh"],
+    args = ["$(rootpath @ty//:bin)"],
+    data = [
+        "//:ruff.toml",
+        "//tools:python_srcs",
+        "@ty//:bin",
+    ],
+)

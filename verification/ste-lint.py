@@ -212,22 +212,111 @@ IRREGULAR_PARTICIPLES = (
 
 # Words that end in "-en" or "-ed" but are not participles.
 PASSIVE_STOP = frozenset(
-    {"often", "open", "seven", "ten", "garden", "token", "golden", "wooden",
-     "sudden", "even", "when", "then", "within"}
+    {
+        "often",
+        "open",
+        "seven",
+        "ten",
+        "garden",
+        "token",
+        "golden",
+        "wooden",
+        "sudden",
+        "even",
+        "when",
+        "then",
+        "within",
+    }
 )
 
 # Sentences do not end after these tokens.
 ABBREVIATIONS = frozenset(
-    {"e.g.", "i.e.", "etc.", "cf.", "vs.", "al.", "viz.", "fig.", "no.", "approx.", "dr.", "mr.", "ms."}
+    {
+        "e.g.",
+        "i.e.",
+        "etc.",
+        "cf.",
+        "vs.",
+        "al.",
+        "viz.",
+        "fig.",
+        "no.",
+        "approx.",
+        "dr.",
+        "mr.",
+        "ms.",
+    }
 )
 
 # Function words that a sentence rarely ends on.  A line that ends with one of
 # them is a wrapped sentence, so the next line continues it.
 CONTINUATION = frozenset(
-    """and or but so the a an of to in on at by for with from into over under
-    that which who whom whose is are was were be been being not it its their
-    they this these those as if when then than because while does do did must
-    can may will shall should would could has have had there here also both""".split()
+    [
+        "and",
+        "or",
+        "but",
+        "so",
+        "the",
+        "a",
+        "an",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "from",
+        "into",
+        "over",
+        "under",
+        "that",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "not",
+        "it",
+        "its",
+        "their",
+        "they",
+        "this",
+        "these",
+        "those",
+        "as",
+        "if",
+        "when",
+        "then",
+        "than",
+        "because",
+        "while",
+        "does",
+        "do",
+        "did",
+        "must",
+        "can",
+        "may",
+        "will",
+        "shall",
+        "should",
+        "would",
+        "could",
+        "has",
+        "have",
+        "had",
+        "there",
+        "here",
+        "also",
+        "both",
+    ]
 )
 
 # Skip any line that carries this marker.  Use it for text that is data, not prose.
@@ -246,27 +335,23 @@ BADGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 SENTENCE_SEP = re.compile(r"(?<=[.!?])[ \t]+")
 WORD = re.compile(r"\S+")
-CONTRACTION_RE = re.compile(r"\b(?:%s)\b" % CONTRACTIONS, re.IGNORECASE)
+CONTRACTION_RE = re.compile(rf"\b(?:{CONTRACTIONS})\b", re.IGNORECASE)
 LATIN_RE = re.compile(
-    r"(?<![\w.])(?:%s)(?![\w])" % "|".join(re.escape(k) for k in LATIN), re.IGNORECASE
+    r"(?<![\w.])(?:{})(?![\w])".format("|".join(re.escape(k) for k in LATIN)), re.IGNORECASE
 )
 WORDY_RE = re.compile(
-    r"\b(?:%s)\b" % "|".join(re.escape(k) for k in sorted(WORDY, key=len, reverse=True)),
+    r"\b(?:{})\b".format("|".join(re.escape(k) for k in sorted(WORDY, key=len, reverse=True))),
     re.IGNORECASE,
 )
 HYPE_RE = re.compile(
-    r"(?:\b(?:%s)\b)" % "|".join(re.escape(k) for k in sorted(HYPE, key=len, reverse=True)),
+    r"(?:\b(?:{})\b)".format("|".join(re.escape(k) for k in sorted(HYPE, key=len, reverse=True))),
     re.IGNORECASE,
 )
 # Emoji only.  Arrows and box-drawing characters are deliberate in ASCII art,
 # so the arrow and dingbat blocks stay out.
-EMOJI_RE = re.compile(
-    "[\U0001f000-\U0001faff]"
-    "|[\u2728\u2705\u274c\u2757\u2764\u2b50\u26a0\ufe0f]"
-)
+EMOJI_RE = re.compile("[\U0001f000-\U0001faff]|[\u2728\u2705\u274c\u2757\u2764\u2b50\u26a0\ufe0f]")
 PASSIVE_RE = re.compile(
-    r"\b(?:is|are|was|were|be|been|being)\s+(?:\w+ly\s+)?(\w+(?:ed|en)\b|%s\b)"
-    % IRREGULAR_PARTICIPLES,
+    rf"\b(?:is|are|was|were|be|been|being)\s+(?:\w+ly\s+)?(\w+(?:ed|en)\b|{IRREGULAR_PARTICIPLES}\b)",
     re.IGNORECASE,
 )
 EXPLETIVE_RE = re.compile(r"\bthere\s+(?:is|are|was|were)\b", re.IGNORECASE)
@@ -323,12 +408,16 @@ class Finding:
     detail: str
 
     def render(self) -> str:
-        head = f"{self.path}:{self.line}:{self.col}: {self.severity.value}: {self.text} [{self.rule}]"
+        head = (
+            f"{self.path}:{self.line}:{self.col}: {self.severity.value}: {self.text} [{self.rule}]"
+        )
         return f"{head}\n    {self.detail}" if self.detail else head
 
     def github(self) -> str:
         kind = "error" if self.severity is Severity.ERROR else "warning"
-        return f"::{kind} file={self.path},line={self.line},col={self.col}::{self.rule}: {self.text}"
+        return (
+            f"::{kind} file={self.path},line={self.line},col={self.col}::{self.rule}: {self.text}"
+        )
 
 
 # ------------------------------------------------------------------ cleaning
@@ -456,9 +545,8 @@ def ends_sentence(prev: str) -> bool:
         return False
     if re.fullmatch(r"[a-z]\.", last):  # a single initial, as in "J."
         return False
-    if re.fullmatch(r"[\d.]+\.", last):  # a version or decimal, as in "1.2."
-        return False
-    return True
+    # A version or decimal, as in "1.2.".
+    return not re.fullmatch(r"[\d.]+\.", last)
 
 
 def ends_open(text: str) -> bool:
@@ -546,8 +634,7 @@ def lint_text(path: str, segments: list[tuple[int, str]], strict: bool) -> list[
                     1,
                     Severity.ERROR if warnings_block else Severity.WARNING,
                     Rule.PARAGRAPH,
-                    f"paragraph has {len(sentences)} sentences "
-                    f"(limit {PARAGRAPH_MAX_SENTENCES})",
+                    f"paragraph has {len(sentences)} sentences (limit {PARAGRAPH_MAX_SENTENCES})",
                     "",
                 )
             )
@@ -618,7 +705,13 @@ def add_line_findings(
     for match in WORDY_RE.finditer(text):
         replacement = WORDY[match.group(0).lower()]
         detail = f'use "{replacement}"' if replacement else "delete the phrase"
-        add(match.start() + 1, Severity.ERROR, Rule.WORDY, f'wordy phrase "{match.group(0)}"', detail)
+        add(
+            match.start() + 1,
+            Severity.ERROR,
+            Rule.WORDY,
+            f'wordy phrase "{match.group(0)}"',
+            detail,
+        )
 
     for match in HYPE_RE.finditer(text):
         add(
@@ -763,7 +856,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--strict", action="store_true", help="treat warnings as errors")
     parser.add_argument("--github", action="store_true", help="emit GitHub Actions annotations")
     parser.add_argument(
-        "--max", type=int, default=MAX_FINDINGS, help=f"stop after N findings (default {MAX_FINDINGS})"
+        "--max",
+        type=int,
+        default=MAX_FINDINGS,
+        help=f"stop after N findings (default {MAX_FINDINGS})",
     )
     parser.add_argument("--quiet", action="store_true", help="suppress the summary line")
     parser.add_argument("--list-rules", action="store_true", help="print the rule table")
@@ -787,11 +883,11 @@ def main(argv: list[str]) -> int:
             return 2
         if args.paths:
             targets = expand(args.paths)
-            added = None
+            added: dict[str, set[int]] | None = None
         else:
             targets = tracked_files() if args.all else []
             added = staged_added_lines() if args.diff else None
-            if args.diff:
+            if added is not None:
                 targets = [ROOT / name for name in added if is_lintable(ROOT / name)]
         for path in targets:
             segments = prose_lines(path, read_text(path))

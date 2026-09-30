@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-import os
-
-ROOT = Path(os.environ["SMOKE_ROOT"]).resolve() if "SMOKE_ROOT" in os.environ else Path(__file__).resolve().parent.parent
+ROOT = (
+    Path(os.environ["SMOKE_ROOT"]).resolve()
+    if "SMOKE_ROOT" in os.environ
+    else Path(__file__).resolve().parent.parent
+)
 SOC_HTML = ROOT / "output" / "architecture-visuals" / "soc-diagram.html"
 
 FORBIDDEN_PHRASES = [
@@ -48,14 +51,17 @@ def main() -> int:
 
     content = SOC_HTML.read_text(encoding="utf-8")
 
-    failures: list[str] = []
-    for phrase in FORBIDDEN_PHRASES:
-        if phrase in content:
-            failures.append(f"Found forbidden obsolete phrase: '{phrase}'")
-
-    for phrase in REQUIRED_PHRASES:
-        if phrase.lower() not in content.lower():
-            failures.append(f"Missing required phrase: '{phrase}'")
+    content_lower = content.lower()
+    failures: list[str] = [
+        f"Found forbidden obsolete phrase: '{phrase}'"
+        for phrase in FORBIDDEN_PHRASES
+        if phrase in content
+    ]
+    failures.extend(
+        f"Missing required phrase: '{phrase}'"
+        for phrase in REQUIRED_PHRASES
+        if phrase.lower() not in content_lower
+    )
 
     if failures:
         print("FAIL: soc-diagram.html has incorrect memory hierarchy words:", file=sys.stderr)

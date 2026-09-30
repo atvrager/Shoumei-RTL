@@ -1,0 +1,33 @@
+# ruff configuration for the Python tooling.
+#
+# `bazel test //tools:ruff_test` runs `ruff check` and `ruff format --check`
+# over every Python file in the workspace.
+
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = [
+    "ANN", # annotations
+    "ARG", # unused arguments
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import order
+    "PERF",# performance
+    "PTH", # pathlib
+    "RET", # return statements
+    "RUF", # ruff-specific
+    "SIM", # simplify
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "ANN401", # `Any` is allowed where a value is genuinely untyped
+    "E501",   # line length is the formatter's job
+]
+
+[lint.per-file-ignores]
+# Test scripts build fixtures at run time, so a few helpers stay unannotated.
+"verification/test-*.py" = ["ANN201"]

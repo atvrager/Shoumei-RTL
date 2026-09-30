@@ -12,10 +12,10 @@ Produces a header with:
 
 import json
 import sys
-import os
+from pathlib import Path
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         print(f"Usage: {sys.argv[0]} <state.json> <output.h> [top_module]", file=sys.stderr)
         sys.exit(1)
@@ -24,14 +24,11 @@ def main():
     output_path = sys.argv[2]
     top_hint = sys.argv[3] if len(sys.argv) > 3 else None
 
-    with open(state_path) as f:
+    with Path(state_path).open() as f:
         data = json.load(f)
 
     # The JSON is a list of modules. Find the top module.
-    if isinstance(data, list):
-        modules = data
-    else:
-        modules = [data]
+    modules = data if isinstance(data, list) else [data]
 
     # Find top module: by hint, or pick the one with most state bytes
     if top_hint:
@@ -48,8 +45,8 @@ def main():
 
     lines = []
     lines.append(f"// Auto-generated arcilator header for {module_name}")
-    lines.append(f"// Source: {os.path.basename(state_path)}")
-    lines.append(f"// DO NOT EDIT - regenerate with: python3 scripts/gen-arc-header.py")
+    lines.append(f"// Source: {Path(state_path).name}")
+    lines.append("// DO NOT EDIT - regenerate with: python3 scripts/gen-arc-header.py")
     lines.append("")
     lines.append(f"#ifndef {cpp_name.upper()}_ARC_H")
     lines.append(f"#define {cpp_name.upper()}_ARC_H")
@@ -120,10 +117,16 @@ def main():
             continue
 
         if mask:
-            lines.append(f"    {cpp_type} get_{cname}() const {{ {cpp_type} v; std::memcpy(&v, &state[{offset}], sizeof(v)); return v & {mask}; }}")
+            lines.append(
+                f"    {cpp_type} get_{cname}() const {{ {cpp_type} v; std::memcpy(&v, &state[{offset}], sizeof(v)); return v & {mask}; }}"
+            )
         else:
-            lines.append(f"    {cpp_type} get_{cname}() const {{ {cpp_type} v; std::memcpy(&v, &state[{offset}], sizeof(v)); return v; }}")
-        lines.append(f"    void set_{cname}({cpp_type} v) {{ std::memcpy(&state[{offset}], &v, sizeof(v)); }}")
+            lines.append(
+                f"    {cpp_type} get_{cname}() const {{ {cpp_type} v; std::memcpy(&v, &state[{offset}], sizeof(v)); return v; }}"
+            )
+        lines.append(
+            f"    void set_{cname}({cpp_type} v) {{ std::memcpy(&state[{offset}], &v, sizeof(v)); }}"
+        )
         lines.append("")
 
     lines.append("};")
@@ -131,10 +134,12 @@ def main():
     lines.append(f"#endif // {cpp_name.upper()}_ARC_H")
     lines.append("")
 
-    with open(output_path, "w") as f:
+    with Path(output_path).open("w") as f:
         f.write("\n".join(lines))
 
-    print(f"Generated {output_path} for {module_name} ({len(states)} signals, {num_bytes} state bytes)")
+    print(
+        f"Generated {output_path} for {module_name} ({len(states)} signals, {num_bytes} state bytes)"
+    )
 
 
 if __name__ == "__main__":

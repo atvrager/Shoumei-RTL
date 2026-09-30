@@ -46,7 +46,9 @@ def get_binary() -> Path:
     if bazel_bin.exists():
         return bazel_bin
     print("fst_inspect not built; running `bazel build //tools:fst_inspect`...", file=sys.stderr)
-    r = subprocess.run(["bazel", "build", "//tools:fst_inspect"], cwd=ROOT, capture_output=True, text=True)
+    r = subprocess.run(
+        ["bazel", "build", "//tools:fst_inspect"], cwd=ROOT, capture_output=True, text=True
+    )
     if not bazel_bin.exists():
         print(r.stdout, file=sys.stderr)
         print(r.stderr, file=sys.stderr)
@@ -60,8 +62,7 @@ def ensure_binary() -> None:
 
 def run_inspect(trace: Path, args: list[str]) -> str:
     bin_path = get_binary()
-    r = subprocess.run(
-        [str(bin_path), str(trace), *args], capture_output=True, text=True)
+    r = subprocess.run([str(bin_path), str(trace), *args], capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"fst_inspect failed: {r.stderr.strip() or r.stdout.strip()}")
     return r.stdout
@@ -124,8 +125,7 @@ def fmt_cell(v: str | None, width: int) -> str:
     return v
 
 
-def dump(trace: Path, sigs: list[str], cy: str, when: str | None,
-         raw: bool, bits: bool) -> None:
+def dump(trace: Path, sigs: list[str], cy: str, when: str | None, raw: bool, bits: bool) -> None:
     resolved = resolve_sigs(trace, sigs)
     args = ["--raw", "--cycles", cy, "--signals", ",".join(resolved)]
     if when:
@@ -148,7 +148,7 @@ def dump(trace: Path, sigs: list[str], cy: str, when: str | None,
         else:
             cols.setdefault(name, len(cols))
     inv = {i: n for n, i in cols.items()}
-    hdr = "%6s | " % "cy" + " | ".join("%14s" % inv[i] for i in range(len(cols)))
+    hdr = f"{'cy':>6} | " + " | ".join(f"{inv[i]:>14}" for i in range(len(cols)))
     print(hdr)
     print("-" * len(hdr))
     for cycle in sorted(per_cy):
@@ -162,27 +162,37 @@ def dump(trace: Path, sigs: list[str], cy: str, when: str | None,
                 cells[slot] = str(int(cells[slot] or 0) | (n << bit))
             else:
                 cells[cols[name]] = val
-        row = "%6d | " % cycle + " | ".join(
-            "%14s" % (fmt_cell(c, 14) if c else "-") for c in cells)
+        row = f"{cycle:>6} | " + " | ".join(f"{(fmt_cell(c, 14) if c else '-'):>14}" for c in cells)
         print(row)
 
 
 def find_cycles(trace: Path, sig: str, val: str, cy: str | None) -> None:
     resolved = resolve_sigs(trace, [sig])
-    args = ["--raw", "--signals", ",".join(resolved),
-            "--cycles", cy or "0-100000000", "--when", f"{sig}={val}"]
+    args = [
+        "--raw",
+        "--signals",
+        ",".join(resolved),
+        "--cycles",
+        cy or "0-100000000",
+        "--when",
+        f"{sig}={val}",
+    ]
     out = run_inspect(trace, args)
-    cycles = sorted({int(line.split()[0]) for line in out.splitlines()
-                     if len(line.split()) == 3})
+    cycles = sorted({int(line.split()[0]) for line in out.splitlines() if len(line.split()) == 3})
     for c in cycles:
         print(c)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("trace", nargs="?", default="shoumei_cpu.fst",
-                    help="FST trace path (default: ./shoumei_cpu.fst)")
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "trace",
+        nargs="?",
+        default="shoumei_cpu.fst",
+        help="FST trace path (default: ./shoumei_cpu.fst)",
+    )
     subs = ap.add_subparsers(dest="cmd", required=True)
 
     p_list = subs.add_parser("list", help="list signals containing PATTERN")
@@ -203,8 +213,10 @@ def main() -> int:
     args = ap.parse_args()
     trace = Path(args.trace)
     if not trace.exists():
-        sys.exit(f"ERROR: trace not found: {trace}\n"
-                 "  (run `bazel run //testbench:sim_shoumei -- +trace` and the sim with +trace)")
+        sys.exit(
+            f"ERROR: trace not found: {trace}\n"
+            "  (run `bazel run //testbench:sim_shoumei -- +trace` and the sim with +trace)"
+        )
     ensure_binary()
 
     if args.cmd == "list":
@@ -215,8 +227,14 @@ def main() -> int:
             print(f"[{width:3}] {name}")
         return 0
     if args.cmd == "dump":
-        dump(trace, [s for s in args.sigs.split(",") if s], args.cycles,
-             args.when, args.raw, args.bits)
+        dump(
+            trace,
+            [s for s in args.sigs.split(",") if s],
+            args.cycles,
+            args.when,
+            args.raw,
+            args.bits,
+        )
         return 0
     if args.cmd == "find":
         if "=" not in args.sigval:

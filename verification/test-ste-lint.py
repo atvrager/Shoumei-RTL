@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 
 
-def load_linter():
+def load_linter() -> types.ModuleType:
     spec = importlib.util.spec_from_file_location("ste_lint", BASE / "ste-lint.py")
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["ste_lint"] = module  # dataclass needs the module registered
     spec.loader.exec_module(module)
@@ -37,27 +40,31 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         FAILURES.append(f"{label}: {detail}") if detail else FAILURES.append(label)
 
 
-def lint(text: str, name: str = "t.md", strict: bool = False):
+def lint(text: str, name: str = "t.md", strict: bool = False) -> list[ste.Finding]:
     return ste.lint_text(name, ste.prose_lines(Path(name), text), strict)
 
 
-def rules(findings) -> set[str]:
+def rules(findings: list[ste.Finding]) -> set[str]:
     return {f.rule for f in findings}
 
 
-def severities(findings, rule: str) -> list[ste.Severity]:
+def severities(findings: list[ste.Finding], rule: str) -> list[ste.Severity]:
     return [f.severity for f in findings if f.rule == rule]
 
 
 # ------------------------------------------------------------------ rules
 
-LONG = "The generator emits the netlist from the Lean source and it also writes " \
-       "the ASAP7 mapping and the flat netlist and the C++ model and the " \
-       "testbench in the same pass."
+LONG = (
+    "The generator emits the netlist from the Lean source and it also writes "
+    "the ASAP7 mapping and the flat netlist and the C++ model and the "
+    "testbench in the same pass."
+)
 check("STE001 long sentence fails", ste.Rule.SENTENCE in rules(lint(LONG)))
 
-MEDIUM = "The registry checks each certificate against the emitted circuits " \
-         "and fails when a certificate names a module that is not emitted now."
+MEDIUM = (
+    "The registry checks each certificate against the emitted circuits "
+    "and fails when a certificate names a module that is not emitted now."
+)
 findings = lint(MEDIUM)
 check("STE001 medium sentence warns", ste.Rule.SENTENCE in rules(findings))
 check(
@@ -118,10 +125,12 @@ check("arrows and box drawing are not emoji", lint(ARROWS) == [], str(lint(ARROW
 
 # ------------------------------------------------------------ extraction
 
-LEAN = "-- The proof is checked here; it is done.\n" \
-       "/- Block comment: it does not stop.\n" \
-       "   The block continues here. -/\n" \
-       "theorem foo : True := by trivial\n"
+LEAN = (
+    "-- The proof is checked here; it is done.\n"
+    "/- Block comment: it does not stop.\n"
+    "   The block continues here. -/\n"
+    "theorem foo : True := by trivial\n"
+)
 lean_segments = ste.prose_lines(Path("t.lean"), LEAN)
 lean_lines = {lineno for lineno, _ in lean_segments}
 check("lean line comment is read", 1 in lean_lines)

@@ -28,22 +28,21 @@ GF180_LIB = "third_party/orfs/flow/platforms/gf180/lib/gf180mcu_fd_sc_mcu9t5v0__
 
 # CellFunction.model, mirrored.
 MODEL = {
-    "inv":   lambda v: [not v[0]],
-    "buf":   lambda v: [v[0]],
-    "and2":  lambda v: [v[0] and v[1]],
-    "or2":   lambda v: [v[0] or v[1]],
-    "xor2":  lambda v: [v[0] != v[1]],
+    "inv": lambda v: [not v[0]],
+    "buf": lambda v: [v[0]],
+    "and2": lambda v: [v[0] and v[1]],
+    "or2": lambda v: [v[0] or v[1]],
+    "xor2": lambda v: [v[0] != v[1]],
     "nand2": lambda v: [not (v[0] and v[1])],
-    "nor2":  lambda v: [not (v[0] or v[1])],
-    "mux2":  lambda v: [v[1] if v[2] else v[0]],
-    "ao21":  lambda v: [v[2] or (v[0] and v[1])],
-    "ao22":  lambda v: [(v[0] and v[1]) or (v[2] and v[3])],
+    "nor2": lambda v: [not (v[0] or v[1])],
+    "mux2": lambda v: [v[1] if v[2] else v[0]],
+    "ao21": lambda v: [v[2] or (v[0] and v[1])],
+    "ao22": lambda v: [(v[0] and v[1]) or (v[2] and v[3])],
     "aoi21": lambda v: [not (v[2] or (v[0] and v[1]))],
     "aoi22": lambda v: [not ((v[0] and v[1]) or (v[2] and v[3]))],
     "oai21": lambda v: [not ((v[0] or v[1]) and v[2])],
-    "fa":    lambda v: [bool(v[0] ^ v[1] ^ v[2]),
-                        (v[0] and v[1]) or (v[2] and (v[0] ^ v[1]))],
-    "ha":    lambda v: [v[0] != v[1], v[0] and v[1]],
+    "fa": lambda v: [bool(v[0] ^ v[1] ^ v[2]), (v[0] and v[1]) or (v[2] and (v[0] ^ v[1]))],
+    "ha": lambda v: [v[0] != v[1], v[0] and v[1]],
 }
 
 
@@ -64,21 +63,22 @@ def match_brace(txt: str, start: int) -> tuple[int, int] | None:
 
 def load_lib(path: str) -> dict[str, dict[str, str]]:
     """cell -> {output pin -> function}."""
-    txt = gzip.open(path, "rt").read()
+    with gzip.open(path, "rt") as f:
+        txt = f.read()
     out: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"cell\s*\(\s*([^)]+?)\s*\)", txt):
         name = m.group(1)
         b = match_brace(txt, m.end())
         if not b:
             continue
-        body = txt[b[0]:b[1]]
+        body = txt[b[0] : b[1]]
         pins: dict[str, str] = {}
         for pm in re.finditer(r"pin\s*\(\s*([^)]+?)\s*\)", body):
             pn = pm.group(1)
             pb = match_brace(body, pm.end())
             if not pb:
                 continue
-            pbody = body[pb[0]:pb[1]]
+            pbody = body[pb[0] : pb[1]]
             if not re.search(r"direction\s*:\s*output", pbody):
                 continue
             f = re.search(r'function\s*:\s*"([^"]*)"', pbody)
@@ -107,7 +107,7 @@ def tokenize(expr: str) -> list[str]:
 class Parser:
     """Liberty function grammar: OR(+) < XOR(^) < AND(*) < unary(!, postfix ')."""
 
-    def __init__(self, toks: list[str], env: dict[str, bool]):
+    def __init__(self, toks: list[str], env: dict[str, bool]) -> None:
         self.toks, self.env, self.i = toks, env, 0
 
     def peek(self) -> str | None:
@@ -121,7 +121,7 @@ class Parser:
     def parse(self) -> bool:
         v = self.or_expr()
         if self.peek() is not None:
-            raise ValueError(f"trailing tokens {self.toks[self.i:]}")
+            raise ValueError(f"trailing tokens {self.toks[self.i :]}")
         return v
 
     def or_expr(self) -> bool:
@@ -201,7 +201,7 @@ def check(table: Path, lib: dict[str, dict[str, str]], tag: str) -> int:
                 continue
             n = len(ins)
             for bits in itertools.product([False, True], repeat=n):
-                env = dict(zip(ins, bits))
+                env = dict(zip(ins, bits, strict=True))
                 try:
                     lib_val = Parser(tokenize(expr), env).parse()
                 except ValueError as exc:
@@ -210,8 +210,10 @@ def check(table: Path, lib: dict[str, dict[str, str]], tag: str) -> int:
                     break
                 model_val = MODEL[fn](bits)[outs.index(out_pin)]
                 if lib_val != model_val:
-                    print(f"FAIL {tag} {sv}.{out_pin} {fn}{ins}={bits}: "
-                          f"liberty={lib_val} model={model_val} ({expr})")
+                    print(
+                        f"FAIL {tag} {sv}.{out_pin} {fn}{ins}={bits}: "
+                        f"liberty={lib_val} model={model_val} ({expr})"
+                    )
                     bad += 1
                     break
     print(f"{tag}: {'OK' if bad == 0 else str(bad) + ' mismatches'}")
@@ -220,7 +222,7 @@ def check(table: Path, lib: dict[str, dict[str, str]], tag: str) -> int:
 
 def liberty_present() -> bool:
     """The PDK Liberty lives in the third_party/orfs submodule."""
-    return all((ROOT / p).exists() for p in ASAP7_LIBS + [GF180_LIB])
+    return all((ROOT / p).exists() for p in [*ASAP7_LIBS, GF180_LIB])
 
 
 def main() -> int:

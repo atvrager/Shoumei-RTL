@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -53,8 +52,16 @@ def parse_bench_csv(path: Path) -> dict[str, tuple[int | None, int | None]]:
             names = row.get("name", "").strip()
             if not names or names.startswith("name"):
                 continue
-            thr = _int_or_none(row.get("peak_ipc_milli") or row.get("throughput_ipc_milli") or row.get("throughput_cpi_milli"))
-            lat = _int_or_none(row.get("dependent_ipc_milli") or row.get("latency_ipc_milli") or row.get("latency_cpi_milli"))
+            thr = _int_or_none(
+                row.get("peak_ipc_milli")
+                or row.get("throughput_ipc_milli")
+                or row.get("throughput_cpi_milli")
+            )
+            lat = _int_or_none(
+                row.get("dependent_ipc_milli")
+                or row.get("latency_ipc_milli")
+                or row.get("latency_cpi_milli")
+            )
             rows[names] = (thr, lat)
     return rows
 
@@ -72,7 +79,7 @@ def strip_march(name: str) -> str:
     """ELF basename -> spec name: fp_fadd_s -> fadd_s, amo_amoadd_w -> amoadd_w."""
     for prefix in ("fp_", "amo_", "zb_"):
         if name.startswith(prefix):
-            return name[len(prefix):]
+            return name[len(prefix) :]
     return name
 
 
@@ -140,16 +147,18 @@ def main() -> int:
         thr_milli, lat_milli = rtl_metrics.get(name, (None, None))
         key = f"{p.get('march', '')}{name}"
         rtl = rtl_run.get(key, {})
-        benchmarks.append({
-            "name": name,
-            "kind": kind,
-            "peak_ipc_milli": thr_milli,
-            "dependent_ipc_milli": lat_milli,
-            "throughput_cpi_milli": thr_milli,
-            "latency_cpi_milli": lat_milli,
-            "rtl_cycles": rtl.get("cycles"),
-            "rtl_retired": rtl.get("retired"),
-        })
+        benchmarks.append(
+            {
+                "name": name,
+                "kind": kind,
+                "peak_ipc_milli": thr_milli,
+                "dependent_ipc_milli": lat_milli,
+                "throughput_cpi_milli": thr_milli,
+                "latency_cpi_milli": lat_milli,
+                "rtl_cycles": rtl.get("cycles"),
+                "rtl_retired": rtl.get("retired"),
+            }
+        )
 
     merged = {
         "config": {"cpu": cpu_name, "source": "rtl-verilator"},
@@ -164,7 +173,7 @@ def main() -> int:
     for b in benchmarks:
         thr = str(b["peak_ipc_milli"]) if b["peak_ipc_milli"] is not None else "-"
         lat = str(b["dependent_ipc_milli"]) if b["dependent_ipc_milli"] is not None else "-"
-        print(f'{b["name"]:<18}{thr:>9}{lat:>9}')
+        print(f"{b['name']:<18}{thr:>9}{lat:>9}")
     return 0
 
 

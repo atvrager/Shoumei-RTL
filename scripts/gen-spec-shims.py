@@ -34,15 +34,14 @@ import argparse
 import pathlib
 import re
 import shutil
-import sys
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
-ROOT      = pathlib.Path(__file__).resolve().parent.parent
-SV_SRC    = ROOT / "output" / "sv-from-lean"
-SPEC_SRC  = ROOT / "verification" / "specs"
-OUT_DIR   = ROOT / "output" / "sv-spec"
-DUAL_RTL  = ROOT / "lean" / "Shoumei" / "Verification" / "DualRTL.lean"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SV_SRC = ROOT / "output" / "sv-from-lean"
+SPEC_SRC = ROOT / "verification" / "specs"
+OUT_DIR = ROOT / "output" / "sv-spec"
+DUAL_RTL = ROOT / "lean" / "Shoumei" / "Verification" / "DualRTL.lean"
 
 # Explicit parameter overrides for modules whose params cannot be inferred
 # from port widths (the parameter only affects behavior, not interface sizes).
@@ -64,22 +63,20 @@ EXTRA_SPEC_ONLY = [
 
 # ── port helpers ─────────────────────────────────────────────────────────────
 
-_HDR_RE = re.compile(
-    r'module\s+(\w+)\s*(?:#\s*\((.*?)\))?\s*\((.*?)\)\s*;', re.DOTALL
+_HDR_RE = re.compile(r"module\s+(\w+)\s*(?:#\s*\((.*?)\))?\s*\((.*?)\)\s*;", re.DOTALL)
+_PARAM_RE = re.compile(r"parameter\s+(?:int\s+)?(\w+)\s*=\s*([^,\n)]+)")
+_PORT_RE = re.compile(
+    r"\b(input|output|inout)\s+(?:logic|wire|reg|signed)?\s*(\[[^\]]*\])?\s*(\w+)"
 )
-_PARAM_RE    = re.compile(r'parameter\s+(?:int\s+)?(\w+)\s*=\s*([^,\n)]+)')
-_PORT_RE     = re.compile(
-    r'\b(input|output|inout)\s+(?:logic|wire|reg|signed)?\s*(\[[^\]]*\])?\s*(\w+)'
-)
-_SCALAR_BITS = re.compile(r'^(.*)_(\d+)$')
+_SCALAR_BITS = re.compile(r"^(.*)_(\d+)$")
 
 
 def _eval_width_expr(expr: str, vals: dict[str, int]) -> int | None:
     for k, v in vals.items():
-        expr = re.sub(rf'\b{k}\b', str(v), expr)
+        expr = re.sub(rf"\b{k}\b", str(v), expr)
     expr = expr.strip()
-    if re.fullmatch(r'[0-9+\-*() <<]+', expr):
-        return int(eval(expr))  # noqa: S307 — controlled arithmetic only
+    if re.fullmatch(r"[0-9+\-*() <<]+", expr):
+        return int(eval(expr))
     return None
 
 
@@ -92,7 +89,7 @@ def parse_ports(text: str, param_vals: dict[str, int]) -> list[tuple[str, str, i
     for pm in _PORT_RE.finditer(m.group(3)):
         d, w_expr, n = pm.group(1), (pm.group(2) or "").replace(" ", ""), pm.group(3)
         width = 1
-        inner = re.fullmatch(r'\[(.+):0\]', w_expr)
+        inner = re.fullmatch(r"\[(.+):0\]", w_expr)
         if inner:
             ev = _eval_width_expr(inner.group(1), param_vals)
             width = (ev + 1) if ev is not None else 1
@@ -123,10 +120,11 @@ def bit_map(ports: list[tuple[str, str, int]]) -> dict[tuple[str, int], tuple[st
 
 # ── parameter inference ──────────────────────────────────────────────────────
 
+
 def infer_params(
     spec_text: str,
     emitted_ports: list[tuple[str, str, int]],
-    spec_ports: list[tuple[str, str, int]],
+    _spec_ports: list[tuple[str, str, int]],
 ) -> dict[str, int] | None:
     """Infer concrete parameter values from port-width comparisons.
 
@@ -135,15 +133,17 @@ def infer_params(
     Returns None if any parameter cannot be resolved or gives conflicting values.
     """
     m = _HDR_RE.search(spec_text)
+    assert m is not None
     param_names = {pm.group(1) for pm in _PARAM_RE.finditer(m.group(2) or "")}
     if not param_names:
         return {}
 
     em_w = {n: w for _, n, w in emitted_ports}
     vals: dict[str, set[int]] = {}
-    inner_re = re.compile(r'\[(.+):0\]')
+    inner_re = re.compile(r"\[(.+):0\]")
 
     m2 = _HDR_RE.search(spec_text)
+    assert m2 is not None
     for pm in _PORT_RE.finditer(m2.group(3)):
         n = pm.group(3)
         w_raw = (pm.group(2) or "").replace(" ", "")
@@ -152,17 +152,17 @@ def infer_params(
             continue
         concrete = em_w.get(n, 0)
         expr = inner.group(1)
-        for ident in re.findall(r'[A-Za-z_]\w*', expr):
+        for ident in re.findall(r"[A-Za-z_]\w*", expr):
             if ident not in param_names or ident == "int":
                 continue
             # solve: eval(expr[ident=?]) + 1 == concrete
             # Heuristic: try concrete values 1..256 and keep consistent ones
             for candidate in range(1, 257):
-                test_expr = re.sub(rf'\b{ident}\b', str(candidate), expr)
-                test_expr_clean = re.sub(r'[A-Za-z_]\w*', '0', test_expr)
-                if re.fullmatch(r'[0-9+\-*() <<]+', test_expr_clean):
+                test_expr = re.sub(rf"\b{ident}\b", str(candidate), expr)
+                test_expr_clean = re.sub(r"[A-Za-z_]\w*", "0", test_expr)
+                if re.fullmatch(r"[0-9+\-*() <<]+", test_expr_clean):
                     try:
-                        if int(eval(test_expr)) + 1 == concrete:  # noqa: S307
+                        if int(eval(test_expr)) + 1 == concrete:
                             vals.setdefault(ident, set()).add(candidate)
                     except Exception:
                         pass
@@ -177,7 +177,7 @@ def infer_params(
         elif not v:
             # Parameter doesn't appear in any port width (e.g. address bit counts
             # that depend on depth).  Try falling back to the default value.
-            dm = re.search(rf'parameter\s+(?:int\s+)?{k}\s*=\s*(\d+)', spec_text)
+            dm = re.search(rf"parameter\s+(?:int\s+)?{k}\s*=\s*(\d+)", spec_text)
             if dm:
                 resolved[k] = int(dm.group(1))
             else:
@@ -190,13 +190,14 @@ def infer_params(
 
 # ── shim generation ───────────────────────────────────────────────────────────
 
+
 def spec_pins(
-    spec_mod: str,
-    param_vals: dict[str, int],
+    _spec_mod: str,
+    _param_vals: dict[str, int],
     em_ports: list[tuple[str, str, int]],
     sp_ports: list[tuple[str, str, int]],
 ) -> list[str] | None:
-    """Port connections for instantiating `spec_mod` from the emitted port set.
+    """Port connections for instantiating the spec module from the emitted port set.
 
     Returns `["    .port(expr)", ...]`, or None when an emitted input has no
     spec counterpart (a real interface mismatch).  Spec outputs with no emitted
@@ -207,23 +208,13 @@ def spec_pins(
 
     # Spec may expose extra output ports not in emitted (e.g. Subtractor64 borrow).
     # Those are left undriven in the shim.  Missing inputs would be a real error.
-    missing_inputs = {
-        k for k in e_bm
-        if k not in s_bm
-        and any(d == "input" and n == k[0] for d, n, _ in em_ports if _ == 1 or True)
-    }
-    # Actually check direction properly
     em_dir = {n: d for d, n, _ in em_ports}
-    missing_inputs = {
-        k for k in e_bm
-        if k not in s_bm
-        and em_dir.get(k[0], "output") == "input"
-    }
+    missing_inputs = {k for k in e_bm if k not in s_bm and em_dir.get(k[0], "output") == "input"}
     if missing_inputs:
         return None
 
     pins: list[str] = []
-    for d, n, width in sp_ports:
+    for _d, n, width in sp_ports:
         m = _SCALAR_BITS.fullmatch(n)
         if width == 1 and not m:
             # Scalar spec port
@@ -282,13 +273,12 @@ def build_shim(
     return (
         f"// Spec shim — {mod} backed by {spec_mod}{phdr}\n"
         f"module {mod} (\n{decl}\n);\n"
-        f"  {spec_mod}{phdr} u_spec (\n"
-        + ",\n".join(pins)
-        + "\n  );\nendmodule\n"
+        f"  {spec_mod}{phdr} u_spec (\n" + ",\n".join(pins) + "\n  );\nendmodule\n"
     )
 
 
 # ── registry loading ──────────────────────────────────────────────────────────
+
 
 def load_registry(dual_rtl_path: pathlib.Path = DUAL_RTL) -> dict[str, tuple[str, str]]:
     """Load {circuitName: (specFile, topModule)} from DualRTL.lean."""
@@ -303,6 +293,7 @@ def load_registry(dual_rtl_path: pathlib.Path = DUAL_RTL) -> dict[str, tuple[str
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
+
 
 def main(
     sv_dir: pathlib.Path = SV_SRC,
@@ -324,13 +315,13 @@ def main(
             continue
         spec_mod = m.group(1)
         # circuit name = spec module name minus trailing _spec
-        circuit = re.sub(r'_spec$', '', spec_mod)
+        circuit = re.sub(r"_spec$", "", spec_mod)
         if circuit not in registry:
             registry[circuit] = (str(sf.name), spec_mod)
 
     shimmed: list[str] = []
-    missing: list[str]  = []
-    errors:  list[tuple[str, str]] = []
+    missing: list[str] = []
+    errors: list[tuple[str, str]] = []
     spec_files_used: set[pathlib.Path] = set()
 
     if not dry:
@@ -360,11 +351,11 @@ def main(
             missing.append(mod)
             continue
 
-        spec_text  = sf.read_text()
-        em_text    = (sv_dir / f"{mod}.sv").read_text()
+        spec_text = sf.read_text()
+        em_text = (sv_dir / f"{mod}.sv").read_text()
 
         # Apply default params first for port-width parsing
-        em_ports   = parse_ports(em_text, {})
+        em_ports = parse_ports(em_text, {})
         sp_ports_default = parse_ports(spec_text, {})
 
         param_vals = PARAM_OVERRIDES.get(mod) or infer_params(spec_text, em_ports, sp_ports_default)
@@ -398,8 +389,9 @@ def main(
     # ── report ───────────────────────────────────────────────────────────────
 
     total = len(emitted_names)
-    print(f"Spec shims: {len(shimmed):3d}/{total}  "
-          f"missing: {len(missing):3d}  errors: {len(errors)}")
+    print(
+        f"Spec shims: {len(shimmed):3d}/{total}  missing: {len(missing):3d}  errors: {len(errors)}"
+    )
 
     if errors:
         print("\nErrors (need explicit port map):")
@@ -409,17 +401,35 @@ def main(
     print(f"\nMissing specs ({len(missing)} modules — write these next):")
     # Group by rough category
     cats: dict[str, list[str]] = {
-        "FP": [], "Cache/LSU": [], "OoO core": [], "Decoder/opcode": [], "Other": [],
+        "FP": [],
+        "Cache/LSU": [],
+        "OoO core": [],
+        "Decoder/opcode": [],
+        "Other": [],
     }
     for m in sorted(missing):
         if m.startswith("FP") or m in {"Int64ToFP", "FPToInt64", "FPFMA", "FPFMAD"}:
             cats["FP"].append(m)
         elif any(x in m for x in ("Cache", "LSU", "MemoryHierarchy")):
             cats["Cache/LSU"].append(m)
-        elif any(x in m for x in ("Decode", "Decoder", "Sequencer", "Microcode", "Trap", "Fallback")):
+        elif any(
+            x in m for x in ("Decode", "Decoder", "Sequencer", "Microcode", "Trap", "Fallback")
+        ):
             cats["Decoder/opcode"].append(m)
-        elif any(x in m for x in ("ROB", "Rename", "Reservation", "StoreBuffer", "Bitmap",
-                                   "PhysReg", "Fetch", "CSRFile", "CPU_")):
+        elif any(
+            x in m
+            for x in (
+                "ROB",
+                "Rename",
+                "Reservation",
+                "StoreBuffer",
+                "Bitmap",
+                "PhysReg",
+                "Fetch",
+                "CSRFile",
+                "CPU_",
+            )
+        ):
             cats["OoO core"].append(m)
         else:
             cats["Other"].append(m)
@@ -434,10 +444,21 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate spec shims for Shoumei.")
-    parser.add_argument("--sv-dir", type=pathlib.Path, default=SV_SRC, help="Path to emitted SV directory")
-    parser.add_argument("--spec-dir", type=pathlib.Path, default=SPEC_SRC, help="Path to verification specs directory")
-    parser.add_argument("--dual-rtl", type=pathlib.Path, default=DUAL_RTL, help="Path to DualRTL.lean")
-    parser.add_argument("--out-dir", type=pathlib.Path, default=OUT_DIR, help="Output directory for sv-spec")
+    parser.add_argument(
+        "--sv-dir", type=pathlib.Path, default=SV_SRC, help="Path to emitted SV directory"
+    )
+    parser.add_argument(
+        "--spec-dir",
+        type=pathlib.Path,
+        default=SPEC_SRC,
+        help="Path to verification specs directory",
+    )
+    parser.add_argument(
+        "--dual-rtl", type=pathlib.Path, default=DUAL_RTL, help="Path to DualRTL.lean"
+    )
+    parser.add_argument(
+        "--out-dir", type=pathlib.Path, default=OUT_DIR, help="Output directory for sv-spec"
+    )
     parser.add_argument("--dry", action="store_true", help="Dry run without writing files")
     parsed_args = parser.parse_args()
     main(

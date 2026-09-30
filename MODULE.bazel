@@ -28,3 +28,6 @@ register_toolchains("//toolchains/verilator:host_verilator_toolchain")
 
 pdk = use_extension("//rules:pdk.bzl", "pdk_ext")
 use_repo(pdk, "orfs_pdk")
+
+lint_tools = use_extension("//rules:lint_tools.bzl", "lint_tools")
+use_repo(lint_tools, "ruff", "ty")
