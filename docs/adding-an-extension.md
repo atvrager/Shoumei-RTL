@@ -11,7 +11,7 @@ the A (atomics) extension (`LR.W`/`SC.W`/`AMO*.W`) to reach `RV32IMA`.
 |---|------|-------|
 | 1 | Add encodings | `third_party/riscv-opcodes/extensions/rv_<x>` then `instr_dict.json` |
 | 2 | New encoding fields (if any) | `lean/Shoumei/RISCV/ISA.lean` (`FieldType`) |
-| 3 | Extension group | `GenerateOpType.lean` (`extGroups`) then `bazel run //:generate_optype` |
+| 3 | Extension group | `GenerateOpType.lean` (`extGroups`) then `bazel run //generators:generate_optype` |
 | 4 | Config flag | `lean/Shoumei/RISCV/Config.lean` |
 | 5 | Decoder classification | `lean/Shoumei/RISCV/Codegen{SystemVerilog,CppSim}.lean` |
 | 6 | Dispatch routing | `lean/Shoumei/RISCV/Execution/Dispatch.lean` |
@@ -63,7 +63,7 @@ Add an extension group to `extGroups` in `GenerateOpType.lean`:
 { comment := "A Extension: Atomic Memory Operations", exts := ["rv_a"] },
 ```
 
-then `bazel run //:generate_optype`. This regenerates `OpTypeGenerated.lean`
+then `bazel run //generators:generate_optype`. This regenerates `OpTypeGenerated.lean`
 (constructors, `all`, `toIndex`/`ofIndex`, `extensionGroup`, `isFpGroup`).
 
 Adding constructors makes every exhaustive `match` on `OpType` fail. That

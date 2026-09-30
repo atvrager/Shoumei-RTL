@@ -21,18 +21,18 @@ ALL_BENCH_NAMES = BENCH_INT_NAMES + BENCH_FP_NAMES
 
 genrule(
     name = "gen_benchmarks_regression",
-    srcs = ["//:instr_dict"],
+    srcs = ["//generators:instr_dict"],
     outs = [t + ".S" for t in ALL_BENCH_NAMES] + ["bench-programs.json"],
     cmd = """
         TMP_DIR=$$(mktemp -d)
         trap 'rm -rf "$$TMP_DIR"' EXIT
-        $(location //:gen_benchmarks) --instr-dict=$(location //:instr_dict) --asm-dir=$$TMP_DIR --out-dir=$$TMP_DIR
+        $(location //generators:gen_benchmarks) --instr-dict=$(location //generators:instr_dict) --asm-dir=$$TMP_DIR --out-dir=$$TMP_DIR
         for t in {bench_names}; do
             cp "$$TMP_DIR/$${{t}}.S" $(RULEDIR)/
         done
         cp "$$TMP_DIR/bench-programs.json" $(RULEDIR)/
     """.format(bench_names = " ".join(ALL_BENCH_NAMES)),
-    tools = ["//:gen_benchmarks"],
+    tools = ["//generators:gen_benchmarks"],
 )
 
 [

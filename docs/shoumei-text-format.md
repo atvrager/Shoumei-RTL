@@ -437,7 +437,7 @@ lean/Shoumei/ShoumeiText/
 Plus an executable entry point:
 
 ```
-GenerateAllShoumei.lean   -- bazel run //:generate_all_shoumei
+GenerateAllShoumei.lean   -- bazel run //generators:generate_all_shoumei
 ```
 
 ### 6.2 Pretty printer (`Emit.lean`)

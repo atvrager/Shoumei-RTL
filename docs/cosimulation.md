@@ -327,7 +327,7 @@ the generated benchmark programs:
 | :--- | :--- | :--- |
 | ISA suites | `testbench/riscv-tests/rv64{u,m,f,d,a,uzb}-p-*.elf` | golden architectural tests, `tohost`-terminated |
 | Custom tests | `testbench/tests/*.elf`, `testbench/tests/generated/*.elf` | traps, interrupts, FreeRTOS, serialize/fence.i pairing |
-| Benchmarks | `//testbench/benchmarks:...` | generated from `//:instr_dict`, executed through `bazel test //testbench/benchmarks:bench_regression_test` |
+| Benchmarks | `//testbench/benchmarks:...` | generated from `//generators:instr_dict`, executed through `bazel test //testbench/benchmarks:bench_regression_test` |
 
 The benchmark programs are ordinary bare-metal ELFs: they read `mcycle` /
 `minstret` (handled by the unsyncable-CSR-read path below) and print a result

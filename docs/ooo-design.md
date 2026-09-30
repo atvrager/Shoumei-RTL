@@ -157,7 +157,7 @@ Shoumei establishes correctness directly in Lean 4:
 1. **Structural Theorems**: Port counts, gate counts, and submodule instance counts verified through `native_decide`.
 2. **Behavioral Theorems**: State machine transitions, order preservation, and queue invariants proven using dependent types.
 3. **Zero Axioms**: All production modules contain zero unproven axioms and zero `sorry` statements.
-4. **Compositional Certificates**: Verified sequential subcircuits carry `CompositionalCert` declarations validated by `bazel run //:generate_all -- --export-certs`.
+4. **Compositional Certificates**: Verified sequential subcircuits carry `CompositionalCert` declarations validated by `bazel run //generators:generate_all -- --export-certs`.
 5. **Mutation Testing**: Proof robustness verified through `bazel test //verification:mutation_test`.
 
 ---

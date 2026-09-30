@@ -122,7 +122,7 @@ if SMT2LEAN_PATH:
 else:
     SMT2LEAN_BIN = ROOT / "bazel-bin" / "smt2lean"
     if not SMT2LEAN_BIN.exists():
-        subprocess.run(["bazel", "build", "//:smt2lean"], cwd=ROOT, check=True)
+        subprocess.run(["bazel", "build", "//generators:smt2lean"], cwd=ROOT, check=True)
     SMT2LEAN_CMD = str(SMT2LEAN_BIN)
 
 SVA2LEAN_PATH = os.environ.get("SVA2LEAN")
@@ -132,7 +132,7 @@ if SVA2LEAN_PATH:
 else:
     SVA2LEAN_BIN = ROOT / "bazel-bin" / "sva2lean"
     if not SVA2LEAN_BIN.exists():
-        subprocess.run(["bazel", "build", "//:sva2lean"], cwd=ROOT, check=True)
+        subprocess.run(["bazel", "build", "//generators:sva2lean"], cwd=ROOT, check=True)
     SVA2LEAN_CMD = str(SVA2LEAN_BIN) 
 GEN_SCRIPT = Path(__file__).resolve()
 

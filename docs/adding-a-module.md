@@ -196,7 +196,7 @@ def allCircuits : List Circuit := [
 
 Then run:
 ```bash
-bazel run //:generate_all
+bazel run //generators:generate_all
 ```
 
 This emits all outputs in one command:
@@ -275,7 +275,7 @@ the circuit instantiates.
 
 ```bash
 bazel build //lean:shoumei
-bazel run //:generate_all -- --export-certs
+bazel run //generators:generate_all -- --export-certs
 ```
 
 A certificate fails the export if it names a module the generator does not emit.
@@ -293,7 +293,7 @@ lean/Shoumei/Circuits/Sequential/CounterProofs.lean # Proofs
 3. Prove structural properties (gate count, port count)
 4. Prove behavioral properties (reset sets to 0, increment wraps correctly)
 5. Add to `GenerateAll.lean` circuit list
-6. Run `bazel run //:generate_all`
+6. Run `bazel run //generators:generate_all`
 7. Check the emitted SV (`bazel test //verification:slang_lint_test`)
 8. Simulate (`bazel test //testbench/tests:...`)
-9. If the composition is too large to discharge in one step: add a `CompositionalCert` and run `bazel run //:generate_all -- --export-certs`
+9. If the composition is too large to discharge in one step: add a `CompositionalCert` and run `bazel run //generators:generate_all -- --export-certs`

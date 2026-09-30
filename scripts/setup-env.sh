@@ -87,7 +87,7 @@ if [ "${1:-}" = "--background" ]; then
 
     if [ ! -f "$PROJECT_DIR/third_party/riscv-opcodes/instr_dict.json" ]; then
         echo "==> Generating RISC-V opcodes"
-        (cd "$PROJECT_DIR" && bazel build //:instr_dict 2>&1) || echo "⚠ opcodes generation failed"
+        (cd "$PROJECT_DIR" && bazel build //generators:instr_dict 2>&1) || echo "⚠ opcodes generation failed"
     fi
     echo "✓ submodules ready"
 

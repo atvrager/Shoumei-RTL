@@ -94,7 +94,7 @@ jobs:
           lean: 'true'
       - name: Build the Lean library and the generators
         run: |
-          bazel build //lean:shoumei //:generate_all
+          bazel build //lean:shoumei //generators:generate_all
 
   lint:
     name: Lint
@@ -145,7 +145,7 @@ jobs:
           lean: 'true'
           cache-save: 'false'
       - name: Run the round-trip test
-        run: bazel test //:shoumei_roundtrip_test
+        run: bazel test //generators:shoumei_roundtrip_test
 
   proofs:
     name: Proof coverage and mutation

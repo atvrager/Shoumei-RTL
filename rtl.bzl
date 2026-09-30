@@ -154,7 +154,7 @@ _output_group_target = rule(
     },
 )
 
-def shoumei_rtl(name, generator = "//:generate_all", instr_dict = "//:instr_dict", synth_wrappers = None):
+def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//generators:instr_dict", synth_wrappers = None):
     """Macro providing the RTL generation suite with convenient subtargets."""
     if synth_wrappers == None:
         synth_wrappers = native.glob(["physical/*_synth.sv"])

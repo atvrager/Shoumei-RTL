@@ -6,10 +6,10 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
 
 - **Lean Toolchain**: Pinned to Lean `v4.34.1` through `lean-toolchain`.
 - **Core Library (`//lean:shoumei`)**: All 285 Lean modules compile in parallel across individual sandboxed Bazel actions.
-- **Code Generator (`//:generate_all`)**: Compiles to a 136 MB static ELF binary through `lean_binary`.
+- **Code Generator (`//generators:generate_all`)**: Compiles to a 136 MB static ELF binary through `lean_binary`.
 - **Hermetic RTL Generation (`//:rtl`, `//:sv`)**: Sandboxed Bazel rule executes `generate_all` inside the build sandbox, emitting declared artifacts into `bazel-out/` without polluting the source workspace.
 - **Structural Linter Test (`//:lint_structural_test`)**: Sandboxed test target validating all 238 emitted SystemVerilog modules against Synopsys DC NXT LINT-31/32 rules.
-- **RISC-V Opcode Parsing (`//:instr_dict`)**: Hermetically built through Bazel from `third_party/riscv-opcodes` definitions.
+- **RISC-V Opcode Parsing (`//generators:instr_dict`)**: Hermetically built through Bazel from `third_party/riscv-opcodes` definitions.
 - **Spike Simulator (`//third_party:spike_lib`)**: Hermetically compiled through `rules_foreign_cc`, emitting `libriscv.so`, `libfesvr.a`, `libdisasm.a`, and headers.
 - **Support C++ Libraries**:
   - `//testbench:elf_loader`: ELF binary loader.
@@ -38,7 +38,7 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//lean:no_sorry_test`: Asserts zero incomplete `sorry` proofs across `lean/`.
   - `//lean:lean_root_test`: Asserts `lean/Shoumei/All.lean` is up to date with all source modules.
   - `//lean:project_map_test`: Asserts `docs/project-map.md` matches Lean circuit and proof declarations.
-  - `//:shoumei_roundtrip_test`: Generates 124 `.shoumei` files, parses them back, and verifies SV emission round-trip.
+  - `//generators:shoumei_roundtrip_test`: Generates 124 `.shoumei` files, parses them back, and verifies SV emission round-trip.
   - `//:audits`: Aggregates all 4 integrity audit tests.
 - **Hardware Verification & Formal Gates (Phase 3 / Tier 4)**:
   - `//verification:yosys_validate_test`: Syntax and hierarchy verification of all 239 emitted SV modules through Yosys.
@@ -66,7 +66,7 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//lean:axiom_gates`: Aggregates all theorem axiom gate tests.
   - `//verification:formal_proofs`: Aggregates mutation tests, proof coverage, certified SEC bridge tests, and Lean axiom gates.
 - **Generator Optimization**:
-  - `//:generate_all` configured with `extra_link_flags = ["-O3", "-DNDEBUG"]`, accelerating execution by ~8x (for example, `check_wiring` from 619s to 78s).
+  - `//generators:generate_all` configured with `extra_link_flags = ["-O3", "-DNDEBUG"]`, accelerating execution by ~8x (for example, `check_wiring` from 619s to 78s).
 
 ## Commands
 
@@ -163,7 +163,7 @@ Executing `bazel build //:rtl` emits hardware designs into `bazel-bin/`:
 ## Migration status
 
 All 10 Tiers of Bazel migration are complete:
-- **Tier 1**: Foundational toolchains, Lean compiler, code generator `//:generate_all`, RTL generator `//:rtl`.
+- **Tier 1**: Foundational toolchains, Lean compiler, code generator `//generators:generate_all`, RTL generator `//:rtl`.
 - **Tier 2**: Direct Verilator C++ simulation harness and 91 assembly/baremetal tests (`//testbench:sim_tests`).
 - **Tier 3**: Hermetic Spike C++ simulator build through `rules_foreign_cc` and lockstep cosimulation test suite (`//testbench:cosim_tests`).
 - **Tier 4**: Code quality, linters (`slang`, `shellcheck`, `cppcheck`, `py_compile`), and Lean roundtrip audits (`//verification:linters`, `//:audits`).

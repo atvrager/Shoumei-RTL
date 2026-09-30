@@ -37,7 +37,7 @@ genrule(
     ],
     outs = ["pages_bundle.tar.gz"],
     cmd = """
-        GEN_ALL=$$(pwd)/$(location //:generate_all)
+        GEN_ALL=$$(pwd)/$(location //generators:generate_all)
         TMP=$$(mktemp -d)
         trap 'rm -rf "$$TMP"' EXIT
         mkdir -p "$$TMP/pages"
@@ -46,7 +46,7 @@ genrule(
         cp -r $$TMP/output/architecture-visuals/* "$$TMP/pages/"
         tar -czf $@ -C "$$TMP/pages" .
     """,
-    tools = ["//:generate_all"],
+    tools = ["//generators:generate_all"],
 )
 
 sh_test(

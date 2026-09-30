@@ -64,18 +64,18 @@ fi
 
 # 4. Generated manifests stay fresh when lean/ changes
 if staged | grep -q '^lean/'; then
-    if [ ! -x "./bazel-bin/generate_all" ]; then
-        bazel build //:generate_all > /dev/null 2>&1 || true
+    if [ ! -x "./bazel-bin/generators/generate_all" ]; then
+        bazel build //generators:generate_all > /dev/null 2>&1 || true
     fi
-    if [ -x "./bazel-bin/generate_all" ]; then
-        ./bazel-bin/generate_all --gen-lean-root > /dev/null
+    if [ -x "./bazel-bin/generators/generate_all" ]; then
+        ./bazel-bin/generators/generate_all --gen-lean-root > /dev/null
         if ! git diff --exit-code --quiet -- lean/Shoumei/All.lean; then
-            echo "pre-commit: lean/Shoumei/All.lean is stale; stage the regeneration (bazel run //:generate_all -- --gen-lean-root)" >&2
+            echo "pre-commit: lean/Shoumei/All.lean is stale; stage the regeneration (bazel run //generators:generate_all -- --gen-lean-root)" >&2
             failed=1
         fi
-        ./bazel-bin/generate_all --project-map > /dev/null
+        ./bazel-bin/generators/generate_all --project-map > /dev/null
         if ! git diff --exit-code --quiet -- docs/project-map.md; then
-            echo "pre-commit: docs/project-map.md is stale; stage the regeneration (bazel run //:generate_all -- --project-map)" >&2
+            echo "pre-commit: docs/project-map.md is stale; stage the regeneration (bazel run //generators:generate_all -- --project-map)" >&2
             failed=1
         fi
     fi

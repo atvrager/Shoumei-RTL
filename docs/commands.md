@@ -12,7 +12,7 @@ All commands run from the project root directory.
 python3 bootstrap.py --check-only
 
 # Build Lean proofs and code generator
-bazel build //lean:shoumei //:generate_all
+bazel build //lean:shoumei //generators:generate_all
 
 # Generate RTL and all hardware artifacts
 bazel build //:rtl
@@ -30,9 +30,9 @@ bazel test //:presubmit
 | Target | Description | Output |
 |--------|-------------|--------|
 | `//lean:shoumei` | Lean 4 library (proofs and AST models) | `.olean` bytecode |
-| `//:generate_all` | Native code generator binary | `bazel-bin/generate_all` |
+| `//generators:generate_all` | Native code generator binary | `bazel-bin/generators/generate_all` |
 | `//:rtl` | Generated SystemVerilog, netlists, and C++ sim | `bazel-bin/rtl_*` |
-| `//:instr_dict` | RISC-V opcode definitions dictionary | `bazel-bin/instr_dict.json` |
+| `//generators:instr_dict` | RISC-V opcode definitions dictionary | `bazel-bin/instr_dict.json` |
 | `//viewer:pages_bundle` | Web visualization bundle and SVGs | `bazel-bin/viewer/pages_bundle.tar.gz` |
 
 ### Test suites
@@ -81,22 +81,22 @@ The native Lean generator supports targeted tasks through `bazel run`:
 
 ```bash
 # Export the compositional certificate registry
-bazel run //:generate_all -- --export-certs
+bazel run //generators:generate_all -- --export-certs
 
 # Export the refinement registry
-bazel run //:generate_all -- --export-refinements
+bazel run //generators:generate_all -- --export-refinements
 
 # Check module wiring integrity
-bazel run //:generate_all -- --check-wiring
+bazel run //generators:generate_all -- --check-wiring
 
 # Check SEC specifications evidence
-bazel run //:generate_all -- --check-sec-specs
+bazel run //generators:generate_all -- --check-sec-specs
 
 # Verify lean/Shoumei/All.lean is synchronized
-bazel run //:generate_all -- --check-lean-root
+bazel run //generators:generate_all -- --check-lean-root
 
 # Regenerate docs/project-map.md
-bazel run //:generate_all -- --project-map
+bazel run //generators:generate_all -- --project-map
 ```
 
 ---

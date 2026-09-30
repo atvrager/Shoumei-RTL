@@ -763,7 +763,7 @@ def emitAll (config : CPUConfig := defaultCPUConfig)
     (dictPath : System.FilePath := Shoumei.RISCV.instrDictPath) : IO Unit := do
   let opcodesPath := dictPath
   unless (← opcodesPath.pathExists) do
-    throw <| IO.userError s!"instr_dict.json not found at {opcodesPath}. Run 'bazel build //:instr_dict' first."
+    throw <| IO.userError s!"instr_dict.json not found at {opcodesPath}. Run 'bazel build //generators:instr_dict' first."
   let rawDefs ← loadInstrDictFromFile opcodesPath
   let defs ← loadInstrDefsForConfig config opcodesPath
   let specs := computeSpecs defs

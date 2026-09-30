@@ -23,7 +23,7 @@ The Certified Dual-RTL Bridge establishes a closed verification loop:
                  │                                   │
                  └───────────────┬───────────────────┘
                                  ▼
-                     [bazel build //:smt2lean]  (Pure Lean 4, 0 Python)
+                     [bazel build //generators:smt2lean]  (Pure Lean 4, 0 Python)
                                  │
                                  ▼
                  output/sec-bridge/ShoumeiSec/   (generated, gitignored)
@@ -61,7 +61,7 @@ rebuilt on demand by `bazel test //verification:sec_bridge_test` and never appea
 
 ### 1. Ingesting without Python
 
-The bridge introduces a native, self-contained Lean 4 tool (`bazel build //:smt2lean`,
+The bridge introduces a native, self-contained Lean 4 tool (`bazel build //generators:smt2lean`,
 source `Smt2Lean.lean`). No Python is in the loop:
 
 - **Input**: SMT-LIB2 output from Yosys (`write_functional_smt2`).
@@ -136,7 +136,7 @@ name those nets as scalars (`pxa_l{li}g{i}`, `ksag{stride}x{i}`, `pamask{i}x{j}`
 
 ### 4. SVA property translation (`sva2lean`)
 
-`bazel build //:sva2lean` (source `Sva2Lean.lean`) translates the assertions a
+`bazel build //generators:sva2lean` (source `Sva2Lean.lean`) translates the assertions a
 specification writes about itself into Lean theorems, reading the spec's
 `` `ifdef FORMAL `` block together with the Lean model of that same
 specification:
@@ -412,7 +412,7 @@ bazel test //verification:spec_equiv_test       # randomised RTL-vs-spec co-simu
 bazel test //verification:check_sec_specs_test  # gate: no spec without evidence
 
 # Build standalone Lean SMT ingester
-bazel build //:smt2lean
+bazel build //generators:smt2lean
 
 # Hand-written gates that must stay green
 bazel build //lean:shoumei                 # human-authored modules
@@ -438,7 +438,7 @@ Tracked verification surface:
 | Path | Tracked | Role |
 |---|---|---|
 | `verification/specs/*.sv` | yes | human-authored reference models |
-| `Sva2Lean.lean` | yes | SVA assertion -> Lean theorem translator (`bazel build //:sva2lean`) |
+| `Sva2Lean.lean` | yes | SVA assertion -> Lean theorem translator (`bazel build //generators:sva2lean`) |
 | `output/sec-bridge/ShoumeiSec/Bridge*Props.lean` | no | generated per-spec assertion theorems |
 | `scripts/gen-bridges.py` | yes | per-family SEC recipes and state-correspondence tables |
 | `lean/Shoumei/Verification/DualRTL.lean` | yes | registry mapping circuit -> spec -> proof |

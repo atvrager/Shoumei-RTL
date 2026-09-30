@@ -80,7 +80,7 @@ def run (checkOnly : Bool := false) : IO UInt32 := do
       return 1
     let current ← IO.FS.readFile outPath
     if current != content then
-      IO.eprintln s!"✗ {outPath} is out of date; run bazel run //:generate_all -- --gen-lean-root"
+      IO.eprintln s!"✗ {outPath} is out of date; run bazel run //generators:generate_all -- --gen-lean-root"
       return 1
     IO.println s!"✓ All.lean is current ({sortedMods.length} modules)"
     return 0

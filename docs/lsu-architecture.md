@@ -366,7 +366,7 @@ instantiation keep their identity. Widths grow inside.
 ### 11.2 Flow checks
 
 - `bazel build //lean:shoumei`: all proofs, zero axioms.
-- `bazel run //:generate_all -- --export-certs`: validates the registry
+- `bazel run //generators:generate_all -- --export-certs`: validates the registry
   against emitted instances.
 - `bazel test //verification:slang_lint_test`: IEEE 1800-2017
   elaboration of the retimed `LSU`/`StoreBuffer8`/`L1DCache`.

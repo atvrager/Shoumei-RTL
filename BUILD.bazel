@@ -1,4 +1,3 @@
-load("@rules_lean//lean:defs.bzl", "lean_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//:rtl.bzl", "shoumei_rtl")
 
@@ -11,88 +10,12 @@ exports_files([
     "scripts/gen-spec-shims.py",
 ])
 
-genrule(
-    name = "instr_dict",
-    srcs = ["//third_party:riscv_opcodes_srcs"],
-    outs = ["instr_dict.json"],
-    cmd = """
-        if [ -f third_party/riscv-opcodes/instr_dict.json ]; then
-            cp third_party/riscv-opcodes/instr_dict.json $@
-        elif [ -d third_party/riscv-opcodes/src ]; then
-            (cd third_party/riscv-opcodes && PYTHONPATH=src python3 -m riscv_opcodes -c rv_i rv64_i rv_m rv64_m rv_a rv64_a rv_f rv64_f rv_d rv64_d rv_zicsr rv_zifencei rv_system)
-            cp third_party/riscv-opcodes/instr_dict.json $@
-        else
-            echo "Error: riscv-opcodes not found" >&2
-            exit 1
-        fi
-    """,
-)
-
-lean_binary(
-    name = "generate_all",
-    srcs = ["GenerateAll.lean"],
-    data = [":instr_dict"],
-    extra_link_flags = [
-        "-O3",
-        "-DNDEBUG",
-    ],
-    main = "GenerateAll",
-    deps = ["//lean:shoumei"],
-)
-
+# The RTL generation suite.  The generators live in //generators; this target
+# wires one generator call to every output tree the rest of the build reads.
 shoumei_rtl(
     name = "rtl",
-    generator = ":generate_all",
-    instr_dict = ":instr_dict",
-)
-
-lean_binary(
-    name = "generate_adder_matrix",
-    srcs = ["GenerateAdderMatrix.lean"],
-    main = "GenerateAdderMatrix",
-    deps = ["//lean:shoumei"],
-)
-
-lean_binary(
-    name = "generate_optype",
-    srcs = ["GenerateOpType.lean"],
-    main = "GenerateOpType",
-)
-
-lean_binary(
-    name = "generate_shoumei",
-    srcs = ["GenerateShoumei.lean"],
-    main = "GenerateShoumei",
-    deps = ["//lean:shoumei"],
-)
-
-lean_binary(
-    name = "gen_tests",
-    srcs = ["GenTests.lean"],
-    data = [":instr_dict"],
-    main = "GenTests",
-    deps = ["//lean:shoumei"],
-)
-
-lean_binary(
-    name = "gen_benchmarks",
-    srcs = ["GenBenchmarks.lean"],
-    data = [":instr_dict"],
-    main = "GenBenchmarks",
-    deps = ["//lean:shoumei"],
-)
-
-lean_binary(
-    name = "smt2lean",
-    srcs = ["Smt2Lean.lean"],
-    main = "Smt2Lean",
-)
-
-lean_binary(
-    name = "sva2lean",
-    srcs = ["Sva2Lean.lean"],
-    main = "Sva2Lean",
-    deps = ["//lean:shoumei"],
+    generator = "//generators:generate_all",
+    instr_dict = "//generators:instr_dict",
 )
 
 filegroup(
@@ -135,17 +58,10 @@ filegroup(
     ]),
 )
 
-sh_test(
-    name = "shoumei_roundtrip_test",
-    srcs = ["shoumei_roundtrip_test.sh"],
-    args = ["$(location :generate_shoumei)"],
-    data = [":generate_shoumei"],
-)
-
 test_suite(
     name = "audits",
     tests = [
-        ":shoumei_roundtrip_test",
+        "//generators:shoumei_roundtrip_test",
         "//lean:integrity_tests",
     ],
 )

@@ -33,10 +33,10 @@ sh_test(
 sh_test(
     name = "lean_root_test",
     srcs = ["lean_root_test.sh"],
-    args = ["$(location //:generate_all)"],
+    args = ["$(location //generators:generate_all)"],
     data = [
         ":shoumei_srcs",
-        "//:generate_all",
+        "//generators:generate_all",
         "//:known_unbuilt_modules",
     ],
 )
@@ -44,11 +44,11 @@ sh_test(
 sh_test(
     name = "project_map_test",
     srcs = ["project_map_test.sh"],
-    args = ["$(location //:generate_all)"],
+    args = ["$(location //generators:generate_all)"],
     data = [
         ":shoumei_srcs",
         "//:docs",
-        "//:generate_all",
+        "//generators:generate_all",
     ],
 )
 

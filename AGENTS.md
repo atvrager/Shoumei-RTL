@@ -3,7 +3,7 @@ Communicate only in Simplified Technical English (ASD-STE100).
 # Development Context
 
 > **Start here:** [docs/project-map.md](docs/project-map.md) comes from the
-> source tree (`bazel run //:generate_all -- --project-map`). It shows the subsystem
+> source tree (`bazel run //generators:generate_all -- --project-map`). It shows the subsystem
 > composition graph, per-circuit coverage (certificate / proofs / doc comment),
 > and the mechanical gaps. Re-run the generator after adding a module.
 >
@@ -33,7 +33,7 @@ GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ```bash
 bazel build //lean:shoumei               # Build Lean proofs
-bazel build //:generate_all              # Build native code generator binary
+bazel build //generators:generate_all              # Build native code generator binary
 bazel build //:rtl                       # Generate SV + netlist + ASAP7 + C++ Sim + testbenches
 bazel test //:presubmit                  # Run complete presubmit test suite (311 tests)
 
@@ -62,7 +62,7 @@ see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 2. **Structural circuit:** Build `Circuit` from gates and/or `CircuitInstance` submodules
 3. **Proofs:** Structural (`native_decide`) and behavioral (`simp`, manual tactics)
 4. **Code generation:** Add to `GenerateAll.lean` circuit list, then `bazel build //:rtl`
-5. **Compositional cert** (if needed): Add to `CompositionalCerts.lean`. `bazel run //:generate_all -- --export-certs` checks the registry
+5. **Compositional cert** (if needed): Add to `CompositionalCerts.lean`. `bazel run //generators:generate_all -- --export-certs` checks the registry
 6. **Simulation:** `bazel test //testbench/tests:all_sim`, or `bazel test //testbench/tests:all_cosim` for CPU-level changes
 
 ### Where files go
@@ -87,7 +87,7 @@ and runs. No second RTL design exists to compare against.
 - **Lean proofs:** structural and behavioral theorems live next to each circuit.
   `bazel build //lean:shoumei` checks them, and `bazel test //verification:proof_coverage_test` reports coverage.
 - **Compositional certificate registry:** a `CompositionalCert` names a module, its
-  dependencies and its composition proof. `bazel run //:generate_all -- --export-certs`
+  dependencies and its composition proof. `bazel run //generators:generate_all -- --export-certs`
   derives each certificate's dependencies from the circuit's instances. It fails if a
   certificate names a module the generator does not emit.
 - **slang elaboration:** `bazel test //verification:slang_lint_test`
@@ -103,7 +103,7 @@ For a module too large to discharge in one step, justify it from its building bl
 
 1. Define a `CompositionalCert` in `lean/Shoumei/Verification/CompositionalCerts.lean`
 2. Add it to `allCerts`
-3. `bazel run //:generate_all -- --export-certs` validates the registry against the emitted
+3. `bazel run //generators:generate_all -- --export-certs` validates the registry against the emitted
    circuits and prints one `Module|deps|proofReference` line per certificate
 
 The dependencies are not written by hand. They are the modules the circuit

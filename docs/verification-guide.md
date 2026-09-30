@@ -16,7 +16,7 @@ against. The checks only confirm that the translation elaborates and runs.
 | Composition | parent correct given children | Lean `CompositionalCert` |
 | Equivalence (SEC) | alternative implementations preserve trace semantics | Lean bisimulation & SAT/LEC miters ([SEC Guide](proof-strategies/sequential-equivalence-checking.md)) |
 | Formal Properties (SVA) | temporal assertion contracts hold on RTL | IEEE 1800 SVA FPV ([SVA Guide](proof-strategies/sva-formal-verification.md)) |
-| Registry | every certificate matches an emitted circuit | `bazel run //:generate_all -- --export-certs` |
+| Registry | every certificate matches an emitted circuit | `bazel run //generators:generate_all -- --export-certs` |
 | Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `bazel test //verification:slang_lint_test`, `bazel test //verification:yosys_validate_test` |
 | Dynamic Simulation | RTL executes cycles correctly & assertions active | Verilator `--assert` (`bazel test //testbench/tests:all_sim`) |
 | Co-simulation | retired instruction trace matches Spike reference | Spike lock-step cosimulation (`bazel test //testbench/tests:all_cosim`) |
@@ -83,7 +83,7 @@ adds.
 | :--- | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
 | Composition | parent correct given children | seconds | Lean `CompositionalCert` |
-| Registry | certificates match the emitted circuits | instant | `bazel run //:generate_all -- --export-certs` |
+| Registry | certificates match the emitted circuits | instant | `bazel run //generators:generate_all -- --export-certs` |
 | Smoke | integration sanity | < 2 s | parallel sim / Spike cosim sweep |
 
 Rules that keep the ladder intact:
@@ -97,7 +97,7 @@ Rules that keep the ladder intact:
    [Compositional Verification](#compositional-verification)). This is the
    axiom/theorem ladder, and the leaf theorems are the axioms.
 3. **Keep the registry honest.** A `CompositionalCert` is only meaningful for a
-   circuit that the generator actually emits. `bazel run //:generate_all -- --export-certs` derives the
+   circuit that the generator actually emits. `bazel run //generators:generate_all -- --export-certs` derives the
    dependencies from the circuit's instances and rejects a certificate that names a
    module the generator does not emit.
 4. **Tier the work.** Commit and PR gates run the proofs, the registry check and a
@@ -132,7 +132,7 @@ The verification ladder builds from verified leaf atoms to composed pipelines:
    `mkRegisterN n`, `mkComparatorN n` carry semantic evaluation lemmas
    (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, and more), allowing composition
    chains instead of per-instance decision procedures.
-4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof term and a *non-vacuity* proof at construction time (`bazel run //:generate_all -- --export-refinements`). That witness is a `NonVacuousBehavior` / `NonVacuousCombBehavior` proof that the behavioural model produces distinct outputs. This prevents dangling references, unproven claims, and tautological/constant specifications from registering.
+4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof term and a *non-vacuity* proof at construction time (`bazel run //generators:generate_all -- --export-refinements`). That witness is a `NonVacuousBehavior` / `NonVacuousCombBehavior` proof that the behavioural model produces distinct outputs. This prevents dangling references, unproven claims, and tautological/constant specifications from registering.
 5. **Per-instruction ISA atoms.** Decoder proofs give coverage and non-overlap. The
    `ALU32` atom covers all 10 RV32I opcodes over all inputs. Expanding to remaining
    instruction classes connects execution units directly to the ISA specification.
@@ -168,7 +168,7 @@ sub-modules than in one step:
 1. Leaves carry their own Lean theorems.
 2. The children's theorems plus glue reasoning prove the parent's spec. The
    certificate records the Lean namespace holding that proof.
-3. `bazel run //:generate_all -- --export-certs` derives the certificate's dependencies from
+3. `bazel run //generators:generate_all -- --export-certs` derives the certificate's dependencies from
    the circuit's `instances` and rejects the registry if it is inconsistent with the
    emitted circuits.
 
@@ -205,7 +205,7 @@ def allCerts : List CompositionalCert := [
 The tool derives the dependency list from the circuit's instances, not by hand:
 
 ```bash
-$ bazel run //:generate_all -- --export-certs
+$ bazel run //generators:generate_all -- --export-certs
 Mux64x32|Mux8x32|Shoumei.Circuits.Combinational.MuxTreeProofs
 Register24|Register16,Register8|Shoumei.Circuits.Sequential.RegisterProofs
 ```
@@ -251,7 +251,7 @@ plus `bazel run //tools:fst_inspect` show the signal path that produced the wron
 
 ```bash
 bazel build //lean:shoumei                                # Lean proofs
-bazel run //:generate_all -- --export-certs               # Validate + print certificate registry
+bazel run //generators:generate_all -- --export-certs               # Validate + print certificate registry
 bazel test //verification:linters                         # slang, shellcheck, python, cppcheck
 bazel test //verification:formal                          # SVA formal, SEC miter, bridge validation
 bazel test //testbench:all_tests                          # Verilator simulation, Spike cosim, spec tests
@@ -285,4 +285,4 @@ bazel test //testbench/benchmarks
 2. Add the `CompositionalCert` to `CompositionalCerts.lean`
 3. Add it to `allCerts`
 4. Run `bazel build //lean:shoumei` to ensure it compiles
-5. Run `bazel run //:generate_all -- --export-certs` to see it validate and print
+5. Run `bazel run //generators:generate_all -- --export-certs` to see it validate and print

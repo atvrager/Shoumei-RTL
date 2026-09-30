@@ -73,8 +73,8 @@ fi
 echo "==> LINT-31/32/33 structural check (double-connects, undriven, ties)..."
 if [[ -n "${GENERATOR:-}" ]]; then
     "$GENERATOR" --lint-structural --sv-dir="$SV_DIR"
-elif [[ -x "$PROJECT_ROOT/bazel-bin/generate_all" ]]; then
-    "$PROJECT_ROOT/bazel-bin/generate_all" --lint-structural --sv-dir="$SV_DIR"
+elif [[ -x "$PROJECT_ROOT/bazel-bin/generators/generate_all" ]]; then
+    "$PROJECT_ROOT/bazel-bin/generators/generate_all" --lint-structural --sv-dir="$SV_DIR"
 fi
 
 echo "✓ LINT clean (no latches, no comb loops, no width/undriven/multi-driver pops)"

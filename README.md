@@ -196,7 +196,7 @@ bazel test //:presubmit                                   # Full presubmit suite
 ```
 
 Large sequential modules get a compositional justification: a `CompositionalCert`
-names the module and its composition proof. `bazel run //:generate_all -- --export-certs`
+names the module and its composition proof. `bazel run //generators:generate_all -- --export-certs`
 derives its dependencies from the circuit's instances. It fails if the certificate
 names a module the generator does not emit.
 

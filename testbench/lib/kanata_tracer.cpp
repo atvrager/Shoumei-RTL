@@ -15,10 +15,10 @@
 #include "rv32_disasm.h"
 #include "../generated/trace_schema.gen.h"
 
-// The stage enum (order, count) and the Lean-generated table must agree;
-// a stage added/removed in Lean/Shoumei/RISCV/TraceSchema.lean fails here.
+// The stage enum (order, count) and the Lean-generated table must agree.
+// A stage added/removed in Lean/Shoumei/RISCV/TraceSchema.lean fails here.
 static_assert(TRACE_STAGE_COUNT == (static_cast<int>(STAGE_DONE) - static_cast<int>(STAGE_FETCH)),
-              "trace schema drift: re-run `bazel run //:generate_all`");
+              "trace schema drift: re-run `bazel run //generators:generate_all`");
 
 const char* KanataTracer::stage_name(Stage s) {
     // Index into the Lean-generated table; order is pinned by the
