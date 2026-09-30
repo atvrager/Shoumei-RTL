@@ -16,7 +16,7 @@
 # Prerequisites:
 #   - Docker running and accessible (user in docker group)
 #   - ORFS submodule initialized: git submodule update --init --recursive
-#   - Verilog generated: lake exe generate_riscv_decoder (for RV32IDecoder)
+#   - Verilog generated: bazel build //:rtl
 #
 # Results will be in: third_party/orfs/flow/results/asap7/RV32IDecoder/base/
 #   - 6_final.gds (GDSII layout)
@@ -100,7 +100,7 @@ if [ ! -f "$MAIN_VERILOG" ]; then
 fi
 if [ ! -f "$MAIN_VERILOG" ]; then
     echo -e "${RED}✗ Main Verilog file not found: ${DESIGN_NAME}.sv${NC}"
-    echo "Run: lake exe generate_all"
+    echo "Run: bazel build //:rtl"
     exit 1
 fi
 

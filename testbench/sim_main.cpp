@@ -6,11 +6,11 @@
 //   2. Runs clock cycles until tohost is written or timeout
 //   3. Reports PASS/FAIL with cycle count
 //
-// Build (after Verilating):
-//   make -C testbench sim
+// Build:
+//   bazel build //testbench:sim_shoumei
 //
 // Run:
-//   ./build-sim/sim_shoumei +elf=path/to/program.elf [+timeout=N] [+trace]
+//   bazel run //testbench:sim_shoumei -- +elf=path/to/program.elf [+timeout=N] [+trace]
 //==============================================================================
 
 #include <cstdio>

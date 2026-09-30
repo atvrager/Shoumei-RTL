@@ -16,10 +16,10 @@ against; what is checked is that the translation elaborates and runs.
 | Composition | parent correct given children | Lean `CompositionalCert` |
 | Equivalence (SEC) | alternative implementations preserve trace semantics | Lean bisimulation & SAT/LEC miters ([SEC Guide](proof-strategies/sequential-equivalence-checking.md)) |
 | Formal Properties (SVA) | temporal assertion contracts hold on RTL | IEEE 1800 SVA FPV ([SVA Guide](proof-strategies/sva-formal-verification.md)) |
-| Registry | every certificate matches an emitted circuit | `lake exe generate_all --export-certs` |
-| Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `python3 verification/slang-lint.py`, `make systemverilog` (Yosys read/hierarchy) |
-| Dynamic Simulation | RTL executes cycles correctly & assertions active | Verilator `--assert`, C++ cycle-accurate model |
-| Co-simulation | retired instruction trace matches Spike reference | Spike lock-step cosimulation (`make -C testbench cosim`) |
+| Registry | every certificate matches an emitted circuit | `bazel run //:generate_all -- --export-certs` |
+| Elaboration | the emitted SV is legal IEEE 1800-2017 SV | `bazel test //verification:slang_lint_test`, `bazel test //verification:yosys_validate_test` |
+| Dynamic Simulation | RTL executes cycles correctly & assertions active | Verilator `--assert` (`bazel test //testbench/tests:all_sim`) |
+| Co-simulation | retired instruction trace matches Spike reference | Spike lock-step cosimulation (`bazel test //testbench/tests:all_cosim`) |
 | Compliance | RISC-V architectural compliance | 107/107 `riscv-arch-test` pass |
 
 ```
@@ -30,7 +30,7 @@ against; what is checked is that the translation elaborates and runs.
                       │  - L2 Inductive State Invariants     │
                       │  - L3 Temporal Refinement (Bisim)    │
                       └──────────────────┬───────────────────┘
-                                         │ lake exe generate_all
+                                         │ bazel build //:rtl
                                          ▼
                       ┌──────────────────────────────────────┐
                       │      Emitted Hardware Artifacts      │
@@ -83,7 +83,7 @@ adds.
 | :--- | :--- | :--- | :--- |
 | Leaf behaviour | module meets its spec | < 1 s | Lean theorem (`native_decide`, `simp`) |
 | Composition | parent correct given children | seconds | Lean `CompositionalCert` |
-| Registry | certificates match the emitted circuits | instant | `lake exe generate_all --export-certs` |
+| Registry | certificates match the emitted circuits | instant | `bazel run //:generate_all -- --export-certs` |
 | Smoke | integration sanity | < 2 s | parallel sim / Spike cosim sweep |
 
 Rules that keep the ladder intact:
@@ -97,7 +97,7 @@ Rules that keep the ladder intact:
    [Compositional Verification](#compositional-verification)). This is the
    axiom/theorem ladder, and the leaf theorems are the axioms.
 3. **Keep the registry honest.** A `CompositionalCert` is only meaningful for a
-   circuit that is actually emitted; `lake exe generate_all --export-certs` derives the
+   circuit that is actually emitted; `bazel run //:generate_all -- --export-certs` derives the
    dependencies from the circuit's instances and rejects a certificate that names a
    module the generator does not emit.
 4. **Tier the work.** Commit and PR gates run the proofs, the registry check and a
@@ -132,7 +132,7 @@ The verification ladder builds from verified leaf atoms to composed pipelines:
    (`rca4_arithmetic_correct`, `evalGates_mux2Bit_result`, etc.), allowing composition
    chains instead of per-instance decision procedures.
 4. **Machine-checked refinement registry.** `RefinementAtom` entries require both a proof
-   term and a *non-vacuity* proof at construction time (`lake exe generate_all
+   term and a *non-vacuity* proof at construction time (`bazel run //:generate_all --
    --export-refinements`) — a `NonVacuousBehavior` / `NonVacuousCombBehavior` witness that
    the behavioural model produces distinct outputs. This prevents dangling references,
    unproven claims, and tautological/constant specifications from registering.
@@ -170,7 +170,7 @@ sub-modules than in one step:
 1. Leaves carry their own Lean theorems.
 2. The parent's spec is proven from the children's theorems plus glue reasoning, and
    the Lean namespace holding that proof is recorded in the certificate.
-3. `lake exe generate_all --export-certs` derives the certificate's dependencies from
+3. `bazel run //:generate_all -- --export-certs` derives the certificate's dependencies from
    the circuit's `instances` and rejects the registry if it is inconsistent with the
    emitted circuits.
 
@@ -207,12 +207,12 @@ def allCerts : List CompositionalCert := [
 The dependency list is derived from the circuit's instances, not written by hand:
 
 ```bash
-$ lake exe generate_all --export-certs
+$ bazel run //:generate_all -- --export-certs
 Mux64x32|Mux8x32|Shoumei.Circuits.Combinational.MuxTreeProofs
 Register24|Register16,Register8|Shoumei.Circuits.Sequential.RegisterProofs
 ```
 
-`make codegen` runs this after generating, so an inconsistent registry fails the run
+`bazel build //:rtl` runs this validation, so an inconsistent registry fails the build
 instead of degrading verification quietly. The lines are also written to
 `verification/compositional-certs.txt`.
 
@@ -230,7 +230,7 @@ The emitted text is not legal SystemVerilog. Fix the generator
 (`lean/Shoumei/Codegen/`), not the emitted file -- `output/` is regenerated on every
 run.
 
-### Yosys `make systemverilog` fails
+### Yosys `bazel test //verification:yosys_validate_test` fails
 
 - A module is instantiated but absent from `allCircuits` in `GenerateAll.lean`
 - Instance port names do not match the target module's ports exactly
@@ -246,78 +246,40 @@ that circuit instantiates must be emitted too.
 ### Simulation diverges from Spike
 
 Start with the cosimulation trace (see *Debugging RTL* in [CLAUDE.md](../CLAUDE.md)):
-`MISMATCH` lines give the first diverging instruction, and `make -C testbench sim-trace`
-plus `./scripts/fst_inspect` show the signal path that produced the wrong value.
+`MISMATCH` lines give the first diverging instruction, and `bazel run //testbench:sim_shoumei_trace`
+plus `bazel run //tools:fst_inspect` show the signal path that produced the wrong value.
 
 ## Running Verification
 
 ```bash
-lake build                                                # Lean proofs
-./verification/proof-coverage.sh                          # Proof coverage report
-lake exe generate_all --export-certs                      # Validate + print the certificate registry
-python3 verification/slang-lint.py output/sv-from-lean    # slang elaboration
-make systemverilog                                        # Yosys read/hierarchy check
-make sva                                                  # SVA formal/simulation checks (slang + Verilator)
-make sec                                                  # Sequential Equivalence Checking (Yosys SAT)
-./verification/sva-verify.sh --remote <host>              # Synopsys VC Formal FPV (industrial model checking)
-./verification/sec-verify.sh --remote <host>              # Synopsys Formality LEC (industrial equivalence)
-make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
-make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
-./verification/smoke-test.sh                              # CI smoke tests
+bazel build //lean:shoumei                                # Lean proofs
+bazel run //:generate_all -- --export-certs               # Validate + print certificate registry
+bazel test //verification:linters                         # slang, shellcheck, python, cppcheck
+bazel test //verification:formal                          # SVA formal, SEC miter, bridge validation
+bazel test //testbench:all_tests                          # Verilator simulation, Spike cosim, spec tests
+bazel test //:presubmit                                   # Full presubmit suite (311 tests)
 ```
 
-`run-cosim` sweeps the same ELF set as `run-all-tests` plus the generated
-benchmark programs (`testbench/tests/generated/bench/*.elf`, built by the
-`bench` dependency): the ISA suites, the hand-written custom tests, and every
-benchmark body, all compared retirement-by-retirement against Spike.  A
-benchmark that silently executes the wrong instruction stream therefore fails
-cosim even when its own region check still passes.
+`//testbench:cosim_tests` sweeps the test programs and generated benchmarks, comparing execution retirement-by-retirement against Spike.
 
 ### Benchmark numbers: peak vs whole-program IPC
 
 Two different IPC numbers are reported per benchmark; do not compare them
 with each other:
 
-- **Peak IPC** (`BENCH <name> <thr> <lat>` lines, `output/bench/bench-metrics.csv`,
+- **Peak IPC** (`BENCH <name> <thr> <lat>` lines,
   published on the Pages `benchmarks.html`): in-program `1000*minstret/mcycle`
   over the throughput region only (e.g. `add` = 1.933).
-- **Whole-program IPC** (`PASS add.elf (cycles, retired, IPC)` lines,
-  `output/bench/bench-results-rtl.csv`): total retired over total cycles for
-  the whole ELF, including the latency region, setup and IO (e.g. `add` = 1.578).
+- **Whole-program IPC** (`PASS add.elf (cycles, retired, IPC)` lines):
+  total retired over total cycles for the whole ELF, including latency region,
+  setup, and IO.
 
 ### Performance regression gate
 
-`scripts/bench_regression.py` compares fresh metrics against the checked-in
-`verification/bench-baseline.csv` (like with like: peak vs peak, dependent vs
-dependent) and fails on any drop beyond 5% relative + 10 milli absolute. The
-simulator is deterministic, so a failure is always a real RTL or benchmark
-program change:
+`//testbench/benchmarks` gates the 8-path instruction subset against `verification/bench-baseline.csv`:
 
 ```bash
-make -C testbench run-benchmarks   # full suite (main-branch benchmarks job)
-make -C testbench bench-regression # 8-instr subset, one per execution path (PRs)
-python3 scripts/bench_regression.py --metrics output/bench/bench-metrics.csv
-```
-
-To affirm an intended delta, merge the new numbers into the baseline and
-commit it in the same PR that changes the microarchitecture:
-
-```bash
-python3 scripts/bench_regression.py --metrics output/bench/bench-metrics.csv \
-    --baseline verification/bench-baseline.csv --update-baseline
-```
-
-### Via Make
-
-```bash
-make lean             # Lean build
-make codegen          # generate_all + certificate registry export
-make sva              # SVA verification (slang + Verilator --assert)
-make sec              # Sequential Equivalence Checking (Yosys SAT miter)
-make systemverilog    # Yosys read/hierarchy check
-make cppsim           # compile the C++ simulation
-make smoke-test       # codegen + smoke tests
-make all              # the whole pipeline
+bazel test //testbench/benchmarks
 ```
 
 ## Adding a New Compositional Certificate
@@ -325,5 +287,5 @@ make all              # the whole pipeline
 1. Write the composition proof in Lean (or point at existing proofs)
 2. Add the `CompositionalCert` to `CompositionalCerts.lean`
 3. Add it to `allCerts`
-4. Run `lake build` to ensure it compiles
-5. Run `lake exe generate_all --export-certs` to see it validate and print
+4. Run `bazel build //lean:shoumei` to ensure it compiles
+5. Run `bazel run //:generate_all -- --export-certs` to see it validate and print

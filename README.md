@@ -83,7 +83,7 @@ every merge to `main`.*
 | RISC-V Pipeline | 35 | Decoder, RAT, FreeList, PhysRegFile, RS4, ROB, LSU, CSRFile, TrapSequencer, CPU top |
 
 **Verification:**
-- Lean proofs (structural + behavioural) checked by `lake build`; coverage reported by `verification/proof-coverage.sh`
+- Lean proofs (structural + behavioural) checked by `bazel test //lean:shoumei`; coverage reported by `verification/proof-coverage.sh`
 - Zero axioms in production circuits (`verification/mutation-test.sh` validates proof sensitivity)
 - Modules that cannot be discharged in one step are justified compositionally from their sub-modules (`CompositionalCert`; dependencies derived from the circuit's instances)
 - Emitted SV elaborated by slang, simulated under Verilator, cosimulated lock-step against Spike
@@ -113,33 +113,24 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for future directions.
 # Clone and setup
 git clone --recurse-submodules https://github.com/atvrager/Shoumei-RTL.git
 cd Shoumei-RTL
-make setup          # installs elan, lean, and the build dependencies
+python3 bootstrap.py --check-only   # verify prerequisites
 
-# Build
-make all            # lean -> codegen -> SV check -> cppsim
+# Build the complete RTL and artifacts
+bazel build //:rtl
 
-# Simulate
-export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
-make -C testbench/tests             # compile test ELFs
-make -C testbench sim               # build Verilator simulation
-make -C testbench run-all-tests     # run all 8 ELF tests
-make -C testbench cosim             # build cosimulation (auto-builds Spike)
-make -C testbench run-cosim         # RTL vs Spike lock-step cosim
-```
+# Run the complete presubmit test suite (311 tests)
+bazel test //:presubmit
 
-Or step by step:
-
-```bash
-lake build                              # build Lean proofs + code generators
-lake exe generate_all                   # generate SV + netlist + ASAP7 + C++ Sim + testbenches
-make systemverilog                      # Yosys read/hierarchy check of the emitted SV
-python3 verification/slang-lint.py output/sv-from-lean   # slang elaboration
+# Or run specific test suites:
+bazel test //testbench:all_tests    # Verilator simulation, lockstep Spike cosim, spec sim
+bazel test //verification:linters   # slang elaboration, shellcheck, python, cppcheck
 ```
 
 ### Prerequisites
 
-- **Lean 4** (v4.34.1) -- installed via elan by `make setup`
-- **Yosys** (>= 0.66) -- SystemVerilog read/hierarchy checks and ASIC synthesis (`setup-oss-cad-suite` or modern package)
+- **Bazel** (>= 8.x) or **Bazelisk**
+- **Lean 4** (v4.34.1) -- toolchain fetched automatically or via elan (`lean-toolchain`)
+- **Yosys** (>= 0.66) -- SystemVerilog read/hierarchy checks and ASIC synthesis
 - **slang** (`pyslang`) -- IEEE 1800-2017 elaboration of the emitted SV (`pip install pyslang`)
 - **Verilator** -- for RTL simulation (`apt install verilator`)
 - **RISC-V GCC** -- for test compilation (`./scripts/setup-riscv-toolchain.sh`)
@@ -198,17 +189,16 @@ Correctness is established in Lean; the emitted RTL is then checked by elaborati
 and running it.
 
 ```bash
-./verification/proof-coverage.sh                          # Lean proof coverage
-python3 verification/slang-lint.py output/sv-from-lean    # slang elaboration
-make systemverilog                                        # Yosys read/hierarchy check
-make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
-make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
+bazel test //verification:linters                         # slang elaboration, shellcheck, python, cppcheck
+bazel test //testbench:sim_tests                          # Verilator simulation
+bazel test //testbench:cosim_tests                        # RTL vs Spike lock-step cosim
+bazel test //:presubmit                                   # Full presubmit suite (311 tests)
 ```
 
 Large sequential modules are justified compositionally: a `CompositionalCert`
-names the module and its composition proof, and `lake exe generate_all --export-certs`
-(run by `make codegen`) derives its dependencies from the circuit's instances and
-fails if the certificate names a module the generator does not emit.
+names the module and its composition proof, and `bazel run //:generate_all -- --export-certs`
+derives its dependencies from the circuit's instances and fails if the certificate
+names a module the generator does not emit.
 
 ## Documentation
 

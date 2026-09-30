@@ -1,7 +1,7 @@
 # Claude Development Context
 
 > **Start here:** [docs/project-map.md](docs/project-map.md) is generated from
-> the source tree (`scripts/gen-project-map.py`) and shows the subsystem
+> the source tree (`bazel run //:generate_all -- --project-map`) and shows the subsystem
 > composition graph, per-circuit coverage (certificate / proofs / doc comment),
 > and the mechanical gaps.  Re-run the generator after adding a module.
 >
@@ -21,34 +21,30 @@ GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Key Toolchain Versions
 
-- **Lean 4:** v4.34.1 (controlled by `lean-toolchain`)
-- **Yosys:** >= 0.66 (`YosysHQ/setup-oss-cad-suite` in CI or modern distribution package; avoid older releases like 0.33 which lack fine-grained bit-level loop analysis and produce thousands of false combinational loop warnings)
+- **Bazel:** 8.x / Bazelisk (single entry point for all builds, tests, and generation)
+- **Lean 4:** v4.34.1 (controlled by `lean-toolchain`, built via `@rules_lean`)
+- **Yosys:** >= 0.66 (`YosysHQ/setup-oss-cad-suite` in CI or modern distribution package)
 - **slang:** `verification/slang-lint.py` elaborates every emitted SV file (IEEE 1800-2017)
-- **CIRCT/firtool:** 1.140.0 (for arcilator simulation backend; install via `scripts/install-circt.sh`)
-- **RISC-V GCC:** `riscv64-unknown-elf-gcc` / `riscv32-unknown-elf-gcc` (add to PATH for test compilation)
+- **RISC-V GCC:** `riscv64-unknown-elf-gcc` / `riscv32-unknown-elf-gcc` (cross-compiles test ELFs)
 
 ## Build Commands
 
 ```bash
-lake --no-ansi build                # Build Lean proofs + code generators
-lake --no-ansi exe generate_all     # Generate SV + netlist + ASAP7 + C++ Sim + testbenches
-make codegen                        # generate_all + export the compositional certificate registry
-make all                            # Run entire pipeline (lean -> codegen -> SV check -> cppsim)
+bazel build //lean:shoumei               # Build Lean proofs
+bazel build //:generate_all              # Build native code generator binary
+bazel build //:rtl                       # Generate SV + netlist + ASAP7 + C++ Sim + testbenches
+bazel test //:presubmit                  # Run complete presubmit test suite (311 tests)
 
-# RISC-V test compilation and simulation
-export PATH="$HOME/.local/riscv32-elf/bin:$PATH"
-make -C testbench/tests             # Compile C tests -> ELF binaries
-make -C testbench sim               # Build Verilator simulation (X-prop on by default)
-make -C testbench run-all-tests     # Run all ELF tests (Verilator)
-make -C testbench cosim       # Build Verilator cosim (auto-builds Spike)
-make -C testbench run-cosim   # RTL vs Spike lock-step cosim (Verilator)
-
-# Arcilator simulation (CIRCT/MLIR/LLVM-based, requires scripts/install-circt.sh)
-scripts/install-circt.sh            # Install CIRCT 1.140.0 (firtool, arcilator, circt-verilog)
-make -C testbench sim-arc           # Build Arcilator simulation
-make -C testbench run-all-tests-arc # Run all ELF tests (Arcilator)
-make -C testbench cosim-arc         # Build Arcilator cosim
-make -C testbench run-cosim-arc     # RTL vs Spike lock-step cosim (Arcilator)
+# Targeted test suites
+bazel test //testbench:sim_tests         # Verilator standalone simulations
+bazel test //testbench:cosim_tests       # RTL vs Spike lockstep cosimulations
+bazel test //testbench:spec_tests        # Specification reference simulations
+bazel test //testbench:all_tests         # All simulation suites combined
+bazel test //testbench:coverage_test     # Hardware line coverage test
+bazel test //verification:linters        # Slang, shellcheck, python, cppcheck
+bazel test //verification:formal         # Formal verification & SEC
+bazel test //verification:synthesis      # Yosys ASAP7 & GF180MCU synthesis
+bazel test //testbench/benchmarks        # Benchmark IPC regression test
 ```
 
 ## Procedure: Adding a New Module
@@ -63,9 +59,9 @@ see [docs/adding-an-extension.md](docs/adding-an-extension.md).
 1. **Behavioral model** -- Define state type + operations in Lean
 2. **Structural circuit** -- Build `Circuit` from gates and/or `CircuitInstance` submodules
 3. **Proofs** -- Structural (`native_decide`) and behavioral (`simp`, manual tactics)
-4. **Code generation** -- Add to `GenerateAll.lean` circuit list, then `lake exe generate_all`
-5. **Compositional cert** (if needed) -- Add to `CompositionalCerts.lean`; `lake exe generate_all --export-certs` checks the registry
-6. **Simulation** -- `make -C testbench sim` + `run-all-tests`, or cosim for CPU-level changes
+4. **Code generation** -- Add to `GenerateAll.lean` circuit list, then `bazel build //:rtl`
+5. **Compositional cert** (if needed) -- Add to `CompositionalCerts.lean`; `bazel run //:generate_all -- --export-certs` checks the registry
+6. **Simulation** -- `bazel test //testbench/tests:all_sim`, or `bazel test //testbench/tests:all_cosim` for CPU-level changes
 
 ### Where files go
 
@@ -87,18 +83,17 @@ the proven `Circuit`, so the checks below confirm that the translation elaborate
 and runs; there is no second RTL design to compare against.
 
 - **Lean proofs** -- structural and behavioral theorems live next to each circuit and
-  are checked by `lake build`; `verification/proof-coverage.sh` reports coverage.
+  are checked by `bazel build //lean:shoumei`; `bazel test //verification:proof_coverage_test` reports coverage.
 - **Compositional certificate registry** -- a `CompositionalCert` names a module, its
-  dependencies and its composition proof. `lake exe generate_all --export-certs`
+  dependencies and its composition proof. `bazel run //:generate_all -- --export-certs`
   derives each certificate's dependencies from the circuit's instances and fails if a
-  certificate names a module the generator does not emit (run by `make codegen`).
-- **slang elaboration** -- `python3 verification/slang-lint.py output/sv-from-lean`
-  parses and elaborates every emitted SV file (IEEE 1800-2017). `make systemverilog`
-  runs the equivalent Yosys read/hierarchy check via `verification/validate-sv.sh`.
-- **Verilator simulation** -- `make -C testbench sim` builds the emitted SV and
-  `make -C testbench run-all-tests` runs the ELF test suite against it.
-- **RISC-V cosimulation** -- `make -C testbench cosim` + `run-cosim` compare the RTL
-  against Spike lock-step on the retired RVVI trace.
+  certificate names a module the generator does not emit.
+- **slang elaboration** -- `bazel test //verification:slang_lint_test`
+  parses and elaborates every emitted SV file (IEEE 1800-2017). `bazel test //verification:yosys_validate_test`
+  runs the equivalent Yosys read/hierarchy check.
+- **Verilator simulation** -- `bazel test //testbench/tests:all_sim` runs the standalone RTL simulation.
+- **RISC-V cosimulation** -- `bazel test //testbench/tests:all_cosim` compares the RTL
+  against Spike lockstep on the retired RVVI trace.
 
 ### Compositional certificates (large sequential modules)
 
@@ -106,7 +101,7 @@ A module too large to discharge in one step is justified from its building block
 
 1. Define a `CompositionalCert` in `lean/Shoumei/Verification/CompositionalCerts.lean`
 2. Add it to `allCerts`
-3. `lake exe generate_all --export-certs` validates the registry against the emitted
+3. `bazel run //:generate_all -- --export-certs` validates the registry against the emitted
    circuits and prints one `Module|deps|proofReference` line per certificate
 
 The dependencies are not written by hand -- they are the modules the circuit
@@ -119,14 +114,11 @@ the registry is validated at codegen time.
 ### Running verification
 
 ```bash
-./verification/proof-coverage.sh                       # Lean proof coverage
-python3 verification/slang-lint.py output/sv-from-lean # slang elaboration
-make systemverilog                                     # Yosys read/hierarchy check
-make -C testbench sim && make -C testbench run-all-tests  # Verilator simulation
-make -C testbench cosim && make -C testbench run-cosim    # RTL vs Spike lock-step
-make synth-gf180                                       # Native Yosys GF180MCU synthesis (64 MHz)
-make synth-asap7                                       # Native Yosys ASAP7 synthesis (1.0 GHz)
-./verification/smoke-test.sh                           # CI smoke tests
+bazel test //verification:linters        # Slang elaboration, shellcheck, python, cppcheck
+bazel test //verification:formal         # Formal proofs and SEC
+bazel test //testbench:all_tests         # Verilator simulation, cosim, and spec tests
+bazel test //verification:synthesis      # Yosys ASAP7 and GF180MCU synthesis
+bazel test //:presubmit                  # Complete presubmit suite
 ```
 
 ## DSL Core Types
@@ -298,7 +290,7 @@ IEEE 1800-2017 compliant, synthesizable subset only.
 Lock-step comparison of RTL vs Spike reference model. Shows exact instruction where RTL diverges:
 
 ```bash
-make -C testbench cosim && ./build-sim/cosim_shoumei +elf=testbench/tests/failing_test.elf
+bazel run //testbench:sim_shoumei_cosim -- +elf=path/to/failing_test.elf
 ```
 
 Output format: `DBG ret#N cyC: PC=0x... insn=0x... rd=xR(wr) data=0x... | Spike: ...`
@@ -308,10 +300,9 @@ Output format: `DBG ret#N cyC: PC=0x... insn=0x... rd=xR(wr) data=0x... | Spike:
 ### FST Waveform Traces
 
 ```bash
-make -C testbench sim-trace                                    # Build with FST trace support
-./build-sim/sim_shoumei_trace +trace +elf=testbench/tests/test.elf  # Run with FST
-./scripts/fst_inspect shoumei_cpu.fst --list                   # List all signals
-./scripts/fst_inspect shoumei_cpu.fst --cycles 60-100 --signals "rvvi_valid,rvvi_pc_rdata"
+bazel run //testbench:sim_shoumei_trace -- +trace +elf=path/to/test.elf
+bazel run //tools:fst_inspect -- shoumei_cpu.fst --list
+bazel run //tools:fst_inspect -- shoumei_cpu.fst --cycles 60-100 --signals "rvvi_valid,rvvi_pc_rdata"
 ```
 
 Key signals for memory path debugging:
@@ -328,7 +319,7 @@ Key signals for memory path debugging:
 
 ## Important Notes
 
-- **NEVER edit files in `output/` or `testbench/generated/`.** These are generated by `lake exe generate_all` and will be overwritten on every regeneration. All changes must go in the Lean source files under `lean/`. If the generated output is wrong, fix the code generator (`lean/Shoumei/Codegen/`), not the generated file.
+- **NEVER edit files in `output/` or `testbench/generated/`.** These are generated by `bazel build //:rtl` and will be overwritten on every regeneration. All changes must go in the Lean source files under `lean/`. If the generated output is wrong, fix the code generator (`lean/Shoumei/Codegen/`), not the generated file.
 - **origin/main has no pre-existing test failures.** GitHub branch protection requires CI to pass before merging. If tests fail on your branch, you introduced the regression -- do not assume failures are pre-existing.
 - Always read existing Lean files before modifying
 - `hasSequentialElements` checks DFF gates only, NOT instances -- use `findClockWires`/`findResetWires` which check both

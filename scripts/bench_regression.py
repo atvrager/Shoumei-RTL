@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """bench_regression.py - gate instruction IPC against the checked-in baseline.
 
-Compares a fresh output/bench/bench-metrics.csv (name,peak_ipc_milli,
-dependent_ipc_milli, produced by `make -C testbench run-benchmarks` via
-run-suite.sh --bench-csv) against verification/bench-baseline.csv and fails
-on any throughput regression beyond tolerance.
+Compares a fresh bench-metrics.csv (name,peak_ipc_milli,
+dependent_ipc_milli, produced by `bazel test //testbench/benchmarks`)
+against verification/bench-baseline.csv and fails on any throughput
+regression beyond tolerance.
 
 Why this exists: the per-ELF "PASS add.elf (cycles, retired, IPC)" log line
 reports *whole-program* IPC (both measured regions plus setup/IO), while
@@ -68,7 +68,7 @@ def load_csv(path: Path) -> dict[str, tuple[int | None, int | None]]:
                 continue
             peak = parse_milli(row.get("peak_ipc_milli") or row.get("throughput_ipc_milli"))
             dep = parse_milli(row.get("dependent_ipc_milli") or row.get("latency_ipc_milli"))
-            # Legacy pre-IPC schema stored CPI x1000 (see gen-benchmark-visual.py).
+            # Legacy pre-IPC schema stored CPI x1000 (see Shoumei.Codegen.BenchmarkVisual).
             if peak is None:
                 peak = cpi_to_ipc(row.get("throughput_cpi_milli"))
             if dep is None:

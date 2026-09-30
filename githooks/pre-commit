@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-commit - fast local guards (installed via scripts/install-githooks.sh)
 #
-# Heavy validation stays in CI (lake build, verilator, cosim). This hook
+# Heavy validation stays in CI (bazel test //:presubmit). This hook
 # only catches what is instant and would spam CI: syntax errors, broken
 # workflow YAML, and stale generated manifests.
 #
@@ -64,15 +64,20 @@ fi
 
 # 4. Generated manifests stay fresh when lean/ changes
 if staged | grep -q '^lean/'; then
-    python3 scripts/gen-lean-root.py > /dev/null
-    if ! git diff --exit-code --quiet -- lean/Shoumei/All.lean; then
-        echo "pre-commit: lean/Shoumei/All.lean is stale; stage the regeneration" >&2
-        failed=1
+    if [ ! -x "./bazel-bin/generate_all" ]; then
+        bazel build //:generate_all > /dev/null 2>&1 || true
     fi
-    python3 scripts/gen-project-map.py > /dev/null
-    if ! git diff --exit-code --quiet -- docs/project-map.md; then
-        echo "pre-commit: docs/project-map.md is stale; stage the regeneration" >&2
-        failed=1
+    if [ -x "./bazel-bin/generate_all" ]; then
+        ./bazel-bin/generate_all --gen-lean-root > /dev/null
+        if ! git diff --exit-code --quiet -- lean/Shoumei/All.lean; then
+            echo "pre-commit: lean/Shoumei/All.lean is stale; stage the regeneration (bazel run //:generate_all -- --gen-lean-root)" >&2
+            failed=1
+        fi
+        ./bazel-bin/generate_all --project-map > /dev/null
+        if ! git diff --exit-code --quiet -- docs/project-map.md; then
+            echo "pre-commit: docs/project-map.md is stale; stage the regeneration (bazel run //:generate_all -- --project-map)" >&2
+            failed=1
+        fi
     fi
 fi
 

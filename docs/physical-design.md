@@ -9,9 +9,9 @@ This document describes how to run the physical design flow for Shoumei RTL usin
     ```bash
     git submodule update --init --recursive
     ```
-3.  **Generated Verilog**: Run `lake exe generate_all` (or `make codegen`) to emit the SystemVerilog under `output/sv-from-lean/`.
+3.  **Generated Verilog**: Run `bazel build //:rtl` to emit the SystemVerilog under `output/sv-from-lean/`.
     ```bash
-    lake exe generate_all
+    bazel build //:rtl
     ```
 
 ## Configuration
@@ -184,17 +184,10 @@ The flow is driven by a shared, parameterizable TCL engine (`physical/run-yosys.
 ### Running Synthesis
 
 ```bash
-# Quad-Target synthesis flow: builds all 4 targets and extracts comparison
-make synth-quad
-
-# Extract PPA comparison table
-make synth-stats
-
-# Individual targets:
-make synth-gf180-cpu   # GF180MCU Cached CPU at 64 MHz (15.625 ns)
-make synth-gf180-soc   # GF180MCU Shoumei SoC at 64 MHz (15.625 ns)
-make synth-asap7-cpu   # ASAP7 7nm Cached CPU at 1.0 GHz (1.000 ns)
-make synth-asap7-soc   # ASAP7 7nm Shoumei SoC at 1.0 GHz (1.000 ns)
+# Quad-Target synthesis flow:
+bazel test //verification:synth_asap7_test
+bazel test //verification:synth_gf180_test
+bazel test //verification:synth_stats_test
 
 # Lightweight subsystem smoke synthesis (< 4 seconds runtime)
 ./physical/run-yosys-gf180.sh ALU64 10.0
@@ -269,7 +262,7 @@ process-explicit SRAM hook.  Every RAM emits as:
   GF180MCU vendor family (`gf180mcu_fd_ip_sram`) and OpenRAM 1R1W macros.
   RAMPrimitives with exactly one write + one read port map to the macro;
   other configurations keep the fallback.
-- **Generation**: `make sram-macros` drives
+- **Generation**:
   `scripts/gen-sram-macros.sh` (OpenRAM, `--pdk gf180mcuD`/`asap7`,
   1R1W), emitting a shim with the canonical module name so the codegen
   contract is immune to OpenRAM's internal naming.  Sizes per node follow
@@ -278,7 +271,7 @@ process-explicit SRAM hook.  Every RAM emits as:
 - **Verification of the macro branch without real IP**:
   `verification/sram-macro-stub.sv` provides behavioral stubs
   (synchronous read) so slang lint checks the `ifdef` path in CI
-  (`python3 verification/slang-lint.py --sram output/sv-from-lean`).
+  (`bazel test //verification:slang_sram_lint_test`).
 - **Simulation**: the `else` reg-array fallback is the Verilator path —
   intentionally a plain memory, never an FF array in synthesis.  If a
   macro-accurate sim model is needed, the fallback can be replaced by a

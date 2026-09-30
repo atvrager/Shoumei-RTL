@@ -40,7 +40,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ ! -d "$GOLD_DIR" ]; then
-    echo "ERROR: $GOLD_DIR not found. Run: make codegen"
+    echo "ERROR: $GOLD_DIR not found. Run: bazel build //:rtl"
     exit 1
 fi
 if [ ! -f "$CELL_MODELS" ]; then

@@ -355,7 +355,7 @@ def generateTableGen (m : MicroarchModel) : String := ...
 -- Output: output/RISCVSchedShoumei.td
 ```
 
-Wire into `GenerateAll.lean` so `lake exe generate_all` produces the `.td` file alongside hierarchical SV, flat netlist SV, ASAP7 SV, and C++ Sim.
+Wire into `GenerateAll.lean` so `bazel run //:generate_all` produces the `.td` file alongside hierarchical SV, flat netlist SV, ASAP7 SV, and C++ Sim.
 
 ## Iteration plan
 
@@ -397,7 +397,7 @@ Wire into `GenerateAll.lean` so `lake exe generate_all` produces the `.td` file 
 | Add store buffer (Phase 7) | Store latency, forwarding | 1, 3 |
 | Change cache latency | `LoadLatency` | 1, 3 |
 
-If the generator reads these from the Lean model, re-running `lake exe generate_all` propagates changes automatically.
+If the generator reads these from the Lean model, re-running `bazel run //:generate_all` propagates changes automatically.
 
 ## Files
 

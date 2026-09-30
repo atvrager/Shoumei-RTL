@@ -39,21 +39,29 @@ BIT_RE = re.compile(r"(?:.*\.)?(.*)_e(\d+)$")
 IDX_RE = re.compile(r"(?:.*\.)?(.*)_(\d+)$")
 
 
-def ensure_binary() -> None:
+def get_binary() -> Path:
     if BIN.exists():
-        return
-    print("fst_inspect not built; running `make tools`...", file=sys.stderr)
-    r = subprocess.run(["make", "tools"], cwd=ROOT, capture_output=True, text=True)
-    if not BIN.exists():
+        return BIN
+    bazel_bin = ROOT / "bazel-bin" / "tools" / "fst_inspect"
+    if bazel_bin.exists():
+        return bazel_bin
+    print("fst_inspect not built; running `bazel build //tools:fst_inspect`...", file=sys.stderr)
+    r = subprocess.run(["bazel", "build", "//tools:fst_inspect"], cwd=ROOT, capture_output=True, text=True)
+    if not bazel_bin.exists():
         print(r.stdout, file=sys.stderr)
         print(r.stderr, file=sys.stderr)
-        sys.exit("ERROR: could not build scripts/fst_inspect")
-    print(f"done: {BIN}", file=sys.stderr)
+        sys.exit("ERROR: could not build //tools:fst_inspect")
+    return bazel_bin
+
+
+def ensure_binary() -> None:
+    get_binary()
 
 
 def run_inspect(trace: Path, args: list[str]) -> str:
+    bin_path = get_binary()
     r = subprocess.run(
-        [str(BIN), str(trace), *args], capture_output=True, text=True)
+        [str(bin_path), str(trace), *args], capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"fst_inspect failed: {r.stderr.strip() or r.stdout.strip()}")
     return r.stdout
@@ -196,7 +204,7 @@ def main() -> int:
     trace = Path(args.trace)
     if not trace.exists():
         sys.exit(f"ERROR: trace not found: {trace}\n"
-                 "  (run `make -C testbench sim-trace` and the sim with +trace)")
+                 "  (run `bazel run //testbench:sim_shoumei -- +trace` and the sim with +trace)")
     ensure_binary()
 
     if args.cmd == "list":

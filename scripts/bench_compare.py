@@ -8,7 +8,7 @@ Consumes:
 
 Emits:
   output/bench/bench-metrics.json    machine-readable per-benchmark CPI data
-  output/cpp_sim/bench_metrics.h     C++ header (regenerate with `make bench-compare`)
+  output/cpp_sim/bench_metrics.h     C++ header (regenerate with `bazel test //testbench/benchmarks`)
 
 Exit status is always 0.
 """
@@ -87,7 +87,7 @@ def emit_header(benchmarks: list[dict], out: Path) -> None:
     cpp_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "// Auto-generated from measured benchmark data. DO NOT EDIT.",
-        "// Regenerate with: make run-benchmarks bench-compare",
+        "// Regenerate with: bazel test //testbench/benchmarks",
         "//",
         "// peak_ipc_milli is instructions-per-cycle * 1000 (1000 == 1.0 IPC).",
         "// dependent_ipc_milli is 0 for benchmarks without a dependency chain.",

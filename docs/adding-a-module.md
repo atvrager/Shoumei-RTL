@@ -196,7 +196,7 @@ def allCircuits : List Circuit := [
 
 Then run:
 ```bash
-lake exe generate_all
+bazel run //:generate_all
 ```
 
 This emits all outputs in one command:
@@ -221,25 +221,27 @@ def main : IO Unit := do
   IO.FS.writeFile "output/sv-from-lean/MyModule.sv" (SystemVerilog.toSystemVerilog c)
 ```
 
-Add a Lake target in `lakefile.lean`:
-```lean
-lean_exe generate_mymodule where
-  root := `GenerateMyModule
-  supportInterpreter := true
+Add a Bazel target in `BUILD.bazel`:
+```python
+lean_binary(
+    name = "generate_mymodule",
+    srcs = ["GenerateMyModule.lean"],
+    deps = ["//lean:shoumei"],
+)
 ```
 
 ## Step 5: Check the Emitted RTL
 
 ```bash
-python3 verification/slang-lint.py output/sv-from-lean   # parse + elaborate every emitted SV file
-make systemverilog                                       # Yosys read/hierarchy check
+bazel test //verification:slang_lint_test     # parse + elaborate every emitted SV file
+bazel test //verification:yosys_validate_test # Yosys read/hierarchy check
 ```
 
 Both read the emitted files only; there is no second RTL design to compare against.
 The emitted SV then gets exercised by the simulation tests:
 
 ```bash
-make -C testbench sim && make -C testbench run-all-tests
+bazel test //testbench/tests:...
 ```
 
 If a module's clock or reset is mis-detected, check `findClockWires`/`findResetWires`
@@ -272,8 +274,8 @@ the circuit instantiates.
 ### 2. Verify
 
 ```bash
-lake build
-lake exe generate_all --export-certs
+bazel build //lean:shoumei
+bazel run //:generate_all -- --export-certs
 ```
 
 A certificate fails the export if it names a module the generator does not emit, or
@@ -291,7 +293,7 @@ lean/Shoumei/Circuits/Sequential/CounterProofs.lean # Proofs
 3. Prove structural properties (gate count, port count)
 4. Prove behavioral properties (reset sets to 0, increment wraps correctly)
 5. Add to `GenerateAll.lean` circuit list
-6. Run `lake exe generate_all`
-7. Check the emitted SV (`python3 verification/slang-lint.py output/sv-from-lean`)
-8. Simulate (`make -C testbench sim` + `run-all-tests`)
-9. If the composition is too large to discharge in one step: add a `CompositionalCert` and run `lake exe generate_all --export-certs`
+6. Run `bazel run //:generate_all`
+7. Check the emitted SV (`bazel test //verification:slang_lint_test`)
+8. Simulate (`bazel test //testbench/tests:...`)
+9. If the composition is too large to discharge in one step: add a `CompositionalCert` and run `bazel run //:generate_all -- --export-certs`

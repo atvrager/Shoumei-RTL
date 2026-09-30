@@ -28,7 +28,7 @@ echo ""
 
 # Pre-flight: verify codegen has been run
 if ! ls output/sv-from-lean/*.sv >/dev/null 2>&1; then
-    printf '%bNo generated SV files found. Run make codegen first.%b\n' "$RED" "$NC"
+    printf '%bNo generated SV files found. Run bazel build //:rtl first.%b\n' "$RED" "$NC"
     exit 1
 fi
 
@@ -67,7 +67,7 @@ if [ "$SC_H_COUNT" -gt 0 ]; then
         fi
     done
 else
-    printf '%b  ⚠ No C++ simulation output (run make codegen to generate)%b\n' "$YELLOW" "$NC"
+    printf '%b  ⚠ No C++ simulation output (run bazel build //:rtl to generate)%b\n' "$YELLOW" "$NC"
 fi
 echo ""
 
@@ -186,7 +186,7 @@ if ! command -v verilator > /dev/null 2>&1; then
     echo "(skipped: verilator not installed; CI runs it in verilator-sim)"
 elif [ -n "${SKIP_CACHE_CONFORMANCE:-}" ]; then
     echo "(skipped: verified via testbench:cache_conformance_test)"
-elif make -C testbench cache-model-test > /tmp/cache-conformance.log 2>&1; then
+elif bazel test //testbench:cache_conformance_test > /tmp/cache-conformance.log 2>&1; then
     pass "Cache conformance (L1D SV vs reference)"
 else
     fail "Cache conformance (see /tmp/cache-conformance.log)"

@@ -23,7 +23,7 @@ The Certified Dual-RTL Bridge establishes a closed verification loop:
                  │                                   │
                  └───────────────┬───────────────────┘
                                  ▼
-                     [lake exe smt2lean]  (Pure Lean 4, 0 Python)
+                     [bazel build //:smt2lean]  (Pure Lean 4, 0 Python)
                                  │
                                  ▼
                  output/sec-bridge/ShoumeiSec/   (generated, gitignored)
@@ -32,7 +32,7 @@ The Certified Dual-RTL Bridge establishes a closed verification loop:
                       └── Bridge<Mod>.lean       -> ShoumeiSec.Bridge<Mod> (SEC proof)
                                  │
                                  ▼
-                  lake build ShoumeiSec   (separate Lake library)
+                  bazel test //verification:sec_bridge_test
                                  │
                       ┌──────────┴──────────┐
                       ▼                     ▼
@@ -55,13 +55,13 @@ Two Lean libraries keep generated proof material out of the hand-written tree:
 | `ShoumeiSec` | `output/sec-bridge/` | no (`.gitignore`) | SMT2-derived `Spec`/`Impl` models and SEC proofs |
 
 `Shoumei.All` therefore imports only human-authored modules; the bridge models are
-rebuilt on demand by `make sec-bridge` and never appear in `git status`.
+rebuilt on demand by `bazel test //verification:sec_bridge_test` and never appear in `git status`.
 
 ## Principles
 
 ### 1. Ingesting Without Python
 
-The bridge introduces a native, self-contained Lean 4 tool (`lake exe smt2lean`,
+The bridge introduces a native, self-contained Lean 4 tool (`bazel build //:smt2lean`,
 source `Smt2Lean.lean`); no Python is in the loop:
 
 - **Input**: SMT-LIB2 output from Yosys (`write_functional_smt2`).
@@ -137,7 +137,7 @@ name those nets as scalars (`pxa_l{li}g{i}`, `ksag{stride}x{i}`, `pamask{i}x{j}`
 ### 4. SVA Property Translation (`sva2lean`)
 
 The assertions a specification writes about itself are translated into Lean
-theorems by `lake exe sva2lean` (source `Sva2Lean.lean`), which reads the spec's
+theorems by `bazel build //:sva2lean` (source `Sva2Lean.lean`), which reads the spec's
 `` `ifdef FORMAL `` block together with the Lean model of that same
 specification:
 
@@ -227,7 +227,7 @@ differently across circuit topologies:
    algebraic rewriting. Verification for these units follows two distinct paths:
    - Compositional verification (proving partial products, CSA compressors via
      lemmas, and the final adder independently).
-   - Lock-step architectural co-simulation against Spike (`make -C testbench cosim`).
+   - Lock-step architectural co-simulation against Spike (`bazel test //testbench/tests:all_cosim`).
 2. **Tiered Coverage Strategy**:
    - **Tier A (Registers, Buffers, Gates)**: Direct SEC via parameterized specs.
    - **Tier B (Adders, ALUs, Compressors)**: Direct SEC via `bv_decide`.
@@ -276,7 +276,7 @@ specs now expose that as a combinational mask (`busy_eff[i] = flush_groups[i/8] 
 : busy_table[i]`) used by the read path, with the edge behaviour unchanged.
 
 Both models now match the RTL over 400k (`BusyTable_W2`) and 300k (`FPBusyTable`)
-cycles of randomised co-simulation, and `make spec-equiv` covers the whole spec
+cycles of randomised co-simulation, and `bazel test //verification:spec_equiv_test` covers the whole spec
 set.
 
 Lesson: when a counterexample looks spurious, distrust the probe before the
@@ -307,13 +307,13 @@ output/sv-spec/<Mod>.sv                   module <Mod> = thin wrapper around
                                           <Mod>_spec #(<params>)   (bit-level
                                           port mapping; handles scalar/bus splits)
         │
-        │  make -C testbench sim SV_DIR=output/sv-spec
+        │  bazel test //verification:spec_shims_test
         ▼
 240/240 ELF tests pass
 ```
 
 Modules without a spec keep their emitted RTL, so the harness is usable at any
-coverage level and improves as specs are written. `make spec-shims` prints the
+coverage level and improves as specs are written. `bazel test //verification:spec_shims_test` prints the
 missing list, grouped by subsystem.
 
 Port-shape handling: the emitted SV sometimes exposes an N-bit bus as N scalar
@@ -331,7 +331,7 @@ Coverage of the CPU closure (136 modules reachable from
 | No spec yet | 59 |
 | No circuit entry (`RV64GDecoder`, `sram_1r1w_512x64`) | 2 |
 
-#### Per-module equivalence: `make spec-equiv`
+#### Per-module equivalence: `bazel test //verification:spec_equiv_test`
 
 The co-simulation behind the two busy-table fixes is generalised in
 `scripts/spec-equiv.py`.  For every spec-backed module it generates a
@@ -340,7 +340,7 @@ by side, drives all inputs from an LFSR, and compares every output on every cloc
 edge, then builds and runs it with Verilator:
 
 ```bash
-make spec-equiv                      # all spec-backed modules
+bazel test //verification:spec_equiv_test
 python3 scripts/spec-equiv.py BusyTable_W2 FPBusyTable --cycles 200000
 ```
 
@@ -367,7 +367,7 @@ where the SMT route does not scale.
 
 #### Evidence levels
 
-`make sec-manifest` distinguishes four states, because "has a spec" and "has
+`bazel test //verification:sec_manifest_test` distinguishes four states, because "has a spec" and "has
 evidence" are different claims:
 
 | Status | Meaning |
@@ -377,7 +377,7 @@ evidence" are different claims:
 | `○ SPEC_ONLY` | a spec file exists with no equivalence evidence |
 | `✗ MISSING` | no spec |
 
-`lake exe generate_all --check-sec-specs` gates on `SPEC_ONLY`: a spec that
+`bazel test //verification:check_sec_specs_test` gates on `SPEC_ONLY`: a spec that
 carries no evidence fails the build (the `MISSING` set is an agreed
 out-of-scope boundary and is reported, not fatal).
 
@@ -386,37 +386,35 @@ out-of-scope boundary and is reported, not fatal).
 Both paths run in `.github/workflows/ci.yml` and are required by `ci-pass`:
 
 - **`sec-bridge`** — OSS CAD Suite (Yosys, for `write_functional_smt2`) plus Lean:
-  `make sec-bridge`, then the evidence gate, then the manifest.
+  `bazel test //verification:sec_bridge_test`, then the evidence gate, then the manifest.
 - **`spec-sim`** — Verilator plus the RISC-V toolchain: builds the ELF tests, runs
-  the full suite against the spec implementation (`make run-spec-tests`), then the
-  per-module equivalence audit (`make spec-equiv`).
+  the full suite against the spec implementation, then the
+  per-module equivalence audit (`bazel test //verification:spec_equiv_test`).
 
 ## Verification Commands
 
 ```bash
 # Run full dual-RTL bridge verification (generates output/sec-bridge/, then
 # builds the ShoumeiSec library: 155 circuits + 147 spec assertions, 0 axioms)
-make sec-bridge
+bazel test //verification:sec_bridge_test
 
 # Coverage manifest: verified / spec-only / missing across all 237 circuits
-make sec-manifest
+bazel test //verification:sec_manifest_test
 
 # Regenerate only the generated models and proofs
 python3 scripts/gen-bridges.py
 
 # Spec-side simulation: run the hand-written specs as an RTL implementation
-make spec-shims                 # build output/sv-spec/ (+ list specs still missing)
-make spec-sim                   # build the Verilator sim from the spec tree
-make run-spec-tests             # run the full ELF suite against the spec tree
-make spec-equiv                 # randomised RTL-vs-spec co-simulation, per module
-lake exe generate_all --check-sec-specs   # gate: no spec without evidence
+bazel test //verification:spec_shims_test       # build output/sv-spec/ (+ list specs still missing)
+bazel test //verification:spec_equiv_test       # randomised RTL-vs-spec co-simulation, per module
+bazel test //verification:check_sec_specs_test  # gate: no spec without evidence
 
 # Build standalone Lean SMT ingester
-lake build smt2lean
+bazel build //:smt2lean
 
 # Hand-written gates that must stay green
-lake build Shoumei.All                     # human-authored modules only
-python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
+bazel build //lean:shoumei                 # human-authored modules
+bazel test //lean:lean_root_test           # Shoumei.All is current
 ```
 
 ## Coverage
@@ -426,7 +424,7 @@ python3 scripts/gen-lean-root.py --check   # Shoumei.All is current
 | Circuits in the emitted universe | 237 |
 | Families with a human-authored spec | 160 (68%) |
 | Verified with `bv_decide` (0 axioms) | 157 (66%) |
-| Co-sim verified (`make spec-equiv`) | 3 |
+| Co-sim verified (`spec_equiv_test`) | 3 |
 | Spec-only (spec, no evidence) | 0 |
 | Missing | 77 |
 | Equivalence evidence (SEC or co-sim) | 160/237 (67%) |
@@ -438,7 +436,7 @@ Tracked verification surface:
 | Path | Tracked | Role |
 |---|---|---|
 | `verification/specs/*.sv` | yes | human-authored reference models |
-| `Sva2Lean.lean` | yes | SVA assertion -> Lean theorem translator (`lake exe sva2lean`) |
+| `Sva2Lean.lean` | yes | SVA assertion -> Lean theorem translator (`bazel build //:sva2lean`) |
 | `output/sec-bridge/ShoumeiSec/Bridge*Props.lean` | no | generated per-spec assertion theorems |
 | `scripts/gen-bridges.py` | yes | per-family SEC recipes and state-correspondence tables |
 | `lean/Shoumei/Verification/DualRTL.lean` | yes | registry mapping circuit -> spec -> proof |

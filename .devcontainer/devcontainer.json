@@ -23,7 +23,7 @@
     "PATH": "/home/dev/.elan/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },
 
-  "postCreateCommand": "lake build",
+  "postCreateCommand": "bazel build //lean:shoumei",
 
   "customizations": {
     "vscode": {

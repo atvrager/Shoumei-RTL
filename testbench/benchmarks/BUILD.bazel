@@ -59,7 +59,7 @@ genrule(
 
 sh_test(
     name = "bench_regression_test",
-    size = "medium",
+    size = "large",
     srcs = ["run_bench_regression.sh"],
     args = [
         "$(location //testbench:sim_shoumei)",

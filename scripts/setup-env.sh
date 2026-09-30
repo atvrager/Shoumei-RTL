@@ -2,7 +2,7 @@
 # setup-env.sh — Bootstrap the Shoumei RTL dev environment for Claude Code web sessions.
 #
 # The SessionStart hook calls this script.  It must return FAST so the
-# session is responsive immediately.  Heavy work (installs, lake build)
+# session is responsive immediately.  Heavy work (installs, bazel build)
 # runs in a background re-invocation of this script; progress is logged
 # to /tmp/shoumei-setup.log and a sentinel /tmp/shoumei-setup-done is
 # created on completion.
@@ -35,13 +35,13 @@ if [ "${1:-}" = "--background" ]; then
     export PATH="$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:$PATH"
 
     # ── 1. elan + Lean 4 ─────────────────────────────────────────────
-    if ! command -v lake &>/dev/null; then
+    if ! command -v lean &>/dev/null; then
         echo "==> Installing elan + Lean 4"
         curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain "$(cat "$PROJECT_DIR/lean-toolchain")"
         export PATH="$HOME/.elan/bin:$PATH"
     fi
-    echo "✓ lake ready"
+    echo "✓ lean ready"
 
     # ── 2. System packages ───────────────────────────────────────────
     if [ "$(id -u)" = "0" ]; then
@@ -92,16 +92,14 @@ if [ "${1:-}" = "--background" ]; then
 
     if [ ! -f "$PROJECT_DIR/third_party/riscv-opcodes/instr_dict.json" ]; then
         echo "==> Generating RISC-V opcodes"
-        make -C "$PROJECT_DIR" opcodes 2>&1 || echo "⚠ opcodes generation failed"
+        (cd "$PROJECT_DIR" && bazel build //:instr_dict 2>&1) || echo "⚠ opcodes generation failed"
     fi
     echo "✓ submodules ready"
 
-    # ── 6. Build Lean ────────────────────────────────────────────────
-    if [ ! -f "$PROJECT_DIR/.lake/build/bin/generate_all" ]; then
-        echo "==> Running lake build (this takes a while...)"
-        cd "$PROJECT_DIR" && lake build 2>&1
-    fi
-    echo "✓ Lean build ready"
+    # ── 6. Build Shoumei RTL via Bazel ──────────────────────────────
+    echo "==> Running bazel build //:rtl"
+    (cd "$PROJECT_DIR" && bazel build //:rtl 2>&1)
+    echo "✓ Shoumei RTL build ready"
 
     # ── Done ─────────────────────────────────────────────────────────
     echo ""

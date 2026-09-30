@@ -436,7 +436,7 @@ lean/Shoumei/ShoumeiText/
 Plus an executable entry point:
 
 ```
-GenerateAllShoumei.lean   -- lake exe generate_all_shoumei
+GenerateAllShoumei.lean   -- bazel run //:generate_all_shoumei
 ```
 
 ### 6.2 Pretty Printer (`Emit.lean`)
@@ -565,11 +565,14 @@ def main : IO Unit := do
   IO.println s!"Generated {allCircuits.length} .shoumei files"
 ```
 
-**lakefile entry:**
+**BUILD.bazel entry:**
 
-```lean
-lean_exe generate_all_shoumei where
-  root := `GenerateAllShoumei
+```python
+lean_binary(
+    name = "generate_all_shoumei",
+    srcs = ["GenerateAllShoumei.lean"],
+    deps = ["//lean:shoumei"],
+)
 ```
 
 ### 6.6 Round-trip check integration

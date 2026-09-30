@@ -232,11 +232,6 @@ else
 fi
 
 MANIFEST="${PROOF_MANIFEST:-$PROJECT_ROOT/output/proof-manifest.json}"
-if [ ! -f "$MANIFEST" ]; then
-    if command -v lake >/dev/null 2>&1; then
-        lake env lean --run "$PROJECT_ROOT/scripts/export-proof-manifest.lean" "$MANIFEST" > /dev/null 2>&1 || true
-    fi
-fi
 
 if [ -f "$MANIFEST" ]; then
     L0_COUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['summary']['l0_structural'])" 2>/dev/null || echo "0")

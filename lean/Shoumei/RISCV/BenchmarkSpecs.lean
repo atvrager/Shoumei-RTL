@@ -763,10 +763,7 @@ def emitAll (config : CPUConfig := defaultCPUConfig)
     (dictPath : System.FilePath := Shoumei.RISCV.instrDictPath) : IO Unit := do
   let opcodesPath := dictPath
   unless (← opcodesPath.pathExists) do
-    IO.println "  instr_dict.json not found, running 'make opcodes'..."
-    let result ← IO.Process.run { cmd := "make", args := #["opcodes"] }
-    unless result.isEmpty do
-      IO.println result
+    throw <| IO.userError s!"instr_dict.json not found at {opcodesPath}. Run 'bazel build //:instr_dict' first."
   let rawDefs ← loadInstrDictFromFile opcodesPath
   let defs ← loadInstrDefsForConfig config opcodesPath
   let specs := computeSpecs defs

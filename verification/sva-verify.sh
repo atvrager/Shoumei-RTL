@@ -54,8 +54,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -d "$SEC_DIR" ]]; then
-  echo "==> SEC output directory not found. Running codegen..."
-  lake --no-ansi exe generate_all
+  echo "==> SEC output directory not found: $SEC_DIR"
+  echo "    Run 'bazel build //:rtl' or specify --sec-dir"
+  exit 1
 fi
 
 echo "============================================================"

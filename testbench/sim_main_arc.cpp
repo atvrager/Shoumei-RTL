@@ -5,8 +5,8 @@
 // Implements cache-line memory, tohost/putchar detection, and ELF loading
 // entirely in C++.
 //
-// Build:  make -C testbench sim-arc
-// Run:    ./build-sim/sim_shoumei_arc +elf=path/to/program.elf [+timeout=N]
+// Build:  bazel build //testbench:sim_shoumei_arc
+// Run:    bazel run //testbench:sim_shoumei_arc -- +elf=path/to/program.elf [+timeout=N]
 //==============================================================================
 
 #include <cstdio>

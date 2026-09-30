@@ -24,7 +24,7 @@ if ! command -v yosys > /dev/null 2>&1; then
     exit 1
 fi
 if [[ ! -d "$SV_DIR" ]]; then
-    echo "ERROR: no SV dir: $SV_DIR (run make codegen first)"
+    echo "ERROR: no SV dir: $SV_DIR (run 'bazel build //:rtl' first)"
     exit 1
 fi
 
@@ -73,8 +73,8 @@ fi
 echo "==> LINT-31/32/33 structural check (double-connects, undriven, ties)..."
 if [[ -n "${GENERATOR:-}" ]]; then
     "$GENERATOR" --lint-structural --sv-dir="$SV_DIR"
-elif command -v lake >/dev/null 2>&1 && [[ -f "$PROJECT_ROOT/lakefile.lean" ]]; then
-    lake --no-ansi exe generate_all --lint-structural --sv-dir="$SV_DIR"
+elif [[ -x "$PROJECT_ROOT/bazel-bin/generate_all" ]]; then
+    "$PROJECT_ROOT/bazel-bin/generate_all" --lint-structural --sv-dir="$SV_DIR"
 fi
 
 echo "✓ LINT clean (no latches, no comb loops, no width/undriven/multi-driver pops)"

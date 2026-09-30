@@ -363,16 +363,16 @@ instantiation keep their identity; widths grow inside.
 
 ### 11.2 Flow checks
 
-- `lake build` — all proofs, zero axioms.
-- `make codegen` — `generate_all --export-certs` validates the registry
+- `bazel build //lean:shoumei` — all proofs, zero axioms.
+- `bazel run //:generate_all -- --export-certs` — validates the registry
   against emitted instances.
-- `python3 verification/slang-lint.py output/sv-from-lean` — IEEE 1800-2017
+- `bazel test //verification:slang_lint_test` — IEEE 1800-2017
   elaboration of the retimed `LSU`/`StoreBuffer8`/`L1DCache`.
-- `make systemverilog` (Yosys read/hierarchy).
-- RISC-V cosim (`make -C testbench cosim && run-cosim`) for the 107/107
+- `bazel test //verification:yosys_validate_test` (Yosys read/hierarchy).
+- RISC-V cosim (`bazel test //testbench/tests:all_cosim`) for the
   suite, plus targeted store-forwarding tests (store→load same address,
   sub-word overlap → replay, miss → MSHR → refill → CDB).
-- Per-PDK synthesis smoke: `make synth-gf180` / `make synth-asap7` on
+- Per-PDK synthesis smoke: `bazel test //verification:synth_gf180_test` / `bazel test //verification:synth_asap7_test` on
   `LSU` and `StoreBuffer8` to confirm M1-only adder + M2-only mux partition
   meets the Section 1.1 budgets.
 

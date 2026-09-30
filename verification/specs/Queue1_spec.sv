@@ -56,7 +56,7 @@ module Queue1_spec #(
 
 `ifdef FORMAL
   // ---- SVA Properties: what this specification claims about itself ----
-  // Checked against the Lean model of this module by `lake exe sva2lean`;
+  // Checked against the Lean model of this module by `bazel build //:sva2lean`;
   // the netlist inherits them through the SEC theorem.
   default clocking @(posedge clock); endclocking
   default disable iff (reset);

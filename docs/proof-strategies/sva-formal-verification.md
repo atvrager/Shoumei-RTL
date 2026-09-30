@@ -153,13 +153,13 @@ To avoid assertion erasure in formal verification while preventing silicon overh
 
 ### 4.1 Local Open-Source Flow
 
-Run locally via Make:
+Run locally via Bazel:
 ```bash
-make sva
+bazel test //verification:sva_verilator_test //verification:slang_lint_test
 ```
 This executes:
-1. `verification/slang-lint.py output/sv-from-lean`: Validates syntax and IEEE 1800 AST elaboration across all 230+ emitted files.
-2. `verilator --assert --lint-only`: Checks that SVA properties compile into active simulation assertions.
+1. `//verification:slang_lint_test`: Validates syntax and IEEE 1800 AST elaboration across all 230+ emitted files.
+2. `//verification:sva_verilator_test`: Checks that SVA properties compile into active simulation assertions.
 
 ### 4.2 Synopsys VC Formal FPV (Remote / Industrial)
 

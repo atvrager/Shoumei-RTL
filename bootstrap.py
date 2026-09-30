@@ -7,10 +7,11 @@ Sets up the complete Shoumei RTL development environment:
 - Installs uv (fast Python package manager)
 - Installs elan (LEAN toolchain manager)
 - Installs LEAN 4 v4.34.1 (via lean-toolchain file)
+- Verifies Bazel / Bazelisk installation
 - Installs Yosys (SystemVerilog validation)
 - Installs Verilator (RTL simulation)
 - Installs RISC-V GCC cross-compiler (test ELF compilation)
-- Verifies installation with `lake build`
+- Verifies installation with `bazel build //lean:shoumei`
 
 Requirements: Python 3.11+
 Usage: python3 bootstrap.py [--check-only]
@@ -95,13 +96,10 @@ def install_uv():
 
     print_warning("uv not found, installing...")
 
-    # Install uv using the official installer
     install_cmd = "curl -LsSf https://astral.sh/uv/install.sh | sh"
     print(f"Running: {install_cmd}")
     run_command(install_cmd)
 
-    # Source the shell rc to get uv in PATH
-    # Note: User may need to restart shell or source manually
     print_success("uv installed")
     print_warning("You may need to restart your shell or run: source ~/.bashrc (or ~/.zshrc)")
 
@@ -116,7 +114,6 @@ def install_elan():
 
     print_warning("elan not found, installing...")
 
-    # Install elan using the official installer
     install_cmd = "curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y"
     print(f"Running: {install_cmd}")
     run_command(install_cmd)
@@ -132,37 +129,52 @@ def setup_lean():
     """Set up LEAN via elan using lean-toolchain"""
     print_step("Setting up LEAN 4")
 
-    # Check if lean-toolchain exists
     toolchain_file = Path("lean-toolchain")
     if not toolchain_file.exists():
         print_error("lean-toolchain file not found!")
         sys.exit(1)
 
-    # Read the toolchain version
     with open(toolchain_file) as f:
         toolchain = f.read().strip()
     print(f"Target toolchain: {toolchain}")
 
-    # elan will automatically install the right version when we run lake
-    # But we can trigger it explicitly
-    if command_exists("lake"):
-        version = run_command("lake --version", capture=True)
-        print_success(f"LEAN/Lake ready: {version}")
-    else:
-        print_warning("Running lake to trigger LEAN installation...")
-        # This will fail but trigger elan to install LEAN
-        run_command("lake --version || true", check=False)
-
-        # Update PATH
+    if command_exists("lean"):
+        version = run_command("lean --version", capture=True)
+        print_success(f"LEAN ready: {version}")
+    elif command_exists("elan"):
+        run_command(f"elan default {toolchain}", check=False)
         home = Path.home()
         elan_bin = home / ".elan" / "bin"
         os.environ["PATH"] = f"{elan_bin}:{os.environ['PATH']}"
-
-        if command_exists("lake"):
+        if command_exists("lean"):
             print_success("LEAN installed successfully")
         else:
             print_error("LEAN installation failed")
             sys.exit(1)
+    else:
+        print_error("elan not found; install elan first")
+        sys.exit(1)
+
+def install_bazel():
+    """Verify Bazel / Bazelisk installation"""
+    print_step("Checking Bazel installation")
+
+    if command_exists("bazel"):
+        version = run_command("bazel --version", capture=True)
+        print_success(f"Bazel ready: {version}")
+        return
+    if command_exists("bazelisk"):
+        version = run_command("bazelisk --version", capture=True)
+        print_success(f"Bazelisk ready: {version}")
+        return
+
+    print_warning("Bazel/Bazelisk not found.")
+    print("Install Bazelisk via:")
+    print("  npm:            npm install -g @bazel/bazelisk")
+    print("  macOS:          brew install bazelisk")
+    print("  Ubuntu/Debian:  sudo apt-get install bazel")
+    print("  Arch Linux:     sudo pacman -S bazel")
+    print("  GitHub release: https://github.com/bazelbuild/bazelisk/releases")
 
 def install_yosys():
     """Install Yosys (used for SystemVerilog validation)"""
@@ -202,7 +214,7 @@ def install_riscv_gcc():
     riscv_dir = home / ".local" / "riscv32-elf"
     riscv_gcc = riscv_dir / "bin" / "riscv32-unknown-elf-gcc"
 
-    if riscv_gcc.exists() or command_exists("riscv32-unknown-elf-gcc"):
+    if riscv_gcc.exists() or command_exists("riscv32-unknown-elf-gcc") or command_exists("riscv64-unknown-elf-gcc") or command_exists("riscv64-elf-gcc"):
         print_success("RISC-V GCC already installed")
         return
 
@@ -218,11 +230,11 @@ def install_riscv_gcc():
         print("Download manually from: https://github.com/riscv-collab/riscv-gnu-toolchain/releases")
 
 def verify_build():
-    """Verify the installation by running lake build"""
-    print_step("Verifying installation with 'lake build'")
+    """Verify the installation by running bazel build //lean:shoumei"""
+    print_step("Verifying installation with 'bazel build //lean:shoumei'")
 
     try:
-        run_command("lake build")
+        run_command("bazel build //lean:shoumei")
         print_success("Build successful! Environment is ready.")
     except subprocess.CalledProcessError:
         print_error("Build failed - see errors above")
@@ -236,25 +248,35 @@ def check_all_tools():
 
     tools = [
         ("python3",                  "Python 3.11+"),
-        ("lake",                     "Lean 4 / Lake"),
+        ("bazel",                    "Bazel / Bazelisk"),
+        ("lean",                     "Lean 4"),
         ("yosys",                    "Yosys (SystemVerilog validation)"),
         ("verilator",                "Verilator (RTL sim)"),
-        ("riscv32-unknown-elf-gcc",  "RISC-V GCC"),
-        ("cmake",                    "CMake"),
+        ("riscv-gcc",                "RISC-V GCC"),
         ("uv",                       "uv (Python)"),
         ("gh",                       "GitHub CLI"),
     ]
 
-    # Also check RISC-V GCC in the standard install location
     home = Path.home()
-    riscv_gcc = home / ".local" / "riscv32-elf" / "bin" / "riscv32-unknown-elf-gcc"
+    riscv_gcc_32 = home / ".local" / "riscv32-elf" / "bin" / "riscv32-unknown-elf-gcc"
+    riscv_gcc_64 = home / ".local" / "riscv64-elf" / "bin" / "riscv64-unknown-elf-gcc"
 
     missing = []
     for cmd, label in tools:
-        found = command_exists(cmd)
-        # Special case: riscv gcc might be in ~/.local/riscv32-elf/bin
-        if cmd == "riscv32-unknown-elf-gcc" and not found and riscv_gcc.exists():
-            found = True
+        found = False
+        if cmd == "bazel":
+            found = command_exists("bazel") or command_exists("bazelisk")
+        elif cmd == "riscv-gcc":
+            found = (
+                command_exists("riscv32-unknown-elf-gcc")
+                or command_exists("riscv64-unknown-elf-gcc")
+                or command_exists("riscv64-elf-gcc")
+                or riscv_gcc_32.exists()
+                or riscv_gcc_64.exists()
+            )
+        else:
+            found = command_exists(cmd)
+
         if found:
             print_success(label)
         else:
@@ -296,13 +318,17 @@ def main():
     # Step 4: Set up LEAN
     setup_lean()
 
-    # Step 5: HDL / simulation tools
+    # Step 5: Check Bazel
+    install_bazel()
+
+    # Step 6: HDL / simulation tools
     install_yosys()
     install_verilator()
-    # Step 6: RISC-V cross-compiler
+
+    # Step 7: RISC-V cross-compiler
     install_riscv_gcc()
 
-    # Step 7: Verify with lake build
+    # Step 8: Verify with Bazel build
     verify_build()
 
     # Final message
@@ -312,9 +338,11 @@ def main():
     print("     source ~/.bashrc  # or ~/.zshrc")
     print("  2. Verify installation:")
     print("     python3 bootstrap.py --check-only")
-    print("  3. Build the project:")
-    print("     make all")
-    print("  4. See README.md for detailed workflow")
+    print("  3. Build the RTL:")
+    print("     bazel build //:rtl")
+    print("  4. Run presubmit tests:")
+    print("     bazel test //:presubmit")
+    print("  5. See README.md for detailed Bazel workflow")
 
 if __name__ == "__main__":
     try:

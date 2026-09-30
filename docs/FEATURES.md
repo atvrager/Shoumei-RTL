@@ -4,7 +4,7 @@ What Shoumei RTL provides today.
 
 ## "Formally Verified" RV64G Out-of-Order CPU
 
-Complete out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 87 modules, with structural and behavioural Lean theorems checked by `lake build` and emitted RTL validated by slang elaboration, Verilator simulation, Spike lock-step cosimulation, and architectural compliance testing.
+Complete out-of-order processor defined in Lean 4, with dependent-type proofs of correctness. 87 modules, with structural and behavioural Lean theorems checked by `bazel build //lean:shoumei` and emitted RTL validated by slang elaboration, Verilator simulation, Spike lock-step cosimulation, and architectural compliance testing.
 
 ### Supported ISA: `RV64IMAFD_Zicsr_Zifencei` (RV64G)
 
@@ -52,9 +52,9 @@ Bus reconstruction groups indexed scalar wires into clean vector ports (`logic [
 
 ## Formal Verification
 
-- **Lean Proofs**: Structural proofs (`native_decide` for ports, gates, instances) and behavioral theorems (state transitions, order preservation, arithmetic equivalence) checked by `lake build`.
+- **Lean Proofs**: Structural proofs (`native_decide` for ports, gates, instances) and behavioral theorems (state transitions, order preservation, arithmetic equivalence) checked by `bazel build //lean:shoumei`.
 - **Zero Axioms**: Production circuits contain 0 unproven axioms or `sorry` statements.
-- **Mutation Testing**: `verification/mutation-test.sh` validates that proof suites detect intentional circuit regressions.
+- **Mutation Testing**: `bazel test //verification:mutation_test` validates that proof suites detect intentional circuit regressions.
 - **Compositional Certificates**: Large sequential modules carry a `CompositionalCert` validated at codegen time against emitted module instances.
 
 ## Simulation & Testing

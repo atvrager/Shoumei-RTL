@@ -75,10 +75,9 @@ memory-bearing modules for SAT); their RAMs are copied verbatim by the emitter.
 ## Commands
 
 ```bash
-make techmap-equiv            # Yosys LEC: mapped vs gate-level, both PDKs
-make cell-models              # regenerate cell models + check tables vs Liberty
-python3 verification/slang-lint.py output/sv-gf180
-lake exe generate_adder_matrix && python3 scripts/calibrate-adders.py --refit
+bazel test //verification:techmap_equiv_test   # Yosys LEC: mapped vs gate-level, both PDKs
+bazel test //verification:cell_tables_test     # check tables vs Liberty
+bazel test //verification:slang_lint_test
 ```
 
 `scripts/calibrate-adders.py` measures real area and critical delay per adder

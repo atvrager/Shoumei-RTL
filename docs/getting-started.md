@@ -1,33 +1,27 @@
 # Getting Started with Shoumei RTL
 
-This guide walks through setting up the environment, compiling Lean proofs, generating synthesizable RTL, running simulations, and synthesizing ASIC targets.
+This guide walks through setting up the environment, compiling Lean proofs, generating synthesizable RTL, running simulations, and verifying tests through Bazel.
 
 ---
 
 ## Prerequisites & Environment Setup
 
-### Automatic Setup
+### Prerequisites
+
+All user workflows start through Bazel:
+- **Bazel** (>= 8.x) or **Bazelisk**
+- **Lean 4** (v4.34.1 as pinned in `lean-toolchain`)
+- **Python 3.11+**
+- **Yosys** (>= 0.66)
+- **slang** (`pip install pyslang`)
+- **Verilator** (`sudo apt install verilator`)
+- **RISC-V GCC** (`riscv64-unknown-elf-gcc` or via `scripts/setup-riscv-toolchain.sh`)
+
+### Verification of Prerequisites
 
 ```bash
-make setup
+python3 bootstrap.py --check-only
 ```
-
-This runs `python3 bootstrap.py` to install:
-- `elan` (Lean toolchain manager) and Lean 4 (v4.34.1 as pinned in `lean-toolchain`).
-- Python build dependencies (via `uv` or `pip`).
-
-Ensure your shell has the tools in `PATH`:
-```bash
-export PATH="$HOME/.elan/bin:$HOME/.local/bin:$PATH"
-```
-
-### Optional Simulation & Synthesis Tools
-
-To run the full verification and synthesis pipeline:
-- **Verilator**: RTL simulation (`sudo apt install verilator`)
-- **slang**: IEEE 1800-2017 linting (`pip install pyslang`)
-- **Yosys**: Open-source synthesis (>= 0.66 recommended via `YosysHQ/setup-oss-cad-suite` or modern distribution package; avoid older releases like 0.33)
-- **RISC-V GCC**: `riscv64-unknown-elf-gcc` for test compilation (`scripts/setup-riscv-toolchain.sh`)
 
 ---
 
@@ -36,50 +30,53 @@ To run the full verification and synthesis pipeline:
 ### 1. Build Lean Proofs
 
 ```bash
-lake --no-ansi build
-# or: make lean
+bazel build //lean:shoumei
 ```
 
-Compiles all 87 hardware modules, behavioral models, and formal correctness proofs with zero warnings and zero axioms.
+Compiles all hardware modules, behavioral models, and formal correctness proofs with zero warnings and zero axioms.
 
 ### 2. Generate RTL, Netlists, and C++ Simulation
 
 ```bash
-lake --no-ansi exe generate_all
-# or: make codegen
+bazel build //:rtl
 ```
 
 Emits all target artifacts from the proven Lean source:
-- `output/sv-from-lean/*.sv`: Hierarchical SystemVerilog.
-- `output/sv-netlist/*.sv`: Flat gate-level netlists.
-- `output/sv-asap7/*.sv`: ASAP7 7nm FinFET tech-mapped netlists.
-- `output/cpp_sim/*`: Cycle-accurate C++ simulation model.
-- `testbench/generated/*`: Testbench scaffolding.
+- SystemVerilog (`output/sv-from-lean/*.sv`)
+- Flat gate-level netlists (`output/sv-netlist/*.sv`)
+- ASAP7 FinFET mapped netlists (`output/sv-asap7/*.sv`)
+- GF180MCU mapped netlists (`output/sv-gf180/*.sv`)
+- Cycle-accurate C++ simulation model (`output/cpp_sim/*`)
+- Testbench scaffolding (`testbench/generated/*`)
 
-### 3. Elaborate & Lint RTL
+### 3. Run Presubmit Test Suite
 
 ```bash
-python3 verification/slang-lint.py output/sv-from-lean  # IEEE 1800-2017 elaboration
-make systemverilog                                     # Yosys read/hierarchy validation
+bazel test //:presubmit
 ```
 
-### 4. Run Simulation & Cosimulation
+Runs all 311 presubmit tests across proof validation, linting, formal verification, RTL simulation, Spike lockstep cosimulation, and packaging.
+
+### 4. Run Targeted Test Suites
 
 ```bash
-# Build & run Verilator simulation
-make -C testbench sim
-make -C testbench run-all-tests
+# Linting & elaboration
+bazel test //verification:linters
 
-# Build & run 2-way lock-step cosimulation (RTL vs Spike)
-make -C testbench cosim
-make -C testbench run-cosim
-```
+# Standalone RTL simulation
+bazel test //testbench:sim_tests
 
-### 5. Run Open-Source ASIC Synthesis
+# Lock-step cosimulation against Spike reference
+bazel test //testbench:cosim_tests
 
-```bash
-make synth-gf180  # Synthesize RV64 core to GF180MCU at 64 MHz (15.625 ns)
-make synth-asap7  # Synthesize RV64 core to ASAP7 7nm at 1.0 GHz (1.000 ns)
+# Hardware coverage
+bazel test //testbench:coverage_test
+
+# Synthesis gates
+bazel test //verification:synthesis
+
+# Benchmark regressions
+bazel test //testbench/benchmarks
 ```
 
 ---
@@ -94,10 +91,10 @@ Shoumei-RTL/
 │   ├── RISCV/              # RV64G out-of-order CPU implementation & proofs
 │   ├── Codegen/            # Multi-target code generators (SV, Netlist, ASAP7, C++)
 │   └── Verification/       # Compositional certificate registry & proof manifests
-├── output/                 # Emitted RTL and C++ simulation artifacts
 ├── physical/               # OpenROAD, ASAP7, GF180, and Synopsys DC synthesis scripts
-├── testbench/              # Verilator and cosimulation harnesses
-├── verification/           # Verification scripts (slang, proof coverage, mutation testing)
+├── testbench/              # Verilator and Spike cosimulation testbenches
+├── verification/           # Verification rules, specifications, and linting
+├── viewer/                 # Architecture diagram viewer & web packaging
 └── docs/                   # Architecture, verification, and physical design guides
 ```
 
@@ -106,6 +103,7 @@ Shoumei-RTL/
 ## Where to Go Next
 
 - [project-map.md](project-map.md): Subsystem composition graph and proof coverage matrix.
+- [commands.md](commands.md): Comprehensive Bazel command and target reference.
 - [adding-a-module.md](adding-a-module.md): Step-by-step walkthrough for building a new verified circuit.
 - [adding-an-extension.md](adding-an-extension.md): Adding an ISA extension (decode, classify, execute, verify).
 - [verification-guide.md](verification-guide.md): Details on proofs, compositional certificates, and cosimulation.

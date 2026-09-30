@@ -1,9 +1,0 @@
-#!/bin/bash
-# Generate SystemVerilog, netlist and C++ simulation code from LEAN
-
-set -e
-
-export PATH="$HOME/.elan/bin:$PATH"
-
-lake --no-ansi build
-lake --no-ansi exe generate_all

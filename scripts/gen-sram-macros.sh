@@ -61,7 +61,7 @@ if [[ -n "${SRAM_GEOMS:-}" ]]; then
 else
   SV_DIR="${SV_DIR:-$PROJECT_ROOT/output/sv-from-lean}"
   if [[ ! -d "$SV_DIR" ]]; then
-    echo "error: $SV_DIR not found - run 'make codegen' first." >&2
+    echo "error: $SV_DIR not found - run 'bazel build //:rtl' first." >&2
     exit 1
   fi
   # grep -o over the emitted SV: `sram_1r1w_256x8` / `sram_rw1_256x64`

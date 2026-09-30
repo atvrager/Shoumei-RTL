@@ -119,29 +119,21 @@ SMT2LEAN_PATH = os.environ.get("SMT2LEAN")
 if SMT2LEAN_PATH:
     SMT2LEAN_BIN = Path(SMT2LEAN_PATH).resolve()
     SMT2LEAN_CMD = str(SMT2LEAN_BIN)
-elif (ROOT / "bazel-bin" / "smt2lean").exists():
-    SMT2LEAN_BIN = ROOT / "bazel-bin" / "smt2lean"
-    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
-elif (ROOT / ".lake" / "build" / "bin" / "smt2lean").exists():
-    SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
-    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
 else:
-    SMT2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "smt2lean"
-    SMT2LEAN_CMD = "lake exe smt2lean"
+    SMT2LEAN_BIN = ROOT / "bazel-bin" / "smt2lean"
+    if not SMT2LEAN_BIN.exists():
+        subprocess.run(["bazel", "build", "//:smt2lean"], cwd=ROOT, check=True)
+    SMT2LEAN_CMD = str(SMT2LEAN_BIN)
 
 SVA2LEAN_PATH = os.environ.get("SVA2LEAN")
 if SVA2LEAN_PATH:
     SVA2LEAN_BIN = Path(SVA2LEAN_PATH).resolve()
     SVA2LEAN_CMD = str(SVA2LEAN_BIN)
-elif (ROOT / "bazel-bin" / "sva2lean").exists():
-    SVA2LEAN_BIN = ROOT / "bazel-bin" / "sva2lean"
-    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
-elif (ROOT / ".lake" / "build" / "bin" / "sva2lean").exists():
-    SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
-    SVA2LEAN_CMD = str(SVA2LEAN_BIN)
 else:
-    SVA2LEAN_BIN = ROOT / ".lake" / "build" / "bin" / "sva2lean"
-    SVA2LEAN_CMD = "lake exe sva2lean" 
+    SVA2LEAN_BIN = ROOT / "bazel-bin" / "sva2lean"
+    if not SVA2LEAN_BIN.exists():
+        subprocess.run(["bazel", "build", "//:sva2lean"], cwd=ROOT, check=True)
+    SVA2LEAN_CMD = str(SVA2LEAN_BIN) 
 GEN_SCRIPT = Path(__file__).resolve()
 
 def sv_dep_paths(mod):

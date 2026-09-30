@@ -235,10 +235,10 @@ Shoumei does not leave SEC proofs inside the theorem prover. The verified proper
 ```
 
 ### Tri-Layer Verification Loop
-1. **Lean 4 Proofs:** Verified by `lake build` (0 axioms, 0 sorry).
-2. **IEEE 1800-2017 AST Check:** Verified by `python3 verification/slang-lint.py output/sv-from-lean` (230 files, 0 warnings).
-3. **Dynamic Simulation Check:** Verified by `make -C testbench run-all-tests` (239/239 passing ELF tests in Verilator with SVA enabled).
-4. **Mutation Validation:** Verified by `./verification/mutation-test.sh` (6/6 hardware mutants killed, proving semantic sensitivity).
+1. **Lean 4 Proofs:** Verified by `bazel build //lean:shoumei` (0 axioms, 0 sorry).
+2. **IEEE 1800-2017 AST Check:** Verified by `bazel test //verification:slang_lint_test` (230 files, 0 warnings).
+3. **Dynamic Simulation Check:** Verified by `bazel test //testbench/tests:...` (passing ELF tests in Verilator with SVA enabled).
+4. **Mutation Validation:** Verified by `bazel test //verification:mutation_test` (6/6 hardware mutants killed, proving semantic sensitivity).
 
 ---
 

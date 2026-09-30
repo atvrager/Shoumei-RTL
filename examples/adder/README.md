@@ -69,7 +69,7 @@ The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the fo
 
 ## Generated Outputs
 
-`lake exe generate_all` emits, among others, for this circuit:
+`bazel build //:rtl` emits, among others, for this circuit:
 
 - **SystemVerilog**: `output/sv-from-lean/FullAdder.sv` (hierarchical)
 - **Netlist SystemVerilog**: `output/sv-netlist/FullAdder.sv` (flat)
@@ -80,16 +80,16 @@ The full adder is implemented in `lean/Shoumei/Examples/Adder.lean` using the fo
 `lean/Shoumei/Examples/AdderProofs.lean` proves the full adder's truth table,
 commutativity and arithmetic correctness in Lean. The emitted SystemVerilog is
 elaborated by slang, and its ports and gate expressions are checked by
-`verification/smoke-test.sh`.
+`bazel test //verification:smoke_test`.
 
 ## Building
 
 ```bash
 # Generate code for all circuits
-lake exe generate_all
+bazel build //:rtl
 
-# Or run the entire pipeline
-make all
+# Or run the presubmit verification suite
+bazel test //:presubmit
 ```
 
 ## Next Steps

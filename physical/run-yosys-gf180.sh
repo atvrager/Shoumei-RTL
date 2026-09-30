@@ -47,7 +47,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-syn_out_gf180}"
 SV_DIR="$PROJECT_ROOT/output/sv-from-lean"
 if [ ! -d "$SV_DIR" ] || [ -z "$(find "$SV_DIR" -maxdepth 1 -name "*.sv" -print -quit 2>/dev/null)" ]; then
     echo "ERROR: Generated SystemVerilog not found under $SV_DIR."
-    echo "Run: make codegen"
+    echo "Run: bazel build //:rtl"
     exit 1
 fi
 
