@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# commit-msg - ASD-STE100 guard on the commit message.
+#
+# The message is human prose, so it must obey the same rules as the docs.
+# Skip it with: git commit --no-verify, or STE_LINT_DISABLE=1.
+
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if [ "${STE_LINT_DISABLE:-0}" = "1" ]; then
+    exit 0
+fi
+
+if ! python3 verification/ste-lint.py --stdin < "$1"; then
+    echo "commit-msg: fix the prose findings above, or set STE_LINT_DISABLE=1" >&2
+    exit 1
+fi
+exit 0

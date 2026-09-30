@@ -247,6 +247,13 @@ else
     cat /tmp/soc-visual.log || true
 fi
 
+if python3 verification/test-ste-lint.py > /tmp/ste-lint-test.log 2>&1; then
+    pass "ASD-STE100 prose linter rules"
+else
+    fail "ASD-STE100 prose linter rules failed (see /tmp/ste-lint-test.log)"
+    cat /tmp/ste-lint-test.log || true
+fi
+
 SORRY_COUNT=$(grep -rnE --include="*.lean" '\bsorry\b' lean/ 2>/dev/null | grep -vcE ':[0-9]+:\s*--' || true)
 if [ "$SORRY_COUNT" -eq 0 ]; then
     pass "Zero sorry/admit occurrences in Lean proofs"

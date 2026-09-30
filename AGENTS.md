@@ -121,7 +121,24 @@ bazel test //verification:formal         # Formal proofs and SEC
 bazel test //testbench:all_tests         # Verilator simulation, cosim, and spec tests
 bazel test //verification:synthesis      # Yosys ASAP7 and GF180MCU synthesis
 bazel test //:presubmit                  # Complete presubmit suite
+python3 verification/ste-lint.py --all   # ASD-STE100 prose lint
 ```
+
+### Prose lint (ASD-STE100)
+
+`verification/ste-lint.py` checks human prose against mechanical Simplified
+Technical English rules. The tool has no approved-word list, so it runs
+offline: every rule is a regex or a length limit. It reads markdown,
+code comments, and commit messages.
+
+Rules: sentence length, semicolons, contractions, Latin abbreviations,
+wordy phrases, praise and filler, passive voice, long paragraphs, and
+`there is/are` (STE001-STE009). `--strict` turns warnings into errors.
+
+`githooks/pre-commit` lints the lines a commit adds, and `githooks/commit-msg`
+lints the message. Both install with `scripts/install-githooks.sh`. Set
+`STE_LINT_DISABLE=1` to skip them. Write `ste-lint: ignore` in a line to
+exclude text that is data, not prose.
 
 ## DSL Core Types
 
@@ -326,3 +343,4 @@ Key signals for memory path debugging:
 - Always read existing Lean files before modifying
 - `hasSequentialElements` checks DFF gates only, NOT instances -- use `findClockWires`/`findResetWires` which check both
 - The `generate_all` executable is the recommended codegen entry point (does SV + netlist + ASAP7 + C++ Sim + testbenches)
+

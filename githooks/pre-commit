@@ -81,6 +81,14 @@ if staged | grep -q '^lean/'; then
     fi
 fi
 
+# 5. ASD-STE100 prose on the added lines (verification/ste-lint.py)
+if [ "${STE_LINT_DISABLE:-0}" != "1" ]; then
+    if ! python3 verification/ste-lint.py --diff; then
+        echo "pre-commit: fix the prose findings above, or set STE_LINT_DISABLE=1" >&2
+        failed=1
+    fi
+fi
+
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi
