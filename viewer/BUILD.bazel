@@ -25,8 +25,13 @@ genrule(
     ],
     cmd = """
         OUT_DIR=$$(dirname $(location schema.gen.js))
-        tsc -p $(location tsconfig.json) --outDir $$OUT_DIR
+        $(execpath @node//:node) $(execpath @typescript//:tsc) \
+            -p $(execpath tsconfig.json) --outDir "$$OUT_DIR"
     """,
+    tools = [
+        "@node",
+        "@typescript//:tsc",
+    ],
 )
 
 genrule(

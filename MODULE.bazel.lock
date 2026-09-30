@@ -300,6 +300,33 @@
         }
       }
     },
+    "//rules:node_tools.bzl%node_tools_ext": {
+      "general": {
+        "bzlTransitiveDigest": "rlk41A3I8uQ++kN/hRDY+mL2R3dY20qbzeCec8+Pz6w=",
+        "usagesDigest": "dhQukP28TLy3OYU+0kReChQj+7lQzGl7PSIFj5m57+U=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "node": {
+            "repoRuleId": "@@//rules:node_tools.bzl%_download_repo",
+            "attributes": {
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"node\",\n    srcs = [\"bin/node\"],\n    data = glob([\"lib/**\"], allow_empty = True),\n)\n",
+              "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+              "strip_prefix": "node-v24.21.0-linux-x64",
+              "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz"
+            }
+          },
+          "typescript": {
+            "repoRuleId": "@@//rules:node_tools.bzl%_download_repo",
+            "attributes": {
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"tsc\",\n    srcs = [\"bin/tsc\"],\n    data = glob(\n        [\n            \"dist/**\",\n            \"lib/**\",\n        ],\n        allow_empty = True,\n    ),\n)\n",
+              "sha256": "10e108c9cf7d5f2879053dff18515fb405abf2ccef63eaaf017d9c571687a1d3",
+              "strip_prefix": "package",
+              "url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz"
+            }
+          }
+        }
+      }
+    },
     "//rules:pdk.bzl%pdk_ext": {
       "general": {
         "bzlTransitiveDigest": "aklCa5HawFdXueAoPKrlSGt+fDKBFXRYeF02S/AvAtw=",

@@ -11,6 +11,7 @@ toolchain_type(name = "riscv_toolchain_type")
 
 exports_files([
     "lean_tool.bzl",
+    "node_tools.bzl",
     "riscv_gcc.bzl",
     "pdk.bzl",
     "riscv.bzl",

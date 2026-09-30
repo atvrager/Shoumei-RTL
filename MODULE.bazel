@@ -51,6 +51,10 @@ bazel_dep(name = "rules_shell", version = "0.7.1")
 
 register_toolchains("//toolchains/verilator:verilator_toolchain")
 
+# node and typescript compile the viewer bundle.
+node_tools = use_extension("//rules:node_tools.bzl", "node_tools_ext")
+use_repo(node_tools, "node", "typescript")
+
 # The RISC-V compiler for the ELF tests.
 riscv_gcc = use_extension("//rules:riscv_gcc.bzl", "riscv_gcc_ext")
 use_repo(riscv_gcc, "riscv_gcc")
