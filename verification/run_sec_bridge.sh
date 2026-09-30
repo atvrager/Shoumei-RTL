@@ -2,8 +2,8 @@
 # verification/run_sec_bridge.sh - Certified Dual-RTL bridge test under Bazel
 set -euo pipefail
 
-if [ $# -lt 4 ]; then
-    echo "Usage: $0 <smt2lean_bin> <sva2lean_bin> <sv_dir> <lean_bin> [modules...]" >&2
+if [ $# -lt 5 ]; then
+    echo "Usage: $0 <smt2lean_bin> <sva2lean_bin> <sv_dir> <lean_bin> <yosys_bin> [modules...]" >&2
     exit 1
 fi
 
@@ -11,7 +11,8 @@ SMT2LEAN_BIN="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 SVA2LEAN_BIN="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 SV_DIR_ARG="$(cd "$3" && pwd)"
 LEAN_BIN="$4"
-shift 4
+YOSYS_BIN="$5"
+shift 5
 
 MODULES=("$@")
 if [ ${#MODULES[@]} -eq 0 ]; then
@@ -28,6 +29,11 @@ fi
 # shellcheck source=verification/lean_env.sh
 . "$ROOT/verification/lean_env.sh"
 lean_env "$LEAN_BIN" "$ROOT"
+
+# gen-bridges.py runs yosys to write the SMT2 models: the pinned one.
+# shellcheck source=verification/tool_path.sh
+. "$ROOT/verification/tool_path.sh"
+tool_path "$YOSYS_BIN"
 
 WORK_DIR="${TEST_TMPDIR:-/tmp}/sec_bridge_work"
 rm -rf "$WORK_DIR"

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GOLD_DIR="$1"
-ASAP7_DIR="$2"
-GF180_DIR="$3"
-CELL_MODELS="$4"
-shift 4
+YOSYS="$1"
+GOLD_DIR="$2"
+ASAP7_DIR="$3"
+GF180_DIR="$4"
+CELL_MODELS="$5"
+shift 5
+
+# The pinned yosys, not the one on the host.
+source verification/tool_path.sh
+tool_path "$YOSYS"
 
 ./verification/techmap-equiv.sh \
     --gold-dir "$GOLD_DIR" \

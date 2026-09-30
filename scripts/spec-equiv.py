@@ -3,10 +3,13 @@
 spec-equiv.py — randomised differential co-simulation of the emitted RTL against
 its hand-written spec, module by module.
 
-For each requested module this generates a self-checking SystemVerilog
-testbench that instantiates the emitted netlist and the spec side by side,
-drives every input from an LFSR, and compares every output each cycle.  It then
-builds and runs it with Verilator.
+For one module this writes a self-checking SystemVerilog testbench that
+instantiates the emitted netlist and the spec side by side, drives every input
+from an LFSR, and compares every output each cycle.  It copies the testbench,
+the spec, and the netlist sources into one output directory.  The
+`spec_equiv_test` macro (verification/spec_equiv.bzl) runs this script in a
+build action, compiles the directory with rules_verilator, and runs the model
+as a test.  The testbench stops with $fatal on the first run with a mismatch.
 
 This is the equivalence check for modules where the SMT route does not scale
 (wide state, wide interfaces), and for the spec-side simulation harness: a spec
@@ -15,9 +18,7 @@ visible here.
 
 Usage
 ─────
-    python3 scripts/spec-equiv.py                      # all spec-backed modules
-    python3 scripts/spec-equiv.py BusyTable_W2 FPBusyTable
-    python3 scripts/spec-equiv.py --cycles 100000 --keep
+    bazel test //verification:spec_equiv_test
 """
 
 import argparse
@@ -26,10 +27,8 @@ import os
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
 import types
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = (
     pathlib.Path().resolve()
@@ -38,11 +37,6 @@ ROOT = (
 )
 SV_SRC = ROOT / "output" / "sv-from-lean"
 SPEC_SRC = ROOT / "verification" / "specs"
-OUT = (
-    pathlib.Path(os.environ["TEST_TMPDIR"]) / "spec-equiv"
-    if "TEST_TMPDIR" in os.environ
-    else ROOT / "output" / "spec-equiv"
-)
 DUAL_RTL = ROOT / "lean" / "Shoumei" / "Verification" / "DualRTL.lean"
 
 # Specs that are real but whose SEC proof is not registered yet.
@@ -55,7 +49,6 @@ EXTRA_SPEC_ONLY = [
 ]
 
 LFSR_BITS = 1024
-DEFAULT_CYCLES = 20000
 CLOCK_NAMES = ("clock", "clk")
 RESET_NAMES = ("reset", "rst", "rst_n", "resetn")
 
@@ -279,6 +272,7 @@ def make_tb(
             "  initial begin",
             f"    repeat ({cycles}) @(posedge clock);",
             '    $display("cycles=%0d errors=%0d", cycles, errors);',
+            '    if (errors != 0) $fatal(1, "emitted RTL and spec differ");',
             "    $finish;",
             "  end",
         ]
@@ -294,15 +288,15 @@ def make_tb(
     return "\n".join(L) + "\n"
 
 
-def run_one(
-    mod: str, reg: dict[str, tuple[str, str]], cycles: int, keep: bool, build_jobs: int = 1
-) -> tuple[str, str]:
+def emit(mod: str, reg: dict[str, tuple[str, str]], cycles: int, out: pathlib.Path) -> str | None:
+    """Write the testbench and copy its sources into `out`.  Return an error
+    message, or None on success."""
     if mod not in reg:
-        return mod, "no spec"
+        return "no spec"
     sf_rel, spec_mod = reg[mod]
     sf, ef = ROOT / sf_rel, SV_SRC / f"{mod}.sv"
     if not sf.exists() or not ef.exists():
-        return mod, "missing file"
+        return "missing file"
 
     em_ports = ports_of(ef.read_text())
     spec_text = sf.read_text()
@@ -310,114 +304,50 @@ def run_one(
         spec_text, em_ports, ports_of(spec_text, {})
     )
     if params is None:
-        return mod, "param inference failed"
+        return "param inference failed"
 
     # Port connection uses the same bit-level mapping as the shim generator:
     # the emitted netlist exposes some buses as scalar ports (sum_0..sum_N).
     ref_ports = ports_of(spec_text, params)
-    if _gs().spec_pins(spec_mod, params, em_ports, ref_ports) is None:
-        return mod, "port sets incompatible"
+    pins = _gs().spec_pins(spec_mod, params, em_ports, ref_ports)
+    if pins is None:
+        return "port sets incompatible"
 
-    work = OUT / mod
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
-    tb = work / f"tb_{mod}.sv"
     # spec_pins names the emitted ports; the testbench publishes ref outputs as
     # ref_<name>.  Rewrite only the expression inside each pin — the pin name is
     # the spec's port name and must not be touched.
     ref_pins = []
     outs_map = [(n, f"ref_{n}") for d, n, _ in em_ports if d == "output"]
-    for pin in _gs().spec_pins(spec_mod, params, em_ports, ref_ports):
+    for pin in pins:
         head, _, expr = pin.partition("(")
         for name, repl in outs_map:
             expr = re.sub(rf"\b{re.escape(name)}\b", repl, expr)
         ref_pins.append(f"{head}({expr}")
-    tb.write_text(make_tb(mod, em_ports, spec_mod, params, cycles, ref_pins))
 
-    # -DSYNTHESIS drops the emitted SVA properties, which are sampled as if reset
-    # were synchronous and therefore misfire under randomised stimulus.
-    # -O0 is fine: the simulation itself takes ~0 s, only the C++ build matters.
-    cmd = [
-        "verilator",
-        "--binary",
-        "--timing",
-        "-DSYNTHESIS",
-        "-CFLAGS",
-        "-O0",
-        "--build-jobs",
-        str(build_jobs),
-        "-Wno-fatal",
-        "-Wno-WIDTHTRUNC",
-        "-Wno-WIDTHEXPAND",
-        "-Wno-UNUSEDSIGNAL",
-        "-Wno-UNUSEDPARAM",
-        "--top-module",
-        f"tb_{mod}",
-        "-Mdir",
-        str(work / "obj"),
-        "-o",
-        str(work / "sim"),
-        str(tb),
-        str(sf),
-        *deps_of(mod),
-    ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        last = [ln for ln in (r.stderr or r.stdout).strip().splitlines() if ln.strip()]
-        return mod, "build failed: " + (last[-1][:110] if last else "?")
-
-    r = subprocess.run([str(work / "sim")], capture_output=True, text=True)
-    m = re.search(r"cycles=(\d+) errors=(\d+)", r.stdout)
-    if not m:
-        return mod, "no result: " + r.stdout.strip()[-110:]
-    if m.group(2) != "0":
-        return mod, f"DIVERGE ({m.group(2)} errors in {m.group(1)} cycles)"
-    if not keep:
-        shutil.rmtree(work, ignore_errors=True)
-    return mod, f"match ({m.group(1)} cycles)"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"tb_{mod}.sv").write_text(make_tb(mod, em_ports, spec_mod, params, cycles, ref_pins))
+    for src in [str(sf), *deps_of(mod)]:
+        shutil.copyfile(src, out / pathlib.Path(src).name)
+    return None
 
 
 def main() -> int:
     global SV_SRC
     ap = argparse.ArgumentParser()
-    ap.add_argument("modules", nargs="*")
-    ap.add_argument("--cycles", type=int, default=DEFAULT_CYCLES)
-    ap.add_argument("--keep", action="store_true")
-    ap.add_argument("--jobs", type=int, default=0, help="parallel module builds (default: nproc)")
-    ap.add_argument(
-        "--sv-dir", type=pathlib.Path, default=SV_SRC, help="Path to emitted SV directory"
-    )
+    ap.add_argument("module")
+    ap.add_argument("--cycles", type=int, required=True)
+    ap.add_argument("--sv-dir", type=pathlib.Path, required=True, help="emitted SV directory")
+    ap.add_argument("--out", type=pathlib.Path, required=True, help="output directory")
     args = ap.parse_args()
 
-    if args.sv_dir:
-        SV_SRC = args.sv_dir.resolve()
-        os.environ["SV_DIR"] = str(SV_SRC)
+    SV_SRC = args.sv_dir.resolve()
+    os.environ["SV_DIR"] = str(SV_SRC)
 
-    OUT.mkdir(parents=True, exist_ok=True)
-    reg = load_registry()
-    mods = args.modules or sorted(reg)
-
-    # Each module is an independent Verilator build, so fan out across cores.
-    # Budget the inner make jobs so the product stays near nproc.
-    cores = (
-        len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 4)
-    )
-    jobs = max(1, min(args.jobs or cores, len(mods)))
-    inner = max(1, cores // jobs)
-
-    bad = []
-    with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futs = {pool.submit(run_one, m, reg, args.cycles, args.keep, inner): m for m in mods}
-        for fut in as_completed(futs):
-            name, status = fut.result()
-            print(f"{name:44s} {status}")
-            if not status.startswith("match"):
-                bad.append(name)
-
-    print(f"\n{len(mods) - len(bad)}/{len(mods)} match")
-    if bad:
-        print("not matching: " + " ".join(sorted(bad)))
-    return 1 if bad else 0
+    err = emit(args.module, load_registry(), args.cycles, args.out)
+    if err:
+        print(f"spec-equiv: {args.module}: {err}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

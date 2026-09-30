@@ -1,12 +1,16 @@
 load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//rules:spec_rtl.bzl", "shoumei_spec_rtl")
+load(":spec_equiv.bzl", "spec_equiv_test")
+load(":spec_equiv_modules.bzl", "SPEC_EQUIV_MODULES")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "bench-baseline.csv",
     "slang-lint.py",
+    "spec_equiv_main.cpp",
+    "tool_path.sh",
 ])
 
 filegroup(
@@ -285,11 +289,13 @@ genrule(
     tools = ["//:root_python_scripts"],
 )
 
+# About 250 s on 12 cores, so "medium" (300 s) is too short for a CI runner.
 sh_test(
     name = "techmap_equiv_test",
-    size = "medium",
+    size = "large",
     srcs = ["run_techmap_equiv.sh"],
     args = [
+        "$(rootpath //third_party/tools:yosys)",
         "$(location //:sv)",
         "$(location //:sv_asap7)",
         "$(location //:sv_gf180)",
@@ -302,28 +308,51 @@ sh_test(
     ],
     data = [
         "techmap-equiv.sh",
+        "tool_path.sh",
         ":pdk_cells_model",
         "//:root_shell_scripts",
         "//:sv",
         "//:sv_asap7",
         "//:sv_gf180",
+        "//third_party/tools:yosys",
+        "//third_party/tools:yosys_share",
     ],
 )
 
-sh_test(
+# One co-simulation test per spec-backed module.  Presubmit runs the two
+# busy tables.  `bazel test //verification:spec_equiv_all` runs every module.
+SPEC_EQUIV_PRESUBMIT = [
+    "BusyTable_W2",
+    "FPBusyTable",
+]
+
+[
+    spec_equiv_test(
+        name = "spec_equiv_%s_test" % module,
+        cycles = 5000,
+        module = module,
+        tags = [] if module in SPEC_EQUIV_PRESUBMIT else ["manual"],
+    )
+    for module in SPEC_EQUIV_MODULES
+]
+
+test_suite(
     name = "spec_equiv_test",
-    srcs = ["run_spec_equiv.sh"],
-    args = [
-        "$(location //:sv)",
-        "--cycles",
-        "500",
-        "BusyTable_W2",
-        "FPBusyTable",
-    ],
+    tests = ["spec_equiv_%s_test" % m for m in SPEC_EQUIV_PRESUBMIT],
+)
+
+test_suite(
+    name = "spec_equiv_all",
+    tests = ["spec_equiv_%s_test" % m for m in SPEC_EQUIV_MODULES],
+)
+
+py_test(
+    name = "spec_equiv_modules_test",
+    srcs = ["spec_equiv_modules_test.py"],
+    args = SPEC_EQUIV_MODULES,
     data = [
         ":specs",
         "//:root_python_scripts",
-        "//:sv",
         "//lean:shoumei_srcs",
     ],
 )
@@ -382,6 +411,7 @@ test_suite(
     name = "extended",
     tests = [
         ":smoke_test",
+        ":spec_equiv_modules_test",
         ":spec_equiv_test",
         ":techmap_equiv_test",
         "//testbench:cache_conformance_test",
@@ -422,12 +452,14 @@ sh_test(
         "$(location //generators:sva2lean)",
         "$(location //:sv)",
         "$(rootpath //rules:lean)",
+        "$(rootpath //third_party/tools:yosys)",
         # Representative modules:
         "FullAdder",
         "ALU32",
     ],
     data = [
         "lean_env.sh",
+        "tool_path.sh",
         ":specs",
         "//:lean_toolchain_file",
         "//:root_python_scripts",
@@ -436,6 +468,8 @@ sh_test(
         "//generators:sva2lean",
         "//lean:shoumei",
         "//rules:lean",
+        "//third_party/tools:yosys",
+        "//third_party/tools:yosys_share",
     ],
 )
 

@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("//rules:verilog_tree.bzl", "verilog_tree_library")
@@ -220,18 +220,34 @@ filegroup(
     srcs = glob(["*.sh"]),
 )
 
-sh_test(
-    name = "cache_conformance_test",
-    srcs = ["run_cache_conformance.sh"],
-    args = [
-        "$(location //:sv)",
-        "$(location cache_model_test/cache_conformance.cpp)",
-        "$(location //physical/sim-dpi:sram_dpi.c)",
+# The L1 data cache against a C++ reference model.  Verilator runs in a build
+# action, and the Bazel C++ toolchain compiles the model.
+verilog_tree_library(
+    name = "l1dcache_verilog",
+    srcs = ["//:sv"],
+    top_module = "L1DCache",
+)
+
+verilator_cc_library(
+    name = "vl1dcache",
+    module = ":l1dcache_verilog",
+    vopts = [
+        "-Wno-fatal",
+        "-O3",
     ],
-    data = [
-        "cache_model_test/cache_conformance.cpp",
-        "//:sv",
-        "//physical/sim-dpi:sram_dpi.c",
+)
+
+cc_test(
+    name = "cache_conformance_test",
+    srcs = ["cache_model_test/cache_conformance.cpp"],
+    args = [
+        "--cycles",
+        "2000",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        ":vl1dcache",
+        "//physical/sim-dpi:sram_dpi",
     ],
 )
 

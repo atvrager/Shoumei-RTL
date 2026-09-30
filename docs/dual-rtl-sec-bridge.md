@@ -340,20 +340,24 @@ Coverage of the CPU closure (136 modules reachable from
 #### Per-module equivalence: `bazel test //verification:spec_equiv_test`
 
 `scripts/spec-equiv.py` generalises the co-simulation behind the two busy-table
-fixes. For every spec-backed module it generates a self-checking testbench. That
+fixes. For one spec-backed module it generates a self-checking testbench. That
 testbench instantiates the emitted netlist and the spec side by side, drives all
-inputs from an LFSR, and compares every output on every clock edge. It then builds
-and runs the testbench with Verilator:
+inputs from an LFSR, and compares every output on every clock edge. The
+`spec_equiv_test` macro (`verification/spec_equiv.bzl`) runs the script in a
+build action, compiles the testbench with rules_verilator, and runs it as a
+test. Each module is one test target, `spec_equiv_<Module>_test`:
 
 ```bash
-bazel test //verification:spec_equiv_test
-python3 scripts/spec-equiv.py BusyTable_W2 FPBusyTable --cycles 200000
+bazel test //verification:spec_equiv_test   # the two busy tables (presubmit)
+bazel test //verification:spec_equiv_all    # every spec-backed module
 ```
 
-Current result: **160/160 match** over 5000 cycles each, ~2 min wall on 12 cores.
-Sequential it was ~16 min. The two levers were `-O0` for the generated C++ (the
-simulation itself takes ~0 s) and one Verilator build per module fanned out
-across cores.
+`verification/spec_equiv_modules.bzl` lists the modules.
+`//verification:spec_equiv_modules_test` fails when the list and the spec
+registry differ.
+
+Current result: **160/160 match** over 5000 cycles each. The generated C++
+compiles with `-O0`, because the simulation itself takes ~0 s.
 
 Two details that matter:
 
