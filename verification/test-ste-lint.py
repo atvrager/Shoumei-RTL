@@ -193,6 +193,13 @@ check(
     ste.Rule.SENTENCE not in rules(ste.lint_text("t.md", GAPPED, False)),
 )
 
+# ------------------------------------------------------- generated files
+
+check(
+    "a generated lock file is not prose",
+    not ste.is_lintable(Path("tools/requirements_lock.txt")),
+)
+
 # ------------------------------------------------------- commit messages
 
 BAD_COMMIT = "add a thing.\nbody with no blank line after the subject\n"

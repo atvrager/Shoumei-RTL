@@ -1,5 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//rules:slang.bzl", "slang_lint_test")
 load("//rules:spec_rtl.bzl", "shoumei_spec_rtl")
 
 package(default_visibility = ["//visibility:public"])
@@ -19,21 +19,46 @@ filegroup(
     srcs = glob(["*.py"]),
 )
 
-slang_lint_test(
+# The elaborator is pyslang, a pinned wheel from //tools:requirements_lock.txt.
+# The test runs under the hermetic Python of rules_python, so nothing comes
+# from the host environment.
+py_test(
     name = "slang_lint_test",
-    sv = "//:sv",
+    size = "medium",
+    srcs = ["slang-lint.py"],
+    args = ["$(rootpath //:sv)"],
+    data = ["//:sv"],
+    main = "slang-lint.py",
+    deps = ["@pip//pyslang"],
 )
 
-slang_lint_test(
+py_test(
     name = "slang_sram_lint_test",
-    sram = True,
-    sv = "//:sv",
+    size = "medium",
+    srcs = ["slang-lint.py"],
+    args = [
+        "$(rootpath //:sv)",
+        "--sram",
+    ],
+    data = ["//:sv"],
+    main = "slang-lint.py",
+    deps = ["@pip//pyslang"],
 )
 
-slang_lint_test(
+py_test(
     name = "slang_sec_lint_test",
-    lean_sv = "//:sv",
-    sv = "//:sv_sec",
+    size = "medium",
+    srcs = ["slang-lint.py"],
+    args = [
+        "$(rootpath //:sv_sec)",
+        "--lean-dir=$(rootpath //:sv)",
+    ],
+    data = [
+        "//:sv",
+        "//:sv_sec",
+    ],
+    main = "slang-lint.py",
+    deps = ["@pip//pyslang"],
 )
 
 sh_test(

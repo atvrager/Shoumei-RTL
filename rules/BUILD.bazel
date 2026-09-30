@@ -13,7 +13,6 @@ exports_files([
     "pdk.bzl",
     "riscv.bzl",
     "rtl.bzl",
-    "slang.bzl",
     "spec_rtl.bzl",
     "verilog_tree.bzl",
 ])

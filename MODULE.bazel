@@ -18,6 +18,7 @@ use_repo(lean, "lean_toolchains")
 register_toolchains("@lean_toolchains//:all")
 
 bazel_dep(name = "rules_foreign_cc", version = "0.16.0")
+bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "buildifier_prebuilt", version = "10.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.18")
 bazel_dep(name = "rules_verilator", version = "1.1.2")
@@ -31,3 +32,19 @@ use_repo(pdk, "orfs_pdk")
 
 lint_tools = use_extension("//rules:lint_tools.bzl", "lint_tools")
 use_repo(lint_tools, "ruff", "ty")
+
+# The Python tools the build runs, such as the SystemVerilog elaborator.  A
+# pinned lock file keeps them out of the host environment.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.11",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pip",
+    python_version = "3.11",
+    requirements_lock = "//tools:requirements_lock.txt",
+)
+use_repo(pip, "pip")

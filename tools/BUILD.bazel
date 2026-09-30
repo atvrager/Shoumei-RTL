@@ -1,7 +1,15 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# `bazel run //tools:requirements.update` refreshes the lock file.
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+)
 
 cc_binary(
     name = "fst_inspect",

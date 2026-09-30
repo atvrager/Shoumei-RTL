@@ -25,7 +25,7 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//testbench:all_tests`: 182 automated tests executing natively under `bazel test`.
   - `//testbench/coremark:coremark_sim`: CoreMark standalone simulation target.
 - **Static Analysis & Linters (Phase 2 / Tier 3)**:
-  - `//rules:slang.bzl`: Rule `slang_lint_test` for IEEE 1800-2017 SystemVerilog elaboration linting.
+  - `//verification:slang_lint_test`: IEEE 1800-2017 SystemVerilog elaboration with the pinned `pyslang` wheel.
   - `//verification:slang_lint_test`: Validates 238 emitted RTL modules with pyslang.
   - `//verification:slang_sram_lint_test`: Validates `SHOUMEI_SRAM_MACROS` branch against behavioral macro stubs.
   - `//verification:slang_sec_lint_test`: Validates SEC miter modules against base RTL.

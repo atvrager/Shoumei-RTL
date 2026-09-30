@@ -50,6 +50,9 @@ MAX_FINDINGS = 200
 MAX_FINDINGS_PER_LINE = 3
 
 PROSE_EXTS = frozenset({".md", ".txt", ".rst", ".adoc"})
+# Machine-generated files.  Their comments are output of a tool and not prose
+# a reader can rewrite.
+SKIP_FILES = frozenset({"requirements_lock.txt"})
 SKIP_DIRS = frozenset(
     {".git", ".lake", "output", "build-sim", "node_modules", "third_party", "generated"}
 )
@@ -802,6 +805,8 @@ def tracked_files() -> list[Path]:
 
 
 def is_lintable(path: Path) -> bool:
+    if path.name in SKIP_FILES:
+        return False
     ext = path.suffix.lower()
     return ext in PROSE_EXTS or ext in LINE_COMMENT or ext in BLOCK_COMMENT
 
