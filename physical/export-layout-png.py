@@ -26,15 +26,20 @@ import re
 import sys
 from pathlib import Path
 
+# The uv script header above declares these; Bazel does not provide them.
 import gdstk  # ty: ignore[unresolved-import]
-import matplotlib.font_manager as fm
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.axes import Axes
-from matplotlib.collections import PolyCollection
-from matplotlib.patches import FancyBboxPatch, Patch, Rectangle
-from scipy.ndimage import gaussian_filter
+import matplotlib.font_manager as fm  # ty: ignore[unresolved-import]
+import matplotlib.gridspec as gridspec  # ty: ignore[unresolved-import]
+import matplotlib.pyplot as plt  # ty: ignore[unresolved-import]
+import numpy as np  # ty: ignore[unresolved-import]
+from matplotlib.axes import Axes  # ty: ignore[unresolved-import]
+from matplotlib.collections import PolyCollection  # ty: ignore[unresolved-import]
+from matplotlib.patches import (  # ty: ignore[unresolved-import]
+    FancyBboxPatch,
+    Patch,
+    Rectangle,
+)
+from scipy.ndimage import gaussian_filter  # ty: ignore[unresolved-import]
 
 parser = argparse.ArgumentParser(description="Export GDS layout as die shot poster")
 parser.add_argument(
