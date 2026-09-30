@@ -174,7 +174,7 @@ theorem no_replay_on_exact_match :
     output of an entry storage cell — never a signal produced downstream of
     the compare (priority/mux), so the match stage cannot close a
     combinational loop.  Full-circuit loop closure is additionally checked
-    on the emitted SV by `make lint` (yosys check -assert). -/
+    on the emitted SV by `//verification:yosys_dc_lint_test` (yosys check -assert). -/
 def comparatorInputsAreRegsOrPrimary (c : Circuit) : Bool :=
   let entries := c.instances.filter (fun i => i.instName.startsWith "u_entry")
   let entryQ : List String := entries.flatMap (fun inst =>

@@ -5,7 +5,7 @@ The raw fst_inspect is a C++ CLI whose signal naming (flat scopes, bit-sliced
 buses like `TOP.minstret_e0`..`TOP.minstret_e31`) trips up every user.  This
 wrapper:
 
-  * builds `scripts/fst_inspect` on first use (`make tools`) and reports what
+  * builds `//tools:fst_inspect` on first use (`bazel build`) and reports what
     it is doing instead of dumping assembler errors,
   * accepts the trace path or defaults to ./shoumei_cpu.fst,
   * expands bus bases (`minstret`) into their bit members and reassembles one

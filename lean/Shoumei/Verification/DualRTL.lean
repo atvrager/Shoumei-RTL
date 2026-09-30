@@ -19,7 +19,7 @@ inductive SpecStatus where
   /-- Equivalence established by `bv_decide` over the SMT2 models (a proof). -/
   | secVerified  : SpecStatus
   /-- Equivalence established by randomised differential co-simulation against the
-      emitted netlist (`make spec-equiv`).  Not a proof: it samples the input and
+      emitted netlist (`//verification:spec_equiv_all`).  Not a proof: it samples the input and
       state space, so it is a weaker, independent witness. -/
   | coSimVerified : SpecStatus
   deriving Repr, DecidableEq, Inhabited
@@ -36,7 +36,7 @@ structure DualRTLSpec where
   specFile     : String
   topModule    : String
   hasProof     : Bool := false
-  /-- Covered by `make spec-equiv` (randomised differential co-simulation). -/
+  /-- Covered by `//verification:spec_equiv_all` (randomised differential co-simulation). -/
   coSimulated  : Bool := false
   proofRef     : String := ""
   deriving Repr, Inhabited
@@ -977,7 +977,7 @@ def allSpecs : List DualRTLSpec := [
     proofRef := "ShoumeiSec.BridgeIntegerExecUnit_W2_64.integerexecunit_w2_64_sec"
   },
   -- Equivalence established by randomised differential co-simulation
-  -- (`make spec-equiv`); these carry no bv_decide proof.
+  -- (`//verification:spec_equiv_all`); these carry no bv_decide proof.
   {
     circuitName := "BusyTable_W2"
     specFile := "verification/specs/BusyTable_W2_spec.sv"
@@ -1249,7 +1249,7 @@ Circuits with no spec at all are reported but not fatal — the missing set is a
 agreed out-of-scope boundary (Tier D).  A spec that exists with no equivalence
 evidence *is* fatal: writing a spec without securing evidence for it is the
 regression this check exists to catch, and the recorded statuses move only in
-one direction (`make sec-bridge` / `make spec-equiv`). -/
+one direction (`//verification:sec_bridge_test` / `//verification:spec_equiv_all`). -/
 def checkSpecs (circuits : List Circuit) : IO UInt32 := do
   let entries ← generateManifest circuits
   let unbacked := entries.filter (·.status == .specExists)

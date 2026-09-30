@@ -64,7 +64,7 @@ exhaustive gate-level arithmetic at width 4 and 8.
 |---|---|---|
 | 1 | peephole lemmas (cell function == gate pattern) | `Codegen/TechMapProofs.lean` |
 | 1 | exhaustive end-to-end checks, both PDKs | `Codegen/TechMapProofs.lean` |
-| 2 | Yosys miter LEC, every mapped module | `make techmap-equiv` |
+| 2 | Yosys miter LEC, every mapped module | `bazel test //verification:techmap_equiv_test` |
 | none | tables against Liberty functions | `scripts/check-cell-tables.py` |
 
 Tier 2 uses cell models translated from the Liberty `function` of each output

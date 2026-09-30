@@ -104,13 +104,13 @@ def main (args : List String) : IO Unit := do
   for prog in patterns do
     IO.FS.writeFile s!"{opts.outDir}/{prog.name}.S" prog.toAsm
 
-  -- The instruction dictionary is a submodule; a job without `make opcodes`
-  -- still gets the directed corpus.
+  -- The instruction dictionary is a submodule.  A job without the
+  -- `//generators:instr_dict` output still gets the directed corpus.
   let defsOpt : Option (List InstructionDef) ←
     try
       pure (some (← loadInstrDefsForConfig defaultCPUConfig opts.dictPath))
     catch _ =>
-      IO.println s!"WARNING: {opts.dictPath} missing (run 'make opcodes'); skipping random batch"
+      IO.println s!"WARNING: {opts.dictPath} missing (build //generators:instr_dict); skipping random batch"
       pure none
   match defsOpt with
   | none => IO.println "Done."

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Smoke test: Validates pipeline outputs are structurally correct
-# Assumes builds have already run (via 'make smoke-test' or CI steps)
+# //verification:smoke_test runs this script on the Bazel outputs.
 # Exit code 0 = all passed, non-zero = failure count
 
 set -e
