@@ -16,26 +16,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
         with:
-          submodules: recursive
-
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            yosys \
-            build-essential
-
-      - name: Install Elan (Lean 4)
-        run: |
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> $GITHUB_PATH
-
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@v0.8.5
-        with:
-          bazelisk-version: '1.20.0'
-          disk-cache: true
+          packages: yosys build-essential
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
 
       - name: Build Publication Bundle
         run: |

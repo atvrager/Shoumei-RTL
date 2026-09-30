@@ -7,50 +7,291 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# One job per verification slice, so the slices run on separate runners.
+#
+# The jobs share the Bazel caches.  `warm` builds the shared artifacts
+# (the Lean library and the code generators) and saves the action cache and
+# the repository cache.  Every other job waits for it, restores those caches
+# in its setup step, and re-runs only the work no earlier job did.
+#
+# `bazel test //:presubmit` runs all the slices in one command for local use.
+# The jobs below are that suite cut along its test_suite boundaries:
+#
+#   presubmit          -> job
+#   //:audits          -> roundtrip, lean-build
+#   //lean:integrity_tests -> lean-build
+#   //verification:linters -> lint
+#   //verification:formal -> formal
+#   //verification:formal_proofs -> proofs
+#   //verification:extended -> extended
+#   //verification:synthesis -> synthesis
+#   //verification:visuals_test -> visuals
+#   //cpp_sim:cpp_sim_compile_test -> cppsim
+#   //testbench:all_tests -> sim
+#   //testbench/benchmarks -> benchmarks
+#   //tools:fst_inspect_test -> visuals
+
 jobs:
-  presubmit:
-    name: Presubmit Verification
+  changes:
+    name: Change detection
     runs-on: ubuntu-24.04
+    outputs:
+      rtl: ${{ steps.detect.outputs.rtl }}
+      sim: ${{ steps.detect.outputs.sim }}
+      synth: ${{ steps.detect.outputs.synth }}
+      code: ${{ steps.detect.outputs.code }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
-      - name: Install System Dependencies
+      # Deliberately NOT `paths-ignore` on the trigger: that skips the whole
+      # run.  Then a required check never reports, and the PR cannot merge.
+      # Gating inside the graph keeps every check reporting (as skipped).
+      #
+      #   docs/ *.md .github/ images -> nothing (files still linted)
+      #   testbench/ verification/ cpp_sim/ tools/ -> sim
+      #   physical/ -> synthesis
+      #   lean/ BUILD.bazel *.bzl MODULE.bazel -> everything
+      - name: Detect code changes
+        id: detect
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            yosys \
-            verilator \
-            shellcheck \
-            cppcheck \
-            python3-pip \
-            python3-yaml \
-            build-essential
-          pip install --break-system-packages pyslang
+          base="origin/${{ github.base_ref || 'main' }}"
+          files="$(git diff --name-only "$base"...HEAD)"
+          rtl=false; sim=false; synth=false
+          if [ -n "$files" ]; then
+            while IFS= read -r f; do
+              case "$f" in
+                lean/*|Generate*.lean|*.bzl|BUILD.bazel|MODULE.bazel|MODULE.bazel.lock|lean-toolchain|docs/project-map.md|third_party/*) rtl=true; sim=true; synth=true ;;
+                testbench/*|verification/*|cpp_sim/*|tools/*|viewer/*) sim=true ;;
+                physical/*) synth=true ;;
+                .github/*|docs/*|*.md|*.png|*.svg|LICENSE|.gitignore) ;;
+                *) rtl=true; sim=true; synth=true ;;
+              esac
+            done <<< "$files"
+          fi
+          code=false
+          { [ "$rtl" = true ] || [ "$sim" = true ] || [ "$synth" = true ]; } && code=true
+          {
+            echo "rtl=$rtl"
+            echo "sim=$sim"
+            echo "synth=$synth"
+            echo "code=$code"
+          } >> "$GITHUB_OUTPUT"
+          echo "changed files:"; echo "$files" | head -20
 
-      - name: Install Elan (Lean 4)
-        run: |
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> $GITHUB_PATH
-
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@v0.8.5
+  # Build the artifacts every other job needs, and seed the shared caches.
+  warm:
+    name: Warm Bazel cache
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
         with:
-          bazelisk-version: '1.20.0'
-          disk-cache: true
-
-      - name: Run Presubmit Test Suite
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+      - name: Build the Lean library and the generators
         run: |
-          bazel test //:presubmit
+          bazel build //lean:shoumei //:generate_all
 
-      - name: Build Publication Bundle
+  lint:
+    name: Lint
+    needs: [changes, warm]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: shellcheck cppcheck python3-yaml
+          submodules: third_party/riscv-opcodes
+          pyslang: 'true'
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the linters
+        run: bazel test //verification:linters
+
+  lean-build:
+    name: Lean build and integrity
+    needs: [changes, warm]
+    if: needs.changes.outputs.rtl == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
+      - name: Build the Lean library
+        run: bazel build //lean:shoumei
+      - name: Run the integrity audits
         run: |
-          bazel build //viewer:pages_bundle
+          bazel test //lean:integrity_tests
+          bazel test //lean:core_theorems_axiom_test //lean:logicunit_axiom_test //lean:queue_invariants_axiom_test
 
-      - name: Upload Pages Bundle Artifact
+  roundtrip:
+    name: Shoumei round-trip
+    needs: [changes, warm]
+    if: needs.changes.outputs.rtl == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the round-trip test
+        run: bazel test //:shoumei_roundtrip_test
+
+  proofs:
+    name: Proof coverage and mutation
+    needs: [changes, warm]
+    if: needs.changes.outputs.rtl == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: python3-yaml
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the proof audits
+        run: bazel test //verification:formal_proofs
+
+  formal:
+    name: Formal verification
+    needs: [changes, warm]
+    if: needs.changes.outputs.rtl == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: yosys verilator python3-yaml
+          submodules: third_party/riscv-opcodes third_party/orfs
+          pyslang: 'true'
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the formal checks
+        run: bazel test //verification:formal
+
+  extended:
+    name: Extended checks
+    needs: [changes, warm]
+    if: needs.changes.outputs.sim == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: yosys verilator device-tree-compiler python3-yaml
+          submodules: third_party/riscv-opcodes third_party/orfs third_party/riscv-isa-sim
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the extended checks
+        run: bazel test //verification:extended
+
+  sim:
+    name: Simulation and cosimulation
+    needs: [changes, warm]
+    if: needs.changes.outputs.sim == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: verilator device-tree-compiler autoconf automake libtool build-essential
+          submodules: third_party/riscv-opcodes third_party/riscv-isa-sim third_party/riscv-tests
+          riscv: 'true'
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the simulation tests
+        run: bazel test //testbench:all_tests
+
+  cppsim:
+    name: C++ simulation
+    needs: [changes, warm]
+    if: needs.changes.outputs.sim == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: build-essential cmake
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
+      - name: Compile the C++ simulation
+        run: bazel test //cpp_sim:cpp_sim_compile_test
+
+  synthesis:
+    name: Synthesis (${{ matrix.name }})
+    needs: [changes, warm]
+    if: needs.changes.outputs.synth == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GF180MCU
+            target: //verification:synth_gf180_test
+          - name: ASAP7
+            target: //verification:synth_asap7_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: yosys python3-yaml
+          submodules: third_party/riscv-opcodes third_party/orfs
+          lean: 'true'
+          cache-save: 'false'
+      - name: Synthesize
+        run: bazel test ${{ matrix.target }}
+      - name: Check the synthesis statistics
+        run: bazel test //verification:synth_stats_test
+
+  benchmarks:
+    name: Instruction benchmarks
+    needs: [changes, warm]
+    if: needs.changes.outputs.sim == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          packages: verilator device-tree-compiler autoconf automake libtool build-essential
+          submodules: third_party/riscv-opcodes third_party/riscv-isa-sim third_party/riscv-tests
+          riscv: 'true'
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the benchmark suite
+        run: bazel test //testbench/benchmarks
+
+  visuals:
+    name: Visuals and pages bundle
+    needs: [changes, warm]
+    if: needs.changes.outputs.rtl == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          submodules: third_party/riscv-opcodes
+          lean: 'true'
+          cache-save: 'false'
+      - name: Run the visualization tests
+        run: |
+          bazel test //verification:visuals_test
+          bazel test //tools:fst_inspect_test
+          bazel test //viewer:viewer_bundle_test
+      - name: Build the pages bundle
+        run: bazel build //viewer:pages_bundle
+      - name: Upload the pages bundle
         uses: actions/upload-artifact@v4
         with:
           name: pages-bundle
@@ -60,7 +301,7 @@ jobs:
   pages:
     name: Deploy GitHub Pages
     runs-on: ubuntu-24.04
-    needs: [presubmit]
+    needs: [visuals]
     if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
     permissions:
       pages: write
@@ -69,27 +310,51 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download Pages Bundle Artifact
+      - name: Download the pages bundle
         uses: actions/download-artifact@v4
         with:
           name: pages-bundle
           path: dist
-
-      - name: Unpack Pages Bundle
+      - name: Unpack the pages bundle
         run: |
           mkdir -p pages
           tar -xzf dist/pages_bundle.tar.gz -C pages/
-
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
           enablement: true
-
-      - name: Upload Pages artifact
+      - name: Upload the Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: pages/
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  ci-pass:
+    name: CI pass
+    needs:
+      - changes
+      - warm
+      - lint
+      - lean-build
+      - roundtrip
+      - proofs
+      - formal
+      - extended
+      - sim
+      - cppsim
+      - synthesis
+      - benchmarks
+      - visuals
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check the result of every job
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results"
+          if echo "$results" | grep -qE '"result": "(failure|cancelled)"'; then
+            echo "A required job did not pass" >&2
+            exit 1
+          fi

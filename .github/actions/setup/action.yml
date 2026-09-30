@@ -1,0 +1,96 @@
+name: Setup verification environment
+description: >
+  Install the toolchain a verification job needs, then configure Bazel with the
+  shared action cache and repository cache.  Every job uses this action, so all
+  jobs restore the same caches and a later job starts from the work an earlier
+  one already did.
+
+inputs:
+  packages:
+    description: Space-separated apt packages to install
+    required: false
+    default: ""
+  submodules:
+    description: Space-separated submodule paths to initialise
+    required: false
+    default: ""
+  pyslang:
+    description: Install pyslang for the slang elaboration checks
+    required: false
+    default: "false"
+  lean:
+    description: Install the Lean toolchain through elan
+    required: false
+    default: "false"
+  riscv:
+    description: Install the RISC-V bare-metal GCC toolchain
+    required: false
+    default: "false"
+  cache-save:
+    description: Save the Bazel caches when the job finishes
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install system packages
+      if: inputs.packages != ''
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends ${{ inputs.packages }}
+
+    # Only the submodules this job needs.  A full recursive checkout pulls ORFS
+    # and the RISC-V tool suites into every job, which wastes runner time.
+    - name: Initialise submodules
+      if: inputs.submodules != ''
+      shell: bash
+      run: |
+        for path in ${{ inputs.submodules }}; do
+          git submodule update --init --depth 1 "$path" \
+            || git submodule update --init "$path"
+        done
+
+    - name: Install pyslang
+      if: inputs.pyslang == 'true'
+      shell: bash
+      run: pip install --break-system-packages pyslang
+
+    - name: Install Elan (Lean 4)
+      if: inputs.lean == 'true'
+      shell: bash
+      run: |
+        curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+        echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+    # The RISC-V tests compile ELFs with a host riscv64-unknown-elf-gcc.  The
+    # testbench Bazel rule looks it up on PATH.
+    - name: Cache RISC-V toolchain
+      if: inputs.riscv == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/riscv64-elf
+        key: riscv64-elf-${{ runner.os }}-2026.01.23
+
+    - name: Setup RISC-V toolchain
+      if: inputs.riscv == 'true'
+      shell: bash
+      run: |
+        ./scripts/setup-riscv-toolchain.sh
+        echo "$HOME/.local/riscv64-elf/bin" >> "$GITHUB_PATH"
+
+    # disk-cache stores Bazel action outputs, repository-cache stores external
+    # repositories.  Bazel keys both caches on the BUILD and MODULE.bazel
+    # contents, so every job in every run restores the same caches and only
+    # re-runs the actions no earlier job has run.  cache-version busts them.
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@0.19.0
+      with:
+        bazelisk-version: '1.20.0'
+        bazelisk-cache: 'true'
+        disk-cache: 'true'
+        repository-cache: 'true'
+        external-cache: 'true'
+        cache-version: '1'
+        cache-save: ${{ inputs.cache-save }}
