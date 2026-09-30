@@ -30,6 +30,12 @@ configure_make(
     configure_options = [
         "CFLAGS=-O2",
         "CXXFLAGS=-O2",
+        # configure stops when dtc is not on PATH.  Spike runs dtc only to
+        # build a device tree for sim_t.  The cosim harness drives processor_t
+        # directly (testbench/lib/spike_oracle.cpp), so dtc never runs.
+        # AC_PATH_PROG keeps a preset DTC only when it is an absolute path.
+        # A preset cache variable skips the PATH search.
+        "ac_cv_path_DTC=dtc",
     ],
     lib_source = ":spike_srcs",
     out_shared_libs = [
