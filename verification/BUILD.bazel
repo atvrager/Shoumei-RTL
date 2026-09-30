@@ -337,10 +337,14 @@ sh_test(
     name = "mutation_test",
     size = "large",
     srcs = ["run_mutation_test.sh"],
+    args = ["$(rootpath //rules:lean)"],
     data = [
+        "lean_env.sh",
         "mutation-test.sh",
         "//:lean_toolchain_file",
+        "//lean:shoumei",
         "//lean:shoumei_srcs",
+        "//rules:lean",
     ],
 )
 
@@ -352,11 +356,13 @@ sh_test(
         "$(location //generators:smt2lean)",
         "$(location //generators:sva2lean)",
         "$(location //:sv)",
+        "$(rootpath //rules:lean)",
         # Representative modules:
         "FullAdder",
         "ALU32",
     ],
     data = [
+        "lean_env.sh",
         ":specs",
         "//:lean_toolchain_file",
         "//:root_python_scripts",
@@ -364,6 +370,7 @@ sh_test(
         "//generators:smt2lean",
         "//generators:sva2lean",
         "//lean:shoumei",
+        "//rules:lean",
     ],
 )
 

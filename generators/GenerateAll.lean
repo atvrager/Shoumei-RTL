@@ -508,13 +508,13 @@ def main (args : List String) : IO Unit := do
   -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
   IO.println ""
   IO.println "Generating RISC-V decoders..."
-  -- Auto-generate opcodes JSON if missing
+  -- The instruction dictionary is an input of the build, so a missing file is
+  -- an error and not a reason to run another build tool.
   let opcodesPath := Shoumei.RISCV.instrDictPath
   unless (← opcodesPath.pathExists) do
-    IO.println "  instr_dict.json not found, running 'make opcodes'..."
-    let result ← IO.Process.run { cmd := "make", args := #["opcodes"] }
-    unless result.isEmpty do
-      IO.println result
+    IO.eprintln s!"instr_dict.json is missing at {opcodesPath}"
+    IO.eprintln "Build it with: bazel build //generators:instr_dict"
+    IO.Process.exit 1
   let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
   Shoumei.RISCV.generateDecoders defs riscvDecoderModules
 

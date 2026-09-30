@@ -16,6 +16,10 @@ REPORT_DIR="${REPORT_DIR:-${TEST_TMPDIR:-$PROJECT_ROOT/output/mutation-test}}"
 
 mkdir -p "$REPORT_DIR"
 
+# The scratch tree holds the sources and the oleans of the library. A
+# recompiled module replaces its olean in place.
+export LEAN_PATH="$PROJECT_ROOT/lean"
+
 # Colors
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     GREEN='\033[0;32m'
@@ -73,16 +77,28 @@ with open(path, "w") as f:
     f.write(content.replace(s_from, s_to, 1))
 ' "$file" "$sed_from" "$sed_to"
 
-    # 2. Test semantic / L1-L3 proof
+    # 2. Test semantic / L1-L3 proof.
+    #
+    # The mutation is in the circuit module, and Lean reads the olean of an
+    # import from the search path.  A stale olean would hide the mutation, so
+    # the mutated module is compiled first into a work directory that comes
+    # first on the search path.  The proof fails only if it sees the mutation.
     local target_file="lean/${target//.//}.lean"
     local killed=false
-    if command -v lean > /dev/null 2>&1 && [ -f "$target_file" ]; then
-        if ! lean -R lean "$target_file" > /dev/null 2>&1; then
-            killed=true
-        fi
-    else
+
+    if ! command -v lean > /dev/null 2>&1 || [ ! -f "$target_file" ]; then
         echo "ERROR: lean not found in PATH or target file missing: $target_file" >&2
         exit 1
+    fi
+
+    # Recompile the mutated module first, so its olean reflects the mutation.
+    if ! lean -R lean "$file"; then
+        echo "ERROR: the mutated module does not compile: $file" >&2
+        exit 1
+    fi
+
+    if ! lean -R lean "$target_file" > /dev/null 2>&1; then
+        killed=true
     fi
 
     if [ "$killed" = true ]; then

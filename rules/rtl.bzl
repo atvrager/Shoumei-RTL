@@ -29,7 +29,9 @@ for f in {synth_wrappers}; do
     fi
 done
 
-"{generator}" --force
+# No `--force`.  The action cache of the build is the cache; the generator's
+# own hash cache cannot survive a sandbox anyway.
+"{generator}"
 
 mkdir -p "{sv_dir}" "{netlist_dir}" "{asap7_dir}" "{gf180_dir}" "{sec_dir}" "{cpp_sim_dir}" "{testbench_dir}"
 cp -a output/sv-from-lean/. "{sv_dir}/"
