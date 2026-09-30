@@ -25,9 +25,14 @@ GF180MCU (64 MHz) and ASAP7 (1.0 GHz). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 - **Bazel:** 8.x / Bazelisk (single entry point for all builds, tests, and generation)
 - **Lean 4:** v4.34.1 (controlled by `lean-toolchain`, built through `@rules_lean`)
-- **Yosys:** >= 0.66 (`YosysHQ/setup-oss-cad-suite` in CI or modern distribution package)
-- **slang:** `verification/slang-lint.py` elaborates every emitted SV file (IEEE 1800-2017)
-- **RISC-V GCC:** `riscv64-unknown-elf-gcc` / `riscv32-unknown-elf-gcc` (cross-compiles test ELFs)
+- **Yosys:** 0.68 (`@yosys`, built from source in the sandbox)
+- **Verilator:** 5.046 (`@verilator`, built from source in the sandbox)
+- **RISC-V GCC:** xpack `riscv-none-elf` 15.2.0 (`@riscv_gcc`)
+- **slang:** `pyslang` 12.0.0 (`@pip`), used by `verification/slang-lint.py`
+
+Bazel fetches these tools from a pinned URL or builds them from a pinned
+source. No script probes the host PATH. See [docs/host-tools.md](docs/host-tools.md)
+for the scripts that still need a host tool.
 
 ## Build commands
 

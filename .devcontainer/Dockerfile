@@ -2,13 +2,12 @@
 # Mirrors CI (ubuntu-latest) with all toolchains pre-installed.
 #
 # Build:  docker build -t shoumei-dev .devcontainer/
-# Run:    docker run --rm -v $(pwd):/workspace -w /workspace shoumei-dev make all
+# Run:    docker run --rm -v $(pwd):/workspace -w /workspace shoumei-dev bazel test //:presubmit
 
 FROM ubuntu:24.04
 
 # ── Version pins (update these when bumping toolchains) ──────────────
 ARG LEAN_VERSION=v4.34.1
-ARG RISCV_TAG=2026.01.23
 
 # ── System packages ─────────────────────────────────────────────────
 # Matches what CI installs across its jobs: build tools, linters,
@@ -46,12 +45,6 @@ WORKDIR /home/dev
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
         | sh -s -- -y --default-toolchain leanprover/lean4:${LEAN_VERSION}
 
-# ── RISC-V GCC cross-compiler ──────────────────────────────────────
-# Same archive as CI's verilator-sim job + setup-riscv-toolchain.sh
-RUN mkdir -p /home/dev/.local/riscv32-elf \
-    && curl -fSL "https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/${RISCV_TAG}/riscv32-elf-ubuntu-22.04-gcc.tar.xz" \
-        | tar xJ -C /home/dev/.local/riscv32-elf --strip-components=1
-
 # ── pyslang (SystemVerilog IEEE 1800-2017 lint) ──────────────────
 RUN pip install --break-system-packages pyslang
 
@@ -59,8 +52,8 @@ RUN pip install --break-system-packages pyslang
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # ── PATH ────────────────────────────────────────────────────────────
-# Matches the Makefile's PATH and bootstrap.py's layout.
-ENV PATH="/home/dev/.elan/bin:/home/dev/.local/riscv32-elf/bin:/home/dev/.local/spike/bin:/home/dev/.local/bin:${PATH}"
+# The RISC-V compiler comes from the Bazel toolchain, so it is not here.
+ENV PATH="/home/dev/.elan/bin:/home/dev/.local/spike/bin:/home/dev/.local/bin:${PATH}"
 
 # ── Spike RISC-V ISA simulator (cosimulation oracle) ─────────────
 # LAST because it COPYs from build context (submodule), busting cache

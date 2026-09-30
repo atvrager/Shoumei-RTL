@@ -53,11 +53,15 @@ filegroup(
 
 filegroup(
     name = "root_python_scripts",
-    srcs = glob([
-        "*.py",
-        "physical/*.py",
-        "scripts/*.py",
-    ]),
+    srcs = glob(
+        [
+            "*.py",
+            "physical/*.py",
+            "scripts/*.py",
+        ],
+        # No Python script sits at the root today.
+        allow_empty = True,
+    ),
 )
 
 test_suite(
