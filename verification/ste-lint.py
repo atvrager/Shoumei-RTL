@@ -365,14 +365,30 @@ def markdown_lines(text: str) -> list[tuple[int, str]]:
 def _find_line_comment(payload: str, token: str) -> int:
     """Index of the first real line comment, or -1.
 
-    A comment token starts a line or follows whitespace.  This keeps `http://`
-    and `"#tag"` out of the prose.
+    A comment token starts a line or follows whitespace, and it must not sit
+    inside a string literal.  This keeps `http://`, `"#tag"` and a Bazel label
+    in a C++ string, as in `"bazel run //generators:generate_all"`, out of the
+    prose.
     """
-    idx = payload.find(token)
-    while idx >= 0:
-        if idx == 0 or payload[idx - 1] in " \t":
+    quote = ""
+    idx = 0
+    while idx < len(payload):
+        char = payload[idx]
+        if quote:
+            if char == "\\":
+                idx += 2
+                continue
+            if char == quote:
+                quote = ""
+            idx += 1
+            continue
+        if char in "\"'":
+            quote = char
+            idx += 1
+            continue
+        if payload.startswith(token, idx) and (idx == 0 or payload[idx - 1] in " \t"):
             return idx
-        idx = payload.find(token, idx + 1)
+        idx += 1
     return -1
 
 

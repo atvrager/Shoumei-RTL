@@ -168,6 +168,11 @@ LABELS = (
 )
 check("short label comments stay apart", ste.Rule.SENTENCE not in rules(lint(LABELS, "t.py")))
 
+# A Bazel label in a C++ string starts with `//`, which is also the comment
+# token, so the scanner must skip string literals.
+CPP_STRING = 'static_assert(TRACE_STAGE_COUNT == 10, "run //generators:generate_all");\n'
+check("a label in a C++ string is not a comment", lint(CPP_STRING, "t.cpp") == [])
+
 # `--diff` keeps only the added lines, so two added lines that sit far apart
 # must not merge into one sentence.
 GAPPED = [
