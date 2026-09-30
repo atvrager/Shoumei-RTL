@@ -9,11 +9,14 @@
   LEAN003  a `#eval`, `#check`, `#print` or `#reduce` debug command  error
   LEAN004  trailing whitespace                     error
   LEAN005  a tab character                         error
-  LEAN006  a line longer than the column limit     warning
+  LEAN006  a line whose code is longer than the column limit  error
 
   The scanner blanks comments and string literals before the code rules run, so
   a banned word inside a comment does not count.  A blanked line keeps its
   length and its newline, so a reported line number is the file's line.
+
+  A line that carries the marker `lean-lint: ignore` is skipped.  Use it for
+  text that a rule cannot split, such as a long string literal.
 
   One finding prints as:
 
@@ -21,6 +24,8 @@
 
   The exit status is 1 when an error is reported.
 -/
+
+import Shoumei.Lint.Scan
 
 namespace Shoumei.Lint
 
@@ -33,10 +38,6 @@ structure Finding where
   fatal : Bool
   rule : String
   message : String
-
-/-- A character that continues a Lean identifier, for a word boundary test. -/
-def isIdentChar (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '\''
 
 /-- Drop trailing characters that satisfy the test. -/
 def dropTrailing (s : String) (test : Char → Bool) : String :=
@@ -82,11 +83,11 @@ partial def blankNonCode (chars : List Char) : List Char :=
         if c == '\n' then go rest depth 0 (c :: acc) else go rest depth 3 (blank c :: acc)
       | _ =>
         if depth > 0 then
-          -- A block comment.  A nested opener deepens it.
+          -- A block comment.  An opener deepens it and a closer ends one level.
           if c == '/' && rest.head? == some '-' then
-            go rest.tail! (depth - 1) 0 (blank c :: acc)
+            go rest (depth + 1) 0 (blank c :: acc)
           else if c == '-' && rest.head? == some '/' then
-            go rest.tail! (depth + 1) 0 (blank c :: acc)
+            go rest (depth - 1) 0 (blank c :: acc)
           else
             go rest depth 0 (blank c :: acc)
         else if c == '-' && rest.head? == some '-' then
@@ -132,11 +133,16 @@ def dropKeyword (keyword : String) (s : String) : String :=
   else
     s
 
+/-- True when the text starts with a keyword, and not with a longer
+    identifier that begins the same way. -/
+def startsWithKeyword (text : String) (keyword : String) : Bool :=
+  text.startsWith keyword && !isIdentChar ((text.drop keyword.length).toString.toList.headD ' ')
+
 /-- True when the line declares an axiom or a constant. -/
 def declaresAxiom (line : String) : Bool :=
   let t := dropKeyword "unsafe" (dropKeyword "noncomputable"
     (dropKeyword "protected" (dropKeyword "private" (dropSpaces line))))
-  t.startsWith "axiom" || t.startsWith "constant"
+  startsWithKeyword t "axiom" || startsWithKeyword t "constant"
 
 /-- True when the line holds a debugging command. -/
 def isDebugCommand (line : String) : Bool :=
@@ -155,16 +161,25 @@ def firstColumn (line : String) (test : Char → Bool) : Nat :=
 /-- The column limit of LEAN006. -/
 def columnLimit : Nat := 100
 
+/-- A line with this marker is skipped. -/
+def ignoreMarker : String := "lean-lint: ignore"
+
 /-- Lint one file.  `text` is the file content, `path` its display name. -/
 def lintText (path : String) (text : String) : List Finding := Id.run do
   let rawLines := splitLines text
   let codeLines := stripNonCode text
-  let add (out : List Finding) (lineno col : Nat) (fatal : Bool) (rule message : String) : List Finding :=
-    out.concat { file := path, line := lineno, col := col, fatal := fatal, rule := rule, message := message }
+  let scanned := scanLines text.toList
+  let add (out : List Finding) (lineno col : Nat) (fatal : Bool)
+      (rule message : String) : List Finding :=
+    out.concat
+      { file := path, line := lineno, col := col, fatal := fatal, rule := rule
+        message := message }
   let mut out : List Finding := []
   let mut lineno := 0
   for raw in rawLines do
     lineno := lineno + 1
+    if raw.contains ignoreMarker then
+      continue
     let code := codeLines.getD (lineno - 1) ""
     -- LEAN004: trailing whitespace.
     let trimmed := dropTrailing raw (fun c => c == ' ' || c == '\t')
@@ -182,10 +197,13 @@ def lintText (path : String) (text : String) : List Finding := Id.run do
       out := add out lineno 1 true "LEAN002" "axiom or constant declaration"
     if isDebugCommand code then
       out := add out lineno 1 true "LEAN003" "debugging command left in the source"
-    -- LEAN006: the line is wider than the limit.
-    if raw.length > columnLimit then
-      out := add out lineno (columnLimit + 1) false "LEAN006"
-        s!"line is {raw.length} columns, over the limit of {columnLimit}"
+    -- LEAN006: the code on the line is wider than the limit.  The interior of
+    -- a string literal does not count, because a break in it would change the
+    -- value.
+    let width := codeWidth (scanned.getD (lineno - 1) [])
+    if width > columnLimit then
+      out := add out lineno (columnLimit + 1) true "LEAN006"
+        s!"line holds {width} columns of code, over the limit of {columnLimit}"
   return out
 
 /-- Every `.lean` file under a directory. -/

@@ -4,6 +4,7 @@ load("//rules:rtl.bzl", "shoumei_rtl")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "lean-lint-baseline.txt",
     "ruff.toml",
     "scripts/bench_compare.py",
     "scripts/bench_regression.py",

@@ -316,10 +316,23 @@ When writing a commit message, follow these 7 rules.
 - Keep circuits and proofs in separate files (`Foo.lean` + `FooProofs.lean`)
 
 `bazel test //verification:lean_lint_test` runs the style linter
-(`lean/Shoumei/Lint/Style.lean`). It reports an error for `sorry` or `admit`
-in the code, an `axiom` or `constant` declaration, a `#eval`/`#check`/`#print`
-or `#reduce` command left in the source, trailing whitespace, and a tab
-character. A line over 100 columns is a warning.
+(`lean/Shoumei/Lint/`).
+
+```bash
+bazel run //generators:lean_lint              # Report every finding
+bazel run //generators:lean_lint -- --fix     # Reflow the long lines
+```
+
+It reports an error for `sorry` or `admit` in the code, an `axiom` or
+`constant` declaration, a `#eval`/`#check`/`#print`/`#reduce` command left in
+the source, trailing whitespace, and a tab character.
+
+The line-width rule (LEAN006) is a ratchet. `lean-lint-baseline.txt` records
+how many lines of code over 100 columns each file carries, and the count may
+only fall. `--fix` reflows a line at the last space that keeps the first part
+inside the limit, and never breaks a string literal, because that would change
+the value. Run `--update-baseline` after a fix to record the lower count. Use
+the marker `lean-lint: ignore` on a line that a rule cannot settle.
 
 ### Python
 

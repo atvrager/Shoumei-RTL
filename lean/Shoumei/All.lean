@@ -141,6 +141,8 @@ import Shoumei.Examples.QueueExample
 import Shoumei.Interconnect.TileLink.TLTypes
 import Shoumei.Interconnect.TileLink.TLXbar
 import Shoumei.Interconnect.TileLink.TLXbarProofs
+import Shoumei.Lint.Fix
+import Shoumei.Lint.Scan
 import Shoumei.Lint.Style
 import Shoumei.Peripherals.ACLINT
 import Shoumei.Peripherals.ACLINTProofs

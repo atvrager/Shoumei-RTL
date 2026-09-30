@@ -113,6 +113,7 @@ sh_test(
     srcs = ["run_lean_lint.sh"],
     args = ["$(location //generators:lean_lint)"],
     data = [
+        "//:lean-lint-baseline.txt",
         "//generators:lean_lint",
         "//generators:srcs",
         "//lean:shoumei_srcs",

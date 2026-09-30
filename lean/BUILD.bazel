@@ -25,12 +25,6 @@ filegroup(
 )
 
 sh_test(
-    name = "no_sorry_test",
-    srcs = ["no_sorry_test.sh"],
-    data = [":shoumei_srcs"],
-)
-
-sh_test(
     name = "lean_root_test",
     srcs = ["lean_root_test.sh"],
     args = ["$(location //generators:generate_all)"],
@@ -112,7 +106,6 @@ test_suite(
     tests = [
         ":axiom_gates",
         ":lean_root_test",
-        ":no_sorry_test",
         ":project_map_test",
     ],
 )

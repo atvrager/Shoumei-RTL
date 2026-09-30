@@ -35,7 +35,7 @@ This document records the status and roadmap for building Shoumei-RTL with `rule
   - `//verification:cell_tables_test`: PDK cell table function verification against Liberty models.
   - `//verification:linters`: Aggregates all 7 static analysis tests.
 - **Lean Codebase & Project Audits (Phase 2 / Tier 1 Part 2)**:
-  - `//lean:no_sorry_test`: Asserts zero incomplete `sorry` proofs across `lean/`.
+  - `//verification:lean_lint_test`: Runs the style linter. It reports `sorry`, an `axiom`, a debug command, trailing whitespace and a tab, and it ratchets the line width.
   - `//lean:lean_root_test`: Asserts `lean/Shoumei/All.lean` is up to date with all source modules.
   - `//lean:project_map_test`: Asserts `docs/project-map.md` matches Lean circuit and proof declarations.
   - `//generators:shoumei_roundtrip_test`: Generates 124 `.shoumei` files, parses them back, and verifies SV emission round-trip.
