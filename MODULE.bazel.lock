@@ -70,6 +70,8 @@
     "https://bcr.bazel.build/modules/buildifier_prebuilt/10.1.0/source.json": "984c35566e7637562e96e2ae9fa65a34982a76b612bdff8408c46a85e847eea7",
     "https://bcr.bazel.build/modules/buildozer/8.5.1/MODULE.bazel": "a35d9561b3fc5b18797c330793e99e3b834a473d5fbd3d7d7634aafc9bdb6f8f",
     "https://bcr.bazel.build/modules/buildozer/8.5.1/source.json": "e3386e6ff4529f2442800dee47ad28d3e6487f36a1f75ae39ae56c70f0cd2fbd",
+    "https://bcr.bazel.build/modules/cppcheck/2.20.0/MODULE.bazel": "4116f5fad648fa4aa37775ade4825518b76d393837af37f336efcdb3e69d9919",
+    "https://bcr.bazel.build/modules/cppcheck/2.20.0/source.json": "35406fa7e86775420a2fc7b15783c8c6b8cab21c283e8f9a4fce0b0c5d6d063c",
     "https://bcr.bazel.build/modules/cxxopts/3.3.1/MODULE.bazel": "dcc6d876d0c779e0f79fb712eddc66cfed44e8b87488728c6bea52e7da9652ec",
     "https://bcr.bazel.build/modules/cxxopts/3.3.1/source.json": "4076abfd34456e084950451f848934630f4a429cacf496c9dda132fd56980157",
     "https://bcr.bazel.build/modules/flex/2.6.4.bcr.3/MODULE.bazel": "bd03fa9fe80831cddbfbeefc1de9c14fc444e8ca395cc3d8f1069dd42a15cb65",
@@ -258,6 +260,8 @@
     "https://bcr.bazel.build/modules/systemc/3.0.2/source.json": "47370abd3ed04ce3c1a65a5b87c973e3e80e7e10e6b1dca2f15076f612d86d4c",
     "https://bcr.bazel.build/modules/tcl_lang/8.6.16.bcr.1/MODULE.bazel": "1fc27ececc903378b88ad5a0b92d2675b54fe3add9bcc27d612195bd823c2f2d",
     "https://bcr.bazel.build/modules/tcl_lang/8.6.16.bcr.1/source.json": "f755e3b14f4d08e68f03ef0e1a7ac1aebe993b73ff05ee55f69ceb4e1c36b7e6",
+    "https://bcr.bazel.build/modules/tinyxml2/10.0.0/MODULE.bazel": "7c2c2fd7f9bd767e5c98eeb46385dba08c81be321d885ed077da9383e85aebc7",
+    "https://bcr.bazel.build/modules/tinyxml2/10.0.0/source.json": "e6f10ec3ed2d93b165a6556ec0cca75f3f1f1b508494c618ed398d38919947a0",
     "https://bcr.bazel.build/modules/upb/0.0.0-20220923-a547704/MODULE.bazel": "7298990c00040a0e2f121f6c32544bab27d4452f80d9ce51349b1a28f3005c43",
     "https://bcr.bazel.build/modules/verilator/5.046.bcr.3/MODULE.bazel": "f3feea38d58189240e690dd849d430d66959454a2a73b0181a7ea671719f3022",
     "https://bcr.bazel.build/modules/verilator/5.046.bcr.5/MODULE.bazel": "d1e272ad29637518f89dc3e013a7c2261ebe0f7c02cdace32b0573653d063ace",
@@ -275,7 +279,7 @@
   "moduleExtensions": {
     "//rules:lint_tools.bzl%lint_tools": {
       "general": {
-        "bzlTransitiveDigest": "8uNSOlX1AKaJtwuWrVjBIfIUZTUPyGRRHCXCCr5mL9g=",
+        "bzlTransitiveDigest": "5mE5/npwkv14jbdJW9lYjY5lKK2pJQJhf2Uyr7W+qiQ=",
         "usagesDigest": "G78kzez1NU1tDq6KegdO3fTck8WniGiu4kcrxTAvvMY=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -286,6 +290,15 @@
               "url": "https://github.com/astral-sh/ruff/releases/download/0.16.9/ruff-x86_64-unknown-linux-musl.tar.gz",
               "sha256": "6a561ed4bc860472f7833dfb0f0b8285d3969fa627188c5678ea4ac2c462bbee",
               "strip_prefix": "ruff-x86_64-unknown-linux-musl"
+            }
+          },
+          "shellcheck": {
+            "repoRuleId": "@@//rules:lint_tools.bzl%tool_repository",
+            "attributes": {
+              "tool": "shellcheck",
+              "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz",
+              "sha256": "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+              "strip_prefix": "shellcheck-v0.11.0"
             }
           },
           "ty": {

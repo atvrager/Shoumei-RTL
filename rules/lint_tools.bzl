@@ -1,10 +1,11 @@
-"""Prebuilt Python lint tools.
+"""Prebuilt lint tools.
 
-`ruff` (lint and format) and `ty` (type check) each ship as one static binary,
-so a download and a filegroup are enough.  No pip step, no system package, and
-the version is pinned with a checksum.
+`ruff` (lint and format), `ty` (type check) and `shellcheck` each ship as one
+static binary, so a download and a filegroup are enough.  No pip step, no
+system package, and the version is pinned with a checksum.
 """
 
+_SHELLCHECK_VERSION = "0.11.0"
 _RUFF_VERSION = "0.16.9"
 _TY_VERSION = "0.0.84"
 _RELEASES = "https://github.com/astral-sh"
@@ -42,6 +43,13 @@ def _lint_tools_impl(_ctx):
         url = "%s/ruff/releases/download/%s/ruff-x86_64-unknown-linux-musl.tar.gz" % (_RELEASES, _RUFF_VERSION),
         sha256 = "6a561ed4bc860472f7833dfb0f0b8285d3969fa627188c5678ea4ac2c462bbee",
         strip_prefix = "ruff-x86_64-unknown-linux-musl",
+    )
+    tool_repository(
+        name = "shellcheck",
+        tool = "shellcheck",
+        url = "https://github.com/koalaman/shellcheck/releases/download/v{0}/shellcheck-v{0}.linux.x86_64.tar.gz".format(_SHELLCHECK_VERSION),
+        sha256 = "b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6",
+        strip_prefix = "shellcheck-v" + _SHELLCHECK_VERSION,
     )
     tool_repository(
         name = "ty",

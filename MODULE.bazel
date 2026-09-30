@@ -28,6 +28,16 @@ bazel_dep(name = "bison", version = "3.8.2.bcr.8")
 bazel_dep(name = "m4", version = "1.4.21.bcr.4")
 
 # Hermetic external tools for the synthesis and lint steps.
+bazel_dep(name = "cppcheck", version = "2.20.0")
+
+# The cppcheck module ships the binary without its library configuration.
+single_version_override(
+    module_name = "cppcheck",
+    patch_strip = 1,
+    patches = ["//third_party/patches:cppcheck-cfg.patch"],
+    version = "2.20.0",
+)
+
 bazel_dep(name = "yosys", version = "0.68.bcr.1")
 
 # Yosys and ABC keep a readline shell.  That shell drags in ncurses and the
@@ -65,7 +75,7 @@ pdk = use_extension("//rules:pdk.bzl", "pdk_ext")
 use_repo(pdk, "orfs_pdk")
 
 lint_tools = use_extension("//rules:lint_tools.bzl", "lint_tools")
-use_repo(lint_tools, "ruff", "ty")
+use_repo(lint_tools, "ruff", "shellcheck", "ty")
 
 # The Python tools the build runs, such as the SystemVerilog elaborator.  A
 # pinned lock file keeps them out of the host environment.

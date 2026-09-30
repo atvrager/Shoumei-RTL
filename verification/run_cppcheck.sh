@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+CPPCHECK="$1"
+CFG_FILES="$2"
+shift 2
+
+# cppcheck reads its library configuration from the `cfg` directory beside the
+# executable, and it resolves that path through the real location of the
+# binary.  A symlink therefore does not help: copy the binary next to a link to
+# the configuration tree.
+CFG_DIR="$(cd "$(dirname "${CFG_FILES%% *}")" && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cp "$CPPCHECK" "$WORK/cppcheck"
+ln -s "$CFG_DIR" "$WORK/cfg"
+CPPCHECK="$WORK/cppcheck"
+
 cpp_files=()
 c_files=()
 
@@ -22,7 +37,7 @@ done
 
 if [ ${#cpp_files[@]} -gt 0 ]; then
     echo "Checking ${#cpp_files[@]} C++ files with cppcheck..."
-    cppcheck --error-exitcode=1 --enable=warning,style \
+    "$CPPCHECK" --error-exitcode=1 --enable=warning,style \
         --language=c++ \
         --suppress=missingIncludeSystem \
         --suppress=knownConditionTrueFalse \
@@ -34,7 +49,7 @@ fi
 
 if [ ${#c_files[@]} -gt 0 ]; then
     echo "Checking ${#c_files[@]} C files with cppcheck..."
-    cppcheck --error-exitcode=1 --enable=warning,style \
+    "$CPPCHECK" --error-exitcode=1 --enable=warning,style \
         --suppress=missingIncludeSystem \
         --suppress=knownConditionTrueFalse \
         --suppress=syntaxError:testbench/tests/mret_test.c \

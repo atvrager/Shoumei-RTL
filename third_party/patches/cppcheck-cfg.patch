@@ -1,0 +1,16 @@
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -16,6 +16,13 @@
+ 
+ package(default_visibility = ["//visibility:public"])
+ 
++# The library configuration files.  cppcheck reads them from the `cfg`
++# directory next to the working directory.
++filegroup(
++    name = "cfg",
++    srcs = glob(["cfg/**"]),
++)
++
+ # Dependencies
+ 
+ cc_library(

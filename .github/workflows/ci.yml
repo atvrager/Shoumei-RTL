@@ -107,7 +107,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
-          packages: shellcheck cppcheck python3-yaml
+          packages: python3-yaml
           submodules: third_party/riscv-opcodes
           lean: 'true'
           cache-save: 'false'

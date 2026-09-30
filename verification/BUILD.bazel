@@ -65,14 +65,17 @@ sh_test(
     name = "shellcheck_test",
     srcs = ["run_shellcheck.sh"],
     args = [
+        "$(rootpath @shellcheck//:bin)",
         "$(locations //:root_shell_scripts)",
         "$(locations //testbench:testbench_scripts)",
         "$(locations :verification_scripts)",
     ],
     data = [
+        "tool_path.sh",
         ":verification_scripts",
         "//:root_shell_scripts",
         "//testbench:testbench_scripts",
+        "@shellcheck//:bin",
     ],
 )
 
@@ -93,12 +96,16 @@ sh_test(
     name = "cppcheck_test",
     srcs = ["run_cppcheck.sh"],
     args = [
+        "$(rootpath @cppcheck//:cppcheck)",
+        "$(locations @cppcheck//:cfg)",
         "$(locations //testbench:testbench_cpp_srcs)",
         "$(locations //testbench/tests:test_c_srcs)",
     ],
     data = [
         "//testbench:testbench_cpp_srcs",
         "//testbench/tests:test_c_srcs",
+        "@cppcheck",
+        "@cppcheck//:cfg",
     ],
 )
 

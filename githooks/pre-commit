@@ -35,9 +35,10 @@ fi
                 failed=1
             fi
         done
+        # -x follows the sources, which live in this repository.
         if command -v shellcheck > /dev/null 2>&1; then
             # shellcheck disable=SC2086
-            if ! shellcheck $sh_files; then
+            if ! shellcheck -x $sh_files; then
                 echo "pre-commit: fix shellcheck findings before committing" >&2
                 failed=1
             fi
