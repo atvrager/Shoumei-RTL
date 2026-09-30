@@ -245,7 +245,7 @@ that circuit instantiates must be emitted too.
 
 ### Simulation diverges from Spike
 
-Start with the cosimulation trace (see *Debugging RTL* in [CLAUDE.md](../CLAUDE.md)):
+Start with the cosimulation trace (see *Debugging RTL* in [AGENTS.md](../AGENTS.md)):
 `MISMATCH` lines give the first diverging instruction, and `bazel run //testbench:sim_shoumei_trace`
 plus `bazel run //tools:fst_inspect` show the signal path that produced the wrong value.
 

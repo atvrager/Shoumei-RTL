@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-env.sh — Bootstrap the Shoumei RTL dev environment for Claude Code web sessions.
+# setup-env.sh — Bootstrap the Shoumei RTL dev environment for a remote session.
 #
 # The SessionStart hook calls this script.  It must return FAST so the
 # session is responsive immediately.  Heavy work (installs, bazel build)
@@ -9,11 +9,6 @@
 #
 # Idempotent — safe to run multiple times.
 set -euo pipefail
-
-# Only run in remote (web) sessions — skip on local CLI
-if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
-    exit 0
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -114,13 +109,6 @@ fi
 
 # Set up PATH immediately so tools already installed are available
 export PATH="$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:$PATH"
-
-# Persist env vars so every Bash tool call in the session inherits them
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-    {
-        echo "export PATH=\"$HOME/.elan/bin:$HOME/.local/riscv32-elf/bin:$HOME/.local/bin:\$PATH\""
-    } >> "$CLAUDE_ENV_FILE"
-fi
 
 # If setup already completed, nothing to do
 if [ -f "$SETUP_DONE" ]; then

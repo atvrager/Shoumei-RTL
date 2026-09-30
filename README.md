@@ -208,7 +208,7 @@ names a module the generator does not emit.
 | [docs/commands.md](docs/commands.md) | Comprehensive command and Make target reference |
 | [docs/FEATURES.md](docs/FEATURES.md) | What's built -- complete feature list |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What's planned -- near/medium/long-term |
-| [CLAUDE.md](CLAUDE.md) | Development guide -- procedures, workflows, conventions |
+| [AGENTS.md](AGENTS.md) | Development guide -- procedures, workflows, conventions |
 | [docs/ooo-design.md](docs/ooo-design.md) | RV64G microarchitecture specification |
 | [docs/ooo-plan.md](docs/ooo-plan.md) | Implementation phase ledger and milestone history |
 | [docs/physical-design.md](docs/physical-design.md) | OpenROAD, ASAP7 (1.0 GHz), GF180MCU (64 MHz), Synopsys DC |

@@ -1,12 +1,14 @@
-# Claude Development Context
+Communicate only in Simplified Technical English (ASD-STE100).
+
+# Development Context
 
 > **Start here:** [docs/project-map.md](docs/project-map.md) is generated from
 > the source tree (`bazel run //:generate_all -- --project-map`) and shows the subsystem
 > composition graph, per-circuit coverage (certificate / proofs / doc comment),
 > and the mechanical gaps.  Re-run the generator after adding a module.
 >
-> This file is the single source of truth for agent guidance.  `CLAUDE.md`,
-> `GEMINI.md`, and `agent.md` are symlinks to it, so there is one copy to keep current.
+> This file is the single source of truth for agent guidance.  `GEMINI.md` and
+> `agent.md` are symlinks to it, so there is one copy to keep current.
 
 Instructions and procedures for working on the Shoumei RTL project.
 
