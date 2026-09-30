@@ -10,18 +10,11 @@ This guide covers environment setup, Lean proof compilation, RTL generation, sim
 
 All user workflows start through Bazel:
 - **Bazel** (>= 8.x) or **Bazelisk**
-- **Lean 4** (v4.34.1 as pinned in `lean-toolchain`)
-- **Python 3.11+**
-- **Yosys** (>= 0.66)
-- **slang** (`pip install pyslang`)
-- **Verilator** (`sudo apt install verilator`)
-- **RISC-V GCC** (`riscv64-unknown-elf-gcc` or through `scripts/setup-riscv-toolchain.sh`)
+- **A C++ toolchain** for the Bazel actions
 
-### Verification of prerequisites
-
-```bash
-python3 bootstrap.py --check-only
-```
+Bazel fetches every other tool. Lean 4, Yosys, Verilator, the RISC-V compiler,
+node, typescript and `pyslang` are pinned in `MODULE.bazel`. No tool comes from
+the host PATH.
 
 ---
 

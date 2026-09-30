@@ -1,6 +1,6 @@
 name: Setup verification environment
 description: >
-  Install the toolchain a verification job needs, then configure Bazel with the
+  Install the host packages a verification job needs, then configure Bazel with the
   shared action cache and repository cache.  Every job uses this action, so all
   jobs restore the same caches and a later job starts from the work an earlier
   one already did.
@@ -14,16 +14,8 @@ inputs:
     description: Space-separated submodule paths to initialise
     required: false
     default: ""
-  pyslang:
-    description: Install pyslang for the slang elaboration checks
-    required: false
-    default: "false"
   lean:
     description: Install the Lean toolchain through elan
-    required: false
-    default: "false"
-  riscv:
-    description: Install the RISC-V bare-metal GCC toolchain
     required: false
     default: "false"
   cache-save:
@@ -52,33 +44,12 @@ runs:
             || git submodule update --init "$path"
         done
 
-    - name: Install pyslang
-      if: inputs.pyslang == 'true'
-      shell: bash
-      run: pip install --break-system-packages pyslang
-
     - name: Install Elan (Lean 4)
       if: inputs.lean == 'true'
       shell: bash
       run: |
         curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
         echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-
-    # The RISC-V tests compile ELFs with a host riscv64-unknown-elf-gcc.  The
-    # testbench Bazel rule looks it up on PATH.
-    - name: Cache RISC-V toolchain
-      if: inputs.riscv == 'true'
-      uses: actions/cache@v4
-      with:
-        path: ~/.local/riscv64-elf
-        key: riscv64-elf-${{ runner.os }}-2026.01.23
-
-    - name: Setup RISC-V toolchain
-      if: inputs.riscv == 'true'
-      shell: bash
-      run: |
-        ./scripts/setup-riscv-toolchain.sh
-        echo "$HOME/.local/riscv64-elf/bin" >> "$GITHUB_PATH"
 
     # disk-cache stores Bazel action outputs, repository-cache stores external
     # repositories.  Bazel keys both caches on the BUILD and MODULE.bazel

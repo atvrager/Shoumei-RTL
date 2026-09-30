@@ -8,9 +8,6 @@ All commands run from the project root directory.
 ## Quick start
 
 ```bash
-# Verify prerequisites
-python3 bootstrap.py --check-only
-
 # Build Lean proofs and code generator
 bazel build //lean:shoumei //generators:generate_all
 
@@ -106,7 +103,4 @@ bazel run //generators:generate_all -- --project-map
 ```bash
 # Install Git hooks (fast pre-commit guards)
 ./scripts/install-githooks.sh
-
-# Download prebuilt RISC-V cross-compilation toolchain
-./scripts/setup-riscv-toolchain.sh
 ```

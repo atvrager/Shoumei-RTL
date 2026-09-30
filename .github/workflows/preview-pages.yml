@@ -19,7 +19,7 @@ jobs:
 
       - uses: ./.github/actions/setup
         with:
-          packages: yosys build-essential
+          packages: build-essential
           submodules: third_party/riscv-opcodes
           lean: 'true'
           cache-save: 'false'

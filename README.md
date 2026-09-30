@@ -113,7 +113,6 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for future directions.
 # Clone and setup
 git clone --recurse-submodules https://github.com/atvrager/Shoumei-RTL.git
 cd Shoumei-RTL
-python3 bootstrap.py --check-only   # verify prerequisites
 
 # Build the complete RTL and artifacts
 bazel build //:rtl
@@ -129,11 +128,11 @@ bazel test //verification:linters   # slang elaboration, shellcheck, python, cpp
 ### Prerequisites
 
 - **Bazel** (>= 8.x) or **Bazelisk**
-- **Lean 4** (v4.34.1): toolchain fetched automatically or through elan (`lean-toolchain`)
-- **Yosys** (>= 0.66): SystemVerilog read/hierarchy checks and ASIC synthesis
-- **slang** (`pyslang`): IEEE 1800-2017 elaboration of the emitted SV (`pip install pyslang`)
-- **Verilator** for RTL simulation (`apt install verilator`)
-- **RISC-V GCC** for test compilation (`./scripts/setup-riscv-toolchain.sh`)
+- **A C++ toolchain** for the Bazel actions
+
+Bazel fetches every other tool. The build pins Lean 4 (`lean-toolchain`), Yosys,
+Verilator, the RISC-V compiler, node, typescript and `pyslang` (`MODULE.bazel`).
+No tool comes from the host PATH.
 
 ## How it works
 
