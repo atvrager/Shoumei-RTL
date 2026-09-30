@@ -113,6 +113,13 @@ VACUOUS_LOCATIONS=()
 
 PROJECT_PREFIX="$PROJECT_ROOT/"
 for f in "${LEAN_FILES[@]}"; do
+    # The style linter keeps `sorry` and `admit` as rule text, not as proof
+    # gaps.  A text scan cannot tell the two apart, so its source is out of
+    # the scan.
+    if [[ "$f" == */Shoumei/Lint/* ]]; then
+        continue
+    fi
+
     comp=$(file_to_component "$f")
     # shellcheck disable=SC2295
     rel="${f#"$PROJECT_PREFIX"}"
