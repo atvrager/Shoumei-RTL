@@ -3,9 +3,13 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
 package(default_visibility = ["//visibility:public"])
 
+# A job that does not check out the submodule loads this package without it.
 filegroup(
     name = "spike_srcs",
-    srcs = glob(["riscv-isa-sim/**"]),
+    srcs = glob(
+        ["riscv-isa-sim/**"],
+        allow_empty = True,
+    ),
 )
 
 filegroup(

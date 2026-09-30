@@ -108,7 +108,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           packages: python3-yaml
-          submodules: third_party/riscv-opcodes
+          submodules: third_party/riscv-opcodes third_party/orfs
           lean: 'true'
           cache-save: 'false'
       - name: Run the linters
@@ -284,7 +284,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
-          submodules: third_party/riscv-opcodes
+          submodules: third_party/riscv-opcodes third_party/libfst
           lean: 'true'
           cache-save: 'false'
       - name: Run the visualization tests
