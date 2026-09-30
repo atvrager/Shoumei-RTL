@@ -887,7 +887,15 @@ def commit_findings(text: str, name: str = "<commit>") -> list[Finding]:
 
     if subject[:1].islower():
         out.append(
-            Finding(name, lineno, 1, Severity.ERROR, Rule.SUBJECT_CASE, "capitalize the subject", subject)
+            Finding(
+                name,
+                lineno,
+                1,
+                Severity.ERROR,
+                Rule.SUBJECT_CASE,
+                "capitalize the subject",
+                subject,
+            )
         )
     if subject.endswith("."):
         out.append(
@@ -942,7 +950,11 @@ def commit_findings(text: str, name: str = "<commit>") -> list[Finding]:
                     stripped[-40:],
                 )
             )
-        if offset > subject_index + 1 and len(line) > BODY_MAX and not line.lstrip().startswith("http"):
+        if (
+            offset > subject_index + 1
+            and len(line) > BODY_MAX
+            and not line.lstrip().startswith("http")
+        ):
             out.append(
                 Finding(
                     name,
