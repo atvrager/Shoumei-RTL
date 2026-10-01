@@ -38,11 +38,22 @@ Interface:
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Sequential.FPNormalize
 
 namespace Shoumei.Circuits.Sequential
 
 open Shoumei
 open Shoumei.Circuits.Combinational
+
+/-- OR-reduce a wire list: returns the result wire and its gates. -/
+private def mkOrTree (pfx : String) (wires : List Wire) : Wire × List Gate :=
+  match wires with
+  | [] => (Wire.mk s!"{pfx}_gnd", [])
+  | w0 :: rest =>
+    let (last, gates) := rest.foldl (fun (acc, gs) w =>
+      let o := Wire.mk s!"{pfx}_{gs.length}"
+      (o, gs ++ [Gate.mkOR acc w o])) (w0, [])
+    (last, gates)
 
 /-- Build the 24-cycle iterative FP square root structural circuit. -/
 def mkFPSqrt : Circuit :=
@@ -301,8 +312,47 @@ def mkFPSqrt : Circuit :=
     Gate.mkBUF zero (sp_exc[0]!)
   ]
 
+  -- ── Operand normalization ──────────────────────────────────────────────────
+  -- A nonzero subnormal has no implicit bit, so its fraction is shifted up
+  -- until its leading one reaches position 23 and its effective exponent field
+  -- drops by the same shift.  The setup below then sees an operand in [1, 2)
+  -- like any normal one.  The effective field is signed, so it is carried at 9
+  -- bits: the smallest subnormal needs -22, and adding the 127 bias to it wraps
+  -- inside the adder, which still leaves the right 9-bit sum.
+  let frac_a := (List.range 23).map fun i => src1_in[i]!
+  let sub_a := Wire.mk "sqrt_sub_a"
+  let sub_gate := Gate.mkAND exp_all_zeros mant_any_set sub_a
+
+  let pos_a := makeIndexedWires "sqrt_pos_a" 6
+  let (pos_a_w, lead_a_gates) := mkLeadPos "sqrt_lza" frac_a zero 6
+  let pos_a_gates := (List.range 6).map fun i => Gate.mkBUF (pos_a_w[i]!) (pos_a[i]!)
+
+  -- Shift that brings the leading one to position 23: 23 - position.
+  let const23 := (List.range 6).map fun i =>
+    if i == 0 || i == 1 || i == 2 || i == 4 then one else zero
+  let sh_a := makeIndexedWires "sqrt_sh_a" 6
+  let (sh_a_gates, _sh_a_borrow) := mkKoggeStoneSub const23 pos_a sh_a "sqrt_sh_a_sub" one
+
+  let norm_a := makeIndexedWires "sqrt_norm_a" 24
+  let norm_a_gates := mkBarrelShiftLeft (frac_a ++ [zero]) sh_a norm_a zero "sqrt_bsla"
+
+  let frac_eff := makeIndexedWires "sqrt_frac_eff" 23
+  let frac_eff_gates := (List.range 23).map fun i =>
+    Gate.mkMUX (frac_a[i]!) (norm_a[i]!) sub_a (frac_eff[i]!)
+
+  -- Effective exponent field: 1 - shift for a subnormal, the field otherwise.
+  let one9 := (List.range 9).map fun i => if i == 0 then one else zero
+  let sh_a_9 := (List.range 9).map fun i => if i < 6 then sh_a[i]! else zero
+  let eff_a := makeIndexedWires "sqrt_eff_a" 9
+  let (eff_a_gates, _eff_a_borrow) := mkKoggeStoneSub one9 sh_a_9 eff_a "sqrt_eff_a_sub" one
+  let exp_eff := makeIndexedWires "sqrt_exp_eff" 9
+  let exp_eff_gates := (List.range 9).map fun i =>
+    let raw := if i < 8 then src1_in[23 + i]! else zero
+    Gate.mkMUX raw (eff_a[i]!) sub_a (exp_eff[i]!)
+
   -- ══════════════════════════════════════════════
-  -- Exponent computation: result_exp = (biased_exp + 127) >> 1
+  -- Exponent computation: result_exp = (biased_exp + 127) >> 1, on the
+  -- effective field for a subnormal operand.
   -- ══════════════════════════════════════════════
   let exp_sum := makeIndexedWires "exp_sum" 9
   let exp_add_carry := makeIndexedWires "exp_add_carry" 9
@@ -311,9 +361,11 @@ def mkFPSqrt : Circuit :=
   )
 
   let exp_add_gates :=
+    (sub_gate :: lead_a_gates) ++ pos_a_gates ++ sh_a_gates ++ norm_a_gates ++
+    frac_eff_gates ++ eff_a_gates ++ exp_eff_gates ++
     [Gate.mkBUF zero (exp_add_carry[0]!)] ++
     (List.range 8).flatMap (fun i =>
-      let a := src1_in[23 + i]!
+      let a := exp_eff[i]!
       let b := bias_bits[i]!
       let ci := exp_add_carry[i]!
       let xab := Wire.mk s!"sqrt_exp_add_xab_{i}"
@@ -333,7 +385,7 @@ def mkFPSqrt : Circuit :=
         Gate.mkOR t01 t2 co
       ]
     ) ++
-    [Gate.mkBUF (exp_add_carry[8]!) (exp_sum[8]!)]
+    [Gate.mkXOR (exp_add_carry[8]!) (exp_eff[8]!) (exp_sum[8]!)]
 
   -- init_exp[7:0] = exp_sum[8:1] (right shift by 1)
   let init_exp := makeIndexedWires "init_exp" 8
@@ -343,7 +395,7 @@ def mkFPSqrt : Circuit :=
 
   -- exp_odd: unbiased exponent is odd when biased exp is even
   let exp_odd := Wire.mk "exp_odd"
-  let exp_odd_gate := [Gate.mkNOT (src1_in[23]!) exp_odd]
+  let exp_odd_gate := [Gate.mkNOT (exp_eff[0]!) exp_odd]
 
   let exp_mux_gates := (List.range 8).map (fun i =>
     Gate.mkMUX (exp_q[i]!) (init_exp[i]!) start_new (exp_d[i]!)
@@ -360,14 +412,14 @@ def mkFPSqrt : Circuit :=
     --   bit 25 = 0, bit 24 = 1, bits 23..1 = src[22..0], bit 0 = 0
     let even_bit :=
       if i == 0 then zero
-      else if i >= 1 && i <= 23 then src1_in[i - 1]!
+      else if i >= 1 && i <= 23 then frac_eff[i - 1]!
       else if i == 24 then one
       else zero  -- i == 25
     -- Odd (exp_odd=1): {1, src[22], src[21], ..., src[0], 0, 0}
     --   bit 25 = 1, bits 24..2 = src[22..0], bits 1,0 = 0
     let odd_bit :=
       if i <= 1 then zero
-      else if i >= 2 && i <= 24 then src1_in[i - 2]!
+      else if i >= 2 && i <= 24 then frac_eff[i - 2]!
       else one  -- i == 25
     Gate.mkMUX even_bit odd_bit exp_odd (mant_init[i]!)
   )
@@ -617,10 +669,47 @@ def mkFPSqrt : Circuit :=
   let guard := Wire.mk "sqrt_guard"
   let guard_gate := [Gate.mkNOT (guard_borrow[26]!) guard]
 
-  -- For RNE: round_up = guard
-  -- (When guard=1, sticky is always 1, so round_up = guard AND (1 OR LSB) = guard)
+  -- Rounding mode.  A square root is never negative, so rounding down is
+  -- truncation and "any remainder at all" drives rounding up; RMM differs from
+  -- RNE only at a tie.  rm was ignored before this: every mode behaved as RNE,
+  -- so sqrt(2.0) at toward-zero gave 3FB504F3 for 3FB504F2.
+  let sq_any_rem := Wire.mk "sqrt_any_rem"
+  let (sq_any_rem_w, sq_any_rem_gates) := mkOrTree "sqrt_anyrem" out_rem
+  let sq_grs_or := Wire.mk "sqrt_grs_or"
+  let sq_rne_up := Wire.mk "sqrt_rne_up"
+  let sq_rup_up := Wire.mk "sqrt_rup_up"
+  let sq_nrm0 := Wire.mk "sqrt_nrm0"
+  let sq_nrm1 := Wire.mk "sqrt_nrm1"
+  let sq_nrm2 := Wire.mk "sqrt_nrm2"
+  let sq_trunc := Wire.mk "sqrt_trunc"
+  let sq_is_rup := Wire.mk "sqrt_is_rup"
+  let sq_is_rmm := Wire.mk "sqrt_is_rmm"
+  let sq_grp_n2n1 := Wire.mk "sqrt_grp_n2n1"
+  let sq_grp_n2p1 := Wire.mk "sqrt_grp_n2p1"
+  let sq_grp_p2n1 := Wire.mk "sqrt_grp_p2n1"
+  let sq_up_rup := Wire.mk "sqrt_up_rup"
+  let sq_up_rmm := Wire.mk "sqrt_up_rmm"
   let round_up := Wire.mk "sqrt_round_up"
-  let rne_gates := [Gate.mkBUF guard round_up]
+  let rne_gates := [
+    Gate.mkBUF sq_any_rem_w sq_any_rem,
+    Gate.mkOR sq_any_rem (norm_mant[0]!) sq_grs_or,
+    Gate.mkAND guard sq_grs_or sq_rne_up,
+    Gate.mkOR guard sq_any_rem sq_rup_up,
+    Gate.mkNOT (rm_q[0]!) sq_nrm0,
+    Gate.mkNOT (rm_q[1]!) sq_nrm1,
+    Gate.mkNOT (rm_q[2]!) sq_nrm2,
+    Gate.mkAND sq_nrm2 sq_nrm1 sq_grp_n2n1,
+    Gate.mkOR (Wire.mk "sqrt_t_rtz") (Wire.mk "sqrt_t_rdn") sq_trunc,
+    Gate.mkAND sq_grp_n2n1 (rm_q[0]!) (Wire.mk "sqrt_t_rtz"),
+    Gate.mkAND sq_nrm2 (rm_q[1]!) sq_grp_n2p1,
+    Gate.mkAND sq_grp_n2p1 sq_nrm0 (Wire.mk "sqrt_t_rdn"),
+    Gate.mkAND sq_grp_n2p1 (rm_q[0]!) sq_is_rup,
+    Gate.mkAND (rm_q[2]!) sq_nrm1 sq_grp_p2n1,
+    Gate.mkAND sq_grp_p2n1 sq_nrm0 sq_is_rmm,
+    Gate.mkMUX sq_rne_up sq_rup_up sq_is_rup sq_up_rup,
+    Gate.mkMUX sq_up_rup guard sq_is_rmm sq_up_rmm,
+    Gate.mkMUX sq_up_rmm zero sq_trunc round_up
+  ]
 
   -- ══════════════════════════════════════════════
   -- Mantissa increment: rounded_mant = norm_mant + round_up
@@ -790,7 +879,7 @@ def mkFPSqrt : Circuit :=
     root_ext_gates ++
     guard_sub_gates ++
     guard_gate ++
-    rne_gates ++
+    sq_any_rem_gates ++ rne_gates ++
     mant_inc_gates ++
     exp_inc_gates ++
     adj_gates ++

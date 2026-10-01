@@ -239,7 +239,7 @@ def shoumei_elf_test(
         crt0 = None if is_asm else "//testbench/tests:crt0.S"
 
     if march == None:
-        march = "rv64imafd_zicsr_zifencei" if is_fp else "rv64im_zicsr_zifencei"
+        march = "rv64imafd_zicsr_zifencei" if is_fp else "rv64ima_zicsr_zifencei"
 
     if mabi == None:
         mabi = "lp64d" if is_fp else "lp64"

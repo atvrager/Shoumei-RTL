@@ -291,18 +291,59 @@ where
 -- Program assembly
 -- ════════════════════════════════════════════════════════════════════════════
 
-/-- `x31 = scratch base`, then every FP register cleared.
+/-- `x31 = scratch base`, then every FP register seeded from `fpSeedPool`.
 
-    The FP clear matters for the oracle: Spike NaN-boxes `f64` reads, so an
-    unwritten FP register reads as qNaN there and as +0.0 in the RTL.  A payload
-    that reads one would diverge for reasons that have nothing to do with the
-    instruction under test. -/
+    Every FP register must be written.  Spike NaN-boxes `f64` reads, so an
+    unwritten FP register reads as qNaN there and as +0.0 in the RTL, and a
+    payload that reads one would diverge for reasons that have nothing to do
+    with the instruction under test.
+
+    Zeroing them was not enough.  All-zero operands never reach a rounding
+    boundary, a subnormal, NaN or infinity, so the random stream covered the FP
+    wiring and none of the arithmetic corners.  The pool seeds those corners,
+    and the oracle is Spike, which accepts any bit pattern. -/
+def fpSeedPool : List UInt64 :=
+  [ 0x0000000000000000,   -- +0.0
+    0x8000000000000000,   -- -0.0
+    0x0000000000000001,   -- smallest subnormal
+    0x000FFFFFFFFFFFFF,   -- largest subnormal
+    0x0010000000000000,   -- smallest normal
+    0x3FF0000000000000,   -- 1.0
+    0x3FF0000000000001,   -- 1.0 + 1 ulp
+    0x3FEFFFFFFFFFFFFF,   -- 1.0 - 1 ulp
+    0x3FE0000000000000,   -- 0.5
+    0x4000000000000000,   -- 2.0
+    0x7FEFFFFFFFFFFFFF,   -- largest finite
+    0x7FF0000000000000,   -- +inf
+    0xFFF0000000000000,   -- -inf
+    0x7FF8000000000000,   -- quiet NaN
+    0x7FF0000000000001,   -- signalling NaN
+    0xBFB999999999999A ]  -- -0.1, inexact in binary
+
+/-- Trap vector target.  A CSR instruction that writes a read-only address is an
+    illegal instruction, so the handler skips the faulting instruction by
+    advancing `mepc` one word and returns.  The payload therefore stays
+    straight-line through a trap, and both models take the trap and run this
+    same handler, so the register it clobbers is clobbered identically. -/
+def trapHandler : List AsmInstr :=
+  [ .label ".Ltrap"
+  , .pseudo "csrr x28, mepc"
+  , .pseudo "addi x28, x28, 4"
+  , .pseudo "csrw mepc, x28"
+  , .pseudo "mret" ]
+
 def randProgramPrologue (defs : List InstructionDef) : List AsmInstr :=
   [ .comment "x31 = scratch base; never written by the payload"
-  , .utype "lui" dataBaseReg dataBaseVal ]
-  ++ (List.range 32).filterMap fun i =>
-      (encodeR defs .FMV_D_X (fin32 i) ⟨0, by omega⟩ ⟨0, by omega⟩).map
-        (fun w => .word w s!"fmv.d.x f{i}, x0")
+  , .utype "lui" dataBaseReg dataBaseVal
+  , .comment "trap vector: the handler at .Ltrap, which resumes after the fault"
+  , .pseudo "la x28, .Ltrap"
+  , .pseudo "csrw mtvec, x28" ]
+  ++ (List.range 32).flatMap fun i =>
+      let bits := fpSeedPool[i % fpSeedPool.length]!
+      let hex := s!"{hex8 (bits >>> 32).toUInt32}{hex8 bits.toUInt32}"
+      match encodeR defs .FMV_D_X (fin32 i) ⟨5, by omega⟩ ⟨0, by omega⟩ with
+      | none => []
+      | some w => [ .pseudo s!"li x5, 0x{hex}", .word w s!"fmv.d.x f{i}, x5" ]
 
 /-- One program body: the dealt cover first (so the batch covers the alphabet),
     then uniform draws up to `length` instructions. -/
@@ -332,6 +373,9 @@ def randProgramAsm (defs : List InstructionDef) (name : String) (seed length cou
     , ".section .text"
     , ".globl _start"
     , "_start:"
+    , "    j .Lmain" ]
+    ++ (trapHandler.map AsmInstr.toAsm) ++
+    [ ".Lmain:"
     , ".globl main"
     , "main:" ]
     ++ (randProgramPrologue defs ++ body.map (fun e => AsmInstr.word e.2.1 e.2.2)

@@ -685,7 +685,11 @@ def resolveBusRef (c : Circuit) (wireGroupMap : Std.HashMap String (SignalGroup 
   else
     let slices := partitionIntoSlices wireGroupMap wires
     let resolvedSlices := slices.map (resolveContiguousSlice c wireGroupMap wireToGroup wireToIndex)
-    if resolvedSlices.all Option.isSome then
+    -- An empty element would concatenate into `{, x}`: invalid SystemVerilog with
+    -- no diagnostic.  Refuse instead, so the caller falls back to per-bit
+    -- assignments.  (Seen once from a wire built by an out-of-range index, where
+    -- the sanitised name came out empty.)
+    if resolvedSlices.all (fun r => r.isSome && !r.get!.isEmpty) then
       let sliceStrs := resolvedSlices.filterMap id
       match sliceStrs with
       | [single] => some single

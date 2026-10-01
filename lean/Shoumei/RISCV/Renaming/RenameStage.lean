@@ -1476,9 +1476,15 @@ def mkFPRenameStage (dataWidth : Nat := 64) : Circuit :=
   let commit_physRd       := (List.range tagWidth).map  fun i => Wire.mk s!"commit_physRd_{i}"
   let commit_hasPhysRd    := Wire.mk "commit_hasPhysRd"
 
-  let cdb_valid := Wire.mk "cdb_valid"
-  let cdb_tag   := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_{i}"
-  let cdb_data  := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_{i}"
+  -- Two CDB write ports, one per channel.  An FP load and an FP operation can
+  -- complete in the same cycle, one on each channel, so a single port would
+  -- drop one of the two results.
+  let cdb_valid_0 := Wire.mk "cdb_valid_0"
+  let cdb_tag_0   := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_0_{i}"
+  let cdb_data_0  := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_0_{i}"
+  let cdb_valid_1 := Wire.mk "cdb_valid_1"
+  let cdb_tag_1   := (List.range tagWidth).map  fun i => Wire.mk s!"cdb_tag_1_{i}"
+  let cdb_data_1  := (List.range dataWidth).map fun i => Wire.mk s!"cdb_data_1_{i}"
 
   let ext_stall        := Wire.mk "ext_stall"
   let retire_tag       := (List.range tagWidth).map fun i => Wire.mk s!"retire_tag_{i}"
@@ -1653,19 +1659,35 @@ def mkFPRenameStage (dataWidth : Nat := 64) : Circuit :=
       [("deq_valid", alloc_avail)]
   }
 
+  -- RVVI readback: the value of the committing instruction's FP destination, so
+  -- the trace can carry FP register contents and not just integer ones.
+  -- Two ports: one per retire slot, because the FP commit channel is
+  -- single-issue and a dual FP retire would otherwise report one value twice.
+  let rvvi_tag := (List.range tagWidth).map fun i => Wire.mk s!"rvvi_tag_{i}"
+  let rvvi_data := (List.range dataWidth).map fun i => Wire.mk s!"rvvi_data_{i}"
+  let rvvi_tag_1 := (List.range tagWidth).map fun i => Wire.mk s!"rvvi_tag_1_{i}"
+  let rvvi_data_1 := (List.range dataWidth).map fun i => Wire.mk s!"rvvi_data_1_{i}"
+
   let physregfile_inst : CircuitInstance := {
     moduleName := s!"FPPhysRegFile_64x{dataWidth}"
     instName := "u_prf"
     portMap :=
-      [("clock", clock), ("reset", reset), ("wr_en", cdb_valid)] ++
-      (cdb_tag.enum.map fun ⟨i,w⟩ => (s!"wr_tag_{i}", w)) ++
-      (cdb_data.enum.map fun ⟨i,w⟩ => (s!"wr_data_{i}", w)) ++
+      [("clock", clock), ("reset", reset),
+       ("wr_en_0", cdb_valid_0), ("wr_en_1", cdb_valid_1)] ++
+      (cdb_tag_0.enum.map fun ⟨i,w⟩ => (s!"wr_tag_0_{i}", w)) ++
+      (cdb_data_0.enum.map fun ⟨i,w⟩ => (s!"wr_data_0_{i}", w)) ++
+      (cdb_tag_1.enum.map fun ⟨i,w⟩ => (s!"wr_tag_1_{i}", w)) ++
+      (cdb_data_1.enum.map fun ⟨i,w⟩ => (s!"wr_data_1_{i}", w)) ++
       (rs1_phys.enum.map fun ⟨i,w⟩ => (s!"rd_tag1_{i}", w)) ++
       (rs2_phys.enum.map fun ⟨i,w⟩ => (s!"rd_tag2_{i}", w)) ++
       (rs3_phys.enum.map fun ⟨i,w⟩ => (s!"rd_tag3_{i}", w)) ++
+      (rvvi_tag.enum.map fun ⟨i,w⟩ => (s!"rd_tag4_{i}", w)) ++
+      (rvvi_tag_1.enum.map fun ⟨i,w⟩ => (s!"rd_tag5_{i}", w)) ++
       (rs1_data.enum.map fun ⟨i,w⟩ => (s!"rd_data1_{i}", w)) ++
       (rs2_data.enum.map fun ⟨i,w⟩ => (s!"rd_data2_{i}", w)) ++
-      (rd_data3.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w))
+      (rd_data3.enum.map fun ⟨i,w⟩ => (s!"rd_data3_{i}", w)) ++
+      (rvvi_data.enum.map fun ⟨i,w⟩ => (s!"rd_data4_{i}", w)) ++
+      (rvvi_data_1.enum.map fun ⟨i,w⟩ => (s!"rd_data5_{i}", w))
   }
 
   let out_gates :=
@@ -1681,13 +1703,15 @@ def mkFPRenameStage (dataWidth : Nat := 64) : Circuit :=
     rs1_addr ++ rs2_addr ++ rs3_addr ++ rd_addr ++
     [flush_en, commit_valid] ++ commit_archRd ++ commit_physRd ++
     [commit_hasPhysRd,
-     cdb_valid] ++ cdb_tag ++ cdb_data ++
-    retire_tag ++
+     cdb_valid_0] ++ cdb_tag_0 ++ cdb_data_0 ++
+    [cdb_valid_1] ++ cdb_tag_1 ++ cdb_data_1 ++
+    retire_tag ++ rvvi_tag ++ rvvi_tag_1 ++
     [ext_stall]
 
   let all_outputs :=
     [rename_valid, stall] ++ rs1_phys_out ++ rs2_phys_out ++ rs3_phys_out ++
-    rd_phys_out ++ old_rd_phys ++ rs1_data ++ rs2_data ++ rd_data3
+    rd_phys_out ++ old_rd_phys ++ rs1_data ++ rs2_data ++ rd_data3 ++ rvvi_data ++
+    rvvi_data_1
 
   let all_gates :=
     control_gates ++ rd_phys_gates ++ crat_ctrl_gates ++ crat_gates ++
@@ -1708,8 +1732,10 @@ def mkFPRenameStage (dataWidth : Nat := 64) : Circuit :=
       { name := "rd_addr",    width := archWidth, wires := rd_addr },
       { name := "commit_archRd", width := archWidth, wires := commit_archRd },
       { name := "commit_physRd", width := tagWidth,  wires := commit_physRd },
-      { name := "cdb_tag",    width := tagWidth,  wires := cdb_tag },
-      { name := "cdb_data",   width := dataWidth, wires := cdb_data },
+      { name := "cdb_tag_0",  width := tagWidth,  wires := cdb_tag_0 },
+      { name := "cdb_data_0", width := dataWidth, wires := cdb_data_0 },
+      { name := "cdb_tag_1",  width := tagWidth,  wires := cdb_tag_1 },
+      { name := "cdb_data_1", width := dataWidth, wires := cdb_data_1 },
       { name := "retire_tag", width := tagWidth,  wires := retire_tag },
       { name := "rs1_phys_out", width := tagWidth, wires := rs1_phys_out },
       { name := "rs2_phys_out", width := tagWidth, wires := rs2_phys_out },

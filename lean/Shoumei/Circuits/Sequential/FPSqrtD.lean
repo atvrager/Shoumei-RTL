@@ -21,6 +21,7 @@ Interface:
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Sequential.FPNormalize
 
 namespace Shoumei.Circuits.Sequential
 
@@ -222,13 +223,51 @@ def mkFPSqrtD : Circuit :=
     Gate.mkBUF is_neg_or_snan (sp_exc_wire[4]!)  -- NV
   ]
 
-  -- Normal Sqrt Setup:
-  -- exp_odd = NOT src1_in[52]
-  let exp_odd := Wire.mk "sq_exp_odd"
-  let exp_odd_gate := Gate.mkNOT (src1_in[52]!) exp_odd
+  -- ── Operand normalization ──────────────────────────────────────────────────
+  -- A nonzero subnormal has no implicit bit, so its fraction is shifted up
+  -- until its leading one reaches position 52 and its effective exponent field
+  -- drops by the same shift.  The setup below then sees an operand in [1, 2)
+  -- like any normal one.  The effective field is signed, so it is carried at 12
+  -- bits: the smallest subnormal needs -51, and adding the 1023 bias to it
+  -- wraps inside the adder, which still leaves the right 12-bit sum.
+  let sub_a := Wire.mk "sq_sub_a"
+  let sub_gate := Gate.mkAND exp_all_zeros frac_any_set sub_a
 
-  -- init_exp = (exp_a + 1023) >> 1
-  let exp_a_12 := exp_a ++ [zero]
+  let pos_a := makeIndexedWires "sq_pos_a" 6
+  let (pos_a_w, lead_a_gates) := mkLeadPos "sq_lza" frac_a zero 6
+  let pos_a_gates := (List.range 6).map fun i => Gate.mkBUF (pos_a_w[i]!) (pos_a[i]!)
+
+  -- Shift that brings the leading one to position 52: 52 - position.
+  let const52 := (List.range 6).map fun i =>
+    if i == 2 || i == 4 || i == 5 then one else zero
+  let sh_a := makeIndexedWires "sq_sh_a" 6
+  let (sh_a_gates, _sh_a_borrow) := mkKoggeStoneSub const52 pos_a sh_a "sq_sh_a_sub" one
+
+  let norm_a := makeIndexedWires "sq_norm_a" 53
+  let norm_a_gates := mkBarrelShiftLeft (frac_a ++ [zero]) sh_a norm_a zero "sq_bsla"
+
+  let frac_eff := makeIndexedWires "sq_frac_eff" 52
+  let frac_eff_gates := (List.range 52).map fun i =>
+    Gate.mkMUX (frac_a[i]!) (norm_a[i]!) sub_a (frac_eff[i]!)
+
+  -- Effective exponent field: 1 - shift for a subnormal, the field otherwise.
+  let one12 := (List.range 12).map fun i => if i == 0 then one else zero
+  let sh_a_12 := (List.range 12).map fun i => if i < 6 then sh_a[i]! else zero
+  let eff_a := makeIndexedWires "sq_eff_a" 12
+  let (eff_a_gates, _eff_a_borrow) := mkKoggeStoneSub one12 sh_a_12 eff_a "sq_eff_a_sub" one
+  let exp_eff := makeIndexedWires "sq_exp_eff" 12
+  let exp_eff_gates := (List.range 12).map fun i =>
+    let raw := if i < 11 then exp_a[i]! else zero
+    Gate.mkMUX raw (eff_a[i]!) sub_a (exp_eff[i]!)
+
+  -- Normal Sqrt Setup:
+  -- exp_odd = NOT of the effective exponent field's low bit, which is the
+  -- parity of the unbiased exponent.
+  let exp_odd := Wire.mk "sq_exp_odd"
+  let exp_odd_gate := Gate.mkNOT (exp_eff[0]!) exp_odd
+
+  -- init_exp = (effective exponent field + 1023) >> 1
+  let exp_a_12 := exp_eff
   let bias_12 : List Wire := (List.range 12).map fun i => if i < 10 then one else zero
   let exp_sum := makeIndexedWires "sq_exp_sum" 12
   let (ea_add_gates, _) := mkKoggeStoneAdd exp_a_12 bias_12 zero exp_sum "sq_ea_add"
@@ -241,12 +280,12 @@ def mkFPSqrtD : Circuit :=
   let mant_init_gates := (List.range 56).map fun i =>
     let even_bit :=
       if i < 2 then zero
-      else if i <= 53 then frac_a[i - 2]!
+      else if i <= 53 then frac_eff[i - 2]!
       else if i == 54 then one
       else zero
     let odd_bit :=
       if i < 3 then zero
-      else if i <= 54 then frac_a[i - 3]!
+      else if i <= 54 then frac_eff[i - 3]!
       else one
     Gate.mkMUX even_bit odd_bit exp_odd (mant_init[i]!)
 
@@ -424,7 +463,8 @@ def mkFPSqrtD : Circuit :=
     ctrl_gates ++ done_gates ++ cnt_inc_gates ++ cnt_mux_gates ++
     ea_ao_gates ++ ea_oz_gates ++ [ea_allz_gate] ++ fa_any_gates ++
     class_gates ++ [nan_target_gate] ++ sp_res_gates ++ sp_exc_gates ++
-    [exp_odd_gate] ++ ea_add_gates ++ mant_init_gates ++
+    [sub_gate, exp_odd_gate] ++ lead_a_gates ++ pos_a_gates ++ sh_a_gates ++
+    norm_a_gates ++ frac_eff_gates ++ eff_a_gates ++ exp_eff_gates ++ ea_add_gates ++ mant_init_gates ++
     trial_sub_gates ++ [accept_gate] ++ new_rem_gates ++
     rem_mux_gates ++ root_mux_gates ++ mant_mux_gates ++ exp_mux_gates ++
     [sp_flag_mux] ++ sp_res_mux_gates ++ sp_exc_mux_gates ++

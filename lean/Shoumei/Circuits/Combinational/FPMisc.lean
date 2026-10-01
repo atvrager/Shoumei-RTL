@@ -25,6 +25,7 @@ Outputs:
 import Shoumei.DSL
 import Shoumei.Components.Select
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Sequential.FPNormalize
 
 namespace Shoumei.Circuits.Combinational
 
@@ -352,13 +353,31 @@ def fpCompareCircuit : Circuit :=
     Gate.mkAND fmax_t2 (nop[0]!) is_fmax
   ]
 
+  -- Numeric equality needs +0 and -0 to compare equal, but their bit patterns
+  -- differ in the sign bit alone, so a pattern test separates them.  Detect
+  -- "both operands are zero" and fold it into the equality result.
+  let (a_low_bits_or, a_low_bits_or_gates) :=
+    mkOrTree "zero_a" ((List.range 31).map fun i => src1[i]!)
+  let (b_low_bits_or, b_low_bits_or_gates) :=
+    mkOrTree "zero_b" ((List.range 31).map fun i => src2[i]!)
+  let a_is_zero := Wire.mk "a_is_zero"
+  let b_is_zero := Wire.mk "b_is_zero"
+  let both_zero := Wire.mk "both_zero"
+  let zero_detect_gates :=
+    a_low_bits_or_gates ++ b_low_bits_or_gates ++
+    [ Gate.mkNOT a_low_bits_or a_is_zero,
+      Gate.mkNOT b_low_bits_or b_is_zero,
+      Gate.mkAND a_is_zero b_is_zero both_zero ]
+
   -- FEQ logic
   let feq_xor := makeIndexedWires "feq_xor" 32
   let feq_xor_gates := (List.range 32).map fun i =>
     Gate.mkXOR (src1[i]!) (src2[i]!) (feq_xor[i]!)
   let (feq_or_out, feq_or_gates) := mkOrTree "feq_or" feq_xor
+  let feq_bits_eq := Wire.mk "feq_bits_eq"
   let feq_raw := Wire.mk "feq_raw"
-  let g_feq_inv := Gate.mkNOT feq_or_out feq_raw
+  let g_feq_inv := Gate.mkNOT feq_or_out feq_bits_eq
+  let g_feq_zero := Gate.mkOR feq_bits_eq both_zero feq_raw
   let not_either_nan := Wire.mk "not_either_nan"
   let feq_result := Wire.mk "feq_result"
   let feq_nan_gates := [
@@ -382,8 +401,17 @@ def fpCompareCircuit : Circuit :=
   let g_flt_same2 := Gate.mkMUX flt_borrow flt_neg_lt (src1[31]!) flt_same_result2
   let flt_raw := Wire.mk "flt_raw"
   let g_flt_final := Gate.mkMUX flt_same_result2 (src1[31]!) flt_signs_differ flt_raw
+  -- flt_raw is the -0 < +0 total order (which FMIN/FMAX need, and matches their
+  -- behaviour), so it reports -0 < +0 as true.  IEEE compares -0 and +0 equal,
+  -- so FLT must exclude numerically equal operands: a strict less-than.
+  -- Note the wire name: `flt_t0` is already the op-decode partial product above,
+  -- and a repeated name gives one net two drivers.
+  let flt_strict := Wire.mk "flt_strict"
   let flt_result := Wire.mk "flt_result"
-  let flt_nan_gate := Gate.mkAND flt_raw not_either_nan flt_result
+  let flt_nan_gates := [
+    Gate.mkAND flt_raw not_either_nan flt_strict,
+    Gate.mkAND flt_strict flt_not_eq flt_result
+  ]
 
   -- FLE logic
   let fle_result := Wire.mk "fle_result"
@@ -468,11 +496,13 @@ def fpCompareCircuit : Circuit :=
       nan1_exp_ones_gates ++ nan1_mant_nz_gates ++ nan1_detect_gates ++
       nan2_exp_ones_gates ++ nan2_mant_nz_gates ++ nan2_detect_gates ++
       nan_combined_gates ++
+      zero_detect_gates ++
       inv_gates ++
       dec_feq ++ dec_flt ++ dec_fle ++ dec_fmin ++ dec_fmax ++
-      feq_xor_gates ++ feq_or_gates ++ [g_feq_inv] ++ feq_nan_gates ++
+      feq_xor_gates ++ feq_or_gates ++ [g_feq_inv, g_feq_zero] ++ feq_nan_gates ++
       flt_sub_gates ++
-      [g_flt_sd, g_flt_nb, g_flt_neq, g_flt_neg_lt, g_flt_same2, g_flt_final, flt_nan_gate] ++
+      [g_flt_sd, g_flt_nb, g_flt_neq, g_flt_neg_lt, g_flt_same2, g_flt_final] ++
+      flt_nan_gates ++
       [g_fle] ++
       fmin_res_gates ++ fmax_res_gates ++
       after_feq_gates ++ after_flt_gates ++ after_fle_gates ++
@@ -618,6 +648,7 @@ def fpClassCircuit : Circuit :=
 def fpCvtIntCircuit : Circuit :=
   let src1 := makeIndexedWires "src1" 32
   let op := makeIndexedWires "op" 5
+  let rm := makeIndexedWires "rm" 3
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
   let result := makeIndexedWires "result" 32
@@ -705,29 +736,132 @@ def fpCvtIntCircuit : Circuit :=
   let fcvt_big_and := Wire.mk "fcvt_big_and"
   let fcvt_shift_too_big := Wire.mk "fcvt_shift_too_big"
   let fcvt_underflow := Wire.mk "fcvt_underflow"
+  let not_shiftBorrow := Wire.mk "fcvt_not_shiftBorrow"
+  let not_shiftBorrow_gate := Gate.mkNOT shiftBorrow not_shiftBorrow
+  -- 157 = 150 + 7: above it the magnitude is 2^31 or more and the signed
+  -- conversion saturates; between 150 and 157 the significand shifts left
+  let const157 := [one, zero, one, one, one, zero, zero, one]
+  let fcvt_over_borrow := Wire.mk "fcvt_over_borrow"
   let fcvt_big_gates := [
     Gate.mkOR (shiftAmt[7]!) (shiftAmt[6]!) fcvt_big_or0,
     Gate.mkOR fcvt_big_or0 (shiftAmt[5]!) fcvt_big_or1,
     Gate.mkAND (shiftAmt[4]!) (shiftAmt[3]!) fcvt_big_and,
     Gate.mkOR fcvt_big_or1 fcvt_big_and fcvt_shift_too_big,
-    Gate.mkOR fcvt_shift_too_big shiftBorrow fcvt_underflow
+    -- the range test reads the high bits of the amount, which are all ones in
+    -- the two's-complement left-shift case, so it only applies when shifting
+    -- right
+    Gate.mkAND fcvt_shift_too_big not_shiftBorrow fcvt_underflow
   ]
+  let (_, fcvt_over_borrow_gate, fcvt_over_gates) :=
+    mkRippleSub "fcvt_ov" const157 expBits 8 zero
+  let fcvt_over_buf := [Gate.mkBUF fcvt_over_borrow_gate fcvt_over_borrow]
 
   let mant32 := mant ++ (List.range 8).map (fun _ => zero)
+  -- guard: the bit immediately below the truncation, and the sticky strictly
+  -- below it, both needed for the rounding modes
+  let const1_8 := [one, zero, zero, zero, zero, zero, zero, zero]
+  let (shiftAmtM1, _shm1_borrow, fcvt_shm1_gates) :=
+    mkRippleSub "fcvt_shm1" shiftAmt const1_8 8 zero
+  let shiftCtrlM1 := (List.range 5).map fun i => shiftAmtM1[i]!
+  let fcvt_guard32 := makeIndexedWires "fcvt_gsh" 32
+  let fcvt_stk_below := Wire.mk "fcvt_stk_below"
+  let fcvt_guard_gates :=
+    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrlM1 fcvt_guard32 fcvt_stk_below zero "fcvt_gsh"
+
   let shiftCtrl := (List.range 5).map fun i => shiftAmt[i]!
-  let (fcvt_shifted, fcvt_shift_gates) :=
-    mkBarrelShiftRight "fcvt_bsh" mant32 32 shiftCtrl 5 zero
+  let fcvt_shifted := makeIndexedWires "fcvt_bsh" 32
+  let fcvt_sticky_out := Wire.mk "fcvt_sticky_out"
+  let fcvt_shift_gates :=
+    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrl fcvt_shifted fcvt_sticky_out zero "fcvt_bsh"
+
+  -- exp above 150: the value is an integer of 24 + (exp - 150) bits, so the
+  -- significand shifts left by 150 - exp negated.  exp up to 157 keeps it
+  -- below 2^31, which is what the signed conversion can hold.
+  let fcvt_lsa_inv := (List.range 4).map fun i => Wire.mk s!"fcvt_lsa_inv_{i}"
+  let fcvt_lsa_inv_gates := (List.range 4).map fun i =>
+    Gate.mkNOT (shiftAmt[i]!) (fcvt_lsa_inv[i]!)
+  let fcvt_lsa_carry := (List.range 5).map fun i => Wire.mk s!"fcvt_lsa_c_{i}"
+  let fcvt_lsa := makeIndexedWires "fcvt_lsa" 4
+  let fcvt_lsa_gates :=
+    [Gate.mkBUF one (fcvt_lsa_carry[0]!)] ++
+    (List.range 4).map (fun i =>
+      Gate.mkXOR (fcvt_lsa_inv[i]!) (fcvt_lsa_carry[i]!) (fcvt_lsa[i]!)) ++
+    (List.range 4).map (fun i =>
+      Gate.mkAND (fcvt_lsa_inv[i]!) (fcvt_lsa_carry[i]!) (fcvt_lsa_carry[i+1]!))
+  let mant32_for_lsh := (List.range 32).map fun i => mant32[i]!
+  let (fcvt_lsh, fcvt_lsh_gates) :=
+    mkBarrelShiftLeft "fcvt_lsh" mant32_for_lsh 32 fcvt_lsa 4 zero
 
   let fcvt_mag := makeIndexedWires "fcvt_mag" 32
-  let fcvt_mag_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (fcvt_shifted[i]!) zero fcvt_underflow (fcvt_mag[i]!)
+  let fcvt_mag_gates := (List.range 32).flatMap fun i =>
+    let right_or_left := Wire.mk s!"fcvt_mrl_{i}"
+    [Gate.mkMUX (fcvt_shifted[i]!) (fcvt_lsh[i]!) shiftBorrow right_or_left,
+     Gate.mkMUX right_or_left zero fcvt_underflow (fcvt_mag[i]!)]
 
-  let fcvt_mag_bits := (List.range 32).map fun i => fcvt_mag[i]!
+  -- ── rounding, one of the five modes, on the truncated magnitude ──
+  let fcvt_guard := fcvt_guard32[0]!
+  let fcvt_rem := Wire.mk "fcvt_rem"
+  let fcvt_rne := Wire.mk "fcvt_rne"
+  let fcvt_rtz := Wire.mk "fcvt_rtz"
+  let fcvt_rdn := Wire.mk "fcvt_rdn"
+  let fcvt_rup := Wire.mk "fcvt_rup"
+  let fcvt_rmm := Wire.mk "fcvt_rmm"
+  let fcvt_nr0 := Wire.mk "fcvt_nr0"
+  let fcvt_nr1 := Wire.mk "fcvt_nr1"
+  let fcvt_nr2 := Wire.mk "fcvt_nr2"
+  let fcvt_nr01 := Wire.mk "fcvt_nr01"
+  let fcvt_r01 := Wire.mk "fcvt_r01"
+  let fcvt_up := Wire.mk "fcvt_up"
+  let not_shiftBorrow_rem := Wire.mk "fcvt_nsb_rem"
+  let not_shiftBorrow_rem_gate := Gate.mkNOT shiftBorrow not_shiftBorrow_rem
+  let fcvt_rem_raw := Wire.mk "fcvt_rem_raw"
+  let fcvt_rem_gate := [Gate.mkOR fcvt_guard fcvt_stk_below fcvt_rem_raw,
+                        Gate.mkAND fcvt_rem_raw not_shiftBorrow_rem fcvt_rem]
+  let fcvt_rm_gates := not_shiftBorrow_rem_gate :: fcvt_rem_gate ++ [
+    Gate.mkNOT (rm[0]!) fcvt_nr0, Gate.mkNOT (rm[1]!) fcvt_nr1,
+    Gate.mkNOT (rm[2]!) fcvt_nr2,
+    Gate.mkAND fcvt_nr0 fcvt_nr1 fcvt_nr01,
+    Gate.mkAND fcvt_nr01 fcvt_nr2 fcvt_rne,
+    Gate.mkAND fcvt_nr0 (rm[1]!) (Wire.mk "fcvt_rdn_t"),
+    Gate.mkAND (Wire.mk "fcvt_rdn_t") fcvt_nr2 fcvt_rdn,
+    Gate.mkAND (rm[0]!) (rm[1]!) fcvt_r01,
+    Gate.mkAND fcvt_r01 fcvt_nr2 fcvt_rup,
+    Gate.mkAND fcvt_nr01 (rm[2]!) fcvt_rmm
+  ]
+  let fcvt_rtz_gate := Gate.mkAND (rm[0]!) fcvt_nr1 (Wire.mk "fcvt_rtz_t")
+  let fcvt_rtz2_gate := Gate.mkAND (Wire.mk "fcvt_rtz_t") fcvt_nr2 fcvt_rtz
+  -- RNE: guard and (anything below or an odd result); RMM: the guard alone;
+  -- RDN and RUP take any remainder when the sign points that way
+  let fcvt_rne_up := Wire.mk "fcvt_rne_up"
+  let fcvt_rdn_up := Wire.mk "fcvt_rdn_up"
+  let fcvt_rup_up := Wire.mk "fcvt_rup_up"
+  let fcvt_up_gates := [
+    fcvt_rtz_gate, fcvt_rtz2_gate,
+    Gate.mkOR fcvt_stk_below (fcvt_mag[0]!) (Wire.mk "fcvt_stlsb"),
+    Gate.mkAND fcvt_guard (Wire.mk "fcvt_stlsb") fcvt_rne_up,
+    Gate.mkAND fcvt_rem (src1[31]!) fcvt_rdn_up,
+    Gate.mkNOT (src1[31]!) (Wire.mk "fcvt_nsign"),
+    Gate.mkAND fcvt_rem (Wire.mk "fcvt_nsign") fcvt_rup_up,
+    Gate.mkAND fcvt_rne fcvt_rne_up (Wire.mk "fcvt_u0"),
+    Gate.mkAND fcvt_rdn fcvt_rdn_up (Wire.mk "fcvt_u1"),
+    Gate.mkAND fcvt_rup fcvt_rup_up (Wire.mk "fcvt_u2"),
+    Gate.mkAND fcvt_rmm fcvt_guard (Wire.mk "fcvt_u3"),
+    Gate.mkOR (Wire.mk "fcvt_u0") (Wire.mk "fcvt_u1") (Wire.mk "fcvt_u01"),
+    Gate.mkOR (Wire.mk "fcvt_u01") (Wire.mk "fcvt_u2") (Wire.mk "fcvt_u012"),
+    Gate.mkOR (Wire.mk "fcvt_u012") (Wire.mk "fcvt_u3") (Wire.mk "fcvt_up_raw"),
+    Gate.mkAND (Wire.mk "fcvt_up_raw") not_shiftBorrow_rem fcvt_up
+  ]
+  let fcvt_inc := (List.range 32).map fun i => if i == 0 then fcvt_up else zero
+  let fcvt_mag_r := makeIndexedWires "fcvt_magr" 32
+  let (fcvt_mag_r_gates, _fcvt_mag_r_carry) :=
+    mkAddFor (AdderSpec.minArea 32 .none) fcvt_mag fcvt_inc zero fcvt_mag_r "fcvt_magra"
+
+  let fcvt_mag_bits := (List.range 32).map fun i => fcvt_mag_r[i]!
   let (fcvt_mag_nz, fcvt_mag_nz_gates) := mkOrTree "fcvt_mag_nz" fcvt_mag_bits
 
   let fcvt_inv := makeIndexedWires "fcvt_inv" 32
   let fcvt_inv_gates := (List.range 32).map fun i =>
-    Gate.mkNOT (fcvt_mag[i]!) (fcvt_inv[i]!)
+    Gate.mkNOT (fcvt_mag_r[i]!) (fcvt_inv[i]!)
 
   let fcvt_neg := makeIndexedWires "fcvt_neg" 32
   let zeros32 := (List.range 32).map fun _ => zero
@@ -736,7 +870,7 @@ def fpCvtIntCircuit : Circuit :=
 
   let fcvt_normal := makeIndexedWires "fcvt_normal" 32
   let fcvt_sel_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (fcvt_mag[i]!) (fcvt_neg[i]!) (src1[31]!) (fcvt_normal[i]!)
+    Gate.mkMUX (fcvt_mag_r[i]!) (fcvt_neg[i]!) (src1[31]!) (fcvt_normal[i]!)
 
   let nan1_mant_zero := Wire.mk "nan1_mant_zero"
   let is_inf_src1 := Wire.mk "is_inf_src1"
@@ -744,7 +878,7 @@ def fpCvtIntCircuit : Circuit :=
   let inf1_gate := Gate.mkAND nan1_exp_ones nan1_mant_zero is_inf_src1
 
   let fcvt_overflow := Wire.mk "fcvt_overflow"
-  let fcvt_special_gates := [Gate.mkBUF shiftBorrow fcvt_overflow]
+  let fcvt_special_gates := [Gate.mkBUF fcvt_over_borrow fcvt_overflow]
 
   let fcvt_is_special := Wire.mk "fcvt_is_special"
   let fcvt_neg_special := Wire.mk "fcvt_neg_special"
@@ -768,42 +902,21 @@ def fpCvtIntCircuit : Circuit :=
     (List.range 31).map fun i =>
       Gate.mkBUF fcvt_not_neg_special (Wire.mk s!"fcvt_sb_{i}")
 
-  let fcvt_sticky := Wire.mk "fcvt_sticky_out"
-  let (_, fcvt_sticky_gates) :=
-    (List.range 5).foldl (fun (acc : (List Wire × Wire) × List Gate) stage =>
-      let (prev_data, prev_sticky) := acc.1
-      let shift := Nat.pow 2 stage
-      let lost_bits := (List.range (min shift 32)).map fun i => prev_data[i]!
-      let (lost_or, lost_or_gates) := mkOrTree s!"fcvt_lost_s{stage}" lost_bits
-      let stage_contrib := Wire.mk s!"fcvt_sticky_contrib_{stage}"
-      let new_sticky := Wire.mk s!"fcvt_sticky_{stage}"
-      let g_contrib := Gate.mkAND (shiftCtrl[stage]!) lost_or stage_contrib
-      let g_sticky := Gate.mkOR prev_sticky stage_contrib new_sticky
-      let new_data := makeIndexedWires s!"fcvt_bsh2_s{stage}" 32
-      let data_gates := (List.range 32).map fun i =>
-        if i + shift < 32 then
-          Gate.mkMUX (prev_data[i]!) (prev_data[i + shift]!) (shiftCtrl[stage]!) (new_data[i]!)
-        else
-          Gate.mkMUX (prev_data[i]!) zero (shiftCtrl[stage]!) (new_data[i]!)
-      ((new_data, new_sticky), acc.2 ++ lost_or_gates ++ [g_contrib, g_sticky] ++ data_gates)
-    ) ((mant32, zero), [])
-  let fcvt_sticky_final := Wire.mk "fcvt_sticky_4"
-  let fcvt_sticky_buf := [Gate.mkBUF fcvt_sticky_final fcvt_sticky]
-
+  let fcvt_sticky := fcvt_sticky_out
   let fcvt_src1_mag := (List.range 31).map fun i => src1[i]!
   let (fcvt_src1_nz, fcvt_src1_nz_gates) := mkOrTree "fcvt_s1nz" fcvt_src1_mag
   let fcvt_underflow_nx := Wire.mk "fcvt_underflow_nx"
-  let not_shiftBorrow := Wire.mk "fcvt_not_shiftBorrow"
   let fcvt_uflow_real := Wire.mk "fcvt_uflow_real"
   let g_underflow_nx_gates := [
-    Gate.mkNOT shiftBorrow not_shiftBorrow,
     Gate.mkAND fcvt_shift_too_big not_shiftBorrow fcvt_uflow_real,
     Gate.mkAND fcvt_uflow_real fcvt_src1_nz fcvt_underflow_nx
   ]
   let fcvt_nx_pre := Wire.mk "fcvt_nx_pre"
   let fcvt_nx := Wire.mk "fcvt_nx"
-  let fcvt_nx_gates := [
-    Gate.mkAND fcvt_sticky (Wire.mk "fcvt_not_special") fcvt_nx_pre,
+  let fcvt_sticky_gated := Wire.mk "fcvt_sticky_g"
+  let fcvt_sticky_gate := [Gate.mkAND fcvt_sticky not_shiftBorrow_rem fcvt_sticky_gated]
+  let fcvt_nx_gates := fcvt_sticky_gate ++ [
+    Gate.mkAND fcvt_sticky_gated (Wire.mk "fcvt_not_special") fcvt_nx_pre,
     Gate.mkOR fcvt_nx_pre fcvt_underflow_nx fcvt_nx
   ]
   let fcvt_not_special_gate := [Gate.mkNOT fcvt_is_special (Wire.mk "fcvt_not_special")]
@@ -825,9 +938,18 @@ def fpCvtIntCircuit : Circuit :=
     (List.range 4).map (fun i =>
       Gate.mkAND (fcvtwu_lsa_inv[i]!) (fcvtwu_lsa_carry[i]!) (fcvtwu_lsa_carry[i+1]!))
 
+  -- The left shift is the one that can carry out of 32 bits, so it is done in
+  -- a 40-bit field and any bit at or above 32 saturates the result.
   let mant32_list := (List.range 32).map fun i => mant32[i]!
-  let (fcvtwu_lsh, fcvtwu_lsh_gates) :=
-    mkBarrelShiftLeft "fcvtwu_lsh" mant32_list 32 fcvtwu_lsa 4 zero
+  let fcvtwu_wide := 40
+  let fcvtwu_wide_in := mant32_list ++ (List.range (fcvtwu_wide - 32)).map (fun _ => zero)
+  let (fcvtwu_lsh_wide, fcvtwu_lsh_wide_gates) :=
+    mkBarrelShiftLeft "fcvtwu_lshw" fcvtwu_wide_in fcvtwu_wide fcvtwu_lsa 4 zero
+  let (fcvtwu_hi, fcvtwu_hi_gates) :=
+    mkOrTree "fcvtwu_hi" ((List.range (fcvtwu_wide - 32)).map fun i => fcvtwu_lsh_wide[32 + i]!)
+  let fcvtwu_lsh := makeIndexedWires "fcvtwu_lsh" 32
+  let fcvtwu_lsh_gates := (List.range 32).map fun i =>
+    Gate.mkBUF (fcvtwu_lsh_wide[i]!) (fcvtwu_lsh[i]!)
 
   let fcvtwu_ov_t0 := Wire.mk "fcvtwu_ov_t0"
   let fcvtwu_ov_t1 := Wire.mk "fcvtwu_ov_t1"
@@ -840,12 +962,14 @@ def fpCvtIntCircuit : Circuit :=
   ]
 
   let fcvtwu_lsh_or_ov := makeIndexedWires "fcvtwu_lsh_ov" 32
+  let fcvtwu_sat := Wire.mk "fcvtwu_sat"
+  let fcvtwu_sat_gate := [Gate.mkOR fcvtwu_overflow fcvtwu_hi fcvtwu_sat]
   let fcvtwu_lsh_ov_gates := (List.range 32).map fun i =>
-    Gate.mkOR (fcvtwu_lsh[i]!) fcvtwu_overflow (fcvtwu_lsh_or_ov[i]!)
+    Gate.mkOR (fcvtwu_lsh[i]!) fcvtwu_sat (fcvtwu_lsh_or_ov[i]!)
 
   let fcvtwu_unsigned_mag := makeIndexedWires "fcvtwu_umag" 32
   let fcvtwu_umag_gates := (List.range 32).map fun i =>
-    Gate.mkMUX (fcvt_mag[i]!) (fcvtwu_lsh_or_ov[i]!) shiftBorrow (fcvtwu_unsigned_mag[i]!)
+    Gate.mkMUX (fcvt_mag_r[i]!) (fcvtwu_lsh_or_ov[i]!) shiftBorrow (fcvtwu_unsigned_mag[i]!)
 
   let fcvtwu_neg_clamp := Wire.mk "fcvtwu_neg_clamp"
   let fcvtwu_neg_clamp_gate := [
@@ -922,11 +1046,47 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtsw_guard_bit := fcvtsw_shifted[8]!
   let fcvtsw_sticky_bits := (List.range 7).map fun i => fcvtsw_shifted[i]!
   let (fcvtsw_sticky_or, fcvtsw_sticky_gates) := mkOrTree "fcvtsw_sticky" fcvtsw_sticky_bits
+  -- Rounding, one of the five modes.  Everything below the significand is the
+  -- round bit and the sticky; RNE also needs the result LSB, RMM the round bit
+  -- alone, RDN and RUP any remainder when the sign points that way.
   let fcvtsw_sticky_or_guard := Wire.mk "fcvtsw_sticky_or_guard"
+  let fcvtsw_rem := Wire.mk "fcvtsw_rem"
+  let fcvtsw_nsign := Wire.mk "fcvtsw_nsign"
+  let fcvtsw_rne_up := Wire.mk "fcvtsw_rne_up"
+  let fcvtsw_rdn_up := Wire.mk "fcvtsw_rdn_up"
+  let fcvtsw_rup_up := Wire.mk "fcvtsw_rup_up"
+  let fcvtsw_nr0 := Wire.mk "fcvtsw_nr0"
+  let fcvtsw_nr1 := Wire.mk "fcvtsw_nr1"
+  let fcvtsw_nr2 := Wire.mk "fcvtsw_nr2"
+  let fcvtsw_nr01 := Wire.mk "fcvtsw_nr01"
+  let fcvtsw_rne := Wire.mk "fcvtsw_rne"
+  let fcvtsw_rdn := Wire.mk "fcvtsw_rdn"
+  let fcvtsw_rup := Wire.mk "fcvtsw_rup"
+  let fcvtsw_rmm := Wire.mk "fcvtsw_rmm"
   let fcvtsw_round_up := Wire.mk "fcvtsw_round_up"
   let fcvtsw_round_gates := [
     Gate.mkOR fcvtsw_sticky_or fcvtsw_guard_bit fcvtsw_sticky_or_guard,
-    Gate.mkAND fcvtsw_round_bit fcvtsw_sticky_or_guard fcvtsw_round_up
+    Gate.mkAND fcvtsw_round_bit fcvtsw_sticky_or_guard fcvtsw_rne_up,
+    Gate.mkOR fcvtsw_round_bit fcvtsw_sticky_or fcvtsw_rem,
+    Gate.mkAND fcvtsw_rem (src1[31]!) fcvtsw_rdn_up,
+    Gate.mkNOT (src1[31]!) fcvtsw_nsign,
+    Gate.mkAND fcvtsw_rem fcvtsw_nsign fcvtsw_rup_up,
+    Gate.mkNOT (rm[0]!) fcvtsw_nr0, Gate.mkNOT (rm[1]!) fcvtsw_nr1,
+    Gate.mkNOT (rm[2]!) fcvtsw_nr2,
+    Gate.mkAND fcvtsw_nr0 fcvtsw_nr1 fcvtsw_nr01,
+    Gate.mkAND fcvtsw_nr01 fcvtsw_nr2 fcvtsw_rne,
+    Gate.mkAND fcvtsw_nr0 (rm[1]!) (Wire.mk "fcvtsw_rdn_t"),
+    Gate.mkAND (Wire.mk "fcvtsw_rdn_t") fcvtsw_nr2 fcvtsw_rdn,
+    Gate.mkAND (rm[0]!) (rm[1]!) (Wire.mk "fcvtsw_r01"),
+    Gate.mkAND (Wire.mk "fcvtsw_r01") fcvtsw_nr2 fcvtsw_rup,
+    Gate.mkAND fcvtsw_nr01 (rm[2]!) fcvtsw_rmm,
+    Gate.mkAND fcvtsw_rne fcvtsw_rne_up (Wire.mk "fcvtsw_u0"),
+    Gate.mkAND fcvtsw_rdn fcvtsw_rdn_up (Wire.mk "fcvtsw_u1"),
+    Gate.mkAND fcvtsw_rup fcvtsw_rup_up (Wire.mk "fcvtsw_u2"),
+    Gate.mkAND fcvtsw_rmm fcvtsw_round_bit (Wire.mk "fcvtsw_u3"),
+    Gate.mkOR (Wire.mk "fcvtsw_u0") (Wire.mk "fcvtsw_u1") (Wire.mk "fcvtsw_u01"),
+    Gate.mkOR (Wire.mk "fcvtsw_u01") (Wire.mk "fcvtsw_u2") (Wire.mk "fcvtsw_u012"),
+    Gate.mkOR (Wire.mk "fcvtsw_u012") (Wire.mk "fcvtsw_u3") fcvtsw_round_up
   ]
   let fcvtsw_nx := Wire.mk "fcvtsw_nx"
   let fcvtsw_nx_gate := Gate.mkOR fcvtsw_round_bit fcvtsw_sticky_or fcvtsw_nx
@@ -998,11 +1158,35 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtswu_guard_bit := fcvtswu_shifted[8]!
   let fcvtswu_sticky_bits := (List.range 7).map fun i => fcvtswu_shifted[i]!
   let (fcvtswu_sticky_or, fcvtswu_sticky_gates) := mkOrTree "fcvtswu_sticky" fcvtswu_sticky_bits
+  -- Rounding, one of the five modes.  The source is unsigned, so only RUP can
+  -- round away from zero; RDN never does.
   let fcvtswu_sticky_or_guard := Wire.mk "fcvtswu_sticky_or_guard"
+  let fcvtswu_rem := Wire.mk "fcvtswu_rem"
+  let fcvtswu_rne_up := Wire.mk "fcvtswu_rne_up"
+  let fcvtswu_nr0 := Wire.mk "fcvtswu_nr0"
+  let fcvtswu_nr1 := Wire.mk "fcvtswu_nr1"
+  let fcvtswu_nr2 := Wire.mk "fcvtswu_nr2"
+  let fcvtswu_nr01 := Wire.mk "fcvtswu_nr01"
+  let fcvtswu_rne := Wire.mk "fcvtswu_rne"
+  let fcvtswu_rup := Wire.mk "fcvtswu_rup"
+  let fcvtswu_rmm := Wire.mk "fcvtswu_rmm"
   let fcvtswu_round_up := Wire.mk "fcvtswu_round_up"
   let fcvtswu_round_gates := [
     Gate.mkOR fcvtswu_sticky_or fcvtswu_guard_bit fcvtswu_sticky_or_guard,
-    Gate.mkAND fcvtswu_round_bit fcvtswu_sticky_or_guard fcvtswu_round_up
+    Gate.mkAND fcvtswu_round_bit fcvtswu_sticky_or_guard fcvtswu_rne_up,
+    Gate.mkOR fcvtswu_round_bit fcvtswu_sticky_or fcvtswu_rem,
+    Gate.mkNOT (rm[0]!) fcvtswu_nr0, Gate.mkNOT (rm[1]!) fcvtswu_nr1,
+    Gate.mkNOT (rm[2]!) fcvtswu_nr2,
+    Gate.mkAND fcvtswu_nr0 fcvtswu_nr1 fcvtswu_nr01,
+    Gate.mkAND fcvtswu_nr01 fcvtswu_nr2 fcvtswu_rne,
+    Gate.mkAND (rm[0]!) (rm[1]!) (Wire.mk "fcvtswu_r01"),
+    Gate.mkAND (Wire.mk "fcvtswu_r01") fcvtswu_nr2 fcvtswu_rup,
+    Gate.mkAND fcvtswu_nr01 (rm[2]!) fcvtswu_rmm,
+    Gate.mkAND fcvtswu_rne fcvtswu_rne_up (Wire.mk "fcvtswu_u0"),
+    Gate.mkAND fcvtswu_rup fcvtswu_rem (Wire.mk "fcvtswu_u2"),
+    Gate.mkAND fcvtswu_rmm fcvtswu_round_bit (Wire.mk "fcvtswu_u3"),
+    Gate.mkOR (Wire.mk "fcvtswu_u0") (Wire.mk "fcvtswu_u2") (Wire.mk "fcvtswu_u02"),
+    Gate.mkOR (Wire.mk "fcvtswu_u02") (Wire.mk "fcvtswu_u3") fcvtswu_round_up
   ]
   let fcvtswu_nx := Wire.mk "fcvtswu_nx"
   let fcvtswu_nx_gate := Gate.mkOR fcvtswu_round_bit fcvtswu_sticky_or fcvtswu_nx
@@ -1075,19 +1259,23 @@ def fpCvtIntCircuit : Circuit :=
   ]
 
   { name := "FPCvtInt"
-    inputs := src1 ++ op ++ [zero, one]
+    inputs := src1 ++ op ++ rm ++ [zero, one]
     outputs := result ++ [nv, nx]
     gates :=
       nan1_exp_ones_gates ++ nan1_mant_nz_gates ++ nan1_detect_gates ++
       inv_gates ++
       dec_fcvt ++ dec_fcvt_wu ++ dec_fcvt_s_w ++ dec_fcvt_s_wu ++
-      fcvt_sub_gates ++ fcvt_big_gates ++ fcvt_shift_gates ++
+      fcvt_sub_gates ++ [not_shiftBorrow_gate] ++ fcvt_big_gates ++ fcvt_over_gates ++ fcvt_over_buf ++
+      fcvt_lsa_inv_gates ++ fcvt_lsa_gates ++ fcvt_lsh_gates ++
+      fcvt_shm1_gates ++ fcvt_shift_gates ++
+      fcvt_guard_gates ++ fcvt_rm_gates ++ fcvt_up_gates ++ fcvt_mag_r_gates ++
       fcvt_mag_gates ++ fcvt_mag_nz_gates ++ fcvt_inv_gates ++ fcvt_neg_gates ++ fcvt_sel_gates ++
       [nan1_mant_z_gate, inf1_gate] ++ fcvt_special_gates ++ fcvt_special_det ++
       fcvt_special_bit_gates ++ fcvt_result_gates ++
-      fcvt_sticky_gates ++ fcvt_sticky_buf ++ fcvt_src1_nz_gates ++ g_underflow_nx_gates ++
+      fcvt_src1_nz_gates ++ g_underflow_nx_gates ++
       fcvt_not_special_gate ++ fcvt_nx_gates ++ fcvt_nv_gate ++
-      fcvtwu_lsa_inv_gates ++ fcvtwu_lsa_add_gates ++ fcvtwu_lsh_gates ++
+      fcvtwu_lsa_inv_gates ++ fcvtwu_lsa_add_gates ++ fcvtwu_lsh_wide_gates ++
+      fcvtwu_hi_gates ++ fcvtwu_lsh_gates ++ fcvtwu_sat_gate ++
       fcvtwu_ov_gates ++ fcvtwu_lsh_ov_gates ++ fcvtwu_umag_gates ++
       fcvtwu_neg_clamp_gate ++ fcvtwu_res_gates ++
       fcvtsw_or_gates ++ [g_fcvtsw_iz] ++
@@ -1174,6 +1362,7 @@ def fpMiscCircuit : Circuit :=
     portMap :=
       ((List.range 32).map fun i => (s!"src1_{i}", src1[i]!)) ++
       ((List.range 5).map fun i => (s!"op_{i}", op[i]!)) ++
+      ((List.range 3).map fun i => (s!"rm_{i}", rm[i]!)) ++
       [("zero", zero), ("one", one)] ++
       ((List.range 32).map fun i => (s!"result_{i}", cvt_res[i]!)) ++
       [("nv", cvt_nv), ("nx", cvt_nx)]

@@ -51,8 +51,8 @@ theorem storebuffer8_output_count : mkStoreBuffer8.outputs.length = 212 := by na
     - 1 x PriorityArbiter8 (youngest-match selection) -/
 theorem storebuffer8_instance_count : mkStoreBuffer8.instances.length = 50 := by native_decide
 
-/-- StoreBuffer8 gate count: 3089 combinational gates -/
-theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3089 := by native_decide
+/-- StoreBuffer8 gate count: 3090 combinational gates -/
+theorem storebuffer8_gate_count : mkStoreBuffer8.gates.length = 3090 := by native_decide
 
 /-! ## Building Block Verification -/
 
@@ -174,7 +174,7 @@ theorem no_replay_on_exact_match :
     output of an entry storage cell — never a signal produced downstream of
     the compare (priority/mux), so the match stage cannot close a
     combinational loop.  Full-circuit loop closure is additionally checked
-    on the emitted SV by `//verification:yosys_dc_lint_test` (yosys check -assert). -/
+    on the emitted SV by `make lint` (yosys check -assert). -/
 def comparatorInputsAreRegsOrPrimary (c : Circuit) : Bool :=
   let entries := c.instances.filter (fun i => i.instName.startsWith "u_entry")
   let entryQ : List String := entries.flatMap (fun inst =>

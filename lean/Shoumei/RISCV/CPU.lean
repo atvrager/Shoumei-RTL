@@ -321,6 +321,53 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     else
       [Gate.mkBUF zero (Wire.mk "csr_match_0"), Gate.mkBUF zero (Wire.mk "csr_match_1")]
 
+  -- A CSR instruction that writes a read-only address (bits [11:10] = 2'b11, so
+  -- 0xC00-0xFFF) is an illegal instruction, not a CSR operation.  CSRRW and
+  -- CSRRWI always write; CSRRS and CSRRC write only when the rs1 field is
+  -- non-zero, and CSRRWI/CSRRSI/CSRRCI carry their operand there as a uimm, so
+  -- one non-zero test on the rs1 field covers all four read-modify-write forms.
+  let csr_rmw_0 := Wire.mk "csr_rmw_0"
+  let csr_rmw_1 := Wire.mk "csr_rmw_1"
+  let csr_r1nz_0 := Wire.mk "csr_r1nz_0"
+  let csr_r1nz_1 := Wire.mk "csr_r1nz_1"
+  let csr_wr_0 := Wire.mk "csr_wr_0"
+  let csr_wr_1 := Wire.mk "csr_wr_1"
+  let csr_ro_addr_0 := Wire.mk "csr_ro_addr_0"
+  let csr_ro_addr_1 := Wire.mk "csr_ro_addr_1"
+  let csr_ro_write_0 := Wire.mk "csr_ro_write_0"
+  let csr_ro_write_1 := Wire.mk "csr_ro_write_1"
+  let csr_ro_write_gates :=
+    [Gate.mkOR d0_rs1[0]! d0_rs1[1]! (Wire.mk "csr_r1nz_0_a"),
+     Gate.mkOR (Wire.mk "csr_r1nz_0_a") d0_rs1[2]! (Wire.mk "csr_r1nz_0_b"),
+     Gate.mkOR (Wire.mk "csr_r1nz_0_b") d0_rs1[3]! (Wire.mk "csr_r1nz_0_c"),
+     Gate.mkOR (Wire.mk "csr_r1nz_0_c") d0_rs1[4]! csr_r1nz_0,
+     Gate.mkOR d1_rs1[0]! d1_rs1[1]! (Wire.mk "csr_r1nz_1_a"),
+     Gate.mkOR (Wire.mk "csr_r1nz_1_a") d1_rs1[2]! (Wire.mk "csr_r1nz_1_b"),
+     Gate.mkOR (Wire.mk "csr_r1nz_1_b") d1_rs1[3]! (Wire.mk "csr_r1nz_1_c"),
+     Gate.mkOR (Wire.mk "csr_r1nz_1_c") d1_rs1[4]! csr_r1nz_1] ++
+    (if config.enableZicsr then
+      [Gate.mkOR (Wire.mk "csrrs_0") (Wire.mk "csrrc_0") (Wire.mk "csr_rmw_n0"),
+       Gate.mkOR (Wire.mk "csrrsi_0") (Wire.mk "csrrci_0") (Wire.mk "csr_rmw_i0"),
+       Gate.mkOR (Wire.mk "csr_rmw_n0") (Wire.mk "csr_rmw_i0") csr_rmw_0,
+       Gate.mkOR (Wire.mk "csrrs_1") (Wire.mk "csrrc_1") (Wire.mk "csr_rmw_n1"),
+       Gate.mkOR (Wire.mk "csrrsi_1") (Wire.mk "csrrci_1") (Wire.mk "csr_rmw_i1"),
+       Gate.mkOR (Wire.mk "csr_rmw_n1") (Wire.mk "csr_rmw_i1") csr_rmw_1,
+       Gate.mkAND csr_rmw_0 csr_r1nz_0 (Wire.mk "csr_rmw_w0"),
+       Gate.mkAND csr_rmw_1 csr_r1nz_1 (Wire.mk "csr_rmw_w1"),
+       Gate.mkOR (Wire.mk "csrrw_0") (Wire.mk "csrrwi_0") (Wire.mk "csr_wr_i0"),
+       Gate.mkOR (Wire.mk "csrrw_1") (Wire.mk "csrrwi_1") (Wire.mk "csr_wr_i1"),
+       Gate.mkOR (Wire.mk "csr_wr_i0") (Wire.mk "csr_rmw_w0") csr_wr_0,
+       Gate.mkOR (Wire.mk "csr_wr_i1") (Wire.mk "csr_rmw_w1") csr_wr_1,
+       Gate.mkAND d0_imm[11]! d0_imm[10]! csr_ro_addr_0,
+       Gate.mkAND d1_imm[11]! d1_imm[10]! csr_ro_addr_1,
+       Gate.mkAND csr_wr_0 csr_ro_addr_0 csr_ro_write_0,
+       Gate.mkAND csr_wr_1 csr_ro_addr_1 csr_ro_write_1]
+     else
+      [Gate.mkBUF zero csr_rmw_0, Gate.mkBUF zero csr_rmw_1,
+       Gate.mkBUF zero csr_wr_0, Gate.mkBUF zero csr_wr_1,
+       Gate.mkBUF zero csr_ro_addr_0, Gate.mkBUF zero csr_ro_addr_1,
+       Gate.mkBUF zero csr_ro_write_0, Gate.mkBUF zero csr_ro_write_1])
+
   -- Gate by decode_valid and not redirect/stall
   let enableTraps := config.microcodesTraps
   let ser_detect_gates :=
@@ -382,10 +429,23 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (if enableTraps then
       [Gate.mkAND (Wire.mk "d0_unknown_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_du0_nr"),
        Gate.mkAND (Wire.mk "ser_du0_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_du0_pre"),
-       Gate.mkAND (Wire.mk "ser_du0_pre") (Wire.mk "ser_not_stall") illegal_detected_0,
+       Gate.mkAND (Wire.mk "ser_du0_pre") (Wire.mk "ser_not_stall") (Wire.mk "ill_unk_0"),
        Gate.mkAND (Wire.mk "d1_unknown_raw") (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_du1_nr"),
        Gate.mkAND (Wire.mk "ser_du1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_du1_pre"),
-       Gate.mkAND (Wire.mk "ser_du1_pre") (Wire.mk "ser_not_stall") illegal_detected_1,
+       Gate.mkAND (Wire.mk "ser_du1_pre") (Wire.mk "ser_not_stall") (Wire.mk "ill_unk_1"),
+       -- A write to a read-only CSR is illegal, not a CSR operation.  The word
+       -- does decode, so gate on the decoder's own valid output rather than the
+       -- serialize-FSM one, which the masking above clears for this instruction.
+       Gate.mkAND _d0_valid (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_cro0_nr"),
+       Gate.mkAND (Wire.mk "ser_cro0_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_cro0_pre"),
+       Gate.mkAND (Wire.mk "ser_cro0_pre") (Wire.mk "ser_not_stall") (Wire.mk "ser_cro0_ok"),
+       Gate.mkAND (Wire.mk "ser_cro0_ok") csr_ro_write_0 (Wire.mk "ill_csr_0"),
+       Gate.mkAND _d1_valid (Wire.mk "ser_not_redir_flush") (Wire.mk "ser_cro1_nr"),
+       Gate.mkAND (Wire.mk "ser_cro1_nr") (Wire.mk "ser_not_fse") (Wire.mk "ser_cro1_pre"),
+       Gate.mkAND (Wire.mk "ser_cro1_pre") (Wire.mk "ser_not_stall") (Wire.mk "ser_cro1_ok"),
+       Gate.mkAND (Wire.mk "ser_cro1_ok") csr_ro_write_1 (Wire.mk "ill_csr_1"),
+       Gate.mkOR (Wire.mk "ill_unk_0") (Wire.mk "ill_csr_0") illegal_detected_0,
+       Gate.mkOR (Wire.mk "ill_unk_1") (Wire.mk "ill_csr_1") illegal_detected_1,
        Gate.mkOR illegal_detected_0 illegal_detected_1 illegal_detected]
     else
       [Gate.mkBUF zero illegal_detected_0, Gate.mkBUF zero illegal_detected_1,
@@ -950,13 +1010,21 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fetch_valid_gates :=
     [Gate.mkNOT fetch_stall_ext not_fs_ext,
      Gate.mkAND fetch_valid_0 not_fs_ext fetch_valid_0_mask,
-     Gate.mkAND d0_valid_raw fetch_valid_0_mask d0_valid,
+     -- A CSR write to a read-only address is an illegal instruction.  Keep it out
+     -- of the ROB the way an undecodable word is: the trap sequencer drains the
+     -- pipeline before it reports the fault, and a dispatched instruction could
+     -- never retire, so that drain would never finish.
+     Gate.mkNOT csr_ro_write_0 (Wire.mk "d0_not_csr_ro"),
+     Gate.mkAND d0_valid_raw fetch_valid_0_mask (Wire.mk "d0_valid_pre"),
+     Gate.mkAND (Wire.mk "d0_valid_pre") (Wire.mk "d0_not_csr_ro") d0_valid,
      Gate.mkNOT d0_valid_raw (Wire.mk "not_d0_valid_raw"),
      Gate.mkAND fetch_valid_0_mask (Wire.mk "not_d0_valid_raw") (Wire.mk "d0_unknown_raw"),
      Gate.mkNOT ifetch_last_word (Wire.mk "not_last_word"),
      Gate.mkAND fetch_valid_1 (Wire.mk "not_last_word") fetch_valid_1_masked,
      Gate.mkAND fetch_valid_1_masked not_fs_ext fetch_valid_1_mask,
-     Gate.mkAND d1_valid_raw fetch_valid_1_mask d1_valid,
+     Gate.mkNOT csr_ro_write_1 (Wire.mk "d1_not_csr_ro"),
+     Gate.mkAND d1_valid_raw fetch_valid_1_mask (Wire.mk "d1_valid_pre"),
+     Gate.mkAND (Wire.mk "d1_valid_pre") (Wire.mk "d1_not_csr_ro") d1_valid,
      Gate.mkNOT d1_valid_raw (Wire.mk "not_d1_valid_raw"),
      Gate.mkAND fetch_valid_1_mask (Wire.mk "not_d1_valid_raw") (Wire.mk "d1_unknown_raw")]
 
@@ -1241,9 +1309,25 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let d0_needs_fp := Wire.mk "d0_needs_fp_ren_pre"
       let d1_needs_fp := Wire.mk "d1_needs_fp_ren_pre"
       [Gate.mkOR d0_is_fp d0_has_fp_rd d0_fp_res,
+       -- FP-domain: the operation is executed by the FP unit and therefore
+       -- raises FP flags.  Loads and stores touch FP registers and do not.
+       Gate.mkOR d0_fp_rs1_read d0_fp_rs2_read (Wire.mk "d0_fp_src_t"),
+       Gate.mkOR (Wire.mk "d0_fp_src_t") d0_fp_rs3_used (Wire.mk "d0_fp_src"),
+       Gate.mkOR d0_fp_res (Wire.mk "d0_fp_src") (Wire.mk "d0_fp_op_t"),
+       Gate.mkOR d0_is_fp_load d0_is_fp_store (Wire.mk "d0_fp_mem"),
+       Gate.mkNOT (Wire.mk "d0_fp_mem") (Wire.mk "d0_fp_notmem"),
+       Gate.mkAND (Wire.mk "d0_fp_op_t") (Wire.mk "d0_fp_notmem") (Wire.mk "d0_fp_op"),
        Gate.mkOR d0_fp_res d0_is_fp_store d0_needs_fp,
        Gate.mkAND d0_valid_raw d0_needs_fp (Wire.mk "pre_fp_0"),
        Gate.mkOR d1_is_fp d1_has_fp_rd d1_fp_res,
+       -- FP-domain: the operation is executed by the FP unit and therefore
+       -- raises FP flags.  Loads and stores touch FP registers and do not.
+       Gate.mkOR d1_fp_rs1_read d1_fp_rs2_read (Wire.mk "d1_fp_src_t"),
+       Gate.mkOR (Wire.mk "d1_fp_src_t") d1_fp_rs3_used (Wire.mk "d1_fp_src"),
+       Gate.mkOR d1_fp_res (Wire.mk "d1_fp_src") (Wire.mk "d1_fp_op_t"),
+       Gate.mkOR d1_is_fp_load d1_is_fp_store (Wire.mk "d1_fp_mem"),
+       Gate.mkNOT (Wire.mk "d1_fp_mem") (Wire.mk "d1_fp_notmem"),
+       Gate.mkAND (Wire.mk "d1_fp_op_t") (Wire.mk "d1_fp_notmem") (Wire.mk "d1_fp_op"),
        Gate.mkOR d1_fp_res d1_is_fp_store d1_needs_fp,
        Gate.mkAND d1_valid_raw d1_needs_fp (Wire.mk "pre_fp_1"),
        Gate.mkAND (Wire.mk "pre_fp_0") (Wire.mk "pre_fp_1") fp_dual_stall,
@@ -1300,6 +1384,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- Forward-declare FP wires needed by memory and ROB sections
   let fp_issue_dest_tag := CPU.makeIndexedWires "fp_issue_dest_tag" 6
   let rob_head_is_fp_0 := Wire.mk "rob_head_is_fp_0"
+  let rob_head_is_fp_op_0 := Wire.mk "rob_head_is_fp_op_0"
+  let rob_head_is_fp_op_1 := Wire.mk "rob_head_is_fp_op_1"
   let rob_head_is_fp_1 := Wire.mk "rob_head_is_fp_1"
 
   -- Memory routing MUX
@@ -1378,6 +1464,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let cdb_data32_0 := cdb_data_0.take (if config.xlen == 64 then 64 else 32)
   let cdb_valid_1 := Wire.mk "cdb_valid_1"; let cdb_tag_1 := CPU.makeIndexedWires "cdb_tag_1" 6; let cdb_data_1 := CPU.makeIndexedWires "cdb_data_1" (if config.xlen == 64 || config.enableD then 64 else 32)
   let cdb_data32_1 := cdb_data_1.take (if config.xlen == 64 then 64 else 32)
+  -- CDB domain bit (driven later by the FP pipeline).  Declared here because the
+  -- snoops below are integer-domain consumers and must reject FP broadcasts.
+  let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
+  let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
 
   -- CDB snoop for CSR rs1 and Fallback rs2 capture: during drain, compare captured tags against CDB
   -- If match, capture CDB data into csr_rs1cap_reg / ser_rs2cap_reg. Also capture initial value on fence_i_start.
@@ -1410,8 +1500,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let gates :=
         [Gate.mkOR fallback_active fallback_seq_start (Wire.mk "fb_act_or_st"),
          Gate.mkOR fence_i_draining (Wire.mk "fb_act_or_st") snoop_draining,
-         Gate.mkAND match0 cdb_valid_0 match0_v,
-         Gate.mkAND match1 cdb_valid_1 match1_v,
+         Gate.mkNOT cdb_is_fp_0 (Wire.mk "csr_snoop_not_fp0"),
+         Gate.mkNOT cdb_is_fp_1 (Wire.mk "csr_snoop_not_fp1"),
+         Gate.mkAND match0 cdb_valid_0 (Wire.mk "csr_snoop_m0i"),
+         Gate.mkAND match1 cdb_valid_1 (Wire.mk "csr_snoop_m1i"),
+         Gate.mkAND (Wire.mk "csr_snoop_m0i") (Wire.mk "csr_snoop_not_fp0") match0_v,
+         Gate.mkAND (Wire.mk "csr_snoop_m1i") (Wire.mk "csr_snoop_not_fp1") match1_v,
          Gate.mkAND match0_v snoop_draining m0_drain,
          Gate.mkAND match1_v snoop_draining m1_drain,
          Gate.mkOR m0_drain m1_drain cdb_snoop_hit,
@@ -1446,8 +1540,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       let m2_0_drain := Wire.mk s!"{pfx2}_m0d"
       let m2_1_drain := Wire.mk s!"{pfx2}_m1d"
       let gates2 :=
-        [Gate.mkAND match2_0 cdb_valid_0 match2_0_v,
-         Gate.mkAND match2_1 cdb_valid_1 match2_1_v,
+        [Gate.mkNOT cdb_is_fp_0 (Wire.mk "ser_snoop2_not_fp0"),
+         Gate.mkNOT cdb_is_fp_1 (Wire.mk "ser_snoop2_not_fp1"),
+         Gate.mkAND match2_0 cdb_valid_0 (Wire.mk "ser_snoop2_m0i"),
+         Gate.mkAND match2_1 cdb_valid_1 (Wire.mk "ser_snoop2_m1i"),
+         Gate.mkAND (Wire.mk "ser_snoop2_m0i") (Wire.mk "ser_snoop2_not_fp0") match2_0_v,
+         Gate.mkAND (Wire.mk "ser_snoop2_m1i") (Wire.mk "ser_snoop2_not_fp1") match2_1_v,
          Gate.mkAND match2_0_v snoop_draining m2_0_drain,
          Gate.mkAND match2_1_v snoop_draining m2_1_drain,
          Gate.mkOR m2_0_drain m2_1_drain cdb_snoop2_hit,
@@ -1726,9 +1824,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   }
 
   -- === REORDER BUFFER (W2) ===
-  -- Forward-declare FP wires (defined later in FP pipeline block)
-  let cdb_is_fp_0 := Wire.mk "cdb_is_fp_0"
-  let cdb_is_fp_1 := Wire.mk "cdb_is_fp_1"
+  -- FP wires (cdb_is_fp_* is declared with the rest of the CDB, above)
 
   -- FP dest tag MUX for ROB: when an FP instruction dispatches, the ROB must store
   -- the FP issue dest tag (from FP rename) instead of the INT rename tag, so CDB
@@ -1772,7 +1868,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("alloc_hasOldPhysRd_0", if enableF then Wire.mk "d0_has_any_rd_nox0" else d0_has_rd_nox0),
                 ("alloc_hasOldPhysRd_1", if enableF then Wire.mk "d1_has_any_rd_nox0" else d1_has_rd_nox0),
                 ("alloc_isBranch_0", d0_is_br), ("alloc_is_fp_0", if enableF then d0_has_fp_rd else zero),
+                ("alloc_is_fp_op_0", if enableF then Wire.mk "d0_fp_op" else zero),
                 ("alloc_isBranch_1", d1_is_br), ("alloc_is_fp_1", if enableF then d1_has_fp_rd else zero),
+                ("alloc_is_fp_op_1", if enableF then Wire.mk "d1_fp_op" else zero),
                 ("cdb_valid", cdb_valid_0), ("cdb_valid_1", cdb_valid_1),
                 ("cdb_mispredicted_1", cdb_mispredicted_reg_1),
                 ("cdb_is_fp", if enableF then cdb_is_fp_0 else zero),
@@ -1798,7 +1896,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                bundledPorts "head_archRd_1" commit_archRd_1 ++
                [("head_exception_1", rob_head_exception_1), ("head_isBranch_1", rob_head_isBranch_1),
                 ("head_mispredicted_1", rob_head_mispredicted_1),
-                ("head_is_fp_0", rob_head_is_fp_0), ("head_is_fp_1", rob_head_is_fp_1)]
+                ("head_is_fp_0", rob_head_is_fp_0), ("head_is_fp_1", rob_head_is_fp_1),
+                ("head_is_fp_op_0", rob_head_is_fp_op_0), ("head_is_fp_op_1", rob_head_is_fp_op_1)]
   }
 
   -- === COMMIT CONTROL (W2) ===
@@ -1806,12 +1905,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   -- commit_en_1 = head_valid_1 AND head_complete_1 AND commit_en_0
   let fp_commit_buf_stall := Wire.mk "fp_commit_buf_stall"
   let not_fp_commit_buf_stall := Wire.mk "not_fp_commit_buf_stall"
+  let fp_commit_buf_stall_1 := Wire.mk "fp_commit_buf_stall_1"
+  let not_fp_commit_buf_stall_1 := Wire.mk "not_fp_commit_buf_stall_1"
   let fp_buf_stall_gates :=
     if enableF then
       [Gate.mkAND (Wire.mk "fp_commit_buf_valid_reg") rob_head_is_fp_0 fp_commit_buf_stall,
-       Gate.mkNOT fp_commit_buf_stall not_fp_commit_buf_stall]
+       Gate.mkNOT fp_commit_buf_stall not_fp_commit_buf_stall,
+       Gate.mkAND (Wire.mk "fp_commit_buf_valid_reg") rob_head_is_fp_1 fp_commit_buf_stall_1,
+       Gate.mkNOT fp_commit_buf_stall_1 not_fp_commit_buf_stall_1]
     else
-      [Gate.mkBUF zero fp_commit_buf_stall, Gate.mkBUF one not_fp_commit_buf_stall]
+      [Gate.mkBUF zero fp_commit_buf_stall, Gate.mkBUF one not_fp_commit_buf_stall,
+       Gate.mkBUF zero fp_commit_buf_stall_1, Gate.mkBUF one not_fp_commit_buf_stall_1]
   let commit_gates :=
     fp_buf_stall_gates ++
     [Gate.mkNOT branch_redirect_valid_reg (Wire.mk "not_redirect_for_commit"),
@@ -1824,7 +1928,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND (Wire.mk "s0_is_committing_branch") rob_head_mispredicted_0 (Wire.mk "s0_redirect"),
      Gate.mkNOT (Wire.mk "s0_redirect") (Wire.mk "not_s0_redirect"),
      Gate.mkAND (Wire.mk "commit_ready_1") retire_valid_0 (Wire.mk "commit_ready_1_pre"),
-     Gate.mkAND (Wire.mk "commit_ready_1_pre") (Wire.mk "not_s0_redirect") retire_valid_1]
+     Gate.mkAND (Wire.mk "commit_ready_1_pre") (Wire.mk "not_s0_redirect") (Wire.mk "commit_ready_1_gated"),
+     Gate.mkAND (Wire.mk "commit_ready_1_gated") not_fp_commit_buf_stall_1 retire_valid_1]
 
   -- === BRANCH TRACKING (W2) ===
   -- Branches force-allocate a physRd but have no archRd (hasOldPhysRd=0).
@@ -1971,10 +2076,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   let slot1_steer_en := Wire.mk "slot1_steer_en"
   let not_slot1_to_bank0 := Wire.mk "not_slot1_to_bank0"
+  -- `not_slot1_to_bank0` is already driven by the slot-1 dispatch steering above;
+  -- a second NOT of the same input here would drive the net twice, which
+  -- `make check-drivers` rejects (one net, one driver).
   let b0_steer_ctrl_gates := [
     Gate.mkAND dispatch_int_1 slot1_to_bank0 slot1_steer_en,
     Gate.mkOR dispatch_int_0 slot1_steer_en b0_issue_en,
-    Gate.mkNOT slot1_to_bank0 not_slot1_to_bank0,
     Gate.mkAND dispatch_int_1 not_slot1_to_bank0 b1_issue_en,
     Gate.mkMUX src1_ready_0 src1_ready_1 slot1_to_bank0 b0_src1_ready,
     Gate.mkMUX src2_ready_0 src2_ready_1 slot1_to_bank0 b0_src2_ready
@@ -2099,6 +2206,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
 
   -- Forward-declare memory pipeline wires
   let mem_addr_r := CPU.makeIndexedWires "mem_addr_r" (if config.xlen == 64 then 64 else 32)
+  let mem_rs_entry_at_head := CPU.makeIndexedWires "mem_rs_entry_at_head" 2
   let mem_valid_r := Wire.mk "mem_valid_r"
   let mem_tag_r := CPU.makeIndexedWires "mem_tag_r" 6
   let is_load_r := Wire.mk "is_load_r"
@@ -2136,6 +2244,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                 ("dispatch_valid", rs_mem_dispatch_valid),
                 ("alloc_ptr", rs_mem_alloc_ptr),
                 ("pending_store", Wire.mk "rs_mem_pending_store"),
+                ("entry_at_head_0", mem_rs_entry_at_head[0]!),
+                ("entry_at_head_1", mem_rs_entry_at_head[1]!),
                 ("dispatch_grant_0", rs_mem_grant[0]!),
                 ("dispatch_grant_1", rs_mem_grant[1]!)] ++
                bundledPorts "dispatch_opcode" rs_mem_dispatch_opcode ++
@@ -2278,6 +2388,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_rs3_data := CPU.makeIndexedWires "fp_rs3_data" config.flen
   let fp_rs3_phys := CPU.makeIndexedWires "fp_rs3_phys" 6
   let fp_rvvi_rd_data := CPU.makeIndexedWires "fp_rvvi_rd_data" config.flen
+  let fp_rvvi_rd_data_1 := CPU.makeIndexedWires "fp_rvvi_rd_data_1" config.flen
 
   -- CDB routing: split CDB writes between INT and FP PRFs (2-channel CDB)
   -- We register is_fp per CDB channel and use it to gate PRF writes
@@ -2432,9 +2543,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
        ("commit_hasPhysRd", fp_commit_hasPhysRd)] ++
       bundledPorts "commit_archRd" fp_commit_archRd ++
       bundledPorts "commit_physRd" fp_commit_physRd ++
-      -- CDB: FP domain
-      [("cdb_valid", cdb_valid_fp_prf)] ++
-      bundledPorts "cdb_tag" cdb_tag_fp ++ bundledPorts "cdb_data" cdb_data_fp ++
+      -- CDB: FP domain, one write port per channel.  An FP load and an FP
+      -- operation can complete together, one on each channel; a single port
+      -- would drop one of the two register writes.
+      [("cdb_valid_0", cdb_valid_fp_ch0), ("cdb_valid_1", cdb_valid_fp_ch1)] ++
+      bundledPorts "cdb_tag_0" cdb_tag_0 ++ bundledPorts "cdb_data_0" (cdb_data_0.take config.flen) ++
+      bundledPorts "cdb_tag_1" cdb_tag_1 ++ bundledPorts "cdb_data_1" (cdb_data_1.take config.flen) ++
       -- Retire (free list enqueue)
       bundledPorts "retire_tag" fp_commit_oldPhysRd ++
       -- Stall
@@ -2446,7 +2560,17 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "rd_phys_out" fp_rd_phys ++
       bundledPorts "old_rd_phys_out" fp_old_rd_phys ++
       bundledPorts "rs1_data" fp_rs1_data ++ bundledPorts "rs2_data" fp_rs2_data ++
-      bundledPorts "rd_data3" fp_rs3_data
+      bundledPorts "rd_data3" fp_rs3_data ++
+      -- RVVI: read the committing instruction's FP destination for the trace.
+      -- Port 4 follows slot 0's own commit tag, not the merged FP commit: the
+      -- FP commit channel is single-issue and buffers the second retire, so the
+      -- merged tag can still point at the previous cycle's instruction and the
+      -- trace would report that register instead.  Port 5 follows slot 1
+      -- directly, so a dual FP retire reports both values in the same cycle.
+      bundledPorts "rvvi_tag" commit_physRd_0 ++
+      bundledPorts "rvvi_tag_1" commit_physRd_1 ++
+      bundledPorts "rvvi_data" fp_rvvi_rd_data ++
+      bundledPorts "rvvi_data_1" fp_rvvi_rd_data_1
   }
 
   -- FP dest tag: use FP rd_phys when has_fp_rd, else use INT dest_tag (for mixed ops like FMV.X.W)
@@ -2526,8 +2650,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         (flush_busy_groups.enum.map fun ⟨i, w⟩ => (s!"flush_groups_{i}", w)) ++
         (fp_rd_phys.enum.map fun ⟨i, w⟩ => (s!"set_tag_{i}", w)) ++
         [("set_en", fp_busy_set_en)] ++
-        (cdb_tag_fp.enum.map fun ⟨i, w⟩ => (s!"clear_tag_{i}", w)) ++
-        [("clear_en", cdb_valid_fp_prf)] ++
+        (cdb_tag_0.enum.map fun ⟨i, w⟩ => (s!"clear_tag_{i}", w)) ++
+        [("clear_en", cdb_valid_fp_ch0)] ++
+        (cdb_tag_1.enum.map fun ⟨i, w⟩ => (s!"clear_tag_1_{i}", w)) ++
+        [("clear_en_1", cdb_valid_fp_ch1)] ++
         (fp_rs1_phys.enum.map fun ⟨i, w⟩ => (s!"read1_tag_{i}", w)) ++
         (fp_rs2_phys.enum.map fun ⟨i, w⟩ => (s!"read2_tag_{i}", w)) ++
         (fp_rs3_phys.enum.map fun ⟨i, w⟩ => (s!"read3_tag_{i}", w)) ++
@@ -2723,8 +2849,16 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_rs_dispatch_gate :=
     if enableF then
       let not_fp_eu_busy := Wire.mk "not_fp_eu_busy"
+      let fp_dispatch_hold := Wire.mk "fp_dispatch_hold"      -- issued last cycle
+      let not_fp_dispatch_hold := Wire.mk "not_fp_dispatch_hold"
+      -- fp_busy_eu is registered, so it still reads low in the cycle after an
+      -- operation entered the unit.  Without the hold the station issues a second
+      -- operation into a unit that has no room, the unit drops it, and the entry
+      -- is cleared while its destination stays marked busy for ever
+      -- (rand_0026_b28: unit busy one cycle, two station entries leave).
       [Gate.mkNOT (Wire.mk "fp_busy_eu") not_fp_eu_busy,
-       Gate.mkBUF not_fp_eu_busy fp_rs_dispatch_en]
+       Gate.mkNOT fp_dispatch_hold not_fp_dispatch_hold,
+       Gate.mkAND not_fp_eu_busy not_fp_dispatch_hold fp_rs_dispatch_en]
     else [Gate.mkBUF one fp_rs_dispatch_en]
 
   let fp_rs_cdb_gates : List Gate := []
@@ -2795,6 +2929,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   }
 
   -- FP SRC3 SIDECAR: 2-entry × flen-bit storage for FMA rs3 data
+  let fp_dispatch_hold_dff : CircuitInstance := {
+    moduleName := "DFlipFlop"
+    instName := "u_fp_dispatch_hold"
+    portMap := [("d", Wire.mk "fp_eu_valid_in"), ("q", Wire.mk "fp_dispatch_hold"),
+                ("clock", clock), ("reset", reset)]
+  }
+
   let fp_src3_dispatch := CPU.makeIndexedWires "fp_src3_dispatch" config.flen
   let fp_src3_we := (List.range 2).map (fun slot => Wire.mk s!"fp_src3_we_{slot}")
   let fp_src3_alloc_decode :=
@@ -2955,6 +3096,88 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       bundledPorts "exceptions" fp_exceptions ++
       [("valid_out", fp_valid_out), ("busy", fp_busy_eu),
        ("result_is_int", fp_result_is_int)]
+  }
+
+  -- FP exception side file: written when an FP result completes, read at commit
+  -- so fflags advances with retirement rather than with execution.  Keyed by
+  -- destination physical register, which renaming keeps unique among in-flight
+  -- instructions.
+  let fp_exc_wr := Wire.mk "fp_exc_wr"
+  let fp_exc_commit := CPU.makeIndexedWires "fp_exc_commit" 5
+  let fp_exc_commit_1 := CPU.makeIndexedWires "fp_exc_commit_1" 5
+
+  -- The accumulator takes FP-domain operations, which include the ones whose
+  -- destination is an integer register.  rob_head_is_fp is the destination
+  -- domain and misses those, so the FP-domain bit drives both the enable and
+  -- the exception selection.
+  let fp_flag_commit_0 := Wire.mk "fp_flag_commit_0"
+  let fp_flag_commit_1 := Wire.mk "fp_flag_commit_1"
+  let fp_flag_en := Wire.mk "fp_flag_en"
+  let fp_flag_exc := CPU.makeIndexedWires "fp_flag_exc" 5
+  let fp_flag_gates :=
+    [Gate.mkAND retire_valid_0 rob_head_is_fp_op_0 fp_flag_commit_0,
+     Gate.mkAND retire_valid_1 rob_head_is_fp_op_1 fp_flag_commit_1,
+     Gate.mkOR fp_flag_commit_0 fp_flag_commit_1 fp_flag_en] ++
+    -- The exceptions of the retiring instructions, read from the side file at
+    -- each slot's own physical register and gated by the FP-domain bit.  The
+    -- side file is read unconditionally, so an ungated OR would pick up entries
+    -- left behind by earlier occupants of that register.  The CSR ORs this into
+    -- fflags at the retire enable, so the source must be a committed exception
+    -- and not the exec unit's live output, which belongs to a different
+    -- instruction.
+    --
+    -- The commit condition also gates the value.  The enable alone is not
+    -- enough: a young FP-domain entry that has not executed yet keeps the flags
+    -- of the previous occupant of its physical register, and the FP-domain bit
+    -- is set for it as soon as it is renamed.  Such a slot must not contribute.
+    (List.range 5).map (fun i =>
+      Gate.mkAND rob_head_is_fp_op_0 fp_exc_commit[i]! (Wire.mk s!"fp_exc_h0_{i}")) ++
+    (List.range 5).map (fun i =>
+      Gate.mkAND retire_valid_0 (Wire.mk s!"fp_exc_h0_{i}") (Wire.mk s!"fp_exc_s0_{i}")) ++
+    (List.range 5).map (fun i =>
+      Gate.mkAND rob_head_is_fp_op_1 fp_exc_commit_1[i]! (Wire.mk s!"fp_exc_h1_{i}")) ++
+    (List.range 5).map (fun i =>
+      Gate.mkAND retire_valid_1 (Wire.mk s!"fp_exc_h1_{i}") (Wire.mk s!"fp_exc_s1_{i}")) ++
+    (List.range 5).map (fun i =>
+      Gate.mkOR (Wire.mk s!"fp_exc_s0_{i}") (Wire.mk s!"fp_exc_s1_{i}") fp_flag_exc[i]!)
+  -- Every FP-domain completion, including the ones whose result goes to an
+  -- integer register (fcvt.w.s, feq.s, fle.s, fmv.x.w, fclass.s).  Those
+  -- still raise FP flags, and gating the capture on "not an integer result"
+  -- dropped exactly them.  The exec unit completes only FP-domain work.
+  -- The write enable is the gated FIFO enqueue, built below with the flush
+  -- suppression: a result the flush made stale must not be recorded, because
+  -- its physical destination is recycled and a later instruction reading that
+  -- register at commit would pick up these flags.
+  -- Consume the exceptions at retire.  An FP-domain entry that never executed in
+  -- the FP unit -- a CSR write to fflags, an FP load -- keeps whatever the
+  -- previous occupant of its physical register left in the file, and OR-ing that
+  -- into fflags is the spurious-flag bug.  Zeroing the entry at retire makes a
+  -- later occupant read zero unless its own completion wrote it.  The completion
+  -- keeps priority on the file's single write port so a value arriving in the
+  -- same cycle is not lost.
+  let fp_exc_retire_tag := CPU.makeIndexedWires "fp_exc_retire_tag" 6
+  let fp_exc_wr_tag := CPU.makeIndexedWires "fp_exc_wr_tag" 6
+  let fp_exc_wr_data := CPU.makeIndexedWires "fp_exc_wr_data" 5
+  let fp_exc_retire_gates :=
+    (List.range 6).map (fun i =>
+      Gate.mkMUX commit_physRd_1[i]! commit_physRd_0[i]! fp_flag_commit_1 fp_exc_retire_tag[i]!) ++
+    (List.range 6).map (fun i =>
+      Gate.mkMUX (Wire.mk s!"fp_exc_retire_tag_{i}") fp_tag_out[i]!
+        (Wire.mk "fp_enq_valid_gated") fp_exc_wr_tag[i]!) ++
+    (List.range 5).map (fun i =>
+      Gate.mkMUX zero fp_exceptions[i]! (Wire.mk "fp_enq_valid_gated") fp_exc_wr_data[i]!)
+
+  let fp_exc_file_inst : CircuitInstance := {
+    moduleName := "FPExcFile_64x5"
+    instName := "u_fp_exc"
+    portMap :=
+      [("clock", clock), ("reset", reset), ("wr_en", fp_exc_wr)] ++
+      (fp_exc_wr_tag.enum.map fun ⟨i, w⟩ => (s!"wr_tag_{i}", w)) ++
+      (fp_exc_wr_data.enum.map fun ⟨i, w⟩ => (s!"wr_data_{i}", w)) ++
+      (commit_physRd_0.enum.map fun ⟨i, w⟩ => (s!"rd_tag_{i}", w)) ++
+      (fp_exc_commit.enum.map fun ⟨i, w⟩ => (s!"rd_data_{i}", w)) ++
+      (commit_physRd_1.enum.map fun ⟨i, w⟩ => (s!"rd_tag_1_{i}", w)) ++
+      (fp_exc_commit_1.enum.map fun ⟨i, w⟩ => (s!"rd_data_1_{i}", w))
   }
 
   -- FP result FIFO data assembly
@@ -3272,6 +3495,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let lsu_agu_address := CPU.makeIndexedWires "lsu_agu_address" (if config.xlen == 64 then 64 else 32)
   let lsu_agu_tag := CPU.makeIndexedWires "lsu_agu_tag" 6
   let sb_enq_en := Wire.mk "sb_enq_en"
+
   let commit_store_en := Wire.mk "commit_store_en"  -- TODO: drive from commit control
 
   let store_data_masked := CPU.makeIndexedWires "store_data_masked" (if config.xlen == 64 || config.enableD then 64 else 32)
@@ -3639,7 +3863,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkMUX (Wire.mk "fwd_sz_a") (Wire.mk "fwd_sz_b") mem_size_r[1]! fwd_size_ok
   ]
   let load_fwd_gates := [
-    Gate.mkAND mem_valid_r is_load_r (Wire.mk "load_valid_tmp"),
+    Gate.mkAND mem_valid_r is_load_r (Wire.mk "load_valid_tmp_pre"),
+    Gate.mkAND (Wire.mk "load_valid_tmp_pre") (Wire.mk "not_amo_in_stage")
+      (Wire.mk "load_valid_tmp"),
     Gate.mkAND (Wire.mk "load_valid_tmp") lsu_sb_fwd_hit (Wire.mk "load_fwd_tmp2"),
     Gate.mkAND (Wire.mk "load_fwd_tmp2") fwd_size_ok (Wire.mk "load_fwd_pre_overlap"),
     -- Block SB fwd when there's a partial word overlap
@@ -3650,9 +3876,19 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     Gate.mkAND (Wire.mk "load_fwd_tmp2") (Wire.mk "not_fwd_size_ok") (Wire.mk "cross_size_any"),
     Gate.mkAND (Wire.mk "lsu_sb_fwd_word_only_hit") (Wire.mk "load_valid_tmp") (Wire.mk "word_overlap_stall"),
     Gate.mkOR (Wire.mk "cross_size_any") (Wire.mk "word_overlap_stall") cross_size_stall,
-    -- Store completion: mem_valid_r AND NOT is_load_r
+    -- Store completion: mem_valid_r AND NOT is_load_r, and not an AMO.
+    -- An AMO is classed as a store at the memory stage, and this path then
+    -- broadcasts the value the read-modify-write is about to write as though it
+    -- were the instruction's result, racing the atomic unit's own writeback of the
+    -- old value (rand_0008_s3: "cy256 lsu tag31=0x1" for an AMO the reference
+    -- reports as 0).  SC must keep this path -- it broadcasts its success there --
+    -- and LR is a plain load, so only the AMO encoding is excluded: the atomic
+    -- code is LR = {c0,~c1}, SC = {~c0,c1}, AMO = {c0,c1} (CPUHelpers 1711-1716).
     Gate.mkNOT is_load_r not_is_load_r,
-    Gate.mkAND mem_valid_r not_is_load_r store_complete_valid,
+    Gate.mkAND (Wire.mk "atom_code_r_0") (Wire.mk "atom_code_r_1") (Wire.mk "amo_in_stage"),
+    Gate.mkNOT (Wire.mk "amo_in_stage") (Wire.mk "not_amo_in_stage"),
+    Gate.mkAND not_is_load_r (Wire.mk "not_amo_in_stage") (Wire.mk "not_load_or_amo"),
+    Gate.mkAND mem_valid_r (Wire.mk "not_load_or_amo") store_complete_valid,
     -- LSU valid = load fwd OR store complete
     Gate.mkOR load_fwd_valid store_complete_valid lsu_valid
   ]
@@ -3681,6 +3917,32 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      else [])
 
   -- === A EXTENSION: ATOMIC UNIT ===
+  -- === ATOMIC HEAD HOLD ===
+  -- An atomic executes speculatively and its read-modify-write cannot be undone,
+  -- so an atomic that an older redirect discards would leave its own write in
+  -- memory and then read it back on re-execution.  Each memory-RS entry carries
+  -- its instruction's ROB index (issued alongside the immediate, like `imm_rf`)
+  -- and the entry is held back until that index is the ROB head: an atomic then
+  -- runs exactly once, and no older memory op is ever blocked behind it.
+  let atom_rob_idx_w := 4
+  let rs_mem_disp_rob_idx := CPU.makeIndexedWires "rs_mem_disp_rob_idx" atom_rob_idx_w
+  let mem_disp_rob_idx := CPU.makeIndexedWires "mem_disp_rob_idx" atom_rob_idx_w
+  let mem_disp_rob_idx_gates := (List.range atom_rob_idx_w).map (fun i =>
+    Gate.mkMUX rob_alloc_idx_0[i]! rob_alloc_idx_1[i]! mem_route_sel mem_disp_rob_idx[i]!)
+  let (atom_rob_rf_gates, atom_rob_rf_entries) :=
+    mkSidecarRegFile2xW "atom_rob_rf" atom_rob_idx_w clock reset
+      rs_mem_alloc_ptr mem_dispatch_valid mem_disp_rob_idx rs_mem_grant[1]! rs_mem_disp_rob_idx
+  let mem_rs_entry_at_head_gates := (List.range 2).flatMap (fun e =>
+    let entry_idx := atom_rob_rf_entries[e]!
+    (List.range atom_rob_idx_w).flatMap (fun i =>
+      [Gate.mkXOR entry_idx[i]! rob_head_idx_0[i]! (Wire.mk s!"mem_rs_e{e}_x{i}"),
+       Gate.mkNOT (Wire.mk s!"mem_rs_e{e}_x{i}") (Wire.mk s!"mem_rs_e{e}_n{i}")]) ++
+    [Gate.mkAND (Wire.mk s!"mem_rs_e{e}_n0") (Wire.mk s!"mem_rs_e{e}_n1") (Wire.mk s!"mem_rs_e{e}_a01"),
+     Gate.mkAND (Wire.mk s!"mem_rs_e{e}_n2") (Wire.mk s!"mem_rs_e{e}_n3") (Wire.mk s!"mem_rs_e{e}_a23"),
+     Gate.mkAND (Wire.mk s!"mem_rs_e{e}_a01") (Wire.mk s!"mem_rs_e{e}_a23") (Wire.mk s!"mem_rs_e{e}_eq"),
+     Gate.mkAND (Wire.mk s!"mem_rs_e{e}_eq") rob_head_valid_0 mem_rs_entry_at_head[e]!])
+  let atom_head_gates := mem_disp_rob_idx_gates ++ atom_rob_rf_gates ++ mem_rs_entry_at_head_gates
+
   let atomic_unit := mkAtomicUnit clock reset zero one
     rs_mem_dispatch_valid (Wire.mk "mem_dispatch_en_any")
     is_lr is_sc is_amo is_atomic_d amo_funct rs_mem_dispatch_src2
@@ -4017,12 +4279,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       -- Suppress = drain mode only (shift register is too aggressive for single-cycle FP ops)
       [Gate.mkBUF fp_drain_mode fp_stale_suppress,
        Gate.mkNOT fp_stale_suppress not_fp_stale_suppress,
-       Gate.mkAND fp_valid_out not_fp_stale_suppress fp_enq_valid_gated]
+       Gate.mkAND fp_valid_out not_fp_stale_suppress fp_enq_valid_gated,
+       Gate.mkOR fp_flag_commit_0 fp_flag_commit_1 (Wire.mk "fp_exc_wr_retire"),
+       Gate.mkOR fp_enq_valid_gated (Wire.mk "fp_exc_wr_retire") fp_exc_wr]
     else
       [Gate.mkBUF zero fp_flush_suppress,
        Gate.mkBUF zero fp_drain_mode,
        Gate.mkBUF zero fp_stale_suppress,
-       Gate.mkBUF zero fp_enq_valid_gated] ++
+       Gate.mkBUF zero fp_enq_valid_gated,
+       Gate.mkBUF zero fp_exc_wr] ++
       (List.range 5).map (fun i => Gate.mkBUF zero fp_flush_sr[i]!) ++
       [Gate.mkBUF zero fp_drain_mode_d, Gate.mkBUF zero fp_drain_hold,
        Gate.mkBUF zero not_fp_stale_suppress]
@@ -4369,8 +4634,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     [Gate.mkMUX mem_size_r[0]! sb_deq_size_0 lsu_sb_deq_valid (Wire.mk "dmem_msize0"),
      Gate.mkMUX mem_size_r[1]! sb_deq_size_1 lsu_sb_deq_valid (Wire.mk "dmem_msize1"),
      -- Atomic writes use mem_size_r; SB drains use sb_deq_size; reads use mem_size_r
-     Gate.mkBUF (Wire.mk "dmem_msize0") dmem_req_size[0]!,
-     Gate.mkBUF (Wire.mk "dmem_msize1") dmem_req_size[1]!]
+     -- An atomic's own width, registered with its operands.  Taking the size
+     -- from the live memory stage instead made a .W atomic a doubleword write:
+     -- it clobbered the upper half of the location, and the word it then held
+     -- was not the word the atomic reports having read.
+     Gate.mkMUX (Wire.mk "dmem_msize0") (Wire.mk "atom_d_r") (Wire.mk "atom_aw_pending") (Wire.mk "dmem_size_aw0"),
+     Gate.mkMUX (Wire.mk "dmem_msize1") one (Wire.mk "atom_aw_pending") (Wire.mk "dmem_size_aw1"),
+     Gate.mkBUF (Wire.mk "dmem_size_aw0") dmem_req_size[0]!,
+     Gate.mkBUF (Wire.mk "dmem_size_aw1") dmem_req_size[1]!]
 
   -- === CSR REGISTER FILE + EXECUTE LOGIC (W2) ===
   -- CSR drain_complete: fires when pipeline fully drained AND the serialized op was a CSR
@@ -4388,6 +4659,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let csr_cdb_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_cdb_dt_e{i}")
   let frm_reg := CPU.makeIndexedWires "frm_reg" 3
   let fflags_reg := CPU.makeIndexedWires "fflags_reg" 5
+  let fflags_new := CPU.makeIndexedWires "fflags_new" 5
+  let fflags_0 := CPU.makeIndexedWires "fflags_0" 5
+  let fflags_1 := CPU.makeIndexedWires "fflags_1" 5
   let irq_pending := Wire.mk "irq_pending"
 
   let csr_inst : CircuitInstance := {
@@ -4421,8 +4695,11 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      ("msip_in", Wire.mk "msip_in"),
      ("meip_in", Wire.mk "meip_in")] ++
     (if enableF then
-      [("fp_valid_out", fp_valid_out)] ++
-      (fp_exceptions.enum.map fun ⟨i, w⟩ => (s!"fp_exceptions_{i}", w))
+      [("fp_valid_out", fp_flag_en)] ++
+      (fp_flag_exc.enum.map fun ⟨i, w⟩ => (s!"fp_exceptions_{i}", w)) ++
+      (fp_exc_commit.enum.map fun ⟨i, w⟩ => (s!"fp_exc_0_{i}", w)) ++
+      (fp_exc_commit_1.enum.map fun ⟨i, w⟩ => (s!"fp_exc_1_{i}", w)) ++
+      [("fp_is_fp_0", rob_head_is_fp_op_0), ("fp_is_fp_1", rob_head_is_fp_op_1)]
     else []) ++
     [("csr_cdb_inject", csr_cdb_inject),
      ("csr_rd_nonzero", csr_rd_nonzero)] ++
@@ -4430,6 +4707,9 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     (csr_cdb_data.enum.map fun ⟨i, w⟩ => (s!"csr_cdb_data_{i}", w)) ++
     (frm_reg.enum.map fun ⟨i, w⟩ => (s!"frm_{i}", w)) ++
     (fflags_reg.enum.map fun ⟨i, w⟩ => (s!"fflags_{i}", w)) ++
+    (fflags_new.enum.map fun ⟨i, w⟩ => (s!"fflags_new_{i}", w)) ++
+    (fflags_0.enum.map fun ⟨i, w⟩ => (s!"fflags_0_{i}", w)) ++
+    (fflags_1.enum.map fun ⟨i, w⟩ => (s!"fflags_1_{i}", w)) ++
     [("irq_pending", irq_pending)]
   }
 
@@ -4529,6 +4809,20 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let rvvi_rd_1       := CPU.makeIndexedWires "rvvi_rd_1" 5
   let rvvi_rd_data_0  := CPU.makeIndexedWires "rvvi_rdd_0" (if config.xlen == 64 then 64 else 32)
   let rvvi_rd_data_1  := CPU.makeIndexedWires "rvvi_rdd_1" (if config.xlen == 64 then 64 else 32)
+
+  -- RVVI register-class coverage.  is_fp says which register file the retiring
+  -- instruction wrote, so the harness can stop comparing an FP destination
+  -- against the integer register file; fflags carries the FP exception flags,
+  -- which were otherwise invisible to every test.
+  let rvvi_is_fp_0 := Wire.mk "rvvi_is_fpS0"
+  let rvvi_is_fp_1 := Wire.mk "rvvi_is_fpS1"
+  let rvvi_fflags := (List.range 5).map (fun i => Wire.mk s!"rvvi_fflags_{i}")
+  let rvvi_fflags_slot1 := (List.range 5).map (fun i => Wire.mk s!"rvvi_fflags_slot1_{i}")
+  -- FP register value of the committing instruction, one port per retire
+  -- slot: the FP commit channel is single-issue, so a dual FP retire needs
+  -- both to be reported in the cycle the instructions retire.
+  let rvvi_fp_rd_data := (List.range config.flen).map (fun i => Wire.mk s!"rvvi_fprd_{i}")
+  let rvvi_fp_rd_data_1 := (List.range config.flen).map (fun i => Wire.mk s!"rvvi_fprd_slot1_{i}")
 
   -- PC Queue (dual-port: 2 writes at dispatch, 2 reads at commit)
   -- Use intermediate wires for queue output so we can MUX with CSR PC for RVVI
@@ -4631,6 +4925,19 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       (List.range 32).map (fun i => Gate.mkBUF rob_insn_0[i]! rvvi_insn_0[i]!) ++
       (List.range 32).map (fun i => Gate.mkBUF rob_insn_1[i]! rvvi_insn_1[i]!)
 
+  -- is_fp mirrors the retiring instruction's FP-ness; fflags is the CSR's
+  -- accumulated exception-flag register, exposed so it can be compared.
+  let rvvi_class_gates :=
+    [Gate.mkBUF rob_head_is_fp_0 rvvi_is_fp_0,
+     Gate.mkBUF rob_head_is_fp_1 rvvi_is_fp_1] ++
+    -- One value per retire slot: the two slots retire different instructions
+    -- and therefore have different flags.  The interface is parameterized
+    -- across slots, so a single signal could not be correct for both.
+    (List.range 5).map (fun i => Gate.mkBUF fflags_0[i]! rvvi_fflags[i]!) ++
+    (List.range 5).map (fun i => Gate.mkBUF fflags_1[i]! rvvi_fflags_slot1[i]!) ++
+    (rvvi_fp_rd_data.enum.map fun ⟨i, w⟩ => Gate.mkBUF fp_rvvi_rd_data[i]! w) ++
+    (rvvi_fp_rd_data_1.enum.map fun ⟨i, w⟩ => Gate.mkBUF fp_rvvi_rd_data_1[i]! w)
+
   -- === OUTPUT BUFFERS ===
   let global_stall_out := Wire.mk "global_stall_out"
   let output_gates := [Gate.mkBUF global_stall global_stall_out]
@@ -4652,6 +4959,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                rvvi_pc_rdata_0 ++ rvvi_pc_rdata_1 ++
                rvvi_insn_0 ++ rvvi_insn_1 ++
                rvvi_rd_0 ++ rvvi_rd_1 ++
+               [rvvi_is_fp_0, rvvi_is_fp_1] ++ rvvi_fflags ++ rvvi_fflags_slot1 ++
+               rvvi_fp_rd_data ++ rvvi_fp_rd_data_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := flush_gate ++ fetch_stall_gates ++ fetch_valid_gates ++ dispatch_gates ++ has_rd_int_gates ++ rd_nox0_gates ++ rob_hasPhysRd_gates ++
              icache_fence_gates ++
@@ -4683,7 +4992,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fwd_size_check_gates ++ load_no_fwd_gates ++ dmem_pending_gates ++ dmem_tag_capture_gates ++
              dmem_is_fp_gates ++
              lsu_sb_fwd_format_all ++ load_fwd_gates ++ lsu_tag_data_gates ++ sc_lsu_data_gates ++
-             lr_match_gates ++ sc_match_gates ++ amo_match_gates ++ atomic_d_match_gates ++ amo_funct_gates ++ atomic_read_gates ++ atomic_gates ++
+             lr_match_gates ++ sc_match_gates ++ amo_match_gates ++ atomic_d_match_gates ++ amo_funct_gates ++ atomic_read_gates ++ atomic_gates ++ atom_head_gates ++
              lsu_is_fp_gates ++ lsu_is_double_gates ++
              dmem_meta_capture_gates ++ dmem_resp_format_all ++ dmem_valid_gate_gates ++
              ib0_fifo_enq_assemble ++ ib1_merge_gates ++ ib1_fifo_enq_assemble ++
@@ -4697,15 +5006,15 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
              fpu_lut_gates ++ fp_rs_dispatch_gate ++ fp_rs_cdb_gates ++ fp_supp_gates ++
              fp_src3_alloc_decode ++ fp_src3_alloc_cdb_gates ++ fp_src3_cdb_data_mux ++ fp_src3_dff_gates ++ fp_src3_read_gates ++
              rm_resolve_gates ++ fp_rm_alloc_decode ++ fp_rm_dff_gates ++ fp_rm_read_gates ++
-             fp_op_gates ++ fp_flush_reset_gates ++
-             rs_full_gates ++ clb_gates ++ stall_gates ++ dmem_gates ++ rvvi_gates ++ rvvi_pc_insn_gates ++ output_gates ++
+             fp_op_gates ++ fp_flag_gates ++ fp_exc_retire_gates ++ fp_flush_reset_gates ++
+             rs_full_gates ++ clb_gates ++ stall_gates ++ dmem_gates ++ rvvi_gates ++ rvvi_pc_insn_gates ++ rvvi_class_gates ++ output_gates ++
              fi_match_0 ++ fi_match_1 ++
              ecall_m0 ++ ecall_m1 ++
              mret_m0 ++ mret_m1 ++ wfi_m0 ++ wfi_m1 ++
              csrrw_m0 ++ csrrs_m0 ++ csrrc_m0 ++ csrrwi_m0 ++ csrrsi_m0 ++ csrrci_m0 ++
              csrrw_m1 ++ csrrs_m1 ++ csrrc_m1 ++ csrrwi_m1 ++ csrrsi_m1 ++ csrrci_m1 ++
              cdb_tag_nz_gates ++
-             csr_detect_gates ++ ser_detect_gates ++ ser_fsm_gates ++
+             csr_detect_gates ++ csr_ro_write_gates ++ ser_detect_gates ++ ser_fsm_gates ++
              ser_pc_mux_gates ++ cdb_fwd_rs1_gates ++ ser_capture_gates ++
              trap_rom_gates ++
              csr_all_gates ++
@@ -4715,7 +5024,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     instances := [fetch_inst, dec0_inst, dec1_inst, rename_inst,
                   rs_int_inst, rs_br_inst, rs_mem_inst] ++
                  (if enableM then [rs_muldiv_inst] else []) ++
-                 (if enableF then [rs_fp_inst, fp_rename_inst, fp_exec_inst] else []) ++
+                 (if enableF then [rs_fp_inst, fp_rename_inst, fp_exec_inst, fp_exc_file_inst] else []) ++
                  fpu_lut_inst ++
                  [alu_lut_inst0, alu_lut_inst1, exec_inst, auipc_adder_0_inst, auipc_adder_1_inst,
                   branch_exec_inst, br_pc_plus_4_adder, br_target_adder, jalr_target_adder, br_cmp_inst,
@@ -4723,7 +5032,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
                  (if enableM then [muldiv_exec_inst] ++ muldiv_lut_inst else []) ++
                  [rob_inst, lsu_inst] ++
                  atomic_insts ++ amo_lut_inst ++
-                 [redirect_valid_dff_inst, flush_dff_dispatch] ++
+                 [redirect_valid_dff_inst, flush_dff_dispatch, fp_dispatch_hold_dff] ++
                  flush_dff_insts ++ flush_busy_dff_insts ++
                  redirect_target_dff_insts ++
                  [busy_inst] ++ fp_busy_instances ++ fp_cdb_fwd_instances ++

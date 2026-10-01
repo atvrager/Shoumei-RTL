@@ -79,10 +79,12 @@ import Shoumei.Circuits.Sequential.FPDividerDProofs
 import Shoumei.Circuits.Sequential.FPFMA
 import Shoumei.Circuits.Sequential.FPFMAD
 import Shoumei.Circuits.Sequential.FPFMADProofs
+import Shoumei.Circuits.Sequential.FPFMAProofs
 import Shoumei.Circuits.Sequential.FPMultiplier
 import Shoumei.Circuits.Sequential.FPMultiplierD
 import Shoumei.Circuits.Sequential.FPMultiplierDProofs
 import Shoumei.Circuits.Sequential.FPMultiplierProofs
+import Shoumei.Circuits.Sequential.FPNormalize
 import Shoumei.Circuits.Sequential.FPSqrt
 import Shoumei.Circuits.Sequential.FPSqrtD
 import Shoumei.Circuits.Sequential.FPSqrtDProofs

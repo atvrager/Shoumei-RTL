@@ -26,7 +26,7 @@ theorem fpClass_inputs : fpClassCircuit.inputs.length = 32 := by native_decide
 theorem fpClass_outputs : fpClassCircuit.outputs.length = 10 := by native_decide
 
 theorem fpCvtInt_name : fpCvtIntCircuit.name = "FPCvtInt" := by rfl
-theorem fpCvtInt_inputs : fpCvtIntCircuit.inputs.length = 39 := by native_decide
+theorem fpCvtInt_inputs : fpCvtIntCircuit.inputs.length = 42 := by native_decide
 theorem fpCvtInt_outputs : fpCvtIntCircuit.outputs.length = 34 := by native_decide
 
 end Shoumei.Circuits.Combinational

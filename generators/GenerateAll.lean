@@ -212,6 +212,7 @@ def baseCircuits : List Circuit := [
   mkMux32x6,
   mkMux64x32Hierarchical,  -- Hierarchical version (9 instances instead of 8064 gates)
   mkMux64x64Hierarchical,  -- Hierarchical version 64-bit
+  mkMuxTree 64 5,          -- FPExcFile_64x5 readout
   mkPriorityArbiter2,
   mkPriorityArbiter8,
   mkPriorityArbiter64,  -- Bitmap free list allocation
@@ -231,6 +232,7 @@ def baseCircuits : List Circuit := [
   mkRegisterN 8,
   mkRegisterN 12,
   mkRegisterN 16,
+  mkRegisterN 5,   -- FP exception side file (FPExcFile_64x5 entries)
   mkRegisterN 24,  -- ROB16_W2 PC array
   mkRegisterN 32,
   mkRegisterN 64,
@@ -264,6 +266,7 @@ def baseCircuits : List Circuit := [
   mkIntPhysRegFile 64 64,
   mkFPPhysRegFile 64 32,
   mkFPPhysRegFile 64 64,
+  mkFPExcFile 64 5,  -- FP exception flags keyed by destination phys reg
 
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
@@ -435,6 +438,16 @@ def main (args : List String) : IO Unit := do
     let rc ← Shoumei.Verification.DualRTL.checkSpecs allCircuits
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
+  if args.contains "--check-drivers" then
+    let clashes := Shoumei.DSL.PortResolve.checkRegistryDrivers allCircuits
+    if clashes.isEmpty then
+      IO.println s!"✓ No wire in {allCircuits.length} circuits has more than one driver"
+      return
+    else
+      IO.eprintln s!"✗ Driver check failed: {clashes.length} multiply-driven wires:"
+      for c in clashes do
+        IO.eprintln s!"  {c.moduleName}: {c.wireName} ({c.drivers} drivers)"
+      IO.Process.exit 1
   if args.contains "--check-wiring" then
     let missing := Shoumei.DSL.PortResolve.checkRegistryWiring allCircuits
     if missing.isEmpty then
@@ -485,6 +498,18 @@ def main (args : List String) : IO Unit := do
     IO.println "  (--force: regenerating all circuits)"
   IO.println ""
 
+  -- A wire with two drivers is a modelling error that proofs do not catch: the
+  -- emitted SystemVerilog just gets two continuous assignments for the net. Fail
+  -- before writing anything rather than ship a netlist whose value depends on
+  -- evaluation order.
+  let driverClashes := Shoumei.DSL.PortResolve.checkRegistryDrivers allCircuits
+  if !driverClashes.isEmpty then
+    IO.eprintln s!"✗ {driverClashes.length} wire(s) are driven more than once; refusing to generate:"
+    for c in driverClashes do
+      IO.eprintln s!"  {c.moduleName}: {c.wireName} ({c.drivers} drivers)"
+    IO.eprintln "  Each wire is a single net, so a second driver silently overrides the first."
+    IO.Process.exit 1
+
   -- Initialize output directories
   initOutputDirs
 
@@ -498,7 +523,7 @@ def main (args : List String) : IO Unit := do
   for c in allCircuits do
     let wasCached ← if !force then
       if let some h := Shoumei.Codegen.Unified.lookupHash hashMap c.name then
-        isUpToDate c.name h
+        isUpToDate c.name h (Shoumei.Codegen.Unified.emittedPaths c)
       else pure false
     else pure false
     writeCircuit c allCircuits force hashMap loadedMap

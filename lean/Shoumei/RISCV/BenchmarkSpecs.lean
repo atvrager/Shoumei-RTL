@@ -759,13 +759,15 @@ def marchPrefix (spec : BenchmarkSpec) : String :=
 def emitAll (config : CPUConfig := defaultCPUConfig)
     (iters : Nat := BENCH_ITERS)
     (asmDir : String := benchAsmDir)
-    (outDir : String := benchOutDir)
-    (dictPath : System.FilePath := Shoumei.RISCV.instrDictPath) : IO Unit := do
-  let opcodesPath := dictPath
+    (outDir : String := benchOutDir) : IO Unit := do
+  let opcodesPath := Shoumei.RISCV.instrDictPath
   unless (← opcodesPath.pathExists) do
-    throw <| IO.userError s!"instr_dict.json not found at {opcodesPath}. Run 'bazel build //generators:instr_dict' first."
+    IO.println "  instr_dict.json not found, running 'make opcodes'..."
+    let result ← IO.Process.run { cmd := "make", args := #["opcodes"] }
+    unless result.isEmpty do
+      IO.println result
   let rawDefs ← loadInstrDictFromFile opcodesPath
-  let defs ← loadInstrDefsForConfig config opcodesPath
+  let defs ← loadInstrDefsForConfig config
   let specs := computeSpecs defs
 
   -- Validate every sample encoding: a wrong sample is a wrong benchmark.

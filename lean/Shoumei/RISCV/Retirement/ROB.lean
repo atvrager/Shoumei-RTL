@@ -499,6 +499,11 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let alloc_archRd_0    := mkWires2 "alloc_archRd_0" 5
   let alloc_isBranch_0  := Wire.mk "alloc_isBranch_0"
   let alloc_is_fp_0     := Wire.mk "alloc_is_fp_0"
+  -- FP-domain operation: uses the FP unit and therefore raises FP flags,
+  -- regardless of whether its destination is an FP register.  fcvt.w.s,
+  -- feq.s, fle.s, fmv.x.w and fclass.s write an integer register but still
+  -- set fflags, and rob_head_is_fp (the destination domain) misses them.
+  let alloc_is_fp_op_0  := Wire.mk "alloc_is_fp_op_0"
   let alloc_idx_0       := mkWires2 "alloc_idx_0" 4
 
   -- === Alloc Slot 1 ===
@@ -510,6 +515,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let alloc_archRd_1    := mkWires2 "alloc_archRd_1" 5
   let alloc_isBranch_1  := Wire.mk "alloc_isBranch_1"
   let alloc_is_fp_1     := Wire.mk "alloc_is_fp_1"
+  let alloc_is_fp_op_1  := Wire.mk "alloc_is_fp_op_1"
   let alloc_idx_1       := mkWires2 "alloc_idx_1" 4
 
   -- === CDB Interface (W=2) ===
@@ -524,6 +530,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
 
   -- Internal is_fp_shadow DFFs (managed per-entry)
   let is_fp_shadow  := (List.range 16).map (fun i => Wire.mk s!"e{i}_isfp")
+  let is_fp_op_shadow := (List.range 16).map (fun i => Wire.mk s!"e{i}_isfpop")
   -- Output: head entry is_fp readout
   let head_is_fp_0 := Wire.mk "head_is_fp_0"
   let head_is_fp_1 := Wire.mk "head_is_fp_1"
@@ -703,8 +710,9 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     let (g_archRd, sel_archRd)   := sel5 "ar"  alloc_archRd_0  alloc_archRd_1
     let (g_isBr, sel_isBr)       := sel "ibr"  alloc_isBranch_0 alloc_isBranch_1
     let (g_isFp, sel_isFp)       := sel "ifp"  alloc_is_fp_0 alloc_is_fp_1
+    let (g_isFpOp, sel_isFpOp)   := sel "ifpo" alloc_is_fp_op_0 alloc_is_fp_op_1
 
-    let sel_gates := g_physRd ++ [g_hasPhRd] ++ g_oldPhRd ++ [g_hasOPR] ++ g_archRd ++ [g_isBr, g_isFp]
+    let sel_gates := g_physRd ++ [g_hasPhRd] ++ g_oldPhRd ++ [g_hasOPR] ++ g_archRd ++ [g_isBr, g_isFp, g_isFpOp]
     let sel_hasPhRd_w := sel_hasPhRd
     let sel_isBr_w    := sel_isBr
 
@@ -809,6 +817,13 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
       Gate.mkDFF is_fp_next clock rb[i]! is_fp_shadow[i]!
     ]
 
+    -- is_fp_op DFF: same shape, for the FP-domain bit the flag commit needs
+    let is_fp_op_next := Wire.mk s!"e{i}_fpop_nx"
+    let is_fp_op_gates := [
+      Gate.mkMUX is_fp_op_shadow[i]! sel_isFpOp awe is_fp_op_next,
+      Gate.mkDFF is_fp_op_next clock rb[i]! is_fp_op_shadow[i]!
+    ]
+
     let reg_inst : CircuitInstance := {
       moduleName := "Register24"
       instName := s!"u_entry{i}"
@@ -822,7 +837,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
       awe_gates ++ sel_gates ++ cdb_we_gates ++ cc_gates ++
       [clear_gate] ++ valid_gates ++ comp_gates ++
       physRd_gates ++ [hasPR_gate] ++ oldPR_gates ++ [hasOPR_gate] ++
-      archRd_gates ++ exc_gates ++ [isBr_gate] ++ misp_gates ++ is_fp_gates
+      archRd_gates ++ exc_gates ++ [isBr_gate] ++ misp_gates ++ is_fp_gates ++ is_fp_op_gates
 
     (entry_gates, [cmp0_inst, cmp1_inst, reg_inst], e_cur)
 
@@ -869,6 +884,8 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let hopr0  := mkWires2 "head_oldPhysRd_0" 6; let hhopr0 := Wire.mk "head_hasOldPhysRd_0"
   let har0   := mkWires2 "head_archRd_0" 5
   let hexc0  := Wire.mk "head_exception_0"; let hibr0  := Wire.mk "head_isBranch_0"
+  let hfpop0 := Wire.mk "head_is_fp_op_0"
+  let hfpop1 := Wire.mk "head_is_fp_op_1"
   let hmisp0 := Wire.mk "head_mispredicted_0"
 
   -- === Commit Slot 1 Outputs ===
@@ -886,11 +903,13 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let opr_mux_1 := mkMuxReadout2 "u_mux_opr_1" "Mux16x6" 9  6 head1_ptr hopr1
   let ar_mux_1  := mkMuxReadout2 "u_mux_ar_1"  "Mux16x5" 16 5 head1_ptr har1
 
-  -- is_fp readout: OR-tree on is_fp_shadow DFF outputs for head entries
-  let mkFpReadout (pfx : String) (dec : List Wire) (out : Wire) : List Gate :=
+  -- is_fp / is_fp_op readout: OR-tree on the selected shadow array for head entries.
+  -- The array is a parameter: the FP-domain readout must read is_fp_op_shadow, not
+  -- is_fp_shadow, or the flag commit sees the destination domain instead.
+  let mkFpReadout (pfx : String) (dec : List Wire) (shadows : List Wire) (out : Wire) : List Gate :=
     let ands := (List.range 16).map fun i =>
       let w := Wire.mk s!"{pfx}_fp_a{i}"
-      (Gate.mkAND dec[i]! is_fp_shadow[i]! w, w)
+      (Gate.mkAND dec[i]! shadows[i]! w, w)
     let l2 := (List.range 8).map fun i =>
       let w := Wire.mk s!"{pfx}_fp_l2_{i}"
       (Gate.mkOR (ands.map Prod.snd)[2*i]! (ands.map Prod.snd)[2*i+1]! w, w)
@@ -911,7 +930,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     mkBitReadout2 "s0" "exc"      commit_dec_0 21 hexc0 ++
     mkBitReadout2 "s0" "isBr"     commit_dec_0 22 hibr0 ++
     mkBitReadout2 "s0" "misp"     commit_dec_0 23 hmisp0 ++
-    mkFpReadout "s0" commit_dec_0 head_is_fp_0
+    mkFpReadout "s0" commit_dec_0 is_fp_shadow head_is_fp_0
   let ro1 :=
     mkBitReadout2 "s1" "valid"    commit_dec_1 0  hv1   ++
     mkBitReadout2 "s1" "complete" commit_dec_1 1  hcmp1 ++
@@ -920,7 +939,9 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     mkBitReadout2 "s1" "exc"      commit_dec_1 21 hexc1 ++
     mkBitReadout2 "s1" "isBr"     commit_dec_1 22 hibr1 ++
     mkBitReadout2 "s1" "misp"     commit_dec_1 23 hmisp1 ++
-    mkFpReadout "s1" commit_dec_1 head_is_fp_1
+    mkFpReadout "s1" commit_dec_1 is_fp_shadow head_is_fp_1 ++
+    mkFpReadout "s0o" commit_dec_0 is_fp_op_shadow hfpop0 ++
+    mkFpReadout "s1o" commit_dec_1 is_fp_op_shadow hfpop1
 
   -- === Head/Tail Pointer + Counter: DFF-based dual-increment ===
   -- Helper: 4-bit ripple-carry adder (a + b, cin=0), returns (sum_wires, gates)
@@ -1021,9 +1042,9 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
   let all_inputs2 :=
     [clock, reset, zero, one,
      alloc_en_0] ++ alloc_physRd_0 ++ [alloc_hasPhysRd_0] ++
-    alloc_oldPhysRd_0 ++ [alloc_hasOldPR_0] ++ alloc_archRd_0 ++ [alloc_isBranch_0, alloc_is_fp_0] ++
+    alloc_oldPhysRd_0 ++ [alloc_hasOldPR_0] ++ alloc_archRd_0 ++ [alloc_isBranch_0, alloc_is_fp_0, alloc_is_fp_op_0] ++
     [alloc_en_1] ++ alloc_physRd_1 ++ [alloc_hasPhysRd_1] ++
-    alloc_oldPhysRd_1 ++ [alloc_hasOldPR_1] ++ alloc_archRd_1 ++ [alloc_isBranch_1, alloc_is_fp_1] ++
+    alloc_oldPhysRd_1 ++ [alloc_hasOldPR_1] ++ alloc_archRd_1 ++ [alloc_isBranch_1, alloc_is_fp_1, alloc_is_fp_op_1] ++
     [cdb_valid_0] ++ cdb_tag ++ [cdb_is_fp_0] ++
     [cdb_valid_1] ++ cdb_tag_1 ++ [cdb_mispred_1, cdb_is_fp_1] ++
     [commit_en_0, commit_en_1, flush_en]
@@ -1033,7 +1054,7 @@ def mkROB16 (_width : Nat := 2) : Circuit :=
     head_idx_0 ++ head_idx_1 ++
     [hv0, hcmp0] ++ hpr0 ++ [hhpr0] ++ hopr0 ++ [hhopr0] ++ har0 ++ [hexc0, hibr0, hmisp0] ++
     [hv1, hcmp1] ++ hpr1 ++ [hhpr1] ++ hopr1 ++ [hhopr1] ++ har1 ++ [hexc1, hibr1, hmisp1] ++
-    [head_is_fp_0, head_is_fp_1]
+    [head_is_fp_0, head_is_fp_1, hfpop0, hfpop1]
 
   let all_gates2 :=
     tail1_gates ++ head1_gates ++ count_ge2_gates ++ count_safe_gates ++

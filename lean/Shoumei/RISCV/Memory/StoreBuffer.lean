@@ -418,7 +418,15 @@ def mkStoreBuffer8 : Circuit :=
   let flush_apply_gates := [
     Gate.mkNOT pc_nz (Wire.mk "not_pc_nz"),
     Gate.mkNOT commit_en (Wire.mk "not_commit_en_for_flush"),
-    Gate.mkAND (Wire.mk "not_pc_nz") (Wire.mk "not_commit_en_for_flush") flush_quiescent,
+    -- An empty buffer owes no commit, so the flush may proceed whatever the
+    -- counter says.  The counter can hold a nonzero count with the buffer empty:
+    -- the commit owed to an entry whose carrier retired before it landed never
+    -- arrives, and the counter only decrements on a later commit or a dequeue.
+    -- Waiting on ~pc_nz then waits for a commit that the flush itself is stalling,
+    -- so the flush never applies and the pipeline wedges (rand_0025_b1: rob_empty,
+    -- empty, flush_pending all settled and no commit in flight).
+    Gate.mkOR (Wire.mk "not_pc_nz") empty (Wire.mk "no_commit_owed"),
+    Gate.mkAND (Wire.mk "no_commit_owed") (Wire.mk "not_commit_en_for_flush") flush_quiescent,
     Gate.mkOR flush_en flush_pending flush_req,
     Gate.mkAND flush_req flush_quiescent flush_apply,
     Gate.mkNOT flush_apply not_flush_apply,

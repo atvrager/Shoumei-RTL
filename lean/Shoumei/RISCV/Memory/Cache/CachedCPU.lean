@@ -100,6 +100,12 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
   let rvvi_rd_1 := makeIndexedWires "rvvi_rd_1" 5
   let rvvi_rd_data_0 := makeIndexedWires "rvvi_rdd_0" config.xlen
   let rvvi_rd_data_1 := makeIndexedWires "rvvi_rdd_1" config.xlen
+  let rvvi_is_fp_0 := Wire.mk "rvvi_is_fpS0"
+  let rvvi_is_fp_1 := Wire.mk "rvvi_is_fpS1"
+  let rvvi_fflags := makeIndexedWires "rvvi_fflags" 5
+  let rvvi_fflags_slot1 := makeIndexedWires "rvvi_fflags_slot1" 5
+  let rvvi_fp_rd_data := makeIndexedWires "rvvi_fprd" config.flen
+  let rvvi_fp_rd_data_1 := makeIndexedWires "rvvi_fprd_slot1" config.flen
 
   -- Store snoop outputs (for testbench tohost detection)
   let store_snoop_valid := Wire.mk "store_snoop_valid"
@@ -168,7 +174,12 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
      (rvvi_rd_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_0_{i}", w)) ++
      (rvvi_rd_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rd_1_{i}", w)) ++
      (rvvi_rd_data_0.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_0_{i}", w)) ++
-     (rvvi_rd_data_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_1_{i}", w)))
+     (rvvi_rd_data_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_rdd_1_{i}", w)) ++
+     [("rvvi_is_fpS0", rvvi_is_fp_0), ("rvvi_is_fpS1", rvvi_is_fp_1)] ++
+     (rvvi_fflags.enum.map fun ⟨i, w⟩ => (s!"rvvi_fflags_{i}", w)) ++
+     (rvvi_fflags_slot1.enum.map fun ⟨i, w⟩ => (s!"rvvi_fflags_slot1_{i}", w)) ++
+     (rvvi_fp_rd_data.enum.map fun ⟨i, w⟩ => (s!"rvvi_fprd_{i}", w)) ++
+     (rvvi_fp_rd_data_1.enum.map fun ⟨i, w⟩ => (s!"rvvi_fprd_slot1_{i}", w)))
 
   -- MemoryHierarchy instance
   let ifetch_valid := Wire.mk "ifetch_valid"
@@ -211,6 +222,8 @@ def mkCachedCPU (config : CPUConfig) : Circuit :=
                rvvi_pc_0 ++ rvvi_pc_1 ++
                rvvi_insn_0 ++ rvvi_insn_1 ++
                rvvi_rd_0 ++ rvvi_rd_1 ++
+               [rvvi_is_fp_0, rvvi_is_fp_1] ++ rvvi_fflags ++ rvvi_fflags_slot1 ++
+               rvvi_fp_rd_data ++ rvvi_fp_rd_data_1 ++
                rvvi_rd_data_0 ++ rvvi_rd_data_1
     gates := [stall_gate, ready_gate, ifetch_valid_gate, snoop_valid_gate0, snoop_valid_gate, rvvi_valid_gate] ++
              snoop_addr_gates ++ snoop_data_gates

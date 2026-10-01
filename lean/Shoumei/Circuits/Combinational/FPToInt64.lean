@@ -83,6 +83,24 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
           reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
     reduceTree inputs 0 [] (inputs.length + 1)
 
+/-- Barrel left shift by a variable amount, one stage per bit of the amount.
+    Mirrors the helper in FPMisc: kept local so this module does not reach into
+    the sequential layer. -/
+private def mkBarrelShiftLeftN (pfx : String) (data : List Wire) (n : Nat)
+    (shiftAmt : List Wire) (zeroW : Wire) : List Wire × List Gate :=
+  let (finalData, allGates) := (List.range shiftAmt.length).foldl (fun (acc : List Wire × List Gate) stage =>
+    let prev := acc.1
+    let shift := Nat.pow 2 stage
+    let cur := makeIndexedWires s!"{pfx}_s{stage}" n
+    let stageGates := (List.range n).map fun i =>
+      if i ≥ shift then
+        Gate.mkMUX (prev[i]!) (prev[i - shift]!) (shiftAmt[stage]!) (cur[i]!)
+      else
+        Gate.mkMUX (prev[i]!) zeroW (shiftAmt[stage]!) (cur[i]!)
+    (cur, acc.2 ++ stageGates)
+  ) (data, [])
+  (finalData, allGates)
+
 /-- 64-bit Float to Integer Converter Circuit -/
 def mkFPToInt64 : Circuit :=
   let src1 := makeIndexedWires "src1" 64
@@ -209,6 +227,10 @@ def mkFPToInt64 : Circuit :=
   -- shamt = 115 - (flt_exp - 1023) = 1138 - flt_exp (7 bits: 0..127)
   -- 1138 in 11-bit binary: 10001110010
   let const1138 := [zero, one, zero, zero, one, one, one, zero, zero, zero, one]
+  -- 1022 in 11-bit binary: 01111111110
+  let const1022 := [zero, one, one, one, one, one, one, one, one, one, zero]
+  -- 1075 in 11-bit binary: 10000110011
+  let const1075 := [one, one, zero, zero, one, one, zero, zero, zero, zero, one]
   let shamt_full := makeIndexedWires "shamt_full" 11
   let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minArea const1138.length .one) const1138 flt_exp shamt_full "shamt_sub" one
 
@@ -229,10 +251,11 @@ def mkFPToInt64 : Circuit :=
     [one] ++
     (List.range 12 |>.map fun _ => zero)
 
-  -- 128-bit Barrel Right Shifter with sticky accumulator
-  let ((bus128_out, bus_sticky), bus_shift_gates) := (List.range 7).foldl
-    (fun (acc : (List Wire × Wire) × List Gate) step =>
-      let (stageIn, prev_sticky) := acc.1
+  -- 128-bit Barrel Right Shifter.  It carries no sticky: the guard and the
+  -- sticky are taken from the mantissa directly, below.
+  let (bus128_out, bus_shift_gates) := (List.range 7).foldl
+    (fun (acc : List Wire × List Gate) step =>
+      let stageIn := acc.1
       let shiftVal := Nat.pow 2 step
       let stageOut := makeIndexedWires s!"b128_s{step}" 128
       let gates := (List.range 128).map fun i =>
@@ -240,14 +263,8 @@ def mkFPToInt64 : Circuit :=
           Gate.mkMUX (stageIn[i]!) (stageIn[i + shiftVal]!) (shamt7[step]!) (stageOut[i]!)
         else
           Gate.mkMUX (stageIn[i]!) zero (shamt7[step]!) (stageOut[i]!)
-      let lost_bits := (List.range (min shiftVal 128)).map fun i => stageIn[i]!
-      let (lost_or, lost_or_gates) := mkOrTree s!"b128_lost_{step}" lost_bits
-      let stage_contrib := Wire.mk s!"b128_stk_c_{step}"
-      let new_sticky := Wire.mk s!"b128_stk_{step}"
-      let g_contrib := Gate.mkAND (shamt7[step]!) lost_or stage_contrib
-      let g_sticky := Gate.mkOR prev_sticky stage_contrib new_sticky
-      ((stageOut, new_sticky), acc.2 ++ gates ++ lost_or_gates ++ [g_contrib, g_sticky])
-    ) ((bus128_init, zero), [])
+      (stageOut, acc.2 ++ gates)
+    ) (bus128_init, [])
 
   -- Magnitude < 1.0 check: flt_exp < 1023
   let (exp_lo10_all, exp_lo10_all_gates) := mkAndTree "exp_lo10" (List.range 10 |>.map fun i => flt_exp[i]!)
@@ -266,30 +283,61 @@ def mkFPToInt64 : Circuit :=
   let flt_int_mag_gates := (List.range 64).map fun i =>
     Gate.mkMUX (bus128_out[i]!) zero flt_exp_lt_1023 (flt_int_mag[i]!)
 
-  -- Discarded fractional bits:
-  -- If flt_exp_lt_1023:
-  --   round bit is 1 iff flt_exp == 1022 (magnitude in [0.5, 1.0))
-  --   sticky bit is 1 iff mantissa nonzero or flt_exp < 1022
-  let flt_exp_is_1022 := Wire.mk "flt_exp_is_1022"
-  let not_flt_exp0 := Wire.mk "not_flt_exp0"
-  let (exp_bits1_9_all, exp_b19_gates) := mkAndTree "exp_b19" (List.range 9 |>.map fun i => flt_exp[1 + i]!)
-  let exp_1022_gates := exp_b19_gates ++ [
-    Gate.mkNOT (flt_exp[0]!) not_flt_exp0,
-    Gate.mkAND not_flt_exp10 exp_bits1_9_all (Wire.mk "e1022_t0"),
-    Gate.mkAND (Wire.mk "e1022_t0") not_flt_exp0 flt_exp_is_1022
-  ]
-
+  -- Discarded fractional bits.
+  --
+  -- The hidden one sits at bit 115 of the 128-bit bus and the value is shifted
+  -- right by 1138 - flt_exp, so the value's 2^-1 bit is the bus bit at index
+  -- 1137 - flt_exp.  Below the hidden one the bus holds the mantissa, whose bit
+  -- j carries weight 2^-(j+1), so the sequence "mantissa ++ hidden one" is
+  -- indexed by 1074 - flt_exp.  Shifting that sequence left by flt_exp - 1022
+  -- lands the guard at bit 52 with every bit below it at 51..0, which gives the
+  -- guard and the sticky to the same shifter.  The shifter's own sticky cannot
+  -- be used for this: it ORs the guard together with the lower bits, so a value
+  -- just above a half would look exact.
+  --
+  -- Leaving the guard as bus128_out[127] made every magnitude at or above 1.0
+  -- round down, because that bit is zero for them.
+  let mant53 := flt_mant ++ [one]
+  let guard_amt_full := makeIndexedWires "fti_gamt" 11
+  let (guard_amt_sub_gates, guard_amt_borrow) :=
+    mkSubFor (AdderSpec.minArea 11 .one) flt_exp const1022 guard_amt_full "fti_gamt_sub" one
+  -- An integral magnitude (flt_exp past 1074) has no discarded bits at all, and
+  -- an amount past 52 leaves the 53-bit window empty, which 63 does.  A
+  -- magnitude under 0.5 borrows in the subtraction and takes no shift, so the
+  -- sticky sees the whole mantissa and the guard is masked off below.
+  let amt_hi_full := makeIndexedWires "fti_gahi" 11
+  let (amt_hi_sub_gates, amt_hi_borrow) :=
+    mkSubFor (AdderSpec.minArea 11 .one) flt_exp const1075 amt_hi_full "fti_gahi_sub" one
+  let guard_amt := makeIndexedWires "fti_ga" 7
+  let guard_amt_gates := guard_amt_sub_gates ++ amt_hi_sub_gates ++
+    (List.range 7).flatMap fun i =>
+      let a1 := Wire.mk s!"fti_ga1_{i}"
+      let empty_bit := if i < 6 then one else zero
+      [Gate.mkMUX empty_bit (guard_amt_full[i]!) amt_hi_borrow a1,
+       Gate.mkMUX a1 zero guard_amt_borrow (guard_amt[i]!)]
+  let (guard_shift, guard_shift_gates) :=
+    mkBarrelShiftLeftN "fti_gshf" mant53 53 guard_amt zero
+  let (guard_sticky, guard_sticky_gates) :=
+    mkOrTree "fti_gstk" ((List.range 52).map fun i => guard_shift[i]!)
+  let not_guard_amt_borrow := Wire.mk "fti_ngab"
   let flt_round_bit := Wire.mk "flt_round_bit"
   let flt_sticky_bit := Wire.mk "flt_sticky_bit"
   let not_flt_is_zero := Wire.mk "not_flt_is_zero"
-  let flt_stk_sub1 := Wire.mk "flt_stk_sub1"
-  let flt_frac_gates := [
+  -- A magnitude below 0.5 has no 2^-1 bit at all, so its guard is zero and the
+  -- shifted bits below it are zero too when the fraction is zero, as it is for
+  -- the smallest normal.  The value is still nonzero and still not an integer,
+  -- so the remainder is nonzero: without this, converting 2^-1022 to a 64-bit
+  -- integer reported exact and every mode truncated to zero, where round toward
+  -- negative and round up must give -1 and 1.
+  let below_half_nonzero := Wire.mk "fti_bhnz"
+  let sticky_any := Wire.mk "fti_stkany"
+  let flt_frac_gates := guard_shift_gates ++ guard_sticky_gates ++ [
     Gate.mkNOT flt_is_zero not_flt_is_zero,
-    Gate.mkMUX (bus128_out[127]!) flt_exp_is_1022 flt_exp_lt_1023 flt_round_bit,
-    Gate.mkOR flt_mant_any (Wire.mk "not_e1022_nz") flt_stk_sub1,
-    Gate.mkNOT flt_exp_is_1022 (Wire.mk "not_e1022"),
-    Gate.mkAND (Wire.mk "not_e1022") not_flt_is_zero (Wire.mk "not_e1022_nz"),
-    Gate.mkMUX bus_sticky flt_stk_sub1 flt_exp_lt_1023 flt_sticky_bit
+    Gate.mkNOT guard_amt_borrow not_guard_amt_borrow,
+    Gate.mkAND guard_amt_borrow not_flt_is_zero below_half_nonzero,
+    Gate.mkOR guard_sticky below_half_nonzero sticky_any,
+    Gate.mkAND not_guard_amt_borrow (guard_shift[52]!) flt_round_bit,
+    Gate.mkBUF sticky_any flt_sticky_bit
   ]
 
   let flt_inexact := Wire.mk "flt_inexact"
@@ -456,7 +504,7 @@ def mkFPToInt64 : Circuit :=
     flt_mant_any_gates ++ [flt_mant_zeros_gate] ++ flt_class_gates ++
     shamt_sub_gates ++ shamt7_gates ++ bus_shift_gates ++
     exp_lo10_all_gates ++ exp_lt_1023_gates ++ flt_int_mag_gates ++
-    exp_1022_gates ++ flt_frac_gates ++ [flt_inexact_gate] ++
+    guard_amt_gates ++ flt_frac_gates ++ [flt_inexact_gate] ++
     flt_round_gates ++ fimag_add_gates ++ fint_neg_gates ++ flt_int_norm_gates ++
     exp_ovf_gates ++ pos_signed_ovf_gates ++ neg_signed_ovf_gates ++ [signed_nv_gate] ++
     pos_unsigned_ovf_gates ++ neg_unsigned_ovf_gates ++ [unsigned_nv_gate] ++

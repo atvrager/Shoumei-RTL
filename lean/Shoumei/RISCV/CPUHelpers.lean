@@ -120,7 +120,14 @@ def mkLoadForwarding
     Gate.mkAND load_fwd_tmp2 fwd_size_ok (Wire.mk "load_fwd_pre_overlap"),
     -- Block SB fwd when there's a partial word overlap (forwarded data incomplete)
     Gate.mkNOT lsu_sb_fwd_word_only_hit (Wire.mk "not_word_only_hit"),
-    Gate.mkAND (Wire.mk "load_fwd_pre_overlap") (Wire.mk "not_word_only_hit") load_fwd_valid,
+    Gate.mkAND (Wire.mk "load_fwd_pre_overlap") (Wire.mk "not_word_only_hit") (Wire.mk "load_fwd_raw"),
+    -- An atomic's read must come from memory.  A store-buffer forward gives the
+    -- right word but no DMEM response, and the atomic's direct write, which
+    -- carries the read-modify-write result, is driven by that response: with the
+    -- forward the atomic returned the right value and never wrote at all.
+    Gate.mkOR (Wire.mk "atom_lr_sel") (Wire.mk "atom_amo_sel") (Wire.mk "atom_read_in_mem"),
+    Gate.mkNOT (Wire.mk "atom_read_in_mem") (Wire.mk "not_atomic_read_fwd"),
+    Gate.mkAND (Wire.mk "load_fwd_raw") (Wire.mk "not_atomic_read_fwd") load_fwd_valid,
     -- Cross-size detection: SB hit but size insufficient
     Gate.mkNOT fwd_size_ok not_fwd_size_ok,
     Gate.mkAND load_fwd_tmp2 not_fwd_size_ok cross_size_any,
@@ -760,7 +767,13 @@ def mkCsrReadMux
           let r_mcause_hi := Wire.mk s!"csr_rmcause_hi_{k}"
           let mstat_hi_bit := if k == 31 then mstatus_sd_bit else zero
           let mcause_hi_bit := if k == 31 then mcause_reg[31]! else zero
-          [Gate.mkMUX zero mcycleh_reg[k]! is_mcycle r_mcyc_hi,
+          -- misa keeps its MXL field in the top two bits, so its high half must
+          -- reach the read data too; leaving it out returned 0x112b for a
+          -- machine whose misa is 0x800000000000112b.
+          let misa_hi_bit := if Nat.testBit misa_val (32 + k) then one else zero
+          let r_misa_hi := Wire.mk s!"csr_rmisa_hi_{k}"
+          [Gate.mkMUX zero misa_hi_bit is_misa r_misa_hi,
+           Gate.mkMUX r_misa_hi mcycleh_reg[k]! is_mcycle r_mcyc_hi,
            Gate.mkMUX r_mcyc_hi minstreth_reg[k]! is_minstret r_mins_hi,
            Gate.mkMUX r_mins_hi mstat_hi_bit is_mstatus r_mstat_hi,
            Gate.mkMUX r_mstat_hi mcause_hi_bit is_mcause r_mcause_hi,
@@ -1954,9 +1967,12 @@ def mkAtomicUnit
     Gate.mkNOT load_in_flight not_load_in_flight,
     Gate.mkNOT is_atomic not_is_atomic,
     Gate.mkOR not_is_atomic not_load_in_flight atom_load_ok,
-    -- SC / AMO form an RMW: they wait for a fully drained store buffer and no
-    -- pending plain store in the memory RS (an older store may not have reached
-    -- the SB yet).  LR is a plain load plus a reservation set, so it does not.
+    -- SC / AMO form an RMW: they wait for a fully drained store buffer, no
+    -- pending plain store in the memory RS, and no older non-store memory op
+    -- in it either.  An atomic is exclusive until it retires, so an older
+    -- memory op left behind would be blocked by it while it waits for that op
+    -- to retire.  LR is a plain load plus a reservation set, so it does not
+    -- need exclusivity and does not wait.
     Gate.mkOR is_sc is_amo drain_req,
     Gate.mkNOT drain_req not_drain_req,
     Gate.mkAND lsu_sb_empty nps di_dr,

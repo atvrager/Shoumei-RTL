@@ -10,7 +10,7 @@ SECTIONS {
         *(.text.freertos_risc_v_mtimer_interrupt_handler)
         *(.text*)
     } > RAM
-    .rodata    : { *(.rodata*) } > RAM
+    .rodata    : { . = ALIGN(8); *(.rodata*) } > RAM
     .data      : { *(.data*) *(.sdata*) } > RAM
     .bss       : {
         __bss_start = .;

@@ -35,7 +35,7 @@ genrule(
         src = ":" + t + ".S",
         is_asm = True,
     )
-    for t in GEN_INT_PATTERNS + GEN_RAND_TESTS
+    for t in GEN_INT_PATTERNS
 ]
 
 [
@@ -45,7 +45,7 @@ genrule(
         is_asm = True,
         is_fp = True,
     )
-    for t in GEN_FP_PATTERNS
+    for t in GEN_FP_PATTERNS + GEN_RAND_TESTS
 ]
 
 test_suite(

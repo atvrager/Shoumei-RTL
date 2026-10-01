@@ -15,6 +15,11 @@ struct SpikeStepResult {
     uint32_t rd;        // Destination register (0 if none)
     uint64_t rd_value;  // Written value (0 if rd==0)
     uint64_t rs1_value; // Pre-step rs1 value (for load address detection)
+    // Pre-step FP source operands, so an FP mismatch can be recomputed by
+    // hand.  fs3 is the addend of the fused multiply-add family.
+    uint64_t fs1_value;
+    uint64_t fs2_value;
+    uint64_t fs3_value;
     bool     trap;      // Exception occurred
     // F/D extension
     uint32_t frd;       // FP destination register (0 if none)
@@ -41,6 +46,14 @@ public:
     // Read FP register (as raw bits)
     uint64_t get_freg(int i) const;
 
+    // Read the upper half of an FP register.  A 128-bit FLEN keeps the second
+    // 64 bits here; if a result lands here instead of the low half, the low
+    // read shows the untouched initial value.
+    uint64_t get_freg_hi(int i) const;
+
+    // Write FP register (as raw bits), for aligning Spike after a resync
+    void set_freg(int i, uint64_t val);
+
     // Read CSR
     uint64_t get_csr(int which) const;
 
@@ -50,6 +63,11 @@ public:
 
     // Read instruction word at a given address
     uint32_t get_insn_at(uint64_t addr) const;
+
+    // Read a 32-bit word from physical memory.  No MMU translation and no
+    // traps, so an unmapped address reads as 0 instead of faulting.  Used by
+    // the cosimulation to compare memory against the RTL.
+    uint32_t read_mem(uint64_t addr) const;
 
     // Force-unhalt after WFI (clears halted flag)
     void unhalt();

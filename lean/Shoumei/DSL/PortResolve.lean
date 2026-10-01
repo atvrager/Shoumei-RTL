@@ -178,4 +178,76 @@ def checkRegistryWiring (circuits : List Circuit) : List MissingPort :=
                 portWire     := inWire
               }
 
+/-- A wire with more than one driver.
+
+    The DSL has no resolution function: a wire is a single-bit net, so two
+    drivers on one name is a modelling error, not a wired-or.  It is easy to
+    introduce by accident, because nothing checks wire-name uniqueness -- reusing
+    a name that is already a gate output (or an instance output) silently gives
+    that net two continuous assignments, and the emitted SystemVerilog then
+    depends on evaluation order while every proof still holds qualification.
+
+    A real instance of this: a new gate in `fpCompareCircuit` reused `flt_t0`,
+    which is already the op-decode partial product, which corrupted `is_flt`.
+    The circuit answered `1` for opcodes it does not decode and stopped
+    signalling NV for FLT. -/
+structure DriverClash where
+  moduleName : String
+  wireName   : String
+  drivers    : Nat
+  deriving Repr, BEq
+
+/-- Group adjacent equal names in a sorted list, keeping groups of size > 1.
+    Sorting rather than hashing keeps the output order deterministic. -/
+def duplicateGroups (names : List String) : List (String × Nat) :=
+  let grouped := names.mergeSort (· ≤ ·) |>.foldl (fun acc n =>
+    match acc with
+    | (m, k) :: rest => if m == n then (m, k + 1) :: rest else (n, 1) :: acc
+    | [] => [(n, 1)]) []
+  grouped.reverse.filter (fun p => p.2 > 1)
+
+/-- Every wire a circuit drives: gate outputs, plus the parent wires bound to the
+    output ports of each instance.  Instances whose module is not in the registry
+    (external macros such as SRAM) are skipped, since their port directions are
+    unknown here. -/
+def drivenWires (regMap : Std.HashMap String Circuit) (c : Circuit) : List String :=
+  c.gates.map (·.output.name) ++
+  c.instances.flatMap fun inst =>
+    match regMap.get? inst.moduleName with
+    | none => []
+    | some child =>
+        let outNames : Std.HashSet String :=
+          child.outputs.foldl (fun s w => s.insert w.name) {}
+        inst.portMap.filterMap fun (port, w) =>
+          if outNames.contains port then some w.name else none
+
+/-- Wires driven more than once, across an entire registry. -/
+def checkRegistryDrivers (circuits : List Circuit) : List DriverClash :=
+  let regMap : Std.HashMap String Circuit := circuits.foldl (fun m c => m.insert c.name c) {}
+  circuits.flatMap fun c =>
+    (duplicateGroups (drivenWires regMap c)).map fun (w, n) =>
+      { moduleName := c.name, wireName := w, drivers := n }
+
+/-- Self-tests.  A uniqueness check that passes because it is wired up wrong
+    would read exactly like a clean corpus, so pin that it detects a clash and
+    that it does not invent one. -/
+private def dupTestName : String := "dup"
+private def okTestName : String := "ok"
+
+theorem checkRegistryDrivers_detects_clash :
+    (checkRegistryDrivers
+      [{ name := dupTestName, inputs := [], outputs := [],
+         gates := [Gate.mkBUF (Wire.mk "a") (Wire.mk "y"),
+                   Gate.mkNOT (Wire.mk "a") (Wire.mk "y")],
+         instances := [] }]).length = 1 := by
+  native_decide
+
+theorem checkRegistryDrivers_ignores_single_driver :
+    (checkRegistryDrivers
+      [{ name := okTestName, inputs := [], outputs := [],
+         gates := [Gate.mkBUF (Wire.mk "a") (Wire.mk "y"),
+                   Gate.mkBUF (Wire.mk "a") (Wire.mk "z")],
+         instances := [] }]).isEmpty = true := by
+  native_decide
+
 end Shoumei.DSL.PortResolve

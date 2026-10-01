@@ -25,12 +25,12 @@ theorem busyTable_w2_ports : mkBusyTable_W2.inputs.length = 66 ∧ mkBusyTable_W
 theorem fpBusyTable_name : mkFPBusyTable.name = "FPBusyTable" := by
   rfl
 
-/-- Verify FPBusyTable instance count (2 Decoder6 + 64 DFlipFlop) -/
-theorem fpBusyTable_instances : mkFPBusyTable.instances.length = 66 := by
+/-- Verify FPBusyTable instance count (3 Decoder6 + 64 DFlipFlop) -/
+theorem fpBusyTable_instances : mkFPBusyTable.instances.length = 67 := by
   native_decide
 
-/-- Verify FPBusyTable port counts -/
-theorem fpBusyTable_ports : mkFPBusyTable.inputs.length = 44 ∧ mkFPBusyTable.outputs.length = 3 := by
+/-- Verify FPBusyTable port counts (two clear ports, one per CDB channel) -/
+theorem fpBusyTable_ports : mkFPBusyTable.inputs.length = 51 ∧ mkFPBusyTable.outputs.length = 3 := by
   native_decide
 
 end Shoumei.RISCV.CPU.BusyBitTableProofs

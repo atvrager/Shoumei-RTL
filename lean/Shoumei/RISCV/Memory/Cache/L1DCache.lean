@@ -404,6 +404,27 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
       (List.range (wordBits - 1)).map (fun i => (s!"sel_{i}", dword_sel[i]!)) ++
       (List.range 32).map (fun b => (s!"out_{b}", (way_dword_hi[way]!)[b]!)))
 
+  -- When the access straddles a doubleword boundary (req_addr[2] set), the upper
+  -- half is the word after the low one, not the aligned doubleword's second half.
+  -- Words 2, 4, 6 hold those, selected by the same doubleword index.
+  let way_word_next := (List.range ways).map fun way =>
+    (List.range 32).map fun b => Wire.mk s!"way{way}_wordn_{b}"
+
+  -- The last doubleword's next word is in the following line, which this read
+  -- does not fetch; those inputs stay zero and the access is not supported.
+  let data_wordn_mux_instances := (List.range ways).map fun way =>
+    CircuitInstance.mk s!"Mux{lineWords / 2}x32" s!"u_data_wordn_mux_w{way}"
+      ((List.range (lineWords / 2)).foldl (fun acc dwIdx =>
+        let wordIdx := dwIdx * 2 + 2
+        if wordIdx < lineWords then
+          acc ++ (List.range 32).map (fun b =>
+            (s!"in{dwIdx}_{b}", (data_ram_rd[way]!)[wordIdx * 32 + b]!))
+        else
+          acc ++ (List.range 32).map (fun b => (s!"in{dwIdx}_{b}", Wire.mk "zero"))
+      ) [] ++
+      (List.range (wordBits - 1)).map (fun i => (s!"sel_{i}", dword_sel[i]!)) ++
+      (List.range 32).map (fun b => (s!"out_{b}", (way_word_next[way]!)[b]!)))
+
   -- Hit data mux (64 bits): way1_hit selects between way0 and way1 data
   let hit_data := (List.range 64).map fun b => Wire.mk s!"hit_data_{b}"
   let hit_data_mux_gates : List Gate :=
@@ -414,7 +435,10 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
     ++
     List.flatten ((List.range 32).map (fun b =>
       let hi := (List.range ways).map (fun w => Wire.mk s!"hd_hi_{w}_{b}")
-      (List.range ways).map (fun w => Gate.mkAND way_hit[w]! (way_dword_hi[w]!)[b]! hi[w]!)
+      let hi_src := (List.range ways).map fun w => Wire.mk s!"hd_hi_src_{w}_{b}"
+      (List.range ways).map (fun w =>
+        Gate.mkMUX (way_dword_hi[w]!)[b]! (way_word_next[w]!)[b]! req_addr[2]! (hi_src[w]!))
+      ++ (List.range ways).map (fun w => Gate.mkAND way_hit[w]! (hi_src[w]!) hi[w]!)
       ++ mkOrTree hi hit_data[32+b]!))
 
   -- Refill word mux: extract the requested lower word from 256-bit refill data using pend_q[4:2]
@@ -934,7 +958,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   let allInstances :=
     tag_instances ++
     tag_mux_instances ++ tag_cmp_instances ++
-    data_word_mux_instances ++ data_dwhi_mux_instances ++
+    data_word_mux_instances ++ data_dwhi_mux_instances ++ data_wordn_mux_instances ++
     [refill_word_mux_inst, refill_dwhi_mux_inst] ++
     plru_insts ++ valid_dec_insts
 

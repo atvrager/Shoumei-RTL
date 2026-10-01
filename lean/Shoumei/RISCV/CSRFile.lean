@@ -61,6 +61,11 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
 
   let fp_valid_out := Wire.mk "fp_valid_out"
   let fp_exceptions := (List.range 5).map (fun i => Wire.mk s!"fp_exceptions_{i}")
+  -- Per-retire-slot exceptions and FP-domain flags, for the two RVVI values.
+  let fp_exc_0 := (List.range 5).map (fun i => Wire.mk s!"fp_exc_0_{i}")
+  let fp_exc_1 := (List.range 5).map (fun i => Wire.mk s!"fp_exc_1_{i}")
+  let fp_is_fp_0 := Wire.mk "fp_is_fp_0"
+  let fp_is_fp_1 := Wire.mk "fp_is_fp_1"
   let csr_cdb_inject := Wire.mk "csr_cdb_inject"
   let csr_cdb_tag := (List.range 6).map (fun i => Wire.mk s!"csr_cdb_tag_{i}")
   let csr_cdb_data := (List.range csrDataWidth).map (fun i => Wire.mk s!"csr_cdb_data_{i}")
@@ -177,6 +182,8 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   let fflags_acc := CPU.makeIndexedWires "fflags_acc" 5
   let fflags_masked := CPU.makeIndexedWires "fflags_masked" 5
   let fflags_acc_val := CPU.makeIndexedWires "fflags_acc_val" 5
+  let fflags_0 := CPU.makeIndexedWires "fflags_0" 5
+  let fflags_1 := CPU.makeIndexedWires "fflags_1" 5
   let frm_reg := CPU.makeIndexedWires "frm_reg" 3
   let frm_new := CPU.makeIndexedWires "frm_new" 3
   let fp_exceptions_ffl := if enableF then fp_exceptions else
@@ -186,7 +193,9 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
   let (fflags_frm_gates, fflags_frm_dff_instances) := mkFPFlags
     enableF zero one clock reset
     (if enableF then fp_valid_out else zero) fp_exceptions_ffl
+    fp_exc_0 fp_exc_1 fp_is_fp_0 fp_is_fp_1
     fflags_reg fflags_new fflags_acc fflags_masked fflags_acc_val
+    fflags_0 fflags_1
     frm_reg frm_new
 
   -- CSR read MUX
@@ -197,9 +206,19 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
        Gate.mkOR is_mstatus (Wire.mk "useq_any_mstatus") is_mstatus_for_read]
     else
       [Gate.mkBUF is_mstatus is_mstatus_for_read]
-  let misa_val : Nat := 0x40000100 +
-    (if config.enableM then 0x00001000 else 0) +
-    (if config.enableF then 0x00000020 else 0)
+  -- misa: MXL in the top two bits (10 for RV64, 01 for RV32) and one bit per
+  -- implemented extension in the architecture's letter order.  B covers the
+  -- Zba/Zbb/Zbc/Zbs instructions the fallback sequencer emulates, which this
+  -- machine runs; C is absent, since no compressed instruction is decoded.  The
+  -- old value put MXL in the RV32 position and named neither A nor D.
+  let misa_val : Nat :=
+    (if config.xlen == 64 then 0x8000000000000000 else 0x40000000) +
+    0x00000001 +                                    -- A
+    0x00000002 +                                    -- B (Zba, Zbb, Zbc, Zbs)
+    (if config.enableD then 0x00000008 else 0) +    -- D
+    (if config.enableF then 0x00000020 else 0) +    -- F
+    0x00000100 +                                    -- I
+    (if config.enableM then 0x00001000 else 0)      -- M
   let (csr_read_mux_all_gates, internal_read_data, _mstatus_sd_bit, _mstatus_fs_inv0, _mstatus_fs_inv1) :=
     mkCsrReadMux config enableF zero one misa_val
       is_misa is_mscratch is_mcycle is_mcycleh is_minstret is_minstreth
@@ -344,11 +363,12 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
       useq_write_data
     else []) ++
     [retire_valid_0, retire_valid_1, mtip_in, msip_in, meip_in] ++
-    (if enableF then [fp_valid_out] ++ fp_exceptions else [])
+    (if enableF then [fp_valid_out] ++ fp_exceptions ++ fp_exc_0 ++ fp_exc_1 ++
+                       [fp_is_fp_0, fp_is_fp_1] else [])
 
   let all_outputs : List Wire :=
     [csr_cdb_inject, csr_rd_nonzero] ++ csr_cdb_tag ++ csr_cdb_data ++
-    frm ++ fflags ++ [irq_pending]
+    frm ++ fflags ++ fflags_new ++ fflags_0 ++ fflags_1 ++ [irq_pending]
 
   let all_gates :=
     eff_csr_addr_gates ++ fp_exceptions_stub_gates ++ fflags_frm_gates ++
@@ -373,7 +393,13 @@ def mkCSRFile (config : CPUConfig) : Circuit :=
     sg "csr_cdb_tag" 6 csr_cdb_tag,
     sg "csr_cdb_data" csrDataWidth csr_cdb_data,
     sg "frm" 3 frm,
-    sg "fflags" 5 fflags
+    sg "fflags" 5 fflags,
+    -- The value after the retiring instruction's effect, which is what a
+    -- trace port must report: fflags_reg still holds the pre-instruction
+    -- value in the cycle the instruction retires.
+    sg "fflags_new" 5 fflags_new,
+    sg "fflags_0" 5 fflags_0,
+    sg "fflags_1" 5 fflags_1
   ] ++ (if enableTraps then [
     sg "useq_csr_sel" 2 useq_csr_sel,
     sg "useq_write_data" 32 useq_write_data
