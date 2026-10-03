@@ -80,9 +80,12 @@ shoumei_elf_test(
 ASM_INT_TESTS = [
     "alu_ops_test",
     "amo_and_test",
+    "amo_rd_chain_test",
+    "amo_rd_chain_useq_test",
     "amo_redirect_test",
     "amo_ret_test",
     "amo_sb_order_test",
+    "amo_word_merge_test",
     "amo_x0_test",
     "csr_ro_write_test",
     "l1d_4way_hit_test",
