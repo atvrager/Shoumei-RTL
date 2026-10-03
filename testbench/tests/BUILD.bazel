@@ -105,8 +105,10 @@ ASM_INT_TESTS = [
 
 ASM_FP_TESTS = [
     "fcvt_rm_test",
+    "fcvt_swu_nx_test",
     "fcvt_wd_test",
     "fcvt_wu_directed",
+    "fflags_ser_pair_test",
     "fp_conformance_test",
     "fp_fma_zero_test",
     "fp_fnmsub_subnormal_test",

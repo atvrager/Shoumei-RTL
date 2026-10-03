@@ -3183,8 +3183,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_exc_wr_tag := CPU.makeIndexedWires "fp_exc_wr_tag" 6
   let fp_exc_wr_data := CPU.makeIndexedWires "fp_exc_wr_data" 5
   let fp_exc_retire_gates :=
+    -- The tag of the committing slot: slot 1 when it commits an FP-domain
+    -- op, else slot 0.  mkMUX selects its second input when the select is 1.
     (List.range 6).map (fun i =>
-      Gate.mkMUX commit_physRd_1[i]! commit_physRd_0[i]! fp_flag_commit_1 fp_exc_retire_tag[i]!) ++
+      Gate.mkMUX commit_physRd_0[i]! commit_physRd_1[i]! fp_flag_commit_1 fp_exc_retire_tag[i]!) ++
     (List.range 6).map (fun i =>
       Gate.mkMUX (Wire.mk s!"fp_exc_retire_tag_{i}") fp_tag_out[i]!
         (Wire.mk "fp_enq_valid_gated") fp_exc_wr_tag[i]!) ++

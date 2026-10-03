@@ -1557,6 +1557,7 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "#include \"svdpi.h\"\n\n" ++
   "#if VM_TRACE\n" ++
   "#include \"verilated_fst_c.h\"\n" ++
+  "#include <string>\n" ++
   "#endif\n\n" ++
   "#if VM_COVERAGE\n" ++
   "#include \"verilated_cov.h\"\n" ++
@@ -1732,7 +1733,11 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "        Verilated::traceEverOn(true);\n" ++
   "        trace = new VerilatedFstC;\n" ++
   "        dut->trace(trace, 99);\n" ++
-  s!"        trace->open(\"{tbName}.fst\");\n" ++
+  "        // bazel run starts in the runfiles tree: write where the user ran it.\n" ++
+  "        const char* run_dir = getenv(\"BUILD_WORKING_DIRECTORY\");\n" ++
+  s!"        std::string fst_path = std::string(run_dir ? run_dir : \".\") + \"/{tbName}.fst\";\n" ++
+  "        trace->open(fst_path.c_str());\n" ++
+  "        fprintf(stderr, \"trace: %s\\n\", fst_path.c_str());\n" ++
   "    " ++ rb ++ "\n" ++
   "#else\n" ++
   "    (void)do_trace;\n" ++
