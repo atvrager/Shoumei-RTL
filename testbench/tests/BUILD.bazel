@@ -110,6 +110,7 @@ ASM_FP_TESTS = [
     "fcvt_wu_directed",
     "fflags_ser_pair_test",
     "fp_conformance_test",
+    "fp_fma_qnan_inf_test",
     "fp_fma_zero_test",
     "fp_fnmsub_subnormal_test",
     "fp_ovf_test",

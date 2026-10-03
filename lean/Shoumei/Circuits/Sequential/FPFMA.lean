@@ -182,11 +182,18 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let is_sub_a := Wire.mk "fma_sba"
   let is_sub_b := Wire.mk "fma_sbb"
   let is_sub_c := Wire.mk "fma_sbc"
+  let prod_inf_raw := Wire.mk "fma_pir"
+  let prod_zero_raw := Wire.mk "fma_pzr"
   let prod_inf := Wire.mk "fma_pinf"
   let prod_zero := Wire.mk "fma_pz"
   let inf_zero_a := Wire.mk "fma_iza"
   let inf_zero_b := Wire.mk "fma_izb"
   let inf_zero := Wire.mk "fma_iz"
+  let fma_nab := Wire.mk "fma_nab"
+  let fma_snab := Wire.mk "fma_snab"
+  let not_nab := Wire.mk "fma_nnab"
+  let not_iz := Wire.mk "fma_niz"
+  let prod_valid := Wire.mk "fma_pval"
   let any_nan := Wire.mk "fma_anynan"
   let any_snan := Wire.mk "fma_anysnan"
   let class_gates := [
@@ -205,15 +212,20 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkAND exp_a_zero frac_a_any is_sub_a,
     Gate.mkAND exp_b_zero frac_b_any is_sub_b,
     Gate.mkAND exp_c_zero frac_c_any is_sub_c,
-    Gate.mkOR is_inf_a is_inf_b prod_inf,
-    Gate.mkOR is_zero_a is_zero_b prod_zero,
     Gate.mkAND is_inf_a is_zero_b inf_zero_a,
     Gate.mkAND is_zero_a is_inf_b inf_zero_b,
     Gate.mkOR inf_zero_a inf_zero_b inf_zero,
-    Gate.mkOR is_nan_a is_nan_b (Wire.mk "fma_nab"),
-    Gate.mkOR (Wire.mk "fma_nab") is_nan_c any_nan,
-    Gate.mkOR is_snan_a is_snan_b (Wire.mk "fma_snab"),
-    Gate.mkOR (Wire.mk "fma_snab") is_snan_c any_snan
+    Gate.mkOR is_nan_a is_nan_b fma_nab,
+    Gate.mkOR fma_nab is_nan_c any_nan,
+    Gate.mkOR is_snan_a is_snan_b fma_snab,
+    Gate.mkOR fma_snab is_snan_c any_snan,
+    Gate.mkNOT fma_nab not_nab,
+    Gate.mkNOT inf_zero not_iz,
+    Gate.mkAND not_nab not_iz prod_valid,
+    Gate.mkOR is_inf_a is_inf_b prod_inf_raw,
+    Gate.mkAND prod_inf_raw prod_valid prod_inf,
+    Gate.mkOR is_zero_a is_zero_b prod_zero_raw,
+    Gate.mkAND prod_zero_raw prod_valid prod_zero
   ]
 
   let eff_a := makeIndexedWires "fma_ea" WEXP
@@ -792,7 +804,9 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkNOT (Wire.mk "s3_xss") (Wire.mk "s3_ssame"),
     Gate.mkNOT (Wire.mk "s3_ssame") (Wire.mk "s3_sdiff"),
     Gate.mkAND s2_prod_inf s2_c_inf (Wire.mk "s3_bothinf"),
-    Gate.mkAND (Wire.mk "s3_bothinf") (Wire.mk "s3_sdiff") inf_sub_inf,
+    Gate.mkAND (Wire.mk "s3_bothinf") (Wire.mk "s3_sdiff") (Wire.mk "s3_isiraw"),
+    Gate.mkNOT s2_any_nan (Wire.mk "s3_notnan"),
+    Gate.mkAND (Wire.mk "s3_isiraw") (Wire.mk "s3_notnan") inf_sub_inf,
     Gate.mkOR s2_any_nan s2_inf_zero (Wire.mk "s3_sn1"),
     Gate.mkOR (Wire.mk "s3_sn1") inf_sub_inf sel_nan
   ]
