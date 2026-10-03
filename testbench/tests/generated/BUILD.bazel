@@ -1,3 +1,4 @@
+load("//rules:gen_seed.bzl", "gen_seed")
 load("//rules:riscv.bzl", "pad4", "shoumei_elf_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -19,13 +20,21 @@ GEN_RAND_TESTS = ["rand_" + pad4(i) for i in range(32)]
 
 ALL_GEN_TESTS = GEN_INT_PATTERNS + GEN_FP_PATTERNS + GEN_RAND_TESTS
 
+# The generator seed.  Set --//testbench/tests/generated:seed=N to run a new
+# generation of the random tests.
+gen_seed(
+    name = "seed",
+    build_setting_default = 42,
+)
+
 genrule(
     name = "generate_asm_tests",
     srcs = ["//generators:instr_dict"],
     outs = [t + ".S" for t in ALL_GEN_TESTS],
     cmd = """
-        $(location //generators:gen_tests) --seed=42 --instr-dict=$(location //generators:instr_dict) --out=$(RULEDIR)
+        $(location //generators:gen_tests) --seed=$(GEN_SEED) --instr-dict=$(location //generators:instr_dict) --out=$(RULEDIR)
     """,
+    toolchains = [":seed"],
     tools = ["//generators:gen_tests"],
 )
 
