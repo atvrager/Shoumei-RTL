@@ -1006,6 +1006,9 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "    output logic [63:0] o_dbg_atm,\n" ++
   "    output logic [63:0] o_dbg_atmf,\n" ++
   "    output logic [31:0] o_dbg_atmf2,\n" ++
+  "    output logic [63:0] o_dbg_ren,\n" ++
+  "    output logic [63:0] o_dbg_ren2,\n" ++
+  "    output logic [63:0] o_dbg_cdbd,\n" ++
   "    output logic        o_hw_draining_reg,\n" ++
   "    output logic        o_fence_start_delayed,\n" ++
   "    output logic        o_lsu_sb_full,\n" ++
@@ -1438,6 +1441,23 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "  };\n" ++
   "  assign o_dbg_atm = { u_cpu.u_cpu.atom_aw_addr, u_cpu.u_cpu.mem_addr_r };\n" ++
   "  assign o_dbg_atmf = { u_cpu.u_cpu.dmem_resp_data[31:0], u_cpu.u_cpu.dmem_req_addr };\n" ++
+  "  assign o_dbg_ren = {\n" ++
+  "    u_cpu.u_cpu.cdb_valid, u_cpu.u_cpu.cdb_tag_1, u_cpu.u_cpu.cdb_tag_0,\n" ++
+  "    u_cpu.u_cpu.commit_en, u_cpu.u_cpu.int_retire_any_old,\n" ++
+  "    u_cpu.u_cpu.retire_tag_bt_1, u_cpu.u_cpu.retire_tag_bt_0,\n" ++
+  "    u_cpu.u_cpu.mem_dispatch_valid, u_cpu.u_cpu.mem_mux_src2_ready, u_cpu.u_cpu.mem_mux_rs2_phys,\n" ++
+  "    u_cpu.u_cpu.rd_phys_1, u_cpu.u_cpu.rd_phys_0, u_cpu.u_cpu.dispatch_base_valid,\n" ++
+  "    u_cpu.u_cpu.d1_has_rd_int, u_cpu.u_cpu.d0_has_rd_int,\n" ++
+  "    u_cpu.u_cpu.d1_force_alloc, u_cpu.u_cpu.d0_force_alloc, 8'b0\n" ++
+  "  };\n" ++
+  "  assign o_dbg_ren2 = {\n" ++
+  "    7'b0, u_cpu.u_cpu.fence_i_start, u_cpu.u_cpu.fallback_seq_start, u_cpu.u_cpu.csr_rename_en,\n" ++
+  "    u_cpu.u_cpu.csr_phcap_e, u_cpu.u_cpu.csr_ophcap_e,\n" ++
+  "    u_cpu.u_cpu.csr_cdb_inject, u_cpu.u_cpu.fallback_cdb_inject,\n" ++
+  "    u_cpu.u_cpu.csr_commit_valid_0, u_cpu.u_cpu.csr_retire_hasPhysRd_0, u_cpu.u_cpu.csr_commit_hasPhysRd_0,\n" ++
+  "    u_cpu.u_cpu.cmt_retag_mux_0, u_cpu.u_cpu.cmt_physRd_mux_0, u_cpu.u_cpu.cmt_archRd_mux_0,\n" ++
+  "    u_cpu.u_cpu.dec1_rd, u_cpu.u_cpu.dec0_rd, 10'b0 };\n" ++
+  "  assign o_dbg_cdbd = { u_cpu.u_cpu.cdb_data_1[31:0], u_cpu.u_cpu.cdb_data_0[31:0] };\n" ++
   "  assign o_dbg_atmf2 = {\n" ++
   "    10'b0, u_cpu.u_cpu.pipeline_flush_comb, u_cpu.u_cpu.atom_aw_clr,\n" ++
   "    u_cpu.u_cpu.atom_lr_resp, u_cpu.u_cpu.cross_size_stall, u_cpu.u_cpu.atom_sc_exec,\n" ++
@@ -2618,6 +2638,11 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "    bool sb_trace = get_plusarg(argc, argv, \"+sbtrace\") != nullptr;\n" ++
   "    bool csr_trace = get_plusarg(argc, argv, \"+csrtrace\") != nullptr;\n" ++
   "    bool atm_trace = get_plusarg(argc, argv, \"+atmtrace\") != nullptr;\n" ++
+  "    // +ren_lo=N +ren_hi=M: per-cycle tag trace (alloc, CDB, free, mem RS src2).\n" ++
+  "    const char* ren_lo_arg = get_plusarg(argc, argv, \"+ren_lo\");\n" ++
+  "    const char* ren_hi_arg = get_plusarg(argc, argv, \"+ren_hi\");\n" ++
+  "    unsigned long ren_lo = ren_lo_arg ? strtoul(ren_lo_arg, nullptr, 0) : 1;\n" ++
+  "    unsigned long ren_hi = ren_hi_arg ? strtoul(ren_hi_arg, nullptr, 0) : 0;\n" ++
   "    // +mem_watch=0xADDR: compare one word every cycle and report each cycle\n" ++
   "    // where it starts to differ, with the instruction retiring then.  That\n" ++
   "    // names the store that should have written it.\n" ++
@@ -2721,6 +2746,42 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                    (c >> 40) & 1, (c >> 35) & 1, (c >> 34) & 1, (c >> 33) & 1, (c >> 32) & 1, c & 0xffffffff);\n" ++
   "                csr_trace_lines++;\n" ++
   "            " ++ rb ++ "\n" ++
+  "        " ++ rb ++ "\n\n" ++
+  "        // Tag trace (+ren_lo/+ren_hi): allocations, CDB broadcasts, frees and\n" ++
+  "        // memory RS src2 capture.  Two live values on one physical tag show\n" ++
+  "        // up as a tag freed or allocated while still mapped.\n" ++
+  "        if (cycle >= ren_lo && cycle <= ren_hi) " ++ lb ++ "\n" ++
+  "            unsigned long long r = dut->o_dbg_ren, r2 = dut->o_dbg_ren2, cd = dut->o_dbg_cdbd;\n" ++
+  "            unsigned dbv = (r >> 12) & 3;\n" ++
+  "            printf(\"REN cy=%lu\", cycle);\n" ++
+  "            for (int s = 0; s < 2; s++) " ++ lb ++ "\n" ++
+  "                if (!((dbv >> s) & 1)) continue;\n" ++
+  "                printf(\" alloc%d[rd=x%llu p%llu hasrd=%llu force=%llu]\", s,\n" ++
+  "                    (r2 >> (10 + 5 * s)) & 0x1f, (r >> (14 + 6 * s)) & 0x3f,\n" ++
+  "                    (r >> (10 + s)) & 1, (r >> (8 + s)) & 1);\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            for (int s = 0; s < 2; s++) " ++ lb ++ "\n" ++
+  "                if (!((r >> (62 + s)) & 1)) continue;\n" ++
+  "                printf(\" cdb%d[p%llu=0x%llx]\", s, (r >> (50 + 6 * s)) & 0x3f,\n" ++
+  "                    (cd >> (32 * s)) & 0xffffffffull);\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            for (int s = 0; s < 2; s++) " ++ lb ++ "\n" ++
+  "                if (!((r >> (48 + s)) & 1)) continue;\n" ++
+  "                printf(\" commit%d[free=%llu p%llu]\", s, (r >> (46 + s)) & 1,\n" ++
+  "                    (r >> (34 + 6 * s)) & 0x3f);\n" ++
+  "            " ++ rb ++ "\n" ++
+  "            if ((r2 >> 56) & 1) printf(\" FI_START\");\n" ++
+  "            if ((r2 >> 55) & 1) printf(\" FB_START\");\n" ++
+  "            if ((r2 >> 54) & 1) printf(\" CSR_REN\");\n" ++
+  "            if ((r2 >> 40) & 3)\n" ++
+  "                printf(\" inject[%s cap_ph=p%llu cap_oph=p%llu]\", ((r2 >> 41) & 1) ? \"csr\" : \"fb\",\n" ++
+  "                    (r2 >> 48) & 0x3f, (r2 >> 42) & 0x3f);\n" ++
+  "            if ((r2 >> 39) & 1)\n" ++
+  "                printf(\" cmt0mux[crat=%llu x%llu->p%llu free=%llu p%llu]\", (r2 >> 37) & 1,\n" ++
+  "                    (r2 >> 20) & 0x1f, (r2 >> 25) & 0x3f, (r2 >> 38) & 1, (r2 >> 31) & 0x3f);\n" ++
+  "            if ((r >> 33) & 1)\n" ++
+  "                printf(\" memiss[s2=p%llu rdy=%llu]\", (r >> 26) & 0x3f, (r >> 32) & 1);\n" ++
+  "            printf(\"\\n\");\n" ++
   "        " ++ rb ++ "\n\n" ++
   "        // Atomic trace (+atmtrace): the address the RMW read from, the data\n" ++
   "        // the response carried, and the address it writes back to.  An\n" ++
@@ -2888,6 +2949,13 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
   "                            for (int ri = rf; ri < req_n; ri++) " ++ lb ++ "\n" ++
   "                                ReqRec &q = req_ring[ri % WB_RING];\n" ++
   "                                fprintf(stderr, \" [cy%u v=%u we=%u aw=%u a=0x%x]\", q.cy, q.v, q.we, q.aw, q.addr);\n" ++
+  "                            " ++ rb ++ "\n" ++
+  "                            fprintf(stderr, \"\\n\");\n" ++
+  "                            unsigned wf = wr_n > 16 ? wr_n - 16 : 0;\n" ++
+  "                            fprintf(stderr, \"  wr ring:\");\n" ++
+  "                            for (unsigned wi = wf; wi < wr_n; wi++) " ++ lb ++ "\n" ++
+  "                                WRec &w = wr_ring[wi % 64];\n" ++
+  "                                fprintf(stderr, \" [cy%u a=0x%x d=0x%llx sz=%u]\", w.cy, w.addr, w.data, w.sz);\n" ++
   "                            " ++ rb ++ "\n" ++
   "                            fprintf(stderr, \"\\n\");\n" ++
   "                        " ++ rb ++ "\n" ++
