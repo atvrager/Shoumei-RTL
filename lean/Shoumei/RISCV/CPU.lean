@@ -1165,6 +1165,12 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let d1_has_rd_nox0 := Wire.mk "d1_has_rd_nox0"
   let busy_set_en_0 := Wire.mk "busy_set_en_0"
   let busy_set_en_1 := Wire.mk "busy_set_en_1"
+  let d0_atom_nox0 := Wire.mk "d0_atom_nox0"
+  let d1_atom_nox0 := Wire.mk "d1_atom_nox0"
+  let d0_force_alloc := Wire.mk "d0_force_alloc"
+  let d1_force_alloc := Wire.mk "d1_force_alloc"
+  let d0_dest_valid := Wire.mk "d0_dest_valid"
+  let d1_dest_valid := Wire.mk "d1_dest_valid"
   let rd_nox0_gates :=
     [Gate.mkOR d0_rd[0]! d0_rd[1]! (Wire.mk "d0_rd_or01"),
      Gate.mkOR (Wire.mk "d0_rd_or01") d0_rd[2]! (Wire.mk "d0_rd_or012"),
@@ -1177,28 +1183,36 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkOR (Wire.mk "d1_rd_or012") d1_rd[3]! (Wire.mk "d1_rd_or0123"),
      Gate.mkOR (Wire.mk "d1_rd_or0123") d1_rd[4]! d1_rd_nonzero,
      Gate.mkAND d1_has_rd_int d1_rd_nonzero d1_has_rd_nox0,
-     Gate.mkAND dispatch_base_valid_1 d1_has_rd_nox0 busy_set_en_1]
+     Gate.mkAND dispatch_base_valid_1 d1_has_rd_nox0 busy_set_en_1,
+     Gate.mkNOT d0_has_rd_nox0 (Wire.mk "d0_not_has_rd_nox0"),
+     Gate.mkAND d0_is_atomic (Wire.mk "d0_not_has_rd_nox0") d0_atom_nox0,
+     Gate.mkNOT d1_has_rd_nox0 (Wire.mk "d1_not_has_rd_nox0"),
+     Gate.mkAND d1_is_atomic (Wire.mk "d1_not_has_rd_nox0") d1_atom_nox0,
+     Gate.mkOR d0_is_br d0_atom_nox0 d0_force_alloc,
+     Gate.mkOR d1_is_br d1_atom_nox0 d1_force_alloc,
+     Gate.mkOR d0_has_rd_nox0 d0_atom_nox0 d0_dest_valid,
+     Gate.mkOR d1_has_rd_nox0 d1_atom_nox0 d1_dest_valid]
 
-  -- Masked dest tags: zero out physRd when rd=x0 (prevent CDB from writing garbage to PRF)
+  -- Masked dest tags: zero out physRd when not allocated (prevent CDB from writing garbage to PRF)
   let int_dest_tag_masked_0 := CPU.makeIndexedWires "int_dtm_0" 6
   let int_dest_tag_masked_1 := CPU.makeIndexedWires "int_dtm_1" 6
   let dest_tag_mask_gates :=
-    (List.range 6).map (fun i => Gate.mkAND rd_phys_0[i]! d0_has_rd_nox0 int_dest_tag_masked_0[i]!) ++
-    (List.range 6).map (fun i => Gate.mkAND rd_phys_1[i]! d1_has_rd_nox0 int_dest_tag_masked_1[i]!)
+    (List.range 6).map (fun i => Gate.mkAND rd_phys_0[i]! d0_dest_valid int_dest_tag_masked_0[i]!) ++
+    (List.range 6).map (fun i => Gate.mkAND rd_phys_1[i]! d1_dest_valid int_dest_tag_masked_1[i]!)
 
-  -- ROB alloc_hasPhysRd must include branches (force_alloc allocates a tag for them)
+  -- ROB alloc_hasPhysRd must include branches and atomics without archRd (force_alloc allocates a tag for them)
   -- Also includes FP rd (FLW etc.) — these need hasPhysRd for ROB commit to free the old tag
   let rob_alloc_hasPhysRd_0 := Wire.mk "rob_alloc_hasPhysRd_0"
   let rob_alloc_hasPhysRd_1 := Wire.mk "rob_alloc_hasPhysRd_1"
   let rob_hasPhysRd_gates :=
     if enableF then
       [Gate.mkOR d0_has_rd_nox0 d0_has_fp_rd (Wire.mk "d0_has_any_rd_nox0"),
-       Gate.mkOR d0_is_br (Wire.mk "d0_has_any_rd_nox0") rob_alloc_hasPhysRd_0,
+       Gate.mkOR d0_force_alloc (Wire.mk "d0_has_any_rd_nox0") rob_alloc_hasPhysRd_0,
        Gate.mkOR d1_has_rd_nox0 d1_has_fp_rd (Wire.mk "d1_has_any_rd_nox0"),
-       Gate.mkOR d1_is_br (Wire.mk "d1_has_any_rd_nox0") rob_alloc_hasPhysRd_1]
+       Gate.mkOR d1_force_alloc (Wire.mk "d1_has_any_rd_nox0") rob_alloc_hasPhysRd_1]
     else
-      [Gate.mkOR d0_is_br d0_has_rd_nox0 rob_alloc_hasPhysRd_0,
-       Gate.mkOR d1_is_br d1_has_rd_nox0 rob_alloc_hasPhysRd_1]
+      [Gate.mkOR d0_force_alloc d0_has_rd_nox0 rob_alloc_hasPhysRd_0,
+       Gate.mkOR d1_force_alloc d1_has_rd_nox0 rob_alloc_hasPhysRd_1]
 
   -- === DISPATCH ROUTING ===
   -- Integer RS gets both slots directly (W=2 RS has dual issue ports).
@@ -1749,8 +1763,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     moduleName := if config.xlen == 64 then "IntRenameStage_W2_64" else "IntRenameStage_W2"
     instName := "u_rename"
     portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
-                ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_is_br),
-                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_is_br),
+                ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_force_alloc),
+                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_force_alloc),
                 ("flush_en", pipeline_flush)] ++
                -- commit_valid for slot 0 is muxed with CSR inject (defined in CSR block below)
                [("commit_valid", Wire.mk "csr_commit_valid_0"), ("commit_valid_1", retire_valid_1)] ++
@@ -1931,20 +1945,18 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND (Wire.mk "commit_ready_1_pre") (Wire.mk "not_s0_redirect") (Wire.mk "commit_ready_1_gated"),
      Gate.mkAND (Wire.mk "commit_ready_1_gated") not_fp_commit_buf_stall_1 retire_valid_1]
 
-  -- === BRANCH TRACKING (W2) ===
-  -- Branches force-allocate a physRd but have no archRd (hasOldPhysRd=0).
-  -- At commit, we must free the branch's OWN physRd (not garbage oldPhysRd).
-  -- branch_tracking_s = isBranch_s AND NOT(hasOldPhysRd_s) AND hasPhysRd_s
+  -- === BRANCH & ATOMIC TRACKING (W2) ===
+  -- Instructions with force-allocated physRd (branches, atomics with rd=x0) have no archRd (hasOldPhysRd=0).
+  -- At commit, we must free the instruction's OWN physRd (not garbage oldPhysRd).
+  -- branch_tracking_s = NOT(hasOldPhysRd_s) AND hasPhysRd_s
   -- retire_any_old_s = hasOldPhysRd_s OR branch_tracking_s
   -- retire_tag_s = branch_tracking_s ? physRd_s : oldPhysRd_s
   let branch_tracking_gates :=
     [Gate.mkNOT rob_head_hasOldPhysRd_0 (Wire.mk "not_hasOldPhysRd_0"),
-     Gate.mkAND rob_head_isBranch_0 (Wire.mk "not_hasOldPhysRd_0") (Wire.mk "bt_tmp_0"),
-     Gate.mkAND (Wire.mk "bt_tmp_0") rob_head_hasPhysRd_0 branch_tracking_0,
+     Gate.mkAND (Wire.mk "not_hasOldPhysRd_0") rob_head_hasPhysRd_0 branch_tracking_0,
      Gate.mkOR rob_head_hasOldPhysRd_0 branch_tracking_0 retire_any_old_0,
      Gate.mkNOT rob_head_hasOldPhysRd_1 (Wire.mk "not_hasOldPhysRd_1"),
-     Gate.mkAND rob_head_isBranch_1 (Wire.mk "not_hasOldPhysRd_1") (Wire.mk "bt_tmp_1"),
-     Gate.mkAND (Wire.mk "bt_tmp_1") rob_head_hasPhysRd_1 branch_tracking_1,
+     Gate.mkAND (Wire.mk "not_hasOldPhysRd_1") rob_head_hasPhysRd_1 branch_tracking_1,
      Gate.mkOR rob_head_hasOldPhysRd_1 branch_tracking_1 retire_any_old_1] ++
     -- MUX retire_tag for slot 0: branch_tracking ? physRd : oldPhysRd
     (List.range 6).map (fun i =>
