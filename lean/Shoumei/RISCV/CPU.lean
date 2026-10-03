@@ -1203,10 +1203,13 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let int_dest_tag_masked_0 := CPU.makeIndexedWires "int_dtm_0" 6
   let int_dest_tag_masked_1 := CPU.makeIndexedWires "int_dtm_1" 6
   let dest_tag_mask_gates :=
-    (List.range 6).map (fun i => Gate.mkAND rd_phys_0[i]! d0_dest_valid int_dest_tag_masked_0[i]!) ++
-    (List.range 6).map (fun i => Gate.mkAND rd_phys_1[i]! d1_dest_valid int_dest_tag_masked_1[i]!)
+    (List.range 6).map (fun i =>
+      Gate.mkAND rd_phys_0[i]! d0_dest_valid int_dest_tag_masked_0[i]!) ++
+    (List.range 6).map (fun i =>
+      Gate.mkAND rd_phys_1[i]! d1_dest_valid int_dest_tag_masked_1[i]!)
 
-  -- ROB alloc_hasPhysRd must include branches and atomics without archRd (force_alloc allocates a tag for them)
+  -- ROB alloc_hasPhysRd must include branches and atomics without archRd
+  -- (force_alloc allocates a tag for them)
   -- Also includes FP rd (FLW etc.) — these need hasPhysRd for ROB commit to free the old tag
   let rob_alloc_hasPhysRd_0 := Wire.mk "rob_alloc_hasPhysRd_0"
   let rob_alloc_hasPhysRd_1 := Wire.mk "rob_alloc_hasPhysRd_1"
@@ -1769,8 +1772,10 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
     moduleName := if config.xlen == 64 then "IntRenameStage_W2_64" else "IntRenameStage_W2"
     instName := "u_rename"
     portMap := [("clock", clock), ("reset", reset), ("zero", zero), ("one", one),
-                ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int), ("force_alloc", d0_force_alloc),
-                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int), ("force_alloc_1", d1_force_alloc),
+                ("instr_valid", d0_valid), ("has_rd", d0_has_rd_int),
+                ("force_alloc", d0_force_alloc),
+                ("instr_valid_1", d1_valid), ("has_rd_1", d1_has_rd_int),
+                ("force_alloc_1", d1_force_alloc),
                 ("flush_en", pipeline_flush)] ++
                -- commit_valid for slot 0 is muxed with CSR inject (defined in CSR block below)
                [("commit_valid", Wire.mk "csr_commit_valid_0"), ("commit_valid_1", retire_valid_1)] ++
@@ -1952,7 +1957,8 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
      Gate.mkAND (Wire.mk "commit_ready_1_gated") not_fp_commit_buf_stall_1 retire_valid_1]
 
   -- === BRANCH & ATOMIC TRACKING (W2) ===
-  -- Instructions with force-allocated physRd (branches, atomics with rd=x0) have no archRd (hasOldPhysRd=0).
+  -- Instructions with force-allocated physRd (branches, atomics with rd=x0)
+  -- have no archRd (hasOldPhysRd=0).
   -- At commit, we must free the instruction's OWN physRd (not garbage oldPhysRd).
   -- branch_tracking_s = NOT(hasOldPhysRd_s) AND hasPhysRd_s
   -- retire_any_old_s = hasOldPhysRd_s OR branch_tracking_s

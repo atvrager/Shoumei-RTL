@@ -324,8 +324,9 @@ When writing a commit message, follow these 7 rules.
 (`lean/Shoumei/Lint/`).
 
 ```bash
-bazel run //generators:lean_lint              # Report every finding
-bazel run //generators:lean_lint -- --fix     # Reflow the long lines
+bazel run //generators:lean_lint                    # Report every finding
+bazel run //generators:lean_lint -- --print-fix FILE  # Show the reflow, write nothing
+bazel run //generators:lean_lint -- --fix           # Reflow the long lines
 ```
 
 It reports an error for `sorry` or `admit` in the code, an `axiom` or
@@ -338,6 +339,10 @@ only fall. `--fix` reflows a line at the last space that keeps the first part
 inside the limit, and never breaks a string literal, because that would change
 the value. Run `--update-baseline` after a fix to record the lower count. Use
 the marker `lean-lint: ignore` on a line that a rule cannot settle.
+
+`--fix` rewrites files in place. It refuses to run if git shows a changed,
+staged or untracked `.lean` file under the paths. Commit first, so that
+`git checkout` can undo a bad reflow. Build the result before you commit it.
 
 ### Python
 
