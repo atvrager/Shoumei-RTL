@@ -369,9 +369,9 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
   let hit_gates := (List.range ways).map fun w =>
     Gate.mkAND way_valid_sel[w]! way_tag_match[w]! way_hit[w]!
 
-  -- Overall hit = way0_hit OR way1_hit
+  -- Overall hit = OR over all ways
   let hit := Wire.mk "hit"
-  let hit_gate := Gate.mkOR way_hit[0]! way_hit[1]! hit
+  let hit_gate : List Gate := mkOrTree way_hit hit
 
   -- Data read mux: for each way, select the set, then select the word
   -- Then use hit way to select the final data
@@ -943,7 +943,7 @@ def mkL1DCache (g : CacheGeom := CacheGeom.default) : Circuit :=
     fsm_gates ++ pend_dffs ++ pend_victim_dffs ++ plru_gates ++ valid_dffs ++ dirty_dffs ++
     data_ram_rd_addr_mux ++
     valid_mux_gates ++ dirty_mux_gates ++ victim_wb_gates ++
-    hit_gates ++ [hit_gate] ++
+    hit_gates ++ hit_gate ++
     hit_data_mux_gates ++ resp_data_mux_gates ++ fsm_decode_gates ++ resp_valid_gates ++ resp_reg_gates ++
     miss_gates ++ miss_valid_gates ++ miss_addr_gates ++ stall_gates ++
     [wb_valid_gate] ++ wb_vtag_mux ++ wb_addr_gates ++ wb_data_gates ++ flush_gates ++

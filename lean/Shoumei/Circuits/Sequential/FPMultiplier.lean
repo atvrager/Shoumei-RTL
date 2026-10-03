@@ -105,7 +105,8 @@ private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let levels : List (List Wire) := (List.range 7).map fun level =>
     if level == 0 then input
     else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
-  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString level)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
   let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
   let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
     let shift_by := 1 <<< level
@@ -289,13 +290,15 @@ def mkFPMultiplier : Circuit :=
   let exp_a10 := eff_exp_a ++ [zero, zero]
   let exp_b10 := eff_exp_b ++ [zero, zero]
   let exp_sum := makeIndexedWires "fp_expsum" 10
-  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp_a10.length .none) exp_a10 exp_b10 zero exp_sum "fp_expadd"
+  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp_a10.length .none) exp_a10 exp_b10 zero
+    exp_sum "fp_expadd"
 
   -- Subtract bias (127): exp_unbiased = exp_sum - 127
   let bias10 := (List.range 10).map fun i =>
     if i < 7 then one_w else zero
   let exp_unbiased := makeIndexedWires "fp_expub" 10
-  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum.length .one) exp_sum bias10 exp_unbiased "fp_expsub" one_w
+  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum.length .one) exp_sum bias10
+    exp_unbiased "fp_expsub" one_w
 
   -- Generate 24 partial products (each 48 bits, shifted)
   let pp_rows := (List.range 24).map fun j =>
@@ -450,7 +453,8 @@ def mkFPMultiplier : Circuit :=
 
   let norm_mant_inc := makeIndexedWires "fp_nm_inc" 23
   let norm_mant_c := makeIndexedWires "fp_nm_c" 24
-  let norm_mant_inc_gates := [Gate.mkBUF round_up (norm_mant_c[0]!)] ++ (List.range 23).flatMap fun i =>
+  let norm_mant_inc_gates := [Gate.mkBUF round_up (norm_mant_c[0]!)] ++ (List.range 23).flatMap fun
+    i =>
     [Gate.mkXOR (norm_mant[i]!) (norm_mant_c[i]!) (norm_mant_inc[i]!),
      Gate.mkAND (norm_mant[i]!) (norm_mant_c[i]!) (norm_mant_c[i + 1]!)]
   let norm_rollover := norm_mant_c[23]!
@@ -511,7 +515,8 @@ def mkFPMultiplier : Circuit :=
           [Gate.mkOR (v_prev[i + stride]!) (v_prev[i]!) merge_v,
            Gate.mkBUF merge_v (v_new[i]!)] ++
           (List.range 6).map fun k =>
-            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!) ((p_new[i]!)[k]!)
+            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!)
+              ((p_new[i]!)[k]!)
         else
           [Gate.mkBUF (v_prev[i]!) (v_new[i]!)] ++
           (List.range 6).map fun k =>
@@ -561,7 +566,8 @@ def mkFPMultiplier : Circuit :=
 
   let sub_mant_inc := makeIndexedWires "fp_sub_minc" 23
   let sub_mant_c := makeIndexedWires "fp_sub_mc" 24
-  let sub_mant_inc_gates := [Gate.mkBUF sub_rnd_up (sub_mant_c[0]!)] ++ (List.range 23).flatMap (fun i =>
+  let sub_mant_inc_gates := [Gate.mkBUF sub_rnd_up (sub_mant_c[0]!)] ++ (List.range 23).flatMap (fun
+    i =>
     [Gate.mkXOR (sub_mant[i]!) (sub_mant_c[i]!) (sub_mant_inc[i]!),
      Gate.mkAND (sub_mant[i]!) (sub_mant_c[i]!) (sub_mant_c[i + 1]!)]
   )
@@ -581,7 +587,8 @@ def mkFPMultiplier : Circuit :=
 
   let roll_ext10 := [sub_rollover] ++ (List.replicate 9 zero)
   let sub_exp_final := makeIndexedWires "fp_sub_efin" 10
-  let (sub_exp_roll_gates, _) := mkKoggeStoneAdd sub_exp_pre roll_ext10 zero sub_exp_final "fp_eroll"
+  let (sub_exp_roll_gates, _) := mkKoggeStoneAdd sub_exp_pre roll_ext10 zero sub_exp_final
+    "fp_eroll"
 
   let sub_packed := makeIndexedWires "fp_sub_packed" 32
   let sub_pack_gates := (List.range 32).map fun i =>
@@ -817,13 +824,10 @@ def mkFPMultiplier : Circuit :=
   let valid_gate := [Gate.mkBUF s2_valid valid_out]
   -- fflags: bit0=NX bit1=UF bit2=OF bit3=DZ bit4=NV.  OF and UF used to be
   -- rm[i] & ~rm[i]; DZ stays 0 because a multiplier cannot divide by zero.
-  -- UF requires a tiny result: the rounded result is subnormal (so not the
-  -- carry-to-minimum-normal case) and inexact.
-  let uf_pre := Wire.mk "mul_uf_pre"
   let is_underflow := Wire.mk "mul_uf"
   let uf_gates := [
-    Gate.mkAND subnormal_res sub2_not_carry uf_pre,
-    Gate.mkAND uf_pre sub2_inexact is_underflow
+    -- UF needs a tiny and inexact result.  subnormal_res confirms tininess.
+    Gate.mkAND subnormal_res sub2_inexact is_underflow
   ]
   let exc_gates := [
     Gate.mkBUF final_nx (exc[0]!),
@@ -854,7 +858,8 @@ def mkFPMultiplier : Circuit :=
     s2_dffs ++ [s2_nv_dff, s2_nan_res_dff, s2_ns_dff, s2_inf_dff, s2_zero_dff] ++
     -- Stage 2 combinational
     final_add_gates ++
-    low23_or_gates ++ nx_gates ++ [sub2_inexact_gate, nx_sel_gate, nx_of_gate, nx_final_gate, final_nx_gate] ++
+    low23_or_gates ++ nx_gates ++ [sub2_inexact_gate, nx_sel_gate, nx_of_gate, nx_final_gate,
+      final_nx_gate] ++
     uf_gates ++
     norm_mant_gates ++
     final_exp_gates ++ norm_S_a_gates ++ norm_S_b_gates ++ norm_grs_gates ++
@@ -870,7 +875,8 @@ def mkFPMultiplier : Circuit :=
     sub2_rnd_gates ++ sub2_inc_gates ++ sub2_final_mant_gates ++ sub2_pack_gates ++
     sub2_mant_or_gates ++ sub2_zero_gates ++ packed_or_sub_in_gates ++ final_pack_gates ++
     -- Special result override: NaN > Inf > Zero > Normal
-    sel_gates ++ zero_override_gates ++ sat_override_gates ++ inf_override_gates ++ nan_override_gates ++
+    sel_gates ++ zero_override_gates ++ sat_override_gates ++ inf_override_gates ++
+      nan_override_gates ++
     tag_out_gates ++
     valid_gate ++
     exc_gates

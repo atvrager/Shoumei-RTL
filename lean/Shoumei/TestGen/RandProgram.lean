@@ -141,6 +141,7 @@ def genFields (d : InstructionDef) : RandM (List (FieldType × Int)) := do
           pure (r.val : Int)
       | .rs1 =>
         if isBranch then pure (breg.val : Int)
+        else if [.CSRRS, .CSRRC].contains d.opType then pure 0
         else if memBytes > 0 || atomicOpcodes.contains d.opType then
           pure (dataBaseReg.val : Int)
         else if d.opType.hasFpRs1 then do

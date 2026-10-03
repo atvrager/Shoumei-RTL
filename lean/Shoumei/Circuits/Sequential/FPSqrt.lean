@@ -260,12 +260,14 @@ def mkFPSqrt : Circuit :=
   let not_mant := Wire.mk "not_mant"
   let is_inf := Wire.mk "is_inf"
   let is_nan := Wire.mk "is_nan"
+  let not_is_nan := Wire.mk "not_is_nan"
   let is_snan := Wire.mk "is_snan"
   let not_mant22 := Wire.mk "not_mant22"
   let is_neg_nonzero := Wire.mk "is_neg_nonzero"
   let not_is_zero := Wire.mk "not_is_zero"
   let is_special := Wire.mk "is_special"
   let is_neg_or_snan := Wire.mk "is_neg_or_snan"
+  let nan_target := Wire.mk "sp_nan_target"
 
   let special_detect_gates := [
     Gate.mkNOT sign_bit not_sign,
@@ -275,22 +277,22 @@ def mkFPSqrt : Circuit :=
     Gate.mkAND exp_all_ones not_mant (Wire.mk "exp_ff_mant_0"),
     Gate.mkAND (Wire.mk "exp_ff_mant_0") not_sign is_inf,
     Gate.mkAND exp_all_ones mant_any_set is_nan,
+    Gate.mkNOT is_nan not_is_nan,
     Gate.mkNOT (src1_in[22]!) not_mant22,
     Gate.mkAND is_nan not_mant22 is_snan,
-    Gate.mkAND sign_bit not_is_zero is_neg_nonzero,
+    Gate.mkAND sign_bit not_is_zero (Wire.mk "is_neg_t0"),
+    Gate.mkAND (Wire.mk "is_neg_t0") not_is_nan is_neg_nonzero,
     Gate.mkOR is_neg_nonzero is_snan is_neg_or_snan,
+    Gate.mkOR is_neg_or_snan is_nan nan_target,
     Gate.mkOR is_zero is_inf (Wire.mk "sp_01"),
-    Gate.mkOR is_nan is_neg_nonzero (Wire.mk "sp_23"),
-    Gate.mkOR (Wire.mk "sp_01") (Wire.mk "sp_23") is_special
+    Gate.mkOR (Wire.mk "sp_01") nan_target is_special
   ]
 
   -- Special result MUX chain:
-  --   base = src1 (handles ±0 and qNaN passthrough)
+  --   base = src1 (handles ±0)
   --   m1 = MUX(base, +inf, is_inf)
-  --   m2 = MUX(m1, src1, is_nan)  -- restore qNaN passthrough
-  --   m3 = MUX(m2, qNaN, is_neg_or_snan)
+  --   m2 = MUX(m1, qNaN, nan_target)  -- canonical NaN for any NaN or negative
   let sp_result_m1 := makeIndexedWires "sp_result_m1" 32
-  let sp_result_m2 := makeIndexedWires "sp_result_m2" 32
   let sp_result := makeIndexedWires "sp_result" 32
 
   let sp_result_gates := (List.range 32).flatMap (fun i =>
@@ -298,8 +300,7 @@ def mkFPSqrt : Circuit :=
     let qnan_bit := if (i >= 23 && i <= 30) || i == 22 then one else zero
     [
       Gate.mkMUX (src1_in[i]!) inf_bit is_inf (sp_result_m1[i]!),
-      Gate.mkMUX (sp_result_m1[i]!) (src1_in[i]!) is_nan (sp_result_m2[i]!),
-      Gate.mkMUX (sp_result_m2[i]!) qnan_bit is_neg_or_snan (sp_result[i]!)
+      Gate.mkMUX (sp_result_m1[i]!) qnan_bit nan_target (sp_result[i]!)
     ]
   )
 

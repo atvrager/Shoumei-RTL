@@ -64,7 +64,8 @@ private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let levels : List (List Wire) := (List.range 7).map fun level =>
     if level == 0 then input
     else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
-  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString level)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
   let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
   let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
     let shift_by := 1 <<< level
@@ -440,7 +441,8 @@ def mkFPDividerD : Circuit :=
   -- rem_shifted = {rem_q[53:0], 1'b0} (55 bits)
   let rem_shifted := [zero] ++ (List.range 54).map (fun i => rem_q[i]!)
   let trial := makeIndexedWires "div_trial" 55
-  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted div_mant_q trial "div_step_sub" one
+  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted div_mant_q trial "div_step_sub"
+    one
   let q_bit := Wire.mk "div_q_bit"
   let qb_gate := Gate.mkNOT trial_borrow q_bit
 
@@ -588,7 +590,8 @@ def mkFPDividerD : Circuit :=
   let final_exp_zero := Wire.mk "div_fexp_zero"
   let final_exp_le0 := Wire.mk "div_fexp_le0"
   let subnormal_res := Wire.mk "div_subres"
-  let (exp_final_lo_gates, exp_final_lo) := mkAndChain ((List.range 11).map fun i => final_exp[i]!) "div_fexp_lo"
+  let (exp_final_lo_gates, exp_final_lo) := mkAndChain ((List.range 11).map fun i => final_exp[i]!)
+    "div_fexp_lo"
   let exp_final_n12 := Wire.mk "div_fexp_n12"
   let ovf_cand := Wire.mk "div_ovf_cand"
   let ovf_pre := Wire.mk "div_ovf_pre"
@@ -627,7 +630,8 @@ def mkFPDividerD : Circuit :=
   let sub_shift13 := makeIndexedWires "div_subsh13" 13
   let (sub_shift13_gates, _sub_shift13_borrow) :=
     mkKoggeStoneSub four_13 final_exp sub_shift13 "div_subsh13" one
-  let (sub_over_gates, sub_over) := mkOrChain ((List.range 7).map fun i => sub_shift13[6 + i]!) "div_subover"
+  let (sub_over_gates, sub_over) := mkOrChain ((List.range 7).map fun i => sub_shift13[6 + i]!)
+    "div_subover"
   let sub_shift := makeIndexedWires "div_subsh" 6
   let sub_shift_gates := (List.range 6).map fun i =>
     Gate.mkMUX (sub_shift13[i]!) one sub_over (sub_shift[i]!)
@@ -726,12 +730,11 @@ def mkFPDividerD : Circuit :=
     zero]
   let norm_exc_gates := [
     -- NX: the subnormal path measures its own remainder; a saturated result is
-    -- inexact too.  UF needs a tiny and inexact result, and a carry out of the
-    -- subnormal mantissa reaches the smallest normal, which is not tiny.
+    -- inexact too.  UF needs a tiny and inexact result.  subnormal_res confirms
+    -- tininess after normal rounding.  Any remainder sets inexact.
     Gate.mkMUX any_round sub_any_rem subnormal_res (Wire.mk "div_nxmux"),
     Gate.mkOR (Wire.mk "div_nxmux") ovf_res (norm_exc[0]!),
-    Gate.mkAND subnormal_res sub_not_carry (Wire.mk "div_ufmux"),
-    Gate.mkAND (Wire.mk "div_ufmux") sub_any_rem (norm_exc[1]!),
+    Gate.mkAND subnormal_res sub_any_rem (norm_exc[1]!),
     Gate.mkBUF ovf_res (norm_exc[2]!)
   ]
 

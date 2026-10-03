@@ -85,7 +85,8 @@ private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let levels : List (List Wire) := (List.range 7).map fun level =>
     if level == 0 then input
     else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
-  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString level)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
   let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
   let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
     let shift_by := 1 <<< level
@@ -259,8 +260,10 @@ def mkFPMultiplierD : Circuit :=
 
   let norm1_pre := makeIndexedWires "muld_nm1p" 53
   let norm2_pre := makeIndexedWires "muld_nm2p" 53
-  let norm1_gates := mkBarrelShiftLeft (((List.range 52).map fun i => frac1[i]!) ++ [zero]) sh1 norm1_pre zero "muld_bsl1"
-  let norm2_gates := mkBarrelShiftLeft (((List.range 52).map fun i => frac2[i]!) ++ [zero]) sh2 norm2_pre zero "muld_bsl2"
+  let norm1_gates := mkBarrelShiftLeft (((List.range 52).map fun i => frac1[i]!) ++ [zero]) sh1
+    norm1_pre zero "muld_bsl1"
+  let norm2_gates := mkBarrelShiftLeft (((List.range 52).map fun i => frac2[i]!) ++ [zero]) sh2
+    norm2_pre zero "muld_bsl2"
 
   let mant1 := makeIndexedWires "muld_mant1" 53
   let mant2 := makeIndexedWires "muld_mant2" 53
@@ -278,8 +281,10 @@ def mkFPMultiplierD : Circuit :=
   let sh2_13 := (List.range 13).map fun i => if i < 6 then sh2[i]! else zero
   let eff1_13 := makeIndexedWires "muld_eff1" 13
   let eff2_13 := makeIndexedWires "muld_eff2" 13
-  let (eff1_gates, _eff1_borrow) := mkSubFor (AdderSpec.minArea 13 .one) one13 sh1_13 eff1_13 "muld_eff1s" one_w
-  let (eff2_gates, _eff2_borrow) := mkSubFor (AdderSpec.minArea 13 .one) one13 sh2_13 eff2_13 "muld_eff2s" one_w
+  let (eff1_gates, _eff1_borrow) := mkSubFor (AdderSpec.minArea 13 .one) one13 sh1_13 eff1_13
+    "muld_eff1s" one_w
+  let (eff2_gates, _eff2_borrow) := mkSubFor (AdderSpec.minArea 13 .one) one13 sh2_13 eff2_13
+    "muld_eff2s" one_w
   let exp1_13 := makeIndexedWires "muld_exp1_13" 13
   let exp2_13 := makeIndexedWires "muld_exp2_13" 13
   let exp_norm_gates := (List.range 13).flatMap fun i =>
@@ -289,10 +294,12 @@ def mkFPMultiplierD : Circuit :=
      Gate.mkMUX raw2 (eff2_13[i]!) e2_sub (exp2_13[i]!)]
 
   let exp_sum13 := makeIndexedWires "muld_esum" 13
-  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp1_13.length .none) exp1_13 exp2_13 zero exp_sum13 "muld_eadd"
+  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp1_13.length .none) exp1_13 exp2_13 zero
+    exp_sum13 "muld_eadd"
   let bias13 := (List.range 13).map fun i => if i < 10 then one_w else zero
   let exp_ub13 := makeIndexedWires "muld_eub" 13
-  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum13.length .one) exp_sum13 bias13 exp_ub13 "muld_esub" one_w
+  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum13.length .one) exp_sum13 bias13
+    exp_ub13 "muld_esub" one_w
 
   -- 53 partial products of 106 bits
   let pp_rows := (List.range 53).map fun j =>
@@ -553,7 +560,8 @@ def mkFPMultiplierD : Circuit :=
   let sub_shift13 := makeIndexedWires "muld_subsh13" 13
   let (sub_shift13_gates, _sub_shift13_borrow) :=
     mkKoggeStoneSub four_13 exp_adj13 sub_shift13 "muld_subsh13" one_w
-  let (sub_over, sub_over_gates) := mkOrTree "muld_subover" ((List.range 7).map fun i => sub_shift13[6 + i]!)
+  let (sub_over, sub_over_gates) := mkOrTree "muld_subover" ((List.range 7).map fun i =>
+    sub_shift13[6 + i]!)
   let sub_shift := makeIndexedWires "muld_subsh" 6
   let sub_shift_gates := (List.range 6).map fun i =>
     Gate.mkMUX (sub_shift13[i]!) one_w sub_over (sub_shift[i]!)
@@ -636,7 +644,8 @@ def mkFPMultiplierD : Circuit :=
       Gate.mkMUX (norm_res[i]!) (sub_exp_final[i - 52]!) subnormal_res (res_l0[i]!)
 
   -- Overflow and Underflow detection
-  let (exp11_all1, exp11_all1_gates) := mkAndTree "muld_e11o" ((List.range 11).map fun i => exp_final13[i]!)
+  let (exp11_all1, exp11_all1_gates) := mkAndTree "muld_e11o" ((List.range 11).map fun i =>
+    exp_final13[i]!)
   let not_neg_exp := Wire.mk "muld_nnege"
   let ovf_cand := Wire.mk "muld_ovf_cand"
   let is_overflow := Wire.mk "muld_ovf"
@@ -646,10 +655,9 @@ def mkFPMultiplierD : Circuit :=
     Gate.mkNOT (exp_final13[12]!) not_neg_exp,
     Gate.mkOR (exp_final13[11]!) exp11_all1 ovf_cand,
     Gate.mkAND not_neg_exp ovf_cand is_overflow,
-    -- UF needs a tiny and inexact result.  exp_final13[12] is the sign of the
-    -- *rounded* exponent, so a carry to the smallest normal is not tiny.
-    Gate.mkAND subnormal_res sub_not_carry (Wire.mk "muld_uf_pre"),
-    Gate.mkAND (Wire.mk "muld_uf_pre") sub_any_rem is_underflow
+    -- UF needs a tiny and inexact result.  subnormal_res confirms tininess.
+    -- Any remainder sets inexact.
+    Gate.mkAND subnormal_res sub_any_rem is_underflow
   ]
 
   -- Special result values

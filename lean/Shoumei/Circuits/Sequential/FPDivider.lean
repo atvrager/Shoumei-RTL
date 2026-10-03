@@ -81,7 +81,8 @@ private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let levels : List (List Wire) := (List.range 7).map fun level =>
     if level == 0 then input
     else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
-  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString level)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
   let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
   let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
     let shift_by := 1 <<< level
@@ -682,7 +683,8 @@ def mkFPDivider : Circuit :=
   let subnormal_res := Wire.mk "div_subres"
   -- Overflow: the exponent saturated at 255.  A negative exponent (a subnormal
   -- result) also has the high bits set, so only a non-negative one can overflow.
-  let (exp_rnd_low8, exp_rnd_low8_gates) := mkAndTree "div_ernd_l8" ((List.range 8).map fun i => exp_rnd[i]!)
+  let (exp_rnd_low8, exp_rnd_low8_gates) := mkAndTree "div_ernd_l8" ((List.range 8).map fun i =>
+    exp_rnd[i]!)
   let exp_rnd_n9 := Wire.mk "div_ernd_n9"
   let ovf_cand := Wire.mk "div_ovf_cand"
   let ovf_pre := Wire.mk "div_ovf_pre"
@@ -721,7 +723,8 @@ def mkFPDivider : Circuit :=
   let sub_shift10 := makeIndexedWires "div_subsh10" 10
   let (sub_shift10_gates, _sub_shift10_borrow) :=
     mkKoggeStoneSub four_10 final_exp sub_shift10 "div_subsh10" one
-  let (sub_over, sub_over_gates) := mkOrTree "div_subover" ((List.range 5).map fun i => sub_shift10[5 + i]!)
+  let (sub_over, sub_over_gates) := mkOrTree "div_subover" ((List.range 5).map fun i =>
+    sub_shift10[5 + i]!)
   let sub_shift := makeIndexedWires "div_subsh" 6
   let sub_shift_gates := (List.range 6).map fun i =>
     Gate.mkMUX (sub_shift10[i]!) one sub_over (sub_shift[i]!)
@@ -819,8 +822,10 @@ def mkFPDivider : Circuit :=
   let pre_pack_gates := (List.range 31).flatMap mkPackBit ++
     [Gate.mkBUF sign_q (pre_pack[31]!)]
 
-  let result_mant_gates := (List.range 23).map (fun i => Gate.mkBUF (pre_pack[i]!) (packed_result[i]!))
-  let result_exp_gates := (List.range 8).map (fun i => Gate.mkBUF (pre_pack[23 + i]!) (packed_result[23 + i]!))
+  let result_mant_gates := (List.range 23).map (fun i => Gate.mkBUF (pre_pack[i]!)
+    (packed_result[i]!))
+  let result_exp_gates := (List.range 8).map (fun i => Gate.mkBUF (pre_pack[23 + i]!)
+    (packed_result[23 + i]!))
   let result_sign_gate := [Gate.mkBUF (pre_pack[31]!) (packed_result[31]!)]
 
 
@@ -951,13 +956,12 @@ def mkFPDivider : Circuit :=
 
   -- fflags: bit0=NX bit1=UF bit2=OF bit3=DZ bit4=NV.
   -- The subnormal path measures its own remainder, and a saturated result is
-  -- inexact too.  UF needs a tiny *and* inexact result: a carry out of the
-  -- subnormal mantissa reaches the smallest normal, which is not tiny.
+  -- inexact too.  UF needs a tiny and inexact result.  subnormal_res confirms
+  -- tininess after normal rounding.  Any remainder sets inexact.
   let not_special_nx := Wire.mk "div_not_special_nx"
   let nx_final := Wire.mk "div_nx_final"
   let nx_sel := Wire.mk "div_nx_sel"
   let nx_of := Wire.mk "div_nx_of"
-  let uf_pre := Wire.mk "div_uf_pre"
   let is_underflow := Wire.mk "div_uf"
   let exc_gates := rem_or_tree ++ [
     Gate.mkBUF nx_final (exc[0]!),
@@ -969,8 +973,7 @@ def mkFPDivider : Circuit :=
     Gate.mkMUX nx_all sub_any_rem subnormal_res nx_sel,
     Gate.mkOR nx_sel ovf_res nx_of,
     Gate.mkAND nx_of not_special_nx nx_final,
-    Gate.mkAND subnormal_res sub_not_carry uf_pre,
-    Gate.mkAND uf_pre sub_any_rem is_underflow
+    Gate.mkAND subnormal_res sub_any_rem is_underflow
   ]
 
   -- valid_out = done

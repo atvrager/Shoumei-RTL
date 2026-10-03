@@ -45,7 +45,6 @@ import Shoumei.Circuits.Combinational.OneHotEncoder
 -- Phase 3: Sequential Components
 import Shoumei.Circuits.Sequential.QueueN
 import Shoumei.Circuits.Sequential.QueueComponents
-import Shoumei.Circuits.Sequential.Queue1Bridge
 import Shoumei.Circuits.Sequential.Register
 
 -- Phase 4: RISC-V Components
@@ -197,6 +196,7 @@ def baseCircuits : List Circuit := [
   mkDecoder 4,   -- Phase 6: ROB allocation decode (4→16 one-hot)
   mkDecoder 5,
   mkDecoder 6,
+  mkDecoder 7,   -- FPExcFile_128x5 write decoder
   mkComparatorN 6,
   mkEqualityComparatorN 6,
   mkEqualityComparator32,  -- Phase 7: Store buffer address matching (XOR + OR-tree)
@@ -429,8 +429,8 @@ def main (args : List String) : IO Unit := do
     Shoumei.Verification.ExportCerts.printCertificates allCircuits riscvDecoderModules
     return
   if args.contains "--export-refinements" then
-    Shoumei.Verification.ExportCerts.printRefinements allCircuits riscvDecoderModules
-    return
+    IO.eprintln "Refinements export is disabled in generate_all to keep code generation fast."
+    IO.Process.exit 1
   if args.contains "--export-sec-manifest" || args.contains "--sec-manifest" then
     Shoumei.Verification.DualRTL.printManifest allCircuits
     return

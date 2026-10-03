@@ -1,0 +1,2 @@
+build --action_env=CCACHE_DISABLE=1
+build --host_action_env=CCACHE_DISABLE=1

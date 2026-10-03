@@ -164,6 +164,7 @@ def mkFPSqrtD : Circuit :=
   let not_is_zero := Wire.mk "sq_not_is_zero"
   let is_inf := Wire.mk "sq_is_inf"
   let is_nan := Wire.mk "sq_is_nan"
+  let not_is_nan := Wire.mk "sq_not_is_nan"
   let not_src1_51 := Wire.mk "sq_not_src1_51"
   let is_snan := Wire.mk "sq_is_snan"
   let is_neg_nonzero := Wire.mk "sq_is_neg_nonzero"
@@ -178,9 +179,11 @@ def mkFPSqrtD : Circuit :=
     Gate.mkAND exp_all_ones not_frac_any (Wire.mk "sq_inf_t0"),
     Gate.mkAND (Wire.mk "sq_inf_t0") not_sign_a is_inf,
     Gate.mkAND exp_all_ones frac_any_set is_nan,
+    Gate.mkNOT is_nan not_is_nan,
     Gate.mkNOT (src1_in[51]!) not_src1_51,
     Gate.mkAND is_nan not_src1_51 is_snan,
-    Gate.mkAND sign_a not_is_zero is_neg_nonzero,
+    Gate.mkAND sign_a not_is_zero (Wire.mk "sq_neg_t0"),
+    Gate.mkAND (Wire.mk "sq_neg_t0") not_is_nan is_neg_nonzero,
     Gate.mkOR is_neg_nonzero is_snan is_neg_or_snan,
 
     Gate.mkOR is_zero is_inf (Wire.mk "sq_sp_01"),
@@ -301,7 +304,8 @@ def mkFPSqrtD : Circuit :=
   let trial_val := [one, zero] ++ (List.range 54).map (fun i => root_q[i]!) ++ [zero]
 
   let trial_diff := makeIndexedWires "sq_trial_diff" 57
-  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted trial_val trial_diff "sq_step_sub" one
+  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted trial_val trial_diff
+    "sq_step_sub" one
   let accept := Wire.mk "sq_accept"
   let accept_gate := Gate.mkNOT trial_borrow accept
 
@@ -464,7 +468,8 @@ def mkFPSqrtD : Circuit :=
     ea_ao_gates ++ ea_oz_gates ++ [ea_allz_gate] ++ fa_any_gates ++
     class_gates ++ [nan_target_gate] ++ sp_res_gates ++ sp_exc_gates ++
     [sub_gate, exp_odd_gate] ++ lead_a_gates ++ pos_a_gates ++ sh_a_gates ++
-    norm_a_gates ++ frac_eff_gates ++ eff_a_gates ++ exp_eff_gates ++ ea_add_gates ++ mant_init_gates ++
+    norm_a_gates ++ frac_eff_gates ++ eff_a_gates ++ exp_eff_gates ++ ea_add_gates ++
+      mant_init_gates ++
     trial_sub_gates ++ [accept_gate] ++ new_rem_gates ++
     rem_mux_gates ++ root_mux_gates ++ mant_mux_gates ++ exp_mux_gates ++
     [sp_flag_mux] ++ sp_res_mux_gates ++ sp_exc_mux_gates ++

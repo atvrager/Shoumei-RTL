@@ -6,10 +6,7 @@
 1 lean/Shoumei/Circuits/Combinational/Comparator.lean
 1 lean/Shoumei/Circuits/Combinational/ComparatorProofs.lean
 1 lean/Shoumei/Circuits/Combinational/Decoder.lean
-9 lean/Shoumei/Circuits/Combinational/FPDoubleConverter.lean
 1 lean/Shoumei/Circuits/Combinational/FPLongConverterProofs.lean
-7 lean/Shoumei/Circuits/Combinational/FPMisc.lean
-8 lean/Shoumei/Circuits/Combinational/FPToInt64.lean
 4 lean/Shoumei/Circuits/Combinational/FPU.lean
 6 lean/Shoumei/Circuits/Combinational/FPUDouble.lean
 5 lean/Shoumei/Circuits/Combinational/FPUDoubleProofs.lean
@@ -26,16 +23,8 @@
 2 lean/Shoumei/Circuits/Combinational/ShifterProofs.lean
 1 lean/Shoumei/Circuits/Sequential/Divider.lean
 3 lean/Shoumei/Circuits/Sequential/FPAdder.lean
-8 lean/Shoumei/Circuits/Sequential/FPAdderD.lean
-2 lean/Shoumei/Circuits/Sequential/FPDivider.lean
-1 lean/Shoumei/Circuits/Sequential/FPDividerD.lean
-3 lean/Shoumei/Circuits/Sequential/FPFMA.lean
-7 lean/Shoumei/Circuits/Sequential/FPMultiplier.lean
-6 lean/Shoumei/Circuits/Sequential/FPMultiplierD.lean
 1 lean/Shoumei/Circuits/Sequential/FPMultiplierDProofs.lean
 1 lean/Shoumei/Circuits/Sequential/FPMultiplierProofs.lean
-1 lean/Shoumei/Circuits/Sequential/FPNormalize.lean
-1 lean/Shoumei/Circuits/Sequential/FPSqrtD.lean
 2 lean/Shoumei/Circuits/Sequential/Queue.lean
 6 lean/Shoumei/Circuits/Sequential/QueueProofs.lean
 1 lean/Shoumei/Circuits/Sequential/QueueTemporalProofs.lean
@@ -60,7 +49,7 @@
 2 lean/Shoumei/Peripherals/BootROM.lean
 1 lean/Shoumei/Peripherals/UART.lean
 1 lean/Shoumei/RISCV/BenchmarkSpecs.lean
-116 lean/Shoumei/RISCV/CPU.lean
+115 lean/Shoumei/RISCV/CPU.lean
 4 lean/Shoumei/RISCV/CPU/BusyBitTable.lean
 2 lean/Shoumei/RISCV/CPU/BusyBitTableProofs.lean
 17 lean/Shoumei/RISCV/CPUBehavioral.lean
@@ -100,7 +89,6 @@
 4 lean/Shoumei/RISCV/Microcode/ZbEmulationLibrary.lean
 8 lean/Shoumei/RISCV/OpTypeGenerated.lean
 2 lean/Shoumei/RISCV/Renaming/FreeList.lean
-7 lean/Shoumei/RISCV/Renaming/PhysRegFile.lean
 2 lean/Shoumei/RISCV/Renaming/PhysRegFileProofs.lean
 4 lean/Shoumei/RISCV/Renaming/RAT.lean
 3 lean/Shoumei/RISCV/Renaming/RenameStage.lean

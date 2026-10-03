@@ -44,7 +44,8 @@ private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
           let gate := Gate.mkOR w1 w2 intermediate
           go rest (intermediate :: acc_w) (acc_g ++ [gate])
       go ws [] []
-    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
+    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List
+      Gate :=
       match fuel with
       | 0 => (ws.head!, acc)
       | fuel' + 1 =>
@@ -71,7 +72,8 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
           let gate := Gate.mkAND w1 w2 intermediate
           go rest (intermediate :: acc_w) (acc_g ++ [gate])
       go ws [] []
-    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
+    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List
+      Gate :=
       match fuel with
       | 0 => (ws.head!, acc)
       | fuel' + 1 =>
@@ -88,7 +90,8 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
     the sequential layer. -/
 private def mkBarrelShiftLeftN (pfx : String) (data : List Wire) (n : Nat)
     (shiftAmt : List Wire) (zeroW : Wire) : List Wire × List Gate :=
-  let (finalData, allGates) := (List.range shiftAmt.length).foldl (fun (acc : List Wire × List Gate) stage =>
+  let (finalData, allGates) := (List.range shiftAmt.length).foldl (fun (acc : List Wire × List Gate)
+    stage =>
     let prev := acc.1
     let shift := Nat.pow 2 stage
     let cur := makeIndexedWires s!"{pfx}_s{stage}" n
@@ -166,7 +169,8 @@ def mkFPToInt64 : Circuit :=
   -- SP exp to DP exp: if normal, dp_exp = sp_exp + 896 (896 = 0b01110000000)
   let norm_sp_dp_exp := makeIndexedWires "nsp_dpe" 11
   let norm_sp_dp_exp_c := makeIndexedWires "nsp_dpe_c" 12
-  let norm_sp_dp_exp_gates := [Gate.mkBUF zero (norm_sp_dp_exp_c[0]!)] ++ (List.range 11).flatMap fun i =>
+  let norm_sp_dp_exp_gates := [Gate.mkBUF zero (norm_sp_dp_exp_c[0]!)] ++ (List.range 11).flatMap
+    fun i =>
     let a := if i < 8 then sp_in_exp[i]! else zero
     let b := if i == 7 || i == 8 || i == 9 then one else zero
     let ab_xor := Wire.mk s!"nsp_xor_{i}"
@@ -232,9 +236,11 @@ def mkFPToInt64 : Circuit :=
   -- 1075 in 11-bit binary: 10000110011
   let const1075 := [one, one, zero, zero, one, one, zero, zero, zero, zero, one]
   let shamt_full := makeIndexedWires "shamt_full" 11
-  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minArea const1138.length .one) const1138 flt_exp shamt_full "shamt_sub" one
+  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minArea const1138.length .one)
+    const1138 flt_exp shamt_full "shamt_sub" one
 
-  -- If shamt_borrow=1 or flt_exp >= 1139 (i.e. unbiased_exp >= 116): shift amount is 0 (huge overflow)
+  -- If shamt_borrow=1 or flt_exp >= 1139 (i.e. unbiased_exp >= 116): shift amount is 0 (huge
+    -- overflow)
   let shamt7 := (List.range 7).map fun i =>
     Wire.mk s!"shamt7_{i}"
   let shamt7_gates := (List.range 7).map fun i =>
@@ -267,7 +273,8 @@ def mkFPToInt64 : Circuit :=
     ) (bus128_init, [])
 
   -- Magnitude < 1.0 check: flt_exp < 1023
-  let (exp_lo10_all, exp_lo10_all_gates) := mkAndTree "exp_lo10" (List.range 10 |>.map fun i => flt_exp[i]!)
+  let (exp_lo10_all, exp_lo10_all_gates) := mkAndTree "exp_lo10" (List.range 10 |>.map fun i =>
+    flt_exp[i]!)
   let not_exp_lo10_all := Wire.mk "not_exp_lo10_all"
   let not_flt_exp10 := Wire.mk "not_flt_exp10"
   let flt_exp_lt_1023 := Wire.mk "flt_exp_lt_1023"
@@ -372,11 +379,13 @@ def mkFPToInt64 : Circuit :=
   -- Increment integer magnitude by flt_round_up
   let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
   let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minArea 64 .input) (List.range 64 |>.map fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
+  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minArea 64 .input) (List.range 64 |>.map
+    fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
 
   -- 2's complement negation if signed and negative: -flt_int_mag_inc
   let flt_int_neg := makeIndexedWires "flt_int_neg" 64
-  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
+  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun
+    i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
 
   -- Un-clamped normal integer result
   let flt_int_norm := makeIndexedWires "flt_int_norm" 64
@@ -392,14 +401,16 @@ def mkFPToInt64 : Circuit :=
   -- Let's detect if flt_exp >= 1086, >= 1087, >= 1088:
   -- 1088 = 0b10001000000 (bit 10=1, bit 6=1)
   -- Bits [9:6]: any bit set means flt_exp[9:0] >= 64, so flt_exp >= 1088
-  let (exp_hi4_any, exp_hi4_any_gates) := mkOrTree "fexp_hi4" (List.range 4 |>.map fun i => flt_exp[6 + i]!)
+  let (exp_hi4_any, exp_hi4_any_gates) := mkOrTree "fexp_hi4" (List.range 4 |>.map fun i =>
+    flt_exp[6 + i]!)
   let exp_gte_1088 := Wire.mk "exp_gte_1088"
   let exp_gte_1088_gate := Gate.mkAND (flt_exp[10]!) exp_hi4_any exp_gte_1088
 
   -- Bits [5:0]: 1086 is 1024 + 62 = 0b10000111110
   -- 1087 is 1024 + 63 = 0b10000111111
   let (exp_lo6_all, exp_lo6_gates) := mkAndTree "exp_lo6" (List.range 6 |>.map fun i => flt_exp[i]!)
-  let (exp_bits1_5_all, exp_b15_gates) := mkAndTree "exp_b15" (List.range 5 |>.map fun i => flt_exp[1 + i]!)
+  let (exp_bits1_5_all, exp_b15_gates) := mkAndTree "exp_b15" (List.range 5 |>.map fun i =>
+    flt_exp[1 + i]!)
 
   let exp_gte_1087 := Wire.mk "exp_gte_1087"
   let exp_gte_1086 := Wire.mk "exp_gte_1086"

@@ -211,7 +211,8 @@ def fpSgnjCircuit : Circuit :=
     Gate.mkMUX sgnj_sign_inner fsgnjx_bit31 is_fsgnjx sgnj_sign
   ]
 
-  -- Result: bits [30:0] pass src1 through NOT-NOT pair to prevent feedthrough; bit 31 is sgnj_sign if sgnj else src1[31] (FMV)
+  -- Result: bits [30:0] pass src1 through NOT-NOT pair to prevent feedthrough; bit 31 is sgnj_sign
+    -- if sgnj else src1[31] (FMV)
   let not_src1 := makeIndexedWires "not_src1" 31
   let low_gates := (List.range 31).flatMap fun i =>
     [Gate.mkNOT (src1[i]!) (not_src1[i]!),
@@ -766,13 +767,15 @@ def fpCvtIntCircuit : Circuit :=
   let fcvt_guard32 := makeIndexedWires "fcvt_gsh" 32
   let fcvt_stk_below := Wire.mk "fcvt_stk_below"
   let fcvt_guard_gates :=
-    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrlM1 fcvt_guard32 fcvt_stk_below zero "fcvt_gsh"
+    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrlM1 fcvt_guard32 fcvt_stk_below
+      zero "fcvt_gsh"
 
   let shiftCtrl := (List.range 5).map fun i => shiftAmt[i]!
   let fcvt_shifted := makeIndexedWires "fcvt_bsh" 32
   let fcvt_sticky_out := Wire.mk "fcvt_sticky_out"
   let fcvt_shift_gates :=
-    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrl fcvt_shifted fcvt_sticky_out zero "fcvt_bsh"
+    Shoumei.Circuits.Sequential.mkShiftRightSticky mant32 shiftCtrl fcvt_shifted fcvt_sticky_out
+      zero "fcvt_bsh"
 
   -- exp above 150: the value is an integer of 24 + (exp - 150) bits, so the
   -- significand shifts left by 150 - exp negated.  exp up to 157 keeps it
@@ -994,7 +997,8 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtsw_neg := makeIndexedWires "fcvtsw_neg" 32
   let fcvtsw_zeros32 := (List.range 32).map fun _ => zero
   let (fcvtsw_neg_gates, _fcvtsw_neg_cout) :=
-    mkAddFor (AdderSpec.minArea fcvtsw_inv.length .one) fcvtsw_inv fcvtsw_zeros32 one fcvtsw_neg "fcvtsw_neg"
+    mkAddFor (AdderSpec.minArea fcvtsw_inv.length .one) fcvtsw_inv fcvtsw_zeros32 one fcvtsw_neg
+      "fcvtsw_neg"
 
   let fcvtsw_mag := makeIndexedWires "fcvtsw_mag" 32
   let fcvtsw_mag_gates := (List.range 32).map fun i =>
@@ -1040,7 +1044,8 @@ def fpCvtIntCircuit : Circuit :=
     [zero, zero, zero]
   let fcvtsw_exp := makeIndexedWires "fcvtsw_exp" 8
   let (fcvtsw_exp_gates, _fcvtsw_exp_cout) :=
-    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtsw_lpos8 zero fcvtsw_exp "fcvtsw_exp"
+    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtsw_lpos8 zero fcvtsw_exp
+      "fcvtsw_exp"
 
   let fcvtsw_round_bit := fcvtsw_shifted[7]!
   let fcvtsw_guard_bit := fcvtsw_shifted[8]!
@@ -1098,7 +1103,8 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtsw_zeros31 := (List.range 31).map fun _ => zero
   let fcvtsw_rounded := makeIndexedWires "fcvtsw_rnded" 31
   let (fcvtsw_rnd_add_gates, _fcvtsw_rnd_cout) :=
-    mkAddFor (AdderSpec.minArea fcvtsw_unrounded.length .input) fcvtsw_unrounded fcvtsw_zeros31 fcvtsw_round_up fcvtsw_rounded "fcvtsw_rnd"
+    mkAddFor (AdderSpec.minArea fcvtsw_unrounded.length .input) fcvtsw_unrounded fcvtsw_zeros31
+      fcvtsw_round_up fcvtsw_rounded "fcvtsw_rnd"
 
   let fcvtsw_not_zero := Wire.mk "fcvtsw_not_zero"
   let g_fcvtsw_nz := Gate.mkNOT fcvtsw_is_zero fcvtsw_not_zero
@@ -1152,7 +1158,8 @@ def fpCvtIntCircuit : Circuit :=
     [zero, zero, zero]
   let fcvtswu_exp := makeIndexedWires "fcvtswu_exp" 8
   let (fcvtswu_exp_gates, _fcvtswu_exp_cout) :=
-    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtswu_lpos8 zero fcvtswu_exp "fcvtswu_exp"
+    mkAddFor (AdderSpec.minArea const127.length .none) const127 fcvtswu_lpos8 zero fcvtswu_exp
+      "fcvtswu_exp"
 
   let fcvtswu_round_bit := fcvtswu_shifted[7]!
   let fcvtswu_guard_bit := fcvtswu_shifted[8]!
@@ -1198,7 +1205,8 @@ def fpCvtIntCircuit : Circuit :=
   let fcvtswu_zeros31 := (List.range 31).map fun _ => zero
   let fcvtswu_rounded := makeIndexedWires "fcvtswu_rnded" 31
   let (fcvtswu_rnd_add_gates, _fcvtswu_rnd_cout) :=
-    mkAddFor (AdderSpec.minArea fcvtswu_unrounded.length .input) fcvtswu_unrounded fcvtswu_zeros31 fcvtswu_round_up fcvtswu_rounded "fcvtswu_rnd"
+    mkAddFor (AdderSpec.minArea fcvtswu_unrounded.length .input) fcvtswu_unrounded fcvtswu_zeros31
+      fcvtswu_round_up fcvtswu_rounded "fcvtswu_rnd"
 
   let fcvtswu_res := makeIndexedWires "fcvtswu_res" 32
   let fcvtswu_pack_gates := (List.range 32).map fun i =>
@@ -1265,7 +1273,8 @@ def fpCvtIntCircuit : Circuit :=
       nan1_exp_ones_gates ++ nan1_mant_nz_gates ++ nan1_detect_gates ++
       inv_gates ++
       dec_fcvt ++ dec_fcvt_wu ++ dec_fcvt_s_w ++ dec_fcvt_s_wu ++
-      fcvt_sub_gates ++ [not_shiftBorrow_gate] ++ fcvt_big_gates ++ fcvt_over_gates ++ fcvt_over_buf ++
+      fcvt_sub_gates ++ [not_shiftBorrow_gate] ++ fcvt_big_gates ++ fcvt_over_gates ++ fcvt_over_buf
+        ++
       fcvt_lsa_inv_gates ++ fcvt_lsa_gates ++ fcvt_lsh_gates ++
       fcvt_shm1_gates ++ fcvt_shift_gates ++
       fcvt_guard_gates ++ fcvt_rm_gates ++ fcvt_up_gates ++ fcvt_mag_r_gates ++
@@ -1442,7 +1451,8 @@ def fpMiscCircuit : Circuit :=
 
   -- Connect rm[0..2] to drive exc[1..3] as Boolean zero terms: rm[i] AND NOT(rm[i]) = 0.
   -- This ensures rm input ports are connected (no LINT-28), exc[1..3] have independent
-  -- drivers (no LINT-31 shorted outputs), and exc[1..3] are not tied directly to logic 0 (no LINT-52).
+  -- drivers (no LINT-31 shorted outputs), and exc[1..3] are not tied directly to logic 0 (no
+    -- LINT-52).
   let not_rm0 := Wire.mk "not_rm0"
   let not_rm1 := Wire.mk "not_rm1"
   let not_rm2 := Wire.mk "not_rm2"

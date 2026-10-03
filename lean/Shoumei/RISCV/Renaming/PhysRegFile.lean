@@ -44,7 +44,8 @@ def PhysRegFileState.read (prf : PhysRegFileState n) (tag : Fin n) : UInt32 :=
   prf.regs tag
 
 /-- Write a value to a physical register (synchronous) -/
-def PhysRegFileState.write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) : PhysRegFileState n :=
+def PhysRegFileState.write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) :
+  PhysRegFileState n :=
   { regs := fun i => if i == tag then val else prf.regs i }
 
 /-- Initialize all registers to zero -/
@@ -159,7 +160,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
     let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
     let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
     let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-    let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+    let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+      (reset_leaves[i]!))
 
     -- Storage
     let storage_instances := (List.range numRegs).map (fun i =>
@@ -183,7 +185,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
     }
 
     { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
-      inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1 ++
+      inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1
+        ++
                 rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ rd_tag5 ++ rd_tag6 ++ rd_tag7
       outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4 ++ rd_data5 ++ rd_data6 ++ rd_data7
       gates := we_gates ++ write_mux_gates ++ rr_gates ++ rl_gates
@@ -203,7 +206,8 @@ def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32
 /-- Physical Register File with 64 registers × 64 bits, superscalar (dual write ports) -/
 def mkPhysRegFile64x64 : Circuit := mkPhysRegFile 64 64
 
-/-- Integer Physical Register File: 2 write ports, 6 read ports (rs1_0, rs2_0, rs1_1, rs2_1, rvvi_0, rvvi_1; no rs3). -/
+/-- Integer Physical Register File: 2 write ports, 6 read ports (rs1_0, rs2_0, rs1_1, rs2_1, rvvi_0,
+  rvvi_1; no rs3). -/
 def mkIntPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let tagWidth := log2Ceil numRegs
 
@@ -273,7 +277,8 @@ def mkIntPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
   let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
   let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
 
   let storage_instances := (List.range numRegs).map (fun i =>
     { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",
@@ -370,7 +375,8 @@ def mkFPPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
   let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
   let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
 
   let storage_instances := (List.range numRegs).map (fun i =>
     { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",
@@ -423,7 +429,7 @@ def mkFPPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
     in-flight instructions, so no two FP operations share an entry.  Written when
     the result completes and read at commit; a flushed operation never commits,
     so its entry is simply never read. -/
-def mkFPExcFile (numRegs : Nat := 64) (dataWidth : Nat := 5) : Circuit :=
+def mkFPExcFile (numRegs : Nat := 128) (dataWidth : Nat := 5) : Circuit :=
   let tagWidth := log2Ceil numRegs
 
   let clock := Wire.mk "clock"
@@ -456,11 +462,12 @@ def mkFPExcFile (numRegs : Nat := 64) (dataWidth : Nat := 5) : Circuit :=
     (List.range dataWidth).map (fun j =>
       Gate.mkMUX (getReg i j) (wr_data[j]!) (we[i]!) (getNext i j))) |>.flatten
 
-  let numRoots := 16
+  let numRoots := (numRegs + 3) / 4
   let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
   let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
   let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
 
   let storage_instances := (List.range numRegs).map (fun i =>
     { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",

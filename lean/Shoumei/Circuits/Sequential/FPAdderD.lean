@@ -4,10 +4,12 @@ Circuits/Sequential/FPAdderD.lean - 4-Stage Pipelined Double-Precision FP Adder/
 A pipelined floating-point adder/subtractor for IEEE 754 binary64.
 
 Decomposed hierarchically into 4 combinational pipeline stage modules:
-  Stage 1 (FPAdderD_Stage1_Unpack): Unpack + Exponent difference + Swap detection + NaN/Inf detection
+  Stage 1 (FPAdderD_Stage1_Unpack): Unpack + Exponent difference + Swap detection + NaN/Inf
+    detection
   Stage 2 (FPAdderD_Stage2_Align): Swap operands + Alignment barrel shift with sticky tracking
   Stage 3 (FPAdderD_Stage3_AddSub): Mantissa add/sub + Leading-zero parallel prefix detect
-  Stage 4 (FPAdderD_Stage4_NormRound): Normalization shifter + Rounding + Special value handling + Pack
+  Stage 4 (FPAdderD_Stage4_NormRound): Normalization shifter + Rounding + Special value handling +
+    Pack
 
 Interface:
 - Inputs: src1[63:0], src2[63:0], op_sub, rm[2:0], dest_tag[5:0], valid_in, clock, reset, zero
@@ -384,7 +386,8 @@ def mkFPAdderD_Stage2_Align : Circuit :=
      Gate.mkBUF w (s2_shift_amt[i]!)]
 
   let s2_small_mant56 := [zero, zero, zero] ++ s2_small_mant
-  let s2_shift_gates := mkBarrelShiftRight56WithSticky s2_small_mant56 s2_shift_amt aligned_small shift_sticky zero "s2_align"
+  let s2_shift_gates := mkBarrelShiftRight56WithSticky s2_small_mant56 s2_shift_amt aligned_small
+    shift_sticky zero "s2_align"
 
   let s2_eff_sub_gate := Gate.mkXOR big_sign small_sign eff_sub
   let s2_inf_sub_inf_gate := Gate.mkAND both_inf eff_sub inf_sub_inf
@@ -392,7 +395,8 @@ def mkFPAdderD_Stage2_Align : Circuit :=
 
   let all_gates :=
     [one_gate] ++ s2_sign_swap_gates ++ s2_exp_swap_gates ++ s2_mant_swap_gates ++
-    s2_ed12_gates ++ s2_neg12_gates ++ s2_diff_mag_gates ++ s2_far_gates ++ s2_sh_mux_gates ++ s2_shift_gates ++
+    s2_ed12_gates ++ s2_neg12_gates ++ s2_diff_mag_gates ++ s2_far_gates ++ s2_sh_mux_gates ++
+      s2_shift_gates ++
     [s2_eff_sub_gate, s2_inf_sub_inf_gate, s2_inf_sign_gate]
 
   { name := "FPAdderD_Stage2_Align"
@@ -432,25 +436,15 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let one := Wire.mk "s3_one"
   let one_gate := Gate.mkNOT zero one
 
-  -- An effective subtraction whose operand lost bits below the window is a
-  -- magnitude just under the sum, not exactly the sum: the truncated subtrahend
-  -- is larger than the true one.  With the three low bits of the sum zero the
-  -- difference sits on the significand grid, so one ulp must be borrowed.
-  -- Applying it as a carry-in of zero (instead of eff_sub) subtracts exactly
-  -- one: the inverted subtrahend's own bit 0 is zero whenever this fires.
-  let s3_al_low := Wire.mk "s3_al_l01"
-  let s3_al_low_any := Wire.mk "s3_al_low"
-  let s3_al_low_none := Wire.mk "s3_al_low_none"
+  -- An effective subtraction whose subtrahend lost bits below the window must borrow
+  -- one unit from bit 0: the exact difference is (A - B - 1) + (1 - epsilon).
+  -- A carry-in of zero (instead of eff_sub) subtracts exactly one.
   let s3_borrow := Wire.mk "s3_borrow"
   let s3_borrow_gates := [
-    Gate.mkOR (aligned_small[0]!) (aligned_small[1]!) s3_al_low,
-    Gate.mkOR s3_al_low (aligned_small[2]!) s3_al_low_any,
-    Gate.mkNOT s3_al_low_any s3_al_low_none,
-    Gate.mkAND eff_sub sticky s3_borrow,
-    Gate.mkAND s3_borrow s3_al_low_none (Wire.mk "s3_borrow_ulp")
+    Gate.mkAND eff_sub sticky s3_borrow
   ]
   let s3_carry_in := Wire.mk "s3_eff_sub_final"
-  let s3_carry_in_gate := [Gate.mkXOR eff_sub (Wire.mk "s3_borrow_ulp") s3_carry_in]
+  let s3_carry_in_gate := [Gate.mkXOR eff_sub s3_borrow s3_carry_in]
 
   let s3_carry := makeIndexedWires "s3_c" 57
   let s3_add_gates := [Gate.mkBUF s3_carry_in (s3_carry[0]!)] ++ (List.range 56).flatMap (fun i =>
@@ -499,7 +493,8 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
           [Gate.mkOR (v_prev[i + stride]!) (v_prev[i]!) merge_v,
            Gate.mkBUF merge_v (v_new[i]!)] ++
           (List.range 6).map fun k =>
-            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!) ((p_new[i]!)[k]!)
+            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!)
+              ((p_new[i]!)[k]!)
         else
           [Gate.mkBUF (v_prev[i]!) (v_new[i]!)] ++
           (List.range 6).map fun k =>
@@ -513,7 +508,8 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let s3_found_gate := Gate.mkBUF (lz_final_v[0]!) found
 
   let all_gates :=
-    [one_gate] ++ s3_borrow_gates ++ s3_carry_in_gate ++ s3_add_gates ++ s3_ovf_gates ++ lz_leaf_gates ++ lz_prefix_gates ++
+    [one_gate] ++ s3_borrow_gates ++ s3_carry_in_gate ++ s3_add_gates ++ s3_ovf_gates ++
+      lz_leaf_gates ++ lz_prefix_gates ++
     s3_lead_pos_gates ++ [s3_found_gate]
 
   { name := "FPAdderD_Stage3_AddSub"
@@ -922,12 +918,14 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
   -- widened exponent absorbs is an ordinary renormalization.
   let is_sp := Wire.mk "s4_is_sp"
   let not_special := Wire.mk "s4_not_special"
+  let raw_of := Wire.mk "s4_raw_of"
   let exc_gates := [
     Gate.mkOR is_nan_res is_inf_res is_sp,
     Gate.mkNOT is_sp not_special,
     Gate.mkAND reg_nx not_special (exc[0]!),
     Gate.mkBUF zero (exc[1]!),
-    Gate.mkOR ovf_any ovf_rnd (exc[2]!),
+    Gate.mkOR ovf_any ovf_rnd raw_of,
+    Gate.mkAND raw_of not_special (exc[2]!),
     Gate.mkBUF zero (exc[3]!),
     Gate.mkOR any_snan inf_sub_inf (exc[4]!)
   ]
@@ -938,8 +936,10 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
     [norm_s_gate] ++ norm_exp_gates ++ norm_exp_or_gates ++ subnormal_gates ++
     four6_gates ++ sub_shift_gates ++ sub_shift_barrel_gates ++
     ns_mant_gates ++ ns_exp_gates ++ pre_mant_gates ++ pre_exp_gates ++ grs_mux_gates ++
-    rnd_ctrl_gates ++ round_gate ++ mant_inc_gates ++ exp_pr_gates ++ rnd_mant_gates ++ ovf_rnd_gates ++ inx_gates ++
-    zero_det_gates ++ sign_sel_gates ++ reg_res_gates ++ [reg_nx_gate, is_nan_gate] ++ inf_res_gates ++
+    rnd_ctrl_gates ++ round_gate ++ mant_inc_gates ++ exp_pr_gates ++ rnd_mant_gates ++
+      ovf_rnd_gates ++ inx_gates ++
+    zero_det_gates ++ sign_sel_gates ++ reg_res_gates ++ [reg_nx_gate, is_nan_gate] ++ inf_res_gates
+      ++
     res_mux_gates ++ exc_gates
 
   { name := "FPAdderD_Stage4_NormRound"

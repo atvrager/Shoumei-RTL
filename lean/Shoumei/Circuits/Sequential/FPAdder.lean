@@ -587,24 +587,14 @@ def mkFPAdder_Stage3_AddSub : Circuit :=
   let cond_inv_gates := (List.range 28).map fun i =>
     Gate.mkXOR (aligned_ext[i]!) eff_sub (cond_inv_aligned[i]!)
 
-  -- An effective subtraction whose operand lost bits below the window is a
-  -- magnitude just under the sum, not exactly the sum: the truncated subtrahend
-  -- is larger than the true one.  With the three low bits of the sum zero the
-  -- difference sits on the significand grid, so one ulp must be borrowed.
-  -- Applying it as a carry-in of zero (instead of eff_sub) subtracts exactly
-  -- one: the inverted subtrahend's own bit 0 is zero whenever this fires.
-  let aligned_low_any := Wire.mk "s3_al_low"
-  let aligned_low_none := Wire.mk "s3_al_low_none"
+  -- An effective subtraction whose subtrahend lost bits below the window must borrow
+  -- one unit from bit 0: the exact difference is (A - B - 1) + (1 - epsilon).
+  -- A carry-in of zero (instead of eff_sub) subtracts exactly one.
   let borrow_ulp := Wire.mk "s3_borrow"
-  let eff_sub_corr := Wire.mk "s3_eff_sub_c"
   let borrow_gates := [
-    Gate.mkOR (aligned[0]!) (aligned[1]!) (Wire.mk "s3_al_l01"),
-    Gate.mkOR (Wire.mk "s3_al_l01") (aligned[2]!) aligned_low_any,
-    Gate.mkNOT aligned_low_any aligned_low_none,
-    Gate.mkAND eff_sub sticky borrow_ulp,
-    Gate.mkAND borrow_ulp aligned_low_none eff_sub_corr
+    Gate.mkAND eff_sub sticky borrow_ulp
   ]
-  let eff_sub_corr_gate := [Gate.mkXOR eff_sub eff_sub_corr (Wire.mk "s3_eff_sub_final")]
+  let eff_sub_corr_gate := [Gate.mkXOR eff_sub borrow_ulp (Wire.mk "s3_eff_sub_final")]
   let eff_sub_final := Wire.mk "s3_eff_sub_final"
 
   let (sum_add_gates, _sum_carry) :=
@@ -1075,6 +1065,10 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
   let not_any_special_gate := Gate.mkNOT any_special not_any_special
   let exc_nx := Wire.mk "s4_exc_nx"
   let exc_nx_gate := Gate.mkAND nx_raw not_any_special exc_nx
+  let of_raw := Wire.mk "s4_of_raw"
+  let of_raw_gate := Gate.mkOR ovf_any ovf_rnd of_raw
+  let exc_of := Wire.mk "s4_exc_of"
+  let exc_of_gate := Gate.mkAND of_raw not_any_special exc_of
 
   -- fflags: bit0=NX bit1=UF bit2=OF bit3=DZ bit4=NV.
   -- UF needs a subnormal result to exist first; the adder has no subnormal
@@ -1082,7 +1076,7 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
   let exc_output_gates := [
     Gate.mkBUF exc_nx (exc[0]!),
     Gate.mkBUF zero (exc[1]!),
-    Gate.mkOR ovf_any ovf_rnd (exc[2]!),
+    Gate.mkBUF exc_of (exc[2]!),
     Gate.mkBUF zero (exc[3]!),
     Gate.mkBUF exc_nv (exc[4]!)
   ]
@@ -1102,7 +1096,8 @@ def mkFPAdder_Stage4_NormRound : Circuit :=
     nan_gates ++ inf_result_gates ++
     [any_inf_gate, not_inf_sub_inf_gate, inf_not_nv_gate, is_nan_result_gate] ++
     sat_result_gates ++ mux0_gates ++ mux1_gates ++ final_mux_gates ++
-    [exc_nv_gate, ovf_loses_gate, nx_pre_gate, nx_raw_gate, not_any_special_gate, exc_nx_gate] ++
+    [exc_nv_gate, ovf_loses_gate, nx_pre_gate, nx_raw_gate, not_any_special_gate, exc_nx_gate,
+     of_raw_gate, exc_of_gate] ++
     exc_output_gates
 
   { name := "FPAdder_Stage4_NormRound"

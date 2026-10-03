@@ -236,6 +236,9 @@ def mkMuxTree (n width : Nat) : Circuit :=
 /-- 2:1 MUX, 8 bits (for testing) -/
 def mkMux2x8 : Circuit := mkMuxTree 2 8
 
+/-- 4:1 MUX, 1 bit (pilot atom) -/
+def mkMux4x1 : Circuit := mkMuxTree 4 1
+
 /-- 4:1 MUX, 8 bits (for testing) -/
 def mkMux4x8 : Circuit := mkMuxTree 4 8
 

@@ -294,6 +294,7 @@ import Shoumei.Verification.Compositional
 import Shoumei.Verification.CompositionalCerts
 import Shoumei.Verification.DualRTL
 import Shoumei.Verification.ExportCerts
+import Shoumei.Verification.ExportRefinements
 import Shoumei.Verification.Implements
 import Shoumei.Verification.ProofManifest
 import Shoumei.Verification.Refinements

@@ -1764,17 +1764,14 @@ def mkAtomicUnit
       [("eq", sb_deq_addr_eq)] }
   let res_inval_t := Wire.mk "atom_res_inv_t"
   let res_invalidate := Wire.mk "atom_res_invalidate"
-  let res_clr_t := Wire.mk "atom_res_clr_t"
   let res_clr := Wire.mk "atom_res_clr"
   let res_inval_gates := [
     Gate.mkAND lsu_sb_deq_valid reservation_valid res_inval_t,
     Gate.mkAND res_inval_t sb_deq_addr_eq res_invalidate,
-    Gate.mkOR sc_exec res_invalidate res_clr_t,
-    -- NOTE: a pipeline flush must NOT clear the reservation.  A mispredicted
-    -- branch between LR and SC would otherwise cause a spurious SC failure,
-    -- diverging from the reference model (spec permits failure, but the tests
-    -- require success when no intervening store occurs).
-    Gate.mkBUF res_clr_t res_clr]
+    -- NOTE: Neither Spike nor Semantics.lean clears the reservation on same-hart
+    -- stores. In a single-hart system, clearing on store buffer dequeue causes
+    -- spurious SC failures against Spike. Only sc_exec clears the reservation.
+    Gate.mkBUF sc_exec res_clr]
   -- Next value: clear > set > hold
   let res_set_v := Wire.mk "atom_res_set_v"
   let res_set_gates := [

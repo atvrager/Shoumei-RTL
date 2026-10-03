@@ -218,17 +218,20 @@ def fpDoubleConverterCircuit : Circuit :=
 
   let bsl_stage1 := makeIndexedWires "bsl_s1" 32
   let bsl_s1_gates := (List.range 32).map fun i =>
-    if i >= 8 then Gate.mkMUX (bsl_stage0[i]!) (bsl_stage0[i - 8]!) (norm_shamt[3]!) (bsl_stage1[i]!)
+    if i >= 8 then Gate.mkMUX (bsl_stage0[i]!) (bsl_stage0[i - 8]!) (norm_shamt[3]!)
+      (bsl_stage1[i]!)
     else Gate.mkMUX (bsl_stage0[i]!) zero (norm_shamt[3]!) (bsl_stage1[i]!)
 
   let bsl_stage2 := makeIndexedWires "bsl_s2" 32
   let bsl_s2_gates := (List.range 32).map fun i =>
-    if i >= 4 then Gate.mkMUX (bsl_stage1[i]!) (bsl_stage1[i - 4]!) (norm_shamt[2]!) (bsl_stage2[i]!)
+    if i >= 4 then Gate.mkMUX (bsl_stage1[i]!) (bsl_stage1[i - 4]!) (norm_shamt[2]!)
+      (bsl_stage2[i]!)
     else Gate.mkMUX (bsl_stage1[i]!) zero (norm_shamt[2]!) (bsl_stage2[i]!)
 
   let bsl_stage3 := makeIndexedWires "bsl_s3" 32
   let bsl_s3_gates := (List.range 32).map fun i =>
-    if i >= 2 then Gate.mkMUX (bsl_stage2[i]!) (bsl_stage2[i - 2]!) (norm_shamt[1]!) (bsl_stage3[i]!)
+    if i >= 2 then Gate.mkMUX (bsl_stage2[i]!) (bsl_stage2[i - 2]!) (norm_shamt[1]!)
+      (bsl_stage3[i]!)
     else Gate.mkMUX (bsl_stage2[i]!) zero (norm_shamt[1]!) (bsl_stage3[i]!)
 
   let norm_mant := makeIndexedWires "norm_mant" 32
@@ -295,6 +298,7 @@ def fpDoubleConverterCircuit : Circuit :=
   let sp_is_snan := Wire.mk "sp_is_snan"
   let sp_is_inf := Wire.mk "sp_is_inf"
   let sp_is_zero := Wire.mk "sp_is_zero"
+  let sp_is_sub := Wire.mk "sp_is_sub"
   let not_sp_quiet := Wire.mk "not_sp_quiet"
 
   let sp_class_gates := [
@@ -302,7 +306,8 @@ def fpDoubleConverterCircuit : Circuit :=
     Gate.mkNOT (sp_mant[22]!) not_sp_quiet,
     Gate.mkAND sp_is_nan not_sp_quiet sp_is_snan,
     Gate.mkAND sp_exp_ones sp_mant_zeros sp_is_inf,
-    Gate.mkAND sp_exp_zeros sp_mant_zeros sp_is_zero
+    Gate.mkAND sp_exp_zeros sp_mant_zeros sp_is_zero,
+    Gate.mkAND sp_exp_zeros sp_mant_any sp_is_sub
   ]
 
   let norm_dp_exp := makeIndexedWires "norm_dpe" 11
@@ -319,6 +324,24 @@ def fpDoubleConverterCircuit : Circuit :=
      Gate.mkAND ab_xor (norm_dpe_c[i]!) cin_and,
      Gate.mkOR ab_and cin_and (norm_dpe_c[i + 1]!)]
 
+  -- Subnormal normalization: find leading one, shift to bit 22, adjust exponent.
+  let (pos_w_list, lead_gates) :=
+    Shoumei.Circuits.Sequential.mkLeadPos "fcds_lz" sp_mant zero 5
+  let const22 := (List.range 5).map fun i =>
+    if (22 >>> i) &&& 1 == 1 then one else zero
+  let sh_sub := makeIndexedWires "fcds_sh" 5
+  let (sh_sub_gates, _sh_borrow) :=
+    mkKoggeStoneSub const22 pos_w_list sh_sub "fcds_shs" one
+  let shifted_mant := makeIndexedWires "fcds_smant" 23
+  let shift_gates :=
+    Shoumei.Circuits.Sequential.mkBarrelShiftLeft sp_mant sh_sub shifted_mant zero "fcds_bsl"
+  let const874 := (List.range 11).map fun i =>
+    if (874 >>> i) &&& 1 == 1 then one else zero
+  let pos_ext := pos_w_list ++ (List.range 6).map fun _ => zero
+  let sub_dp_exp := makeIndexedWires "fcds_sube" 11
+  let (sub_exp_gates, _sub_carry) :=
+    mkKoggeStoneAdd const874 pos_ext zero sub_dp_exp "fcds_subea"
+
   let res_fcvt_d_s := makeIndexedWires "res_fcvt_d_s" 64
   let res_fcvt_d_s_gates := (List.range 64).flatMap fun i =>
     let w := res_fcvt_d_s[i]!
@@ -328,15 +351,22 @@ def fpDoubleConverterCircuit : Circuit :=
       else if i < 52 then sp_mant[i - 29]!
       else if i < 63 then norm_dp_exp[i - 52]!
       else sp_sign
+    let sub_bit :=
+      if i < 30 then zero
+      else if i < 52 then shifted_mant[i - 30]!
+      else if i < 63 then sub_dp_exp[i - 52]!
+      else sp_sign
     let inf_bit :=
       if i < 52 then zero
       else if i < 63 then one
       else sp_sign
     let zero_bit := if i == 63 then sp_sign else zero
+    let val_bit := Wire.mk s!"fcds_val_{i}"
     let m0 := Wire.mk s!"fcds_m0_{i}"
     let m1 := Wire.mk s!"fcds_m1_{i}"
     let m2 := Wire.mk s!"fcds_m2_{i}"
-    [Gate.mkMUX norm_bit zero_bit sp_is_zero m0,
+    [Gate.mkMUX norm_bit sub_bit sp_is_sub val_bit,
+     Gate.mkMUX val_bit zero_bit sp_is_zero m0,
      Gate.mkMUX m0 inf_bit sp_is_inf m1,
      Gate.mkMUX m1 canon_bit sp_is_nan m2,
      Gate.mkMUX canon_bit m2 is_boxed w]
@@ -421,7 +451,8 @@ def fpDoubleConverterCircuit : Circuit :=
   ]
 
   -- Clamp shift amount: if any bit above bit 5 is set, clamp to 63
-  let (sub_high_any, sub_high_any_gates) := mkOrTree "sp_sub_hi" ((List.range 5).map fun i => sp_sub_val[6 + i]!)
+  let (sub_high_any, sub_high_any_gates) := mkOrTree "sp_sub_hi" ((List.range 5).map fun i =>
+    sp_sub_val[6 + i]!)
   let sp_sh_amt := makeIndexedWires "sp_sh_amt" 6
   let sp_sh_amt_gates := sub_high_any_gates ++ (List.range 6).flatMap fun i =>
     let clamped := Wire.mk s!"sp_sh_c_{i}"
@@ -519,7 +550,8 @@ def fpDoubleConverterCircuit : Circuit :=
 
   let final_sp_exp := makeIndexedWires "fsp_exp" 8
   let exp_inc_c := makeIndexedWires "einc_c" 9
-  let exp_inc_gates := [Gate.mkBUF (rnd_carry[23]!) (exp_inc_c[0]!)] ++ (List.range 8).flatMap fun i =>
+  let exp_inc_gates := [Gate.mkBUF (rnd_carry[23]!) (exp_inc_c[0]!)] ++ (List.range 8).flatMap fun i
+    =>
     [Gate.mkXOR (base_sp_exp[i]!) (exp_inc_c[i]!) (final_sp_exp[i]!),
      Gate.mkAND (base_sp_exp[i]!) (exp_inc_c[i]!) (exp_inc_c[i + 1]!)]
 
@@ -539,7 +571,8 @@ def fpDoubleConverterCircuit : Circuit :=
     mkSubFor (AdderSpec.minArea 11 .one) dp_exp const1151 sp_ge_1151_diff "sp_ge1151_sub" one
   let sp_exp_hi_any := Wire.mk "sp_ephi"
   let sp_exp_hi_gate := Gate.mkNOT sp_ge_1151_borrow sp_exp_hi_any
-  let (sp_exp_all, sp_exp_all_gates) := mkAndTree "sp_eall" ((List.range 8).map fun i => final_sp_exp[i]!)
+  let (sp_exp_all, sp_exp_all_gates) := mkAndTree "sp_eall" ((List.range 8).map fun i =>
+    final_sp_exp[i]!)
   let sp_ovf := Wire.mk "sp_ovf"
   let sp_to_inf := Wire.mk "sp_toinf"
   let sp_ovf_gates := sp_exp_hi_gates ++ [sp_exp_hi_gate] ++ sp_exp_all_gates ++ [
@@ -723,7 +756,8 @@ def fpDoubleConverterCircuit : Circuit :=
   let guard64 := makeIndexedWires "fcvt_gsh" 64
   let fcvt_stk_below := Wire.mk "fcvt_stk_below"
   let guard_gates :=
-    Shoumei.Circuits.Sequential.mkShiftRightSticky sig64 sh_m1 guard64 fcvt_stk_below zero "fcvt_gsh"
+    Shoumei.Circuits.Sequential.mkShiftRightSticky sig64 sh_m1 guard64 fcvt_stk_below zero
+      "fcvt_gsh"
 
   -- The guard and sticky bits are meaningful only while the shift amount is inside
   -- the shifter.  The amount is 1075 - exponent, which exceeds the six-bit amount
@@ -899,7 +933,8 @@ def fpDoubleConverterCircuit : Circuit :=
   let fcvt_wu_neg_gates := [
     Gate.mkAND is_fcvt_wu_d dp_sign fcvt_wu_neg_t,
     Gate.mkAND fcvt_wu_neg_t not_dp_nan fcvt_wu_neg]
-  let clamp_gates_pre := [not_dp_nan_gate, clamp_w_is_neg_gate, not_clamp_w_is_neg_gate, clamp_wu_val_gate] ++ fcvt_wu_neg_gates
+  let clamp_gates_pre := [not_dp_nan_gate, clamp_w_is_neg_gate, not_clamp_w_is_neg_gate,
+    clamp_wu_val_gate] ++ fcvt_wu_neg_gates
 
   let res_fcvt_w := makeIndexedWires "res_fcvt_w" 64
   let res_fcvt_w_gates := (List.range 64).flatMap fun i =>
@@ -999,16 +1034,20 @@ def fpDoubleConverterCircuit : Circuit :=
     fcvt_d_exp_gates ++ res_fcvt_d_int_gates ++ [not_int_zero_gate] ++ res_fcvt_d_sign_gate ++
     box_and_gates ++ sp_exp_ones_gates ++ sp_exp_any_gates ++ [sp_exp_zeros_gate] ++
     sp_mant_any_gates ++ [sp_mant_zeros_gate] ++ sp_class_gates ++ norm_dpe_gates ++
+    lead_gates ++ sh_sub_gates ++ shift_gates ++ sub_exp_gates ++
     res_fcvt_d_s_gates ++ dp_exp_ones_gates ++ dp_exp_any_gates ++ [dp_exp_zeros_gate] ++
     dp_mant_any_gates ++ [dp_mant_zeros_gate] ++ dp_class_gates ++ sp_cexp_gates ++
     sp_sub_gates ++ is_subnormal_gates ++ sp_sh_amt_gates ++ base_sp_exp_gates ++
-    sp_bsr_gates ++ low28_gates ++ [sticky_gate] ++ [round_inexact_gate] ++ rne_up_gates ++ rnd_add_gates ++
-    exp_inc_gates ++ sp_ovf_gates ++ sp_sat_gates ++ res_fcvt_s_d_gates ++ fcvt_sh_gates ++ bsr_gates ++
+    sp_bsr_gates ++ low28_gates ++ [sticky_gate] ++ [round_inexact_gate] ++ rne_up_gates ++
+      rnd_add_gates ++
+    exp_inc_gates ++ sp_ovf_gates ++ sp_sat_gates ++ res_fcvt_s_d_gates ++ fcvt_sh_gates ++
+      bsr_gates ++
     exp_lt_1023_gates ++ gte_1054_gates ++ gte_1055_gates ++ eq_1054_gates ++
     int_mag_gates ++ int_mag_neg_gates ++ fcvt_w_val_gates ++ [not_dp_sign_gate] ++
     [is_nan_or_inf_gate] ++ neg_w_ov_gates ++ [pos_w_ov_gate] ++ nv_w_gates ++
     [pos_wu_ov_gate] ++ neg_wu_ge1_gates ++ nv_wu_gates ++
-    sh_m1_gates ++ guard_gates ++ fcvt_shift_ok_gates ++ fcvt_rm_gates ++ int_mag_r_gates ++ int_mag_ov_gate ++
+    sh_m1_gates ++ guard_gates ++ fcvt_shift_ok_gates ++ fcvt_rm_gates ++ int_mag_r_gates ++
+      int_mag_ov_gate ++
     nv_fcvt_w_gate ++
     clamp_gates_pre ++ res_fcvt_w_gates ++ fcvt_w_nx_gates ++
     sel_gates ++ out_gates ++ exc_nv_gates ++ sp_res_exp_any_gates

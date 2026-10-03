@@ -71,7 +71,8 @@ def mkShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let levels : List (List Wire) := (List.range (nlev + 1)).map fun level =>
     if level == 0 then input
     else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
-  let stickies : List Wire := (List.range (nlev + 1)).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString level)
+  let stickies : List Wire := (List.range (nlev + 1)).map fun level => Wire.mk (pfx ++ "_stk_" ++
+    toString level)
   let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
   let (mux_gates, stk_gates) := (List.range nlev).foldl (fun (acc : List Gate × List Gate) level =>
     let shift_by := 1 <<< level

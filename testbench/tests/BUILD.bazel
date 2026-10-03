@@ -79,10 +79,13 @@ shoumei_elf_test(
 
 ASM_INT_TESTS = [
     "alu_ops_test",
+    "amo_and_test",
     "amo_redirect_test",
     "amo_ret_test",
     "amo_sb_order_test",
+    "amo_x0_test",
     "csr_ro_write_test",
+    "l1d_4way_hit_test",
     "rand_0027_seed_test",
     "serialize_pair_test",
 ]
@@ -102,6 +105,7 @@ ASM_FP_TESTS = [
     "fcvt_wu_directed",
     "fp_conformance_test",
     "fp_fma_zero_test",
+    "fp_fnmsub_subnormal_test",
     "fp_ovf_test",
     "fp_result_collision_test",
     "fp_sqrt_sub_test",

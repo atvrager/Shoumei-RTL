@@ -13,6 +13,40 @@ lean_library(
     extra_flags = ["-DwarningAsError=true"],
 )
 
+CIRCUITS_EXCLUDE = [
+    "**/*Proofs.lean",
+    "Shoumei/Circuits/Combinational/ALUBitVecBridge.lean",
+    "Shoumei/Circuits/Sequential/Queue1Bridge.lean",
+    "Shoumei/Circuits/Sequential/RegisterLemmas.lean",
+    "Shoumei/Reflection/ALUSymbolic.lean",
+    "Shoumei/Reflection/BitVecPacking.lean",
+    "Shoumei/Reflection/BoolExpr.lean",
+    "Shoumei/Reflection/CompileCircuit.lean",
+    "Shoumei/Reflection/CompileGate.lean",
+    "Shoumei/Reflection/FlattenSoundness.lean",
+    "Shoumei/Reflection/SequentialCompile.lean",
+    "Shoumei/Reflection/SymbolicCompile.lean",
+    "Shoumei/Verification/ALU32HierBridge.lean",
+    "Shoumei/Verification/CompositionDemos.lean",
+    "Shoumei/Verification/DualRTLProofs.lean",
+    "Shoumei/Verification/ExportRefinements.lean",
+    "Shoumei/Verification/Implements.lean",
+    "Shoumei/Verification/ProofManifest.lean",
+    "Shoumei/Verification/Refinements.lean",
+    "Shoumei/Theorems.lean",
+    "Shoumei.lean",
+    "Shoumei/All.lean",
+]
+
+lean_library(
+    name = "circuits",
+    srcs = glob(
+        ["**/*.lean"],
+        exclude = CIRCUITS_EXCLUDE,
+    ),
+    extra_flags = ["-DwarningAsError=true"],
+)
+
 lean_library(
     name = "shoumei",
     srcs = glob(["**/*.lean"]),

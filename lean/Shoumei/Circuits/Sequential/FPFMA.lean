@@ -74,7 +74,8 @@ private def mkShiftRightSat (input : List Wire) (amount : List Wire) (width : Na
   let amt := (List.range shiftBits).map fun i => Wire.mk s!"{pfx}_a{i}"
   let (any, any_gates) := mkOrTree s!"{pfx}_in" input
   let (over, over_gates) :=
-    mkOrTree s!"{pfx}_hi" ((List.range (amount.length - shiftBits)).map fun i => amount[i + shiftBits]!)
+    mkOrTree s!"{pfx}_hi" ((List.range (amount.length - shiftBits)).map fun i => amount[i +
+      shiftBits]!)
   let gates :=
     over_gates ++ any_gates ++
     (List.range shiftBits).flatMap (fun i =>
@@ -389,17 +390,20 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     mkKoggeStoneSub (constOf 0 EFFW) p_up_amt_e p_down_amt "s2_pdas" one
   let c_left_amt := makeIndexedWires "s2_cla" SHB
   let const27_6 := constOf SIG_LSB SHB
-  let (c_left_amt_gates, _cla_borrow) := mkKoggeStoneSub const27_6 diff_low6 c_left_amt "s2_clas" one
+  let (c_left_amt_gates, _cla_borrow) := mkKoggeStoneSub const27_6 diff_low6 c_left_amt "s2_clas"
+    one
   let c_up_amt := makeIndexedWires "s2_cua" SHB
   let c_up_amt_gates := (List.range SHB).map fun i =>
     Gate.mkMUX (c_left_amt[i]!) (const27_6[i]!) c_big (c_up_amt[i]!)
   let c_down_amt := makeIndexedWires "s2_cda" EFFW
   let (c_down_amt_gates, _cda_borrow) :=
-    mkKoggeStoneSub diff (const27_6 ++ (List.range (EFFW - SHB)).map (fun _ => zero)) c_down_amt "s2_cdas" one
+    mkKoggeStoneSub diff (const27_6 ++ (List.range (EFFW - SHB)).map (fun _ => zero)) c_down_amt
+      "s2_cdas" one
 
   let (p_up, p_up_gates) := mkShiftLeftInto prod_n const3_6 WINDOW zero "s2_pup"
   let (p_left, p_left_gates) := mkShiftLeftInto prod_n p_left_amt WINDOW zero "s2_pl"
-  let (p_down, p_down_stk, p_down_gates) := mkShiftRightSat prod_n p_down_amt WINDOW SHB one zero "s2_pdn"
+  let (p_down, p_down_stk, p_down_gates) := mkShiftRightSat prod_n p_down_amt WINDOW SHB one zero
+    "s2_pdn"
   let (p_down_any, p_down_any_gates) := mkOrTree "s2_pdany" p_down_amt
   let p_dir := Wire.mk "s2_pdir"
   let p_dir_gate := [
@@ -415,7 +419,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
 
   let (c_up, c_up_gates) := mkShiftLeftInto s1_mant_c const27_6 WINDOW zero "s2_cup"
   let (c_left, c_left_gates) := mkShiftLeftInto s1_mant_c c_left_amt WINDOW zero "s2_cl"
-  let (c_down, c_down_stk, c_down_gates) := mkShiftRightSat s1_mant_c c_down_amt WINDOW SHB one zero "s2_cdn"
+  let (c_down, c_down_stk, c_down_gates) := mkShiftRightSat s1_mant_c c_down_amt WINDOW SHB one zero
+    "s2_cdn"
   let (c_down_any, c_down_any_gates) := mkOrTree "s2_cdany" c_down_amt
   let c_dir := Wire.mk "s2_cdir"
   let c_dir_gate := [
@@ -459,23 +464,16 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let res_sign := Wire.mk "s2_rs"
   let res_sign_gate := [Gate.mkMUX s1_prod_sign s1_c_sign dqc_borrow res_sign]
 
-  let small_win := makeIndexedWires "s2_small" WINDOW
-  let small_win_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (c_win[i]!) (q_win[i]!) c_big (small_win[i]!)
-  let small_low := Wire.mk "s2_sl"
-  let small_low_none := Wire.mk "s2_sln"
-  let ulp_borrow := Wire.mk "s2_ub"
+  -- An effective subtraction whose subtrahend lost bits below the window must borrow
+  -- one unit from bit 0: the exact difference is (A - B - 1) + (1 - epsilon).
   let ulp_borrow_ok := Wire.mk "s2_ubok"
   let ulp_borrow_gates := [
-    Gate.mkOR (small_win[0]!) (small_win[1]!) (Wire.mk "s2_sl01"),
-    Gate.mkOR (Wire.mk "s2_sl01") (small_win[2]!) small_low,
-    Gate.mkNOT small_low small_low_none,
-    Gate.mkAND not_same stk ulp_borrow,
-    Gate.mkAND ulp_borrow small_low_none ulp_borrow_ok
+    Gate.mkAND not_same stk ulp_borrow_ok
   ]
   let mag_c := makeIndexedWires "s2_magc" WINDOW
   let minus_one := (List.range WINDOW).map fun i => if i == 0 then one else zero
-  let (mag_c_gates, _mag_c_borrow) := mkKoggeStoneSub mag minus_one mag_c "s2_magcs" zero
+  let (mag_c_gates, _mag_c_borrow) := mkKoggeStoneSub mag minus_one mag_c "s2_magcs" one
+  let small_win_gates : List Gate := []
   let mag_sel := makeIndexedWires "s2_magsel" WINDOW
   let mag_sel_gates := (List.range WINDOW).map fun i =>
     Gate.mkMUX (mag[i]!) (mag_c[i]!) ulp_borrow_ok (mag_sel[i]!)
@@ -545,8 +543,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let extra := Wire.mk "s3_extra"
   let extra_gate := [Gate.mkAND sh_v_borrow (s2_win[0]!) extra]
 
-  -- sh_v is signed: 50 - pos_v goes negative when the sum carried past bit 50
-  let sh_v_11 := (List.range EFFW).map fun i => if i < SHB then sh_v[i]! else sh_v[SHB - 1]!
+  -- Extend sh_v with the borrow bit: const50 - pos_v is positive except when pos_v = ANCHOR + 1.
+  let sh_v_11 := (List.range EFFW).map fun i => if i < SHB then sh_v[i]! else sh_v_borrow
   let e_res := makeIndexedWires "s3_e" EFFW
   let (e_res_gates, _e_res_borrow) := mkKoggeStoneSub s2_e_hi sh_v_11 e_res "s3_es" one
 
@@ -605,9 +603,24 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let ml := makeIndexedWires "s3_ml" (P + 3)
   let ml_amt6 := (List.range SHB).map fun i => if i < SLB then ml_amt[i]! else zero
   let ml_gates := mkBarrelShiftLeft m_bits ml_amt6 ml zero "s3_bslml"
-  let (st2, st2_gates) := mkOrTree "s3_st2" ((List.range (P + 2)).map fun i => ml[i]!)
+  let (st2_raw, st2_raw_gates) := mkOrTree "s3_st2r" ((List.range (P + 2)).map fun i => ml[i]!)
+  let any_unrounded := Wire.mk "s3_any_unrounded"
+  let any_unrounded_gate := [Gate.mkOR win_any s2_stk any_unrounded]
+  let (clamp_d_any, clamp_d_any_gates) := mkOrTree "s3_cldany" clamp_d
+  let past_round := Wire.mk "s3_past_round"
+  let past_round_gates := [
+    Gate.mkAND clamp clamp_d_any past_round
+  ]
+  let rnd_bit := Wire.mk "s3_rndbit"
+  let rnd_bit_gate := [
+    Gate.mkMUX (ml[P + 2]!) zero past_round rnd_bit
+  ]
+  let st2 := Wire.mk "s3_st2"
+  let st2_gate := [
+    Gate.mkMUX st2_raw any_unrounded past_round st2
+  ]
   let rem_any := Wire.mk "s3_remany"
-  let rem_any_gate := [Gate.mkOR ml[P + 2]! st2 rem_any]
+  let rem_any_gate := [Gate.mkOR rnd_bit st2 rem_any]
 
   -- rounding modes: 000 RNE, 001 RTZ, 010 RDN, 011 RUP, 100 RMM
   let rne := Wire.mk "s3_rne"
@@ -636,13 +649,13 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let up_gates := [
     Gate.mkNOT s2_sign not_sign,
     Gate.mkOR st2 (mant[0]!) (Wire.mk "s3_stlsb"),
-    Gate.mkAND ml[P + 2]! (Wire.mk "s3_stlsb") rne_up,
+    Gate.mkAND rnd_bit (Wire.mk "s3_stlsb") rne_up,
     Gate.mkAND rem_any s2_sign rdn_up,
     Gate.mkAND rem_any not_sign rup_up,
     Gate.mkAND rne rne_up (Wire.mk "s3_u0"),
     Gate.mkAND rdn rdn_up (Wire.mk "s3_u1"),
     Gate.mkAND rup rup_up (Wire.mk "s3_u2"),
-    Gate.mkAND rmm ml[P + 2]! (Wire.mk "s3_u3"),
+    Gate.mkAND rmm rnd_bit (Wire.mk "s3_u3"),
     Gate.mkOR (Wire.mk "s3_u0") (Wire.mk "s3_u1") (Wire.mk "s3_u01"),
     Gate.mkOR (Wire.mk "s3_u01") (Wire.mk "s3_u2") (Wire.mk "s3_u012"),
     Gate.mkOR (Wire.mk "s3_u012") (Wire.mk "s3_u3") up,
@@ -685,8 +698,10 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let sub_ok_gate := [Gate.mkOR (e_final[EFFW - 1]!) e_final_zero sub_ok]
 
   -- overflow: E >= 255, i.e. the field saturated or a higher bit set
-  let (e_hi_any, e_hi_any_gates) := mkOrTree "s3_ehiany" ((List.range 3).map fun i => e_final[WEXP + i]!)
-  let (e_field_all, e_field_all_gates) := mkAndTree "s3_efall" ((List.range WEXP).map fun i => e_final[i]!)
+  let (e_hi_any, e_hi_any_gates) := mkOrTree "s3_ehiany" ((List.range 3).map fun i => e_final[WEXP +
+    i]!)
+  let (e_field_all, e_field_all_gates) := mkAndTree "s3_efall" ((List.range WEXP).map fun i =>
+    e_final[i]!)
   let of_cond := Wire.mk "s3_ofc"
   let of_cond_gate := [
     Gate.mkOR e_hi_any e_field_all (Wire.mk "s3_ofc1"),
@@ -718,7 +733,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let sub_carry_gate := [Gate.mkAND carried sub_ok sub_carry]
   let sub_fix := makeIndexedWires "s3_subfix" (MSB + 1)
   let sub_fix_gates := (List.range (MSB + 1)).map fun i =>
-    if i == FRAC then Gate.mkMUX (sub_body[i]!) one sub_carry (sub_fix[i]!)
+    if i == MSB then Gate.mkBUF (sub_body[i]!) (sub_fix[i]!)
+    else if i == FRAC then Gate.mkMUX (sub_body[i]!) one sub_carry (sub_fix[i]!)
     else Gate.mkMUX (sub_body[i]!) zero sub_carry (sub_fix[i]!)
   let body_sel := makeIndexedWires "s3_bsel" (MSB + 1)
   let body_sel_gates := (List.range (MSB + 1)).map fun i =>
@@ -829,8 +845,16 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let nx := Wire.mk "s3_nx"
   let nx_gate := [Gate.mkOR rem_any of_cond nx_any,
                   Gate.mkAND nx_any round_active nx]
+  -- Underflow needs a tiny and inexact result.  A subnormal carry reaches
+  -- the smallest normal number, which is not tiny.
+  let not_sub_carry := Wire.mk "s3_nsubcarry"
+  let uf_cand := Wire.mk "s3_ufcand"
   let uf := Wire.mk "s3_uf"
-  let uf_gate := [Gate.mkAND sub_ok nx uf]
+  let uf_gate := [
+    Gate.mkNOT sub_carry not_sub_carry,
+    Gate.mkAND sub_ok not_sub_carry uf_cand,
+    Gate.mkAND uf_cand nx uf
+  ]
   let of_final := Wire.mk "s3_of"
   let of_final_gate := [Gate.mkAND of_cond round_active of_final]
   let exc_gates := [
@@ -861,7 +885,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       c_eff_gates ++ sign_gates ++ s1_gates ++
       prod_add_gates ++ lead_p_gates ++ pos_p_gates ++ s_h_gates ++ prod_n_gates ++
       exp_sum_gates ++ exp_t1_gates ++ exp_p_gates ++ diff_gates ++ c_big_gate ++
-      p_up_amt_gates ++ p_left_amt_gates ++ p_up_amt_e_gates ++ p_down_amt_gates ++ c_left_amt_gates ++
+      p_up_amt_gates ++ p_left_amt_gates ++ p_up_amt_e_gates ++ p_down_amt_gates ++ c_left_amt_gates
+        ++
       c_up_amt_gates ++ c_down_amt_gates ++ c_down_any_gates ++ p_down_any_gates ++
       p_up_gates ++ p_left_gates ++ p_down_gates ++ p_dir_gate ++
       q_win_gates ++ q_win_gates' ++
@@ -874,7 +899,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       n_up_gates ++ n_dn_gates ++ n_gates ++ extra_gate ++ e_res_gates ++
       st_lo_gates ++ st_gates ++ m_gates ++ e_any_gates ++ e_ge1_gate ++
       four_minus_e_gates ++ clamp_d_gates ++ clamp_gate ++ shd_gates ++
-      mant_gates ++ ml_amt_gates ++ ml_gates ++ st2_gates ++ rem_any_gate ++
+      mant_gates ++ ml_amt_gates ++ ml_gates ++ st2_raw_gates ++ any_unrounded_gate ++
+      clamp_d_any_gates ++ past_round_gates ++ rnd_bit_gate ++ st2_gate ++ rem_any_gate ++
       rm_decode_gates ++ up_gates ++ mant_inc_gates ++ e_inc_gates ++
       e_final_gates ++ sig_final_gates ++ e_ge1_f_gate ++ e_final_any_gates ++
       e_final_zero_gate ++ sub_ok_gate ++ e_hi_any_gates ++ e_field_all_gates ++
