@@ -87,6 +87,7 @@ ASM_INT_TESTS = [
     "csr_ro_write_test",
     "l1d_4way_hit_test",
     "rand_0027_seed_test",
+    "ser_fb_csr_pair_test",
     "serialize_pair_test",
 ]
 

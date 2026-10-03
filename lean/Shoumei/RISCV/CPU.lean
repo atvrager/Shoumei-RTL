@@ -657,8 +657,14 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
         Gate.mkMUX fence_i_redir_target[i]! ser_pc_plus_4[i]! fence_i_start fence_i_redir_next[i]!)) ++
     -- CSR flag: 1=CSR, 0=FENCE.I
     -- Clear csr_flag on drain_complete (CSR done, redirect fires)
+    -- Latch the slot-selected CSR bit, not csr_detected (either slot).  A
+    -- fallback op in slot 0 with a CSR in slot 1 serializes the fallback op
+    -- first.  Flagged as a CSR, its completion would also run the CSR commit
+    -- and free the captured old tag: the live tag of the fallback op's rd.
     [Gate.mkAND csr_flag_reg (Wire.mk "ser_not_dc") (Wire.mk "csr_flag_hold"),
-     Gate.mkMUX (Wire.mk "csr_flag_hold") csr_detected fence_i_start csr_flag_next] ++
+     Gate.mkMUX (Wire.mk "csr_flag_hold")
+       (if enableTraps then Wire.mk "csr_selected" else csr_detected)
+       fence_i_start csr_flag_next] ++
     -- CSR address: decode_imm captured on hw_csr_fence_start / fence_i_start
     (if config.enableZicsr then
       ((List.range 12).map (fun i =>
