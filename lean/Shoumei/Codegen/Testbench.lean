@@ -1786,26 +1786,6 @@ def toSimMainCpp (cfg : TestbenchConfig) : String :=
   "#if VM_TRACE\n" ++
   "        if (trace) trace->dump(sim_time++);\n" ++
   "#endif\n\n" ++
-  "        { // watch every change of the floating-point busy mask: a bit that is set\n" ++
-  "          // and never cleared is the stall, so the cycle it is set must show\n" ++
-  "          // whether the station took the operation.\n" ++
-  "          static int prev_supp = 0; static int watch = 0;\n" ++
-  "          static unsigned long prev_fpb = 0;\n" ++
-  "          int supp = (int)dut->o_fence_i_suppress;\n" ++
-  "          unsigned long fpb = (unsigned long)dut->o_fp_busy;\n" ++
-  "          if (supp && !prev_supp) watch = 14;\n" ++
-  "          if (fpb != prev_fpb && watch <= 0) watch = 6;\n" ++
-  "          if (cycle >= 250 && cycle <= 272) watch = 2;\n" ++
-  "          prev_fpb = fpb;\n" ++
-  "          if (watch > 0) {\n" ++
-  "            printf(\"WATCH cyc=%u%s supp=%d fb=%d d0t=%d d0p=%d fpp=%d rs=%d,%d oeu=%d roe=%d fpb=%016lx\\n\",\n" ++
-  "                cycle, (watch == 14 ? \" ONSET\" : \"\"), supp,\n" ++
-  "                (int)dut->o_fallback_active, (int)dut->o_d0_base_tmp, (int)dut->o_d0_base_pre,\n" ++
-  "                (int)dut->o_fp_disp_pre, (int)dut->o_rs_e0_valid, (int)dut->o_rs_e1_valid,\n" ++
-  "                (int)dut->o_fp_busy_eu, (int)dut->o_rob_empty, (unsigned long)dut->o_fp_busy);\n" ++
-  "            watch--;\n" ++
-  "          }\n" ++
-  "          prev_supp = supp; }\n\n" ++
   "        // Dual-retire RVVI (W=2)\n" ++
   "        if (dut->o_rvvi_valid_0) " ++ lb ++ "\n" ++
   "            retired++;\n" ++

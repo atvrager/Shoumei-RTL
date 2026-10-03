@@ -2880,6 +2880,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
       -- operation into a unit that has no room, the unit drops it, and the entry
       -- is cleared while its destination stays marked busy for ever
       -- (rand_0026_b28: unit busy one cycle, two station entries leave).
+      -- Hold applies only to iterative operations (divide and square root).
       [Gate.mkNOT (Wire.mk "fp_busy_eu") not_fp_eu_busy,
        Gate.mkNOT fp_dispatch_hold not_fp_dispatch_hold,
        Gate.mkAND not_fp_eu_busy not_fp_dispatch_hold fp_rs_dispatch_en]
@@ -2956,7 +2957,7 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_dispatch_hold_dff : CircuitInstance := {
     moduleName := "DFlipFlop"
     instName := "u_fp_dispatch_hold"
-    portMap := [("d", Wire.mk "fp_eu_valid_in"), ("q", Wire.mk "fp_dispatch_hold"),
+    portMap := [("d", Wire.mk "fp_dispatch_hold_in"), ("q", Wire.mk "fp_dispatch_hold"),
                 ("clock", clock), ("reset", reset)]
   }
 
@@ -3096,12 +3097,41 @@ def mkCPU_W2 (config : CPUConfig) : Circuit :=
   let fp_rm_out := CPU.makeIndexedWires "fp_rm_eu" 3
   let fp_op_gates :=
     if enableF then
-      [Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en (Wire.mk "fp_eu_valid_in")] ++
+      let not_op0 := Wire.mk "fp_disp_not_op0"
+      let not_op1 := Wire.mk "fp_disp_not_op1"
+      let not_op2 := Wire.mk "fp_disp_not_op2"
+      let not_op3 := Wire.mk "fp_disp_not_op3"
+      let not_op4 := Wire.mk "fp_disp_not_op4"
+      let op_hi_zero := Wire.mk "fp_disp_op_hz"
+      let op_is_div := Wire.mk "fp_disp_op_div"
+      let op_is_sqrt := Wire.mk "fp_disp_op_sqrt"
+      let op_is_iter := Wire.mk "fp_disp_op_iter"
+      let fp_eu_valid_in := Wire.mk "fp_eu_valid_in"
+      let fp_dispatch_hold_in := Wire.mk "fp_dispatch_hold_in"
+      [Gate.mkAND rs_fp_dispatch_valid fp_rs_dispatch_en fp_eu_valid_in,
+       Gate.mkNOT (rs_fp_dispatch_opcode[0]!) not_op0,
+       Gate.mkNOT (rs_fp_dispatch_opcode[1]!) not_op1,
+       Gate.mkNOT (rs_fp_dispatch_opcode[2]!) not_op2,
+       Gate.mkNOT (rs_fp_dispatch_opcode[3]!) not_op3,
+       Gate.mkNOT (rs_fp_dispatch_opcode[4]!) not_op4,
+       Gate.mkAND not_op3 not_op4 op_hi_zero,
+       -- div: op[0] AND op[1] AND NOT(op[2]) AND op_hi_zero
+       Gate.mkAND (rs_fp_dispatch_opcode[0]!) (rs_fp_dispatch_opcode[1]!)
+         (Wire.mk "fp_disp_div_01"),
+       Gate.mkAND (Wire.mk "fp_disp_div_01") not_op2 (Wire.mk "fp_disp_div_012"),
+       Gate.mkAND (Wire.mk "fp_disp_div_012") op_hi_zero op_is_div,
+       -- sqrt: NOT(op[0]) AND NOT(op[1]) AND op[2] AND op_hi_zero
+       Gate.mkAND not_op0 not_op1 (Wire.mk "fp_disp_sqrt_n01"),
+       Gate.mkAND (Wire.mk "fp_disp_sqrt_n01") (rs_fp_dispatch_opcode[2]!)
+         (Wire.mk "fp_disp_sqrt_012"),
+       Gate.mkAND (Wire.mk "fp_disp_sqrt_012") op_hi_zero op_is_sqrt,
+       Gate.mkOR op_is_div op_is_sqrt op_is_iter,
+       Gate.mkAND fp_eu_valid_in op_is_iter fp_dispatch_hold_in] ++
       (List.range (if config.enableD then 6 else 5)).map (fun i =>
         Gate.mkBUF rs_fp_dispatch_opcode[i]! fp_op[i]!) ++
       (List.range 3).map (fun i =>
         Gate.mkBUF fp_rm_dispatch[i]! fp_rm_out[i]!)
-    else []
+    else [Gate.mkBUF zero (Wire.mk "fp_dispatch_hold_in")]
   let fp_exec_inst : CircuitInstance := {
     moduleName := if config.enableD then "FPExecUnit_D" else "FPExecUnit"
     instName := "u_exec_fp"

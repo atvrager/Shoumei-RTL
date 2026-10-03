@@ -12,7 +12,7 @@
 5 lean/Shoumei/Circuits/Combinational/FPUDoubleProofs.lean
 11 lean/Shoumei/Circuits/Combinational/Int64ToFP.lean
 11 lean/Shoumei/Circuits/Combinational/LogicUnitProofs.lean
-12 lean/Shoumei/Circuits/Combinational/Mux8x32HierProofs.lean
+11 lean/Shoumei/Circuits/Combinational/Mux8x32HierProofs.lean
 5 lean/Shoumei/Circuits/Combinational/MuxTree.lean
 23 lean/Shoumei/Circuits/Combinational/MuxTreeProofs.lean
 10 lean/Shoumei/Circuits/Combinational/PopcountProofs.lean
@@ -42,7 +42,7 @@
 1 lean/Shoumei/Codegen/SECMiter.lean
 2 lean/Shoumei/Codegen/SVA.lean
 5 lean/Shoumei/Codegen/ShoumeiParse.lean
-19 lean/Shoumei/Codegen/SoCDiagram.lean
+1 lean/Shoumei/Codegen/SoCDiagram.lean
 27 lean/Shoumei/Codegen/SystemVerilog.lean
 3 lean/Shoumei/Codegen/SystemVerilogNetlist.lean
 1 lean/Shoumei/Codegen/Testbench.lean
