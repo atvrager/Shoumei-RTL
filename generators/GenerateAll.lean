@@ -156,8 +156,7 @@ open Shoumei.SoC
 def riscvDecoderModules : List String :=
   ["RV64GDecoder"]
 
--- Registry: Add circuits here for automatic generation
-def baseCircuits : List Circuit := [
+def foundationBaseCircuits : List Circuit := [
   -- Phase 0: Foundation & Pilot Atoms
   dff,
   fullAdderCircuit,
@@ -176,8 +175,10 @@ def baseCircuits : List Circuit := [
   mkQueue1FlowStructural 43,     -- FP writeback merge queue, SP (tag6 + data32 + exc5)
   mkQueue1FlowStructural 44,     -- FP writeback merge queue, SP (tag6 + data32 + exc5 + int-domain)
   mkQueue1FlowStructural 75,     -- FP writeback merge queue, DP (tag6 + data64 + exc5)
-  mkQueue1FlowStructural 76,     -- FP writeback merge queue, DP (tag6 + data64 + exc5 + int-domain)
+  mkQueue1FlowStructural 76      -- FP writeback merge queue, DP (tag6 + data64 + exc5 + int-domain)
+]
 
+def combinationalCircuits : List Circuit := [
   -- Phase 1: Arithmetic
   pcIncrementer4Circuit,
   pcIncrementer8Circuit,
@@ -217,8 +218,10 @@ def baseCircuits : List Circuit := [
   mkPriorityArbiter8,
   mkPriorityArbiter64,  -- Bitmap free list allocation
   mkOneHotEncoder64,    -- Bitmap free list one-hot to binary
-  mkPopcount8,  -- Phase 7: Store buffer flush recovery
+  mkPopcount8  -- Phase 7: Store buffer flush recovery
+]
 
+def sequentialCircuits : List Circuit := [
   -- Phase 3: Queues and Registers
   mkQueuePointer 3,  -- Phase 7: Store buffer head pointer
   mkQueuePointerLoadable 3,  -- Phase 7: Store buffer tail pointer (loadable for flush)
@@ -252,8 +255,10 @@ def baseCircuits : List Circuit := [
   mkRegisterNHierarchical 158,
   mkRegisterNHierarchical 159,
   mkRegisterNHierarchical 160, -- RS 64-bit entry (1+8+7+1+7+64+1+7+64)
-  mkRegister160Flat,
+  mkRegister160Flat
+]
 
+def renamingCircuits : List Circuit := [
   -- Phase 4: RISC-V Components
   mkRAT64,
   mkIntRAT64,
@@ -266,8 +271,10 @@ def baseCircuits : List Circuit := [
   mkIntPhysRegFile 64 64,
   mkFPPhysRegFile 64 32,
   mkFPPhysRegFile 64 64,
-  mkFPExcFile 64 5,  -- FP exception flags keyed by destination phys reg
+  mkFPExcFile 64 5  -- FP exception flags keyed by destination phys reg
+]
 
+def executionCircuits : List Circuit := [
   -- Phase 5: Execution Units
   mkIntegerExecUnit,
   mkBranchExecUnit,
@@ -335,27 +342,27 @@ def baseCircuits : List Circuit := [
   fpFMADCircuit,
   fpDividerDCircuit,
   fpSqrtDCircuit,
-  fpExecUnitD,
+  fpExecUnitD
+]
 
+def retirementCircuits : List Circuit := [
   -- Phase 6: Retirement
   mkROB16,
-  mkQueue16x32_DualPort,  -- W=2 dual-port RVVI PC/instruction queues
+  mkQueue16x32_DualPort  -- W=2 dual-port RVVI PC/instruction queues
+]
 
-  -- Phase 7: Memory
-  mkStoreBuffer8,
-  mkLSU
-  ] ++
-  -- Phase 7b: Cache Hierarchy Building Blocks, derived from the configured
-  -- geometry (tag widths, set counts, word extract muxes, replacement blocks)
-  -- so a different cache size does not silently reference missing modules.
+def memoryCircuits : List Circuit :=
+  [-- Phase 7: Memory
+   mkStoreBuffer8,
+   mkLSU] ++
   cacheGeomCircuits defaultCPUConfig.cacheGeom ++
-  [
-  -- Phase 7b: Cache Hierarchy Modules
-  mkL1ICache,
-  mkL1DCache,
-  mkL2Cache,
-  mkMemoryHierarchy,
+  [-- Phase 7b: Cache Hierarchy Modules
+   mkL1ICache,
+   mkL1DCache,
+   mkL2Cache,
+   mkMemoryHierarchy]
 
+def controlCircuits : List Circuit := [
   -- Phase 8a: Microcode Sequencer
   microcodeDecoderCircuit,
   microcodeSequencerCircuit,
@@ -366,8 +373,10 @@ def baseCircuits : List Circuit := [
   mkALUOpDecoder defaultCPUConfig,
   mkMulDivOpDecoder defaultCPUConfig,
   mkFPUOpDecoder defaultCPUConfig,
-  mkAMOOpDecoder defaultCPUConfig,
+  mkAMOOpDecoder defaultCPUConfig
+]
 
+def cpuCircuits : List Circuit := [
   -- Phase 8: Top-Level Integration
   cdbMuxFDW2,
   mkFetchStage,
@@ -381,9 +390,10 @@ def baseCircuits : List Circuit := [
   mkBusyTable_W2,
   mkFPBusyTable,
   CPU_W2.mkCPU_W2 defaultCPUConfig,
-  Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig,
+  Shoumei.RISCV.Memory.Cache.mkCachedCPU defaultCPUConfig
+]
 
-
+def socCircuits : List Circuit := [
   -- Phase 9: Shoumei SoC & Peripherals
   resetSyncCircuit,
   tlXbar8Circuit,
@@ -395,6 +405,19 @@ def baseCircuits : List Circuit := [
   sramCircuit,
   shoumeiSoCCircuit
 ]
+
+-- Registry: Add circuits here for automatic generation
+def baseCircuits : List Circuit :=
+  foundationBaseCircuits ++
+  combinationalCircuits ++
+  sequentialCircuits ++
+  renamingCircuits ++
+  executionCircuits ++
+  retirementCircuits ++
+  memoryCircuits ++
+  controlCircuits ++
+  cpuCircuits ++
+  socCircuits
 
 /-- Every selectable adder the sites may resolve to, followed by the rest of
     the registry minus any adder already listed.  The adders are leaves, so
@@ -419,6 +442,36 @@ def allCircuits : List Circuit :=
 /-- Everything this generator emits, by module name. -/
 def emittedModuleNames : List String :=
   allCircuits.map (·.name) ++ riscvDecoderModules
+
+def subsystemCircuitNames (subsystem : String) : Option (List String) :=
+  let adderNames := allAdderCircuits.map (·.name)
+  match subsystem with
+  | "foundation" | "base" => some (adderNames ++ foundationBaseCircuits.map (·.name))
+  | "combinational"       =>
+    some (combinationalCircuits.filter (fun c => !adderNames.contains c.name) |>.map (·.name))
+  | "sequential"          => some (sequentialCircuits.map (·.name))
+  | "renaming"            => some (renamingCircuits.map (·.name))
+  | "execution"           =>
+    some (executionCircuits.filter (fun c => !adderNames.contains c.name) |>.map (·.name))
+  | "retirement"          => some (retirementCircuits.map (·.name))
+  | "memory"              => some (memoryCircuits.map (·.name))
+  | "control"             => some (controlCircuits.map (·.name))
+  | "cpu"                 => some (cpuCircuits.map (·.name))
+  | "soc"                 => some (socCircuits.map (·.name))
+  | "decoders"            => some []
+  | "testbench"           => some []
+  | "sec"                 => some []
+  | "all"                 => some (allCircuits.map (·.name))
+  | _                     => none
+
+def circuitsForSubsystem (subsystem : String) : Option (List Circuit) :=
+  match subsystemCircuitNames subsystem with
+  | some names => some (allCircuits.filter (fun c => names.contains c.name))
+  | none => none
+
+def parseArg (pfx : String) (args : List String) : Option String :=
+  args.findSome? (fun a =>
+    if a.startsWith pfx then some (a.drop pfx.length).toString else none)
 
 def main (args : List String) : IO Unit := do
   -- The circuit registry below is also the certificate registry: a
@@ -476,26 +529,91 @@ def main (args : List String) : IO Unit := do
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--lint-structural" then
-    let svDir := args.findSome? (fun a => if a.startsWith "--sv-dir=" then some (System.FilePath.mk (a.drop 9).toString) else none) |>.getD (System.FilePath.mk "output/sv-from-lean")
+    let svDir := args.findSome? (fun a =>
+      if a.startsWith "--sv-dir=" then some (System.FilePath.mk (a.drop 9).toString) else none)
+      |>.getD (System.FilePath.mk "output/sv-from-lean")
     let rc ← Shoumei.Verification.StructuralLint.run svDir
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--project-map" then
-    let outPath := args.findSome? (fun a => if a.startsWith "--out=" then some (System.FilePath.mk (a.drop 6).toString) else none) |>.getD (System.FilePath.mk "docs/project-map.md")
+    let outPath := args.findSome? (fun a =>
+      if a.startsWith "--out=" then some (System.FilePath.mk (a.drop 6).toString) else none)
+      |>.getD (System.FilePath.mk "docs/project-map.md")
     let rc ← Shoumei.Codegen.ProjectMap.generate outPath
     if rc != 0 then IO.Process.exit rc.toUInt8
     return
   if args.contains "--visuals" || args.contains "--architecture-visuals" then
     Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
     Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
-    Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
+    Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits
+      (CPU_W2.mkCPU_W2 defaultCPUConfig)
     return
-  let force := args.contains "--force"
+
+  let outSv := parseArg "--out-sv=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/sv-from-lean")
+  let outNetlist := parseArg "--out-netlist=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/sv-netlist")
+  let outCppSim := parseArg "--out-cpp-sim=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/cpp_sim")
+  let outAsap7 := parseArg "--out-asap7=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/sv-asap7")
+  let outGf180 := parseArg "--out-gf180=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/sv-gf180")
+  let outSec := parseArg "--out-sec=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/sv-sec")
+  let outTestbench := parseArg "--out-testbench=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "testbench/generated")
+  let outConfigMk := parseArg "--out-config-mk=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "output/config.mk")
+  let outPhysical := parseArg "--out-physical=" args |>.map System.FilePath.mk
+    |>.getD (System.FilePath.mk "physical")
+  let instrDict := parseArg "--instr-dict=" args |>.map System.FilePath.mk
+    |>.getD Shoumei.RISCV.instrDictPath
+  let subsystemOpt := parseArg "--subsystem=" args
+  let circuitOpt := parseArg "--circuit=" args
+  let skipVisuals := args.contains "--skip-visuals"
+  let skipTestbench := args.contains "--skip-testbench"
+  let skipSec := args.contains "--skip-sec"
+  let skipDecoders := args.contains "--skip-decoders"
+
+  let cfg : OutputConfig := {
+    svDir := outSv,
+    netlistDir := outNetlist,
+    cppSimDir := outCppSim,
+    asap7Dir := outAsap7,
+    gf180Dir := outGf180,
+    secDir := outSec,
+    testbenchDir := outTestbench,
+    configMkPath := outConfigMk,
+    physicalDir := outPhysical,
+    instrDictPath := instrDict
+  }
+
+  let selectedCircuits : List Circuit ← match circuitOpt with
+    | some name =>
+      match allCircuits.find? (fun (c : Circuit) => c.name == name) with
+      | some c => pure [c]
+      | none =>
+        IO.eprintln s!"Unknown circuit: {name}"
+        IO.Process.exit 1
+    | none =>
+      match subsystemOpt with
+      | some sub =>
+        match circuitsForSubsystem sub with
+        | some cs => pure cs
+        | none =>
+          IO.eprintln s!"Unknown subsystem: {sub}"
+          IO.Process.exit 1
+      | none => pure allCircuits
+
+  let isAllSubsystem := subsystemOpt.isNone || subsystemOpt == some "all"
+
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println "  証明 Shoumei RTL - Generate All Circuits"
+  let subTag := match subsystemOpt with
+    | some s => s!" ({s})"
+    | none => ""
+  IO.println s!"  証明 Shoumei RTL - Code Generation{subTag}"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if force then
-    IO.println "  (--force: regenerating all circuits)"
   IO.println ""
 
   -- A wire with two drivers is a modelling error that proofs do not catch: the
@@ -511,141 +629,153 @@ def main (args : List String) : IO Unit := do
     IO.Process.exit 1
 
   -- Initialize output directories
-  initOutputDirs
+  initOutputDirs cfg
 
-  -- Pre-compute dependency-aware hashes for incremental generation
-  let hashMap := computeAllHashes allCircuits
+  -- Pre-compute loaded-wire map
   let loadedMap := Shoumei.Codegen.SystemVerilog.computeAllLoadedWires allCircuits
 
-  -- Generate all circuits (pass allCircuits for sub-module port direction lookup)
+  -- Generate circuits
   let mut count := 0
-  let mut skipped := 0
-  for c in allCircuits do
-    let wasCached ← if !force then
-      if let some h := Shoumei.Codegen.Unified.lookupHash hashMap c.name then
-        isUpToDate c.name h (Shoumei.Codegen.Unified.emittedPaths c)
-      else pure false
-    else pure false
-    writeCircuit c allCircuits force hashMap loadedMap
-    if wasCached then skipped := skipped + 1
+  for c in selectedCircuits do
+    writeCircuit c allCircuits loadedMap cfg
     count := count + 1
 
-  -- Generate RISC-V decoders (from riscv-opcodes instruction definitions)
-  IO.println ""
-  IO.println "Generating RISC-V decoders..."
-  -- The instruction dictionary is an input of the build, so a missing file is
-  -- an error and not a reason to run another build tool.
-  let opcodesPath := Shoumei.RISCV.instrDictPath
-  unless (← opcodesPath.pathExists) do
-    IO.eprintln s!"instr_dict.json is missing at {opcodesPath}"
-    IO.eprintln "Build it with: bazel build //generators:instr_dict"
-    IO.Process.exit 1
-  let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
-  Shoumei.RISCV.generateDecoders defs riscvDecoderModules
-
-  -- Prune stale generated files (removed/renamed modules) so they don't
-  -- linger in the build filelists.
-  IO.println ""
-  IO.println "Pruning stale generated outputs..."
-  pruneStaleOutputs emittedModuleNames
+  -- Generate RISC-V decoders
+  if (isAllSubsystem || subsystemOpt == some "decoders") && circuitOpt.isNone && !skipDecoders then
+    IO.println ""
+    IO.println "Generating RISC-V decoders..."
+    let opcodesPath := cfg.instrDictPath
+    unless (← opcodesPath.pathExists) do
+      IO.eprintln s!"instr_dict.json is missing at {opcodesPath}"
+      IO.eprintln "Build it with: bazel build //generators:instr_dict"
+      IO.Process.exit 1
+    let defs ← Shoumei.RISCV.loadInstrDictFromFile opcodesPath
+    Shoumei.RISCV.generateDecoders defs riscvDecoderModules cfg.svDir cfg.cppSimDir
 
   -- Generate testbenches
-  IO.println ""
-  IO.println "Generating testbenches..."
-  writeTestbenches cpuTestbenchConfig
+  if (isAllSubsystem || subsystemOpt == some "testbench") && circuitOpt.isNone && !skipTestbench then
+    IO.println ""
+    IO.println "Generating testbenches..."
+    writeTestbenches cpuTestbenchConfig cfg.testbenchDir
+    IO.println ""
+    IO.println "Generating config.mk..."
+    let cpuCfg := defaultCPUConfig
+    let configMk := s!"# Auto-generated by generate_all — do not edit\n" ++
+      s!"CPU_NAME := {cpuCfg.isaString}\n" ++
+      s!"SPIKE_ISA := {cpuCfg.spikeIsa}\n" ++
+      s!"TB_MEM_SIZE := {cpuCfg.memSizeWords}\n" ++
+      s!"TIMEOUT_CYCLES := {cpuCfg.timeoutCycles}\n" ++
+      s!"NUM_PHYS_REGS := {cpuCfg.numPhysRegs}\n" ++
+      s!"ROB_ENTRIES := {cpuCfg.robEntries}\n" ++
+      s!"SB_ENTRIES := {cpuCfg.storeBufferEntries}\n" ++
+      s!"RS_ENTRIES := {cpuCfg.rsEntries}\n"
+    if let some parent := cfg.configMkPath.parent then
+      IO.FS.createDirAll parent
+    IO.FS.writeFile cfg.configMkPath.toString configMk
+    IO.println s!"✓ Generated {cfg.configMkPath}"
 
-  -- Generate SEC (Sequential Equivalence Checking) miters and scripts
-  IO.println ""
-  IO.println "Generating SEC miters and verification scripts..."
-  let secOutputDir : System.FilePath := "output/sv-sec"
-  IO.FS.createDirAll secOutputDir
-  let miter160 := Shoumei.Codegen.SECMiter.generateSECMiter mkRegister160Flat mkRegister160Hierarchical "Register160_sec_miter"
-  IO.FS.writeFile (secOutputDir / "Register160_sec_miter.sv") miter160
-  let formality160 := Shoumei.Codegen.SECMiter.generateFormalityTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv"] ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
-  IO.FS.writeFile (secOutputDir / "Register160_formality.tcl") formality160
-  let yosys160 := Shoumei.Codegen.SECMiter.generateYosysTcl "Register160Flat" "Register160" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
-  IO.FS.writeFile (secOutputDir / "Register160_yosys.tcl") yosys160
-  let vcFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160_sec_miter" ["output/sv-from-lean/Register160Flat.sv", "output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv", "output/sv-sec/Register160_sec_miter.sv"]
-  IO.FS.writeFile (secOutputDir / "Register160_vc_formal.tcl") vcFormal160
-  let svaFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160" ["output/sv-from-lean/Register64.sv", "output/sv-from-lean/Register32.sv", "output/sv-from-lean/Register160.sv"]
-  IO.FS.writeFile (secOutputDir / "Register160_sva_formal.tcl") svaFormal160
-  let svaFormalEn64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "RegisterEn64" ["output/sv-from-lean/RegisterEn64.sv"]
-  IO.FS.writeFile (secOutputDir / "RegisterEn64_sva_formal.tcl") svaFormalEn64
-  let svaFormalLogicUnit32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit32" ["output/sv-from-lean/LogicUnit32.sv"] "clock" "reset" (hasClock := false)
-  IO.FS.writeFile (secOutputDir / "LogicUnit32_sva_formal.tcl") svaFormalLogicUnit32
-  let svaFormalLogicUnit64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit64" ["output/sv-from-lean/LogicUnit64.sv"] "clock" "reset" (hasClock := false)
-  IO.FS.writeFile (secOutputDir / "LogicUnit64_sva_formal.tcl") svaFormalLogicUnit64
-  let svaFormalMux4x32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Mux4x32" ["output/sv-from-lean/Mux4x32.sv"] "clock" "reset" (hasClock := false)
-  IO.FS.writeFile (secOutputDir / "Mux4x32_sva_formal.tcl") svaFormalMux4x32
-  let svaFormalMux8x32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Mux8x32" ["output/sv-from-lean/Mux4x32.sv", "output/sv-from-lean/Mux8x32.sv"] "clock" "reset" (hasClock := false)
-  IO.FS.writeFile (secOutputDir / "Mux8x32_sva_formal.tcl") svaFormalMux8x32
-  let svaFormalPopcount8 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Popcount8" ["output/sv-from-lean/Popcount8.sv"] "clock" "reset" (hasClock := false)
-  IO.FS.writeFile (secOutputDir / "Popcount8_sva_formal.tcl") svaFormalPopcount8
-  IO.println "✓ Generated SEC miters and scripts in output/sv-sec/"
+    IO.println ""
+    IO.println "Generating trace schema..."
+    IO.FS.createDirAll cfg.testbenchDir
+    IO.FS.writeFile (cfg.testbenchDir / "trace_schema.gen.h").toString
+      Shoumei.TraceSchema.renderCHeader
+    if ← System.FilePath.isDir "viewer/src" then
+      IO.FS.writeFile "viewer/src/schema.gen.ts" Shoumei.TraceSchema.renderTsSchema
+    IO.println "✓ Generated trace schema"
 
-  -- Generate filelist.f for each output directory
-  IO.println ""
-  IO.println "Generating filelists..."
-  writeFilelist svOutputDir ".sv"
-  writeFilelist svNetlistOutputDir ".sv"
-  writeFilelist cppSimOutputDir ".h"
-  for pdk in allPdks do
-    writeFilelist (pdkOutputDir pdk) ".sv"
-  IO.println "✓ Generated filelist.f in each output directory"
+  -- Generate SEC miters and scripts
+  if (isAllSubsystem || subsystemOpt == some "sec") && circuitOpt.isNone && !skipSec then
+    IO.println ""
+    IO.println "Generating SEC miters and verification scripts..."
+    let secOutputDir := cfg.secDir
+    IO.FS.createDirAll secOutputDir
+    let miter160 := Shoumei.Codegen.SECMiter.generateSECMiter mkRegister160Flat
+      mkRegister160Hierarchical "Register160_sec_miter"
+    IO.FS.writeFile (secOutputDir / "Register160_sec_miter.sv").toString miter160
+    let svDirStr := cfg.svDir.toString
+    let secDirStr := cfg.secDir.toString
+    let formality160 := Shoumei.Codegen.SECMiter.generateFormalityTcl "Register160Flat" "Register160"
+      [s!"{svDirStr}/Register160Flat.sv"]
+      [s!"{svDirStr}/Register64.sv", s!"{svDirStr}/Register32.sv", s!"{svDirStr}/Register160.sv"]
+    IO.FS.writeFile (secOutputDir / "Register160_formality.tcl").toString formality160
+    let yosys160 := Shoumei.Codegen.SECMiter.generateYosysTcl "Register160Flat" "Register160"
+      [s!"{svDirStr}/Register160Flat.sv", s!"{svDirStr}/Register64.sv", s!"{svDirStr}/Register32.sv",
+       s!"{svDirStr}/Register160.sv"]
+    IO.FS.writeFile (secOutputDir / "Register160_yosys.tcl").toString yosys160
+    let vcFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160_sec_miter"
+      [s!"{svDirStr}/Register160Flat.sv", s!"{svDirStr}/Register64.sv", s!"{svDirStr}/Register32.sv",
+       s!"{svDirStr}/Register160.sv", s!"{secDirStr}/Register160_sec_miter.sv"]
+    IO.FS.writeFile (secOutputDir / "Register160_vc_formal.tcl").toString vcFormal160
+    let svaFormal160 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Register160"
+      [s!"{svDirStr}/Register64.sv", s!"{svDirStr}/Register32.sv", s!"{svDirStr}/Register160.sv"]
+    IO.FS.writeFile (secOutputDir / "Register160_sva_formal.tcl").toString svaFormal160
+    let svaFormalEn64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "RegisterEn64"
+      [s!"{svDirStr}/RegisterEn64.sv"]
+    IO.FS.writeFile (secOutputDir / "RegisterEn64_sva_formal.tcl").toString svaFormalEn64
+    let svaFormalLogicUnit32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit32"
+      [s!"{svDirStr}/LogicUnit32.sv"] "clock" "reset" (hasClock := false)
+    IO.FS.writeFile (secOutputDir / "LogicUnit32_sva_formal.tcl").toString svaFormalLogicUnit32
+    let svaFormalLogicUnit64 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "LogicUnit64"
+      [s!"{svDirStr}/LogicUnit64.sv"] "clock" "reset" (hasClock := false)
+    IO.FS.writeFile (secOutputDir / "LogicUnit64_sva_formal.tcl").toString svaFormalLogicUnit64
+    let svaFormalMux4x32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Mux4x32"
+      [s!"{svDirStr}/Mux4x32.sv"] "clock" "reset" (hasClock := false)
+    IO.FS.writeFile (secOutputDir / "Mux4x32_sva_formal.tcl").toString svaFormalMux4x32
+    let svaFormalMux8x32 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Mux8x32"
+      [s!"{svDirStr}/Mux4x32.sv", s!"{svDirStr}/Mux8x32.sv"] "clock" "reset" (hasClock := false)
+    IO.FS.writeFile (secOutputDir / "Mux8x32_sva_formal.tcl").toString svaFormalMux8x32
+    let svaFormalPopcount8 := Shoumei.Codegen.SECMiter.generateVCFormalTcl "Popcount8"
+      [s!"{svDirStr}/Popcount8.sv"] "clock" "reset" (hasClock := false)
+    IO.FS.writeFile (secOutputDir / "Popcount8_sva_formal.tcl").toString svaFormalPopcount8
+    IO.println s!"✓ Generated SEC miters and scripts in {secOutputDir}"
 
-  -- Generate physical synthesis filelists (target-PDK-priority merge)
-  IO.println ""
-  IO.println "Generating physical synthesis filelists..."
-  let physEntries ← System.FilePath.readDir physicalOutputDir
-  let synthWrappers := physEntries.filter (fun e =>
-    e.fileName.endsWith "_synth.sv")
-  for wrapper in synthWrappers do
-    let name := (wrapper.fileName.take (wrapper.fileName.length - 3)).toString  -- strip ".sv"
-    writePhysicalFilelist name
-    IO.println s!"  ✓ {name}.f"
-  IO.println s!"✓ Generated {synthWrappers.size} physical filelists"
+  -- Prune stale generated files
+  if isAllSubsystem && circuitOpt.isNone then
+    IO.println ""
+    IO.println "Pruning stale generated outputs..."
+    pruneStaleOutputs emittedModuleNames cfg
 
-  -- Generate config.mk for testbench Makefile
-  IO.println ""
-  IO.println "Generating config.mk..."
-  let cfg := defaultCPUConfig
-  let configMk := s!"# Auto-generated by generate_all — do not edit\n" ++
-    s!"CPU_NAME := {cfg.isaString}\n" ++
-    s!"SPIKE_ISA := {cfg.spikeIsa}\n" ++
-    s!"TB_MEM_SIZE := {cfg.memSizeWords}\n" ++
-    s!"TIMEOUT_CYCLES := {cfg.timeoutCycles}\n" ++
-    s!"NUM_PHYS_REGS := {cfg.numPhysRegs}\n" ++
-    s!"ROB_ENTRIES := {cfg.robEntries}\n" ++
-    s!"SB_ENTRIES := {cfg.storeBufferEntries}\n" ++
-    s!"RS_ENTRIES := {cfg.rsEntries}\n"
-  IO.FS.writeFile "output/config.mk" configMk
-  IO.println "✓ Generated output/config.mk"
+    -- Generate filelist.f for each output directory
+    IO.println ""
+    IO.println "Generating filelists..."
+    writeFilelist cfg.svDir ".sv"
+    writeFilelist cfg.netlistDir ".sv"
+    writeFilelist cfg.cppSimDir ".h"
+    for pdk in allPdks do
+      let pDir := match pdk with
+        | .asap7 => cfg.asap7Dir
+        | .gf180mcu => cfg.gf180Dir
+      writeFilelist pDir ".sv"
+    IO.println "✓ Generated filelist.f in each output directory"
 
-  -- Generate the canonical trace schema used by the C++ Kanata tracer and
-  -- the TS pipeline viewer; stage drift becomes a compile error on both.
-  IO.println ""
-  IO.println "Generating trace schema..."
-  IO.FS.writeFile "testbench/generated/trace_schema.gen.h" Shoumei.TraceSchema.renderCHeader
-  IO.FS.writeFile "viewer/src/schema.gen.ts" Shoumei.TraceSchema.renderTsSchema
-  IO.println "✓ Generated trace schema (C++ header + TS module)"
+    -- Generate physical synthesis filelists
+    let physEntries ← try cfg.physicalDir.readDir catch _ => pure #[]
+    let synthWrappers := physEntries.filter (fun e => e.fileName.endsWith "_synth.sv")
+    if !synthWrappers.isEmpty then
+      IO.println ""
+      IO.println "Generating physical synthesis filelists..."
+      for wrapper in synthWrappers do
+        let name := (wrapper.fileName.take (wrapper.fileName.length - 3)).toString
+        writePhysicalFilelist name cfg.asap7Dir cfg.svDir cfg.physicalDir
+        IO.println s!"  ✓ {name}.f"
+      IO.println s!"✓ Generated {synthWrappers.size} physical filelists"
 
-  -- Architecture treemap & visuals, sized from the same registry the SV came from
-  IO.println ""
-  IO.println "Generating architecture treemap and visual suite..."
-  Shoumei.Codegen.ArchitectureDiagram.generate allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
-  Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
-  Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
-  Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
+    -- Architecture visuals
+    if !skipVisuals then
+      IO.println ""
+      IO.println "Generating architecture treemap and visual suite..."
+      Shoumei.Codegen.ArchitectureDiagram.generate allCircuits (CPU_W2.mkCPU_W2 defaultCPUConfig)
+      Shoumei.Codegen.SoCDiagram.generate defaultCPUConfig
+      Shoumei.Codegen.BenchmarkVisual.generateBenchmarks
+      Shoumei.Codegen.ArchitectureVisuals.generateAllVisuals allCircuits
+        (CPU_W2.mkCPU_W2 defaultCPUConfig)
 
   IO.println ""
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if skipped > 0 then
-    IO.println s!"✓ Generated {count - skipped} circuits, skipped {skipped} unchanged"
-  else
-    IO.println s!"✓ Generated {count} circuits"
-  IO.println "  SV:      output/sv-from-lean/"
-  IO.println "  Netlist: output/sv-netlist/"
-  IO.println "  C++ Sim: output/cpp_sim/"
-  IO.println "  ASAP7:   output/sv-asap7/ (tech-mapped modules)"
-  IO.println "  GF180:   output/sv-gf180/ (tech-mapped modules)"
+  IO.println s!"✓ Generated {count} circuits"
+  IO.println s!"  SV:      {cfg.svDir}"
+  IO.println s!"  Netlist: {cfg.netlistDir}"
+  IO.println s!"  C++ Sim: {cfg.cppSimDir}"
+  IO.println s!"  ASAP7:   {cfg.asap7Dir}"
+  IO.println s!"  GF180:   {cfg.gf180Dir}"
   IO.println "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
