@@ -456,17 +456,131 @@ def mkKoggeStoneSub (a b : List Wire) (sum_out : List Wire)
   let borrow_gate := Gate.mkNOT carry_out borrow_wire
   (inv_gates ++ add_gates ++ [borrow_gate], borrow_wire)
 
-/-- Parameterized Kogge-Stone parallel prefix adder circuit. -/
-def mkKoggeStoneAdder (width : Nat) : Circuit :=
+/-- 106-bit Carry-Select Kogge-Stone adder with carry-in.
+    It splits into two 53-bit Kogge-Stone blocks to eliminate the 7th prefix level.
+    The lower block absorbs cin and computes sum[52:0] and carry-out bit 52.
+    The upper block computes sum0 (cin=0) and sum1 (cin=1) in parallel.
+    A multiplexer selects the upper sum using the lower block carry-out. -/
+def mkKoggeStoneAdder106 : Circuit :=
+  let width := 106
+  let half := 53
   let a := makeIndexedWires "a" width
   let b := makeIndexedWires "b" width
   let cin := Wire.mk "cin"
   let sum := makeIndexedWires "sum" width
-  let (gates, _cout) := mkKoggeStoneAdd a b cin sum "ksa"
-  { name := s!"KoggeStoneAdder{width}"
+
+  let a_lo := (List.range half).map fun i => a[i]!
+  let b_lo := (List.range half).map fun i => b[i]!
+  let sum_lo := (List.range half).map fun i => sum[i]!
+  let a_hi := (List.range half).map fun i => a[half + i]!
+  let b_hi := (List.range half).map fun i => b[half + i]!
+  let sum_hi := (List.range half).map fun i => sum[half + i]!
+
+  let strides := [1, 2, 4, 8, 16, 32]
+
+  let g0_lo := (List.range half).map (fun i => Wire.mk s!"ksag0_lo_x{i}")
+  let p0_lo := (List.range half).map (fun i => Wire.mk s!"ksap0_lo_x{i}")
+  let init_lo := List.flatten <| (List.range half).map fun i =>
+    [ Gate.mkAND (a_lo[i]!) (b_lo[i]!) (g0_lo[i]!),
+      Gate.mkXOR (a_lo[i]!) (b_lo[i]!) (p0_lo[i]!) ]
+
+  let p0_cin := Wire.mk "ksa_p0_cin"
+  let g0_lo_m0 := Wire.mk "ksag0_lo_m0"
+  let cin_gates := [
+    Gate.mkAND (p0_lo[0]!) cin p0_cin,
+    Gate.mkOR (g0_lo[0]!) p0_cin g0_lo_m0
+  ]
+  let g0_lo_init := [g0_lo_m0] ++ (List.range (half - 1)).map fun i => g0_lo[i + 1]!
+
+  let (pfx_lo, final_g_lo, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"lo_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_lo_init, p0_lo)
+
+  let sum_lo_gates :=
+    [Gate.mkXOR (p0_lo[0]!) cin (sum_lo[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_lo[i + 1]!) (final_g_lo[i]!) (sum_lo[i + 1]!))
+
+  let c52 := final_g_lo[half - 1]!
+
+  let g0_hi := (List.range half).map (fun i => Wire.mk s!"ksag0_hi_x{i}")
+  let p0_hi := (List.range half).map (fun i => Wire.mk s!"ksap0_hi_x{i}")
+  let init_hi := List.flatten <| (List.range half).map fun i =>
+    [ Gate.mkAND (a_hi[i]!) (b_hi[i]!) (g0_hi[i]!),
+      Gate.mkXOR (a_hi[i]!) (b_hi[i]!) (p0_hi[i]!) ]
+
+  let sum0 := makeIndexedWires "ksas0_hi" half
+  let (pfx_hi0, final_g_hi0, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"hi0_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_hi, p0_hi)
+
+  let sum0_gates :=
+    [Gate.mkBUF (p0_hi[0]!) (sum0[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi0[i]!) (sum0[i + 1]!))
+
+  let sum1 := makeIndexedWires "ksas1_hi" half
+  let g0_hi_m0 := Wire.mk "ksag0_hi_m0"
+  let cin1_gate := Gate.mkOR (a_hi[0]!) (b_hi[0]!) g0_hi_m0
+  let g0_hi1 := [g0_hi_m0] ++ (List.range (half - 1)).map fun i => g0_hi[i + 1]!
+
+  let (pfx_hi1, final_g_hi1, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"hi1_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_hi1, p0_hi)
+
+  let sum1_gates :=
+    [Gate.mkNOT (p0_hi[0]!) (sum1[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi1[i]!) (sum1[i + 1]!))
+
+  let sel_gates := (List.range half).map fun i =>
+    Gate.mkMUX (sum0[i]!) (sum1[i]!) c52 (sum_hi[i]!)
+
+  { name := "KoggeStoneAdder106"
     inputs := a ++ b ++ [cin]
     outputs := sum
-    gates := gates
+    gates := init_lo ++ cin_gates ++ pfx_lo ++ sum_lo_gates ++
+             init_hi ++ [cin1_gate] ++ pfx_hi0 ++ sum0_gates ++
+             pfx_hi1 ++ sum1_gates ++ sel_gates
     instances := []
     signalGroups := [
       { name := "a", width := width, wires := a },
@@ -476,54 +590,146 @@ def mkKoggeStoneAdder (width : Nat) : Circuit :=
     keepHierarchy := true
   }
 
+/-- Parameterized Kogge-Stone parallel prefix adder circuit. -/
+def mkKoggeStoneAdder (width : Nat) : Circuit :=
+  if width == 106 then mkKoggeStoneAdder106
+  else
+    let a := makeIndexedWires "a" width
+    let b := makeIndexedWires "b" width
+    let cin := Wire.mk "cin"
+    let sum := makeIndexedWires "sum" width
+    let (gates, _cout) := mkKoggeStoneAdd a b cin sum "ksa"
+    { name := s!"KoggeStoneAdder{width}"
+      inputs := a ++ b ++ [cin]
+      outputs := sum
+      gates := gates
+      instances := []
+      signalGroups := [
+        { name := "a", width := width, wires := a },
+        { name := "b", width := width, wires := b },
+        { name := "sum", width := width, wires := sum }
+      ]
+      keepHierarchy := true
+    }
+
 def koggeStoneAdder106 : Circuit := mkKoggeStoneAdder 106
 
-/-- Parameterized Kogge-Stone parallel prefix adder circuit without cin (cin=0 absorbed). -/
-def mkKoggeStoneAdderNoCin (width : Nat) : Circuit :=
+/-- 106-bit Carry-Select Kogge-Stone adder without carry-in (cin=0 absorbed).
+    It splits into two 53-bit Kogge-Stone blocks to eliminate the 7th prefix level.
+    The lower block computes sum[52:0] and carry-out bit 52.
+    The upper block computes sum0 (cin=0) and sum1 (cin=1) in parallel.
+    A multiplexer selects the upper sum using the lower block carry-out. -/
+def mkKoggeStoneAdder106NoCin : Circuit :=
+  let width := 106
+  let half := 53
   let a := makeIndexedWires "a" width
   let b := makeIndexedWires "b" width
   let sum := makeIndexedWires "sum" width
 
-  let g0 := (List.range width).map (fun i => Wire.mk s!"ksag0x{i}")
-  let p0 := (List.range width).map (fun i => Wire.mk s!"ksap0x{i}")
-  let init_gates := List.flatten <| (List.range width).map fun i =>
-    [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
-      Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+  let a_lo := (List.range half).map fun i => a[i]!
+  let b_lo := (List.range half).map fun i => b[i]!
+  let sum_lo := (List.range half).map fun i => sum[i]!
+  let a_hi := (List.range half).map fun i => a[half + i]!
+  let b_hi := (List.range half).map fun i => b[half + i]!
+  let sum_hi := (List.range half).map fun i => sum[half + i]!
 
-  let strides := (List.range 20).filterMap fun k =>
-    let s := 1 <<< k
-    if s < width then some s else none
+  let strides := [1, 2, 4, 8, 16, 32]
 
-  let (all_prefix_gates, final_g, _final_p) :=
+  let g0_lo := (List.range half).map (fun i => Wire.mk s!"ksag0_lo_x{i}")
+  let p0_lo := (List.range half).map (fun i => Wire.mk s!"ksap0_lo_x{i}")
+  let init_lo := List.flatten <| (List.range half).map fun i =>
+    [ Gate.mkAND (a_lo[i]!) (b_lo[i]!) (g0_lo[i]!),
+      Gate.mkXOR (a_lo[i]!) (b_lo[i]!) (p0_lo[i]!) ]
+
+  let (pfx_lo, final_g_lo, _) :=
     strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
       let (gates_acc, g_prev, p_prev) := acc
-      let level_tag := s!"l{stride}"
-      let g_new := (List.range width).map (fun i => Wire.mk s!"ksag{level_tag}x{i}")
-      let p_new := (List.range width).map (fun i => Wire.mk s!"ksap{level_tag}x{i}")
-
-      let level_gates := List.flatten <| (List.range width).map fun i =>
+      let lt := s!"lo_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
         if i < stride then
-          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
-            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
         else
-          let pg := Wire.mk s!"ksapg{level_tag}x{i}"
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
           [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
             Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
             Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_lo, p0_lo)
 
-      (gates_acc ++ level_gates, g_new, p_new)
-    )
-    ([], g0, p0)
+  let sum_lo_gates :=
+    [Gate.mkBUF (p0_lo[0]!) (sum_lo[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_lo[i + 1]!) (final_g_lo[i]!) (sum_lo[i + 1]!))
 
-  let sum_gates :=
-    [Gate.mkBUF (p0[0]!) (sum[0]!)] ++
-    ((List.range (width - 1)).map fun i =>
-      Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!))
+  let c52 := final_g_lo[half - 1]!
 
-  { name := s!"KoggeStoneAdder{width}NoCin"
+  let g0_hi := (List.range half).map (fun i => Wire.mk s!"ksag0_hi_x{i}")
+  let p0_hi := (List.range half).map (fun i => Wire.mk s!"ksap0_hi_x{i}")
+  let init_hi := List.flatten <| (List.range half).map fun i =>
+    [ Gate.mkAND (a_hi[i]!) (b_hi[i]!) (g0_hi[i]!),
+      Gate.mkXOR (a_hi[i]!) (b_hi[i]!) (p0_hi[i]!) ]
+
+  let sum0 := makeIndexedWires "ksas0_hi" half
+  let (pfx_hi0, final_g_hi0, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"hi0_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_hi, p0_hi)
+
+  let sum0_gates :=
+    [Gate.mkBUF (p0_hi[0]!) (sum0[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi0[i]!) (sum0[i + 1]!))
+
+  let sum1 := makeIndexedWires "ksas1_hi" half
+  let g0_hi_m0 := Wire.mk "ksag0_hi_m0"
+  let cin1_gate := Gate.mkOR (a_hi[0]!) (b_hi[0]!) g0_hi_m0
+  let g0_hi1 := [g0_hi_m0] ++ (List.range (half - 1)).map fun i => g0_hi[i + 1]!
+
+  let (pfx_hi1, final_g_hi1, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"hi1_l{stride}"
+      let g_new := (List.range half).map (fun i => Wire.mk s!"ksag_{lt}x{i}")
+      let p_new := (List.range half).map (fun i => Wire.mk s!"ksap_{lt}x{i}")
+      let lg := List.flatten <| (List.range half).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"ksapg_{lt}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_hi1, p0_hi)
+
+  let sum1_gates :=
+    [Gate.mkNOT (p0_hi[0]!) (sum1[0]!)] ++
+    ((List.range (half - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi1[i]!) (sum1[i + 1]!))
+
+  let sel_gates := (List.range half).map fun i =>
+    Gate.mkMUX (sum0[i]!) (sum1[i]!) c52 (sum_hi[i]!)
+
+  { name := "KoggeStoneAdder106NoCin"
     inputs := a ++ b
     outputs := sum
-    gates := init_gates ++ all_prefix_gates ++ sum_gates
+    gates := init_lo ++ pfx_lo ++ sum_lo_gates ++
+             init_hi ++ [cin1_gate] ++ pfx_hi0 ++ sum0_gates ++
+             pfx_hi1 ++ sum1_gates ++ sel_gates
     instances := []
     signalGroups := [
       { name := "a", width := width, wires := a },
@@ -532,6 +738,63 @@ def mkKoggeStoneAdderNoCin (width : Nat) : Circuit :=
     ]
     keepHierarchy := true
   }
+
+/-- Parameterized Kogge-Stone parallel prefix adder circuit without cin (cin=0 absorbed). -/
+def mkKoggeStoneAdderNoCin (width : Nat) : Circuit :=
+  if width == 106 then mkKoggeStoneAdder106NoCin
+  else
+    let a := makeIndexedWires "a" width
+    let b := makeIndexedWires "b" width
+    let sum := makeIndexedWires "sum" width
+
+    let g0 := (List.range width).map (fun i => Wire.mk s!"ksag0x{i}")
+    let p0 := (List.range width).map (fun i => Wire.mk s!"ksap0x{i}")
+    let init_gates := List.flatten <| (List.range width).map fun i =>
+      [ Gate.mkAND (a[i]!) (b[i]!) (g0[i]!),
+        Gate.mkXOR (a[i]!) (b[i]!) (p0[i]!) ]
+
+    let strides := (List.range 20).filterMap fun k =>
+      let s := 1 <<< k
+      if s < width then some s else none
+
+    let (all_prefix_gates, final_g, _final_p) :=
+      strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+        let (gates_acc, g_prev, p_prev) := acc
+        let level_tag := s!"l{stride}"
+        let g_new := (List.range width).map (fun i => Wire.mk s!"ksag{level_tag}x{i}")
+        let p_new := (List.range width).map (fun i => Wire.mk s!"ksap{level_tag}x{i}")
+
+        let level_gates := List.flatten <| (List.range width).map fun i =>
+          if i < stride then
+            [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+              Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+          else
+            let pg := Wire.mk s!"ksapg{level_tag}x{i}"
+            [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+              Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+              Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+
+        (gates_acc ++ level_gates, g_new, p_new)
+      )
+      ([], g0, p0)
+
+    let sum_gates :=
+      [Gate.mkBUF (p0[0]!) (sum[0]!)] ++
+      ((List.range (width - 1)).map fun i =>
+        Gate.mkXOR (p0[i + 1]!) (final_g[i]!) (sum[i + 1]!))
+
+    { name := s!"KoggeStoneAdder{width}NoCin"
+      inputs := a ++ b
+      outputs := sum
+      gates := init_gates ++ all_prefix_gates ++ sum_gates
+      instances := []
+      signalGroups := [
+        { name := "a", width := width, wires := a },
+        { name := "b", width := width, wires := b },
+        { name := "sum", width := width, wires := sum }
+      ]
+      keepHierarchy := true
+    }
 
 def koggeStoneAdder106NoCin : Circuit := mkKoggeStoneAdderNoCin 106
 
