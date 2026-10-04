@@ -673,7 +673,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     mkDFFBank s2c_tag s2_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
-  -- Stage 3: normalize, round once, pack, flags
+  -- Stage 3a: normalize, detect leading position, shift, subnormal prep
   -- ══════════════════════════════════════════════════════════════════════
   let (win_any, win_any_gates) := mkOrTree "s3_wany" s2_win
   let pos_v := makeIndexedWires "s3_pv" SHB
@@ -730,8 +730,6 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let clamp_d := makeIndexedWires "s3_cld" EFFW
   let (clamp_d_gates, clamp_borrow) :=
     mkKoggeStoneSub four_minus_e const27_11 clamp_d "s3_clds" one
-  -- the clamp applies only on the subnormal branch: there 4 - E can exceed the
-  -- field and the mantissa is shifted clear
   let clamp := Wire.mk "s3_clamp"
   let clamp_gate := [
     Gate.mkNOT e_ge1 (Wire.mk "s3_nge1"),
@@ -744,17 +742,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     [Gate.mkMUX (four_minus_e[i]!) (if i == 0 || i == 1 then one else zero) e_ge1
        (Wire.mk s!"s3_shdm{i}"),
      Gate.mkMUX (Wire.mk s!"s3_shdm{i}") (shd_clamp[i]!) clamp (shd[i]!)]
-  let mant := makeIndexedWires "s3_mant" (P + 3)
-  let mant_stk := Wire.mk "s3_mantstk"
-  let shd6 := (List.range SHB).map fun i => if i < SLB then shd[i]! else zero
-  let mant_gates := mkShiftRightSticky m_bits shd6 mant mant_stk zero "s3_bshm"
-  let ml_amt := makeIndexedWires "s3_mla" SLB
-  let const27_5 := constOf SIG_LSB SLB
-  let (ml_amt_gates, _ml_borrow) := mkKoggeStoneSub const27_5 shd ml_amt "s3_mlas" one
-  let ml := makeIndexedWires "s3_ml" (P + 3)
-  let ml_amt6 := (List.range SHB).map fun i => if i < SLB then ml_amt[i]! else zero
-  let ml_gates := mkBarrelShiftLeft m_bits ml_amt6 ml zero "s3_bslml"
-  let (st2_raw, st2_raw_gates) := mkOrTree "s3_st2r" ((List.range (P + 2)).map fun i => ml[i]!)
+
   let any_unrounded := Wire.mk "s3_any_unrounded"
   let any_unrounded_gate := [Gate.mkOR win_any s2_stk any_unrounded]
   let (clamp_d_any, clamp_d_any_gates) := mkOrTree "s3_cldany" clamp_d
@@ -762,18 +750,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let past_round_gates := [
     Gate.mkAND clamp clamp_d_any past_round
   ]
-  let rnd_bit := Wire.mk "s3_rndbit"
-  let rnd_bit_gate := [
-    Gate.mkMUX (ml[P + 2]!) zero past_round rnd_bit
-  ]
-  let st2 := Wire.mk "s3_st2"
-  let st2_gate := [
-    Gate.mkMUX st2_raw any_unrounded past_round st2
-  ]
-  let rem_any := Wire.mk "s3_remany"
-  let rem_any_gate := [Gate.mkOR rnd_bit st2 rem_any]
 
-  -- rounding modes: 000 RNE, 001 RTZ, 010 RDN, 011 RUP, 100 RMM
+  -- Rounding mode decoding and sign/overflow precomputations
   let rne := Wire.mk "s3_rne"
   let rdn := Wire.mk "s3_rdn"
   let rup := Wire.mk "s3_rup"
@@ -793,27 +771,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkAND (Wire.mk "s3_nr01") (s2_rm[2]!) rmm
   ]
   let not_sign := Wire.mk "s3_ns"
-  let rne_up := Wire.mk "s3_rneup"
-  let rdn_up := Wire.mk "s3_rdnup"
-  let rup_up := Wire.mk "s3_rupup"
-  let up := Wire.mk "s3_up"
-  let up_gates := [
+  let ovf_to_inf_gates := [
     Gate.mkNOT s2_sign not_sign,
-    Gate.mkOR st2 (mant[0]!) (Wire.mk "s3_stlsb"),
-    Gate.mkAND rnd_bit (Wire.mk "s3_stlsb") rne_up,
-    Gate.mkAND rem_any s2_sign rdn_up,
-    Gate.mkAND rem_any not_sign rup_up,
-    Gate.mkAND rne rne_up (Wire.mk "s3_u0"),
-    Gate.mkAND rdn rdn_up (Wire.mk "s3_u1"),
-    Gate.mkAND rup rup_up (Wire.mk "s3_u2"),
-    Gate.mkAND rmm rnd_bit (Wire.mk "s3_u3"),
-    Gate.mkOR (Wire.mk "s3_u0") (Wire.mk "s3_u1") (Wire.mk "s3_u01"),
-    Gate.mkOR (Wire.mk "s3_u01") (Wire.mk "s3_u2") (Wire.mk "s3_u012"),
-    Gate.mkOR (Wire.mk "s3_u012") (Wire.mk "s3_u3") up,
-    -- IEEE 754 section 7.4: overflow gives an infinity only when the rounding
-    -- direction points away from zero for this sign.  Toward zero is rtz
-    -- always, rdn for a positive sum and rup for a negative sum; round to
-    -- nearest counts as away.  The other modes give the largest finite value.
     Gate.mkOR rne rdn (Wire.mk "s3_rm_ab"),
     Gate.mkOR (Wire.mk "s3_rm_ab") rup (Wire.mk "s3_rm_abc"),
     Gate.mkOR (Wire.mk "s3_rm_abc") rmm (Wire.mk "s3_rm_any"),
@@ -824,74 +783,8 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkOR (Wire.mk "s3_tz_a") (Wire.mk "s3_tz_rup") not_ovf_to_inf,
     Gate.mkNOT not_ovf_to_inf ovf_to_inf
   ]
-  let mant_inc := makeIndexedWires "s3_mi" (P + 3)
-  let up_ext := (List.range (P + 3)).map fun i => if i == 0 then up else zero
-  let (mant_inc_gates, _mi_carry) := mkKoggeStoneAdd mant up_ext zero mant_inc "s3_mia"
 
-  -- pack: normal when E >= 1, subnormal otherwise, both after the rounding carry
-  let carry_out := mant_inc[P]!
-  let e_inc := makeIndexedWires "s3_einc" EFFW
-  let (e_inc_gates, _einc_carry) :=
-    mkKoggeStoneAdd e_res one11 zero e_inc "s3_einca"
-  let e_final := makeIndexedWires "s3_ef" EFFW
-  let e_final_gates := (List.range EFFW).map fun i =>
-    Gate.mkMUX (e_res[i]!) (e_inc[i]!) carry_out (e_final[i]!)
-  let sig_final := makeIndexedWires "s3_sf" P
-  let sig_final_gates := (List.range P).map fun i =>
-    Gate.mkMUX (mant_inc[i]!) (mant_inc[i + 1]!) carry_out (sig_final[i]!)
-
-  let e_ge1_f := Wire.mk "s3_ege1f"
-  let e_ge1_f_gate := [Gate.mkNOT (e_final[EFFW - 1]!) e_ge1_f]
-  let (e_final_any, e_final_any_gates) := mkOrTree "s3_efany" e_final
-  let e_final_zero := Wire.mk "s3_efzero"
-  let e_final_zero_gate := [Gate.mkNOT e_final_any e_final_zero]
-  let sub_ok := Wire.mk "s3_subok"
-  let sub_ok_gate := [Gate.mkOR (e_final[EFFW - 1]!) e_final_zero sub_ok]
-
-  -- overflow: E >= 255, i.e. the field saturated or a higher bit set
-  let (e_hi_any, e_hi_any_gates) := mkOrTree "s3_ehiany" ((List.range 3).map fun i => e_final[WEXP +
-    i]!)
-  let (e_field_all, e_field_all_gates) := mkAndTree "s3_efall" ((List.range WEXP).map fun i =>
-    e_final[i]!)
-  let of_cond := Wire.mk "s3_ofc"
-  let of_cond_gate := [
-    Gate.mkOR e_hi_any e_field_all (Wire.mk "s3_ofc1"),
-    Gate.mkAND (Wire.mk "s3_ofc1") e_ge1_f of_cond
-  ]
-
-  -- body: the fused rounding result
-  -- a saturated exponent is the canonical infinity: field all ones, fraction zero
-  let body := makeIndexedWires "s3_body" (MSB + 1)
-  let body_gates :=
-    [Gate.mkBUF s2_sign (body[MSB]!)] ++
-    -- an infinity has the exponent field all ones, the largest finite value has
-    -- all ones minus one, so the two differ in bit 0 only
-    [Gate.mkMUX (e_final[0]!) ovf_to_inf of_cond (body[FRAC]!)] ++
-    (List.range (WEXP - 1)).map
-      (fun i => Gate.mkMUX (e_final[i + 1]!) one of_cond (body[FRAC + 1 + i]!)) ++
-    -- the fraction is zero for an infinity and all ones for the saturated value
-    (List.range FRAC).map (fun i => Gate.mkMUX (sig_final[i]!) not_ovf_to_inf of_cond (body[i]!))
-  -- subnormal result: field 0, or the smallest normal when the rounding carried
-  let carried := mant_inc[FRAC]!
-  let sub_body := makeIndexedWires "s3_sbody" (MSB + 1)
-  let sub_body_gates :=
-    [Gate.mkBUF s2_sign (sub_body[MSB]!)] ++
-    (List.range WEXP).flatMap (fun i =>
-      [Gate.mkBUF zero (sub_body[FRAC + i]!),
-       Gate.mkBUF zero (Wire.mk s!"s3_sbh{i}")]) ++
-    (List.range FRAC).map (fun i => Gate.mkBUF (mant_inc[i]!) (sub_body[i]!))
-  let sub_carry := Wire.mk "s3_subcarry"
-  let sub_carry_gate := [Gate.mkAND carried sub_ok sub_carry]
-  let sub_fix := makeIndexedWires "s3_subfix" (MSB + 1)
-  let sub_fix_gates := (List.range (MSB + 1)).map fun i =>
-    if i == MSB then Gate.mkBUF (sub_body[i]!) (sub_fix[i]!)
-    else if i == FRAC then Gate.mkMUX (sub_body[i]!) one sub_carry (sub_fix[i]!)
-    else Gate.mkMUX (sub_body[i]!) zero sub_carry (sub_fix[i]!)
-  let body_sel := makeIndexedWires "s3_bsel" (MSB + 1)
-  let body_sel_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (body[i]!) (sub_fix[i]!) sub_ok (body_sel[i]!)
-
-  -- exact zero: the window and the sticky are both clear
+  -- Exact zero
   let exact_zero := Wire.mk "s3_exz"
   let not_stk := Wire.mk "s3_nstk"
   let exact_zero_gate := [
@@ -902,38 +795,14 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let zero_sign := Wire.mk "s3_zsign"
   let zero_sign_gate := [
     Gate.mkAND s2_prod_sign s2_c_sign (Wire.mk "s3_zsame1"),
-    -- The two operand signs compared here must be the registered ones.  This
-    -- once compared s1_prod_sign with s1_c_sign, which at this stage belong to
-    -- an operation two cycles older, so a pipelined stream rounded an exact
-    -- zero by the previous operation's signs.
-    -- s3_zdiff means "the two signs differ", so it is the xor itself: the
-    -- stage-1 signal it replaced was "the signs agree", and negating the xor
-    -- would compare them the other way round.
     Gate.mkXOR s2_prod_sign s2_c_sign (Wire.mk "s3_zdiff"),
     Gate.mkAND rdn (Wire.mk "s3_zdiff") (Wire.mk "s3_zd1"),
     Gate.mkOR (Wire.mk "s3_zsame1") (Wire.mk "s3_zd1") zero_sign
   ]
-  let zero_bits := makeIndexedWires "s3_zb" (MSB + 1)
-  let zero_bits_gates := (List.range (MSB + 1)).map fun i =>
-    if i == MSB then Gate.mkBUF zero_sign (zero_bits[i]!)
-    else Gate.mkBUF zero (zero_bits[i]!)
-  let with_zero := makeIndexedWires "s3_wz" (MSB + 1)
-  let with_zero_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (body_sel[i]!) (zero_bits[i]!) exact_zero (with_zero[i]!)
 
-  -- special cases, highest precedence last
-  let nan_bits := makeIndexedWires "s3_nan" (MSB + 1)
-  let nan_gates := (List.range (MSB + 1)).map fun i =>
-    if FRAC - 1 <= i && i <= MSB - 1 then Gate.mkBUF one (nan_bits[i]!)
-    else Gate.mkBUF zero (nan_bits[i]!)
+  -- Special cases precomputation
   let inf_sign := Wire.mk "s3_isign"
-  let inf_bits := makeIndexedWires "s3_inf" (MSB + 1)
-  let inf_gates :=
-    [Gate.mkMUX s2_c_sign s2_prod_sign s2_prod_inf inf_sign] ++
-    (List.range (MSB + 1)).map fun i =>
-      if i == MSB then Gate.mkBUF inf_sign (inf_bits[i]!)
-      else if FRAC <= i && i <= MSB - 1 then Gate.mkBUF one (inf_bits[i]!)
-      else Gate.mkBUF zero (inf_bits[i]!)
+  let inf_sign_gate := [Gate.mkMUX s2_c_sign s2_prod_sign s2_prod_inf inf_sign]
   let any_inf := Wire.mk "s3_anyinf"
   let any_inf_gate := [Gate.mkOR s2_prod_inf s2_c_inf any_inf]
   let sel_nan := Wire.mk "s3_selnan"
@@ -949,17 +818,6 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkOR s2_any_nan s2_inf_zero (Wire.mk "s3_sn1"),
     Gate.mkOR (Wire.mk "s3_sn1") inf_sub_inf sel_nan
   ]
-  let with_inf := makeIndexedWires "s3_wi" (MSB + 1)
-  let with_inf_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_zero[i]!) (inf_bits[i]!) any_inf (with_inf[i]!)
-  let with_nan := makeIndexedWires "s3_wn" (MSB + 1)
-  let with_nan_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_inf[i]!) (nan_bits[i]!) sel_nan (with_nan[i]!)
-  -- product zero with a nonzero addend: the result is the addend itself.  A
-  -- zero addend as well is an exact zero sum, and taking the addend for it
-  -- returned +0 under round toward negative where section 6.3 requires -0: the
-  -- exact-zero path below already applies that rule, so this must not pre-empt
-  -- it.
   let use_pz := Wire.mk "s3_usepz"
   let not_sel_nan := Wire.mk "s3_nselnan"
   let not_any_inf := Wire.mk "s3_nanyinf"
@@ -972,19 +830,11 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkAND (Wire.mk "s3_upz1") not_c_zero (Wire.mk "s3_upz2"),
     Gate.mkAND (Wire.mk "s3_upz2") s2_prod_zero use_pz
   ]
-  let res_final := makeIndexedWires "s3_rf" (MSB + 1)
-  let res_final_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_nan[i]!) (s2_c_eff[i]!) use_pz (res_final[i]!)
-  let result_gates := (List.range (MSB + 1)).map fun i => Gate.mkBUF (res_final[i]!) (result[i]!)
-
-  -- flags
   let nv := Wire.mk "s3_nv"
   let nv_gate := [
     Gate.mkOR s2_any_snan s2_inf_zero (Wire.mk "s3_nv1"),
     Gate.mkOR (Wire.mk "s3_nv1") inf_sub_inf nv
   ]
-  -- the fused rounding's NX/UF/OF belong to the rounded result: a special
-  -- (NaN, infinity, or the addend of a zero product) replaces it entirely
   let round_active := Wire.mk "s3_rond"
   let round_active_gate := [
     Gate.mkNOT sel_nan (Wire.mk "s3_nsn"),
@@ -993,36 +843,224 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkAND (Wire.mk "s3_nsn") (Wire.mk "s3_naif") (Wire.mk "s3_ra1"),
     Gate.mkAND (Wire.mk "s3_ra1") (Wire.mk "s3_nupz") round_active
   ]
-  -- a saturated result is inexact by definition, so OF implies NX
-  let nx_any := Wire.mk "s3_nxany"
-  let nx := Wire.mk "s3_nx"
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3a -> 3b Pipeline Registers
+  -- ══════════════════════════════════════════════════════════════════════
+  let s3_m := makeIndexedWires "s3r_m" (P + 3)
+  let s3_shd := makeIndexedWires "s3r_shd" SLB
+  let s3_e_res := makeIndexedWires "s3r_e" EFFW
+  let s3_past_round := Wire.mk "s3r_pstrnd"
+  let s3_any_unrounded := Wire.mk "s3r_aunrnd"
+  let s3_c_eff := makeIndexedWires "s3r_ce" (MSB + 1)
+  let s3_sign := Wire.mk "s3r_s"
+  let s3_not_sign := Wire.mk "s3r_ns"
+  let s3_rne := Wire.mk "s3r_rne"
+  let s3_rdn := Wire.mk "s3r_rdn"
+  let s3_rup := Wire.mk "s3r_rup"
+  let s3_rmm := Wire.mk "s3r_rmm"
+  let s3_ovf_to_inf := Wire.mk "s3r_ovfinf"
+  let s3_not_ovf_to_inf := Wire.mk "s3r_novfinf"
+  let s3_exact_zero := Wire.mk "s3r_exz"
+  let s3_zero_sign := Wire.mk "s3r_zsign"
+  let s3_any_inf := Wire.mk "s3r_ainf"
+  let s3_inf_sign := Wire.mk "s3r_isign"
+  let s3_sel_nan := Wire.mk "s3r_snan"
+  let s3_use_pz := Wire.mk "s3r_upz"
+  let s3_round_active := Wire.mk "s3r_ra"
+  let s3_nv := Wire.mk "s3r_nv"
+  let s3_tag := makeIndexedWires "s3r_tg" 6
+  let s3_valid := Wire.mk "s3r_v"
+
+  let s3_gates :=
+    [Gate.mkDFF past_round clock reset s3_past_round,
+     Gate.mkDFF any_unrounded clock reset s3_any_unrounded,
+     Gate.mkDFF s2_sign clock reset s3_sign,
+     Gate.mkDFF not_sign clock reset s3_not_sign,
+     Gate.mkDFF rne clock reset s3_rne,
+     Gate.mkDFF rdn clock reset s3_rdn,
+     Gate.mkDFF rup clock reset s3_rup,
+     Gate.mkDFF rmm clock reset s3_rmm,
+     Gate.mkDFF ovf_to_inf clock reset s3_ovf_to_inf,
+     Gate.mkDFF not_ovf_to_inf clock reset s3_not_ovf_to_inf,
+     Gate.mkDFF exact_zero clock reset s3_exact_zero,
+     Gate.mkDFF zero_sign clock reset s3_zero_sign,
+     Gate.mkDFF any_inf clock reset s3_any_inf,
+     Gate.mkDFF inf_sign clock reset s3_inf_sign,
+     Gate.mkDFF sel_nan clock reset s3_sel_nan,
+     Gate.mkDFF use_pz clock reset s3_use_pz,
+     Gate.mkDFF round_active clock reset s3_round_active,
+     Gate.mkDFF nv clock reset s3_nv,
+     Gate.mkDFF s2_valid clock reset s3_valid] ++
+    mkDFFBank m_bits s3_m clock reset ++
+    mkDFFBank shd s3_shd clock reset ++
+    mkDFFBank e_res s3_e_res clock reset ++
+    mkDFFBank s2_c_eff s3_c_eff clock reset ++
+    mkDFFBank s2_tag s3_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3b: 56-bit mantissa shift, round once, pack, flags
+  -- ══════════════════════════════════════════════════════════════════════
+  let mant := makeIndexedWires "s3b_mant" (P + 3)
+  let mant_stk := Wire.mk "s3b_mantstk"
+  let shd6 := (List.range SHB).map fun i => if i < SLB then s3_shd[i]! else zero
+  let mant_gates := mkShiftRightSticky s3_m shd6 mant mant_stk zero "s3b_bshm"
+  let ml_amt := makeIndexedWires "s3b_mla" SLB
+  let const27_5 := constOf SIG_LSB SLB
+  let (ml_amt_gates, _ml_borrow) := mkKoggeStoneSub const27_5 s3_shd ml_amt "s3b_mlas" one
+  let ml := makeIndexedWires "s3b_ml" (P + 3)
+  let ml_amt6 := (List.range SHB).map fun i => if i < SLB then ml_amt[i]! else zero
+  let ml_gates := mkBarrelShiftLeft s3_m ml_amt6 ml zero "s3b_bslml"
+  let (st2_raw, st2_raw_gates) := mkOrTree "s3b_st2r" ((List.range (P + 2)).map fun i => ml[i]!)
+  let rnd_bit := Wire.mk "s3b_rndbit"
+  let rnd_bit_gate := [
+    Gate.mkMUX (ml[P + 2]!) zero s3_past_round rnd_bit
+  ]
+  let st2 := Wire.mk "s3b_st2"
+  let st2_gate := [
+    Gate.mkMUX st2_raw s3_any_unrounded s3_past_round st2
+  ]
+  let rem_any := Wire.mk "s3b_remany"
+  let rem_any_gate := [Gate.mkOR rnd_bit st2 rem_any]
+
+  let rne_up := Wire.mk "s3b_rneup"
+  let rdn_up := Wire.mk "s3b_rdnup"
+  let rup_up := Wire.mk "s3b_rupup"
+  let up := Wire.mk "s3b_up"
+  let up_gates := [
+    Gate.mkOR st2 (mant[0]!) (Wire.mk "s3b_stlsb"),
+    Gate.mkAND rnd_bit (Wire.mk "s3b_stlsb") rne_up,
+    Gate.mkAND rem_any s3_sign rdn_up,
+    Gate.mkAND rem_any s3_not_sign rup_up,
+    Gate.mkAND s3_rne rne_up (Wire.mk "s3b_u0"),
+    Gate.mkAND s3_rdn rdn_up (Wire.mk "s3b_u1"),
+    Gate.mkAND s3_rup rup_up (Wire.mk "s3b_u2"),
+    Gate.mkAND s3_rmm rnd_bit (Wire.mk "s3b_u3"),
+    Gate.mkOR (Wire.mk "s3b_u0") (Wire.mk "s3b_u1") (Wire.mk "s3b_u01"),
+    Gate.mkOR (Wire.mk "s3b_u01") (Wire.mk "s3b_u2") (Wire.mk "s3b_u012"),
+    Gate.mkOR (Wire.mk "s3b_u012") (Wire.mk "s3b_u3") up
+  ]
+  let mant_inc := makeIndexedWires "s3b_mi" (P + 3)
+  let up_ext := (List.range (P + 3)).map fun i => if i == 0 then up else zero
+  let (mant_inc_gates, _mi_carry) := mkKoggeStoneAdd mant up_ext zero mant_inc "s3b_mia"
+
+  -- pack: normal when E >= 1, subnormal otherwise, both after the rounding carry
+  let carry_out := mant_inc[P]!
+  let e_inc := makeIndexedWires "s3b_einc" EFFW
+  let (e_inc_gates, _einc_carry) :=
+    mkKoggeStoneAdd s3_e_res one11 zero e_inc "s3b_einca"
+  let e_final := makeIndexedWires "s3b_ef" EFFW
+  let e_final_gates := (List.range EFFW).map fun i =>
+    Gate.mkMUX (s3_e_res[i]!) (e_inc[i]!) carry_out (e_final[i]!)
+  let sig_final := makeIndexedWires "s3b_sf" P
+  let sig_final_gates := (List.range P).map fun i =>
+    Gate.mkMUX (mant_inc[i]!) (mant_inc[i + 1]!) carry_out (sig_final[i]!)
+
+  let e_ge1_f := Wire.mk "s3b_ege1f"
+  let e_ge1_f_gate := [Gate.mkNOT (e_final[EFFW - 1]!) e_ge1_f]
+  let (e_final_any, e_final_any_gates) := mkOrTree "s3b_efany" e_final
+  let e_final_zero := Wire.mk "s3b_efzero"
+  let e_final_zero_gate := [Gate.mkNOT e_final_any e_final_zero]
+  let sub_ok := Wire.mk "s3b_subok"
+  let sub_ok_gate := [Gate.mkOR (e_final[EFFW - 1]!) e_final_zero sub_ok]
+
+  -- overflow: E >= 255, i.e. the field saturated or a higher bit set
+  let (e_hi_any, e_hi_any_gates) :=
+    mkOrTree "s3b_ehiany" ((List.range 3).map fun i => e_final[WEXP + i]!)
+  let (e_field_all, e_field_all_gates) :=
+    mkAndTree "s3b_efall" ((List.range WEXP).map fun i => e_final[i]!)
+  let of_cond := Wire.mk "s3b_ofc"
+  let of_cond_gate := [
+    Gate.mkOR e_hi_any e_field_all (Wire.mk "s3b_ofc1"),
+    Gate.mkAND (Wire.mk "s3b_ofc1") e_ge1_f of_cond
+  ]
+
+  -- body: the fused rounding result
+  let body := makeIndexedWires "s3b_body" (MSB + 1)
+  let body_gates :=
+    [Gate.mkBUF s3_sign (body[MSB]!)] ++
+    [Gate.mkMUX (e_final[0]!) s3_ovf_to_inf of_cond (body[FRAC]!)] ++
+    (List.range (WEXP - 1)).map
+      (fun i => Gate.mkMUX (e_final[i + 1]!) one of_cond (body[FRAC + 1 + i]!)) ++
+    (List.range FRAC).map (fun i => Gate.mkMUX (sig_final[i]!) s3_not_ovf_to_inf of_cond (body[i]!))
+
+  -- subnormal result
+  let carried := mant_inc[FRAC]!
+  let sub_body := makeIndexedWires "s3b_sbody" (MSB + 1)
+  let sub_body_gates :=
+    [Gate.mkBUF s3_sign (sub_body[MSB]!)] ++
+    (List.range WEXP).flatMap (fun i =>
+      [Gate.mkBUF zero (sub_body[FRAC + i]!),
+       Gate.mkBUF zero (Wire.mk s!"s3b_sbh{i}")]) ++
+    (List.range FRAC).map (fun i => Gate.mkBUF (mant_inc[i]!) (sub_body[i]!))
+  let sub_carry := Wire.mk "s3b_subcarry"
+  let sub_carry_gate := [Gate.mkAND carried sub_ok sub_carry]
+  let sub_fix := makeIndexedWires "s3b_subfix" (MSB + 1)
+  let sub_fix_gates := (List.range (MSB + 1)).map fun i =>
+    if i == MSB then Gate.mkBUF (sub_body[i]!) (sub_fix[i]!)
+    else if i == FRAC then Gate.mkMUX (sub_body[i]!) one sub_carry (sub_fix[i]!)
+    else Gate.mkMUX (sub_body[i]!) zero sub_carry (sub_fix[i]!)
+  let body_sel := makeIndexedWires "s3b_bsel" (MSB + 1)
+  let body_sel_gates := (List.range (MSB + 1)).map fun i =>
+    Gate.mkMUX (body[i]!) (sub_fix[i]!) sub_ok (body_sel[i]!)
+
+  -- exact zero
+  let zero_bits := makeIndexedWires "s3b_zb" (MSB + 1)
+  let zero_bits_gates := (List.range (MSB + 1)).map fun i =>
+    if i == MSB then Gate.mkBUF s3_zero_sign (zero_bits[i]!)
+    else Gate.mkBUF zero (zero_bits[i]!)
+  let with_zero := makeIndexedWires "s3b_wz" (MSB + 1)
+  let with_zero_gates := (List.range (MSB + 1)).map fun i =>
+    Gate.mkMUX (body_sel[i]!) (zero_bits[i]!) s3_exact_zero (with_zero[i]!)
+
+  -- special cases
+  let nan_bits := makeIndexedWires "s3b_nan" (MSB + 1)
+  let nan_gates := (List.range (MSB + 1)).map fun i =>
+    if FRAC - 1 <= i && i <= MSB - 1 then Gate.mkBUF one (nan_bits[i]!)
+    else Gate.mkBUF zero (nan_bits[i]!)
+  let inf_bits := makeIndexedWires "s3b_inf" (MSB + 1)
+  let inf_gates :=
+    (List.range (MSB + 1)).map fun i =>
+      if i == MSB then Gate.mkBUF s3_inf_sign (inf_bits[i]!)
+      else if FRAC <= i && i <= MSB - 1 then Gate.mkBUF one (inf_bits[i]!)
+      else Gate.mkBUF zero (inf_bits[i]!)
+  let with_inf := makeIndexedWires "s3b_wi" (MSB + 1)
+  let with_inf_gates := (List.range (MSB + 1)).map fun i =>
+    Gate.mkMUX (with_zero[i]!) (inf_bits[i]!) s3_any_inf (with_inf[i]!)
+  let with_nan := makeIndexedWires "s3b_wn" (MSB + 1)
+  let with_nan_gates := (List.range (MSB + 1)).map fun i =>
+    Gate.mkMUX (with_inf[i]!) (nan_bits[i]!) s3_sel_nan (with_nan[i]!)
+
+  let res_final := makeIndexedWires "s3b_rf" (MSB + 1)
+  let res_final_gates := (List.range (MSB + 1)).map fun i =>
+    Gate.mkMUX (with_nan[i]!) (s3_c_eff[i]!) s3_use_pz (res_final[i]!)
+  let result_gates := (List.range (MSB + 1)).map fun i => Gate.mkBUF (res_final[i]!) (result[i]!)
+
+  -- flags
+  let nx_any := Wire.mk "s3b_nxany"
+  let nx := Wire.mk "s3b_nx"
   let nx_gate := [Gate.mkOR rem_any of_cond nx_any,
-                  Gate.mkAND nx_any round_active nx]
-  -- Underflow needs a tiny and inexact result.  A subnormal carry reaches
-  -- the smallest normal number, which is not tiny.
-  let not_sub_carry := Wire.mk "s3_nsubcarry"
-  let uf_cand := Wire.mk "s3_ufcand"
-  let uf := Wire.mk "s3_uf"
+                  Gate.mkAND nx_any s3_round_active nx]
+  let not_sub_carry := Wire.mk "s3b_nsubcarry"
+  let uf_cand := Wire.mk "s3b_ufcand"
+  let uf := Wire.mk "s3b_uf"
   let uf_gate := [
     Gate.mkNOT sub_carry not_sub_carry,
     Gate.mkAND sub_ok not_sub_carry uf_cand,
     Gate.mkAND uf_cand nx uf
   ]
-  let of_final := Wire.mk "s3_of"
-  let of_final_gate := [Gate.mkAND of_cond round_active of_final]
+  let of_final := Wire.mk "s3b_of"
+  let of_final_gate := [Gate.mkAND of_cond s3_round_active of_final]
   let exc_gates := [
     Gate.mkBUF nx (exc[0]!),
     Gate.mkBUF uf (exc[1]!),
     Gate.mkBUF of_final (exc[2]!),
     Gate.mkBUF zero (exc[3]!),
-    Gate.mkBUF nv (exc[4]!)
+    Gate.mkBUF s3_nv (exc[4]!)
   ]
 
-  -- the rounding is combinational over the stage-2 banks, so the valid is two
-  -- deep: unpack/CSA, then align; a third stage would present the next
-  -- operation's data with this one's valid.
-  let tag_gates := (List.range 6).map fun i => Gate.mkBUF (s2_tag[i]!) (tag_out[i]!)
-  let valid_gate := [Gate.mkBUF s2_valid valid_out]
+  let tag_gates := (List.range 6).map fun i => Gate.mkBUF (s3_tag[i]!) (tag_out[i]!)
+  let valid_gate := [Gate.mkBUF s3_valid valid_out]
 
   { name := nm
     inputs := src1 ++ src2 ++ src3 ++ rm ++ dest_tag ++
@@ -1053,17 +1091,21 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       n_up_gates ++ n_dn_gates ++ n_gates ++ extra_gate ++ e_res_gates ++
       st_lo_gates ++ st_gates ++ m_gates ++ e_any_gates ++ e_ge1_gate ++
       four_minus_e_gates ++ clamp_d_gates ++ clamp_gate ++ shd_gates ++
-      mant_gates ++ ml_amt_gates ++ ml_gates ++ st2_raw_gates ++ any_unrounded_gate ++
-      clamp_d_any_gates ++ past_round_gates ++ rnd_bit_gate ++ st2_gate ++ rem_any_gate ++
-      rm_decode_gates ++ up_gates ++ mant_inc_gates ++ e_inc_gates ++
+      clamp_d_any_gates ++ past_round_gates ++ any_unrounded_gate ++
+      rm_decode_gates ++ ovf_to_inf_gates ++ exact_zero_gate ++ zero_sign_gate ++
+      inf_sign_gate ++ any_inf_gate ++ sel_nan_gate ++ use_pz_gate ++ nv_gate ++
+      round_active_gate ++ s3_gates ++
+      mant_gates ++ ml_amt_gates ++ ml_gates ++ st2_raw_gates ++
+      rnd_bit_gate ++ st2_gate ++ rem_any_gate ++
+      up_gates ++ mant_inc_gates ++ e_inc_gates ++
       e_final_gates ++ sig_final_gates ++ e_ge1_f_gate ++ e_final_any_gates ++
       e_final_zero_gate ++ sub_ok_gate ++ e_hi_any_gates ++ e_field_all_gates ++
       of_cond_gate ++ body_gates ++ sub_body_gates ++ sub_carry_gate ++
-      sub_fix_gates ++ body_sel_gates ++ exact_zero_gate ++ zero_sign_gate ++
+      sub_fix_gates ++ body_sel_gates ++
       zero_bits_gates ++ with_zero_gates ++ nan_gates ++ inf_gates ++
-      any_inf_gate ++ sel_nan_gate ++ with_inf_gates ++ with_nan_gates ++
-      use_pz_gate ++ res_final_gates ++ result_gates ++ nv_gate ++ nx_gate ++
-      round_active_gate ++ uf_gate ++ of_final_gate ++ exc_gates ++ tag_gates ++ valid_gate
+      with_inf_gates ++ with_nan_gates ++
+      res_final_gates ++ result_gates ++ nx_gate ++
+      uf_gate ++ of_final_gate ++ exc_gates ++ tag_gates ++ valid_gate
     instances := csa_instances
     keepHierarchy := true
     signalGroups := [
