@@ -57,29 +57,32 @@ def sortIFirst (defs : List InstructionDef) : List InstructionDef :=
   let f := defs.filter isFpExtInstruction
   i ++ f
 
-private def writeDecoder (defs : List InstructionDef) (name : String) : IO Unit := do
-  writeSystemVerilogDecoder defs s!"output/sv-from-lean/{name}.sv" name
-  writeCppSimDecoderHeader defs s!"output/cpp_sim/{name}.h" name
-  writeCppSimDecoderImpl defs s!"output/cpp_sim/{name}.cpp" name
+def writeDecoder (defs : List InstructionDef) (name : String)
+    (svDir : System.FilePath := "output/sv-from-lean")
+    (cppSimDir : System.FilePath := "output/cpp_sim") : IO Unit := do
+  writeSystemVerilogDecoder defs (svDir / s!"{name}.sv").toString name
+  writeCppSimDecoderHeader defs (cppSimDir / s!"{name}.h").toString name
+  writeCppSimDecoderImpl defs (cppSimDir / s!"{name}.cpp").toString name
 
 /-- Generate decoder variants from instruction definitions -/
-def generateDecoders (defs : List InstructionDef) (targetNames : List String := ["RV32IMFDecoder"]) : IO Unit := do
+def generateDecoders (defs : List InstructionDef)
+    (targetNames : List String := ["RV32IMFDecoder"])
+    (svDir : System.FilePath := "output/sv-from-lean")
+    (cppSimDir : System.FilePath := "output/cpp_sim") : IO Unit := do
   IO.println "==================================================\n"
   IO.println "Generating RISC-V Decoder Code\n"
   IO.println "==================================================\n"
 
   -- Create output directories
   IO.println "Creating output directories..."
-  let _ ← IO.Process.run {
-    cmd := "mkdir"
-    args := #["-p", "output/sv-from-lean", "output/cpp_sim"]
-  }
+  IO.FS.createDirAll svDir
+  IO.FS.createDirAll cppSimDir
 
   let baseDefs := filterBaseI defs
 
   if targetNames.contains "RV32IDecoder" then
     IO.println s!"\n── RV32IDecoder ({baseDefs.length} instructions) ──"
-    writeDecoder baseDefs "RV32IDecoder"
+    writeDecoder baseDefs "RV32IDecoder" svDir cppSimDir
     IO.println "✓ RV32IDecoder complete"
 
   let hasM := hasMExtension defs
@@ -89,31 +92,31 @@ def generateDecoders (defs : List InstructionDef) (targetNames : List String := 
   if targetNames.contains "RV32IMDecoder" && hasM then
     let imDefs := filterIM defs
     IO.println s!"\n── RV32IMDecoder ({imDefs.length} instructions) ──"
-    writeDecoder imDefs "RV32IMDecoder"
+    writeDecoder imDefs "RV32IMDecoder" svDir cppSimDir
     IO.println "✓ RV32IMDecoder complete"
 
   if targetNames.contains "RV32IFDecoder" && hasF then
     let ifDefs := sortIFirst (filterIF defs)
     IO.println s!"\n── RV32IFDecoder ({ifDefs.length} instructions) ──"
-    writeDecoder ifDefs "RV32IFDecoder"
+    writeDecoder ifDefs "RV32IFDecoder" svDir cppSimDir
     IO.println "✓ RV32IFDecoder complete"
 
   if targetNames.contains "RV32IMFDecoder" && hasM && hasF then
     let imfDefs := sortIMFirst (filterIMF defs)
     IO.println s!"\n── RV32IMFDecoder ({imfDefs.length} instructions) ──"
-    writeDecoder imfDefs "RV32IMFDecoder"
+    writeDecoder imfDefs "RV32IMFDecoder" svDir cppSimDir
     IO.println "✓ RV32IMFDecoder complete"
 
   if targetNames.contains "RV32GDecoder" && hasM && hasF && hasD then
     let gDefs := sortIMFirst defs
     IO.println s!"\n── RV32GDecoder ({gDefs.length} instructions) ──"
-    writeDecoder gDefs "RV32GDecoder"
+    writeDecoder gDefs "RV32GDecoder" svDir cppSimDir
     IO.println "✓ RV32GDecoder complete"
 
   if targetNames.contains "RV64GDecoder" && hasM && hasF && hasD then
     let gDefs := sortIMFirst defs
     IO.println s!"\n── RV64GDecoder ({gDefs.length} instructions) ──"
-    writeDecoder gDefs "RV64GDecoder"
+    writeDecoder gDefs "RV64GDecoder" svDir cppSimDir
     IO.println "✓ RV64GDecoder complete"
 
   IO.println "\n==================================================\n"

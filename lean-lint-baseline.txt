@@ -1,5 +1,4 @@
 1 generators/GenBenchmarks.lean
-9 generators/GenerateAll.lean
 2 generators/Sva2Lean.lean
 4 lean/Shoumei/Circuits/Combinational/BranchTargetAdderProofs.lean
 2 lean/Shoumei/Circuits/Combinational/CarrySelectAdderProofs.lean

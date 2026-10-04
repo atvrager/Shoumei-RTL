@@ -1,12 +1,129 @@
 """Rules for generating SystemVerilog and simulation models from Lean."""
 
-def _shoumei_rtl_impl(ctx):
+CIRCUIT_SUBSYSTEMS = [
+    "foundation",
+    "combinational",
+    "sequential",
+    "renaming",
+    "execution",
+    "retirement",
+    "memory",
+    "control",
+    "cpu",
+    "soc",
+    "decoders",
+]
+
+def _shoumei_subsystem_rtl_impl(ctx):
+    subsystem = ctx.attr.subsystem
     sv_dir = ctx.actions.declare_directory(ctx.attr.name + "_sv")
     netlist_dir = ctx.actions.declare_directory(ctx.attr.name + "_netlist")
     asap7_dir = ctx.actions.declare_directory(ctx.attr.name + "_asap7")
     gf180_dir = ctx.actions.declare_directory(ctx.attr.name + "_gf180")
-    sec_dir = ctx.actions.declare_directory(ctx.attr.name + "_sec")
     cpp_sim_dir = ctx.actions.declare_directory(ctx.attr.name + "_cpp_sim")
+
+    args = ctx.actions.args()
+    args.add("--subsystem=" + subsystem)
+    args.add("--out-sv=" + sv_dir.path)
+    args.add("--out-netlist=" + netlist_dir.path)
+    args.add("--out-asap7=" + asap7_dir.path)
+    args.add("--out-gf180=" + gf180_dir.path)
+    args.add("--out-cpp-sim=" + cpp_sim_dir.path)
+    args.add("--skip-visuals")
+    args.add("--skip-testbench")
+    args.add("--skip-sec")
+
+    inputs = []
+    if ctx.file.instr_dict:
+        inputs.append(ctx.file.instr_dict)
+        args.add("--instr-dict=" + ctx.file.instr_dict.path)
+
+    outputs = [sv_dir, netlist_dir, asap7_dir, gf180_dir, cpp_sim_dir]
+
+    ctx.actions.run(
+        executable = ctx.executable.generator,
+        arguments = [args],
+        inputs = inputs,
+        outputs = outputs,
+        mnemonic = "LeanRtlSubsystem",
+        progress_message = "Generating Shoumei RTL subsystem %s" % subsystem,
+    )
+
+    return [
+        DefaultInfo(
+            files = depset([sv_dir]),
+            runfiles = ctx.runfiles(files = outputs),
+        ),
+        OutputGroupInfo(
+            sv = depset([sv_dir]),
+            netlist = depset([netlist_dir]),
+            asap7 = depset([asap7_dir]),
+            gf180 = depset([gf180_dir]),
+            cpp_sim = depset([cpp_sim_dir]),
+            all = depset(outputs),
+        ),
+    ]
+
+shoumei_subsystem_rtl = rule(
+    implementation = _shoumei_subsystem_rtl_impl,
+    attrs = {
+        "subsystem": attr.string(mandatory = True),
+        "generator": attr.label(
+            executable = True,
+            cfg = "exec",
+            mandatory = True,
+        ),
+        "instr_dict": attr.label(
+            allow_single_file = True,
+        ),
+    },
+)
+
+def _shoumei_sec_rtl_impl(ctx):
+    sec_dir = ctx.actions.declare_directory(ctx.attr.name + "_sec")
+
+    args = ctx.actions.args()
+    args.add("--subsystem=sec")
+    args.add("--out-sec=" + sec_dir.path)
+    args.add("--out-sv=output/sv-from-lean")
+    args.add("--skip-visuals")
+    args.add("--skip-testbench")
+    args.add("--skip-decoders")
+
+    outputs = [sec_dir]
+
+    ctx.actions.run(
+        executable = ctx.executable.generator,
+        arguments = [args],
+        inputs = [],
+        outputs = outputs,
+        mnemonic = "LeanRtlSec",
+        progress_message = "Generating Shoumei RTL SEC miters",
+    )
+
+    return [
+        DefaultInfo(
+            files = depset([sec_dir]),
+            runfiles = ctx.runfiles(files = outputs),
+        ),
+        OutputGroupInfo(
+            sec = depset([sec_dir]),
+            all = depset(outputs),
+        ),
+    ]
+
+shoumei_sec_rtl = rule(
+    implementation = _shoumei_sec_rtl_impl,
+    attrs = {
+        "generator": attr.label(
+            executable = True,
+            cfg = "exec",
+            mandatory = True,
+        ),
+    },
+)
+
+def _shoumei_testbench_rtl_impl(ctx):
     testbench_dir = ctx.actions.declare_directory(ctx.attr.name + "_testbench")
     config_mk = ctx.actions.declare_file(ctx.attr.name + "_config.mk")
     cosim_main = ctx.actions.declare_file(ctx.attr.name + "_cosim_main_tb_cpu.cpp")
@@ -17,44 +134,19 @@ def _shoumei_rtl_impl(ctx):
     script_content = """#!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p third_party/riscv-opcodes physical testbench/generated viewer/src docs output .codegen-cache
+"{generator}" \\
+    --subsystem=testbench \\
+    --out-testbench="{testbench_dir}" \\
+    --out-config-mk="{config_mk}" \\
+    --skip-visuals \\
+    --skip-decoders \\
+    --skip-sec
 
-if [ "{instr_dict}" != "third_party/riscv-opcodes/instr_dict.json" ]; then
-    cp "{instr_dict}" third_party/riscv-opcodes/instr_dict.json
-fi
-
-for f in {synth_wrappers}; do
-    if [ -f "$f" ] && [ "$(dirname "$f")" != "physical" ]; then
-        cp "$f" physical/
-    fi
-done
-
-# No `--force`.  The action cache of the build is the cache; the generator's
-# own hash cache cannot survive a sandbox anyway.
-"{generator}"
-
-mkdir -p "{sv_dir}" "{netlist_dir}" "{asap7_dir}" "{gf180_dir}" "{sec_dir}" "{cpp_sim_dir}" "{testbench_dir}"
-cp -a output/sv-from-lean/. "{sv_dir}/"
-cp -a output/sv-netlist/. "{netlist_dir}/"
-cp -a output/sv-asap7/. "{asap7_dir}/"
-cp -a output/sv-gf180/. "{gf180_dir}/"
-cp -a output/sv-sec/. "{sec_dir}/"
-cp -a output/cpp_sim/. "{cpp_sim_dir}/"
-cp -a testbench/generated/. "{testbench_dir}/"
-cp output/config.mk "{config_mk}"
-cp testbench/generated/cosim_main_tb_cpu.cpp "{cosim_main}"
-cp testbench/generated/sim_main_tb_cpu.cpp "{sim_main}"
-cp testbench/generated/tb_cpu.sv "{tb_cpu_sv}"
+cp "{testbench_dir}/cosim_main_tb_cpu.cpp" "{cosim_main}"
+cp "{testbench_dir}/sim_main_tb_cpu.cpp" "{sim_main}"
+cp "{testbench_dir}/tb_cpu.sv" "{tb_cpu_sv}"
 """.format(
-        instr_dict = ctx.file.instr_dict.path,
-        synth_wrappers = " ".join([f.path for f in ctx.files.synth_wrappers]),
         generator = ctx.executable.generator.path,
-        sv_dir = sv_dir.path,
-        netlist_dir = netlist_dir.path,
-        asap7_dir = asap7_dir.path,
-        gf180_dir = gf180_dir.path,
-        sec_dir = sec_dir.path,
-        cpp_sim_dir = cpp_sim_dir.path,
         testbench_dir = testbench_dir.path,
         config_mk = config_mk.path,
         cosim_main = cosim_main.path,
@@ -68,45 +160,23 @@ cp testbench/generated/tb_cpu.sv "{tb_cpu_sv}"
         is_executable = True,
     )
 
-    inputs = [
-        ctx.file.instr_dict,
-    ] + ctx.files.synth_wrappers
-
-    outputs = [
-        sv_dir,
-        netlist_dir,
-        asap7_dir,
-        gf180_dir,
-        sec_dir,
-        cpp_sim_dir,
-        testbench_dir,
-        config_mk,
-        cosim_main,
-        sim_main,
-        tb_cpu_sv,
-    ]
+    outputs = [testbench_dir, config_mk, cosim_main, sim_main, tb_cpu_sv]
 
     ctx.actions.run(
         executable = script,
-        inputs = inputs,
+        inputs = [],
         outputs = outputs,
         tools = [ctx.executable.generator],
-        mnemonic = "LeanRtlGen",
-        progress_message = "Generating Shoumei RTL from Lean (%{label})",
+        mnemonic = "LeanRtlTestbench",
+        progress_message = "Generating Shoumei RTL testbenches",
     )
 
     return [
         DefaultInfo(
-            files = depset([sv_dir]),
+            files = depset([testbench_dir]),
             runfiles = ctx.runfiles(files = outputs),
         ),
         OutputGroupInfo(
-            sv = depset([sv_dir]),
-            netlist = depset([netlist_dir]),
-            asap7 = depset([asap7_dir]),
-            gf180 = depset([gf180_dir]),
-            sec = depset([sec_dir]),
-            cpp_sim = depset([cpp_sim_dir]),
             testbench = depset([testbench_dir]),
             config_mk = depset([config_mk]),
             cosim_main = depset([cosim_main]),
@@ -116,26 +186,75 @@ cp testbench/generated/tb_cpu.sv "{tb_cpu_sv}"
         ),
     ]
 
-shoumei_rtl_raw = rule(
-    implementation = _shoumei_rtl_impl,
+shoumei_testbench_rtl = rule(
+    implementation = _shoumei_testbench_rtl_impl,
     attrs = {
         "generator": attr.label(
             executable = True,
             cfg = "exec",
             mandatory = True,
-            doc = "The lean_binary generator executable (generate_all).",
-        ),
-        "instr_dict": attr.label(
-            allow_single_file = True,
-            mandatory = True,
-            doc = "The riscv-opcodes instr_dict.json file.",
-        ),
-        "synth_wrappers": attr.label_list(
-            allow_files = True,
-            doc = "Physical synthesis wrapper files (*_synth.sv).",
         ),
     },
-    doc = "Executes the Lean RTL code generator and produces SystemVerilog and simulation models.",
+)
+
+def _shoumei_merge_dirs_impl(ctx):
+    out_dir = ctx.actions.declare_directory(ctx.attr.name)
+    group = ctx.attr.group
+    ext = ctx.attr.extension
+
+    all_inputs = []
+    for t in ctx.attr.targets:
+        if group and OutputGroupInfo in t and hasattr(t[OutputGroupInfo], group):
+            all_inputs.extend(getattr(t[OutputGroupInfo], group).to_list())
+        elif DefaultInfo in t:
+            all_inputs.extend(t[DefaultInfo].files.to_list())
+
+    script = ctx.actions.declare_file(ctx.attr.name + "_merge.sh")
+    script_content = """#!/usr/bin/env bash
+set -euo pipefail
+
+out="{out_dir}"
+mkdir -p "$out"
+
+for d in {dirs}; do
+    if [ -d "$d" ]; then
+        cp -R -f "$d/." "$out/"
+        chmod -R u+w "$out" || true
+    fi
+done
+
+if [ -n "{ext}" ]; then
+    find "$out" -maxdepth 1 -name "*{ext}" -exec basename {{}} \\; | sort > "$out/filelist.f"
+fi
+""".format(
+        out_dir = out_dir.path,
+        dirs = " ".join([d.path for d in all_inputs]),
+        ext = ext,
+    )
+
+    ctx.actions.write(
+        output = script,
+        content = script_content,
+        is_executable = True,
+    )
+
+    ctx.actions.run(
+        executable = script,
+        inputs = all_inputs,
+        outputs = [out_dir],
+        mnemonic = "MergeDirs",
+        progress_message = "Merging %{label}",
+    )
+
+    return [DefaultInfo(files = depset([out_dir]))]
+
+shoumei_merge_dirs = rule(
+    implementation = _shoumei_merge_dirs_impl,
+    attrs = {
+        "targets": attr.label_list(mandatory = True),
+        "group": attr.string(default = ""),
+        "extension": attr.string(default = ""),
+    },
 )
 
 def _output_group_filter_impl(ctx):
@@ -156,80 +275,344 @@ _output_group_target = rule(
     },
 )
 
-def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//generators:instr_dict", synth_wrappers = None):
-    """Macro providing the RTL generation suite with convenient subtargets.
+def _shoumei_workspace_sync_impl(ctx):
+    script = ctx.actions.declare_file(ctx.attr.name + ".sh")
+
+    content = """#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${{1:---copy}}"
+
+if [ -z "${{BUILD_WORKSPACE_DIRECTORY:-}}" ]; then
+    echo "ERROR: BUILD_WORKSPACE_DIRECTORY is not set. Run this target via 'bazel run'." >&2
+    exit 1
+fi
+
+cd "$BUILD_WORKSPACE_DIRECTORY"
+
+if [ -n "${{RUNFILES_DIR:-}}" ]; then
+    RUNFILES="$RUNFILES_DIR"
+elif [ -d "$0.runfiles" ]; then
+    RUNFILES="$0.runfiles"
+else
+    RUNFILES="$(cd "$(dirname "$0")" && pwd)"
+fi
+
+WS_NAME="{workspace}"
+if [ -d "$RUNFILES/$WS_NAME" ]; then
+    BASE="$RUNFILES/$WS_NAME"
+else
+    BASE="$RUNFILES"
+fi
+
+SV_DIR="$BASE/{sv_path}"
+NETLIST_DIR="$BASE/{netlist_path}"
+ASAP7_DIR="$BASE/{asap7_path}"
+GF180_DIR="$BASE/{gf180_path}"
+SEC_DIR="$BASE/{sec_path}"
+CPP_SIM_DIR="$BASE/{cpp_sim_path}"
+TB_DIR="$BASE/{tb_path}"
+CONFIG_MK="$BASE/{config_mk_path}"
+
+mkdir -p output testbench
+
+sync_dir() {{
+    local src="$1"
+    local dst="$2"
+    if [ "$MODE" = "--copy" ]; then
+        if [ -L "$dst" ]; then rm -f "$dst"; fi
+        mkdir -p "$dst"
+        cp -R -f "$src/." "$dst/"
+    else
+        rm -rf "$dst"
+        ln -sfn "$(readlink -f "$src")" "$dst"
+    fi
+}}
+
+sync_file() {{
+    local src="$1"
+    local dst="$2"
+    mkdir -p "$(dirname "$dst")"
+    if [ "$MODE" = "--copy" ]; then
+        if [ -L "$dst" ]; then rm -f "$dst"; fi
+        cp -f "$src" "$dst"
+    else
+        rm -rf "$dst"
+        ln -sfn "$(readlink -f "$src")" "$dst"
+    fi
+}}
+
+sync_dir "$SV_DIR" output/sv-from-lean
+sync_dir "$NETLIST_DIR" output/sv-netlist
+sync_dir "$ASAP7_DIR" output/sv-asap7
+sync_dir "$GF180_DIR" output/sv-gf180
+sync_dir "$SEC_DIR" output/sv-sec
+sync_dir "$CPP_SIM_DIR" output/cpp_sim
+sync_dir "$TB_DIR" testbench/generated
+sync_file "$CONFIG_MK" output/config.mk
+
+if [ "$MODE" = "--copy" ]; then
+    echo "✓ Synced Shoumei RTL outputs into workspace (copied)"
+else
+    echo "✓ Synced Shoumei RTL outputs into workspace (symlinked)"
+fi
+""".format(
+        workspace = ctx.workspace_name,
+        sv_path = ctx.file.sv.short_path,
+        netlist_path = ctx.file.netlist.short_path,
+        asap7_path = ctx.file.asap7.short_path,
+        gf180_path = ctx.file.gf180.short_path,
+        sec_path = ctx.file.sec.short_path,
+        cpp_sim_path = ctx.file.cpp_sim.short_path,
+        tb_path = ctx.file.testbench.short_path,
+        config_mk_path = ctx.file.config_mk.short_path,
+    )
+
+    ctx.actions.write(
+        output = script,
+        content = content,
+        is_executable = True,
+    )
+
+    runfiles = ctx.runfiles(files = [
+        ctx.file.sv,
+        ctx.file.netlist,
+        ctx.file.asap7,
+        ctx.file.gf180,
+        ctx.file.sec,
+        ctx.file.cpp_sim,
+        ctx.file.testbench,
+        ctx.file.config_mk,
+    ])
+
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+shoumei_workspace_sync = rule(
+    implementation = _shoumei_workspace_sync_impl,
+    executable = True,
+    attrs = {
+        "sv": attr.label(mandatory = True, allow_single_file = True),
+        "netlist": attr.label(mandatory = True, allow_single_file = True),
+        "asap7": attr.label(mandatory = True, allow_single_file = True),
+        "gf180": attr.label(mandatory = True, allow_single_file = True),
+        "sec": attr.label(mandatory = True, allow_single_file = True),
+        "cpp_sim": attr.label(mandatory = True, allow_single_file = True),
+        "testbench": attr.label(mandatory = True, allow_single_file = True),
+        "config_mk": attr.label(mandatory = True, allow_single_file = True),
+    },
+)
+
+def _shoumei_aggregate_rtl_impl(ctx):
+    script = ctx.actions.declare_file(ctx.label.name)
+    content = """#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -n "${{RUNFILES_DIR:-}}" ]; then
+    RUNFILES="$RUNFILES_DIR"
+elif [ -d "$0.runfiles" ]; then
+    RUNFILES="$0.runfiles"
+else
+    RUNFILES="$(cd "$(dirname "$0")" && pwd)"
+fi
+
+WS_NAME="{workspace}"
+if [ -f "$RUNFILES/$WS_NAME/{sync_script}" ]; then
+    EXEC_PATH="$RUNFILES/$WS_NAME/{sync_script}"
+elif [ -f "$RUNFILES/{sync_script}" ]; then
+    EXEC_PATH="$RUNFILES/{sync_script}"
+elif [ -f "$(dirname "$0")/{sync_script}" ]; then
+    EXEC_PATH="$(dirname "$0")/{sync_script}"
+else
+    EXEC_PATH="$(dirname "$0")/{sync_script}"
+fi
+
+exec "$EXEC_PATH" "$@"
+""".format(
+        workspace = ctx.workspace_name,
+        sync_script = ctx.executable.sync_script.short_path,
+    )
+    ctx.actions.write(
+        output = script,
+        content = content,
+        is_executable = True,
+    )
+    all_files = [
+        ctx.file.sv,
+        ctx.file.netlist,
+        ctx.file.asap7,
+        ctx.file.gf180,
+        ctx.file.sec,
+        ctx.file.cpp_sim,
+        ctx.file.testbench,
+        ctx.file.config_mk,
+        ctx.file.cosim_main,
+        ctx.file.sim_main,
+        ctx.file.tb_cpu_sv,
+    ]
+    runfiles = ctx.runfiles(files = [ctx.executable.sync_script]).merge(
+        ctx.attr.sync_script[DefaultInfo].default_runfiles,
+    )
+    return [
+        DefaultInfo(
+            files = depset(all_files),
+            runfiles = runfiles,
+            executable = script,
+        ),
+        OutputGroupInfo(
+            sv = depset([ctx.file.sv]),
+            netlist = depset([ctx.file.netlist]),
+            asap7 = depset([ctx.file.asap7]),
+            gf180 = depset([ctx.file.gf180]),
+            sec = depset([ctx.file.sec]),
+            cpp_sim = depset([ctx.file.cpp_sim]),
+            testbench = depset([ctx.file.testbench]),
+            config_mk = depset([ctx.file.config_mk]),
+            cosim_main = depset([ctx.file.cosim_main]),
+            sim_main = depset([ctx.file.sim_main]),
+            tb_cpu_sv = depset([ctx.file.tb_cpu_sv]),
+            all = depset(all_files),
+        ),
+    ]
+
+shoumei_aggregate_rtl = rule(
+    implementation = _shoumei_aggregate_rtl_impl,
+    executable = True,
+    attrs = {
+        "sv": attr.label(mandatory = True, allow_single_file = True),
+        "netlist": attr.label(mandatory = True, allow_single_file = True),
+        "asap7": attr.label(mandatory = True, allow_single_file = True),
+        "gf180": attr.label(mandatory = True, allow_single_file = True),
+        "sec": attr.label(mandatory = True, allow_single_file = True),
+        "cpp_sim": attr.label(mandatory = True, allow_single_file = True),
+        "testbench": attr.label(mandatory = True, allow_single_file = True),
+        "config_mk": attr.label(mandatory = True, allow_single_file = True),
+        "cosim_main": attr.label(mandatory = True, allow_single_file = True),
+        "sim_main": attr.label(mandatory = True, allow_single_file = True),
+        "tb_cpu_sv": attr.label(mandatory = True, allow_single_file = True),
+        "sync_script": attr.label(mandatory = True, executable = True, cfg = "exec"),
+    },
+)
+
+def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//generators:instr_dict"):
+    """Macro providing granular RTL generation suite with convenient subtargets.
 
     Args:
       name: name of the generation target.
       generator: the `lean_binary` code generator to run.
       instr_dict: the RISC-V instruction dictionary the generator reads.
-      synth_wrappers: extra SystemVerilog files to pass to the generator.
     """
-    if synth_wrappers == None:
-        synth_wrappers = native.glob(["physical/*_synth.sv"])
+    subsystem_targets = []
+    for sub in CIRCUIT_SUBSYSTEMS:
+        target_name = name + "_" + sub
+        shoumei_subsystem_rtl(
+            name = target_name,
+            subsystem = sub,
+            generator = generator,
+            instr_dict = instr_dict,
+        )
+        subsystem_targets.append(":" + target_name)
 
-    raw_name = name + "_raw"
-    shoumei_rtl_raw(
-        name = raw_name,
+    sec_target = name + "_sec"
+    shoumei_sec_rtl(
+        name = sec_target,
         generator = generator,
-        instr_dict = instr_dict,
-        synth_wrappers = synth_wrappers,
     )
 
-    _output_group_target(
+    tb_target = name + "_testbench"
+    shoumei_testbench_rtl(
+        name = tb_target,
+        generator = generator,
+    )
+
+    shoumei_merge_dirs(
         name = "sv",
-        target = ":" + raw_name,
+        targets = subsystem_targets,
         group = "sv",
+        extension = ".sv",
     )
-    _output_group_target(
+    shoumei_merge_dirs(
         name = "sv_netlist",
-        target = ":" + raw_name,
+        targets = subsystem_targets,
         group = "netlist",
+        extension = ".sv",
     )
-    _output_group_target(
+    shoumei_merge_dirs(
         name = "sv_asap7",
-        target = ":" + raw_name,
+        targets = subsystem_targets,
         group = "asap7",
+        extension = ".sv",
     )
-    _output_group_target(
+    shoumei_merge_dirs(
         name = "sv_gf180",
-        target = ":" + raw_name,
+        targets = subsystem_targets,
         group = "gf180",
+        extension = ".sv",
     )
+    shoumei_merge_dirs(
+        name = "cpp_sim",
+        targets = subsystem_targets,
+        group = "cpp_sim",
+        extension = ".h",
+    )
+
     _output_group_target(
         name = "sv_sec",
-        target = ":" + raw_name,
+        target = ":" + sec_target,
         group = "sec",
     )
     _output_group_target(
-        name = "cpp_sim",
-        target = ":" + raw_name,
-        group = "cpp_sim",
-    )
-    _output_group_target(
         name = "testbench",
-        target = ":" + raw_name,
+        target = ":" + tb_target,
         group = "testbench",
     )
     _output_group_target(
+        name = "config_mk",
+        target = ":" + tb_target,
+        group = "config_mk",
+    )
+    _output_group_target(
         name = "cosim_main",
-        target = ":" + raw_name,
+        target = ":" + tb_target,
         group = "cosim_main",
     )
     _output_group_target(
         name = "sim_main",
-        target = ":" + raw_name,
+        target = ":" + tb_target,
         group = "sim_main",
     )
     _output_group_target(
         name = "tb_cpu_sv",
-        target = ":" + raw_name,
+        target = ":" + tb_target,
         group = "tb_cpu_sv",
     )
-    _output_group_target(
+
+    sync_name = "sync_" + name
+    shoumei_workspace_sync(
+        name = sync_name,
+        sv = ":sv",
+        netlist = ":sv_netlist",
+        asap7 = ":sv_asap7",
+        gf180 = ":sv_gf180",
+        sec = ":sv_sec",
+        cpp_sim = ":cpp_sim",
+        testbench = ":testbench",
+        config_mk = ":config_mk",
+    )
+
+    shoumei_aggregate_rtl(
         name = name,
-        target = ":" + raw_name,
-        group = "all",
+        sv = ":sv",
+        netlist = ":sv_netlist",
+        asap7 = ":sv_asap7",
+        gf180 = ":sv_gf180",
+        sec = ":sv_sec",
+        cpp_sim = ":cpp_sim",
+        testbench = ":testbench",
+        config_mk = ":config_mk",
+        cosim_main = ":cosim_main",
+        sim_main = ":sim_main",
+        tb_cpu_sv = ":tb_cpu_sv",
+        sync_script = ":" + sync_name,
     )
 
     structural_lint_test(

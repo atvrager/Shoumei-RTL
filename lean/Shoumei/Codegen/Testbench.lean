@@ -3157,72 +3157,80 @@ def toCosimMainCpp (cfg : TestbenchConfig) : String :=
 
 def testbenchOutputDir : String := "testbench/generated"
 
-def writeTestbenchSV (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeTestbenchSV (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let sv := if cfg.cacheLineMemPort.isSome then toTestbenchSVCached cfg else toTestbenchSV cfg
   let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
-  let path := s!"{testbenchOutputDir}/{tbName}.sv"
-  IO.FS.writeFile path sv
+  let path := outDir / s!"{tbName}.sv"
+  IO.FS.writeFile path.toString sv
   IO.println s!"  ✓ {tbName}.sv (testbench)"
 
-def writeCpuSetup (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeCpuSetup (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let c := cfg.circuit
   -- Thin setup header (port order + names only)
-  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.h" (toCpuSetupHeader c)
+  IO.FS.writeFile (outDir / s!"cpu_setup_{c.name}.h").toString (toCpuSetupHeader c)
   -- Heavy setup cpp (includes full module header)
-  IO.FS.writeFile s!"{testbenchOutputDir}/cpu_setup_{c.name}.cpp" (toCpuSetupCpp cfg)
+  IO.FS.writeFile (outDir / s!"cpu_setup_{c.name}.cpp").toString (toCpuSetupCpp cfg)
 
-def writeTestbenchCppSim (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeTestbenchCppSim (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let c := cfg.circuit
-  Testbench.writeCpuSetup cfg
+  Testbench.writeCpuSetup cfg outDir
   -- Write thin sim_main (no module header includes)
   let sc := toTestbenchCppSim cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/sim_main_{c.name}.cpp" sc
+  IO.FS.writeFile (outDir / s!"sim_main_{c.name}.cpp").toString sc
   IO.println s!"  ✓ sim_main_{c.name}.cpp + cpu_setup_{c.name}.cpp (testbench, split)"
 
-def writeSimMainCpp (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeSimMainCpp (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
   let cpp := toSimMainCpp cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/sim_main_{tbName}.cpp" cpp
+  IO.FS.writeFile (outDir / s!"sim_main_{tbName}.cpp").toString cpp
   IO.println s!"  ✓ sim_main_{tbName}.cpp (Verilator sim driver)"
 
-def writeCosimMainCpp (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeCosimMainCpp (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
   let cpp := toCosimMainCpp cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/cosim_main_{tbName}.cpp" cpp
+  IO.FS.writeFile (outDir / s!"cosim_main_{tbName}.cpp").toString cpp
   IO.println s!"  ✓ cosim_main_{tbName}.cpp (Verilator cosim driver)"
 
-def writeLeanSim (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeLeanSim (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let c := cfg.circuit
   let h := toLeanSimH cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_{c.name}.h" h
+  IO.FS.writeFile (outDir / s!"lean_sim_{c.name}.h").toString h
   let cpp := toLeanSimCpp cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_{c.name}.cpp" cpp
+  IO.FS.writeFile (outDir / s!"lean_sim_{c.name}.cpp").toString cpp
   IO.println s!"  ✓ lean_sim_{c.name}.h + lean_sim_{c.name}.cpp (Lean gate-level sim)"
 
-def writeLeanSimMainCpp (cfg : TestbenchConfig) : IO Unit := do
-  IO.FS.createDirAll testbenchOutputDir
+def writeLeanSimMainCpp (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  IO.FS.createDirAll outDir
   let tbName := optOrDefault cfg.tbName s!"tb_{cfg.circuit.name}"
   let cpp := toLeanSimMainCpp cfg
-  IO.FS.writeFile s!"{testbenchOutputDir}/lean_sim_main_{tbName}.cpp" cpp
+  IO.FS.writeFile (outDir / s!"lean_sim_main_{tbName}.cpp").toString cpp
   IO.println s!"  ✓ lean_sim_main_{tbName}.cpp (Lean simulator driver)"
 
-def writeTestbenches (cfg : TestbenchConfig) : IO Unit := do
-  Testbench.writeTestbenchSV cfg
+def writeTestbenches (cfg : TestbenchConfig)
+    (outDir : System.FilePath := System.FilePath.mk testbenchOutputDir) : IO Unit := do
+  Testbench.writeTestbenchSV cfg outDir
   -- CppSim (plain C++ model) does not support the cache-line memory interface;
   -- LeanSim does, so the gate-level model + its standalone driver are always
   -- emitted (bench-cppsim builds from them).
   if cfg.cacheLineMemPort.isNone then
-    Testbench.writeTestbenchCppSim cfg
-  Testbench.writeCpuSetup cfg
-  Testbench.writeLeanSim cfg
-  Testbench.writeSimMainCpp cfg
-  Testbench.writeLeanSimMainCpp cfg
-  Testbench.writeCosimMainCpp cfg
+    Testbench.writeTestbenchCppSim cfg outDir
+  Testbench.writeCpuSetup cfg outDir
+  Testbench.writeLeanSim cfg outDir
+  Testbench.writeSimMainCpp cfg outDir
+  Testbench.writeLeanSimMainCpp cfg outDir
+  Testbench.writeCosimMainCpp cfg outDir
 
 end Shoumei.Codegen.Testbench
