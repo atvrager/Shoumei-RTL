@@ -193,48 +193,119 @@ def mkMulFinalAdder64 : Circuit :=
     Gate.mkNOT mid0 (sum[0]!)
   ]
 
-  -- Level 0 for bits 1..63
-  let g0 := (List.range 64).map (fun i => Wire.mk s!"mfa_g0_{i}")
-  let p0 := (List.range 64).map (fun i => Wire.mk s!"mfa_p0_{i}")
-  let init_gates := List.flatten <| (List.range 63).map fun i =>
+  -- Lower block: 31 bits (bits 1..31 of sum, from a[31:1] + b[30:0])
+  let width_lo := 31
+  let g0_lo := (List.range width_lo).map (fun i => Wire.mk s!"mfa_g0_lo_{i}")
+  let p0_lo := (List.range width_lo).map (fun i => Wire.mk s!"mfa_p0_lo_{i}")
+  let init_lo := List.flatten <| (List.range width_lo).map fun i =>
     let idx := i + 1
-    [ Gate.mkAND (a[idx]!) (b[i]!) (g0[idx]!),
-      Gate.mkXOR (a[idx]!) (b[i]!) (p0[idx]!) ]
+    [ Gate.mkAND (a[idx]!) (b[i]!) (g0_lo[i]!),
+      Gate.mkXOR (a[idx]!) (b[i]!) (p0_lo[i]!) ]
 
-  -- Prefix levels 1-6 (strides 1, 2, 4, 8, 16, 32) over bits 1..63
-  let levels := [1, 2, 4, 8, 16, 32]
-  let (all_prefix_gates, final_g, _final_p) :=
-    levels.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+  let levels_lo := [1, 2, 4, 8, 16]
+  let (pfx_lo, final_g_lo, _) :=
+    levels_lo.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
       let (gates_acc, g_prev, p_prev) := acc
-      let level_tag := s!"l{stride}"
-      let g_new := (List.range 64).map (fun i => Wire.mk s!"mfag{level_tag}x{i}")
-      let p_new := (List.range 64).map (fun i => Wire.mk s!"mfap{level_tag}x{i}")
-      let level_gates := List.flatten <| (List.range 63).map fun i =>
-        let idx := i + 1
-        if idx <= stride then
-          [ Gate.mkBUF (g_prev[idx]!) (g_new[idx]!),
-            Gate.mkBUF (p_prev[idx]!) (p_new[idx]!) ]
+      let level_tag := s!"lol{stride}"
+      let g_new := (List.range width_lo).map (fun i => Wire.mk s!"mfag{level_tag}x{i}")
+      let p_new := (List.range width_lo).map (fun i => Wire.mk s!"mfap{level_tag}x{i}")
+      let level_gates := List.flatten <| (List.range width_lo).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
         else
-          let pg := Wire.mk s!"mfapg{level_tag}x{idx}"
-          [ Gate.mkAND (p_prev[idx]!) (g_prev[idx - stride]!) pg,
-            Gate.mkOR (g_prev[idx]!) pg (g_new[idx]!),
-            Gate.mkAND (p_prev[idx]!) (p_prev[idx - stride]!) (p_new[idx]!) ]
-
+          let pg := Wire.mk s!"mfapg{level_tag}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
       (gates_acc ++ level_gates, g_new, p_new)
-    )
-    ([], g0, p0)
+    ) ([], g0_lo, p0_lo)
 
-  -- Final sum: sum[1] = p0[1], sum[i] = p0[i] XOR final_g[i-1] for i in 2..63
-  let sum_gates :=
-    [Gate.mkBUF (p0[1]!) (sum[1]!)] ++
-    ((List.range 62).map fun i =>
-      let idx := i + 2
-      Gate.mkXOR (p0[idx]!) (final_g[idx - 1]!) (sum[idx]!))
+  let sum_lo_gates :=
+    [Gate.mkBUF (p0_lo[0]!) (sum[1]!)] ++
+    ((List.range (width_lo - 1)).map fun i =>
+      Gate.mkXOR (p0_lo[i + 1]!) (final_g_lo[i]!) (sum[i + 2]!))
+
+  let c31 := final_g_lo[width_lo - 1]!
+  let c31_bufs := (List.range 4).map (fun g => Wire.mk s!"mfac31_b{g}")
+  let c31_buf_gates := (List.range 4).map (fun g =>
+    Gate.mkBUF c31 (c31_bufs[g]!))
+
+  -- Upper block: 32 bits (bits 32..63 of sum, from a[63:32] + b[62:31])
+  let width_hi := 32
+  let g0_hi := (List.range width_hi).map (fun i => Wire.mk s!"mfa_g0_hi_{i}")
+  let p0_hi := (List.range width_hi).map (fun i => Wire.mk s!"mfa_p0_hi_{i}")
+  let init_hi := List.flatten <| (List.range width_hi).map fun i =>
+    let a_idx := 32 + i
+    let b_idx := 31 + i
+    [ Gate.mkAND (a[a_idx]!) (b[b_idx]!) (g0_hi[i]!),
+      Gate.mkXOR (a[a_idx]!) (b[b_idx]!) (p0_hi[i]!) ]
+
+  -- Upper block speculative tree 0 (cin = 0)
+  let sum0 := makeIndexedWires "mfas0_hi" width_hi
+  let (pfx_hi0, final_g_hi0, _) :=
+    levels_lo.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"hi0l{stride}"
+      let g_new := (List.range width_hi).map (fun i => Wire.mk s!"mfag{level_tag}x{i}")
+      let p_new := (List.range width_hi).map (fun i => Wire.mk s!"mfap{level_tag}x{i}")
+      let level_gates := List.flatten <| (List.range width_hi).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"mfapg{level_tag}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ level_gates, g_new, p_new)
+    ) ([], g0_hi, p0_hi)
+
+  let sum0_gates :=
+    [Gate.mkBUF (p0_hi[0]!) (sum0[0]!)] ++
+    ((List.range (width_hi - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi0[i]!) (sum0[i + 1]!))
+
+  -- Upper block speculative tree 1 (cin = 1)
+  let sum1 := makeIndexedWires "mfas1_hi" width_hi
+  let g0_hi_m0 := Wire.mk "mfa_g0_hi_m0"
+  let cin1_gate := Gate.mkOR (a[32]!) (b[31]!) g0_hi_m0
+  let g0_hi1 := [g0_hi_m0] ++ (List.range (width_hi - 1)).map (fun i => g0_hi[i + 1]!)
+
+  let (pfx_hi1, final_g_hi1, _) :=
+    levels_lo.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let level_tag := s!"hi1l{stride}"
+      let g_new := (List.range width_hi).map (fun i => Wire.mk s!"mfag{level_tag}x{i}")
+      let p_new := (List.range width_hi).map (fun i => Wire.mk s!"mfap{level_tag}x{i}")
+      let level_gates := List.flatten <| (List.range width_hi).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!),
+            Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"mfapg{level_tag}x{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ level_gates, g_new, p_new)
+    ) ([], g0_hi1, p0_hi)
+
+  let sum1_gates :=
+    [Gate.mkNOT (p0_hi[0]!) (sum1[0]!)] ++
+    ((List.range (width_hi - 1)).map fun i =>
+      Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi1[i]!) (sum1[i + 1]!))
+
+  let sel_gates := (List.range width_hi).map fun i =>
+    let grp := i / 8
+    Gate.mkMUX (sum0[i]!) (sum1[i]!) (c31_bufs[grp]!) (sum[32 + i]!)
 
   { name := "MulFinalAdder64"
     inputs := a ++ b
     outputs := sum
-    gates := bit0_gates ++ init_gates ++ all_prefix_gates ++ sum_gates
+    gates := bit0_gates ++ init_lo ++ pfx_lo ++ sum_lo_gates ++
+             c31_buf_gates ++
+             init_hi ++ pfx_hi0 ++ sum0_gates ++
+             [cin1_gate] ++ pfx_hi1 ++ sum1_gates ++ sel_gates
     instances := []
     signalGroups := [
       { name := "a", width := width, wires := a },
@@ -761,13 +832,18 @@ def mkKoggeStoneAdder106NoCin : Circuit :=
     ((List.range (half - 1)).map fun i =>
       Gate.mkXOR (p0_hi[i + 1]!) (final_g_hi1[i]!) (sum1[i + 1]!))
 
+  let c52_bufs := (List.range 4).map (fun g => Wire.mk s!"ksac52_b{g}")
+  let c52_buf_gates := (List.range 4).map (fun g =>
+    Gate.mkBUF c52 (c52_bufs[g]!))
+
   let sel_gates := (List.range half).map fun i =>
-    Gate.mkMUX (sum0[i]!) (sum1[i]!) c52 (sum_hi[i]!)
+    let grp := min (i / 13) 3
+    Gate.mkMUX (sum0[i]!) (sum1[i]!) (c52_bufs[grp]!) (sum_hi[i]!)
 
   { name := "KoggeStoneAdder106NoCin"
     inputs := a ++ b
     outputs := sum
-    gates := init_lo ++ pfx_lo ++ sum_lo_gates ++
+    gates := init_lo ++ pfx_lo ++ sum_lo_gates ++ c52_buf_gates ++
              init_hi ++ [cin1_gate] ++ pfx_hi0 ++ sum0_gates ++
              pfx_hi1 ++ sum1_gates ++ sel_gates
     instances := []
