@@ -133,7 +133,7 @@ def mkInt64ToFP : Circuit :=
   -- Negation of integer input: 0 - src1
   let zeros64 := (List.range 64).map fun _ => zero
   let int_neg := makeIndexedWires "int_neg" 64
-  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
+  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
 
   -- Absolute value of integer input
   let int_abs := makeIndexedWires "int_abs" 64

@@ -236,7 +236,7 @@ def mkFPToInt64 : Circuit :=
   -- 1075 in 11-bit binary: 10000110011
   let const1075 := [one, one, zero, zero, one, one, zero, zero, zero, zero, one]
   let shamt_full := makeIndexedWires "shamt_full" 11
-  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minArea const1138.length .one)
+  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minDelay const1138.length .one)
     const1138 flt_exp shamt_full "shamt_sub" one
 
   -- If shamt_borrow=1 or flt_exp >= 1139 (i.e. unbiased_exp >= 116): shift amount is 0 (huge
@@ -307,14 +307,14 @@ def mkFPToInt64 : Circuit :=
   let mant53 := flt_mant ++ [one]
   let guard_amt_full := makeIndexedWires "fti_gamt" 11
   let (guard_amt_sub_gates, guard_amt_borrow) :=
-    mkSubFor (AdderSpec.minArea 11 .one) flt_exp const1022 guard_amt_full "fti_gamt_sub" one
+    mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1022 guard_amt_full "fti_gamt_sub" one
   -- An integral magnitude (flt_exp past 1074) has no discarded bits at all, and
   -- an amount past 52 leaves the 53-bit window empty, which 63 does.  A
   -- magnitude under 0.5 borrows in the subtraction and takes no shift, so the
   -- sticky sees the whole mantissa and the guard is masked off below.
   let amt_hi_full := makeIndexedWires "fti_gahi" 11
   let (amt_hi_sub_gates, amt_hi_borrow) :=
-    mkSubFor (AdderSpec.minArea 11 .one) flt_exp const1075 amt_hi_full "fti_gahi_sub" one
+    mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1075 amt_hi_full "fti_gahi_sub" one
   let guard_amt := makeIndexedWires "fti_ga" 7
   let guard_amt_gates := guard_amt_sub_gates ++ amt_hi_sub_gates ++
     (List.range 7).flatMap fun i =>
@@ -379,12 +379,12 @@ def mkFPToInt64 : Circuit :=
   -- Increment integer magnitude by flt_round_up
   let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
   let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minArea 64 .input) (List.range 64 |>.map
+  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
     fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
 
   -- 2's complement negation if signed and negative: -flt_int_mag_inc
   let flt_int_neg := makeIndexedWires "flt_int_neg" 64
-  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minArea 64 .one) zeros64 (List.range 64 |>.map fun
+  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun
     i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
 
   -- Un-clamped normal integer result
