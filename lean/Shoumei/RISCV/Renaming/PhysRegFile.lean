@@ -44,7 +44,8 @@ def PhysRegFileState.read (prf : PhysRegFileState n) (tag : Fin n) : UInt32 :=
   prf.regs tag
 
 /-- Write a value to a physical register (synchronous) -/
-def PhysRegFileState.write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) : PhysRegFileState n :=
+def PhysRegFileState.write (prf : PhysRegFileState n) (tag : Fin n) (val : UInt32) :
+  PhysRegFileState n :=
   { regs := fun i => if i == tag then val else prf.regs i }
 
 /-- Initialize all registers to zero -/
@@ -159,7 +160,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
     let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
     let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
     let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-    let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+    let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+      (reset_leaves[i]!))
 
     -- Storage
     let storage_instances := (List.range numRegs).map (fun i =>
@@ -183,7 +185,8 @@ def mkPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
     }
 
     { name := s!"PhysRegFile_{numRegs}x{dataWidth}"
-      inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1 ++
+      inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++ wr_tag_1 ++ wr_data_1
+        ++
                 rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ rd_tag5 ++ rd_tag6 ++ rd_tag7
       outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4 ++ rd_data5 ++ rd_data6 ++ rd_data7
       gates := we_gates ++ write_mux_gates ++ rr_gates ++ rl_gates
@@ -203,7 +206,8 @@ def mkPhysRegFile64 : Circuit := mkPhysRegFile 64 32
 /-- Physical Register File with 64 registers × 64 bits, superscalar (dual write ports) -/
 def mkPhysRegFile64x64 : Circuit := mkPhysRegFile 64 64
 
-/-- Integer Physical Register File: 2 write ports, 6 read ports (rs1_0, rs2_0, rs1_1, rs2_1, rvvi_0, rvvi_1; no rs3). -/
+/-- Integer Physical Register File: 2 write ports, 6 read ports (rs1_0, rs2_0, rs1_1, rs2_1, rvvi_0,
+  rvvi_1; no rs3). -/
 def mkIntPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let tagWidth := log2Ceil numRegs
 
@@ -273,7 +277,8 @@ def mkIntPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
   let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
   let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
 
   let storage_instances := (List.range numRegs).map (fun i =>
     { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",
@@ -315,9 +320,15 @@ def mkFPPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let clock := Wire.mk "clock"
   let reset := Wire.mk "reset"
 
-  let wr_en := Wire.mk "wr_en"
-  let wr_tag := (List.range tagWidth).map (fun i => Wire.mk s!"wr_tag_{i}")
-  let wr_data := (List.range dataWidth).map (fun i => Wire.mk s!"wr_data_{i}")
+  -- Dual write port.  An FP load and an FP operation can complete in the same
+  -- cycle, one on each CDB channel, so one port would drop a result.  Port 1 has
+  -- priority if both target the same register, which renaming makes impossible.
+  let wr_en_0 := Wire.mk "wr_en_0"
+  let wr_tag_0 := (List.range tagWidth).map (fun i => Wire.mk s!"wr_tag_0_{i}")
+  let wr_data_0 := (List.range dataWidth).map (fun i => Wire.mk s!"wr_data_0_{i}")
+  let wr_en_1 := Wire.mk "wr_en_1"
+  let wr_tag_1 := (List.range tagWidth).map (fun i => Wire.mk s!"wr_tag_1_{i}")
+  let wr_data_1 := (List.range dataWidth).map (fun i => Wire.mk s!"wr_data_1_{i}")
 
   let rd_tag1 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag1_{i}")
   let rd_tag2 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag2_{i}")
@@ -327,32 +338,45 @@ def mkFPPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
   let rd_data2 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data2_{i}")
   let rd_data3 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data3_{i}")
 
-  let write_sel := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_{i}")
-  let decoder_inst : CircuitInstance := {
+  let write_sel_0 := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_0_{i}")
+  let decoder0_inst : CircuitInstance := {
     moduleName := s!"Decoder{tagWidth}"
-    instName := "u_write_dec"
-    portMap := (wr_tag.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
-               (write_sel.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
+    instName := "u_write_dec_0"
+    portMap := (wr_tag_0.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
+               (write_sel_0.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
+  }
+  let write_sel_1 := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_1_{i}")
+  let decoder1_inst : CircuitInstance := {
+    moduleName := s!"Decoder{tagWidth}"
+    instName := "u_write_dec_1"
+    portMap := (wr_tag_1.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
+               (write_sel_1.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
   }
 
-  let we := (List.range numRegs).map (fun i => Wire.mk s!"we_{i}")
+  let we0 := (List.range numRegs).map (fun i => Wire.mk s!"we0_{i}")
+  let we1 := (List.range numRegs).map (fun i => Wire.mk s!"we1_{i}")
   let we_gates := (List.range numRegs).map (fun i =>
-    Gate.mkAND wr_en (write_sel[i]!) (we[i]!))
+    [Gate.mkAND wr_en_0 (write_sel_0[i]!) (we0[i]!),
+     Gate.mkAND wr_en_1 (write_sel_1[i]!) (we1[i]!)]
+  ) |>.flatten
 
   let getReg (i j : Nat) : Wire := Wire.mk s!"reg_{i}_{j}"
   let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
+  let getMux0 (i j : Nat) : Wire := Wire.mk s!"mux0_{i}_{j}"
 
   let write_mux_gates := (List.range numRegs).map (fun i =>
     (List.range dataWidth).map (fun j =>
-      Gate.mkMUX (getReg i j) (wr_data[j]!) (we[i]!) (getNext i j)
-    )
+      [Gate.mkMUX (getReg i j) (wr_data_0[j]!) (we0[i]!) (getMux0 i j),
+       Gate.mkMUX (getMux0 i j) (wr_data_1[j]!) (we1[i]!) (getNext i j)]
+    ) |>.flatten
   ) |>.flatten
 
   let numRoots := 16
   let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
   let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
   let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
-  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!) (reset_leaves[i]!))
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
 
   let storage_instances := (List.range numRegs).map (fun i =>
     { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",
@@ -373,15 +397,106 @@ def mkFPPhysRegFile (numRegs : Nat := 64) (dataWidth : Nat := 64) : Circuit :=
                out.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
   }
 
+  -- Fourth read port: RVVI readback of the committing instruction's value.
+  let rd_tag4 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag4_{i}")
+  let rd_data4 := (List.range dataWidth).map fun i => Wire.mk s!"rd_data4_{i}"
+
+  -- Fifth read port: RVVI readback for the second retire slot.  The FP commit
+  -- channel is single-issue, so when two FP instructions retire together slot 0
+  -- commits now and slot 1 is buffered and replayed next cycle.  A single port
+  -- would then report slot 0's value for both retires.
+  let rd_tag5 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag5_{i}")
+  let rd_data5 := (List.range dataWidth).map fun i => Wire.mk s!"rd_data5_{i}"
+
   { name := s!"FPPhysRegFile_{numRegs}x{dataWidth}"
-    inputs := [clock, reset, wr_en] ++ wr_tag ++ wr_data ++
-              rd_tag1 ++ rd_tag2 ++ rd_tag3
-    outputs := rd_data1 ++ rd_data2 ++ rd_data3
+    inputs := [clock, reset, wr_en_0, wr_en_1] ++ wr_tag_0 ++ wr_data_0 ++
+              wr_tag_1 ++ wr_data_1 ++
+              rd_tag1 ++ rd_tag2 ++ rd_tag3 ++ rd_tag4 ++ rd_tag5
+    outputs := rd_data1 ++ rd_data2 ++ rd_data3 ++ rd_data4 ++ rd_data5
     gates := we_gates ++ write_mux_gates ++ rr_gates ++ rl_gates
-    instances := [decoder_inst] ++ storage_instances ++
+    instances := [decoder0_inst, decoder1_inst] ++ storage_instances ++
                  [mkMux "u_mux_rd1" rd_tag1 rd_data1,
                   mkMux "u_mux_rd2" rd_tag2 rd_data2,
-                  mkMux "u_mux_rd3" rd_tag3 rd_data3]
+                  mkMux "u_mux_rd3" rd_tag3 rd_data3,
+                  mkMux "u_mux_rd4" rd_tag4 rd_data4,
+                  mkMux "u_mux_rd5" rd_tag5 rd_data5]
+  }
+
+/-- FP exception flags, one entry per physical register, so an FP instruction's
+    exceptions can be applied when it retires rather than when it executes.
+
+    Keyed by physical destination register, which renaming keeps unique among
+    in-flight instructions, so no two FP operations share an entry.  Written when
+    the result completes and read at commit; a flushed operation never commits,
+    so its entry is simply never read. -/
+def mkFPExcFile (numRegs : Nat := 128) (dataWidth : Nat := 5) : Circuit :=
+  let tagWidth := log2Ceil numRegs
+
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
+  let wr_en := Wire.mk "wr_en"
+  let wr_tag := (List.range tagWidth).map (fun i => Wire.mk s!"wr_tag_{i}")
+  let wr_data := (List.range dataWidth).map (fun i => Wire.mk s!"wr_data_{i}")
+  let rd_tag := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag_{i}")
+  let rd_data := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data_{i}")
+  -- One read port per retire slot: the two slots retire different
+  -- instructions and therefore have different flag values.
+  let rd_tag_1 := (List.range tagWidth).map (fun i => Wire.mk s!"rd_tag_1_{i}")
+  let rd_data_1 := (List.range dataWidth).map (fun i => Wire.mk s!"rd_data_1_{i}")
+
+  let write_sel := (List.range numRegs).map (fun i => Wire.mk s!"write_sel_{i}")
+  let decoder_inst : CircuitInstance := {
+    moduleName := s!"Decoder{tagWidth}"
+    instName := "u_write_dec"
+    portMap := (wr_tag.enum.map fun ⟨i,w⟩ => (s!"in_{i}", w)) ++
+               (write_sel.enum.map fun ⟨i,w⟩ => (s!"out_{i}", w))
+  }
+
+  let we := (List.range numRegs).map (fun i => Wire.mk s!"we_{i}")
+  let we_gates := (List.range numRegs).map (fun i =>
+    Gate.mkAND wr_en (write_sel[i]!) (we[i]!))
+
+  let getReg (i j : Nat) : Wire := Wire.mk s!"reg_{i}_{j}"
+  let getNext (i j : Nat) : Wire := Wire.mk s!"next_{i}_{j}"
+  let write_mux_gates := (List.range numRegs).map (fun i =>
+    (List.range dataWidth).map (fun j =>
+      Gate.mkMUX (getReg i j) (wr_data[j]!) (we[i]!) (getNext i j))) |>.flatten
+
+  let numRoots := (numRegs + 3) / 4
+  let reset_roots := (List.range numRoots).map (fun i => Wire.mk s!"reset_root_{i}")
+  let rr_gates := (List.range numRoots).map (fun i => Gate.mkBUF reset (reset_roots[i]!))
+  let reset_leaves := (List.range numRegs).map (fun i => Wire.mk s!"reset_leaf_{i}")
+  let rl_gates := (List.range numRegs).map (fun i => Gate.mkBUF (reset_roots[i/4]!)
+    (reset_leaves[i]!))
+
+  let storage_instances := (List.range numRegs).map (fun i =>
+    { moduleName := s!"Register{dataWidth}", instName := s!"u_reg_{i}",
+      portMap := (List.range dataWidth).map (fun j => (s!"d[{j}]", getNext i j)) ++
+                 [("clock", clock), ("reset", reset_leaves[i]!)] ++
+                 (List.range dataWidth).map (fun j => (s!"q[{j}]", getReg i j)) })
+
+  let mux_in_map := (List.range numRegs).map (fun i =>
+    (List.range dataWidth).map (fun j => (s!"in{i}[{j}]", getReg i j))) |>.flatten
+  let read_mux : CircuitInstance := {
+    moduleName := s!"Mux{numRegs}x{dataWidth}"
+    instName := "u_mux_rd"
+    portMap := mux_in_map ++
+               rd_tag.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w)) ++
+               rd_data.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
+  }
+  let read_mux_1 : CircuitInstance := {
+    moduleName := s!"Mux{numRegs}x{dataWidth}"
+    instName := "u_mux_rd_1"
+    portMap := mux_in_map ++
+               rd_tag_1.enum.map (fun ⟨i, w⟩ => (s!"sel[{i}]", w)) ++
+               rd_data_1.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w))
+  }
+
+  { name := s!"FPExcFile_{numRegs}x{dataWidth}"
+    inputs := [clock, reset, wr_en] ++ wr_tag ++ wr_data ++ rd_tag ++ rd_tag_1
+    outputs := rd_data ++ rd_data_1
+    gates := we_gates ++ write_mux_gates ++ rr_gates ++ rl_gates
+    instances := [decoder_inst] ++ storage_instances ++ [read_mux, read_mux_1]
   }
 
 /-- Config-driven Physical Register File -/

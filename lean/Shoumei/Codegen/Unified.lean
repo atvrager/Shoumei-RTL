@@ -35,20 +35,44 @@ def cacheDir : String := ".codegen-cache"
 def lookupHash (hashMap : List (String × UInt64)) (name : String) : Option UInt64 :=
   hashMap.find? (fun p => p.1 == name) |>.map (·.2)
 
-def circuitHashWithDeps (hashMap : List (String × UInt64)) (c : Circuit) : UInt64 :=
-  let baseHash := hash c
-  let depHashes := c.instances.filterMap fun inst =>
-    lookupHash hashMap inst.moduleName
-  hash (baseHash, hash depHashes)
+/-- Hash a circuit together with everything it instantiates, transitively.
+    Dependencies come from `byName` and are memoised in `memo`, so the outcome
+    does not depend on the order of `allCircuits`.  A single forward pass drops
+    a dependency that appears later in the list, and a later change to that
+    dependency then never invalidates the cached output.
 
-/-- Pre-compute hashes for all circuits in dependency order.
-    Since allCircuits is already in topological order (leaves first),
-    we can compute hashes in a single pass. -/
+    A provisional entry goes in before recursing, so a dependency cycle
+    terminates instead of looping; the true hash replaces it on the way out. -/
+partial def hashWithDeps (byName : Std.HashMap String Circuit)
+    (memo : Std.HashMap String UInt64) (c : Circuit) :
+    UInt64 × Std.HashMap String UInt64 :=
+  match memo.get? c.name with
+  | some h => (h, memo)
+  | none =>
+    let memoProv := memo.insert c.name (hash c)
+    let (depHashes, memo') := c.instances.foldl
+      (init := (([] : List UInt64), memoProv))
+      fun (acc : List UInt64 × Std.HashMap String UInt64) inst =>
+        match byName.get? inst.moduleName with
+        | some sub =>
+          let (h, m') := hashWithDeps byName acc.2 sub
+          (acc.1 ++ [h], m')
+        -- Not emitted by this generator, so its content cannot change here.
+        | none => acc
+    let h := hash (hash c, hash depHashes)
+    (h, memo'.insert c.name h)
+
+/-- Pre-compute dependency-aware hashes for every circuit.  Order-independent:
+    a circuit's hash covers its dependencies however the list is arranged. -/
 def computeAllHashes (allCircuits : List Circuit) : List (String × UInt64) :=
-  allCircuits.foldl (fun acc c =>
-    let h := circuitHashWithDeps acc c
-    acc ++ [(c.name, h)]
-  ) []
+  let byName : Std.HashMap String Circuit :=
+    allCircuits.foldl (fun m c => m.insert c.name c) {}
+  let (pairs, _) := allCircuits.foldl
+    (init := (([] : List (String × UInt64)), ({} : Std.HashMap String UInt64)))
+    fun (acc : List (String × UInt64) × Std.HashMap String UInt64) c =>
+      let (h, memo') := hashWithDeps byName acc.2 c
+      (acc.1 ++ [(c.name, h)], memo')
+  pairs
 
 /-- Bump whenever a code generator changes in a way that alters emitted text
     without altering circuit structure, or when the set of emitted formats
@@ -60,13 +84,15 @@ def codegenVersion : String := "geom64-dpi-2026-09-20g"
 def svOutputDir : String := "output/sv-from-lean"
 
 /-- Check if circuit hash matches cached value (and the codegen version).
-    Also requires the emitted module to still exist: deleting an output (or
-    cleaning the directory) must regenerate it, and the hash file alone would
-    otherwise report the circuit as up to date. -/
-def isUpToDate (name : String) (h : UInt64) : IO Bool := do
+    `emitted` is every file the caller would write: a deleted output (or a
+    cleaned directory) must force regeneration, and the hash file alone would
+    otherwise report the circuit as up to date.  Checking only the SV left a
+    deleted netlist or C++ model permanently missing. -/
+def isUpToDate (name : String) (h : UInt64) (emitted : List String) : IO Bool := do
   let path := s!"{cacheDir}/{name}.hash"
   unless (← System.FilePath.pathExists path) do return false
-  unless (← System.FilePath.pathExists s!"{svOutputDir}/{name}.sv") do return false
+  for f in emitted do
+    unless (← System.FilePath.pathExists f) do return false
   let stored ← IO.FS.readFile path
   return stored.trimAscii.toString == s!"{codegenVersion}:{h}"
 
@@ -115,6 +141,14 @@ def writeCircuitPDK (pdk : PDK) (c : Circuit) (allCircuits : List Circuit := [])
     let path := s!"{pdkOutputDir pdk}/{c.name}.sv"
     IO.FS.writeFile path sv
 
+/-- Every file writeCircuit emits for a circuit.  The up-to-date check needs
+    the full list: checking only the SV left a deleted netlist or C++ model
+    permanently missing. -/
+def emittedPaths (c : Circuit) : List String :=
+  [s!"{svOutputDir}/{c.name}.sv", s!"{svNetlistOutputDir}/{c.name}.sv",
+   s!"{cppSimOutputDir}/{c.name}.h", s!"{cppSimOutputDir}/{c.name}.cpp"]
+  ++ (if c.keepHierarchy then allPdks.map (fun pdk => s!"{pdkOutputDir pdk}/{c.name}.sv") else [])
+
 -- Write all output formats for a circuit
 -- When force=false, skip generation if the circuit hash matches the cached value.
 -- hashMap provides pre-computed dependency-aware hashes.
@@ -124,7 +158,7 @@ def writeCircuit (c : Circuit) (allCircuits : List Circuit := [])
   -- Check cache (skip if unchanged)
   if !force then
     if let some h := lookupHash hashMap c.name then
-      if ← isUpToDate c.name h then
+      if ← isUpToDate c.name h (emittedPaths c) then
         IO.println s!"— {c.name} (unchanged, skipping)"
         return
   writeCircuitSV c allCircuits precomputedLoaded

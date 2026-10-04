@@ -936,7 +936,9 @@ def mkShadowRegisters2
 def mkFPFlags
     (enableF : Bool) (zero _one clock reset : Wire)
     (fp_valid_out : Wire) (fp_exceptions : List Wire)
+    (fp_exc_0 fp_exc_1 : List Wire) (fp_is_fp_0 fp_is_fp_1 : Wire)
     (fflags_reg fflags_new fflags_acc fflags_masked fflags_acc_val : List Wire)
+    (fflags_0 fflags_1 : List Wire)
     (frm_reg frm_new : List Wire)
     : (List Gate × List CircuitInstance) :=
   let fflags_csr_we := Wire.mk "fflags_csr_we"
@@ -950,7 +952,25 @@ def mkFPFlags
       (List.range 5).map (fun i =>
         Gate.mkMUX fflags_acc_val[i]! (Wire.mk s!"csr_wv_e{i}") fflags_csr_we fflags_new[i]!) ++
       (List.range 5).map (fun i =>
-        Gate.mkBUF fflags_reg[i]! fflags_acc[i]!)
+        Gate.mkBUF fflags_reg[i]! fflags_acc[i]!) ++
+      -- Per-retire-slot flag values.  RVVI reports one fflags per retire slot,
+      -- and the two slots retire different instructions, so one signal cannot
+      -- be correct for both.  base is the value before this cycle's FP
+      -- operations: the CSR-written value if a CSR write commits now, else the
+      -- accumulated register.  Slot 1 includes slot 0's contribution because it
+      -- retires later in the same cycle.
+      (List.range 5).map (fun i =>
+        Gate.mkMUX fflags_reg[i]! (Wire.mk s!"csr_wv_e{i}") fflags_csr_we
+          (Wire.mk s!"fflags_base_{i}")) ++
+      (List.range 5).map (fun i =>
+        Gate.mkAND fp_is_fp_0 fp_exc_0[i]! (Wire.mk s!"fflags_s0_{i}")) ++
+      (List.range 5).map (fun i =>
+        Gate.mkOR (Wire.mk s!"fflags_base_{i}") (Wire.mk s!"fflags_s0_{i}")
+          fflags_0[i]!) ++
+      (List.range 5).map (fun i =>
+        Gate.mkAND fp_is_fp_1 fp_exc_1[i]! (Wire.mk s!"fflags_s1_{i}")) ++
+      (List.range 5).map (fun i =>
+        Gate.mkOR fflags_0[i]! (Wire.mk s!"fflags_s1_{i}") fflags_1[i]!)
     else
       (List.range 5).map (fun i => Gate.mkBUF zero fflags_acc[i]!)
   let fflags_dff_instances :=
@@ -1267,6 +1287,38 @@ def mkSidecarRegFile4x32
       (captured_out.enum.map (fun ⟨i, w⟩ => (s!"out[{i}]", w)))
   }
   (dec_gates ++ we_gates ++ rf_gates ++ sel_gates, entries, mux_inst)
+
+/-- Width-parameterised form of `mkSidecarRegFile2x32`, used for small per-entry
+    payloads such as the issuing instruction's ROB index. -/
+def mkSidecarRegFile2xW
+    (pfx : String) (width : Nat)
+    (clock reset : Wire)
+    (alloc_ptr : Wire) (we_en : Wire)
+    (write_data : List Wire) (grant_1 : Wire)
+    (captured_out : List Wire)
+    : (List Gate × List (List Wire)) :=
+  let not_ap := Wire.mk s!"{pfx}_not_ap"
+  let we_0 := Wire.mk s!"{pfx}_we_0"
+  let we_1 := Wire.mk s!"{pfx}_we_1"
+  let dec_gates := [
+    Gate.mkNOT alloc_ptr not_ap,
+    Gate.mkAND not_ap we_en we_0,
+    Gate.mkAND alloc_ptr we_en we_1
+  ]
+  let entries := (List.range 2).map (fun e =>
+    makeIndexedWires s!"{pfx}_e{e}" width)
+  let wes := [we_0, we_1]
+  let rf_gates := (List.range 2).map (fun e =>
+    let entry := entries[e]!
+    (List.range width).map (fun b =>
+      let next := Wire.mk s!"{pfx}_next_e{e}_{b}"
+      [ Gate.mkMUX entry[b]! write_data[b]! wes[e]! next,
+        Gate.mkDFF next clock reset entry[b]! ]
+    ) |>.flatten
+  ) |>.flatten
+  let read_gates := (List.range width).map (fun b =>
+    Gate.mkMUX entries[0]![b]! entries[1]![b]! grant_1 captured_out[b]!)
+  (dec_gates ++ rf_gates ++ read_gates, entries)
 
 /-- 2-entry × 32-bit sidecar register file for single-unit RS (branch, memory, fp).
     Entry 0 or 1 selected by 1-bit alloc_ptr for write, selected by grant_1 for read.

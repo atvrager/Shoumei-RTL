@@ -4,6 +4,8 @@ FPDoubleConverterProofs.lean - Structural proofs for FPDoubleConverter
 
 import Shoumei.Circuits.Combinational.FPDoubleConverter
 
+set_option maxRecDepth 131072
+
 namespace Shoumei.Circuits.Combinational
 
 theorem fpDoubleConverter_inputs : fpDoubleConverterCircuit.inputs.length = 75 := by native_decide

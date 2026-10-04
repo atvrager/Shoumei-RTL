@@ -22,6 +22,13 @@ bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "buildifier_prebuilt", version = "10.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.18")
 bazel_dep(name = "rules_verilator", version = "1.1.2")
+single_version_override(
+    module_name = "rules_verilator",
+    patch_strip = 1,
+    patches = ["//third_party/patches:rules-verilator-warning-flags.patch"],
+    version = "1.1.2",
+)
+
 bazel_dep(name = "verilator", version = "5.046.bcr.5")
 bazel_dep(name = "flex", version = "2.6.4.bcr.5")
 bazel_dep(name = "bison", version = "3.8.2.bcr.8")

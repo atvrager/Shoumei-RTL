@@ -13,7 +13,7 @@
  *   void sram_dpi_write(int id, int addr, bit[W-1:0] data, int width_bytes)
  *        Clocked write; `data` arrives as uint32_t[] (Verilator svBitVecVal).
  *
- *   void sram_dpi_read(int id, int addr, int width_bytes, output bit[W-1:0] out)
+ *   void sram_dpi_read(int id, int addr, int width_bytes, int epoch, output bit[W-1:0] out)
  *        Clocked read; `out` written as uint32_t[] in-place.
  *
  * Supports width up to 512 bits (64 bytes) and depth up to 65536 rows.
@@ -78,7 +78,8 @@ void sram_dpi_write(int id, int addr,
 
 /* Read width_bytes bytes into `out` (Verilator svBitVecVal[], LSW first). */
 void sram_dpi_read(int id, int addr,
-                   int width_bytes, svBitVecVal *out) {
+                   int width_bytes, int epoch, svBitVecVal *out) {
+    (void)epoch;
     if (id < 0 || id >= n_slots) {
         memset(out, 0, (size_t)width_bytes);
         return;

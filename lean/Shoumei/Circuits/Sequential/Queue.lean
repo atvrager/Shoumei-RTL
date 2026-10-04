@@ -326,6 +326,9 @@ def mkQueue1StructuralComplete (width : Nat) : Circuit :=
     ]
   }
 
+/-- 1-entry queue, 1-bit width (pilot atom) -/
+def q1w1 : Circuit := mkQueue1StructuralComplete 1
+
 /-! ## Decoupled Interface Support
 
 Extension: Expose Queue ports as Decoupled interfaces for composition.

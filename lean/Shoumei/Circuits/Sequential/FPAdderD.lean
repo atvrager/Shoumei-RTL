@@ -4,10 +4,12 @@ Circuits/Sequential/FPAdderD.lean - 4-Stage Pipelined Double-Precision FP Adder/
 A pipelined floating-point adder/subtractor for IEEE 754 binary64.
 
 Decomposed hierarchically into 4 combinational pipeline stage modules:
-  Stage 1 (FPAdderD_Stage1_Unpack): Unpack + Exponent difference + Swap detection + NaN/Inf detection
+  Stage 1 (FPAdderD_Stage1_Unpack): Unpack + Exponent difference + Swap detection + NaN/Inf
+    detection
   Stage 2 (FPAdderD_Stage2_Align): Swap operands + Alignment barrel shift with sticky tracking
   Stage 3 (FPAdderD_Stage3_AddSub): Mantissa add/sub + Leading-zero parallel prefix detect
-  Stage 4 (FPAdderD_Stage4_NormRound): Normalization shifter + Rounding + Special value handling + Pack
+  Stage 4 (FPAdderD_Stage4_NormRound): Normalization shifter + Rounding + Special value handling +
+    Pack
 
 Interface:
 - Inputs: src1[63:0], src2[63:0], op_sub, rm[2:0], dest_tag[5:0], valid_in, clock, reset, zero
@@ -111,6 +113,26 @@ private def mkBarrelShiftLeft56 (input : List Wire) (shift_amt : List Wire)
     Gate.mkBUF (levels[6]!)[i]! output[i]!
   mux_gates ++ copy_gates
 
+/-- 6-level barrel right shifter for 56-bit value. -/
+private def mkBarrelShiftRight56 (input : List Wire) (shift_amt : List Wire)
+    (output : List Wire) (zero_wire : Wire) (pfx : String) : List Gate :=
+  let w := input.length
+  let levels : List (List Wire) := (List.range 7).map fun level =>
+    if level == 0 then input
+    else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
+  let mux_gates := (List.range 6).flatMap fun level =>
+    let shift_by := 1 <<< level
+    let prev := levels[level]!
+    let curr := levels[level + 1]!
+    let sel := shift_amt[level]!
+    (List.range w).map fun i =>
+      let unshifted := prev[i]!
+      let shifted := if i + shift_by < w then prev[i + shift_by]! else zero_wire
+      Gate.mkMUX unshifted shifted sel curr[i]!
+  let copy_gates := (List.range w).map fun i =>
+    Gate.mkBUF (levels[6]!)[i]! output[i]!
+  mux_gates ++ copy_gates
+
 /-! ## Pipeline Stage 1: Unpack, Exponent difference, Swap detection, Special cases -/
 
 def mkFPAdderD_Stage1_Unpack : Circuit :=
@@ -132,6 +154,8 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   let any_inf := Wire.mk "any_inf"
   let a_is_inf := Wire.mk "a_is_inf"
 
+  let s1_one := Wire.mk "s1_d_one"
+  let s1_one_gate := Gate.mkNOT zero s1_one
   let not_s1_sign1 := Wire.mk "s1_not_sign1"
   let s1_sign1_gate := [Gate.mkNOT (src1[63]!) not_s1_sign1, Gate.mkNOT not_s1_sign1 sign1]
   let s1_sign2_gate := Gate.mkXOR (src2[63]!) op_sub sign2
@@ -139,15 +163,8 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   let s1_exp1_src := (List.range 11).map fun i => src1[52 + i]!
   let s1_exp2_src := (List.range 11).map fun i => src2[52 + i]!
 
-  let not_exp1 := makeIndexedWires "s1_not_exp1" 11
-  let exp1_buf_gates := (List.range 11).flatMap fun i =>
-    [Gate.mkNOT (s1_exp1_src[i]!) (not_exp1[i]!),
-     Gate.mkNOT (not_exp1[i]!) (exp1[i]!)]
-
-  let not_exp2 := makeIndexedWires "s1_not_exp2" 11
-  let exp2_buf_gates := (List.range 11).flatMap fun i =>
-    [Gate.mkNOT (s1_exp2_src[i]!) (not_exp2[i]!),
-     Gate.mkNOT (not_exp2[i]!) (exp2[i]!)]
+  -- exp1/exp2 are driven below, by the effective-exponent mux, which is their
+  -- only driver.
 
   let (exp1_or_all, exp1_or_gates) := mkOrTree "s1_e1_or" s1_exp1_src
   let (exp2_or_all, exp2_or_gates) := mkOrTree "s1_e2_or" s1_exp2_src
@@ -157,10 +174,43 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   let (mant1_lo_or, mant1_lo_gates) := mkOrTree "s1_m1_or" ((List.range 52).map fun i => src1[i]!)
   let (mant2_lo_or, mant2_lo_gates) := mkOrTree "s1_m2_or" ((List.range 52).map fun i => src2[i]!)
 
+  -- Effective exponent: a nonzero subnormal operand is scaled as a normal number
+  -- whose exponent field is 1, so it must align at that weight.  exp1/exp2 below
+  -- are the effective values; the all-ones test above reads the raw field.
+  let d_eff_sub1 := Wire.mk "s1_d_eff_sub1"
+  let d_eff_sub2 := Wire.mk "s1_d_eff_sub2"
+  let not_exp1_or_all := Wire.mk "s1_d_not_e1_or"
+  let not_exp2_or_all := Wire.mk "s1_d_not_e2_or"
+  let eff_exp_gates := [
+    Gate.mkNOT exp1_or_all not_exp1_or_all,
+    Gate.mkAND not_exp1_or_all mant1_lo_or d_eff_sub1,
+    Gate.mkNOT exp2_or_all not_exp2_or_all,
+    Gate.mkAND not_exp2_or_all mant2_lo_or d_eff_sub2
+  ] ++
+    (List.range 11).map (fun i =>
+      Gate.mkMUX (s1_exp1_src[i]!) (if i == 0 then s1_one else zero) d_eff_sub1 (exp1[i]!)) ++
+    (List.range 11).map (fun i =>
+      Gate.mkMUX (s1_exp2_src[i]!) (if i == 0 then s1_one else zero) d_eff_sub2 (exp2[i]!))
+
   let a_is_nan := Wire.mk "s1_a_is_nan"
   let b_is_nan := Wire.mk "s1_b_is_nan"
   let not_m1_lo := Wire.mk "s1_not_m1_lo"
   let not_m2_lo := Wire.mk "s1_not_m2_lo"
+
+  -- NV comes from a signalling NaN operand (quiet bit clear) or from inf + -inf.
+  -- Raising it for every NaN was wrong: a quiet NaN propagates without a flag.
+  let d_a_is_snan := Wire.mk "s1_d_a_is_snan"
+  let d_b_is_snan := Wire.mk "s1_d_b_is_snan"
+  let d_not_a_quiet := Wire.mk "s1_d_not_a_quiet"
+  let d_not_b_quiet := Wire.mk "s1_d_not_b_quiet"
+  let any_snan := Wire.mk "any_snan"
+  let d_snan_gates := [
+    Gate.mkNOT (src1[51]!) d_not_a_quiet,
+    Gate.mkAND a_is_nan d_not_a_quiet d_a_is_snan,
+    Gate.mkNOT (src2[51]!) d_not_b_quiet,
+    Gate.mkAND b_is_nan d_not_b_quiet d_b_is_snan,
+    Gate.mkOR d_a_is_snan d_b_is_snan any_snan
+  ]
 
   let special_gates := [
     Gate.mkAND exp1_and_all mant1_lo_or a_is_nan,
@@ -191,8 +241,8 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   -- Exponent difference exp1 - exp2 (11-bit)
   let s1_borrow := makeIndexedWires "s1_borrow" 12
   let s1_sub_gates := [Gate.mkBUF zero (s1_borrow[0]!)] ++ (List.range 11).flatMap (fun i =>
-    let a := s1_exp1_src[i]!
-    let b := s1_exp2_src[i]!
+    let a := exp1[i]!
+    let b := exp2[i]!
     let bi := s1_borrow[i]!
     let bo := s1_borrow[i + 1]!
     let xab := Wire.mk s!"s1_es_x_{i}"
@@ -238,15 +288,15 @@ def mkFPAdderD_Stage1_Unpack : Circuit :=
   ]
 
   let all_gates :=
-    s1_sign1_gate ++ [s1_sign2_gate] ++ exp1_buf_gates ++ exp2_buf_gates ++
+    [s1_one_gate] ++ s1_sign1_gate ++ [s1_sign2_gate] ++ eff_exp_gates ++
     exp1_or_gates ++ exp2_or_gates ++ exp1_and_gates ++ exp2_and_gates ++
-    mant1_lo_gates ++ mant2_lo_gates ++ special_gates ++
+    mant1_lo_gates ++ mant2_lo_gates ++ special_gates ++ d_snan_gates ++
     mant1_gates ++ mant2_gates ++ s1_sub_gates ++ s1_mant_sub_gates ++ swap_gates
 
   { name := "FPAdderD_Stage1_Unpack"
     inputs := src1 ++ src2 ++ [op_sub, zero]
     outputs := [sign1, sign2] ++ exp1 ++ exp2 ++ mant1 ++ mant2 ++ exp_diff ++
-               [swap, any_nan, both_inf, any_inf, a_is_inf]
+               [swap, any_nan, any_snan, both_inf, any_inf, a_is_inf]
     gates := all_gates
     instances := []
     signalGroups := [
@@ -302,40 +352,42 @@ def mkFPAdderD_Stage2_Align : Circuit :=
     [Gate.mkMUX (mant1[i]!) (mant2[i]!) swap (big_mant[i]!),
      Gate.mkMUX (mant2[i]!) (mant1[i]!) swap (s2_small_mant[i]!)]
 
-  let s2_neg_diff := makeIndexedWires "s2_neg_diff" 6
-  let s2_neg_carry := makeIndexedWires "s2_neg_c" 7
-  let s2_neg_gates := [Gate.mkBUF one (s2_neg_carry[0]!)] ++ (List.range 6).flatMap (fun i =>
-    let nbit := Wire.mk s!"s2_nd_{i}"
-    [Gate.mkNOT (exp_diff[i]!) nbit,
-     Gate.mkXOR nbit (s2_neg_carry[i]!) (s2_neg_diff[i]!),
-     Gate.mkAND nbit (s2_neg_carry[i]!) (s2_neg_carry[i + 1]!)]
+  -- The alignment shift is the magnitude of the exponent difference.  exp_diff
+  -- is signed, so a swapped pair needs its negation, and that negation must be
+  -- taken at full width.  Negating only the low six bits left the sign extension
+  -- in the high bits, and a far operand then looked near: a difference of 1074
+  -- came out as 14 and the small operand landed inside the window instead of
+  -- being flushed, which turned +0.1 + DBL_MAX into an infinity.
+  let s2_ed12 := makeIndexedWires "s2_ed12" 12
+  let s2_ed12_gates :=
+    (List.range 11).map (fun i => Gate.mkBUF (exp_diff[i]!) (s2_ed12[i]!)) ++
+    [Gate.mkBUF (exp_diff[10]!) (s2_ed12[11]!)]
+  let s2_neg12 := makeIndexedWires "s2_neg12" 12
+  let s2_neg12_c := makeIndexedWires "s2_neg12c" 13
+  let s2_neg12_gates := [Gate.mkBUF one (s2_neg12_c[0]!)] ++ (List.range 12).flatMap (fun i =>
+    let nbit := Wire.mk s!"s2_n12_{i}"
+    [Gate.mkNOT (s2_ed12[i]!) nbit,
+     Gate.mkXOR nbit (s2_neg12_c[i]!) (s2_neg12[i]!),
+     Gate.mkAND nbit (s2_neg12_c[i]!) (s2_neg12_c[i + 1]!)]
   )
+  let s2_diff_mag := makeIndexedWires "s2_dmag" 12
+  let s2_diff_mag_gates := (List.range 12).map fun i =>
+    Gate.mkMUX (s2_ed12[i]!) (s2_neg12[i]!) swap (s2_diff_mag[i]!)
 
-  let exp_diff_zeros := (List.range 5).map fun i =>
-    (Gate.mkNOT (exp_diff[6 + i]!) (Wire.mk s!"s2_ed_not_{6 + i}"),
-     Gate.mkAND (exp_diff[6 + i]!) (Wire.mk s!"s2_ed_not_{6 + i}") (Wire.mk s!"s2_ed_z_{6 + i}"))
-  let exp_diff_zero_gates := exp_diff_zeros.flatMap fun (g1, g2) => [g1, g2]
-  let ed_z_or01 := Wire.mk "s2_ed_z_or01"
-  let ed_z_or23 := Wire.mk "s2_ed_z_or23"
-  let ed_z_or0123 := Wire.mk "s2_ed_z_or0123"
-  let ed_z_all := Wire.mk "s2_ed_z_all"
-  let ed_tree_gates := [
-    Gate.mkOR (Wire.mk "s2_ed_z_6") (Wire.mk "s2_ed_z_7") ed_z_or01,
-    Gate.mkOR (Wire.mk "s2_ed_z_8") (Wire.mk "s2_ed_z_9") ed_z_or23,
-    Gate.mkOR ed_z_or01 ed_z_or23 ed_z_or0123,
-    Gate.mkOR ed_z_or0123 (Wire.mk "s2_ed_z_10") ed_z_all
-  ]
-
+  -- The shifter takes six bits, so a far operand must be pinned to a shift that
+  -- empties the window rather than truncated: 1027 modulo 64 is 3, which would
+  -- put the bits back inside.  Anything from 64 up is such a shift, and 63
+  -- (all ones) empties a 56-bit window with its sticky collecting the rest.
+  let (s2_far, s2_far_gates) := mkOrTree "s2_far" ((List.range 5).map fun i => s2_diff_mag[6 + i]!)
   let s2_shift_amt := makeIndexedWires "s2_sh_amt" 6
-  let s2_sh_amt_pre0 := Wire.mk "s2_sh_amt_pre0"
-  let s2_sh_mux_gates :=
-    [Gate.mkMUX (exp_diff[0]!) (s2_neg_diff[0]!) swap s2_sh_amt_pre0,
-     Gate.mkOR s2_sh_amt_pre0 ed_z_all (s2_shift_amt[0]!)] ++
-    (List.range 5).map fun i =>
-      Gate.mkMUX (exp_diff[i + 1]!) (s2_neg_diff[i + 1]!) swap (s2_shift_amt[i + 1]!)
+  let s2_sh_mux_gates := (List.range 6).flatMap fun i =>
+    let w := Wire.mk s!"s2_shm_{i}"
+    [Gate.mkMUX (s2_diff_mag[i]!) one s2_far w,
+     Gate.mkBUF w (s2_shift_amt[i]!)]
 
   let s2_small_mant56 := [zero, zero, zero] ++ s2_small_mant
-  let s2_shift_gates := mkBarrelShiftRight56WithSticky s2_small_mant56 s2_shift_amt aligned_small shift_sticky zero "s2_align"
+  let s2_shift_gates := mkBarrelShiftRight56WithSticky s2_small_mant56 s2_shift_amt aligned_small
+    shift_sticky zero "s2_align"
 
   let s2_eff_sub_gate := Gate.mkXOR big_sign small_sign eff_sub
   let s2_inf_sub_inf_gate := Gate.mkAND both_inf eff_sub inf_sub_inf
@@ -343,7 +395,8 @@ def mkFPAdderD_Stage2_Align : Circuit :=
 
   let all_gates :=
     [one_gate] ++ s2_sign_swap_gates ++ s2_exp_swap_gates ++ s2_mant_swap_gates ++
-    s2_neg_gates ++ exp_diff_zero_gates ++ ed_tree_gates ++ s2_sh_mux_gates ++ s2_shift_gates ++
+    s2_ed12_gates ++ s2_neg12_gates ++ s2_diff_mag_gates ++ s2_far_gates ++ s2_sh_mux_gates ++
+      s2_shift_gates ++
     [s2_eff_sub_gate, s2_inf_sub_inf_gate, s2_inf_sign_gate]
 
   { name := "FPAdderD_Stage2_Align"
@@ -372,6 +425,7 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let big_mant := makeIndexedWires "big_mant" 53
   let aligned_small := makeIndexedWires "aligned_small" 56
   let eff_sub := Wire.mk "eff_sub"
+  let sticky := Wire.mk "sticky"
   let zero := Wire.mk "zero"
 
   let sum := makeIndexedWires "sum" 56
@@ -382,8 +436,18 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let one := Wire.mk "s3_one"
   let one_gate := Gate.mkNOT zero one
 
+  -- An effective subtraction whose subtrahend lost bits below the window must borrow
+  -- one unit from bit 0: the exact difference is (A - B - 1) + (1 - epsilon).
+  -- A carry-in of zero (instead of eff_sub) subtracts exactly one.
+  let s3_borrow := Wire.mk "s3_borrow"
+  let s3_borrow_gates := [
+    Gate.mkAND eff_sub sticky s3_borrow
+  ]
+  let s3_carry_in := Wire.mk "s3_eff_sub_final"
+  let s3_carry_in_gate := [Gate.mkXOR eff_sub s3_borrow s3_carry_in]
+
   let s3_carry := makeIndexedWires "s3_c" 57
-  let s3_add_gates := [Gate.mkBUF eff_sub (s3_carry[0]!)] ++ (List.range 56).flatMap (fun i =>
+  let s3_add_gates := [Gate.mkBUF s3_carry_in (s3_carry[0]!)] ++ (List.range 56).flatMap (fun i =>
     let a := if i < 3 then zero else big_mant[i - 3]!
     let b_raw := aligned_small[i]!
     let b := Wire.mk s!"s3_b_{i}"
@@ -429,7 +493,8 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
           [Gate.mkOR (v_prev[i + stride]!) (v_prev[i]!) merge_v,
            Gate.mkBUF merge_v (v_new[i]!)] ++
           (List.range 6).map fun k =>
-            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!) ((p_new[i]!)[k]!)
+            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!)
+              ((p_new[i]!)[k]!)
         else
           [Gate.mkBUF (v_prev[i]!) (v_new[i]!)] ++
           (List.range 6).map fun k =>
@@ -443,11 +508,12 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let s3_found_gate := Gate.mkBUF (lz_final_v[0]!) found
 
   let all_gates :=
-    [one_gate] ++ s3_add_gates ++ s3_ovf_gates ++ lz_leaf_gates ++ lz_prefix_gates ++
+    [one_gate] ++ s3_borrow_gates ++ s3_carry_in_gate ++ s3_add_gates ++ s3_ovf_gates ++
+      lz_leaf_gates ++ lz_prefix_gates ++
     s3_lead_pos_gates ++ [s3_found_gate]
 
   { name := "FPAdderD_Stage3_AddSub"
-    inputs := big_mant ++ aligned_small ++ [eff_sub, zero]
+    inputs := big_mant ++ aligned_small ++ [eff_sub, sticky, zero]
     outputs := sum ++ [overflow] ++ lead_pos ++ [found]
     gates := all_gates
     instances := []
@@ -464,6 +530,7 @@ def fpAdderD_Stage3Circuit : Circuit := mkFPAdderD_Stage3_AddSub
 
 def mkFPAdderD_Stage4_NormRound : Circuit :=
   let sign := Wire.mk "sign"
+  let eff_sub := Wire.mk "eff_sub"
   let exp := makeIndexedWires "exp" 11
   let sum := makeIndexedWires "sum" 56
   let overflow := Wire.mk "overflow"
@@ -471,6 +538,7 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
   let found := Wire.mk "found"
   let sticky := Wire.mk "sticky"
   let any_nan := Wire.mk "any_nan"
+  let any_snan := Wire.mk "any_snan"
   let inf_sub_inf := Wire.mk "inf_sub_inf"
   let any_inf := Wire.mk "any_inf"
   let inf_sign := Wire.mk "inf_sign"
@@ -483,23 +551,81 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
   let one := Wire.mk "s4_one"
   let one_gate := Gate.mkNOT zero one
 
-  -- Overflow path: sum >> 1
-  let ovf_mant := (List.range 52).map fun i => sum[4 + i]!
-  let ovf_G := sum[3]!
-  let ovf_R := sum[2]!
-  let ovf_S := Wire.mk "s4_ovf_S"
-  let ovf_s_or := Wire.mk "s4_ovf_s_or"
-  let ovf_s_gates := [
-    Gate.mkOR (sum[1]!) (sum[0]!) ovf_s_or,
-    Gate.mkOR ovf_s_or sticky ovf_S
-  ]
-
+  -- Overflow path: sum >> 1, with the exponent widened by one.
   let ovf_exp := makeIndexedWires "s4_ovf_exp" 11
   let ovf_exp_c := makeIndexedWires "s4_ovf_exp_c" 12
   let ovf_exp_gates := [Gate.mkBUF one (ovf_exp_c[0]!)] ++ (List.range 11).flatMap (fun i =>
     [Gate.mkXOR (exp[i]!) (ovf_exp_c[i]!) (ovf_exp[i]!),
      Gate.mkAND (exp[i]!) (ovf_exp_c[i]!) (ovf_exp_c[i + 1]!)]
   )
+
+  -- A saturated exponent means the magnitude is unrepresentable, and IEEE 754
+  -- requires +/-inf.  Clear the mantissa and the guard/round/sticky bits so that
+  -- nothing can round back to a finite value: leaving the shifted mantissa in
+  -- place gives exp=all-ones with a non-zero mantissa, i.e. a NaN.
+  let ovf_ones_l1 := (List.range 5).map fun i => Wire.mk s!"s4_ovf_ones_l1_{i}"
+  let ovf_ones_l2 := (List.range 3).map fun i => Wire.mk s!"s4_ovf_ones_l2_{i}"
+  let ovf_ones_l3 := (List.range 2).map fun i => Wire.mk s!"s4_ovf_ones_l3_{i}"
+  let ovf_exp_all_ones := Wire.mk "s4_ovf_exp_all_ones"
+  let ovf_ones_gates :=
+    (List.range 5).map (fun i =>
+      Gate.mkAND (ovf_exp[2 * i]!) (ovf_exp[2 * i + 1]!) (ovf_ones_l1[i]!)) ++
+    [ Gate.mkAND (ovf_ones_l1[0]!) (ovf_ones_l1[1]!) (ovf_ones_l2[0]!),
+      Gate.mkAND (ovf_ones_l1[2]!) (ovf_ones_l1[3]!) (ovf_ones_l2[1]!),
+      Gate.mkAND (ovf_ones_l1[4]!) (ovf_exp[10]!) (ovf_ones_l2[2]!),
+      Gate.mkAND (ovf_ones_l2[0]!) (ovf_ones_l2[1]!) (ovf_ones_l3[0]!),
+      Gate.mkAND (ovf_ones_l3[0]!) (ovf_ones_l2[2]!) ovf_exp_all_ones ]
+
+  let inf_ovf := Wire.mk "s4_inf_ovf"
+  let not_inf_ovf := Wire.mk "s4_not_inf_ovf"
+  let ovf_any := Wire.mk "s4_ovf_any"
+  let sat_ovf := Wire.mk "s4_sat_ovf"
+  let to_inf := Wire.mk "s4_to_inf"
+  let rm_rtz := Wire.mk "s4_rm_rtz"
+  let rm_rdn := Wire.mk "s4_rm_rdn"
+  let rm_rup := Wire.mk "s4_rm_rup"
+  let inf_ovf_gates := [
+    Gate.mkAND overflow ovf_exp_all_ones ovf_any,
+    -- rm as the instruction gives it: 001 rtz, 010 rdn, 011 rup
+    Gate.mkNOT (rm[2]!) (Wire.mk "s4_nrm2"),
+    Gate.mkNOT (rm[1]!) (Wire.mk "s4_nrm1"),
+    Gate.mkNOT (rm[0]!) (Wire.mk "s4_nrm0"),
+    Gate.mkAND (Wire.mk "s4_nrm2") (Wire.mk "s4_nrm1") (Wire.mk "s4_nrm21"),
+    Gate.mkAND (Wire.mk "s4_nrm21") (rm[0]!) rm_rtz,
+    Gate.mkAND (Wire.mk "s4_nrm2") (rm[1]!) (Wire.mk "s4_rm10"),
+    Gate.mkAND (Wire.mk "s4_rm10") (Wire.mk "s4_nrm0") rm_rdn,
+    Gate.mkAND (Wire.mk "s4_rm10") (rm[0]!) rm_rup,
+    -- IEEE 754 section 7.4: an overflowed sum is an infinity only when the
+    -- rounding direction points away from zero for this sign.  On the overflow
+    -- path both operands have the same sign, so src1 carries the result sign.
+    Gate.mkAND rm_rdn (Wire.mk "s4_tz_ns1") (Wire.mk "s4_tz_rdn"),
+    Gate.mkNOT (sign) (Wire.mk "s4_tz_ns1"),
+    Gate.mkAND rm_rup (sign) (Wire.mk "s4_tz_rup"),
+    Gate.mkOR rm_rtz (Wire.mk "s4_tz_rdn") (Wire.mk "s4_tz_a"),
+    Gate.mkOR (Wire.mk "s4_tz_a") (Wire.mk "s4_tz_rup") (Wire.mk "s4_tz_any"),
+    Gate.mkNOT (Wire.mk "s4_tz_any") to_inf,
+    Gate.mkNOT to_inf (Wire.mk "s4_not_to_inf"),
+    Gate.mkAND ovf_any to_inf inf_ovf,
+    Gate.mkAND ovf_any (Wire.mk "s4_not_to_inf") sat_ovf,
+    Gate.mkNOT inf_ovf not_inf_ovf
+  ]
+
+  let ovf_mant := (List.range 52).map fun i => Wire.mk s!"s4_ovf_mant_{i}"
+  let ovf_mant_gates := (List.range 52).map fun i =>
+    Gate.mkAND (sum[4 + i]!) not_inf_ovf (ovf_mant[i]!)
+
+  let ovf_G := Wire.mk "s4_ovf_G"
+  let ovf_R := Wire.mk "s4_ovf_R"
+  let ovf_S := Wire.mk "s4_ovf_S"
+  let ovf_s_or := Wire.mk "s4_ovf_s_or"
+  let ovf_s_pre := Wire.mk "s4_ovf_s_pre"
+  let ovf_grs_gates := [
+    Gate.mkAND (sum[3]!) not_inf_ovf ovf_G,
+    Gate.mkAND (sum[2]!) not_inf_ovf ovf_R,
+    Gate.mkOR (sum[1]!) (sum[0]!) ovf_s_or,
+    Gate.mkOR ovf_s_or sticky ovf_s_pre,
+    Gate.mkAND ovf_s_pre not_inf_ovf ovf_S
+  ]
 
   -- Normal path: lshift_amt = 55 - lead_pos (6 bits)
   let lshift_amt := makeIndexedWires "s4_lsh_amt" 6
@@ -548,13 +674,53 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
      Gate.mkOR (Wire.mk s!"s4_ne_t01_{i}") (Wire.mk s!"s4_ne_t2_{i}") bo]
   )
 
+  -- Subnormal result: exponent field 0, mantissa counted in multiples of 2^-1074.
+  -- The normalizing shift put the leading 1 of the sum at bit 55, whose weight is
+  -- 2^(norm_exp-1023), so the mantissa is the normalized sum shifted down by
+  -- (4 - norm_exp).  The sum of two multiples of the quantum is a multiple of the
+  -- quantum, so a subnormal result is exact and round_up is forced low below.
+  let (norm_exp_any, norm_exp_or_gates) := mkOrTree "s4_nexp_or" norm_exp
+  let norm_exp_zero := Wire.mk "s4_nexp_zero"
+  let norm_exp_le_zero := Wire.mk "s4_nexp_le0"
+  let subnormal_res := Wire.mk "s4_subnormal"
+  let not_overflow_pre := Wire.mk "s4_not_ovf_pre"
+  -- norm_exp = exp - shift on a full exponent field, so bit 10 is a value bit,
+  -- not a sign: the subtractor's borrow is what says the exponent went negative.
+  let subnormal_gates := [
+    Gate.mkNOT norm_exp_any norm_exp_zero,
+    Gate.mkOR norm_exp_zero (norm_exp_b[11]!) norm_exp_le_zero,
+    Gate.mkNOT overflow not_overflow_pre,
+    Gate.mkAND norm_exp_le_zero not_overflow_pre subnormal_res
+  ]
+
+  let four6 := makeIndexedWires "s4_four6" 6
+  let four6_gates := [
+    Gate.mkBUF zero (four6[0]!), Gate.mkBUF zero (four6[1]!),
+    Gate.mkBUF one (four6[2]!), Gate.mkBUF zero (four6[3]!),
+    Gate.mkBUF zero (four6[4]!), Gate.mkBUF zero (four6[5]!)
+  ]
+  let sub_shift := makeIndexedWires "s4_sub_shift" 6
+  let (sub_shift_gates, _sub_shift_borrow) :=
+    mkKoggeStoneSub four6 ((List.range 6).map fun i => norm_exp[i]!) sub_shift "s4_subsh" one
+
+  let sub_norm56 := makeIndexedWires "s4_sub_norm56" 56
+  let sub_shift_barrel_gates := mkBarrelShiftRight56 norm56 sub_shift sub_norm56 zero "s4_bsr_sub"
+  let sub_mant := (List.range 52).map fun i => sub_norm56[i]!
+
+  let norm_or_sub_mant := makeIndexedWires "s4_ns_mant" 52
+  let ns_mant_gates := (List.range 52).map fun i =>
+    Gate.mkMUX (norm_mant[i]!) (sub_mant[i]!) subnormal_res (norm_or_sub_mant[i]!)
   let pre_mant := makeIndexedWires "s4_pre_mant" 52
   let pre_mant_gates := (List.range 52).map fun i =>
-    Gate.mkMUX (norm_mant[i]!) (ovf_mant[i]!) overflow (pre_mant[i]!)
+    Gate.mkMUX (norm_or_sub_mant[i]!) (ovf_mant[i]!) overflow (pre_mant[i]!)
 
+  -- A subnormal result has exponent field 0.
+  let norm_or_sub_exp := makeIndexedWires "s4_ns_exp" 11
+  let ns_exp_gates := (List.range 11).map fun i =>
+    Gate.mkMUX (norm_exp[i]!) zero subnormal_res (norm_or_sub_exp[i]!)
   let pre_exp := makeIndexedWires "s4_pre_exp" 11
   let pre_exp_gates := (List.range 11).map fun i =>
-    Gate.mkMUX (norm_exp[i]!) (ovf_exp[i]!) overflow (pre_exp[i]!)
+    Gate.mkMUX (norm_or_sub_exp[i]!) (ovf_exp[i]!) overflow (pre_exp[i]!)
 
   let g_bit := Wire.mk "s4_g_bit"
   let r_bit := Wire.mk "s4_r_bit"
@@ -565,17 +731,67 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
     Gate.mkMUX norm_S ovf_S overflow s_bit
   ]
 
-  let rs_or := Wire.mk "s4_rs_or"
-  let rsl_or := Wire.mk "s4_rsl_or"
+  -- Rounding-mode decode.  RISC-V rm is 000 RNE, 001 RTZ, 010 RDN, 011 RUP,
+  -- 100 RMM; 101..111 are reserved and behave as RNE.  Increment the magnitude
+  -- (the result sign is applied separately) by at most one ulp:
+  --   RNE  nearest, ties to even   -> up iff G and (R or S or the kept LSB)
+  --   RTZ  toward zero             -> never
+  --   RDN  toward -inf             -> up iff there is a remainder and sign=1
+  --   RUP  toward +inf             -> up iff there is a remainder and sign=0
+  --   RMM  nearest, ties away      -> up iff G
+  let rs_or := Wire.mk "s4_rs_or"        -- R | S
+  let rsl_or := Wire.mk "s4_rsl_or"      -- R | S | kept LSB
+  let any_rem := Wire.mk "s4_any_rem"    -- G | R | S
   let rne_up := Wire.mk "s4_rne_up"
-  let is_not_rtz := Wire.mk "s4_is_not_rtz"
+  let rdn_up := Wire.mk "s4_rdn_up"
+  let rup_up := Wire.mk "s4_rup_up"
+  let not_sign := Wire.mk "s4_not_sign"
+  let not_rm0 := Wire.mk "s4_not_rm0"
+  let not_rm1 := Wire.mk "s4_not_rm1"
+  let not_rm2 := Wire.mk "s4_not_rm2"
+  let is_rtz := Wire.mk "s4_is_rtz"
+  let is_rdn := Wire.mk "s4_is_rdn"
+  let is_rup := Wire.mk "s4_is_rup"
+  let is_rmm := Wire.mk "s4_is_rmm"
+  let grp_n2n1 := Wire.mk "s4_grp_n2n1"   -- ~rm[2] & ~rm[1]
+  let grp_n2p1 := Wire.mk "s4_grp_n2p1"   -- ~rm[2] &  rm[1]
+  let grp_p2n1 := Wire.mk "s4_grp_p2n1"   --  rm[2] & ~rm[1]
+  let up_rdn := Wire.mk "s4_up_rdn"
+  let up_rup := Wire.mk "s4_up_rup"
+  let up_rmm := Wire.mk "s4_up_rmm"
+  let round_up_pre := Wire.mk "s4_round_up_pre"
   let round_up := Wire.mk "s4_round_up"
   let rnd_ctrl_gates := [
+    -- Per-mode increments.
     Gate.mkOR r_bit s_bit rs_or,
     Gate.mkOR rs_or (pre_mant[0]!) rsl_or,
     Gate.mkAND g_bit rsl_or rne_up,
-    Gate.mkNOT (rm[0]!) is_not_rtz,
-    Gate.mkAND rne_up is_not_rtz round_up
+    Gate.mkOR g_bit rs_or any_rem,
+    Gate.mkNOT sign not_sign,
+    Gate.mkAND any_rem sign rdn_up,
+    Gate.mkAND any_rem not_sign rup_up,
+    -- Mode decode.
+    Gate.mkNOT (rm[0]!) not_rm0,
+    Gate.mkNOT (rm[1]!) not_rm1,
+    Gate.mkNOT (rm[2]!) not_rm2,
+    Gate.mkAND not_rm2 not_rm1 grp_n2n1,          -- ~r2 & ~r1
+    Gate.mkAND grp_n2n1 (rm[0]!) is_rtz,          -- 001
+    Gate.mkAND not_rm2 (rm[1]!) grp_n2p1,         -- ~r2 &  r1
+    Gate.mkAND grp_n2p1 not_rm0 is_rdn,           -- 010
+    Gate.mkAND grp_n2p1 (rm[0]!) is_rup,          -- 011
+    Gate.mkAND (rm[2]!) not_rm1 grp_p2n1,         --  r2 & ~r1
+    Gate.mkAND grp_p2n1 not_rm0 is_rmm,           -- 100
+    -- Select, defaulting to RNE.
+    Gate.mkMUX rne_up rdn_up is_rdn up_rdn,
+    Gate.mkMUX up_rdn rup_up is_rup up_rup,
+    Gate.mkMUX up_rup g_bit is_rmm up_rmm,
+    Gate.mkMUX up_rmm zero is_rtz round_up_pre
+  ]
+  -- A subnormal result is exact, so no mode may round it.
+  let not_subnormal_res := Wire.mk "s4_not_subnormal"
+  let round_gate := [
+    Gate.mkNOT subnormal_res not_subnormal_res,
+    Gate.mkAND round_up_pre not_subnormal_res round_up
   ]
 
   let mant_inc := makeIndexedWires "s4_m_inc" 52
@@ -599,11 +815,35 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
     (List.range 52).map fun i =>
       Gate.mkAND (mant_inc[i]!) not_rollover (rounded_mant[i]!)
 
+  -- A mantissa carry is not the only way past the maximum.  A sum just above
+  -- DBL_MAX whose rounding direction points away from zero has a mantissa that
+  -- rolls over, and the increment then saturates an exponent that was already
+  -- at the top: the result is an infinity.  IEEE 754 section 7.4 compares the
+  -- larger finite value against the result rounded with an unbounded exponent,
+  -- so this case raises OF too.  `ovf_any` above sees only the carry.
+  let prnd_l1 := (List.range 5).map fun i => Wire.mk s!"s4_prnd_l1_{i}"
+  let prnd_l2 := (List.range 3).map fun i => Wire.mk s!"s4_prnd_l2_{i}"
+  let prnd_l3 := Wire.mk "s4_prnd_l3"
+  let exp_sat := Wire.mk "s4_exp_sat"
+  let ovf_rnd := Wire.mk "s4_ovf_rnd"
+  let ovf_rnd_gates :=
+    (List.range 5).map (fun i =>
+      Gate.mkAND (exp_post_rnd[2 * i]!) (exp_post_rnd[2 * i + 1]!) (prnd_l1[i]!)) ++
+    [ Gate.mkAND (prnd_l1[0]!) (prnd_l1[1]!) (prnd_l2[0]!),
+      Gate.mkAND (prnd_l1[2]!) (prnd_l1[3]!) (prnd_l2[1]!),
+      Gate.mkAND (prnd_l1[4]!) (exp_post_rnd[10]!) (prnd_l2[2]!),
+      Gate.mkAND (prnd_l2[0]!) (prnd_l2[1]!) prnd_l3,
+      Gate.mkAND prnd_l3 (prnd_l2[2]!) exp_sat,
+      Gate.mkAND mant_rollover exp_sat ovf_rnd ]
+
   let gr_or := Wire.mk "s4_gr_or"
+  let inx_pre := Wire.mk "s4_inx_pre"
   let inexact := Wire.mk "s4_inexact"
+  -- A saturated overflow rounded away to infinity, so it is inexact too.
   let inx_gates := [
     Gate.mkOR g_bit r_bit gr_or,
-    Gate.mkOR gr_or s_bit inexact
+    Gate.mkOR gr_or s_bit inx_pre,
+    Gate.mkOR inx_pre inf_ovf inexact
   ]
 
   let not_found := Wire.mk "s4_not_found"
@@ -616,11 +856,25 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
     Gate.mkNOT zero_res not_zero_res
   ]
 
+  -- Sign of an exactly zero result (IEEE 754-2008 §6.3).  Like-signed addends
+  -- keep that sign (-0 + -0 = -0); a cancellation of like-signed operands
+  -- (x - x, -0 - +0) is +0 in every mode except RDN, which gives -0.
+  -- `eff_sub` is the sign comparison of the aligned operands, so it picks the
+  -- rule: differ (subtraction) selects the mode, agree selects `sign`.
+  let same_sign := Wire.mk "s4_same_sign"
+  let zero_sign := Wire.mk "s4_zero_sign"
+  let res_sign := Wire.mk "s4_res_sign"
+  let sign_sel_gates := [
+    Gate.mkNOT eff_sub same_sign,
+    Gate.mkMUX is_rdn sign same_sign zero_sign,
+    Gate.mkMUX sign zero_sign zero_res res_sign
+  ]
+
   let reg_res := makeIndexedWires "s4_reg_res" 64
   let reg_res_gates :=
     (List.range 52).map (fun i => Gate.mkAND (rounded_mant[i]!) not_zero_res (reg_res[i]!)) ++
     (List.range 11).map (fun i => Gate.mkAND (exp_post_rnd[i]!) not_zero_res (reg_res[52 + i]!)) ++
-    [Gate.mkAND sign not_zero_res (reg_res[63]!)]
+    [Gate.mkBUF res_sign (reg_res[63]!)]
 
   let reg_nx := Wire.mk "s4_reg_nx"
   let reg_nx_gate := Gate.mkAND inexact not_zero_res reg_nx
@@ -636,46 +890,61 @@ def mkFPAdderD_Stage4_NormRound : Circuit :=
   ]
 
   let res_m0 := makeIndexedWires "s4_rm0" 64
+  let res_m1 := makeIndexedWires "s4_rm1" 64
   let res_mux_gates := (List.range 64).flatMap fun i =>
     let inf_bit :=
       if i == 63 then inf_sign
       else if i >= 52 then one
       else zero
+    -- The largest finite magnitude: exponent all ones minus one, fraction all
+    -- ones.  Applied after rounding, because rounding the saturated value could
+    -- carry into the exponent and turn it back into an infinity.
+    let sat_bit :=
+      if i == 63 then sign
+      else if i == 52 then zero
+      else one
     let nan_bit :=
       if i >= 51 && i <= 62 then one
       else zero
     [Gate.mkMUX (reg_res[i]!) inf_bit is_inf_res (res_m0[i]!),
-     Gate.mkMUX (res_m0[i]!) nan_bit is_nan_res (result[i]!)]
+     Gate.mkMUX (res_m0[i]!) sat_bit sat_ovf (res_m1[i]!),
+     Gate.mkMUX (res_m1[i]!) nan_bit is_nan_res (result[i]!)]
 
-  let not_rm1 := Wire.mk "s4_not_rm1"
-  let not_rm2 := Wire.mk "s4_not_rm2"
-  let rm_xor12 := Wire.mk "s4_rm_xor12"
-  let not_rm_xor12 := Wire.mk "s4_not_rm_xor12"
+  -- fflags: bit0=NX bit1=UF bit2=OF bit3=DZ bit4=NV.
+  -- UF stays 0: every operand is a multiple of the subnormal quantum, so a
+  -- subnormal sum is exact, and an inexact tiny result (therefore UF) cannot
+  -- arise.  DZ is structurally impossible for an adder.
+  -- OF is the saturated-overflow case, not any mantissa carry: a carry that the
+  -- widened exponent absorbs is an ordinary renormalization.
+  let is_sp := Wire.mk "s4_is_sp"
   let not_special := Wire.mk "s4_not_special"
+  let raw_of := Wire.mk "s4_raw_of"
   let exc_gates := [
-    Gate.mkBUF is_nan_res (exc[4]!),
-    Gate.mkNOT (rm[1]!) not_rm1,
-    Gate.mkAND (rm[1]!) not_rm1 (exc[1]!),
-    Gate.mkNOT (rm[2]!) not_rm2,
-    Gate.mkAND (rm[2]!) not_rm2 (exc[2]!),
-    Gate.mkXOR (rm[1]!) (rm[2]!) rm_xor12,
-    Gate.mkNOT rm_xor12 not_rm_xor12,
-    Gate.mkAND rm_xor12 not_rm_xor12 (exc[3]!),
-    Gate.mkOR is_nan_res is_inf_res (Wire.mk "s4_is_sp"),
-    Gate.mkNOT (Wire.mk "s4_is_sp") not_special,
-    Gate.mkAND reg_nx not_special (exc[0]!)
+    Gate.mkOR is_nan_res is_inf_res is_sp,
+    Gate.mkNOT is_sp not_special,
+    Gate.mkAND reg_nx not_special (exc[0]!),
+    Gate.mkBUF zero (exc[1]!),
+    Gate.mkOR ovf_any ovf_rnd raw_of,
+    Gate.mkAND raw_of not_special (exc[2]!),
+    Gate.mkBUF zero (exc[3]!),
+    Gate.mkOR any_snan inf_sub_inf (exc[4]!)
   ]
 
   let all_gates :=
-    [one_gate] ++ ovf_s_gates ++ ovf_exp_gates ++ lsh_sub_gates ++ lshift_gates ++
-    [norm_s_gate] ++ norm_exp_gates ++ pre_mant_gates ++ pre_exp_gates ++ grs_mux_gates ++
-    rnd_ctrl_gates ++ mant_inc_gates ++ exp_pr_gates ++ rnd_mant_gates ++ inx_gates ++
-    zero_det_gates ++ reg_res_gates ++ [reg_nx_gate, is_nan_gate] ++ inf_res_gates ++
+    [one_gate] ++ ovf_exp_gates ++ ovf_ones_gates ++ inf_ovf_gates ++
+    ovf_mant_gates ++ ovf_grs_gates ++ lsh_sub_gates ++ lshift_gates ++
+    [norm_s_gate] ++ norm_exp_gates ++ norm_exp_or_gates ++ subnormal_gates ++
+    four6_gates ++ sub_shift_gates ++ sub_shift_barrel_gates ++
+    ns_mant_gates ++ ns_exp_gates ++ pre_mant_gates ++ pre_exp_gates ++ grs_mux_gates ++
+    rnd_ctrl_gates ++ round_gate ++ mant_inc_gates ++ exp_pr_gates ++ rnd_mant_gates ++
+      ovf_rnd_gates ++ inx_gates ++
+    zero_det_gates ++ sign_sel_gates ++ reg_res_gates ++ [reg_nx_gate, is_nan_gate] ++ inf_res_gates
+      ++
     res_mux_gates ++ exc_gates
 
   { name := "FPAdderD_Stage4_NormRound"
-    inputs := [sign] ++ exp ++ sum ++ [overflow] ++ lead_pos ++
-              [found, sticky, any_nan, inf_sub_inf, any_inf, inf_sign] ++ rm ++ [zero]
+    inputs := [sign, eff_sub] ++ exp ++ sum ++ [overflow] ++ lead_pos ++
+              [found, sticky, any_nan, any_snan, inf_sub_inf, any_inf, inf_sign] ++ rm ++ [zero]
     outputs := result ++ exc
     gates := all_gates
     instances := []
@@ -718,6 +987,7 @@ def mkFPAdderD : Circuit :=
   let s1_exp_diff := makeIndexedWires "s1_exp_diff" 11
   let s1_swap := Wire.mk "s1_swap"
   let s1_any_nan := Wire.mk "s1_any_nan"
+  let s1_any_snan := Wire.mk "any_snan"
   let s1_both_inf := Wire.mk "s1_both_inf"
   let s1_any_inf := Wire.mk "s1_any_inf"
   let s1_a_is_inf := Wire.mk "s1_a_is_inf"
@@ -735,7 +1005,7 @@ def mkFPAdderD : Circuit :=
       ((List.range 53).map fun i => (s!"mant1_{i}", s1_mant1[i]!)) ++
       ((List.range 53).map fun i => (s!"mant2_{i}", s1_mant2[i]!)) ++
       ((List.range 11).map fun i => (s!"exp_diff_{i}", s1_exp_diff[i]!)) ++
-      [("swap", s1_swap), ("any_nan", s1_any_nan),
+      [("swap", s1_swap), ("any_nan", s1_any_nan), ("any_snan", s1_any_snan),
        ("both_inf", s1_both_inf), ("any_inf", s1_any_inf), ("a_is_inf", s1_a_is_inf)]
   }
 
@@ -749,6 +1019,7 @@ def mkFPAdderD : Circuit :=
   let p1_exp_diff := makeIndexedWires "p1_exp_diff" 11
   let p1_swap := Wire.mk "p1_swap"
   let p1_any_nan := Wire.mk "p1_any_nan"
+  let p1_any_snan := Wire.mk "p1_any_snan"
   let p1_both_inf := Wire.mk "p1_both_inf"
   let p1_any_inf := Wire.mk "p1_any_inf"
   let p1_a_is_inf := Wire.mk "p1_a_is_inf"
@@ -766,6 +1037,7 @@ def mkFPAdderD : Circuit :=
     mkDFFBank s1_exp_diff p1_exp_diff clock reset ++
     [Gate.mkDFF s1_swap clock reset p1_swap,
      Gate.mkDFF s1_any_nan clock reset p1_any_nan,
+     Gate.mkDFF s1_any_snan clock reset p1_any_snan,
      Gate.mkDFF s1_both_inf clock reset p1_both_inf,
      Gate.mkDFF s1_any_inf clock reset p1_any_inf,
      Gate.mkDFF s1_a_is_inf clock reset p1_a_is_inf] ++
@@ -808,6 +1080,7 @@ def mkFPAdderD : Circuit :=
   let p2_eff_sub := Wire.mk "p2_eff_sub"
   let p2_sticky := Wire.mk "p2_sticky"
   let p2_any_nan := Wire.mk "p2_any_nan"
+  let p2_any_snan := Wire.mk "p2_any_snan"
   let p2_inf_sub_inf := Wire.mk "p2_inf_sub_inf"
   let p2_any_inf := Wire.mk "p2_any_inf"
   let p2_inf_sign := Wire.mk "p2_inf_sign"
@@ -823,6 +1096,7 @@ def mkFPAdderD : Circuit :=
      Gate.mkDFF s2_eff_sub clock reset p2_eff_sub,
      Gate.mkDFF s2_shift_sticky clock reset p2_sticky,
      Gate.mkDFF p1_any_nan clock reset p2_any_nan,
+     Gate.mkDFF p1_any_snan clock reset p2_any_snan,
      Gate.mkDFF s2_inf_sub_inf clock reset p2_inf_sub_inf,
      Gate.mkDFF p1_any_inf clock reset p2_any_inf,
      Gate.mkDFF s2_inf_sign clock reset p2_inf_sign] ++
@@ -845,7 +1119,7 @@ def mkFPAdderD : Circuit :=
     portMap :=
       ((List.range 53).map fun i => (s!"big_mant_{i}", p2_big_mant[i]!)) ++
       ((List.range 56).map fun i => (s!"aligned_small_{i}", p2_aligned_small[i]!)) ++
-      [("eff_sub", p2_eff_sub), ("zero", zero)] ++
+      [("eff_sub", p2_eff_sub), ("sticky", p2_sticky), ("zero", zero)] ++
       ((List.range 56).map fun i => (s!"sum_{i}", s3_sum[i]!)) ++
       [("overflow", s3_overflow)] ++
       ((List.range 6).map fun i => (s!"lead_pos_{i}", s3_lead_pos[i]!)) ++
@@ -854,10 +1128,12 @@ def mkFPAdderD : Circuit :=
 
   -- Pipeline register 3 (DFFs)
   let p3_sign := Wire.mk "p3_sign"
+  let p3_eff_sub := Wire.mk "p3_eff_sub"
   let p3_overflow := Wire.mk "p3_overflow"
   let p3_found := Wire.mk "p3_found"
   let p3_sticky := Wire.mk "p3_sticky"
   let p3_any_nan := Wire.mk "p3_any_nan"
+  let p3_any_snan := Wire.mk "p3_any_snan"
   let p3_inf_sub_inf := Wire.mk "p3_inf_sub_inf"
   let p3_any_inf := Wire.mk "p3_any_inf"
   let p3_inf_sign := Wire.mk "p3_inf_sign"
@@ -870,10 +1146,12 @@ def mkFPAdderD : Circuit :=
 
   let p3_dffs :=
     [Gate.mkDFF p2_big_sign clock reset p3_sign,
+     Gate.mkDFF p2_eff_sub clock reset p3_eff_sub,
      Gate.mkDFF s3_overflow clock reset p3_overflow,
      Gate.mkDFF s3_found clock reset p3_found,
      Gate.mkDFF p2_sticky clock reset p3_sticky,
      Gate.mkDFF p2_any_nan clock reset p3_any_nan,
+     Gate.mkDFF p2_any_snan clock reset p3_any_snan,
      Gate.mkDFF p2_inf_sub_inf clock reset p3_inf_sub_inf,
      Gate.mkDFF p2_any_inf clock reset p3_any_inf,
      Gate.mkDFF p2_inf_sign clock reset p3_inf_sign] ++
@@ -889,13 +1167,13 @@ def mkFPAdderD : Circuit :=
     moduleName := "FPAdderD_Stage4_NormRound"
     instName := "u_stage4"
     portMap :=
-      [("sign", p3_sign)] ++
+      [("sign", p3_sign), ("eff_sub", p3_eff_sub)] ++
       ((List.range 11).map fun i => (s!"exp_{i}", p3_exp[i]!)) ++
       ((List.range 56).map fun i => (s!"sum_{i}", p3_sum[i]!)) ++
       [("overflow", p3_overflow)] ++
       ((List.range 6).map fun i => (s!"lead_pos_{i}", p3_lead_pos[i]!)) ++
       [("found", p3_found), ("sticky", p3_sticky),
-       ("any_nan", p3_any_nan), ("inf_sub_inf", p3_inf_sub_inf),
+       ("any_nan", p3_any_nan), ("any_snan", p3_any_snan), ("inf_sub_inf", p3_inf_sub_inf),
        ("any_inf", p3_any_inf), ("inf_sign", p3_inf_sign)] ++
       ((List.range 3).map fun i => (s!"rm_{i}", p3_rm[i]!)) ++
       [("zero", zero)] ++

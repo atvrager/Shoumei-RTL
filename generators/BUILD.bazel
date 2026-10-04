@@ -31,7 +31,7 @@ lean_binary(
         "-DNDEBUG",
     ],
     main = "GenerateAll",
-    deps = ["//lean:shoumei"],
+    deps = ["//lean:circuits"],
 )
 
 lean_binary(

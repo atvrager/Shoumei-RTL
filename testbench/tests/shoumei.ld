@@ -3,7 +3,7 @@ ENTRY(_start)
 MEMORY { RAM (rwx) : ORIGIN = 0x0, LENGTH = 256K }
 SECTIONS {
     .text 0x0 : { *(.text.start) *(.text*) } > RAM
-    .rodata    : { *(.rodata*) } > RAM
+    .rodata    : { . = ALIGN(8); *(.rodata*) } > RAM
     .tohost 0x1000 (NOLOAD) : { tohost = .; . += 4; putchar_addr = .; . += 4; } > RAM
     .data      : { *(.data*)   } > RAM
     .bss       : { *(.bss* COMMON) } > RAM

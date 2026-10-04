@@ -1530,6 +1530,11 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
   let dispatch_valid := Wire.mk "dispatch_valid"
   let alloc_ptr := Wire.mk "alloc_ptr"; let alloc_ptr_next := Wire.mk "alloc_ptr_next"
   let pending_store := Wire.mk "pending_store"
+  -- `entry_at_head_e`: the CPU reports that this entry's instruction is the
+  -- oldest in flight.  An atomic is held (not a dispatch candidate) until then,
+  -- so it cannot be discarded after it has modified memory.  Plain loads and
+  -- stores are never held.
+  let entry_at_head_0 := Wire.mk "entry_at_head_0"; let entry_at_head_1 := Wire.mk "entry_at_head_1"
   let dispatch_grant_0 := Wire.mk "dispatch_grant_0"; let dispatch_grant_1 := Wire.mk "dispatch_grant_1"
 
   let dispatch_opcode := makeIndexedWires "dispatch_opcode" opcodeWidth
@@ -1618,42 +1623,30 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
     Gate.mkAND ev0 ps0 pst0, Gate.mkAND ev1 ps1 pst1,
     Gate.mkMUX pst0 pst1 alloc_ptr pending_store
   ]
-  let vs0 := Wire.mk "slo_vs0"; let vs1 := Wire.mk "slo_vs1"
-  let hos0 := Wire.mk "slo_hos0"; let hos1 := Wire.mk "slo_hos1"
-  let not_hos0 := Wire.mk "slo_not_hos0"; let not_hos1 := Wire.mk "slo_not_hos1"
   let not_ap := Wire.mk "slo_not_ap"
+  let has_older_0 := Wire.mk "slo_has_older_0"
+  let has_older_1 := Wire.mk "slo_has_older_1"
   let ok0 := Wire.mk "slo_ok0"; let ok1 := Wire.mk "slo_ok1"
   let ar0 := Wire.mk "slo_ar0"; let ar1 := Wire.mk "slo_ar1"
-  -- A plain store is normally free to overtake an older *plain* store: the
-  -- store buffer preserves their order.  It must not overtake an older
-  -- *atomic*: an SC/AMO performs its own read-modify-write and only dispatches
-  -- while the store buffer is empty, so a store that slips past it lands in the
-  -- buffer and can never be released - it waits for the atomic to retire, and
-  -- the atomic waits for the buffer to drain.
-  let at0 := Wire.mk "slo_at0"; let at1 := Wire.mk "slo_at1"
-  let hosat0 := Wire.mk "slo_hosat0"; let hosat1 := Wire.mk "slo_hosat1"
-  let not_hosat0 := Wire.mk "slo_not_hosat0"; let not_hosat1 := Wire.mk "slo_not_hosat1"
-  let ps0_ok := Wire.mk "slo_ps0_ok"; let ps1_ok := Wire.mk "slo_ps1_ok"
+  let ar0_t := Wire.mk "slo_ar0_t"; let ar1_t := Wire.mk "slo_ar1_t"
+  let ready_ok0 := Wire.mk "slo_ready_ok0"; let ready_ok1 := Wire.mk "slo_ready_ok1"
+  -- Memory operations must dispatch in program order: a younger operation
+  -- (whether load, store, or atomic) must never overtake an older operation
+  -- in the Memory RS. alloc_ptr tracks the older entry (0 when entry 0 is
+  -- older, 1 when entry 1 is older).
   let slo_check_gates := [
-    Gate.mkAND ev0 is_store_cur_0 vs0,
-    Gate.mkAND ev1 is_store_cur_1 vs1,
     Gate.mkNOT alloc_ptr not_ap,
-    Gate.mkAND vs1 alloc_ptr hos0,
-    Gate.mkAND vs0 not_ap hos1,
-    Gate.mkNOT hos0 not_hos0,
-    Gate.mkAND ev0 is_atomic_cur_0 at0,
-    Gate.mkAND ev1 is_atomic_cur_1 at1,
-    Gate.mkAND at1 alloc_ptr hosat0,
-    Gate.mkAND at0 not_ap hosat1,
-    Gate.mkNOT hosat0 not_hosat0,
-    Gate.mkNOT hosat1 not_hosat1,
-    Gate.mkAND ps0 not_hosat0 ps0_ok,
-    Gate.mkAND ps1 not_hosat1 ps1_ok,
-    Gate.mkOR ps0_ok not_hos0 ok0,
-    Gate.mkAND er0 ok0 ar0,
-    Gate.mkNOT hos1 not_hos1,
-    Gate.mkOR ps1_ok not_hos1 ok1,
-    Gate.mkAND er1 ok1 ar1
+    Gate.mkAND ev1 alloc_ptr has_older_0,
+    Gate.mkNOT has_older_0 ok0,
+    Gate.mkAND ev0 not_ap has_older_1,
+    Gate.mkNOT has_older_1 ok1,
+    -- A held atomic waits until it is at the head of the ROB.
+    Gate.mkOR nat0 entry_at_head_0 ready_ok0,
+    Gate.mkOR nat1 entry_at_head_1 ready_ok1,
+    Gate.mkAND er0 ok0 ar0_t,
+    Gate.mkAND ar0_t ready_ok0 ar0,
+    Gate.mkAND er1 ok1 ar1_t,
+    Gate.mkAND ar1_t ready_ok1 ar1
   ]
 
   let arb_inst : CircuitInstance := {
@@ -1671,7 +1664,7 @@ def mkMemoryReservationStation2_W1 (dataWidth : Nat := 64) : Circuit :=
 
   { name := if dataWidth == 64 then "MemoryReservationStation2_W1_64" else "MemoryReservationStation2_W1"
     inputs :=
-      [clock, reset, issue_en, issue_is_store, issue_is_atomic] ++
+      [clock, reset, issue_en, issue_is_store, issue_is_atomic, entry_at_head_0, entry_at_head_1] ++
       issue_opcode ++ issue_dest_tag ++ [issue_src1_ready] ++ issue_src1_tag ++ issue_src1_data ++
       [issue_src2_ready] ++ issue_src2_tag ++ issue_src2_data ++
       [cdb_valid_0, cdb_is_fp_0] ++ cdb_tag_0 ++ cdb_data_0 ++

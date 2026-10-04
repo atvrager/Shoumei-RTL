@@ -67,8 +67,6 @@ def queue1StepBool (q : QueueState Bool) (enq_valid deq_ready enq_data : Bool) :
 
 /-! ## Width=1 Bisimulation (9 gates, 32 input combinations) -/
 
-def q1w1 := mkQueue1StructuralComplete 1
-
 theorem q1w1_gate_count : q1w1.gates.length = 9 := by native_decide
 
 def evalQ1W1 (valid_st data0_st enq_valid enq_data0 deq_ready : Bool) :

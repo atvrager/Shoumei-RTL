@@ -25,6 +25,7 @@ Interface:
 
 import Shoumei.DSL
 import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.Circuits.Sequential.FPNormalize
 
 namespace Shoumei.Circuits.Sequential
 
@@ -54,6 +55,40 @@ private def mkAndChain (wires : List Wire) (pfx : String) : List Gate × Wire :=
       (gates ++ [Gate.mkAND cur w nxt], nxt)
     ) ([], w0)
 
+/-- Right barrel shifter that accumulates every bit shifted below position 0 into
+    `sticky_out`, so a subnormal result keeps its guard/round window and the
+    remainder below it stays visible. -/
+private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
+    (output : List Wire) (sticky_out : Wire) (zero_wire : Wire) (pfx : String) : List Gate :=
+  let w := input.length
+  let levels : List (List Wire) := (List.range 7).map fun level =>
+    if level == 0 then input
+    else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
+  let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
+  let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
+    let shift_by := 1 <<< level
+    let prev := levels[level]!
+    let curr := levels[level + 1]!
+    let sel := shift_amt[level]!
+    let prev_stk := stickies[level]!
+    let curr_stk := stickies[level + 1]!
+    let m_gates := (List.range w).map fun i =>
+      let shifted := if i + shift_by < w then prev[i + shift_by]! else zero_wire
+      Gate.mkMUX prev[i]! shifted sel curr[i]!
+    let lost_bits := (List.range (min shift_by w)).map fun i => prev[i]!
+    let (lost_or_gates, lost_or) := mkOrChain lost_bits (pfx ++ "_lost_" ++ toString level)
+    let stk_c := Wire.mk (pfx ++ "_stkc_" ++ toString level)
+    let s_gates := lost_or_gates ++ [
+      Gate.mkAND sel lost_or stk_c,
+      Gate.mkOR prev_stk stk_c curr_stk
+    ]
+    (acc.1 ++ m_gates, acc.2 ++ s_gates)
+  ) ([], [init_stk_gate])
+  let copy_gates := (List.range w).map fun i => Gate.mkBUF (levels[6]!)[i]! output[i]!
+  mux_gates ++ stk_gates ++ copy_gates ++ [Gate.mkBUF stickies[6]! sticky_out]
+
 /-- Build the 54-cycle iterative Double-Precision FP divider structural circuit. -/
 def mkFPDividerD : Circuit :=
   let src1_in := makeIndexedWires "src1" 64
@@ -81,7 +116,7 @@ def mkFPDividerD : Circuit :=
   let busy_q := Wire.mk "busy_q"
 
   let sign_q := Wire.mk "sign_q"
-  let exp_q := makeIndexedWires "exp_q" 11
+  let exp_q := makeIndexedWires "exp_q" 13
   let div_mant_q := makeIndexedWires "div_mant_q" 55
   let rem_q := makeIndexedWires "rem_q" 55
   let quot_q := makeIndexedWires "quot_q" 54
@@ -98,7 +133,7 @@ def mkFPDividerD : Circuit :=
   let busy_d := Wire.mk "busy_d"
 
   let sign_d := Wire.mk "sign_d"
-  let exp_d := makeIndexedWires "exp_d" 11
+  let exp_d := makeIndexedWires "exp_d" 13
   let div_mant_d := makeIndexedWires "div_mant_d" 55
   let rem_d := makeIndexedWires "rem_d" 55
   let quot_d := makeIndexedWires "quot_d" 54
@@ -205,6 +240,69 @@ def mkFPDividerD : Circuit :=
     Gate.mkAND is_nan_b not_src2_51 is_snan_b
   ]
 
+  -- ── Operand normalization ──────────────────────────────────────────────────
+  -- A nonzero subnormal operand has no implicit bit, so its fraction is shifted
+  -- up until its leading one reaches position 52 and its exponent field drops by
+  -- the same shift.  The mantissa is then in [1, 2), which is what the
+  -- comparison, the alignment muxes and the restoring division assume: they all
+  -- treat the two mantissas as integers of the same scale.  A normal operand
+  -- shifts by nothing.
+  let sub_a := Wire.mk "div_sub_a"
+  let sub_b := Wire.mk "div_sub_b"
+  let sub_gates := [
+    Gate.mkAND exp_a_all_zeros frac_a_any_set sub_a,
+    Gate.mkAND exp_b_all_zeros frac_b_any_set sub_b
+  ]
+
+  let pos_a := makeIndexedWires "div_pos_a" 6
+  let pos_b := makeIndexedWires "div_pos_b" 6
+  let (pos_a_w, lead_a_gates) := mkLeadPos "div_lza" frac_a zero 6
+  let (pos_b_w, lead_b_gates) := mkLeadPos "div_lzb" frac_b zero 6
+  let pos_a_gates := (List.range 6).map fun i => Gate.mkBUF (pos_a_w[i]!) (pos_a[i]!)
+  let pos_b_gates := (List.range 6).map fun i => Gate.mkBUF (pos_b_w[i]!) (pos_b[i]!)
+
+  -- Shift that brings the leading one to position 52: 52 - position.
+  let const52 := (List.range 6).map fun i =>
+    if i == 2 || i == 4 || i == 5 then one else zero
+  let sh_a := makeIndexedWires "div_sh_a" 6
+  let sh_b := makeIndexedWires "div_sh_b" 6
+  let (sh_a_gates, _sh_a_borrow) := mkKoggeStoneSub const52 pos_a sh_a "div_sh_a_sub" one
+  let (sh_b_gates, _sh_b_borrow) := mkKoggeStoneSub const52 pos_b sh_b "div_sh_b_sub" one
+
+  let norm_a := makeIndexedWires "div_norm_a" 53
+  let norm_b := makeIndexedWires "div_norm_b" 53
+  let norm_a_gates := mkBarrelShiftLeft (frac_a ++ [zero]) sh_a norm_a zero "div_bsla"
+  let norm_b_gates := mkBarrelShiftLeft (frac_b ++ [zero]) sh_b norm_b zero "div_bslb"
+
+  -- Mantissa in [1, 2): {1, fraction} for a normal operand, the shifted fraction
+  -- for a subnormal.
+  let mant_a := makeIndexedWires "div_mant_a" 53
+  let mant_b := makeIndexedWires "div_mant_b" 53
+  let mant_gates := (List.range 53).flatMap fun i =>
+    let raw_a := if i == 52 then one else frac_a[i]!
+    let raw_b := if i == 52 then one else frac_b[i]!
+    [Gate.mkMUX raw_a (norm_a[i]!) sub_a (mant_a[i]!),
+     Gate.mkMUX raw_b (norm_b[i]!) sub_b (mant_b[i]!)]
+  let frac_a_n := (List.range 52).map fun i => mant_a[i]!
+  let frac_b_n := (List.range 52).map fun i => mant_b[i]!
+
+  -- Effective exponent field at 13 bits: 1 - shift for a subnormal (a signed
+  -- value, hence the full width), the zero-extended field otherwise.
+  let one13 := (List.range 13).map fun i => if i == 0 then one else zero
+  let sh_a_13 := (List.range 13).map fun i => if i < 6 then sh_a[i]! else zero
+  let sh_b_13 := (List.range 13).map fun i => if i < 6 then sh_b[i]! else zero
+  let eff_a := makeIndexedWires "div_eff_a" 13
+  let eff_b := makeIndexedWires "div_eff_b" 13
+  let (eff_a_gates, _eff_a_borrow) := mkKoggeStoneSub one13 sh_a_13 eff_a "div_eff_a_sub" one
+  let (eff_b_gates, _eff_b_borrow) := mkKoggeStoneSub one13 sh_b_13 eff_b "div_eff_b_sub" one
+  let exp_a_n := makeIndexedWires "div_exp_a_n" 13
+  let exp_b_n := makeIndexedWires "div_exp_b_n" 13
+  let exp_norm_gates := (List.range 13).flatMap fun i =>
+    let raw_a := if i < 11 then exp_a[i]! else zero
+    let raw_b := if i < 11 then exp_b[i]! else zero
+    [Gate.mkMUX raw_a (eff_a[i]!) sub_a (exp_a_n[i]!),
+     Gate.mkMUX raw_b (eff_b[i]!) sub_b (exp_b_n[i]!)]
+
   -- Special case conditions
   let res_sign := Wire.mk "div_res_sign"
   let any_nan := Wire.mk "div_any_nan"
@@ -296,9 +394,10 @@ def mkFPDividerD : Circuit :=
   ]
 
   -- Normal division setup (start_new)
-  -- Mantissa pre-comparison: frac_a >= frac_b
+  -- Mantissa pre-comparison: mant_a >= mant_b, which reduces to the fraction
+  -- comparison because both integer parts are one
   let pre_diff := makeIndexedWires "div_pre_diff" 52
-  let (cmp_gates, pre_borrow) := mkKoggeStoneSub frac_a frac_b pre_diff "div_pre_cmp" one
+  let (cmp_gates, pre_borrow) := mkKoggeStoneSub frac_a_n frac_b_n pre_diff "div_pre_cmp" one
   let pre_ge := Wire.mk "div_pre_ge"
   let pre_ge_gate := Gate.mkNOT pre_borrow pre_ge
 
@@ -307,12 +406,12 @@ def mkFPDividerD : Circuit :=
   -- else:      {1, frac_a, 0} (54 bits)
   let op_a := makeIndexedWires "div_op_a" 54
   let op_a_gates := (List.range 54).map fun i =>
-    let ge_bit := if i < 52 then frac_a[i]! else if i == 52 then one else zero
-    let lt_bit := if i == 0 then zero else if i <= 52 then frac_a[i - 1]! else one
+    let ge_bit := if i < 53 then mant_a[i]! else zero
+    let lt_bit := if i == 0 then zero else mant_a[i - 1]!
     Gate.mkMUX lt_bit ge_bit pre_ge (op_a[i]!)
 
   -- op_b: {0, 1, frac_b} (54 bits)
-  let op_b := (List.range 52).map (fun i => frac_b[i]!) ++ [one, zero]
+  let op_b := frac_b_n ++ [mant_b[52]!, zero]
 
   -- init_rem_54 = op_a - op_b
   let init_rem_54 := makeIndexedWires "div_init_rem54" 54
@@ -321,28 +420,29 @@ def mkFPDividerD : Circuit :=
 
   -- init_exp computation:
   -- bias_adj = pre_ge ? 1023 : 1022
-  let exp_a_12 := exp_a ++ [zero]
-  let bias_12 : List Wire := (List.range 12).map fun i =>
+  let bias_13 : List Wire := (List.range 13).map fun i =>
     if i == 0 then pre_ge
     else if i < 10 then one
     else zero
 
-  let exp_biased := makeIndexedWires "div_exp_biased" 12
-  let (ea_add_gates, _) := mkKoggeStoneAdd exp_a_12 bias_12 zero exp_biased "div_ea_add"
+  let exp_biased := makeIndexedWires "div_exp_biased" 13
+  let (ea_add_gates, _) := mkKoggeStoneAdd exp_a_n bias_13 zero exp_biased "div_ea_add"
 
-  let exp_b_12 := exp_b ++ [zero]
-  let init_exp_12 := makeIndexedWires "div_init_exp12" 12
-  let (ea_sub_gates, _) := mkKoggeStoneSub exp_biased exp_b_12 init_exp_12 "div_ea_sub" one
-  let init_exp := (List.range 11).map fun i => init_exp_12[i]!
+  let init_exp_13 := makeIndexedWires "div_init_exp13" 13
+  let (ea_sub_gates, _) := mkKoggeStoneSub exp_biased exp_b_n init_exp_13 "div_ea_sub" one
+  -- 13 bits: a double-precision quotient exponent spans -1024..3070, and 12 bits
+  -- wrap a large exponent into the subnormal range.
+  let init_exp := (List.range 13).map fun i => init_exp_13[i]!
 
   -- div_mant_init: {0, 0, 1, frac_b} (55 bits)
-  let div_mant_init := (List.range 52).map (fun i => frac_b[i]!) ++ [one, zero, zero]
+  let div_mant_init := frac_b_n ++ [mant_b[52]!, zero, zero]
 
   -- Iterative step logic (54 cycles):
   -- rem_shifted = {rem_q[53:0], 1'b0} (55 bits)
   let rem_shifted := [zero] ++ (List.range 54).map (fun i => rem_q[i]!)
   let trial := makeIndexedWires "div_trial" 55
-  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted div_mant_q trial "div_step_sub" one
+  let (trial_sub_gates, trial_borrow) := mkKoggeStoneSub rem_shifted div_mant_q trial "div_step_sub"
+    one
   let q_bit := Wire.mk "div_q_bit"
   let qb_gate := Gate.mkNOT trial_borrow q_bit
 
@@ -368,7 +468,7 @@ def mkFPDividerD : Circuit :=
   let div_mant_mux_gates := (List.range 55).map fun i =>
     Gate.mkMUX (div_mant_q[i]!) (div_mant_init[i]!) start_new (div_mant_d[i]!)
 
-  let exp_mux_gates := (List.range 11).map fun i =>
+  let exp_mux_gates := (List.range 13).map fun i =>
     Gate.mkMUX (exp_q[i]!) (init_exp[i]!) start_new (exp_d[i]!)
 
   let sign_mux_gate := Gate.mkMUX sign_q res_sign start_new sign_d
@@ -471,20 +571,172 @@ def mkFPDividerD : Circuit :=
   let rollover_up := Wire.mk "div_rollover_up"
   let ro_gate := Gate.mkAND frac_rollover round_up rollover_up
 
-  let zero11 := (List.range 11).map fun _ => zero
-  let exp_inc := makeIndexedWires "div_exp_inc" 11
-  let (exp_inc_gates, _) := mkKoggeStoneAdd exp_q zero11 one exp_inc "div_exp_inc"
+  let zero13 := (List.range 13).map fun _ => zero
+  let exp_inc := makeIndexedWires "div_exp_inc" 13
+  let (exp_inc_gates, _) := mkKoggeStoneAdd exp_q zero13 one exp_inc "div_exp_inc"
 
-  let final_exp := makeIndexedWires "div_final_exp" 11
-  let final_exp_gates := (List.range 11).map fun i =>
+  let final_exp := makeIndexedWires "div_final_exp" 13
+  let final_exp_gates := (List.range 13).map fun i =>
     Gate.mkMUX (exp_q[i]!) (exp_inc[i]!) rollover_up (final_exp[i]!)
 
-  -- Result assembler
-  let norm_res := (List.range 52).map (fun i => final_frac[i]!) ++
-                  (List.range 11).map (fun i => final_exp[i]!) ++
-                  [sign_q]
+  -- ── Subnormal and overflowing results ──────────────────────────────────────
+  -- A quotient below the minimum normal is emitted with exponent field 0 and a
+  -- mantissa counted in multiples of 2^-1074: the normalized quotient is shifted
+  -- down by (4 - final_exp) and the division remainder below its last bit joins
+  -- the shifted-out bits in the sticky.  An exponent at or past 2^1024 is
+  -- infinity with OF.
+  let sub_neg := final_exp[12]!
+  let (final_exp_any_gates, final_exp_any) := mkOrChain final_exp "div_fexp_or"
+  let final_exp_zero := Wire.mk "div_fexp_zero"
+  let final_exp_le0 := Wire.mk "div_fexp_le0"
+  let subnormal_res := Wire.mk "div_subres"
+  let (exp_final_lo_gates, exp_final_lo) := mkAndChain ((List.range 11).map fun i => final_exp[i]!)
+    "div_fexp_lo"
+  let exp_final_n12 := Wire.mk "div_fexp_n12"
+  let ovf_cand := Wire.mk "div_ovf_cand"
+  let ovf_pre := Wire.mk "div_ovf_pre"
+  let ovf_res := Wire.mk "div_ovf"
+  let ovf_to_inf := Wire.mk "div_ovftoinf"
+  let ovf_not_to_inf := Wire.mk "div_ovfnti"
+  let ovf_inf := Wire.mk "div_ovfinf"
+  let ovf_max := Wire.mk "div_ovfmax"
+  let subres_gates := [
+    Gate.mkNOT final_exp_any final_exp_zero,
+    Gate.mkOR final_exp_zero sub_neg final_exp_le0,
+    Gate.mkBUF final_exp_le0 subnormal_res,
+    -- Overflow is exponent 2047 or more: bit 12 must be clear (that would be a
+    -- negative exponent) and the low twelve bits must reach 2047.
+    Gate.mkNOT (final_exp[12]!) exp_final_n12,
+    Gate.mkOR (final_exp[11]!) exp_final_lo ovf_cand,
+    Gate.mkAND exp_final_n12 ovf_cand ovf_pre,
+    Gate.mkBUF ovf_pre ovf_res,
+    -- IEEE 754 section 7.4: an overflowing quotient is an infinity only when
+    -- the rounding direction points away from zero for this sign.  Toward zero
+    -- is rtz always, rdn for a positive quotient and rup for a negative one;
+    -- round to nearest counts as away.  The other modes saturate to the
+    -- largest finite magnitude.
+    Gate.mkAND rm_is_2 not_sign_q (Wire.mk "div_ovf_tzrdn"),
+    Gate.mkAND rm_is_3 sign_q (Wire.mk "div_ovf_tzrup"),
+    Gate.mkOR rm_is_1 (Wire.mk "div_ovf_tzrdn") (Wire.mk "div_ovf_tza"),
+    Gate.mkOR (Wire.mk "div_ovf_tza") (Wire.mk "div_ovf_tzrup") (Wire.mk "div_ovf_tzany"),
+    Gate.mkNOT (Wire.mk "div_ovf_tzany") ovf_to_inf,
+    Gate.mkNOT ovf_to_inf ovf_not_to_inf,
+    Gate.mkAND ovf_res ovf_to_inf ovf_inf,
+    Gate.mkAND ovf_res ovf_not_to_inf ovf_max
+  ]
 
-  let norm_exc := [any_round, zero, zero, zero, zero]
+  -- Window: implicit one at 55, fraction at [54:3], guard/round at [1:0].
+  let four_13 := (List.range 13).map fun i => if i == 2 then one else zero
+  let sub_shift13 := makeIndexedWires "div_subsh13" 13
+  let (sub_shift13_gates, _sub_shift13_borrow) :=
+    mkKoggeStoneSub four_13 final_exp sub_shift13 "div_subsh13" one
+  let (sub_over_gates, sub_over) := mkOrChain ((List.range 7).map fun i => sub_shift13[6 + i]!)
+    "div_subover"
+  let sub_shift := makeIndexedWires "div_subsh" 6
+  let sub_shift_gates := (List.range 6).map fun i =>
+    Gate.mkMUX (sub_shift13[i]!) one sub_over (sub_shift[i]!)
+
+  let sub_window := makeIndexedWires "div_subwin" 56
+  let sub_window_gates := [
+    Gate.mkBUF zero (sub_window[0]!), Gate.mkBUF zero (sub_window[1]!),
+    Gate.mkBUF zero (sub_window[2]!), Gate.mkBUF one (sub_window[55]!)
+  ] ++ (List.range 52).map fun i => Gate.mkBUF (frac_out[i]!) (sub_window[3 + i]!)
+  let sub_in := [zero, zero] ++ sub_window
+  let sub_shifted := makeIndexedWires "div_subshifted" 58
+  let sub_sticky_shift := Wire.mk "div_substk"
+  let sub_barrel_gates :=
+    mkBarrelShiftRightSticky sub_in sub_shift sub_shifted sub_sticky_shift zero "div_sbr"
+  let sub_R := sub_shifted[0]!
+  let sub_G := sub_shifted[1]!
+  let sub_mant := makeIndexedWires "div_submant" 52
+  let sub_mant_gates := (List.range 52).map fun i =>
+    Gate.mkBUF (sub_shifted[2 + i]!) (sub_mant[i]!)
+
+  let sub_sticky := Wire.mk "div_substk_all"
+  let sub_sticky_gate := Gate.mkOR sub_sticky_shift sticky sub_sticky
+  let sub_rs_or := Wire.mk "div_subrs"
+  let sub_rne := Wire.mk "div_subrne"
+  let sub_any_rem := Wire.mk "div_subany"
+  let sub_rdn := Wire.mk "div_subrdn"
+  let sub_rup := Wire.mk "div_subrup"
+  let sub_t0 := Wire.mk "div_subt0"
+  let sub_t1 := Wire.mk "div_subt1"
+  let sub_round_pre := Wire.mk "div_subrpre"
+  let sub_round := Wire.mk "div_subround"
+  let sub_rnd_gates := [
+    Gate.mkOR sub_R sub_sticky sub_rs_or,
+    Gate.mkOR sub_rs_or (sub_mant[0]!) sub_rne,
+    Gate.mkAND sub_G sub_rne (Wire.mk "div_subrneup"),
+    Gate.mkOR sub_G sub_rs_or sub_any_rem,
+    Gate.mkAND sub_any_rem sign_q sub_rdn,
+    Gate.mkAND sub_any_rem not_sign_q sub_rup,
+    Gate.mkMUX (Wire.mk "div_subrneup") sub_rdn rm_is_2 sub_t0,
+    Gate.mkMUX sub_t0 sub_rup rm_is_3 sub_t1,
+    Gate.mkMUX sub_t1 sub_G rm_is_4 sub_round_pre,
+    Gate.mkMUX sub_round_pre zero rm_is_1 sub_round
+  ]
+
+  let sub_inc := makeIndexedWires "div_subinc" 52
+  let sub_c := makeIndexedWires "div_subc" 53
+  let sub_inc_gates := [Gate.mkBUF sub_round (sub_c[0]!)] ++ (List.range 52).flatMap fun i =>
+    [Gate.mkXOR (sub_mant[i]!) (sub_c[i]!) (sub_inc[i]!),
+     Gate.mkAND (sub_mant[i]!) (sub_c[i]!) (sub_c[i + 1]!)]
+  let sub_carry := sub_c[52]!
+  let sub_not_carry := Wire.mk "div_subncarry"
+  let sub_final_mant := makeIndexedWires "div_subfm" 52
+  let sub_final_mant_gates := [Gate.mkNOT sub_carry sub_not_carry] ++
+    (List.range 52).map fun i =>
+      Gate.mkAND (sub_inc[i]!) sub_not_carry (sub_final_mant[i]!)
+  let (sub_mant_any_gates, sub_mant_any) := mkOrChain sub_final_mant "div_submany"
+  let sub_mant_nz := Wire.mk "div_submnz"
+  let sub_zero_pre := Wire.mk "div_subzpre"
+  let sub_zero := Wire.mk "div_subzero"
+  let sub_zero_gates := [
+    Gate.mkNOT sub_mant_any sub_mant_nz,
+    Gate.mkAND subnormal_res sub_not_carry sub_zero_pre,
+    Gate.mkAND sub_zero_pre sub_mant_nz sub_zero
+  ]
+
+  -- Result assembler: normal, else subnormal, else the overflowing infinity, and
+  -- a subnormal that rounded to zero becomes zero.  The sign is kept throughout.
+  let norm_res := makeIndexedWires "div_norm_res" 64
+  let mkNormBit (i : Nat) : List Gate :=
+    if i == 63 then [Gate.mkBUF sign_q (norm_res[i]!)]
+    else
+      let normal_bit := if i < 52 then final_frac[i]! else final_exp[i - 52]!
+      let sub_bit := if i < 52 then sub_final_mant[i]!
+                     else if i == 52 then sub_carry else zero
+      -- An infinity is exponent all ones with a zero fraction; the largest
+      -- finite magnitude is the exponent field all ones minus one, so only its
+      -- low bit (bit 52) differs, with an all-ones fraction.
+      let ovf_inf_bit := if i < 52 then zero else one
+      let ovf_max_bit := if i == 52 then zero else one
+      let m1 := Wire.mk s!"div_nr1_{i}"
+      let m2 := Wire.mk s!"div_nr2_{i}"
+      let m3 := Wire.mk s!"div_nr3_{i}"
+      let m4 := Wire.mk s!"div_nr4_{i}"
+      [Gate.mkMUX normal_bit sub_bit subnormal_res m1,
+       Gate.mkMUX m1 ovf_max_bit ovf_max m2,
+       Gate.mkMUX m2 ovf_inf_bit ovf_inf m3,
+       Gate.mkMUX m3 zero sub_zero m4,
+       Gate.mkBUF m4 (norm_res[i]!)]
+  let norm_res_gates := (List.range 64).flatMap mkNormBit
+
+  let norm_exc := [
+    Wire.mk "div_nxor",
+    Wire.mk "div_ufand",
+    Wire.mk "div_ofand",
+    zero,
+    zero]
+  let norm_exc_gates := [
+    -- NX: the subnormal path measures its own remainder; a saturated result is
+    -- inexact too.  UF needs a tiny and inexact result.  subnormal_res confirms
+    -- tininess after normal rounding.  Any remainder sets inexact.
+    Gate.mkMUX any_round sub_any_rem subnormal_res (Wire.mk "div_nxmux"),
+    Gate.mkOR (Wire.mk "div_nxmux") ovf_res (norm_exc[0]!),
+    Gate.mkAND subnormal_res sub_any_rem (norm_exc[1]!),
+    Gate.mkBUF ovf_res (norm_exc[2]!)
+  ]
 
   let res_gates := (List.range 64).map fun i =>
     Gate.mkMUX (norm_res[i]!) (sp_res_q[i]!) is_special_q (result[i]!)
@@ -503,7 +755,7 @@ def mkFPDividerD : Circuit :=
     (List.range 6).map (fun i => Gate.mkDFF (cnt_d[i]!) clock reset (cnt_q[i]!)) ++
     [Gate.mkDFF busy_d clock reset busy_q] ++
     [Gate.mkDFF sign_d clock reset sign_q] ++
-    (List.range 11).map (fun i => Gate.mkDFF (exp_d[i]!) clock reset (exp_q[i]!)) ++
+    (List.range 13).map (fun i => Gate.mkDFF (exp_d[i]!) clock reset (exp_q[i]!)) ++
     (List.range 55).map (fun i => Gate.mkDFF (div_mant_d[i]!) clock reset (div_mant_q[i]!)) ++
     (List.range 55).map (fun i => Gate.mkDFF (rem_d[i]!) clock reset (rem_q[i]!)) ++
     (List.range 54).map (fun i => Gate.mkDFF (quot_d[i]!) clock reset (quot_q[i]!)) ++
@@ -515,6 +767,9 @@ def mkFPDividerD : Circuit :=
     ctrl_gates ++ done_gates ++ cnt_inc_gates ++ cnt_mux_gates ++
     ea_ao_gates ++ ea_oz_gates ++ [ea_allz_gate] ++ fa_any_gates ++
     eb_ao_gates ++ eb_oz_gates ++ [eb_allz_gate] ++ fb_any_gates ++
+    sub_gates ++ lead_a_gates ++ lead_b_gates ++ pos_a_gates ++ pos_b_gates ++
+    sh_a_gates ++ sh_b_gates ++ norm_a_gates ++ norm_b_gates ++ mant_gates ++
+    eff_a_gates ++ eff_b_gates ++ exp_norm_gates ++
     class_gates ++ sp_cond_gates ++ sp_res_gates ++ sp_exc_gates ++
     cmp_gates ++ [pre_ge_gate] ++ op_a_gates ++ init_sub_gates ++
     ea_add_gates ++ ea_sub_gates ++
@@ -524,6 +779,11 @@ def mkFPDividerD : Circuit :=
     src1_mux_gates ++ src2_mux_gates ++ rm_mux_gates ++ tag_mux_gates ++
     sticky_gates ++ rnd_cond_gates ++ rm_dec_gates ++ rnd_eval_gates ++
     rnd_add_gates ++ final_frac_gates ++ [ro_gate] ++ exp_inc_gates ++ final_exp_gates ++
+    final_exp_any_gates ++ exp_final_lo_gates ++ subres_gates ++
+    sub_shift13_gates ++ sub_over_gates ++ sub_shift_gates ++
+    sub_window_gates ++ sub_barrel_gates ++ sub_mant_gates ++ [sub_sticky_gate] ++
+    sub_rnd_gates ++ sub_inc_gates ++ sub_final_mant_gates ++
+    sub_mant_any_gates ++ sub_zero_gates ++ norm_res_gates ++ norm_exc_gates ++
     res_gates ++ tag_gates ++ exc_out_gates ++ all_dffs
 
   { name := "FPDividerD"

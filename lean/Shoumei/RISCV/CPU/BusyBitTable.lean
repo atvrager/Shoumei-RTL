@@ -20,6 +20,7 @@ def mkBusyBitTable1
     (clock global_reset : Wire) (flush_groups : List Wire) (zero one : Wire)
     (set_tag : List Wire) (set_en : Wire)
     (clear_tag : List Wire) (clear_en : Wire)
+    (clear_tag_1 : List Wire) (clear_en_1 : Wire)
     (read1_tag : List Wire) (read2_tag : List Wire) (read3_tag : List Wire)
     (use_imm : Option Wire := none)
     (src1_ready src2_ready src3_busy_raw : Wire)
@@ -29,6 +30,7 @@ def mkBusyBitTable1
   -- Decoder instances for set and clear paths
   let set_decode := (List.range 64).map fun i => mkW s!"{pfx}_set_dec_{i}"
   let clear_decode := (List.range 64).map fun i => mkW s!"{pfx}_clr_dec_{i}"
+  let clear_decode_1 := (List.range 64).map fun i => mkW s!"{pfx}_clr1_dec_{i}"
 
   let set_dec_inst : CircuitInstance := {
     moduleName := "Decoder6"
@@ -43,6 +45,13 @@ def mkBusyBitTable1
     portMap :=
       (clear_tag.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
       (clear_decode.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
+  }
+  let clear_dec_1_inst : CircuitInstance := {
+    moduleName := "Decoder6"
+    instName := s!"u_{pfx}_clr1_dec"
+    portMap :=
+      (clear_tag_1.enum.map (fun ⟨i, w⟩ => (s!"in_{i}", w))) ++
+      (clear_decode_1.enum.map (fun ⟨i, w⟩ => (s!"out_{i}", w)))
   }
 
   -- 64 busy bits: DFF + next-state logic
@@ -60,10 +69,16 @@ def mkBusyBitTable1
   let perBitGates := (List.range 64).map fun i =>
     let set_i := mkW s!"{pfx}_set_{i}"
     let clr_i := mkW s!"{pfx}_clr_{i}"
+    let clr0_i := mkW s!"{pfx}_clr0_{i}"
+    let clr1_i := mkW s!"{pfx}_clr1_{i}"
     let mux1 := mkW s!"{pfx}_mux1_{i}"
     [
       Gate.mkAND set_en set_decode[i]! set_i,
-      Gate.mkAND clear_en clear_decode[i]! clr_i,
+      -- Two clear ports: one result per CDB channel, so both must be able to
+      -- retire a busy bit in the same cycle.
+      Gate.mkAND clear_en clear_decode[i]! clr0_i,
+      Gate.mkAND clear_en_1 clear_decode_1[i]! clr1_i,
+      Gate.mkOR clr0_i clr1_i clr_i,
       Gate.mkMUX busy_cur[i]! zero clr_i mux1,
       Gate.mkMUX mux1 one set_i busy_next[i]!
     ]
@@ -116,7 +131,7 @@ def mkBusyBitTable1
     [Gate.mkBUF busy_rs3 src3_busy_raw]
 
   let allGates := resetGroupGates ++ perBitGates.flatten ++ mux1_gates ++ mux2_gates ++ mux3_gates ++ readyGates
-  let allInstances := [set_dec_inst, clear_dec_inst] ++ perBitInstances
+  let allInstances := [set_dec_inst, clear_dec_inst, clear_dec_1_inst] ++ perBitInstances
   (allGates, allInstances)
 
 /--
@@ -332,6 +347,8 @@ def mkFPBusyTable : Circuit :=
   let set_en := Wire.mk "set_en"
   let clear_tag := (List.range 6).map fun i => Wire.mk s!"clear_tag_{i}"
   let clear_en := Wire.mk "clear_en"
+  let clear_tag_1 := (List.range 6).map fun i => Wire.mk s!"clear_tag_1_{i}"
+  let clear_en_1 := Wire.mk "clear_en_1"
   let read1_tag := (List.range 6).map fun i => Wire.mk s!"read1_tag_{i}"
   let read2_tag := (List.range 6).map fun i => Wire.mk s!"read2_tag_{i}"
   let read3_tag := (List.range 6).map fun i => Wire.mk s!"read3_tag_{i}"
@@ -342,6 +359,7 @@ def mkFPBusyTable : Circuit :=
     clock reset flush_groups zero one
     set_tag set_en
     clear_tag clear_en
+    clear_tag_1 clear_en_1
     read1_tag read2_tag read3_tag
     none
     src1_ready src2_ready src3_busy_raw
@@ -350,6 +368,7 @@ def mkFPBusyTable : Circuit :=
     inputs := [clock, reset, zero, one] ++ flush_groups ++
               set_tag ++ [set_en] ++
               clear_tag ++ [clear_en] ++
+              clear_tag_1 ++ [clear_en_1] ++
               read1_tag ++ read2_tag ++ read3_tag
     outputs := [src1_ready, src2_ready, src3_busy_raw]
     gates := gates

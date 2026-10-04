@@ -95,6 +95,43 @@ private def mkBarrelShiftLeft48 (input : List Wire) (shift_amt : List Wire)
     Gate.mkBUF ((levels[6]!)[i]!) (output[i]!)
   mux_gates ++ copy_gates
 
+/-- Right barrel shifter that accumulates every bit shifted below position 0
+    into `sticky_out`.  Two extra input positions above the data let the guard and
+    round bits survive the shift while the remainder below them is still visible,
+    which is what a subnormal result needs. -/
+private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
+    (output : List Wire) (sticky_out : Wire) (zero_wire : Wire) (pfx : String) : List Gate :=
+  let w := input.length
+  let levels : List (List Wire) := (List.range 7).map fun level =>
+    if level == 0 then input
+    else (List.range w).map fun i => Wire.mk (pfx ++ "_l" ++ toString level ++ "_" ++ toString i)
+  let stickies : List Wire := (List.range 7).map fun level => Wire.mk (pfx ++ "_stk_" ++ toString
+    level)
+  let init_stk_gate := Gate.mkBUF zero_wire stickies[0]!
+  let (mux_gates, stk_gates) := (List.range 6).foldl (fun (acc : List Gate × List Gate) level =>
+    let shift_by := 1 <<< level
+    let prev := levels[level]!
+    let curr := levels[level + 1]!
+    let sel := shift_amt[level]!
+    let prev_stk := stickies[level]!
+    let curr_stk := stickies[level + 1]!
+    let m_gates := (List.range w).map fun i =>
+      let shifted := if i + shift_by < w then prev[i + shift_by]! else zero_wire
+      Gate.mkMUX prev[i]! shifted sel curr[i]!
+    let lost_bits := (List.range (min shift_by w)).map fun i => prev[i]!
+    let (lost_or, lost_or_gates) := mkOrTree (pfx ++ "_lost_" ++ toString level) lost_bits
+    let stk_c := Wire.mk (pfx ++ "_stkc_" ++ toString level)
+    let s_gates := lost_or_gates ++ [
+      Gate.mkAND sel lost_or stk_c,
+      Gate.mkOR prev_stk stk_c curr_stk
+    ]
+    (acc.1 ++ m_gates, acc.2 ++ s_gates)
+  ) ([], [init_stk_gate])
+  let copy_gates := (List.range w).map fun i =>
+    Gate.mkBUF (levels[6]!)[i]! output[i]!
+  let final_stk_gate := Gate.mkBUF stickies[6]! sticky_out
+  mux_gates ++ stk_gates ++ copy_gates ++ [final_stk_gate]
+
 /-- Build a 3-stage pipelined FP multiplier circuit with CSA tree multiplication.
 
     Pipeline:
@@ -173,6 +210,22 @@ def mkFPMultiplier : Circuit :=
     Gate.mkOR is_nan1 is_nan2 either_nan
   ]
 
+  -- A signaling NaN is a NaN whose significand's top bit, the quiet bit, is
+  -- clear.  Only it raises NV; a quiet NaN propagates as the canonical NaN
+  -- without setting a flag.
+  let not_quiet1 := Wire.mk "mul_nq1"
+  let not_quiet2 := Wire.mk "mul_nq2"
+  let is_snan1 := Wire.mk "mul_is_snan1"
+  let is_snan2 := Wire.mk "mul_is_snan2"
+  let either_snan := Wire.mk "mul_either_snan"
+  let snan_gates := [
+    Gate.mkNOT (s1_src1[22]!) not_quiet1,
+    Gate.mkNOT (s1_src2[22]!) not_quiet2,
+    Gate.mkAND is_nan1 not_quiet1 is_snan1,
+    Gate.mkAND is_nan2 not_quiet2 is_snan2,
+    Gate.mkOR is_snan1 is_snan2 either_snan
+  ]
+
   -- Inf detection
   let not_mant1_nz := Wire.mk "mul_nm1nz"
   let not_mant2_nz := Wire.mk "mul_nm2nz"
@@ -230,17 +283,22 @@ def mkFPMultiplier : Circuit :=
     (List.range 7).map fun i =>
       Gate.mkMUX (exp_b[i + 1]!) zero is_subnorm_b (eff_exp_b[i + 1]!)
 
-  -- Exponent sum: eff_exp_a + eff_exp_b (9-bit KSA)
-  let exp_a9 := eff_exp_a ++ [zero]
-  let exp_b9 := eff_exp_b ++ [zero]
-  let exp_sum := makeIndexedWires "fp_expsum" 9
-  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp_a9.length .none) exp_a9 exp_b9 zero exp_sum "fp_expadd"
+  -- Exponent sum: eff_exp_a + eff_exp_b (10-bit KSA).  The sign bit is needed to
+  -- tell underflow from overflow, which 9 bits cannot do: the product exponent
+  -- ranges from -125 to 381, so 256..381 collides with the negative range on the
+  -- single available high bit.
+  let exp_a10 := eff_exp_a ++ [zero, zero]
+  let exp_b10 := eff_exp_b ++ [zero, zero]
+  let exp_sum := makeIndexedWires "fp_expsum" 10
+  let (exp_add_gates, _) := mkAddFor (AdderSpec.minArea exp_a10.length .none) exp_a10 exp_b10 zero
+    exp_sum "fp_expadd"
 
   -- Subtract bias (127): exp_unbiased = exp_sum - 127
-  let bias9 := (List.range 9).map fun i =>
+  let bias10 := (List.range 10).map fun i =>
     if i < 7 then one_w else zero
-  let exp_unbiased := makeIndexedWires "fp_expub" 9
-  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum.length .one) exp_sum bias9 exp_unbiased "fp_expsub" one_w
+  let exp_unbiased := makeIndexedWires "fp_expub" 10
+  let (exp_sub_gates, _) := mkSubFor (AdderSpec.minArea exp_sum.length .one) exp_sum bias10
+    exp_unbiased "fp_expsub" one_w
 
   -- Generate 24 partial products (each 48 bits, shifted)
   let pp_rows := (List.range 24).map fun j =>
@@ -258,16 +316,19 @@ def mkFPMultiplier : Circuit :=
   let (csa_sum, csa_carry, csa_tree_gates, csa_instances) :=
     mkCSATreeHierarchical pp_wires zero 48
 
-  -- NV = either_nan | (inf1 & zero2) | (zero1 & inf2)
+  -- NV = signaling NaN | (inf1 & zero2) | (zero1 & inf2)
   let inf1_zero2 := Wire.mk "mul_inf1_zero2"
   let zero1_inf2 := Wire.mk "mul_zero1_inf2"
   let inf_zero := Wire.mk "mul_inf_zero"
   let mul_nv := Wire.mk "mul_nv"
+  let mul_nan_res := Wire.mk "mul_nan_res"
   let nv_gates := [
     Gate.mkAND is_inf1 is_zero2 inf1_zero2,
     Gate.mkAND is_zero1 is_inf2 zero1_inf2,
     Gate.mkOR inf1_zero2 zero1_inf2 inf_zero,
-    Gate.mkOR either_nan inf_zero mul_nv
+    Gate.mkOR either_snan inf_zero mul_nv,
+    -- The canonical-NaN result still applies to every NaN, quiet or not.
+    Gate.mkOR either_nan inf_zero mul_nan_res
   ]
 
   -- any_special = either_nan | inf1 | inf2 | zero1 | zero2
@@ -288,7 +349,7 @@ def mkFPMultiplier : Circuit :=
   -- Stage 2 pipeline registers: latch intermediate results
   -- ══════════════════════════════════════════════
   let s2_rsign := Wire.mk "s2_rsign"
-  let s2_expub := makeIndexedWires "s2_expub" 9
+  let s2_expub := makeIndexedWires "s2_expub" 10
   let s2_csa_sum := makeIndexedWires "s2_csa_sum" 48
   let s2_csa_carry := makeIndexedWires "s2_csa_carry" 48
   let s2_rm := makeIndexedWires "s2_rm" 3
@@ -320,17 +381,114 @@ def mkFPMultiplier : Circuit :=
   let norm_mant := makeIndexedWires "fp_nmant" 23
   let norm_mant_gates := mkMuxBank mant_unshifted mant_shifted (product[47]!) norm_mant
 
-  let exp_inc_b := (List.range 9).map fun i =>
+  let exp_inc_b := (List.range 10).map fun i =>
     if i == 0 then product[47]! else zero
-  let final_exp := makeIndexedWires "fp_fexp" 9
+  let final_exp := makeIndexedWires "fp_fexp" 10
   let (final_exp_gates, _) := mkKoggeStoneAdd s2_expub exp_inc_b zero final_exp "fp_fexpadd"
+
+  -- Guard, round and sticky for the normal path.  product[47] selects whether the
+  -- mantissa is taken shifted (top bit set) or not, which moves all three by one
+  -- position; everything below sticky is the remainder.
+  let (norm_S_a, norm_S_a_gates) :=
+    mkOrTree "fp_ns_a" ((List.range 22).map fun i => product[i]!)
+  let (norm_S_b, norm_S_b_gates) :=
+    mkOrTree "fp_ns_b" ((List.range 21).map fun i => product[i]!)
+  let norm_G := Wire.mk "fp_ng"
+  let norm_R := Wire.mk "fp_nr"
+  let norm_S := Wire.mk "fp_ns"
+  let norm_grs_gates := [
+    Gate.mkMUX (product[22]!) (product[23]!) (product[47]!) norm_G,
+    Gate.mkMUX (product[21]!) (product[22]!) (product[47]!) norm_R,
+    Gate.mkMUX norm_S_b norm_S_a (product[47]!) norm_S
+  ]
+
+  -- Rounding-mode decode, as in FPMultiplierD and the adders: RISC-V rm is
+  -- 000 RNE, 001 RTZ, 010 RDN, 011 RUP, 100 RMM, and 101..111 behave as RNE.
+  let rs_or := Wire.mk "fp_rs_or"
+  let grs_or := Wire.mk "fp_grs_or"
+  let rne_cand := Wire.mk "fp_rne_cand"
+  let rne_up := Wire.mk "fp_rne_up"
+  let any_rem := Wire.mk "fp_any_rem"
+  let rdn_up := Wire.mk "fp_rdn_up"
+  let rup_up := Wire.mk "fp_rup_up"
+  let not_sign := Wire.mk "fp_not_sign"
+  let not_rm0 := Wire.mk "fp_not_rm0"
+  let not_rm1 := Wire.mk "fp_not_rm1"
+  let not_rm2 := Wire.mk "fp_not_rm2"
+  let is_rtz := Wire.mk "fp_is_rtz"
+  let is_rdn := Wire.mk "fp_is_rdn"
+  let is_rup := Wire.mk "fp_is_rup"
+  let is_rmm := Wire.mk "fp_is_rmm"
+  let grp_n2n1 := Wire.mk "fp_grp_n2n1"
+  let grp_n2p1 := Wire.mk "fp_grp_n2p1"
+  let grp_p2n1 := Wire.mk "fp_grp_p2n1"
+  let up_rdn := Wire.mk "fp_up_rdn"
+  let up_rup := Wire.mk "fp_up_rup"
+  let up_rmm := Wire.mk "fp_up_rmm"
+  let round_up := Wire.mk "fp_round_up"
+  let rnd_cond_gates := [
+    Gate.mkOR norm_R norm_S rs_or,
+    Gate.mkOR norm_G rs_or grs_or,
+    Gate.mkOR rs_or (norm_mant[0]!) rne_cand,
+    Gate.mkAND norm_G rne_cand rne_up,
+    Gate.mkOR norm_G rs_or any_rem,
+    Gate.mkNOT s2_rsign not_sign,
+    Gate.mkAND any_rem s2_rsign rdn_up,
+    Gate.mkAND any_rem not_sign rup_up,
+    Gate.mkNOT (s2_rm[0]!) not_rm0,
+    Gate.mkNOT (s2_rm[1]!) not_rm1,
+    Gate.mkNOT (s2_rm[2]!) not_rm2,
+    Gate.mkAND not_rm2 not_rm1 grp_n2n1,
+    Gate.mkAND grp_n2n1 (s2_rm[0]!) is_rtz,
+    Gate.mkAND not_rm2 (s2_rm[1]!) grp_n2p1,
+    Gate.mkAND grp_n2p1 not_rm0 is_rdn,
+    Gate.mkAND grp_n2p1 (s2_rm[0]!) is_rup,
+    Gate.mkAND (s2_rm[2]!) not_rm1 grp_p2n1,
+    Gate.mkAND grp_p2n1 not_rm0 is_rmm,
+    Gate.mkMUX rne_up rdn_up is_rdn up_rdn,
+    Gate.mkMUX up_rdn rup_up is_rup up_rup,
+    Gate.mkMUX up_rup norm_G is_rmm up_rmm,
+    Gate.mkMUX up_rmm zero is_rtz round_up
+  ]
+
+  let norm_mant_inc := makeIndexedWires "fp_nm_inc" 23
+  let norm_mant_c := makeIndexedWires "fp_nm_c" 24
+  let norm_mant_inc_gates := [Gate.mkBUF round_up (norm_mant_c[0]!)] ++ (List.range 23).flatMap fun
+    i =>
+    [Gate.mkXOR (norm_mant[i]!) (norm_mant_c[i]!) (norm_mant_inc[i]!),
+     Gate.mkAND (norm_mant[i]!) (norm_mant_c[i]!) (norm_mant_c[i + 1]!)]
+  let norm_rollover := norm_mant_c[23]!
+  let norm_not_roll := Wire.mk "fp_nm_nroll"
+  let norm_mant_final := makeIndexedWires "fp_nm_fin" 23
+  let norm_mant_final_gates := [Gate.mkNOT norm_rollover norm_not_roll] ++
+    (List.range 23).map fun i =>
+      Gate.mkAND (norm_mant_inc[i]!) norm_not_roll (norm_mant_final[i]!)
+
+  let roll_inc := (List.range 10).map fun i =>
+    if i == 0 then norm_rollover else zero
+  let final_exp_r := makeIndexedWires "fp_fexpr" 10
+  let (final_exp_r_gates, _) := mkKoggeStoneAdd final_exp roll_inc zero final_exp_r "fp_fexpradd"
+
+  -- Overflow and underflow, mirroring FPMultiplierD: bit 9 is the sign of the
+  -- exponent sum, bit 8 is a carry past the exponent field.
+  let (exp8_all1, exp8_all1_gates) :=
+    mkAndTree "mul_e8o" ((List.range 8).map fun i => final_exp_r[i]!)
+  let not_neg_exp := Wire.mk "mul_nnege"
+  let ovf_cand := Wire.mk "mul_ovf_cand"
+  let is_overflow := Wire.mk "mul_ovf"
+  let exp_neg := final_exp_r[9]!
+  let ovf_unf_gates := [
+    Gate.mkNOT exp_neg not_neg_exp,
+    Gate.mkOR (final_exp_r[8]!) exp8_all1 ovf_cand,
+    Gate.mkAND not_neg_exp ovf_cand is_overflow
+  ]
 
   let packed := makeIndexedWires "mul_packed" 32
   let pack_gates := (List.range 32).map fun i =>
     if i < 23 then
-      Gate.mkBUF (norm_mant[i]!) (packed[i]!)
+      Gate.mkBUF (norm_mant_final[i]!) (packed[i]!)
     else if i < 31 then
-      Gate.mkBUF (final_exp[i - 23]!) (packed[i]!)
+      Gate.mkBUF (final_exp_r[i - 23]!) (packed[i]!)
     else
       Gate.mkBUF s2_rsign (packed[i]!)
 
@@ -357,7 +515,8 @@ def mkFPMultiplier : Circuit :=
           [Gate.mkOR (v_prev[i + stride]!) (v_prev[i]!) merge_v,
            Gate.mkBUF merge_v (v_new[i]!)] ++
           (List.range 6).map fun k =>
-            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!) ((p_new[i]!)[k]!)
+            Gate.mkMUX ((p_prev[i]!)[k]!) ((p_prev[i + stride]!)[k]!) (v_prev[i + stride]!)
+              ((p_new[i]!)[k]!)
         else
           [Gate.mkBUF (v_prev[i]!) (v_new[i]!)] ++
           (List.range 6).map fun k =>
@@ -407,7 +566,8 @@ def mkFPMultiplier : Circuit :=
 
   let sub_mant_inc := makeIndexedWires "fp_sub_minc" 23
   let sub_mant_c := makeIndexedWires "fp_sub_mc" 24
-  let sub_mant_inc_gates := [Gate.mkBUF sub_rnd_up (sub_mant_c[0]!)] ++ (List.range 23).flatMap (fun i =>
+  let sub_mant_inc_gates := [Gate.mkBUF sub_rnd_up (sub_mant_c[0]!)] ++ (List.range 23).flatMap (fun
+    i =>
     [Gate.mkXOR (sub_mant[i]!) (sub_mant_c[i]!) (sub_mant_inc[i]!),
      Gate.mkAND (sub_mant[i]!) (sub_mant_c[i]!) (sub_mant_c[i + 1]!)]
   )
@@ -417,17 +577,18 @@ def mkFPMultiplier : Circuit :=
   let sub_final_mant_gates := [Gate.mkNOT sub_rollover sub_not_rollover] ++
     (List.range 23).map fun i => Gate.mkAND (sub_mant_inc[i]!) sub_not_rollover (sub_final_mant[i]!)
 
-  let const_one_9 := [one_w] ++ (List.replicate 8 zero)
-  let exp_plus_1 := makeIndexedWires "fp_eplus1" 9
-  let (exp_plus1_gates, _) := mkKoggeStoneAdd s2_expub const_one_9 zero exp_plus_1 "fp_ep1"
+  let const_one_10 := [one_w] ++ (List.replicate 9 zero)
+  let exp_plus_1 := makeIndexedWires "fp_eplus1" 10
+  let (exp_plus1_gates, _) := mkKoggeStoneAdd s2_expub const_one_10 zero exp_plus_1 "fp_ep1"
 
-  let lsh_ext9 := lshift_amt ++ [zero, zero, zero]
-  let sub_exp_pre := makeIndexedWires "fp_sub_epre" 9
-  let (sub_exp_sub_gates, _) := mkKoggeStoneSub exp_plus_1 lsh_ext9 sub_exp_pre "fp_esub" one_w
+  let lsh_ext10 := lshift_amt ++ [zero, zero, zero, zero]
+  let sub_exp_pre := makeIndexedWires "fp_sub_epre" 10
+  let (sub_exp_sub_gates, _) := mkKoggeStoneSub exp_plus_1 lsh_ext10 sub_exp_pre "fp_esub" one_w
 
-  let roll_ext9 := [sub_rollover] ++ (List.replicate 8 zero)
-  let sub_exp_final := makeIndexedWires "fp_sub_efin" 9
-  let (sub_exp_roll_gates, _) := mkKoggeStoneAdd sub_exp_pre roll_ext9 zero sub_exp_final "fp_eroll"
+  let roll_ext10 := [sub_rollover] ++ (List.replicate 9 zero)
+  let sub_exp_final := makeIndexedWires "fp_sub_efin" 10
+  let (sub_exp_roll_gates, _) := mkKoggeStoneAdd sub_exp_pre roll_ext10 zero sub_exp_final
+    "fp_eroll"
 
   let sub_packed := makeIndexedWires "fp_sub_packed" 32
   let sub_pack_gates := (List.range 32).map fun i =>
@@ -435,8 +596,117 @@ def mkFPMultiplier : Circuit :=
     else if i < 31 then Gate.mkBUF (sub_exp_final[i - 23]!) (sub_packed[i]!)
     else Gate.mkBUF s2_rsign (sub_packed[i]!)
 
+  -- ── Subnormal result ───────────────────────────────────────────────────────
+  -- A product below the minimum normal is emitted with exponent field 0 and a
+  -- mantissa counted in multiples of 2^-149.  sub_exp_pre is the biased exponent
+  -- the product would have as a normal number, so 0 or less means the result is
+  -- subnormal and the normalized product must be shifted down by (25 - E) to
+  -- reach the quantum.
+  --
+  -- norm_prod enters with two low zeros appended, so the guard and round
+  -- positions survive the shift and the shifter's sticky keeps the remainder
+  -- below them.  A shift of 64 or more leaves zero.
+  let sub_exp_neg := sub_exp_pre[9]!
+  let (sub_exp_pre_or, sub_exp_pre_or_gates) := mkOrTree "mul_epre_or" sub_exp_pre
+  let sub_exp_pre_zero := Wire.mk "mul_epre_zero"
+  let sub_exp_le0 := Wire.mk "mul_epre_le0"
+  let subnormal_res := Wire.mk "mul_subres"
+  let not_ovf := Wire.mk "mul_not_ovf"
+  let subres_gates := [
+    Gate.mkNOT sub_exp_pre_or sub_exp_pre_zero,
+    Gate.mkOR sub_exp_neg sub_exp_pre_zero sub_exp_le0,
+    Gate.mkNOT is_overflow not_ovf,
+    Gate.mkAND sub_exp_le0 not_ovf subnormal_res
+  ]
+
+  let zeros8 := (List.range 8).map fun _ => zero
+  let sub_e8 := (List.range 8).map fun i => sub_exp_pre[i]!
+  let abs_e := makeIndexedWires "mul_abse" 8
+  let (abs_e_gates, _abs_e_borrow) := mkKoggeStoneSub zeros8 sub_e8 abs_e "mul_abse" one_w
+  let const25 := (List.range 8).map fun i => if i == 0 || i == 3 || i == 4 then one_w else zero
+  let sub_shift8 := makeIndexedWires "mul_subsh8" 8
+  let (sub_shift8_gates, _sub_shift8_carry) :=
+    mkKoggeStoneAdd abs_e const25 zero sub_shift8 "mul_subsh8"
+  let sub_shift_over := Wire.mk "mul_subsh_over"
+  let sub_shift_over_gate := Gate.mkOR (sub_shift8[6]!) (sub_shift8[7]!) sub_shift_over
+  let sub_shift := makeIndexedWires "mul_subsh" 6
+  let sub_shift_gates := (List.range 6).map fun i =>
+    Gate.mkMUX (sub_shift8[i]!) one_w sub_shift_over (sub_shift[i]!)
+
+  let sub_shift_in := [zero, zero] ++ norm_prod
+  let sub_shifted := makeIndexedWires "mul_subshifted" 50
+  let sub_sticky := Wire.mk "mul_substk"
+  let sub_barrel_gates :=
+    mkBarrelShiftRightSticky sub_shift_in sub_shift sub_shifted sub_sticky zero "mul_sbr"
+
+  let sub2_R := sub_shifted[0]!
+  let sub2_G := sub_shifted[1]!
+  let sub2_mant := makeIndexedWires "mul_sub2mant" 23
+  let sub2_mant_gates := (List.range 23).map fun i =>
+    Gate.mkBUF (sub_shifted[2 + i]!) (sub2_mant[i]!)
+
+  let sub2_rs_or := Wire.mk "mul_sub2_rs"
+  let sub2_cand := Wire.mk "mul_sub2_cand"
+  let sub2_rne := Wire.mk "mul_sub2_rne"
+  let sub2_rem := Wire.mk "mul_sub2_rem"
+  let sub2_rdn := Wire.mk "mul_sub2_rdn"
+  let sub2_rup := Wire.mk "mul_sub2_rup"
+  let sub2_t0 := Wire.mk "mul_sub2_t0"
+  let sub2_t1 := Wire.mk "mul_sub2_t1"
+  let sub2_round_pre := Wire.mk "mul_sub2_rpre"
+  let sub2_round := Wire.mk "mul_sub2_round"
+  let sub2_rnd_gates := [
+    Gate.mkOR sub2_R sub_sticky sub2_rs_or,
+    Gate.mkOR sub2_rs_or (sub2_mant[0]!) sub2_cand,
+    Gate.mkAND sub2_G sub2_cand sub2_rne,
+    Gate.mkOR sub2_G sub2_rs_or sub2_rem,
+    Gate.mkAND sub2_rem s2_rsign sub2_rdn,
+    Gate.mkAND sub2_rem not_sign sub2_rup,
+    Gate.mkMUX sub2_rne sub2_rdn is_rdn sub2_t0,
+    Gate.mkMUX sub2_t0 sub2_rup is_rup sub2_t1,
+    Gate.mkMUX sub2_t1 sub2_G is_rmm sub2_round_pre,
+    Gate.mkMUX sub2_round_pre zero is_rtz sub2_round
+  ]
+
+  let sub2_inc := makeIndexedWires "mul_sub2inc" 23
+  let sub2_c := makeIndexedWires "mul_sub2c" 24
+  let sub2_inc_gates := [Gate.mkBUF sub2_round (sub2_c[0]!)] ++ (List.range 23).flatMap fun i =>
+    [Gate.mkXOR (sub2_mant[i]!) (sub2_c[i]!) (sub2_inc[i]!),
+     Gate.mkAND (sub2_mant[i]!) (sub2_c[i]!) (sub2_c[i + 1]!)]
+  let sub2_carry := sub2_c[23]!
+  let sub2_not_carry := Wire.mk "mul_sub2ncarry"
+  let sub2_final_mant := makeIndexedWires "mul_sub2fm" 23
+  let sub2_final_mant_gates := [Gate.mkNOT sub2_carry sub2_not_carry] ++
+    (List.range 23).map fun i =>
+      Gate.mkAND (sub2_inc[i]!) sub2_not_carry (sub2_final_mant[i]!)
+
+  -- Packing: exponent field 0, or 1 with a zero mantissa when rounding carried
+  -- the mantissa up to the smallest normal.
+  let sub2_packed := makeIndexedWires "mul_sub2packed" 32
+  let sub2_pack_gates := (List.range 32).map fun i =>
+    if i < 23 then Gate.mkBUF (sub2_final_mant[i]!) (sub2_packed[i]!)
+    else if i < 31 then
+      (if i == 23 then Gate.mkBUF sub2_carry (sub2_packed[i]!)
+       else Gate.mkBUF zero (sub2_packed[i]!))
+    else Gate.mkBUF s2_rsign (sub2_packed[i]!)
+
+  -- A subnormal result is zero when the rounded mantissa is zero.
+  let (sub2_mant_or, sub2_mant_or_gates) := mkOrTree "mul_sub2mor" sub2_final_mant
+  let sub2_mz := Wire.mk "mul_sub2mz"
+  let sub2_zero_pre := Wire.mk "mul_sub2zpre"
+  let sub2_zero := Wire.mk "mul_sub2zero"
+  let sub2_zero_gates := [
+    Gate.mkNOT sub2_mant_or sub2_mz,
+    Gate.mkAND subnormal_res sub2_not_carry sub2_zero_pre,
+    Gate.mkAND sub2_zero_pre sub2_mz sub2_zero
+  ]
+
+  let packed_or_sub_in := makeIndexedWires "mul_psub_in" 32
+  let packed_or_sub_in_gates := (List.range 32).map fun i =>
+    Gate.mkMUX (packed[i]!) (sub_packed[i]!) s2_has_subnorm (packed_or_sub_in[i]!)
   let final_packed := makeIndexedWires "fp_fin_packed" 32
-  let final_pack_gates := mkMuxBank packed sub_packed s2_has_subnorm final_packed
+  let final_pack_gates := (List.range 32).map fun i =>
+    Gate.mkMUX (packed_or_sub_in[i]!) (sub2_packed[i]!) subnormal_res (final_packed[i]!)
 
   -- NX (Inexact)
   let low23_bits := (List.range 23).map fun i => product[i]!
@@ -448,57 +718,103 @@ def mkFPMultiplier : Circuit :=
     Gate.mkOR low23_or mul_extra_lost mul_nx
   ]
 
+  -- The subnormal path takes its inexactness from the shifted-out remainder;
+  -- the raw-product test above describes the normal path only.  An overflow is
+  -- inexact too, and it is the only inexactness the normal path cannot see.
+  let sub2_inexact := Wire.mk "mul_sub2inx"
+  let sub2_inexact_gate := Gate.mkOR sub2_G sub2_rs_or sub2_inexact
+  let nx_sel := Wire.mk "mul_nxsel"
+  let nx_sel_gate := Gate.mkMUX mul_nx sub2_inexact subnormal_res nx_sel
+  let nx_all := Wire.mk "mul_nx_all"
+  let nx_of_gate := Gate.mkOR nx_sel is_overflow nx_all
   let mul_nx_final := Wire.mk "mul_nx_final"
-  let nx_final_gate := Gate.mkAND mul_nx not_special mul_nx_final
+  let nx_final_gate := Gate.mkAND nx_all not_special mul_nx_final
 
   -- Latch NV, special flags, inf/zero indicators through stage 2
   let s2_nv := Wire.mk "s2_nv"
   let s2_not_special := Wire.mk "s2_not_special"
   let s2_is_inf := Wire.mk "s2_is_inf"
   let s2_is_zero := Wire.mk "s2_is_zero"
+  let s2_nan_res := Wire.mk "s2_nan_res"
   let s2_nv_dff := Gate.mkDFF mul_nv clock reset s2_nv
+  let s2_nan_res_dff := Gate.mkDFF mul_nan_res clock reset s2_nan_res
   let s2_ns_dff := Gate.mkDFF not_special clock reset s2_not_special
   let s2_inf_dff := Gate.mkDFF any_special_or1 clock reset s2_is_inf
   let s2_zero_dff := Gate.mkDFF any_special_or2 clock reset s2_is_zero
 
   let final_nx := Wire.mk "mul_final_nx"
-  let final_nx_gate := Gate.mkAND mul_nx s2_not_special final_nx
+  let final_nx_gate := Gate.mkAND nx_all s2_not_special final_nx
+
+  -- An underflowed product rounds to zero and an overflowed one is infinity,
+  -- exactly as the zero/infinity overrides already treat a zero/inf input.
+  let is_zero_sel := Wire.mk "mul_zsel"
+  let is_inf_sel := Wire.mk "mul_isel"
+  let is_ovf_max := Wire.mk "mul_ovfmax"
+  let not_ovf_to_inf := Wire.mk "mul_novfinf"
+  let ovf_to_inf := Wire.mk "mul_ovfinf"
+  let sel_gates := [
+    Gate.mkOR s2_is_zero sub2_zero is_zero_sel,
+    -- IEEE 754 section 7.4: an overflowing product is an infinity only when the
+    -- rounding direction points away from zero for this sign.  Toward zero is
+    -- rtz always, rdn for a positive sign and rup for a negative sign; round to
+    -- nearest counts as away.  The rest give the largest finite magnitude.
+    Gate.mkAND is_rdn not_sign (Wire.mk "mul_tz_rdn"),
+    Gate.mkAND is_rup s2_rsign (Wire.mk "mul_tz_rup"),
+    Gate.mkOR is_rtz (Wire.mk "mul_tz_rdn") (Wire.mk "mul_tz_a"),
+    Gate.mkOR (Wire.mk "mul_tz_a") (Wire.mk "mul_tz_rup") not_ovf_to_inf,
+    Gate.mkNOT not_ovf_to_inf ovf_to_inf,
+    Gate.mkAND is_overflow not_ovf_to_inf is_ovf_max,
+    Gate.mkAND is_overflow ovf_to_inf (Wire.mk "mul_ovfinfsel"),
+    Gate.mkOR s2_is_inf (Wire.mk "mul_ovfinfsel") is_inf_sel
+  ]
 
   -- Step 1: zero override
   let zero_result := makeIndexedWires "mul_zero_res" 32
   let zero_override_gates := (List.range 32).map fun i =>
     if i < 31 then
-      Gate.mkMUX (final_packed[i]!) zero s2_is_zero (zero_result[i]!)
+      Gate.mkMUX (final_packed[i]!) zero is_zero_sel (zero_result[i]!)
     else
       Gate.mkBUF (final_packed[i]!) (zero_result[i]!)
 
-  -- Step 2: inf override: if s2_is_inf, force exp=0xFF mant=0 (sign preserved)
+  -- Step 2: saturate an overflown product to the largest finite magnitude.
+  -- The exponent field is all ones minus one, so only its low bit (bit 23)
+  -- differs from an infinity; the fraction becomes all ones.
+  let sat_result := makeIndexedWires "mul_sat_res" 32
+  let sat_override_gates := (List.range 32).map fun i =>
+    if i == 31 then
+      Gate.mkBUF (zero_result[31]!) (sat_result[31]!)  -- sign stays
+    else if i == 23 then
+      Gate.mkMUX (zero_result[i]!) zero is_ovf_max (sat_result[i]!)
+    else
+      Gate.mkMUX (zero_result[i]!) one_w is_ovf_max (sat_result[i]!)
+
+  -- Step 3: inf override: if s2_is_inf, force exp=0xFF mant=0 (sign preserved)
   let inf_result := makeIndexedWires "mul_inf_res" 32
   let inf_override_gates := (List.range 32).map fun i =>
     if i < 23 then
       -- Inf has mant = 0
-      Gate.mkMUX (zero_result[i]!) zero s2_is_inf (inf_result[i]!)
+      Gate.mkMUX (sat_result[i]!) zero is_inf_sel (inf_result[i]!)
     else if i < 31 then
       -- Inf has exp = 0xFF (all ones)
-      Gate.mkMUX (zero_result[i]!) one_w s2_is_inf (inf_result[i]!)
+      Gate.mkMUX (sat_result[i]!) one_w is_inf_sel (inf_result[i]!)
     else
-      Gate.mkBUF (zero_result[i]!) (inf_result[i]!)  -- sign stays
+      Gate.mkBUF (sat_result[i]!) (inf_result[i]!)  -- sign stays
 
-  -- Step 3: NaN override: if s2_nv, force canonical NaN 0x7FC00000
+  -- Step 3: NaN override: if s2_nan_res, force canonical NaN 0x7FC00000
   -- Write directly to the output `result` wires
   let nan_override_gates := (List.range 32).map fun i =>
     if i == 22 then
       -- Quiet NaN bit
-      Gate.mkMUX (inf_result[i]!) one_w s2_nv (result[i]!)
+      Gate.mkMUX (inf_result[i]!) one_w s2_nan_res (result[i]!)
     else if i < 22 then
       -- mant = 0 (except quiet bit)
-      Gate.mkMUX (inf_result[i]!) zero s2_nv (result[i]!)
+      Gate.mkMUX (inf_result[i]!) zero s2_nan_res (result[i]!)
     else if i < 31 then
       -- exp = 0xFF
-      Gate.mkMUX (inf_result[i]!) one_w s2_nv (result[i]!)
+      Gate.mkMUX (inf_result[i]!) one_w s2_nan_res (result[i]!)
     else
       -- sign = 0 for canonical NaN
-      Gate.mkMUX (inf_result[i]!) zero s2_nv (result[i]!)
+      Gate.mkMUX (inf_result[i]!) zero s2_nan_res (result[i]!)
 
   -- ══════════════════════════════════════════════
   -- Tag, valid, exception outputs
@@ -506,17 +822,18 @@ def mkFPMultiplier : Circuit :=
   let tag_out_gates := (List.range 6).map fun i =>
     Gate.mkBUF (s2_tag[i]!) (tag_out[i]!)
   let valid_gate := [Gate.mkBUF s2_valid valid_out]
-  let not_s2_rm0 := Wire.mk "not_s2_rm0"
-  let not_s2_rm1 := Wire.mk "not_s2_rm1"
-  let not_s2_rm2 := Wire.mk "not_s2_rm2"
+  -- fflags: bit0=NX bit1=UF bit2=OF bit3=DZ bit4=NV.  OF and UF used to be
+  -- rm[i] & ~rm[i]; DZ stays 0 because a multiplier cannot divide by zero.
+  let is_underflow := Wire.mk "mul_uf"
+  let uf_gates := [
+    -- UF needs a tiny and inexact result.  subnormal_res confirms tininess.
+    Gate.mkAND subnormal_res sub2_inexact is_underflow
+  ]
   let exc_gates := [
     Gate.mkBUF final_nx (exc[0]!),
-    Gate.mkNOT (s2_rm[0]!) not_s2_rm0,
-    Gate.mkAND (s2_rm[0]!) not_s2_rm0 (exc[1]!),
-    Gate.mkNOT (s2_rm[1]!) not_s2_rm1,
-    Gate.mkAND (s2_rm[1]!) not_s2_rm1 (exc[2]!),
-    Gate.mkNOT (s2_rm[2]!) not_s2_rm2,
-    Gate.mkAND (s2_rm[2]!) not_s2_rm2 (exc[3]!),
+    Gate.mkAND is_underflow s2_not_special (exc[1]!),
+    Gate.mkAND is_overflow s2_not_special (exc[2]!),
+    Gate.mkBUF zero (exc[3]!),
     Gate.mkBUF s2_nv (exc[4]!)
   ]
 
@@ -528,7 +845,7 @@ def mkFPMultiplier : Circuit :=
     [one_gate, sign_gate] ++
     s1_exp1_ones_gates ++ s1_mant1_nz_gates ++
     s1_exp2_ones_gates ++ s1_mant2_nz_gates ++
-    nan_gates ++ inf_gates ++
+    nan_gates ++ snan_gates ++ inf_gates ++
     s1_exp1_any_gates ++ s1_exp2_any_gates ++
     zero_det_gates ++ subnorm_det_gates ++
     eff_ea_gates ++ eff_eb_gates ++
@@ -538,19 +855,28 @@ def mkFPMultiplier : Circuit :=
     csa_tree_gates ++
     nv_gates ++ special_gates ++
     -- Stage 2 DFFs (including exception latches)
-    s2_dffs ++ [s2_nv_dff, s2_ns_dff, s2_inf_dff, s2_zero_dff] ++
+    s2_dffs ++ [s2_nv_dff, s2_nan_res_dff, s2_ns_dff, s2_inf_dff, s2_zero_dff] ++
     -- Stage 2 combinational
     final_add_gates ++
-    low23_or_gates ++ nx_gates ++ [nx_final_gate, final_nx_gate] ++
+    low23_or_gates ++ nx_gates ++ [sub2_inexact_gate, nx_sel_gate, nx_of_gate, nx_final_gate,
+      final_nx_gate] ++
+    uf_gates ++
     norm_mant_gates ++
-    final_exp_gates ++
+    final_exp_gates ++ norm_S_a_gates ++ norm_S_b_gates ++ norm_grs_gates ++
+    rnd_cond_gates ++ norm_mant_inc_gates ++ norm_mant_final_gates ++ final_exp_r_gates ++
+    exp8_all1_gates ++ ovf_unf_gates ++
     pack_gates ++
     lz_all_gates ++ lsh_sub_gates ++ lshift_gates ++
     sub_S_gates ++ sub_rnd_gates ++ sub_mant_inc_gates ++ sub_final_mant_gates ++
     exp_plus1_gates ++ sub_exp_sub_gates ++ sub_exp_roll_gates ++
-    sub_pack_gates ++ final_pack_gates ++
+    sub_pack_gates ++
+    sub_exp_pre_or_gates ++ subres_gates ++ abs_e_gates ++ sub_shift8_gates ++
+    [sub_shift_over_gate] ++ sub_shift_gates ++ sub_barrel_gates ++ sub2_mant_gates ++
+    sub2_rnd_gates ++ sub2_inc_gates ++ sub2_final_mant_gates ++ sub2_pack_gates ++
+    sub2_mant_or_gates ++ sub2_zero_gates ++ packed_or_sub_in_gates ++ final_pack_gates ++
     -- Special result override: NaN > Inf > Zero > Normal
-    zero_override_gates ++ inf_override_gates ++ nan_override_gates ++
+    sel_gates ++ zero_override_gates ++ sat_override_gates ++ inf_override_gates ++
+      nan_override_gates ++
     tag_out_gates ++
     valid_gate ++
     exc_gates

@@ -85,6 +85,46 @@ cc_binary(
     ],
 )
 
+# The standalone simulator with FST tracing compiled in.
+#   bazel run //testbench:sim_shoumei_trace -- +trace +elf=$PWD/path/to/test.elf
+# writes the FST into the directory the command runs from.
+verilator_cc_library(
+    name = "vtb_cpu_trace",
+    module = ":tb_verilog",
+    trace_mode = "fst",
+    vopts = [
+        "-Wno-UNOPTFLAT",
+        "-Wno-PINMISSING",
+        "-Wno-WIDTHEXPAND",
+        "-Wno-WIDTHTRUNC",
+        "-Wno-CASEOVERLAP",
+        "-Wno-UNUSEDSIGNAL",
+        "-Wno-UNUSEDPARAM",
+        "-Wno-NULLPORT",
+        "-Wno-MULTIDRIVEN",
+        "--output-split",
+        "5000",
+        "--output-split-cfuncs",
+        "5000",
+        "+define+COSIM_DEBUG",
+    ],
+)
+
+cc_binary(
+    name = "sim_shoumei_trace",
+    srcs = [
+        "//:sim_main",
+    ],
+    copts = [
+        "-std=c++17",
+    ],
+    deps = [
+        ":elf_loader",
+        ":vtb_cpu_trace",
+        "//physical/sim-dpi:sram_dpi",
+    ],
+)
+
 verilator_cc_library(
     name = "vtb_cov_cpu",
     module = ":tb_verilog",

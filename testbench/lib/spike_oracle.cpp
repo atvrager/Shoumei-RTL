@@ -18,6 +18,16 @@ class flat_simif_t : public simif_t {
 public:
     static constexpr size_t MEM_SIZE = 0x40000; // 256KB (matches RTL memSizeWords=65536)
 
+    // UART transmit register.  The RTL harness accepts stores here and prints
+    // the byte, so the reference model must accept them too; without this the
+    // store faults and the two models diverge at the first character written.
+    static constexpr reg_t UART_BASE = 0x10000000;
+    static constexpr reg_t UART_SIZE = 0x100;
+
+    // CLINT region, machine timer only.
+    static constexpr reg_t CLINT_BASE = 0x02000000;
+    static constexpr reg_t CLINT_SIZE = 0x00010000;
+
     explicit flat_simif_t(cfg_t* cfg) : cfg_(cfg), mem_(MEM_SIZE, 0) {}
 
     char* addr_to_mem(reg_t paddr) override {
@@ -26,9 +36,18 @@ public:
         return nullptr;
     }
 
+    static bool is_uart(reg_t addr) {
+        return addr >= UART_BASE && addr < UART_BASE + UART_SIZE;
+    }
+
     // CLINT region (0x02000000-0x0200FFFF): accept loads/stores silently
     bool mmio_load(reg_t addr, size_t len, uint8_t* bytes) override {
-        if (addr >= 0x02000000 && addr < 0x02010000) {
+        if (is_uart(addr)) {
+            uint32_t zero = 0;
+            memcpy(bytes, &zero, len);
+            return true;
+        }
+        if (addr >= CLINT_BASE && addr < CLINT_BASE + CLINT_SIZE) {
             // Return CLINT register values
             uint64_t val = 0;
             if (addr == 0x0200BFF8) {
@@ -48,7 +67,10 @@ public:
         return false;
     }
     bool mmio_store(reg_t addr, size_t len, const uint8_t* bytes) override {
-        if (addr >= 0x02000000 && addr < 0x02010000) {
+        if (is_uart(addr)) {
+            return true;  // Discarded; the cosim logs the RTL's UART writes.
+        }
+        if (addr >= CLINT_BASE && addr < CLINT_BASE + CLINT_SIZE) {
             if (len == 8) {
                 if (addr == 0x02004000) memcpy(&mtimecmp_, bytes, 8);
                 else if (addr == 0x0200BFF8) memcpy(&mtime_, bytes, 8);
@@ -157,10 +179,14 @@ SpikeOracle::SpikeOracle(const std::string& elf_path, const std::string& isa)
     flat->load_elf(elf_path.c_str());
     simif_.reset(flat);
 
+    bool want_log = getenv("SPIKE_LOG_COMMITS") != nullptr;
     proc_ = std::make_unique<processor_t>(
         cfg_->isa, cfg_->priv, cfg_.get(), simif_.get(),
-        /*hartid=*/0, /*halted=*/false, /*log_file=*/nullptr,
+        /*hartid=*/0, /*halted=*/false, /*log_file=*/want_log ? stderr : nullptr,
         /*sout=*/std::cerr);
+    if (want_log) {
+        proc_->enable_log_commits();
+    }
 
     flat->register_hart(0, proc_.get());
     proc_->get_state()->pc = 0;
@@ -185,11 +211,6 @@ SpikeStepResult SpikeOracle::step() {
     for (int i = 0; i < 32; i++)
         regs_before[i] = static_cast<uint64_t>(proc_->get_state()->XPR[i]);
 
-    // Snapshot FP registers before stepping
-    uint64_t fregs_before[32];
-    for (int i = 0; i < 32; i++)
-        fregs_before[i] = static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
-
     try {
         r.insn = static_cast<uint32_t>(
             proc_->get_mmu()->load<uint32_t>(r.pc));
@@ -201,6 +222,22 @@ SpikeStepResult SpikeOracle::step() {
     uint32_t rs1_idx = (r.insn >> 15) & 0x1f;
     r.rs1_value = regs_before[rs1_idx];
 
+    // Save FP source operands before step.  The fused multiply-add family
+    // reads three: rs1, rs2 and the addend in bits[31:27].
+    bool is_fma = (r.insn & 0x7f) == 0x43 || (r.insn & 0x7f) == 0x47
+               || (r.insn & 0x7f) == 0x4B || (r.insn & 0x7f) == 0x4F;
+    bool is_opfp = (r.insn & 0x7f) == 0x53;
+    if (is_fma || is_opfp) {
+        uint32_t fs1 = (r.insn >> 15) & 0x1f;
+        uint32_t fs2 = (r.insn >> 20) & 0x1f;
+        r.fs1_value = static_cast<uint64_t>(proc_->get_state()->FPR[fs1].v[0]);
+        r.fs2_value = static_cast<uint64_t>(proc_->get_state()->FPR[fs2].v[0]);
+        if (is_fma) {
+            uint32_t fs3 = (r.insn >> 27) & 0x1f;
+            r.fs3_value = static_cast<uint64_t>(proc_->get_state()->FPR[fs3].v[0]);
+        }
+    }
+
     try {
         proc_->step(1);
         r.trap = false;
@@ -208,26 +245,55 @@ SpikeStepResult SpikeOracle::step() {
         r.trap = true;
     }
 
-    // Detect integer register change
-    for (int i = 1; i < 32; i++) {
-        uint64_t val = static_cast<uint64_t>(proc_->get_state()->XPR[i]);
-        if (val != regs_before[i]) {
-            r.rd = static_cast<uint32_t>(i);
-            r.rd_value = val;
-            break;
-        }
+    // Decode integer rd from bits[11:7] only for opcodes that write an integer
+    // register.  FP ops, stores, and branches all have non-zero bits[11:7] but
+    // do not write an integer destination; reading XPR for those produces a
+    // spurious diff in the trace.
+    // Opcodes that write an integer destination register.
+    // Low group fits in a 64-bit bitmask (opcodes 0x00..0x3F).
+    // High group (JALR=0x67, JAL=0x6F, SYSTEM=0x73) checked explicitly.
+    static constexpr uint64_t INT_RD_LOW =
+        (1ull << 0x03) |  // LOAD
+        (1ull << 0x13) |  // OP-IMM
+        (1ull << 0x17) |  // AUIPC
+        (1ull << 0x1B) |  // OP-IMM-32
+        (1ull << 0x2F) |  // AMO
+        (1ull << 0x33) |  // OP
+        (1ull << 0x37) |  // LUI
+        (1ull << 0x3B);   // OP-32
+    uint32_t opcode  = r.insn & 0x7f;
+    uint32_t rd_idx  = (r.insn >> 7) & 0x1f;
+    // OP-FP (0x53): only certain funct7 values write an integer rd.
+    // funct7 0x50-0x55 = comparisons (feq/flt/fle), 0x60-0x61 = fcvt->int,
+    // 0x70-0x71 = fmv.x.w/d and fclass.  All others write an FP destination.
+    uint32_t funct7 = r.insn >> 25;
+    bool fp_writes_int = (opcode == 0x53) &&
+        ((funct7 >= 0x50 && funct7 <= 0x55) || // comparisons
+         (funct7 == 0x60 || funct7 == 0x61)  || // fcvt->int
+         (funct7 == 0x70 || funct7 == 0x71));   // fmv.x, fclass
+    bool writes_xrd  = ((opcode < 64) && ((INT_RD_LOW >> opcode) & 1ull))
+                    || fp_writes_int
+                    || (opcode == 0x67)   // JALR
+                    || (opcode == 0x6F)   // JAL
+                    || (opcode == 0x73);  // SYSTEM (CSR)
+    if (writes_xrd && rd_idx != 0) {
+        r.rd       = rd_idx;
+        r.rd_value = static_cast<uint64_t>(proc_->get_state()->XPR[rd_idx]);
     }
-
-    // Detect FP register change
+    // Detect FP destination writes.  The destination is named by the
+    // instruction, not inferred from a change of value: a rewrite of the value
+    // the register already holds must still be reported, or the trace check
+    // skips it and the RTL's write is never compared.
+    uint32_t fp_op = r.insn & 0x7f;
+    bool writes_frd = (fp_op == 0x07)                        // FLW, FLD
+                   || (fp_op == 0x43 || fp_op == 0x47
+                    || fp_op == 0x4B || fp_op == 0x4F)       // FMADD..FNMSUB
+                   || (fp_op == 0x53 && !fp_writes_int);     // OP-FP
     r.frd_valid = false;
-    for (int i = 0; i < 32; i++) {
-        uint64_t val = static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
-        if (val != fregs_before[i]) {
-            r.frd = static_cast<uint32_t>(i);
-            r.frd_value = val;
-            r.frd_valid = true;
-            break;
-        }
+    if (writes_frd) {
+        r.frd = rd_idx;
+        r.frd_value = static_cast<uint64_t>(proc_->get_state()->FPR[rd_idx].v[0]);
+        r.frd_valid = true;
     }
 
     // Read accumulated fflags (CSR 0x001)
@@ -248,6 +314,14 @@ uint64_t SpikeOracle::get_freg(int i) const {
     return static_cast<uint64_t>(proc_->get_state()->FPR[i].v[0]);
 }
 
+uint64_t SpikeOracle::get_freg_hi(int i) const {
+    return static_cast<uint64_t>(proc_->get_state()->FPR[i].v[1]);
+}
+
+void SpikeOracle::set_freg(int i, uint64_t val) {
+    proc_->get_state()->FPR.write(i, freg_t{val, 0});
+}
+
 uint64_t SpikeOracle::get_csr(int which) const {
     return static_cast<uint64_t>(proc_->get_csr(which));
 }
@@ -262,6 +336,15 @@ void SpikeOracle::set_pc(uint64_t pc) {
 
 uint32_t SpikeOracle::get_insn_at(uint64_t addr) const {
     return static_cast<uint32_t>(proc_->get_mmu()->load<uint32_t>(addr));
+}
+
+uint32_t SpikeOracle::read_mem(uint64_t addr) const {
+    char* p = simif_->addr_to_mem(addr);
+    if (p == nullptr)
+        return 0;
+    uint32_t word = 0;
+    memcpy(&word, p, sizeof(word));
+    return word;
 }
 
 void SpikeOracle::unhalt() {

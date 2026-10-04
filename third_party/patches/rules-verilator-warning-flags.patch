@@ -1,0 +1,14 @@
+--- a/verilator/private/common.bzl
++++ b/verilator/private/common.bzl
+@@ -99,7 +99,10 @@ def cc_compile_and_link_static_library(
+         actions = ctx.actions,
+         feature_configuration = feature_configuration,
+         cc_toolchain = cc_toolchain,
+-        user_compile_flags = ctx.attr.copts + extra_copts,
++        user_compile_flags = ctx.attr.copts + extra_copts + [
++            "-Wno-sign-compare",
++            "-Wno-unused-variable",
++        ],
+         srcs = srcs,
+         includes = includes,
+         defines = defines,

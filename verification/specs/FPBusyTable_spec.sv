@@ -7,6 +7,8 @@ module FPBusyTable_spec (
   input  logic        set_en,
   input  logic [5:0]  clear_tag,
   input  logic        clear_en,
+  input  logic [5:0]  clear_tag_1,
+  input  logic        clear_en_1,
   input  logic [5:0]  read1_tag,
   input  logic [5:0]  read2_tag,
   input  logic [5:0]  read3_tag,
@@ -34,7 +36,8 @@ module FPBusyTable_spec (
     for (int i = 0; i < 64; i++) begin
       fp_busy_next[i] = flush_groups[i / 8]                 ? 1'b0 :
                         (set_en && (set_tag == 6'(i)))      ? 1'b1 :
-                        (clear_en && (clear_tag == 6'(i)))  ? 1'b0 :
+                        ((clear_en && (clear_tag == 6'(i))) ||
+                         (clear_en_1 && (clear_tag_1 == 6'(i)))) ? 1'b0 :
                                                               fp_busy_table[i];
     end
   end

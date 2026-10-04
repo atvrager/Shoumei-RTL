@@ -1,13 +1,16 @@
 /-
   LeanLint - run the style linter over the Lean sources.
 
-  Usage: lean_lint [--fix] [--update-baseline] [--baseline FILE] [--warn-limit N] [path...]
+  Usage: lean_lint [--fix | --print-fix] [--update-baseline] [--baseline FILE]
+                   [--warn-limit N] [path...]
 
   The default paths are `lean` and `generators`.  The other rules fail the run
   on any finding.  The line-width rule (LEAN006) is a ratchet: a file may hold
   no more over-length lines than the baseline file records, and the count may
   only fall.  `--fix` reflows the long lines, and `--update-baseline` records
-  the result.
+  the result.  `--fix` refuses to run unless git shows every Lean file under
+  the paths as committed, so `git checkout` can undo a bad reflow.
+  `--print-fix` prints the reflowed text and writes nothing.
 -/
 import Shoumei.Lint.Fix
 import Shoumei.Lint.Style
@@ -15,10 +18,30 @@ import Shoumei.Lint.Style
 open Shoumei.Lint
 
 /-- The command line summary. -/
-def usage : String := "usage: lean_lint [--fix] [--update-baseline] [--baseline FILE] [--warn-limit N] [path...]"
+def usage : String :=
+  "usage: lean_lint [--fix | --print-fix] [--update-baseline] [--baseline FILE] " ++
+    "[--warn-limit N] [path...]"
 
 /-- The default baseline file. -/
 def baselineFile : String := "lean-lint-baseline.txt"
+
+/-- The width of the status field before the path in a line of
+    `git status --porcelain`, for example `?? lean/New.lean`. -/
+def porcelainPathColumn : Nat := 3
+
+/-- The `.lean` files under the roots that git shows as changed, staged or
+    untracked.  A git failure, for example outside a work tree, is an error. -/
+def dirtyLeanFiles (roots : List System.FilePath) : IO (Except String (List String)) := do
+  let args := #["status", "--porcelain", "--untracked-files=all", "--"] ++
+    (roots.map (·.toString)).toArray
+  let out ←
+    try IO.Process.output { cmd := "git", args := args }
+    catch e => return .error (toString e)
+  if out.exitCode != 0 then
+    return .error out.stderr
+  let paths := (out.stdout.splitOn "\n").map
+    (fun line => String.ofList (line.toList.drop porcelainPathColumn))
+  return .ok (paths.filter (fun p => p.endsWith ".lean"))
 
 /-- Sort the findings by file, line and column. -/
 def sortFindings (findings : List Finding) : Array Finding :=
@@ -65,11 +88,17 @@ def renderBaseline (counts : List (String × Nat)) : String :=
   String.intercalate "\n" (rows.toList.map (fun entry => s!"{entry.2} {entry.1}")) ++ "\n"
 
 def main (args : List String) : IO UInt32 := do
+  -- `bazel run` starts the tool in its runfiles tree.  The paths and the
+  -- baseline are relative to the source tree.
+  if let some workspace ← IO.getEnv "BUILD_WORKSPACE_DIRECTORY" then
+    IO.Process.setCurrentDir workspace
+
   let mut warnLimit := 10
   let mut roots : List System.FilePath := []
   let mut expectLimit := false
   let mut expectBaseline := false
   let mut fix := false
+  let mut printFix := false
   let mut updateBaseline := false
   let mut baselinePath := baselineFile
   for arg in args do
@@ -81,6 +110,8 @@ def main (args : List String) : IO UInt32 := do
       expectBaseline := false
     else if arg == "--fix" then
       fix := true
+    else if arg == "--print-fix" then
+      printFix := true
     else if arg == "--update-baseline" then
       updateBaseline := true
     else if arg == "--baseline" then
@@ -103,9 +134,25 @@ def main (args : List String) : IO UInt32 := do
     if roots.isEmpty then [System.FilePath.mk "lean", System.FilePath.mk "generators"]
     else roots
 
+  if printFix then
+    Fix.printRoots searchRoots
+    return 0
+
   if fix then
-    let (changed, unfixable) ← Fix.fixRoots searchRoots
-    IO.println s!"lean-lint: reflowed {changed} file(s), {unfixable} line(s) left alone"
+    -- The fixer rewrites files in place.  A reflow that goes wrong must be
+    -- easy to undo, so git must hold every file it can touch.
+    match ← dirtyLeanFiles searchRoots with
+    | .error msg =>
+      IO.eprintln s!"lean-lint: --fix refused: git cannot vouch for the files: {msg}"
+      return 1
+    | .ok dirty@(_ :: _) =>
+      IO.eprintln "lean-lint: --fix refused: commit or stash these files first:"
+      for path in dirty do
+        IO.eprintln s!"  {path}"
+      return 1
+    | .ok [] =>
+      let (changed, unfixable) ← Fix.fixRoots searchRoots
+      IO.println s!"lean-lint: reflowed {changed} file(s), {unfixable} line(s) left alone"
 
   let findings ← lintRoots searchRoots
   let sorted := sortFindings findings

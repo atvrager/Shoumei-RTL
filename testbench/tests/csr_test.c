@@ -56,6 +56,22 @@ int main(void) {
     asm volatile("csrrs %0, mcycle, x0" : "=r"(val));
     if (val == 0) ok = 0;
 
+    /* Test 9: misa names what this machine implements.  MXL is 10 in the top
+       two bits for RV64; the extension bits are A, B (the Zba/Zbb/Zbc/Zbs
+       instructions the fallback sequencer runs), D, F, I and M, in letter
+       order.  C is absent: no compressed instruction is decoded. */
+    unsigned long misa;
+    asm volatile("csrrs %0, misa, x0" : "=r"(misa));
+    if (misa != 0x800000000000112bUL) ok = 0;
+
+    /* Test 10: misa is WARL.  Setting the C bit cannot succeed, because no
+       compressed instruction decodes, so the read back is unchanged. */
+    unsigned long misa2;
+    asm volatile("csrrsi %0, misa, 4" : "=r"(misa2));
+    if (misa2 != 0x800000000000112bUL) ok = 0;
+    asm volatile("csrrs %0, misa, x0" : "=r"(misa2));
+    if (misa2 != 0x800000000000112bUL) ok = 0;
+
     tohost = ok;
     while (1) {}
 }
