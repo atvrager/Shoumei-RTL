@@ -7,7 +7,7 @@ from `moduleName :=` references between circuits, certificates from the
 Lean registry, and docs from each file's leading comment block.
 
 - Lean files: **291**
-- Circuits with a literal `name :=` (graph nodes): **98**
+- Circuits with a literal `name :=` (graph nodes): **99**
 - Compositional certificates (Lean registry): **103**
 - Refinement atoms (Lean registry): **13**
 - Proof files: **80**
@@ -27,7 +27,7 @@ The label is the count of distinct instantiations that cross it.
 ```mermaid
 graph TD
   Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>43 circuits"]
-  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>20 circuits"]
+  Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
   Shoumei_Interconnect_TileLink["Shoumei/Interconnect/TileLink<br/>1 circuits"]
@@ -76,11 +76,12 @@ graph TD
 | `Divider32` | Shoumei/Circuits/Sequential | 2 | yes |  | yes | yes |
 | `Divider64` | Shoumei/Circuits/Sequential | 2 | yes |  | yes | yes |
 | `FPAdder` | Shoumei/Circuits/Sequential | 4 | yes |  | yes | yes |
-| `FPAdderD` | Shoumei/Circuits/Sequential | 4 | yes |  | yes | yes |
-| `FPAdderD_Stage1_Unpack` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
-| `FPAdderD_Stage2_Align` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
-| `FPAdderD_Stage3_AddSub` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
-| `FPAdderD_Stage4_NormRound` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
+| `FPAdderD` | Shoumei/Circuits/Sequential | 5 | yes |  | yes | yes |
+| `FPAdderD_Stage1_Unpack` | Shoumei/Circuits/Sequential | 4 |  |  | yes | yes |
+| `FPAdderD_Stage2_Align` | Shoumei/Circuits/Sequential | 4 |  |  | yes | yes |
+| `FPAdderD_Stage3_AddSub` | Shoumei/Circuits/Sequential | 4 |  |  | yes | yes |
+| `FPAdderD_Stage4a_Norm` | Shoumei/Circuits/Sequential | 4 |  |  | yes | yes |
+| `FPAdderD_Stage4b_Round` | Shoumei/Circuits/Sequential | 4 |  |  | yes | yes |
 | `FPAdder_Stage1_Unpack` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
 | `FPAdder_Stage2_Align` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
 | `FPAdder_Stage3_AddSub` | Shoumei/Circuits/Sequential | 3 |  |  | yes | yes |
@@ -161,7 +162,7 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **93** circuits with no `Circuit satisfies Behavior` atom
+- **94** circuits with no `Circuit satisfies Behavior` atom
 - **23** circuits with no `*Proofs.lean` mentioning them
 - **59** circuits that instantiate nothing (leaves)
 - **45** circuits nothing else instantiates (tops)
