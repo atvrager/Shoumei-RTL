@@ -120,10 +120,6 @@ sh_test(
         "//:root_python_scripts",
         "//lean:shoumei_srcs",
         "//third_party:orfs_liberty",
-        "//third_party/tools:verilator",
-        "//third_party/tools:verilator_include",
-        "//third_party/tools:yosys",
-        "//third_party/tools:yosys_share",
     ],
 )
 
@@ -280,10 +276,6 @@ genrule(
     srcs = [
         "//lean:shoumei_srcs",
         "//third_party:orfs_liberty",
-        "//third_party/tools:verilator",
-        "//third_party/tools:verilator_include",
-        "//third_party/tools:yosys",
-        "//third_party/tools:yosys_share",
     ],
     outs = ["pdk-cells-model.sv"],
     cmd = "python3 scripts/gen-pdk-cell-models.py --out $@",
@@ -486,13 +478,14 @@ test_suite(
 
 sh_test(
     name = "synth_gf180_test",
-    size = "medium",
+    size = "enormous",
+    timeout = "eternal",
     srcs = ["run_yosys_synth.sh"],
     args = [
         "$(rootpath //third_party/tools:yosys)",
         "gf180",
-        "ALU64",
-        "10.0",
+        "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth",
+        "15.625",
         "$(location //:sv)",
     ],
     data = [
@@ -508,12 +501,13 @@ sh_test(
 
 sh_test(
     name = "synth_asap7_test",
-    size = "medium",
+    size = "enormous",
+    timeout = "eternal",
     srcs = ["run_yosys_synth.sh"],
     args = [
         "$(rootpath //third_party/tools:yosys)",
         "asap7",
-        "ALU64",
+        "CPU_RV64IMAFD_Zicsr_Zifencei_Microcoded_synth",
         "1.0",
         "$(location //:sv)",
     ],
@@ -526,6 +520,11 @@ sh_test(
         "//third_party/tools:yosys",
         "//third_party/tools:yosys_share",
     ],
+)
+
+alias(
+    name = "synth_asap7_core_test",
+    actual = ":synth_asap7_test",
 )
 
 sh_test(

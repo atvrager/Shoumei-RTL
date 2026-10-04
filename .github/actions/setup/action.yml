@@ -22,6 +22,10 @@ inputs:
     description: Save the Bazel caches when the job finishes
     required: false
     default: "true"
+  yosys-cache:
+    description: Download the shared Yosys cache artifact
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -65,3 +69,10 @@ runs:
         external-cache: 'true'
         cache-version: '1'
         cache-save: ${{ inputs.cache-save }}
+
+    - name: Download Yosys cache artifact
+      if: inputs.yosys-cache == 'true'
+      uses: actions/download-artifact@v4
+      with:
+        name: bazel-yosys-cache
+        path: /home/runner/.cache/bazel-disk

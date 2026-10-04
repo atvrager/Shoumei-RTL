@@ -119,11 +119,7 @@ mkdir -p "$OUTPUT_DIR/reports"
 mkdir -p "$OUTPUT_DIR/netlist"
 
 echo "==> Running Yosys synthesis for $DESIGN_NAME on $PLATFORM (${CLK_PERIOD_NS} ns)..."
-yosys -c "$ROOT/physical/run-yosys.tcl" > "$OUTPUT_DIR/synth.log" 2>&1 || {
-    echo "ERROR: Yosys synthesis failed! Log:" >&2
-    cat "$OUTPUT_DIR/synth.log" >&2
-    exit 1
-}
+yosys -c "$ROOT/physical/run-yosys.tcl" 2>&1 | tee "$OUTPUT_DIR/synth.log"
 
 NETLIST="$OUTPUT_DIR/netlist/${DESIGN_NAME}.v"
 SDC="$OUTPUT_DIR/netlist/${DESIGN_NAME}.sdc"
@@ -137,5 +133,17 @@ for f in "$NETLIST" "$SDC" "$AREA_RPT" "$CHECK_RPT"; do
     fi
 done
 
-CELL_COUNT=$(grep -E 'Number of cells:\s+[0-9]+' "$AREA_RPT" | head -n 1 | awk '{print $NF}' || echo "0")
+CELL_COUNT=$(awk '/Number of cells:/ {print $NF; exit}' "$AREA_RPT")
+if [ -z "$CELL_COUNT" ]; then
+    CELL_COUNT=$(awk '/^[[:space:]]*[0-9]+[[:space:]]+cells/ {print $1; exit}' "$AREA_RPT")
+fi
+if [ -z "$CELL_COUNT" ]; then
+    CELL_COUNT="0"
+fi
 echo "✓ Synthesis passed for $DESIGN_NAME on $PLATFORM ($CELL_COUNT cells)"
+
+echo "==> Timing & Critical Path Summary:"
+grep -E "Delay =|Current delay|Start-point|End-point" "$OUTPUT_DIR/synth.log" || true
+if [ -f "$OUTPUT_DIR/reports/timing.rpt" ]; then
+    cat "$OUTPUT_DIR/reports/timing.rpt"
+fi
