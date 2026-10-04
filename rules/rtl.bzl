@@ -549,10 +549,14 @@ def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//g
         extension = ".sv",
     )
     shoumei_merge_dirs(
-        name = "cpp_sim",
+        name = "cpp_sim_dir",
         targets = subsystem_targets,
         group = "cpp_sim",
         extension = ".h",
+    )
+    native.alias(
+        name = "cpp_sim",
+        actual = ":cpp_sim_dir",
     )
 
     _output_group_target(
@@ -594,7 +598,7 @@ def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//g
         asap7 = ":sv_asap7",
         gf180 = ":sv_gf180",
         sec = ":sv_sec",
-        cpp_sim = ":cpp_sim",
+        cpp_sim = ":cpp_sim_dir",
         testbench = ":testbench",
         config_mk = ":config_mk",
     )
@@ -606,7 +610,7 @@ def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//g
         asap7 = ":sv_asap7",
         gf180 = ":sv_gf180",
         sec = ":sv_sec",
-        cpp_sim = ":cpp_sim",
+        cpp_sim = ":cpp_sim_dir",
         testbench = ":testbench",
         config_mk = ":config_mk",
         cosim_main = ":cosim_main",
