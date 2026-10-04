@@ -337,165 +337,304 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     mkDFFBank dest_tag s1_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
-  -- Stage 2: exact product, alignment into the window, add or subtract
+  -- Stage 2: exact product addition and exponent bias subtraction
   -- ══════════════════════════════════════════════════════════════════════
-  let prod := makeIndexedWires "s2_p" (2 * P)
+  let prod := makeIndexedWires "s2a_p" (2 * P)
   let (prod_add_gates, _prod_carry) :=
-    mkKoggeStoneAdd s1_csa_sum s1_csa_carry zero prod "s2_padd"
-  let pos_p := makeIndexedWires "s2_pp" SHB
-  let (pos_p_w, lead_p_gates) := mkLeadPos "s2_lzp" prod zero SHB
-  let pos_p_gates := (List.range SHB).map fun i => Gate.mkBUF (pos_p_w[i]!) (pos_p[i]!)
-  let const47 := constOf (2 * P - 1) SHB
-  let s_h := makeIndexedWires "s2_sh" SHB
-  let (s_h_gates, _s_h_borrow) := mkKoggeStoneSub const47 pos_p s_h "s2_shs" one
-  let prod_n := makeIndexedWires "s2_pn" (2 * P)
-  let prod_n_gates := mkBarrelShiftLeft prod s_h prod_n zero "s2_bslp"
+    mkCarrySelectKoggeStoneAdd s1_csa_sum s1_csa_carry zero prod "s2a_padd" zero one
 
   let eff_a_11 := (List.range EFFW).map fun i => if i < WEXP then s1_eff_a[i]! else zero
   let eff_b_11 := (List.range EFFW).map fun i => if i < WEXP then s1_eff_b[i]! else zero
-  let exp_sum := makeIndexedWires "s2_es" EFFW
-  let (exp_sum_gates, _es_carry) := mkKoggeStoneAdd eff_a_11 eff_b_11 zero exp_sum "s2_esa"
+  let exp_sum := makeIndexedWires "s2a_es" EFFW
+  let (exp_sum_gates, _es_carry) := mkKoggeStoneAdd eff_a_11 eff_b_11 zero exp_sum "s2a_esa"
   let const126 := constOf (BIAS - 1) EFFW
-  let exp_t1 := makeIndexedWires "s2_et1" EFFW
-  let (exp_t1_gates, _et1_borrow) := mkKoggeStoneSub exp_sum const126 exp_t1 "s2_et1s" one
-  let s_h_11 := (List.range EFFW).map fun i => if i < SHB then s_h[i]! else zero
-  let exp_p := makeIndexedWires "s2_ep" EFFW
-  let (exp_p_gates, _ep_borrow) := mkKoggeStoneSub exp_t1 s_h_11 exp_p "s2_eps" one
+  let exp_t1 := makeIndexedWires "s2a_et1" EFFW
+  let (exp_t1_gates, _et1_borrow) := mkKoggeStoneSub exp_sum const126 exp_t1 "s2a_et1s" one
 
-  let diff := makeIndexedWires "s2_d" EFFW
-  let (diff_gates, diff_borrow) := mkKoggeStoneSub exp_p s1_eff_c diff "s2_ds" one
-  -- Ep and Ec are signed: a subnormal or zero addend has a negative effective
-  -- exponent, so the anchor is chosen by a signed comparison, not the borrow
-  let c_big := Wire.mk "s2_cbig"
+  let s2a_prod := makeIndexedWires "s2ar_p" (2 * P)
+  let s2a_exp_t1 := makeIndexedWires "s2ar_et1" EFFW
+  let s2a_eff_c := makeIndexedWires "s2ar_ec" EFFW
+  let s2a_mant_c := makeIndexedWires "s2ar_mc" P
+  let s2a_c_eff := makeIndexedWires "s2ar_ce" (MSB + 1)
+  let s2a_rm := makeIndexedWires "s2ar_rm" 3
+  let s2a_tag := makeIndexedWires "s2ar_tg" 6
+  let s2a_prod_sign := Wire.mk "s2ar_ps"
+  let s2a_c_sign := Wire.mk "s2ar_cs"
+  let s2a_any_nan := Wire.mk "s2ar_an"
+  let s2a_any_snan := Wire.mk "s2ar_as"
+  let s2a_prod_inf := Wire.mk "s2ar_pi"
+  let s2a_prod_zero := Wire.mk "s2ar_pz"
+  let s2a_inf_zero := Wire.mk "s2ar_iz"
+  let s2a_c_inf := Wire.mk "s2ar_ci"
+  let s2a_c_zero := Wire.mk "s2ar_cz"
+  let s2a_valid := Wire.mk "s2ar_v"
+  let s2a_gates :=
+    [Gate.mkDFF s1_prod_sign clock reset s2a_prod_sign,
+     Gate.mkDFF s1_c_sign clock reset s2a_c_sign,
+     Gate.mkDFF s1_any_nan clock reset s2a_any_nan,
+     Gate.mkDFF s1_any_snan clock reset s2a_any_snan,
+     Gate.mkDFF s1_prod_inf clock reset s2a_prod_inf,
+     Gate.mkDFF s1_prod_zero clock reset s2a_prod_zero,
+     Gate.mkDFF s1_inf_zero clock reset s2a_inf_zero,
+     Gate.mkDFF s1_c_inf clock reset s2a_c_inf,
+     Gate.mkDFF s1_c_zero clock reset s2a_c_zero,
+     Gate.mkDFF s1_valid clock reset s2a_valid] ++
+    mkDFFBank prod s2a_prod clock reset ++
+    mkDFFBank exp_t1 s2a_exp_t1 clock reset ++
+    mkDFFBank s1_eff_c s2a_eff_c clock reset ++
+    mkDFFBank s1_mant_c s2a_mant_c clock reset ++
+    mkDFFBank s1_c_eff s2a_c_eff clock reset ++
+    mkDFFBank s1_rm s2a_rm clock reset ++
+    mkDFFBank s1_tag s2a_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3: product normalization, exponent diff, and shift amounts
+  -- ══════════════════════════════════════════════════════════════════════
+  let pos_p := makeIndexedWires "s2b_pp" SHB
+  let (pos_p_w, lead_p_gates) := mkLeadPos "s2b_lzp" s2a_prod zero SHB
+  let pos_p_gates := (List.range SHB).map fun i => Gate.mkBUF (pos_p_w[i]!) (pos_p[i]!)
+  let const47 := constOf (2 * P - 1) SHB
+  let s_h := makeIndexedWires "s2b_sh" SHB
+  let (s_h_gates, _s_h_borrow) := mkKoggeStoneSub const47 pos_p s_h "s2b_shs" one
+  let prod_n := makeIndexedWires "s2b_pn" (2 * P)
+  let prod_n_gates := mkBarrelShiftLeft s2a_prod s_h prod_n zero "s2b_bslp"
+
+  let s_h_11 := (List.range EFFW).map fun i => if i < SHB then s_h[i]! else zero
+  let exp_p := makeIndexedWires "s2b_ep" EFFW
+  let (exp_p_gates, _ep_borrow) := mkKoggeStoneSub s2a_exp_t1 s_h_11 exp_p "s2b_eps" one
+
+  let diff := makeIndexedWires "s2b_d" EFFW
+  let (diff_gates, diff_borrow) := mkKoggeStoneSub exp_p s2a_eff_c diff "s2b_ds" one
+  let c_big := Wire.mk "s2b_cbig"
   let c_big_gate := [
-    Gate.mkBUF (exp_p[EFFW - 1]!) (Wire.mk "s2_epsign"),
-    Gate.mkBUF (s1_eff_c[EFFW - 1]!) (Wire.mk "s2_ecsign"),
-    Gate.mkNOT (Wire.mk "s2_ecsign") (Wire.mk "s2_necpos"),
-    Gate.mkAND (Wire.mk "s2_epsign") (Wire.mk "s2_necpos") (Wire.mk "s2_cbig1"),
-    Gate.mkXOR (Wire.mk "s2_epsign") (Wire.mk "s2_ecsign") (Wire.mk "s2_sdiff0"),
-    Gate.mkNOT (Wire.mk "s2_sdiff0") (Wire.mk "s2_same0"),
-    Gate.mkAND (Wire.mk "s2_same0") diff_borrow (Wire.mk "s2_cbig2"),
-    Gate.mkOR (Wire.mk "s2_cbig1") (Wire.mk "s2_cbig2") c_big
+    Gate.mkBUF (exp_p[EFFW - 1]!) (Wire.mk "s2b_epsign"),
+    Gate.mkBUF (s2a_eff_c[EFFW - 1]!) (Wire.mk "s2b_ecsign"),
+    Gate.mkNOT (Wire.mk "s2b_ecsign") (Wire.mk "s2b_necpos"),
+    Gate.mkAND (Wire.mk "s2b_epsign") (Wire.mk "s2b_necpos") (Wire.mk "s2b_cbig1"),
+    Gate.mkXOR (Wire.mk "s2b_epsign") (Wire.mk "s2b_ecsign") (Wire.mk "s2b_sdiff0"),
+    Gate.mkNOT (Wire.mk "s2b_sdiff0") (Wire.mk "s2b_same0"),
+    Gate.mkAND (Wire.mk "s2b_same0") diff_borrow (Wire.mk "s2b_cbig2"),
+    Gate.mkOR (Wire.mk "s2b_cbig1") (Wire.mk "s2b_cbig2") c_big
   ]
 
-  -- the product sits at the top of the window; the addend starts at SIG_LSB;
-  -- whichever is not the anchor shifts down by the exponent gap
   let diff_low6 := (List.range SHB).map fun i => diff[i]!
   let const3_6 := constOf (ANCHOR - (2 * P - 1)) SHB
-  let p_up_amt := makeIndexedWires "s2_pua" SHB
-  let (p_up_amt_gates, _pua_carry) := mkKoggeStoneAdd const3_6 diff_low6 zero p_up_amt "s2_puaa"
-  let p_left_amt := makeIndexedWires "s2_pla" SHB
+  let p_up_amt := makeIndexedWires "s2b_pua" SHB
+  let (p_up_amt_gates, _pua_carry) := mkKoggeStoneAdd const3_6 diff_low6 zero p_up_amt "s2b_puaa"
+  let p_left_amt := makeIndexedWires "s2b_pla" SHB
   let p_left_amt_gates := (List.range SHB).map fun i =>
     Gate.mkMUX (const3_6[i]!) (p_up_amt[i]!) c_big (p_left_amt[i]!)
-  let p_down_amt := makeIndexedWires "s2_pda" EFFW
-  -- The addend is anchored with its leading one at window bit ANCHOR, so the
-  -- product's leading one belongs at ANCHOR - (Ec - Ep).  It starts at bit
-  -- 2P-1, so the shift is (ANCHOR - (2P-1)) + diff to the left, and the
-  -- negation of that to the right.  Computing (2P-1 - ANCHOR) - diff gets the
-  -- sign of the constant wrong and lands the product six bits low whenever the
-  -- addend outweighs the product.
+  let p_down_amt := makeIndexedWires "s2b_pda" EFFW
   let const3_e := constOf (ANCHOR - (2 * P - 1)) EFFW
-  let p_up_amt_e := makeIndexedWires "s2_puae" EFFW
+  let p_up_amt_e := makeIndexedWires "s2b_puae" EFFW
   let (p_up_amt_e_gates, _puae_carry) :=
-    mkKoggeStoneAdd const3_e diff zero p_up_amt_e "s2_puaea"
+    mkKoggeStoneAdd const3_e diff zero p_up_amt_e "s2b_puaea"
   let (p_down_amt_gates, _pda_borrow) :=
-    mkKoggeStoneSub (constOf 0 EFFW) p_up_amt_e p_down_amt "s2_pdas" one
-  let c_left_amt := makeIndexedWires "s2_cla" SHB
+    mkKoggeStoneSub (constOf 0 EFFW) p_up_amt_e p_down_amt "s2b_pdas" one
+  let c_left_amt := makeIndexedWires "s2b_cla" SHB
   let const27_6 := constOf SIG_LSB SHB
-  let (c_left_amt_gates, _cla_borrow) := mkKoggeStoneSub const27_6 diff_low6 c_left_amt "s2_clas"
-    one
-  let c_up_amt := makeIndexedWires "s2_cua" SHB
+  let (c_left_amt_gates, _cla_borrow) :=
+    mkKoggeStoneSub const27_6 diff_low6 c_left_amt "s2b_clas" one
+  let c_up_amt := makeIndexedWires "s2b_cua" SHB
   let c_up_amt_gates := (List.range SHB).map fun i =>
     Gate.mkMUX (c_left_amt[i]!) (const27_6[i]!) c_big (c_up_amt[i]!)
-  let c_down_amt := makeIndexedWires "s2_cda" EFFW
+  let c_down_amt := makeIndexedWires "s2b_cda" EFFW
   let (c_down_amt_gates, _cda_borrow) :=
     mkKoggeStoneSub diff (const27_6 ++ (List.range (EFFW - SHB)).map (fun _ => zero)) c_down_amt
-      "s2_cdas" one
+      "s2b_cdas" one
 
-  let (p_up, p_up_gates) := mkShiftLeftInto prod_n const3_6 WINDOW zero "s2_pup"
-  let (p_left, p_left_gates) := mkShiftLeftInto prod_n p_left_amt WINDOW zero "s2_pl"
-  let (p_down, p_down_stk, p_down_gates) := mkShiftRightSat prod_n p_down_amt WINDOW SHB one zero
-    "s2_pdn"
-  let (p_down_any, p_down_any_gates) := mkOrTree "s2_pdany" p_down_amt
-  let p_dir := Wire.mk "s2_pdir"
+  let s2b_prod_n := makeIndexedWires "s2br_pn" (2 * P)
+  let s2b_mant_c := makeIndexedWires "s2br_mc" P
+  let s2b_c_big := Wire.mk "s2br_cbig"
+  let s2b_p_left_amt := makeIndexedWires "s2br_pla" SHB
+  let s2b_p_down_amt := makeIndexedWires "s2br_pda" EFFW
+  let s2b_c_left_amt := makeIndexedWires "s2br_cla" SHB
+  let s2b_c_up_amt := makeIndexedWires "s2br_cua" SHB
+  let s2b_c_down_amt := makeIndexedWires "s2br_cda" EFFW
+  let s2b_exp_p := makeIndexedWires "s2br_ep" EFFW
+  let s2b_eff_c := makeIndexedWires "s2br_ec" EFFW
+  let s2b_c_eff := makeIndexedWires "s2br_ce" (MSB + 1)
+  let s2b_rm := makeIndexedWires "s2br_rm" 3
+  let s2b_tag := makeIndexedWires "s2br_tg" 6
+  let s2b_prod_sign := Wire.mk "s2br_ps"
+  let s2b_c_sign := Wire.mk "s2br_cs"
+  let s2b_any_nan := Wire.mk "s2br_an"
+  let s2b_any_snan := Wire.mk "s2br_as"
+  let s2b_prod_inf := Wire.mk "s2br_pi"
+  let s2b_prod_zero := Wire.mk "s2br_pz"
+  let s2b_inf_zero := Wire.mk "s2br_iz"
+  let s2b_c_inf := Wire.mk "s2br_ci"
+  let s2b_c_zero := Wire.mk "s2br_cz"
+  let s2b_valid := Wire.mk "s2br_v"
+  let s2b_gates :=
+    [Gate.mkDFF c_big clock reset s2b_c_big,
+     Gate.mkDFF s2a_prod_sign clock reset s2b_prod_sign,
+     Gate.mkDFF s2a_c_sign clock reset s2b_c_sign,
+     Gate.mkDFF s2a_any_nan clock reset s2b_any_nan,
+     Gate.mkDFF s2a_any_snan clock reset s2b_any_snan,
+     Gate.mkDFF s2a_prod_inf clock reset s2b_prod_inf,
+     Gate.mkDFF s2a_prod_zero clock reset s2b_prod_zero,
+     Gate.mkDFF s2a_inf_zero clock reset s2b_inf_zero,
+     Gate.mkDFF s2a_c_inf clock reset s2b_c_inf,
+     Gate.mkDFF s2a_c_zero clock reset s2b_c_zero,
+     Gate.mkDFF s2a_valid clock reset s2b_valid] ++
+    mkDFFBank prod_n s2b_prod_n clock reset ++
+    mkDFFBank s2a_mant_c s2b_mant_c clock reset ++
+    mkDFFBank p_left_amt s2b_p_left_amt clock reset ++
+    mkDFFBank p_down_amt s2b_p_down_amt clock reset ++
+    mkDFFBank c_left_amt s2b_c_left_amt clock reset ++
+    mkDFFBank c_up_amt s2b_c_up_amt clock reset ++
+    mkDFFBank c_down_amt s2b_c_down_amt clock reset ++
+    mkDFFBank exp_p s2b_exp_p clock reset ++
+    mkDFFBank s2a_eff_c s2b_eff_c clock reset ++
+    mkDFFBank s2a_c_eff s2b_c_eff clock reset ++
+    mkDFFBank s2a_rm s2b_rm clock reset ++
+    mkDFFBank s2a_tag s2b_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 4: window alignment barrel shifters
+  -- ══════════════════════════════════════════════════════════════════════
+  let (p_up, p_up_gates) := mkShiftLeftInto s2b_prod_n const3_6 WINDOW zero "s2c_pup"
+  let (p_left, p_left_gates) := mkShiftLeftInto s2b_prod_n s2b_p_left_amt WINDOW zero "s2c_pl"
+  let (p_down, p_down_stk, p_down_gates) :=
+    mkShiftRightSat s2b_prod_n s2b_p_down_amt WINDOW SHB one zero "s2c_pdn"
+  let (p_down_any, p_down_any_gates) := mkOrTree "s2c_pdany" s2b_p_down_amt
+  let p_dir := Wire.mk "s2c_pdir"
   let p_dir_gate := [
-    Gate.mkNOT (p_down_amt[EFFW - 1]!) (Wire.mk "s2_pdpos"),
-    Gate.mkAND (Wire.mk "s2_pdpos") p_down_any (Wire.mk "s2_pdp1"),
-    Gate.mkAND c_big (Wire.mk "s2_pdp1") p_dir
+    Gate.mkNOT (s2b_p_down_amt[EFFW - 1]!) (Wire.mk "s2c_pdpos"),
+    Gate.mkAND (Wire.mk "s2c_pdpos") p_down_any (Wire.mk "s2c_pdp1"),
+    Gate.mkAND s2b_c_big (Wire.mk "s2c_pdp1") p_dir
   ]
-  let q_win := makeIndexedWires "s2_qw" WINDOW
+  let q_win := makeIndexedWires "s2c_qw" WINDOW
   let q_win_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (p_up[i]!) (Wire.mk s!"s2_pq{i}") c_big (q_win[i]!)
+    Gate.mkMUX (p_up[i]!) (Wire.mk s!"s2c_pq{i}") s2b_c_big (q_win[i]!)
   let q_win_gates' := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (p_left[i]!) (p_down[i]!) p_dir (Wire.mk s!"s2_pq{i}")
+    Gate.mkMUX (p_left[i]!) (p_down[i]!) p_dir (Wire.mk s!"s2c_pq{i}")
 
-  let (c_up, c_up_gates) := mkShiftLeftInto s1_mant_c const27_6 WINDOW zero "s2_cup"
-  let (c_left, c_left_gates) := mkShiftLeftInto s1_mant_c c_left_amt WINDOW zero "s2_cl"
-  let (c_down, c_down_stk, c_down_gates) := mkShiftRightSat s1_mant_c c_down_amt WINDOW SHB one zero
-    "s2_cdn"
-  let (c_down_any, c_down_any_gates) := mkOrTree "s2_cdany" c_down_amt
-  let c_dir := Wire.mk "s2_cdir"
+  let (c_up, c_up_gates) := mkShiftLeftInto s2b_mant_c const27_6 WINDOW zero "s2c_cup"
+  let (c_left, c_left_gates) := mkShiftLeftInto s2b_mant_c s2b_c_left_amt WINDOW zero "s2c_cl"
+  let (c_down, c_down_stk, c_down_gates) :=
+    mkShiftRightSat s2b_mant_c s2b_c_down_amt WINDOW SHB one zero "s2c_cdn"
+  let (c_down_any, c_down_any_gates) := mkOrTree "s2c_cdany" s2b_c_down_amt
+  let c_dir := Wire.mk "s2c_cdir"
   let c_dir_gate := [
-    Gate.mkNOT c_big (Wire.mk "s2_ncbig"),
-    -- EFFW - 1, not a literal: the effective-exponent width follows WEXP, so a
-    -- literal is only the sign bit at one precision.  A literal 10 here is
-    -- correct for the single-precision build and wrong for double.
-    Gate.mkNOT (c_down_amt[EFFW - 1]!) (Wire.mk "s2_cdpos"),
-    Gate.mkAND (Wire.mk "s2_ncbig") (Wire.mk "s2_cdpos") (Wire.mk "s2_cdp1"),
-    Gate.mkAND (Wire.mk "s2_cdp1") c_down_any c_dir
+    Gate.mkNOT s2b_c_big (Wire.mk "s2c_ncbig"),
+    Gate.mkNOT (s2b_c_down_amt[EFFW - 1]!) (Wire.mk "s2c_cdpos"),
+    Gate.mkAND (Wire.mk "s2c_ncbig") (Wire.mk "s2c_cdpos") (Wire.mk "s2c_cdp1"),
+    Gate.mkAND (Wire.mk "s2c_cdp1") c_down_any c_dir
   ]
-  let c_win := makeIndexedWires "s2_cw" WINDOW
+  let c_win := makeIndexedWires "s2c_cw" WINDOW
   let c_win_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (Wire.mk s!"s2_cc{i}") (c_up[i]!) c_big (c_win[i]!)
+    Gate.mkMUX (Wire.mk s!"s2c_cc{i}") (c_up[i]!) s2b_c_big (c_win[i]!)
   let c_win_gates' := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (c_left[i]!) (c_down[i]!) c_dir (Wire.mk s!"s2_cc{i}")
-  -- only a right shift loses bits, and only one operand ever shifts right
-  let stk := Wire.mk "s2_stk"
+    Gate.mkMUX (c_left[i]!) (c_down[i]!) c_dir (Wire.mk s!"s2c_cc{i}")
+
+  let stk := Wire.mk "s2c_stk"
   let stk_gates := [
-    Gate.mkMUX zero c_down_stk c_dir (Wire.mk "s2_stkc"),
-    Gate.mkMUX (Wire.mk "s2_stkc") p_down_stk p_dir stk
+    Gate.mkMUX zero c_down_stk c_dir (Wire.mk "s2c_stkc"),
+    Gate.mkMUX (Wire.mk "s2c_stkc") p_down_stk p_dir stk
   ]
 
-  let same := Wire.mk "s2_same"
-  let not_same := Wire.mk "s2_nsame"
+  let same := Wire.mk "s2c_same"
+  let not_same := Wire.mk "s2c_nsame"
   let same_gate := [
-    Gate.mkXOR s1_prod_sign s1_c_sign (Wire.mk "s2_xs"),
-    Gate.mkNOT (Wire.mk "s2_xs") same,
+    Gate.mkXOR s2b_prod_sign s2b_c_sign (Wire.mk "s2c_xs"),
+    Gate.mkNOT (Wire.mk "s2c_xs") same,
     Gate.mkNOT same not_same
   ]
 
-  let sum_win := makeIndexedWires "s2_sw" WINDOW
-  let (sum_win_gates, _sw_carry) := mkKoggeStoneAdd q_win c_win zero sum_win "s2_swa"
-  let diff_qc := makeIndexedWires "s2_dqc" WINDOW
-  let (diff_qc_gates, dqc_borrow) := mkKoggeStoneSub q_win c_win diff_qc "s2_dqcs" one
-  let diff_cq := makeIndexedWires "s2_dcq" WINDOW
-  let (diff_cq_gates, _dcq_borrow) := mkKoggeStoneSub c_win q_win diff_cq "s2_dcqs" one
-  let mag := makeIndexedWires "s2_mag" WINDOW
+  let e_hi := makeIndexedWires "s2c_eh" EFFW
+  let e_hi_gates := (List.range EFFW).map fun i =>
+    Gate.mkMUX (s2b_exp_p[i]!) (s2b_eff_c[i]!) s2b_c_big (e_hi[i]!)
+
+  let s2c_q_win := makeIndexedWires "s2cr_qw" WINDOW
+  let s2c_c_win := makeIndexedWires "s2cr_cw" WINDOW
+  let s2c_stk := Wire.mk "s2cr_stk"
+  let s2c_same := Wire.mk "s2cr_same"
+  let s2c_not_same := Wire.mk "s2cr_nsame"
+  let s2c_e_hi := makeIndexedWires "s2cr_eh" EFFW
+  let s2c_c_eff := makeIndexedWires "s2cr_ce" (MSB + 1)
+  let s2c_rm := makeIndexedWires "s2cr_rm" 3
+  let s2c_tag := makeIndexedWires "s2cr_tg" 6
+  let s2c_prod_sign := Wire.mk "s2cr_ps"
+  let s2c_c_sign := Wire.mk "s2cr_cs"
+  let s2c_any_nan := Wire.mk "s2cr_an"
+  let s2c_any_snan := Wire.mk "s2cr_as"
+  let s2c_prod_inf := Wire.mk "s2cr_pi"
+  let s2c_prod_zero := Wire.mk "s2cr_pz"
+  let s2c_inf_zero := Wire.mk "s2cr_iz"
+  let s2c_c_inf := Wire.mk "s2cr_ci"
+  let s2c_c_zero := Wire.mk "s2cr_cz"
+  let s2c_valid := Wire.mk "s2cr_v"
+  let s2c_gates :=
+    [Gate.mkDFF stk clock reset s2c_stk,
+     Gate.mkDFF same clock reset s2c_same,
+     Gate.mkDFF not_same clock reset s2c_not_same,
+     Gate.mkDFF s2b_prod_sign clock reset s2c_prod_sign,
+     Gate.mkDFF s2b_c_sign clock reset s2c_c_sign,
+     Gate.mkDFF s2b_any_nan clock reset s2c_any_nan,
+     Gate.mkDFF s2b_any_snan clock reset s2c_any_snan,
+     Gate.mkDFF s2b_prod_inf clock reset s2c_prod_inf,
+     Gate.mkDFF s2b_prod_zero clock reset s2c_prod_zero,
+     Gate.mkDFF s2b_inf_zero clock reset s2c_inf_zero,
+     Gate.mkDFF s2b_c_inf clock reset s2c_c_inf,
+     Gate.mkDFF s2b_c_zero clock reset s2c_c_zero,
+     Gate.mkDFF s2b_valid clock reset s2c_valid] ++
+    mkDFFBank q_win s2c_q_win clock reset ++
+    mkDFFBank c_win s2c_c_win clock reset ++
+    mkDFFBank e_hi s2c_e_hi clock reset ++
+    mkDFFBank s2b_c_eff s2c_c_eff clock reset ++
+    mkDFFBank s2b_rm s2c_rm clock reset ++
+    mkDFFBank s2b_tag s2c_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 5: window addition and subtraction
+  -- ══════════════════════════════════════════════════════════════════════
+  let sum_win := makeIndexedWires "s2d_sw" WINDOW
+  let (sum_win_gates, _sw_carry) :=
+    mkCarrySelectKoggeStoneAdd s2c_q_win s2c_c_win zero sum_win "s2d_swa" zero one
+
+  let diff_qc := makeIndexedWires "s2d_dqc" WINDOW
+  let (diff_qc_gates, dqc_borrow) :=
+    mkCarrySelectKoggeStoneSub s2c_q_win s2c_c_win diff_qc "s2d_dqcs" one zero one
+
+  let diff_cq := makeIndexedWires "s2d_dcq" WINDOW
+  let (diff_cq_gates, _dcq_borrow) :=
+    mkCarrySelectKoggeStoneSub s2c_c_win s2c_q_win diff_cq "s2d_dcqs" one zero one
+
+  let inv_c := makeIndexedWires "s2d_invc" WINDOW
+  let inv_c_gates := (List.range WINDOW).map fun i => Gate.mkNOT (s2c_c_win[i]!) (inv_c[i]!)
+  let diff_qc_sub1 := makeIndexedWires "s2d_dqc_s1" WINDOW
+  let (dqc_sub1_gates, _dqc_sub1_carry) :=
+    mkCarrySelectKoggeStoneAdd s2c_q_win inv_c zero diff_qc_sub1 "s2d_dqc_s1a" zero one
+
+  let inv_q := makeIndexedWires "s2d_invq" WINDOW
+  let inv_q_gates := (List.range WINDOW).map fun i => Gate.mkNOT (s2c_q_win[i]!) (inv_q[i]!)
+  let diff_cq_sub1 := makeIndexedWires "s2d_dcq_s1" WINDOW
+  let (dcq_sub1_gates, _dcq_sub1_carry) :=
+    mkCarrySelectKoggeStoneAdd s2c_c_win inv_q zero diff_cq_sub1 "s2d_dcq_s1a" zero one
+
+  let res_sign := Wire.mk "s2d_rs"
+  let res_sign_gate := [Gate.mkMUX s2c_prod_sign s2c_c_sign dqc_borrow res_sign]
+
+  let ulp_borrow_ok := Wire.mk "s2d_ubok"
+  let ulp_borrow_gates := [Gate.mkAND s2c_not_same s2c_stk ulp_borrow_ok]
+
+  let mag := makeIndexedWires "s2d_mag" WINDOW
   let mag_gates := (List.range WINDOW).map fun i =>
     Gate.mkMUX (diff_qc[i]!) (diff_cq[i]!) dqc_borrow (mag[i]!)
-  let res_sign := Wire.mk "s2_rs"
-  let res_sign_gate := [Gate.mkMUX s1_prod_sign s1_c_sign dqc_borrow res_sign]
 
-  -- An effective subtraction whose subtrahend lost bits below the window must borrow
-  -- one unit from bit 0: the exact difference is (A - B - 1) + (1 - epsilon).
-  let ulp_borrow_ok := Wire.mk "s2_ubok"
-  let ulp_borrow_gates := [
-    Gate.mkAND not_same stk ulp_borrow_ok
-  ]
-  let mag_c := makeIndexedWires "s2_magc" WINDOW
-  let minus_one := (List.range WINDOW).map fun i => if i == 0 then one else zero
-  let (mag_c_gates, _mag_c_borrow) := mkKoggeStoneSub mag minus_one mag_c "s2_magcs" one
-  let small_win_gates : List Gate := []
-  let mag_sel := makeIndexedWires "s2_magsel" WINDOW
+  let mag_c := makeIndexedWires "s2d_magc" WINDOW
+  let mag_c_gates := (List.range WINDOW).map fun i =>
+    Gate.mkMUX (diff_qc_sub1[i]!) (diff_cq_sub1[i]!) dqc_borrow (mag_c[i]!)
+
+  let mag_sel := makeIndexedWires "s2d_magsel" WINDOW
   let mag_sel_gates := (List.range WINDOW).map fun i =>
     Gate.mkMUX (mag[i]!) (mag_c[i]!) ulp_borrow_ok (mag_sel[i]!)
-  let win := makeIndexedWires "s2_w" WINDOW
-  let win_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (mag_sel[i]!) (sum_win[i]!) same (win[i]!)
 
-  let e_hi := makeIndexedWires "s2_eh" EFFW
-  let e_hi_gates := (List.range EFFW).map fun i =>
-    Gate.mkMUX (exp_p[i]!) (s1_eff_c[i]!) c_big (e_hi[i]!)
+  let win := makeIndexedWires "s2d_w" WINDOW
+  let win_gates := (List.range WINDOW).map fun i =>
+    Gate.mkMUX (mag_sel[i]!) (sum_win[i]!) s2c_same (win[i]!)
 
   let s2_win := makeIndexedWires "s2r_w" WINDOW
   let s2_stk := Wire.mk "s2r_stk"
@@ -516,22 +655,22 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let s2_valid := Wire.mk "s2r_v"
   let s2_gates :=
     [Gate.mkDFF res_sign clock reset s2_sign,
-     Gate.mkDFF stk clock reset s2_stk,
-     Gate.mkDFF s1_any_nan clock reset s2_any_nan,
-     Gate.mkDFF s1_any_snan clock reset s2_any_snan,
-     Gate.mkDFF s1_prod_inf clock reset s2_prod_inf,
-     Gate.mkDFF s1_prod_zero clock reset s2_prod_zero,
-     Gate.mkDFF s1_inf_zero clock reset s2_inf_zero,
-     Gate.mkDFF s1_c_inf clock reset s2_c_inf,
-     Gate.mkDFF s1_c_zero clock reset s2_c_zero,
-     Gate.mkDFF s1_prod_sign clock reset s2_prod_sign,
-     Gate.mkDFF s1_c_sign clock reset s2_c_sign,
-     Gate.mkDFF s1_valid clock reset s2_valid] ++
+     Gate.mkDFF s2c_stk clock reset s2_stk,
+     Gate.mkDFF s2c_any_nan clock reset s2_any_nan,
+     Gate.mkDFF s2c_any_snan clock reset s2_any_snan,
+     Gate.mkDFF s2c_prod_inf clock reset s2_prod_inf,
+     Gate.mkDFF s2c_prod_zero clock reset s2_prod_zero,
+     Gate.mkDFF s2c_inf_zero clock reset s2_inf_zero,
+     Gate.mkDFF s2c_c_inf clock reset s2_c_inf,
+     Gate.mkDFF s2c_c_zero clock reset s2_c_zero,
+     Gate.mkDFF s2c_prod_sign clock reset s2_prod_sign,
+     Gate.mkDFF s2c_c_sign clock reset s2_c_sign,
+     Gate.mkDFF s2c_valid clock reset s2_valid] ++
     mkDFFBank win s2_win clock reset ++
-    mkDFFBank e_hi s2_e_hi clock reset ++
-    mkDFFBank s1_c_eff s2_c_eff clock reset ++
-    mkDFFBank s1_rm s2_rm clock reset ++
-    mkDFFBank s1_tag s2_tag clock reset
+    mkDFFBank s2c_e_hi s2_e_hi clock reset ++
+    mkDFFBank s2c_c_eff s2_c_eff clock reset ++
+    mkDFFBank s2c_rm s2_rm clock reset ++
+    mkDFFBank s2c_tag s2_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
   -- Stage 3: normalize, round once, pack, flags
@@ -897,18 +1036,19 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       pp_gates ++ csa_gates ++ lead_c_gates ++ pos_c_gates ++ sh_c_gates ++
       mant_c_norm_gates ++ mant_c_gates ++ eff_c_sub_gates ++ eff_c_gates ++
       c_eff_gates ++ sign_gates ++ s1_gates ++
-      prod_add_gates ++ lead_p_gates ++ pos_p_gates ++ s_h_gates ++ prod_n_gates ++
-      exp_sum_gates ++ exp_t1_gates ++ exp_p_gates ++ diff_gates ++ c_big_gate ++
-      p_up_amt_gates ++ p_left_amt_gates ++ p_up_amt_e_gates ++ p_down_amt_gates ++ c_left_amt_gates
-        ++
-      c_up_amt_gates ++ c_down_amt_gates ++ c_down_any_gates ++ p_down_any_gates ++
-      p_up_gates ++ p_left_gates ++ p_down_gates ++ p_dir_gate ++
+      prod_add_gates ++ exp_sum_gates ++ exp_t1_gates ++ s2a_gates ++
+      lead_p_gates ++ pos_p_gates ++ s_h_gates ++ prod_n_gates ++
+      exp_p_gates ++ diff_gates ++ c_big_gate ++
+      p_up_amt_gates ++ p_left_amt_gates ++ p_up_amt_e_gates ++ p_down_amt_gates ++
+      c_left_amt_gates ++ c_up_amt_gates ++ c_down_amt_gates ++ s2b_gates ++
+      p_down_any_gates ++ p_up_gates ++ p_left_gates ++ p_down_gates ++ p_dir_gate ++
       q_win_gates ++ q_win_gates' ++
-      c_up_gates ++ c_left_gates ++ c_down_gates ++ c_dir_gate ++
-      c_win_gates ++ c_win_gates' ++ stk_gates ++ same_gate ++
-      sum_win_gates ++ diff_qc_gates ++ diff_cq_gates ++ mag_gates ++
-      res_sign_gate ++ small_win_gates ++ ulp_borrow_gates ++ mag_c_gates ++
-      mag_sel_gates ++ win_gates ++ e_hi_gates ++ s2_gates ++
+      c_up_gates ++ c_left_gates ++ c_down_gates ++ c_down_any_gates ++ c_dir_gate ++
+      c_win_gates ++ c_win_gates' ++ stk_gates ++ same_gate ++ e_hi_gates ++ s2c_gates ++
+      sum_win_gates ++ diff_qc_gates ++ diff_cq_gates ++
+      inv_c_gates ++ dqc_sub1_gates ++ inv_q_gates ++ dcq_sub1_gates ++
+      res_sign_gate ++ ulp_borrow_gates ++ mag_gates ++ mag_c_gates ++
+      mag_sel_gates ++ win_gates ++ s2_gates ++
       win_any_gates ++ lead_v_gates ++ pos_v_gates ++ sh_v_gates ++
       n_up_gates ++ n_dn_gates ++ n_gates ++ extra_gate ++ e_res_gates ++
       st_lo_gates ++ st_gates ++ m_gates ++ e_any_gates ++ e_ge1_gate ++
@@ -925,6 +1065,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       use_pz_gate ++ res_final_gates ++ result_gates ++ nv_gate ++ nx_gate ++
       round_active_gate ++ uf_gate ++ of_final_gate ++ exc_gates ++ tag_gates ++ valid_gate
     instances := csa_instances
+    keepHierarchy := true
     signalGroups := [
       { name := "src1", width := MSB + 1, wires := src1 },
       { name := "src2", width := MSB + 1, wires := src2 },

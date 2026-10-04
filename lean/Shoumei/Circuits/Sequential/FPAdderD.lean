@@ -1191,6 +1191,7 @@ def mkFPAdderD : Circuit :=
     outputs := result ++ tag_out ++ exc ++ [valid_out]
     gates := all_gates
     instances := [stage1_inst, stage2_inst, stage3_inst, stage4_inst]
+    keepHierarchy := true
     signalGroups := [
       { name := "src1", width := 64, wires := src1 },
       { name := "src2", width := 64, wires := src2 },

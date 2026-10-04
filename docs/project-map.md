@@ -7,7 +7,7 @@ from `moduleName :=` references between circuits, certificates from the
 Lean registry, and docs from each file's leading comment block.
 
 - Lean files: **291**
-- Circuits with a literal `name :=` (graph nodes): **96**
+- Circuits with a literal `name :=` (graph nodes): **98**
 - Compositional certificates (Lean registry): **103**
 - Refinement atoms (Lean registry): **13**
 - Proof files: **80**
@@ -26,7 +26,7 @@ The label is the count of distinct instantiations that cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>41 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>43 circuits"]
   Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>20 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
@@ -110,6 +110,8 @@ graph TD
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes | yes |
 | `GPIO` | Shoumei/Peripherals | 0 |  |  | yes | yes |
 | `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
+| `KoggeStoneAdder106` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
+| `KoggeStoneAdder106NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
 | `KoggeStoneAdder32NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
 | `KoggeStoneAdder64` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
@@ -159,10 +161,10 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **91** circuits with no `Circuit satisfies Behavior` atom
+- **93** circuits with no `Circuit satisfies Behavior` atom
 - **23** circuits with no `*Proofs.lean` mentioning them
-- **57** circuits that instantiate nothing (leaves)
-- **43** circuits nothing else instantiates (tops)
+- **59** circuits that instantiate nothing (leaves)
+- **45** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
 

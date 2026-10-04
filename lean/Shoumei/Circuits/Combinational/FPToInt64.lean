@@ -379,8 +379,9 @@ def mkFPToInt64 : Circuit :=
   -- Increment integer magnitude by flt_round_up
   let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
   let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) := mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
-    fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
+  let (fimag_add_gates, flt_mag_ovf) :=
+    mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
+      fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
 
   -- 2's complement negation if signed and negative: -flt_int_mag_inc
   let flt_int_neg := makeIndexedWires "flt_int_neg" 64

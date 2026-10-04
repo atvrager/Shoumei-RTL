@@ -456,6 +456,46 @@ def mkKoggeStoneSub (a b : List Wire) (sum_out : List Wire)
   let borrow_gate := Gate.mkNOT carry_out borrow_wire
   (inv_gates ++ add_gates ++ [borrow_gate], borrow_wire)
 
+/-- Carry-Select Kogge-Stone adder: splits operands wider than 56 bits into two halves.
+    Both halves compute with at most 6 prefix levels in parallel.
+    A multiplexer selects the upper half result using the lower half carry-out. -/
+def mkCarrySelectKoggeStoneAdd (a b : List Wire) (carry_in : Wire)
+    (sum_out : List Wire) (pfx : String) (zero_wire one_wire : Wire) : List Gate × Wire :=
+  let n := a.length
+  if n <= 56 then
+    mkKoggeStoneAdd a b carry_in sum_out pfx
+  else
+    let half := n / 2
+    let a_lo := (List.range half).map fun i => a[i]!
+    let b_lo := (List.range half).map fun i => b[i]!
+    let sum_lo := (List.range half).map fun i => sum_out[i]!
+    let a_hi := (List.range (n - half)).map fun i => a[half + i]!
+    let b_hi := (List.range (n - half)).map fun i => b[half + i]!
+    let sum_hi := (List.range (n - half)).map fun i => sum_out[half + i]!
+    let (lo_gates, c_lo) := mkKoggeStoneAdd a_lo b_lo carry_in sum_lo (pfx ++ "_lo")
+    let sum_hi0 := makeIndexedWires (pfx ++ "_s0") (n - half)
+    let sum_hi1 := makeIndexedWires (pfx ++ "_s1") (n - half)
+    let (hi0_gates, c_hi0) := mkKoggeStoneAdd a_hi b_hi zero_wire sum_hi0 (pfx ++ "_hi0")
+    let (hi1_gates, c_hi1) := mkKoggeStoneAdd a_hi b_hi one_wire sum_hi1 (pfx ++ "_hi1")
+    let mux_sum_gates := (List.range (n - half)).map fun i =>
+      Gate.mkMUX (sum_hi0[i]!) (sum_hi1[i]!) c_lo (sum_hi[i]!)
+    let cout := Wire.mk (pfx ++ "_cout")
+    let cout_gate := Gate.mkMUX c_hi0 c_hi1 c_lo cout
+    (lo_gates ++ hi0_gates ++ hi1_gates ++ mux_sum_gates ++ [cout_gate], cout)
+
+/-- Carry-Select Kogge-Stone subtractor: out = a - b - (1 - cin).
+    When cin = 1, computes a - b. When cin = 0, computes a - b - 1. -/
+def mkCarrySelectKoggeStoneSub (a b : List Wire) (sum_out : List Wire)
+    (pfx : String) (one_wire zero_wire : Wire) (cin : Wire) : List Gate × Wire :=
+  let n := b.length
+  let inv_b := makeIndexedWires (pfx ++ "_invb") n
+  let inv_gates := (List.range n).map fun i => Gate.mkNOT (b[i]!) (inv_b[i]!)
+  let (add_gates, carry_out) :=
+    mkCarrySelectKoggeStoneAdd a inv_b cin sum_out (pfx ++ "_add") zero_wire one_wire
+  let borrow_wire := Wire.mk (pfx ++ "_borrow")
+  let borrow_gate := Gate.mkNOT carry_out borrow_wire
+  (inv_gates ++ add_gates ++ [borrow_gate], borrow_wire)
+
 /-- 106-bit Carry-Select Kogge-Stone adder with carry-in.
     It splits into two 53-bit Kogge-Stone blocks to eliminate the 7th prefix level.
     The lower block absorbs cin and computes sum[52:0] and carry-out bit 52.
