@@ -253,7 +253,7 @@ if {$dff_lib ne $target_lib} {
     lappend stat_cmd -liberty $dff_lib
 }
 tee -o "${out_dir}/reports/area.rpt" {*}$stat_cmd
-tee -o "${out_dir}/reports/timing.rpt" ltp -noff
+yosys scc -expect 0
 
 # Step 10: Export gate-level netlist
 set netlist_file "${out_dir}/netlist/${design_name}.v"
