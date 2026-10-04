@@ -8,9 +8,9 @@ namespace Shoumei.Circuits.Combinational
 
 open Shoumei
 
-/-- Port count: 72 inputs (src1[64], op[3], rm[3], zero, one). -/
+/-- Port count: 74 inputs (src1[64], op[3], rm[3], clock, reset, zero, one). -/
 theorem fpLongConverterCircuit_inputs :
-    fpLongConverterCircuit.inputs.length = 72 := by native_decide
+    fpLongConverterCircuit.inputs.length = 74 := by native_decide
 
 /-- Port count: 70 outputs (result[64], exc[5], result_is_int). -/
 theorem fpLongConverterCircuit_outputs :

@@ -13,6 +13,8 @@ Interface:
   * is_dp: High for double-precision float output, low for single-precision
   * is_unsigned: High for unsigned integer, low for signed integer
   * rm[2:0]: Rounding mode (0=RNE, 1=RTZ, 2=RDN, 3=RUP, 4=RMM)
+  * clock: Pipeline clock
+  * reset: Synchronous reset
   * zero, one: Constant wires
 - Outputs:
   * result[63:0]: Converted float value (NaN-boxed for SP)
@@ -114,6 +116,8 @@ def mkInt64ToFP : Circuit :=
   let is_dp := Wire.mk "is_dp"
   let is_unsigned := Wire.mk "is_unsigned"
   let rm := makeIndexedWires "rm" 3
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
@@ -127,13 +131,12 @@ def mkInt64ToFP : Circuit :=
   let int_is_signed := not_is_unsigned
   let int_sign := Wire.mk "int_sign"
   let int_sign_gate := Gate.mkAND (src1[63]!) int_is_signed int_sign
-  let not_int_sign := Wire.mk "not_int_sign"
-  let not_int_sign_gate := Gate.mkNOT int_sign not_int_sign
 
   -- Negation of integer input: 0 - src1
   let zeros64 := (List.range 64).map fun _ => zero
   let int_neg := makeIndexedWires "int_neg" 64
-  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
+  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64
+    (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
 
   -- Absolute value of integer input
   let int_abs := makeIndexedWires "int_abs" 64
@@ -176,12 +179,35 @@ def mkInt64ToFP : Circuit :=
     let g_final := Gate.mkMUX m0123 m4567 (top_pos3[2]!) (lead_pos_wires[bit_idx]!)
     [g01, g23, g45, g67, g0123, g4567, g_final]
 
+  -- ══════════════════════════════════════════════
+  -- Stage 1 Pipeline Registers
+  -- ══════════════════════════════════════════════
+  let s1_int_abs := makeIndexedWires "s1_int_abs" 64
+  let s1_lead_pos := makeIndexedWires "s1_lead_pos" 6
+  let s1_int_sign := Wire.mk "s1_int_sign"
+  let not_s1_int_sign := Wire.mk "not_s1_int_sign"
+  let s1_int_is_zero := Wire.mk "s1_int_is_zero"
+  let s1_is_dp := Wire.mk "s1_is_dp"
+  let s1_rm := makeIndexedWires "s1_rm" 3
+
+  let pipe_dff_gates :=
+    (List.range 64 |>.map fun i => Gate.mkDFF (int_abs[i]!) clock reset (s1_int_abs[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkDFF (lead_pos_wires[i]!) clock reset (s1_lead_pos[i]!)) ++
+    [ Gate.mkDFF int_sign clock reset s1_int_sign,
+      Gate.mkNOT s1_int_sign not_s1_int_sign,
+      Gate.mkDFF int_is_zero clock reset s1_int_is_zero,
+      Gate.mkDFF is_dp clock reset s1_is_dp ] ++
+    (List.range 3 |>.map fun i => Gate.mkDFF (rm[i]!) clock reset (s1_rm[i]!))
+
+  -- ══════════════════════════════════════════════
+  -- Stage 2: Normalization shift, rounding and packing
+  -- ══════════════════════════════════════════════
   -- Shift left amount to normalize: shamt = 63 - lead_pos = ~lead_pos
   let norm_shamt := makeIndexedWires "norm_shamt" 6
   let norm_shamt_gates := (List.range 6).map fun i =>
-    Gate.mkNOT (lead_pos_wires[i]!) (norm_shamt[i]!)
+    Gate.mkNOT (s1_lead_pos[i]!) (norm_shamt[i]!)
 
-  -- 64-bit Barrel Left Shifter: int_abs << norm_shamt
+  -- 64-bit Barrel Left Shifter: s1_int_abs << norm_shamt
   let (norm64, norm_shift_gates) := (List.range 6).foldl
     (fun (acc : List Wire × List Gate) step =>
       let stageIn := acc.1
@@ -193,16 +219,16 @@ def mkInt64ToFP : Circuit :=
         else
           Gate.mkMUX (stageIn[i]!) zero (norm_shamt[step]!) (stageOut[i]!)
       (stageOut, acc.2 ++ gates)
-    ) ((List.range 64 |>.map fun i => int_abs[i]!), [])
+    ) ((List.range 64 |>.map fun i => s1_int_abs[i]!), [])
 
   -- Rounding mode decoding
   let not_rm0 := Wire.mk "not_rm0"
   let not_rm1 := Wire.mk "not_rm1"
   let not_rm2 := Wire.mk "not_rm2"
   let rm_inv_gates := [
-    Gate.mkNOT (rm[0]!) not_rm0,
-    Gate.mkNOT (rm[1]!) not_rm1,
-    Gate.mkNOT (rm[2]!) not_rm2
+    Gate.mkNOT (s1_rm[0]!) not_rm0,
+    Gate.mkNOT (s1_rm[1]!) not_rm1,
+    Gate.mkNOT (s1_rm[2]!) not_rm2
   ]
   let rm_is_rne := Wire.mk "rm_is_rne"
   let rm_is_rtz := Wire.mk "rm_is_rtz"
@@ -212,18 +238,19 @@ def mkInt64ToFP : Circuit :=
   let rm_dec_gates := [
     Gate.mkAND not_rm2 not_rm1 (Wire.mk "rm_t0"),
     Gate.mkAND (Wire.mk "rm_t0") not_rm0 rm_is_rne,
-    Gate.mkAND (Wire.mk "rm_t0") (rm[0]!) rm_is_rtz,
-    Gate.mkAND not_rm2 (rm[1]!) (Wire.mk "rm_t1"),
+    Gate.mkAND (Wire.mk "rm_t0") (s1_rm[0]!) rm_is_rtz,
+    Gate.mkAND not_rm2 (s1_rm[1]!) (Wire.mk "rm_t1"),
     Gate.mkAND (Wire.mk "rm_t1") not_rm0 rm_is_rdn,
-    Gate.mkAND (Wire.mk "rm_t1") (rm[0]!) rm_is_rup,
-    Gate.mkAND (rm[2]!) not_rm1 (Wire.mk "rm_t2"),
+    Gate.mkAND (Wire.mk "rm_t1") (s1_rm[0]!) rm_is_rup,
+    Gate.mkAND (s1_rm[2]!) not_rm1 (Wire.mk "rm_t2"),
     Gate.mkAND (Wire.mk "rm_t2") not_rm0 rm_is_rmm
   ]
 
   -- ── Subpart 1A: Int64 -> DP Float ──
   let dp_raw_mant := (List.range 52).map fun i => norm64[11 + i]!
   let dp_round_bit := norm64[10]!
-  let (dp_sticky_bit, dp_sticky_gates) := mkBalancedOrTree "dp_stk" (List.range 10 |>.map fun i => norm64[i]!)
+  let (dp_sticky_bit, dp_sticky_gates) := mkBalancedOrTree "dp_stk"
+    (List.range 10 |>.map fun i => norm64[i]!)
   let dp_inexact := Wire.mk "dp_inexact"
   let dp_inexact_gate := Gate.mkOR dp_round_bit dp_sticky_bit dp_inexact
 
@@ -237,8 +264,8 @@ def mkInt64ToFP : Circuit :=
   let dp_round_gates := [
     Gate.mkOR dp_sticky_bit dp_lsb dp_stk_or_lsb,
     Gate.mkAND dp_round_bit dp_stk_or_lsb dp_rne_up,
-    Gate.mkAND int_sign dp_inexact dp_rdn_up,
-    Gate.mkAND not_int_sign dp_inexact dp_rup_up,
+    Gate.mkAND s1_int_sign dp_inexact dp_rdn_up,
+    Gate.mkAND not_s1_int_sign dp_inexact dp_rup_up,
     Gate.mkAND rm_is_rne dp_rne_up (Wire.mk "dp_ru0"),
     Gate.mkAND rm_is_rdn dp_rdn_up (Wire.mk "dp_ru1"),
     Gate.mkAND rm_is_rup dp_rup_up (Wire.mk "dp_ru2"),
@@ -251,29 +278,35 @@ def mkInt64ToFP : Circuit :=
 
   let dp_mant_inc := makeIndexedWires "dp_mant_inc" 52
   let zeros52 := (List.range 52).map fun _ => zero
-  let (dp_mant_add_gates, dp_mant_ovf) := mkAddFor (AdderSpec.minArea dp_raw_mant.length .input) dp_raw_mant zeros52 dp_round_up dp_mant_inc "dp_mant_add"
+  let (dp_mant_add_gates, dp_mant_ovf) := mkAddFor
+    (AdderSpec.minArea dp_raw_mant.length .input)
+    dp_raw_mant zeros52 dp_round_up dp_mant_inc "dp_mant_add"
 
   let dp_mant_final := makeIndexedWires "dp_mant_fin" 52
   let dp_mant_fin_gates := (List.range 52).map fun i =>
     Gate.mkMUX (dp_mant_inc[i]!) zero dp_mant_ovf (dp_mant_final[i]!)
 
   let const1023 := (List.range 10 |>.map fun _ => one) ++ [zero]
-  let lead_pos_ext11 := (List.range 6 |>.map fun i => lead_pos_wires[i]!) ++ (List.range 5 |>.map fun _ => zero)
+  let lead_pos_ext11 :=
+    (List.range 6 |>.map fun i => s1_lead_pos[i]!) ++ (List.range 5 |>.map fun _ => zero)
   let dp_exp_base := makeIndexedWires "dp_exp_base" 11
-  let (dp_exp_add_gates, _) := mkAddFor (AdderSpec.minArea const1023.length .input) const1023 lead_pos_ext11 dp_mant_ovf dp_exp_base "dp_exp_add"
+  let (dp_exp_add_gates, _) := mkAddFor
+    (AdderSpec.minArea const1023.length .input)
+    const1023 lead_pos_ext11 dp_mant_ovf dp_exp_base "dp_exp_add"
 
   let res_int_to_dp := makeIndexedWires "res_int_to_dp" 64
   let res_int_to_dp_gates := (List.range 64).map fun i =>
     let bit :=
       if i < 52 then dp_mant_final[i]!
       else if i < 63 then dp_exp_base[i - 52]!
-      else int_sign
-    Gate.mkMUX bit zero int_is_zero (res_int_to_dp[i]!)
+      else s1_int_sign
+    Gate.mkMUX bit zero s1_int_is_zero (res_int_to_dp[i]!)
 
   -- ── Subpart 1B: Int64 -> SP Float ──
   let sp_raw_mant := (List.range 23).map fun i => norm64[40 + i]!
   let sp_round_bit := norm64[39]!
-  let (sp_sticky_bit, sp_sticky_gates) := mkBalancedOrTree "sp_stk" (List.range 39 |>.map fun i => norm64[i]!)
+  let (sp_sticky_bit, sp_sticky_gates) := mkBalancedOrTree "sp_stk"
+    (List.range 39 |>.map fun i => norm64[i]!)
   let sp_inexact := Wire.mk "sp_inexact"
   let sp_inexact_gate := Gate.mkOR sp_round_bit sp_sticky_bit sp_inexact
 
@@ -287,8 +320,8 @@ def mkInt64ToFP : Circuit :=
   let sp_round_gates := [
     Gate.mkOR sp_sticky_bit sp_lsb sp_stk_or_lsb,
     Gate.mkAND sp_round_bit sp_stk_or_lsb sp_rne_up,
-    Gate.mkAND int_sign sp_inexact sp_rdn_up,
-    Gate.mkAND not_int_sign sp_inexact sp_rup_up,
+    Gate.mkAND s1_int_sign sp_inexact sp_rdn_up,
+    Gate.mkAND not_s1_int_sign sp_inexact sp_rup_up,
     Gate.mkAND rm_is_rne sp_rne_up (Wire.mk "sp_ru0"),
     Gate.mkAND rm_is_rdn sp_rdn_up (Wire.mk "sp_ru1"),
     Gate.mkAND rm_is_rup sp_rup_up (Wire.mk "sp_ru2"),
@@ -301,16 +334,20 @@ def mkInt64ToFP : Circuit :=
 
   let sp_mant_inc := makeIndexedWires "sp_mant_inc" 23
   let zeros23 := (List.range 23).map fun _ => zero
-  let (sp_mant_add_gates, sp_mant_ovf) := mkAddFor (AdderSpec.minArea sp_raw_mant.length .input) sp_raw_mant zeros23 sp_round_up sp_mant_inc "sp_mant_add"
+  let (sp_mant_add_gates, sp_mant_ovf) := mkAddFor
+    (AdderSpec.minArea sp_raw_mant.length .input)
+    sp_raw_mant zeros23 sp_round_up sp_mant_inc "sp_mant_add"
 
   let sp_mant_final := makeIndexedWires "sp_mant_fin" 23
   let sp_mant_fin_gates := (List.range 23).map fun i =>
     Gate.mkMUX (sp_mant_inc[i]!) zero sp_mant_ovf (sp_mant_final[i]!)
 
   let const127 := (List.range 7 |>.map fun _ => one) ++ [zero]
-  let lead_pos_ext8 := (List.range 6 |>.map fun i => lead_pos_wires[i]!) ++ [zero, zero]
+  let lead_pos_ext8 := (List.range 6 |>.map fun i => s1_lead_pos[i]!) ++ [zero, zero]
   let sp_exp_base := makeIndexedWires "sp_exp_base" 8
-  let (sp_exp_add_gates, _) := mkAddFor (AdderSpec.minArea const127.length .input) const127 lead_pos_ext8 sp_mant_ovf sp_exp_base "sp_exp_add"
+  let (sp_exp_add_gates, _) := mkAddFor
+    (AdderSpec.minArea const127.length .input)
+    const127 lead_pos_ext8 sp_mant_ovf sp_exp_base "sp_exp_add"
 
   let res_int_to_sp := makeIndexedWires "res_int_to_sp" 64
   let res_int_to_sp_gates := (List.range 64).map fun i =>
@@ -320,22 +357,23 @@ def mkInt64ToFP : Circuit :=
       let bit :=
         if i < 23 then sp_mant_final[i]!
         else if i < 31 then sp_exp_base[i - 23]!
-        else int_sign
-      Gate.mkMUX bit zero int_is_zero (res_int_to_sp[i]!)
+        else s1_int_sign
+      Gate.mkMUX bit zero s1_int_is_zero (res_int_to_sp[i]!)
 
   let exc_nx_int_to_fp := Wire.mk "exc_nx_int_to_fp"
-  let exc_nx_int_to_fp_gate := Gate.mkMUX sp_inexact dp_inexact is_dp exc_nx_int_to_fp
+  let exc_nx_int_to_fp_gate := Gate.mkMUX sp_inexact dp_inexact s1_is_dp exc_nx_int_to_fp
   let exc_nx_out_gate := Gate.mkBUF exc_nx_int_to_fp exc_nx
 
   -- Select between DP and SP float result
   let res_out_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (res_int_to_sp[i]!) (res_int_to_dp[i]!) is_dp (result[i]!)
+    Gate.mkMUX (res_int_to_sp[i]!) (res_int_to_dp[i]!) s1_is_dp (result[i]!)
 
   let all_gates :=
-    [not_is_unsigned_gate, int_sign_gate, not_int_sign_gate] ++
+    [not_is_unsigned_gate, int_sign_gate] ++
     int_neg_sub_gates ++ int_abs_gates ++
     grp_pe_gates ++ top_pe_gates ++ [int_is_zero_gate] ++
     lead_pos_hi_gates ++ mux8_low_gates ++
+    pipe_dff_gates ++
     norm_shamt_gates ++ norm_shift_gates ++
     rm_inv_gates ++ rm_dec_gates ++
     dp_sticky_gates ++ [dp_inexact_gate] ++ dp_round_gates ++ dp_mant_add_gates ++ dp_mant_fin_gates ++
@@ -345,7 +383,7 @@ def mkInt64ToFP : Circuit :=
     res_out_gates
 
   { name := "Int64ToFP",
-    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [zero, one],
+    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [clock, reset, zero, one],
     outputs := result ++ [exc_nx],
     gates := all_gates,
     instances := [],

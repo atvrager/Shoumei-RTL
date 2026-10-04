@@ -13,6 +13,8 @@ Interface:
   * is_dp: High for double-precision float input, low for single-precision
   * is_unsigned: High for unsigned integer result, low for signed integer
   * rm[2:0]: Rounding mode (0=RNE, 1=RTZ, 2=RDN, 3=RUP, 4=RMM)
+  * clock: Pipeline clock
+  * reset: Synchronous reset
   * zero, one: Constant wires
 - Outputs:
   * result[63:0]: Converted 64-bit integer
@@ -110,37 +112,14 @@ def mkFPToInt64 : Circuit :=
   let is_dp := Wire.mk "is_dp"
   let is_unsigned := Wire.mk "is_unsigned"
   let rm := makeIndexedWires "rm" 3
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
   let result := makeIndexedWires "result" 64
   let exc_nv := Wire.mk "exc_nv"
   let exc_nx := Wire.mk "exc_nx"
-
-  -- Rounding mode decodes
-  let not_rm0 := Wire.mk "not_rm0"
-  let not_rm1 := Wire.mk "not_rm1"
-  let not_rm2 := Wire.mk "not_rm2"
-  let rm_inv_gates := [
-    Gate.mkNOT (rm[0]!) not_rm0,
-    Gate.mkNOT (rm[1]!) not_rm1,
-    Gate.mkNOT (rm[2]!) not_rm2
-  ]
-  let rm_is_rne := Wire.mk "rm_is_rne" -- 000
-  let rm_is_rtz := Wire.mk "rm_is_rtz" -- 001
-  let rm_is_rdn := Wire.mk "rm_is_rdn" -- 010
-  let rm_is_rup := Wire.mk "rm_is_rup" -- 011
-  let rm_is_rmm := Wire.mk "rm_is_rmm" -- 100
-  let rm_dec_gates := [
-    Gate.mkAND not_rm2 not_rm1 (Wire.mk "rm_t0"),
-    Gate.mkAND (Wire.mk "rm_t0") not_rm0 rm_is_rne,
-    Gate.mkAND (Wire.mk "rm_t0") (rm[0]!) rm_is_rtz,
-    Gate.mkAND not_rm2 (rm[1]!) (Wire.mk "rm_t1"),
-    Gate.mkAND (Wire.mk "rm_t1") not_rm0 rm_is_rdn,
-    Gate.mkAND (Wire.mk "rm_t1") (rm[0]!) rm_is_rup,
-    Gate.mkAND (rm[2]!) not_rm1 (Wire.mk "rm_t2"),
-    Gate.mkAND (Wire.mk "rm_t2") not_rm0 rm_is_rmm
-  ]
 
   -- For SP float inputs (is_dp == 0): losslessly expand SP to DP float
   -- SP fields: sign=src1[31], exp=src1[30:23], mant=src1[22:0]
@@ -229,36 +208,26 @@ def mkFPToInt64 : Circuit :=
 
   -- Shift amount calculation for 128-bit barrel right shifter:
   -- shamt = 115 - (flt_exp - 1023) = 1138 - flt_exp (7 bits: 0..127)
-  -- 1138 in 11-bit binary: 10001110010
   let const1138 := [zero, one, zero, zero, one, one, one, zero, zero, zero, one]
-  -- 1022 in 11-bit binary: 01111111110
   let const1022 := [zero, one, one, one, one, one, one, one, one, one, zero]
-  -- 1075 in 11-bit binary: 10000110011
   let const1075 := [one, one, zero, zero, one, one, zero, zero, zero, zero, one]
   let shamt_full := makeIndexedWires "shamt_full" 11
   let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minDelay const1138.length .one)
     const1138 flt_exp shamt_full "shamt_sub" one
 
-  -- If shamt_borrow=1 or flt_exp >= 1139 (i.e. unbiased_exp >= 116): shift amount is 0 (huge
-    -- overflow)
   let shamt7 := (List.range 7).map fun i =>
     Wire.mk s!"shamt7_{i}"
   let shamt7_gates := (List.range 7).map fun i =>
     Gate.mkMUX (shamt_full[i]!) zero shamt_borrow (shamt7[i]!)
 
   -- Form the 128-bit bus:
-  -- bits [127:116] = 0 (12 zeros)
-  -- bit 115 = 1 (implicit hidden 1)
-  -- bits [114:63] = flt_mant (52 bits)
-  -- bits [62:0] = 0 (63 zeros)
   let bus128_init :=
     (List.range 63 |>.map fun _ => zero) ++
     flt_mant ++
     [one] ++
     (List.range 12 |>.map fun _ => zero)
 
-  -- 128-bit Barrel Right Shifter.  It carries no sticky: the guard and the
-  -- sticky are taken from the mantissa directly, below.
+  -- 128-bit Barrel Right Shifter.
   let (bus128_out, bus_shift_gates) := (List.range 7).foldl
     (fun (acc : List Wire × List Gate) step =>
       let stageIn := acc.1
@@ -285,33 +254,15 @@ def mkFPToInt64 : Circuit :=
   ]
 
   -- Integer magnitude from shifted bus: bits [63:0]
-  -- If flt_exp_lt_1023 or flt_is_zero, integer magnitude is 0
   let flt_int_mag := makeIndexedWires "flt_int_mag" 64
   let flt_int_mag_gates := (List.range 64).map fun i =>
     Gate.mkMUX (bus128_out[i]!) zero flt_exp_lt_1023 (flt_int_mag[i]!)
 
   -- Discarded fractional bits.
-  --
-  -- The hidden one sits at bit 115 of the 128-bit bus and the value is shifted
-  -- right by 1138 - flt_exp, so the value's 2^-1 bit is the bus bit at index
-  -- 1137 - flt_exp.  Below the hidden one the bus holds the mantissa, whose bit
-  -- j carries weight 2^-(j+1), so the sequence "mantissa ++ hidden one" is
-  -- indexed by 1074 - flt_exp.  Shifting that sequence left by flt_exp - 1022
-  -- lands the guard at bit 52 with every bit below it at 51..0, which gives the
-  -- guard and the sticky to the same shifter.  The shifter's own sticky cannot
-  -- be used for this: it ORs the guard together with the lower bits, so a value
-  -- just above a half would look exact.
-  --
-  -- Leaving the guard as bus128_out[127] made every magnitude at or above 1.0
-  -- round down, because that bit is zero for them.
   let mant53 := flt_mant ++ [one]
   let guard_amt_full := makeIndexedWires "fti_gamt" 11
   let (guard_amt_sub_gates, guard_amt_borrow) :=
     mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1022 guard_amt_full "fti_gamt_sub" one
-  -- An integral magnitude (flt_exp past 1074) has no discarded bits at all, and
-  -- an amount past 52 leaves the 53-bit window empty, which 63 does.  A
-  -- magnitude under 0.5 borrows in the subtraction and takes no shift, so the
-  -- sticky sees the whole mantissa and the guard is masked off below.
   let amt_hi_full := makeIndexedWires "fti_gahi" 11
   let (amt_hi_sub_gates, amt_hi_borrow) :=
     mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1075 amt_hi_full "fti_gahi_sub" one
@@ -330,12 +281,6 @@ def mkFPToInt64 : Circuit :=
   let flt_round_bit := Wire.mk "flt_round_bit"
   let flt_sticky_bit := Wire.mk "flt_sticky_bit"
   let not_flt_is_zero := Wire.mk "not_flt_is_zero"
-  -- A magnitude below 0.5 has no 2^-1 bit at all, so its guard is zero and the
-  -- shifted bits below it are zero too when the fraction is zero, as it is for
-  -- the smallest normal.  The value is still nonzero and still not an integer,
-  -- so the remainder is nonzero: without this, converting 2^-1022 to a 64-bit
-  -- integer reported exact and every mode truncated to zero, where round toward
-  -- negative and round up must give -1 and 1.
   let below_half_nonzero := Wire.mk "fti_bhnz"
   let sticky_any := Wire.mk "fti_stkany"
   let flt_frac_gates := guard_shift_gates ++ guard_sticky_gates ++ [
@@ -350,65 +295,14 @@ def mkFPToInt64 : Circuit :=
   let flt_inexact := Wire.mk "flt_inexact"
   let flt_inexact_gate := Gate.mkOR flt_round_bit flt_sticky_bit flt_inexact
 
-  -- Round up logic for Float -> Int64
-  let flt_lsb := flt_int_mag[0]!
-  let flt_stk_or_lsb := Wire.mk "flt_stk_lsb"
-  let flt_rne_up := Wire.mk "flt_rne_up"
-  let flt_rdn_up := Wire.mk "flt_rdn_up"
-  let flt_rup_up := Wire.mk "flt_rup_up"
-  let not_flt_sign := Wire.mk "not_flt_sign"
-  let flt_round_up_raw := Wire.mk "flt_rnd_up_raw"
-  let flt_round_up := Wire.mk "flt_rnd_up"
-
-  let flt_round_gates := [
-    Gate.mkNOT flt_sign not_flt_sign,
-    Gate.mkOR flt_sticky_bit flt_lsb flt_stk_or_lsb,
-    Gate.mkAND flt_round_bit flt_stk_or_lsb flt_rne_up,
-    Gate.mkAND flt_sign flt_inexact flt_rdn_up,
-    Gate.mkAND not_flt_sign flt_inexact flt_rup_up,
-    Gate.mkAND rm_is_rne flt_rne_up (Wire.mk "flt_ru0"),
-    Gate.mkAND rm_is_rdn flt_rdn_up (Wire.mk "flt_ru1"),
-    Gate.mkAND rm_is_rup flt_rup_up (Wire.mk "flt_ru2"),
-    Gate.mkAND rm_is_rmm flt_round_bit (Wire.mk "flt_ru3"),
-    Gate.mkOR (Wire.mk "flt_ru0") (Wire.mk "flt_ru1") (Wire.mk "flt_ru_t0"),
-    Gate.mkOR (Wire.mk "flt_ru2") (Wire.mk "flt_ru3") (Wire.mk "flt_ru_t1"),
-    Gate.mkOR (Wire.mk "flt_ru_t0") (Wire.mk "flt_ru_t1") flt_round_up_raw,
-    Gate.mkAND flt_round_up_raw flt_inexact flt_round_up
-  ]
-
-  -- Increment integer magnitude by flt_round_up
-  let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
-  let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) :=
-    mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
-      fun i => flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
-
-  -- 2's complement negation if signed and negative: -flt_int_mag_inc
-  let flt_int_neg := makeIndexedWires "flt_int_neg" 64
-  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun
-    i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
-
-  -- Un-clamped normal integer result
-  let flt_int_norm := makeIndexedWires "flt_int_norm" 64
-  let flt_int_norm_gates := (List.range 64).flatMap fun i =>
-    let signed_val := Wire.mk s!"fint_sval_{i}"
-    [Gate.mkMUX (flt_int_mag_inc[i]!) (flt_int_neg[i]!) flt_sign signed_val,
-     Gate.mkMUX signed_val (flt_int_mag_inc[i]!) is_unsigned (flt_int_norm[i]!)]
-
-  -- Overflow and Invalid Operation (NV) Detection:
-  -- Exponent threshold checks:
-  -- 1023 + 63 = 1086 (max signed exponent)
-  -- 1023 + 64 = 1087 (max unsigned exponent)
-  -- Let's detect if flt_exp >= 1086, >= 1087, >= 1088:
+  -- Exponent threshold checks (computed in Stage 1):
   -- 1088 = 0b10001000000 (bit 10=1, bit 6=1)
-  -- Bits [9:6]: any bit set means flt_exp[9:0] >= 64, so flt_exp >= 1088
   let (exp_hi4_any, exp_hi4_any_gates) := mkOrTree "fexp_hi4" (List.range 4 |>.map fun i =>
     flt_exp[6 + i]!)
   let exp_gte_1088 := Wire.mk "exp_gte_1088"
   let exp_gte_1088_gate := Gate.mkAND (flt_exp[10]!) exp_hi4_any exp_gte_1088
 
-  -- Bits [5:0]: 1086 is 1024 + 62 = 0b10000111110
-  -- 1087 is 1024 + 63 = 0b10000111111
+  -- Bits [5:0]: 1086 is 1024 + 62; 1087 is 1024 + 63
   let (exp_lo6_all, exp_lo6_gates) := mkAndTree "exp_lo6" (List.range 6 |>.map fun i => flt_exp[i]!)
   let (exp_bits1_5_all, exp_b15_gates) := mkAndTree "exp_b15" (List.range 5 |>.map fun i =>
     flt_exp[1 + i]!)
@@ -423,44 +317,147 @@ def mkFPToInt64 : Circuit :=
     Gate.mkOR exp_gte_1088 (Wire.mk "e1086_t") exp_gte_1086
   ]
 
+  -- ══════════════════════════════════════════════
+  -- Stage 1 Pipeline Registers
+  -- ══════════════════════════════════════════════
+  let s1_flt_int_mag := makeIndexedWires "s1_fimag" 64
+  let s1_flt_round_bit := Wire.mk "s1_flt_round_bit"
+  let s1_flt_sticky_bit := Wire.mk "s1_flt_sticky_bit"
+  let s1_flt_inexact := Wire.mk "s1_flt_inexact"
+  let s1_flt_sign := Wire.mk "s1_flt_sign"
+  let s1_is_unsigned := Wire.mk "s1_is_unsigned"
+  let s1_rm := makeIndexedWires "s1_rm" 3
+  let s1_flt_is_nan := Wire.mk "s1_flt_is_nan"
+  let s1_flt_is_inf := Wire.mk "s1_flt_is_inf"
+  let s1_flt_is_zero := Wire.mk "s1_flt_is_zero"
+  let not_s1_flt_is_zero := Wire.mk "not_s1_flt_is_zero"
+  let s1_exp_gte_1086 := Wire.mk "s1_exp_gte_1086"
+  let s1_exp_gte_1087 := Wire.mk "s1_exp_gte_1087"
+  let s1_flt_mant_any := Wire.mk "s1_flt_mant_any"
+  let s1_flt_exp_lt_1023 := Wire.mk "s1_flt_exp_lt_1023"
+
+  let pipe_dff_gates :=
+    (List.range 64 |>.map fun i => Gate.mkDFF (flt_int_mag[i]!) clock reset (s1_flt_int_mag[i]!)) ++
+    [ Gate.mkDFF flt_round_bit clock reset s1_flt_round_bit,
+      Gate.mkDFF flt_sticky_bit clock reset s1_flt_sticky_bit,
+      Gate.mkDFF flt_inexact clock reset s1_flt_inexact,
+      Gate.mkDFF flt_sign clock reset s1_flt_sign,
+      Gate.mkDFF is_unsigned clock reset s1_is_unsigned ] ++
+    (List.range 3 |>.map fun i => Gate.mkDFF (rm[i]!) clock reset (s1_rm[i]!)) ++
+    [ Gate.mkDFF flt_is_nan clock reset s1_flt_is_nan,
+      Gate.mkDFF flt_is_inf clock reset s1_flt_is_inf,
+      Gate.mkDFF flt_is_zero clock reset s1_flt_is_zero,
+      Gate.mkNOT s1_flt_is_zero not_s1_flt_is_zero,
+      Gate.mkDFF exp_gte_1086 clock reset s1_exp_gte_1086,
+      Gate.mkDFF exp_gte_1087 clock reset s1_exp_gte_1087,
+      Gate.mkDFF flt_mant_any clock reset s1_flt_mant_any,
+      Gate.mkDFF flt_exp_lt_1023 clock reset s1_flt_exp_lt_1023 ]
+
+  -- ══════════════════════════════════════════════
+  -- Stage 2: Rounding, 2's Complement, Saturation, Clamping
+  -- ══════════════════════════════════════════════
+  let not_rm0 := Wire.mk "not_rm0"
+  let not_rm1 := Wire.mk "not_rm1"
+  let not_rm2 := Wire.mk "not_rm2"
+  let rm_inv_gates := [
+    Gate.mkNOT (s1_rm[0]!) not_rm0,
+    Gate.mkNOT (s1_rm[1]!) not_rm1,
+    Gate.mkNOT (s1_rm[2]!) not_rm2
+  ]
+  let rm_is_rne := Wire.mk "rm_is_rne"
+  let rm_is_rtz := Wire.mk "rm_is_rtz"
+  let rm_is_rdn := Wire.mk "rm_is_rdn"
+  let rm_is_rup := Wire.mk "rm_is_rup"
+  let rm_is_rmm := Wire.mk "rm_is_rmm"
+  let rm_dec_gates := [
+    Gate.mkAND not_rm2 not_rm1 (Wire.mk "rm_t0"),
+    Gate.mkAND (Wire.mk "rm_t0") not_rm0 rm_is_rne,
+    Gate.mkAND (Wire.mk "rm_t0") (s1_rm[0]!) rm_is_rtz,
+    Gate.mkAND not_rm2 (s1_rm[1]!) (Wire.mk "rm_t1"),
+    Gate.mkAND (Wire.mk "rm_t1") not_rm0 rm_is_rdn,
+    Gate.mkAND (Wire.mk "rm_t1") (s1_rm[0]!) rm_is_rup,
+    Gate.mkAND (s1_rm[2]!) not_rm1 (Wire.mk "rm_t2"),
+    Gate.mkAND (Wire.mk "rm_t2") not_rm0 rm_is_rmm
+  ]
+
+  -- Round up logic for Float -> Int64
+  let flt_lsb := s1_flt_int_mag[0]!
+  let flt_stk_or_lsb := Wire.mk "flt_stk_lsb"
+  let flt_rne_up := Wire.mk "flt_rne_up"
+  let flt_rdn_up := Wire.mk "flt_rdn_up"
+  let flt_rup_up := Wire.mk "flt_rup_up"
+  let not_flt_sign := Wire.mk "not_flt_sign"
+  let flt_round_up_raw := Wire.mk "flt_rnd_up_raw"
+  let flt_round_up := Wire.mk "flt_rnd_up"
+
+  let flt_round_gates := [
+    Gate.mkNOT s1_flt_sign not_flt_sign,
+    Gate.mkOR s1_flt_sticky_bit flt_lsb flt_stk_or_lsb,
+    Gate.mkAND s1_flt_round_bit flt_stk_or_lsb flt_rne_up,
+    Gate.mkAND s1_flt_sign s1_flt_inexact flt_rdn_up,
+    Gate.mkAND not_flt_sign s1_flt_inexact flt_rup_up,
+    Gate.mkAND rm_is_rne flt_rne_up (Wire.mk "flt_ru0"),
+    Gate.mkAND rm_is_rdn flt_rdn_up (Wire.mk "flt_ru1"),
+    Gate.mkAND rm_is_rup flt_rup_up (Wire.mk "flt_ru2"),
+    Gate.mkAND rm_is_rmm s1_flt_round_bit (Wire.mk "flt_ru3"),
+    Gate.mkOR (Wire.mk "flt_ru0") (Wire.mk "flt_ru1") (Wire.mk "flt_ru_t0"),
+    Gate.mkOR (Wire.mk "flt_ru2") (Wire.mk "flt_ru3") (Wire.mk "flt_ru_t1"),
+    Gate.mkOR (Wire.mk "flt_ru_t0") (Wire.mk "flt_ru_t1") flt_round_up_raw,
+    Gate.mkAND flt_round_up_raw s1_flt_inexact flt_round_up
+  ]
+
+  -- Increment integer magnitude by flt_round_up
+  let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
+  let zeros64 := (List.range 64).map fun _ => zero
+  let (fimag_add_gates, flt_mag_ovf) :=
+    mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
+      fun i => s1_flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
+
+  -- 2's complement negation if signed and negative: -flt_int_mag_inc
+  let flt_int_neg := makeIndexedWires "flt_int_neg" 64
+  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun
+    i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
+
+  -- Un-clamped normal integer result
+  let flt_int_norm := makeIndexedWires "flt_int_norm" 64
+  let flt_int_norm_gates := (List.range 64).flatMap fun i =>
+    let signed_val := Wire.mk s!"fint_sval_{i}"
+    [Gate.mkMUX (flt_int_mag_inc[i]!) (flt_int_neg[i]!) s1_flt_sign signed_val,
+     Gate.mkMUX signed_val (flt_int_mag_inc[i]!) s1_is_unsigned (flt_int_norm[i]!)]
+
   -- Signed overflow:
-  -- Positive overflow: not_flt_sign AND (exp_gte_1086 OR flt_int_mag_inc[63])
   let pos_signed_ovf := Wire.mk "pos_s_ovf"
   let pos_signed_ovf_gates := [
-    Gate.mkOR exp_gte_1086 (flt_int_mag_inc[63]!) (Wire.mk "pso_t"),
+    Gate.mkOR s1_exp_gte_1086 (flt_int_mag_inc[63]!) (Wire.mk "pso_t"),
     Gate.mkAND not_flt_sign (Wire.mk "pso_t") pos_signed_ovf
   ]
 
-  -- Negative overflow: flt_sign AND (exp_gte_1087 OR (exp_gte_1086 AND mantissa_nonzero))
   let neg_signed_ovf := Wire.mk "neg_s_ovf"
   let neg_signed_ovf_gates := [
-    Gate.mkAND exp_gte_1086 flt_mant_any (Wire.mk "nso_t0"),
-    Gate.mkOR exp_gte_1087 (Wire.mk "nso_t0") (Wire.mk "nso_t1"),
-    Gate.mkAND flt_sign (Wire.mk "nso_t1") neg_signed_ovf
+    Gate.mkAND s1_exp_gte_1086 s1_flt_mant_any (Wire.mk "nso_t0"),
+    Gate.mkOR s1_exp_gte_1087 (Wire.mk "nso_t0") (Wire.mk "nso_t1"),
+    Gate.mkAND s1_flt_sign (Wire.mk "nso_t1") neg_signed_ovf
   ]
 
   let signed_nv := Wire.mk "signed_nv"
   let signed_nv_gate := Gate.mkOR pos_signed_ovf neg_signed_ovf signed_nv
 
   -- Unsigned overflow:
-  -- Positive: not_flt_sign AND (exp_gte_1087 OR flt_mag_ovf)
   let pos_unsigned_ovf := Wire.mk "pos_u_ovf"
   let pos_unsigned_ovf_gates := [
-    Gate.mkOR exp_gte_1087 flt_mag_ovf (Wire.mk "puo_t"),
+    Gate.mkOR s1_exp_gte_1087 flt_mag_ovf (Wire.mk "puo_t"),
     Gate.mkAND not_flt_sign (Wire.mk "puo_t") pos_unsigned_ovf
   ]
 
   -- Negative input to unsigned:
-  -- If negative and magnitude >= 1.0 (NOT exp_lt_1023): NV!
-  -- If negative and magnitude < 1.0 and rounds to -1 (flt_round_up): NV!
   let neg_unsigned_ovf := Wire.mk "neg_u_ovf"
   let not_exp_lt_1023 := Wire.mk "not_exp_lt_1023"
   let neg_unsigned_ovf_gates := [
-    Gate.mkNOT flt_exp_lt_1023 not_exp_lt_1023,
-    Gate.mkAND not_exp_lt_1023 not_flt_is_zero (Wire.mk "nuo_ge1"),
-    Gate.mkAND flt_round_up not_flt_is_zero (Wire.mk "nuo_rup"),
+    Gate.mkNOT s1_flt_exp_lt_1023 not_exp_lt_1023,
+    Gate.mkAND not_exp_lt_1023 not_s1_flt_is_zero (Wire.mk "nuo_ge1"),
+    Gate.mkAND flt_round_up not_s1_flt_is_zero (Wire.mk "nuo_rup"),
     Gate.mkOR (Wire.mk "nuo_ge1") (Wire.mk "nuo_rup") (Wire.mk "nuo_any"),
-    Gate.mkAND flt_sign (Wire.mk "nuo_any") neg_unsigned_ovf
+    Gate.mkAND s1_flt_sign (Wire.mk "nuo_any") neg_unsigned_ovf
   ]
 
   let unsigned_nv := Wire.mk "unsigned_nv"
@@ -470,24 +467,22 @@ def mkFPToInt64 : Circuit :=
   let flt_nv_raw := Wire.mk "flt_nv_raw"
   let flt_nv := Wire.mk "flt_nv"
   let flt_nv_gates := [
-    Gate.mkMUX signed_nv unsigned_nv is_unsigned flt_nv_raw,
-    Gate.mkOR flt_is_nan flt_is_inf (Wire.mk "nan_inf"),
+    Gate.mkMUX signed_nv unsigned_nv s1_is_unsigned flt_nv_raw,
+    Gate.mkOR s1_flt_is_nan s1_flt_is_inf (Wire.mk "nan_inf"),
     Gate.mkOR flt_nv_raw (Wire.mk "nan_inf") flt_nv,
     Gate.mkBUF flt_nv exc_nv
   ]
 
   -- Clamping logic on NV:
-  -- Signed: if negative and NOT NaN -> 0x8000000000000000; else 0x7FFFFFFFFFFFFFFF
-  -- Unsigned: if negative and NOT NaN -> 0x0000000000000000; else 0xFFFFFFFFFFFFFFFF
   let not_flt_nan := Wire.mk "not_flt_nan"
   let clamp_is_neg := Wire.mk "clamp_is_neg"
   let not_clamp_is_neg := Wire.mk "not_clamp_is_neg"
   let clamp_u_val := Wire.mk "clamp_u_val"
   let clamp_gates := [
-    Gate.mkNOT flt_is_nan not_flt_nan,
-    Gate.mkAND flt_sign not_flt_nan clamp_is_neg,
+    Gate.mkNOT s1_flt_is_nan not_flt_nan,
+    Gate.mkAND s1_flt_sign not_flt_nan clamp_is_neg,
     Gate.mkNOT clamp_is_neg not_clamp_is_neg,
-    Gate.mkOR flt_is_nan not_flt_sign clamp_u_val
+    Gate.mkOR s1_flt_is_nan not_flt_sign clamp_u_val
   ]
 
   let res_flt_to_int_gates := (List.range 64).flatMap fun i =>
@@ -497,18 +492,17 @@ def mkFPToInt64 : Circuit :=
     let clamp_bit_unsigned := clamp_u_val
     let clamp_bit := Wire.mk s!"clamp_bit_{i}"
     let norm_bit := flt_int_norm[i]!
-    [Gate.mkMUX clamp_bit_signed clamp_bit_unsigned is_unsigned clamp_bit,
+    [Gate.mkMUX clamp_bit_signed clamp_bit_unsigned s1_is_unsigned clamp_bit,
      Gate.mkMUX norm_bit clamp_bit flt_nv (result[i]!)]
 
-  -- Inexact for Float -> Int: flt_inexact AND NOT flt_nv
+  -- Inexact for Float -> Int: s1_flt_inexact AND NOT flt_nv
   let not_flt_nv := Wire.mk "not_flt_nv"
   let exc_nx_flt_to_int_gates := [
     Gate.mkNOT flt_nv not_flt_nv,
-    Gate.mkAND flt_inexact not_flt_nv exc_nx
+    Gate.mkAND s1_flt_inexact not_flt_nv exc_nx
   ]
 
   let all_gates :=
-    rm_inv_gates ++ rm_dec_gates ++
     sp_in_exp_ones_gates ++ sp_in_exp_any_gates ++ [sp_in_exp_zeros_gate] ++
     sp_in_mant_any_gates ++ [sp_in_mant_zeros_gate] ++ sp_in_class_gates ++
     norm_sp_dp_exp_gates ++ sp_as_dp_gates ++ flt_in_gates ++
@@ -517,13 +511,16 @@ def mkFPToInt64 : Circuit :=
     shamt_sub_gates ++ shamt7_gates ++ bus_shift_gates ++
     exp_lo10_all_gates ++ exp_lt_1023_gates ++ flt_int_mag_gates ++
     guard_amt_gates ++ flt_frac_gates ++ [flt_inexact_gate] ++
+    exp_ovf_gates ++
+    pipe_dff_gates ++
+    rm_inv_gates ++ rm_dec_gates ++
     flt_round_gates ++ fimag_add_gates ++ fint_neg_gates ++ flt_int_norm_gates ++
-    exp_ovf_gates ++ pos_signed_ovf_gates ++ neg_signed_ovf_gates ++ [signed_nv_gate] ++
+    pos_signed_ovf_gates ++ neg_signed_ovf_gates ++ [signed_nv_gate] ++
     pos_unsigned_ovf_gates ++ neg_unsigned_ovf_gates ++ [unsigned_nv_gate] ++
     flt_nv_gates ++ clamp_gates ++ res_flt_to_int_gates ++ exc_nx_flt_to_int_gates
 
   { name := "FPToInt64",
-    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [zero, one],
+    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [clock, reset, zero, one],
     outputs := result ++ [exc_nv, exc_nx],
     gates := all_gates,
     instances := [],

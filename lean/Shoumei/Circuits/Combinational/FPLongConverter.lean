@@ -21,6 +21,8 @@ Interface:
   * src1[63:0]: Operand
   * op[2:0]: Sub-op (bit2=DP, bit1=Int->FP, bit0=unsigned)
   * rm[2:0]: Rounding mode (0=RNE, 1=RTZ, 2=RDN, 3=RUP, 4=RMM)
+  * clock: Pipeline clock
+  * reset: Synchronous reset
   * zero, one: Constant wires
 - Outputs:
   * result[63:0]: Converted value
@@ -41,6 +43,8 @@ def fpLongConverterCircuit : Circuit :=
   let src1 := makeIndexedWires "src1" 64
   let op := makeIndexedWires "op" 3
   let rm := makeIndexedWires "rm" 3
+  let clock := Wire.mk "clock"
+  let reset := Wire.mk "reset"
   let zero := Wire.mk "zero"
   let one := Wire.mk "one"
 
@@ -53,16 +57,6 @@ def fpLongConverterCircuit : Circuit :=
   let is_int_to_fp := op[1]!
   let is_unsigned := op[0]!
 
-  let not_is_dp := Wire.mk "not_is_dp"
-  let not_is_int_to_fp := Wire.mk "not_is_int_to_fp"
-  let not_is_unsigned := Wire.mk "not_is_unsigned"
-  let op_inv_gates := [
-    Gate.mkNOT is_dp not_is_dp,
-    Gate.mkNOT is_int_to_fp not_is_int_to_fp,
-    Gate.mkNOT is_unsigned not_is_unsigned,
-    Gate.mkBUF not_is_int_to_fp result_is_int
-  ]
-
   -- Submodule instances
   let i2f_result := makeIndexedWires "i2f_res" 64
   let i2f_exc_nx := Wire.mk "i2f_exc_nx"
@@ -73,7 +67,7 @@ def fpLongConverterCircuit : Circuit :=
       (src1.enum.map (fun ⟨i, w⟩ => (s!"src1[{i}]", w))) ++
       [("is_dp", is_dp), ("is_unsigned", is_unsigned)] ++
       (rm.enum.map (fun ⟨i, w⟩ => (s!"rm[{i}]", w))) ++
-      [("zero", zero), ("one", one)] ++
+      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
       (i2f_result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w))) ++
       [("exc_nx", i2f_exc_nx)]
   }
@@ -88,14 +82,23 @@ def fpLongConverterCircuit : Circuit :=
       (src1.enum.map (fun ⟨i, w⟩ => (s!"src1[{i}]", w))) ++
       [("is_dp", is_dp), ("is_unsigned", is_unsigned)] ++
       (rm.enum.map (fun ⟨i, w⟩ => (s!"rm[{i}]", w))) ++
-      [("zero", zero), ("one", one)] ++
+      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
       (f2i_result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w))) ++
       [("exc_nv", f2i_exc_nv), ("exc_nx", f2i_exc_nx)]
   }
 
+  -- Register selection control to align with 1-cycle latency submodules
+  let s1_is_int_to_fp := Wire.mk "s1_is_int_to_fp"
+  let s1_not_is_int_to_fp := Wire.mk "s1_not_is_int_to_fp"
+  let pipe_dff_gates := [
+    Gate.mkDFF is_int_to_fp clock reset s1_is_int_to_fp,
+    Gate.mkNOT s1_is_int_to_fp s1_not_is_int_to_fp,
+    Gate.mkBUF s1_not_is_int_to_fp result_is_int
+  ]
+
   -- Select between Float -> Int and Int -> Float outputs
   let master_result_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (f2i_result[i]!) (i2f_result[i]!) is_int_to_fp (result[i]!)
+    Gate.mkMUX (f2i_result[i]!) (i2f_result[i]!) s1_is_int_to_fp (result[i]!)
 
   -- Exceptions:
   -- exc[4] = NV: active only for Float -> Int
@@ -106,22 +109,19 @@ def fpLongConverterCircuit : Circuit :=
   let master_exc_nv := Wire.mk "m_exc_nv"
   let master_exc_nx := Wire.mk "m_exc_nx"
   let master_exc_gates := [
-    Gate.mkAND f2i_exc_nv not_is_int_to_fp master_exc_nv,
-    Gate.mkMUX f2i_exc_nx i2f_exc_nx is_int_to_fp master_exc_nx,
+    Gate.mkAND f2i_exc_nv s1_not_is_int_to_fp master_exc_nv,
+    Gate.mkMUX f2i_exc_nx i2f_exc_nx s1_is_int_to_fp master_exc_nx,
     Gate.mkBUF master_exc_nv (exc[4]!),
-    Gate.mkNOT (rm[2]!) (Wire.mk "not_lc_rm2"),
-    Gate.mkAND (rm[2]!) (Wire.mk "not_lc_rm2") (exc[3]!),
-    Gate.mkNOT (rm[1]!) (Wire.mk "not_lc_rm1"),
-    Gate.mkAND (rm[1]!) (Wire.mk "not_lc_rm1") (exc[2]!),
-    Gate.mkNOT (rm[0]!) (Wire.mk "not_lc_rm0"),
-    Gate.mkAND (rm[0]!) (Wire.mk "not_lc_rm0") (exc[1]!),
+    Gate.mkBUF zero (exc[3]!),
+    Gate.mkBUF zero (exc[2]!),
+    Gate.mkBUF zero (exc[1]!),
     Gate.mkBUF master_exc_nx (exc[0]!)
   ]
 
-  let all_gates := op_inv_gates ++ master_result_gates ++ master_exc_gates
+  let all_gates := pipe_dff_gates ++ master_result_gates ++ master_exc_gates
 
   { name := "FPLongConverter",
-    inputs := src1 ++ op ++ rm ++ [zero, one],
+    inputs := src1 ++ op ++ rm ++ [clock, reset, zero, one],
     outputs := result ++ exc ++ [result_is_int],
     gates := all_gates,
     instances := [u_i2f, u_f2i],

@@ -1290,7 +1290,7 @@ def mkFPExecUnitD : Circuit :=
       (List.range 64 |>.map fun i => (s!"src1_{i}", long_src1[i]!)) ++
       (List.range 3 |>.map fun i => (s!"op_{i}", long_op[i]!)) ++
       (List.range 3 |>.map fun i => (s!"rm_{i}", rm[i]!)) ++
-      [ ("zero", zero), ("one", one) ] ++
+      [ ("clock", clock), ("reset", reset_misc_dp), ("zero", zero), ("one", one) ] ++
       (List.range 64 |>.map fun i => (s!"result_{i}", conv_long_res[i]!)) ++
       (List.range 5 |>.map fun i => (s!"exc_{i}", conv_long_exc[i]!)) ++
       [ ("result_is_int", conv_long_rint) ]
@@ -1508,8 +1508,6 @@ def mkFPExecUnitD : Circuit :=
 
   let misc_res_pre := makeIndexedWires "misc_res_pre" 64
   let misc_exc_pre := makeIndexedWires "misc_exc_pre" 5
-  let misc_result := makeIndexedWires "misc_res" 64
-  let misc_exc := makeIndexedWires "misc_exc" 5
   let misc_valid := Wire.mk "misc_valid"
   let misc_merge_gates :=
     (List.range 64 |>.flatMap fun i =>
@@ -1527,28 +1525,48 @@ def mkFPExecUnitD : Circuit :=
       let dp_sub_exc := Wire.mk s!"m_dpexc_{i}"
       [Gate.mkMUX (misc_dp_exc[i]!) (conv_dp_exc[i]!) is_dp_conv dp_sub_exc,
        Gate.mkMUX (misc_sp_exc[i]!) dp_sub_exc is_dp (misc_exc_pre[i]!)]) ++
-    (List.range 64 |>.map fun i =>
-      Gate.mkMUX (misc_res_pre[i]!) (conv_long_res[i]!) is_long_conv (misc_result[i]!)) ++
-    (List.range 5 |>.map fun i =>
-      Gate.mkMUX (misc_exc_pre[i]!) (conv_long_exc[i]!) is_long_conv (misc_exc[i]!)) ++
     [Gate.mkOR misc_valid_sp misc_valid_dp misc_valid]
+
+  let dp_misc_or_conv_rint := Wire.mk "dp_rint_comb"
+  let active_writes_int_pre := Wire.mk "active_writes_int_pre"
+  let active_wint_pre_gates := [
+    Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
+    Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp active_writes_int_pre
+  ]
 
   -- ══════════════════════════════════════════════
   -- 1-Cycle Pipeline Register for Misc/Converter Path
   -- Decouples RS issue + 64-bit converter from CDB mux
   -- ══════════════════════════════════════════════
-  let misc_reg_result := makeIndexedWires "misc_reg_res" 64
+  let misc_reg_res_pre := makeIndexedWires "misc_reg_res_pre" 64
   let misc_reg_tag := makeIndexedWires "misc_reg_tag" 6
-  let misc_reg_exc := makeIndexedWires "misc_reg_exc" 5
+  let misc_reg_exc_pre := makeIndexedWires "misc_reg_exc_pre" 5
   let misc_reg_valid := Wire.mk "misc_reg_valid"
-  let misc_reg_writes_int := Wire.mk "misc_reg_rint"
+  let is_long_conv_reg := Wire.mk "is_long_conv_reg"
+  let active_writes_int_reg := Wire.mk "act_wint_reg"
 
   let misc_pipe_dffs :=
-    (List.range 64 |>.map fun i => Gate.mkDFF (misc_result[i]!) clock reset_misc_dp (misc_reg_result[i]!)) ++
-    (List.range 6 |>.map fun i => Gate.mkDFF (dest_tag[i]!) clock reset_misc_dp (misc_reg_tag[i]!)) ++
-    (List.range 5 |>.map fun i => Gate.mkDFF (misc_exc[i]!) clock reset_misc_dp (misc_reg_exc[i]!)) ++
+    (List.range 64 |>.map fun i =>
+      Gate.mkDFF (misc_res_pre[i]!) clock reset_misc_dp (misc_reg_res_pre[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkDFF (dest_tag[i]!) clock reset_misc_dp (misc_reg_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkDFF (misc_exc_pre[i]!) clock reset_misc_dp (misc_reg_exc_pre[i]!)) ++
     [Gate.mkDFF misc_valid clock reset_misc_dp misc_reg_valid,
-     Gate.mkDFF (Wire.mk "active_writes_int") clock reset_misc_dp misc_reg_writes_int]
+     Gate.mkDFF is_long_conv clock reset_misc_dp is_long_conv_reg,
+     Gate.mkDFF active_writes_int_pre clock reset_misc_dp active_writes_int_reg]
+
+  let misc_reg_result := makeIndexedWires "misc_reg_res" 64
+  let misc_reg_exc := makeIndexedWires "misc_reg_exc" 5
+  let misc_reg_writes_int := Wire.mk "misc_reg_rint"
+  let misc_out_mux_gates :=
+    (List.range 64 |>.map fun i =>
+      Gate.mkMUX (misc_reg_res_pre[i]!) (conv_long_res[i]!)
+        is_long_conv_reg (misc_reg_result[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (misc_reg_exc_pre[i]!) (conv_long_exc[i]!)
+        is_long_conv_reg (misc_reg_exc[i]!)) ++
+    [Gate.mkMUX active_writes_int_reg conv_long_rint is_long_conv_reg misc_reg_writes_int]
 
   -- ══════════════════════════════════════════════
   -- Per-source result queues
@@ -1654,12 +1672,7 @@ def mkFPExecUnitD : Circuit :=
   -- High when output comes from misc path and targets INT PRF
   -- (SP int-writing op detection lives above, next to the misc merge)
   -- ══════════════════════════════════════════════
-  let dp_misc_or_conv_rint := Wire.mk "dp_rint_comb"
-  let active_writes_int_pre := Wire.mk "active_writes_int_pre"
   let int_result_gates := [
-    Gate.mkMUX misc_dp_rint conv_dp_rint is_dp_conv dp_misc_or_conv_rint,
-    Gate.mkMUX sp_writes_int dp_misc_or_conv_rint is_dp active_writes_int_pre,
-    Gate.mkMUX active_writes_int_pre conv_long_rint is_long_conv (Wire.mk "active_writes_int"),
     -- Same rule as the SP builder: select on the held valids, and take the
     -- domain flag captured with the held result.
     Gate.mkOR hMul.v hAdd.v (Wire.mk "rint_d_t1"),
@@ -1676,7 +1689,8 @@ def mkFPExecUnitD : Circuit :=
     s1_hi_ones_gates ++ s2_hi_ones_gates ++ s3_hi_ones_gates ++
     s1_int_gates ++ [s1_byp_gate] ++ unbox_gates ++
     add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
-    is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++ misc_pipe_dffs ++
+    is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++
+    active_wint_pre_gates ++ misc_pipe_dffs ++ misc_out_mux_gates ++
     hold_gates ++ hold_busy_gates ++
     long_op_gates ++ long_conv_dec_gates ++ long_src1_gates ++
     mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
