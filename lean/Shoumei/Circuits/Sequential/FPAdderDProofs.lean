@@ -10,7 +10,7 @@ theorem fpAdderD_name : fpAdderDCircuit.name = "FPAdderD" := by rfl
 theorem fpAdderD_inputs : fpAdderDCircuit.inputs.length = 142 := by native_decide
 theorem fpAdderD_outputs : fpAdderDCircuit.outputs.length = 76 := by native_decide
 theorem fpAdderD_sequential : fpAdderDCircuit.hasSequentialElements = true := by native_decide
-theorem fpAdderD_instances : fpAdderDCircuit.instances.length = 4 := by native_decide
+theorem fpAdderD_instances : fpAdderDCircuit.instances.length = 5 := by native_decide
 
 theorem fpAdderD_stage1_name : fpAdderD_Stage1Circuit.name = "FPAdderD_Stage1_Unpack" := by rfl
 theorem fpAdderD_stage1_inputs : fpAdderD_Stage1Circuit.inputs.length = 130 := by native_decide
@@ -24,8 +24,12 @@ theorem fpAdderD_stage3_name : fpAdderD_Stage3Circuit.name = "FPAdderD_Stage3_Ad
 theorem fpAdderD_stage3_inputs : fpAdderD_Stage3Circuit.inputs.length = 112 := by native_decide
 theorem fpAdderD_stage3_outputs : fpAdderD_Stage3Circuit.outputs.length = 64 := by native_decide
 
-theorem fpAdderD_stage4_name : fpAdderD_Stage4Circuit.name = "FPAdderD_Stage4_NormRound" := by rfl
-theorem fpAdderD_stage4_inputs : fpAdderD_Stage4Circuit.inputs.length = 87 := by native_decide
-theorem fpAdderD_stage4_outputs : fpAdderD_Stage4Circuit.outputs.length = 69 := by native_decide
+theorem fpAdderD_stage4a_name : fpAdderD_Stage4aCircuit.name = "FPAdderD_Stage4a_Norm" := by rfl
+theorem fpAdderD_stage4a_inputs : fpAdderD_Stage4aCircuit.inputs.length = 87 := by native_decide
+theorem fpAdderD_stage4a_outputs : fpAdderD_Stage4aCircuit.outputs.length = 82 := by native_decide
+
+theorem fpAdderD_stage4b_name : fpAdderD_Stage4bCircuit.name = "FPAdderD_Stage4b_Round" := by rfl
+theorem fpAdderD_stage4b_inputs : fpAdderD_Stage4bCircuit.inputs.length = 83 := by native_decide
+theorem fpAdderD_stage4b_outputs : fpAdderD_Stage4bCircuit.outputs.length = 69 := by native_decide
 
 end Shoumei.Circuits.Sequential

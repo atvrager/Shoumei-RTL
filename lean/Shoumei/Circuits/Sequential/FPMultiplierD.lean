@@ -1,11 +1,13 @@
 /-
-Circuits/Sequential/FPMultiplierD.lean - 3-Stage Pipelined Double-Precision FP Multiplier
+Circuits/Sequential/FPMultiplierD.lean - 4-Stage Pipelined Double-Precision FP Multiplier
 
 IEEE 754 binary64 multiplication with pipelined datapath.
 
 Pipeline stages:
-  Stage 1: Latch inputs -> Unpack + exponent addition + partial products + CSA tree
-  Stage 2: Latch intermediate CSA results -> 106-bit CPA + normalize + round + pack + special cases
+  Stage 1a: Latch inputs -> Unpack + exponent addition + partial products + CSA tree levels 0-4
+  Stage 1b: Latch intermediate CSA rows -> CSA tree levels 5-8
+  Stage 2: Latch CSA result -> 106-bit CPA + normalize
+  Stage 3: Latch normalized product -> Round + pack + special cases
 
 Inputs (141):
   src1[63:0], src2[63:0] - FP operands
@@ -312,9 +314,42 @@ def mkFPMultiplierD : Circuit :=
   let pp_wires := pp_rows.map (·.1)
   let pp_gates := pp_rows.map (·.2) |>.flatten
 
-  -- CSA Tree: 53 rows -> 2 rows (106 bits each)
-  let (csa_sum, csa_carry, csa_tree_gates, csa_instances) :=
-    mkCSATreeHierarchical pp_wires zero 106
+  -- CSA Tree Level 0-4: 53 rows -> 8 rows (106 bits each)
+  let (csa_p1_rows, csa_tree_gates1, csa_instances1) :=
+    mkCSATreeToDepth pp_wires zero 5 106 0
+
+  -- Stage 1b Pipeline Registers: Latch 8 CSA rows + control signals
+  let s1b_sign := Wire.mk "s1b_sign"
+  let s1b_expub := makeIndexedWires "s1b_expub" 13
+  let s1b_rm := makeIndexedWires "s1b_rm" 3
+  let s1b_tag := makeIndexedWires "s1b_tag" 6
+  let s1b_valid := Wire.mk "s1b_valid"
+  let s1b_nv := Wire.mk "s1b_nv"
+  let s1b_nan_res := Wire.mk "s1b_nan_res"
+  let s1b_inf_res := Wire.mk "s1b_inf_res"
+  let s1b_zero_res := Wire.mk "s1b_zero_res"
+  let s1b_not_special := Wire.mk "s1b_not_special"
+  let s1b_csa_rows := (List.range 8).map fun r => makeIndexedWires s!"s1b_csa_r{r}" 106
+
+  let s1b_csa_dffs := (List.range 8).flatMap fun r =>
+    mkDFFBank (csa_p1_rows[r]!) (s1b_csa_rows[r]!) clock reset
+
+  let s1b_dffs :=
+    [Gate.mkDFF prod_sign clock reset s1b_sign] ++
+    mkDFFBank exp_ub13 s1b_expub clock reset ++
+    s1b_csa_dffs ++
+    mkDFFBank s1_rm s1b_rm clock reset ++
+    mkDFFBank s1_tag s1b_tag clock reset ++
+    [Gate.mkDFF s1_valid clock reset s1b_valid,
+     Gate.mkDFF s1_nv clock reset s1b_nv,
+     Gate.mkDFF s1_nan_res clock reset s1b_nan_res,
+     Gate.mkDFF s1_inf_res clock reset s1b_inf_res,
+     Gate.mkDFF s1_zero_res clock reset s1b_zero_res,
+     Gate.mkDFF s1_not_special clock reset s1b_not_special]
+
+  -- Stage 1b Combinational: CSA Tree Level 5-8: 8 rows -> 2 rows (106 bits each)
+  let (csa_sum, csa_carry, csa_tree_gates2, csa_instances2) :=
+    mkCSATreeHierarchical s1b_csa_rows zero 106 5
 
   -- Stage 2 Pipeline Registers
   let s2_sign := Wire.mk "s2_sign"
@@ -331,18 +366,18 @@ def mkFPMultiplierD : Circuit :=
   let s2_not_special := Wire.mk "s2_not_special"
 
   let s2_dffs :=
-    [Gate.mkDFF prod_sign clock reset s2_sign] ++
-    mkDFFBank exp_ub13 s2_expub clock reset ++
+    [Gate.mkDFF s1b_sign clock reset s2_sign] ++
+    mkDFFBank s1b_expub s2_expub clock reset ++
     mkDFFBank csa_sum s2_csa_sum clock reset ++
     mkDFFBank csa_carry s2_csa_carry clock reset ++
-    mkDFFBank s1_rm s2_rm clock reset ++
-    mkDFFBank s1_tag s2_tag clock reset ++
-    [Gate.mkDFF s1_valid clock reset s2_valid,
-     Gate.mkDFF s1_nv clock reset s2_nv,
-     Gate.mkDFF s1_nan_res clock reset s2_nan_res,
-     Gate.mkDFF s1_inf_res clock reset s2_inf_res,
-     Gate.mkDFF s1_zero_res clock reset s2_zero_res,
-     Gate.mkDFF s1_not_special clock reset s2_not_special]
+    mkDFFBank s1b_rm s2_rm clock reset ++
+    mkDFFBank s1b_tag s2_tag clock reset ++
+    [Gate.mkDFF s1b_valid clock reset s2_valid,
+     Gate.mkDFF s1b_nv clock reset s2_nv,
+     Gate.mkDFF s1b_nan_res clock reset s2_nan_res,
+     Gate.mkDFF s1b_inf_res clock reset s2_inf_res,
+     Gate.mkDFF s1b_zero_res clock reset s2_zero_res,
+     Gate.mkDFF s1b_not_special clock reset s2_not_special]
 
   -- Stage 2 Combinational: Final CPA + Normalization
   let product := makeIndexedWires "muld_prod" 106
@@ -740,8 +775,8 @@ def mkFPMultiplierD : Circuit :=
     lead1_gates ++ lead2_gates ++ pos1_gates ++ pos2_gates ++ sh1_gates ++ sh2_gates ++
     sub_op_gates ++ norm1_gates ++ norm2_gates ++ mant_norm_gates ++
     eff1_gates ++ eff2_gates ++ exp_norm_gates ++
-    exp_add_gates ++ exp_sub_gates ++ pp_gates ++ csa_tree_gates ++
-    s2_dffs ++ pre_mant_gates ++
+    exp_add_gates ++ exp_sub_gates ++ pp_gates ++
+    csa_tree_gates1 ++ s1b_dffs ++ csa_tree_gates2 ++ s2_dffs ++ pre_mant_gates ++
     [g_gate, r_gate, s_extra_gate] ++ s_low50_gates ++ [s_gate] ++
     exp_adj_gates ++ s3_dffs ++ rm_inv_gates ++ rm_dec_gates ++ rnd_cond_gates ++
     mant_inc_gates ++ final_mant_gates ++ exp_final_gates ++ norm_res_gates ++
@@ -757,7 +792,7 @@ def mkFPMultiplierD : Circuit :=
     inputs := src1 ++ src2 ++ rm ++ dest_tag ++ [valid_in, clock, reset, zero]
     outputs := result ++ tag_out ++ exc ++ [valid_out]
     gates := all_gates
-    instances := csa_instances ++ [cpa_inst]
+    instances := csa_instances1 ++ csa_instances2 ++ [cpa_inst]
     keepHierarchy := true
     signalGroups := [
       { name := "src1", width := 64, wires := src1 },

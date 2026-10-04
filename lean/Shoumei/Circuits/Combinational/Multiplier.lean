@@ -257,6 +257,51 @@ partial def mkCSATreeHierarchical
       mkCSATreeHierarchical next_rows zero_wire width (level + 1) (baseIdx + insts1.length)
     (final_s, final_c, gates1 ++ gates2, insts1 ++ insts2)
 
+/-- Compress CSA rows for up to `maxLevels` levels of 3:2 reduction.
+    Returns the remaining rows, the generated gates, and instances. -/
+partial def mkCSATreeToDepth
+    (rows : List (List Wire)) (zero_wire : Wire)
+    (maxLevels : Nat) (width : Nat := 64) (level : Nat := 0)
+    : List (List Wire) × List Gate × List CircuitInstance :=
+  if maxLevels == 0 || rows.length <= 2 then
+    (rows, [], [])
+  else
+    let rec compressGroups (rs : List (List Wire)) (idx : Nat)
+        : List (List Wire) × List Gate × List CircuitInstance :=
+      match rs with
+      | x :: y :: z :: rest =>
+        let tag := s!"csa_l{level}_g{idx}"
+        let s_out := makeIndexedWires s!"{tag}_s" width
+        let c_out := makeIndexedWires s!"{tag}_c" width
+        let c_raw := makeIndexedWires s!"{tag}_craw" width
+        let csa_gates := List.flatten <| (List.range width).map fun j =>
+          let xy := Wire.mk s!"{tag}_xy_{j}"
+          let ab := Wire.mk s!"{tag}_ab_{j}"
+          let bc := Wire.mk s!"{tag}_bc_{j}"
+          let ac := Wire.mk s!"{tag}_ac_{j}"
+          let abbc := Wire.mk s!"{tag}_abbc_{j}"
+          [
+            Gate.mkXOR (x[j]!) (y[j]!) xy,
+            Gate.mkXOR xy (z[j]!) (s_out[j]!),
+            Gate.mkAND (x[j]!) (y[j]!) ab,
+            Gate.mkAND (y[j]!) (z[j]!) bc,
+            Gate.mkAND (x[j]!) (z[j]!) ac,
+            Gate.mkOR ab bc abbc,
+            Gate.mkOR abbc ac (c_raw[j]!)
+          ]
+        let shift_gates :=
+          [Gate.mkBUF zero_wire (c_out[0]!)] ++
+          (List.range (width - 1)).map fun j =>
+            Gate.mkBUF (c_raw[j]!) (c_out[j + 1]!)
+        let cur_gates := csa_gates ++ shift_gates
+        let (more_rows, more_gates, more_insts) := compressGroups rest (idx + 1)
+        (s_out :: c_out :: more_rows, cur_gates ++ more_gates, more_insts)
+      | remaining => (remaining, [], [])
+    let (next_rows, gates1, insts1) := compressGroups rows 0
+    let (final_rows, gates2, insts2) :=
+      mkCSATreeToDepth next_rows zero_wire (maxLevels - 1) width (level + 1)
+    (final_rows, gates1 ++ gates2, insts1 ++ insts2)
+
 /-! ## Structural Circuit -/
 
 /-- Build the 3-stage pipelined 32x32 unsigned multiplier (hierarchical).
