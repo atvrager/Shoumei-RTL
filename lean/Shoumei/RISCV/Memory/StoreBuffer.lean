@@ -542,6 +542,7 @@ def mkStoreBuffer8 : Circuit :=
   -- Pending commit counter (3-bit): tracks commits that arrived before SB entry
   let pc := (List.range 3).map (fun i => Wire.mk s!"pending_commit_{i}")
   let pc_next := (List.range 3).map (fun i => Wire.mk s!"pending_commit_next_{i}")
+  let pc_d := (List.range 3).map (fun i => Wire.mk s!"pending_commit_d_{i}")
   let pc_inc := Wire.mk "pending_commit_inc"
   let pc_dec := Wire.mk "pending_commit_dec"
 
@@ -591,7 +592,10 @@ def mkStoreBuffer8 : Circuit :=
     (List.range 3).map (fun i =>
       Gate.mkMUX pc[i]! pc_dec_val[i]! pc_dec (Wire.mk s!"pc_mux1_{i}")) ++
     (List.range 3).map (fun i =>
-      Gate.mkMUX (Wire.mk s!"pc_mux1_{i}") pc_inc_val[i]! pc_inc pc_next[i]!)
+      Gate.mkMUX (Wire.mk s!"pc_mux1_{i}") pc_inc_val[i]! pc_inc pc_next[i]!) ++
+    -- On flush, clear pending commit counter synchronously to 0
+    (List.range 3).map (fun i =>
+      Gate.mkMUX pc_next[i]! zero flush_apply pc_d[i]!)
 
   -- Internal commit pointer: increments on commit_en_gated, loads flush_tail_load on flush
   let commit_ptr_inst : CircuitInstance := {
@@ -742,13 +746,11 @@ def mkStoreBuffer8 : Circuit :=
       portMap := [("d", committed_next[i]!), ("q", committed[i]!),
                   ("clock", clock), ("reset", reset)] : CircuitInstance })
 
-  -- DFFs for pending commit counter (reset on global reset OR flush)
-  let pc_reset := Wire.mk "pc_reset"
-  let pc_reset_gate := Gate.mkOR reset flush_apply pc_reset
+  -- DFFs for pending commit counter (reset on global reset, synchronously cleared on flush)
   let pc_dff_insts := (List.range 3).map (fun i =>
     { moduleName := "DFlipFlop", instName := s!"u_pending_commit_{i}",
-      portMap := [("d", pc_next[i]!), ("q", pc[i]!),
-                  ("clock", clock), ("reset", pc_reset)] : CircuitInstance })
+      portMap := [("d", pc_d[i]!), ("q", pc[i]!),
+                  ("clock", clock), ("reset", reset)] : CircuitInstance })
 
   -- === Per-Entry Forwarding Logic ===
   -- Read all entries from QueueRAM for forwarding (parallel read ports via per-entry storage)
@@ -1186,7 +1188,7 @@ def mkStoreBuffer8 : Circuit :=
     [full_gate] ++ empty_gates ++ enq_idx_gates ++
     [deq_fire_gate, deq_valid_gate] ++
     flush_apply_gates ++
-    commit_gate_gates ++ [pc_reset_gate] ++
+    commit_gate_gates ++
     bitmap_gates ++ surviving_gates ++
     flush_count_gates ++ flush_tail_gates ++ flush_tail_out_gates ++
     all_entry_gates ++

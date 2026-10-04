@@ -227,9 +227,7 @@ yosys scc -expect 0
 
 # Step 5: Coarse synthesis
 if {$flatten} {
-    setattr -mod -unset keep_hierarchy
     synth -top $design_name -flatten
-    hierarchy -check -top $design_name
 } else {
     synth -top $design_name -hieropt
 }
@@ -250,7 +248,7 @@ clean -purge
 
 # Step 9: Reports
 tee -o "${out_dir}/reports/check_design.rpt" check
-set stat_cmd [list stat -top $design_name -liberty $target_lib]
+set stat_cmd [list stat -liberty $target_lib]
 if {$dff_lib ne $target_lib} {
     lappend stat_cmd -liberty $dff_lib
 }

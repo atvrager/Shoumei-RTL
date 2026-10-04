@@ -97,6 +97,8 @@ if header is not None:
         out.write(merged)
 ' "${COMB_LIBS[@]}" "$WORK_DIR/asap7_comb_merged.lib"
     TARGET_LIB="$WORK_DIR/asap7_comb_merged.lib"
+    export ABC_DRIVER_CELL="BUFx2_ASAP7_75t_R"
+    export ABC_LOAD_IN_FF="3.898"
 else
     echo "ERROR: Unsupported platform: $PLATFORM" >&2
     exit 1
@@ -133,13 +135,7 @@ for f in "$NETLIST" "$SDC" "$AREA_RPT" "$CHECK_RPT"; do
     fi
 done
 
-CELL_COUNT=$(awk '/Number of cells:/ {print $NF; exit}' "$AREA_RPT")
-if [ -z "$CELL_COUNT" ]; then
-    CELL_COUNT=$(awk '/^[[:space:]]*[0-9]+[[:space:]]+cells/ {print $1; exit}' "$AREA_RPT")
-fi
-if [ -z "$CELL_COUNT" ]; then
-    CELL_COUNT="0"
-fi
+CELL_COUNT=$(awk '/Number of cells:/ {count=$NF} /^[[:space:]]*[0-9]+[[:space:]]+cells/ {count=$1} END {if (count != "") print count; else print "0"}' "$AREA_RPT")
 echo "✓ Synthesis passed for $DESIGN_NAME on $PLATFORM ($CELL_COUNT cells)"
 
 echo "==> Timing & Critical Path Summary:"
