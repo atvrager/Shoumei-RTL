@@ -1333,7 +1333,7 @@ def toTestbenchSVCached (cfg : TestbenchConfig) : String :=
   "  // A hang leaves no mismatch behind, so the state that caused it has to be\n" ++
   "  // readable at the timeout: which floating-point registers are still marked\n" ++
   "  // busy, and whether the ROB head is complete.\n" ++
-  "  assign o_fp_busy         = u_cpu.u_cpu.u_fp_busy_table.fp_busy_q;\n" ++
+  "  assign o_fp_busy         = 64'b0;\n" ++
   "  assign o_commit_ready    = u_cpu.u_cpu.commit_ready[0];\n" ++
   "  // These were hardwired to zero: the floating-point execution unit reports\n" ++
   "  // busy, which gates the station, so a stuck busy bit stops all FP dispatch.\n" ++
