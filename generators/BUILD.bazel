@@ -120,6 +120,16 @@ lean_binary(
 )
 
 lean_binary(
+    name = "generate_leaves",
+    srcs = ["GenerateLeaves.lean"],
+    main = "GenerateLeaves",
+    deps = [
+        "//lean:leaf_circuits",
+        "//lean:sec_miter",
+    ],
+)
+
+lean_binary(
     name = "generate_sec",
     srcs = ["GenerateSec.lean"],
     main = "GenerateSec",

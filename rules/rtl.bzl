@@ -513,7 +513,10 @@ def shoumei_rtl(
       instr_dict: the RISC-V instruction dictionary the generator reads.
     """
     effective_subsystem_generators = {
+        "combinational": "//generators:generate_leaves",
         "decoders": "//generators:generate_decoders",
+        "foundation": "//generators:generate_leaves",
+        "sequential": "//generators:generate_leaves",
     }
     effective_subsystem_generators.update(subsystem_generators)
 

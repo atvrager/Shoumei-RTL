@@ -194,7 +194,58 @@ lean_library(
     ],
 )
 
-CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + VISUALS_SRCS + PROOFS_PATTERNS
+LEAF_CIRCUITS_SRCS = [
+    "Shoumei/Circuits/Combinational/ALU.lean",
+    "Shoumei/Circuits/Combinational/Arbiter.lean",
+    "Shoumei/Circuits/Combinational/BranchTargetAdder.lean",
+    "Shoumei/Circuits/Combinational/CarrySelectAdder.lean",
+    "Shoumei/Circuits/Combinational/Comparator.lean",
+    "Shoumei/Circuits/Combinational/Decoder.lean",
+    "Shoumei/Circuits/Combinational/KoggeStoneAdder.lean",
+    "Shoumei/Circuits/Combinational/LogicUnit.lean",
+    "Shoumei/Circuits/Combinational/MuxTree.lean",
+    "Shoumei/Circuits/Combinational/OneHotEncoder.lean",
+    "Shoumei/Circuits/Combinational/PCIncrementer.lean",
+    "Shoumei/Circuits/Combinational/Popcount.lean",
+    "Shoumei/Circuits/Combinational/PrefixAdder.lean",
+    "Shoumei/Circuits/Combinational/RippleCarryAdder.lean",
+    "Shoumei/Circuits/Combinational/Shifter.lean",
+    "Shoumei/Circuits/Combinational/Subtractor.lean",
+    "Shoumei/Circuits/Sequential/Queue.lean",
+    "Shoumei/Circuits/Sequential/QueueComponents.lean",
+    "Shoumei/Circuits/Sequential/QueueN.lean",
+    "Shoumei/Codegen/CellLibrary.lean",
+    "Shoumei/Codegen/CellLibs/ASAP7.lean",
+    "Shoumei/Codegen/CellLibs/GF180.lean",
+    "Shoumei/Codegen/CellLibs/Library.lean",
+    "Shoumei/Codegen/CellNetlist.lean",
+    "Shoumei/Codegen/CppSim.lean",
+    "Shoumei/Codegen/SystemVerilogNetlist.lean",
+    "Shoumei/Codegen/TechMap.lean",
+    "Shoumei/Codegen/Testbench.lean",
+    "Shoumei/Codegen/Unified.lean",
+    "Shoumei/Components/AdderLibrary.lean",
+    "Shoumei/Components/Cost.lean",
+    "Shoumei/Components/Select.lean",
+    "Shoumei/Components/Spec.lean",
+    "Shoumei/DSL/Decoupled.lean",
+    "Shoumei/Examples/Adder.lean",
+    "Shoumei/LeafRegistry.lean",
+    "Shoumei/Reflection/WireMap.lean",
+    "Shoumei/Semantics.lean",
+]
+
+lean_library(
+    name = "leaf_circuits",
+    srcs = LEAF_CIRCUITS_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":sec_miter",
+    ],
+)
+
+CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + VISUALS_SRCS + LEAF_CIRCUITS_SRCS + PROOFS_PATTERNS
 
 lean_library(
     name = "circuits",
@@ -206,6 +257,7 @@ lean_library(
     deps = [
         ":decoder_gen",
         ":dsl",
+        ":leaf_circuits",
         ":riscv_isa",
         ":sec_miter",
     ],
@@ -220,6 +272,7 @@ lean_library(
         ":circuits",
         ":decoder_gen",
         ":dsl",
+        ":leaf_circuits",
         ":lean_root",
         ":lint",
         ":project_map",
