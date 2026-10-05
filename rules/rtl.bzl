@@ -493,21 +493,38 @@ shoumei_aggregate_rtl = rule(
     },
 )
 
-def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//generators:instr_dict"):
+def shoumei_rtl(
+        name,
+        generator = "//generators:generate_all",
+        subsystem_generators = {},
+        sec_generator = "//generators:generate_sec",
+        testbench_generator = "//generators:gen_testbench",
+        structural_lint_tool = "//generators:structural_lint",
+        instr_dict = "//generators:instr_dict"):
     """Macro providing granular RTL generation suite with convenient subtargets.
 
     Args:
       name: name of the generation target.
-      generator: the `lean_binary` code generator to run.
+      generator: the fallback `lean_binary` code generator to run.
+      subsystem_generators: optional dictionary mapping subsystem name to generator label.
+      sec_generator: generator label for SEC verification miters.
+      testbench_generator: generator label for simulation testbenches.
+      structural_lint_tool: binary for structural linting.
       instr_dict: the RISC-V instruction dictionary the generator reads.
     """
+    effective_subsystem_generators = {
+        "decoders": "//generators:generate_decoders",
+    }
+    effective_subsystem_generators.update(subsystem_generators)
+
     subsystem_targets = []
     for sub in CIRCUIT_SUBSYSTEMS:
         target_name = name + "_" + sub
+        sub_generator = effective_subsystem_generators.get(sub, generator)
         shoumei_subsystem_rtl(
             name = target_name,
             subsystem = sub,
-            generator = generator,
+            generator = sub_generator,
             instr_dict = instr_dict,
         )
         subsystem_targets.append(":" + target_name)
@@ -515,13 +532,13 @@ def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//g
     sec_target = name + "_sec"
     shoumei_sec_rtl(
         name = sec_target,
-        generator = generator,
+        generator = sec_generator,
     )
 
     tb_target = name + "_testbench"
     shoumei_testbench_rtl(
         name = tb_target,
-        generator = generator,
+        generator = testbench_generator,
     )
 
     shoumei_merge_dirs(
@@ -621,7 +638,7 @@ def shoumei_rtl(name, generator = "//generators:generate_all", instr_dict = "//g
 
     structural_lint_test(
         name = "lint_structural_test",
-        generator = generator,
+        generator = structural_lint_tool,
         sv = ":sv",
     )
 

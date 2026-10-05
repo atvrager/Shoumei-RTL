@@ -43,6 +43,36 @@ BENCHMARK_SRCS = [
     "Shoumei/RISCV/BenchmarkSpecs.lean",
 ]
 
+STRUCTURAL_LINT_SRCS = [
+    "Shoumei/Verification/StructuralLint.lean",
+]
+
+LEAN_ROOT_SRCS = [
+    "Shoumei/Codegen/LeanRoot.lean",
+]
+
+PROJECT_MAP_SRCS = [
+    "Shoumei/Codegen/ProjectMap.lean",
+]
+
+lean_library(
+    name = "structural_lint",
+    srcs = STRUCTURAL_LINT_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+)
+
+lean_library(
+    name = "lean_root",
+    srcs = LEAN_ROOT_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+)
+
+lean_library(
+    name = "project_map",
+    srcs = PROJECT_MAP_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+)
+
 lean_library(
     name = "lint",
     srcs = LINT_SRCS,
@@ -109,7 +139,7 @@ PROOFS_SRCS = glob(
 
 CIRCUITS_EXCLUDE = [
     "Shoumei/DSL.lean",
-] + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + PROOFS_PATTERNS
+] + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + PROOFS_PATTERNS
 
 lean_library(
     name = "circuits",
@@ -120,7 +150,10 @@ lean_library(
     extra_flags = ["-DwarningAsError=true"],
     deps = [
         ":dsl",
+        ":lean_root",
+        ":project_map",
         ":riscv_isa",
+        ":structural_lint",
     ],
 )
 
@@ -146,22 +179,22 @@ filegroup(
 sh_test(
     name = "lean_root_test",
     srcs = ["lean_root_test.sh"],
-    args = ["$(location //generators:generate_all)"],
+    args = ["$(location //generators:lean_root)"],
     data = [
         ":shoumei_srcs",
         "//:known_unbuilt_modules",
-        "//generators:generate_all",
+        "//generators:lean_root",
     ],
 )
 
 sh_test(
     name = "project_map_test",
     srcs = ["project_map_test.sh"],
-    args = ["$(location //generators:generate_all)"],
+    args = ["$(location //generators:project_map)"],
     data = [
         ":shoumei_srcs",
         "//:docs",
-        "//generators:generate_all",
+        "//generators:project_map",
     ],
 )
 

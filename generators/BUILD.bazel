@@ -84,6 +84,49 @@ lean_binary(
 )
 
 lean_binary(
+    name = "structural_lint",
+    srcs = ["StructuralLintMain.lean"],
+    main = "StructuralLintMain",
+    deps = ["//lean:structural_lint"],
+)
+
+lean_binary(
+    name = "lean_root",
+    srcs = ["LeanRootMain.lean"],
+    main = "LeanRootMain",
+    deps = ["//lean:lean_root"],
+)
+
+lean_binary(
+    name = "project_map",
+    srcs = ["ProjectMapMain.lean"],
+    main = "ProjectMapMain",
+    deps = ["//lean:project_map"],
+)
+
+lean_binary(
+    name = "gen_testbench",
+    srcs = ["GenTestbench.lean"],
+    main = "GenTestbench",
+    deps = ["//lean:circuits"],
+)
+
+lean_binary(
+    name = "generate_decoders",
+    srcs = ["GenerateDecoders.lean"],
+    data = [":instr_dict"],
+    main = "GenerateDecoders",
+    deps = ["//lean:circuits"],
+)
+
+lean_binary(
+    name = "generate_sec",
+    srcs = ["GenerateSec.lean"],
+    main = "GenerateSec",
+    deps = ["//lean:circuits"],
+)
+
+lean_binary(
     name = "lean_lint",
     srcs = ["LeanLint.lean"],
     main = "LeanLint",
