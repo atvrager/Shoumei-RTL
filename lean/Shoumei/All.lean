@@ -141,6 +141,13 @@ import Shoumei.DSL.PortResolve
 import Shoumei.Examples.Adder
 import Shoumei.Examples.AdderProofs
 import Shoumei.Examples.QueueExample
+import Shoumei.HDL.Examples.PipelinedStage
+import Shoumei.HDL.Expr
+import Shoumei.HDL.Lower
+import Shoumei.HDL.Module
+import Shoumei.HDL.Semantics
+import Shoumei.HDL.Tests
+import Shoumei.HDL.Types
 import Shoumei.Interconnect.TileLink.TLTypes
 import Shoumei.Interconnect.TileLink.TLXbar
 import Shoumei.Interconnect.TileLink.TLXbarProofs

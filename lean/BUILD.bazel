@@ -19,6 +19,26 @@ lean_library(
     extra_flags = ["-DwarningAsError=true"],
 )
 
+HDL_SRCS = [
+    "Shoumei/HDL/Examples/PipelinedStage.lean",
+    "Shoumei/HDL/Expr.lean",
+    "Shoumei/HDL/Lower.lean",
+    "Shoumei/HDL/Module.lean",
+    "Shoumei/HDL/Semantics.lean",
+    "Shoumei/HDL/Tests.lean",
+    "Shoumei/HDL/Types.lean",
+]
+
+lean_library(
+    name = "hdl",
+    srcs = HDL_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":leaf_circuits",
+    ],
+)
+
 LINT_SRCS = [
     "Shoumei/Lint/Fix.lean",
     "Shoumei/Lint/Scan.lean",
@@ -245,7 +265,7 @@ lean_library(
     ],
 )
 
-CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + VISUALS_SRCS + LEAF_CIRCUITS_SRCS + PROOFS_PATTERNS
+CIRCUITS_EXCLUDE = DSL_SRCS + HDL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + VISUALS_SRCS + LEAF_CIRCUITS_SRCS + PROOFS_PATTERNS
 
 lean_library(
     name = "circuits",
@@ -272,6 +292,7 @@ lean_library(
         ":circuits",
         ":decoder_gen",
         ":dsl",
+        ":hdl",
         ":leaf_circuits",
         ":lean_root",
         ":lint",
