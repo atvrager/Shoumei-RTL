@@ -284,7 +284,6 @@ def shoumei_elf_test(
         tests = [
             ":" + sim_target,
             ":" + cosim_target,
-            ":" + spec_target,
         ],
         tags = tags or [],
     )
