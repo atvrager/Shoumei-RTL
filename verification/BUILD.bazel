@@ -192,14 +192,14 @@ sh_test(
     args = [
         "$(rootpath //third_party/tools:yosys)",
         "$(location //:sv)",
-        "$(location //generators:generate_all)",
+        "$(location //generators:structural_lint)",
     ],
     data = [
         "dc-lint.sh",
         "tool_path.sh",
         "//:root_shell_scripts",
         "//:sv",
-        "//generators:generate_all",
+        "//generators:structural_lint",
         "//third_party/tools:yosys",
         "//third_party/tools:yosys_share",
     ],
