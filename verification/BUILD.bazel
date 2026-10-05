@@ -548,9 +548,9 @@ sh_test(
     name = "visuals_test",
     size = "medium",
     srcs = ["run_visuals.sh"],
-    args = ["$(location //generators:generate_all)"],
+    args = ["$(location //generators:generate_visuals)"],
     data = [
-        "//generators:generate_all",
+        "//generators:generate_visuals",
     ],
 )
 

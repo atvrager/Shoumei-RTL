@@ -10,6 +10,7 @@ Re-run the generator after adding or fixing a module (CI checks it is
 current).
 -/
 
+import Shoumei.CircuitRegistry
 import Shoumei.Circuits.Combinational.ALU
 import Shoumei.Circuits.Combinational.ALUBitVecBridge
 import Shoumei.Circuits.Combinational.ALUCodegen

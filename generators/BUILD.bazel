@@ -127,6 +127,13 @@ lean_binary(
 )
 
 lean_binary(
+    name = "generate_visuals",
+    srcs = ["GenerateVisuals.lean"],
+    main = "GenerateVisuals",
+    deps = ["//lean:circuits"],
+)
+
+lean_binary(
     name = "lean_lint",
     srcs = ["LeanLint.lean"],
     main = "LeanLint",
