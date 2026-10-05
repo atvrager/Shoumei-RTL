@@ -9,6 +9,8 @@ def parseArg (pfx : String) (args : List String) : Option String :=
     if a.startsWith pfx then some (a.drop pfx.length).toString else none)
 
 def main (args : List String) : IO Unit := do
+  if let some workspace ← IO.getEnv "BUILD_WORKSPACE_DIRECTORY" then
+    IO.Process.setCurrentDir workspace
   let outPath := parseArg "--out=" args
     |>.map System.FilePath.mk
     |>.getD (System.FilePath.mk "docs/project-map.md")

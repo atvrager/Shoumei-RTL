@@ -9,7 +9,7 @@
 4 lean/Shoumei/Circuits/Combinational/FPU.lean
 6 lean/Shoumei/Circuits/Combinational/FPUDouble.lean
 5 lean/Shoumei/Circuits/Combinational/FPUDoubleProofs.lean
-11 lean/Shoumei/Circuits/Combinational/Int64ToFP.lean
+3 lean/Shoumei/Circuits/Combinational/Int64ToFP.lean
 11 lean/Shoumei/Circuits/Combinational/LogicUnitProofs.lean
 11 lean/Shoumei/Circuits/Combinational/Mux8x32HierProofs.lean
 5 lean/Shoumei/Circuits/Combinational/MuxTree.lean
@@ -42,7 +42,7 @@
 2 lean/Shoumei/Codegen/SVA.lean
 5 lean/Shoumei/Codegen/ShoumeiParse.lean
 1 lean/Shoumei/Codegen/SoCDiagram.lean
-27 lean/Shoumei/Codegen/SystemVerilog.lean
+26 lean/Shoumei/Codegen/SystemVerilog.lean
 3 lean/Shoumei/Codegen/SystemVerilogNetlist.lean
 1 lean/Shoumei/Codegen/Testbench.lean
 2 lean/Shoumei/Peripherals/BootROM.lean
@@ -67,7 +67,7 @@
 3 lean/Shoumei/RISCV/Decoder.lean
 11 lean/Shoumei/RISCV/DecoderProofs.lean
 5 lean/Shoumei/RISCV/Encoder.lean
-20 lean/Shoumei/RISCV/Execution/FPExecUnit.lean
+17 lean/Shoumei/RISCV/Execution/FPExecUnit.lean
 52 lean/Shoumei/RISCV/Execution/ReservationStation.lean
 3 lean/Shoumei/RISCV/Execution/ReservationStationProofs.lean
 5 lean/Shoumei/RISCV/Fetch.lean
