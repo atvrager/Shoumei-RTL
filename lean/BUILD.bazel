@@ -176,7 +176,25 @@ lean_library(
     deps = [":dsl"],
 )
 
-CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + PROOFS_PATTERNS
+VISUALS_SRCS = [
+    "Shoumei/Codegen/ArchitectureDiagram.lean",
+    "Shoumei/Codegen/ArchitectureVisuals.lean",
+    "Shoumei/Codegen/BenchmarkVisual.lean",
+    "Shoumei/Codegen/SoCDiagram.lean",
+]
+
+lean_library(
+    name = "visuals",
+    srcs = VISUALS_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":circuits",
+        ":dsl",
+        ":riscv_isa",
+    ],
+)
+
+CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + VISUALS_SRCS + PROOFS_PATTERNS
 
 lean_library(
     name = "circuits",
@@ -188,11 +206,8 @@ lean_library(
     deps = [
         ":decoder_gen",
         ":dsl",
-        ":lean_root",
-        ":project_map",
         ":riscv_isa",
         ":sec_miter",
-        ":structural_lint",
     ],
 )
 
@@ -203,10 +218,16 @@ lean_library(
     deps = [
         ":benchmark_specs",
         ":circuits",
+        ":decoder_gen",
         ":dsl",
+        ":lean_root",
         ":lint",
+        ":project_map",
         ":riscv_isa",
+        ":sec_miter",
+        ":structural_lint",
         ":testgen",
+        ":visuals",
     ],
 )
 

@@ -130,7 +130,10 @@ lean_binary(
     name = "generate_visuals",
     srcs = ["GenerateVisuals.lean"],
     main = "GenerateVisuals",
-    deps = ["//lean:circuits"],
+    deps = [
+        "//lean:circuits",
+        "//lean:visuals",
+    ],
 )
 
 lean_binary(

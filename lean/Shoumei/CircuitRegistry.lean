@@ -384,4 +384,30 @@ def allCircuits : List Circuit :=
 def emittedModuleNames : List String :=
   allCircuits.map (·.name) ++ riscvDecoderModules
 
+def subsystemCircuitNames (subsystem : String) : Option (List String) :=
+  let adderNames := allAdderCircuits.map (·.name)
+  match subsystem with
+  | "foundation" | "base" => some (adderNames ++ foundationBaseCircuits.map (·.name))
+  | "combinational"       =>
+    some (combinationalCircuits.filter (fun c => !adderNames.contains c.name) |>.map (·.name))
+  | "sequential"          => some (sequentialCircuits.map (·.name))
+  | "renaming"            => some (renamingCircuits.map (·.name))
+  | "execution"           =>
+    some (executionCircuits.filter (fun c => !adderNames.contains c.name) |>.map (·.name))
+  | "retirement"          => some (retirementCircuits.map (·.name))
+  | "memory"              => some (memoryCircuits.map (·.name))
+  | "control"             => some (controlCircuits.map (·.name))
+  | "cpu"                 => some (cpuCircuits.map (·.name))
+  | "soc"                 => some (socCircuits.map (·.name))
+  | "decoders"            => some []
+  | "testbench"           => some []
+  | "sec"                 => some []
+  | "all"                 => some (allCircuits.map (·.name))
+  | _                     => none
+
+def circuitsForSubsystem (subsystem : String) : Option (List Circuit) :=
+  match subsystemCircuitNames subsystem with
+  | some names => some (allCircuits.filter (fun c => names.contains c.name))
+  | none => none
+
 end Shoumei.CircuitRegistry
