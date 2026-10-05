@@ -116,14 +116,14 @@ lean_binary(
     srcs = ["GenerateDecoders.lean"],
     data = [":instr_dict"],
     main = "GenerateDecoders",
-    deps = ["//lean:circuits"],
+    deps = ["//lean:decoder_gen"],
 )
 
 lean_binary(
     name = "generate_sec",
     srcs = ["GenerateSec.lean"],
     main = "GenerateSec",
-    deps = ["//lean:circuits"],
+    deps = ["//lean:sec_miter"],
 )
 
 lean_binary(

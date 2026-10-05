@@ -7,9 +7,15 @@ exports_files([
     "Shoumei/Verification/DualRTL.lean",
 ])
 
+DSL_SRCS = [
+    "Shoumei/DSL.lean",
+    "Shoumei/DSL/Interfaces.lean",
+    "Shoumei/DSL/PortResolve.lean",
+]
+
 lean_library(
     name = "dsl",
-    srcs = ["Shoumei/DSL.lean"],
+    srcs = DSL_SRCS,
     extra_flags = ["-DwarningAsError=true"],
 )
 
@@ -137,9 +143,40 @@ PROOFS_SRCS = glob(
     exclude = ["Shoumei/RISCV/EncoderProofs.lean"],
 )
 
-CIRCUITS_EXCLUDE = [
-    "Shoumei/DSL.lean",
-] + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + PROOFS_PATTERNS
+DECODER_GEN_SRCS = [
+    "Shoumei/RISCV/CodegenCppSim.lean",
+    "Shoumei/RISCV/CodegenSystemVerilog.lean",
+    "Shoumei/RISCV/CodegenTest.lean",
+    "Shoumei/RISCV/InstructionList.lean",
+]
+
+SEC_MITER_SRCS = [
+    "Shoumei/Circuits/Sequential/DFF.lean",
+    "Shoumei/Circuits/Sequential/Register.lean",
+    "Shoumei/Codegen/Common.lean",
+    "Shoumei/Codegen/SECMiter.lean",
+    "Shoumei/Codegen/SVA.lean",
+    "Shoumei/Codegen/SystemVerilog.lean",
+]
+
+lean_library(
+    name = "decoder_gen",
+    srcs = DECODER_GEN_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":riscv_isa",
+    ],
+)
+
+lean_library(
+    name = "sec_miter",
+    srcs = SEC_MITER_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [":dsl"],
+)
+
+CIRCUITS_EXCLUDE = DSL_SRCS + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + STRUCTURAL_LINT_SRCS + LEAN_ROOT_SRCS + PROJECT_MAP_SRCS + DECODER_GEN_SRCS + SEC_MITER_SRCS + PROOFS_PATTERNS
 
 lean_library(
     name = "circuits",
@@ -149,10 +186,12 @@ lean_library(
     ),
     extra_flags = ["-DwarningAsError=true"],
     deps = [
+        ":decoder_gen",
         ":dsl",
         ":lean_root",
         ":project_map",
         ":riscv_isa",
+        ":sec_miter",
         ":structural_lint",
     ],
 )
