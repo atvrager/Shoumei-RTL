@@ -13,7 +13,70 @@ lean_library(
     extra_flags = ["-DwarningAsError=true"],
 )
 
-CIRCUITS_EXCLUDE = [
+LINT_SRCS = [
+    "Shoumei/Lint/Fix.lean",
+    "Shoumei/Lint/Scan.lean",
+    "Shoumei/Lint/Style.lean",
+]
+
+RISCV_ISA_SRCS = [
+    "Shoumei/RISCV/Config.lean",
+    "Shoumei/RISCV/Decoder.lean",
+    "Shoumei/RISCV/Encoder.lean",
+    "Shoumei/RISCV/EncoderProofs.lean",
+    "Shoumei/RISCV/ISA.lean",
+    "Shoumei/RISCV/Microcode/FallbackTypes.lean",
+    "Shoumei/RISCV/Microcode/ZbEmulationLibrary.lean",
+    "Shoumei/RISCV/OpTypeGenerated.lean",
+    "Shoumei/RISCV/OpcodeParser.lean",
+]
+
+TESTGEN_SRCS = [
+    "Shoumei/TestGen/AsmEmitter.lean",
+    "Shoumei/TestGen/Patterns.lean",
+    "Shoumei/TestGen/RandAlphabet.lean",
+    "Shoumei/TestGen/RandProgram.lean",
+    "Shoumei/TestGen/Rng.lean",
+]
+
+BENCHMARK_SRCS = [
+    "Shoumei/RISCV/BenchmarkSpecs.lean",
+]
+
+lean_library(
+    name = "lint",
+    srcs = LINT_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+)
+
+lean_library(
+    name = "riscv_isa",
+    srcs = RISCV_ISA_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [":dsl"],
+)
+
+lean_library(
+    name = "testgen",
+    srcs = TESTGEN_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":riscv_isa",
+    ],
+)
+
+lean_library(
+    name = "benchmark_specs",
+    srcs = BENCHMARK_SRCS,
+    extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":riscv_isa",
+    ],
+)
+
+PROOFS_PATTERNS = [
     "**/*Proofs.lean",
     "Shoumei/Circuits/Combinational/ALUBitVecBridge.lean",
     "Shoumei/Circuits/Sequential/Queue1Bridge.lean",
@@ -38,6 +101,16 @@ CIRCUITS_EXCLUDE = [
     "Shoumei/All.lean",
 ]
 
+PROOFS_SRCS = glob(
+    PROOFS_PATTERNS,
+    allow_empty = True,
+    exclude = ["Shoumei/RISCV/EncoderProofs.lean"],
+)
+
+CIRCUITS_EXCLUDE = [
+    "Shoumei/DSL.lean",
+] + LINT_SRCS + RISCV_ISA_SRCS + TESTGEN_SRCS + BENCHMARK_SRCS + PROOFS_PATTERNS
+
 lean_library(
     name = "circuits",
     srcs = glob(
@@ -45,12 +118,24 @@ lean_library(
         exclude = CIRCUITS_EXCLUDE,
     ),
     extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":dsl",
+        ":riscv_isa",
+    ],
 )
 
 lean_library(
     name = "shoumei",
-    srcs = glob(["**/*.lean"]),
+    srcs = PROOFS_SRCS,
     extra_flags = ["-DwarningAsError=true"],
+    deps = [
+        ":benchmark_specs",
+        ":circuits",
+        ":dsl",
+        ":lint",
+        ":riscv_isa",
+        ":testgen",
+    ],
 )
 
 filegroup(

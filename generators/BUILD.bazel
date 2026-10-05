@@ -59,7 +59,7 @@ lean_binary(
     srcs = ["GenTests.lean"],
     data = [":instr_dict"],
     main = "GenTests",
-    deps = ["//lean:shoumei"],
+    deps = ["//lean:testgen"],
 )
 
 lean_binary(
@@ -67,7 +67,7 @@ lean_binary(
     srcs = ["GenBenchmarks.lean"],
     data = [":instr_dict"],
     main = "GenBenchmarks",
-    deps = ["//lean:shoumei"],
+    deps = ["//lean:benchmark_specs"],
 )
 
 lean_binary(
@@ -87,7 +87,7 @@ lean_binary(
     name = "lean_lint",
     srcs = ["LeanLint.lean"],
     main = "LeanLint",
-    deps = ["//lean:shoumei"],
+    deps = ["//lean:lint"],
 )
 
 # The generator sources, for the tests that read the tree.
