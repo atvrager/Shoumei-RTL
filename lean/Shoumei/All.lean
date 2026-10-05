@@ -141,6 +141,7 @@ import Shoumei.DSL.PortResolve
 import Shoumei.Examples.Adder
 import Shoumei.Examples.AdderProofs
 import Shoumei.Examples.QueueExample
+import Shoumei.HDL.Examples.EqualityComparator
 import Shoumei.HDL.Examples.PipelinedStage
 import Shoumei.HDL.Expr
 import Shoumei.HDL.Lower

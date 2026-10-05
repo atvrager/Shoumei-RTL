@@ -57,6 +57,27 @@ def emitSignalGroup (sg : SignalGroup) : ElabM Unit := do
   let s ← get
   set { s with signalGroups := s.signalGroups ++ [sg] }
 
+/-- Construct a balanced binary OR tree to reduce a list of wires to a single wire. -/
+partial def lowerOrTree (pfx : String) (wires : List Wire) : ElabM Wire := do
+  match wires with
+  | [] => return Wire.mk "zero"
+  | [w] => return w
+  | _ =>
+      let mut nextLevel : List Wire := []
+      let mut i := 0
+      let mut pairIdx := 0
+      while i < wires.length do
+        if i + 1 < wires.length then
+          let outW ← freshWire s!"{pfx}_{pairIdx}"
+          emitGate (Gate.mkOR (wires[i]!) (wires[i + 1]!) outW)
+          nextLevel := nextLevel ++ [outW]
+          i := i + 2
+          pairIdx := pairIdx + 1
+        else
+          nextLevel := nextLevel ++ [wires[i]!]
+          i := i + 1
+      lowerOrTree s!"{pfx}_l" nextLevel
+
 /-- Lower a typed signal expression to a list of hardware wires. -/
 def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List Wire)
   | w, .const val => do
@@ -204,19 +225,17 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
       let aWires ← lowerSignal target a
       let bWires ← lowerSignal target b
       let srcW := aWires.length
-      let xorWires ← freshWires "eq_xor" srcW
+      let xorWires ← freshWires "diff" srcW
       for i in [:srcW] do
         emitGate (Gate.mkXOR (aWires[i]!) (bWires[i]!) (xorWires[i]!))
+      if srcW > 1 then
+        emitSignalGroup { name := "diff", width := srcW, wires := xorWires }
       let outW ← freshWire "eq"
       if srcW == 0 then
         emitGate (Gate.mkBUF (Wire.mk "one") outW)
       else
-        let mut cur := xorWires[0]!
-        for i in [1:srcW] do
-          let nextOr ← freshWire "eq_or"
-          emitGate (Gate.mkOR cur (xorWires[i]!) nextOr)
-          cur := nextOr
-        emitGate (Gate.mkNOT cur outW)
+        let anyDiff ← lowerOrTree "or_tree" xorWires
+        emitGate (Gate.mkNOT anyDiff outW)
       return [outW]
 
   | _, .ult a b => do
@@ -262,9 +281,13 @@ def lowerModule (m : HDLModule) : Circuit :=
   let initial : ElabState := {}
   let ((inputs, outputs), (state : ElabState)) := (do
     -- Lower inputs
-    let inWires := m.inputs.flatMap fun (p : PortDef) =>
-      (List.range p.width).map fun i =>
+    let mut inWires : List Wire := []
+    for (p : PortDef) in m.inputs do
+      let pWires := (List.range p.width).map fun i =>
         if p.width == 1 then Wire.mk p.name else Wire.mk s!"{p.name}_{i}"
+      inWires := inWires ++ pWires
+      if p.width > 1 then
+        emitSignalGroup { name := p.name, width := p.width, wires := pWires }
     -- Lower registers
     for reg in m.registers do
       match reg with

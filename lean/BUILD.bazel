@@ -20,6 +20,7 @@ lean_library(
 )
 
 HDL_SRCS = [
+    "Shoumei/HDL/Examples/EqualityComparator.lean",
     "Shoumei/HDL/Examples/PipelinedStage.lean",
     "Shoumei/HDL/Expr.lean",
     "Shoumei/HDL/Lower.lean",
@@ -277,6 +278,7 @@ lean_library(
     deps = [
         ":decoder_gen",
         ":dsl",
+        ":hdl",
         ":leaf_circuits",
         ":riscv_isa",
         ":sec_miter",

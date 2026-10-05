@@ -165,3 +165,13 @@ sh_test(
     args = ["$(location :generate_shoumei)"],
     data = [":generate_shoumei"],
 )
+
+lean_binary(
+    name = "emit_hdl_comparator",
+    srcs = ["EmitHDLComparator.lean"],
+    main = "EmitHDLComparator",
+    deps = [
+        "//lean:circuits",
+        "//lean:hdl",
+    ],
+)

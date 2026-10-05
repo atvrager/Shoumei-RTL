@@ -13,6 +13,7 @@ import Shoumei.HDL.Module
 import Shoumei.HDL.Lower
 import Shoumei.HDL.Semantics
 import Shoumei.HDL.Examples.PipelinedStage
+import Shoumei.HDL.Examples.EqualityComparator
 
 namespace Shoumei.HDL.Tests
 
@@ -33,8 +34,37 @@ theorem pipelinedMAC_input_count : testMAC.inputs.length = 64 := by
 theorem pipelinedMAC_output_count : testMAC.outputs.length = 32 := by
   native_decide
 
-/-- Signal group count: bundled buses for result, stage1, and stage2. -/
-theorem pipelinedMAC_signal_groups : testMAC.signalGroups.length = 4 := by
+/-- Signal group count: bundled buses for inputs, registers, and outputs. -/
+theorem pipelinedMAC_signal_groups : testMAC.signalGroups.length = 7 := by
+  native_decide
+
+/-! ## Structural Theorems on Lowered Equality Comparator -/
+
+def testEq20 : Circuit := equalityComparator20Circuit
+def testEq32 : Circuit := equalityComparator32Circuit
+
+/-- Input count: 20 (a) + 20 (b) = 40 inputs. -/
+theorem eq20_input_count : testEq20.inputs.length = 40 := by
+  native_decide
+
+/-- Output count: 1 (eq) = 1 output. -/
+theorem eq20_output_count : testEq20.outputs.length = 1 := by
+  native_decide
+
+/-- Gate count: 20 XOR + 19 OR + 1 NOT + 1 BUF = 41 gates. -/
+theorem eq20_gate_count : testEq20.gates.length = 41 := by
+  native_decide
+
+/-- Input count: 32 (a) + 32 (b) = 64 inputs. -/
+theorem eq32_input_count : testEq32.inputs.length = 64 := by
+  native_decide
+
+/-- Output count: 1 (eq) = 1 output. -/
+theorem eq32_output_count : testEq32.outputs.length = 1 := by
+  native_decide
+
+/-- Gate count: 32 XOR + 31 OR + 1 NOT + 1 BUF = 65 gates. -/
+theorem eq32_gate_count : testEq32.gates.length = 65 := by
   native_decide
 
 /-! ## Semantic Reduction Tests through `rfl` -/
