@@ -49,8 +49,6 @@ structure Context where
   gateOutputs : Std.HashSet String := {}
   /-- Wire names driven by instance output ports -/
   instanceOutputs : Std.HashSet String := {}
-  /-- Output signal group names of this circuit that use individual bit ports -/
-  individualOutputGroups : Std.HashSet String := {}
   /-- Fast O(1) map from wire name to SignalGroup -/
   groupMap : Std.HashMap String SignalGroup := {}
   /-- Fast O(1) map from wire name to bit index -/
@@ -59,7 +57,7 @@ structure Context where
   wireGroupMap : Std.HashMap String (SignalGroup × Nat) := {}
   /-- Fast O(1) map from signal group name to SignalGroup -/
   groupByName : Std.HashMap String SignalGroup := {}
-  /-- All signal groups (including individualOutputGroups) for sub-module interface introspection -/
+  /-- All signal groups for sub-module interface introspection -/
   allSignalGroups : List SignalGroup := []
   deriving Repr
 
@@ -310,46 +308,18 @@ def mkContext (c : Circuit) (allCircuits : List Circuit := [])
     | none => s
   ) {}
 
-  -- Output signal groups of `c` that are partially loaded by any caller in `allCircuits`
-  -- must be emitted as individual bit ports so callers can omit unused bits without LINT-2/LINT-28.
-  let outputGroups := allGroups.filter (fun sg =>
-    sg.width > 1 && sg.wires.any (fun w => c.outputs.any (fun ow => ow.name == w.name)))
-  let individualOutputGroups : Std.HashSet String :=
-    if outputGroups.isEmpty || allCircuits.isEmpty then {}
-    else
-      allCircuits.foldl (fun acc parent =>
-        let matchingInsts := parent.instances.filter (fun inst => inst.moduleName == c.name)
-        if matchingInsts.isEmpty then acc
-        else
-          let parentLoaded := match precomputedLoaded.get? parent.name with
-            | some s => s
-            | none => computeCircuitLoadedWires parent allCircuits
-          matchingInsts.foldl (fun acc' inst =>
-            outputGroups.foldl (fun acc'' sg =>
-              let sgEntries := inst.portMap.filter (fun (pname, _) =>
-                match parsePortIndex pname with
-                | some (base, _) => base == sg.name
-                | none => sg.wires.any (fun sw => sw.name == pname))
-              let anyLoaded := sgEntries.any (fun (_, w) => parentLoaded.contains w.name)
-              let anyUnloaded := sgEntries.any (fun (_, w) => !parentLoaded.contains w.name)
-              if anyLoaded && anyUnloaded then acc''.insert sg.name else acc''
-            ) acc'
-          ) acc
-      ) {}
+  let activeWireToGroup := allGroups.flatMap (fun sg => sg.wires.map (fun w => (w, sg)))
+  let activeWireToIndex := allGroups.flatMap (fun sg => sg.wires.enum.map (fun (idx, w) => (w, idx)))
 
-  let activeGroups := allGroups.filter (fun sg => !individualOutputGroups.contains sg.name)
-  let activeWireToGroup := activeGroups.flatMap (fun sg => sg.wires.map (fun w => (w, sg)))
-  let activeWireToIndex := activeGroups.flatMap (fun sg => sg.wires.enum.map (fun (idx, w) => (w, idx)))
-
-  let (groupMap, indexMap, wireGroupMap) := activeGroups.foldl (fun (gm, im, wgm) sg =>
+  let (groupMap, indexMap, wireGroupMap) := allGroups.foldl (fun (gm, im, wgm) sg =>
     sg.wires.enum.foldl (fun (gm', im', wgm') (idx, w) =>
       (gm'.insert w.name sg, im'.insert w.name idx, wgm'.insert w.name (sg, idx))
     ) (gm, im, wgm)
   ) ({}, {}, {})
 
-  let groupByName := activeGroups.foldl (fun m sg => m.insert sg.name sg) {}
+  let groupByName := allGroups.foldl (fun m sg => m.insert sg.name sg) {}
 
-  { wireToGroup := activeWireToGroup, wireToIndex := activeWireToIndex, clockWires, resetWires, isSequential, loadedWires, gateOutputs, instanceOutputs, individualOutputGroups, groupMap, indexMap, wireGroupMap, groupByName, allSignalGroups := allGroups }
+  { wireToGroup := activeWireToGroup, wireToIndex := activeWireToIndex, clockWires, resetWires, isSequential, loadedWires, gateOutputs, instanceOutputs, groupMap, indexMap, wireGroupMap, groupByName, allSignalGroups := allGroups }
 
 /-! ## Signal Type Helpers -/
 
@@ -375,14 +345,10 @@ def signalGroupToSV (sg : SignalGroup) : String :=
     For wires in signal groups: use group name with optional bit indexing
     For output signal group wires: use wire name directly (ports are individual)
     For standalone wires: use wire name directly -/
-def wireRef (ctx : Context) (c : Circuit) (w : Wire) : String :=
+def wireRef (ctx : Context) (_c : Circuit) (w : Wire) : String :=
   match ctx.groupMap.get? w.name with
   | some sg =>
-      let needsIndividual := ctx.individualOutputGroups.contains sg.name &&
-        c.outputs.any (fun ow => ow.name == w.name)
-      if needsIndividual then
-        sanitizeSVName w.name
-      else if sg.width > 1 then
+      if sg.width > 1 then
         match ctx.indexMap.get? w.name with
         | some idx => s!"{sg.name}[{idx}]"
         | none => sg.name
@@ -1150,15 +1116,6 @@ def generateRegisters (ctx : Context) (c : Circuit) : String :=
 
 /-! ## Module Instantiation -/
 
-/-- Get the set of output signal group names that use individual ports for a sub-module. -/
-def getSubModuleIndividualOutputGroups (allCircuits : List Circuit) (moduleName : String)
-    (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : List String :=
-  match allCircuits.find? (fun sc => sc.name == moduleName) with
-  | none => []
-  | some subMod =>
-      let subCtx := mkContext subMod allCircuits precomputedLoaded
-      subCtx.individualOutputGroups.toList
-
 /-- Build a mapping of port base names to their grouped bus names for a sub-module.
     Uses the sub-module's signal groups + auto-detected groups to determine
     which individual port names (e.g., "in_0", "data_3") belong to buses (e.g., "in", "data"). -/
@@ -1168,23 +1125,21 @@ def buildSubModulePortGroups (allCircuits : List Circuit) (moduleName : String)
   match allCircuits.find? (fun sc => sc.name == moduleName) with
   | none => []
   | some subMod =>
-      let subCtx := mkContext subMod []
-      (subMod.inputs ++ subMod.outputs).filterMap (fun w =>
-        match subCtx.wireGroupMap.get? w.name with
-        | some (sg, idx) => some (w.name, sg.name, idx)
-        | none => none
-      )
+    let subCtx := mkContext subMod []
+    (subMod.inputs ++ subMod.outputs).filterMap (fun w =>
+      match subCtx.wireGroupMap.get? w.name with
+      | some (sg, idx) => some (w.name, sg.name, idx)
+      | none => none
+    )
 
 structure SubModMetadata where
   subMod : Option Circuit
   subInputSet : Std.HashSet String
   subOutputSet : Std.HashSet String
-  individualOutputGroups : Std.HashSet String
   portGroups : List (String × String × Nat)
   portGroupDirectMap : Std.HashMap String (String × Nat)
   portGroupBusSet : Std.HashSet String
   subModFound : Bool
-  subModSgWiresMap : Std.HashMap String (List Wire)
 
 def buildSubModMetadata (allCircuits : List Circuit) (moduleName : String)
     (precomputedLoaded : Std.HashMap String (Std.HashSet String) := {}) : SubModMetadata :=
@@ -1194,34 +1149,28 @@ def buildSubModMetadata (allCircuits : List Circuit) (moduleName : String)
       subMod := none
       subInputSet := {}
       subOutputSet := {}
-      individualOutputGroups := {}
       portGroups := []
       portGroupDirectMap := {}
       portGroupBusSet := {}
       subModFound := false
-      subModSgWiresMap := {}
     }
   | some subMod =>
     let subCtx := mkContext subMod allCircuits precomputedLoaded
     let subInputSet := buildPortBaseSet subMod.inputs
     let subOutputSet := buildPortBaseSet subMod.outputs
-    let individualOutputGroups := subCtx.individualOutputGroups
     let (portGroupDirectMap, portGroupBusSet) := subCtx.allSignalGroups.foldl
       (fun (dm, bs) sg =>
         let dm' := sg.wires.enum.foldl (fun m (idx, w) => m.insert w.name (sg.name, idx)) dm
         (dm', bs.insert sg.name)
       ) ({}, {})
-    let subModSgWiresMap := subCtx.allSignalGroups.foldl (fun m sg => m.insert sg.name sg.wires) {}
     {
       subMod := some subMod
       subInputSet := subInputSet
       subOutputSet := subOutputSet
-      individualOutputGroups := individualOutputGroups
       portGroups := []
       portGroupDirectMap := portGroupDirectMap
       portGroupBusSet := portGroupBusSet
       subModFound := true
-      subModSgWiresMap := subModSgWiresMap
     }
 
 /-- Group port map entries using the sub-module's actual port structure.
@@ -1362,20 +1311,6 @@ def generateBusPortConnection (ctx : Context) (c : Circuit) (baseName : String)
       let concat := "{" ++ String.intercalate ", " wireRefs.reverse ++ "}"
       s!"    .{baseName}({concat})"
 
-/-- Generate individual port connections for a bus group where the sub-module
-    uses individual ports (e.g., out_0, out_1, ...). -/
-def generateIndividualBusPortConnections (ctx : Context) (c : Circuit)
-    (subModSgWiresMap : Std.HashMap String (List Wire)) (baseName : String) (entries : List (Nat × Wire)) : List String :=
-  let sorted := entries.toArray.qsort (fun a b => a.1 < b.1) |>.toList
-  let subModSgWires : List Wire := subModSgWiresMap.getD baseName []
-  sorted.filterMap (fun (idx, w) =>
-    if isUnloadedInstanceWire ctx w then none
-    else
-      let portName := match subModSgWires[idx]? with
-        | some sw => sanitizeSVName sw.name
-        | none => s!"{baseName}_{idx}"
-      some s!"    .{portName}({wireRef ctx c w})")
-
 /-- Generate module instantiation -/
 def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
     (inst : CircuitInstance) (subInfoOpt : Option SubModMetadata := none) : String :=
@@ -1388,7 +1323,6 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
   let subMod := subInfo.subMod
   let subInputSet := subInfo.subInputSet
   let subOutputSet := subInfo.subOutputSet
-  let individualOutputGroups := subInfo.individualOutputGroups
   let portConnections := grouped.flatMap (fun entry =>
     match entry with
     | Sum.inl (pname, w) =>
@@ -1400,17 +1334,13 @@ def generateInstance (ctx : Context) (c : Circuit) (allCircuits : List Circuit)
         else
           [generatePortConnection ctx c pname w]
     | Sum.inr (baseName, entries) =>
-        -- Check if this bus group corresponds to an individual-port output
-        if individualOutputGroups.contains baseName then
-          generateIndividualBusPortConnections ctx c subInfo.subModSgWiresMap baseName entries
+        let isUnloadedBus := match subMod with
+          | some _ => matchesPortSet subOutputSet subInputSet baseName && entries.all (fun (_, w) => isUnloadedInstanceWire ctx w)
+          | none => false
+        if isUnloadedBus then
+          []
         else
-          let isUnloadedBus := match subMod with
-            | some _ => matchesPortSet subOutputSet subInputSet baseName && entries.all (fun (_, w) => isUnloadedInstanceWire ctx w)
-            | none => false
-          if isUnloadedBus then
-            []
-          else
-            [generateBusPortConnection ctx c baseName entries]
+          [generateBusPortConnection ctx c baseName entries]
   )
 
   let connectionsStr := String.intercalate ",\n" portConnections
