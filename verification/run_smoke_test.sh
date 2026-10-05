@@ -36,6 +36,7 @@ ln -s "$(cd "$CPP_SIM_DIR" && pwd)" "$TMP/output/cpp_sim"
 
 export SMOKE_ROOT="$TMP"
 export GENERATOR="$GEN"
+export VISUALS_GENERATOR="$GEN"
 export SKIP_CACHE_CONFORMANCE=1
 
 "$ROOT/verification/smoke-test.sh"

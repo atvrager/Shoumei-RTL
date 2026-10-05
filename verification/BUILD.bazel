@@ -361,7 +361,7 @@ sh_test(
         "$(location //:sv_gf180)",
         "$(location //:sv_sec)",
         "$(location //:cpp_sim)",
-        "$(location //generators:generate_all)",
+        "$(location //generators:generate_visuals)",
     ],
     data = [
         "tool_path.sh",
@@ -377,7 +377,7 @@ sh_test(
         "//:sv_asap7",
         "//:sv_gf180",
         "//:sv_sec",
-        "//generators:generate_all",
+        "//generators:generate_visuals",
         "//lean:shoumei_srcs",
         "//third_party:orfs_liberty",
         "//third_party/tools:verilator",

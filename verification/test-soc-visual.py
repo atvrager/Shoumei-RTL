@@ -39,14 +39,14 @@ REQUIRED_PHRASES = [
 def main() -> int:
     if not SOC_HTML.exists():
         SOC_HTML.parent.mkdir(parents=True, exist_ok=True)
-        gen = os.environ.get("GENERATOR")
+        gen = os.environ.get("VISUALS_GENERATOR") or os.environ.get("GENERATOR")
         if gen:
             cmd = [gen, "--soc-diagram"]
         else:
-            cmd = ["lake", "--no-ansi", "exe", "generate_all", "--soc-diagram"]
+            cmd = ["lake", "--no-ansi", "exe", "generate_visuals", "--soc-diagram"]
         res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
         if res.returncode != 0:
-            print(f"Error running generate_all --soc-diagram:\n{res.stderr}", file=sys.stderr)
+            print(f"Error running generate_visuals --soc-diagram:\n{res.stderr}", file=sys.stderr)
             return 1
 
     content = SOC_HTML.read_text(encoding="utf-8")
