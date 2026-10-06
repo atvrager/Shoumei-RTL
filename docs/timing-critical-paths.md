@@ -6,7 +6,7 @@ This document records physical synthesis results for Shoumei RTL on ASAP7 at 1.0
 
 Synthesis completed with 0 logic loops.
 The `yosys scc` command found 0 strongly connected components.
-22 submodules meet the 1.0 GHz timing constraint.
+24 submodules meet the 1.0 GHz timing constraint.
 
 ### Verified Fast Paths (< 1000.0 ps)
 
@@ -33,10 +33,12 @@ The `yosys scc` command found 0 strongly connected components.
 | `BranchTargetAdder32` | 619.1 | MET |
 | `Mul32x32To64` | 731.8 | MET |
 | `MulFinalAdder64` | 777.5 | MET |
+| `FPFMA` | 828.5 | MET |
 | `Int64RoundPack` | 869.1 | MET |
 | `KoggeStoneAdder64WithCin1` | 871.1 | MET |
 | `KoggeStoneAdder64NoCin` | 915.2 | MET |
 | `Int64Prep` | 930.2 | MET |
+| `FPFMAD` | 994.1 | MET |
 
 ## Critical Paths Backlog (> 1000.0 ps)
 
@@ -53,26 +55,16 @@ Future work must pipeline these paths.
 - **Cause**: Long routing paths connect reservation stations, execution units, and the reorder buffer.
 - **Proposed Solution**: Register reservation station issue lines and CDB bypass broadcast nets.
 
-### 3. `FPFMAD` (1450.1 ps)
-- **Path**: Stage 2 partial product reduction and normalization.
-- **Cause**: High logic depth exists in 106-bit carry-save addition and alignment logic.
-- **Proposed Solution**: Split Stage 2 into Stage 2a (CSA compression) and Stage 2b (addition and normalization).
-
-### 4. `FPMultiplierD` (1348.9 ps)
+### 3. `FPMultiplierD` (1348.9 ps)
 - **Path**: Stage 3 rounding, special case evaluation, and format packing.
 - **Note**: Pipelining levels 0-4 and 5-8 across two cycles closed the 1410.5 ps CSA tree path.
 - **Proposed Solution**: Insert pipeline registers between the mantissa round adder and the exception logic.
 
-### 5. `FPAdderD` (1223.2 ps)
+### 4. `FPAdderD` (1223.2 ps)
 - **Path**: Stage 3 mantissa add/sub and parallel-prefix leading-zero detect.
 - **Note**: Splitting Stage 4 into Stage 4a and Stage 4b closed the 1478.9 ps Stage 4 path.
 - **Proposed Solution**: Register the mantissa sum before the leading-zero detection network.
 
-### 6. `KoggeStoneAdder106NoCin` (1065.9 ps)
+### 5. `KoggeStoneAdder106NoCin` (1065.9 ps)
 - **Path**: 106-bit carry-propagate adder.
 - **Proposed Solution**: Decompose into a 2-stage pipelined adder or a carry-select architecture.
-
-### 7. `FPFMA` (1026.4 ps)
-- **Path**: Single-precision Stage 2b.
-- **Note**: Exceeds target by 26.4 ps.
-- **Proposed Solution**: Optimize gate fanout on the addend alignment path.

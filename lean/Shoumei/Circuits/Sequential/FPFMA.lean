@@ -403,12 +403,50 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let exp_p := makeIndexedWires "s2b_ep" EFFW
   let (exp_p_gates, _ep_borrow) := mkKoggeStoneSub s2a_exp_t1 s_h_11 exp_p "s2b_eps" one
 
+  -- Stage 2b1 -> Stage 2b2 pipeline registers
+  let s2b1_prod_n := makeIndexedWires "s2b1r_pn" (2 * P)
+  let s2b1_exp_p := makeIndexedWires "s2b1r_ep" EFFW
+  let s2b1_eff_c := makeIndexedWires "s2b1r_ec" EFFW
+  let s2b1_mant_c := makeIndexedWires "s2b1r_mc" P
+  let s2b1_c_eff := makeIndexedWires "s2b1r_ce" (MSB + 1)
+  let s2b1_rm := makeIndexedWires "s2b1r_rm" 3
+  let s2b1_tag := makeIndexedWires "s2b1r_tg" 6
+  let s2b1_prod_sign := Wire.mk "s2b1r_ps"
+  let s2b1_c_sign := Wire.mk "s2b1r_cs"
+  let s2b1_any_nan := Wire.mk "s2b1r_an"
+  let s2b1_any_snan := Wire.mk "s2b1r_as"
+  let s2b1_prod_inf := Wire.mk "s2b1r_pi"
+  let s2b1_prod_zero := Wire.mk "s2b1r_pz"
+  let s2b1_inf_zero := Wire.mk "s2b1r_iz"
+  let s2b1_c_inf := Wire.mk "s2b1r_ci"
+  let s2b1_c_zero := Wire.mk "s2b1r_cz"
+  let s2b1_valid := Wire.mk "s2b1r_v"
+  let s2b1_gates :=
+    [Gate.mkDFF s2a_prod_sign clock reset s2b1_prod_sign,
+     Gate.mkDFF s2a_c_sign clock reset s2b1_c_sign,
+     Gate.mkDFF s2a_any_nan clock reset s2b1_any_nan,
+     Gate.mkDFF s2a_any_snan clock reset s2b1_any_snan,
+     Gate.mkDFF s2a_prod_inf clock reset s2b1_prod_inf,
+     Gate.mkDFF s2a_prod_zero clock reset s2b1_prod_zero,
+     Gate.mkDFF s2a_inf_zero clock reset s2b1_inf_zero,
+     Gate.mkDFF s2a_c_inf clock reset s2b1_c_inf,
+     Gate.mkDFF s2a_c_zero clock reset s2b1_c_zero,
+     Gate.mkDFF s2a_valid clock reset s2b1_valid] ++
+    mkDFFBank prod_n s2b1_prod_n clock reset ++
+    mkDFFBank exp_p s2b1_exp_p clock reset ++
+    mkDFFBank s2a_eff_c s2b1_eff_c clock reset ++
+    mkDFFBank s2a_mant_c s2b1_mant_c clock reset ++
+    mkDFFBank s2a_c_eff s2b1_c_eff clock reset ++
+    mkDFFBank s2a_rm s2b1_rm clock reset ++
+    mkDFFBank s2a_tag s2b1_tag clock reset
+
+  -- Stage 2b2: exponent diff, comparison, and shift amounts
   let diff := makeIndexedWires "s2b_d" EFFW
-  let (diff_gates, diff_borrow) := mkKoggeStoneSub exp_p s2a_eff_c diff "s2b_ds" one
+  let (diff_gates, diff_borrow) := mkKoggeStoneSub s2b1_exp_p s2b1_eff_c diff "s2b_ds" one
   let c_big := Wire.mk "s2b_cbig"
   let c_big_gate := [
-    Gate.mkBUF (exp_p[EFFW - 1]!) (Wire.mk "s2b_epsign"),
-    Gate.mkBUF (s2a_eff_c[EFFW - 1]!) (Wire.mk "s2b_ecsign"),
+    Gate.mkBUF (s2b1_exp_p[EFFW - 1]!) (Wire.mk "s2b_epsign"),
+    Gate.mkBUF (s2b1_eff_c[EFFW - 1]!) (Wire.mk "s2b_ecsign"),
     Gate.mkNOT (Wire.mk "s2b_ecsign") (Wire.mk "s2b_necpos"),
     Gate.mkAND (Wire.mk "s2b_epsign") (Wire.mk "s2b_necpos") (Wire.mk "s2b_cbig1"),
     Gate.mkXOR (Wire.mk "s2b_epsign") (Wire.mk "s2b_ecsign") (Wire.mk "s2b_sdiff0"),
@@ -425,12 +463,9 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let p_left_amt_gates := (List.range SHB).map fun i =>
     Gate.mkMUX (const3_6[i]!) (p_up_amt[i]!) c_big (p_left_amt[i]!)
   let p_down_amt := makeIndexedWires "s2b_pda" EFFW
-  let const3_e := constOf (ANCHOR - (2 * P - 1)) EFFW
-  let p_up_amt_e := makeIndexedWires "s2b_puae" EFFW
-  let (p_up_amt_e_gates, _puae_carry) :=
-    mkKoggeStoneAdd const3_e diff zero p_up_amt_e "s2b_puaea"
+  let const_neg3_e := constOf (2^EFFW - (ANCHOR - (2 * P - 1))) EFFW
   let (p_down_amt_gates, _pda_borrow) :=
-    mkKoggeStoneSub (constOf 0 EFFW) p_up_amt_e p_down_amt "s2b_pdas" one
+    mkKoggeStoneSub const_neg3_e diff p_down_amt "s2b_pdas" one
   let c_left_amt := makeIndexedWires "s2b_cla" SHB
   let const27_6 := constOf SIG_LSB SHB
   let (c_left_amt_gates, _cla_borrow) :=
@@ -468,28 +503,28 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let s2b_valid := Wire.mk "s2br_v"
   let s2b_gates :=
     [Gate.mkDFF c_big clock reset s2b_c_big,
-     Gate.mkDFF s2a_prod_sign clock reset s2b_prod_sign,
-     Gate.mkDFF s2a_c_sign clock reset s2b_c_sign,
-     Gate.mkDFF s2a_any_nan clock reset s2b_any_nan,
-     Gate.mkDFF s2a_any_snan clock reset s2b_any_snan,
-     Gate.mkDFF s2a_prod_inf clock reset s2b_prod_inf,
-     Gate.mkDFF s2a_prod_zero clock reset s2b_prod_zero,
-     Gate.mkDFF s2a_inf_zero clock reset s2b_inf_zero,
-     Gate.mkDFF s2a_c_inf clock reset s2b_c_inf,
-     Gate.mkDFF s2a_c_zero clock reset s2b_c_zero,
-     Gate.mkDFF s2a_valid clock reset s2b_valid] ++
-    mkDFFBank prod_n s2b_prod_n clock reset ++
-    mkDFFBank s2a_mant_c s2b_mant_c clock reset ++
+     Gate.mkDFF s2b1_prod_sign clock reset s2b_prod_sign,
+     Gate.mkDFF s2b1_c_sign clock reset s2b_c_sign,
+     Gate.mkDFF s2b1_any_nan clock reset s2b_any_nan,
+     Gate.mkDFF s2b1_any_snan clock reset s2b_any_snan,
+     Gate.mkDFF s2b1_prod_inf clock reset s2b_prod_inf,
+     Gate.mkDFF s2b1_prod_zero clock reset s2b_prod_zero,
+     Gate.mkDFF s2b1_inf_zero clock reset s2b_inf_zero,
+     Gate.mkDFF s2b1_c_inf clock reset s2b_c_inf,
+     Gate.mkDFF s2b1_c_zero clock reset s2b_c_zero,
+     Gate.mkDFF s2b1_valid clock reset s2b_valid] ++
+    mkDFFBank s2b1_prod_n s2b_prod_n clock reset ++
+    mkDFFBank s2b1_mant_c s2b_mant_c clock reset ++
     mkDFFBank p_left_amt s2b_p_left_amt clock reset ++
     mkDFFBank p_down_amt s2b_p_down_amt clock reset ++
     mkDFFBank c_left_amt s2b_c_left_amt clock reset ++
     mkDFFBank c_up_amt s2b_c_up_amt clock reset ++
     mkDFFBank c_down_amt s2b_c_down_amt clock reset ++
-    mkDFFBank exp_p s2b_exp_p clock reset ++
-    mkDFFBank s2a_eff_c s2b_eff_c clock reset ++
-    mkDFFBank s2a_c_eff s2b_c_eff clock reset ++
-    mkDFFBank s2a_rm s2b_rm clock reset ++
-    mkDFFBank s2a_tag s2b_tag clock reset
+    mkDFFBank s2b1_exp_p s2b_exp_p clock reset ++
+    mkDFFBank s2b1_eff_c s2b_eff_c clock reset ++
+    mkDFFBank s2b1_c_eff s2b_c_eff clock reset ++
+    mkDFFBank s2b1_rm s2b_rm clock reset ++
+    mkDFFBank s2b1_tag s2b_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
   -- Stage 4: window alignment barrel shifters
@@ -614,19 +649,71 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let (dcq_sub1_gates, _dcq_sub1_carry) :=
     mkCarrySelectKoggeStoneAdd s2c_c_win inv_q zero diff_cq_sub1 "s2d_dcq_s1a" zero one
 
+  -- Stage 2d1 -> Stage 2d2 pipeline registers
+  let s2d1_sum_win := makeIndexedWires "s2d1r_sw" WINDOW
+  let s2d1_diff_qc := makeIndexedWires "s2d1r_dqc" WINDOW
+  let s2d1_diff_cq := makeIndexedWires "s2d1r_dcq" WINDOW
+  let s2d1_diff_qc_sub1 := makeIndexedWires "s2d1r_dqc_s1" WINDOW
+  let s2d1_diff_cq_sub1 := makeIndexedWires "s2d1r_dcq_s1" WINDOW
+  let s2d1_dqc_borrow := Wire.mk "s2d1r_dqcb"
+  let s2d1_stk := Wire.mk "s2d1r_stk"
+  let s2d1_same := Wire.mk "s2d1r_same"
+  let s2d1_not_same := Wire.mk "s2d1r_nsame"
+  let s2d1_e_hi := makeIndexedWires "s2d1r_eh" EFFW
+  let s2d1_c_eff := makeIndexedWires "s2d1r_ce" (MSB + 1)
+  let s2d1_rm := makeIndexedWires "s2d1r_rm" 3
+  let s2d1_tag := makeIndexedWires "s2d1r_tg" 6
+  let s2d1_prod_sign := Wire.mk "s2d1r_ps"
+  let s2d1_c_sign := Wire.mk "s2d1r_cs"
+  let s2d1_any_nan := Wire.mk "s2d1r_an"
+  let s2d1_any_snan := Wire.mk "s2d1r_as"
+  let s2d1_prod_inf := Wire.mk "s2d1r_pi"
+  let s2d1_prod_zero := Wire.mk "s2d1r_pz"
+  let s2d1_inf_zero := Wire.mk "s2d1r_iz"
+  let s2d1_c_inf := Wire.mk "s2d1r_ci"
+  let s2d1_c_zero := Wire.mk "s2d1r_cz"
+  let s2d1_valid := Wire.mk "s2d1r_v"
+  let s2d1_gates :=
+    [Gate.mkDFF dqc_borrow clock reset s2d1_dqc_borrow,
+     Gate.mkDFF s2c_stk clock reset s2d1_stk,
+     Gate.mkDFF s2c_same clock reset s2d1_same,
+     Gate.mkDFF s2c_not_same clock reset s2d1_not_same,
+     Gate.mkDFF s2c_prod_sign clock reset s2d1_prod_sign,
+     Gate.mkDFF s2c_c_sign clock reset s2d1_c_sign,
+     Gate.mkDFF s2c_any_nan clock reset s2d1_any_nan,
+     Gate.mkDFF s2c_any_snan clock reset s2d1_any_snan,
+     Gate.mkDFF s2c_prod_inf clock reset s2d1_prod_inf,
+     Gate.mkDFF s2c_prod_zero clock reset s2d1_prod_zero,
+     Gate.mkDFF s2c_inf_zero clock reset s2d1_inf_zero,
+     Gate.mkDFF s2c_c_inf clock reset s2d1_c_inf,
+     Gate.mkDFF s2c_c_zero clock reset s2d1_c_zero,
+     Gate.mkDFF s2c_valid clock reset s2d1_valid] ++
+    mkDFFBank sum_win s2d1_sum_win clock reset ++
+    mkDFFBank diff_qc s2d1_diff_qc clock reset ++
+    mkDFFBank diff_cq s2d1_diff_cq clock reset ++
+    mkDFFBank diff_qc_sub1 s2d1_diff_qc_sub1 clock reset ++
+    mkDFFBank diff_cq_sub1 s2d1_diff_cq_sub1 clock reset ++
+    mkDFFBank s2c_e_hi s2d1_e_hi clock reset ++
+    mkDFFBank s2c_c_eff s2d1_c_eff clock reset ++
+    mkDFFBank s2c_rm s2d1_rm clock reset ++
+    mkDFFBank s2c_tag s2d1_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 2d2: window magnitude and sign selection
+  -- ══════════════════════════════════════════════════════════════════════
   let res_sign := Wire.mk "s2d_rs"
-  let res_sign_gate := [Gate.mkMUX s2c_prod_sign s2c_c_sign dqc_borrow res_sign]
+  let res_sign_gate := [Gate.mkMUX s2d1_prod_sign s2d1_c_sign s2d1_dqc_borrow res_sign]
 
   let ulp_borrow_ok := Wire.mk "s2d_ubok"
-  let ulp_borrow_gates := [Gate.mkAND s2c_not_same s2c_stk ulp_borrow_ok]
+  let ulp_borrow_gates := [Gate.mkAND s2d1_not_same s2d1_stk ulp_borrow_ok]
 
   let mag := makeIndexedWires "s2d_mag" WINDOW
   let mag_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (diff_qc[i]!) (diff_cq[i]!) dqc_borrow (mag[i]!)
+    Gate.mkMUX (s2d1_diff_qc[i]!) (s2d1_diff_cq[i]!) s2d1_dqc_borrow (mag[i]!)
 
   let mag_c := makeIndexedWires "s2d_magc" WINDOW
   let mag_c_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (diff_qc_sub1[i]!) (diff_cq_sub1[i]!) dqc_borrow (mag_c[i]!)
+    Gate.mkMUX (s2d1_diff_qc_sub1[i]!) (s2d1_diff_cq_sub1[i]!) s2d1_dqc_borrow (mag_c[i]!)
 
   let mag_sel := makeIndexedWires "s2d_magsel" WINDOW
   let mag_sel_gates := (List.range WINDOW).map fun i =>
@@ -634,7 +721,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
 
   let win := makeIndexedWires "s2d_w" WINDOW
   let win_gates := (List.range WINDOW).map fun i =>
-    Gate.mkMUX (mag_sel[i]!) (sum_win[i]!) s2c_same (win[i]!)
+    Gate.mkMUX (mag_sel[i]!) (s2d1_sum_win[i]!) s2d1_same (win[i]!)
 
   let s2_win := makeIndexedWires "s2r_w" WINDOW
   let s2_stk := Wire.mk "s2r_stk"
@@ -655,22 +742,22 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let s2_valid := Wire.mk "s2r_v"
   let s2_gates :=
     [Gate.mkDFF res_sign clock reset s2_sign,
-     Gate.mkDFF s2c_stk clock reset s2_stk,
-     Gate.mkDFF s2c_any_nan clock reset s2_any_nan,
-     Gate.mkDFF s2c_any_snan clock reset s2_any_snan,
-     Gate.mkDFF s2c_prod_inf clock reset s2_prod_inf,
-     Gate.mkDFF s2c_prod_zero clock reset s2_prod_zero,
-     Gate.mkDFF s2c_inf_zero clock reset s2_inf_zero,
-     Gate.mkDFF s2c_c_inf clock reset s2_c_inf,
-     Gate.mkDFF s2c_c_zero clock reset s2_c_zero,
-     Gate.mkDFF s2c_prod_sign clock reset s2_prod_sign,
-     Gate.mkDFF s2c_c_sign clock reset s2_c_sign,
-     Gate.mkDFF s2c_valid clock reset s2_valid] ++
+     Gate.mkDFF s2d1_stk clock reset s2_stk,
+     Gate.mkDFF s2d1_any_nan clock reset s2_any_nan,
+     Gate.mkDFF s2d1_any_snan clock reset s2_any_snan,
+     Gate.mkDFF s2d1_prod_inf clock reset s2_prod_inf,
+     Gate.mkDFF s2d1_prod_zero clock reset s2_prod_zero,
+     Gate.mkDFF s2d1_inf_zero clock reset s2_inf_zero,
+     Gate.mkDFF s2d1_c_inf clock reset s2_c_inf,
+     Gate.mkDFF s2d1_c_zero clock reset s2_c_zero,
+     Gate.mkDFF s2d1_prod_sign clock reset s2_prod_sign,
+     Gate.mkDFF s2d1_c_sign clock reset s2_c_sign,
+     Gate.mkDFF s2d1_valid clock reset s2_valid] ++
     mkDFFBank win s2_win clock reset ++
-    mkDFFBank s2c_e_hi s2_e_hi clock reset ++
-    mkDFFBank s2c_c_eff s2_c_eff clock reset ++
-    mkDFFBank s2c_rm s2_rm clock reset ++
-    mkDFFBank s2c_tag s2_tag clock reset
+    mkDFFBank s2d1_e_hi s2_e_hi clock reset ++
+    mkDFFBank s2d1_c_eff s2_c_eff clock reset ++
+    mkDFFBank s2d1_rm s2_rm clock reset ++
+    mkDFFBank s2d1_tag s2_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
   -- Stage 3a: normalize, detect leading position, shift, subnormal prep
@@ -713,19 +800,64 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     [Gate.mkBUF n[SIG_LSB - 1]! (m_bits[2]!), Gate.mkBUF n[SIG_LSB - 2]! (m_bits[1]!),
      Gate.mkBUF st (m_bits[0]!)]
 
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3a1 -> Stage 3a2 Pipeline Registers
+  -- ══════════════════════════════════════════════════════════════════════
+  let s3a1_m := makeIndexedWires "s3a1r_m" (P + 3)
+  let s3a1_e_res := makeIndexedWires "s3a1r_e" EFFW
+  let s3a1_win_any := Wire.mk "s3a1r_wany"
+  let s3a1_stk := Wire.mk "s3a1r_stk"
+  let s3a1_rm := makeIndexedWires "s3a1r_rm" 3
+  let s3a1_sign := Wire.mk "s3a1r_s"
+  let s3a1_prod_sign := Wire.mk "s3a1r_ps"
+  let s3a1_c_sign := Wire.mk "s3a1r_cs"
+  let s3a1_prod_inf := Wire.mk "s3a1r_pi"
+  let s3a1_c_inf := Wire.mk "s3a1r_ci"
+  let s3a1_any_nan := Wire.mk "s3a1r_an"
+  let s3a1_any_snan := Wire.mk "s3a1r_as"
+  let s3a1_inf_zero := Wire.mk "s3a1r_iz"
+  let s3a1_c_zero := Wire.mk "s3a1r_cz"
+  let s3a1_prod_zero := Wire.mk "s3a1r_pz"
+  let s3a1_c_eff := makeIndexedWires "s3a1r_ce" (MSB + 1)
+  let s3a1_tag := makeIndexedWires "s3a1r_tg" 6
+  let s3a1_valid := Wire.mk "s3a1r_v"
+
+  let s3a1_gates :=
+    [Gate.mkDFF win_any clock reset s3a1_win_any,
+     Gate.mkDFF s2_stk clock reset s3a1_stk,
+     Gate.mkDFF s2_sign clock reset s3a1_sign,
+     Gate.mkDFF s2_prod_sign clock reset s3a1_prod_sign,
+     Gate.mkDFF s2_c_sign clock reset s3a1_c_sign,
+     Gate.mkDFF s2_prod_inf clock reset s3a1_prod_inf,
+     Gate.mkDFF s2_c_inf clock reset s3a1_c_inf,
+     Gate.mkDFF s2_any_nan clock reset s3a1_any_nan,
+     Gate.mkDFF s2_any_snan clock reset s3a1_any_snan,
+     Gate.mkDFF s2_inf_zero clock reset s3a1_inf_zero,
+     Gate.mkDFF s2_c_zero clock reset s3a1_c_zero,
+     Gate.mkDFF s2_prod_zero clock reset s3a1_prod_zero,
+     Gate.mkDFF s2_valid clock reset s3a1_valid] ++
+    mkDFFBank m_bits s3a1_m clock reset ++
+    mkDFFBank e_res s3a1_e_res clock reset ++
+    mkDFFBank s2_rm s3a1_rm clock reset ++
+    mkDFFBank s2_c_eff s3a1_c_eff clock reset ++
+    mkDFFBank s2_tag s3a1_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3a2: rounding shift precomputation, condition decoding
+  -- ══════════════════════════════════════════════════════════════════════
   -- rounding shift: 3 when the result is normal, 4 - E when subnormal, clamped
   -- at 27 (everything out)
-  let (e_any, e_any_gates) := mkOrTree "s3_eany" e_res
+  let (e_any, e_any_gates) := mkOrTree "s3_eany" s3a1_e_res
   let e_ge1 := Wire.mk "s3_ege1"
   let not_e_pos := Wire.mk "s3_nepos"
   let e_ge1_gate := [
-    Gate.mkNOT (e_res[EFFW - 1]!) not_e_pos,
+    Gate.mkNOT (s3a1_e_res[EFFW - 1]!) not_e_pos,
     Gate.mkAND not_e_pos e_any e_ge1
   ]
   let four11 := constOf 4 EFFW
   let four_minus_e := makeIndexedWires "s3_4me" EFFW
   let (four_minus_e_gates, _4me_borrow) :=
-    mkKoggeStoneSub four11 e_res four_minus_e "s3_4mes" one
+    mkKoggeStoneSub four11 s3a1_e_res four_minus_e "s3_4mes" one
   let const27_11 := constOf SIG_LSB EFFW
   let clamp_d := makeIndexedWires "s3_cld" EFFW
   let (clamp_d_gates, clamp_borrow) :=
@@ -744,7 +876,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
      Gate.mkMUX (Wire.mk s!"s3_shdm{i}") (shd_clamp[i]!) clamp (shd[i]!)]
 
   let any_unrounded := Wire.mk "s3_any_unrounded"
-  let any_unrounded_gate := [Gate.mkOR win_any s2_stk any_unrounded]
+  let any_unrounded_gate := [Gate.mkOR s3a1_win_any s3a1_stk any_unrounded]
   let (clamp_d_any, clamp_d_any_gates) := mkOrTree "s3_cldany" clamp_d
   let past_round := Wire.mk "s3_past_round"
   let past_round_gates := [
@@ -759,26 +891,26 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let ovf_to_inf := Wire.mk "s3_ovfinf"
   let not_ovf_to_inf := Wire.mk "s3_novfinf"
   let rm_decode_gates := [
-    Gate.mkNOT (s2_rm[0]!) (Wire.mk "s3_nr0"),
-    Gate.mkNOT (s2_rm[1]!) (Wire.mk "s3_nr1"),
-    Gate.mkNOT (s2_rm[2]!) (Wire.mk "s3_nr2"),
+    Gate.mkNOT (s3a1_rm[0]!) (Wire.mk "s3_nr0"),
+    Gate.mkNOT (s3a1_rm[1]!) (Wire.mk "s3_nr1"),
+    Gate.mkNOT (s3a1_rm[2]!) (Wire.mk "s3_nr2"),
     Gate.mkAND (Wire.mk "s3_nr0") (Wire.mk "s3_nr1") (Wire.mk "s3_nr01"),
     Gate.mkAND (Wire.mk "s3_nr01") (Wire.mk "s3_nr2") rne,
-    Gate.mkAND (Wire.mk "s3_nr0") (s2_rm[1]!) (Wire.mk "s3_r1"),
+    Gate.mkAND (Wire.mk "s3_nr0") (s3a1_rm[1]!) (Wire.mk "s3_r1"),
     Gate.mkAND (Wire.mk "s3_r1") (Wire.mk "s3_nr2") rdn,
-    Gate.mkAND (s2_rm[0]!) (s2_rm[1]!) (Wire.mk "s3_r01"),
+    Gate.mkAND (s3a1_rm[0]!) (s3a1_rm[1]!) (Wire.mk "s3_r01"),
     Gate.mkAND (Wire.mk "s3_r01") (Wire.mk "s3_nr2") rup,
-    Gate.mkAND (Wire.mk "s3_nr01") (s2_rm[2]!) rmm
+    Gate.mkAND (Wire.mk "s3_r01") (s3a1_rm[2]!) rmm
   ]
   let not_sign := Wire.mk "s3_ns"
   let ovf_to_inf_gates := [
-    Gate.mkNOT s2_sign not_sign,
+    Gate.mkNOT s3a1_sign not_sign,
     Gate.mkOR rne rdn (Wire.mk "s3_rm_ab"),
     Gate.mkOR (Wire.mk "s3_rm_ab") rup (Wire.mk "s3_rm_abc"),
     Gate.mkOR (Wire.mk "s3_rm_abc") rmm (Wire.mk "s3_rm_any"),
     Gate.mkNOT (Wire.mk "s3_rm_any") (Wire.mk "s3_tz_rtz"),
     Gate.mkAND rdn not_sign (Wire.mk "s3_tz_rdn"),
-    Gate.mkAND rup s2_sign (Wire.mk "s3_tz_rup"),
+    Gate.mkAND rup s3a1_sign (Wire.mk "s3_tz_rup"),
     Gate.mkOR (Wire.mk "s3_tz_rtz") (Wire.mk "s3_tz_rdn") (Wire.mk "s3_tz_a"),
     Gate.mkOR (Wire.mk "s3_tz_a") (Wire.mk "s3_tz_rup") not_ovf_to_inf,
     Gate.mkNOT not_ovf_to_inf ovf_to_inf
@@ -788,34 +920,34 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let exact_zero := Wire.mk "s3_exz"
   let not_stk := Wire.mk "s3_nstk"
   let exact_zero_gate := [
-    Gate.mkNOT s2_stk not_stk,
-    Gate.mkNOT win_any (Wire.mk "s3_nwany"),
+    Gate.mkNOT s3a1_stk not_stk,
+    Gate.mkNOT s3a1_win_any (Wire.mk "s3_nwany"),
     Gate.mkAND (Wire.mk "s3_nwany") not_stk exact_zero
   ]
   let zero_sign := Wire.mk "s3_zsign"
   let zero_sign_gate := [
-    Gate.mkAND s2_prod_sign s2_c_sign (Wire.mk "s3_zsame1"),
-    Gate.mkXOR s2_prod_sign s2_c_sign (Wire.mk "s3_zdiff"),
+    Gate.mkAND s3a1_prod_sign s3a1_c_sign (Wire.mk "s3_zsame1"),
+    Gate.mkXOR s3a1_prod_sign s3a1_c_sign (Wire.mk "s3_zdiff"),
     Gate.mkAND rdn (Wire.mk "s3_zdiff") (Wire.mk "s3_zd1"),
     Gate.mkOR (Wire.mk "s3_zsame1") (Wire.mk "s3_zd1") zero_sign
   ]
 
   -- Special cases precomputation
   let inf_sign := Wire.mk "s3_isign"
-  let inf_sign_gate := [Gate.mkMUX s2_c_sign s2_prod_sign s2_prod_inf inf_sign]
+  let inf_sign_gate := [Gate.mkMUX s3a1_c_sign s3a1_prod_sign s3a1_prod_inf inf_sign]
   let any_inf := Wire.mk "s3_anyinf"
-  let any_inf_gate := [Gate.mkOR s2_prod_inf s2_c_inf any_inf]
+  let any_inf_gate := [Gate.mkOR s3a1_prod_inf s3a1_c_inf any_inf]
   let sel_nan := Wire.mk "s3_selnan"
   let inf_sub_inf := Wire.mk "s3_isubinf"
   let sel_nan_gate := [
-    Gate.mkXOR inf_sign s2_c_sign (Wire.mk "s3_xss"),
+    Gate.mkXOR inf_sign s3a1_c_sign (Wire.mk "s3_xss"),
     Gate.mkNOT (Wire.mk "s3_xss") (Wire.mk "s3_ssame"),
     Gate.mkNOT (Wire.mk "s3_ssame") (Wire.mk "s3_sdiff"),
-    Gate.mkAND s2_prod_inf s2_c_inf (Wire.mk "s3_bothinf"),
+    Gate.mkAND s3a1_prod_inf s3a1_c_inf (Wire.mk "s3_bothinf"),
     Gate.mkAND (Wire.mk "s3_bothinf") (Wire.mk "s3_sdiff") (Wire.mk "s3_isiraw"),
-    Gate.mkNOT s2_any_nan (Wire.mk "s3_notnan"),
+    Gate.mkNOT s3a1_any_nan (Wire.mk "s3_notnan"),
     Gate.mkAND (Wire.mk "s3_isiraw") (Wire.mk "s3_notnan") inf_sub_inf,
-    Gate.mkOR s2_any_nan s2_inf_zero (Wire.mk "s3_sn1"),
+    Gate.mkOR s3a1_any_nan s3a1_inf_zero (Wire.mk "s3_sn1"),
     Gate.mkOR (Wire.mk "s3_sn1") inf_sub_inf sel_nan
   ]
   let use_pz := Wire.mk "s3_usepz"
@@ -825,14 +957,14 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let use_pz_gate := [
     Gate.mkNOT sel_nan not_sel_nan,
     Gate.mkNOT any_inf not_any_inf,
-    Gate.mkNOT s2_c_zero not_c_zero,
+    Gate.mkNOT s3a1_c_zero not_c_zero,
     Gate.mkAND not_sel_nan not_any_inf (Wire.mk "s3_upz1"),
     Gate.mkAND (Wire.mk "s3_upz1") not_c_zero (Wire.mk "s3_upz2"),
-    Gate.mkAND (Wire.mk "s3_upz2") s2_prod_zero use_pz
+    Gate.mkAND (Wire.mk "s3_upz2") s3a1_prod_zero use_pz
   ]
   let nv := Wire.mk "s3_nv"
   let nv_gate := [
-    Gate.mkOR s2_any_snan s2_inf_zero (Wire.mk "s3_nv1"),
+    Gate.mkOR s3a1_any_snan s3a1_inf_zero (Wire.mk "s3_nv1"),
     Gate.mkOR (Wire.mk "s3_nv1") inf_sub_inf nv
   ]
   let round_active := Wire.mk "s3_rond"
@@ -845,7 +977,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   ]
 
   -- ══════════════════════════════════════════════════════════════════════
-  -- Stage 3a -> 3b Pipeline Registers
+  -- Stage 3a2 -> 3b Pipeline Registers
   -- ══════════════════════════════════════════════════════════════════════
   let s3_m := makeIndexedWires "s3r_m" (P + 3)
   let s3_shd := makeIndexedWires "s3r_shd" SLB
@@ -875,7 +1007,7 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let s3_gates :=
     [Gate.mkDFF past_round clock reset s3_past_round,
      Gate.mkDFF any_unrounded clock reset s3_any_unrounded,
-     Gate.mkDFF s2_sign clock reset s3_sign,
+     Gate.mkDFF s3a1_sign clock reset s3_sign,
      Gate.mkDFF not_sign clock reset s3_not_sign,
      Gate.mkDFF rne clock reset s3_rne,
      Gate.mkDFF rdn clock reset s3_rdn,
@@ -891,12 +1023,12 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
      Gate.mkDFF use_pz clock reset s3_use_pz,
      Gate.mkDFF round_active clock reset s3_round_active,
      Gate.mkDFF nv clock reset s3_nv,
-     Gate.mkDFF s2_valid clock reset s3_valid] ++
-    mkDFFBank m_bits s3_m clock reset ++
+     Gate.mkDFF s3a1_valid clock reset s3_valid] ++
+    mkDFFBank s3a1_m s3_m clock reset ++
     mkDFFBank shd s3_shd clock reset ++
-    mkDFFBank e_res s3_e_res clock reset ++
-    mkDFFBank s2_c_eff s3_c_eff clock reset ++
-    mkDFFBank s2_tag s3_tag clock reset
+    mkDFFBank s3a1_e_res s3_e_res clock reset ++
+    mkDFFBank s3a1_c_eff s3_c_eff clock reset ++
+    mkDFFBank s3a1_tag s3_tag clock reset
 
   -- ══════════════════════════════════════════════════════════════════════
   -- Stage 3b: 56-bit mantissa shift, round once, pack, flags
@@ -940,61 +1072,175 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     Gate.mkOR (Wire.mk "s3b_u01") (Wire.mk "s3b_u2") (Wire.mk "s3b_u012"),
     Gate.mkOR (Wire.mk "s3b_u012") (Wire.mk "s3b_u3") up
   ]
+  -- Stage 3b1 -> Stage 3b2 pipeline registers
+  let s3b1_mant := makeIndexedWires "s3b1r_m" (P + 3)
+  let s3b1_up := Wire.mk "s3b1r_up"
+  let s3b1_rem_any := Wire.mk "s3b1r_ra"
+  let s3b1_e_res := makeIndexedWires "s3b1r_e" EFFW
+  let s3b1_sign := Wire.mk "s3b1r_s"
+  let s3b1_not_sign := Wire.mk "s3b1r_ns"
+  let s3b1_ovf_to_inf := Wire.mk "s3b1r_ovfinf"
+  let s3b1_not_ovf_to_inf := Wire.mk "s3b1r_novfinf"
+  let s3b1_exact_zero := Wire.mk "s3b1r_exz"
+  let s3b1_zero_sign := Wire.mk "s3b1r_zsign"
+  let s3b1_any_inf := Wire.mk "s3b1r_ainf"
+  let s3b1_inf_sign := Wire.mk "s3b1r_isign"
+  let s3b1_sel_nan := Wire.mk "s3b1r_snan"
+  let s3b1_use_pz := Wire.mk "s3b1r_upz"
+  let s3b1_round_active := Wire.mk "s3b1r_rond"
+  let s3b1_nv := Wire.mk "s3b1r_nv"
+  let s3b1_c_eff := makeIndexedWires "s3b1r_ce" (MSB + 1)
+  let s3b1_tag := makeIndexedWires "s3b1r_tg" 6
+  let s3b1_valid := Wire.mk "s3b1r_v"
+  let s3b1_gates :=
+    [Gate.mkDFF up clock reset s3b1_up,
+     Gate.mkDFF rem_any clock reset s3b1_rem_any,
+     Gate.mkDFF s3_sign clock reset s3b1_sign,
+     Gate.mkDFF s3_not_sign clock reset s3b1_not_sign,
+     Gate.mkDFF s3_ovf_to_inf clock reset s3b1_ovf_to_inf,
+     Gate.mkDFF s3_not_ovf_to_inf clock reset s3b1_not_ovf_to_inf,
+     Gate.mkDFF s3_exact_zero clock reset s3b1_exact_zero,
+     Gate.mkDFF s3_zero_sign clock reset s3b1_zero_sign,
+     Gate.mkDFF s3_any_inf clock reset s3b1_any_inf,
+     Gate.mkDFF s3_inf_sign clock reset s3b1_inf_sign,
+     Gate.mkDFF s3_sel_nan clock reset s3b1_sel_nan,
+     Gate.mkDFF s3_use_pz clock reset s3b1_use_pz,
+     Gate.mkDFF s3_round_active clock reset s3b1_round_active,
+     Gate.mkDFF s3_nv clock reset s3b1_nv,
+     Gate.mkDFF s3_valid clock reset s3b1_valid] ++
+    mkDFFBank mant s3b1_mant clock reset ++
+    mkDFFBank s3_e_res s3b1_e_res clock reset ++
+    mkDFFBank s3_c_eff s3b1_c_eff clock reset ++
+    mkDFFBank s3_tag s3b1_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3b2: round increment, exponent increment, condition precomputations
+  -- ══════════════════════════════════════════════════════════════════════
   let mant_inc := makeIndexedWires "s3b_mi" (P + 3)
-  let up_ext := (List.range (P + 3)).map fun i => if i == 0 then up else zero
-  let (mant_inc_gates, _mi_carry) := mkKoggeStoneAdd mant up_ext zero mant_inc "s3b_mia"
+  let up_ext := (List.range (P + 3)).map fun i => if i == 0 then s3b1_up else zero
+  let (mant_inc_gates, _mi_carry) := mkKoggeStoneAdd s3b1_mant up_ext zero mant_inc "s3b_mia"
 
   -- pack: normal when E >= 1, subnormal otherwise, both after the rounding carry
   let carry_out := mant_inc[P]!
   let e_inc := makeIndexedWires "s3b_einc" EFFW
   let (e_inc_gates, _einc_carry) :=
-    mkKoggeStoneAdd s3_e_res one11 zero e_inc "s3b_einca"
+    mkKoggeStoneAdd s3b1_e_res one11 zero e_inc "s3b_einca"
   let e_final := makeIndexedWires "s3b_ef" EFFW
   let e_final_gates := (List.range EFFW).map fun i =>
-    Gate.mkMUX (s3_e_res[i]!) (e_inc[i]!) carry_out (e_final[i]!)
+    Gate.mkMUX (s3b1_e_res[i]!) (e_inc[i]!) carry_out (e_final[i]!)
   let sig_final := makeIndexedWires "s3b_sf" P
   let sig_final_gates := (List.range P).map fun i =>
     Gate.mkMUX (mant_inc[i]!) (mant_inc[i + 1]!) carry_out (sig_final[i]!)
 
-  let e_ge1_f := Wire.mk "s3b_ege1f"
-  let e_ge1_f_gate := [Gate.mkNOT (e_final[EFFW - 1]!) e_ge1_f]
-  let (e_final_any, e_final_any_gates) := mkOrTree "s3b_efany" e_final
-  let e_final_zero := Wire.mk "s3b_efzero"
-  let e_final_zero_gate := [Gate.mkNOT e_final_any e_final_zero]
-  let sub_ok := Wire.mk "s3b_subok"
-  let sub_ok_gate := [Gate.mkOR (e_final[EFFW - 1]!) e_final_zero sub_ok]
+  let e_ge1_0 := Wire.mk "s3b_ege1_0"
+  let e_ge1_0_gate := [Gate.mkNOT (s3b1_e_res[EFFW - 1]!) e_ge1_0]
+  let (e_any_0, e_any_0_gates) := mkOrTree "s3b_eany0" s3b1_e_res
+  let e_zero_0 := Wire.mk "s3b_ezero0"
+  let e_zero_0_gate := [Gate.mkNOT e_any_0 e_zero_0]
+  let sub_ok_0 := Wire.mk "s3b_sok0"
+  let sub_ok_0_gate := [Gate.mkOR (s3b1_e_res[EFFW - 1]!) e_zero_0 sub_ok_0]
 
-  -- overflow: E >= 255, i.e. the field saturated or a higher bit set
-  let (e_hi_any, e_hi_any_gates) :=
-    mkOrTree "s3b_ehiany" ((List.range 3).map fun i => e_final[WEXP + i]!)
-  let (e_field_all, e_field_all_gates) :=
-    mkAndTree "s3b_efall" ((List.range WEXP).map fun i => e_final[i]!)
-  let of_cond := Wire.mk "s3b_ofc"
-  let of_cond_gate := [
-    Gate.mkOR e_hi_any e_field_all (Wire.mk "s3b_ofc1"),
-    Gate.mkAND (Wire.mk "s3b_ofc1") e_ge1_f of_cond
+  let (e_hi_any_0, e_hi_any_0_gates) :=
+    mkOrTree "s3b_ehiany0" ((List.range 3).map fun i => s3b1_e_res[WEXP + i]!)
+  let (e_field_all_0, e_field_all_0_gates) :=
+    mkAndTree "s3b_efall0" ((List.range WEXP).map fun i => s3b1_e_res[i]!)
+  let of_cond_0 := Wire.mk "s3b_ofc0"
+  let of_cond_0_gate := [
+    Gate.mkOR e_hi_any_0 e_field_all_0 (Wire.mk "s3b_ofc0_hi"),
+    Gate.mkAND (Wire.mk "s3b_ofc0_hi") e_ge1_0 of_cond_0
   ]
 
+  let e_ge1_1 := Wire.mk "s3b_ege1_1"
+  let e_ge1_1_gate := [Gate.mkNOT (e_inc[EFFW - 1]!) e_ge1_1]
+  let (e_any_1, e_any_1_gates) := mkOrTree "s3b_eany1" e_inc
+  let e_zero_1 := Wire.mk "s3b_ezero1"
+  let e_zero_1_gate := [Gate.mkNOT e_any_1 e_zero_1]
+  let sub_ok_1 := Wire.mk "s3b_sok1"
+  let sub_ok_1_gate := [Gate.mkOR (e_inc[EFFW - 1]!) e_zero_1 sub_ok_1]
+
+  let (e_hi_any_1, e_hi_any_1_gates) :=
+    mkOrTree "s3b_ehiany1" ((List.range 3).map fun i => e_inc[WEXP + i]!)
+  let (e_field_all_1, e_field_all_1_gates) :=
+    mkAndTree "s3b_efall1" ((List.range WEXP).map fun i => e_inc[i]!)
+  let of_cond_1 := Wire.mk "s3b_ofc1"
+  let of_cond_1_gate := [
+    Gate.mkOR e_hi_any_1 e_field_all_1 (Wire.mk "s3b_ofc1_hi"),
+    Gate.mkAND (Wire.mk "s3b_ofc1_hi") e_ge1_1 of_cond_1
+  ]
+
+  let sub_ok := Wire.mk "s3b_subok"
+  let sub_ok_gate := [Gate.mkMUX sub_ok_0 sub_ok_1 carry_out sub_ok]
+  let of_cond := Wire.mk "s3b_ofc"
+  let of_cond_gate := [Gate.mkMUX of_cond_0 of_cond_1 carry_out of_cond]
+
+  -- Stage 3b2 -> Stage 3b3 pipeline registers
+  let s3b2_mant_inc := makeIndexedWires "s3b2r_mi" (P + 3)
+  let s3b2_sig_final := makeIndexedWires "s3b2r_sf" P
+  let s3b2_e_final := makeIndexedWires "s3b2r_ef" EFFW
+  let s3b2_sub_ok := Wire.mk "s3b2r_sok"
+  let s3b2_of_cond := Wire.mk "s3b2r_ofc"
+  let s3b2_sign := Wire.mk "s3b2r_s"
+  let s3b2_ovf_to_inf := Wire.mk "s3b2r_ovfinf"
+  let s3b2_not_ovf_to_inf := Wire.mk "s3b2r_novfinf"
+  let s3b2_exact_zero := Wire.mk "s3b2r_exz"
+  let s3b2_zero_sign := Wire.mk "s3b2r_zsign"
+  let s3b2_any_inf := Wire.mk "s3b2r_ainf"
+  let s3b2_inf_sign := Wire.mk "s3b2r_isign"
+  let s3b2_sel_nan := Wire.mk "s3b2r_snan"
+  let s3b2_use_pz := Wire.mk "s3b2r_upz"
+  let s3b2_c_eff := makeIndexedWires "s3b2r_ce" (MSB + 1)
+  let s3b2_rem_any := Wire.mk "s3b2r_ra"
+  let s3b2_round_active := Wire.mk "s3b2r_rond"
+  let s3b2_nv := Wire.mk "s3b2r_nv"
+  let s3b2_tag := makeIndexedWires "s3b2r_tg" 6
+  let s3b2_valid := Wire.mk "s3b2r_v"
+
+  let s3b2_gates :=
+    [Gate.mkDFF sub_ok clock reset s3b2_sub_ok,
+     Gate.mkDFF of_cond clock reset s3b2_of_cond,
+     Gate.mkDFF s3b1_sign clock reset s3b2_sign,
+     Gate.mkDFF s3b1_ovf_to_inf clock reset s3b2_ovf_to_inf,
+     Gate.mkDFF s3b1_not_ovf_to_inf clock reset s3b2_not_ovf_to_inf,
+     Gate.mkDFF s3b1_exact_zero clock reset s3b2_exact_zero,
+     Gate.mkDFF s3b1_zero_sign clock reset s3b2_zero_sign,
+     Gate.mkDFF s3b1_any_inf clock reset s3b2_any_inf,
+     Gate.mkDFF s3b1_inf_sign clock reset s3b2_inf_sign,
+     Gate.mkDFF s3b1_sel_nan clock reset s3b2_sel_nan,
+     Gate.mkDFF s3b1_use_pz clock reset s3b2_use_pz,
+     Gate.mkDFF s3b1_rem_any clock reset s3b2_rem_any,
+     Gate.mkDFF s3b1_round_active clock reset s3b2_round_active,
+     Gate.mkDFF s3b1_nv clock reset s3b2_nv,
+     Gate.mkDFF s3b1_valid clock reset s3b2_valid] ++
+    mkDFFBank mant_inc s3b2_mant_inc clock reset ++
+    mkDFFBank sig_final s3b2_sig_final clock reset ++
+    mkDFFBank e_final s3b2_e_final clock reset ++
+    mkDFFBank s3b1_c_eff s3b2_c_eff clock reset ++
+    mkDFFBank s3b1_tag s3b2_tag clock reset
+
+  -- ══════════════════════════════════════════════════════════════════════
+  -- Stage 3b3: format packing multiplexer tree, exception flags
+  -- ══════════════════════════════════════════════════════════════════════
   -- body: the fused rounding result
   let body := makeIndexedWires "s3b_body" (MSB + 1)
   let body_gates :=
-    [Gate.mkBUF s3_sign (body[MSB]!)] ++
-    [Gate.mkMUX (e_final[0]!) s3_ovf_to_inf of_cond (body[FRAC]!)] ++
+    [Gate.mkBUF s3b2_sign (body[MSB]!)] ++
+    [Gate.mkMUX (s3b2_e_final[0]!) s3b2_ovf_to_inf s3b2_of_cond (body[FRAC]!)] ++
     (List.range (WEXP - 1)).map
-      (fun i => Gate.mkMUX (e_final[i + 1]!) one of_cond (body[FRAC + 1 + i]!)) ++
-    (List.range FRAC).map (fun i => Gate.mkMUX (sig_final[i]!) s3_not_ovf_to_inf of_cond (body[i]!))
+      (fun i => Gate.mkMUX (s3b2_e_final[i + 1]!) one s3b2_of_cond (body[FRAC + 1 + i]!)) ++
+    (List.range FRAC).map
+      (fun i => Gate.mkMUX (s3b2_sig_final[i]!) s3b2_not_ovf_to_inf s3b2_of_cond (body[i]!))
 
   -- subnormal result
-  let carried := mant_inc[FRAC]!
+  let carried := s3b2_mant_inc[FRAC]!
   let sub_body := makeIndexedWires "s3b_sbody" (MSB + 1)
   let sub_body_gates :=
-    [Gate.mkBUF s3_sign (sub_body[MSB]!)] ++
+    [Gate.mkBUF s3b2_sign (sub_body[MSB]!)] ++
     (List.range WEXP).flatMap (fun i =>
       [Gate.mkBUF zero (sub_body[FRAC + i]!),
        Gate.mkBUF zero (Wire.mk s!"s3b_sbh{i}")]) ++
-    (List.range FRAC).map (fun i => Gate.mkBUF (mant_inc[i]!) (sub_body[i]!))
+    (List.range FRAC).map (fun i => Gate.mkBUF (s3b2_mant_inc[i]!) (sub_body[i]!))
   let sub_carry := Wire.mk "s3b_subcarry"
-  let sub_carry_gate := [Gate.mkAND carried sub_ok sub_carry]
+  let sub_carry_gate := [Gate.mkAND carried s3b2_sub_ok sub_carry]
   let sub_fix := makeIndexedWires "s3b_subfix" (MSB + 1)
   let sub_fix_gates := (List.range (MSB + 1)).map fun i =>
     if i == MSB then Gate.mkBUF (sub_body[i]!) (sub_fix[i]!)
@@ -1002,16 +1248,16 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
     else Gate.mkMUX (sub_body[i]!) zero sub_carry (sub_fix[i]!)
   let body_sel := makeIndexedWires "s3b_bsel" (MSB + 1)
   let body_sel_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (body[i]!) (sub_fix[i]!) sub_ok (body_sel[i]!)
+    Gate.mkMUX (body[i]!) (sub_fix[i]!) s3b2_sub_ok (body_sel[i]!)
 
   -- exact zero
   let zero_bits := makeIndexedWires "s3b_zb" (MSB + 1)
   let zero_bits_gates := (List.range (MSB + 1)).map fun i =>
-    if i == MSB then Gate.mkBUF s3_zero_sign (zero_bits[i]!)
+    if i == MSB then Gate.mkBUF s3b2_zero_sign (zero_bits[i]!)
     else Gate.mkBUF zero (zero_bits[i]!)
   let with_zero := makeIndexedWires "s3b_wz" (MSB + 1)
   let with_zero_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (body_sel[i]!) (zero_bits[i]!) s3_exact_zero (with_zero[i]!)
+    Gate.mkMUX (body_sel[i]!) (zero_bits[i]!) s3b2_exact_zero (with_zero[i]!)
 
   -- special cases
   let nan_bits := makeIndexedWires "s3b_nan" (MSB + 1)
@@ -1021,46 +1267,46 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
   let inf_bits := makeIndexedWires "s3b_inf" (MSB + 1)
   let inf_gates :=
     (List.range (MSB + 1)).map fun i =>
-      if i == MSB then Gate.mkBUF s3_inf_sign (inf_bits[i]!)
+      if i == MSB then Gate.mkBUF s3b2_inf_sign (inf_bits[i]!)
       else if FRAC <= i && i <= MSB - 1 then Gate.mkBUF one (inf_bits[i]!)
       else Gate.mkBUF zero (inf_bits[i]!)
   let with_inf := makeIndexedWires "s3b_wi" (MSB + 1)
   let with_inf_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_zero[i]!) (inf_bits[i]!) s3_any_inf (with_inf[i]!)
+    Gate.mkMUX (with_zero[i]!) (inf_bits[i]!) s3b2_any_inf (with_inf[i]!)
   let with_nan := makeIndexedWires "s3b_wn" (MSB + 1)
   let with_nan_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_inf[i]!) (nan_bits[i]!) s3_sel_nan (with_nan[i]!)
+    Gate.mkMUX (with_inf[i]!) (nan_bits[i]!) s3b2_sel_nan (with_nan[i]!)
 
   let res_final := makeIndexedWires "s3b_rf" (MSB + 1)
   let res_final_gates := (List.range (MSB + 1)).map fun i =>
-    Gate.mkMUX (with_nan[i]!) (s3_c_eff[i]!) s3_use_pz (res_final[i]!)
+    Gate.mkMUX (with_nan[i]!) (s3b2_c_eff[i]!) s3b2_use_pz (res_final[i]!)
   let result_gates := (List.range (MSB + 1)).map fun i => Gate.mkBUF (res_final[i]!) (result[i]!)
 
   -- flags
   let nx_any := Wire.mk "s3b_nxany"
   let nx := Wire.mk "s3b_nx"
-  let nx_gate := [Gate.mkOR rem_any of_cond nx_any,
-                  Gate.mkAND nx_any s3_round_active nx]
+  let nx_gate := [Gate.mkOR s3b2_rem_any s3b2_of_cond nx_any,
+                  Gate.mkAND nx_any s3b2_round_active nx]
   let not_sub_carry := Wire.mk "s3b_nsubcarry"
   let uf_cand := Wire.mk "s3b_ufcand"
   let uf := Wire.mk "s3b_uf"
   let uf_gate := [
     Gate.mkNOT sub_carry not_sub_carry,
-    Gate.mkAND sub_ok not_sub_carry uf_cand,
+    Gate.mkAND s3b2_sub_ok not_sub_carry uf_cand,
     Gate.mkAND uf_cand nx uf
   ]
   let of_final := Wire.mk "s3b_of"
-  let of_final_gate := [Gate.mkAND of_cond s3_round_active of_final]
+  let of_final_gate := [Gate.mkAND s3b2_of_cond s3b2_round_active of_final]
   let exc_gates := [
     Gate.mkBUF nx (exc[0]!),
     Gate.mkBUF uf (exc[1]!),
     Gate.mkBUF of_final (exc[2]!),
     Gate.mkBUF zero (exc[3]!),
-    Gate.mkBUF s3_nv (exc[4]!)
+    Gate.mkBUF s3b2_nv (exc[4]!)
   ]
 
-  let tag_gates := (List.range 6).map fun i => Gate.mkBUF (s3_tag[i]!) (tag_out[i]!)
-  let valid_gate := [Gate.mkBUF s3_valid valid_out]
+  let tag_gates := (List.range 6).map fun i => Gate.mkBUF (s3b2_tag[i]!) (tag_out[i]!)
+  let valid_gate := [Gate.mkBUF s3b2_valid valid_out]
 
   { name := nm
     inputs := src1 ++ src2 ++ src3 ++ rm ++ dest_tag ++
@@ -1076,20 +1322,20 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       c_eff_gates ++ sign_gates ++ s1_gates ++
       prod_add_gates ++ exp_sum_gates ++ exp_t1_gates ++ s2a_gates ++
       lead_p_gates ++ pos_p_gates ++ s_h_gates ++ prod_n_gates ++
-      exp_p_gates ++ diff_gates ++ c_big_gate ++
-      p_up_amt_gates ++ p_left_amt_gates ++ p_up_amt_e_gates ++ p_down_amt_gates ++
+      exp_p_gates ++ s2b1_gates ++ diff_gates ++ c_big_gate ++
+      p_up_amt_gates ++ p_left_amt_gates ++ p_down_amt_gates ++
       c_left_amt_gates ++ c_up_amt_gates ++ c_down_amt_gates ++ s2b_gates ++
       p_down_any_gates ++ p_up_gates ++ p_left_gates ++ p_down_gates ++ p_dir_gate ++
       q_win_gates ++ q_win_gates' ++
       c_up_gates ++ c_left_gates ++ c_down_gates ++ c_down_any_gates ++ c_dir_gate ++
       c_win_gates ++ c_win_gates' ++ stk_gates ++ same_gate ++ e_hi_gates ++ s2c_gates ++
       sum_win_gates ++ diff_qc_gates ++ diff_cq_gates ++
-      inv_c_gates ++ dqc_sub1_gates ++ inv_q_gates ++ dcq_sub1_gates ++
+      inv_c_gates ++ dqc_sub1_gates ++ inv_q_gates ++ dcq_sub1_gates ++ s2d1_gates ++
       res_sign_gate ++ ulp_borrow_gates ++ mag_gates ++ mag_c_gates ++
       mag_sel_gates ++ win_gates ++ s2_gates ++
       win_any_gates ++ lead_v_gates ++ pos_v_gates ++ sh_v_gates ++
       n_up_gates ++ n_dn_gates ++ n_gates ++ extra_gate ++ e_res_gates ++
-      st_lo_gates ++ st_gates ++ m_gates ++ e_any_gates ++ e_ge1_gate ++
+      st_lo_gates ++ st_gates ++ m_gates ++ s3a1_gates ++ e_any_gates ++ e_ge1_gate ++
       four_minus_e_gates ++ clamp_d_gates ++ clamp_gate ++ shd_gates ++
       clamp_d_any_gates ++ past_round_gates ++ any_unrounded_gate ++
       rm_decode_gates ++ ovf_to_inf_gates ++ exact_zero_gate ++ zero_sign_gate ++
@@ -1097,10 +1343,13 @@ def mkFPFMAFusedP (nm : String) (P BIAS WEXP : Nat) : Circuit :=
       round_active_gate ++ s3_gates ++
       mant_gates ++ ml_amt_gates ++ ml_gates ++ st2_raw_gates ++
       rnd_bit_gate ++ st2_gate ++ rem_any_gate ++
-      up_gates ++ mant_inc_gates ++ e_inc_gates ++
-      e_final_gates ++ sig_final_gates ++ e_ge1_f_gate ++ e_final_any_gates ++
-      e_final_zero_gate ++ sub_ok_gate ++ e_hi_any_gates ++ e_field_all_gates ++
-      of_cond_gate ++ body_gates ++ sub_body_gates ++ sub_carry_gate ++
+      up_gates ++ s3b1_gates ++ mant_inc_gates ++ e_inc_gates ++
+      e_ge1_0_gate ++ e_any_0_gates ++ e_zero_0_gate ++ sub_ok_0_gate ++
+      e_hi_any_0_gates ++ e_field_all_0_gates ++ of_cond_0_gate ++
+      e_ge1_1_gate ++ e_any_1_gates ++ e_zero_1_gate ++ sub_ok_1_gate ++
+      e_hi_any_1_gates ++ e_field_all_1_gates ++ of_cond_1_gate ++
+      sub_ok_gate ++ of_cond_gate ++ e_final_gates ++ sig_final_gates ++
+      s3b2_gates ++ body_gates ++ sub_body_gates ++ sub_carry_gate ++
       sub_fix_gates ++ body_sel_gates ++
       zero_bits_gates ++ with_zero_gates ++ nan_gates ++ inf_gates ++
       with_inf_gates ++ with_nan_gates ++

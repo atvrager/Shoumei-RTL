@@ -24,31 +24,64 @@ namespace Shoumei.Circuits.Sequential
 open Shoumei
 
 /-- Index of the highest set bit of a little-endian bit list, or zero when the
-    list is zero.  Returns (position, gates); the position is `width` bits. -/
+    list is zero.  Returns (position, gates).  The position is `width` bits.
+    Uses parallel-prefix Kogge-Stone OR and balanced binary OR tree for O(log n)
+    depth instead of O(n) linear ripple chain. -/
 def mkLeadPos (pfx : String) (bits : List Wire) (zero_wire : Wire)
     (width : Nat) : List Wire × List Gate :=
   let n := bits.length
-  let above := (List.range (n + 1)).map fun i => Wire.mk s!"{pfx}_ab{i}"
-  let above_gates :=
-    [Gate.mkBUF zero_wire (above[n]!)] ++
-    ((List.range n).reverse.map fun i => Gate.mkOR (bits[i]!) (above[i + 1]!) (above[i]!))
-  let lead := (List.range n).map fun i => Wire.mk s!"{pfx}_ld{i}"
-  let lead_gates := (List.range n).flatMap fun i =>
-    let na := Wire.mk s!"{pfx}_na{i}"
-    [Gate.mkNOT (above[i + 1]!) na, Gate.mkAND (bits[i]!) na (lead[i]!)]
-  -- The reduce is written out rather than reusing an OR tree: a `base_N` family
-  -- name makes the code generator treat the chain as a bus and rewrite it, which
-  -- is wrong for a filtered OR.  A `gx` suffix, as the adders use, is safe.
-  let enc := (List.range width).map fun k =>
-    let terms := (List.range n).filter (fun i => (i >>> k) &&& 1 == 1) |>.map (fun i => lead[i]!)
-    match terms with
-    | [] => (zero_wire, [])
-    | t0 :: rest =>
-      let (last, gs) := rest.enum.foldl (fun (acc : Wire × List Gate) (i, w) =>
-        let o := Wire.mk s!"{pfx}b{k}gx{i}"
-        (o, acc.2 ++ [Gate.mkOR acc.1 w o])) (t0, [])
-      (last, gs)
-  (enc.map Prod.fst, above_gates ++ lead_gates ++ (enc.map Prod.snd).flatten)
+  if n == 0 then
+    ((List.range width).map fun _ => zero_wire, [])
+  else
+    -- Compute prefix OR in reverse: rev_bits[0] = bits[n-1], rev_bits[n-1] = bits[0].
+    -- rev_above[j] = OR(rev_bits[0..j]) = OR(bits[n-1-j .. n-1])
+    let rev_bits := bits.reverse
+    let num_steps := (Nat.log2 n) + if 1 <<< (Nat.log2 n) < n then 1 else 0
+    let (rev_above, ks_gates) := (List.range num_steps).foldl (fun (cur_wires, acc_gates) level =>
+      let step := 1 <<< level
+      let step_pairs := (List.range n).map fun j =>
+        if j < step then
+          (cur_wires[j]!, [])
+        else
+          let o := Wire.mk s!"{pfx}_ksp_l{level}_g{j}"
+          (o, [Gate.mkOR (cur_wires[j]!) (cur_wires[j - step]!) o])
+      let (next_wires, step_gates) := step_pairs.unzip
+      (next_wires, acc_gates ++ step_gates.flatten)
+    ) (rev_bits, [])
+
+    -- above[i] is OR(bits[i .. n-1]) = rev_above[n - 1 - i]
+    -- above[i+1] is OR(bits[i+1 .. n-1]) = rev_above[n - 2 - i] when i < n - 1,
+    -- and zero_wire when i == n - 1
+    let lead := (List.range n).map fun i => Wire.mk s!"{pfx}_ld{i}"
+    let lead_gates := (List.range n).flatMap fun i =>
+      let ab_next := if i + 1 < n then rev_above[n - 2 - i]! else zero_wire
+      let na := Wire.mk s!"{pfx}_na{i}"
+      [Gate.mkNOT ab_next na, Gate.mkAND (bits[i]!) na (lead[i]!)]
+
+    let enc := (List.range width).map fun k =>
+      let terms := (List.range n).filter (fun i => (i >>> k) &&& 1 == 1) |>.map (fun i => lead[i]!)
+      let m := terms.length
+      if m == 0 then
+        (zero_wire, [])
+      else if m == 1 then
+        (terms[0]!, [])
+      else
+        let num_tree_levels := (Nat.log2 m) + if 1 <<< (Nat.log2 m) < m then 1 else 0
+        let bpfx := s!"{pfx}b{k}gx"
+        let (final_terms, tree_gates) :=
+          (List.range num_tree_levels).foldl (fun (cur_ws, acc_gs) lvl =>
+          let pairs := (List.range ((cur_ws.length + 1) / 2)).map fun idx =>
+            let i0 := 2 * idx
+            let i1 := 2 * idx + 1
+            if i1 < cur_ws.length then
+              let o := Wire.mk s!"{bpfx}_l{lvl}_g{idx}"
+              (o, [Gate.mkOR (cur_ws[i0]!) (cur_ws[i1]!) o])
+            else
+              (cur_ws[i0]!, [])
+          (pairs.map Prod.fst, acc_gs ++ (pairs.map Prod.snd).flatten)
+        ) (terms, [])
+        (final_terms[0]!, tree_gates)
+    (enc.map Prod.fst, ks_gates ++ lead_gates ++ (enc.map Prod.snd).flatten)
 
 /-- OR-reduce a contiguous wire list. -/
 private def mkOrChain (pfx : String) (wires : List Wire) : Wire × List Gate :=
