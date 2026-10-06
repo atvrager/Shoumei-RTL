@@ -1,399 +1,428 @@
 /-
 Circuits/Combinational/Int64ToFP.lean - 64-Bit Integer to Float Conversion Submodule
 
-Submodule of FPLongConverter implementing:
-- FCVT.S.L  (signed 64-bit int -> SP float, NaN-boxed)
-- FCVT.S.LU (unsigned 64-bit int -> SP float, NaN-boxed)
-- FCVT.D.L  (signed 64-bit int -> DP float)
-- FCVT.D.LU (unsigned 64-bit int -> DP float)
-
-Interface:
-- Inputs:
-  * src1[63:0]: Integer operand
-  * is_dp: High for double-precision float output, low for single-precision
-  * is_unsigned: High for unsigned integer, low for signed integer
-  * rm[2:0]: Rounding mode (0=RNE, 1=RTZ, 2=RDN, 3=RUP, 4=RMM)
-  * clock: Pipeline clock
-  * reset: Synchronous reset
-  * zero, one: Constant wires
-- Outputs:
-  * result[63:0]: Converted float value (NaN-boxed for SP)
-  * exc_nx: Inexact exception flag
+Rebuilds Int64ToFP with the hierarchical HDL frontend.
+The circuit decomposes into three submodules:
+  1. Int64Prep: Absolute value calculation, leading-zero detection, and base exponent generation
+  2. Int64NormShift: Dynamic barrel left shift and sticky bit extraction
+  3. Int64RoundPack: Fast mantissa increment, exponent selection, and SP/DP packaging
+Meeting the 1.0 GHz ASAP7 timing constraint with 1-cycle pipeline latency.
 -/
 
 import Shoumei.DSL
-import Shoumei.Components.Select
-import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.HDL.Types
+import Shoumei.HDL.Expr
+import Shoumei.HDL.Module
+import Shoumei.HDL.Lower
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
-open Shoumei.Components
+open Shoumei.HDL
 
-private def mkBalancedOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
-  match inputs with
-  | [] => (Wire.mk s!"{pfx}_empty", [])
-  | [w] => (w, [])
-  | _ =>
-    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
-      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
-        match remaining with
-        | [] => (acc_w.reverse, acc_g)
-        | [w] => ((w :: acc_w).reverse, acc_g)
-        | w1 :: w2 :: rest =>
-          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
-          let gate := Gate.mkOR w1 w2 intermediate
-          go rest (intermediate :: acc_w) (acc_g ++ [gate])
-      go ws [] []
-    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List Gate :=
-      match fuel with
-      | 0 => (ws.head!, acc)
-      | fuel' + 1 =>
-        match ws with
-        | [] => (Wire.mk s!"{pfx}_empty", acc)
-        | [w] => (w, acc)
-        | _ =>
-          let (next_ws, next_gates) := buildLevel ws lvl
-          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
-    reduceTree inputs 0 [] (inputs.length + 1)
-
-/-- 8-bit Priority Encoder: finds leading 1 (b7 down to b0), returns (has_1, pos[2:0], gates) -/
-private def mkPE8 (pfx : String) (b : List Wire) : Wire × List Wire × List Gate :=
-  let b0 := b[0]!
-  let b1 := b[1]!
-  let b2 := b[2]!
-  let b3 := b[3]!
-  let b4 := b[4]!
-  let b5 := b[5]!
-  let b6 := b[6]!
-  let b7 := b[7]!
-  let hi_pair := Wire.mk s!"{pfx}_hipair"
-  let g_hipair := Gate.mkOR b7 b6 hi_pair
-  let hi_lo := Wire.mk s!"{pfx}_hilo"
-  let g_hilo := Gate.mkOR b5 b4 hi_lo
-  let hi4 := Wire.mk s!"{pfx}_hi4"
-  let g_hi4 := Gate.mkOR hi_pair hi_lo hi4
-
-  let lo_pair := Wire.mk s!"{pfx}_lopair"
-  let g_lopair := Gate.mkOR b3 b2 lo_pair
-  let lo_lo := Wire.mk s!"{pfx}_lolo"
-  let g_lolo := Gate.mkOR b1 b0 lo_lo
-  let lo4 := Wire.mk s!"{pfx}_lo4"
-  let g_lo4 := Gate.mkOR lo_pair lo_lo lo4
-
-  let has_1 := Wire.mk s!"{pfx}_has1"
-  let g_has1 := Gate.mkOR hi4 lo4 has_1
-
+/-- 8-bit priority encoder: finds leading 1 (bit 7 down to bit 0). -/
+def pe8 (b : Signal 8) : Signal 1 × Signal 3 :=
+  let b7 := b.bit 7
+  let b6 := b.bit 6
+  let b5 := b.bit 5
+  let b4 := b.bit 4
+  let b3 := b.bit 3
+  let b2 := b.bit 2
+  let b1 := b.bit 1
+  let b0 := b.bit 0
+  let hi4 := b7 ||| b6 ||| b5 ||| b4
+  let lo4 := b3 ||| b2 ||| b1 ||| b0
+  let has1 := hi4 ||| lo4
+  let hi_pair := b7 ||| b6
+  let lo_pair := b3 ||| b2
   let pos2 := hi4
+  let pos1 := .mux hi4 hi_pair lo_pair
+  let hi_b0 := b7 ||| (~~~b6 &&& b5)
+  let lo_b0 := b3 ||| (~~~b2 &&& b1)
+  let pos0 := .mux hi4 hi_b0 lo_b0
+  let pos : Signal 3 := Signal.concat (Signal.concat pos2 pos1) pos0
+  (has1, pos)
 
-  let pos1 := Wire.mk s!"{pfx}_pos1"
-  let g_pos1 := Gate.mkMUX lo_pair hi_pair hi4 pos1
+/-- 8-to-1 multiplexer for 3-bit signals. -/
+def mux8x3 (sel : Signal 3) (x0 x1 x2 x3 x4 x5 x6 x7 : Signal 3) : Signal 3 :=
+  let m01 := .mux (sel.bit 0) x1 x0
+  let m23 := .mux (sel.bit 0) x3 x2
+  let m45 := .mux (sel.bit 0) x5 x4
+  let m67 := .mux (sel.bit 0) x7 x6
+  let m0123 := .mux (sel.bit 1) m23 m01
+  let m4567 := .mux (sel.bit 1) m67 m45
+  .mux (sel.bit 2) m4567 m0123
 
-  let not_b6 := Wire.mk s!"{pfx}_nb6"
-  let g_nb6 := Gate.mkNOT b6 not_b6
-  let b65 := Wire.mk s!"{pfx}_b65"
-  let g_b65 := Gate.mkAND not_b6 b5 b65
-  let hi_b0 := Wire.mk s!"{pfx}_hib0"
-  let g_hib0 := Gate.mkOR b7 b65 hi_b0
+/-- Submodule 1: Integer absolute value, leading-zero detection, and base exponent generation. -/
+def mkInt64Prep : HDLModule :=
+  let src1 : Signal 64 := .input "src1" 64
+  let is_unsigned : Signal 1 := .input "is_unsigned" 1
 
-  let not_b2 := Wire.mk s!"{pfx}_nb2"
-  let g_nb2 := Gate.mkNOT b2 not_b2
-  let b21 := Wire.mk s!"{pfx}_b21"
-  let g_b21 := Gate.mkAND not_b2 b1 b21
-  let lo_b0 := Wire.mk s!"{pfx}_lob0"
-  let g_lob0 := Gate.mkOR b3 b21 lo_b0
+  let int_sign_expr : Signal 1 := src1.bit 63 &&& ~~~is_unsigned
+  let int_neg_expr : Signal 64 := (.const (BitVec.ofNat 64 0)) - src1
+  let int_abs_expr : Signal 64 := .mux (.wire "w_int_sign" 1) int_neg_expr src1
 
-  let pos0 := Wire.mk s!"{pfx}_pos0"
-  let g_pos0 := Gate.mkMUX lo_b0 hi_b0 hi4 pos0
+  let int_abs : Signal 64 := .wire "w_int_abs" 64
+  let int_sign : Signal 1 := .wire "w_int_sign" 1
 
-  let gates := [g_hipair, g_hilo, g_hi4, g_lopair, g_lolo, g_lo4, g_has1,
-                g_pos1, g_nb6, g_b65, g_hib0, g_nb2, g_b21, g_lob0, g_pos0]
-  (has_1, [pos0, pos1, pos2], gates)
+  let g0 := int_abs.slice 7 0
+  let g1 := int_abs.slice 15 8
+  let g2 := int_abs.slice 23 16
+  let g3 := int_abs.slice 31 24
+  let g4 := int_abs.slice 39 32
+  let g5 := int_abs.slice 47 40
+  let g6 := int_abs.slice 55 48
+  let g7 := int_abs.slice 63 56
 
-/-- 64-bit Integer to Float Converter Circuit -/
-def mkInt64ToFP : Circuit :=
-  let src1 := makeIndexedWires "src1" 64
-  let is_dp := Wire.mk "is_dp"
-  let is_unsigned := Wire.mk "is_unsigned"
-  let rm := makeIndexedWires "rm" 3
-  let clock := Wire.mk "clock"
-  let reset := Wire.mk "reset"
-  let zero := Wire.mk "zero"
-  let one := Wire.mk "one"
+  let (has0, p0) := pe8 g0
+  let (has1, p1) := pe8 g1
+  let (has2, p2) := pe8 g2
+  let (has3, p3) := pe8 g3
+  let (has4, p4) := pe8 g4
+  let (has5, p5) := pe8 g5
+  let (has6, p6) := pe8 g6
+  let (has7, p7) := pe8 g7
 
-  let result := makeIndexedWires "result" 64
-  let exc_nx := Wire.mk "exc_nx"
+  let has76 := Signal.concat has7 has6
+  let has54 := Signal.concat has5 has4
+  let has32 := Signal.concat has3 has2
+  let has10 := Signal.concat has1 has0
+  let has_hi := Signal.concat has76 has54
+  let has_lo := Signal.concat has32 has10
+  let has_groups := Signal.concat has_hi has_lo
 
-  let not_is_unsigned := Wire.mk "not_is_unsigned"
-  let not_is_unsigned_gate := Gate.mkNOT is_unsigned not_is_unsigned
+  let (has_any_expr, top_pos) := pe8 has_groups
+  let bot_pos := mux8x3 top_pos p0 p1 p2 p3 p4 p5 p6 p7
+  let lead_pos_expr : Signal 6 := Signal.concat top_pos bot_pos
 
-  -- Sign of integer input
-  let int_is_signed := not_is_unsigned
-  let int_sign := Wire.mk "int_sign"
-  let int_sign_gate := Gate.mkAND (src1[63]!) int_is_signed int_sign
+  let lead_pos : Signal 6 := .wire "lead_pos" 6
+  let has_any : Signal 1 := .wire "has_any" 1
 
-  -- Negation of integer input: 0 - src1
-  let zeros64 := (List.range 64).map fun _ => zero
-  let int_neg := makeIndexedWires "int_neg" 64
-  let (int_neg_sub_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64
-    (List.range 64 |>.map fun i => src1[i]!) int_neg "int_neg" one
+  let int_is_zero : Signal 1 := ~~~has_any
+  let norm_shamt : Signal 6 := ~~~lead_pos
 
-  -- Absolute value of integer input
-  let int_abs := makeIndexedWires "int_abs" 64
-  let int_abs_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (src1[i]!) (int_neg[i]!) int_sign (int_abs[i]!)
+  have h6_11 : 6 ≤ 11 := by omega
+  let lead_pos_ext11 := Signal.zeroExtend 11 h6_11 lead_pos
+  let dp_exp_base : Signal 11 := (.const (BitVec.ofNat 11 1023)) + lead_pos_ext11
+  let dp_exp_inc : Signal 11 := (.const (BitVec.ofNat 11 1024)) + lead_pos_ext11
 
-  -- Check if int_abs is zero and find leading 1 (63 down to 0) via 8x8 tree priority encoder
-  let group_pe_results := (List.range 8).map fun g =>
-    let group_bits := (List.range 8).map fun j => int_abs[8 * g + j]!
-    mkPE8 s!"grp_pe_{g}" group_bits
+  have h6_8 : 6 ≤ 8 := by omega
+  let lead_pos_ext8 := Signal.zeroExtend 8 h6_8 lead_pos
+  let sp_exp_base : Signal 8 := (.const (BitVec.ofNat 8 127)) + lead_pos_ext8
+  let sp_exp_inc : Signal 8 := (.const (BitVec.ofNat 8 128)) + lead_pos_ext8
 
-  let grp_has_1 := group_pe_results.map (·.1)
-  let grp_pos3 := group_pe_results.map (·.2.1)
-  let grp_pe_gates := group_pe_results.flatMap (·.2.2)
+  let m := HDLModule.empty "Int64Prep"
+  let m := m.addInput "src1" 64
+  let m := m.addInput "is_unsigned" 1
+  let m := m.addWire "w_int_sign" 1 int_sign_expr
+  let m := m.addWire "w_int_abs" 64 int_abs_expr
+  let m := m.addWire "has_any" 1 has_any_expr
+  let m := m.addWire "lead_pos" 6 lead_pos_expr
+  let m := m.addOutput "int_abs" 64 int_abs
+  let m := m.addOutput "norm_shamt" 6 norm_shamt
+  let m := m.addOutput "int_sign" 1 int_sign
+  let m := m.addOutput "int_is_zero" 1 int_is_zero
+  let m := m.addOutput "dp_exp_base" 11 dp_exp_base
+  let m := m.addOutput "dp_exp_inc" 11 dp_exp_inc
+  let m := m.addOutput "sp_exp_base" 8 sp_exp_base
+  let m := m.addOutput "sp_exp_inc" 8 sp_exp_inc
+  m
 
-  let (int_abs_any, top_pos3, top_pe_gates) := mkPE8 "top_pe" grp_has_1
-  let int_is_zero := Wire.mk "int_is_zero"
-  let int_is_zero_gate := Gate.mkNOT int_abs_any int_is_zero
+/-- Submodule 2: Dynamic barrel left shift and sticky bit extraction. -/
+def mkInt64NormShift : HDLModule :=
+  let norm_in : Signal 64 := .input "norm_in" 64
+  let norm_shamt : Signal 6 := .input "norm_shamt" 6
 
-  let lead_pos_wires := makeIndexedWires "pe_lead_pos" 6
-  let lead_pos_hi_gates := [
-    Gate.mkBUF (top_pos3[0]!) (lead_pos_wires[3]!),
-    Gate.mkBUF (top_pos3[1]!) (lead_pos_wires[4]!),
-    Gate.mkBUF (top_pos3[2]!) (lead_pos_wires[5]!)
-  ]
+  let norm64_expr : Signal 64 := norm_in.dshl norm_shamt
+  let norm64 : Signal 64 := .wire "norm64" 64
 
-  let mux8_low_gates := (List.range 3).flatMap fun bit_idx =>
-    let m01 := Wire.mk s!"lp_m01_{bit_idx}"
-    let m23 := Wire.mk s!"lp_m23_{bit_idx}"
-    let m45 := Wire.mk s!"lp_m45_{bit_idx}"
-    let m67 := Wire.mk s!"lp_m67_{bit_idx}"
-    let g01 := Gate.mkMUX ((grp_pos3[0]!)[bit_idx]!) ((grp_pos3[1]!)[bit_idx]!) (top_pos3[0]!) m01
-    let g23 := Gate.mkMUX ((grp_pos3[2]!)[bit_idx]!) ((grp_pos3[3]!)[bit_idx]!) (top_pos3[0]!) m23
-    let g45 := Gate.mkMUX ((grp_pos3[4]!)[bit_idx]!) ((grp_pos3[5]!)[bit_idx]!) (top_pos3[0]!) m45
-    let g67 := Gate.mkMUX ((grp_pos3[6]!)[bit_idx]!) ((grp_pos3[7]!)[bit_idx]!) (top_pos3[0]!) m67
-    let m0123 := Wire.mk s!"lp_m0123_{bit_idx}"
-    let m4567 := Wire.mk s!"lp_m4567_{bit_idx}"
-    let g0123 := Gate.mkMUX m01 m23 (top_pos3[1]!) m0123
-    let g4567 := Gate.mkMUX m45 m67 (top_pos3[1]!) m4567
-    let g_final := Gate.mkMUX m0123 m4567 (top_pos3[2]!) (lead_pos_wires[bit_idx]!)
-    [g01, g23, g45, g67, g0123, g4567, g_final]
+  let dp_raw_mant : Signal 52 := norm64.slice 62 11
+  let dp_round_bit : Signal 1 := norm64.bit 10
+  let dp_sticky_bit : Signal 1 := (norm64.slice 9 0).orReduce
 
-  -- ══════════════════════════════════════════════
-  -- Stage 1 Pipeline Registers
-  -- ══════════════════════════════════════════════
-  let s1_int_abs := makeIndexedWires "s1_int_abs" 64
-  let s1_lead_pos := makeIndexedWires "s1_lead_pos" 6
-  let s1_int_sign := Wire.mk "s1_int_sign"
-  let not_s1_int_sign := Wire.mk "not_s1_int_sign"
-  let s1_int_is_zero := Wire.mk "s1_int_is_zero"
-  let s1_is_dp := Wire.mk "s1_is_dp"
-  let s1_rm := makeIndexedWires "s1_rm" 3
+  let sp_raw_mant : Signal 23 := norm64.slice 62 40
+  let sp_round_bit : Signal 1 := norm64.bit 39
+  let sp_sticky_bit : Signal 1 := (norm64.slice 38 0).orReduce
 
-  let pipe_dff_gates :=
-    (List.range 64 |>.map fun i => Gate.mkDFF (int_abs[i]!) clock reset (s1_int_abs[i]!)) ++
-    (List.range 6 |>.map fun i => Gate.mkDFF (lead_pos_wires[i]!) clock reset (s1_lead_pos[i]!)) ++
-    [ Gate.mkDFF int_sign clock reset s1_int_sign,
-      Gate.mkNOT s1_int_sign not_s1_int_sign,
-      Gate.mkDFF int_is_zero clock reset s1_int_is_zero,
-      Gate.mkDFF is_dp clock reset s1_is_dp ] ++
-    (List.range 3 |>.map fun i => Gate.mkDFF (rm[i]!) clock reset (s1_rm[i]!))
+  let m := HDLModule.empty "Int64NormShift"
+  let m := m.addInput "norm_in" 64
+  let m := m.addInput "norm_shamt" 6
+  let m := m.addWire "norm64" 64 norm64_expr
+  let m := m.addOutput "dp_raw_mant" 52 dp_raw_mant
+  let m := m.addOutput "dp_round_bit" 1 dp_round_bit
+  let m := m.addOutput "dp_sticky_bit" 1 dp_sticky_bit
+  let m := m.addOutput "sp_raw_mant" 23 sp_raw_mant
+  let m := m.addOutput "sp_round_bit" 1 sp_round_bit
+  let m := m.addOutput "sp_sticky_bit" 1 sp_sticky_bit
+  m
 
-  -- ══════════════════════════════════════════════
-  -- Stage 2: Normalization shift, rounding and packing
-  -- ══════════════════════════════════════════════
-  -- Shift left amount to normalize: shamt = 63 - lead_pos = ~lead_pos
-  let norm_shamt := makeIndexedWires "norm_shamt" 6
-  let norm_shamt_gates := (List.range 6).map fun i =>
-    Gate.mkNOT (s1_lead_pos[i]!) (norm_shamt[i]!)
+/-- Submodule 3: Mantissa rounding, exponent increment, and SP/DP float packing. -/
+def mkInt64RoundPack : HDLModule :=
+  let dp_raw_mant : Signal 52 := .input "dp_raw_mant" 52
+  let dp_round_bit : Signal 1 := .input "dp_round_bit" 1
+  let dp_sticky_bit : Signal 1 := .input "dp_sticky_bit" 1
+  let sp_raw_mant : Signal 23 := .input "sp_raw_mant" 23
+  let sp_round_bit : Signal 1 := .input "sp_round_bit" 1
+  let sp_sticky_bit : Signal 1 := .input "sp_sticky_bit" 1
+  let int_sign : Signal 1 := .input "int_sign" 1
+  let int_is_zero : Signal 1 := .input "int_is_zero" 1
+  let is_dp : Signal 1 := .input "is_dp" 1
+  let rm : Signal 3 := .input "rm" 3
+  let dp_exp_base : Signal 11 := .input "dp_exp_base" 11
+  let dp_exp_inc : Signal 11 := .input "dp_exp_inc" 11
+  let sp_exp_base : Signal 8 := .input "sp_exp_base" 8
+  let sp_exp_inc : Signal 8 := .input "sp_exp_inc" 8
 
-  -- 64-bit Barrel Left Shifter: s1_int_abs << norm_shamt
-  let (norm64, norm_shift_gates) := (List.range 6).foldl
-    (fun (acc : List Wire × List Gate) step =>
-      let stageIn := acc.1
-      let shiftVal := Nat.pow 2 step
-      let stageOut := makeIndexedWires s!"nsh_s{step}" 64
-      let gates := (List.range 64).map fun i =>
-        if i >= shiftVal then
-          Gate.mkMUX (stageIn[i]!) (stageIn[i - shiftVal]!) (norm_shamt[step]!) (stageOut[i]!)
-        else
-          Gate.mkMUX (stageIn[i]!) zero (norm_shamt[step]!) (stageOut[i]!)
-      (stageOut, acc.2 ++ gates)
-    ) ((List.range 64 |>.map fun i => s1_int_abs[i]!), [])
+  let not_rm0 := ~~~rm.bit 0
+  let not_rm1 := ~~~rm.bit 1
+  let not_rm2 := ~~~rm.bit 2
+  let rm_is_rne := not_rm2 &&& not_rm1 &&& not_rm0
+  let rm_is_rtz := not_rm2 &&& not_rm1 &&& rm.bit 0
+  let rm_is_rdn := not_rm2 &&& rm.bit 1 &&& not_rm0
+  let rm_is_rup := not_rm2 &&& rm.bit 1 &&& rm.bit 0
+  let rm_is_rmm := rm.bit 2 &&& not_rm1 &&& not_rm0
 
-  -- Rounding mode decoding
-  let not_rm0 := Wire.mk "not_rm0"
-  let not_rm1 := Wire.mk "not_rm1"
-  let not_rm2 := Wire.mk "not_rm2"
-  let rm_inv_gates := [
-    Gate.mkNOT (s1_rm[0]!) not_rm0,
-    Gate.mkNOT (s1_rm[1]!) not_rm1,
-    Gate.mkNOT (s1_rm[2]!) not_rm2
-  ]
-  let rm_is_rne := Wire.mk "rm_is_rne"
-  let rm_is_rtz := Wire.mk "rm_is_rtz"
-  let rm_is_rdn := Wire.mk "rm_is_rdn"
-  let rm_is_rup := Wire.mk "rm_is_rup"
-  let rm_is_rmm := Wire.mk "rm_is_rmm"
-  let rm_dec_gates := [
-    Gate.mkAND not_rm2 not_rm1 (Wire.mk "rm_t0"),
-    Gate.mkAND (Wire.mk "rm_t0") not_rm0 rm_is_rne,
-    Gate.mkAND (Wire.mk "rm_t0") (s1_rm[0]!) rm_is_rtz,
-    Gate.mkAND not_rm2 (s1_rm[1]!) (Wire.mk "rm_t1"),
-    Gate.mkAND (Wire.mk "rm_t1") not_rm0 rm_is_rdn,
-    Gate.mkAND (Wire.mk "rm_t1") (s1_rm[0]!) rm_is_rup,
-    Gate.mkAND (s1_rm[2]!) not_rm1 (Wire.mk "rm_t2"),
-    Gate.mkAND (Wire.mk "rm_t2") not_rm0 rm_is_rmm
-  ]
+  -- Double-precision rounding
+  let dp_inexact := dp_round_bit ||| dp_sticky_bit
+  let dp_lsb := dp_raw_mant.bit 0
+  let dp_stk_or_lsb := dp_sticky_bit ||| dp_lsb
+  let dp_rne_up := dp_round_bit &&& dp_stk_or_lsb
+  let dp_rdn_up := int_sign &&& dp_inexact
+  let dp_rup_up := (~~~int_sign) &&& dp_inexact
+  let dp_round_up_raw :=
+    (rm_is_rne &&& dp_rne_up) |||
+    (rm_is_rdn &&& dp_rdn_up) |||
+    (rm_is_rup &&& dp_rup_up) |||
+    (rm_is_rmm &&& dp_round_bit)
+  let dp_round_up := dp_round_up_raw &&& dp_inexact
 
-  -- ── Subpart 1A: Int64 -> DP Float ──
-  let dp_raw_mant := (List.range 52).map fun i => norm64[11 + i]!
-  let dp_round_bit := norm64[10]!
-  let (dp_sticky_bit, dp_sticky_gates) := mkBalancedOrTree "dp_stk"
-    (List.range 10 |>.map fun i => norm64[i]!)
-  let dp_inexact := Wire.mk "dp_inexact"
-  let dp_inexact_gate := Gate.mkOR dp_round_bit dp_sticky_bit dp_inexact
+  have h1_52 : 1 ≤ 52 := by omega
+  let dp_round_up_ext : Signal 52 := Signal.zeroExtend 52 h1_52 dp_round_up
+  let dp_mant_inc_expr : Signal 52 := dp_raw_mant + dp_round_up_ext
+  let dp_mant_inc : Signal 52 := .wire "dp_mant_inc" 52
+  let dp_mant_ovf : Signal 1 := dp_raw_mant.andReduce &&& dp_round_up
+  let dp_mant_final : Signal 52 := .mux dp_mant_ovf (.const (BitVec.ofNat 52 0)) dp_mant_inc
+  let dp_exp_final : Signal 11 := .mux dp_mant_ovf dp_exp_inc dp_exp_base
 
-  let dp_lsb := norm64[11]!
-  let dp_stk_or_lsb := Wire.mk "dp_stk_lsb"
-  let dp_rne_up := Wire.mk "dp_rne_up"
-  let dp_rdn_up := Wire.mk "dp_rdn_up"
-  let dp_rup_up := Wire.mk "dp_rup_up"
-  let dp_round_up_raw := Wire.mk "dp_rnd_up_raw"
-  let dp_round_up := Wire.mk "dp_rnd_up"
-  let dp_round_gates := [
-    Gate.mkOR dp_sticky_bit dp_lsb dp_stk_or_lsb,
-    Gate.mkAND dp_round_bit dp_stk_or_lsb dp_rne_up,
-    Gate.mkAND s1_int_sign dp_inexact dp_rdn_up,
-    Gate.mkAND not_s1_int_sign dp_inexact dp_rup_up,
-    Gate.mkAND rm_is_rne dp_rne_up (Wire.mk "dp_ru0"),
-    Gate.mkAND rm_is_rdn dp_rdn_up (Wire.mk "dp_ru1"),
-    Gate.mkAND rm_is_rup dp_rup_up (Wire.mk "dp_ru2"),
-    Gate.mkAND rm_is_rmm dp_round_bit (Wire.mk "dp_ru3"),
-    Gate.mkOR (Wire.mk "dp_ru0") (Wire.mk "dp_ru1") (Wire.mk "dp_ru_t0"),
-    Gate.mkOR (Wire.mk "dp_ru2") (Wire.mk "dp_ru3") (Wire.mk "dp_ru_t1"),
-    Gate.mkOR (Wire.mk "dp_ru_t0") (Wire.mk "dp_ru_t1") dp_round_up_raw,
-    Gate.mkAND dp_round_up_raw dp_inexact dp_round_up
-  ]
+  let dp_hi12 : Signal 12 := Signal.concat int_sign dp_exp_final
+  let dp_val : Signal 64 := Signal.concat dp_hi12 dp_mant_final
+  let res_dp : Signal 64 := .mux int_is_zero (.const (BitVec.ofNat 64 0)) dp_val
 
-  let dp_mant_inc := makeIndexedWires "dp_mant_inc" 52
-  let zeros52 := (List.range 52).map fun _ => zero
-  let (dp_mant_add_gates, dp_mant_ovf) := mkAddFor
-    (AdderSpec.minArea dp_raw_mant.length .input)
-    dp_raw_mant zeros52 dp_round_up dp_mant_inc "dp_mant_add"
+  -- Single-precision rounding
+  let sp_inexact := sp_round_bit ||| sp_sticky_bit
+  let sp_lsb := sp_raw_mant.bit 0
+  let sp_stk_or_lsb := sp_sticky_bit ||| sp_lsb
+  let sp_rne_up := sp_round_bit &&& sp_stk_or_lsb
+  let sp_rdn_up := int_sign &&& sp_inexact
+  let sp_rup_up := (~~~int_sign) &&& sp_inexact
+  let sp_round_up_raw :=
+    (rm_is_rne &&& sp_rne_up) |||
+    (rm_is_rdn &&& sp_rdn_up) |||
+    (rm_is_rup &&& sp_rup_up) |||
+    (rm_is_rmm &&& sp_round_bit)
+  let sp_round_up := sp_round_up_raw &&& sp_inexact
 
-  let dp_mant_final := makeIndexedWires "dp_mant_fin" 52
-  let dp_mant_fin_gates := (List.range 52).map fun i =>
-    Gate.mkMUX (dp_mant_inc[i]!) zero dp_mant_ovf (dp_mant_final[i]!)
+  have h1_23 : 1 ≤ 23 := by omega
+  let sp_round_up_ext : Signal 23 := Signal.zeroExtend 23 h1_23 sp_round_up
+  let sp_mant_inc_expr : Signal 23 := sp_raw_mant + sp_round_up_ext
+  let sp_mant_inc : Signal 23 := .wire "sp_mant_inc" 23
+  let sp_mant_ovf : Signal 1 := sp_raw_mant.andReduce &&& sp_round_up
+  let sp_mant_final : Signal 23 := .mux sp_mant_ovf (.const (BitVec.ofNat 23 0)) sp_mant_inc
+  let sp_exp_final : Signal 8 := .mux sp_mant_ovf sp_exp_inc sp_exp_base
 
-  let const1023 := (List.range 10 |>.map fun _ => one) ++ [zero]
-  let lead_pos_ext11 :=
-    (List.range 6 |>.map fun i => s1_lead_pos[i]!) ++ (List.range 5 |>.map fun _ => zero)
-  let dp_exp_base := makeIndexedWires "dp_exp_base" 11
-  let (dp_exp_add_gates, _) := mkAddFor
-    (AdderSpec.minArea const1023.length .input)
-    const1023 lead_pos_ext11 dp_mant_ovf dp_exp_base "dp_exp_add"
+  let sp_hi9 : Signal 9 := Signal.concat int_sign sp_exp_final
+  let sp_val : Signal 32 := Signal.concat sp_hi9 sp_mant_final
+  let sp_masked : Signal 32 := .mux int_is_zero (.const (BitVec.ofNat 32 0)) sp_val
+  let res_sp : Signal 64 := Signal.concat (.const (BitVec.ofNat 32 4294967295)) sp_masked
 
-  let res_int_to_dp := makeIndexedWires "res_int_to_dp" 64
-  let res_int_to_dp_gates := (List.range 64).map fun i =>
-    let bit :=
-      if i < 52 then dp_mant_final[i]!
-      else if i < 63 then dp_exp_base[i - 52]!
-      else s1_int_sign
-    Gate.mkMUX bit zero s1_int_is_zero (res_int_to_dp[i]!)
+  let result : Signal 64 := .mux is_dp res_dp res_sp
+  let exc_nx : Signal 1 := .mux is_dp dp_inexact sp_inexact
 
-  -- ── Subpart 1B: Int64 -> SP Float ──
-  let sp_raw_mant := (List.range 23).map fun i => norm64[40 + i]!
-  let sp_round_bit := norm64[39]!
-  let (sp_sticky_bit, sp_sticky_gates) := mkBalancedOrTree "sp_stk"
-    (List.range 39 |>.map fun i => norm64[i]!)
-  let sp_inexact := Wire.mk "sp_inexact"
-  let sp_inexact_gate := Gate.mkOR sp_round_bit sp_sticky_bit sp_inexact
+  let m := HDLModule.empty "Int64RoundPack"
+  let m := m.addInput "dp_raw_mant" 52
+  let m := m.addInput "dp_round_bit" 1
+  let m := m.addInput "dp_sticky_bit" 1
+  let m := m.addInput "sp_raw_mant" 23
+  let m := m.addInput "sp_round_bit" 1
+  let m := m.addInput "sp_sticky_bit" 1
+  let m := m.addInput "int_sign" 1
+  let m := m.addInput "int_is_zero" 1
+  let m := m.addInput "is_dp" 1
+  let m := m.addInput "rm" 3
+  let m := m.addInput "dp_exp_base" 11
+  let m := m.addInput "dp_exp_inc" 11
+  let m := m.addInput "sp_exp_base" 8
+  let m := m.addInput "sp_exp_inc" 8
+  let m := m.addWire "dp_mant_inc" 52 dp_mant_inc_expr
+  let m := m.addWire "sp_mant_inc" 23 sp_mant_inc_expr
+  let m := m.addOutput "result" 64 result
+  let m := m.addOutput "exc_nx" 1 exc_nx
+  m
 
-  let sp_lsb := norm64[40]!
-  let sp_stk_or_lsb := Wire.mk "sp_stk_lsb"
-  let sp_rne_up := Wire.mk "sp_rne_up"
-  let sp_rdn_up := Wire.mk "sp_rdn_up"
-  let sp_rup_up := Wire.mk "sp_rup_up"
-  let sp_round_up_raw := Wire.mk "sp_rnd_up_raw"
-  let sp_round_up := Wire.mk "sp_rnd_up"
-  let sp_round_gates := [
-    Gate.mkOR sp_sticky_bit sp_lsb sp_stk_or_lsb,
-    Gate.mkAND sp_round_bit sp_stk_or_lsb sp_rne_up,
-    Gate.mkAND s1_int_sign sp_inexact sp_rdn_up,
-    Gate.mkAND not_s1_int_sign sp_inexact sp_rup_up,
-    Gate.mkAND rm_is_rne sp_rne_up (Wire.mk "sp_ru0"),
-    Gate.mkAND rm_is_rdn sp_rdn_up (Wire.mk "sp_ru1"),
-    Gate.mkAND rm_is_rup sp_rup_up (Wire.mk "sp_ru2"),
-    Gate.mkAND rm_is_rmm sp_round_bit (Wire.mk "sp_ru3"),
-    Gate.mkOR (Wire.mk "sp_ru0") (Wire.mk "sp_ru1") (Wire.mk "sp_ru_t0"),
-    Gate.mkOR (Wire.mk "sp_ru2") (Wire.mk "sp_ru3") (Wire.mk "sp_ru_t1"),
-    Gate.mkOR (Wire.mk "sp_ru_t0") (Wire.mk "sp_ru_t1") sp_round_up_raw,
-    Gate.mkAND sp_round_up_raw sp_inexact sp_round_up
-  ]
+/-- Hierarchical Int64ToFP module with 1-cycle pipeline. -/
+def mkInt64ToFPHDL : HDLModule :=
+  let src1 : Signal 64 := .input "src1" 64
+  let is_dp : Signal 1 := .input "is_dp" 1
+  let is_unsigned : Signal 1 := .input "is_unsigned" 1
+  let rm : Signal 3 := .input "rm" 3
 
-  let sp_mant_inc := makeIndexedWires "sp_mant_inc" 23
-  let zeros23 := (List.range 23).map fun _ => zero
-  let (sp_mant_add_gates, sp_mant_ovf) := mkAddFor
-    (AdderSpec.minArea sp_raw_mant.length .input)
-    sp_raw_mant zeros23 sp_round_up sp_mant_inc "sp_mant_add"
+  let instPrep : InstanceBinding := {
+    instName := "u_prep"
+    moduleName := "Int64Prep"
+    inputs := [
+      .mk "src1" 64 src1,
+      .mk "is_unsigned" 1 is_unsigned
+    ]
+    outputs := [
+      ("int_abs", 64),
+      ("norm_shamt", 6),
+      ("int_sign", 1),
+      ("int_is_zero", 1),
+      ("dp_exp_base", 11),
+      ("dp_exp_inc", 11),
+      ("sp_exp_base", 8),
+      ("sp_exp_inc", 8)
+    ]
+  }
 
-  let sp_mant_final := makeIndexedWires "sp_mant_fin" 23
-  let sp_mant_fin_gates := (List.range 23).map fun i =>
-    Gate.mkMUX (sp_mant_inc[i]!) zero sp_mant_ovf (sp_mant_final[i]!)
+  let prep_int_abs : Signal 64 := .instOut "u_prep" "int_abs" 64
+  let prep_norm_shamt : Signal 6 := .instOut "u_prep" "norm_shamt" 6
+  let prep_int_sign : Signal 1 := .instOut "u_prep" "int_sign" 1
+  let prep_int_is_zero : Signal 1 := .instOut "u_prep" "int_is_zero" 1
+  let prep_dp_exp_base : Signal 11 := .instOut "u_prep" "dp_exp_base" 11
+  let prep_dp_exp_inc : Signal 11 := .instOut "u_prep" "dp_exp_inc" 11
+  let prep_sp_exp_base : Signal 8 := .instOut "u_prep" "sp_exp_base" 8
+  let prep_sp_exp_inc : Signal 8 := .instOut "u_prep" "sp_exp_inc" 8
 
-  let const127 := (List.range 7 |>.map fun _ => one) ++ [zero]
-  let lead_pos_ext8 := (List.range 6 |>.map fun i => s1_lead_pos[i]!) ++ [zero, zero]
-  let sp_exp_base := makeIndexedWires "sp_exp_base" 8
-  let (sp_exp_add_gates, _) := mkAddFor
-    (AdderSpec.minArea const127.length .input)
-    const127 lead_pos_ext8 sp_mant_ovf sp_exp_base "sp_exp_add"
+  let clkW : Wire := Wire.mk "clock"
+  let rstW : Wire := Wire.mk "reset"
 
-  let res_int_to_sp := makeIndexedWires "res_int_to_sp" 64
-  let res_int_to_sp_gates := (List.range 64).map fun i =>
-    if i >= 32 then
-      Gate.mkBUF one (res_int_to_sp[i]!)
-    else
-      let bit :=
-        if i < 23 then sp_mant_final[i]!
-        else if i < 31 then sp_exp_base[i - 23]!
-        else s1_int_sign
-      Gate.mkMUX bit zero s1_int_is_zero (res_int_to_sp[i]!)
+  let reg_int_abs : Signal 64 := .wire "s1_int_abs" 64
+  let reg_norm_shamt : Signal 6 := .wire "s1_norm_shamt" 6
+  let reg_int_sign : Signal 1 := .wire "s1_int_sign" 1
+  let reg_int_is_zero : Signal 1 := .wire "s1_int_is_zero" 1
+  let reg_is_dp : Signal 1 := .wire "s1_is_dp" 1
+  let reg_rm : Signal 3 := .wire "s1_rm" 3
+  let reg_dp_exp_base : Signal 11 := .wire "s1_dp_exp_base" 11
+  let reg_dp_exp_inc : Signal 11 := .wire "s1_dp_exp_inc" 11
+  let reg_sp_exp_base : Signal 8 := .wire "s1_sp_exp_base" 8
+  let reg_sp_exp_inc : Signal 8 := .wire "s1_sp_exp_inc" 8
 
-  let exc_nx_int_to_fp := Wire.mk "exc_nx_int_to_fp"
-  let exc_nx_int_to_fp_gate := Gate.mkMUX sp_inexact dp_inexact s1_is_dp exc_nx_int_to_fp
-  let exc_nx_out_gate := Gate.mkBUF exc_nx_int_to_fp exc_nx
+  let instNormShift : InstanceBinding := {
+    instName := "u_norm_shift"
+    moduleName := "Int64NormShift"
+    inputs := [
+      .mk "norm_in" 64 reg_int_abs,
+      .mk "norm_shamt" 6 reg_norm_shamt
+    ]
+    outputs := [
+      ("dp_raw_mant", 52),
+      ("dp_round_bit", 1),
+      ("dp_sticky_bit", 1),
+      ("sp_raw_mant", 23),
+      ("sp_round_bit", 1),
+      ("sp_sticky_bit", 1)
+    ]
+  }
 
-  -- Select between DP and SP float result
-  let res_out_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (res_int_to_sp[i]!) (res_int_to_dp[i]!) s1_is_dp (result[i]!)
+  let shift_dp_raw_mant : Signal 52 := .instOut "u_norm_shift" "dp_raw_mant" 52
+  let shift_dp_round_bit : Signal 1 := .instOut "u_norm_shift" "dp_round_bit" 1
+  let shift_dp_sticky_bit : Signal 1 := .instOut "u_norm_shift" "dp_sticky_bit" 1
+  let shift_sp_raw_mant : Signal 23 := .instOut "u_norm_shift" "sp_raw_mant" 23
+  let shift_sp_round_bit : Signal 1 := .instOut "u_norm_shift" "sp_round_bit" 1
+  let shift_sp_sticky_bit : Signal 1 := .instOut "u_norm_shift" "sp_sticky_bit" 1
 
-  let all_gates :=
-    [not_is_unsigned_gate, int_sign_gate] ++
-    int_neg_sub_gates ++ int_abs_gates ++
-    grp_pe_gates ++ top_pe_gates ++ [int_is_zero_gate] ++
-    lead_pos_hi_gates ++ mux8_low_gates ++
-    pipe_dff_gates ++
-    norm_shamt_gates ++ norm_shift_gates ++
-    rm_inv_gates ++ rm_dec_gates ++
-    dp_sticky_gates ++ [dp_inexact_gate] ++ dp_round_gates ++ dp_mant_add_gates ++ dp_mant_fin_gates ++
-    dp_exp_add_gates ++ res_int_to_dp_gates ++
-    sp_sticky_gates ++ [sp_inexact_gate] ++ sp_round_gates ++ sp_mant_add_gates ++ sp_mant_fin_gates ++
-    sp_exp_add_gates ++ res_int_to_sp_gates ++ [exc_nx_int_to_fp_gate, exc_nx_out_gate] ++
-    res_out_gates
+  let instRoundPack : InstanceBinding := {
+    instName := "u_round_pack"
+    moduleName := "Int64RoundPack"
+    inputs := [
+      .mk "dp_raw_mant" 52 shift_dp_raw_mant,
+      .mk "dp_round_bit" 1 shift_dp_round_bit,
+      .mk "dp_sticky_bit" 1 shift_dp_sticky_bit,
+      .mk "sp_raw_mant" 23 shift_sp_raw_mant,
+      .mk "sp_round_bit" 1 shift_sp_round_bit,
+      .mk "sp_sticky_bit" 1 shift_sp_sticky_bit,
+      .mk "int_sign" 1 reg_int_sign,
+      .mk "int_is_zero" 1 reg_int_is_zero,
+      .mk "is_dp" 1 reg_is_dp,
+      .mk "rm" 3 reg_rm,
+      .mk "dp_exp_base" 11 reg_dp_exp_base,
+      .mk "dp_exp_inc" 11 reg_dp_exp_inc,
+      .mk "sp_exp_base" 8 reg_sp_exp_base,
+      .mk "sp_exp_inc" 8 reg_sp_exp_inc
+    ]
+    outputs := [
+      ("result", 64),
+      ("exc_nx", 1)
+    ]
+  }
 
-  { name := "Int64ToFP",
-    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [clock, reset, zero, one],
-    outputs := result ++ [exc_nx],
-    gates := all_gates,
-    instances := [],
-    signalGroups := [
-      { name := "src1", width := 64, wires := src1 },
-      { name := "rm", width := 3, wires := rm },
-      { name := "result", width := 64, wires := result }
-    ],
+  let result : Signal 64 := .instOut "u_round_pack" "result" 64
+  let exc_nx : Signal 1 := .instOut "u_round_pack" "exc_nx" 1
+
+  let m := HDLModule.empty "Int64ToFP"
+  let m := m.addInput "src1" 64
+  let m := m.addInput "is_dp" 1
+  let m := m.addInput "is_unsigned" 1
+  let m := m.addInput "rm" 3
+  let m := m.addInput "clock" 1
+  let m := m.addInput "reset" 1
+  let m := m.addInstance instPrep
+  let m := m.addRegister "s1_int_abs" 64 clkW rstW prep_int_abs
+  let m := m.addRegister "s1_norm_shamt" 6 clkW rstW prep_norm_shamt
+  let m := m.addRegister "s1_int_sign" 1 clkW rstW prep_int_sign
+  let m := m.addRegister "s1_int_is_zero" 1 clkW rstW prep_int_is_zero
+  let m := m.addRegister "s1_is_dp" 1 clkW rstW is_dp
+  let m := m.addRegister "s1_rm" 3 clkW rstW rm
+  let m := m.addRegister "s1_dp_exp_base" 11 clkW rstW prep_dp_exp_base
+  let m := m.addRegister "s1_dp_exp_inc" 11 clkW rstW prep_dp_exp_inc
+  let m := m.addRegister "s1_sp_exp_base" 8 clkW rstW prep_sp_exp_base
+  let m := m.addRegister "s1_sp_exp_inc" 8 clkW rstW prep_sp_exp_inc
+  let m := m.addInstance instNormShift
+  let m := m.addInstance instRoundPack
+  let m := m.addOutput "result" 64 result
+  let m := m.addOutput "exc_nx" 1 exc_nx
+  m
+
+/-- Lowered circuit definitions for each component. -/
+def int64PrepCircuit : Circuit :=
+  let c := lowerModule mkInt64Prep
+  { name := "Int64Prep",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
     keepHierarchy := true }
 
-def int64ToFPCircuit : Circuit := mkInt64ToFP
+def int64NormShiftCircuit : Circuit :=
+  let c := lowerModule mkInt64NormShift
+  { name := "Int64NormShift",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
+
+def int64RoundPackCircuit : Circuit :=
+  let c := lowerModule mkInt64RoundPack
+  { name := "Int64RoundPack",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
+
+def int64ToFPCircuit : Circuit :=
+  let c := lowerModule mkInt64ToFPHDL
+  { name := "Int64ToFP",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
 
 end Shoumei.Circuits.Combinational

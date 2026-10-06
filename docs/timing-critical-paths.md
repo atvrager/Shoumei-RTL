@@ -6,33 +6,37 @@ This document records physical synthesis results for Shoumei RTL on ASAP7 at 1.0
 
 Synthesis completed with 0 logic loops.
 The `yosys scc` command found 0 strongly connected components.
-21 submodules meet the 1.0 GHz timing constraint.
+22 submodules meet the 1.0 GHz timing constraint.
 
 ### Verified Fast Paths (< 1000.0 ps)
 
 | Module | ABC Delay (ps) | Status |
 | :--- | :--- | :--- |
 | `Subtractor64` | 28.9 | MET |
+| `Int64ToFP` (top wrapper) | 137.5 | MET |
 | `FPLongConverter` (wrapper) | 150.5 | MET |
 | `Comparator64` | 151.7 | MET |
 | `Mux8x64` | 215.9 | MET |
 | `ALU64` | 232.0 | MET |
 | `LogicUnit64` | 245.8 | MET |
 | `Comparator6` | 246.2 | MET |
-| `FPToInt64` (hierarchical) | 511.5 | MET |
 | `Shifter64` | 350.0 | MET |
 | `PCIncrementer8` | 370.8 | MET |
 | `PCIncrementer4` | 381.7 | MET |
 | `TrapSequencer` | 381.9 | MET |
+| `Int64NormShift` | 386.2 | MET |
 | `PriorityArbiter64` | 394.5 | MET |
+| `FPToInt64` (hierarchical) | 511.5 | MET |
 | `KoggeStoneAdder32` | 539.1 | MET |
 | `PipelinedMultiplier64` | 587.6 | MET |
 | `KoggeStoneAdder32NoCin` | 588.8 | MET |
 | `BranchTargetAdder32` | 619.1 | MET |
 | `Mul32x32To64` | 731.8 | MET |
 | `MulFinalAdder64` | 777.5 | MET |
+| `Int64RoundPack` | 869.1 | MET |
 | `KoggeStoneAdder64WithCin1` | 871.1 | MET |
 | `KoggeStoneAdder64NoCin` | 915.2 | MET |
+| `Int64Prep` | 930.2 | MET |
 
 ## Critical Paths Backlog (> 1000.0 ps)
 
@@ -64,15 +68,11 @@ Future work must pipeline these paths.
 - **Note**: Splitting Stage 4 into Stage 4a and Stage 4b closed the 1478.9 ps Stage 4 path.
 - **Proposed Solution**: Register the mantissa sum before the leading-zero detection network.
 
-### 6. `Int64ToFP` (1125.8 ps)
-- **Path**: Stage 2 normalization shift and mantissa rounding.
-- **Proposed Solution**: Register the shift output before mantissa round increment and packing.
-
-### 7. `KoggeStoneAdder106NoCin` (1065.9 ps)
+### 6. `KoggeStoneAdder106NoCin` (1065.9 ps)
 - **Path**: 106-bit carry-propagate adder.
 - **Proposed Solution**: Decompose into a 2-stage pipelined adder or a carry-select architecture.
 
-### 8. `FPFMA` (1026.4 ps)
+### 7. `FPFMA` (1026.4 ps)
 - **Path**: Single-precision Stage 2b.
 - **Note**: Exceeds target by 26.4 ps.
 - **Proposed Solution**: Optimize gate fanout on the addend alignment path.

@@ -32,6 +32,10 @@ inductive OutputBinding where
 inductive InputBinding where
   | mk (portName : String) (w : Nat) (expr : Signal w) : InputBinding
 
+/-- Internal wire binding connecting a wire name to a typed signal expression. -/
+inductive WireBinding where
+  | mk (name : String) (w : Nat) (expr : Signal w) : WireBinding
+
 /-- Register definition specifying clock, reset, initial value, and next signal. -/
 inductive RegBinding where
   | mk (name : String) (w : Nat) (clock reset : Wire)
@@ -50,9 +54,10 @@ structure HDLModule where
   name      : String
   inputs    : List PortDef
   outputs   : List OutputBinding
-  registers : List RegBinding       := []
-  instances : List InstanceBinding  := []
-  target    : DesignTarget          := {}
+  wires     : List WireBinding          := []
+  registers : List RegBinding           := []
+  instances : List InstanceBinding      := []
+  target    : DesignTarget              := {}
 
 namespace HDLModule
 
@@ -66,6 +71,10 @@ def empty (name : String) : HDLModule := {
 /-- Add an input port to a module. -/
 def addInput (m : HDLModule) (name : String) (width : Nat) : HDLModule :=
   { m with inputs := m.inputs ++ [⟨name, width⟩] }
+
+/-- Add an internal wire binding to a module. -/
+def addWire (m : HDLModule) (name : String) (width : Nat) (expr : Signal width) : HDLModule :=
+  { m with wires := m.wires ++ [.mk name width expr] }
 
 /-- Add an output port binding to a module. -/
 def addOutput (m : HDLModule) (name : String) (width : Nat) (expr : Signal width) : HDLModule :=

@@ -7,7 +7,7 @@ from `moduleName :=` references between circuits, certificates from the
 Lean registry, and docs from each file's leading comment block.
 
 - Lean files: **301**
-- Circuits with a literal `name :=` (graph nodes): **103**
+- Circuits with a literal `name :=` (graph nodes): **106**
 - Compositional certificates (Lean registry): **103**
 - Refinement atoms (Lean registry): **13**
 - Proof files: **80**
@@ -26,7 +26,7 @@ The label is the count of distinct instantiations that cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>47 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>50 circuits"]
   Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
@@ -114,7 +114,10 @@ graph TD
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes | yes |
 | `GPIO` | Shoumei/Peripherals | 0 |  |  | yes | yes |
-| `Int64ToFP` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
+| `Int64NormShift` | Shoumei/Circuits/Combinational | 2 |  |  |  | yes |
+| `Int64Prep` | Shoumei/Circuits/Combinational | 2 |  |  |  | yes |
+| `Int64RoundPack` | Shoumei/Circuits/Combinational | 2 |  |  |  | yes |
+| `Int64ToFP` | Shoumei/Circuits/Combinational | 3 |  |  | yes | yes |
 | `KoggeStoneAdder106` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
 | `KoggeStoneAdder106NoCin` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
 | `KoggeStoneAdder32` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
@@ -166,9 +169,9 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **98** circuits with no `Circuit satisfies Behavior` atom
-- **27** circuits with no `*Proofs.lean` mentioning them
-- **58** circuits that instantiate nothing (leaves)
+- **101** circuits with no `Circuit satisfies Behavior` atom
+- **30** circuits with no `*Proofs.lean` mentioning them
+- **57** circuits that instantiate nothing (leaves)
 - **45** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)

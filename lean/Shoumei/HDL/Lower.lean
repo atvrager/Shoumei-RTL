@@ -313,6 +313,17 @@ def lowerModule (m : HDLModule) : Circuit :=
       inWires := inWires ++ pWires
       if p.width > 1 then
         emitSignalGroup { name := p.name, width := p.width, wires := pWires }
+    -- Lower internal wires
+    for wb in m.wires do
+      match wb with
+      | WireBinding.mk wname ww wexpr =>
+          let exprWires ← lowerSignal m.target wexpr
+          let destWires := (List.range ww).map fun i =>
+            if ww == 1 then Wire.mk wname else Wire.mk s!"{wname}_{i}"
+          for i in [:ww] do
+            emitGate (Gate.mkBUF (exprWires[i]!) (destWires[i]!))
+          if ww > 1 then
+            emitSignalGroup { name := wname, width := ww, wires := destWires }
     -- Lower registers
     for reg in m.registers do
       match reg with
