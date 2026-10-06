@@ -45,17 +45,17 @@ def freshWires (pfx : String) (w : Nat) : ElabM (List Wire) := do
 /-- Emit a gate into the circuit netlist. -/
 def emitGate (g : Gate) : ElabM Unit := do
   let s ← get
-  set { s with gates := s.gates ++ [g] }
+  set { s with gates := g :: s.gates }
 
 /-- Emit a submodule instance into the circuit netlist. -/
 def emitInstance (inst : CircuitInstance) : ElabM Unit := do
   let s ← get
-  set { s with instances := s.instances ++ [inst] }
+  set { s with instances := inst :: s.instances }
 
 /-- Emit a signal group for SystemVerilog bus bundling. -/
 def emitSignalGroup (sg : SignalGroup) : ElabM Unit := do
   let s ← get
-  set { s with signalGroups := s.signalGroups ++ [sg] }
+  set { s with signalGroups := sg :: s.signalGroups }
 
 /-- Construct a balanced binary OR tree to reduce a list of wires to a single wire. -/
 partial def lowerOrTree (pfx : String) (wires : List Wire) : ElabM Wire := do
@@ -70,13 +70,13 @@ partial def lowerOrTree (pfx : String) (wires : List Wire) : ElabM Wire := do
         if i + 1 < wires.length then
           let outW ← freshWire s!"{pfx}_{pairIdx}"
           emitGate (Gate.mkOR (wires[i]!) (wires[i + 1]!) outW)
-          nextLevel := nextLevel ++ [outW]
+          nextLevel := outW :: nextLevel
           i := i + 2
           pairIdx := pairIdx + 1
         else
-          nextLevel := nextLevel ++ [wires[i]!]
+          nextLevel := (wires[i]!) :: nextLevel
           i := i + 1
-      lowerOrTree s!"{pfx}_l" nextLevel
+      lowerOrTree s!"{pfx}_l" nextLevel.reverse
 
 /-- Lower a typed signal expression to a list of hardware wires. -/
 def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List Wire)
@@ -117,7 +117,7 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
   | _, .concat a b => do
       let aWires ← lowerSignal target a
       let bWires ← lowerSignal target b
-      return aWires ++ bWires
+      return bWires ++ aWires
 
   | w, .not a => do
       let aWires ← lowerSignal target a
@@ -174,26 +174,28 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
           width := w
           cin := .none
         }
-        let impl := selectAdder spec
-        let modName := adderImplName impl spec
-        let instName ← freshWire "u_add"
-        let aPorts := (List.range w).map fun i => (s!"a_{i}", aWires[i]!)
-        let bPorts := (List.range w).map fun i => (s!"b_{i}", bWires[i]!)
-        let sumPorts := (List.range w).map fun i => (s!"result_{i}", outWires[i]!)
-        emitInstance {
-          moduleName := modName
-          instName := instName.name
-          portMap := aPorts ++ bPorts ++ sumPorts
-        }
+        if w == 32 || w == 64 || w == 106 then
+          let impl := selectAdder spec
+          let modName := adderImplName impl spec
+          let instName ← freshWire "u_add"
+          let aPorts := (List.range w).map fun i => (s!"a_{i}", aWires[i]!)
+          let bPorts := (List.range w).map fun i => (s!"b_{i}", bWires[i]!)
+          let sumPorts := (List.range w).map fun i => (s!"sum_{i}", outWires[i]!)
+          emitInstance {
+            moduleName := modName
+            instName := instName.name
+            portMap := aPorts ++ bPorts ++ sumPorts
+          }
+        else
+          let pfx ← freshWire "add"
+          let (gates, _) := mkAddFor spec aWires bWires (Wire.mk "zero") outWires pfx.name
+          for g in gates do emitGate g
       return outWires
 
   | w, .sub a b => do
       let aWires ← lowerSignal target a
       let bWires ← lowerSignal target b
       let outWires ← freshWires "diff" w
-      let bInvWires ← freshWires "binv" w
-      for i in [:w] do
-        emitGate (Gate.mkNOT (bWires[i]!) (bInvWires[i]!))
       let spec : AdderSpec := {
         pdk := target.pdk
         periodPs := target.periodPs
@@ -201,17 +203,25 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
         width := w
         cin := .one
       }
-      let impl := selectAdder spec
-      let modName := adderImplName impl spec
-      let instName ← freshWire "u_sub"
-      let aPorts := (List.range w).map fun i => (s!"a_{i}", aWires[i]!)
-      let bPorts := (List.range w).map fun i => (s!"b_{i}", bInvWires[i]!)
-      let sumPorts := (List.range w).map fun i => (s!"result_{i}", outWires[i]!)
-      emitInstance {
-        moduleName := modName
-        instName := instName.name
-        portMap := aPorts ++ bPorts ++ sumPorts
-      }
+      if w == 32 || w == 64 || w == 106 then
+        let bInvWires ← freshWires "binv" w
+        for i in [:w] do
+          emitGate (Gate.mkNOT (bWires[i]!) (bInvWires[i]!))
+        let impl := selectAdder spec
+        let modName := adderImplName impl spec
+        let instName ← freshWire "u_sub"
+        let aPorts := (List.range w).map fun i => (s!"a_{i}", aWires[i]!)
+        let bPorts := (List.range w).map fun i => (s!"b_{i}", bInvWires[i]!)
+        let sumPorts := (List.range w).map fun i => (s!"sum_{i}", outWires[i]!)
+        emitInstance {
+          moduleName := modName
+          instName := instName.name
+          portMap := aPorts ++ bPorts ++ sumPorts
+        }
+      else
+        let pfx ← freshWire "sub"
+        let (gates, _) := mkSubFor spec aWires bWires outWires pfx.name (Wire.mk "one")
+        for g in gates do emitGate g
       return outWires
 
   | _, .mul a b => do
@@ -228,8 +238,6 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
       let xorWires ← freshWires "diff" srcW
       for i in [:srcW] do
         emitGate (Gate.mkXOR (aWires[i]!) (bWires[i]!) (xorWires[i]!))
-      if srcW > 1 then
-        emitSignalGroup { name := "diff", width := srcW, wires := xorWires }
       let outW ← freshWire "eq"
       if srcW == 0 then
         emitGate (Gate.mkBUF (Wire.mk "one") outW)
@@ -247,9 +255,6 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
         emitGate (Gate.mkBUF (Wire.mk "zero") outW)
       else
         let diffWires ← freshWires "cmp_diff" srcW
-        let bInvWires ← freshWires "cmp_binv" srcW
-        for i in [:srcW] do
-          emitGate (Gate.mkNOT (bWires[i]!) (bInvWires[i]!))
         let spec : AdderSpec := {
           pdk := target.pdk
           periodPs := target.periodPs
@@ -257,24 +262,44 @@ def lowerSignal (target : DesignTarget) : {w : Nat} → Signal w → ElabM (List
           width := srcW
           cin := .one
         }
-        let impl := selectAdder spec
-        let modName := adderImplName impl spec
-        let instName ← freshWire "u_cmp_sub"
-        let aPorts := (List.range srcW).map fun i => (s!"a_{i}", aWires[i]!)
-        let bPorts := (List.range srcW).map fun i => (s!"b_{i}", bInvWires[i]!)
-        let sumPorts := (List.range srcW).map fun i => (s!"result_{i}", diffWires[i]!)
-        emitInstance {
-          moduleName := modName
-          instName := instName.name
-          portMap := aPorts ++ bPorts ++ sumPorts
-        }
-        emitGate (Gate.mkBUF (Wire.mk "zero") outW)
+        let pfx ← freshWire "cmp"
+        let (gates, borrow) := mkSubFor spec aWires bWires diffWires pfx.name (Wire.mk "one")
+        for g in gates do emitGate g
+        emitGate (Gate.mkBUF borrow outW)
       return [outW]
 
   | w, .instOut instName portName _ => do
       return (List.range w).map fun i =>
         if w == 1 then Wire.mk s!"{instName}_{portName}"
         else Wire.mk s!"{instName}_{portName}_{i}"
+
+  | w, .dshr s amt => do
+      let sWires ← lowerSignal target s
+      let amtWires ← lowerSignal target amt
+      let mut curWires := sWires
+      for stage in [:amtWires.length] do
+        let shiftVal := Nat.pow 2 stage
+        let nextWires ← freshWires s!"dshr_s{stage}" w
+        let bitW := amtWires[stage]!
+        for i in [:w] do
+          let shiftedW := if i + shiftVal < w then curWires[i + shiftVal]! else Wire.mk "zero"
+          emitGate (Gate.mkMUX (curWires[i]!) shiftedW bitW (nextWires[i]!))
+        curWires := nextWires
+      return curWires
+
+  | w, .dshl s amt => do
+      let sWires ← lowerSignal target s
+      let amtWires ← lowerSignal target amt
+      let mut curWires := sWires
+      for stage in [:amtWires.length] do
+        let shiftVal := Nat.pow 2 stage
+        let nextWires ← freshWires s!"dshl_s{stage}" w
+        let bitW := amtWires[stage]!
+        for i in [:w] do
+          let shiftedW := if i ≥ shiftVal then curWires[i - shiftVal]! else Wire.mk "zero"
+          emitGate (Gate.mkMUX (curWires[i]!) shiftedW bitW (nextWires[i]!))
+        curWires := nextWires
+      return curWires
 
 /-- Lower an entire `HDLModule` into a verified `Circuit` netlist. -/
 def lowerModule (m : HDLModule) : Circuit :=
@@ -333,9 +358,9 @@ def lowerModule (m : HDLModule) : Circuit :=
     name := m.name
     inputs := inputs
     outputs := outputs
-    gates := state.gates
-    instances := state.instances
-    signalGroups := state.signalGroups
+    gates := state.gates.reverse
+    instances := state.instances.reverse
+    signalGroups := state.signalGroups.reverse
   }
 
 end Shoumei.HDL

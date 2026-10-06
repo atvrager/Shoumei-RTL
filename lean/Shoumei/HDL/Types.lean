@@ -50,6 +50,10 @@ inductive Signal : Nat → Type where
   | ult (a b : Signal srcW) : Signal 1
   /-- Submodule output port reference. -/
   | instOut (instName : String) (portName : String) (w : Nat) : Signal w
+  /-- Dynamic logical shift right by variable-width amount. -/
+  | dshr (s : Signal w) (amt : Signal amtW) : Signal w
+  /-- Dynamic logical shift left by variable-width amount. -/
+  | dshl (s : Signal w) (amt : Signal amtW) : Signal w
 
 /-- Convenience alias for single-bit boolean signals. -/
 abbrev SignalBool := Signal 1

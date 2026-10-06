@@ -138,4 +138,18 @@ def shiftSig : Signal 8 :=
 theorem eval_shl : evalSignal dummyEnv shiftSig = 0x3C := by
   decide
 
+-- Test 8: Dynamic barrel shift right
+def dshrSig : Signal 8 :=
+  Signal.dshr (.const (BitVec.ofNat 8 0b11001000)) (.const (BitVec.ofNat 3 3))
+
+theorem eval_dshr : evalSignal dummyEnv dshrSig = 0b00011001 := by
+  decide
+
+-- Test 9: Dynamic barrel shift left
+def dshlSig : Signal 8 :=
+  Signal.dshl (.const (BitVec.ofNat 8 0b00010110)) (.const (BitVec.ofNat 3 2))
+
+theorem eval_dshl : evalSignal dummyEnv dshlSig = 0b01011000 := by
+  decide
+
 end Shoumei.HDL.Tests

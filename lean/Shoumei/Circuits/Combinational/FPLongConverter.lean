@@ -82,7 +82,7 @@ def fpLongConverterCircuit : Circuit :=
       (src1.enum.map (fun ⟨i, w⟩ => (s!"src1[{i}]", w))) ++
       [("is_dp", is_dp), ("is_unsigned", is_unsigned)] ++
       (rm.enum.map (fun ⟨i, w⟩ => (s!"rm[{i}]", w))) ++
-      [("clock", clock), ("reset", reset), ("zero", zero), ("one", one)] ++
+      [("clock", clock), ("reset", reset)] ++
       (f2i_result.enum.map (fun ⟨i, w⟩ => (s!"result[{i}]", w))) ++
       [("exc_nv", f2i_exc_nv), ("exc_nx", f2i_exc_nx)]
   }

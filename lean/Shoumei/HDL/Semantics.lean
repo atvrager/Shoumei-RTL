@@ -82,5 +82,13 @@ def evalSignal (env : Env) : {w : Nat} → Signal w → BitVec w
         env (if w == 1 then Wire.mk s!"{instName}_{portName}"
              else Wire.mk s!"{instName}_{portName}_{i}")
       bitVecOfBools w bits
+  | _, .dshr s amt =>
+      let sVal := evalSignal env s
+      let amtVal := evalSignal env amt
+      sVal >>> amtVal.toNat
+  | _, .dshl s amt =>
+      let sVal := evalSignal env s
+      let amtVal := evalSignal env amt
+      sVal <<< amtVal.toNat
 
 end Shoumei.HDL

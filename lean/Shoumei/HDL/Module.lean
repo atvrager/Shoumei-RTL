@@ -76,6 +76,10 @@ def addRegister (m : HDLModule) (name : String) (width : Nat) (clock reset : Wir
     (next : Signal width) (init : BitVec width := BitVec.ofNat width 0) : HDLModule :=
   { m with registers := m.registers ++ [.mk name width clock reset init next] }
 
+/-- Add a submodule instance to a module. -/
+def addInstance (m : HDLModule) (inst : InstanceBinding) : HDLModule :=
+  { m with instances := m.instances ++ [inst] }
+
 end HDLModule
 
 end Shoumei.HDL

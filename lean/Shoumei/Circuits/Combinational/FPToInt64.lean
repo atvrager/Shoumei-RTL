@@ -1,536 +1,499 @@
 /-
 Circuits/Combinational/FPToInt64.lean - 64-Bit Float to Integer Conversion Submodule
 
-Submodule of FPLongConverter implementing:
-- FCVT.L.S  (SP float -> signed 64-bit int)
-- FCVT.LU.S (SP float -> unsigned 64-bit int)
-- FCVT.L.D  (DP float -> signed 64-bit int)
-- FCVT.LU.D (DP float -> unsigned 64-bit int)
-
-Interface:
-- Inputs:
-  * src1[63:0]: Float operand (SP in bits [31:0] or DP in bits [63:0])
-  * is_dp: High for double-precision float input, low for single-precision
-  * is_unsigned: High for unsigned integer result, low for signed integer
-  * rm[2:0]: Rounding mode (0=RNE, 1=RTZ, 2=RDN, 3=RUP, 4=RMM)
-  * clock: Pipeline clock
-  * reset: Synchronous reset
-  * zero, one: Constant wires
-- Outputs:
-  * result[63:0]: Converted 64-bit integer
-  * exc_nv: Invalid operation exception
-  * exc_nx: Inexact exception
+Rebuilds FPToInt64 with the hierarchical HDL frontend.
+The circuit decomposes into four verified submodules:
+  1. FPUnpackDP: Float unpack, SP-to-DP expansion, and classification
+  2. FPToIntAlign: Dynamic 128-bit right shift and sticky bit reduction
+  3. FPToIntRoundNeg: Rounding mode evaluation and parallel negation
+  4. FPToIntClamp: Overflow detection, saturation, and exception generation
+Computes magnitude increment and negation in parallel to meet 1.0 GHz timing.
 -/
 
 import Shoumei.DSL
-import Shoumei.Components.Select
-import Shoumei.Circuits.Combinational.KoggeStoneAdder
+import Shoumei.HDL.Types
+import Shoumei.HDL.Expr
+import Shoumei.HDL.Module
+import Shoumei.HDL.Lower
 
 namespace Shoumei.Circuits.Combinational
 
 open Shoumei
-open Shoumei.Components
+open Shoumei.HDL
 
-private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
-  match inputs with
-  | [] => (Wire.mk s!"{pfx}_empty", [])
-  | [w] => (w, [])
-  | _ =>
-    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
-      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
-        match remaining with
-        | [] => (acc_w.reverse, acc_g)
-        | [w] => ((w :: acc_w).reverse, acc_g)
-        | w1 :: w2 :: rest =>
-          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
-          let gate := Gate.mkOR w1 w2 intermediate
-          go rest (intermediate :: acc_w) (acc_g ++ [gate])
-      go ws [] []
-    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List
-      Gate :=
-      match fuel with
-      | 0 => (ws.head!, acc)
-      | fuel' + 1 =>
-        match ws with
-        | [] => (Wire.mk s!"{pfx}_empty", acc)
-        | [w] => (w, acc)
-        | _ =>
-          let (next_ws, next_gates) := buildLevel ws lvl
-          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
-    reduceTree inputs 0 [] (inputs.length + 1)
+/-- Submodule 1: Unpack and classify SP/DP floating-point inputs. -/
+def mkFPUnpackDP : HDLModule :=
+  let src1 : Signal 64 := .input "src1" 64
+  let is_dp : Signal 1 := .input "is_dp" 1
 
-private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
-  match inputs with
-  | [] => (Wire.mk s!"{pfx}_empty", [])
-  | [w] => (w, [])
-  | _ =>
-    let buildLevel (ws : List Wire) (lvl : Nat) : List Wire × List Gate :=
-      let rec go (remaining : List Wire) (acc_w : List Wire) (acc_g : List Gate) :=
-        match remaining with
-        | [] => (acc_w.reverse, acc_g)
-        | [w] => ((w :: acc_w).reverse, acc_g)
-        | w1 :: w2 :: rest =>
-          let intermediate := Wire.mk s!"{pfx}_l{lvl}_{acc_w.length}"
-          let gate := Gate.mkAND w1 w2 intermediate
-          go rest (intermediate :: acc_w) (acc_g ++ [gate])
-      go ws [] []
-    let rec reduceTree (ws : List Wire) (lvl : Nat) (acc : List Gate) (fuel : Nat) : Wire × List
-      Gate :=
-      match fuel with
-      | 0 => (ws.head!, acc)
-      | fuel' + 1 =>
-        match ws with
-        | [] => (Wire.mk s!"{pfx}_empty", acc)
-        | [w] => (w, acc)
-        | _ =>
-          let (next_ws, next_gates) := buildLevel ws lvl
-          reduceTree next_ws (lvl + 1) (acc ++ next_gates) fuel'
-    reduceTree inputs 0 [] (inputs.length + 1)
+  let sp_in_sign : Signal 1 := src1.bit 31
+  let sp_in_exp : Signal 8 := src1.slice 30 23
+  let sp_in_mant : Signal 23 := src1.slice 22 0
 
-/-- Barrel left shift by a variable amount, one stage per bit of the amount.
-    Mirrors the helper in FPMisc: kept local so this module does not reach into
-    the sequential layer. -/
-private def mkBarrelShiftLeftN (pfx : String) (data : List Wire) (n : Nat)
-    (shiftAmt : List Wire) (zeroW : Wire) : List Wire × List Gate :=
-  let (finalData, allGates) := (List.range shiftAmt.length).foldl (fun (acc : List Wire × List Gate)
-    stage =>
-    let prev := acc.1
-    let shift := Nat.pow 2 stage
-    let cur := makeIndexedWires s!"{pfx}_s{stage}" n
-    let stageGates := (List.range n).map fun i =>
-      if i ≥ shift then
-        Gate.mkMUX (prev[i]!) (prev[i - shift]!) (shiftAmt[stage]!) (cur[i]!)
-      else
-        Gate.mkMUX (prev[i]!) zeroW (shiftAmt[stage]!) (cur[i]!)
-    (cur, acc.2 ++ stageGates)
-  ) (data, [])
-  (finalData, allGates)
+  let sp_in_exp_ones : Signal 1 := sp_in_exp.andReduce
+  let sp_in_exp_zeros : Signal 1 := ~~~sp_in_exp.orReduce
+  let sp_in_mant_any : Signal 1 := sp_in_mant.orReduce
+  let sp_in_mant_zeros : Signal 1 := ~~~sp_in_mant_any
 
-/-- 64-bit Float to Integer Converter Circuit -/
-def mkFPToInt64 : Circuit :=
-  let src1 := makeIndexedWires "src1" 64
-  let is_dp := Wire.mk "is_dp"
-  let is_unsigned := Wire.mk "is_unsigned"
-  let rm := makeIndexedWires "rm" 3
-  let clock := Wire.mk "clock"
-  let reset := Wire.mk "reset"
-  let zero := Wire.mk "zero"
-  let one := Wire.mk "one"
+  let sp_in_is_nan : Signal 1 := sp_in_exp_ones &&& sp_in_mant_any
+  let sp_in_is_inf : Signal 1 := sp_in_exp_ones &&& sp_in_mant_zeros
+  let sp_in_is_zero : Signal 1 := sp_in_exp_zeros &&& sp_in_mant_zeros
 
-  let result := makeIndexedWires "result" 64
-  let exc_nv := Wire.mk "exc_nv"
-  let exc_nx := Wire.mk "exc_nx"
+  have h8_11 : 8 ≤ 11 := by omega
+  let sp_exp_ext : Signal 11 := Signal.zeroExtend 11 h8_11 sp_in_exp
+  let const896 : Signal 11 := .const (BitVec.ofNat 11 896)
+  let norm_sp_dp_exp : Signal 11 := sp_exp_ext + const896
 
-  -- For SP float inputs (is_dp == 0): losslessly expand SP to DP float
-  -- SP fields: sign=src1[31], exp=src1[30:23], mant=src1[22:0]
-  let sp_in_sign := src1[31]!
-  let sp_in_exp := (List.range 8).map fun i => src1[23 + i]!
-  let sp_in_mant := (List.range 23).map fun i => src1[i]!
+  have hnorm : 1 + (11 + (23 + 29)) = 64 := by omega
+  let norm_as_dp : Signal 64 := hnorm ▸ .concat sp_in_sign
+    (.concat norm_sp_dp_exp (.concat sp_in_mant (Signal.zero 29)))
 
-  let (sp_in_exp_ones, sp_in_exp_ones_gates) := mkAndTree "spin_e1" sp_in_exp
-  let (sp_in_exp_any, sp_in_exp_any_gates) := mkOrTree "spin_ea" sp_in_exp
-  let sp_in_exp_zeros := Wire.mk "spin_ez"
-  let sp_in_exp_zeros_gate := Gate.mkNOT sp_in_exp_any sp_in_exp_zeros
+  have hzero : 1 + 63 = 64 := by omega
+  let zero_as_dp : Signal 64 := hzero ▸ .concat sp_in_sign (Signal.zero 63)
 
-  let (sp_in_mant_any, sp_in_mant_any_gates) := mkOrTree "spin_ma" sp_in_mant
-  let sp_in_mant_zeros := Wire.mk "spin_mz"
-  let sp_in_mant_zeros_gate := Gate.mkNOT sp_in_mant_any sp_in_mant_zeros
+  have hinf : 1 + (11 + 52) = 64 := by omega
+  let inf_as_dp : Signal 64 := hinf ▸ .concat sp_in_sign
+    (.concat (.const (BitVec.ofNat 11 0x7FF)) (Signal.zero 52))
 
-  let sp_in_is_nan := Wire.mk "spin_is_nan"
-  let sp_in_is_inf := Wire.mk "spin_is_inf"
-  let sp_in_is_zero := Wire.mk "spin_is_zero"
-  let sp_in_class_gates := [
-    Gate.mkAND sp_in_exp_ones sp_in_mant_any sp_in_is_nan,
-    Gate.mkAND sp_in_exp_ones sp_in_mant_zeros sp_in_is_inf,
-    Gate.mkAND sp_in_exp_zeros sp_in_mant_zeros sp_in_is_zero
-  ]
+  let nan_as_dp : Signal 64 := .const (BitVec.ofNat 64 0x7FF8000000000000)
 
-  -- SP exp to DP exp: if normal, dp_exp = sp_exp + 896 (896 = 0b01110000000)
-  let norm_sp_dp_exp := makeIndexedWires "nsp_dpe" 11
-  let norm_sp_dp_exp_c := makeIndexedWires "nsp_dpe_c" 12
-  let norm_sp_dp_exp_gates := [Gate.mkBUF zero (norm_sp_dp_exp_c[0]!)] ++ (List.range 11).flatMap
-    fun i =>
-    let a := if i < 8 then sp_in_exp[i]! else zero
-    let b := if i == 7 || i == 8 || i == 9 then one else zero
-    let ab_xor := Wire.mk s!"nsp_xor_{i}"
-    let ab_and := Wire.mk s!"nsp_and_{i}"
-    let cin_and := Wire.mk s!"nsp_ca_{i}"
-    [Gate.mkXOR a b ab_xor,
-     Gate.mkXOR ab_xor (norm_sp_dp_exp_c[i]!) (norm_sp_dp_exp[i]!),
-     Gate.mkAND a b ab_and,
-     Gate.mkAND ab_xor (norm_sp_dp_exp_c[i]!) cin_and,
-     Gate.mkOR ab_and cin_and (norm_sp_dp_exp_c[i + 1]!)]
+  let sp_m0 : Signal 64 := .mux sp_in_is_zero zero_as_dp norm_as_dp
+  let sp_m1 : Signal 64 := .mux sp_in_is_inf inf_as_dp sp_m0
+  let sp_as_dp : Signal 64 := .mux sp_in_is_nan nan_as_dp sp_m1
 
-  -- Assemble expanded DP representation of SP input
-  let sp_as_dp := makeIndexedWires "sp_as_dp" 64
-  let sp_as_dp_gates := (List.range 64).flatMap fun i =>
-    let norm_bit :=
-      if i < 29 then zero
-      else if i < 52 then sp_in_mant[i - 29]!
-      else if i < 63 then norm_sp_dp_exp[i - 52]!
-      else sp_in_sign
-    let nan_bit := if i >= 51 && i <= 62 then one else zero
-    let inf_bit := if i < 52 then zero else if i < 63 then one else sp_in_sign
-    let zero_bit := if i == 63 then sp_in_sign else zero
-    let m0 := Wire.mk s!"spdp_m0_{i}"
-    let m1 := Wire.mk s!"spdp_m1_{i}"
-    [Gate.mkMUX norm_bit zero_bit sp_in_is_zero m0,
-     Gate.mkMUX m0 inf_bit sp_in_is_inf m1,
-     Gate.mkMUX m1 nan_bit sp_in_is_nan (sp_as_dp[i]!)]
+  let flt_in : Signal 64 := .mux is_dp src1 sp_as_dp
 
-  -- Master Float Input to Int64 converter: select DP input or expanded SP input
-  let flt_in := makeIndexedWires "flt_in" 64
-  let flt_in_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (sp_as_dp[i]!) (src1[i]!) is_dp (flt_in[i]!)
+  let flt_exp : Signal 11 := flt_in.slice 62 52
+  let flt_mant : Signal 52 := flt_in.slice 51 0
 
-  let flt_sign := flt_in[63]!
-  let flt_exp := (List.range 11).map fun i => flt_in[52 + i]!
-  let flt_mant := (List.range 52).map fun i => flt_in[i]!
+  let flt_exp_ones : Signal 1 := flt_exp.andReduce
+  let flt_exp_zeros : Signal 1 := ~~~flt_exp.orReduce
+  let flt_mant_any : Signal 1 := flt_mant.orReduce
+  let flt_mant_zeros : Signal 1 := ~~~flt_mant_any
 
-  -- Classification of DP float input
-  let (flt_exp_ones, flt_exp_ones_gates) := mkAndTree "flt_e1" flt_exp
-  let (flt_exp_any, flt_exp_any_gates) := mkOrTree "flt_ea" flt_exp
-  let flt_exp_zeros := Wire.mk "flt_ez"
-  let flt_exp_zeros_gate := Gate.mkNOT flt_exp_any flt_exp_zeros
+  let flt_is_nan : Signal 1 := flt_exp_ones &&& flt_mant_any
+  let flt_is_inf : Signal 1 := flt_exp_ones &&& flt_mant_zeros
+  let flt_is_zero : Signal 1 := flt_exp_zeros &&& flt_mant_zeros
 
-  let (flt_mant_any, flt_mant_any_gates) := mkOrTree "flt_ma" flt_mant
-  let flt_mant_zeros := Wire.mk "flt_mz"
-  let flt_mant_zeros_gate := Gate.mkNOT flt_mant_any flt_mant_zeros
+  let m := HDLModule.empty "FPUnpackDP"
+  let m := m.addInput "src1" 64
+  let m := m.addInput "is_dp" 1
+  let m := m.addOutput "flt_in" 64 flt_in
+  let m := m.addOutput "flt_is_nan" 1 flt_is_nan
+  let m := m.addOutput "flt_is_inf" 1 flt_is_inf
+  let m := m.addOutput "flt_is_zero" 1 flt_is_zero
+  let m := m.addOutput "flt_mant_any" 1 flt_mant_any
+  m
 
-  let flt_is_nan := Wire.mk "flt_is_nan"
-  let flt_is_inf := Wire.mk "flt_is_inf"
-  let flt_is_zero := Wire.mk "flt_is_zero"
-  let flt_class_gates := [
-    Gate.mkAND flt_exp_ones flt_mant_any flt_is_nan,
-    Gate.mkAND flt_exp_ones flt_mant_zeros flt_is_inf,
-    Gate.mkAND flt_exp_zeros flt_mant_zeros flt_is_zero
-  ]
+/-- Submodule 2: Dynamic 128-bit alignment shift and sticky bit calculation. -/
+def mkFPToIntAlign : HDLModule :=
+  let flt_in : Signal 64 := .input "flt_in" 64
+  let flt_is_zero : Signal 1 := .input "flt_is_zero" 1
 
-  -- Shift amount calculation for 128-bit barrel right shifter:
-  -- shamt = 115 - (flt_exp - 1023) = 1138 - flt_exp (7 bits: 0..127)
-  let const1138 := [zero, one, zero, zero, one, one, one, zero, zero, zero, one]
-  let const1022 := [zero, one, one, one, one, one, one, one, one, one, zero]
-  let const1075 := [one, one, zero, zero, one, one, zero, zero, zero, zero, one]
-  let shamt_full := makeIndexedWires "shamt_full" 11
-  let (shamt_sub_gates, shamt_borrow) := mkSubFor (AdderSpec.minDelay const1138.length .one)
-    const1138 flt_exp shamt_full "shamt_sub" one
+  let flt_exp : Signal 11 := flt_in.slice 62 52
+  let flt_mant : Signal 52 := flt_in.slice 51 0
 
-  let shamt7 := (List.range 7).map fun i =>
-    Wire.mk s!"shamt7_{i}"
-  let shamt7_gates := (List.range 7).map fun i =>
-    Gate.mkMUX (shamt_full[i]!) zero shamt_borrow (shamt7[i]!)
+  let const1138 : Signal 11 := .const (BitVec.ofNat 11 1138)
+  let shamt_full : Signal 11 := const1138 - flt_exp
+  let shamt_borrow : Signal 1 := .ult const1138 flt_exp
+  let shamt7_raw : Signal 7 := shamt_full.slice 6 0
+  let shamt7 : Signal 7 := .mux shamt_borrow (Signal.zero 7) shamt7_raw
 
-  -- Form the 128-bit bus:
-  let bus128_init :=
-    (List.range 63 |>.map fun _ => zero) ++
-    flt_mant ++
-    [one] ++
-    (List.range 12 |>.map fun _ => zero)
+  have hbus : 12 + (1 + (52 + 63)) = 128 := by omega
+  let bus128_init : Signal 128 := hbus ▸ .concat (Signal.zero 12)
+    (.concat Signal.true1 (.concat flt_mant (Signal.zero 63)))
 
-  -- 128-bit Barrel Right Shifter.
-  let (bus128_out, bus_shift_gates) := (List.range 7).foldl
-    (fun (acc : List Wire × List Gate) step =>
-      let stageIn := acc.1
-      let shiftVal := Nat.pow 2 step
-      let stageOut := makeIndexedWires s!"b128_s{step}" 128
-      let gates := (List.range 128).map fun i =>
-        if i + shiftVal < 128 then
-          Gate.mkMUX (stageIn[i]!) (stageIn[i + shiftVal]!) (shamt7[step]!) (stageOut[i]!)
-        else
-          Gate.mkMUX (stageIn[i]!) zero (shamt7[step]!) (stageOut[i]!)
-      (stageOut, acc.2 ++ gates)
-    ) (bus128_init, [])
+  let bus128_out : Signal 128 := Signal.dshr bus128_init shamt7
 
-  -- Magnitude < 1.0 check: flt_exp < 1023
-  let (exp_lo10_all, exp_lo10_all_gates) := mkAndTree "exp_lo10" (List.range 10 |>.map fun i =>
-    flt_exp[i]!)
-  let not_exp_lo10_all := Wire.mk "not_exp_lo10_all"
-  let not_flt_exp10 := Wire.mk "not_flt_exp10"
-  let flt_exp_lt_1023 := Wire.mk "flt_exp_lt_1023"
-  let exp_lt_1023_gates := [
-    Gate.mkNOT exp_lo10_all not_exp_lo10_all,
-    Gate.mkNOT (flt_exp[10]!) not_flt_exp10,
-    Gate.mkAND not_flt_exp10 not_exp_lo10_all flt_exp_lt_1023
-  ]
+  let const1023 : Signal 11 := .const (BitVec.ofNat 11 1023)
+  let flt_exp_lt_1023 : Signal 1 := .ult flt_exp const1023
 
-  -- Integer magnitude from shifted bus: bits [63:0]
-  let flt_int_mag := makeIndexedWires "flt_int_mag" 64
-  let flt_int_mag_gates := (List.range 64).map fun i =>
-    Gate.mkMUX (bus128_out[i]!) zero flt_exp_lt_1023 (flt_int_mag[i]!)
+  let bus_mag : Signal 64 := bus128_out.slice 63 0
+  let flt_int_mag : Signal 64 := .mux flt_exp_lt_1023 (Signal.zero 64) bus_mag
 
-  -- Discarded fractional bits.
-  let mant53 := flt_mant ++ [one]
-  let guard_amt_full := makeIndexedWires "fti_gamt" 11
-  let (guard_amt_sub_gates, guard_amt_borrow) :=
-    mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1022 guard_amt_full "fti_gamt_sub" one
-  let amt_hi_full := makeIndexedWires "fti_gahi" 11
-  let (amt_hi_sub_gates, amt_hi_borrow) :=
-    mkSubFor (AdderSpec.minDelay 11 .one) flt_exp const1075 amt_hi_full "fti_gahi_sub" one
-  let guard_amt := makeIndexedWires "fti_ga" 7
-  let guard_amt_gates := guard_amt_sub_gates ++ amt_hi_sub_gates ++
-    (List.range 7).flatMap fun i =>
-      let a1 := Wire.mk s!"fti_ga1_{i}"
-      let empty_bit := if i < 6 then one else zero
-      [Gate.mkMUX empty_bit (guard_amt_full[i]!) amt_hi_borrow a1,
-       Gate.mkMUX a1 zero guard_amt_borrow (guard_amt[i]!)]
-  let (guard_shift, guard_shift_gates) :=
-    mkBarrelShiftLeftN "fti_gshf" mant53 53 guard_amt zero
-  let (guard_sticky, guard_sticky_gates) :=
-    mkOrTree "fti_gstk" ((List.range 52).map fun i => guard_shift[i]!)
-  let not_guard_amt_borrow := Wire.mk "fti_ngab"
-  let flt_round_bit := Wire.mk "flt_round_bit"
-  let flt_sticky_bit := Wire.mk "flt_sticky_bit"
-  let not_flt_is_zero := Wire.mk "not_flt_is_zero"
-  let below_half_nonzero := Wire.mk "fti_bhnz"
-  let sticky_any := Wire.mk "fti_stkany"
-  let flt_frac_gates := guard_shift_gates ++ guard_sticky_gates ++ [
-    Gate.mkNOT flt_is_zero not_flt_is_zero,
-    Gate.mkNOT guard_amt_borrow not_guard_amt_borrow,
-    Gate.mkAND guard_amt_borrow not_flt_is_zero below_half_nonzero,
-    Gate.mkOR guard_sticky below_half_nonzero sticky_any,
-    Gate.mkAND not_guard_amt_borrow (guard_shift[52]!) flt_round_bit,
-    Gate.mkBUF sticky_any flt_sticky_bit
-  ]
+  have hmant53 : 1 + 52 = 53 := by omega
+  let mant53 : Signal 53 := hmant53 ▸ .concat Signal.true1 flt_mant
 
-  let flt_inexact := Wire.mk "flt_inexact"
-  let flt_inexact_gate := Gate.mkOR flt_round_bit flt_sticky_bit flt_inexact
+  let const1022 : Signal 11 := .const (BitVec.ofNat 11 1022)
+  let const1075 : Signal 11 := .const (BitVec.ofNat 11 1075)
 
-  -- Exponent threshold checks (computed in Stage 1):
-  -- 1088 = 0b10001000000 (bit 10=1, bit 6=1)
-  let (exp_hi4_any, exp_hi4_any_gates) := mkOrTree "fexp_hi4" (List.range 4 |>.map fun i =>
-    flt_exp[6 + i]!)
-  let exp_gte_1088 := Wire.mk "exp_gte_1088"
-  let exp_gte_1088_gate := Gate.mkAND (flt_exp[10]!) exp_hi4_any exp_gte_1088
+  let guard_amt_sub : Signal 11 := flt_exp - const1022
+  let guard_amt_borrow : Signal 1 := .ult flt_exp const1022
+  let amt_hi_borrow : Signal 1 := .ult flt_exp const1075
 
-  -- Bits [5:0]: 1086 is 1024 + 62; 1087 is 1024 + 63
-  let (exp_lo6_all, exp_lo6_gates) := mkAndTree "exp_lo6" (List.range 6 |>.map fun i => flt_exp[i]!)
-  let (exp_bits1_5_all, exp_b15_gates) := mkAndTree "exp_b15" (List.range 5 |>.map fun i =>
-    flt_exp[1 + i]!)
+  let guard_raw : Signal 7 := guard_amt_sub.slice 6 0
+  let const63 : Signal 7 := .const (BitVec.ofNat 7 63)
+  let guard_clamped : Signal 7 := .mux amt_hi_borrow guard_raw const63
+  let guard_amt : Signal 7 := .mux guard_amt_borrow (Signal.zero 7) guard_clamped
 
-  let exp_gte_1087 := Wire.mk "exp_gte_1087"
-  let exp_gte_1086 := Wire.mk "exp_gte_1086"
-  let exp_ovf_gates := exp_hi4_any_gates ++ exp_lo6_gates ++ exp_b15_gates ++ [
-    exp_gte_1088_gate,
-    Gate.mkAND (flt_exp[10]!) exp_lo6_all (Wire.mk "e1087_t"),
-    Gate.mkOR exp_gte_1088 (Wire.mk "e1087_t") exp_gte_1087,
-    Gate.mkAND (flt_exp[10]!) exp_bits1_5_all (Wire.mk "e1086_t"),
-    Gate.mkOR exp_gte_1088 (Wire.mk "e1086_t") exp_gte_1086
-  ]
+  let guard_shift : Signal 53 := Signal.dshl mant53 guard_amt
 
-  -- ══════════════════════════════════════════════
-  -- Stage 1 Pipeline Registers
-  -- ══════════════════════════════════════════════
-  let s1_flt_int_mag := makeIndexedWires "s1_fimag" 64
-  let s1_flt_round_bit := Wire.mk "s1_flt_round_bit"
-  let s1_flt_sticky_bit := Wire.mk "s1_flt_sticky_bit"
-  let s1_flt_inexact := Wire.mk "s1_flt_inexact"
-  let s1_flt_sign := Wire.mk "s1_flt_sign"
-  let s1_is_unsigned := Wire.mk "s1_is_unsigned"
-  let s1_rm := makeIndexedWires "s1_rm" 3
-  let s1_flt_is_nan := Wire.mk "s1_flt_is_nan"
-  let s1_flt_is_inf := Wire.mk "s1_flt_is_inf"
-  let s1_flt_is_zero := Wire.mk "s1_flt_is_zero"
-  let not_s1_flt_is_zero := Wire.mk "not_s1_flt_is_zero"
-  let s1_exp_gte_1086 := Wire.mk "s1_exp_gte_1086"
-  let s1_exp_gte_1087 := Wire.mk "s1_exp_gte_1087"
-  let s1_flt_mant_any := Wire.mk "s1_flt_mant_any"
-  let s1_flt_exp_lt_1023 := Wire.mk "s1_flt_exp_lt_1023"
+  let guard_sticky_slice : Signal 52 := guard_shift.slice 51 0
+  let guard_sticky : Signal 1 := guard_sticky_slice.orReduce
 
-  let pipe_dff_gates :=
-    (List.range 64 |>.map fun i => Gate.mkDFF (flt_int_mag[i]!) clock reset (s1_flt_int_mag[i]!)) ++
-    [ Gate.mkDFF flt_round_bit clock reset s1_flt_round_bit,
-      Gate.mkDFF flt_sticky_bit clock reset s1_flt_sticky_bit,
-      Gate.mkDFF flt_inexact clock reset s1_flt_inexact,
-      Gate.mkDFF flt_sign clock reset s1_flt_sign,
-      Gate.mkDFF is_unsigned clock reset s1_is_unsigned ] ++
-    (List.range 3 |>.map fun i => Gate.mkDFF (rm[i]!) clock reset (s1_rm[i]!)) ++
-    [ Gate.mkDFF flt_is_nan clock reset s1_flt_is_nan,
-      Gate.mkDFF flt_is_inf clock reset s1_flt_is_inf,
-      Gate.mkDFF flt_is_zero clock reset s1_flt_is_zero,
-      Gate.mkNOT s1_flt_is_zero not_s1_flt_is_zero,
-      Gate.mkDFF exp_gte_1086 clock reset s1_exp_gte_1086,
-      Gate.mkDFF exp_gte_1087 clock reset s1_exp_gte_1087,
-      Gate.mkDFF flt_mant_any clock reset s1_flt_mant_any,
-      Gate.mkDFF flt_exp_lt_1023 clock reset s1_flt_exp_lt_1023 ]
+  let below_half_nonzero : Signal 1 := guard_amt_borrow &&& (~~~flt_is_zero)
+  let sticky_any : Signal 1 := guard_sticky ||| below_half_nonzero
 
-  -- ══════════════════════════════════════════════
-  -- Stage 2: Rounding, 2's Complement, Saturation, Clamping
-  -- ══════════════════════════════════════════════
-  let not_rm0 := Wire.mk "not_rm0"
-  let not_rm1 := Wire.mk "not_rm1"
-  let not_rm2 := Wire.mk "not_rm2"
-  let rm_inv_gates := [
-    Gate.mkNOT (s1_rm[0]!) not_rm0,
-    Gate.mkNOT (s1_rm[1]!) not_rm1,
-    Gate.mkNOT (s1_rm[2]!) not_rm2
-  ]
-  let rm_is_rne := Wire.mk "rm_is_rne"
-  let rm_is_rtz := Wire.mk "rm_is_rtz"
-  let rm_is_rdn := Wire.mk "rm_is_rdn"
-  let rm_is_rup := Wire.mk "rm_is_rup"
-  let rm_is_rmm := Wire.mk "rm_is_rmm"
-  let rm_dec_gates := [
-    Gate.mkAND not_rm2 not_rm1 (Wire.mk "rm_t0"),
-    Gate.mkAND (Wire.mk "rm_t0") not_rm0 rm_is_rne,
-    Gate.mkAND (Wire.mk "rm_t0") (s1_rm[0]!) rm_is_rtz,
-    Gate.mkAND not_rm2 (s1_rm[1]!) (Wire.mk "rm_t1"),
-    Gate.mkAND (Wire.mk "rm_t1") not_rm0 rm_is_rdn,
-    Gate.mkAND (Wire.mk "rm_t1") (s1_rm[0]!) rm_is_rup,
-    Gate.mkAND (s1_rm[2]!) not_rm1 (Wire.mk "rm_t2"),
-    Gate.mkAND (Wire.mk "rm_t2") not_rm0 rm_is_rmm
-  ]
+  let flt_round_bit : Signal 1 := (~~~guard_amt_borrow) &&& (guard_shift.bit 52)
+  let flt_sticky_bit : Signal 1 := sticky_any
+  let flt_inexact : Signal 1 := flt_round_bit ||| flt_sticky_bit
 
-  -- Round up logic for Float -> Int64
-  let flt_lsb := s1_flt_int_mag[0]!
-  let flt_stk_or_lsb := Wire.mk "flt_stk_lsb"
-  let flt_rne_up := Wire.mk "flt_rne_up"
-  let flt_rdn_up := Wire.mk "flt_rdn_up"
-  let flt_rup_up := Wire.mk "flt_rup_up"
-  let not_flt_sign := Wire.mk "not_flt_sign"
-  let flt_round_up_raw := Wire.mk "flt_rnd_up_raw"
-  let flt_round_up := Wire.mk "flt_rnd_up"
+  let exp_hi4 : Signal 4 := flt_exp.slice 9 6
+  let exp_hi4_any : Signal 1 := exp_hi4.orReduce
+  let exp_gte_1088 : Signal 1 := (flt_exp.bit 10) &&& exp_hi4_any
 
-  let flt_round_gates := [
-    Gate.mkNOT s1_flt_sign not_flt_sign,
-    Gate.mkOR s1_flt_sticky_bit flt_lsb flt_stk_or_lsb,
-    Gate.mkAND s1_flt_round_bit flt_stk_or_lsb flt_rne_up,
-    Gate.mkAND s1_flt_sign s1_flt_inexact flt_rdn_up,
-    Gate.mkAND not_flt_sign s1_flt_inexact flt_rup_up,
-    Gate.mkAND rm_is_rne flt_rne_up (Wire.mk "flt_ru0"),
-    Gate.mkAND rm_is_rdn flt_rdn_up (Wire.mk "flt_ru1"),
-    Gate.mkAND rm_is_rup flt_rup_up (Wire.mk "flt_ru2"),
-    Gate.mkAND rm_is_rmm s1_flt_round_bit (Wire.mk "flt_ru3"),
-    Gate.mkOR (Wire.mk "flt_ru0") (Wire.mk "flt_ru1") (Wire.mk "flt_ru_t0"),
-    Gate.mkOR (Wire.mk "flt_ru2") (Wire.mk "flt_ru3") (Wire.mk "flt_ru_t1"),
-    Gate.mkOR (Wire.mk "flt_ru_t0") (Wire.mk "flt_ru_t1") flt_round_up_raw,
-    Gate.mkAND flt_round_up_raw s1_flt_inexact flt_round_up
-  ]
+  let exp_lo6 : Signal 6 := flt_exp.slice 5 0
+  let exp_lo6_all : Signal 1 := exp_lo6.andReduce
+  let exp_bits1_5 : Signal 5 := flt_exp.slice 5 1
+  let exp_bits1_5_all : Signal 1 := exp_bits1_5.andReduce
 
-  -- Increment integer magnitude by flt_round_up
-  let flt_int_mag_inc := makeIndexedWires "fimag_inc" 64
-  let zeros64 := (List.range 64).map fun _ => zero
-  let (fimag_add_gates, flt_mag_ovf) :=
-    mkAddFor (AdderSpec.minDelay 64 .input) (List.range 64 |>.map
-      fun i => s1_flt_int_mag[i]!) zeros64 flt_round_up flt_int_mag_inc "fimag_add"
+  let exp_gte1087 : Signal 1 := exp_gte_1088 ||| ((flt_exp.bit 10) &&& exp_lo6_all)
+  let exp_gte1086 : Signal 1 := exp_gte_1088 ||| ((flt_exp.bit 10) &&& exp_bits1_5_all)
 
-  -- 2's complement negation if signed and negative: -flt_int_mag_inc
-  let flt_int_neg := makeIndexedWires "flt_int_neg" 64
-  let (fint_neg_gates, _) := mkSubFor (AdderSpec.minDelay 64 .one) zeros64 (List.range 64 |>.map fun
-    i => flt_int_mag_inc[i]!) flt_int_neg "fint_neg" one
+  let m := HDLModule.empty "FPToIntAlign"
+  let m := m.addInput "flt_in" 64
+  let m := m.addInput "flt_is_zero" 1
+  let m := m.addOutput "flt_int_mag" 64 flt_int_mag
+  let m := m.addOutput "flt_round_bit" 1 flt_round_bit
+  let m := m.addOutput "flt_sticky_bit" 1 flt_sticky_bit
+  let m := m.addOutput "flt_inexact" 1 flt_inexact
+  let m := m.addOutput "flt_exp_lt1023" 1 flt_exp_lt_1023
+  let m := m.addOutput "exp_gte1086" 1 exp_gte1086
+  let m := m.addOutput "exp_gte1087" 1 exp_gte1087
+  m
 
-  -- Un-clamped normal integer result
-  let flt_int_norm := makeIndexedWires "flt_int_norm" 64
-  let flt_int_norm_gates := (List.range 64).flatMap fun i =>
-    let signed_val := Wire.mk s!"fint_sval_{i}"
-    [Gate.mkMUX (flt_int_mag_inc[i]!) (flt_int_neg[i]!) s1_flt_sign signed_val,
-     Gate.mkMUX signed_val (flt_int_mag_inc[i]!) s1_is_unsigned (flt_int_norm[i]!)]
+/-- Submodule 3: Rounding mode evaluation, magnitude increment, and parallel negation. -/
+def mkFPToIntRoundNeg : HDLModule :=
+  let flt_int_mag : Signal 64 := .input "flt_int_mag" 64
+  let flt_sign : Signal 1 := .input "flt_sign" 1
+  let flt_round_bit : Signal 1 := .input "flt_round_bit" 1
+  let flt_sticky_bit : Signal 1 := .input "flt_sticky_bit" 1
+  let flt_inexact : Signal 1 := .input "flt_inexact" 1
+  let rm : Signal 3 := .input "rm" 3
 
-  -- Signed overflow:
-  let pos_signed_ovf := Wire.mk "pos_s_ovf"
-  let pos_signed_ovf_gates := [
-    Gate.mkOR s1_exp_gte_1086 (flt_int_mag_inc[63]!) (Wire.mk "pso_t"),
-    Gate.mkAND not_flt_sign (Wire.mk "pso_t") pos_signed_ovf
-  ]
+  let rm_is_rne : Signal 1 := .eq rm (.const (BitVec.ofNat 3 0))
+  let rm_is_rtz : Signal 1 := .eq rm (.const (BitVec.ofNat 3 1))
+  let rm_is_rdn : Signal 1 := .eq rm (.const (BitVec.ofNat 3 2))
+  let rm_is_rup : Signal 1 := .eq rm (.const (BitVec.ofNat 3 3))
+  let rm_is_rmm : Signal 1 := .eq rm (.const (BitVec.ofNat 3 4))
 
-  let neg_signed_ovf := Wire.mk "neg_s_ovf"
-  let neg_signed_ovf_gates := [
-    Gate.mkAND s1_exp_gte_1086 s1_flt_mant_any (Wire.mk "nso_t0"),
-    Gate.mkOR s1_exp_gte_1087 (Wire.mk "nso_t0") (Wire.mk "nso_t1"),
-    Gate.mkAND s1_flt_sign (Wire.mk "nso_t1") neg_signed_ovf
-  ]
+  let flt_lsb : Signal 1 := flt_int_mag.bit 0
+  let flt_stk_or_lsb : Signal 1 := flt_sticky_bit ||| flt_lsb
+  let flt_rne_up : Signal 1 := flt_round_bit &&& flt_stk_or_lsb
+  let flt_rdn_up : Signal 1 := flt_sign &&& flt_inexact
+  let flt_rup_up : Signal 1 := (~~~flt_sign) &&& flt_inexact
 
-  let signed_nv := Wire.mk "signed_nv"
-  let signed_nv_gate := Gate.mkOR pos_signed_ovf neg_signed_ovf signed_nv
+  let flt_round_up_raw : Signal 1 :=
+    (rm_is_rne &&& flt_rne_up) |||
+    (rm_is_rdn &&& flt_rdn_up) |||
+    (rm_is_rup &&& flt_rup_up) |||
+    (rm_is_rmm &&& flt_round_bit)
 
-  -- Unsigned overflow:
-  let pos_unsigned_ovf := Wire.mk "pos_u_ovf"
-  let pos_unsigned_ovf_gates := [
-    Gate.mkOR s1_exp_gte_1087 flt_mag_ovf (Wire.mk "puo_t"),
-    Gate.mkAND not_flt_sign (Wire.mk "puo_t") pos_unsigned_ovf
-  ]
+  let flt_round_up : Signal 1 := flt_round_up_raw &&& flt_inexact
 
-  -- Negative input to unsigned:
-  let neg_unsigned_ovf := Wire.mk "neg_u_ovf"
-  let not_exp_lt_1023 := Wire.mk "not_exp_lt_1023"
-  let neg_unsigned_ovf_gates := [
-    Gate.mkNOT s1_flt_exp_lt_1023 not_exp_lt_1023,
-    Gate.mkAND not_exp_lt_1023 not_s1_flt_is_zero (Wire.mk "nuo_ge1"),
-    Gate.mkAND flt_round_up not_s1_flt_is_zero (Wire.mk "nuo_rup"),
-    Gate.mkOR (Wire.mk "nuo_ge1") (Wire.mk "nuo_rup") (Wire.mk "nuo_any"),
-    Gate.mkAND s1_flt_sign (Wire.mk "nuo_any") neg_unsigned_ovf
-  ]
+  have h1_64 : 1 ≤ 64 := by omega
+  let round_up_ext : Signal 64 := Signal.zeroExtend 64 h1_64 flt_round_up
+  let flt_int_mag_inc : Signal 64 := flt_int_mag + round_up_ext
+  let flt_mag_ovf : Signal 1 := flt_int_mag.andReduce &&& flt_round_up
 
-  let unsigned_nv := Wire.mk "unsigned_nv"
-  let unsigned_nv_gate := Gate.mkOR pos_unsigned_ovf neg_unsigned_ovf unsigned_nv
+  let not_mag : Signal 64 := ~~~flt_int_mag
+  let neg_base : Signal 64 := not_mag + (.const (BitVec.ofNat 64 1))
+  let flt_int_neg : Signal 64 := .mux flt_round_up not_mag neg_base
 
-  -- Master NV for Float -> Int64
-  let flt_nv_raw := Wire.mk "flt_nv_raw"
-  let flt_nv := Wire.mk "flt_nv"
-  let flt_nv_gates := [
-    Gate.mkMUX signed_nv unsigned_nv s1_is_unsigned flt_nv_raw,
-    Gate.mkOR s1_flt_is_nan s1_flt_is_inf (Wire.mk "nan_inf"),
-    Gate.mkOR flt_nv_raw (Wire.mk "nan_inf") flt_nv,
-    Gate.mkBUF flt_nv exc_nv
-  ]
+  let m := HDLModule.empty "FPToIntRoundNeg"
+  let m := m.addInput "flt_int_mag" 64
+  let m := m.addInput "flt_sign" 1
+  let m := m.addInput "flt_round_bit" 1
+  let m := m.addInput "flt_sticky_bit" 1
+  let m := m.addInput "flt_inexact" 1
+  let m := m.addInput "rm" 3
+  let m := m.addOutput "flt_int_mag_inc" 64 flt_int_mag_inc
+  let m := m.addOutput "flt_mag_ovf" 1 flt_mag_ovf
+  let m := m.addOutput "flt_int_neg" 64 flt_int_neg
+  let m := m.addOutput "flt_round_up" 1 flt_round_up
+  m
 
-  -- Clamping logic on NV:
-  let not_flt_nan := Wire.mk "not_flt_nan"
-  let clamp_is_neg := Wire.mk "clamp_is_neg"
-  let not_clamp_is_neg := Wire.mk "not_clamp_is_neg"
-  let clamp_u_val := Wire.mk "clamp_u_val"
-  let clamp_gates := [
-    Gate.mkNOT s1_flt_is_nan not_flt_nan,
-    Gate.mkAND s1_flt_sign not_flt_nan clamp_is_neg,
-    Gate.mkNOT clamp_is_neg not_clamp_is_neg,
-    Gate.mkOR s1_flt_is_nan not_flt_sign clamp_u_val
-  ]
+/-- Submodule 4: Clamping, bounds saturation, and exception generation. -/
+def mkFPToIntClamp : HDLModule :=
+  let flt_int_mag_inc : Signal 64 := .input "flt_int_mag_inc" 64
+  let flt_int_neg : Signal 64 := .input "flt_int_neg" 64
+  let flt_mag_ovf : Signal 1 := .input "flt_mag_ovf" 1
+  let flt_round_up : Signal 1 := .input "flt_round_up" 1
+  let flt_sign : Signal 1 := .input "flt_sign" 1
+  let is_unsigned : Signal 1 := .input "is_unsigned" 1
+  let flt_is_nan : Signal 1 := .input "flt_is_nan" 1
+  let flt_is_inf : Signal 1 := .input "flt_is_inf" 1
+  let flt_is_zero : Signal 1 := .input "flt_is_zero" 1
+  let flt_mant_any : Signal 1 := .input "flt_mant_any" 1
+  let flt_exp_lt1023 : Signal 1 := .input "flt_exp_lt1023" 1
+  let exp_gte1086 : Signal 1 := .input "exp_gte1086" 1
+  let exp_gte1087 : Signal 1 := .input "exp_gte1087" 1
+  let flt_inexact : Signal 1 := .input "flt_inexact" 1
 
-  let res_flt_to_int_gates := (List.range 64).flatMap fun i =>
-    let clamp_bit_signed :=
-      if i == 63 then clamp_is_neg
-      else not_clamp_is_neg
-    let clamp_bit_unsigned := clamp_u_val
-    let clamp_bit := Wire.mk s!"clamp_bit_{i}"
-    let norm_bit := flt_int_norm[i]!
-    [Gate.mkMUX clamp_bit_signed clamp_bit_unsigned s1_is_unsigned clamp_bit,
-     Gate.mkMUX norm_bit clamp_bit flt_nv (result[i]!)]
+  let signed_val : Signal 64 := .mux flt_sign flt_int_neg flt_int_mag_inc
+  let flt_int_norm : Signal 64 := .mux is_unsigned flt_int_mag_inc signed_val
 
-  -- Inexact for Float -> Int: s1_flt_inexact AND NOT flt_nv
-  let not_flt_nv := Wire.mk "not_flt_nv"
-  let exc_nx_flt_to_int_gates := [
-    Gate.mkNOT flt_nv not_flt_nv,
-    Gate.mkAND s1_flt_inexact not_flt_nv exc_nx
-  ]
+  let pos_signed_ovf : Signal 1 :=
+    (~~~flt_sign) &&& (exp_gte1086 ||| flt_int_mag_inc.bit 63)
+  let neg_signed_ovf : Signal 1 :=
+    flt_sign &&& (exp_gte1087 ||| (exp_gte1086 &&& flt_mant_any))
+  let signed_nv : Signal 1 := pos_signed_ovf ||| neg_signed_ovf
 
-  let all_gates :=
-    sp_in_exp_ones_gates ++ sp_in_exp_any_gates ++ [sp_in_exp_zeros_gate] ++
-    sp_in_mant_any_gates ++ [sp_in_mant_zeros_gate] ++ sp_in_class_gates ++
-    norm_sp_dp_exp_gates ++ sp_as_dp_gates ++ flt_in_gates ++
-    flt_exp_ones_gates ++ flt_exp_any_gates ++ [flt_exp_zeros_gate] ++
-    flt_mant_any_gates ++ [flt_mant_zeros_gate] ++ flt_class_gates ++
-    shamt_sub_gates ++ shamt7_gates ++ bus_shift_gates ++
-    exp_lo10_all_gates ++ exp_lt_1023_gates ++ flt_int_mag_gates ++
-    guard_amt_gates ++ flt_frac_gates ++ [flt_inexact_gate] ++
-    exp_ovf_gates ++
-    pipe_dff_gates ++
-    rm_inv_gates ++ rm_dec_gates ++
-    flt_round_gates ++ fimag_add_gates ++ fint_neg_gates ++ flt_int_norm_gates ++
-    pos_signed_ovf_gates ++ neg_signed_ovf_gates ++ [signed_nv_gate] ++
-    pos_unsigned_ovf_gates ++ neg_unsigned_ovf_gates ++ [unsigned_nv_gate] ++
-    flt_nv_gates ++ clamp_gates ++ res_flt_to_int_gates ++ exc_nx_flt_to_int_gates
+  let pos_unsigned_ovf : Signal 1 :=
+    (~~~flt_sign) &&& (exp_gte1087 ||| flt_mag_ovf)
+  let nuo_ge1 : Signal 1 := (~~~flt_exp_lt1023) &&& (~~~flt_is_zero)
+  let nuo_rup : Signal 1 := flt_round_up &&& (~~~flt_is_zero)
+  let neg_unsigned_ovf : Signal 1 := flt_sign &&& (nuo_ge1 ||| nuo_rup)
+  let unsigned_nv : Signal 1 := pos_unsigned_ovf ||| neg_unsigned_ovf
 
-  { name := "FPToInt64",
-    inputs := src1 ++ [is_dp, is_unsigned] ++ rm ++ [clock, reset, zero, one],
-    outputs := result ++ [exc_nv, exc_nx],
-    gates := all_gates,
-    instances := [],
-    signalGroups := [
-      { name := "src1", width := 64, wires := src1 },
-      { name := "rm", width := 3, wires := rm },
-      { name := "result", width := 64, wires := result }
-    ],
+  let flt_nv_raw : Signal 1 := .mux is_unsigned unsigned_nv signed_nv
+  let nan_inf : Signal 1 := flt_is_nan ||| flt_is_inf
+  let flt_nv : Signal 1 := flt_nv_raw ||| nan_inf
+  let exc_nv : Signal 1 := flt_nv
+
+  let clamp_u_val : Signal 1 := flt_is_nan ||| (~~~flt_sign)
+  let clamp_unsigned : Signal 64 := Signal.replicate 64 clamp_u_val
+
+  let clamp_is_neg : Signal 1 := flt_sign &&& (~~~flt_is_nan)
+  let clamp_bit63 : Signal 1 := clamp_is_neg
+  let clamp_bits62_0 : Signal 63 := Signal.replicate 63 (~~~clamp_is_neg)
+  have hclamp : 1 + 63 = 64 := by omega
+  let clamp_signed : Signal 64 := hclamp ▸ .concat clamp_bit63 clamp_bits62_0
+
+  let clamp_val : Signal 64 := .mux is_unsigned clamp_unsigned clamp_signed
+  let result : Signal 64 := .mux flt_nv clamp_val flt_int_norm
+
+  let exc_nx : Signal 1 := flt_inexact &&& (~~~flt_nv)
+
+  let m := HDLModule.empty "FPToIntClamp"
+  let m := m.addInput "flt_int_mag_inc" 64
+  let m := m.addInput "flt_int_neg" 64
+  let m := m.addInput "flt_mag_ovf" 1
+  let m := m.addInput "flt_round_up" 1
+  let m := m.addInput "flt_sign" 1
+  let m := m.addInput "is_unsigned" 1
+  let m := m.addInput "flt_is_nan" 1
+  let m := m.addInput "flt_is_inf" 1
+  let m := m.addInput "flt_is_zero" 1
+  let m := m.addInput "flt_mant_any" 1
+  let m := m.addInput "flt_exp_lt1023" 1
+  let m := m.addInput "exp_gte1086" 1
+  let m := m.addInput "exp_gte1087" 1
+  let m := m.addInput "flt_inexact" 1
+  let m := m.addOutput "result" 64 result
+  let m := m.addOutput "exc_nv" 1 exc_nv
+  let m := m.addOutput "exc_nx" 1 exc_nx
+  m
+
+/-- Hierarchical FPToInt64 module composed of four submodules with 1-cycle pipeline. -/
+def mkFPToInt64HDL : HDLModule :=
+  let src1 : Signal 64 := .input "src1" 64
+  let is_dp : Signal 1 := .input "is_dp" 1
+  let is_unsigned : Signal 1 := .input "is_unsigned" 1
+  let rm : Signal 3 := .input "rm" 3
+
+  let clkW := Wire.mk "clock"
+  let rstW := Wire.mk "reset"
+
+  let instUnpack : InstanceBinding := {
+    instName := "u_unpack"
+    moduleName := "FPUnpackDP"
+    inputs := [
+      .mk "src1" 64 src1,
+      .mk "is_dp" 1 is_dp
+    ]
+    outputs := [
+      ("flt_in", 64),
+      ("flt_is_nan", 1),
+      ("flt_is_inf", 1),
+      ("flt_is_zero", 1),
+      ("flt_mant_any", 1)
+    ]
+  }
+
+  let flt_in : Signal 64 := .instOut "u_unpack" "flt_in" 64
+  let flt_is_nan : Signal 1 := .instOut "u_unpack" "flt_is_nan" 1
+  let flt_is_inf : Signal 1 := .instOut "u_unpack" "flt_is_inf" 1
+  let flt_is_zero : Signal 1 := .instOut "u_unpack" "flt_is_zero" 1
+  let flt_mant_any : Signal 1 := .instOut "u_unpack" "flt_mant_any" 1
+
+  let instAlign : InstanceBinding := {
+    instName := "u_align"
+    moduleName := "FPToIntAlign"
+    inputs := [
+      .mk "flt_in" 64 flt_in,
+      .mk "flt_is_zero" 1 flt_is_zero
+    ]
+    outputs := [
+      ("flt_int_mag", 64),
+      ("flt_round_bit", 1),
+      ("flt_sticky_bit", 1),
+      ("flt_inexact", 1),
+      ("flt_exp_lt1023", 1),
+      ("exp_gte1086", 1),
+      ("exp_gte1087", 1)
+    ]
+  }
+
+  let flt_int_mag : Signal 64 := .instOut "u_align" "flt_int_mag" 64
+  let flt_round_bit : Signal 1 := .instOut "u_align" "flt_round_bit" 1
+  let flt_sticky_bit : Signal 1 := .instOut "u_align" "flt_sticky_bit" 1
+  let flt_inexact : Signal 1 := .instOut "u_align" "flt_inexact" 1
+  let flt_exp_lt1023 : Signal 1 := .instOut "u_align" "flt_exp_lt1023" 1
+  let exp_gte1086 : Signal 1 := .instOut "u_align" "exp_gte1086" 1
+  let exp_gte1087 : Signal 1 := .instOut "u_align" "exp_gte1087" 1
+
+  let flt_sign : Signal 1 := flt_in.bit 63
+
+  -- Registered Stage 1 signals as .wire inputs to Stage 2:
+  let reg_flt_int_mag : Signal 64 := .wire "s1_fimag" 64
+  let reg_flt_round_bit : Signal 1 := .wire "s1_fround" 1
+  let reg_flt_sticky_bit : Signal 1 := .wire "s1_fsticky" 1
+  let reg_flt_inexact : Signal 1 := .wire "s1_finexact" 1
+  let reg_flt_sign : Signal 1 := .wire "s1_fsign" 1
+  let reg_is_unsigned : Signal 1 := .wire "s1_is_uns" 1
+  let reg_rm : Signal 3 := .wire "s1_rm" 3
+  let reg_flt_is_nan : Signal 1 := .wire "s1_fnan" 1
+  let reg_flt_is_inf : Signal 1 := .wire "s1_finf" 1
+  let reg_flt_is_zero : Signal 1 := .wire "s1_fzero" 1
+  let reg_flt_mant_any : Signal 1 := .wire "s1_mant_any" 1
+  let reg_flt_exp_lt1023 : Signal 1 := .wire "s1_exp_lt1023" 1
+  let reg_exp_gte1086 : Signal 1 := .wire "s1_exp_gte1086" 1
+  let reg_exp_gte1087 : Signal 1 := .wire "s1_exp_gte1087" 1
+
+  let instRoundNeg : InstanceBinding := {
+    instName := "u_round_neg"
+    moduleName := "FPToIntRoundNeg"
+    inputs := [
+      .mk "flt_int_mag" 64 reg_flt_int_mag,
+      .mk "flt_sign" 1 reg_flt_sign,
+      .mk "flt_round_bit" 1 reg_flt_round_bit,
+      .mk "flt_sticky_bit" 1 reg_flt_sticky_bit,
+      .mk "flt_inexact" 1 reg_flt_inexact,
+      .mk "rm" 3 reg_rm
+    ]
+    outputs := [
+      ("flt_int_mag_inc", 64),
+      ("flt_mag_ovf", 1),
+      ("flt_int_neg", 64),
+      ("flt_round_up", 1)
+    ]
+  }
+
+  let flt_int_mag_inc : Signal 64 := .instOut "u_round_neg" "flt_int_mag_inc" 64
+  let flt_mag_ovf : Signal 1 := .instOut "u_round_neg" "flt_mag_ovf" 1
+  let flt_int_neg : Signal 64 := .instOut "u_round_neg" "flt_int_neg" 64
+  let flt_round_up : Signal 1 := .instOut "u_round_neg" "flt_round_up" 1
+
+  let instClamp : InstanceBinding := {
+    instName := "u_clamp"
+    moduleName := "FPToIntClamp"
+    inputs := [
+      .mk "flt_int_mag_inc" 64 flt_int_mag_inc,
+      .mk "flt_int_neg" 64 flt_int_neg,
+      .mk "flt_mag_ovf" 1 flt_mag_ovf,
+      .mk "flt_round_up" 1 flt_round_up,
+      .mk "flt_sign" 1 reg_flt_sign,
+      .mk "is_unsigned" 1 reg_is_unsigned,
+      .mk "flt_is_nan" 1 reg_flt_is_nan,
+      .mk "flt_is_inf" 1 reg_flt_is_inf,
+      .mk "flt_is_zero" 1 reg_flt_is_zero,
+      .mk "flt_mant_any" 1 reg_flt_mant_any,
+      .mk "flt_exp_lt1023" 1 reg_flt_exp_lt1023,
+      .mk "exp_gte1086" 1 reg_exp_gte1086,
+      .mk "exp_gte1087" 1 reg_exp_gte1087,
+      .mk "flt_inexact" 1 reg_flt_inexact
+    ]
+    outputs := [
+      ("result", 64),
+      ("exc_nv", 1),
+      ("exc_nx", 1)
+    ]
+  }
+
+  let result : Signal 64 := .instOut "u_clamp" "result" 64
+  let exc_nv : Signal 1 := .instOut "u_clamp" "exc_nv" 1
+  let exc_nx : Signal 1 := .instOut "u_clamp" "exc_nx" 1
+
+  let m := HDLModule.empty "FPToInt64"
+  let m := m.addInput "src1" 64
+  let m := m.addInput "is_dp" 1
+  let m := m.addInput "is_unsigned" 1
+  let m := m.addInput "rm" 3
+  let m := m.addInput "clock" 1
+  let m := m.addInput "reset" 1
+  let m := m.addInstance instUnpack
+  let m := m.addInstance instAlign
+  let m := m.addRegister "s1_fimag" 64 clkW rstW flt_int_mag
+  let m := m.addRegister "s1_fround" 1 clkW rstW flt_round_bit
+  let m := m.addRegister "s1_fsticky" 1 clkW rstW flt_sticky_bit
+  let m := m.addRegister "s1_finexact" 1 clkW rstW flt_inexact
+  let m := m.addRegister "s1_fsign" 1 clkW rstW flt_sign
+  let m := m.addRegister "s1_is_uns" 1 clkW rstW is_unsigned
+  let m := m.addRegister "s1_rm" 3 clkW rstW rm
+  let m := m.addRegister "s1_fnan" 1 clkW rstW flt_is_nan
+  let m := m.addRegister "s1_finf" 1 clkW rstW flt_is_inf
+  let m := m.addRegister "s1_fzero" 1 clkW rstW flt_is_zero
+  let m := m.addRegister "s1_mant_any" 1 clkW rstW flt_mant_any
+  let m := m.addRegister "s1_exp_lt1023" 1 clkW rstW flt_exp_lt1023
+  let m := m.addRegister "s1_exp_gte1086" 1 clkW rstW exp_gte1086
+  let m := m.addRegister "s1_exp_gte1087" 1 clkW rstW exp_gte1087
+  let m := m.addInstance instRoundNeg
+  let m := m.addInstance instClamp
+  let m := m.addOutput "result" 64 result
+  let m := m.addOutput "exc_nv" 1 exc_nv
+  let m := m.addOutput "exc_nx" 1 exc_nx
+  m
+
+/-- Lowered circuit definitions for each component. -/
+def fpUnpackDPCircuit : Circuit :=
+  let c := lowerModule mkFPUnpackDP
+  { name := "FPUnpackDP",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
     keepHierarchy := true }
 
-def fpToInt64Circuit : Circuit := mkFPToInt64
+def fpToIntAlignCircuit : Circuit :=
+  let c := lowerModule mkFPToIntAlign
+  { name := "FPToIntAlign",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
+
+def fpToIntRoundNegCircuit : Circuit :=
+  let c := lowerModule mkFPToIntRoundNeg
+  { name := "FPToIntRoundNeg",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
+
+def fpToIntClampCircuit : Circuit :=
+  let c := lowerModule mkFPToIntClamp
+  { name := "FPToIntClamp",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
+
+def fpToInt64Circuit : Circuit :=
+  let c := lowerModule mkFPToInt64HDL
+  { name := "FPToInt64",
+    inputs := c.inputs,
+    outputs := c.outputs,
+    gates := c.gates,
+    instances := c.instances,
+    signalGroups := c.signalGroups,
+    keepHierarchy := true }
 
 end Shoumei.Circuits.Combinational

@@ -70,6 +70,19 @@ def lshr (amt : Nat) (s : Signal w) : Signal w :=
     have hconcat : amt + keepWidth = w := by omega
     hconcat ▸ .concat zeros kept
 
+
+/-- Extract a single bit from a signal as a 1-bit boolean signal. -/
+def bit (s : Signal w) (idx : Nat) : Signal 1 :=
+  if h : idx < w then
+    have hlen : idx - idx + 1 = 1 := by omega
+    hlen ▸ .extract s idx idx
+  else
+    false1
+
+/-- Extract a bit slice `hi` down to `lo`. -/
+def slice (s : Signal w) (hi lo : Nat) : Signal (hi - lo + 1) :=
+  .extract s hi lo
+
 /-- Replicate a 1-bit signal `n` times. -/
 def replicate (n : Nat) (s : Signal 1) : Signal n :=
   match n with

@@ -6,7 +6,7 @@ This document records physical synthesis results for Shoumei RTL on ASAP7 at 1.0
 
 Synthesis completed with 0 logic loops.
 The `yosys scc` command found 0 strongly connected components.
-20 submodules meet the 1.0 GHz timing constraint.
+21 submodules meet the 1.0 GHz timing constraint.
 
 ### Verified Fast Paths (< 1000.0 ps)
 
@@ -19,6 +19,7 @@ The `yosys scc` command found 0 strongly connected components.
 | `ALU64` | 232.0 | MET |
 | `LogicUnit64` | 245.8 | MET |
 | `Comparator6` | 246.2 | MET |
+| `FPToInt64` (hierarchical) | 511.5 | MET |
 | `Shifter64` | 350.0 | MET |
 | `PCIncrementer8` | 370.8 | MET |
 | `PCIncrementer4` | 381.7 | MET |
@@ -63,19 +64,15 @@ Future work must pipeline these paths.
 - **Note**: Splitting Stage 4 into Stage 4a and Stage 4b closed the 1478.9 ps Stage 4 path.
 - **Proposed Solution**: Register the mantissa sum before the leading-zero detection network.
 
-### 6. `FPToInt64` (1194.5 ps)
-- **Path**: Stage 2 barrel shift, round increment, and integer format packing.
-- **Proposed Solution**: Pipeline the 64-bit barrel shifter and the rounding logic into separate clock cycles.
-
-### 7. `Int64ToFP` (1125.8 ps)
+### 6. `Int64ToFP` (1125.8 ps)
 - **Path**: Stage 2 normalization shift and mantissa rounding.
 - **Proposed Solution**: Register the shift output before mantissa round increment and packing.
 
-### 8. `KoggeStoneAdder106NoCin` (1065.9 ps)
+### 7. `KoggeStoneAdder106NoCin` (1065.9 ps)
 - **Path**: 106-bit carry-propagate adder.
 - **Proposed Solution**: Decompose into a 2-stage pipelined adder or a carry-select architecture.
 
-### 9. `FPFMA` (1026.4 ps)
+### 8. `FPFMA` (1026.4 ps)
 - **Path**: Single-precision Stage 2b.
 - **Note**: Exceeds target by 26.4 ps.
 - **Proposed Solution**: Optimize gate fanout on the addend alignment path.

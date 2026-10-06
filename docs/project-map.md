@@ -7,7 +7,7 @@ from `moduleName :=` references between circuits, certificates from the
 Lean registry, and docs from each file's leading comment block.
 
 - Lean files: **301**
-- Circuits with a literal `name :=` (graph nodes): **99**
+- Circuits with a literal `name :=` (graph nodes): **103**
 - Compositional certificates (Lean registry): **103**
 - Refinement atoms (Lean registry): **13**
 - Proof files: **80**
@@ -26,7 +26,7 @@ The label is the count of distinct instantiations that cross it.
 
 ```mermaid
 graph TD
-  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>43 circuits"]
+  Shoumei_Circuits_Combinational["Shoumei/Circuits/Combinational<br/>47 circuits"]
   Shoumei_Circuits_Sequential["Shoumei/Circuits/Sequential<br/>21 circuits"]
   Shoumei_DSL["Shoumei/DSL<br/>2 circuits"]
   Shoumei_Examples["Shoumei/Examples<br/>1 circuits"]
@@ -104,8 +104,12 @@ graph TD
 | `FPSgnj` | Shoumei/Circuits/Combinational | 3 |  |  | yes | yes |
 | `FPSqrt` | Shoumei/Circuits/Sequential | 0 | yes |  | yes | yes |
 | `FPSqrtD` | Shoumei/Circuits/Sequential | 0 | yes |  | yes | yes |
-| `FPToInt64` | Shoumei/Circuits/Combinational | 0 |  |  | yes | yes |
+| `FPToInt64` | Shoumei/Circuits/Combinational | 4 |  |  | yes | yes |
+| `FPToIntAlign` | Shoumei/Circuits/Combinational | 3 |  |  |  | yes |
+| `FPToIntClamp` | Shoumei/Circuits/Combinational | 3 |  |  |  | yes |
+| `FPToIntRoundNeg` | Shoumei/Circuits/Combinational | 3 |  |  |  | yes |
 | `FPUnpack` | Shoumei/Circuits/Combinational | 0 |  |  |  | yes |
+| `FPUnpackDP` | Shoumei/Circuits/Combinational | 3 |  |  |  | yes |
 | `FallbackSequencer` | Shoumei/RISCV/Microcode | 0 | yes |  | yes | yes |
 | `FetchStage_W2` | Shoumei/RISCV | 1 |  |  | yes | yes |
 | `FullAdder` | Shoumei/Examples | 0 |  | yes | yes | yes |
@@ -162,9 +166,9 @@ graph TD
 ## Mechanical gaps
 
 - **0** circuit files without a leading doc comment
-- **94** circuits with no `Circuit satisfies Behavior` atom
-- **23** circuits with no `*Proofs.lean` mentioning them
-- **59** circuits that instantiate nothing (leaves)
+- **98** circuits with no `Circuit satisfies Behavior` atom
+- **27** circuits with no `*Proofs.lean` mentioning them
+- **58** circuits that instantiate nothing (leaves)
 - **45** circuits nothing else instantiates (tops)
 
 ## Known gaps (hand-maintained)
