@@ -112,6 +112,39 @@ private def mkBarrelShiftRightSticky (input : List Wire) (shift_amt : List Wire)
   let copy_gates := (List.range w).map fun i => Gate.mkBUF (levels[6]!)[i]! output[i]!
   mux_gates ++ stk_gates ++ copy_gates ++ [Gate.mkBUF stickies[6]! sticky_out]
 
+/-- Fast parallel-prefix incrementer: input + cin (width w).
+    Prefix AND tree has depth O(log₂ w) instead of O(w) ripple carry. -/
+private def mkParallelPrefixInc (pfx : String) (w : Nat) (input : List Wire) (cin : Wire) :
+    List Wire × Wire × List Gate :=
+  let strides := [1, 2, 4, 8, 16, 32]
+  let (pfx_gates, final_p) :=
+    strides.foldl (fun (acc : List Gate × List Wire) stride =>
+      let (gates_acc, p_prev) := acc
+      let lt := s!"{pfx}_l{stride}"
+      let p_new := (List.range w).map fun i => Wire.mk s!"{lt}_p{i}"
+      let lg := (List.range w).map fun i =>
+        if i < stride then
+          Gate.mkBUF (p_prev[i]!) (p_new[i]!)
+        else
+          Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!)
+      (gates_acc ++ lg, p_new)
+    ) ([], input)
+
+  let c := (List.range w).map fun i => Wire.mk s!"{pfx}_c{i}"
+  let c_gates := (List.range (w - 1)).map fun i =>
+    Gate.mkAND cin (final_p[i]!) (c[i + 1]!)
+
+  let sum := makeIndexedWires s!"{pfx}_s" w
+  let sum_gates :=
+    [Gate.mkXOR (input[0]!) cin (sum[0]!)] ++
+    ((List.range (w - 1)).map fun i =>
+      Gate.mkXOR (input[i + 1]!) (c[i + 1]!) (sum[i + 1]!))
+
+  let cout := Wire.mk s!"{pfx}_cout"
+  let cout_gate := Gate.mkAND cin (final_p[w - 1]!) cout
+
+  (sum, cout, pfx_gates ++ c_gates ++ sum_gates ++ [cout_gate])
+
 def mkFPMultiplierD : Circuit :=
   -- Input wires
   let src1 := makeIndexedWires "src1" 64
@@ -545,13 +578,8 @@ def mkFPMultiplierD : Circuit :=
   ]
 
   -- Mantissa increment: pre_mant + round_up (52 bits)
-  let mant_inc := makeIndexedWires "muld_minc" 52
-  let mant_inc_c := makeIndexedWires "muld_minc_c" 53
-  let mant_inc_gates := [Gate.mkBUF round_up (mant_inc_c[0]!)] ++ (List.range 52).flatMap (fun i =>
-    [Gate.mkXOR (pre_mant[i]!) (mant_inc_c[i]!) (mant_inc[i]!),
-     Gate.mkAND (pre_mant[i]!) (mant_inc_c[i]!) (mant_inc_c[i + 1]!)]
-  )
-  let mant_rollover := mant_inc_c[52]!
+  let (mant_inc, mant_rollover, mant_inc_gates) :=
+    mkParallelPrefixInc "muld_minc" 52 pre_mant round_up
 
   let final_mant := makeIndexedWires "muld_fmant" 52
   let not_rollover := Wire.mk "muld_nroll"
@@ -638,12 +666,8 @@ def mkFPMultiplierD : Circuit :=
   let not_rtz_gates := [Gate.mkAND n_rm2 n_rm1 (Wire.mk "muld_rtz_pre"),
                         Gate.mkAND (Wire.mk "muld_rtz_pre") rm0 not_rtz]
 
-  let sub_inc := makeIndexedWires "muld_subinc" 52
-  let sub_c := makeIndexedWires "muld_subc" 53
-  let sub_inc_gates := [Gate.mkBUF sub_round (sub_c[0]!)] ++ (List.range 52).flatMap fun i =>
-    [Gate.mkXOR (sub_mant[i]!) (sub_c[i]!) (sub_inc[i]!),
-     Gate.mkAND (sub_mant[i]!) (sub_c[i]!) (sub_c[i + 1]!)]
-  let sub_carry := sub_c[52]!
+  let (sub_inc, sub_carry, sub_inc_gates) :=
+    mkParallelPrefixInc "muld_subinc" 52 sub_mant sub_round
   let sub_not_carry := Wire.mk "muld_subncarry"
   let sub_final_mant := makeIndexedWires "muld_subfm" 52
   let sub_final_mant_gates := [Gate.mkNOT sub_carry sub_not_carry] ++

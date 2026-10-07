@@ -446,28 +446,135 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let s3_carry_in := Wire.mk "s3_eff_sub_final"
   let s3_carry_in_gate := [Gate.mkXOR eff_sub s3_borrow s3_carry_in]
 
-  let s3_carry := makeIndexedWires "s3_c" 57
-  let s3_add_gates := [Gate.mkBUF s3_carry_in (s3_carry[0]!)] ++ (List.range 56).flatMap (fun i =>
-    let a := if i < 3 then zero else big_mant[i - 3]!
-    let b_raw := aligned_small[i]!
-    let b := Wire.mk s!"s3_b_{i}"
-    let ci := s3_carry[i]!
-    let co := s3_carry[i + 1]!
-    let xab := Wire.mk s!"s3_x_{i}"
-    [Gate.mkXOR b_raw eff_sub b,
-     Gate.mkXOR a b xab,
-     Gate.mkXOR xab ci (sum[i]!),
-     Gate.mkAND a b (Wire.mk s!"s3_at0_{i}"),
-     Gate.mkAND a ci (Wire.mk s!"s3_at1_{i}"),
-     Gate.mkAND b ci (Wire.mk s!"s3_at2_{i}"),
-     Gate.mkOR (Wire.mk s!"s3_at0_{i}") (Wire.mk s!"s3_at1_{i}") (Wire.mk s!"s3_at01_{i}"),
-     Gate.mkOR (Wire.mk s!"s3_at01_{i}") (Wire.mk s!"s3_at2_{i}") co]
-  )
+  -- Prepare operands a_in and b_in
+  let a_in := (List.range 56).map fun i =>
+    if i < 3 then zero else big_mant[i - 3]!
+  let b_in := makeIndexedWires "s3_b" 56
+  let b_prep_gates := (List.range 56).map fun i =>
+    Gate.mkXOR (aligned_small[i]!) eff_sub (b_in[i]!)
+
+  -- 56-bit Carry-Select Kogge-Stone Adder (2 blocks of 28 bits)
+  -- Decomposed into 2 blocks with 5 prefix levels each (strides 1..16)
+  let w0 := 28
+  let w1 := 28
+  let strides := [1, 2, 4, 8, 16]
+
+  -- Block 0 (bits 0..27)
+  let g0_b0 := (List.range w0).map (fun i => Wire.mk s!"s3_g0_b0_x{i}")
+  let p0_b0 := (List.range w0).map (fun i => Wire.mk s!"s3_p0_b0_x{i}")
+  let init_b0 := List.flatten <| (List.range w0).map fun i =>
+    [ Gate.mkAND (a_in[i]!) (b_in[i]!) (g0_b0[i]!),
+      Gate.mkXOR (a_in[i]!) (b_in[i]!) (p0_b0[i]!) ]
+
+  let p0_cin := Wire.mk "s3_p0_cin"
+  let g0_b0_m0 := Wire.mk "s3_g0_b0_m0"
+  let cin_gates := [
+    Gate.mkAND (p0_b0[0]!) s3_carry_in p0_cin,
+    Gate.mkOR (g0_b0[0]!) p0_cin g0_b0_m0
+  ]
+  let g0_b0_init := [g0_b0_m0] ++ (List.range (w0 - 1)).map fun i => g0_b0[i + 1]!
+
+  let (pfx_b0, final_g_b0, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"s3_b0_l{stride}"
+      let g_new := (List.range w0).map (fun i => Wire.mk s!"{lt}_g{i}")
+      let p_new := (List.range w0).map (fun i => Wire.mk s!"{lt}_p{i}")
+      let lg := List.flatten <| (List.range w0).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"{lt}_pg{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_b0_init, p0_b0)
+
+  let sum_b0_gates :=
+    [Gate.mkXOR (p0_b0[0]!) s3_carry_in (sum[0]!)] ++
+    ((List.range (w0 - 1)).map fun i =>
+      Gate.mkXOR (p0_b0[i + 1]!) (final_g_b0[i]!) (sum[i + 1]!))
+  let c27 := final_g_b0[w0 - 1]!
+
+  -- Block 1 (bits 28..55)
+  let a_b1 := (List.range w1).map fun i => a_in[w0 + i]!
+  let b_b1 := (List.range w1).map fun i => b_in[w0 + i]!
+  let g0_b1 := (List.range w1).map (fun i => Wire.mk s!"s3_g0_b1_x{i}")
+  let p0_b1 := (List.range w1).map (fun i => Wire.mk s!"s3_p0_b1_x{i}")
+  let init_b1 := List.flatten <| (List.range w1).map fun i =>
+    [ Gate.mkAND (a_b1[i]!) (b_b1[i]!) (g0_b1[i]!),
+      Gate.mkXOR (a_b1[i]!) (b_b1[i]!) (p0_b1[i]!) ]
+
+  -- Block 1 with cin = 0
+  let (pfx_b1_0, final_g_b1_0, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"s3_b1_0_l{stride}"
+      let g_new := (List.range w1).map (fun i => Wire.mk s!"{lt}_g{i}")
+      let p_new := (List.range w1).map (fun i => Wire.mk s!"{lt}_p{i}")
+      let lg := List.flatten <| (List.range w1).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"{lt}_pg{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_b1, p0_b1)
+
+  let sum0_b1 := makeIndexedWires "s3_sum0_b1" w1
+  let sum0_b1_gates :=
+    [Gate.mkBUF (p0_b1[0]!) (sum0_b1[0]!)] ++
+    ((List.range (w1 - 1)).map fun i =>
+      Gate.mkXOR (p0_b1[i + 1]!) (final_g_b1_0[i]!) (sum0_b1[i + 1]!))
+  let cout0_b1 := final_g_b1_0[w1 - 1]!
+
+  -- Block 1 with cin = 1
+  let g0_b1_m0 := Wire.mk "s3_g0_b1_m0"
+  let cin1_b1_gate := Gate.mkOR (a_b1[0]!) (b_b1[0]!) g0_b1_m0
+  let g0_b1_init1 := [g0_b1_m0] ++ (List.range (w1 - 1)).map fun i => g0_b1[i + 1]!
+
+  let (pfx_b1_1, final_g_b1_1, _) :=
+    strides.foldl (fun (acc : List Gate × List Wire × List Wire) stride =>
+      let (gates_acc, g_prev, p_prev) := acc
+      let lt := s!"s3_b1_1_l{stride}"
+      let g_new := (List.range w1).map (fun i => Wire.mk s!"{lt}_g{i}")
+      let p_new := (List.range w1).map (fun i => Wire.mk s!"{lt}_p{i}")
+      let lg := List.flatten <| (List.range w1).map fun i =>
+        if i < stride then
+          [ Gate.mkBUF (g_prev[i]!) (g_new[i]!), Gate.mkBUF (p_prev[i]!) (p_new[i]!) ]
+        else
+          let pg := Wire.mk s!"{lt}_pg{i}"
+          [ Gate.mkAND (p_prev[i]!) (g_prev[i - stride]!) pg,
+            Gate.mkOR (g_prev[i]!) pg (g_new[i]!),
+            Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!) ]
+      (gates_acc ++ lg, g_new, p_new)
+    ) ([], g0_b1_init1, p0_b1)
+
+  let sum1_b1 := makeIndexedWires "s3_sum1_b1" w1
+  let sum1_b1_gates :=
+    [Gate.mkNOT (p0_b1[0]!) (sum1_b1[0]!)] ++
+    ((List.range (w1 - 1)).map fun i =>
+      Gate.mkXOR (p0_b1[i + 1]!) (final_g_b1_1[i]!) (sum1_b1[i + 1]!))
+  let cout1_b1 := final_g_b1_1[w1 - 1]!
+
+  -- Select gates for Block 1
+  let c27_bufs := (List.range 3).map fun i => Wire.mk s!"s3_c27_b{i}"
+  let c27_buf_gates := (List.range 3).map fun i => Gate.mkBUF c27 (c27_bufs[i]!)
+
+  let sum_b1_sel_gates := (List.range w1).map fun i =>
+    let grp := min (i / 10) 2
+    Gate.mkMUX (sum0_b1[i]!) (sum1_b1[i]!) (c27_bufs[grp]!) (sum[w0 + i]!)
+
+  let s3_carry_56 := Wire.mk "s3_c56"
+  let cout_sel_gate := Gate.mkMUX cout0_b1 cout1_b1 (c27_bufs[0]!) s3_carry_56
 
   let not_eff_sub := Wire.mk "s3_not_eff_sub"
   let s3_ovf_gates := [
     Gate.mkNOT eff_sub not_eff_sub,
-    Gate.mkAND (s3_carry[56]!) not_eff_sub overflow
+    Gate.mkAND s3_carry_56 not_eff_sub overflow
   ]
 
   -- Leading zero detection on 56-bit sum (parallel prefix)
@@ -508,8 +615,12 @@ def mkFPAdderD_Stage3_AddSub : Circuit :=
   let s3_found_gate := Gate.mkBUF (lz_final_v[0]!) found
 
   let all_gates :=
-    [one_gate] ++ s3_borrow_gates ++ s3_carry_in_gate ++ s3_add_gates ++ s3_ovf_gates ++
-      lz_leaf_gates ++ lz_prefix_gates ++
+    [one_gate] ++ s3_borrow_gates ++ s3_carry_in_gate ++ b_prep_gates ++
+    init_b0 ++ cin_gates ++ pfx_b0 ++ sum_b0_gates ++
+    init_b1 ++ pfx_b1_0 ++ sum0_b1_gates ++
+    [cin1_b1_gate] ++ pfx_b1_1 ++ sum1_b1_gates ++
+    c27_buf_gates ++ sum_b1_sel_gates ++ [cout_sel_gate] ++
+    s3_ovf_gates ++ lz_leaf_gates ++ lz_prefix_gates ++
     s3_lead_pos_gates ++ [s3_found_gate]
 
   { name := "FPAdderD_Stage3_AddSub"
