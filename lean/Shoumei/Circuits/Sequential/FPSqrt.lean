@@ -909,6 +909,7 @@ def mkFPSqrt : Circuit :=
       { name := "root_q", width := 24, wires := root_q },
       { name := "mant_q", width := 26, wires := mant_q }
     ]
+    keepHierarchy := true
   }
 
 /-- Convenience definition for the FP square root circuit. -/

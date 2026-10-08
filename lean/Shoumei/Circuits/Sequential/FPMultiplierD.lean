@@ -48,15 +48,28 @@ private def mkOrTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   | [w] =>
     let out := Wire.mk s!"{pfx}_buf"
     (out, [Gate.mkBUF w out])
-  | w0 :: w1 :: rest =>
-    let firstOut := Wire.mk s!"{pfx}_0"
-    let firstGate := Gate.mkOR w0 w1 firstOut
-    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
-      let out := Wire.mk s!"{pfx}_{idx + 1}"
-      let g := Gate.mkOR acc.1 w out
-      (out, acc.2 ++ [g])
-    ) (firstOut, [])
-    (finalW, [firstGate] ++ restGates)
+  | _ =>
+    let rec buildTree (ws : List Wire) (lvl : Nat) (gates : List Gate) (fuel : Nat)
+        : Wire × List Gate :=
+      match fuel with
+      | 0 => (ws.head!, gates)
+      | fuel' + 1 =>
+        match ws with
+        | [] => (Wire.mk s!"{pfx}_empty", gates)
+        | [w] => (w, gates)
+        | _ =>
+          let rec pairUp (rem : List Wire) (idx : Nat) (next_ws : List Wire)
+              (lvl_gates : List Gate) :=
+            match rem with
+            | [] => (next_ws.reverse, lvl_gates)
+            | [w] => ((w :: next_ws).reverse, lvl_gates)
+            | w1 :: w2 :: r =>
+              let out := Wire.mk s!"{pfx}_l{lvl}_{idx}"
+              let g := Gate.mkOR w1 w2 out
+              pairUp r (idx + 1) (out :: next_ws) (lvl_gates ++ [g])
+          let (next_level, new_gates) := pairUp ws 0 [] []
+          buildTree next_level (lvl + 1) (gates ++ new_gates) fuel'
+    buildTree inputs 0 [] (inputs.length + 1)
 
 private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   match inputs with
@@ -64,15 +77,28 @@ private def mkAndTree (pfx : String) (inputs : List Wire) : Wire × List Gate :=
   | [w] =>
     let out := Wire.mk s!"{pfx}_buf"
     (out, [Gate.mkBUF w out])
-  | w0 :: w1 :: rest =>
-    let firstOut := Wire.mk s!"{pfx}_0"
-    let firstGate := Gate.mkAND w0 w1 firstOut
-    let (finalW, restGates) := rest.enum.foldl (fun (acc : Wire × List Gate) (idx, w) =>
-      let out := Wire.mk s!"{pfx}_{idx + 1}"
-      let g := Gate.mkAND acc.1 w out
-      (out, acc.2 ++ [g])
-    ) (firstOut, [])
-    (finalW, [firstGate] ++ restGates)
+  | _ =>
+    let rec buildTree (ws : List Wire) (lvl : Nat) (gates : List Gate) (fuel : Nat)
+        : Wire × List Gate :=
+      match fuel with
+      | 0 => (ws.head!, gates)
+      | fuel' + 1 =>
+        match ws with
+        | [] => (Wire.mk s!"{pfx}_empty", gates)
+        | [w] => (w, gates)
+        | _ =>
+          let rec pairUp (rem : List Wire) (idx : Nat) (next_ws : List Wire)
+              (lvl_gates : List Gate) :=
+            match rem with
+            | [] => (next_ws.reverse, lvl_gates)
+            | [w] => ((w :: next_ws).reverse, lvl_gates)
+            | w1 :: w2 :: r =>
+              let out := Wire.mk s!"{pfx}_l{lvl}_{idx}"
+              let g := Gate.mkAND w1 w2 out
+              pairUp r (idx + 1) (out :: next_ws) (lvl_gates ++ [g])
+          let (next_level, new_gates) := pairUp ws 0 [] []
+          buildTree next_level (lvl + 1) (gates ++ new_gates) fuel'
+    buildTree inputs 0 [] (inputs.length + 1)
 
 private def mkMuxBank (in0 in1 : List Wire) (sel : Wire) (out : List Wire) : List Gate :=
   (List.range in0.length).map fun i => Gate.mkMUX (in0[i]!) (in1[i]!) sel (out[i]!)
@@ -121,12 +147,11 @@ private def mkParallelPrefixInc (pfx : String) (w : Nat) (input : List Wire) (ci
     strides.foldl (fun (acc : List Gate × List Wire) stride =>
       let (gates_acc, p_prev) := acc
       let lt := s!"{pfx}_l{stride}"
-      let p_new := (List.range w).map fun i => Wire.mk s!"{lt}_p{i}"
-      let lg := (List.range w).map fun i =>
-        if i < stride then
-          Gate.mkBUF (p_prev[i]!) (p_new[i]!)
-        else
-          Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!)
+      let p_new := (List.range w).map fun i =>
+        if i < stride then p_prev[i]! else Wire.mk s!"{lt}_p{i}"
+      let lg := (List.range w).filterMap fun i =>
+        if i < stride then none
+        else some (Gate.mkAND (p_prev[i]!) (p_prev[i - stride]!) (p_new[i]!))
       (gates_acc ++ lg, p_new)
     ) ([], input)
 
@@ -347,11 +372,11 @@ def mkFPMultiplierD : Circuit :=
   let pp_wires := pp_rows.map (·.1)
   let pp_gates := pp_rows.map (·.2) |>.flatten
 
-  -- CSA Tree Level 0-4: 53 rows -> 8 rows (106 bits each)
+  -- CSA Tree Level 0-2: 53 rows -> 16 rows (106 bits each)
   let (csa_p1_rows, csa_tree_gates1, csa_instances1) :=
-    mkCSATreeToDepth pp_wires zero 5 106 0
+    mkCSATreeToDepth pp_wires zero 3 106 0
 
-  -- Stage 1b Pipeline Registers: Latch 8 CSA rows + control signals
+  -- Stage 1b Pipeline Registers: Latch CSA rows + control signals
   let s1b_sign := Wire.mk "s1b_sign"
   let s1b_expub := makeIndexedWires "s1b_expub" 13
   let s1b_rm := makeIndexedWires "s1b_rm" 3
@@ -362,9 +387,10 @@ def mkFPMultiplierD : Circuit :=
   let s1b_inf_res := Wire.mk "s1b_inf_res"
   let s1b_zero_res := Wire.mk "s1b_zero_res"
   let s1b_not_special := Wire.mk "s1b_not_special"
-  let s1b_csa_rows := (List.range 8).map fun r => makeIndexedWires s!"s1b_csa_r{r}" 106
+  let num_csa_p1 := csa_p1_rows.length
+  let s1b_csa_rows := (List.range num_csa_p1).map fun r => makeIndexedWires s!"s1b_csa_r{r}" 106
 
-  let s1b_csa_dffs := (List.range 8).flatMap fun r =>
+  let s1b_csa_dffs := (List.range num_csa_p1).flatMap fun r =>
     mkDFFBank (csa_p1_rows[r]!) (s1b_csa_rows[r]!) clock reset
 
   let s1b_dffs :=
@@ -380,9 +406,9 @@ def mkFPMultiplierD : Circuit :=
      Gate.mkDFF s1_zero_res clock reset s1b_zero_res,
      Gate.mkDFF s1_not_special clock reset s1b_not_special]
 
-  -- Stage 1b Combinational: CSA Tree Level 5-8: 8 rows -> 2 rows (106 bits each)
+  -- Stage 1b Combinational: CSA Tree Level 3-8: remaining rows -> 2 rows (106 bits each)
   let (csa_sum, csa_carry, csa_tree_gates2, csa_instances2) :=
-    mkCSATreeHierarchical s1b_csa_rows zero 106 5
+    mkCSATreeHierarchical s1b_csa_rows zero 106 3
 
   -- Stage 2 Pipeline Registers
   let s2_sign := Wire.mk "s2_sign"
@@ -427,26 +453,46 @@ def mkFPMultiplierD : Circuit :=
   let is_shift := product[105]!
   let mant_shifted := (List.range 52).map fun i => product[53 + i]!
   let mant_unshifted := (List.range 52).map fun i => product[52 + i]!
+  -- Tree-buffer is_shift from product[105] to minimize fanout load on the adder MSB
+  let is_shift_b0 := Wire.mk "muld_ish_b0"
+  let is_shift_b1 := Wire.mk "muld_ish_b1"
+  let is_shift_b2 := Wire.mk "muld_ish_b2"
+  let is_shift_b3 := Wire.mk "muld_ish_b3"
+  let is_shift_buf_gates := [
+    Gate.mkBUF is_shift is_shift_b0,
+    Gate.mkBUF is_shift is_shift_b1,
+    Gate.mkBUF is_shift is_shift_b2,
+    Gate.mkBUF is_shift is_shift_b3
+  ]
+
   let pre_mant_comb := makeIndexedWires "muld_pre_mant_c" 52
-  let pre_mant_gates := mkMuxBank mant_unshifted mant_shifted is_shift pre_mant_comb
+  let pre_mant_gates :=
+    (List.range 26).map (fun i =>
+      Gate.mkMUX (mant_unshifted[i]!) (mant_shifted[i]!) is_shift_b0 (pre_mant_comb[i]!)) ++
+    (List.range 26).map (fun i =>
+      Gate.mkMUX (mant_unshifted[26 + i]!) (mant_shifted[26 + i]!) is_shift_b1
+        (pre_mant_comb[26 + i]!))
 
   let g_bit_comb := Wire.mk "muld_g_c"
   let r_bit_comb := Wire.mk "muld_r_c"
-  let g_gate := Gate.mkMUX (product[51]!) (product[52]!) is_shift g_bit_comb
-  let r_gate := Gate.mkMUX (product[50]!) (product[51]!) is_shift r_bit_comb
+  let g_gate := Gate.mkMUX (product[51]!) (product[52]!) is_shift_b2 g_bit_comb
+  let r_gate := Gate.mkMUX (product[50]!) (product[51]!) is_shift_b2 r_bit_comb
 
   let s_extra := Wire.mk "muld_s_extra"
-  let s_extra_gate := Gate.mkAND is_shift (product[50]!) s_extra
+  let s_extra_gate := Gate.mkAND is_shift_b2 (product[50]!) s_extra
 
   let low50 := (List.range 50).map fun i => product[i]!
   let (s_low50, s_low50_gates) := mkOrTree "muld_low50" low50
   let s_bit_comb := Wire.mk "muld_s_c"
   let s_gate := Gate.mkOR s_low50 s_extra s_bit_comb
 
-  -- Exponent adjustment by shift: exp_adj = s2_expub + is_shift
-  let exp_inc_13 := [is_shift] ++ (List.replicate 12 zero)
+  -- Exponent adjustment by shift: precompute s2_expub + 1 in parallel with multiplier CPA
+  let (expub_plus1, _, expub_plus1_gates) :=
+    mkParallelPrefixInc "muld_ep1_c" 13 s2_expub one_w
   let exp_adj13_comb := makeIndexedWires "muld_eadj_c" 13
-  let (exp_adj_gates, _) := mkKoggeStoneAdd s2_expub exp_inc_13 zero exp_adj13_comb "muld_eadj"
+  let exp_adj_mux_gates := (List.range 13).map fun i =>
+    Gate.mkMUX (s2_expub[i]!) (expub_plus1[i]!) is_shift_b3 (exp_adj13_comb[i]!)
+  let exp_adj_gates := expub_plus1_gates ++ exp_adj_mux_gates
 
   -- Stage 3 Pipeline Registers: Latch intermediate normalized product and status
   let s3_pre_mant := makeIndexedWires "s3_pre_mant" 52
@@ -581,22 +627,9 @@ def mkFPMultiplierD : Circuit :=
   let (mant_inc, mant_rollover, mant_inc_gates) :=
     mkParallelPrefixInc "muld_minc" 52 pre_mant round_up
 
-  let final_mant := makeIndexedWires "muld_fmant" 52
-  let not_rollover := Wire.mk "muld_nroll"
-  let final_mant_gates := [Gate.mkNOT mant_rollover not_rollover] ++
-    (List.range 52).map fun i => Gate.mkAND (mant_inc[i]!) not_rollover (final_mant[i]!)
-
-  -- Exponent increment on rollover
-  let exp_roll_13 := [mant_rollover] ++ (List.replicate 12 zero)
-  let exp_final13 := makeIndexedWires "muld_efinal" 13
-  let (exp_final_gates, _) := mkKoggeStoneAdd exp_adj13 exp_roll_13 zero exp_final13 "muld_efinal"
-
-  -- Normal result: packed {sign, exp_final13[10:0], final_mant[51:0]}
-  let norm_res := makeIndexedWires "muld_norm_res" 64
-  let norm_res_gates :=
-    (List.range 52).map (fun i => Gate.mkBUF (final_mant[i]!) (norm_res[i]!)) ++
-    (List.range 11).map (fun i => Gate.mkBUF (exp_final13[i]!) (norm_res[52 + i]!)) ++
-    [Gate.mkBUF s2_sign (norm_res[63]!)]
+  -- Exponent increment on rollover (precomputed in parallel with mantissa increment)
+  let (exp_plus1, _, exp_plus1_gates) :=
+    mkParallelPrefixInc "muld_ep1" 13 exp_adj13 one_w
 
   -- ── Subnormal result ───────────────────────────────────────────────────────
   -- A product below the minimum normal is emitted with exponent field 0 and a
@@ -666,91 +699,146 @@ def mkFPMultiplierD : Circuit :=
   let not_rtz_gates := [Gate.mkAND n_rm2 n_rm1 (Wire.mk "muld_rtz_pre"),
                         Gate.mkAND (Wire.mk "muld_rtz_pre") rm0 not_rtz]
 
-  let (sub_inc, sub_carry, sub_inc_gates) :=
-    mkParallelPrefixInc "muld_subinc" 52 sub_mant sub_round
-  let sub_not_carry := Wire.mk "muld_subncarry"
-  let sub_final_mant := makeIndexedWires "muld_subfm" 52
-  let sub_final_mant_gates := [Gate.mkNOT sub_carry sub_not_carry] ++
-    (List.range 52).map fun i =>
-      Gate.mkAND (sub_inc[i]!) sub_not_carry (sub_final_mant[i]!)
-  let (sub_mant_any, sub_mant_any_gates) := mkOrTree "muld_submany" sub_final_mant
-  let sub_mant_nz := Wire.mk "muld_submnz"
-  let sub_zero_pre := Wire.mk "muld_subzpre"
-  let sub_zero := Wire.mk "muld_subzero"
-  let sub_zero_gates := [
-    Gate.mkNOT sub_mant_any sub_mant_nz,
-    Gate.mkAND subnormal_res sub_not_carry sub_zero_pre,
-    Gate.mkAND sub_zero_pre sub_mant_nz sub_zero
-  ]
-  let sub_exp_final := makeIndexedWires "muld_subexp" 11
-  let sub_exp_gates := (List.range 11).map fun i =>
-    if i == 0 then Gate.mkBUF sub_carry (sub_exp_final[i]!)
-    else Gate.mkBUF zero (sub_exp_final[i]!)
-
   let sub_neg_gates := [
     Gate.mkNOT exp_adj_any exp_adj_zero,
     Gate.mkOR exp_adj_zero exp_adj_neg exp_adj_le0,
     Gate.mkBUF exp_adj_le0 subnormal_res
   ]
 
-  -- Normal versus subnormal, before the zero/inf/NaN overrides.
-  let res_l0 := makeIndexedWires "muld_res_l0" 64
+  -- Stage 4 Pipeline Registers: Latch intermediate arithmetic outputs
+  let s4_mant_inc := makeIndexedWires "s4_minc" 52
+  let s4_mant_rollover := Wire.mk "s4_mroll"
+  let s4_exp_adj13 := makeIndexedWires "s4_eadj" 13
+  let s4_exp_plus1 := makeIndexedWires "s4_ep1" 13
+  let s4_sub_mant := makeIndexedWires "s4_subm" 52
+  let s4_sub_round := Wire.mk "s4_subrnd"
+  let s4_sub_any_rem := Wire.mk "s4_subany"
+  let s4_subnormal_res := Wire.mk "s4_subres"
+  let s4_grs_or := Wire.mk "s4_grs_or"
+  let s4_sign := Wire.mk "s4_sign"
+  let s4_ovf_to_inf := Wire.mk "s4_ovfinf"
+  let s4_zero_res := Wire.mk "s4_zres"
+  let s4_inf_res := Wire.mk "s4_ires"
+  let s4_nan_res := Wire.mk "s4_nanres"
+  let s4_not_special := Wire.mk "s4_nspec"
+  let s4_nv := Wire.mk "s4_nv"
+  let s4_rm2 := Wire.mk "s4_rm2"
+  let s4_tag := makeIndexedWires "s4_tag" 6
+  let s4_valid := Wire.mk "s4_valid"
+
+  let s4_dffs :=
+    mkDFFBank mant_inc s4_mant_inc clock reset ++
+    [Gate.mkDFF mant_rollover clock reset s4_mant_rollover] ++
+    mkDFFBank exp_adj13 s4_exp_adj13 clock reset ++
+    mkDFFBank exp_plus1 s4_exp_plus1 clock reset ++
+    mkDFFBank sub_mant s4_sub_mant clock reset ++
+    [Gate.mkDFF sub_round clock reset s4_sub_round,
+     Gate.mkDFF sub_any_rem clock reset s4_sub_any_rem,
+     Gate.mkDFF subnormal_res clock reset s4_subnormal_res,
+     Gate.mkDFF grs_or clock reset s4_grs_or,
+     Gate.mkDFF s2_sign clock reset s4_sign,
+     Gate.mkDFF ovf_to_inf clock reset s4_ovf_to_inf,
+     Gate.mkDFF s2_zero_res clock reset s4_zero_res,
+     Gate.mkDFF s2_inf_res clock reset s4_inf_res,
+     Gate.mkDFF s2_nan_res clock reset s4_nan_res,
+     Gate.mkDFF s2_not_special clock reset s4_not_special,
+     Gate.mkDFF s2_nv clock reset s4_nv,
+     Gate.mkDFF rm2 clock reset s4_rm2] ++
+    mkDFFBank s2_tag s4_tag clock reset ++
+    [Gate.mkDFF s2_valid clock reset s4_valid]
+
+  -- ── Stage 4 Combinational: Format Assembly, Subnormal Inc, Special Cases ──
+  -- Normal result assembly
+  let not_rollover := Wire.mk "s4_nroll"
+  let final_mant := makeIndexedWires "s4_fmant" 52
+  let final_mant_gates := [Gate.mkNOT s4_mant_rollover not_rollover] ++
+    (List.range 52).map fun i => Gate.mkAND (s4_mant_inc[i]!) not_rollover (final_mant[i]!)
+
+  let exp_final13 := makeIndexedWires "s4_efinal" 13
+  let exp_final_gates :=
+    (List.range 13).map fun i =>
+      Gate.mkMUX (s4_exp_adj13[i]!) (s4_exp_plus1[i]!) s4_mant_rollover (exp_final13[i]!)
+
+  let norm_res := makeIndexedWires "s4_norm_res" 64
+  let norm_res_gates :=
+    (List.range 52).map (fun i => Gate.mkBUF (final_mant[i]!) (norm_res[i]!)) ++
+    (List.range 11).map (fun i => Gate.mkBUF (exp_final13[i]!) (norm_res[52 + i]!)) ++
+    [Gate.mkBUF s4_sign (norm_res[63]!)]
+
+  -- Subnormal increment and zero detection
+  let (sub_inc, sub_carry, sub_inc_gates) :=
+    mkParallelPrefixInc "s4_subinc" 52 s4_sub_mant s4_sub_round
+  let sub_not_carry := Wire.mk "s4_subncarry"
+  let sub_final_mant := makeIndexedWires "s4_subfm" 52
+  let sub_final_mant_gates := [Gate.mkNOT sub_carry sub_not_carry] ++
+    (List.range 52).map fun i =>
+      Gate.mkAND (sub_inc[i]!) sub_not_carry (sub_final_mant[i]!)
+  let (sub_mant_any, sub_mant_any_gates) := mkOrTree "s4_submany" sub_final_mant
+  let sub_mant_nz := Wire.mk "s4_submnz"
+  let sub_zero_pre := Wire.mk "s4_subzpre"
+  let sub_zero := Wire.mk "s4_subzero"
+  let sub_zero_gates := [
+    Gate.mkNOT sub_mant_any sub_mant_nz,
+    Gate.mkAND s4_subnormal_res sub_not_carry sub_zero_pre,
+    Gate.mkAND sub_zero_pre sub_mant_nz sub_zero
+  ]
+  let sub_exp_final := makeIndexedWires "s4_subexp" 11
+  let sub_exp_gates := (List.range 11).map fun i =>
+    if i == 0 then Gate.mkBUF sub_carry (sub_exp_final[i]!)
+    else Gate.mkBUF zero (sub_exp_final[i]!)
+
+  -- Normal versus subnormal selection
+  let res_l0 := makeIndexedWires "s4_res_l0" 64
   let l0_gates := (List.range 64).map fun i =>
     if i == 63 then Gate.mkBUF (norm_res[63]!) (res_l0[63]!)
     else if i < 52 then
-      Gate.mkMUX (norm_res[i]!) (sub_final_mant[i]!) subnormal_res (res_l0[i]!)
+      Gate.mkMUX (norm_res[i]!) (sub_final_mant[i]!) s4_subnormal_res (res_l0[i]!)
     else
-      Gate.mkMUX (norm_res[i]!) (sub_exp_final[i - 52]!) subnormal_res (res_l0[i]!)
+      Gate.mkMUX (norm_res[i]!) (sub_exp_final[i - 52]!) s4_subnormal_res (res_l0[i]!)
 
   -- Overflow and Underflow detection
-  let (exp11_all1, exp11_all1_gates) := mkAndTree "muld_e11o" ((List.range 11).map fun i =>
+  let (exp11_all1, exp11_all1_gates) := mkAndTree "s4_e11o" ((List.range 11).map fun i =>
     exp_final13[i]!)
-  let not_neg_exp := Wire.mk "muld_nnege"
-  let ovf_cand := Wire.mk "muld_ovf_cand"
-  let is_overflow := Wire.mk "muld_ovf"
-  let is_underflow := Wire.mk "muld_uf"
+  let not_neg_exp := Wire.mk "s4_nnege"
+  let ovf_cand := Wire.mk "s4_ovf_cand"
+  let is_overflow := Wire.mk "s4_ovf"
+  let is_underflow := Wire.mk "s4_uf"
 
   let ovf_unf_gates := [
     Gate.mkNOT (exp_final13[12]!) not_neg_exp,
     Gate.mkOR (exp_final13[11]!) exp11_all1 ovf_cand,
     Gate.mkAND not_neg_exp ovf_cand is_overflow,
-    -- UF needs a tiny and inexact result.  subnormal_res confirms tininess.
-    -- Any remainder sets inexact.
-    Gate.mkAND subnormal_res sub_any_rem is_underflow
+    Gate.mkAND s4_subnormal_res s4_sub_any_rem is_underflow
   ]
 
   -- Special result values
-  let is_zero_sel := Wire.mk "muld_zsel"
-  let is_inf_sel := Wire.mk "muld_isel"
-  let is_ovf_max := Wire.mk "muld_ovfmax"
-  let not_ovf_to_inf := Wire.mk "muld_novfinf"
+  let is_zero_sel := Wire.mk "s4_zsel"
+  let is_inf_sel := Wire.mk "s4_isel"
+  let is_ovf_max := Wire.mk "s4_ovfmax"
+  let not_ovf_to_inf := Wire.mk "s4_novfinf"
   let sel_gates := [
-    Gate.mkOR s2_zero_res sub_zero is_zero_sel,
-    -- An overflowing product is an infinity only under a direction that points
-    -- away from zero; the other modes saturate to the largest finite magnitude.
-    Gate.mkNOT ovf_to_inf not_ovf_to_inf,
+    Gate.mkOR s4_zero_res sub_zero is_zero_sel,
+    Gate.mkNOT s4_ovf_to_inf not_ovf_to_inf,
     Gate.mkAND is_overflow not_ovf_to_inf is_ovf_max,
-    Gate.mkAND is_overflow ovf_to_inf (Wire.mk "muld_ovfinfsel"),
-    Gate.mkOR s2_inf_res (Wire.mk "muld_ovfinfsel") is_inf_sel
+    Gate.mkAND is_overflow s4_ovf_to_inf (Wire.mk "s4_ovfinfsel"),
+    Gate.mkOR s4_inf_res (Wire.mk "s4_ovfinfsel") is_inf_sel
   ]
 
   -- Level 1: Normal vs Zero
-  let res_l1 := makeIndexedWires "muld_res_l1" 64
+  let res_l1 := makeIndexedWires "s4_res_l1" 64
   let l1_gates := (List.range 64).map fun i =>
     if i == 63 then Gate.mkBUF (res_l0[63]!) (res_l1[63]!)
     else Gate.mkMUX (res_l0[i]!) zero is_zero_sel (res_l1[i]!)
 
-  -- Level 2a: saturate an overflowing product to the largest finite magnitude.
-  -- The exponent field is all ones minus one, so only its low bit (bit 52)
-  -- differs from an infinity; the fraction becomes all ones.
-  let res_l2a := makeIndexedWires "muld_res_l2a" 64
+  -- Level 2a: Overflow saturation
+  let res_l2a := makeIndexedWires "s4_res_l2a" 64
   let l2a_gates := (List.range 64).map fun i =>
     if i == 63 then Gate.mkBUF (res_l1[63]!) (res_l2a[63]!)
     else if i == 52 then Gate.mkMUX (res_l1[52]!) zero is_ovf_max (res_l2a[52]!)
     else Gate.mkMUX (res_l1[i]!) one_w is_ovf_max (res_l2a[i]!)
 
   -- Level 2b: res_l2a vs Inf
-  let res_l2 := makeIndexedWires "muld_res_l2" 64
+  let res_l2 := makeIndexedWires "s4_res_l2" 64
   let l2_gates := (List.range 64).map fun i =>
     if i == 63 then Gate.mkBUF (res_l2a[63]!) (res_l2[63]!)
     else if i >= 52 then Gate.mkMUX (res_l2a[i]!) one_w is_inf_sel (res_l2[i]!)
@@ -758,39 +846,38 @@ def mkFPMultiplierD : Circuit :=
 
   -- Level 3: res_l2 vs Canonical NaN (0x7ff8000000000000)
   let l3_gates := (List.range 64).map fun i =>
-    if i == 63 then Gate.mkMUX (res_l2[63]!) zero s2_nan_res (result[63]!)
-    else if i >= 52 then Gate.mkMUX (res_l2[i]!) one_w s2_nan_res (result[i]!)
-    else if i == 51 then Gate.mkMUX (res_l2[51]!) one_w s2_nan_res (result[51]!)
-    else Gate.mkMUX (res_l2[i]!) zero s2_nan_res (result[i]!)
+    if i == 63 then Gate.mkMUX (res_l2[63]!) zero s4_nan_res (result[63]!)
+    else if i >= 52 then Gate.mkMUX (res_l2[i]!) one_w s4_nan_res (result[i]!)
+    else if i == 51 then Gate.mkMUX (res_l2[51]!) one_w s4_nan_res (result[51]!)
+    else Gate.mkMUX (res_l2[i]!) zero s4_nan_res (result[i]!)
 
   -- Exceptions
-  let nx_cand_a := Wire.mk "muld_nxc_a"
-  let _nx_cand_b := Wire.mk "muld_nxc_b"
-  let final_nx := Wire.mk "muld_fnx"
-  let final_uf := Wire.mk "muld_fuf"
-  let final_of := Wire.mk "muld_fof"
+  let nx_cand_a := Wire.mk "s4_nxc_a"
+  let final_nx := Wire.mk "s4_fnx"
+  let final_uf := Wire.mk "s4_fuf"
+  let final_of := Wire.mk "s4_fof"
 
   let exc_eval_gates := [
-    Gate.mkMUX grs_or sub_any_rem subnormal_res (Wire.mk "muld_nxsel"),
-    Gate.mkOR (Wire.mk "muld_nxsel") is_overflow nx_cand_a,
-    Gate.mkAND nx_cand_a s2_not_special final_nx,
-    Gate.mkAND is_underflow s2_not_special final_uf,
-    Gate.mkAND is_overflow s2_not_special final_of
+    Gate.mkMUX s4_grs_or s4_sub_any_rem s4_subnormal_res (Wire.mk "s4_nxsel"),
+    Gate.mkOR (Wire.mk "s4_nxsel") is_overflow nx_cand_a,
+    Gate.mkAND nx_cand_a s4_not_special final_nx,
+    Gate.mkAND is_underflow s4_not_special final_uf,
+    Gate.mkAND is_overflow s4_not_special final_of
   ]
 
-  let not_rm2 := Wire.mk "fpmd_not_rm2"
+  let not_rm2 := Wire.mk "s4_not_rm2"
   let exc_out_gates := [
     Gate.mkBUF final_nx (exc[0]!),
     Gate.mkBUF final_uf (exc[1]!),
     Gate.mkBUF final_of (exc[2]!),
-    Gate.mkNOT rm2 not_rm2,
-    Gate.mkAND rm2 not_rm2 (exc[3]!),
-    Gate.mkBUF s2_nv (exc[4]!)
+    Gate.mkNOT s4_rm2 not_rm2,
+    Gate.mkAND s4_rm2 not_rm2 (exc[3]!),
+    Gate.mkBUF s4_nv (exc[4]!)
   ]
 
   let tag_out_gates := (List.range 6).map fun i =>
-    Gate.mkBUF (s2_tag[i]!) (tag_out[i]!)
-  let valid_out_gate := Gate.mkBUF s2_valid valid_out
+    Gate.mkBUF (s4_tag[i]!) (tag_out[i]!)
+  let valid_out_gate := Gate.mkBUF s4_valid valid_out
 
   let all_gates :=
     s1_dffs ++ [one_gate, sign_gate] ++
@@ -800,13 +887,17 @@ def mkFPMultiplierD : Circuit :=
     sub_op_gates ++ norm1_gates ++ norm2_gates ++ mant_norm_gates ++
     eff1_gates ++ eff2_gates ++ exp_norm_gates ++
     exp_add_gates ++ exp_sub_gates ++ pp_gates ++
-    csa_tree_gates1 ++ s1b_dffs ++ csa_tree_gates2 ++ s2_dffs ++ pre_mant_gates ++
+    csa_tree_gates1 ++ s1b_dffs ++ csa_tree_gates2 ++ s2_dffs ++
+    is_shift_buf_gates ++ pre_mant_gates ++
     [g_gate, r_gate, s_extra_gate] ++ s_low50_gates ++ [s_gate] ++
     exp_adj_gates ++ s3_dffs ++ rm_inv_gates ++ rm_dec_gates ++ rnd_cond_gates ++
-    mant_inc_gates ++ final_mant_gates ++ exp_final_gates ++ norm_res_gates ++
+    mant_inc_gates ++ exp_plus1_gates ++
     exp_adj_any_gates ++ sub_neg_gates ++ sub_window_gates ++ sub_shift13_gates ++
     sub_over_gates ++ sub_shift_gates ++ sub_barrel_gates ++ sub_mant_gates ++
-    sub_rnd_gates ++ not_rtz_gates ++ sub_inc_gates ++ sub_final_mant_gates ++
+    sub_rnd_gates ++ not_rtz_gates ++
+    s4_dffs ++
+    final_mant_gates ++ exp_final_gates ++ norm_res_gates ++
+    sub_inc_gates ++ sub_final_mant_gates ++
     sub_mant_any_gates ++ sub_zero_gates ++ sub_exp_gates ++ l0_gates ++
     exp11_all1_gates ++ ovf_unf_gates ++ sel_gates ++
     l1_gates ++ l2a_gates ++ l2_gates ++ l3_gates ++

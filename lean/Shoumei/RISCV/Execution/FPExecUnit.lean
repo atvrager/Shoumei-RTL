@@ -1571,22 +1571,30 @@ def mkFPExecUnitD : Circuit :=
   -- ══════════════════════════════════════════════
   -- Per-source result queues
   -- The priority mux below carries one result per cycle; each source parks its
-  -- result in a 1-entry flow queue until the mux wins it *and* the FP result
-  -- FIFO accepts it (`out_ready`), so no result is ever dropped.  Built in
+  -- result in a 1-entry flow queue until the mux wins it *and* the output
+  -- register accepts it (`out_accept`), so no result is ever dropped.  Built in
   -- priority order because every queue needs the `v` of the sources above it.
   -- ══════════════════════════════════════════════
+  let out_reg_valid := Wire.mk "out_reg_valid"
+  let not_out_valid := Wire.mk "not_out_valid"
+  let out_accept := Wire.mk "out_accept"
+  let accept_gates := [
+    Gate.mkNOT out_reg_valid not_out_valid,
+    Gate.mkOR not_out_valid out_ready out_accept
+  ]
+
   let hSqrt := mkResultHold "sqrt" 64 zero sqrt_valid sqrt_result sqrt_tag sqrt_exc
-    [] out_ready clock reset_sqrt_dp
+    [] out_accept clock reset_sqrt_dp
   let hDiv := mkResultHold "div" 64 zero div_valid div_result div_tag div_exc
-    [hSqrt.v] out_ready clock reset_div_dp
+    [hSqrt.v] out_accept clock reset_div_dp
   let hFma := mkResultHold "fma" 64 zero fma_valid fma_result fma_tag fma_exc
-    [hSqrt.v, hDiv.v] out_ready clock reset_fma_dp
+    [hSqrt.v, hDiv.v] out_accept clock reset_fma_dp
   let hMul := mkResultHold "mul" 64 zero mul_valid mul_result mul_tag mul_exc
-    [hSqrt.v, hDiv.v, hFma.v] out_ready clock reset_mul_dp
+    [hSqrt.v, hDiv.v, hFma.v] out_accept clock reset_mul_dp
   let hAdd := mkResultHold "add" 64 zero add_valid add_result add_tag add_exc
-    [hSqrt.v, hDiv.v, hFma.v, hMul.v] out_ready clock reset_add_dp
+    [hSqrt.v, hDiv.v, hFma.v, hMul.v] out_accept clock reset_add_dp
   let hMisc := mkResultHold "misc" 64 zero misc_reg_valid misc_reg_result misc_reg_tag misc_reg_exc
-    [hSqrt.v, hDiv.v, hFma.v, hAdd.v, hMul.v] out_ready clock reset_misc_dp
+    [hSqrt.v, hDiv.v, hFma.v, hAdd.v, hMul.v] out_accept clock reset_misc_dp
     misc_reg_writes_int
   let hold_gates :=
     hSqrt.gates ++ hDiv.gates ++ hFma.gates ++ hMul.gates ++ hAdd.gates ++ hMisc.gates
@@ -1610,7 +1618,7 @@ def mkFPExecUnitD : Circuit :=
   -- Level 2: MUX(t1, mul, mul_v) -> t2
   -- Level 3: MUX(t2, fma, fma_v) -> t3
   -- Level 4: MUX(t3, div, div_v) -> t4
-  -- Level 5: MUX(t4, sqrt, sqrt_v) -> output
+  -- Level 5: MUX(t4, sqrt, sqrt_v) -> mux_output
   -- Each level reads its source's hold output, so a losing result stays put.
   -- ══════════════════════════════════════════════
   let t1_result := makeIndexedWires "t1_res" 64
@@ -1653,35 +1661,86 @@ def mkFPExecUnitD : Circuit :=
     (List.range 5 |>.map fun i => Gate.mkMUX (t3_exc[i]!) (hDiv.exc[i]!) hDiv.v (t4_exc[i]!)) ++
     [Gate.mkOR t3_valid hDiv.v t4_valid]
 
+  let mux_result := makeIndexedWires "mux_res" 64
+  let mux_tag := makeIndexedWires "mux_tag" 6
+  let mux_exc := makeIndexedWires "mux_exc" 5
+  let mux_valid := Wire.mk "mux_valid"
   let mux5_gates :=
-    (List.range 64 |>.map fun i => Gate.mkMUX (t4_result[i]!) (hSqrt.res[i]!) hSqrt.v (result[i]!)) ++
-    (List.range 6 |>.map fun i => Gate.mkMUX (t4_tag[i]!) (hSqrt.tag[i]!) hSqrt.v (tag_out[i]!)) ++
-    (List.range 5 |>.map fun i => Gate.mkMUX (t4_exc[i]!) (hSqrt.exc[i]!) hSqrt.v (exceptions[i]!)) ++
-    [Gate.mkOR t4_valid hSqrt.v valid_out]
-
-  -- No collision tracking here either; see the SP unit.
-  let busy_gate := [
-    Gate.mkOR div_sp_busy div_dp_busy (Wire.mk "busy_div_any"),
-    Gate.mkOR sqrt_sp_busy sqrt_dp_busy (Wire.mk "busy_sqrt_any"),
-    Gate.mkOR (Wire.mk "busy_div_any") (Wire.mk "busy_sqrt_any") (Wire.mk "busy_iter"),
-    Gate.mkOR (Wire.mk "busy_iter") hold_busy busy
-  ]
+    (List.range 64 |>.map fun i =>
+      Gate.mkMUX (t4_result[i]!) (hSqrt.res[i]!) hSqrt.v (mux_result[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (t4_tag[i]!) (hSqrt.tag[i]!) hSqrt.v (mux_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (t4_exc[i]!) (hSqrt.exc[i]!) hSqrt.v (mux_exc[i]!)) ++
+    [Gate.mkOR t4_valid hSqrt.v mux_valid]
 
   -- ══════════════════════════════════════════════
   -- result_is_int
   -- High when output comes from misc path and targets INT PRF
-  -- (SP int-writing op detection lives above, next to the misc merge)
   -- ══════════════════════════════════════════════
+  let mux_rint := Wire.mk "mux_rint"
   let int_result_gates := [
-    -- Same rule as the SP builder: select on the held valids, and take the
-    -- domain flag captured with the held result.
     Gate.mkOR hMul.v hAdd.v (Wire.mk "rint_d_t1"),
     Gate.mkOR hFma.v hDiv.v (Wire.mk "rint_d_t2"),
     Gate.mkOR hSqrt.v (Wire.mk "rint_d_t1") (Wire.mk "rint_d_t3"),
     Gate.mkOR (Wire.mk "rint_d_t2") (Wire.mk "rint_d_t3") (Wire.mk "rint_d_t4"),
     Gate.mkNOT (Wire.mk "rint_d_t4") (Wire.mk "no_override_d"),
     Gate.mkAND hMisc.v (Wire.mk "no_override_d") (Wire.mk "rint_d_t5"),
-    Gate.mkAND (Wire.mk "rint_d_t5") hMisc.intf result_is_int
+    Gate.mkAND (Wire.mk "rint_d_t5") hMisc.intf mux_rint
+  ]
+
+  -- ══════════════════════════════════════════════
+  -- Registered Output Stage
+  -- Decouples the priority writeback tree from external CDB/FIFO networks.
+  -- ══════════════════════════════════════════════
+  let out_reg_res := makeIndexedWires "out_reg_res" 64
+  let out_reg_tag := makeIndexedWires "out_reg_tag" 6
+  let out_reg_exc := makeIndexedWires "out_reg_exc" 5
+  let out_reg_rint := Wire.mk "out_reg_rint"
+
+  let next_res := makeIndexedWires "next_res" 64
+  let next_tag := makeIndexedWires "next_tag" 6
+  let next_exc := makeIndexedWires "next_exc" 5
+  let next_valid := Wire.mk "next_valid"
+  let next_rint := Wire.mk "next_rint"
+
+  let next_gates :=
+    (List.range 64 |>.map fun i =>
+      Gate.mkMUX (out_reg_res[i]!) (mux_result[i]!) out_accept (next_res[i]!)) ++
+    (List.range 6 |>.map fun i =>
+      Gate.mkMUX (out_reg_tag[i]!) (mux_tag[i]!) out_accept (next_tag[i]!)) ++
+    (List.range 5 |>.map fun i =>
+      Gate.mkMUX (out_reg_exc[i]!) (mux_exc[i]!) out_accept (next_exc[i]!)) ++
+    [Gate.mkMUX out_reg_valid mux_valid out_accept next_valid,
+     Gate.mkMUX out_reg_rint mux_rint out_accept next_rint]
+
+  let out_dffs :=
+    (List.range 64 |>.map fun i => Gate.mkDFF (next_res[i]!) clock reset (out_reg_res[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkDFF (next_tag[i]!) clock reset (out_reg_tag[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkDFF (next_exc[i]!) clock reset (out_reg_exc[i]!)) ++
+    [Gate.mkDFF next_valid clock reset out_reg_valid,
+     Gate.mkDFF next_rint clock reset out_reg_rint]
+
+  let out_buf_gates :=
+    (List.range 64 |>.map fun i => Gate.mkBUF (out_reg_res[i]!) (result[i]!)) ++
+    (List.range 6 |>.map fun i => Gate.mkBUF (out_reg_tag[i]!) (tag_out[i]!)) ++
+    (List.range 5 |>.map fun i => Gate.mkBUF (out_reg_exc[i]!) (exceptions[i]!)) ++
+    [Gate.mkBUF out_reg_valid valid_out,
+     Gate.mkBUF out_reg_rint result_is_int]
+
+  let out_holding := Wire.mk "out_holding"
+  let not_out_ready := Wire.mk "not_out_ready"
+  let out_block_gates := [
+    Gate.mkNOT out_ready not_out_ready,
+    Gate.mkAND out_reg_valid not_out_ready out_holding
+  ]
+
+  let busy_gate := [
+    Gate.mkOR div_sp_busy div_dp_busy (Wire.mk "busy_div_any"),
+    Gate.mkOR sqrt_sp_busy sqrt_dp_busy (Wire.mk "busy_sqrt_any"),
+    Gate.mkOR (Wire.mk "busy_div_any") (Wire.mk "busy_sqrt_any") (Wire.mk "busy_iter"),
+    Gate.mkOR (Wire.mk "busy_iter") hold_busy (Wire.mk "busy_hold_any"),
+    Gate.mkOR (Wire.mk "busy_hold_any") out_holding busy
   ]
 
   let all_gates :=
@@ -1691,10 +1750,11 @@ def mkFPExecUnitD : Circuit :=
     add_merge_gates ++ mul_merge_gates ++ fma_merge_gates ++ div_merge_gates ++ sqrt_merge_gates ++
     is_dp_conv_gates ++ sp_int_detect_gates ++ misc_merge_gates ++
     active_wint_pre_gates ++ misc_pipe_dffs ++ misc_out_mux_gates ++
-    hold_gates ++ hold_busy_gates ++
+    accept_gates ++ hold_gates ++ hold_busy_gates ++
     long_op_gates ++ long_conv_dec_gates ++ long_src1_gates ++
     mux1_gates ++ mux2_gates ++ mux3_gates ++ mux4_gates ++ mux5_gates ++
-    busy_gate ++ int_result_gates
+    int_result_gates ++ next_gates ++ out_dffs ++ out_buf_gates ++ out_block_gates ++
+    busy_gate
 
   { name := "FPExecUnit_D"
     inputs := src1 ++ src2 ++ src3 ++ op ++ rm ++ dest_tag ++
@@ -1703,7 +1763,8 @@ def mkFPExecUnitD : Circuit :=
     gates := all_gates
     instances := [
       misc_sp_inst, adder_sp_inst, mul_sp_inst, fma_sp_inst, div_sp_inst, sqrt_sp_inst,
-      misc_dp_inst, conv_dp_inst, conv_long_inst, adder_dp_inst, mul_dp_inst, fma_dp_inst, div_dp_inst, sqrt_dp_inst
+      misc_dp_inst, conv_dp_inst, conv_long_inst, adder_dp_inst,
+      mul_dp_inst, fma_dp_inst, div_dp_inst, sqrt_dp_inst
     ] ++ hold_insts
     signalGroups := [
       { name := "src1", width := 64, wires := src1 },

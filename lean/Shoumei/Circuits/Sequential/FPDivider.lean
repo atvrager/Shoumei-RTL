@@ -1074,6 +1074,7 @@ def mkFPDivider : Circuit :=
       { name := "quot_q", width := 24, wires := quot_q },
       { name := "div_mant_q", width := 24, wires := div_mant_q }
     ]
+    keepHierarchy := true
   }
 
 /-- Convenience definition for the FP divider circuit. -/

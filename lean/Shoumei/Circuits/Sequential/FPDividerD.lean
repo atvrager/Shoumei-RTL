@@ -790,7 +790,8 @@ def mkFPDividerD : Circuit :=
     inputs := src1_in ++ src2_in ++ rm_in ++ dest_tag ++ [start, clock, reset, zero, one]
     outputs := result ++ tag_out ++ exc ++ [valid_out, busy_out]
     gates := all_gates
-    instances := [] }
+    instances := []
+    keepHierarchy := true }
 
 def fpDividerDCircuit : Circuit := mkFPDividerD
 
