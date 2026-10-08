@@ -15,6 +15,7 @@ The `yosys scc` command found 0 strongly connected components.
 | `Subtractor64` | 28.9 | MET |
 | `Int64ToFP` (top wrapper) | 137.5 | MET |
 | `FPLongConverter` (wrapper) | 150.5 | MET |
+| `FPExecUnit_D` (top wrapper) | 150.5 | MET |
 | `Comparator64` | 151.7 | MET |
 | `Mux8x64` | 215.9 | MET |
 | `ALU64` | 232.0 | MET |
@@ -37,7 +38,6 @@ The `yosys scc` command found 0 strongly connected components.
 | `Int64RoundPack` | 869.1 | MET |
 | `KoggeStoneAdder64WithCin1` | 871.1 | MET |
 | `KoggeStoneAdder64NoCin` | 915.2 | MET |
-| `FPExecUnit_D` (top wrapper) | 930.2 | MET |
 | `Int64Prep` | 930.2 | MET |
 | `FPAdderD` | 987.1 | MET |
 | `FPMultiplierD` | 992.0 | MET |
